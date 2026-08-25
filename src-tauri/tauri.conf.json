@@ -15,11 +15,8 @@
     "security": {
       "csp": null,
       "assetProtocol": {
-        "enable": true,
-        "scope": {
-          "allow": ["**"],
-          "requireLiteralLeadingDot": false
-        }
+        "enable": false,
+        "scope": []
       }
     }
   },

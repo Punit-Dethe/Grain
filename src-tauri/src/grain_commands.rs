@@ -1023,7 +1023,11 @@ pub fn grain_extension_mode_status() -> ExtensionModeStatus {
 /// fetched.
 #[tauri::command]
 #[specta::specta]
-pub async fn grain_extension_mode_download_model(app: AppHandle) -> Result<(), String> {
+pub async fn grain_extension_mode_download_model(
+    app: AppHandle,
+    window: tauri::WebviewWindow,
+) -> Result<(), String> {
+    require_main_window(&window)?;
     crate::grain_space::embed::download_model(app).await
 }
 
@@ -1034,7 +1038,12 @@ pub async fn grain_extension_mode_download_model(app: AppHandle) -> Result<(), S
 /// not individually disabled still has to happen.
 #[tauri::command]
 #[specta::specta]
-pub fn change_auto_send_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
+pub fn change_auto_send_setting(
+    app: AppHandle,
+    window: tauri::WebviewWindow,
+    enabled: bool,
+) -> Result<(), String> {
+    require_main_window(&window)?;
     let mut settings = settings::get_settings(&app);
     settings.auto_send_enabled = enabled;
     settings::write_settings(&app, settings);
@@ -1049,9 +1058,11 @@ pub fn change_auto_send_setting(app: AppHandle, enabled: bool) -> Result<(), Str
 #[specta::specta]
 pub fn change_auto_send_for_extension(
     app: AppHandle,
+    window: tauri::WebviewWindow,
     id: String,
     enabled: bool,
 ) -> Result<(), String> {
+    require_main_window(&window)?;
     grain_sdk::validate_extension_id(&id)?;
     let pack = load_pack(&app, &id)?;
     if !pack
@@ -1083,9 +1094,11 @@ pub fn change_auto_send_for_extension(
 #[specta::specta]
 pub async fn grain_extension_mode_decline(
     app: AppHandle,
+    window: tauri::WebviewWindow,
     presentation_id: u64,
     extension_id: String,
 ) -> Result<(), String> {
+    require_main_window(&window)?;
     crate::grain_actions::action_session::decline(&app, presentation_id, &extension_id).await;
     Ok(())
 }
@@ -1097,9 +1110,11 @@ pub async fn grain_extension_mode_decline(
 #[specta::specta]
 pub fn grain_extension_mode_accept(
     app: AppHandle,
+    window: tauri::WebviewWindow,
     presentation_id: u64,
     extension_id: String,
 ) -> Result<(), String> {
+    require_main_window(&window)?;
     crate::grain_actions::action_session::accept(&app, presentation_id, &extension_id);
     Ok(())
 }
@@ -1114,8 +1129,10 @@ pub fn grain_extension_mode_accept(
 #[tauri::command]
 #[specta::specta]
 pub fn grain_action_log(
+    window: tauri::WebviewWindow,
     clear: bool,
 ) -> Result<Vec<crate::grain_actions::action_log::ActionLogEntry>, String> {
+    require_main_window(&window)?;
     if clear {
         crate::grain_actions::action_log::clear();
         return Ok(Vec::new());
@@ -1386,8 +1403,14 @@ impl Default for PackFacts {
 /// toggle re-registers its binding so the change is zero-overhead-when-off.
 #[tauri::command]
 #[specta::specta]
-pub fn extension_set_enabled(app: AppHandle, id: String, enabled: bool) -> Result<(), String> {
+pub fn extension_set_enabled(
+    app: AppHandle,
+    window: tauri::WebviewWindow,
+    id: String,
+    enabled: bool,
+) -> Result<(), String> {
     use grain_core::extensions as ext;
+    require_main_window(&window)?;
     let reg = app
         .try_state::<std::sync::Arc<ext::ExtensionsRegistry>>()
         .ok_or("extensions registry unavailable")?;
@@ -1615,6 +1638,233 @@ pub(crate) fn load_pack(app: &AppHandle, id: &str) -> Result<grain_sdk::GrainPac
     crate::extension_host::load_manifest_result(app, id)
 }
 
+fn read_pack_input(path: &std::path::Path) -> Result<Vec<u8>, String> {
+    use std::io::Read;
+
+    let file =
+        std::fs::File::open(path).map_err(|error| format!("read {}: {error}", path.display()))?;
+    let mut bytes = Vec::new();
+    file.take(grain_sdk::PACK_MAX_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|error| format!("read {}: {error}", path.display()))?;
+    if bytes.len() as u64 > grain_sdk::PACK_MAX_BYTES {
+        return Err(format!(
+            ".grainpack exceeds the {} MiB import limit",
+            grain_sdk::PACK_MAX_BYTES / (1024 * 1024)
+        ));
+    }
+    Ok(bytes)
+}
+
+/// A pack file replacement that rolls itself back unless the registry update
+/// succeeds. The random, create-new temporary cannot be pre-planted as a
+/// symlink, and moving the old destination aside avoids following one.
+struct PendingPackReplacement {
+    output: std::path::PathBuf,
+    backup: Option<std::path::PathBuf>,
+    committed: bool,
+}
+
+impl PendingPackReplacement {
+    fn begin(output: std::path::PathBuf, bytes: &[u8]) -> Result<Self, String> {
+        use std::io::Write;
+
+        let parent = output.parent().ok_or("pack path has no parent")?;
+        std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+        let nonce = uuid::Uuid::new_v4().simple();
+        let temp = parent.join(format!(".grainpack-{nonce}.tmp"));
+        let backup = parent.join(format!(".grainpack-{nonce}.previous"));
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temp)
+            .map_err(|error| error.to_string())?;
+        if let Err(error) = file.write_all(bytes).and_then(|_| file.sync_all()) {
+            let _ = std::fs::remove_file(&temp);
+            return Err(error.to_string());
+        }
+        drop(file);
+
+        let backup = if output.exists() {
+            if let Err(error) = std::fs::rename(&output, &backup) {
+                let _ = std::fs::remove_file(&temp);
+                return Err(error.to_string());
+            }
+            Some(backup)
+        } else {
+            None
+        };
+        if let Err(error) = std::fs::rename(&temp, &output) {
+            let _ = std::fs::remove_file(&temp);
+            if let Some(backup) = &backup {
+                let _ = std::fs::rename(backup, &output);
+            }
+            return Err(error.to_string());
+        }
+        Ok(Self {
+            output,
+            backup,
+            committed: false,
+        })
+    }
+
+    fn commit(mut self) {
+        if let Some(backup) = self.backup.take() {
+            let _ = std::fs::remove_file(backup);
+        }
+        self.committed = true;
+    }
+}
+
+impl Drop for PendingPackReplacement {
+    fn drop(&mut self) {
+        if self.committed {
+            return;
+        }
+        let _ = std::fs::remove_file(&self.output);
+        if let Some(backup) = self.backup.take() {
+            let _ = std::fs::rename(backup, &self.output);
+        }
+    }
+}
+
+fn imported_update_can_stay_enabled(
+    prior: Option<&grain_core::extensions::ExtensionRecord>,
+    pack: &grain_sdk::GrainPack,
+) -> bool {
+    use grain_core::extensions as ext;
+
+    let Some(prior) = prior.filter(|record| record.enabled) else {
+        return false;
+    };
+    let manifest = &pack.manifest;
+    if manifest
+        .permissions
+        .iter()
+        .any(|permission| !prior.granted.contains(permission))
+    {
+        return false;
+    }
+    let prompt_layers_match = manifest.contributes.prompt_layers.is_empty()
+        || prior.prompt_layers_approved.as_deref()
+            == Some(ext::prompt_layers_fingerprint(&manifest.contributes.prompt_layers).as_str());
+    let actions_match = manifest.contributes.actions.is_empty()
+        || prior.actions_approved.as_deref()
+            == Some(ext::actions_fingerprint(&manifest.contributes.actions).as_str());
+    let authentication_match = manifest.contributes.authentication.is_empty()
+        || prior.authentication_approved.as_deref()
+            == Some(ext::authentication_fingerprint(&manifest.contributes.authentication).as_str());
+    let recommendation_match = !manifest.kind.is_searchable()
+        || prior.recommend_approved.as_deref()
+            == Some(ext::recommendation_fingerprint(manifest).as_str());
+    prompt_layers_match && actions_match && authentication_match && recommendation_match
+}
+
+#[cfg(test)]
+mod imported_update_security_tests {
+    use super::*;
+
+    fn auth_pack(token_endpoint: &str) -> grain_sdk::GrainPack {
+        serde_json::from_value(serde_json::json!({
+            "manifest": {
+                "id": "com.example.secure",
+                "name": "Secure",
+                "version": "1.0.0",
+                "tier": "scripted",
+                "entry_source": "export default {}",
+                "permissions": ["auth:service", "net:api.example.com"],
+                "contributes": {
+                    "authentication": [{
+                        "id": "service",
+                        "type": "oauth2-pkce",
+                        "providerName": "Service",
+                        "clientId": "public-client",
+                        "authorizationEndpoint": "https://login.example.com/oauth/authorize",
+                        "tokenEndpoint": token_endpoint,
+                        "scopes": ["read"],
+                        "apiHosts": ["api.example.com"]
+                    }]
+                }
+            }
+        }))
+        .unwrap()
+    }
+
+    fn approved_record(pack: &grain_sdk::GrainPack) -> grain_core::extensions::ExtensionRecord {
+        grain_core::extensions::ExtensionRecord {
+            id: pack.manifest.id.clone(),
+            enabled: true,
+            toggle_seq: 1,
+            installed_version: pack.manifest.version.clone(),
+            artifact_sha256: None,
+            granted: pack.manifest.permissions.clone(),
+            prompt_layers_approved: None,
+            actions_approved: None,
+            authentication_approved: Some(grain_core::extensions::authentication_fingerprint(
+                &pack.manifest.contributes.authentication,
+            )),
+            recommend_approved: None,
+            slots: Vec::new(),
+            variant_slots: Vec::new(),
+            dev: None,
+            trust: grain_sdk::Trust::Dev,
+        }
+    }
+
+    #[test]
+    fn unchanged_approved_authentication_can_remain_enabled() {
+        let pack = auth_pack("https://login.example.com/oauth/token");
+        let record = approved_record(&pack);
+        assert!(imported_update_can_stay_enabled(Some(&record), &pack));
+    }
+
+    #[test]
+    fn changed_token_endpoint_holds_an_enabled_import_for_reapproval() {
+        let approved = auth_pack("https://login.example.com/oauth/token");
+        let record = approved_record(&approved);
+        let changed = auth_pack("https://other.example.com/oauth/token");
+        assert!(!imported_update_can_stay_enabled(Some(&record), &changed));
+    }
+
+    #[test]
+    fn a_new_capability_holds_an_enabled_import_for_reapproval() {
+        let approved = auth_pack("https://login.example.com/oauth/token");
+        let record = approved_record(&approved);
+        let mut changed = approved;
+        changed
+            .manifest
+            .permissions
+            .push("capture:selection".into());
+        assert!(!imported_update_can_stay_enabled(Some(&record), &changed));
+    }
+
+    #[test]
+    fn pack_file_replacement_rolls_back_until_committed() {
+        let directory = tempfile::tempdir().unwrap();
+        let output = directory.path().join("extension.grainpack.json");
+        std::fs::write(&output, b"approved-old").unwrap();
+        {
+            let _pending =
+                PendingPackReplacement::begin(output.clone(), b"uncommitted-new").unwrap();
+            assert_eq!(std::fs::read(&output).unwrap(), b"uncommitted-new");
+        }
+        assert_eq!(std::fs::read(&output).unwrap(), b"approved-old");
+
+        PendingPackReplacement::begin(output.clone(), b"committed-new")
+            .unwrap()
+            .commit();
+        assert_eq!(std::fs::read(output).unwrap(), b"committed-new");
+    }
+
+    #[test]
+    fn pack_input_is_bounded_before_json_deserialization() {
+        let directory = tempfile::tempdir().unwrap();
+        let input = directory.path().join("oversized.grainpack");
+        std::fs::write(&input, vec![b'x'; grain_sdk::PACK_MAX_BYTES as usize + 1]).unwrap();
+        assert!(read_pack_input(&input).is_err());
+    }
+}
+
 #[derive(serde::Serialize, specta::Type)]
 pub struct DeveloperExtension {
     pub id: String,
@@ -1679,10 +1929,10 @@ fn restore_enabled_extension(app: &AppHandle, id: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn require_main_window(window: &tauri::WebviewWindow) -> Result<(), String> {
+pub(crate) fn require_main_window(window: &tauri::WebviewWindow) -> Result<(), String> {
     (window.label() == "main")
         .then_some(())
-        .ok_or_else(|| "developer mode can only be managed from Grain settings".to_string())
+        .ok_or_else(|| "extension management is available only from Grain settings".to_string())
 }
 
 /// Toggle developer mode from the in-app settings surface. Turning it off is
@@ -1754,6 +2004,7 @@ fn load_unpacked_project(app: &AppHandle, root: &std::path::Path) -> Result<Stri
         enabled: false,
         toggle_seq: prior.as_ref().map(|record| record.toggle_seq).unwrap_or(0),
         installed_version: loaded.pack.manifest.version.clone(),
+        artifact_sha256: None,
         granted,
         slots: loaded.pack.manifest.slots.clone(),
         variant_slots: Vec::new(),
@@ -2149,10 +2400,12 @@ pub fn extension_settings_sections(
 #[specta::specta]
 pub fn extension_setting_set(
     app: AppHandle,
+    window: tauri::WebviewWindow,
     id: String,
     key: String,
     value: serde_json::Value,
 ) -> Result<ExtensionSettingRow, String> {
+    require_main_window(&window)?;
     let decl = setting_decl(&app, &id, &key)
         .ok_or_else(|| format!("'{key}' is not a declared setting of '{id}'"))?;
     let accepted = grain_sdk::settings_schema::coerce(&decl, &value)?;
@@ -2188,12 +2441,21 @@ pub fn extension_setting_set(
 /// second step in Overview, where toggle order is assigned.
 #[tauri::command]
 #[specta::specta]
-pub fn extension_import_pack(app: AppHandle, path: String) -> Result<String, String> {
+pub fn extension_import_pack(
+    app: AppHandle,
+    window: tauri::WebviewWindow,
+    path: String,
+) -> Result<String, String> {
     use grain_core::extensions as ext;
-    let raw = std::fs::read_to_string(&path).map_err(|e| format!("read {path}: {e}"))?;
+    require_main_window(&window)?;
+    let raw = read_pack_input(std::path::Path::new(&path))?;
     let pack: grain_sdk::GrainPack =
-        serde_json::from_str(&raw).map_err(|e| format!("not a valid .grainpack: {e}"))?;
+        serde_json::from_slice(&raw).map_err(|e| format!("not a valid .grainpack: {e}"))?;
     pack.validate()?;
+    let stored = serde_json::to_vec(&pack).map_err(|error| error.to_string())?;
+    if stored.len() as u64 > grain_sdk::PACK_MAX_BYTES {
+        return Err("validated .grainpack exceeds the storage limit".into());
+    }
     // A declared embedded icon must fully decode before the import mutates the
     // registry. This also writes the one fixed-size recommendation derivative.
     crate::extension_icons::materialize_pack(&app, &pack)?;
@@ -2202,25 +2464,33 @@ pub fn extension_import_pack(app: AppHandle, path: String) -> Result<String, Str
         .try_state::<std::sync::Arc<ext::ExtensionsRegistry>>()
         .ok_or("extensions registry unavailable")?;
     let id = pack.manifest.id.clone();
-    std::fs::write(
-        pack_path(&app, &id)?,
-        serde_json::to_string_pretty(&pack).map_err(|e| e.to_string())?,
-    )
-    .map_err(|e| e.to_string())?;
+    let replacement = PendingPackReplacement::begin(pack_path(&app, &id)?, &stored)?;
     // Re-import/update of an installed pack must PRESERVE the user's state
     // (SPEC §6 update row) — resetting enabled/toggle order on update would
     // silently disable a working pack.
     let dev_active = reg.dev_path(&id).is_some();
     let prior = reg.installed_record(&id);
     let was_enabled = prior.as_ref().map(|r| r.enabled).unwrap_or(false);
+    let stays_enabled = imported_update_can_stay_enabled(prior.as_ref(), &pack);
     reg.install(ext::ExtensionRecord {
         id: id.clone(),
-        enabled: was_enabled,
+        // Re-import is an update, not an approval. Any newly requested grant or
+        // changed prompt/action/auth/recommendation digest holds the pack off
+        // until the settings sheet has shown the new contract.
+        enabled: stays_enabled,
         toggle_seq: prior.as_ref().map(|r| r.toggle_seq).unwrap_or(0),
         installed_version: pack.manifest.version.clone(),
+        artifact_sha256: Some(grain_core::trust::sha256_hex(&stored)),
         granted: prior
             .as_ref()
-            .map(|r| r.granted.clone())
+            .map(|record| {
+                record
+                    .granted
+                    .iter()
+                    .filter(|permission| pack.manifest.permissions.contains(permission))
+                    .cloned()
+                    .collect()
+            })
             .unwrap_or_default(),
         slots: pack.manifest.slots.clone(),
         // A manually imported pack is a third-party file, so its prompt text is
@@ -2255,11 +2525,21 @@ pub fn extension_import_pack(app: AppHandle, path: String) -> Result<String, Str
         trust: grain_sdk::Trust::UNTRUSTED_DEFAULT,
     })
     .map_err(|e| e.to_string())?;
+    replacement.commit();
+    if was_enabled && !stays_enabled && !dev_active {
+        stop_extension_runtime(&app, &id, "extension update requires renewed approval");
+    }
     // An enabled pack's payloads refresh in place (apply is idempotent).
-    if was_enabled && !dev_active {
+    if stays_enabled && !dev_active {
         if let Some(ctx) = app.try_state::<std::sync::Arc<grain_core::AppContext>>() {
-            ctx.update_settings(|s| ext::apply_prompt_pack(s, &id, &pack.payloads.prompts))
-                .map_err(|e| e.to_string())?;
+            if let Err(error) =
+                ctx.update_settings(|s| ext::apply_prompt_pack(s, &id, &pack.payloads.prompts))
+            {
+                let _ = reg.set_enabled(&id, false);
+                stop_extension_runtime(&app, &id, "extension update could not apply safely");
+                crate::extension_host::refresh_index(&app);
+                return Err(error.to_string());
+            }
         }
     }
     crate::extension_host::refresh_index(&app);
@@ -2272,8 +2552,13 @@ pub fn extension_import_pack(app: AppHandle, path: String) -> Result<String, Str
 /// the user builds here can actually launch. Returns the chosen path or `None`.
 #[tauri::command]
 #[specta::specta]
-pub async fn extension_pick_app(app: AppHandle, id: String) -> Result<Option<String>, String> {
+pub async fn extension_pick_app(
+    app: AppHandle,
+    window: tauri::WebviewWindow,
+    id: String,
+) -> Result<Option<String>, String> {
     use tauri_plugin_dialog::DialogExt;
+    require_main_window(&window)?;
     let picker = app.clone();
     let picked =
         tauri::async_runtime::spawn_blocking(move || picker.dialog().file().blocking_pick_file())
@@ -2297,7 +2582,12 @@ pub async fn extension_pick_app(app: AppHandle, id: String) -> Result<Option<Str
 /// exactly like the file picker. Returns the executable path, or `None`.
 #[tauri::command]
 #[specta::specta]
-pub fn extension_capture_app(app: AppHandle, id: String) -> Result<Option<String>, String> {
+pub fn extension_capture_app(
+    app: AppHandle,
+    window: tauri::WebviewWindow,
+    id: String,
+) -> Result<Option<String>, String> {
+    require_main_window(&window)?;
     let Some(detected) = detect_active_app() else {
         return Ok(None);
     };
@@ -2325,6 +2615,7 @@ pub fn extension_capture_app(app: AppHandle, id: String) -> Result<Option<String
 #[specta::specta]
 pub async fn extension_host_call(
     app: AppHandle,
+    window: tauri::WebviewWindow,
     id: String,
     method: String,
     params: serde_json::Value,
@@ -2338,6 +2629,7 @@ pub async fn extension_host_call(
         ))
         .unwrap_or_else(|_| serde_json::json!({ "code": "E_INTERNAL", "message": message }))
     };
+    require_main_window(&window).map_err(|error| internal(&error, ""))?;
     let reg = app
         .try_state::<std::sync::Arc<ext::ExtensionsRegistry>>()
         .ok_or_else(|| internal("extensions registry unavailable", ""))?;
@@ -2383,8 +2675,14 @@ pub async fn extension_host_call(
 /// approval act rather than a second command that could drift from this one.
 #[tauri::command]
 #[specta::specta]
-pub fn extension_grant(app: AppHandle, id: String, permissions: Vec<String>) -> Result<(), String> {
+pub fn extension_grant(
+    app: AppHandle,
+    window: tauri::WebviewWindow,
+    id: String,
+    permissions: Vec<String>,
+) -> Result<(), String> {
     use grain_core::extensions as ext;
+    require_main_window(&window)?;
     let reg = app
         .try_state::<std::sync::Arc<ext::ExtensionsRegistry>>()
         .ok_or("extensions registry unavailable")?;
@@ -2431,8 +2729,14 @@ pub fn extension_grant(app: AppHandle, id: String, permissions: Vec<String>) -> 
 /// refuses a contested claim, so a takeover is always something the user chose.
 #[tauri::command]
 #[specta::specta]
-pub fn extension_take_slot(app: AppHandle, id: String, slot: String) -> Result<(), String> {
+pub fn extension_take_slot(
+    app: AppHandle,
+    window: tauri::WebviewWindow,
+    id: String,
+    slot: String,
+) -> Result<(), String> {
     use grain_core::extensions as ext;
+    require_main_window(&window)?;
     let reg = app
         .try_state::<std::sync::Arc<ext::ExtensionsRegistry>>()
         .ok_or("extensions registry unavailable")?;
@@ -2461,7 +2765,13 @@ pub fn extension_take_slot(app: AppHandle, id: String, slot: String) -> Result<(
 /// Export an installed pack to `dest` (SPEC §5.1 "shareable data packs").
 #[tauri::command]
 #[specta::specta]
-pub fn extension_export_pack(app: AppHandle, id: String, dest: String) -> Result<(), String> {
+pub fn extension_export_pack(
+    app: AppHandle,
+    window: tauri::WebviewWindow,
+    id: String,
+    dest: String,
+) -> Result<(), String> {
+    require_main_window(&window)?;
     std::fs::copy(pack_path(&app, &id)?, &dest)
         .map(|_| ())
         .map_err(|e| e.to_string())
@@ -2472,8 +2782,14 @@ pub fn extension_export_pack(app: AppHandle, id: String, dest: String) -> Result
 /// payloads are always removed.
 #[tauri::command]
 #[specta::specta]
-pub async fn extension_uninstall(app: AppHandle, id: String, purge: bool) -> Result<(), String> {
+pub async fn extension_uninstall(
+    app: AppHandle,
+    window: tauri::WebviewWindow,
+    id: String,
+    purge: bool,
+) -> Result<(), String> {
     use grain_core::extensions as ext;
+    require_main_window(&window)?;
     // Grain's own features have no record to remove: they are turned off in
     // their own tab, never uninstalled. Everything else is a real installed pack
     // with a store to reinstall from.

@@ -143,6 +143,13 @@ pub fn plan_record(
     variant_slots: Vec<String>,
     digests: ApprovalDigests,
 ) -> ExtensionRecord {
+    // A removed declaration removes its grant too. Keeping stale grants would
+    // let updated code call a host capability that no longer appears on the
+    // approval surface, because runtime gates intentionally read this record.
+    let granted = granted
+        .into_iter()
+        .filter(|capability| entry.capabilities.contains(capability))
+        .collect::<Vec<_>>();
     let prior_enabled = prior.map(|r| r.enabled).unwrap_or(false);
     // Update with NEW permissions installs but stays disabled until the diff is
     // approved (SPEC Â§6). A fresh install is disabled anyway (enable is the
@@ -183,6 +190,7 @@ pub fn plan_record(
         enabled,
         toggle_seq: prior.map(|r| r.toggle_seq).unwrap_or(0),
         installed_version: entry.version.clone(),
+        artifact_sha256: Some(entry.sha256.clone()),
         granted,
         // Slots come from the pack manifest we just installed â€” not the prior
         // record â€” so an update that changes them is reflected, and a fresh
@@ -296,11 +304,16 @@ fn declared_digests(m: &grain_sdk::ExtensionManifest) -> ApprovalDigests {
 /// Extract just the `manifest.json` bytes from a ZIP pack, in memory.
 fn zip_manifest_json(bytes: &[u8]) -> Option<Vec<u8>> {
     use std::io::Read;
+    const MAX_MANIFEST_BYTES: u64 = 1024 * 1024;
+
     let mut archive = zip::ZipArchive::new(std::io::Cursor::new(bytes)).ok()?;
     let mut file = archive.by_name("manifest.json").ok()?;
     let mut buf = Vec::new();
-    file.read_to_end(&mut buf).ok()?;
-    Some(buf)
+    file.by_ref()
+        .take(MAX_MANIFEST_BYTES + 1)
+        .read_to_end(&mut buf)
+        .ok()?;
+    (buf.len() as u64 <= MAX_MANIFEST_BYTES).then_some(buf)
 }
 
 #[cfg(test)]
@@ -358,6 +371,7 @@ mod tests {
             enabled: false,
             toggle_seq: 0,
             installed_version: "1.0.0".into(),
+            artifact_sha256: None,
             granted: vec![],
             prompt_layers_approved: None,
             actions_approved: None,
@@ -443,6 +457,7 @@ mod tests {
         assert!(out.join("pack.grainpack.json").exists());
         let rec = reg.record("com.example.x").unwrap();
         assert_eq!(rec.installed_version, "2.0.0");
+        assert_eq!(rec.artifact_sha256.as_deref(), Some(e.sha256.as_str()));
         assert_eq!(rec.trust, Trust::Verified);
         assert!(!rec.enabled, "fresh install lands disabled");
     }
@@ -487,6 +502,7 @@ mod tests {
             enabled: true,
             toggle_seq: 1,
             installed_version: "1.0.0".into(),
+            artifact_sha256: None,
             granted: vec![],
             prompt_layers_approved: Some("fingerprint-of-1.0".into()),
             actions_approved: None,
@@ -547,6 +563,7 @@ mod tests {
             enabled: true,
             toggle_seq: 1,
             installed_version: "1.0.0".into(),
+            artifact_sha256: None,
             granted: vec![],
             prompt_layers_approved: None,
             actions_approved: Some("actions-of-1.0".into()),
@@ -608,6 +625,7 @@ mod tests {
             enabled: true,
             toggle_seq: 1,
             installed_version: "1.0.0".into(),
+            artifact_sha256: None,
             granted: vec![],
             prompt_layers_approved: None,
             actions_approved: None,
@@ -668,6 +686,7 @@ mod tests {
             enabled: true,
             toggle_seq: 1,
             installed_version: "1.0.0".into(),
+            artifact_sha256: None,
             granted: vec![],
             prompt_layers_approved: Some("layers-of-1.0".into()),
             actions_approved: Some("actions-of-1.0".into()),
@@ -725,6 +744,33 @@ mod tests {
         assert!(
             reg.is_enabled("com.example.x"),
             "an update that adds no permissions stays enabled"
+        );
+    }
+
+    #[test]
+    fn update_drops_grants_that_are_no_longer_declared() {
+        let dir = tmp();
+        let reg = ExtensionsRegistry::load(dir.path(), false).unwrap();
+        let b1 = b"{\"v\":1}";
+        let e1 = entry(
+            "com.example.x",
+            "1.0.0",
+            Trust::Verified,
+            &["storage", "capture:selection"],
+            b1,
+        );
+        install_from_verified_entry(&reg, dir.path(), &e1, b1, ExtractLimits::default()).unwrap();
+        let mut record = reg.record("com.example.x").unwrap();
+        record.granted = vec!["storage".into(), "capture:selection".into()];
+        reg.install(record).unwrap();
+
+        let b2 = b"{\"v\":2}";
+        let e2 = entry("com.example.x", "2.0.0", Trust::Verified, &["storage"], b2);
+        install_from_verified_entry(&reg, dir.path(), &e2, b2, ExtractLimits::default()).unwrap();
+
+        assert_eq!(
+            reg.record("com.example.x").unwrap().granted,
+            vec!["storage"]
         );
     }
 

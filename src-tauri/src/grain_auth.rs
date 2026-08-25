@@ -15,10 +15,10 @@ use grain_sdk::AuthenticationDecl;
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Manager, WebviewWindow};
 use tauri_plugin_opener::OpenerExt;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::TcpListener;
+use tokio::net::{TcpListener, TcpStream};
 use zeroize::{Zeroize, Zeroizing};
 
 const VAULT_SERVICE: &str = "com.grain.extension.oauth";
@@ -35,6 +35,7 @@ struct PendingFlow {
 
 static PENDING: OnceLock<Mutex<HashMap<String, PendingFlow>>> = OnceLock::new();
 static REFRESH_LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
+static VAULT_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
 #[derive(Clone, Serialize, specta::Type)]
 pub struct AuthConnection {
@@ -94,6 +95,17 @@ struct TokenResponse {
     error: Option<String>,
 }
 
+impl Drop for TokenResponse {
+    fn drop(&mut self) {
+        if let Some(access_token) = &mut self.access_token {
+            access_token.zeroize();
+        }
+        if let Some(refresh_token) = &mut self.refresh_token {
+            refresh_token.zeroize();
+        }
+    }
+}
+
 fn vault_user(extension_id: &str, auth_id: &str) -> String {
     format!("{extension_id}:{auth_id}:{CONNECTION_ID}")
 }
@@ -103,20 +115,35 @@ fn vault_entry(extension_id: &str, auth_id: &str) -> Result<keyring::Entry, Stri
         .map_err(|error| format!("OS credential vault unavailable: {error}"))
 }
 
-fn read_index_sync(extension_id: &str) -> Result<Vec<String>, String> {
+fn read_index_unlocked(extension_id: &str) -> Result<Vec<String>, String> {
     let entry = vault_entry(extension_id, VAULT_INDEX_ID)?;
     let mut bytes = match entry.get_secret() {
         Ok(bytes) => bytes,
         Err(keyring::Error::NoEntry) => return Ok(Vec::new()),
         Err(error) => return Err(format!("OS credential vault index read failed: {error}")),
     };
-    let result = serde_json::from_slice(&bytes)
-        .map_err(|error| format!("stored OAuth credential index is invalid: {error}"));
+    let result = if bytes.len() > 4096 {
+        Err("stored OAuth credential index is too large".into())
+    } else {
+        serde_json::from_slice::<Vec<String>>(&bytes)
+            .map_err(|error| format!("stored OAuth credential index is invalid: {error}"))
+            .and_then(|ids| {
+                if ids.len() > 8
+                    || ids.iter().any(|id| {
+                        grain_sdk::authentication_capability_id(&format!("auth:{id}")).is_none()
+                    })
+                {
+                    Err("stored OAuth credential index contains invalid ids".into())
+                } else {
+                    Ok(ids)
+                }
+            })
+    };
     bytes.zeroize();
     result
 }
 
-fn write_index_sync(extension_id: &str, ids: &[String]) -> Result<(), String> {
+fn write_index_unlocked(extension_id: &str, ids: &[String]) -> Result<(), String> {
     let entry = vault_entry(extension_id, VAULT_INDEX_ID)?;
     if ids.is_empty() {
         return match entry.delete_credential() {
@@ -133,27 +160,39 @@ fn write_index_sync(extension_id: &str, ids: &[String]) -> Result<(), String> {
 }
 
 fn read_token_sync(extension_id: &str, auth_id: &str) -> Result<Option<TokenSet>, String> {
+    let _guard = VAULT_LOCK
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .map_err(|_| "OS credential vault lock is unavailable")?;
     let entry = vault_entry(extension_id, auth_id)?;
     let mut bytes = match entry.get_secret() {
         Ok(bytes) => bytes,
         Err(keyring::Error::NoEntry) => return Ok(None),
         Err(error) => return Err(format!("OS credential vault read failed: {error}")),
     };
-    let result = serde_json::from_slice(&bytes)
-        .map(Some)
-        .map_err(|error| format!("stored OAuth credential is invalid: {error}"));
+    let result = if bytes.len() > TOKEN_MAX_BYTES {
+        Err("stored OAuth credential is too large".into())
+    } else {
+        serde_json::from_slice(&bytes)
+            .map(Some)
+            .map_err(|error| format!("stored OAuth credential is invalid: {error}"))
+    };
     bytes.zeroize();
     result
 }
 
 fn write_token_sync(extension_id: &str, auth_id: &str, token: &TokenSet) -> Result<(), String> {
+    let _guard = VAULT_LOCK
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .map_err(|_| "OS credential vault lock is unavailable")?;
     // Keep a vault-resident inventory so uninstall can remove credentials for
     // declarations that a later manifest version no longer contains.
-    let mut ids = read_index_sync(extension_id)?;
+    let mut ids = read_index_unlocked(extension_id)?;
     if !ids.iter().any(|id| id == auth_id) {
         ids.push(auth_id.to_owned());
         ids.sort();
-        write_index_sync(extension_id, &ids)?;
+        write_index_unlocked(extension_id, &ids)?;
     }
     let entry = vault_entry(extension_id, auth_id)?;
     let mut bytes = serde_json::to_vec(token).map_err(|error| error.to_string())?;
@@ -165,18 +204,26 @@ fn write_token_sync(extension_id: &str, auth_id: &str, token: &TokenSet) -> Resu
 }
 
 fn delete_token_sync(extension_id: &str, auth_id: &str) -> Result<(), String> {
+    let _guard = VAULT_LOCK
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .map_err(|_| "OS credential vault lock is unavailable")?;
     let entry = vault_entry(extension_id, auth_id)?;
     match entry.delete_credential() {
         Ok(()) | Err(keyring::Error::NoEntry) => {}
         Err(error) => return Err(format!("OS credential vault delete failed: {error}")),
     }
-    let mut ids = read_index_sync(extension_id)?;
+    let mut ids = read_index_unlocked(extension_id)?;
     ids.retain(|id| id != auth_id);
-    write_index_sync(extension_id, &ids)
+    write_index_unlocked(extension_id, &ids)
 }
 
 fn purge_extension_sync(extension_id: &str) -> Result<(), String> {
-    let ids = read_index_sync(extension_id)?;
+    let _guard = VAULT_LOCK
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .map_err(|_| "OS credential vault lock is unavailable")?;
+    let ids = read_index_unlocked(extension_id)?;
     for auth_id in &ids {
         let entry = vault_entry(extension_id, auth_id)?;
         match entry.delete_credential() {
@@ -184,7 +231,7 @@ fn purge_extension_sync(extension_id: &str) -> Result<(), String> {
             Err(error) => return Err(format!("OS credential vault delete failed: {error}")),
         }
     }
-    write_index_sync(extension_id, &[])
+    write_index_unlocked(extension_id, &[])
 }
 
 async fn read_token(extension_id: &str, auth_id: &str) -> Result<Option<TokenSet>, String> {
@@ -217,7 +264,12 @@ fn declaration(
         .ok_or_else(|| format!("authentication '{auth_id}' is not declared by '{extension_id}'"))
 }
 
-fn require_grant(app: &AppHandle, extension_id: &str, auth_id: &str) -> Result<(), String> {
+fn approved_declaration(
+    app: &AppHandle,
+    extension_id: &str,
+    auth_id: &str,
+) -> Result<AuthenticationDecl, String> {
+    let pack = crate::grain_commands::load_pack(app, extension_id)?;
     let registry = app
         .try_state::<std::sync::Arc<grain_core::extensions::ExtensionsRegistry>>()
         .ok_or("extensions registry unavailable")?;
@@ -231,7 +283,20 @@ fn require_grant(app: &AppHandle, extension_id: &str, auth_id: &str) -> Result<(
     if !record.granted.contains(&capability) {
         return Err(format!("capability '{capability}' is not granted"));
     }
-    Ok(())
+    let fingerprint = grain_core::extensions::authentication_fingerprint(
+        &pack.manifest.contributes.authentication,
+    );
+    if record.authentication_approved.as_deref() != Some(fingerprint.as_str()) {
+        return Err(format!(
+            "authentication declaration for '{extension_id}' changed and requires approval"
+        ));
+    }
+    pack.manifest
+        .contributes
+        .authentication
+        .into_iter()
+        .find(|decl| decl.id == auth_id)
+        .ok_or_else(|| format!("authentication '{auth_id}' is not declared by '{extension_id}'"))
 }
 
 fn endpoint_host(endpoint: &str) -> String {
@@ -331,15 +396,21 @@ async fn connection_for(extension_id: &str, decl: &AuthenticationDecl) -> AuthCo
 #[specta::specta]
 pub async fn extension_auth_connections(
     app: AppHandle,
+    window: WebviewWindow,
     id: String,
 ) -> Result<Vec<AuthConnection>, String> {
-    let declarations = crate::grain_commands::load_pack(&app, &id)?
+    crate::grain_commands::require_main_window(&window)?;
+    connections(&app, &id).await
+}
+
+pub(crate) async fn connections(app: &AppHandle, id: &str) -> Result<Vec<AuthConnection>, String> {
+    let declarations = crate::grain_commands::load_pack(app, id)?
         .manifest
         .contributes
         .authentication;
     let mut out = Vec::with_capacity(declarations.len());
     for decl in &declarations {
-        out.push(connection_for(&id, decl).await);
+        out.push(connection_for(id, decl).await);
     }
     Ok(out)
 }
@@ -368,17 +439,8 @@ fn authorize_url(
     Ok(url.into())
 }
 
-async fn callback(
-    listener: TcpListener,
-    expected_path: String,
-    expected_state: String,
-    expected_host: String,
-) -> Result<String, String> {
-    loop {
-        let (mut stream, peer) = listener.accept().await.map_err(|error| error.to_string())?;
-        if !peer.ip().is_loopback() {
-            continue;
-        }
+async fn read_callback_request(stream: &mut TcpStream) -> Result<Vec<u8>, String> {
+    tokio::time::timeout(Duration::from_secs(5), async {
         let mut request = Vec::with_capacity(1024);
         loop {
             let mut chunk = [0_u8; 1024];
@@ -397,7 +459,54 @@ async fn callback(
                 break;
             }
         }
-        let request = std::str::from_utf8(&request).map_err(|_| "OAuth callback was not UTF-8")?;
+        Ok(request)
+    })
+    .await
+    .map_err(|_| "OAuth callback connection timed out".to_string())?
+}
+
+async fn send_callback_response(stream: &mut TcpStream, status: &str, body: &str) {
+    let response = format!(
+        "HTTP/1.1 {status}\r\nContent-Type: text/plain; charset=utf-8\r\n\
+         X-Content-Type-Options: nosniff\r\nContent-Security-Policy: default-src 'none'\r\n\
+         Content-Length: {}\r\nConnection: close\r\nCache-Control: no-store\r\n\r\n{body}",
+        body.len()
+    );
+    let _ = stream.write_all(response.as_bytes()).await;
+}
+
+async fn callback(
+    listener: TcpListener,
+    expected_path: String,
+    expected_state: String,
+    expected_host: String,
+) -> Result<String, String> {
+    loop {
+        let (mut stream, peer) = listener.accept().await.map_err(|error| error.to_string())?;
+        if !peer.ip().is_loopback() {
+            continue;
+        }
+        let request = match read_callback_request(&mut stream).await {
+            Ok(request) => request,
+            Err(_) => {
+                send_callback_response(
+                    &mut stream,
+                    "400 Bad Request",
+                    "Authentication failed. Return to Grain and try again.",
+                )
+                .await;
+                continue;
+            }
+        };
+        let Ok(request) = std::str::from_utf8(&request) else {
+            send_callback_response(
+                &mut stream,
+                "400 Bad Request",
+                "Authentication failed. Return to Grain and try again.",
+            )
+            .await;
+            continue;
+        };
         let mut lines = request.lines();
         let first = lines.next().unwrap_or_default();
         let mut first = first.split_whitespace();
@@ -409,40 +518,52 @@ async fn callback(
         });
         let url = Url::parse(&format!("http://127.0.0.1{target}"));
         let valid_url = url.as_ref().ok();
-        let params = valid_url
-            .map(|url| {
-                url.query_pairs()
-                    .into_owned()
-                    .collect::<std::collections::BTreeMap<_, _>>()
-            })
-            .unwrap_or_default();
+        let mut duplicate_reserved = false;
+        let mut params = std::collections::BTreeMap::new();
+        if let Some(url) = valid_url {
+            for (key, value) in url.query_pairs().into_owned() {
+                if params.insert(key.clone(), value).is_some()
+                    && matches!(key.as_str(), "state" | "code" | "error")
+                {
+                    duplicate_reserved = true;
+                }
+            }
+        }
         let valid = method == "GET"
             && host == Some(expected_host.as_str())
             && valid_url.is_some_and(|url| url.path() == expected_path)
+            && !duplicate_reserved
             && params.get("state") == Some(&expected_state);
-        let (status, body) = if valid {
-            (
-                "200 OK",
-                "Authentication complete. You can close this tab and return to Grain.",
-            )
-        } else {
-            (
+        if !valid {
+            send_callback_response(
+                &mut stream,
                 "400 Bad Request",
                 "Authentication failed. Return to Grain and try again.",
             )
-        };
-        let response = format!("HTTP/1.1 {status}\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\nCache-Control: no-store\r\n\r\n{body}", body.len());
-        let _ = stream.write_all(response.as_bytes()).await;
-        if !valid {
+            .await;
             continue;
         }
         if params.get("error").is_some() {
+            send_callback_response(
+                &mut stream,
+                "400 Bad Request",
+                "Authentication was not approved. You can close this tab and return to Grain.",
+            )
+            .await;
             return Err("provider denied authentication".into());
         }
-        return params
+        let code = params
             .get("code")
             .cloned()
-            .ok_or_else(|| "OAuth callback did not contain a code".into());
+            .filter(|code| !code.is_empty() && code.len() <= 4096)
+            .ok_or_else(|| "OAuth callback did not contain a valid code".to_string())?;
+        send_callback_response(
+            &mut stream,
+            "200 OK",
+            "Authentication complete. You can close this tab and return to Grain.",
+        )
+        .await;
+        return Ok(code);
     }
 }
 
@@ -472,9 +593,9 @@ async fn exchange(
     if response.status().is_redirection() {
         return Err("token endpoint redirects are not allowed".into());
     }
-    let (status, token) = parse_token_response(response).await?;
+    let (status, mut token) = parse_token_response(response).await?;
     if !status.is_success() || token.error.is_some() {
-        return Err(provider_error(status, token.error));
+        return Err(provider_error(status, token.error.take()));
     }
     if !token.token_type.eq_ignore_ascii_case("bearer") {
         return Err("token endpoint returned an unsupported token type".into());
@@ -482,14 +603,17 @@ async fn exchange(
     Ok(TokenSet {
         access_token: token
             .access_token
+            .take()
+            .filter(|token| !token.is_empty())
             .ok_or_else(|| "token response omitted access_token".to_string())?,
-        refresh_token: token.refresh_token,
-        token_type: token.token_type,
+        refresh_token: token.refresh_token.take(),
+        token_type: std::mem::take(&mut token.token_type),
         expires_at: token
             .expires_in
             .map(|seconds| now().saturating_add(seconds)),
         scopes: token
             .scope
+            .take()
             .map(|scope| scope.split_whitespace().map(str::to_owned).collect())
             .unwrap_or_else(|| decl.scopes.clone()),
     })
@@ -514,9 +638,9 @@ async fn refresh(decl: &AuthenticationDecl, refresh_token: &str) -> Result<Token
     if response.status().is_redirection() {
         return Err("token endpoint redirects are not allowed".into());
     }
-    let (status, token) = parse_token_response(response).await?;
+    let (status, mut token) = parse_token_response(response).await?;
     if !status.is_success() || token.error.is_some() {
-        return Err(provider_error(status, token.error));
+        return Err(provider_error(status, token.error.take()));
     }
     if !token.token_type.eq_ignore_ascii_case("bearer") {
         return Err("token endpoint returned an unsupported token type".into());
@@ -524,16 +648,20 @@ async fn refresh(decl: &AuthenticationDecl, refresh_token: &str) -> Result<Token
     Ok(TokenSet {
         access_token: token
             .access_token
+            .take()
+            .filter(|token| !token.is_empty())
             .ok_or_else(|| "refresh response omitted access_token".to_string())?,
         refresh_token: token
             .refresh_token
+            .take()
             .or_else(|| Some(refresh_token.to_owned())),
-        token_type: token.token_type,
+        token_type: std::mem::take(&mut token.token_type),
         expires_at: token
             .expires_in
             .map(|seconds| now().saturating_add(seconds)),
         scopes: token
             .scope
+            .take()
             .map(|scope| scope.split_whitespace().map(str::to_owned).collect())
             .unwrap_or_else(|| decl.scopes.clone()),
     })
@@ -543,11 +671,16 @@ async fn refresh(decl: &AuthenticationDecl, refresh_token: &str) -> Result<Token
 #[specta::specta]
 pub async fn extension_auth_connect(
     app: AppHandle,
+    window: WebviewWindow,
     id: String,
     auth_id: String,
 ) -> Result<AuthConnection, String> {
-    require_grant(&app, &id, &auth_id)?;
-    let decl = declaration(&app, &id, &auth_id)?;
+    crate::grain_commands::require_main_window(&window)?;
+    connect(app, id, auth_id).await
+}
+
+async fn connect(app: AppHandle, id: String, auth_id: String) -> Result<AuthConnection, String> {
+    let decl = approved_declaration(&app, &id, &auth_id)?;
     let listener = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
         .await
         .map_err(|error| format!("could not start OAuth callback listener: {error}"))?;
@@ -618,6 +751,9 @@ pub async fn extension_auth_connect(
     }
     let code = outcome?;
     let token = exchange(&decl, &code, &redirect, verifier.as_str()).await?;
+    if approved_declaration(&app, &id, &auth_id)? != decl {
+        return Err("authentication declaration changed during sign-in".into());
+    }
     write_token(&id, &auth_id, token).await?;
     Ok(connection_for(&id, &decl).await)
 }
@@ -626,10 +762,16 @@ pub async fn extension_auth_connect(
 #[specta::specta]
 pub async fn extension_auth_disconnect(
     app: AppHandle,
+    window: WebviewWindow,
     id: String,
     auth_id: String,
 ) -> Result<(), String> {
-    declaration(&app, &id, &auth_id)?;
+    crate::grain_commands::require_main_window(&window)?;
+    disconnect(&app, id, auth_id).await
+}
+
+async fn disconnect(app: &AppHandle, id: String, auth_id: String) -> Result<(), String> {
+    declaration(app, &id, &auth_id)?;
     let id_copy = id.clone();
     tokio::task::spawn_blocking(move || delete_token_sync(&id_copy, &auth_id))
         .await
@@ -669,7 +811,7 @@ pub(crate) async fn connect_from_extension(
     extension_id: String,
     auth_id: String,
 ) -> Result<AuthConnection, String> {
-    let decl = declaration(&app, &extension_id, &auth_id)?;
+    let decl = approved_declaration(&app, &extension_id, &auth_id)?;
     confirm(
         &app,
         format!("Connect {}?", decl.provider_name),
@@ -682,7 +824,7 @@ pub(crate) async fn connect_from_extension(
         "Connect",
     )
     .await?;
-    extension_auth_connect(app, extension_id, auth_id).await
+    connect(app, extension_id, auth_id).await
 }
 
 pub(crate) async fn disconnect_from_extension(
@@ -701,7 +843,7 @@ pub(crate) async fn disconnect_from_extension(
         "Disconnect",
     )
     .await?;
-    extension_auth_disconnect(app, extension_id, auth_id).await
+    disconnect(&app, extension_id, auth_id).await
 }
 
 pub(crate) async fn access_token(
@@ -710,8 +852,7 @@ pub(crate) async fn access_token(
     auth_id: &str,
     host: &str,
 ) -> Result<Zeroizing<String>, String> {
-    require_grant(app, extension_id, auth_id)?;
-    let decl = declaration(app, extension_id, auth_id)?;
+    let decl = approved_declaration(app, extension_id, auth_id)?;
     if !decl.api_hosts.iter().any(|allowed| allowed == host) {
         return Err(format!(
             "authentication '{auth_id}' is not allowed for host '{host}'"
@@ -740,6 +881,9 @@ pub(crate) async fn access_token(
                 )
             })?;
             let refreshed = refresh(&decl, refresh_token).await?;
+            if approved_declaration(app, extension_id, auth_id)? != decl {
+                return Err("authentication declaration changed during token refresh".into());
+            }
             write_token(extension_id, auth_id, refreshed).await?;
             token = read_token(extension_id, auth_id)
                 .await?
@@ -753,6 +897,9 @@ pub(crate) async fn access_token(
     }
     if !token.token_type.eq_ignore_ascii_case("bearer") {
         return Err("only Bearer OAuth tokens are supported".into());
+    }
+    if approved_declaration(app, extension_id, auth_id)? != decl {
+        return Err("authentication declaration changed during token access".into());
     }
     Ok(Zeroizing::new(token.access_token.clone()))
 }
@@ -848,6 +995,20 @@ mod tests {
             .await
             .unwrap();
         drop(noise);
+
+        let mut duplicate = tokio::net::TcpStream::connect((std::net::Ipv4Addr::LOCALHOST, port))
+            .await
+            .unwrap();
+        duplicate
+            .write_all(
+                format!(
+                    "GET /grain/oauth/random?code=forged&state=expected&state=expected HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n\r\n"
+                )
+                .as_bytes(),
+            )
+            .await
+            .unwrap();
+        drop(duplicate);
 
         let mut valid = tokio::net::TcpStream::connect((std::net::Ipv4Addr::LOCALHOST, port))
             .await

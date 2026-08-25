@@ -1231,10 +1231,9 @@ pub async fn dispatch(
         }
         "auth.status" => {
             let id = param_nonempty_str(&params, "id")?;
-            let rows =
-                crate::grain_auth::extension_auth_connections(app.clone(), identity.id.clone())
-                    .await
-                    .map_err(internal_error)?;
+            let rows = crate::grain_auth::connections(app, &identity.id)
+                .await
+                .map_err(internal_error)?;
             serde_json::to_value(rows.into_iter().find(|row| row.id == id))
                 .map_err(|error| internal_error(error.to_string()))
         }
@@ -1679,10 +1678,28 @@ fn approved_apps_path(data_dir: &std::path::Path, ext_id: &str) -> std::path::Pa
 }
 
 fn read_approved_apps(data_dir: &std::path::Path, ext_id: &str) -> Vec<String> {
-    std::fs::read_to_string(approved_apps_path(data_dir, ext_id))
-        .ok()
-        .and_then(|raw| serde_json::from_str::<Vec<String>>(&raw).ok())
-        .unwrap_or_default()
+    use std::io::Read;
+
+    const MAX_BYTES: u64 = 256 * 1024;
+    const MAX_APPS: usize = 128;
+    if grain_sdk::validate_extension_id(ext_id).is_err() {
+        return Vec::new();
+    }
+    let Ok(file) = std::fs::File::open(approved_apps_path(data_dir, ext_id)) else {
+        return Vec::new();
+    };
+    let mut bytes = Vec::new();
+    if file.take(MAX_BYTES + 1).read_to_end(&mut bytes).is_err() || bytes.len() as u64 > MAX_BYTES {
+        return Vec::new();
+    }
+    let Ok(mut approved) = serde_json::from_slice::<Vec<String>>(&bytes) else {
+        return Vec::new();
+    };
+    approved.retain(|path| !path.is_empty() && path.len() <= 32 * 1024);
+    approved.sort();
+    approved.dedup();
+    approved.truncate(MAX_APPS);
+    approved
 }
 
 fn is_app_approved(data_dir: &std::path::Path, ext_id: &str, path: &str) -> bool {
@@ -1696,15 +1713,53 @@ pub(crate) fn approve_app(
     ext_id: &str,
     path: &str,
 ) -> std::io::Result<()> {
+    use std::io::Write;
+
+    static APPROVED_APPS_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    const MAX_APPS: usize = 128;
+    const MAX_BYTES: usize = 256 * 1024;
+    grain_sdk::validate_extension_id(ext_id)
+        .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidInput, error))?;
+    if path.is_empty() || path.len() > 32 * 1024 {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "approved app path is invalid",
+        ));
+    }
+    let _guard = APPROVED_APPS_LOCK
+        .lock()
+        .map_err(|_| std::io::Error::other("approved-app lock is unavailable"))?;
     let mut approved = read_approved_apps(data_dir, ext_id);
     if !approved.iter().any(|p| p == path) {
+        if approved.len() >= MAX_APPS {
+            return Err(std::io::Error::other("approved-app limit reached"));
+        }
         approved.push(path.to_string());
     }
     let file = approved_apps_path(data_dir, ext_id);
     if let Some(parent) = file.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    std::fs::write(file, serde_json::to_string(&approved)?)
+    let bytes = serde_json::to_vec(&approved)?;
+    if bytes.len() > MAX_BYTES {
+        return Err(std::io::Error::other("approved-app storage limit reached"));
+    }
+    let temp = file.with_extension(format!("tmp-{}", uuid::Uuid::new_v4().simple()));
+    let mut output = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&temp)?;
+    if let Err(error) = output.write_all(&bytes).and_then(|_| output.sync_all()) {
+        let _ = std::fs::remove_file(&temp);
+        return Err(error);
+    }
+    drop(output);
+    if file.exists() {
+        std::fs::remove_file(&file)?;
+    }
+    std::fs::rename(&temp, file).inspect_err(|_| {
+        let _ = std::fs::remove_file(&temp);
+    })
 }
 
 #[cfg(test)]

@@ -37,7 +37,6 @@ provider-router = { path = "../crates/provider-router" } # [GRAIN] smart rotatio
 tempfile = "3" # [GRAIN] auto-deleted PCM journal for low-RAM rolling sessions
 once_cell = "1"
 tauri = { version = "2.11.5", features = [
-  "protocol-asset",
   "macos-private-api",
   "tray-icon",
   'image-png',

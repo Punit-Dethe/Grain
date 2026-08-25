@@ -594,6 +594,41 @@ pub(crate) fn foreground_hwnd() -> Option<isize> {
     }
 }
 
+/// Stable-enough identity for a captured Windows destination. HWND values are
+/// reusable after a window closes, so output code must also bind the owning
+/// process and GUI thread before restoring focus or synthesising input.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct CapturedWindowTarget {
+    pub hwnd: isize,
+    pub process_id: u32,
+    pub thread_id: u32,
+}
+
+pub(crate) fn foreground_window_target() -> Option<CapturedWindowTarget> {
+    #[cfg(windows)]
+    unsafe {
+        use windows::Win32::UI::WindowsAndMessaging::{
+            GetForegroundWindow, GetWindowThreadProcessId,
+        };
+
+        let hwnd = GetForegroundWindow();
+        if hwnd.0.is_null() {
+            return None;
+        }
+        let mut process_id = 0;
+        let thread_id = GetWindowThreadProcessId(hwnd, Some(&mut process_id));
+        (thread_id != 0 && process_id != 0).then_some(CapturedWindowTarget {
+            hwnd: hwnd.0 as isize,
+            process_id,
+            thread_id,
+        })
+    }
+    #[cfg(not(windows))]
+    {
+        None
+    }
+}
+
 /// Bring an arbitrary window (by raw HWND) back to the foreground so a
 /// synthesised paste lands in it. Same input-queue bridge as `force_foreground`.
 #[cfg(windows)]
@@ -627,19 +662,41 @@ pub(crate) fn force_foreground_raw(raw: isize) {
     }
 }
 
-/// Restore a captured window only while it is still a real OS target. Finite
-/// extension results use the boolean to avoid pasting into whichever unrelated
-/// app happened to become foreground after the original target closed.
+/// Whether the captured HWND still belongs to the same process and GUI thread.
+/// `IsWindow` alone is insufficient because Windows can recycle handle values.
 #[cfg(windows)]
-pub(crate) fn refocus_window(raw: isize) -> bool {
+fn captured_window_still_matches(target: CapturedWindowTarget) -> bool {
     use windows::Win32::Foundation::HWND;
-    use windows::Win32::UI::WindowsAndMessaging::IsWindow;
+    use windows::Win32::UI::WindowsAndMessaging::{GetWindowThreadProcessId, IsWindow};
 
-    let valid = unsafe { IsWindow(Some(HWND(raw as _))).as_bool() };
-    if valid {
-        force_foreground_raw(raw);
+    unsafe {
+        let hwnd = HWND(target.hwnd as _);
+        if !IsWindow(Some(hwnd)).as_bool() {
+            return false;
+        }
+        let mut process_id = 0;
+        let thread_id = GetWindowThreadProcessId(hwnd, Some(&mut process_id));
+        thread_id == target.thread_id && process_id == target.process_id
     }
-    valid
+}
+
+#[cfg(windows)]
+pub(crate) fn captured_window_is_foreground(target: CapturedWindowTarget) -> bool {
+    use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
+
+    captured_window_still_matches(target)
+        && unsafe { GetForegroundWindow().0 as isize == target.hwnd }
+}
+
+/// Restore a captured window only while its complete identity still matches,
+/// and report success only if Windows actually made it foreground.
+#[cfg(windows)]
+pub(crate) fn refocus_window(target: CapturedWindowTarget) -> bool {
+    if !captured_window_still_matches(target) {
+        return false;
+    }
+    force_foreground_raw(target.hwnd);
+    captured_window_is_foreground(target)
 }
 
 /// Build a frameless, transparent, always-on-top Agent surface (hidden until

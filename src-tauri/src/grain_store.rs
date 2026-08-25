@@ -25,6 +25,10 @@ use grain_core::trust::{self, IndexStatus, TrustError};
 use grain_sdk::distribution::{Index, IndexEntry, RevocationState, Revocations, Roots};
 use serde::Serialize;
 
+const STORE_DOCUMENT_MAX_BYTES: u64 = 4 * 1024 * 1024;
+const STORE_SIGNATURE_MAX_BYTES: u64 = 64 * 1024;
+const STORE_MEDIA_MAX_BYTES: u64 = 16 * 1024 * 1024;
+
 /// The resident store state (registered as managed Tauri state). Roots and
 /// revocations are small and stay loaded; the parsed index is present only
 /// while the Extensions store UI is active.
@@ -284,9 +288,22 @@ fn now_unix() -> i64 {
 // ── Cache helpers (all verify before returning) ────────────────────────────
 
 fn read_pair(dir: &Path, name: &str) -> Option<(Vec<u8>, String)> {
-    let doc = std::fs::read(dir.join(name)).ok()?;
-    let sig = std::fs::read_to_string(dir.join(format!("{name}.minisig"))).ok()?;
+    let doc = read_bounded_file(&dir.join(name), STORE_DOCUMENT_MAX_BYTES)?;
+    let sig = String::from_utf8(read_bounded_file(
+        &dir.join(format!("{name}.minisig")),
+        STORE_SIGNATURE_MAX_BYTES,
+    )?)
+    .ok()?;
     Some((doc, sig))
+}
+
+fn read_bounded_file(path: &Path, max: u64) -> Option<Vec<u8>> {
+    use std::io::Read;
+
+    let file = std::fs::File::open(path).ok()?;
+    let mut bytes = Vec::new();
+    file.take(max + 1).read_to_end(&mut bytes).ok()?;
+    (bytes.len() as u64 <= max).then_some(bytes)
 }
 
 fn write_pair(dir: &Path, name: &str, doc: &[u8], sig: &str) {
@@ -316,17 +333,27 @@ fn load_cached_index(
 
 // ── HTTP refresh + install (async, via the shared reqwest client) ──────────
 
-async fn fetch(client: &reqwest::Client, base: &str, name: &str) -> Option<Vec<u8>> {
+async fn fetch(client: &reqwest::Client, base: &str, name: &str, max: u64) -> Option<Vec<u8>> {
     let url = format!("{}{}", base.trim_end_matches('/').to_string() + "/", name);
-    let resp = client.get(&url).send().await.ok()?;
+    let mut resp = client.get(&url).send().await.ok()?;
     if !resp.status().is_success() {
         return None;
     }
-    resp.bytes().await.ok().map(|b| b.to_vec())
+    if resp.content_length().is_some_and(|length| length > max) {
+        return None;
+    }
+    let mut bytes = Vec::new();
+    while let Some(chunk) = resp.chunk().await.ok()? {
+        if bytes.len().saturating_add(chunk.len()) as u64 > max {
+            return None;
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    Some(bytes)
 }
 
-async fn fetch_text(client: &reqwest::Client, base: &str, name: &str) -> Option<String> {
-    fetch(client, base, name)
+async fn fetch_text(client: &reqwest::Client, base: &str, name: &str, max: u64) -> Option<String> {
+    fetch(client, base, name, max)
         .await
         .and_then(|b| String::from_utf8(b).ok())
 }
@@ -352,8 +379,14 @@ async fn refresh_at(state: &StoreState, client: &reqwest::Client, now: i64) -> S
     for base in &bases {
         // roots.json — verified against pinned keys; adopt if newer.
         if let (Some(rdoc), Some(rsig)) = (
-            fetch(client, base, "roots.json").await,
-            fetch_text(client, base, "roots.json.minisig").await,
+            fetch(client, base, "roots.json", STORE_DOCUMENT_MAX_BYTES).await,
+            fetch_text(
+                client,
+                base,
+                "roots.json.minisig",
+                STORE_SIGNATURE_MAX_BYTES,
+            )
+            .await,
         ) {
             if let Ok(new_roots) = trust::verify_roots(&rdoc, &rsig) {
                 let adopt = new_roots.version >= state.roots.read().unwrap().version;
@@ -368,8 +401,14 @@ async fn refresh_at(state: &StoreState, client: &reqwest::Client, now: i64) -> S
         let stored = *state.stored_version.read().unwrap();
 
         let (Some(idoc), Some(isig)) = (
-            fetch(client, base, "index.json").await,
-            fetch_text(client, base, "index.json.minisig").await,
+            fetch(client, base, "index.json", STORE_DOCUMENT_MAX_BYTES).await,
+            fetch_text(
+                client,
+                base,
+                "index.json.minisig",
+                STORE_SIGNATURE_MAX_BYTES,
+            )
+            .await,
         ) else {
             continue;
         };
@@ -380,8 +419,14 @@ async fn refresh_at(state: &StoreState, client: &reqwest::Client, now: i64) -> S
 
         // revocations.json — verify and apply; missing is not fatal.
         if let (Some(vdoc), Some(vsig)) = (
-            fetch(client, base, "revocations.json").await,
-            fetch_text(client, base, "revocations.json.minisig").await,
+            fetch(client, base, "revocations.json", STORE_DOCUMENT_MAX_BYTES).await,
+            fetch_text(
+                client,
+                base,
+                "revocations.json.minisig",
+                STORE_SIGNATURE_MAX_BYTES,
+            )
+            .await,
         ) {
             if let Ok(revs) = trust::verify_revocations(&roots, &vdoc, &vsig) {
                 write_pair(&state.cache_dir, "revocations.json", &vdoc, &vsig);
@@ -454,6 +499,12 @@ pub async fn install_entry(
             .cloned()
             .ok_or_else(|| format!("no entry {id} {version} in the verified index"))?
     };
+    if entry.size > grain_sdk::PACK_MAX_BYTES {
+        return Err(format!(
+            "catalogue artifact exceeds the {} MiB pack limit",
+            grain_sdk::PACK_MAX_BYTES / (1024 * 1024)
+        ));
+    }
 
     let bases: Vec<String> = {
         let roots = state.roots.read().unwrap();
@@ -467,12 +518,15 @@ pub async fn install_entry(
     let blob_name = format!("blob/{}.grainpack", entry.sha256);
     let mut bytes: Option<Vec<u8>> = None;
     for base in &bases {
-        if let Some(b) = fetch(client, base, &blob_name).await {
+        if let Some(b) = fetch(client, base, &blob_name, grain_sdk::PACK_MAX_BYTES).await {
             bytes = Some(b);
             break;
         }
     }
     let bytes = bytes.ok_or("could not download the artifact from any host")?;
+    if entry.size != 0 && bytes.len() as u64 != entry.size {
+        return Err("downloaded artifact size did not match the signed catalogue".into());
+    }
 
     install::install_from_verified_entry(reg, ext_root, &entry, &bytes, ExtractLimits::default())
         .map_err(|e: InstallError| e.to_string())
@@ -549,13 +603,17 @@ fn base64_encode(data: &[u8]) -> String {
 /// cache never goes stale and a hit avoids the network entirely (low-RAM: no
 /// resident media, and the webview drops the bytes when the detail closes).
 async fn fetch_media(app: &AppHandle, sha256: &str, ext: &str) -> Result<Vec<u8>, String> {
-    if sha256.is_empty() || !sha256.bytes().all(|b| b.is_ascii_hexdigit()) {
+    if sha256.len() != 64
+        || !sha256
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
         return Err("invalid media hash".into());
     }
     let state = store_state(app)?;
     let name = format!("media/{sha256}.{ext}");
     let cache_path = state.cache_dir.join(format!("{sha256}.{ext}"));
-    if let Ok(bytes) = std::fs::read(&cache_path) {
+    if let Some(bytes) = read_bounded_file(&cache_path, STORE_MEDIA_MAX_BYTES) {
         if grain_core::trust::sha256_hex(&bytes) == sha256 {
             return Ok(bytes);
         }
@@ -574,7 +632,7 @@ async fn fetch_media(app: &AppHandle, sha256: &str, ext: &str) -> Result<Vec<u8>
             .collect()
     };
     for base in &bases {
-        if let Some(bytes) = fetch(&client, base, &name).await {
+        if let Some(bytes) = fetch(&client, base, &name, STORE_MEDIA_MAX_BYTES).await {
             // Content integrity: the bytes MUST hash to the requested id.
             if grain_core::trust::sha256_hex(&bytes) != sha256 {
                 continue;
@@ -702,7 +760,13 @@ pub async fn store_readme(app: AppHandle, sha256: String) -> Result<String, Stri
 /// only — a link may open the store but never trigger this.
 #[tauri::command]
 #[specta::specta]
-pub async fn store_install(app: AppHandle, id: String, version: String) -> Result<(), String> {
+pub async fn store_install(
+    app: AppHandle,
+    window: tauri::WebviewWindow,
+    id: String,
+    version: String,
+) -> Result<(), String> {
+    crate::grain_commands::require_main_window(&window)?;
     let state = store_state(&app)?;
     let reg = app
         .try_state::<Arc<grain_core::extensions::ExtensionsRegistry>>()

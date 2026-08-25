@@ -69,6 +69,11 @@ pub struct ExtensionRecord {
     pub toggle_seq: u64,
     #[serde(default)]
     pub installed_version: String,
+    /// SHA-256 of the exact installed artifact. Manual imports and signed-store
+    /// installs carry `Some` and are rechecked on every load; unpacked developer
+    /// projects carry `None` because their source is intentionally live.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub artifact_sha256: Option<String>,
     /// Granted capability names (empty for A-inert packs, which need none).
     #[serde(default)]
     pub granted: Vec<String>,
@@ -1198,6 +1203,7 @@ mod tests {
             enabled: false,
             toggle_seq: 0,
             installed_version: "1".into(),
+            artifact_sha256: None,
             granted: vec![],
             prompt_layers_approved: None,
             actions_approved: None,

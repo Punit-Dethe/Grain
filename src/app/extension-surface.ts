@@ -19,6 +19,7 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { EXTENSION_FRAME_POLICY_TAG } from "@/extensions/extensionFramePolicy";
 import { serializeExtensionPalette } from "@/lib/extensionTheme";
 
 type SurfaceInit = {
@@ -215,6 +216,7 @@ let dark = false;
 function surfaceDocument(uiSource: string): string {
   const theme = dark ? "dark" : "light";
   return (
+    EXTENSION_FRAME_POLICY_TAG +
     `<style>:root{color-scheme:${theme};${hostPalette()}}html,body{margin:0;padding:0;}</style>` +
     `<script>document.documentElement.setAttribute("data-grain-theme","${theme}");<` +
     `/script>` +

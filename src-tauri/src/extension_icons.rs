@@ -6,7 +6,7 @@
 //! decoded masters are never retained in process state.
 
 use std::path::{Component, Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Mutex;
 
 use base64::Engine as _;
 use grain_core::AppContext;
@@ -18,7 +18,7 @@ const MASTER_FILE: &str = "icon.png";
 const PILL_FILE: &str = "pill.rgba";
 const UI_FILE: &str = "ui.png";
 const UI_ICON_DIM: u32 = 128;
-static NEXT_TEMP: AtomicU64 = AtomicU64::new(1);
+static ASSET_LOCK: Mutex<()> = Mutex::new(());
 
 fn assets_root(app: &AppHandle) -> Result<PathBuf, String> {
     let ctx = app
@@ -34,11 +34,21 @@ fn version_dir(app: &AppHandle, id: &str, version: &str) -> Result<PathBuf, Stri
 }
 
 fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), String> {
+    use std::io::Write;
+
     let parent = path.parent().ok_or("icon cache path has no parent")?;
     std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
-    let suffix = NEXT_TEMP.fetch_add(1, Ordering::Relaxed);
-    let temp = parent.join(format!(".icon-{}-{suffix}.tmp", std::process::id()));
-    std::fs::write(&temp, bytes).map_err(|error| error.to_string())?;
+    let temp = parent.join(format!(".icon-{}.tmp", uuid::Uuid::new_v4().simple()));
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&temp)
+        .map_err(|error| error.to_string())?;
+    if let Err(error) = file.write_all(bytes).and_then(|_| file.sync_all()) {
+        let _ = std::fs::remove_file(&temp);
+        return Err(error.to_string());
+    }
+    drop(file);
     if path.exists() {
         std::fs::remove_file(path).map_err(|error| {
             let _ = std::fs::remove_file(&temp);
@@ -100,10 +110,13 @@ fn derive_ui_png(png: &[u8]) -> Result<Vec<u8>, String> {
 /// Decode and persist a pack's master + fixed pill derivative. Missing artwork
 /// is allowed for pre-icon-contract packs; malformed embedded artwork is not.
 pub fn materialize_pack(app: &AppHandle, pack: &GrainPack) -> Result<(), String> {
+    let _guard = ASSET_LOCK
+        .lock()
+        .map_err(|_| "extension icon cache lock is unavailable")?;
     let Some(png) = pack.embedded_icon_png()? else {
         // A legacy/iconless update must not leave an older version's artwork
         // looking as though it belonged to the newly installed pack.
-        purge(app, &pack.manifest.id)?;
+        purge_unlocked(app, &pack.manifest.id)?;
         return Ok(());
     };
     let image = decode_master(&png)?;
@@ -111,7 +124,7 @@ pub fn materialize_pack(app: &AppHandle, pack: &GrainPack) -> Result<(), String>
     let ui_png = derive_ui_png_from(&image)?;
     // One installed version is active at a time. Replacing its tiny asset tree
     // keeps repeated extension updates constant-space on disk.
-    purge(app, &pack.manifest.id)?;
+    purge_unlocked(app, &pack.manifest.id)?;
     let dir = version_dir(app, &pack.manifest.id, &pack.manifest.version)?;
     write_atomic(&dir.join(MASTER_FILE), &png)?;
     write_atomic(&dir.join(PILL_FILE), &rgba)?;
@@ -209,6 +222,13 @@ fn installed_ui_icon(app: &AppHandle, id: &str) -> Option<Vec<u8>> {
 
 /// Remove derived assets only when the caller explicitly purges an extension.
 pub fn purge(app: &AppHandle, id: &str) -> Result<(), String> {
+    let _guard = ASSET_LOCK
+        .lock()
+        .map_err(|_| "extension icon cache lock is unavailable")?;
+    purge_unlocked(app, id)
+}
+
+fn purge_unlocked(app: &AppHandle, id: &str) -> Result<(), String> {
     grain_sdk::validate_extension_id(id)?;
     let target = assets_root(app)?.join(id);
     if target.exists() {
