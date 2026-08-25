@@ -70,7 +70,7 @@ function metadata(reply: Reply): string[] {
 
 function runtime(options: {
   extensionId?: string;
-  lexical?: Match[];
+  lexical?: Match[] | Error;
   semantic?: Match[] | Error;
 }) {
   let onRequest: ((request: string) => Promise<Reply>) | undefined;
@@ -78,9 +78,13 @@ function runtime(options: {
     | ((event: ViewEvent) => Reply | void | Promise<Reply | void>)
     | undefined;
   const semantic = options.semantic ?? [];
+  const lexical = options.lexical ?? [];
   const grain = {
     match: {
-      lexical: vi.fn().mockResolvedValue(options.lexical ?? []),
+      lexical:
+        lexical instanceof Error
+          ? vi.fn().mockRejectedValue(lexical)
+          : vi.fn().mockResolvedValue(lexical),
       semantic:
         semantic instanceof Error
           ? vi.fn().mockRejectedValue(semantic)
@@ -113,8 +117,8 @@ function runtime(options: {
 
 describe("Recommendation Lab internal command diagnostic", () => {
   it.each([
-    ["com.grain.lab.stream-music", 7],
-    ["com.grain.lab.music-library", 7],
+    ["com.grain.lab.stream-music", 9],
+    ["com.grain.lab.music-library", 11],
     ["com.grain.lab.issue-tracker", 8],
     ["com.grain.lab.code-host", 8],
     ["com.grain.lab.translator", 6],
@@ -140,6 +144,68 @@ describe("Recommendation Lab internal command diagnostic", () => {
       expect(lab.grain.match.semantic.mock.calls[0][1]).toHaveLength(count);
     },
   );
+
+  it.each([
+    ["play", "play-track", "Play song"],
+    ["pause song", "pause-playback", "Pause song"],
+    ["resume song", "resume-playback", "Resume song"],
+    ["next song", "next-track", "Next song"],
+    ["previous song", "previous-track", "Previous song"],
+  ])(
+    "exposes the explicit playback control '%s'",
+    async (utterance, id, title) => {
+      const lab = runtime({
+        lexical: [{ id, score: 1 }],
+        semantic: new Error("model unavailable"),
+      });
+
+      const reply = await lab.onRequest(utterance);
+      const candidates = lab.grain.match.lexical.mock.calls[0][1] as {
+        id: string;
+        phrases: string[];
+      }[];
+
+      expect(candidates).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            id,
+            phrases: expect.arrayContaining([utterance]),
+          }),
+        ]),
+      );
+      expect(metadata(reply)[0]).toContain(`1. ${title}`);
+    },
+  );
+
+  it("keeps the five core playback controls inside Music Library too", async () => {
+    const lab = runtime({
+      extensionId: "com.grain.lab.music-library",
+      semantic: new Error("model unavailable"),
+    });
+
+    await lab.onRequest("play song");
+    const candidates = lab.grain.match.lexical.mock.calls[0][1] as {
+      id: string;
+      phrases: string[];
+    }[];
+
+    for (const [id, phrase] of [
+      ["play-local-track", "play song"],
+      ["pause-playback", "pause song"],
+      ["resume-playback", "resume song"],
+      ["next-track", "next song"],
+      ["previous-track", "previous song"],
+    ]) {
+      expect(candidates).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            id,
+            phrases: expect.arrayContaining([phrase]),
+          }),
+        ]),
+      );
+    }
+  });
 
   it("marks a safe, semantically clear command as Executed and Auto-send", async () => {
     const lab = runtime({
@@ -230,7 +296,7 @@ describe("Recommendation Lab internal command diagnostic", () => {
 
   it("never executes from lexical evidence when semantic matching is unavailable", async () => {
     const lab = runtime({
-      lexical: [{ id: "skip-track", score: 1 }],
+      lexical: [{ id: "next-track", score: 1 }],
       semantic: new Error("model unavailable"),
     });
 
@@ -239,5 +305,19 @@ describe("Recommendation Lab internal command diagnostic", () => {
     expect(badges(reply)).toEqual(["Semantic unavailable"]);
     expect(reply.view!.actions[0].id).toBe("finish-diagnostic");
     expect(metadata(reply)[0]).toContain("semantic — · lexical 100.0%");
+  });
+
+  it("makes a host rejection of both matching APIs explicit", async () => {
+    const lab = runtime({
+      lexical: new Error("unknown method"),
+      semantic: new Error("unknown method"),
+    });
+
+    const reply = await lab.onRequest("play song");
+
+    expect(badges(reply)).toEqual(["Matching unavailable"]);
+    expect(nodes(reply.view!.root).map((node) => node.text)).toContain(
+      "Both matching signals are unavailable. No command ran. Restart Grain after updating, reinstall the lab fixtures, and retry.",
+    );
   });
 });

@@ -26,7 +26,7 @@ permissions, and calls no external service.
 | Named match            | “Use Calendar Planner to schedule lunch tomorrow” | Calendar Planner is a named recommendation; editable confirmation form |
 | Internal translation   | “Translator, identify this language”              | Translator opens its same-window internal command diagnostic           |
 | Internal issue command | “Create an urgent issue for the broken login”     | Issue Tracker ranks its own eight commands after hand-off              |
-| Internal music command | “Stream Music, play my focus playlist”            | Stream Music ranks its own seven commands after hand-off               |
+| Internal music command | “Stream Music, play my focus playlist”            | Stream Music ranks its own nine commands after hand-off                |
 
 ## Internal command matrix
 
@@ -50,6 +50,7 @@ the result to inspect, not a hard-coded expected value:
 
 | Goal                     | Extension     | Example request                                                          |
 | ------------------------ | ------------- | ------------------------------------------------------------------------ |
+| Exact playback controls  | Stream Music  | “Play song”, “pause song”, “resume song”, “next song”, “previous song”   |
 | Play versus queue        | Stream Music  | “Play this one, but maybe make it the next thing after the current song” |
 | Playlist versus library  | Music Library | “Save this track with my focus music”                                    |
 | Create versus find issue | Issue Tracker | “Check whether there is a login bug, and open one if there is not”       |

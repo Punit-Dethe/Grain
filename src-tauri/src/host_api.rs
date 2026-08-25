@@ -42,6 +42,18 @@ const STORAGE_QUOTA_BYTES: u64 = 200 * 1024 * 1024;
 /// low-RAM device would rather the extension chunk its work.
 const EMBED_MAX_BATCH: usize = 64;
 
+/// `match.*` accepts author-supplied command corpora. Bound every dimension
+/// before scoring or embedding so a capability-free helper cannot become a
+/// CPU/RAM exhaustion path. These limits comfortably cover a large extension
+/// (64 commands × several phrasings) while keeping one semantic request finite.
+const MATCH_MAX_CANDIDATES: usize = 64;
+const MATCH_MAX_PHRASES_PER_CANDIDATE: usize = 16;
+const MATCH_MAX_TOTAL_PHRASES: usize = 256;
+const MATCH_MAX_QUERY_BYTES: usize = 8 * 1024;
+const MATCH_MAX_PHRASE_BYTES: usize = 2 * 1024;
+const MATCH_MAX_TOTAL_PHRASE_BYTES: usize = 128 * 1024;
+const MATCH_MAX_ID_BYTES: usize = 128;
+
 /// Extension egress is intentionally small and bounded. API-shaped responses
 /// fit comfortably; bulk transfer belongs in a purpose-built host capability.
 const NET_TIMEOUT: Duration = Duration::from_secs(15);
@@ -487,6 +499,16 @@ fn param_strings(params: &Value, key: &str) -> HostResult<Vec<String>> {
         .collect()
 }
 
+fn param_match_text(params: &Value) -> HostResult<String> {
+    let text = param_str(params, "text")?;
+    if text.len() > MATCH_MAX_QUERY_BYTES {
+        return Err(invalid_argument(format!(
+            "'text' exceeds the {MATCH_MAX_QUERY_BYTES}-byte match limit"
+        )));
+    }
+    Ok(text)
+}
+
 /// Parse `candidates: [{ id, <phrase_key>: [string] }]` for the match
 /// primitives. `phrase_key` is `"phrases"` for lexical, `"examples"` for
 /// semantic — one shape under two honest names. Empty phrase strings are dropped
@@ -499,28 +521,71 @@ fn param_named_phrase_lists(
         .get("candidates")
         .and_then(Value::as_array)
         .ok_or_else(|| invalid_argument("'candidates' must be an array"))?;
-    array
-        .iter()
-        .enumerate()
-        .map(|(index, candidate)| {
-            let id = candidate.get("id").and_then(Value::as_str).ok_or_else(|| {
-                invalid_argument(format!("'candidates[{index}].id' must be a string"))
+    if array.len() > MATCH_MAX_CANDIDATES {
+        return Err(invalid_argument(format!(
+            "'candidates' accepts at most {MATCH_MAX_CANDIDATES} entries"
+        )));
+    }
+    let mut seen_ids = std::collections::HashSet::with_capacity(array.len());
+    let mut total_phrases = 0usize;
+    let mut total_phrase_bytes = 0usize;
+    let mut parsed = Vec::with_capacity(array.len());
+    for (index, candidate) in array.iter().enumerate() {
+        let id = candidate.get("id").and_then(Value::as_str).ok_or_else(|| {
+            invalid_argument(format!("'candidates[{index}].id' must be a string"))
+        })?;
+        if id.is_empty() || id.len() > MATCH_MAX_ID_BYTES {
+            return Err(invalid_argument(format!(
+                "'candidates[{index}].id' must contain 1-{MATCH_MAX_ID_BYTES} bytes"
+            )));
+        }
+        if !seen_ids.insert(id) {
+            return Err(invalid_argument(format!(
+                "duplicate match candidate id '{id}'"
+            )));
+        }
+        let values = candidate
+            .get(phrase_key)
+            .and_then(Value::as_array)
+            .ok_or_else(|| {
+                invalid_argument(format!(
+                    "'candidates[{index}].{phrase_key}' must be an array of strings"
+                ))
             })?;
-            let phrases = candidate
-                .get(phrase_key)
-                .and_then(Value::as_array)
-                .ok_or_else(|| {
-                    invalid_argument(format!(
-                        "'candidates[{index}].{phrase_key}' must be an array of strings"
-                    ))
-                })?
-                .iter()
-                .filter_map(|p| p.as_str().map(str::to_string))
-                .filter(|p| !p.trim().is_empty())
-                .collect();
-            Ok((id.to_string(), phrases))
-        })
-        .collect()
+        if values.len() > MATCH_MAX_PHRASES_PER_CANDIDATE {
+            return Err(invalid_argument(format!(
+                "'candidates[{index}].{phrase_key}' accepts at most {MATCH_MAX_PHRASES_PER_CANDIDATE} entries"
+            )));
+        }
+        let mut phrases = Vec::with_capacity(values.len());
+        for (phrase_index, value) in values.iter().enumerate() {
+            let phrase = value.as_str().ok_or_else(|| {
+                invalid_argument(format!(
+                    "'candidates[{index}].{phrase_key}[{phrase_index}]' must be a string"
+                ))
+            })?;
+            if phrase.len() > MATCH_MAX_PHRASE_BYTES {
+                return Err(invalid_argument(format!(
+                    "'candidates[{index}].{phrase_key}[{phrase_index}]' exceeds {MATCH_MAX_PHRASE_BYTES} bytes"
+                )));
+            }
+            if phrase.trim().is_empty() {
+                continue;
+            }
+            total_phrases += 1;
+            total_phrase_bytes += phrase.len();
+            if total_phrases > MATCH_MAX_TOTAL_PHRASES
+                || total_phrase_bytes > MATCH_MAX_TOTAL_PHRASE_BYTES
+            {
+                return Err(invalid_argument(format!(
+                    "the match corpus exceeds {MATCH_MAX_TOTAL_PHRASES} phrases or {MATCH_MAX_TOTAL_PHRASE_BYTES} bytes"
+                )));
+            }
+            phrases.push(phrase.to_string());
+        }
+        parsed.push((id.to_string(), phrases));
+    }
+    Ok(parsed)
 }
 
 /// Parse `candidates: [{ id, score }]` for `match.decide`.
@@ -529,6 +594,12 @@ fn param_scored_candidates(params: &Value) -> HostResult<Vec<(String, f32)>> {
         .get("candidates")
         .and_then(Value::as_array)
         .ok_or_else(|| invalid_argument("'candidates' must be an array"))?;
+    if array.len() > MATCH_MAX_CANDIDATES {
+        return Err(invalid_argument(format!(
+            "'candidates' accepts at most {MATCH_MAX_CANDIDATES} entries"
+        )));
+    }
+    let mut seen_ids = std::collections::HashSet::with_capacity(array.len());
     array
         .iter()
         .enumerate()
@@ -536,12 +607,29 @@ fn param_scored_candidates(params: &Value) -> HostResult<Vec<(String, f32)>> {
             let id = candidate.get("id").and_then(Value::as_str).ok_or_else(|| {
                 invalid_argument(format!("'candidates[{index}].id' must be a string"))
             })?;
+            if id.is_empty() || id.len() > MATCH_MAX_ID_BYTES {
+                return Err(invalid_argument(format!(
+                    "'candidates[{index}].id' must contain 1-{MATCH_MAX_ID_BYTES} bytes"
+                )));
+            }
+            if !seen_ids.insert(id) {
+                return Err(invalid_argument(format!(
+                    "duplicate match candidate id '{id}'"
+                )));
+            }
             let score = candidate
                 .get("score")
                 .and_then(Value::as_f64)
                 .ok_or_else(|| {
                     invalid_argument(format!("'candidates[{index}].score' must be a number"))
                 })?;
+            // Semantic cosine is naturally -1..=1. Keeping that full range is
+            // required for the documented semantic -> decide composition.
+            if !score.is_finite() || !(-1.0..=1.0).contains(&score) {
+                return Err(invalid_argument(format!(
+                    "'candidates[{index}].score' must be between -1 and 1"
+                )));
+            }
             Ok((id.to_string(), score as f32))
         })
         .collect()
@@ -550,19 +638,33 @@ fn param_scored_candidates(params: &Value) -> HostResult<Vec<(String, f32)>> {
 /// Parse `policy: { minConfidence, margin }`, with defaults for an omitted
 /// policy. There is no universal threshold (§8 G4), so these defaults are a
 /// starting point an author overrides after measuring with `grain-ext eval`.
-fn param_decide_policy(params: &Value) -> grain_core::matching::DecidePolicy {
-    let policy = params.get("policy");
-    let field = |key: &str, default: f32| {
-        policy
-            .and_then(|p| p.get(key))
-            .and_then(Value::as_f64)
-            .map(|v| v as f32)
-            .unwrap_or(default)
+fn param_decide_policy(params: &Value) -> HostResult<grain_core::matching::DecidePolicy> {
+    let policy = match params.get("policy") {
+        None | Some(Value::Null) => None,
+        Some(value) => Some(
+            value
+                .as_object()
+                .ok_or_else(|| invalid_argument("'policy' must be an object"))?,
+        ),
     };
-    grain_core::matching::DecidePolicy {
-        min_confidence: field("minConfidence", 0.5),
-        margin: field("margin", 0.1),
-    }
+    let field = |key: &str, default: f32| -> HostResult<f32> {
+        let Some(value) = policy.and_then(|object| object.get(key)) else {
+            return Ok(default);
+        };
+        let value = value
+            .as_f64()
+            .ok_or_else(|| invalid_argument(format!("'policy.{key}' must be a number")))?;
+        if !value.is_finite() || !(0.0..=1.0).contains(&value) {
+            return Err(invalid_argument(format!(
+                "'policy.{key}' must be between 0 and 1"
+            )));
+        }
+        Ok(value as f32)
+    };
+    Ok(grain_core::matching::DecidePolicy {
+        min_confidence: field("minConfidence", 0.5)?,
+        margin: field("margin", 0.1)?,
+    })
 }
 
 /// Cosine of two vectors the embedder already L2-normalised — a dot product.
@@ -721,6 +823,18 @@ fn validate_request(method: &str, params: &Value) -> HostResult<()> {
                     "'texts' accepts at most {EMBED_MAX_BATCH} items"
                 )));
             }
+        }
+        "match.lexical" => {
+            param_match_text(params)?;
+            param_named_phrase_lists(params, "phrases")?;
+        }
+        "match.semantic" => {
+            param_match_text(params)?;
+            param_named_phrase_lists(params, "examples")?;
+        }
+        "match.decide" => {
+            param_scored_candidates(params)?;
+            param_decide_policy(params)?;
         }
         "session.start" => {
             param_nonempty_str(params, "mode")?;
@@ -1273,7 +1387,7 @@ pub async fn dispatch(
         "match.lexical" => {
             // Lexical rank over the extension's own phrases. Pure, no model, no
             // capability. Same scorer Grain uses for its own lexical leg.
-            let text = param_str(&params, "text")?;
+            let text = param_match_text(&params)?;
             let candidates = param_named_phrase_lists(&params, "phrases")?;
             let ranked = grain_core::matching::lexical_rank(&text, &candidates);
             Ok(json!({
@@ -1288,7 +1402,7 @@ pub async fn dispatch(
             // primitive that turns a ranking into pick / ask / decline, so an
             // author never hand-writes a threshold check.
             let candidates = param_scored_candidates(&params)?;
-            let policy = param_decide_policy(&params);
+            let policy = param_decide_policy(&params)?;
             Ok(match grain_core::matching::decide(&candidates, &policy) {
                 grain_core::matching::Decision::Pick(id) => json!({ "pick": id }),
                 grain_core::matching::Decision::Ambiguous(ids) => json!({ "ambiguous": ids }),
@@ -1301,7 +1415,7 @@ pub async fn dispatch(
             // reaches nothing beyond the supplied examples, which is why it takes
             // no capability. Loads the model on demand and refreshes the TTL
             // (§6): calling it while cold is never the extension's problem.
-            let text = param_str(&params, "text")?;
+            let text = param_match_text(&params)?;
             let candidates = param_named_phrase_lists(&params, "examples")?;
             if candidates.is_empty() {
                 return Ok(json!({ "matches": [] }));
@@ -1938,6 +2052,144 @@ mod tests {
     }
 
     #[test]
+    fn match_methods_pass_preflight_and_real_lexical_controls_rank() {
+        let identity = named(&[]);
+        let candidates = json!([
+            {"id": "play-track", "phrases": ["play", "play song", "play track", "start song"]},
+            {"id": "pause-playback", "phrases": ["pause", "pause song", "pause music", "stop playback"]},
+            {"id": "resume-playback", "phrases": ["resume", "resume song", "resume music", "continue playback"]},
+            {"id": "next-track", "phrases": ["next", "next song", "next track", "skip song", "skip track"]},
+            {"id": "previous-track", "phrases": ["previous", "previous song", "previous track", "go back one song"]}
+        ]);
+        for (text, expected) in [
+            ("play", "play-track"),
+            ("pause song", "pause-playback"),
+            ("resume song", "resume-playback"),
+            ("next song", "next-track"),
+            ("previous song", "previous-track"),
+        ] {
+            let params = json!({"text": text, "candidates": candidates.clone()});
+            assert!(preflight(&identity, "match.lexical", &params).is_ok());
+            let parsed = param_named_phrase_lists(&params, "phrases").unwrap();
+            let ranked = grain_core::matching::lexical_rank(text, &parsed);
+            assert_eq!(ranked.first().map(|item| item.id.as_str()), Some(expected));
+            assert_eq!(ranked[0].score, 1.0, "'{text}' should be an exact hit");
+        }
+
+        assert!(preflight(
+            &identity,
+            "match.semantic",
+            &json!({
+                "text": "move on to the following track",
+                "candidates": [{"id": "next-track", "examples": ["play the next song"]}]
+            }),
+        )
+        .is_ok());
+        assert!(preflight(
+            &identity,
+            "match.decide",
+            &json!({
+                "candidates": [
+                    {"id": "next-track", "score": 0.9},
+                    {"id": "unrelated", "score": -0.2}
+                ],
+                "policy": {"minConfidence": 0.5, "margin": 0.15}
+            }),
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn capability_free_match_methods_are_strictly_bounded() {
+        let identity = named(&[]);
+        let too_many: Vec<Value> = (0..=MATCH_MAX_CANDIDATES)
+            .map(|index| json!({"id": format!("command-{index}"), "phrases": ["run"]}))
+            .collect();
+        let too_many_scores: Vec<Value> = (0..=MATCH_MAX_CANDIDATES)
+            .map(|index| json!({"id": format!("command-{index}"), "score": 0.5}))
+            .collect();
+        let too_many_phrases = vec!["example"; MATCH_MAX_PHRASES_PER_CANDIDATE + 1];
+        let too_many_total_phrases: Vec<Value> = (0..17)
+            .map(|index| {
+                json!({
+                    "id": format!("command-{index}"),
+                    "examples": vec!["example"; MATCH_MAX_PHRASES_PER_CANDIDATE]
+                })
+            })
+            .collect();
+        let too_many_total_bytes: Vec<Value> = (0..9)
+            .map(|index| {
+                json!({
+                    "id": format!("command-{index}"),
+                    "examples": vec!["x".repeat(1024); MATCH_MAX_PHRASES_PER_CANDIDATE]
+                })
+            })
+            .collect();
+        for (method, params) in [
+            (
+                "match.lexical",
+                json!({"text": "x".repeat(MATCH_MAX_QUERY_BYTES + 1), "candidates": []}),
+            ),
+            (
+                "match.lexical",
+                json!({"text": "run", "candidates": too_many}),
+            ),
+            (
+                "match.semantic",
+                json!({"text": "run", "candidates": [{"id": "run", "examples": too_many_phrases}]}),
+            ),
+            (
+                "match.semantic",
+                json!({"text": "run", "candidates": too_many_total_phrases}),
+            ),
+            (
+                "match.semantic",
+                json!({"text": "run", "candidates": too_many_total_bytes}),
+            ),
+            (
+                "match.semantic",
+                json!({"text": "run", "candidates": [{"id": "run", "examples": ["x".repeat(MATCH_MAX_PHRASE_BYTES + 1)]}]}),
+            ),
+            (
+                "match.lexical",
+                json!({"text": "run", "candidates": [{"id": "x".repeat(MATCH_MAX_ID_BYTES + 1), "phrases": ["run"]}]}),
+            ),
+            (
+                "match.lexical",
+                json!({"text": "run", "candidates": [{"id": "run", "phrases": [4]}]}),
+            ),
+            (
+                "match.lexical",
+                json!({"text": "run", "candidates": [{"id": "same", "phrases": ["run"]}, {"id": "same", "phrases": ["start"]}]}),
+            ),
+            (
+                "match.decide",
+                json!({"candidates": too_many_scores}),
+            ),
+            (
+                "match.decide",
+                json!({"candidates": [{"id": "same", "score": 0.9}, {"id": "same", "score": 0.8}]}),
+            ),
+            (
+                "match.decide",
+                json!({"candidates": [{"id": "run", "score": 1.1}]}),
+            ),
+            (
+                "match.decide",
+                json!({"candidates": [], "policy": {"margin": "wide"}}),
+            ),
+            (
+                "match.decide",
+                json!({"candidates": [], "policy": {"margin": 1.1}}),
+            ),
+        ] {
+            let error = preflight(&identity, method, &params).unwrap_err();
+            assert_eq!(error.code, HostErrorCode::InvalidArgument, "{method}");
+            assert_typed(&error);
+        }
+    }
+
+    #[test]
     fn every_preflight_refusal_is_typed_and_never_an_empty_success() {
         let no_caps = named(&[]);
         for (method, capability) in [
@@ -1976,6 +2228,9 @@ mod tests {
             ("settings.set", json!({"key": "k"})),
             ("llm.complete", json!({"prompt": 4})),
             ("embed", json!({"texts": ["ok", 4]})),
+            ("match.lexical", json!({})),
+            ("match.semantic", json!({"text": "play", "candidates": [{}]})),
+            ("match.decide", json!({"candidates": [{"id": "play", "score": 2}]})),
             ("session.start", json!({})),
             ("net.fetch", json!({})),
         ] {
@@ -1998,6 +2253,18 @@ mod tests {
             ("settings.set", json!({"key": "k", "value": null})),
             ("llm.complete", json!({"prompt": "hello"})),
             ("embed", json!({"texts": ["hello"]})),
+            (
+                "match.lexical",
+                json!({"text": "play song", "candidates": [{"id": "play", "phrases": ["play song"]}]}),
+            ),
+            (
+                "match.semantic",
+                json!({"text": "put on some music", "candidates": [{"id": "play", "examples": ["start a song"]}]}),
+            ),
+            (
+                "match.decide",
+                json!({"candidates": [{"id": "play", "score": 0.9}], "policy": {"minConfidence": 0.5, "margin": 0.1}}),
+            ),
             ("session.start", json!({"mode": "note"})),
             ("capture.selection", json!({})),
             ("workspace.open", json!({})),

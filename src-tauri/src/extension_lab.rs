@@ -53,7 +53,7 @@ fn profiles() -> &'static [Profile] {
             ],
             aliases: &["stream music", "music streaming"],
             entities: &["artist", "album", "playlist", "track"],
-            command_count: 7,
+            command_count: 9,
             auto_send: false,
         },
         Profile {
@@ -69,7 +69,7 @@ fn profiles() -> &'static [Profile] {
             ],
             aliases: &["local music", "my music library"],
             entities: &["artist", "album", "playlist", "track"],
-            command_count: 7,
+            command_count: 11,
             auto_send: false,
         },
         Profile {

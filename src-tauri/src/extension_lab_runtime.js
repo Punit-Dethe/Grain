@@ -10,12 +10,22 @@
       commands: [
         {
           id: "play-track",
-          title: "Play a track",
-          phrases: ["play track", "play song", "start track"],
+          title: "Play song",
+          phrases: ["play", "play song", "play track", "start song"],
           examples: [
             "put on Midnight City",
             "I want to hear one specific song",
             "start the track I just named",
+          ],
+        },
+        {
+          id: "pause-playback",
+          title: "Pause song",
+          phrases: ["pause", "pause song", "pause music", "stop playback"],
+          examples: [
+            "stop the music for a moment",
+            "hold the current song where it is",
+            "quiet the player without losing my place",
           ],
         },
         {
@@ -50,8 +60,13 @@
         },
         {
           id: "resume-playback",
-          title: "Resume playback",
-          phrases: ["resume music", "continue playback", "keep playing"],
+          title: "Resume song",
+          phrases: [
+            "resume",
+            "resume song",
+            "resume music",
+            "continue playback",
+          ],
           examples: [
             "carry on from where the music stopped",
             "continue the song that was paused",
@@ -59,13 +74,34 @@
           ],
         },
         {
-          id: "skip-track",
-          title: "Skip the current track",
-          phrases: ["skip track", "next song", "play next"],
+          id: "next-track",
+          title: "Next song",
+          phrases: [
+            "next",
+            "next song",
+            "next track",
+            "skip song",
+            "skip track",
+          ],
           examples: [
             "get this song out of here",
             "move on to whatever follows this",
             "I do not want to hear the rest of this track",
+          ],
+        },
+        {
+          id: "previous-track",
+          title: "Previous song",
+          phrases: [
+            "previous",
+            "previous song",
+            "previous track",
+            "go back one song",
+          ],
+          examples: [
+            "go back to the song that played before this",
+            "return to the last track",
+            "I want to hear the previous song again",
           ],
         },
         {
@@ -88,8 +124,10 @@
       commands: [
         {
           id: "play-local-track",
-          title: "Play a local track",
+          title: "Play song from library",
           phrases: [
+            "play",
+            "play song",
             "play local track",
             "play downloaded song",
             "play from library",
@@ -98,6 +136,62 @@
             "use the copy already saved on this computer",
             "play the downloaded version instead of streaming it",
             "start this song from my own collection",
+          ],
+        },
+        {
+          id: "pause-playback",
+          title: "Pause song",
+          phrases: ["pause", "pause song", "pause music", "stop playback"],
+          examples: [
+            "stop the local song for a moment",
+            "hold playback where it is",
+            "quiet my library without losing my place",
+          ],
+        },
+        {
+          id: "resume-playback",
+          title: "Resume song",
+          phrases: [
+            "resume",
+            "resume song",
+            "resume music",
+            "continue playback",
+          ],
+          examples: [
+            "continue the local song that was paused",
+            "carry on from where my library stopped",
+            "let the current track keep playing",
+          ],
+        },
+        {
+          id: "next-track",
+          title: "Next song",
+          phrases: [
+            "next",
+            "next song",
+            "next track",
+            "skip song",
+            "skip track",
+          ],
+          examples: [
+            "move to the next song in my library",
+            "skip this local track",
+            "play whatever follows this recording",
+          ],
+        },
+        {
+          id: "previous-track",
+          title: "Previous song",
+          phrases: [
+            "previous",
+            "previous song",
+            "previous track",
+            "go back one song",
+          ],
+          examples: [
+            "return to the last song in my library",
+            "play the track before this one again",
+            "go back one recording",
           ],
         },
         {
@@ -931,6 +1025,9 @@
       return "The leading commands are within the 8-point decision margin. Choose one to test the clarification transition.";
     }
     if (analysis.state === "unavailable") {
+      if (!analysis.lexicalAvailable) {
+        return "Both matching signals are unavailable. No command ran. Restart Grain after updating, reinstall the lab fixtures, and retry.";
+      }
       return "Semantic matching is unavailable. Lexical scores remain visible, but the extension executes nothing in this degraded state.";
     }
     return "No command cleared the 50% semantic floor. The extension refuses to guess.";
@@ -951,7 +1048,9 @@
     } else if (analysis.state === "unavailable") {
       badges.push({
         type: "badge",
-        text: "Semantic unavailable",
+        text: analysis.lexicalAvailable
+          ? "Semantic unavailable"
+          : "Matching unavailable",
         tone: "danger",
       });
     } else {

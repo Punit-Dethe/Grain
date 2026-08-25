@@ -236,13 +236,15 @@ export interface GrainApi {
    * the on-device model (declare `needs: ["semantic"]`) but no capability. */
   readonly match: {
     /** Fast lexical rank over declared phrasings. Strong for names/verbs, weak
-     * for paraphrase — reach for `semantic` when wording varies. */
+     * for paraphrase — reach for `semantic` when wording varies. One call accepts
+     * at most 64 candidates, 16 phrases each, and 256 phrases total. */
     lexical(
       text: string,
       candidates: readonly { id: string; phrases: readonly string[] }[],
     ): Promise<{ id: string; score: number }[]>;
     /** Semantic rank over declared examples. Understands paraphrase; loads the
-     * embedding model on demand. `margin` is the gap to the next candidate. */
+     * embedding model on demand. `margin` is the gap to the next candidate.
+     * Uses the same 64-candidate / 16-example / 256-total bounds as lexical. */
     semantic(
       text: string,
       candidates: readonly { id: string; examples: readonly string[] }[],
@@ -250,7 +252,8 @@ export interface GrainApi {
     /** Turn a ranking into a decision. `minConfidence` is the floor to act at
      * all; `margin` is how far the best must lead to be picked outright — within
      * it, the top candidates are `ambiguous`. There is no universal threshold;
-     * measure with `grain-ext eval` and set these. */
+     * measure with `grain-ext eval` and set these. Accepts at most 64 unique ids;
+     * scores are -1..1 (semantic cosine), policy values are 0..1. */
     decide(
       candidates: readonly { id: string; score: number }[],
       policy?: { minConfidence?: number; margin?: number },
