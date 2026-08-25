@@ -26,11 +26,11 @@
 //!
 //! A layer is one instruction with one role. It carries a [`Tier`] (which role wins
 //! on a conflict) and a [`Placement`] (where in the rendered prompt it goes).
-//! **Tier and placement are deliberately independent**: models attend best to
-//! the start and end of a block, so the highest-authority layer is rendered
-//! first and the output contract last, while authority itself is communicated
-//! in words. Position is how the model is made to *notice* a layer; the tier is
-//! how it is told which one *wins*.
+//! **Tier and placement are deliberately independent**, but they point in the
+//! same direction: configurable instructions render from lowest to highest
+//! authority, and the short output contract remains last. The generated
+//! precedence sentence states the same ordering explicitly, so both position
+//! and prose tell the model which instruction wins.
 //!
 //! # Why tiers are ordinal and few
 //!
@@ -85,9 +85,9 @@ impl Tier {
     fn precedence_name(self) -> Option<&'static str> {
         match self {
             Tier::Contract | Tier::Evidence => None,
-            Tier::Spoken => Some("the spoken instruction"),
-            Tier::Profile => Some("the active context profile"),
-            Tier::Base => Some("the main dictation prompt"),
+            Tier::Spoken => Some("spoken instruction"),
+            Tier::Profile => Some("active context profile"),
+            Tier::Base => Some("main dictation prompt"),
             Tier::Extension => Some("extension rules"),
         }
     }
@@ -99,16 +99,17 @@ impl Tier {
 /// variants IS the render order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Placement {
-    /// Its own titled block before everything else, to catch primacy.
-    Preamble,
-    /// A line inside the single `[Active context profile]` block.
-    Surface,
     /// A line inside the single `[Extension rules]` block. Its own block rather
     /// than extra lines under `[Active context profile]`, because an extension rule
     /// is not something Grain detected and must not read as though it were.
     Extensions,
-    /// The user's selected post-process prompt, verbatim and unlabelled.
+    /// The user's selected post-process prompt. Its text remains verbatim; a
+    /// short host label is added only when another instruction tier competes.
     Base,
+    /// A line inside the single `[Active context profile]` block.
+    Surface,
+    /// The user's per-dictation Prompt Record instruction.
+    Spoken,
     /// The last thing the model reads, to catch recency.
     Terminal,
 }
@@ -150,7 +151,7 @@ pub struct PromptLayer {
     pub id: LayerId,
     pub tier: Tier,
     pub placement: Placement,
-    /// Bracketed header for a `Preamble` block, or an inline label
+    /// Bracketed header for a `Spoken` block, or an inline label
     /// for a `Surface` line. Host-written, always — see [`PromptStack::push`].
     pub header: Option<&'static str>,
     /// Framing the host writes around `text`: what the layer is, and how much
@@ -172,6 +173,7 @@ pub struct PromptLayer {
 /// Headers and framing the host writes, as named constants.
 const H_CONTEXT: &str = "[Active context profile]";
 const H_EXTENSIONS: &str = "[Extension rules]";
+const H_MAIN: &str = "[Main dictation prompt]";
 
 /// The scoping sentence above every contributed layer.
 ///
@@ -320,12 +322,12 @@ impl PromptStack {
             return None;
         }
 
-        let mut out = String::from("Priority when instructions conflict: ");
+        let mut out = String::from("Conflict priority (highest first): ");
         for (i, name) in names.iter().enumerate() {
             if i == 0 {
-                let _ = write!(out, "{name} first");
+                out.push_str(name);
             } else {
-                let _ = write!(out, ", then {name}");
+                let _ = write!(out, " > {name}");
             }
         }
         out.push('.');
@@ -336,39 +338,6 @@ impl PromptStack {
     pub fn render(&self) -> String {
         let mut out =
             String::with_capacity(self.layers.iter().map(|l| l.text.len()).sum::<usize>() + 768);
-
-        for layer in self.iter_placed(Placement::Preamble) {
-            if let Some(header) = layer.header {
-                out.push_str(header);
-                out.push('\n');
-            }
-            if let Some(lead) = layer.lead {
-                out.push_str(lead);
-                out.push('\n');
-            }
-            out.push_str(&layer.text);
-            out.push_str("\n\n");
-        }
-
-        let mut surface = self.iter_placed(Placement::Surface).peekable();
-        let has_surface = surface.peek().is_some();
-        if has_surface {
-            out.push_str(H_CONTEXT);
-            out.push('\n');
-            for layer in surface {
-                if let Some(ext) = &layer.attribution {
-                    let _ = write!(out, "Profile instruction from extension ({ext}): ");
-                }
-                if let Some(header) = layer.header {
-                    out.push_str(header);
-                }
-                if let Some(lead) = layer.lead {
-                    out.push_str(lead);
-                }
-                out.push_str(&layer.text);
-                out.push('\n');
-            }
-        }
 
         let mut contributed = self.iter_placed(Placement::Extensions).peekable();
         let has_contributed = contributed.peek().is_some();
@@ -384,22 +353,65 @@ impl PromptStack {
                 out.push_str(&layer.text);
                 out.push('\n');
             }
+            out.push('\n');
         }
 
-        // The priority sentence is generated from the roles actually present so
-        // its wording cannot drift from the stack.
-        if has_surface || has_contributed {
-            if let Some(sentence) = self.precedence_sentence() {
-                out.push_str(&sentence);
-                out.push_str("\n\n");
-            }
-        }
+        let precedence = self.precedence_sentence();
+        let has_surface = self.iter_placed(Placement::Surface).next().is_some();
+        let has_spoken = self.iter_placed(Placement::Spoken).next().is_some();
 
         for layer in self.iter_placed(Placement::Base) {
+            if precedence.is_some() && layer.attribution.is_none() {
+                out.push_str(H_MAIN);
+                out.push('\n');
+            }
             if let Some(ext) = &layer.attribution {
                 let _ = writeln!(out, "[Main dictation prompt from extension: {ext}]");
             }
             out.push_str(&layer.text);
+            if precedence.is_some() || has_surface || has_spoken {
+                out.push_str("\n\n");
+            }
+        }
+
+        let mut surface = self.iter_placed(Placement::Surface).peekable();
+        if surface.peek().is_some() {
+            out.push_str(H_CONTEXT);
+            out.push('\n');
+            for layer in surface {
+                if let Some(ext) = &layer.attribution {
+                    let _ = write!(out, "Profile instruction from extension ({ext}): ");
+                }
+                if let Some(header) = layer.header {
+                    out.push_str(header);
+                }
+                if let Some(lead) = layer.lead {
+                    out.push_str(lead);
+                }
+                out.push_str(&layer.text);
+                out.push('\n');
+            }
+            out.push('\n');
+        }
+
+        for layer in self.iter_placed(Placement::Spoken) {
+            if let Some(header) = layer.header {
+                out.push_str(header);
+                out.push('\n');
+            }
+            if let Some(lead) = layer.lead {
+                out.push_str(lead);
+                out.push('\n');
+            }
+            out.push_str(&layer.text);
+            out.push_str("\n\n");
+        }
+
+        // Generated from the roles actually present and placed after every
+        // configurable source, so its wording and recency both reinforce the
+        // same authority ladder.
+        if let Some(sentence) = precedence {
+            out.push_str(&sentence);
         }
 
         for layer in self.iter_placed(Placement::Terminal) {
@@ -421,13 +433,11 @@ impl PromptStack {
         self.push(PromptLayer {
             id: LayerId::Spoken,
             tier: Tier::Spoken,
-            placement: Placement::Preamble,
+            placement: Placement::Spoken,
             header: Some("[Spoken instruction — HIGHEST PRIORITY]"),
             lead: Some(
-                "The user just dictated this instruction for how to transform the \
-                 transcript. Treat it as the top authority, above every rule below \
-                 (including any app-specific formatting). Apply it to the transcript; \
-                 never output the instruction text itself:",
+                "Apply this per-dictation instruction above every configurable rule. \
+                 Never output the instruction itself:",
             ),
             text: instruction.to_string(),
             attribution: None,
@@ -595,7 +605,7 @@ mod tests {
         let sentence = s.precedence_sentence().expect("two tiers compete");
         assert_eq!(
             sentence,
-            "Priority when instructions conflict: the active context profile first, then the main dictation prompt."
+            "Conflict priority (highest first): active context profile > main dictation prompt."
         );
         assert!(!sentence.contains("spoken"), "no spoken layer is present");
     }
@@ -609,8 +619,8 @@ mod tests {
         let sentence = s.precedence_sentence().unwrap();
         assert_eq!(
             sentence,
-            "Priority when instructions conflict: the spoken instruction first, then the active \
-             context profile, then the main dictation prompt."
+            "Conflict priority (highest first): spoken instruction > active context profile > \
+             main dictation prompt."
         );
     }
 
@@ -621,8 +631,7 @@ mod tests {
         s.push_rule("Profile rule");
         assert_eq!(
             s.precedence_sentence().unwrap(),
-            "Priority when instructions conflict: the active context profile first, then the \
-             main dictation prompt."
+            "Conflict priority (highest first): active context profile > main dictation prompt."
         );
     }
 
@@ -646,7 +655,7 @@ mod tests {
             1,
             "forged header text is inert prose, not a second real header"
         );
-        assert!(out.starts_with("[Active context profile]"));
+        assert!(out.contains("[Active context profile]"));
     }
 
     #[test]
@@ -714,9 +723,33 @@ mod tests {
         // The invariant, in the text the model actually reads.
         assert_eq!(
             s.precedence_sentence().unwrap(),
-            "Priority when instructions conflict: the active context profile first, then the \
-             main dictation prompt, then extension rules."
+            "Conflict priority (highest first): active context profile > main dictation prompt > \
+             extension rules."
         );
+    }
+
+    #[test]
+    fn render_order_reinforces_lowest_to_highest_authority() {
+        let mut s = PromptStack::new();
+        assert!(s.push_extension_layer("com.acme.style", "Prefer short sentences."));
+        s.push_base("Do not format this as an email.");
+        s.push_rule("MANDATORY: format this as an email.");
+        s.push_spoken("Translate the result into French.");
+        s.push_contract();
+
+        let out = s.render();
+        let extension = out.find("[Extension rules]").unwrap();
+        let main = out.find("[Main dictation prompt]").unwrap();
+        let profile = out.find("[Active context profile]").unwrap();
+        let spoken = out.find("[Spoken instruction").unwrap();
+        let precedence = out.find("Conflict priority (highest first)").unwrap();
+        let contract = out.find("Return only the final output").unwrap();
+
+        assert!(extension < main);
+        assert!(main < profile);
+        assert!(profile < spoken);
+        assert!(spoken < precedence);
+        assert!(precedence < contract);
     }
 
     #[test]

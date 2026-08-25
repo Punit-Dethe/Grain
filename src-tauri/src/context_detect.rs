@@ -1595,8 +1595,8 @@ impl ActiveContext {
 /// off.
 ///
 /// When no spoken instruction or profile applies, the result contains only the
-/// main prompt and terminal output contract. Otherwise the spoken/profile layers
-/// form a compact preamble in explicit authority order.
+/// main prompt and terminal output contract. Otherwise configurable layers are
+/// rendered from lowest to highest authority before the terminal contract.
 ///
 /// See `docs/Prompt Priority/PLAN.md` for the tier ladder and the rule that
 /// nothing a third party contributes may outrank what the user typed or spoke.
@@ -1644,8 +1644,8 @@ pub fn compose_prompt(
 
     let mut stack = PromptStack::new();
 
-    // Rendered FIRST to catch primacy, and the highest instruction authority
-    // there is: the user dictated it seconds ago, about this exact transcript.
+    // The highest configurable authority: the user dictated it seconds ago,
+    // about this exact transcript. The stack renders it after the lower tiers.
     if let Some(instr) = spoken {
         stack.push_spoken(instr);
     }
@@ -3647,6 +3647,29 @@ mod tests {
         assert!(compose("BASE", &s, Some(&t), None).contains("exactly as spoken"));
     }
 
+    #[test]
+    fn mandatory_email_profile_is_rendered_after_a_conflicting_main_prompt() {
+        let mut s = AppSettings::default();
+        s.context_awareness_enabled = true;
+        let profile = "MANDATORY: when this is an email app or website, format it as an email.";
+        s.context_profile_instructions
+            .push(crate::settings::ContextProfileInstruction {
+                id: "email".into(),
+                instruction: profile.into(),
+            });
+
+        let main = "Do not use email formatting.";
+        let out = compose(main, &s, Some(&ctx("gmail", AppCategory::Email)), None);
+        let main_pos = out.find(main).unwrap();
+        let profile_pos = out.find(profile).unwrap();
+        let priority_pos = out.find("Conflict priority (highest first)").unwrap();
+        let contract_pos = out.find("Return only the final output").unwrap();
+
+        assert!(main_pos < profile_pos);
+        assert!(profile_pos < priority_pos);
+        assert!(priority_pos < contract_pos);
+    }
+
     fn custom(id: &str, instruction: &str, kind: &str, value: &str) -> CustomContextProfile {
         CustomContextProfile {
             id: id.into(),
@@ -3712,8 +3735,7 @@ mod tests {
         assert!(out.contains("[Active context profile]"));
         assert!(out.contains("Profile instruction: Bullet points only."));
         assert!(out.contains(
-            "Priority when instructions conflict: the active context profile first, then the \
-             main dictation prompt."
+            "Conflict priority (highest first): active context profile > main dictation prompt."
         ));
     }
 
@@ -3729,7 +3751,7 @@ mod tests {
         assert!(out.contains("[Active context profile]"));
         assert!(out.contains("Profile instruction:"));
         assert!(out.contains(
-            "Priority when instructions conflict: the active context profile first, then the main dictation prompt."
+            "Conflict priority (highest first): active context profile > main dictation prompt."
         ));
     }
 
@@ -3749,8 +3771,8 @@ mod tests {
 
         let with = compose("BASE", &s, Some(&c), Some("make it a haiku"));
         assert!(with.contains(
-            "Priority when instructions conflict: the spoken instruction first, then the active \
-             context profile, then the main dictation prompt."
+            "Conflict priority (highest first): spoken instruction > active context profile > \
+             main dictation prompt."
         ));
     }
 
@@ -4174,16 +4196,16 @@ mod tests {
     }
 
     #[test]
-    fn active_profile_is_prepended_for_known_category() {
+    fn active_profile_is_rendered_after_main_for_known_category() {
         let mut s = AppSettings::default();
         s.context_awareness_enabled = true;
         let base = "BASE ${output}";
         let out = compose(base, &s, Some(&ctx("code", AppCategory::Technical)), None);
-        assert!(out.starts_with("[Active context profile]"));
         assert!(out.contains("code editor"));
-        // The base survives verbatim; the terminal output constraint follows it
-        // (see `context_always_ends_with_the_output_constraint`).
-        assert!(out.contains(base));
+        assert!(
+            out.find(base).unwrap() < out.find("[Active context profile]").unwrap(),
+            "the higher-priority profile must be later than Main"
+        );
     }
 
     #[test]
@@ -4227,10 +4249,13 @@ mod tests {
         let s = AppSettings::default(); // context_awareness_enabled = false
         let base = "BASE ${output}";
         let out = compose(base, &s, None, Some("  make it a haiku  "));
-        assert!(out.starts_with("[Spoken instruction"));
         assert!(out.contains("HIGHEST PRIORITY"));
         assert!(out.contains("make it a haiku")); // trimmed, present
-        assert!(out.find(base).unwrap() < out.find("Return only the final output").unwrap());
+        let base_pos = out.find(base).unwrap();
+        let spoken_pos = out.find("[Spoken instruction").unwrap();
+        let contract_pos = out.find("Return only the final output").unwrap();
+        assert!(base_pos < spoken_pos);
+        assert!(spoken_pos < contract_pos);
     }
 
     #[test]
@@ -4254,13 +4279,13 @@ mod tests {
             Some(&ctx("code", AppCategory::Technical)),
             Some("translate it into French"),
         );
-        // Order carries the authority: what the user dictated for this
-        // transcript is read before the active profile.
+        // Order carries the authority: the highest configurable instruction is
+        // the last one read before the hierarchy line and output contract.
         let spoken_pos = out.find("translate it into French").unwrap();
         let ctx_pos = out.find("[Active context profile]").unwrap();
         assert!(
-            spoken_pos < ctx_pos,
-            "spoken instruction must precede the active profile"
+            ctx_pos < spoken_pos,
+            "spoken instruction must follow the lower-priority active profile"
         );
     }
 
