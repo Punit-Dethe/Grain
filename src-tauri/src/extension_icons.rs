@@ -12,12 +12,14 @@ use base64::Engine as _;
 use grain_core::AppContext;
 use grain_sdk::{GrainPack, ICON_MASTER_DIM, ICON_MAX_BYTES};
 use image::GenericImageView as _;
+use sha2::{Digest, Sha256};
 use tauri::{AppHandle, Manager};
 
 const MASTER_FILE: &str = "icon.png";
 const PILL_FILE: &str = "pill.rgba";
 const UI_FILE: &str = "ui.png";
 const UI_ICON_DIM: u32 = 128;
+const DEV_CACHE_DIRECTORY: &str = ".dev-icons-v1";
 static ASSET_LOCK: Mutex<()> = Mutex::new(());
 
 fn assets_root(app: &AppHandle) -> Result<PathBuf, String> {
@@ -61,6 +63,20 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), String> {
     })
 }
 
+fn read_bounded(path: &Path, limit: u64) -> Result<Vec<u8>, String> {
+    use std::io::Read;
+
+    let file = std::fs::File::open(path).map_err(|error| error.to_string())?;
+    let mut bytes = Vec::new();
+    file.take(limit + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|error| error.to_string())?;
+    if bytes.len() as u64 > limit {
+        return Err(format!("extension icon is larger than {} KB", limit / 1024));
+    }
+    Ok(bytes)
+}
+
 fn decode_master(png: &[u8]) -> Result<image::DynamicImage, String> {
     if png.len() as u64 > ICON_MAX_BYTES {
         return Err(format!(
@@ -68,15 +84,20 @@ fn decode_master(png: &[u8]) -> Result<image::DynamicImage, String> {
             ICON_MAX_BYTES / 1024
         ));
     }
-    let image = image::load_from_memory_with_format(png, image::ImageFormat::Png)
-        .map_err(|error| format!("decode extension icon: {error}"))?;
-    let (width, height) = image.dimensions();
+    // Inspect dimensions before decoding pixels. A tiny PNG header can claim a
+    // huge canvas, so checking only after `load_from_memory` would let a dev
+    // project force an oversized allocation despite the compressed-byte cap.
+    let (width, height) =
+        image::ImageReader::with_format(std::io::Cursor::new(png), image::ImageFormat::Png)
+            .into_dimensions()
+            .map_err(|error| format!("inspect extension icon: {error}"))?;
     if width != ICON_MASTER_DIM || height != ICON_MASTER_DIM {
         return Err(format!(
             "extension icon is {width}×{height}; expected {ICON_MASTER_DIM}×{ICON_MASTER_DIM}"
         ));
     }
-    Ok(image)
+    image::load_from_memory_with_format(png, image::ImageFormat::Png)
+        .map_err(|error| format!("decode extension icon: {error}"))
 }
 
 fn derive_pill_rgba_from(image: &image::DynamicImage) -> Result<Vec<u8>, String> {
@@ -106,6 +127,12 @@ fn derive_ui_png_from(image: &image::DynamicImage) -> Result<Vec<u8>, String> {
 
 fn derive_ui_png(png: &[u8]) -> Result<Vec<u8>, String> {
     derive_ui_png_from(&decode_master(png)?)
+}
+
+fn is_ui_png(bytes: &[u8]) -> bool {
+    image::ImageReader::with_format(std::io::Cursor::new(bytes), image::ImageFormat::Png)
+        .into_dimensions()
+        .is_ok_and(|dimensions| dimensions == (UI_ICON_DIM, UI_ICON_DIM))
 }
 
 /// Decode and persist a pack's master + fixed pill derivative. Missing artwork
@@ -149,6 +176,46 @@ fn safe_dev_icon(root: &Path, declared: &str) -> Option<PathBuf> {
     path.starts_with(&root).then_some(path)
 }
 
+fn dev_cache_root(app: &AppHandle) -> Result<PathBuf, String> {
+    let parent = assets_root(app)?;
+    std::fs::create_dir_all(&parent).map_err(|error| error.to_string())?;
+    let root = parent.join(DEV_CACHE_DIRECTORY);
+    if root.exists() {
+        let metadata = std::fs::symlink_metadata(&root).map_err(|error| error.to_string())?;
+        if metadata.file_type().is_symlink() || !metadata.is_dir() {
+            return Err("extension dev-icon cache is not a regular directory".into());
+        }
+    } else {
+        std::fs::create_dir(&root).map_err(|error| error.to_string())?;
+    }
+    let parent = parent.canonicalize().map_err(|error| error.to_string())?;
+    let root = root.canonicalize().map_err(|error| error.to_string())?;
+    if root.parent() != Some(parent.as_path())
+        || root.file_name().and_then(|name| name.to_str()) != Some(DEV_CACHE_DIRECTORY)
+    {
+        return Err("extension dev-icon cache escaped its fixed asset directory".into());
+    }
+    Ok(root)
+}
+
+fn dev_ui_icon(app: &AppHandle, root: &Path, declared: &str) -> Option<Vec<u8>> {
+    let source = safe_dev_icon(root, declared)?;
+    // Bounded streaming read prevents a load-unpacked project from making the
+    // host allocate an arbitrary-sized file before the validator runs.
+    let png = read_bounded(&source, ICON_MAX_BYTES).ok()?;
+    let digest = format!("{:x}", Sha256::digest(&png));
+    let _guard = ASSET_LOCK.lock().ok()?;
+    let cache = dev_cache_root(app).ok()?.join(format!("{digest}.png"));
+    if let Ok(bytes) = read_bounded(&cache, ICON_MAX_BYTES) {
+        if is_ui_png(&bytes) {
+            return Some(bytes);
+        }
+    }
+    let derived = derive_ui_png(&png).ok()?;
+    write_atomic(&cache, &derived).ok()?;
+    Some(derived)
+}
+
 /// Small PNG data URL for installed cards/settings. The 512² master remains on
 /// disk; settings receives only a transient 128² derivative.
 pub fn ui_icon(app: &AppHandle, id: &str) -> Option<String> {
@@ -158,8 +225,7 @@ pub fn ui_icon(app: &AppHandle, id: &str) -> Option<String> {
     {
         if let Some(root) = registry.dev_path(id) {
             let pack = crate::extension_host::load_manifest(app, id)?;
-            let path = safe_dev_icon(&root, &pack.manifest.icon)?;
-            derive_ui_png(&std::fs::read(path).ok()?).ok()?
+            dev_ui_icon(app, &root, &pack.manifest.icon)?
         } else {
             installed_ui_icon(app, id)?
         }
@@ -172,13 +238,37 @@ pub fn ui_icon(app: &AppHandle, id: &str) -> Option<String> {
     ))
 }
 
+/// Dev derivatives live only for the current developer-mode lifetime. They are
+/// content-addressed, so fixtures sharing one master produce one cached PNG.
+pub fn purge_dev_cache(app: &AppHandle) -> Result<(), String> {
+    let parent = assets_root(app)?;
+    let root = parent.join(DEV_CACHE_DIRECTORY);
+    if !root.exists() {
+        return Ok(());
+    }
+    let _guard = ASSET_LOCK
+        .lock()
+        .map_err(|_| "extension icon cache lock is unavailable")?;
+    let metadata = std::fs::symlink_metadata(&root).map_err(|error| error.to_string())?;
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        return Err("refusing to remove a non-directory extension dev-icon cache".into());
+    }
+    let parent = parent.canonicalize().map_err(|error| error.to_string())?;
+    let root = root.canonicalize().map_err(|error| error.to_string())?;
+    if root.parent() != Some(parent.as_path())
+        || root.file_name().and_then(|name| name.to_str()) != Some(DEV_CACHE_DIRECTORY)
+    {
+        return Err("refusing to remove an extension dev-icon cache outside assets".into());
+    }
+    std::fs::remove_dir_all(root).map_err(|error| error.to_string())
+}
+
 fn installed_ui_icon(app: &AppHandle, id: &str) -> Option<Vec<u8>> {
     let pack = crate::extension_host::load_manifest(app, id)?;
     let dir = version_dir(app, id, &pack.manifest.version).ok()?;
     let read_valid = || {
-        let bytes = std::fs::read(dir.join(UI_FILE)).ok()?;
-        let image = image::load_from_memory_with_format(&bytes, image::ImageFormat::Png).ok()?;
-        (image.dimensions() == (UI_ICON_DIM, UI_ICON_DIM)).then_some(bytes)
+        let bytes = read_bounded(&dir.join(UI_FILE), ICON_MAX_BYTES).ok()?;
+        is_ui_png(&bytes).then_some(bytes)
     };
     read_valid().or_else(|| {
         materialize_pack(app, &pack).ok()?;
@@ -215,5 +305,13 @@ mod tests {
         header[16..20].copy_from_slice(&ICON_MASTER_DIM.to_be_bytes());
         header[20..24].copy_from_slice(&ICON_MASTER_DIM.to_be_bytes());
         assert!(derive_pill_rgba(&header).is_err());
+    }
+
+    #[test]
+    fn a_dev_icon_is_bounded_before_it_is_allocated() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("huge.png");
+        std::fs::write(&path, vec![0u8; ICON_MAX_BYTES as usize + 1]).unwrap();
+        assert!(read_bounded(&path, ICON_MAX_BYTES).is_err());
     }
 }

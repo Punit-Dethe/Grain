@@ -1472,6 +1472,27 @@ async extensionUnloadDev(id: string) : Promise<Result<null, string>> {
 }
 },
 /**
+ * Install a deterministic searchable-extension corpus through the ordinary
+ * unpacked-project loader. Debug + developer-mode only: release builds do not
+ * materialise or execute these fixtures.
+ */
+async extensionRecommendationLabInstall(size: string) : Promise<Result<number, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("extension_recommendation_lab_install", { size }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async extensionRecommendationLabRemove() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("extension_recommendation_lab_remove") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Record the user's approval of what an extension asked for (SPEC §6) —
  * capabilities, and the prompt layers it contributes. Called by the permission
  * sheet on Approve; the caller then retries enable.
@@ -3363,9 +3384,15 @@ needs: string[];
  * The author permits Auto-send and explains why. The user's setting can
  * only remove this eligibility, never grant it to another extension.
  */
-auto_send_eligible: boolean; auto_send_note: string | null }
+auto_send_eligible: boolean;
+/**
+ * Effective per-extension state. This does not include the global beta
+ * switch; it answers only whether this author-eligible extension is on the
+ * user's deny-list.
+ */
+auto_send_enabled: boolean; auto_send_note: string | null }
 export type ExtensionChoiceCandidate = { extensionId: string; name: string; purpose: string; signal: string; icon: string | null }
-export type ExtensionDeveloperStatus = { enabled: boolean; loaded: DeveloperExtension[] }
+export type ExtensionDeveloperStatus = { enabled: boolean; loaded: DeveloperExtension[]; lab_count: number }
 /**
  * [GRAIN] Whether Extension Mode can recommend, and how well
  * (`docs/Extensions V1/PLAN.md` §5).

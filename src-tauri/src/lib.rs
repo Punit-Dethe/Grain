@@ -41,6 +41,7 @@ mod events_server; // [GRAIN] local WebSocket event transport to the pill
 mod extension_companion; // [GRAIN] developer-only native companion process supervisor (Phase 4)
 mod extension_host; // [GRAIN] extension worker lifecycle (SPEC 3.1) — supervisor, activation, reaper
 mod extension_icons; // [GRAIN] verified master icon -> installed 64px recommendation asset
+mod extension_lab; // [GRAIN] debug-only real-runtime recommendation corpus
 mod extension_misroutes; // [GRAIN] bounded decline counters -> conservative topical rerank
 mod extension_session; // [GRAIN] host-owned extension recording modes + bounded slow stage (Phase 4)
 mod extension_shortcuts; // [GRAIN] contributed global shortcuts, namespaced `ext:<id>:<sid>` (SPEC 3.3)
@@ -1026,6 +1027,8 @@ pub fn run(cli_args: CliArgs) {
             grain_commands::extension_set_developer_mode,
             grain_commands::extension_load_unpacked,
             grain_commands::extension_unload_dev,
+            grain_commands::extension_recommendation_lab_install,
+            grain_commands::extension_recommendation_lab_remove,
             grain_commands::extension_grant,
             grain_auth::extension_auth_connections,
             grain_auth::extension_auth_connect,

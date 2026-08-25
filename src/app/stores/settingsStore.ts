@@ -211,6 +211,10 @@ const settingUpdaters: {
   app_language: (value) => commands.changeAppLanguageSetting(value as string),
   experimental_enabled: (value) =>
     commands.changeExperimentalEnabledSetting(value as boolean),
+  auto_send_enabled: async (value) => {
+    const result = await commands.changeAutoSendSetting(value as boolean);
+    if (result.status === "error") throw new Error(result.error);
+  },
   lazy_stream_close: (value) =>
     commands.changeLazyStreamCloseSetting(value as boolean),
   show_tray_icon: (value) =>
