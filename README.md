@@ -1,7 +1,7 @@
 <div align="center">
   <img src="src-tauri/icons/128x128.png" alt="Grain logo" width="128" height="128" />
   <h1>Grain</h1>
-  <p><strong>Local, low-RAM speech-to-text with near-batch accuracy at sub-second delay.</strong></p>
+  <p><strong>Voice operating layer</strong></p>
   <p>
     <a href="https://github.com/Punit-Dethe/Grain/releases">Download</a> ·
     <a href="BUILD.md">Build from source</a> ·
