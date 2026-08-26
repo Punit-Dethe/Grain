@@ -1663,8 +1663,7 @@ fn reap_idle() {
         None => return,
     };
     for id in host.workers.idle_victims(now_secs(), IDLE_REAP_SECS) {
-        if crate::extension_session::is_owned_by(&id)
-            || crate::extension_view::owns_extension(&id)
+        if crate::extension_session::is_owned_by(&id) || crate::extension_view::owns_extension(&id)
         {
             continue;
         }
@@ -2037,9 +2036,7 @@ fn parse_surface_outcome(value: Value, finish_on_empty: bool) -> SurfaceEventOut
                     SurfaceEventOutcome::Failed(format!("invalid extension view: {reason}"))
                 }
             },
-            Err(error) => {
-                SurfaceEventOutcome::Failed(format!("invalid extension view: {error}"))
-            }
+            Err(error) => SurfaceEventOutcome::Failed(format!("invalid extension view: {error}")),
         };
     }
     if let Some(error) = value.get("error").and_then(Value::as_str) {

@@ -387,8 +387,9 @@ impl ShortcutAction for ExtensionModeAction {
                 crate::bridge::emit(
                     app,
                     DaemonEvent::ModelError {
-                        error: "Install a searchable extension in Extensions to use Extension Mode."
-                            .into(),
+                        error:
+                            "Install a searchable extension in Extensions to use Extension Mode."
+                                .into(),
                     },
                 );
             }

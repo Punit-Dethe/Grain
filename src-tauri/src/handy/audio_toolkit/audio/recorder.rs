@@ -228,8 +228,7 @@ impl AudioRecorder {
 
         // [GRAIN] The callback must never block, but an unbounded channel lets
         // recorder-consumer stalls turn directly into unbounded PCM memory.
-        let (sample_tx, sample_rx) =
-            mpsc::sync_channel::<AudioChunk>(MAX_PENDING_CAPTURE_CHUNKS);
+        let (sample_tx, sample_rx) = mpsc::sync_channel::<AudioChunk>(MAX_PENDING_CAPTURE_CHUNKS);
         let (cmd_tx, cmd_rx) = mpsc::channel::<Cmd>();
         let (init_tx, init_rx) = mpsc::sync_channel::<Result<(), String>>(1);
 
@@ -902,7 +901,7 @@ fn run_consumer(
     conditioning: Arc<AtomicBool>,          // [GRAIN] live toggle
     recorded_len: Arc<AtomicUsize>,         // [GRAIN] Prompt Record split mark
     stop_flag: Arc<AtomicBool>,
-    capture_overflow: Arc<AtomicBool>,      // [GRAIN] bounded capture queue state
+    capture_overflow: Arc<AtomicBool>, // [GRAIN] bounded capture queue state
     stream_running_at: Instant,
 ) {
     let mut frame_resampler = FrameResampler::new(

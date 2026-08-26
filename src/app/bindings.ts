@@ -7,7 +7,7 @@
 export const commands = {
 /**
  * Is there a newer release?
- *
+ * 
  * `force` is the manual "Check now" button: it bypasses `update_checks_enabled`
  * because the user just asked, in person. The automatic check on launch passes
  * `false` and stays silent when the setting is off.
@@ -1495,6 +1495,30 @@ async extensionGrant(id: string, permissions: string[]) : Promise<Result<null, s
     else return { status: "error", error: e  as any };
 }
 },
+async extensionAuthConnections(id: string) : Promise<Result<AuthConnection[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("extension_auth_connections", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async extensionAuthConnect(id: string, authId: string) : Promise<Result<AuthConnection, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("extension_auth_connect", { id, authId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async extensionAuthDisconnect(id: string, authId: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("extension_auth_disconnect", { id, authId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 /**
  * Record the user's answer to a slot takeover prompt (SPEC §3.2). Hands `slot`
  * to `id` and disables whoever held it, in one step — the counterpart to
@@ -1602,10 +1626,9 @@ async extensionShortcutsStatus(id: string) : Promise<ShortcutStatus[]> {
  * [GRAIN] Start or stop listening for a request
  * (`docs/Extensions V1/PLAN.md` §3).
  * 
- * The extension surface's own trigger calls this; **Grain registers no
- * shortcut for it here**. What the design depends on is only that the user's
- * intent was unambiguous by the time audio started, and the trigger mechanism
- * is decided separately.
+ * Grain's persisted `extension_mode` binding is the normal trigger. This
+ * command remains the trusted-surface seam for the same start/stop/cancel
+ * lifecycle; it does not create a second recording implementation.
  * 
  * One command for all three transitions rather than three, because the
  * invoke-handler list lives in the Handy-derived `lib.rs` and every entry is a
@@ -1646,7 +1669,7 @@ async grainExtensionModeStatus() : Promise<ExtensionModeStatus> {
  * [GRAIN] Download the understanding model for Extension Mode
  * (`docs/Extensions V1/PLAN.md` §5). The first-use offer calls this after the
  * user consents; progress and completion arrive on the shared model events.
- *
+ * 
  * Deliberately NOT gated on Grain Space being enabled — the model belongs to
  * neither feature, it is a shared resource, and either feature may be the one
  * that first needs it. Reuses the same download so a second copy is never
@@ -1782,6 +1805,19 @@ async extensionViewEvent(sessionId: number, event: ExtensionViewEvent) : Promise
 async extensionViewCopy(sessionId: number) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("extension_view_copy", { sessionId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Insert a successful finite result back into the app Extension Mode was
+ * started from. Replace is exposed only when Grain observed a non-empty text
+ * selection at capture; Insert collapses that selection to its trailing edge.
+ */
+async extensionViewOutput(sessionId: number, action: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("extension_view_output", { sessionId, action }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2849,7 +2885,7 @@ stt_api_keys?: SecretMap;
  * [GRAIN] Local date (YYYY-MM-DD) the STT daily quotas were last reset on.
  * When today differs, quotas roll back to 0 (checked lazily at routing time).
  */
-stt_quota_reset_date?: string; post_process_models?: Partial<{ [key in string]: string }>; post_process_prompts?: LLMPrompt[]; post_process_selected_prompt_id?: string | null; mute_while_recording?: boolean; append_trailing_space?: boolean;
+stt_quota_reset_date?: string; post_process_models?: Partial<{ [key in string]: string }>; post_process_prompts?: LLMPrompt[]; post_process_selected_prompt_id?: string | null; mute_while_recording?: boolean; append_trailing_space?: boolean; 
 /**
  * [GRAIN] Extension Mode Auto-send (`docs/Extensions V1/PLAN.md` §5). The
  * global opt-in, **off by default** and beta-gated (only active while
@@ -2857,14 +2893,14 @@ stt_quota_reset_date?: string; post_process_models?: Partial<{ [key in string]: 
  * author-eligible extension is handed over without a chooser — and a Notice
  * says so afterwards. Never fires on a name match.
  */
-auto_send_enabled?: boolean;
+auto_send_enabled?: boolean; 
 /**
  * [GRAIN] Extensions the user has switched Auto-send OFF for individually.
  * The user may only make Auto-send *stricter* than the author allows —
  * disabling one an author marked eligible — never enable one the author
  * excluded, so this is a deny-list, not an allow-list.
  */
-auto_send_disabled?: string[]; app_language?: string; experimental_enabled?: boolean; lazy_stream_close?: boolean; keyboard_implementation?: KeyboardImplementation; show_tray_icon?: boolean; paste_delay_ms?: number;
+auto_send_disabled?: string[]; app_language?: string; experimental_enabled?: boolean; lazy_stream_close?: boolean; keyboard_implementation?: KeyboardImplementation; show_tray_icon?: boolean; paste_delay_ms?: number; 
 /**
  * Debug-gated ("beta") receipt-sequenced paste: restore the clipboard only
  * after the target app actually reads the transcript, instead of after a
@@ -3090,6 +3126,15 @@ grain_space_vault_path?: string;
  */
 grain_space_vault_folder?: string }
 export type AudioDevice = { index: string; name: string; is_default: boolean }
+export type AuthConnection = { id: string; provider_name: string; authorization_host: string; token_host: string; scopes: string[]; api_hosts: string[]; connection_id: string; 
+/**
+ * `connected` | `needs_reauthorization` | `expired` | `disconnected` | `unavailable`
+ */
+state: string; granted_scopes: string[]; 
+/**
+ * Unix seconds, sent as a string to avoid JS integer loss.
+ */
+expires_at: string | null }
 export type AutoSubmitKey = "enter" | "ctrl_enter" | "cmd_enter"
 export type AvailableAccelerators = { transcribe: string[]; gpu_devices: GpuDeviceOption[] }
 export type BindingResponse = { success: boolean; binding: ShortcutBinding | null; error: string | null }
@@ -3195,7 +3240,7 @@ name: string;
 url_host: string | null }
 export type DeveloperExtension = { id: string; path: string }
 export type EmbedModelStatus = "ready" | "downloading" | "absent"
-export type EngineType =
+export type EngineType = 
 /**
  * Any GGML/GGUF model loaded through transcribe-cpp (Whisper, Parakeet,
  * Voxtral, Qwen3-ASR, Nemotron, …). The architecture is auto-detected from
@@ -3207,12 +3252,11 @@ export type EngineType =
  * state to core settings flags (manifest-first, PLAN.md D4); installed packs
  * read the registry.
  */
-export type ExtensionCard = { id: string; name: string; description: string;
+export type ExtensionCard = { id: string; name: string; description: string; 
 /**
  * Grain-derived 128² PNG for settings. Never the resident 512² master.
  */
-icon: string | null;
-version: string;
+icon: string | null; version: string; 
 /**
  * "pack" | "scripted" | "native"
  */
@@ -3290,7 +3334,7 @@ recommend: RecommendInfo | null;
  * a capability governs *reach* and this governs *cost*, and hiding the
  * second is how a lightweight-looking install turns out not to be.
  */
-needs: string[];
+needs: string[]; 
 /**
  * The author permits Auto-send and explains why. The user's setting can
  * only remove this eligibility, never grant it to another extension.
@@ -3307,12 +3351,12 @@ export type ExtensionDeveloperStatus = { enabled: boolean; loaded: DeveloperExte
  * uses, so a copy downloaded for either serves both — this reports its presence
  * without requiring Grain Space to be enabled.
  */
-export type ExtensionModeStatus = {
+export type ExtensionModeStatus = { 
 /**
  * Searchable, approved extensions installed. Zero means Extension Mode has
  * nothing to rank and the download is not worth offering.
  */
-searchable_count: number;
+searchable_count: number; 
 /**
  * `"ready" | "downloading" | "absent"`. `absent` is name-only mode (§5):
  * Extension Mode still works on names, and first use is where the download
@@ -3323,7 +3367,7 @@ model: string }
  * [GRAIN] Extension Mode ranked a captured request
  * (`docs/Extensions V1/PLAN.md` §3, §6b). The surface (behind the design gate)
  * consumes this; the backend emits it and draws nothing.
- *
+ * 
  * One event covers every outcome the surface must distinguish, because they are
  * one state machine, not several: an EMPTY `candidates` is the "nothing matched"
  * state — a real state, not an error — and `name_only` says the topical leg
@@ -3331,27 +3375,27 @@ model: string }
  * the verbatim `request` is deliberate: it is what would be handed to the
  * accepted extension, so the surface must hold it, not reconstruct it.
  */
-export type ExtensionRecommendation = {
+export type ExtensionRecommendation = { 
 /**
  * Opaque presentation nonce. Accept/decline must echo it so delayed UI
  * input cannot act on a newer request with the same extension id or text.
  * Zero only for an Auto-send notice, which has no chooser actions.
  */
-presentation_id: number;
+presentation_id: number; 
 /**
  * What the user said, verbatim. The payload a hand-off would carry.
  */
-request: string;
+request: string; 
 /**
  * Best first. Empty is "nothing matched".
  */
-candidates: RecommendationCandidate[];
+candidates: RecommendationCandidate[]; 
 /**
  * The topical leg did not run (model absent): only names could match, and
  * the surface may offer the download. Named candidates still populate the
  * list.
  */
-name_only: boolean;
+name_only: boolean; 
 /**
  * [GRAIN] Set to the extension id when Auto-send fired (§5): Grain already
  * handed the request over, so the surface shows a **Notice** naming it
@@ -3425,7 +3469,7 @@ export type ExtensionSettingsSection = { id: string; name: string; rows: Extensi
 export type ExtensionView = { version?: number; title: string; description?: string | null; root: ViewNode; actions?: ViewAction[] }
 export type ExtensionViewContent = { kind: "view"; view: ExtensionView } | { kind: "result"; message: string; tone: ResultTone; can_insert: boolean; can_replace: boolean }
 export type ExtensionViewEvent = { kind: "change"; target: string; value: ViewValue; values?: Partial<{ [key in string]: ViewValue }> } | { kind: "submit"; target: string; values?: Partial<{ [key in string]: ViewValue }> } | { kind: "cancel" }
-export type ExtensionViewEventResult = {
+export type ExtensionViewEventResult = { 
 /**
  * A `change` handler that returns nothing keeps the user's local field
  * state instead of rehydrating the author tree's original defaults.
@@ -3717,11 +3761,11 @@ export type PpPoolView = { smart_rotation: boolean; providers: PostProcessProvid
  * drifting apart would mean the user approved one wording and can later only
  * review another.
  */
-export type PromptLayerInfo = { id: string;
+export type PromptLayerInfo = { id: string; 
 /**
  * `additive` | `main` | `context`.
  */
-target: string;
+target: string; 
 /**
  * The instruction, verbatim. Never summarised anywhere it is displayed.
  */
@@ -3733,7 +3777,7 @@ everywhere: boolean; app: string[]; website: string[]; category: string[] }
 /**
  * [GRAIN] The recommendation surface an extension declares
  * (`docs/Extensions V1/PLAN.md` §3.1).
- *
+ * 
  * Carried whole rather than pre-formatted: `purpose` is a plain line anyone
  * can read, while `examples` are the greedy-declaration surface store review
  * has to see (G3). Whether the in-app card renders the examples is a UI
@@ -3744,12 +3788,12 @@ export type RecommendInfo = { purpose: string; examples: string[]; aliases: stri
 /**
  * One extension Extension Mode would offer, enriched for display.
  */
-export type RecommendationCandidate = { extension_id: string;
+export type RecommendationCandidate = { extension_id: string; 
 /**
  * The display name and the one-line purpose, so the surface reads without a
  * second round-trip for each row.
  */
-name: string; purpose: string;
+name: string; purpose: string; 
 /**
  * `"named" | "topical"`. The surface may present a named hit differently
  * (the user said it outright), and Auto-send later reads this to refuse
