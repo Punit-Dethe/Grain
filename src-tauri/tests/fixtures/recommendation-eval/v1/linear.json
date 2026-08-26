@@ -1,0 +1,21 @@
+{
+  "id": "com.grain.linear",
+  "name": "Linear",
+  "version": "1.0.0",
+  "grainApi": "1",
+  "tier": "scripted",
+  "kind": "searchable",
+  "description": "Manage product issues, cycles, projects, and team backlogs.",
+  "recommend": {
+    "purpose": "Manage Linear issues, cycles, projects, assignments, and backlogs",
+    "examples": [
+      "create a product issue for the team",
+      "show the current sprint backlog",
+      "move this ticket to done",
+      "assign the issue to the platform team",
+      "add this work to the next cycle"
+    ],
+    "aliases": [],
+    "entities": ["issue", "cycle", "project", "assignee", "backlog"]
+  }
+}

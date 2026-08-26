@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "mode": "recommendation",
+  "corpus": "rq0-name-only-smoke-v1",
+  "extensions": [
+    { "manifest": "github.json" },
+    { "manifest": "linear.json" },
+    { "manifest": "spotify.json" },
+    { "manifest": "youtube-music.json" },
+    { "manifest": "deepl.json" }
+  ],
+  "cases": [
+    { "said": "open GitHub", "expect": "com.grain.github", "slices": ["named"] },
+    { "said": "show Linear", "expect": "com.grain.linear", "slices": ["named"] },
+    { "said": "play Spotify", "expect": "com.grain.spotify", "slices": ["named"] },
+    { "said": "open YouTube Music", "expect": "com.grain.youtube-music", "slices": ["named"] },
+    { "said": "use DeepL", "expect": "com.grain.deepl", "slices": ["named"] },
+    { "said": "what is the weather", "expect": "none", "slices": ["none"] }
+  ],
+  "thresholds": [0.5, 0.7, 0.9],
+  "semanticMode": "disabled"
+}

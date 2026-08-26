@@ -1,0 +1,25 @@
+{
+  "id": "com.grain.youtube-music",
+  "name": "YouTube Music",
+  "version": "1.0.0",
+  "grainApi": "1",
+  "tier": "scripted",
+  "kind": "searchable",
+  "description": "Play songs, videos, live performances, and mixes.",
+  "recommend": {
+    "purpose": "Play and control songs, music videos, live performances, and mixes on YouTube Music",
+    "examples": [
+      "play the official music video",
+      "start my video music mix",
+      "find a live concert performance",
+      "skip this video track",
+      "play my liked songs playlist"
+    ],
+    "aliases": ["you tube music", "YT music"],
+    "entities": ["song", "music video", "live performance", "mix", "playlist"]
+  },
+  "autoSend": {
+    "eligible": true,
+    "note": "Playback controls are reversible and never publish user content."
+  }
+}

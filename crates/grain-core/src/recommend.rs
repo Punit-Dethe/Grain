@@ -36,10 +36,9 @@ use crate::action_router::{normalise, same_word, tokens};
 #[derive(Clone, Debug)]
 pub struct IndexedRecommendation {
     pub extension_id: String,
-    /// Declared aliases, normalised and tokenised at build. These, not the
-    /// display name, are the name-detection surface: an author curates them, and
-    /// `doctor` warns when one is really an ordinary verb. Using the display
-    /// name would fire "Voice Actions" on "show me my actions".
+    /// The manifest name plus declared spoken aliases, normalised and tokenised
+    /// at build. Names are part of the contract's implicit address surface;
+    /// aliases add reviewed pronunciations or nicknames.
     aliases: Vec<Vec<String>>,
 }
 
@@ -47,21 +46,35 @@ impl IndexedRecommendation {
     /// Build from a declared alias list. Empty and whitespace aliases are
     /// dropped rather than matched (an empty alias would match every request).
     pub fn new(extension_id: impl Into<String>, aliases: &[String]) -> Self {
-        let aliases = aliases
-            .iter()
-            .map(|alias| {
-                normalise(alias)
-                    .split(' ')
-                    .filter(|t| !t.is_empty())
-                    .map(str::to_string)
-                    .collect::<Vec<_>>()
-            })
-            .filter(|words| !words.is_empty())
-            .collect();
+        let mut normalised_aliases = Vec::with_capacity(aliases.len());
+        for alias in aliases {
+            let words = normalise(alias)
+                .split(' ')
+                .filter(|token| !token.is_empty())
+                .map(str::to_string)
+                .collect::<Vec<_>>();
+            if !words.is_empty() && !normalised_aliases.contains(&words) {
+                normalised_aliases.push(words);
+            }
+        }
         IndexedRecommendation {
             extension_id: extension_id.into(),
-            aliases,
+            aliases: normalised_aliases,
         }
+    }
+
+    /// Build the production name-detection surface. `manifest.name` is an
+    /// implicit alias by contract, so the host and the eval harness must never
+    /// construct recommendation indexes differently here.
+    pub fn with_name(
+        extension_id: impl Into<String>,
+        name: &str,
+        declared_aliases: &[String],
+    ) -> Self {
+        let mut aliases = Vec::with_capacity(declared_aliases.len() + 1);
+        aliases.push(name.to_string());
+        aliases.extend(declared_aliases.iter().cloned());
+        Self::new(extension_id, &aliases)
     }
 }
 
@@ -281,6 +294,20 @@ mod tests {
             out[0].score > out[1].score,
             "a named extension outranks a topical one however strong the topic"
         );
+    }
+
+    #[test]
+    fn manifest_name_is_an_implicit_alias() {
+        let recs = [IndexedRecommendation::with_name(
+            "github",
+            "GitHub",
+            &["github".to_string()],
+        )];
+        assert_eq!(recs[0].aliases.len(), 1);
+        let out = rank(&recs, "could you open github", None, &[]);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].extension_id, "github");
+        assert_eq!(out[0].signal, Signal::Named);
     }
 
     #[test]

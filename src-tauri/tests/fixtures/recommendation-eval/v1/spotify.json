@@ -1,0 +1,25 @@
+{
+  "id": "com.grain.spotify",
+  "name": "Spotify",
+  "version": "1.0.0",
+  "grainApi": "1",
+  "tier": "scripted",
+  "kind": "searchable",
+  "description": "Play and control music in Spotify.",
+  "recommend": {
+    "purpose": "Play and control songs, albums, artists, and playlists on Spotify",
+    "examples": [
+      "play my daily music mix",
+      "pause the current song",
+      "continue playing the album",
+      "skip to another track",
+      "put on a playlist by this artist"
+    ],
+    "aliases": ["spot if I", "spotty fi"],
+    "entities": ["song", "album", "artist", "playlist", "track"]
+  },
+  "autoSend": {
+    "eligible": true,
+    "note": "Playback controls are reversible and never publish user content."
+  }
+}

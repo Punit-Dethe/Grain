@@ -1,0 +1,21 @@
+{
+  "id": "com.grain.github",
+  "name": "GitHub",
+  "version": "1.0.0",
+  "grainApi": "1",
+  "tier": "scripted",
+  "kind": "searchable",
+  "description": "Work with repositories, pull requests, checks, and issues.",
+  "recommend": {
+    "purpose": "Manage GitHub repositories, pull requests, checks, and code issues",
+    "examples": [
+      "create a pull request for this branch",
+      "show the failed workflow run",
+      "review the changes in this repository",
+      "merge the approved pull request",
+      "open the repository issue"
+    ],
+    "aliases": ["git hub", "get hub"],
+    "entities": ["repository", "pull request", "workflow", "commit", "issue"]
+  }
+}

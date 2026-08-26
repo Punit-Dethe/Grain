@@ -49,6 +49,12 @@ pub(crate) mod action_session;
 #[path = "grain_eval.rs"]
 pub(crate) mod eval;
 
+/// [GRAIN] Cross-extension recommendation mode for the same headless eval
+/// command. Kept beside `eval` because it loads whole extension pools while the
+/// original module continues to evaluate one extension's private commands.
+#[path = "grain_recommend_eval.rs"]
+pub(crate) mod recommend_eval;
+
 /// Monotonic id for the current recording session (pill events).
 pub(crate) static SESSION_ID: AtomicU64 = AtomicU64::new(0);
 

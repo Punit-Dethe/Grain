@@ -224,9 +224,7 @@ mod tests {
         let worker = ClientIdentity {
             id: "com.example.transcriber".into(),
             role: ClientRole::Worker,
-            caps: CapabilitySet::Named(
-                ["events:transcripts".to_string()].into_iter().collect(),
-            ),
+            caps: CapabilitySet::Named(["events:transcripts".to_string()].into_iter().collect()),
         };
         let pill = ClientIdentity {
             id: "pill".into(),

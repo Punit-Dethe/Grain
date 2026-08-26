@@ -183,4 +183,3 @@ fn deferred_unregister(app: &AppHandle, id: &str, key: &str) {
         let _ = crate::shortcut::unregister_shortcut(&app, binding);
     });
 }
-
