@@ -386,17 +386,28 @@ impl CapabilityIndex {
             .collect();
 
         // 2. Exact tier: a spoken address is near-certain and promoted whole.
-        let mut exact: Vec<(usize, usize)> = Vec::new(); // (position, matched run length)
+        //
+        // Naming an *extension* ("github", "spotify") makes every one of its
+        // actions an exact hit tied at run length 1. The action words in the same
+        // request ("create an issue") must still choose among them, so ties break
+        // on the lexical score, not alphabetically — otherwise "create an issue on
+        // github" would sort `github.close_issue` first for no reason but its id.
+        let mut exact: Vec<(usize, usize, f32)> = Vec::new(); // (position, run length, lexical tiebreak)
         let mut exact_ids: HashSet<usize> = HashSet::new();
         for &position in &candidates {
             if let Some(run_len) = longest_exact_run(&self.docs[position].exact_runs, &query_tokens) {
-                exact.push((position, run_len));
+                let tiebreak = self
+                    .lexical_score(&self.docs[position], &query_tokens, params.source)
+                    .unwrap_or(0.0);
+                exact.push((position, run_len, tiebreak));
                 exact_ids.insert(position);
             }
         }
-        // Most specific naming first; deterministic on ties.
+        // Most specific naming first, then the strongest action-word evidence;
+        // canonical id only as a final deterministic fallback.
         exact.sort_by(|a, b| {
             b.1.cmp(&a.1)
+                .then(b.2.total_cmp(&a.2))
                 .then_with(|| self.docs[a.0].input.canonical_id.cmp(&self.docs[b.0].input.canonical_id))
         });
 
@@ -467,11 +478,13 @@ impl CapabilityIndex {
         //    remainder, truncated to K. `truncated` is how many eligible matches
         //    did not make the cut — a flood signal for the benchmark.
         let mut entries: Vec<Retrieved> = Vec::with_capacity(params.k);
-        for (position, run_len) in exact {
+        for (position, run_len, tiebreak) in exact {
+            // Run length dominates; the lexical tiebreak orders within a run
+            // length; all stay far above any fused score.
             entries.push(self.retrieved(
                 position,
                 Provenance::Exact,
-                EXACT_SCORE_BASE + run_len as f32,
+                EXACT_SCORE_BASE + 100.0 * run_len as f32 + tiebreak,
                 None,
                 None,
             ));

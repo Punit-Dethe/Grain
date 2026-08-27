@@ -1,0 +1,194 @@
+{
+  "_comment": [
+    "Frozen benchmark corpus for Capability Index V2 retrieval",
+    "(docs/Extensions 2.0/PLAN.md 7.5). Mid-scale: ~11 extensions, ~40 actions.",
+    "Deliberately adversarial across slices: exact naming, paraphrase, ASR",
+    "substitutions, near-neighbour actions within one extension and across two,",
+    "multi-intent/incidental speech, requests nothing should serve, and actions",
+    "withheld by auth. Runs lexical-only in the checked-in test; feed real dense",
+    "scores to compare the hybrid path. canonical id = <namespace>.<action_id>,",
+    "namespace = last dotted segment of the extension id."
+  ],
+  "extensions": [
+    {
+      "id": "com.grain.spotify",
+      "name": "Spotify",
+      "aliases": ["spotify"],
+      "purpose": "Play and control music on Spotify",
+      "entities": ["artist", "playlist", "track"],
+      "actions": [
+        { "id": "play", "title": "Play music", "examples": ["put on some jazz", "play some music", "start the music"], "utterances": ["play {artist}"] },
+        { "id": "pause", "title": "Pause playback", "examples": ["pause the music", "stop the music for a second"], "utterances": ["pause"] },
+        { "id": "next", "title": "Skip to the next track", "examples": ["skip this song", "next track please"], "utterances": ["skip this", "next song"] },
+        { "id": "previous", "title": "Go to the previous track", "examples": ["go back a song", "play the previous track"], "utterances": ["previous song"] },
+        { "id": "like", "title": "Like the current song", "examples": ["save this song", "add this to my liked songs"] },
+        { "id": "add_to_playlist", "title": "Add the song to a playlist", "examples": ["add this to my workout playlist"], "params": ["playlist"] }
+      ]
+    },
+    {
+      "id": "com.grain.applemusic",
+      "name": "Apple Music",
+      "aliases": ["apple music"],
+      "purpose": "Play and control music on Apple Music",
+      "entities": ["artist"],
+      "actions": [
+        { "id": "play", "title": "Play music", "examples": ["put on some jazz", "play some music"] },
+        { "id": "pause", "title": "Pause playback", "examples": ["pause the music"] },
+        { "id": "next", "title": "Skip to the next track", "examples": ["skip this song"] }
+      ]
+    },
+    {
+      "id": "com.grain.github",
+      "name": "GitHub",
+      "aliases": ["github"],
+      "purpose": "Work with GitHub repositories, issues, and pull requests",
+      "entities": ["repository", "issue", "pull request"],
+      "actions": [
+        { "id": "create_issue", "title": "Create an issue", "examples": ["file a bug report", "open an issue", "report a bug"] },
+        { "id": "close_issue", "title": "Close an issue", "examples": ["close this issue", "mark the issue as done"] },
+        { "id": "create_pr", "title": "Open a pull request", "examples": ["open a pull request", "create a pr"] },
+        { "id": "list_prs", "title": "List open pull requests", "examples": ["show my open pull requests", "what prs are open"] },
+        { "id": "star_repo", "title": "Star a repository", "examples": ["star this repo"] }
+      ]
+    },
+    {
+      "id": "com.grain.linear",
+      "name": "Linear",
+      "aliases": ["linear"],
+      "purpose": "Track issues and tasks in Linear",
+      "entities": ["issue", "team"],
+      "actions": [
+        { "id": "create_issue", "title": "Create an issue", "examples": ["file a bug", "create a ticket", "open an issue"] },
+        { "id": "assign_issue", "title": "Assign an issue", "examples": ["assign this to me"] },
+        { "id": "set_status", "title": "Set the issue status", "examples": ["mark this in progress", "move this to done"] }
+      ]
+    },
+    {
+      "id": "com.grain.gcal",
+      "name": "Google Calendar",
+      "aliases": ["calendar", "google calendar"],
+      "purpose": "Manage events on your calendar",
+      "entities": ["event"],
+      "actions": [
+        { "id": "create_event", "title": "Create a calendar event", "examples": ["schedule a meeting for tomorrow", "put an event on my calendar", "book a meeting"] },
+        { "id": "list_events", "title": "List calendar events", "examples": ["what's on my calendar", "show my schedule today"] },
+        { "id": "delete_event", "title": "Delete a calendar event", "examples": ["cancel my three pm", "remove this meeting"], "whenNotToUse": "create schedule add book" },
+        { "id": "find_free", "title": "Find a free slot", "examples": ["when am i free tomorrow", "find a free slot this afternoon"] }
+      ]
+    },
+    {
+      "id": "com.grain.slack",
+      "name": "Slack",
+      "aliases": ["slack"],
+      "purpose": "Send messages and manage channels in Slack",
+      "entities": ["channel", "person"],
+      "actions": [
+        { "id": "send_message", "title": "Send a Slack message", "examples": ["message the team on slack", "send a slack to jack"] },
+        { "id": "set_status", "title": "Set your Slack status", "examples": ["set my slack status to away"] },
+        { "id": "create_channel", "title": "Create a Slack channel", "examples": ["make a new channel"] }
+      ]
+    },
+    {
+      "id": "com.grain.gmail",
+      "name": "Gmail",
+      "aliases": ["gmail", "mail"],
+      "purpose": "Read and send email in Gmail",
+      "entities": ["email", "contact"],
+      "actions": [
+        { "id": "send_email", "title": "Send an email", "examples": ["email sarah about the report", "send an email to the team"] },
+        { "id": "archive", "title": "Archive an email", "examples": ["archive this thread", "archive this email"], "whenNotToUse": "delete trash remove permanently" },
+        { "id": "search_mail", "title": "Search your mail", "examples": ["find emails from sarah", "search my inbox for the invoice"] },
+        { "id": "mark_read", "title": "Mark as read", "examples": ["mark this as read"] }
+      ]
+    },
+    {
+      "id": "com.grain.notion",
+      "name": "Notion",
+      "aliases": ["notion"],
+      "purpose": "Capture and find notes in Notion",
+      "entities": ["page"],
+      "actions": [
+        { "id": "create_page", "title": "Create a page", "examples": ["make a note about the meeting", "create a new page", "jot down an idea"] },
+        { "id": "search_pages", "title": "Search pages", "examples": ["find my notes about onboarding", "search notion"] }
+      ]
+    },
+    {
+      "id": "com.grain.weather",
+      "name": "Weather",
+      "aliases": ["weather"],
+      "purpose": "Check the weather and forecast",
+      "entities": ["location"],
+      "actions": [
+        { "id": "today", "title": "Current weather", "examples": ["what's the weather", "is it raining right now"] },
+        { "id": "forecast", "title": "Weather forecast", "examples": ["what's the forecast", "will it rain tomorrow"] }
+      ]
+    },
+    {
+      "id": "com.grain.timer",
+      "name": "Timer",
+      "aliases": ["timer"],
+      "purpose": "Set and manage countdown timers",
+      "entities": ["duration"],
+      "actions": [
+        { "id": "start", "title": "Start a timer", "examples": ["set a timer for ten minutes", "start a five minute timer"], "params": ["duration"] },
+        { "id": "stop", "title": "Stop the timer", "examples": ["stop the timer", "cancel the timer"] }
+      ]
+    },
+    {
+      "id": "com.grain.colorpicker",
+      "name": "Color Picker",
+      "aliases": ["color picker"],
+      "purpose": "Pick a colour from the screen",
+      "entities": ["colour"],
+      "actions": [
+        { "id": "pick", "title": "Pick a colour", "utterances": ["pick a color", "pick a colour"] }
+      ]
+    }
+  ],
+  "cases": [
+    { "said": "spotify skip this", "expect": ["spotify.next"], "slices": ["exact-name"] },
+    { "said": "on gmail archive this", "expect": ["gmail.archive"], "slices": ["exact-name"] },
+    { "said": "github create an issue", "expect": ["github.create_issue"], "slices": ["exact-name"] },
+    { "said": "spotify next track", "expect": ["spotify.next"], "slices": ["exact-name"] },
+    { "said": "start a timer", "expect": ["timer.start"], "slices": ["exact-name"] },
+    { "said": "pick a color", "expect": ["colorpicker.pick"], "slices": ["exact-name", "launcher-only"] },
+
+    { "said": "put on some jazz", "expect": ["spotify.play", "applemusic.play"], "slices": ["paraphrase", "near-neighbor-cross"] },
+    { "said": "make a note about the meeting", "expect": ["notion.create_page"], "slices": ["paraphrase"] },
+    { "said": "schedule a meeting for tomorrow", "expect": ["gcal.create_event"], "slices": ["paraphrase"] },
+    { "said": "what's on my calendar", "expect": ["gcal.list_events"], "slices": ["paraphrase"] },
+    { "said": "file a bug report", "expect": ["github.create_issue", "linear.create_issue"], "slices": ["paraphrase", "near-neighbor-cross"] },
+    { "said": "email sarah about the report", "expect": ["gmail.send_email"], "slices": ["paraphrase"] },
+    { "said": "what's the weather today", "expect": ["weather.today"], "slices": ["paraphrase"] },
+    { "said": "find a free slot tomorrow", "expect": ["gcal.find_free"], "slices": ["paraphrase"] },
+    { "said": "set a timer for ten minutes", "expect": ["timer.start"], "slices": ["paraphrase"] },
+
+    { "said": "creat an issue on github", "expect": ["github.create_issue"], "slices": ["asr-error"] },
+    { "said": "skit this song", "expect": ["spotify.next", "applemusic.next"], "slices": ["asr-error"] },
+    { "said": "set a timmer for five minutes", "expect": ["timer.start"], "slices": ["asr-error"] },
+    { "said": "archiv this email", "expect": ["gmail.archive"], "slices": ["asr-error"] },
+
+    { "said": "open a pull request", "expect": ["github.create_pr"], "slices": ["near-neighbor-intra"] },
+    { "said": "close this issue", "expect": ["github.close_issue"], "slices": ["near-neighbor-intra"] },
+    { "said": "go back a song", "expect": ["spotify.previous"], "slices": ["near-neighbor-intra"] },
+    { "said": "cancel my three pm", "expect": ["gcal.delete_event"], "slices": ["near-neighbor-intra"] },
+    { "said": "star this repo", "expect": ["github.star_repo"], "slices": ["near-neighbor-intra"] },
+    { "said": "mark this in progress", "expect": ["linear.set_status"], "slices": ["near-neighbor-intra"] },
+
+    { "said": "create an issue", "expect": ["github.create_issue", "linear.create_issue"], "slices": ["near-neighbor-cross"] },
+    { "said": "play some music", "expect": ["spotify.play", "applemusic.play"], "slices": ["near-neighbor-cross"] },
+    { "said": "pause the music", "expect": ["spotify.pause", "applemusic.pause"], "slices": ["near-neighbor-cross"] },
+
+    { "said": "so anyway could you please file a bug on github about the login page", "expect": ["github.create_issue"], "slices": ["incidental"] },
+    { "said": "um can you set a timer for ten minutes please", "expect": ["timer.start"], "slices": ["incidental"] },
+    { "said": "jot down an idea real quick", "expect": ["notion.create_page"], "slices": ["incidental"] },
+
+    { "said": "tell me a joke", "expect": [], "slices": ["no-match"] },
+    { "said": "what is the meaning of life", "expect": [], "slices": ["no-match"] },
+    { "said": "translate this sentence into french", "expect": [], "slices": ["no-match"] },
+    { "said": "how tall is mount everest", "expect": [], "slices": ["no-match"] },
+
+    { "said": "send a message to my coworker about lunch", "expect": [], "authMissing": ["slack.send_message"], "slices": ["unavailable-auth"] },
+    { "said": "put an event on friday for the offsite", "expect": [], "authMissing": ["gcal.create_event"], "slices": ["unavailable-auth"] }
+  ]
+}

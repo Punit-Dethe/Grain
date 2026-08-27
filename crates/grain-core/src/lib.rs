@@ -39,6 +39,11 @@ pub mod action_router;
 // provenance tiers, and host-injected dense scores fused by rank. The embedder
 // stays host-side, exactly as in `recommend`.
 pub mod capability_index;
+// [GRAIN] Capability Index V2 retrieval evaluation (docs/Extensions 2.0/PLAN.md
+// §7.5). Drives the real retriever over a held-out corpus, headless. Headline is
+// eligible Recall@K + fallback-rate + hot-set size — flood, not miss, is the
+// failure. Successor to `recommend_eval` (extension-level).
+pub mod capability_eval;
 // [GRAIN] Recommendation ranking (docs/Extensions V1/PLAN.md §3.1). Which
 // searchable extension should be offered a request. Pure and model-free: the
 // host injects semantic scores, so grain-core carries no embedder.
