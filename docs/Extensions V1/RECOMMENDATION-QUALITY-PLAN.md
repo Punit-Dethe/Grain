@@ -1,5 +1,7 @@
 # Extension Recommendation Quality Plan
 
+> **Architecture transition (2026-08-28):** This is the V1 recommendation baseline. Reuse its corpus and evaluator for Extensions 2.0 action Recall@K, hot-set, and fallback-search testing; do not expand the single-extension routing product model. See `docs/Extensions 2.0/PLAN.md`.
+
 **Status:** research-backed implementation plan
 
 **Date:** 2026-08-25
