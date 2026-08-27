@@ -26,7 +26,7 @@
 
 use std::collections::HashMap;
 
-use crate::action_router::{normalise, same_word, tokens};
+use crate::text::{normalise, same_word, tokens};
 
 /// One searchable extension's recommendation surface, prepared for ranking.
 ///

@@ -23,11 +23,22 @@ pub mod trust;
 pub mod pack;
 // [GRAIN] Phase 5A: install/update/remove transaction + the trust invariant.
 pub mod install;
+// [GRAIN] The ASR-text substrate (normalise/tokens/same_word/fuzzy_keys) shared
+// by every matcher. Extracted from `action_router` so the V2 retriever
+// (`capability_index`) matches speech by exactly the same rules the index files
+// tokens under — the one place that agreement is enforced.
+pub mod text;
 // [GRAIN] Lexical matching, Tier L (docs/Extensions V1/PLAN.md §4). Pure
 // functions over declared text: no model, no state, nothing held between
 // invocations — so the eval harness can drive it without a running app.
 // Under V1 its job is name/alias detection, not topical ranking.
 pub mod action_router;
+// [GRAIN] Capability Index V2 — the schema-projection action retriever
+// (docs/Extensions 2.0/PLAN.md §6–7). Pure and model-free: builds the hot set
+// the Agent selects from, with an eligibility pre-filter, exact/lexical/dense
+// provenance tiers, and host-injected dense scores fused by rank. The embedder
+// stays host-side, exactly as in `recommend`.
+pub mod capability_index;
 // [GRAIN] Recommendation ranking (docs/Extensions V1/PLAN.md §3.1). Which
 // searchable extension should be offered a request. Pure and model-free: the
 // host injects semantic scores, so grain-core carries no embedder.
