@@ -179,6 +179,11 @@
     { "said": "play some music", "expect": ["spotify.play", "applemusic.play"], "slices": ["near-neighbor-cross"] },
     { "said": "pause the music", "expect": ["spotify.pause", "applemusic.pause"], "slices": ["near-neighbor-cross"] },
 
+    { "said": "i'm freezing what should i wear today", "expect": ["weather.today", "weather.forecast"], "slices": ["vocab-mismatch"] },
+    { "said": "capture what we just discussed", "expect": ["notion.create_page"], "slices": ["vocab-mismatch"] },
+    { "said": "i need to get in touch with sarah", "expect": ["gmail.send_email", "slack.send_message"], "slices": ["vocab-mismatch"] },
+    { "said": "wrap up this song and move along", "expect": ["spotify.next", "applemusic.next"], "slices": ["vocab-mismatch"] },
+
     { "said": "so anyway could you please file a bug on github about the login page", "expect": ["github.create_issue"], "slices": ["incidental"] },
     { "said": "um can you set a timer for ten minutes please", "expect": ["timer.start"], "slices": ["incidental"] },
     { "said": "jot down an idea real quick", "expect": ["notion.create_page"], "slices": ["incidental"] },

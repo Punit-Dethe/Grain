@@ -108,9 +108,12 @@ const MAX_DF_FRACTION: f32 = 0.6;
 /// declared title may legitimately contain them). Deliberately small: only words
 /// that are never themselves a command.
 const STOPWORDS: &[&str] = &[
-    "a", "an", "and", "any", "are", "as", "at", "be", "by", "can", "could", "did", "do", "does",
-    "for", "from", "i", "in", "is", "it", "its", "me", "my", "of", "on", "or", "please", "so",
-    "some", "that", "the", "then", "this", "to", "uh", "um", "want", "was", "we", "with", "would",
+    "a", "about", "an", "and", "any", "are", "as", "at", "be", "been", "being", "by", "can",
+    "could", "did", "do", "does", "for", "from", "had", "has", "have", "he", "her", "hers", "him",
+    "his", "how", "i", "if", "in", "is", "it", "its", "just", "me", "might", "must", "my", "of",
+    "on", "or", "our", "ours", "please", "shall", "she", "should", "so", "some", "than", "that",
+    "the", "them", "then", "they", "this", "to", "too", "uh", "um", "us", "very", "want", "was",
+    "we", "what", "whats", "when", "where", "which", "who", "whom", "why", "will", "with", "would",
     "you", "your",
 ];
 
