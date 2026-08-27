@@ -453,6 +453,12 @@ struct Index {
     /// the user's per-extension deny-list are applied at decision time, because
     /// those change without an index rebuild.
     auto_send_eligible: std::collections::HashSet<String>,
+    /// [GRAIN] Capability Index V2 (`docs/Extensions 2.0/PLAN.md` §6): the
+    /// schema-projection action retriever, built from the same installed
+    /// manifests as `actions` above and on the same rebuild trigger — never on a
+    /// hot path (§11.2). Pure metadata memory; no worker. Consumed by the Agent
+    /// tool loop in a later Phase 2B pass.
+    capability: grain_core::capability_index::CapabilityIndex,
 }
 
 /// An enabled extension's prompt layer, compiled for matching.
@@ -482,6 +488,9 @@ static HAS_ACTIONS: AtomicBool = AtomicBool::new(false);
 /// And for the Extension Mode pool: with nothing searchable installed, the
 /// recommendation path is one relaxed load and never touches the index.
 static HAS_RECOMMENDATIONS: AtomicBool = AtomicBool::new(false);
+/// [GRAIN] And for the V2 capability index (`docs/Extensions 2.0`): one relaxed
+/// load when nothing installed declares an action.
+static HAS_CAPABILITY_ACTIONS: AtomicBool = AtomicBool::new(false);
 
 /// [GRAIN] Cached example embeddings for the semantic leg of recommendation
 /// (`docs/Extensions V1/PLAN.md` §3.1). Held outside [`Index`] and behind its
@@ -531,6 +540,7 @@ pub fn refresh_index(app: &AppHandle) {
     let mut transforms: Vec<(String, u64)> = Vec::new();
     let mut prompt_layers: Vec<(CompiledPromptLayer, u64)> = Vec::new();
     let mut actions: Vec<grain_core::action_router::IndexedAction> = Vec::new();
+    let mut capability_inputs: Vec<grain_core::capability_index::ActionInput> = Vec::new();
     let mut recommendations: Vec<grain_core::recommend::IndexedRecommendation> = Vec::new();
     let mut recommend_examples: Vec<(String, Vec<String>)> = Vec::new();
     let mut auto_send_eligible: std::collections::HashSet<String> =
@@ -556,6 +566,12 @@ pub fn refresh_index(app: &AppHandle) {
             // Actions ARE gated on a runtime, unlike prompt layers: a pack with
             // nothing to call would win a route and then dead-end.
             collect_actions(&rec, &pack, &mut actions);
+            // [GRAIN] Capability Index V2 draws from the same declared actions,
+            // projected for the schema-aware retriever (docs/Extensions 2.0 §6).
+            capability_inputs.extend(grain_core::capability_index::actions_from_manifest(
+                &pack.manifest,
+                true,
+            ));
             // The Extension Mode pool. Gated on searchable + recommendation
             // approval, NOT on declaring any action — a translator is a real
             // searchable extension with no command catalogue at all (§3.1).
@@ -620,6 +636,9 @@ pub fn refresh_index(app: &AppHandle) {
     let action_index = grain_core::action_router::ActionIndex::build(actions);
     HAS_ACTIONS.store(action_count > 0, Ordering::Relaxed);
     HAS_RECOMMENDATIONS.store(!recommendations.is_empty(), Ordering::Relaxed);
+    let capability_count = capability_inputs.len();
+    let capability = grain_core::capability_index::CapabilityIndex::build(capability_inputs);
+    HAS_CAPABILITY_ACTIONS.store(capability_count > 0, Ordering::Relaxed);
 
     HAS_ACTIVATIONS.store(!by_event.is_empty(), Ordering::Relaxed);
     HAS_TRANSFORMS.store(!transforms.is_empty(), Ordering::Relaxed);
@@ -649,6 +668,7 @@ pub fn refresh_index(app: &AppHandle) {
         actions: action_index,
         recommendations,
         auto_send_eligible,
+        capability,
     };
     // Embed the pool's examples off this path, generation-guarded, so a slow
     // rebuild never blocks a switch and a stale embed never lands on a newer
@@ -921,6 +941,38 @@ pub fn recommend(
     (
         grain_core::recommend::rank(&index.recommendations, spoken, semantic.as_ref(), excluded),
         semantic_available,
+    )
+}
+
+/// [GRAIN] Retrieve the Agent hot set for a request from the V2 capability index
+/// (`docs/Extensions 2.0/PLAN.md` §7). Pure and code-free: no worker wakes, no
+/// disk is touched. Lexical-only for now — the dense scores and the dynamic
+/// eligibility sets (surface context, auth) are injected by the caller once the
+/// Agent tool-loop wiring lands (Phase 2B); until then this is the honest,
+/// always-available floor.
+#[allow(dead_code)] // consumed when the Agent tool loop exposes the hot set (Phase 2B)
+pub fn capability_retrieve(query: &str, k: usize) -> grain_core::capability_index::HotSet {
+    use grain_core::capability_index::{HotSet, QuerySource, RetrievalContext, RetrievalParams};
+    if !HAS_CAPABILITY_ACTIONS.load(Ordering::Relaxed) {
+        return HotSet::default();
+    }
+    let Some(host) = HOST.get() else {
+        return HotSet::default();
+    };
+    let empty = std::collections::HashSet::new();
+    let ctx = RetrievalContext {
+        dense: None,
+        context_ineligible: &empty,
+        auth_missing: &empty,
+    };
+    let index = host.index.read().unwrap();
+    index.capability.retrieve(
+        query,
+        &ctx,
+        RetrievalParams {
+            source: QuerySource::Transcript,
+            k,
+        },
     )
 }
 
