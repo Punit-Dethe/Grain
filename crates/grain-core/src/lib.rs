@@ -39,6 +39,12 @@ pub mod action_router;
 // provenance tiers, and host-injected dense scores fused by rank. The embedder
 // stays host-side, exactly as in `recommend`.
 pub mod capability_index;
+// [GRAIN] Capability Index V2 — Agent tool exposure (docs/Extensions 2.0/PLAN.md
+// §6.3, §6.4, §7.3). Pure: turns the hot set into model tool definitions with
+// prompt-safe sanitisation, the `search_actions` meta-tool, safe tool-name
+// encoding, and the bounded cumulative-exposure budget. The host maps `ToolDef`
+// onto its transport tool type and runs the loop.
+pub mod capability_agent;
 // [GRAIN] Capability Index V2 retrieval evaluation (docs/Extensions 2.0/PLAN.md
 // §7.5). Drives the real retriever over a held-out corpus, headless. Headline is
 // eligible Recall@K + fallback-rate + hot-set size — flood, not miss, is the

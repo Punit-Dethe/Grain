@@ -357,6 +357,16 @@ impl CapabilityIndex {
         self.docs.is_empty()
     }
 
+    /// The full input record for one canonical id, or `None`. Used to build a
+    /// model tool definition (description, schema) for an action the retriever
+    /// put in the hot set — the `Retrieved` entry carries only what ranking needs.
+    pub fn describe(&self, canonical_id: &str) -> Option<&ActionInput> {
+        self.docs
+            .iter()
+            .map(|doc| &doc.input)
+            .find(|input| input.canonical_id == canonical_id)
+    }
+
     /// Build the Agent hot set for one request.
     pub fn retrieve(&self, spoken: &str, ctx: &RetrievalContext, params: RetrievalParams) -> HotSet {
         let query = normalise(spoken);
