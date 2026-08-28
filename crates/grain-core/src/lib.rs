@@ -50,6 +50,12 @@ pub mod capability_agent;
 // eligible Recall@K + fallback-rate + hot-set size — flood, not miss, is the
 // failure. Successor to `recommend_eval` (extension-level).
 pub mod capability_eval;
+// [GRAIN] The host-owned interaction contract (docs/Extensions 2.0/PLAN.md §9.2,
+// Amendments A & B). Structured, data-shaped interactions (confirm/choose/
+// request/result/receipt) with a markdown renderer — renderer #1 for the Agent
+// chat. The parallel native Dynamic UI is renderer #2 over the same enum, which
+// is why extensions return data here, never authored views.
+pub mod interaction;
 // [GRAIN] Recommendation ranking (docs/Extensions V1/PLAN.md §3.1). Which
 // searchable extension should be offered a request. Pure and model-free: the
 // host injects semantic scores, so grain-core carries no embedder.
