@@ -2160,6 +2160,29 @@ pub async fn agent_run(
     run_with_note_tools(&app, full, image.as_ref()).await
 }
 
+/// [GRAIN] Resume a host-gated action confirmation (PLAN Amendment A, §2.5). The
+/// user approved (or declined) the exact prepared call named by `token`; the host
+/// revalidates and replays *that* call — the model is never re-consulted, so its
+/// nondeterminism cannot change what runs. Returns the receipt/result (or the
+/// decline) rendered for the chat.
+#[tauri::command]
+#[specta::specta]
+pub async fn agent_confirm_action(
+    app: AppHandle,
+    token: String,
+    approve: bool,
+) -> Result<AgentReply, String> {
+    let outcome = crate::action_exec::resume(&app, &token, approve).await;
+    let title = match &outcome {
+        grain_core::execution::ActionOutcome::Succeeded(data) => {
+            data.title.clone().unwrap_or_else(|| "Done".to_string())
+        }
+        _ => "Action".to_string(),
+    };
+    let interaction = outcome.to_interaction(&title);
+    Ok(AgentReply::plain(grain_core::interaction::to_markdown(&interaction)))
+}
+
 /// How many tool hops one turn may take before it is made to answer. Small on
 /// purpose: search → maybe read one in full → answer is the shape of nearly every
 /// real request, and an unbounded loop is a bill.
@@ -2232,7 +2255,7 @@ async fn run_with_note_tools(
             // A capability tool (search_actions / act__…) is handled by the
             // registry; anything else is a notebook tool. `dispatch` returns None
             // when the call is not ours, so the two surfaces never collide.
-            let content = match crate::capability::dispatch(call, &mut exposure) {
+            let content = match crate::capability::dispatch(app, call, &mut exposure).await {
                 Some(result) => result,
                 None => crate::grain_space::agent_tools::execute(app, call, &mut log).await,
             };

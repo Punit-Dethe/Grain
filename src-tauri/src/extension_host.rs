@@ -636,6 +636,12 @@ pub fn refresh_index(app: &AppHandle) {
     let action_index = grain_core::action_router::ActionIndex::build(actions);
     HAS_ACTIONS.store(action_count > 0, Ordering::Relaxed);
     HAS_RECOMMENDATIONS.store(!recommendations.is_empty(), Ordering::Relaxed);
+    // [GRAIN] Grain Space is a built-in provider: its actions flow through the
+    // same capability index and executor as any extension (Phase 3). Registered
+    // only when the feature is on, so a user without Grain Space pays nothing.
+    if crate::grain_space::is_enabled(app) {
+        capability_inputs.extend(crate::action_exec::grain_space_actions());
+    }
     let capability_count = capability_inputs.len();
     let capability = grain_core::capability_index::CapabilityIndex::build(capability_inputs);
     HAS_CAPABILITY_ACTIONS.store(capability_count > 0, Ordering::Relaxed);
@@ -1005,6 +1011,24 @@ pub fn capability_search(
     };
     let index = host.index.read().unwrap();
     index.capability.search_actions(query, &ctx, extension, limit)
+}
+
+/// [GRAIN] The execution-relevant metadata for one action: its extension id,
+/// action id, title, and declared risk. The host executor reads this to classify
+/// and prepare a call without re-opening a manifest. `None` for an unknown id.
+pub fn capability_action_meta(
+    canonical_id: &str,
+) -> Option<(String, String, String, grain_sdk::manifest::ActionRisk)> {
+    let host = HOST.get()?;
+    let index = host.index.read().unwrap();
+    index.capability.describe(canonical_id).map(|input| {
+        (
+            input.extension_id.clone(),
+            input.action_id.clone(),
+            input.title.clone(),
+            input.risk,
+        )
+    })
 }
 
 /// [GRAIN] Build model tool definitions for the given canonical ids, under the

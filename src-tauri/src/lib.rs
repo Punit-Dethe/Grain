@@ -47,6 +47,7 @@ mod extension_session; // [GRAIN] host-owned extension recording modes + bounded
 mod extension_shortcuts; // [GRAIN] contributed global shortcuts, namespaced `ext:<id>:<sid>` (SPEC 3.3)
 mod extension_view; // [GRAIN] host-rendered standard Extension Mode component tree
 mod capability; // [GRAIN] Capability Index V2 host wiring — Agent hot-set tool exposure + dispatch
+mod action_exec; // [GRAIN] Phase 3 host executor — risk-gated prepare/confirm/execute over the action contract
 mod grain_actions; // [GRAIN] Grain's shortcut actions (rolling, Native ASR, switcher, agent, Grain Space)
 mod grain_audio_journal; // [GRAIN] bounded-RAM PCM backing for rolling sessions
 mod grain_auth; // [GRAIN] host-owned extension OAuth + OS credential vault
@@ -1087,6 +1088,7 @@ pub fn run(cli_args: CliArgs) {
             agent::agent_take_instruction,
             agent::agent_copy,
             agent::agent_run,
+            agent::agent_confirm_action,
             agent::agent_set_panel_mode,
             agent::agent_resize_panel,
             agent::agent_confirm_paste,

@@ -29,6 +29,8 @@ use crate::llm_client::{ToolCallOut, ToolSpec};
 use grain_core::capability_agent::{
     self, search_actions_tool_def, tool_name, ToolBudget, ToolExposure, SEARCH_ACTIONS,
 };
+use grain_core::execution::{RiskClass, SideEffect};
+use tauri::AppHandle;
 
 /// Hot-set size retrieved for the initial exposure. Matches the benchmark's K.
 const HOT_SET_K: usize = 8;
@@ -77,7 +79,11 @@ pub fn specs(exposure: &ToolExposure) -> Vec<ToolSpec> {
 /// Dispatch one tool call if it belongs to the capability surface. Returns
 /// `Some(result_text)` when handled, `None` when the call is not ours (the caller
 /// routes it elsewhere — e.g. the Grain Space note tools).
-pub fn dispatch(call: &ToolCallOut, exposure: &mut ToolExposure) -> Option<String> {
+pub async fn dispatch(
+    app: &AppHandle,
+    call: &ToolCallOut,
+    exposure: &mut ToolExposure,
+) -> Option<String> {
     if call.name == SEARCH_ACTIONS {
         return Some(handle_search(call, exposure));
     }
@@ -86,7 +92,57 @@ pub fn dispatch(call: &ToolCallOut, exposure: &mut ToolExposure) -> Option<Strin
     // resolves to nothing here and falls through to the caller (which will report
     // "no such tool"): discovery is not authorisation.
     let canonical = exposure.resolve(&call.name)?;
-    Some(handle_action_call(&canonical))
+    Some(execute_action(app, &canonical, &call.arguments).await)
+}
+
+/// Prepare and route one resolved action through the host executor: a `Safe`
+/// action runs in process now; a `Confirm` action is withheld and the model is
+/// told (never that it ran) while the exact call waits for the user's approval.
+async fn execute_action(app: &AppHandle, canonical: &str, arguments_json: &str) -> String {
+    let Some((extension_id, action_id, title, declared_risk)) =
+        crate::extension_host::capability_action_meta(canonical)
+    else {
+        return format!("The action \"{canonical}\" is not available.");
+    };
+    let arguments: serde_json::Value =
+        serde_json::from_str(arguments_json).unwrap_or(serde_json::Value::Null);
+
+    // The host floor classifies the action; the axis retry/parallelism reads
+    // follows it (a Confirm write, a Safe read). User policy could only tighten
+    // this — never loosen it — and is applied here once wired.
+    let risk = RiskClass::floor(declared_risk);
+    let side_effect = match risk {
+        RiskClass::Confirm => SideEffect::Write,
+        RiskClass::Safe => SideEffect::Read,
+    };
+    let digest = if extension_id == crate::action_exec::GRAIN_SPACE_EXT_ID {
+        "builtin"
+    } else {
+        "unwired"
+    };
+    let prepared = crate::action_exec::prepare(
+        canonical,
+        &extension_id,
+        &action_id,
+        arguments,
+        risk,
+        side_effect,
+        digest,
+    );
+
+    match crate::action_exec::run_or_confirm(app, prepared, &title).await {
+        crate::action_exec::Dispatch::Ran(outcome) => outcome.model_summary(),
+        crate::action_exec::Dispatch::AwaitConfirm(interaction) => {
+            // Interim surface (PLAN Amendment A): the confirmation is held
+            // host-side by token; the chat affordance to approve it is the
+            // `ui/grain-2.0` step. The model is told to present it and that
+            // approval is pending — never that the action ran.
+            format!(
+                "{}\n\n(Awaiting the user's approval before this runs — do not claim it is done.)",
+                grain_core::interaction::to_markdown(&interaction)
+            )
+        }
+    }
 }
 
 fn handle_search(call: &ToolCallOut, exposure: &mut ToolExposure) -> String {
@@ -136,14 +192,3 @@ fn handle_search(call: &ToolCallOut, exposure: &mut ToolExposure) -> String {
     out
 }
 
-/// A discovered third-party action was called. Phase 2 stops at discovery, so
-/// this is deliberately honest and never a false success (§ execution boundary
-/// above). Phase 3 replaces this with prepared-call preparation, host risk
-/// policy, confirmation, and extension-worker execution.
-fn handle_action_call(canonical_id: &str) -> String {
-    format!(
-        "The action \"{canonical_id}\" was found and matches the request, but running \
-         installed-extension actions is not enabled in this build yet. Tell the user you found \
-         the right action and what it would do — do not claim you performed it."
-    )
-}
