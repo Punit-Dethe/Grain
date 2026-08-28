@@ -2185,12 +2185,32 @@ async fn run_with_note_tools(
     full: Vec<(String, String)>,
     image: Option<&ImageAttachment>,
 ) -> Result<AgentReply, String> {
-    use crate::llm_client::ChatEntry;
+    use crate::llm_client::{ChatEntry, ToolSpec};
 
-    let tools = crate::grain_space::agent_tools::specs(app);
-    if tools.is_empty() {
+    let note_tools = crate::grain_space::agent_tools::specs(app);
+    // The current request drives capability retrieval — the last thing the user
+    // said this turn. Its hot set of installed-extension actions rides alongside
+    // the notebook tools; on a machine with no action extensions this is empty and
+    // the turn is exactly the old note-tool (or plain) path.
+    let request = full
+        .iter()
+        .rev()
+        .find(|(role, _)| role == "user")
+        .map(|(_, content)| content.clone())
+        .unwrap_or_default();
+    let (mut exposure, mut cap_tools) = crate::capability::open(&request);
+
+    if note_tools.is_empty() && cap_tools.is_empty() {
         return Ok(AgentReply::plain(run_messages(app, full, image).await?));
     }
+
+    // Note tools + the current capability tools, each hop. `cap_tools` is rebuilt
+    // after every dispatch round because `search_actions` may widen the set.
+    let combined = |cap: &[ToolSpec]| -> Vec<ToolSpec> {
+        let mut all = tools_cloned(&note_tools);
+        all.extend(tools_cloned(cap));
+        all
+    };
 
     let mut entries: Vec<ChatEntry> = full
         .into_iter()
@@ -2202,25 +2222,32 @@ async fn run_with_note_tools(
         .collect();
 
     let mut log = crate::grain_space::agent_tools::TurnLog::default();
-    let mut reply =
-        run_messages_with_tools(app, entries.clone(), tools_cloned(&tools), image).await?;
+    let mut reply = run_messages_with_tools(app, entries.clone(), combined(&cap_tools), image).await?;
 
     let mut hops = 0usize;
     while !reply.tool_calls.is_empty() && hops < MAX_NOTE_TOOL_HOPS {
         hops += 1;
         entries.push(ChatEntry::AssistantToolCalls(reply.tool_calls.clone()));
         for call in &reply.tool_calls {
-            let content = crate::grain_space::agent_tools::execute(app, call, &mut log).await;
+            // A capability tool (search_actions / act__…) is handled by the
+            // registry; anything else is a notebook tool. `dispatch` returns None
+            // when the call is not ours, so the two surfaces never collide.
+            let content = match crate::capability::dispatch(call, &mut exposure) {
+                Some(result) => result,
+                None => crate::grain_space::agent_tools::execute(app, call, &mut log).await,
+            };
             entries.push(ChatEntry::ToolResult {
                 call_id: call.id.clone(),
                 content,
             });
         }
+        // search_actions may have widened the exposed set; rebuild before the hop.
+        cap_tools = crate::capability::specs(&exposure);
         // The frame rides every hop, not just the first. The hop that produces
         // the ANSWER is the one that needs to see the screen, and an OpenAI-shaped
         // request is stateless — dropping the image after hop 1 would leave the
         // model answering a screen question from a note lookup alone.
-        reply = run_messages_with_tools(app, entries.clone(), tools_cloned(&tools), image).await?;
+        reply = run_messages_with_tools(app, entries.clone(), combined(&cap_tools), image).await?;
     }
 
     // Still asking for tools at the cap. `entries` ends on a tool result, so this

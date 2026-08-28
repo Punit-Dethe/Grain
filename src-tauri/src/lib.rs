@@ -46,6 +46,7 @@ mod extension_misroutes; // [GRAIN] bounded decline counters -> conservative top
 mod extension_session; // [GRAIN] host-owned extension recording modes + bounded slow stage (Phase 4)
 mod extension_shortcuts; // [GRAIN] contributed global shortcuts, namespaced `ext:<id>:<sid>` (SPEC 3.3)
 mod extension_view; // [GRAIN] host-rendered standard Extension Mode component tree
+mod capability; // [GRAIN] Capability Index V2 host wiring — Agent hot-set tool exposure + dispatch
 mod grain_actions; // [GRAIN] Grain's shortcut actions (rolling, Native ASR, switcher, agent, Grain Space)
 mod grain_audio_journal; // [GRAIN] bounded-RAM PCM backing for rolling sessions
 mod grain_auth; // [GRAIN] host-owned extension OAuth + OS credential vault

@@ -950,7 +950,6 @@ pub fn recommend(
 /// eligibility sets (surface context, auth) are injected by the caller once the
 /// Agent tool-loop wiring lands (Phase 2B); until then this is the honest,
 /// always-available floor.
-#[allow(dead_code)] // consumed when the Agent tool loop exposes the hot set (Phase 2B)
 pub fn capability_retrieve(query: &str, k: usize) -> grain_core::capability_index::HotSet {
     use grain_core::capability_index::{HotSet, QuerySource, RetrievalContext, RetrievalParams};
     if !HAS_CAPABILITY_ACTIONS.load(Ordering::Relaxed) {
@@ -974,6 +973,60 @@ pub fn capability_retrieve(query: &str, k: usize) -> grain_core::capability_inde
             k,
         },
     )
+}
+
+/// [GRAIN] Whether any installed extension declares a V2 capability action — the
+/// presence gate for exposing action tools to the Agent. One relaxed load when
+/// nothing is installed.
+pub fn has_capability_actions() -> bool {
+    HAS_CAPABILITY_ACTIONS.load(Ordering::Relaxed)
+}
+
+/// [GRAIN] `search_actions` retrieval (`docs/Extensions 2.0/PLAN.md` §7.3): the
+/// Agent's discovery fallback over the whole installed set, optionally narrowed
+/// to one extension. Same pure, code-free path as [`capability_retrieve`].
+pub fn capability_search(
+    query: &str,
+    extension: Option<&str>,
+    limit: usize,
+) -> grain_core::capability_index::HotSet {
+    use grain_core::capability_index::{HotSet, RetrievalContext};
+    if !HAS_CAPABILITY_ACTIONS.load(Ordering::Relaxed) {
+        return HotSet::default();
+    }
+    let Some(host) = HOST.get() else {
+        return HotSet::default();
+    };
+    let empty = std::collections::HashSet::new();
+    let ctx = RetrievalContext {
+        dense: None,
+        context_ineligible: &empty,
+        auth_missing: &empty,
+    };
+    let index = host.index.read().unwrap();
+    index.capability.search_actions(query, &ctx, extension, limit)
+}
+
+/// [GRAIN] Build model tool definitions for the given canonical ids, under the
+/// index lock so nothing on the caller's side touches the index directly. Unknown
+/// ids are skipped. The host maps [`grain_core::capability_agent::ToolDef`] onto
+/// its transport `ToolSpec`.
+pub fn capability_tool_defs(
+    canonical_ids: &[String],
+) -> Vec<grain_core::capability_agent::ToolDef> {
+    let Some(host) = HOST.get() else {
+        return Vec::new();
+    };
+    let index = host.index.read().unwrap();
+    canonical_ids
+        .iter()
+        .filter_map(|id| {
+            index
+                .capability
+                .describe(id)
+                .map(grain_core::capability_agent::action_tool_def)
+        })
+        .collect()
 }
 
 /// The display name and one-line purpose for a pooled extension, for the
