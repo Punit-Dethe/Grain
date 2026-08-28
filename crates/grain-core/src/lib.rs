@@ -56,6 +56,12 @@ pub mod capability_eval;
 // chat. The parallel native Dynamic UI is renderer #2 over the same enum, which
 // is why extensions return data here, never authored views.
 pub mod interaction;
+// [GRAIN] Phase 3 execution contract (docs/Extensions 2.0/PLAN.md §8.3/§8.5/§12):
+// risk classification (escalate-only floor), the prepared call approved and
+// replayed as a unit (idempotency + time-of-use revalidation), and the structured
+// outcome — mapped to `interaction` for rendering. Pure; the host executor is
+// built on it.
+pub mod execution;
 // [GRAIN] Recommendation ranking (docs/Extensions V1/PLAN.md §3.1). Which
 // searchable extension should be offered a request. Pure and model-free: the
 // host injects semantic scores, so grain-core carries no embedder.
