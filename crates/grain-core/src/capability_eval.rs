@@ -28,7 +28,8 @@ use std::time::Instant;
 use serde::{Deserialize, Serialize};
 
 use crate::capability_index::{
-    ActionInput, CapabilityIndex, Provenance, QuerySource, RetrievalContext, RetrievalParams,
+    ActionInput, ActionParamInput, CapabilityIndex, Provenance, QuerySource, RetrievalContext,
+    RetrievalParams,
 };
 
 /// One held-out request. `expected` is the set of acceptable canonical ids; an
@@ -250,13 +251,18 @@ fn run_case(
     let top1_correct = if case.expects_none() {
         hot_set.is_empty()
     } else {
-        hot_set.first().is_some_and(|entry| case.accepts(&entry.canonical_id))
+        hot_set
+            .first()
+            .is_some_and(|entry| case.accepts(&entry.canonical_id))
     };
     let recall = !case.expects_none() && expected_rank.is_some();
     // A false exclusion is an expected action the eligibility gate withheld —
     // only meaningful when the case expects that action to be reachable.
     let false_exclusion = !case.expects_none()
-        && hot.excluded.iter().any(|excluded| case.accepts(&excluded.canonical_id));
+        && hot
+            .excluded
+            .iter()
+            .any(|excluded| case.accepts(&excluded.canonical_id));
 
     CaseResult {
         said: case.said.clone(),
@@ -362,7 +368,10 @@ fn slice_metrics(results: &[CaseResult]) -> Vec<SliceMetrics> {
 
 fn confusion(results: &[CaseResult]) -> Vec<ConfusionCell> {
     let mut counts: BTreeMap<(String, String), usize> = BTreeMap::new();
-    for result in results.iter().filter(|r| !r.expected.is_empty() && !r.top1_correct) {
+    for result in results
+        .iter()
+        .filter(|r| !r.expected.is_empty() && !r.top1_correct)
+    {
         let expected = result.expected.join("|");
         let got = result
             .hot_set
@@ -512,7 +521,14 @@ impl Corpus {
                     tags,
                     examples: action.examples.clone(),
                     phrases,
-                    param_names,
+                    params: param_names
+                        .into_iter()
+                        .map(|name| ActionParamInput {
+                            name,
+                            kind: grain_sdk::manifest::ActionParamKind::Text,
+                            required: false,
+                        })
+                        .collect(),
                     when_to_use: action.when_to_use.clone(),
                     when_not_to_use: action.when_not_to_use.clone(),
                     description: String::new(),
@@ -579,7 +595,11 @@ mod tests {
         let index = CapabilityIndex::build(small_corpus().inputs());
         let cases = [
             case("skip this", &["spotify.next"], &["exact"]),
-            case("file a bug report", &["github.create_issue"], &["paraphrase"]),
+            case(
+                "file a bug report",
+                &["github.create_issue"],
+                &["paraphrase"],
+            ),
             case("tell me a joke", &[], &["no-match"]),
         ];
         let report = evaluate(&index, &cases, 8, None).unwrap();
@@ -597,7 +617,11 @@ mod tests {
         let index = CapabilityIndex::build(small_corpus().inputs());
         // Nothing in the corpus is about the weather; the in-scope expectation
         // cannot be met, so it is a fallback (search_actions would be needed).
-        let cases = [case("what's the weather like", &["weather.today"], &["miss"])];
+        let cases = [case(
+            "what's the weather like",
+            &["weather.today"],
+            &["miss"],
+        )];
         let report = evaluate(&index, &cases, 8, None).unwrap();
         assert_eq!(report.metrics.recall_at_k, Some(0.0));
         assert_eq!(report.metrics.fallback_rate, Some(1.0));

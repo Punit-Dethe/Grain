@@ -51,7 +51,9 @@
 
 use std::collections::{HashMap, HashSet};
 
-use grain_sdk::manifest::{parse_utterance, ActionRisk, ExtensionManifest, UtterancePart};
+use grain_sdk::manifest::{
+    parse_utterance, ActionParamKind, ActionRisk, ExtensionManifest, UtterancePart,
+};
 
 use crate::text::{fuzzy_keys, normalise, same_word, tokens};
 
@@ -185,7 +187,7 @@ pub struct ActionInput {
     pub examples: Vec<String>,
     /// Declared utterance phrasings, `{param}` placeholders stripped.
     pub phrases: Vec<String>,
-    pub param_names: Vec<String>,
+    pub params: Vec<ActionParamInput>,
     pub when_to_use: String,
     /// Declared negative boundary. Matching tokens here *penalise*.
     pub when_not_to_use: String,
@@ -201,6 +203,15 @@ pub struct ActionInput {
     pub platform_ok: bool,
     /// The extension/action is under a security hold.
     pub quarantined: bool,
+}
+
+/// Parameter metadata shared by model schema generation and Rust execution
+/// validation. One projection prevents the model and worker contracts drifting.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ActionParamInput {
+    pub name: String,
+    pub kind: ActionParamKind,
+    pub required: bool,
 }
 
 impl ActionInput {
@@ -222,8 +233,8 @@ impl ActionInput {
         for tag in self.tags.iter().chain(self.namespaces.iter()) {
             fields.push((W_TAG, tag.as_str()));
         }
-        for param in &self.param_names {
-            fields.push((W_PARAM, param.as_str()));
+        for param in &self.params {
+            fields.push((W_PARAM, param.name.as_str()));
         }
         if !self.when_to_use.is_empty() {
             fields.push((W_WHEN_TO_USE, self.when_to_use.as_str()));
@@ -243,7 +254,10 @@ impl ActionInput {
     fn exact_runs(&self) -> Vec<Vec<String>> {
         let mut runs: Vec<Vec<String>> = Vec::new();
         let mut push = |text: &str| {
-            let run: Vec<String> = tokens(&normalise(text)).into_iter().map(str::to_string).collect();
+            let run: Vec<String> = tokens(&normalise(text))
+                .into_iter()
+                .map(str::to_string)
+                .collect();
             if !run.is_empty() && !runs.contains(&run) {
                 runs.push(run);
             }
@@ -396,7 +410,12 @@ impl CapabilityIndex {
     }
 
     /// Build the Agent hot set for one request.
-    pub fn retrieve(&self, spoken: &str, ctx: &RetrievalContext, params: RetrievalParams) -> HotSet {
+    pub fn retrieve(
+        &self,
+        spoken: &str,
+        ctx: &RetrievalContext,
+        params: RetrievalParams,
+    ) -> HotSet {
         let query = normalise(spoken);
         let query_tokens = tokens(&query);
         if query_tokens.is_empty() {
@@ -435,12 +454,15 @@ impl CapabilityIndex {
         // github" would sort `github.close_issue` first for no reason but its id.
         let mut exact: Vec<(usize, usize, f32)> = Vec::new(); // (position, run length, lexical tiebreak)
         let mut exact_ids: HashSet<usize> = HashSet::new();
-        let names_one_extension =
-            |token: &str| self.exact_token_ext_count.get(token).copied().unwrap_or(1) <= EXACT_MAX_NAMING_EXTS;
+        let names_one_extension = |token: &str| {
+            self.exact_token_ext_count.get(token).copied().unwrap_or(1) <= EXACT_MAX_NAMING_EXTS
+        };
         for &position in &candidates {
-            if let Some(run_len) =
-                longest_exact_run(&self.docs[position].exact_runs, &query_tokens, &names_one_extension)
-            {
+            if let Some(run_len) = longest_exact_run(
+                &self.docs[position].exact_runs,
+                &query_tokens,
+                &names_one_extension,
+            ) {
                 let tiebreak = self
                     .lexical_score(&self.docs[position], &query_tokens, params.source)
                     .unwrap_or(0.0);
@@ -451,9 +473,12 @@ impl CapabilityIndex {
         // Most specific naming first, then the strongest action-word evidence;
         // canonical id only as a final deterministic fallback.
         exact.sort_by(|a, b| {
-            b.1.cmp(&a.1)
-                .then(b.2.total_cmp(&a.2))
-                .then_with(|| self.docs[a.0].input.canonical_id.cmp(&self.docs[b.0].input.canonical_id))
+            b.1.cmp(&a.1).then(b.2.total_cmp(&a.2)).then_with(|| {
+                self.docs[a.0]
+                    .input
+                    .canonical_id
+                    .cmp(&self.docs[b.0].input.canonical_id)
+            })
         });
 
         // 3. Lexical arm over the non-exact remainder.
@@ -466,11 +491,18 @@ impl CapabilityIndex {
             })
             .collect();
         lexical.sort_by(|a, b| {
-            b.1.total_cmp(&a.1)
-                .then_with(|| self.docs[a.0].input.canonical_id.cmp(&self.docs[b.0].input.canonical_id))
+            b.1.total_cmp(&a.1).then_with(|| {
+                self.docs[a.0]
+                    .input
+                    .canonical_id
+                    .cmp(&self.docs[b.0].input.canonical_id)
+            })
         });
-        let lexical_rank: HashMap<usize, usize> =
-            lexical.iter().enumerate().map(|(rank, (pos, _))| (*pos, rank + 1)).collect();
+        let lexical_rank: HashMap<usize, usize> = lexical
+            .iter()
+            .enumerate()
+            .map(|(rank, (pos, _))| (*pos, rank + 1))
+            .collect();
 
         // 4. Dense arm — injected cosine per canonical id, floored, non-exact.
         let mut dense: Vec<(usize, f32)> = Vec::new();
@@ -486,17 +518,29 @@ impl CapabilityIndex {
                 }
             }
             dense.sort_by(|a, b| {
-                b.1.total_cmp(&a.1)
-                    .then_with(|| self.docs[a.0].input.canonical_id.cmp(&self.docs[b.0].input.canonical_id))
+                b.1.total_cmp(&a.1).then_with(|| {
+                    self.docs[a.0]
+                        .input
+                        .canonical_id
+                        .cmp(&self.docs[b.0].input.canonical_id)
+                })
             });
         }
-        let dense_rank: HashMap<usize, usize> =
-            dense.iter().enumerate().map(|(rank, (pos, _))| (*pos, rank + 1)).collect();
+        let dense_rank: HashMap<usize, usize> = dense
+            .iter()
+            .enumerate()
+            .map(|(rank, (pos, _))| (*pos, rank + 1))
+            .collect();
 
         // 5. Fuse Lexical ⊕ Dense by rank (RRF). Rank fusion, not score fusion:
         //    BM25 and cosine are different scales and must not be added.
-        let mut fused_ids: Vec<usize> =
-            lexical_rank.keys().chain(dense_rank.keys()).copied().collect::<HashSet<_>>().into_iter().collect();
+        let mut fused_ids: Vec<usize> = lexical_rank
+            .keys()
+            .chain(dense_rank.keys())
+            .copied()
+            .collect::<HashSet<_>>()
+            .into_iter()
+            .collect();
         let mut fused: Vec<Retrieved> = fused_ids
             .drain(..)
             .map(|position| {
@@ -557,7 +601,14 @@ impl CapabilityIndex {
         extension: Option<&str>,
         limit: usize,
     ) -> HotSet {
-        let mut hot = self.retrieve(query, ctx, RetrievalParams { source: QuerySource::Agent, k: limit });
+        let mut hot = self.retrieve(
+            query,
+            ctx,
+            RetrievalParams {
+                source: QuerySource::Agent,
+                k: limit,
+            },
+        );
         if let Some(extension) = extension {
             hot.entries.retain(|entry| entry.extension_id == extension);
         }
@@ -631,7 +682,12 @@ impl CapabilityIndex {
     /// Evidence always comes from the DECLARED token, not the possibly-misheard
     /// spoken one: what the author wrote is what the corpus statistics were built
     /// from.
-    fn lexical_score(&self, doc: &BuiltDoc, query_tokens: &[&str], _source: QuerySource) -> Option<f32> {
+    fn lexical_score(
+        &self,
+        doc: &BuiltDoc,
+        query_tokens: &[&str],
+        _source: QuerySource,
+    ) -> Option<f32> {
         let n = self.docs.len().max(1) as f32;
         let avg = self.avg_length.max(f32::MIN_POSITIVE);
         let mut score = 0.0f32;
@@ -840,7 +896,10 @@ impl HotSet {
     /// Canonical ids in hot-set order — the shape most tests and the eval assert
     /// on.
     pub fn ids(&self) -> Vec<&str> {
-        self.entries.iter().map(|entry| entry.canonical_id.as_str()).collect()
+        self.entries
+            .iter()
+            .map(|entry| entry.canonical_id.as_str())
+            .collect()
     }
 }
 
@@ -908,11 +967,21 @@ pub fn actions_from_manifest(ext: &ExtensionManifest, enabled: bool) -> Vec<Acti
                 })
                 .filter(|phrase| !phrase.trim().is_empty())
                 .collect();
-            let param_names: Vec<String> =
-                action.params.iter().map(|param| param.name.clone()).collect();
+            let params: Vec<ActionParamInput> = action
+                .params
+                .iter()
+                .map(|param| ActionParamInput {
+                    // Manifest validation treats surrounding whitespace as
+                    // insignificant; project the same canonical name so the
+                    // provider schema and Rust validator cannot drift.
+                    name: param.name.trim().to_string(),
+                    kind: param.kind,
+                    required: param.required,
+                })
+                .collect();
 
             ActionInput {
-                canonical_id: format!("{namespace}.{}", action.id.trim()),
+                canonical_id: format!("{}:{}", ext.id, action.id.trim()),
                 extension_id: ext.id.clone(),
                 action_id: action.id.trim().to_string(),
                 provider_name: ext.name.clone(),
@@ -922,7 +991,7 @@ pub fn actions_from_manifest(ext: &ExtensionManifest, enabled: bool) -> Vec<Acti
                 tags: tags.clone(),
                 examples: Vec::new(),
                 phrases,
-                param_names,
+                params,
                 when_to_use: String::new(),
                 when_not_to_use: String::new(),
                 description: String::new(),
@@ -954,7 +1023,7 @@ mod tests {
             tags: Vec::new(),
             examples: Vec::new(),
             phrases: Vec::new(),
-            param_names: Vec::new(),
+            params: Vec::new(),
             when_to_use: String::new(),
             when_not_to_use: String::new(),
             description: String::new(),
@@ -1037,7 +1106,11 @@ mod tests {
         let (c, a) = empty_ctx();
         // A dense score tries to lift notes; the named spotify still wins.
         let dense = scores(&[("notes.new", 0.9)]);
-        let hot = index.retrieve("spotify play something", &ctx(&c, &a, Some(&dense)), transcript(5));
+        let hot = index.retrieve(
+            "spotify play something",
+            &ctx(&c, &a, Some(&dense)),
+            transcript(5),
+        );
         assert_eq!(hot.entries[0].canonical_id, "spotify.play");
         assert_eq!(hot.entries[0].provenance, Provenance::Exact);
     }
@@ -1048,14 +1121,25 @@ mod tests {
         // so "play" names many extensions — it must not be a decisive Exact
         // address. A proper-noun alias still is.
         let index = CapabilityIndex::build(vec![
-            action("com.grain.spotify", "play").title("Play").aliases(&["spotify"]).examples(&["put on music"]),
-            action("com.grain.apple", "play").title("Play").aliases(&["apple"]).examples(&["put on music"]),
-            action("com.grain.sonos", "play").title("Play").aliases(&["sonos"]).examples(&["put on music"]),
+            action("com.grain.spotify", "play")
+                .title("Play")
+                .aliases(&["spotify"])
+                .examples(&["put on music"]),
+            action("com.grain.apple", "play")
+                .title("Play")
+                .aliases(&["apple"])
+                .examples(&["put on music"]),
+            action("com.grain.sonos", "play")
+                .title("Play")
+                .aliases(&["sonos"])
+                .examples(&["put on music"]),
         ]);
         let (c, a) = empty_ctx();
         let bare = index.retrieve("play", &ctx(&c, &a, None), transcript(5));
         assert!(
-            bare.entries.iter().all(|e| e.provenance != Provenance::Exact),
+            bare.entries
+                .iter()
+                .all(|e| e.provenance != Provenance::Exact),
             "a generic one-word title must not be Exact: {:?}",
             bare.ids()
         );
@@ -1067,7 +1151,9 @@ mod tests {
 
     #[test]
     fn an_exact_hit_survives_one_asr_substitution() {
-        let index = CapabilityIndex::build(vec![action("com.grain.linear", "issue").aliases(&["linear"])]);
+        let index = CapabilityIndex::build(vec![
+            action("com.grain.linear", "issue").aliases(&["linear"])
+        ]);
         let (c, a) = empty_ctx();
         // "linear" heard with a dropped vowel.
         let hot = index.retrieve("open a linar ticket", &ctx(&c, &a, None), transcript(5));
@@ -1095,7 +1181,10 @@ mod tests {
         let ids = hot.ids();
         assert!(ids.contains(&"spotify.play"), "spotify missing: {ids:?}");
         assert!(ids.contains(&"apple.play"), "apple missing: {ids:?}");
-        assert!(!ids.contains(&"github.issue"), "unrelated action leaked in: {ids:?}");
+        assert!(
+            !ids.contains(&"github.issue"),
+            "unrelated action leaked in: {ids:?}"
+        );
     }
 
     #[test]
@@ -1103,14 +1192,24 @@ mod tests {
         // "play" is declared by both music actions, so it is corpus-common and
         // must not, alone, drag an unrelated request onto the ballot.
         let index = CapabilityIndex::build(vec![
-            action("com.grain.spotify", "play").title("Play music").phrases(&["play"]),
-            action("com.grain.apple", "play").title("Play music").phrases(&["play"]),
-            action("com.grain.weather", "today").title("Weather").examples(&["what is the weather"]),
+            action("com.grain.spotify", "play")
+                .title("Play music")
+                .phrases(&["play"]),
+            action("com.grain.apple", "play")
+                .title("Play music")
+                .phrases(&["play"]),
+            action("com.grain.weather", "today")
+                .title("Weather")
+                .examples(&["what is the weather"]),
         ]);
         let (c, a) = empty_ctx();
         // Shares only "play" with the music actions; nothing with weather.
         let hot = index.retrieve("play", &ctx(&c, &a, None), transcript(5));
-        assert!(hot.entries.is_empty(), "a lone common token qualified: {:?}", hot.ids());
+        assert!(
+            hot.entries.is_empty(),
+            "a lone common token qualified: {:?}",
+            hot.ids()
+        );
     }
 
     #[test]
@@ -1122,7 +1221,11 @@ mod tests {
             .examples(&["save a thought"])]);
         let (c, a) = empty_ctx();
         let dense = scores(&[("memo.capture", 0.74)]);
-        let hot = index.retrieve("make a note of this", &ctx(&c, &a, Some(&dense)), transcript(5));
+        let hot = index.retrieve(
+            "make a note of this",
+            &ctx(&c, &a, Some(&dense)),
+            transcript(5),
+        );
         assert_eq!(hot.entries.len(), 1);
         assert_eq!(hot.entries[0].canonical_id, "memo.capture");
         assert_eq!(hot.entries[0].provenance, Provenance::Dense);
@@ -1130,10 +1233,15 @@ mod tests {
 
     #[test]
     fn a_below_floor_dense_score_is_not_a_match() {
-        let index = CapabilityIndex::build(vec![action("com.grain.memo", "capture").title("Capture")]);
+        let index =
+            CapabilityIndex::build(vec![action("com.grain.memo", "capture").title("Capture")]);
         let (c, a) = empty_ctx();
         let dense = scores(&[("memo.capture", 0.42)]);
-        let hot = index.retrieve("make a note of this", &ctx(&c, &a, Some(&dense)), transcript(5));
+        let hot = index.retrieve(
+            "make a note of this",
+            &ctx(&c, &a, Some(&dense)),
+            transcript(5),
+        );
         assert!(hot.entries.is_empty());
     }
 
@@ -1150,7 +1258,11 @@ mod tests {
         let (c, a) = empty_ctx();
         // Lexical will rank both; dense lifts github only, so github fuses higher.
         let dense = scores(&[("github.issue", 0.8)]);
-        let hot = index.retrieve("file a bug report", &ctx(&c, &a, Some(&dense)), transcript(5));
+        let hot = index.retrieve(
+            "file a bug report",
+            &ctx(&c, &a, Some(&dense)),
+            transcript(5),
+        );
         assert_eq!(hot.entries[0].canonical_id, "github.issue");
         assert_eq!(hot.entries[0].provenance, Provenance::Hybrid);
         assert_eq!(hot.entries[1].provenance, Provenance::Lexical);
@@ -1162,12 +1274,20 @@ mod tests {
         context_ineligible.insert("deck.next".to_string());
         let auth_missing = HashSet::new();
         let index = CapabilityIndex::build(vec![
-            action("com.grain.spotify", "play").disabled().examples(&["play some jazz"]),
-            action("com.grain.win", "record").off_platform().examples(&["start recording"]),
+            action("com.grain.spotify", "play")
+                .disabled()
+                .examples(&["play some jazz"]),
+            action("com.grain.win", "record")
+                .off_platform()
+                .examples(&["start recording"]),
             action("com.grain.deck", "next").examples(&["next slide"]),
             action("com.grain.notes", "new").examples(&["play some jazz"]),
         ]);
-        let hot = index.retrieve("play some jazz", &ctx(&context_ineligible, &auth_missing, None), transcript(5));
+        let hot = index.retrieve(
+            "play some jazz",
+            &ctx(&context_ineligible, &auth_missing, None),
+            transcript(5),
+        );
         let ids = hot.ids();
         assert!(!ids.contains(&"spotify.play"), "disabled leaked in");
         // The context-ineligible one only excludes if it was a candidate; it is
@@ -1186,8 +1306,14 @@ mod tests {
         let mut context_ineligible = HashSet::new();
         context_ineligible.insert("deck.next".to_string());
         let auth_missing = HashSet::new();
-        let index = CapabilityIndex::build(vec![action("com.grain.deck", "next").examples(&["next slide"])]);
-        let hot = index.retrieve("next slide", &ctx(&context_ineligible, &auth_missing, None), transcript(5));
+        let index = CapabilityIndex::build(vec![
+            action("com.grain.deck", "next").examples(&["next slide"])
+        ]);
+        let hot = index.retrieve(
+            "next slide",
+            &ctx(&context_ineligible, &auth_missing, None),
+            transcript(5),
+        );
         assert!(hot.entries.is_empty());
         assert_eq!(hot.excluded[0].reason, Ineligible::Context);
     }
@@ -1214,13 +1340,24 @@ mod tests {
         let q = "archive the email and delete it";
 
         // Control: no boundary anywhere — the alphabetical tie-break leads `aaa`.
-        let clean = CapabilityIndex::build(vec![candidate("com.grain.aaa", false), candidate("com.grain.bbb", false)]);
-        assert_eq!(clean.retrieve(q, &ctx(&c, &a, None), transcript(5)).ids()[0], "aaa.archive");
+        let clean = CapabilityIndex::build(vec![
+            candidate("com.grain.aaa", false),
+            candidate("com.grain.bbb", false),
+        ]);
+        assert_eq!(
+            clean.retrieve(q, &ctx(&c, &a, None), transcript(5)).ids()[0],
+            "aaa.archive"
+        );
 
         // With the boundary on `aaa`, the "delete" penalty demotes it below `bbb`.
-        let penalised = CapabilityIndex::build(vec![candidate("com.grain.aaa", true), candidate("com.grain.bbb", false)]);
+        let penalised = CapabilityIndex::build(vec![
+            candidate("com.grain.aaa", true),
+            candidate("com.grain.bbb", false),
+        ]);
         assert_eq!(
-            penalised.retrieve(q, &ctx(&c, &a, None), transcript(5)).ids()[0],
+            penalised
+                .retrieve(q, &ctx(&c, &a, None), transcript(5))
+                .ids()[0],
             "bbb.archive",
             "the negative-boundary hit on 'delete' should demote aaa below bbb"
         );
@@ -1244,33 +1381,64 @@ mod tests {
 
     #[test]
     fn ranking_is_independent_of_registry_order() {
-        let a1 = action("com.grain.aaa", "issue").title("Create issue").examples(&["file a bug"]);
-        let b1 = action("com.grain.bbb", "issue").title("Create issue").examples(&["file a bug"]);
+        let a1 = action("com.grain.aaa", "issue")
+            .title("Create issue")
+            .examples(&["file a bug"]);
+        let b1 = action("com.grain.bbb", "issue")
+            .title("Create issue")
+            .examples(&["file a bug"]);
         let (c, a) = empty_ctx();
-        let forwards = CapabilityIndex::build(vec![a1.clone(), b1.clone()])
-            .retrieve("file a bug", &ctx(&c, &a, None), transcript(5));
-        let backwards = CapabilityIndex::build(vec![b1, a1])
-            .retrieve("file a bug", &ctx(&c, &a, None), transcript(5));
-        assert_eq!(forwards.ids(), backwards.ids(), "install order must not decide the ballot");
+        let forwards = CapabilityIndex::build(vec![a1.clone(), b1.clone()]).retrieve(
+            "file a bug",
+            &ctx(&c, &a, None),
+            transcript(5),
+        );
+        let backwards = CapabilityIndex::build(vec![b1, a1]).retrieve(
+            "file a bug",
+            &ctx(&c, &a, None),
+            transcript(5),
+        );
+        assert_eq!(
+            forwards.ids(),
+            backwards.ids(),
+            "install order must not decide the ballot"
+        );
     }
 
     #[test]
     fn search_actions_can_narrow_to_one_extension() {
         let index = CapabilityIndex::build(vec![
-            action("com.grain.github", "issue").title("Create issue").examples(&["file a bug"]),
-            action("com.grain.linear", "issue").title("Create issue").examples(&["file a bug"]),
+            action("com.grain.github", "issue")
+                .title("Create issue")
+                .examples(&["file a bug"]),
+            action("com.grain.linear", "issue")
+                .title("Create issue")
+                .examples(&["file a bug"]),
         ]);
         let (c, a) = empty_ctx();
-        let hot = index.search_actions("create an issue", &ctx(&c, &a, None), Some("com.grain.linear"), 5);
+        let hot = index.search_actions(
+            "create an issue",
+            &ctx(&c, &a, None),
+            Some("com.grain.linear"),
+            5,
+        );
         assert_eq!(hot.ids(), vec!["linear.issue"]);
     }
 
     #[test]
     fn an_empty_query_retrieves_nothing() {
-        let index = CapabilityIndex::build(vec![action("com.grain.spotify", "play").aliases(&["spotify"])]);
+        let index = CapabilityIndex::build(vec![
+            action("com.grain.spotify", "play").aliases(&["spotify"])
+        ]);
         let (c, a) = empty_ctx();
-        assert!(index.retrieve("", &ctx(&c, &a, None), transcript(5)).entries.is_empty());
-        assert!(index.retrieve("...", &ctx(&c, &a, None), transcript(5)).entries.is_empty());
+        assert!(index
+            .retrieve("", &ctx(&c, &a, None), transcript(5))
+            .entries
+            .is_empty());
+        assert!(index
+            .retrieve("...", &ctx(&c, &a, None), transcript(5))
+            .entries
+            .is_empty());
     }
 
     #[test]
@@ -1285,19 +1453,31 @@ mod tests {
         evil.when_to_use = "x".repeat(12000);
         let index = CapabilityIndex::build(vec![evil]);
         let (c, a) = empty_ctx();
-        let hot = index.retrieve("use gremlin to run the thing", &ctx(&c, &a, None), transcript(5));
+        let hot = index.retrieve(
+            "use gremlin to run the thing",
+            &ctx(&c, &a, None),
+            transcript(5),
+        );
         assert_eq!(hot.entries[0].canonical_id, "evil.run");
         assert_eq!(hot.entries[0].provenance, Provenance::Exact);
     }
 
     #[test]
     fn degenerate_queries_never_panic() {
-        let index = CapabilityIndex::build(vec![
-            action("com.grain.spotify", "play").aliases(&["spotify"]).examples(&["put on some music"]),
-        ]);
+        let index = CapabilityIndex::build(vec![action("com.grain.spotify", "play")
+            .aliases(&["spotify"])
+            .examples(&["put on some music"])]);
         let (c, a) = empty_ctx();
         let long = "word ".repeat(600);
-        for q in ["", "   ", "!!!", "the a of to it is", "\u{202E}\u{0007}\u{200B}", "élan naïve café", &long] {
+        for q in [
+            "",
+            "   ",
+            "!!!",
+            "the a of to it is",
+            "\u{202E}\u{0007}\u{200B}",
+            "élan naïve café",
+            &long,
+        ] {
             // The contract is only that nothing panics and the result is bounded.
             let hot = index.retrieve(q, &ctx(&c, &a, None), transcript(8));
             assert!(hot.entries.len() <= 8);
@@ -1313,13 +1493,27 @@ mod tests {
         auth_missing.insert("spotify.play".to_string());
         let context = HashSet::new();
         let index = CapabilityIndex::build(vec![
-            action("com.grain.spotify", "play").aliases(&["spotify"]).examples(&["put on some music"]),
-            action("com.grain.spotify", "pause").aliases(&["spotify"]).examples(&["pause the music"]),
+            action("com.grain.spotify", "play")
+                .aliases(&["spotify"])
+                .examples(&["put on some music"]),
+            action("com.grain.spotify", "pause")
+                .aliases(&["spotify"])
+                .examples(&["pause the music"]),
         ]);
-        let hot = index.retrieve("spotify play something", &ctx(&context, &auth_missing, None), transcript(5));
+        let hot = index.retrieve(
+            "spotify play something",
+            &ctx(&context, &auth_missing, None),
+            transcript(5),
+        );
         let ids = hot.ids();
-        assert!(!ids.contains(&"spotify.play"), "auth-withheld action must not appear: {ids:?}");
-        assert!(ids.contains(&"spotify.pause"), "the eligible sibling still surfaces by name: {ids:?}");
+        assert!(
+            !ids.contains(&"spotify.play"),
+            "auth-withheld action must not appear: {ids:?}"
+        );
+        assert!(
+            ids.contains(&"spotify.pause"),
+            "the eligible sibling still surfaces by name: {ids:?}"
+        );
         assert!(hot
             .excluded
             .iter()
@@ -1332,12 +1526,20 @@ mod tests {
         // dropped). Matching is token-wise and order-free outside the Exact tier,
         // so the two content tokens still carry it.
         let index = CapabilityIndex::build(vec![
-            action("com.grain.slack", "dm").aliases(&["slack"]).examples(&["send a message to someone"]),
-            action("com.grain.spotify", "play").aliases(&["spotify"]).examples(&["put on some music"]),
+            action("com.grain.slack", "dm")
+                .aliases(&["slack"])
+                .examples(&["send a message to someone"]),
+            action("com.grain.spotify", "play")
+                .aliases(&["spotify"])
+                .examples(&["put on some music"]),
         ]);
         let (c, a) = empty_ctx();
         let hot = index.retrieve("send jack message", &ctx(&c, &a, None), transcript(5));
-        assert!(hot.ids().contains(&"slack.dm"), "a dropped word must not lose the match: {:?}", hot.ids());
+        assert!(
+            hot.ids().contains(&"slack.dm"),
+            "a dropped word must not lose the match: {:?}",
+            hot.ids()
+        );
     }
 
     #[test]
@@ -1361,17 +1563,20 @@ mod tests {
         let inputs = actions_from_manifest(&ext, true);
         assert_eq!(inputs.len(), 2);
         let play = inputs.iter().find(|i| i.action_id == "play").unwrap();
-        assert_eq!(play.canonical_id, "spotify.play");
+        assert_eq!(play.canonical_id, "com.grain.spotify:play");
         assert!(play.aliases.contains(&"Spotify".to_string()));
         assert!(play.aliases.contains(&"spotify".to_string()));
-        assert!(play.phrases.iter().any(|p| p == "play"), "utterance literal kept, placeholder dropped");
-        assert!(play.param_names.contains(&"artist".to_string()));
+        assert!(
+            play.phrases.iter().any(|p| p == "play"),
+            "utterance literal kept, placeholder dropped"
+        );
+        assert!(play.params.iter().any(|param| param.name == "artist"));
         assert!(play.tags.contains(&"artist".to_string()));
 
         // And the projection retrieves: "skip this" names the next track.
         let index = CapabilityIndex::build(inputs);
         let (c, a) = empty_ctx();
         let hot = index.retrieve("skip this", &ctx(&c, &a, None), transcript(5));
-        assert_eq!(hot.entries[0].canonical_id, "spotify.next");
+        assert_eq!(hot.entries[0].canonical_id, "com.grain.spotify:next");
     }
 }

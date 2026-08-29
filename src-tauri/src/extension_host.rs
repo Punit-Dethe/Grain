@@ -568,10 +568,9 @@ pub fn refresh_index(app: &AppHandle) {
             collect_actions(&rec, &pack, &mut actions);
             // [GRAIN] Capability Index V2 draws from the same declared actions,
             // projected for the schema-aware retriever (docs/Extensions 2.0 §6).
-            capability_inputs.extend(grain_core::capability_index::actions_from_manifest(
-                &pack.manifest,
-                true,
-            ));
+            // Repeat the approval-digest gate for V2: an edited on-disk pack
+            // cannot smuggle a new Agent tool into an already-enabled record.
+            collect_capability_actions(&rec, &pack, &mut capability_inputs);
             // The Extension Mode pool. Gated on searchable + recommendation
             // approval, NOT on declaring any action — a translator is a real
             // searchable extension with no command catalogue at all (§3.1).
@@ -809,6 +808,33 @@ fn collect_actions(
     }
 }
 
+/// Project actions into Capability Index V2 only while the exact declaration the
+/// user approved is still installed. Unlike V1 routing this intentionally does
+/// not require `kind: searchable`: the effective V2 plan makes declared actions
+/// Agent contributions for standalone and extending packs too.
+fn collect_capability_actions(
+    rec: &grain_core::extensions::ExtensionRecord,
+    pack: &GrainPack,
+    out: &mut Vec<grain_core::capability_index::ActionInput>,
+) {
+    let declared = &pack.manifest.contributes.actions;
+    if declared.is_empty() {
+        return;
+    }
+    let approved = grain_core::extensions::actions_fingerprint(declared);
+    if rec.actions_approved.as_deref() != Some(approved.as_str()) {
+        log::warn!(
+            "[ext:{}] Agent actions withheld because the declaration differs from approval",
+            rec.id
+        );
+        return;
+    }
+    out.extend(grain_core::capability_index::actions_from_manifest(
+        &pack.manifest,
+        true,
+    ));
+}
+
 /// Add one enabled extension to the Extension Mode pool, if it belongs there.
 ///
 /// Two gates, the first two from [`collect_actions`] and for the same reasons —
@@ -1018,17 +1044,32 @@ pub fn capability_search(
 /// and prepare a call without re-opening a manifest. `None` for an unknown id.
 pub fn capability_action_meta(
     canonical_id: &str,
-) -> Option<(String, String, String, grain_sdk::manifest::ActionRisk)> {
+) -> Option<grain_core::capability_index::ActionInput> {
     let host = HOST.get()?;
     let index = host.index.read().unwrap();
-    index.capability.describe(canonical_id).map(|input| {
-        (
-            input.extension_id.clone(),
-            input.action_id.clone(),
-            input.title.clone(),
-            input.risk,
-        )
-    })
+    index.capability.describe(canonical_id).cloned()
+}
+
+/// Re-read the installed declaration at execution time and return its approved
+/// action digest. This deliberately runs off the retrieval hot path and closes
+/// the on-disk edit/update race before a prepared call can execute.
+pub fn approved_action_digest(
+    app: &AppHandle,
+    extension_id: &str,
+    action_id: &str,
+) -> Option<String> {
+    let registry = app.try_state::<Arc<grain_core::extensions::ExtensionsRegistry>>()?;
+    let record = registry.record(extension_id)?;
+    if !record.enabled {
+        return None;
+    }
+    let pack = load_manifest(app, extension_id)?;
+    let declared = &pack.manifest.contributes.actions;
+    if !declared.iter().any(|action| action.id == action_id) {
+        return None;
+    }
+    let digest = grain_core::extensions::actions_fingerprint(declared);
+    (record.actions_approved.as_deref() == Some(digest.as_str())).then_some(digest)
 }
 
 /// [GRAIN] Build model tool definitions for the given canonical ids, under the
@@ -2337,6 +2378,7 @@ pub async fn run_action(
     ext_id: &str,
     action_id: &str,
     arguments: &Value,
+    idempotency_key: Option<&str>,
 ) -> Result<Value, ActionCallError> {
     let Some(host) = HOST.get() else {
         return Err(ActionCallError::Unavailable("extension host unavailable".into()));
@@ -2366,7 +2408,11 @@ pub async fn run_action(
         .call(
             ext_id,
             "action",
-            json!({ "action": action_id, "arguments": arguments }),
+            json!({
+                "action": action_id,
+                "arguments": arguments,
+                "idempotencyKey": idempotency_key,
+            }),
             HANDOFF_DEADLINE,
         )
         .await

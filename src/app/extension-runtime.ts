@@ -357,7 +357,11 @@ export const GRAIN_RUNTIME_JS = `(function () {
           return { error: { class: "not_found", message: "no such action: " + name } };
         }
         return Promise.resolve()
-          .then(function () { return fn((p && p.arguments) || {}); })
+          .then(function () {
+            return fn((p && p.arguments) || {}, {
+              idempotencyKey: (p && p.idempotencyKey) || null
+            });
+          })
           .then(function (out) {
             // Pass through an already-tagged result; wrap plain data as ok.
             if (out && (out.error || out.needsInteraction || out.ok)) return out;

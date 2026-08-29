@@ -23,6 +23,7 @@ use serde::Serialize;
 use serde_json::{json, Value};
 
 use crate::capability_index::{ActionInput, HotSet};
+use grain_sdk::manifest::ActionParamKind;
 
 /// Prefix on every provider-facing tool name, so an action tool can never
 /// collide with a host meta-tool like [`SEARCH_ACTIONS`] and the host can tell
@@ -35,6 +36,8 @@ pub const SEARCH_ACTIONS: &str = "search_actions";
 /// Hard byte ceiling on a composed tool description. Untrusted manifest text
 /// cannot exceed this however long the author made it (§6.3).
 pub const DESCRIPTION_MAX_BYTES: usize = 320;
+/// Hard transport ceiling for one model-authored action argument object.
+pub const ARGUMENTS_MAX_BYTES: usize = 64 * 1024;
 
 /// Provider-facing safe tool name for a canonical id (§6.4):
 /// `github.create_issue` → `act__github__create_issue`. Deterministic and within
@@ -42,18 +45,30 @@ pub const DESCRIPTION_MAX_BYTES: usize = 320;
 /// codec — [`ToolExposure`] holds the authoritative name → canonical map for the
 /// active session, so an ambiguous encoding can never execute the wrong action.
 pub fn tool_name(canonical_id: &str) -> String {
-    let mut out = String::with_capacity(TOOL_NAME_PREFIX.len() + canonical_id.len() + 4);
-    out.push_str(TOOL_NAME_PREFIX);
+    use sha2::{Digest, Sha256};
+
+    // Provider tool names are commonly capped at 64 bytes. Sanitisation is not
+    // an injective codec ("a/b" and "a_b" collide), so keep a readable prefix
+    // and bind it to the complete canonical id with 96 bits of SHA-256.
+    let mut readable = String::new();
     for c in canonical_id.chars() {
-        if c == '.' {
-            out.push_str("__");
-        } else if c.is_ascii_alphanumeric() || c == '_' || c == '-' {
-            out.push(c);
+        let clean = if c.is_ascii_alphanumeric() || matches!(c, '_' | '-') {
+            c
         } else {
-            out.push('_');
+            '_'
+        };
+        if readable.len() + clean.len_utf8() > 28 {
+            break;
         }
+        readable.push(clean);
     }
-    out
+    let digest = Sha256::digest(canonical_id.as_bytes());
+    let mut suffix = String::with_capacity(24);
+    for byte in &digest[..12] {
+        use std::fmt::Write as _;
+        let _ = write!(suffix, "{byte:02x}");
+    }
+    format!("{TOOL_NAME_PREFIX}{readable}__{suffix}")
 }
 
 /// One tool as the model should see it. The host maps this onto its transport
@@ -85,18 +100,80 @@ pub fn action_tool_def(action: &ActionInput) -> ToolDef {
     }
 
     let mut properties = serde_json::Map::new();
-    for name in &action.param_names {
-        let clean = sanitize(name, 64);
+    let mut required = Vec::new();
+    for param in &action.params {
+        let clean = sanitize(&param.name, 64);
         if !clean.is_empty() {
-            properties.insert(clean, json!({ "type": "string" }));
+            let kind = match param.kind {
+                ActionParamKind::Entity | ActionParamKind::Text => "string",
+                ActionParamKind::Number => "number",
+            };
+            properties.insert(clean.clone(), json!({ "type": kind }));
+            if param.required {
+                required.push(clean);
+            }
         }
     }
 
     ToolDef {
         name: tool_name(&action.canonical_id),
         description,
-        parameters: json!({ "type": "object", "properties": Value::Object(properties) }),
+        parameters: json!({
+            "type": "object",
+            "properties": Value::Object(properties),
+            "required": required,
+            "additionalProperties": false
+        }),
     }
+}
+
+/// Parse and validate model-authored arguments against the same parameter
+/// projection used to build the tool schema. Unknown keys, missing required
+/// values, wrong types, and oversized payloads fail before a worker is woken.
+pub fn parse_and_validate_arguments(action: &ActionInput, raw: &str) -> Result<Value, String> {
+    if raw.len() > ARGUMENTS_MAX_BYTES {
+        return Err("action arguments exceed the 64 KiB limit".to_string());
+    }
+    let value: Value =
+        serde_json::from_str(raw).map_err(|_| "action arguments are not valid JSON".to_string())?;
+    let Value::Object(mut object) = value else {
+        return Err("action arguments must be a JSON object".to_string());
+    };
+
+    for key in object.keys() {
+        if !action.params.iter().any(|param| param.name == *key) {
+            return Err(format!("action argument '{key}' is not declared"));
+        }
+    }
+    for param in &action.params {
+        let Some(value) = object.get(&param.name) else {
+            if param.required {
+                return Err(format!("action argument '{}' is required", param.name));
+            }
+            continue;
+        };
+        if value.is_null() && !param.required {
+            object.remove(&param.name);
+            continue;
+        }
+        let valid = match param.kind {
+            ActionParamKind::Entity | ActionParamKind::Text => value
+                .as_str()
+                .is_some_and(|text| !param.required || !text.trim().is_empty()),
+            ActionParamKind::Number => value.is_number(),
+        };
+        if !valid {
+            let expected = match param.kind {
+                ActionParamKind::Entity | ActionParamKind::Text => "text",
+                ActionParamKind::Number => "a number",
+            };
+            return Err(format!(
+                "action argument '{}' must be {expected}",
+                param.name
+            ));
+        }
+    }
+    Ok(Value::Object(object))
 }
 
 /// The `search_actions` meta-tool definition (§7.3). Bounded, compact schema.
@@ -288,7 +365,10 @@ impl ToolExposure {
     /// it survives later eviction. This is the authoritative reverse of
     /// [`tool_name`] — an undisclosed or invented name resolves to nothing.
     pub fn resolve(&mut self, tool_name: &str) -> Option<String> {
-        let tool = self.exposed.iter_mut().find(|tool| tool.tool_name == tool_name)?;
+        let tool = self
+            .exposed
+            .iter_mut()
+            .find(|tool| tool.tool_name == tool_name)?;
         tool.used = true;
         Some(tool.canonical_id.clone())
     }
@@ -302,7 +382,10 @@ impl ToolExposure {
                 .total_cmp(&a.relevance)
                 .then_with(|| a.canonical_id.cmp(&b.canonical_id))
         });
-        ordered.into_iter().map(|tool| tool.canonical_id.clone()).collect()
+        ordered
+            .into_iter()
+            .map(|tool| tool.canonical_id.clone())
+            .collect()
     }
 
     pub fn len(&self) -> usize {
@@ -332,7 +415,7 @@ mod tests {
             tags: Vec::new(),
             examples: Vec::new(),
             phrases: Vec::new(),
-            param_names: Vec::new(),
+            params: Vec::new(),
             when_to_use: String::new(),
             when_not_to_use: String::new(),
             description: String::new(),
@@ -368,9 +451,13 @@ mod tests {
 
     #[test]
     fn tool_name_is_safe_and_prefixed() {
-        assert_eq!(tool_name("github.create_issue"), "act__github__create_issue");
-        // Anything outside the tool-name grammar becomes an underscore.
-        assert_eq!(tool_name("weird.a b/c"), "act__weird__a_b_c");
+        let ordinary = tool_name("github.create_issue");
+        assert!(ordinary.starts_with("act__github_create_issue__"));
+        assert!(ordinary.len() <= 64);
+        assert!(ordinary
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-')));
+        assert_ne!(tool_name("weird.a/b"), tool_name("weird.a_b"));
     }
 
     #[test]
@@ -379,15 +466,28 @@ mod tests {
         a.title = "Create an issue".into();
         a.when_to_use = "The user wants a new bug report or tracked task".into();
         a.examples = vec!["file a bug about the login page".into()];
-        a.param_names = vec!["repository".into(), "title".into()];
+        a.params = vec![
+            crate::capability_index::ActionParamInput {
+                name: "repository".into(),
+                kind: ActionParamKind::Text,
+                required: true,
+            },
+            crate::capability_index::ActionParamInput {
+                name: "title".into(),
+                kind: ActionParamKind::Text,
+                required: true,
+            },
+        ];
         let def = action_tool_def(&a);
-        assert_eq!(def.name, "act__github__create_issue");
+        assert!(def.name.starts_with("act__github_create_issue__"));
         assert!(def.description.starts_with("Create an issue — "));
         assert!(def.description.contains("e.g."));
         assert!(def.description.len() <= DESCRIPTION_MAX_BYTES);
         let props = def.parameters.get("properties").unwrap();
         assert!(props.get("repository").is_some());
         assert!(props.get("title").is_some());
+        assert_eq!(def.parameters["required"], json!(["repository", "title"]));
+        assert_eq!(def.parameters["additionalProperties"], json!(false));
     }
 
     #[test]
@@ -413,16 +513,38 @@ mod tests {
     }
 
     #[test]
+    fn arguments_fail_closed_against_the_exposed_schema() {
+        let mut a = action("github.create_issue");
+        a.params = vec![
+            crate::capability_index::ActionParamInput {
+                name: "title".into(),
+                kind: ActionParamKind::Text,
+                required: true,
+            },
+            crate::capability_index::ActionParamInput {
+                name: "priority".into(),
+                kind: ActionParamKind::Number,
+                required: false,
+            },
+        ];
+        assert!(parse_and_validate_arguments(&a, r#"{"title":"Bug","priority":2}"#).is_ok());
+        assert!(parse_and_validate_arguments(&a, r#"{"priority":2}"#).is_err());
+        assert!(parse_and_validate_arguments(&a, r#"{"title":"Bug","priority":"high"}"#).is_err());
+        assert!(parse_and_validate_arguments(&a, r#"{"title":"Bug","secret":"x"}"#).is_err());
+        assert!(parse_and_validate_arguments(&a, "null").is_err());
+    }
+
+    #[test]
     fn exposure_resolves_only_names_it_offered() {
         let mut exposure = ToolExposure::new(ToolBudget::default());
         exposure.expose(&hot(vec![retrieved("spotify.play", 0.9)]));
         assert_eq!(
-            exposure.resolve("act__spotify__play").as_deref(),
+            exposure.resolve(&tool_name("spotify.play")).as_deref(),
             Some("spotify.play")
         );
         // An undisclosed / invented name resolves to nothing — discovery is not
         // authorisation.
-        assert_eq!(exposure.resolve("act__github__delete_repo"), None);
+        assert_eq!(exposure.resolve(&tool_name("github.delete_repo")), None);
     }
 
     #[test]
@@ -432,19 +554,22 @@ mod tests {
             max_hops: 3,
         };
         let mut exposure = ToolExposure::new(budget);
-        exposure.expose(&hot(vec![
-            retrieved("a.one", 0.9),
-            retrieved("b.two", 0.5),
-        ]));
+        exposure.expose(&hot(vec![retrieved("a.one", 0.9), retrieved("b.two", 0.5)]));
         // The model calls the low-relevance one, protecting it from eviction.
-        assert!(exposure.resolve("act__b__two").is_some());
+        assert!(exposure.resolve(&tool_name("b.two")).is_some());
         // A new, higher-relevance action arrives; the cap is 2, so something must
         // go — but not the used one, so the *unused* a.one is evicted.
         exposure.expose(&hot(vec![retrieved("c.three", 0.95)]));
         let ids = exposure.exposed_canonical_ids();
-        assert!(ids.contains(&"b.two".to_string()), "a used tool must survive: {ids:?}");
+        assert!(
+            ids.contains(&"b.two".to_string()),
+            "a used tool must survive: {ids:?}"
+        );
         assert!(ids.contains(&"c.three".to_string()));
-        assert!(!ids.contains(&"a.one".to_string()), "unused low-relevance evicted");
+        assert!(
+            !ids.contains(&"a.one".to_string()),
+            "unused low-relevance evicted"
+        );
         assert_eq!(exposure.len(), 2);
     }
 
@@ -465,6 +590,10 @@ mod tests {
         let mut exposure = ToolExposure::new(ToolBudget::default());
         exposure.expose(&hot(vec![retrieved("a.one", 0.4)]));
         exposure.expose(&hot(vec![retrieved("a.one", 0.9)]));
-        assert_eq!(exposure.len(), 1, "same action exposed twice stays one tool");
+        assert_eq!(
+            exposure.len(),
+            1,
+            "same action exposed twice stays one tool"
+        );
     }
 }

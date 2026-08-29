@@ -144,7 +144,9 @@ impl Interaction {
     pub fn awaits_user(&self) -> bool {
         matches!(
             self,
-            Interaction::Confirm { .. } | Interaction::Choose { .. } | Interaction::RequestText { .. }
+            Interaction::Confirm { .. }
+                | Interaction::Choose { .. }
+                | Interaction::RequestText { .. }
         )
     }
 
@@ -166,7 +168,10 @@ pub fn to_markdown(interaction: &Interaction) -> String {
         Interaction::Progress { label, fraction } => {
             let label = sanitize(label, SUMMARY_MAX);
             match fraction {
-                Some(f) => format!("_{label} ({}%)_", ((*f).clamp(0.0, 1.0) * 100.0).round() as u32),
+                Some(f) => format!(
+                    "_{label} ({}%)_",
+                    ((*f).clamp(0.0, 1.0) * 100.0).round() as u32
+                ),
                 None => format!("_{label}…_"),
             }
         }
@@ -198,7 +203,12 @@ pub fn to_markdown(interaction: &Interaction) -> String {
             }
             out
         }
-        Interaction::Choose { prompt, options, multi, .. } => {
+        Interaction::Choose {
+            prompt,
+            options,
+            multi,
+            ..
+        } => {
             let mut out = sanitize(prompt, PROMPT_MAX);
             if *multi {
                 out.push_str(" _(choose any)_");
@@ -214,7 +224,11 @@ pub fn to_markdown(interaction: &Interaction) -> String {
             }
             out
         }
-        Interaction::RequestText { prompt, placeholder, .. } => {
+        Interaction::RequestText {
+            prompt,
+            placeholder,
+            ..
+        } => {
             let mut out = sanitize(prompt, PROMPT_MAX);
             if let Some(hint) = placeholder {
                 let hint = sanitize(hint, SHORT_MAX);
@@ -224,7 +238,12 @@ pub fn to_markdown(interaction: &Interaction) -> String {
             }
             out
         }
-        Interaction::Result { source, title, body, details } => {
+        Interaction::Result {
+            source,
+            title,
+            body,
+            details,
+        } => {
             let mut out = String::new();
             let heading = result_heading(source.as_deref(), title.as_deref());
             if !heading.is_empty() {
@@ -243,9 +262,18 @@ pub fn to_markdown(interaction: &Interaction) -> String {
             out
         }
         Interaction::Notice { level, message } => {
-            format!("{} {}", notice_marker(*level), sanitize(message, MESSAGE_MAX))
+            format!(
+                "{} {}",
+                notice_marker(*level),
+                sanitize(message, MESSAGE_MAX)
+            )
         }
-        Interaction::Receipt { source, action, summary, details } => {
+        Interaction::Receipt {
+            source,
+            action,
+            summary,
+            details,
+        } => {
             let mut out = String::from("✓ ");
             if let Some(source) = source {
                 let source = sanitize(source, LABEL_MAX);
@@ -278,8 +306,12 @@ pub fn render_all(interactions: &[Interaction]) -> String {
 }
 
 fn result_heading(source: Option<&str>, title: Option<&str>) -> String {
-    let source = source.map(|s| sanitize(s, LABEL_MAX)).filter(|s| !s.is_empty());
-    let title = title.map(|t| sanitize(t, TITLE_MAX)).filter(|t| !t.is_empty());
+    let source = source
+        .map(|s| sanitize(s, LABEL_MAX))
+        .filter(|s| !s.is_empty());
+    let title = title
+        .map(|t| sanitize(t, TITLE_MAX))
+        .filter(|t| !t.is_empty());
     match (source, title) {
         (Some(source), Some(title)) => format!("{source}: {title}"),
         (Some(source), None) => source,
@@ -341,7 +373,10 @@ mod tests {
             token: "pc_1".into(),
             title: "Create an issue".into(),
             summary: "Open a bug report in acme/webapp.".into(),
-            details: vec![field("Repository", "acme/webapp"), field("Title", "Login button dead")],
+            details: vec![
+                field("Repository", "acme/webapp"),
+                field("Title", "Login button dead"),
+            ],
             side_effect: "Creates a public issue".into(),
             destinations: vec!["github.com".into()],
         };
@@ -400,8 +435,16 @@ mod tests {
             token: "c1".into(),
             prompt: "Which repository?".into(),
             options: vec![
-                ChoiceOption { id: "1".into(), label: "acme/web".into(), description: Some("the app".into()) },
-                ChoiceOption { id: "2".into(), label: "acme/api".into(), description: None },
+                ChoiceOption {
+                    id: "1".into(),
+                    label: "acme/web".into(),
+                    description: Some("the app".into()),
+                },
+                ChoiceOption {
+                    id: "2".into(),
+                    label: "acme/api".into(),
+                    description: None,
+                },
             ],
             multi: true,
         };
@@ -435,11 +478,17 @@ mod tests {
     #[test]
     fn progress_renders_a_known_or_unknown_fraction() {
         assert_eq!(
-            to_markdown(&Interaction::Progress { label: "Searching".into(), fraction: None }),
+            to_markdown(&Interaction::Progress {
+                label: "Searching".into(),
+                fraction: None
+            }),
             "_Searching…_"
         );
         assert_eq!(
-            to_markdown(&Interaction::Progress { label: "Uploading".into(), fraction: Some(0.5) }),
+            to_markdown(&Interaction::Progress {
+                label: "Uploading".into(),
+                fraction: Some(0.5)
+            }),
             "_Uploading (50%)_"
         );
     }

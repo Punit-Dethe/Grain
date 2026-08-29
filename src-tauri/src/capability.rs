@@ -108,38 +108,61 @@ pub async fn dispatch(
 /// action runs in process now; a `Confirm` action is withheld and surfaced for
 /// the user's approval (never fed to the model as if it ran).
 async fn execute_action(app: &AppHandle, canonical: &str, arguments_json: &str) -> ToolResult {
-    let Some((extension_id, action_id, title, declared_risk)) =
-        crate::extension_host::capability_action_meta(canonical)
-    else {
+    let Some(action) = crate::extension_host::capability_action_meta(canonical) else {
         return ToolResult::Text(format!("The action \"{canonical}\" is not available."));
     };
-    let arguments: serde_json::Value =
-        serde_json::from_str(arguments_json).unwrap_or(serde_json::Value::Null);
+    let arguments = match capability_agent::parse_and_validate_arguments(&action, arguments_json)
+    {
+        Ok(arguments) => arguments,
+        Err(error) => return ToolResult::Text(format!("The action arguments are invalid: {error}.")),
+    };
 
     // The host floor classifies the action; the axis retry/parallelism reads
     // follows it (a Confirm write, a Safe read). User policy could only tighten
     // this — never loosen it — and is applied here once wired.
-    let risk = RiskClass::floor(declared_risk);
-    let side_effect = match risk {
-        RiskClass::Confirm => SideEffect::Write,
-        RiskClass::Safe => SideEffect::Read,
-    };
-    let digest = if extension_id == crate::action_exec::GRAIN_SPACE_EXT_ID {
-        "builtin"
+    let builtin = action.extension_id == crate::action_exec::GRAIN_SPACE_EXT_ID;
+    let risk = if builtin {
+        RiskClass::floor(action.risk)
     } else {
-        "unwired"
+        RiskClass::Confirm
+    };
+    let side_effect = if builtin
+        && matches!(
+            action.action_id.as_str(),
+            "search_notes" | "get_note" | "list_collections"
+        )
+    {
+        SideEffect::Read
+    } else {
+        SideEffect::Write
+    };
+    let digest = if builtin {
+        Some("builtin".to_string())
+    } else {
+        crate::extension_host::approved_action_digest(
+            app,
+            &action.extension_id,
+            &action.action_id,
+        )
+    };
+    let Some(digest) = digest else {
+        return ToolResult::Text(
+            "The action is no longer approved or available. Ask again after reviewing the extension."
+                .to_string(),
+        );
     };
     let prepared = crate::action_exec::prepare(
         canonical,
-        &extension_id,
-        &action_id,
+        &action.extension_id,
+        &action.action_id,
+        &action.provider_name,
         arguments,
         risk,
         side_effect,
-        digest,
+        &digest,
     );
 
-    match crate::action_exec::run_or_confirm(app, prepared, &title).await {
+    match crate::action_exec::run_or_confirm(app, prepared, &action.title).await {
         crate::action_exec::Dispatch::Ran(outcome) => ToolResult::Text(outcome.model_summary()),
         // The confirmation is held host-side by token and surfaced on
         // `AgentReply.confirm_action` for the user to approve (§2.5). It is never
@@ -236,4 +259,3 @@ fn handle_search(call: &ToolCallOut, exposure: &mut ToolExposure) -> String {
     }
     out
 }
-

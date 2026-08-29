@@ -18,8 +18,8 @@
 //! Built-in providers execute in process; third-party providers execute through
 //! the extension worker (Phase 3b — the `"action"` worker protocol). Both return
 //! the same [`ActionOutcome`]. This module ships the **Grain Space** built-in
-//! provider; third-party execution reports honestly that it is not wired yet and
-//! never fabricates success (§8.1).
+//! provider; third-party actions run through the isolated extension worker and
+//! return a strict, host-sanitised outcome (§8.1).
 
 use std::sync::Mutex;
 
@@ -76,21 +76,12 @@ impl PendingCalls {
         Some(list.remove(index))
     }
 
-    fn latest_token() -> Option<String> {
-        PENDING
-            .lock()
-            .unwrap()
-            .as_ref()
-            .and_then(|list| list.last())
-            .map(|call| call.token.clone())
-    }
 }
 
-/// The token of the most recent confirmation still awaiting the user, if any.
-/// The interim conversational confirm resumes this on a clear yes/no
-/// ([`grain_core::execution::classify_confirmation`]).
-pub fn latest_pending_token() -> Option<String> {
-    PendingCalls::latest_token()
+/// Drop a held confirmation without executing it. Agent session teardown uses
+/// this so a token can never survive into a later conversation.
+pub fn discard(token: &str) -> bool {
+    PendingCalls::take(token).is_some()
 }
 
 fn now_ms() -> i64 {
@@ -100,7 +91,8 @@ fn now_ms() -> i64 {
 /// A monotonic-ish confirmation token. The nanosecond clock plus the canonical id
 /// is enough — tokens are short-lived and single-user.
 fn mint_token(canonical_id: &str) -> String {
-    format!("pc_{}_{}", now_ms(), canonical_id.replace('.', "_"))
+    let _ = canonical_id; // kept in the signature so call sites express intent
+    format!("pc_{}", uuid::Uuid::new_v4().simple())
 }
 
 /// Build the exact prepared call for a retrieved action, or an immediate failure
@@ -112,6 +104,7 @@ pub fn prepare(
     canonical_id: &str,
     extension_id: &str,
     action_id: &str,
+    provider_name: &str,
     arguments: Value,
     risk: RiskClass,
     side_effect: SideEffect,
@@ -125,6 +118,7 @@ pub fn prepare(
         canonical_id: canonical_id.to_string(),
         extension_id: extension_id.to_string(),
         action_id: action_id.to_string(),
+        provider_name: provider_name.to_string(),
         arguments,
         risk,
         side_effect,
@@ -143,7 +137,7 @@ pub async fn run_or_confirm(app: &AppHandle, prepared: PreparedCall, title: &str
         PendingCalls::insert(prepared);
         Dispatch::AwaitConfirm(interaction)
     } else {
-        Dispatch::Ran(execute(app, &prepared).await)
+        Dispatch::Ran(execute_revalidated(app, &prepared).await)
     }
 }
 
@@ -159,7 +153,14 @@ pub async fn resume(app: &AppHandle, token: &str, approve: bool) -> ActionOutcom
     if !approve {
         return ActionOutcome::Cancelled;
     }
-    match prepared.still_valid(current_manifest_digest(&prepared.extension_id), now_ms()) {
+    let Some(current_digest) = current_manifest_digest(app, &prepared) else {
+        return ActionOutcome::Failed {
+            class: FailureClass::Cancelled,
+            message: "The extension action is no longer approved or available â€” please ask again."
+                .to_string(),
+        };
+    };
+    match prepared.still_valid(&current_digest, now_ms()) {
         Ok(()) => execute(app, &prepared).await,
         Err(Stale::Expired) => ActionOutcome::Failed {
             class: FailureClass::Cancelled,
@@ -176,13 +177,33 @@ pub async fn resume(app: &AppHandle, token: &str, approve: bool) -> ActionOutcom
 /// The manifest digest currently in force for an extension, for time-of-use
 /// revalidation. Built-in providers are versioned with the app, so a constant is
 /// correct; third-party providers will read the installed pack digest (Phase 3b).
-fn current_manifest_digest(extension_id: &str) -> &'static str {
-    if extension_id == GRAIN_SPACE_EXT_ID {
-        "builtin"
+fn current_manifest_digest(app: &AppHandle, prepared: &PreparedCall) -> Option<String> {
+    if prepared.extension_id == GRAIN_SPACE_EXT_ID {
+        Some("builtin".to_string())
     } else {
-        // Third-party execution is not wired yet; a mismatch here would only ever
-        // refuse, which is the safe direction.
-        "unwired"
+        crate::extension_host::approved_action_digest(
+            app,
+            &prepared.extension_id,
+            &prepared.action_id,
+        )
+    }
+}
+
+/// Revalidate even safe calls. A safe action skips user confirmation, not the
+/// approval/update time-of-use gate.
+async fn execute_revalidated(app: &AppHandle, prepared: &PreparedCall) -> ActionOutcome {
+    let Some(current_digest) = current_manifest_digest(app, prepared) else {
+        return failed(
+            FailureClass::Cancelled,
+            "The extension action is no longer approved or available.",
+        );
+    };
+    match prepared.still_valid(&current_digest, now_ms()) {
+        Ok(()) => execute(app, prepared).await,
+        Err(Stale::Expired | Stale::ManifestChanged) => failed(
+            FailureClass::Cancelled,
+            "The extension action changed or expired before it could run.",
+        ),
     }
 }
 
@@ -199,8 +220,7 @@ async fn execute(app: &AppHandle, prepared: &PreparedCall) -> ActionOutcome {
 /// (Phase 3b, Rust half). The worker returns a structured result mapped to an
 /// [`ActionOutcome`]; a side-effecting timeout is `UnknownOutcome` (it may have
 /// run), a read timeout is a plain failure. The worker-side handler is the
-/// `ui/grain-2.0` counterpart; until it exists, a call resolves to a timeout or
-/// failure — never a fabricated success.
+/// extension-runtime handler; malformed or unavailable results fail closed.
 async fn third_party_execute(app: &AppHandle, prepared: &PreparedCall) -> ActionOutcome {
     use crate::extension_host::ActionCallError;
     match crate::extension_host::run_action(
@@ -208,6 +228,7 @@ async fn third_party_execute(app: &AppHandle, prepared: &PreparedCall) -> Action
         &prepared.extension_id,
         &prepared.action_id,
         &prepared.arguments,
+        prepared.idempotency_key.as_deref(),
     )
     .await
     {
@@ -229,62 +250,113 @@ async fn third_party_execute(app: &AppHandle, prepared: &PreparedCall) -> Action
 
 /// Map the worker's structured `"action"` reply to an [`ActionOutcome`]. Shape:
 /// `{ "error": {class?, message} }` | `{ "needsInteraction": <Interaction> }` |
-/// `{ "ok": {source?, title?, body?, details?, receipt?} }`. Lenient — an
-/// unrecognised value is treated as a plain success body.
+/// `{ "ok": {title?, body?, details?} }`. The envelope is strict; provenance
+/// and write receipts are host-owned and worker error text never crosses the
+/// trust boundary.
 fn parse_worker_outcome(value: Value, prepared: &PreparedCall) -> ActionOutcome {
-    if let Some(error) = value.get("error") {
-        let message = error
-            .get("message")
-            .and_then(Value::as_str)
-            .unwrap_or("The action failed.")
-            .to_string();
+    let Some(root) = value.as_object() else {
+        return failed(FailureClass::Internal, "The extension returned an invalid action result.");
+    };
+    let recognized = ["error", "needsInteraction", "ok"]
+        .into_iter()
+        .filter(|key| root.contains_key(*key))
+        .count();
+    if recognized != 1 || root.len() != 1 {
+        return failed(FailureClass::Internal, "The extension returned an invalid action result.");
+    }
+
+    if let Some(error) = root.get("error") {
         let class = error
             .get("class")
             .and_then(Value::as_str)
             .map(map_failure_class)
             .unwrap_or(FailureClass::Internal);
-        return ActionOutcome::Failed { class, message };
+        // A worker exception may contain credentials, request bodies, or prompt
+        // injection. The host maps only its coarse class to user/model text.
+        return failed(class, worker_failure_message(class));
     }
-    if let Some(needs) = value.get("needsInteraction") {
-        if let Ok(interaction) = serde_json::from_value::<Interaction>(needs.clone()) {
-            return ActionOutcome::NeedsInteraction(interaction);
+    if root.contains_key("needsInteraction") {
+        // Initial V2 has no continuation token for extension-authored follow-up.
+        // Failing honestly is safer than rendering an interaction that cannot be
+        // resumed or accepting a worker-minted confirmation token.
+        return failed(
+            FailureClass::Internal,
+            "This action needs more input, but extension follow-up is not available yet.",
+        );
+    }
+
+    let ok = &root["ok"];
+    let (title, body, details) = if let Some(text) = ok.as_str() {
+        (None, bounded_text(text, 4 * 1024), Vec::new())
+    } else if ok.is_null() {
+        (None, None, Vec::new())
+    } else if let Some(object) = ok.as_object() {
+        let title = object
+            .get("title")
+            .and_then(Value::as_str)
+            .and_then(|text| bounded_text(text, 160));
+        let body = object
+            .get("body")
+            .and_then(Value::as_str)
+            .and_then(|text| bounded_text(text, 4 * 1024));
+        let mut details: Vec<Field> = object
+            .get("details")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .take(16)
+            .filter_map(|row| {
+                let label = bounded_text(row.get("label")?.as_str()?, 80)?;
+                let value = bounded_text(row.get("value")?.as_str()?, 600)?;
+                Some(Field { label, value })
+            })
+            .collect();
+        // Plain object data is still useful. Promote unreserved scalar fields to
+        // bounded details rather than silently claiming success with "Done".
+        if title.is_none() && body.is_none() && details.is_empty() {
+            details.extend(
+                object
+                    .iter()
+                    .take(16)
+                    .filter_map(|(label, value)| {
+                        let label = bounded_text(label, 80)?;
+                        let value = value_to_string(value)
+                            .and_then(|text| bounded_text(&text, 600))?;
+                        Some(Field { label, value })
+                    }),
+            );
         }
-    }
-    let ok = value.get("ok").unwrap_or(&value);
-    let source = ok.get("source").and_then(Value::as_str).map(str::to_string);
-    let title = ok.get("title").and_then(Value::as_str).map(str::to_string);
-    let body = ok
-        .get("body")
-        .and_then(Value::as_str)
-        .map(str::to_string)
-        .or_else(|| ok.as_str().map(str::to_string));
-    let details = ok
-        .get("details")
-        .and_then(Value::as_array)
-        .map(|rows| {
-            rows.iter()
-                .filter_map(|row| {
-                    let label = row.get("label").and_then(Value::as_str)?;
-                    let val = row.get("value").and_then(Value::as_str)?;
-                    Some(Field {
-                        label: label.to_string(),
-                        value: val.to_string(),
-                    })
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-    let receipt = ok
-        .get("receipt")
-        .and_then(Value::as_bool)
-        .unwrap_or(prepared.side_effect == SideEffect::Write);
+        (title, body, details)
+    } else {
+        return failed(FailureClass::Internal, "The extension returned an invalid action result.");
+    };
+
     ActionOutcome::Succeeded(SuccessData {
-        source,
+        // Provenance is host-owned; a worker cannot label itself "GitHub".
+        source: Some(prepared.provider_name.clone()),
         title,
         body,
         details,
-        receipt,
+        // A worker cannot hide a host-classified write by returning receipt:false.
+        receipt: prepared.side_effect == SideEffect::Write,
     })
+}
+
+fn bounded_text(text: &str, max_bytes: usize) -> Option<String> {
+    let clean = grain_core::capability_agent::sanitize(text, max_bytes);
+    (!clean.is_empty()).then_some(clean)
+}
+
+fn worker_failure_message(class: FailureClass) -> &'static str {
+    match class {
+        FailureClass::Auth => "Connect or reauthorize the account, then try again.",
+        FailureClass::Network => "The extension could not reach its service.",
+        FailureClass::InvalidArgument => "The extension rejected the action arguments.",
+        FailureClass::NotFound => "The requested item or action was not found.",
+        FailureClass::RateLimited => "The service is rate-limited; try again shortly.",
+        FailureClass::Cancelled => "The action was cancelled.",
+        FailureClass::Internal => "The extension action failed.",
+    }
 }
 
 fn map_failure_class(raw: &str) -> FailureClass {
@@ -479,11 +551,16 @@ fn failed(class: FailureClass, message: &str) -> ActionOutcome {
 /// `extension_host::refresh_index` when Grain Space is enabled, so they are
 /// retrieved and executed through the one action path like any other.
 pub fn grain_space_actions() -> Vec<grain_core::capability_index::ActionInput> {
-    use grain_sdk::manifest::ActionRisk;
+    use grain_core::capability_index::ActionParamInput;
+    use grain_sdk::manifest::{ActionParamKind, ActionRisk};
 
-    let make = |action_id: &str, title: &str, risk: ActionRisk, examples: &[&str], params: &[&str]| {
+    let make = |action_id: &str,
+                title: &str,
+                risk: ActionRisk,
+                examples: &[&str],
+                params: &[(&str, bool)]| {
         grain_core::capability_index::ActionInput {
-            canonical_id: format!("{GRAIN_SPACE_NS}.{action_id}"),
+            canonical_id: format!("{GRAIN_SPACE_EXT_ID}:{action_id}"),
             extension_id: GRAIN_SPACE_EXT_ID.to_string(),
             action_id: action_id.to_string(),
             provider_name: "Grain Space".to_string(),
@@ -493,7 +570,14 @@ pub fn grain_space_actions() -> Vec<grain_core::capability_index::ActionInput> {
             tags: vec!["note".to_string(), "notebook".to_string()],
             examples: examples.iter().map(|s| s.to_string()).collect(),
             phrases: Vec::new(),
-            param_names: params.iter().map(|s| s.to_string()).collect(),
+            params: params
+                .iter()
+                .map(|(name, required)| ActionParamInput {
+                    name: (*name).to_string(),
+                    kind: ActionParamKind::Text,
+                    required: *required,
+                })
+                .collect(),
             when_to_use: String::new(),
             when_not_to_use: String::new(),
             description: String::new(),
@@ -511,23 +595,84 @@ pub fn grain_space_actions() -> Vec<grain_core::capability_index::ActionInput> {
             "Search your saved notes",
             ActionRisk::Safe,
             &["what did I write about the meeting", "find my notes on onboarding"],
-            &["query"],
+            &[("query", true)],
         ),
-        make("get_note", "Read a saved note in full", ActionRisk::Safe, &["read that note"], &["id"]),
+        make("get_note", "Read a saved note in full", ActionRisk::Safe, &["read that note"], &[("id", true)]),
         make(
             "save_note",
             "Save a new note",
             ActionRisk::Confirm,
             &["make a note of this", "write this down", "remember this"],
-            &["body", "title", "collection"],
+            &[("body", true), ("title", false), ("collection", false)],
         ),
         make(
             "append_to_note",
             "Add to an existing note",
             ActionRisk::Confirm,
             &["add this to that note"],
-            &["id", "text"],
+            &[("id", true), ("text", true)],
         ),
         make("list_collections", "List note collections", ActionRisk::Safe, &["what collections do I have"], &[]),
     ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn third_party_call() -> PreparedCall {
+        prepare(
+            "com.example.github:create_issue",
+            "com.example.github",
+            "create_issue",
+            "GitHub",
+            json!({ "title": "Bug" }),
+            RiskClass::Confirm,
+            SideEffect::Write,
+            "approved-digest",
+        )
+    }
+
+    #[test]
+    fn worker_cannot_spoof_provenance_or_hide_a_write_receipt() {
+        let outcome = parse_worker_outcome(
+            json!({ "ok": { "source": "System", "body": "created", "receipt": false } }),
+            &third_party_call(),
+        );
+        let ActionOutcome::Succeeded(data) = outcome else {
+            panic!("expected success");
+        };
+        assert_eq!(data.source.as_deref(), Some("GitHub"));
+        assert!(data.receipt);
+        assert_eq!(data.body.as_deref(), Some("created"));
+    }
+
+    #[test]
+    fn worker_error_text_never_crosses_the_trust_boundary() {
+        let outcome = parse_worker_outcome(
+            json!({ "error": { "class": "auth", "message": "token=super-secret" } }),
+            &third_party_call(),
+        );
+        let ActionOutcome::Failed { class, message } = outcome else {
+            panic!("expected failure");
+        };
+        assert_eq!(class, FailureClass::Auth);
+        assert!(!message.contains("super-secret"));
+    }
+
+    #[test]
+    fn worker_outcomes_are_strict_and_interactions_fail_honestly() {
+        assert!(matches!(
+            parse_worker_outcome(json!({ "result": "done" }), &third_party_call()),
+            ActionOutcome::Failed { class: FailureClass::Internal, .. }
+        ));
+        assert!(matches!(
+            parse_worker_outcome(
+                json!({ "needsInteraction": { "kind": "confirm" } }),
+                &third_party_call()
+            ),
+            ActionOutcome::Failed { class: FailureClass::Internal, .. }
+        ));
+    }
 }

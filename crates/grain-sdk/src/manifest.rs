@@ -1095,6 +1095,10 @@ pub const ACTION_UTTERANCE_MAX_BYTES: usize = 120;
 
 /// Hard ceiling on the permission-sheet line.
 pub const ACTION_TITLE_MAX_BYTES: usize = 80;
+/// Keeps action identifiers safe in registry keys and bounded provider tool
+/// names. The host still hashes provider-facing names, but the manifest id is a
+/// protocol identifier and must not contain deceptive punctuation or Unicode.
+pub const ACTION_ID_MAX_BYTES: usize = 64;
 
 /// Hard ceiling on `agentRules`, which ride into the Agent's context.
 pub const ACTION_AGENT_RULES_MAX_BYTES: usize = 300;
@@ -1184,8 +1188,15 @@ fn validate_actions(actions: &[ActionDecl], permissions: &[String]) -> Result<()
         if id.is_empty() {
             return Err("an action is missing its id".into());
         }
-        // `:` namespaces everywhere else in the contract; allowing it here makes
-        // a qualified action name ambiguous.
+        if id.len() > ACTION_ID_MAX_BYTES {
+            return Err(format!(
+                "action id '{id}' is {} bytes; the limit is {ACTION_ID_MAX_BYTES}",
+                id.len()
+            ));
+        }
+        // `:` separates the globally unique extension id from its local action
+        // id. Other existing V1 identifiers remain compatible; provider-facing
+        // tool names are independently hashed and grammar-safe.
         if id.contains(':') {
             return Err(format!("action id '{id}' must not contain ':'"));
         }
@@ -2909,6 +2920,11 @@ mod tests {
         let with = |body: &str| pack_with_actions("[]", body);
         assert!(with(r#"[{"id":"","title":"N","risk":"safe","utterances":["next"]}]"#).is_err());
         assert!(with(r#"[{"id":"a:b","title":"N","risk":"safe","utterances":["next"]}]"#).is_err());
+        let long_id = "a".repeat(ACTION_ID_MAX_BYTES + 1);
+        assert!(with(&format!(
+            r#"[{{"id":"{long_id}","title":"N","risk":"safe","utterances":["next"]}}]"#
+        ))
+        .is_err());
         assert!(with(r#"[{"id":"n","title":"","risk":"safe","utterances":["next"]}]"#).is_err());
         assert!(with(r#"[{"id":"n","title":"N","risk":"safe","utterances":[]}]"#).is_err());
         // Duplicate ids, and a repeated utterance within one action.

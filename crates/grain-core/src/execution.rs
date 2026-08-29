@@ -96,6 +96,9 @@ pub struct PreparedCall {
     pub canonical_id: String,
     pub extension_id: String,
     pub action_id: String,
+    /// Host-owned display identity. Worker output cannot replace this and spoof
+    /// another extension in composed results.
+    pub provider_name: String,
     /// Normalised, schema-valid arguments. Validated in Rust before this exists.
     pub arguments: Value,
     pub risk: RiskClass,
@@ -137,12 +140,13 @@ impl PreparedCall {
         Ok(())
     }
 
-    /// A retry is safe only when re-running cannot double a side effect: a
-    /// non-write, or a write carrying an idempotency key the executor dedupes on.
-    /// After an ambiguous timeout on anything else, the outcome is
+    /// A retry is safe only when re-running cannot double a side effect. The
+    /// current host forwards write idempotency keys to providers for their own
+    /// dedupe, but does not yet own a durable dedupe ledger, so writes remain
+    /// non-retryable. After an ambiguous timeout the outcome is
     /// [`ActionOutcome::UnknownOutcome`], never a silent retry.
     pub fn is_retry_safe(&self) -> bool {
-        self.side_effect != SideEffect::Write || self.idempotency_key.is_some()
+        self.side_effect != SideEffect::Write
     }
 }
 
@@ -193,11 +197,16 @@ pub struct SuccessData {
 #[serde(tag = "status", rename_all = "camelCase")]
 pub enum ActionOutcome {
     Succeeded(SuccessData),
-    Failed { class: FailureClass, message: String },
+    Failed {
+        class: FailureClass,
+        message: String,
+    },
     Cancelled,
     /// A side-effecting call whose result is genuinely unknown — e.g. an
     /// ambiguous timeout. The user is told plainly; the host does not retry.
-    UnknownOutcome { message: String },
+    UnknownOutcome {
+        message: String,
+    },
     /// The action needs the user before it can proceed (a follow-up field, a
     /// choice). Carried through to the interaction surface.
     NeedsInteraction(Interaction),
@@ -212,7 +221,11 @@ impl ActionOutcome {
             ActionOutcome::Succeeded(data) if data.receipt => Interaction::Receipt {
                 source: data.source.clone(),
                 action: action_title.to_string(),
-                summary: data.body.clone().or_else(|| data.title.clone()).unwrap_or_default(),
+                summary: data
+                    .body
+                    .clone()
+                    .or_else(|| data.title.clone())
+                    .unwrap_or_default(),
                 details: data.details.clone(),
             },
             ActionOutcome::Succeeded(data) => Interaction::Result {
@@ -242,7 +255,7 @@ impl ActionOutcome {
     /// exception. For an unknown outcome it says so honestly, so the model does
     /// not claim success.
     pub fn model_summary(&self) -> String {
-        match self {
+        let raw = match self {
             ActionOutcome::Succeeded(data) => data
                 .body
                 .clone()
@@ -256,7 +269,10 @@ impl ActionOutcome {
             ActionOutcome::NeedsInteraction(_) => {
                 "Waiting on the user before this can proceed.".to_string()
             }
-        }
+        };
+        // Tool results are untrusted evidence. Bound and strip invisible/control
+        // text before they re-enter the model context.
+        crate::capability_agent::sanitize(&raw, 4 * 1024)
     }
 }
 
@@ -278,12 +294,37 @@ pub enum Confirmation {
 /// `Unclear` (never treated as approval).
 pub fn classify_confirmation(said: &str) -> Confirmation {
     const YES: &[&str] = &[
-        "yes", "yeah", "yep", "yup", "sure", "ok", "okay", "confirm", "confirmed", "proceed",
-        "go ahead", "do it", "please do", "go for it", "yes please", "sounds good", "affirmative",
+        "yes",
+        "yeah",
+        "yep",
+        "yup",
+        "sure",
+        "ok",
+        "okay",
+        "confirm",
+        "confirmed",
+        "proceed",
+        "go ahead",
+        "do it",
+        "please do",
+        "go for it",
+        "yes please",
+        "sounds good",
+        "affirmative",
     ];
     const NO: &[&str] = &[
-        "no", "nope", "nah", "cancel", "stop", "dont", "don't", "never mind", "nevermind",
-        "negative", "no thanks", "skip it",
+        "no",
+        "nope",
+        "nah",
+        "cancel",
+        "stop",
+        "dont",
+        "don't",
+        "never mind",
+        "nevermind",
+        "negative",
+        "no thanks",
+        "skip it",
     ];
     let s = said.trim().to_lowercase();
     let starts = |phrase: &str| {
@@ -324,6 +365,7 @@ mod tests {
             canonical_id: "github.create_issue".into(),
             extension_id: "com.grain.github".into(),
             action_id: "create_issue".into(),
+            provider_name: "GitHub".into(),
             arguments: json!({ "repo": "acme/web", "title": "bug" }),
             risk,
             side_effect,
@@ -337,10 +379,19 @@ mod tests {
     #[test]
     fn the_risk_floor_only_tightens() {
         // A confirm floor cannot be loosened by any user policy.
-        assert_eq!(RiskClass::floor(ActionRisk::Confirm).tightened(false), RiskClass::Confirm);
+        assert_eq!(
+            RiskClass::floor(ActionRisk::Confirm).tightened(false),
+            RiskClass::Confirm
+        );
         // A safe floor can be escalated by the user, never the reverse.
-        assert_eq!(RiskClass::floor(ActionRisk::Safe).tightened(true), RiskClass::Confirm);
-        assert_eq!(RiskClass::floor(ActionRisk::Safe).tightened(false), RiskClass::Safe);
+        assert_eq!(
+            RiskClass::floor(ActionRisk::Safe).tightened(true),
+            RiskClass::Confirm
+        );
+        assert_eq!(
+            RiskClass::floor(ActionRisk::Safe).tightened(false),
+            RiskClass::Safe
+        );
         assert!(RiskClass::Confirm.needs_confirmation());
         assert!(!RiskClass::Safe.needs_confirmation());
     }
@@ -350,7 +401,10 @@ mod tests {
         let call = prepared(RiskClass::Confirm, SideEffect::Write);
         assert_eq!(call.still_valid("digest_v1", 30_000), Ok(()));
         // The extension was updated between confirm and execute.
-        assert_eq!(call.still_valid("digest_v2", 30_000), Err(Stale::ManifestChanged));
+        assert_eq!(
+            call.still_valid("digest_v2", 30_000),
+            Err(Stale::ManifestChanged)
+        );
         // The confirmation went stale.
         assert_eq!(call.still_valid("digest_v1", 61_000), Err(Stale::Expired));
         assert!(call.is_expired(61_000));
@@ -362,10 +416,11 @@ mod tests {
         assert!(prepared(RiskClass::Safe, SideEffect::None).is_retry_safe());
         // A bare write must not be retried after an ambiguous timeout.
         assert!(!prepared(RiskClass::Confirm, SideEffect::Write).is_retry_safe());
-        // Unless it carries an idempotency key the executor dedupes on.
+        // A key is forwarded to providers, but the host has no durable dedupe
+        // ledger yet, so it must not retry a write on that basis.
         let mut safe_write = prepared(RiskClass::Confirm, SideEffect::Write);
         safe_write.idempotency_key = Some("idem_x".into());
-        assert!(safe_write.is_retry_safe());
+        assert!(!safe_write.is_retry_safe());
     }
 
     #[test]
@@ -377,7 +432,10 @@ mod tests {
             details: vec![],
             receipt: true,
         });
-        assert!(matches!(write.to_interaction("Create an issue"), Interaction::Receipt { .. }));
+        assert!(matches!(
+            write.to_interaction("Create an issue"),
+            Interaction::Receipt { .. }
+        ));
 
         let read = ActionOutcome::Succeeded(SuccessData {
             source: Some("GitHub".into()),
@@ -386,7 +444,10 @@ mod tests {
             details: vec![],
             receipt: false,
         });
-        assert!(matches!(read.to_interaction("List issues"), Interaction::Result { .. }));
+        assert!(matches!(
+            read.to_interaction("List issues"),
+            Interaction::Result { .. }
+        ));
     }
 
     #[test]
@@ -397,7 +458,10 @@ mod tests {
         assert!(unknown.model_summary().starts_with("Outcome unknown"));
         assert!(matches!(
             unknown.to_interaction("Send"),
-            Interaction::Notice { level: NoticeLevel::Warning, .. }
+            Interaction::Notice {
+                level: NoticeLevel::Warning,
+                ..
+            }
         ));
     }
 
@@ -409,7 +473,10 @@ mod tests {
         };
         assert!(matches!(
             failed.to_interaction("Create an issue"),
-            Interaction::Notice { level: NoticeLevel::Error, .. }
+            Interaction::Notice {
+                level: NoticeLevel::Error,
+                ..
+            }
         ));
         assert!(failed.model_summary().contains("Auth"));
     }
@@ -426,7 +493,10 @@ mod tests {
         assert_eq!(classify_confirmation("cancel"), No);
         // Anything not a clear yes/no is never treated as approval.
         assert_eq!(classify_confirmation("what will it do?"), Unclear);
-        assert_eq!(classify_confirmation("actually search my notes instead"), Unclear);
+        assert_eq!(
+            classify_confirmation("actually search my notes instead"),
+            Unclear
+        );
         assert_eq!(classify_confirmation("yesterday's meeting"), Unclear);
     }
 
