@@ -75,6 +75,22 @@ impl PendingCalls {
         let index = list.iter().position(|call| call.token == token)?;
         Some(list.remove(index))
     }
+
+    fn latest_token() -> Option<String> {
+        PENDING
+            .lock()
+            .unwrap()
+            .as_ref()
+            .and_then(|list| list.last())
+            .map(|call| call.token.clone())
+    }
+}
+
+/// The token of the most recent confirmation still awaiting the user, if any.
+/// The interim conversational confirm resumes this on a clear yes/no
+/// ([`grain_core::execution::classify_confirmation`]).
+pub fn latest_pending_token() -> Option<String> {
+    PendingCalls::latest_token()
 }
 
 fn now_ms() -> i64 {

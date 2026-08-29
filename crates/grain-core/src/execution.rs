@@ -260,6 +260,46 @@ impl ActionOutcome {
     }
 }
 
+/// How the user answered a pending confirmation, in the interim chat surface
+/// where the agent asks in prose and the user replies yes/no (Amendment A — no
+/// approve/deny button). The host, not the model, reads this and resumes the
+/// exact prepared call, so confirmation stays host-gated.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Confirmation {
+    Yes,
+    No,
+    /// Neither — most likely a new, unrelated request; the stale confirmation is
+    /// dropped and the turn proceeds normally.
+    Unclear,
+}
+
+/// Classify a user reply to a pending confirmation. Deliberately conservative:
+/// only a clear affirmative runs a withheld action; anything ambiguous is
+/// `Unclear` (never treated as approval).
+pub fn classify_confirmation(said: &str) -> Confirmation {
+    const YES: &[&str] = &[
+        "yes", "yeah", "yep", "yup", "sure", "ok", "okay", "confirm", "confirmed", "proceed",
+        "go ahead", "do it", "please do", "go for it", "yes please", "sounds good", "affirmative",
+    ];
+    const NO: &[&str] = &[
+        "no", "nope", "nah", "cancel", "stop", "dont", "don't", "never mind", "nevermind",
+        "negative", "no thanks", "skip it",
+    ];
+    let s = said.trim().to_lowercase();
+    let starts = |phrase: &str| {
+        s == phrase
+            || s.strip_prefix(phrase)
+                .is_some_and(|rest| rest.starts_with([' ', ',', '.', '!', ';']))
+    };
+    if YES.iter().any(|phrase| starts(phrase)) {
+        Confirmation::Yes
+    } else if NO.iter().any(|phrase| starts(phrase)) {
+        Confirmation::No
+    } else {
+        Confirmation::Unclear
+    }
+}
+
 /// A deterministic default idempotency key for a side-effecting call: a hash of
 /// the canonical id and the normalised arguments. Two identical writes in a short
 /// window collapse to one. Only meaningful for [`SideEffect::Write`].
@@ -372,6 +412,22 @@ mod tests {
             Interaction::Notice { level: NoticeLevel::Error, .. }
         ));
         assert!(failed.model_summary().contains("Auth"));
+    }
+
+    #[test]
+    fn confirmation_reads_a_clear_yes_or_no_and_nothing_else() {
+        use Confirmation::*;
+        assert_eq!(classify_confirmation("yes"), Yes);
+        assert_eq!(classify_confirmation("Yes, go ahead"), Yes);
+        assert_eq!(classify_confirmation("go ahead"), Yes);
+        assert_eq!(classify_confirmation("  do it! "), Yes);
+        assert_eq!(classify_confirmation("no"), No);
+        assert_eq!(classify_confirmation("No thanks"), No);
+        assert_eq!(classify_confirmation("cancel"), No);
+        // Anything not a clear yes/no is never treated as approval.
+        assert_eq!(classify_confirmation("what will it do?"), Unclear);
+        assert_eq!(classify_confirmation("actually search my notes instead"), Unclear);
+        assert_eq!(classify_confirmation("yesterday's meeting"), Unclear);
     }
 
     #[test]

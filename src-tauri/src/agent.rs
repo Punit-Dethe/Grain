@@ -2179,6 +2179,35 @@ pub async fn agent_run(
     if current_mode(&app) == AgentMode::Recall {
         return crate::grain_space::recall::run_turn(&app, &messages).await;
     }
+    // [GRAIN] A risky action from a prior turn is waiting on the user. The interim
+    // chat surface has no approve/deny button — the agent asked in prose, so the
+    // user's reply IS the answer (Amendment A). The HOST reads it and resumes the
+    // exact prepared call, so confirmation stays host-gated (the model never
+    // decides to run). A clear "yes" runs it, a clear "no" cancels, anything else
+    // is a new request that drops the stale confirmation and proceeds.
+    if let Some(token) = crate::action_exec::latest_pending_token() {
+        use grain_core::execution::Confirmation;
+        let said = messages
+            .iter()
+            .rev()
+            .find(|message| message.role == "user")
+            .map(|message| message.content.as_str())
+            .unwrap_or("");
+        match grain_core::execution::classify_confirmation(said) {
+            Confirmation::Yes => {
+                let outcome = crate::action_exec::resume(&app, &token, true).await;
+                return Ok(outcome_to_reply(outcome));
+            }
+            Confirmation::No => {
+                let _ = crate::action_exec::resume(&app, &token, false).await;
+                return Ok(AgentReply::plain("Okay — I won't do that.".to_string()));
+            }
+            Confirmation::Unclear => {
+                // Drop the stale confirmation and answer the new request.
+                let _ = crate::action_exec::resume(&app, &token, false).await;
+            }
+        }
+    }
     let field = app
         .try_state::<AgentState>()
         .and_then(|s| s.field_context.lock().ok().and_then(|g| g.clone()));
@@ -2202,6 +2231,12 @@ pub async fn agent_confirm_action(
     approve: bool,
 ) -> Result<AgentReply, String> {
     let outcome = crate::action_exec::resume(&app, &token, approve).await;
+    Ok(outcome_to_reply(outcome))
+}
+
+/// Render an execution outcome as a plain chat reply (the receipt/result/notice).
+/// Shared by the button command and the interim conversational confirm path.
+fn outcome_to_reply(outcome: grain_core::execution::ActionOutcome) -> AgentReply {
     let title = match &outcome {
         grain_core::execution::ActionOutcome::Succeeded(data) => {
             data.title.clone().unwrap_or_else(|| "Done".to_string())
@@ -2209,7 +2244,7 @@ pub async fn agent_confirm_action(
         _ => "Action".to_string(),
     };
     let interaction = outcome.to_interaction(&title);
-    Ok(AgentReply::plain(grain_core::interaction::to_markdown(&interaction)))
+    AgentReply::plain(grain_core::interaction::to_markdown(&interaction))
 }
 
 /// How many tool hops one turn may take before it is made to answer. Small on
@@ -2324,7 +2359,10 @@ async fn run_with_note_tools(
     // forced answer. Approval resumes the exact call via `agent_confirm_action`.
     if let Some(confirm) = pending_confirm {
         return Ok(AgentReply {
-            text: confirm.markdown.clone(),
+            // No approve/deny button in the interim surface — ask in prose; the
+            // user's next reply (yes/no) is read host-side and resumes the exact
+            // call. `confirm_action` still rides out for a future native panel.
+            text: format!("{}\n\nWould you like me to go ahead? (yes / no)", confirm.markdown),
             sources: Vec::new(),
             not_found: false,
             confirm_delete: None,
