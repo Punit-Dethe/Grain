@@ -339,6 +339,35 @@ export const GRAIN_RUNTIME_JS = `(function () {
         });
       };
     },
+    // [GRAIN] Extensions 2.0 (Amendment C): the extension declares its actions
+    // here, one handler per declared action id. Grain's Agent chooses the EXACT
+    // action and sends validated arguments — the extension never sees the
+    // transcript and never learns other extensions exist (eyes + hands; Grain is
+    // the brain). Each handler returns structured DATA, never a rendered view;
+    // Grain owns all rendering (markdown now, native cards later). Return shapes:
+    //   { ...data }               plain result data (wrapped as ok by Grain)
+    //   { error: { class?, message } }
+    //   { needsInteraction: <interaction> }
+    //   grain.actions({ create_issue: async function (args) { return { title, body }; } })
+    actions: function (map) {
+      handlers.action = function (p) {
+        var name = p && p.action;
+        var fn = map && map[name];
+        if (typeof fn !== "function") {
+          return { error: { class: "not_found", message: "no such action: " + name } };
+        }
+        return Promise.resolve()
+          .then(function () { return fn((p && p.arguments) || {}); })
+          .then(function (out) {
+            // Pass through an already-tagged result; wrap plain data as ok.
+            if (out && (out.error || out.needsInteraction || out.ok)) return out;
+            return { ok: out == null ? {} : out };
+          })
+          .catch(function (e) {
+            return { error: { class: "internal", message: (e && e.message) || String(e) } };
+          });
+      };
+    },
     // A shortcut press is acknowledged on RECEIPT, not on completion: the
     // handler runs detached so an extension that opens an LLM call from a
     // hotkey is never mistaken for an unresponsive one.
