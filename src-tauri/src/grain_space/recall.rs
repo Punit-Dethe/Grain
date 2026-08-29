@@ -1006,6 +1006,7 @@ pub async fn run_turn(app: &AppHandle, messages: &[AgentMessage]) -> Result<Agen
         sources,
         not_found: tail.not_found,
         confirm_delete,
+        confirm_action: None,
     })
 }
 

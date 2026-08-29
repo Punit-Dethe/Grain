@@ -208,6 +208,34 @@ pub struct AgentReply {
     /// the user asked to delete. Destructive, so the panel confirms in-place
     /// before calling `grain_space_delete_note`. `None` on every other turn.
     pub confirm_delete: Option<AgentSource>,
+    /// [GRAIN] Set when a risky extension action was withheld pending the user's
+    /// approval (Extensions 2.0 §2.5 / Amendment A). Host-gated: the panel shows
+    /// the exact action + arguments and, on approval, calls `agent_confirm_action`
+    /// with the token — the model never approves. `None` on every other turn.
+    pub confirm_action: Option<AgentConfirm>,
+}
+
+/// [GRAIN] One material argument of a pending action, for the confirmation panel.
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+pub struct AgentConfirmField {
+    pub label: String,
+    pub value: String,
+}
+
+/// [GRAIN] A risky action awaiting the user's approval. Carries the exact
+/// prepared-call `token` the host resumes on approval (`agent_confirm_action`),
+/// plus everything the panel needs to show what will happen. `markdown` is the
+/// ready-to-render summary for the interim chat surface (renderer #1); the
+/// structured fields are for the native Dynamic UI renderer later.
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+pub struct AgentConfirm {
+    pub token: String,
+    pub title: String,
+    pub summary: String,
+    pub details: Vec<AgentConfirmField>,
+    pub side_effect: String,
+    pub destinations: Vec<String>,
+    pub markdown: String,
 }
 
 impl AgentReply {
@@ -219,6 +247,7 @@ impl AgentReply {
             sources: Vec::new(),
             not_found: false,
             confirm_delete: None,
+            confirm_action: None,
         }
     }
 }
@@ -2245,6 +2274,9 @@ async fn run_with_note_tools(
         .collect();
 
     let mut log = crate::grain_space::agent_tools::TurnLog::default();
+    // Set when a risky action was withheld; it ends the turn and rides out on
+    // `AgentReply.confirm_action` for the user to approve.
+    let mut pending_confirm: Option<AgentConfirm> = None;
     let mut reply = run_messages_with_tools(app, entries.clone(), combined(&cap_tools), image).await?;
 
     let mut hops = 0usize;
@@ -2256,13 +2288,28 @@ async fn run_with_note_tools(
             // registry; anything else is a notebook tool. `dispatch` returns None
             // when the call is not ours, so the two surfaces never collide.
             let content = match crate::capability::dispatch(app, call, &mut exposure).await {
-                Some(result) => result,
+                Some(crate::capability::ToolResult::Text(text)) => text,
+                Some(crate::capability::ToolResult::Confirm(confirm)) => {
+                    // A risky action was withheld. Close this tool call honestly
+                    // and end the turn to surface the confirmation; the model never
+                    // sees it as done.
+                    if pending_confirm.is_none() {
+                        pending_confirm = Some(confirm);
+                    }
+                    "Awaiting the user's approval before this runs — do not claim it is done."
+                        .to_string()
+                }
                 None => crate::grain_space::agent_tools::execute(app, call, &mut log).await,
             };
             entries.push(ChatEntry::ToolResult {
                 call_id: call.id.clone(),
                 content,
             });
+        }
+        // A withheld action ends the turn — nothing more runs until the user
+        // approves the exact prepared call.
+        if pending_confirm.is_some() {
+            break;
         }
         // search_actions may have widened the exposed set; rebuild before the hop.
         cap_tools = crate::capability::specs(&exposure);
@@ -2271,6 +2318,18 @@ async fn run_with_note_tools(
         // request is stateless — dropping the image after hop 1 would leave the
         // model answering a screen question from a note lookup alone.
         reply = run_messages_with_tools(app, entries.clone(), combined(&cap_tools), image).await?;
+    }
+
+    // A risky action is waiting on the user: end here with the confirmation, not a
+    // forced answer. Approval resumes the exact call via `agent_confirm_action`.
+    if let Some(confirm) = pending_confirm {
+        return Ok(AgentReply {
+            text: confirm.markdown.clone(),
+            sources: Vec::new(),
+            not_found: false,
+            confirm_delete: None,
+            confirm_action: Some(confirm),
+        });
     }
 
     // Still asking for tools at the cap. `entries` ends on a tool result, so this
@@ -2301,6 +2360,7 @@ async fn run_with_note_tools(
         sources,
         not_found: false,
         confirm_delete: None,
+        confirm_action: None,
     })
 }
 

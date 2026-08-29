@@ -30,7 +30,16 @@ use grain_core::capability_agent::{
     self, search_actions_tool_def, tool_name, ToolBudget, ToolExposure, SEARCH_ACTIONS,
 };
 use grain_core::execution::{RiskClass, SideEffect};
+use grain_core::interaction::Interaction;
 use tauri::AppHandle;
+
+/// The result of dispatching one capability tool call: either text to feed back
+/// to the model, or a risky action withheld pending the user's approval (surfaced
+/// on `AgentReply.confirm_action`, not fed to the model as if it ran).
+pub enum ToolResult {
+    Text(String),
+    Confirm(crate::agent::AgentConfirm),
+}
 
 /// Hot-set size retrieved for the initial exposure. Matches the benchmark's K.
 const HOT_SET_K: usize = 8;
@@ -83,9 +92,9 @@ pub async fn dispatch(
     app: &AppHandle,
     call: &ToolCallOut,
     exposure: &mut ToolExposure,
-) -> Option<String> {
+) -> Option<ToolResult> {
     if call.name == SEARCH_ACTIONS {
-        return Some(handle_search(call, exposure));
+        return Some(ToolResult::Text(handle_search(call, exposure)));
     }
     // An action tool resolves through the session's exposure map — the
     // authoritative reverse of `tool_name`. An undisclosed or invented name
@@ -96,13 +105,13 @@ pub async fn dispatch(
 }
 
 /// Prepare and route one resolved action through the host executor: a `Safe`
-/// action runs in process now; a `Confirm` action is withheld and the model is
-/// told (never that it ran) while the exact call waits for the user's approval.
-async fn execute_action(app: &AppHandle, canonical: &str, arguments_json: &str) -> String {
+/// action runs in process now; a `Confirm` action is withheld and surfaced for
+/// the user's approval (never fed to the model as if it ran).
+async fn execute_action(app: &AppHandle, canonical: &str, arguments_json: &str) -> ToolResult {
     let Some((extension_id, action_id, title, declared_risk)) =
         crate::extension_host::capability_action_meta(canonical)
     else {
-        return format!("The action \"{canonical}\" is not available.");
+        return ToolResult::Text(format!("The action \"{canonical}\" is not available."));
     };
     let arguments: serde_json::Value =
         serde_json::from_str(arguments_json).unwrap_or(serde_json::Value::Null);
@@ -131,17 +140,53 @@ async fn execute_action(app: &AppHandle, canonical: &str, arguments_json: &str) 
     );
 
     match crate::action_exec::run_or_confirm(app, prepared, &title).await {
-        crate::action_exec::Dispatch::Ran(outcome) => outcome.model_summary(),
+        crate::action_exec::Dispatch::Ran(outcome) => ToolResult::Text(outcome.model_summary()),
+        // The confirmation is held host-side by token and surfaced on
+        // `AgentReply.confirm_action` for the user to approve (§2.5). It is never
+        // fed to the model as if it ran.
         crate::action_exec::Dispatch::AwaitConfirm(interaction) => {
-            // Interim surface (PLAN Amendment A): the confirmation is held
-            // host-side by token; the chat affordance to approve it is the
-            // `ui/grain-2.0` step. The model is told to present it and that
-            // approval is pending — never that the action ran.
-            format!(
-                "{}\n\n(Awaiting the user's approval before this runs — do not claim it is done.)",
-                grain_core::interaction::to_markdown(&interaction)
-            )
+            ToolResult::Confirm(to_agent_confirm(interaction))
         }
+    }
+}
+
+/// Project a host `Interaction::Confirm` into the frontend confirmation type,
+/// with the interim markdown pre-rendered (renderer #1).
+fn to_agent_confirm(interaction: Interaction) -> crate::agent::AgentConfirm {
+    let markdown = grain_core::interaction::to_markdown(&interaction);
+    match interaction {
+        Interaction::Confirm {
+            token,
+            title,
+            summary,
+            details,
+            side_effect,
+            destinations,
+        } => crate::agent::AgentConfirm {
+            token,
+            title,
+            summary,
+            details: details
+                .into_iter()
+                .map(|field| crate::agent::AgentConfirmField {
+                    label: field.label,
+                    value: field.value,
+                })
+                .collect(),
+            side_effect,
+            destinations,
+            markdown,
+        },
+        // Only Confirm should reach here; render anything else as a bare prompt.
+        _ => crate::agent::AgentConfirm {
+            token: String::new(),
+            title: "Confirm".to_string(),
+            summary: String::new(),
+            details: Vec::new(),
+            side_effect: String::new(),
+            destinations: Vec::new(),
+            markdown,
+        },
     }
 }
 
