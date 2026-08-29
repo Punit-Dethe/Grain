@@ -503,7 +503,7 @@ fn validate_prompt_layers(layers: &[PromptLayerDecl], slots: &[String]) -> Resul
     {
         return Err("the prompt.main replacement must be unconditional".into());
     }
-    if claims_main != !main.is_empty() {
+    if claims_main == main.is_empty() {
         return Err(
             "claiming 'prompt.main' requires exactly one target:'main' prompt layer, and a main replacement must claim that slot"
                 .into(),
@@ -3424,10 +3424,8 @@ mod tests {
     /// The builtin tier (Grain Space's mechanism): first-party identity is
     /// mandatory, there is nothing to launch, and it may contribute settings a
     /// data pack cannot.
-
     /// A `grain://` panel renders a HOST component with Grain's own privileges,
     /// so the tier gate is a security boundary, not a convenience.
-
     #[test]
     fn native_companions_validate_only_through_the_developer_boundary() {
         let native: GrainPack = serde_json::from_str(

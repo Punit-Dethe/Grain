@@ -187,7 +187,7 @@ pub fn rank(
         // for this request is gone from the ballot entirely, not merely demoted —
         // re-offering it as the runner-up is the loop the recovery exists to
         // break.
-        if excluded.iter().any(|id| *id == rec.extension_id) {
+        if excluded.contains(&rec.extension_id) {
             continue;
         }
         if rec

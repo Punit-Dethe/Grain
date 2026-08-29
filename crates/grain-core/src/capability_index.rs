@@ -924,7 +924,7 @@ pub fn actions_from_manifest(ext: &ExtensionManifest, enabled: bool) -> Vec<Acti
     let platform_ok = ext
         .companion
         .as_ref()
-        .map_or(true, |companion| companion.current_platform().is_some());
+        .is_none_or(|companion| companion.current_platform().is_some());
 
     // The address surface: the extension name is an implicit alias, plus any
     // declared recommendation aliases.
