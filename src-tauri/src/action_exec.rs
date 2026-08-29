@@ -175,13 +175,111 @@ async fn execute(app: &AppHandle, prepared: &PreparedCall) -> ActionOutcome {
     if prepared.extension_id == GRAIN_SPACE_EXT_ID {
         grain_space_execute(app, prepared).await
     } else {
-        // Third-party execution (the `"action"` worker protocol) is Phase 3b.
-        // Never fabricate success.
-        ActionOutcome::Failed {
-            class: FailureClass::Internal,
-            message: "Running installed-extension actions is not enabled in this build yet."
-                .to_string(),
+        third_party_execute(app, prepared).await
+    }
+}
+
+/// Execute a third-party action through the extension worker's `"action"` handler
+/// (Phase 3b, Rust half). The worker returns a structured result mapped to an
+/// [`ActionOutcome`]; a side-effecting timeout is `UnknownOutcome` (it may have
+/// run), a read timeout is a plain failure. The worker-side handler is the
+/// `ui/grain-2.0` counterpart; until it exists, a call resolves to a timeout or
+/// failure — never a fabricated success.
+async fn third_party_execute(app: &AppHandle, prepared: &PreparedCall) -> ActionOutcome {
+    use crate::extension_host::ActionCallError;
+    match crate::extension_host::run_action(
+        app,
+        &prepared.extension_id,
+        &prepared.action_id,
+        &prepared.arguments,
+    )
+    .await
+    {
+        Ok(value) => parse_worker_outcome(value, prepared),
+        Err(ActionCallError::Timeout) => {
+            if prepared.side_effect == SideEffect::Write {
+                ActionOutcome::UnknownOutcome {
+                    message: "The extension did not respond in time — it may or may not have \
+                              completed. Do not claim it is done."
+                        .to_string(),
+                }
+            } else {
+                failed(FailureClass::Network, "The extension did not respond in time.")
+            }
         }
+        Err(ActionCallError::Unavailable(message)) => failed(FailureClass::Internal, &message),
+    }
+}
+
+/// Map the worker's structured `"action"` reply to an [`ActionOutcome`]. Shape:
+/// `{ "error": {class?, message} }` | `{ "needsInteraction": <Interaction> }` |
+/// `{ "ok": {source?, title?, body?, details?, receipt?} }`. Lenient — an
+/// unrecognised value is treated as a plain success body.
+fn parse_worker_outcome(value: Value, prepared: &PreparedCall) -> ActionOutcome {
+    if let Some(error) = value.get("error") {
+        let message = error
+            .get("message")
+            .and_then(Value::as_str)
+            .unwrap_or("The action failed.")
+            .to_string();
+        let class = error
+            .get("class")
+            .and_then(Value::as_str)
+            .map(map_failure_class)
+            .unwrap_or(FailureClass::Internal);
+        return ActionOutcome::Failed { class, message };
+    }
+    if let Some(needs) = value.get("needsInteraction") {
+        if let Ok(interaction) = serde_json::from_value::<Interaction>(needs.clone()) {
+            return ActionOutcome::NeedsInteraction(interaction);
+        }
+    }
+    let ok = value.get("ok").unwrap_or(&value);
+    let source = ok.get("source").and_then(Value::as_str).map(str::to_string);
+    let title = ok.get("title").and_then(Value::as_str).map(str::to_string);
+    let body = ok
+        .get("body")
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .or_else(|| ok.as_str().map(str::to_string));
+    let details = ok
+        .get("details")
+        .and_then(Value::as_array)
+        .map(|rows| {
+            rows.iter()
+                .filter_map(|row| {
+                    let label = row.get("label").and_then(Value::as_str)?;
+                    let val = row.get("value").and_then(Value::as_str)?;
+                    Some(Field {
+                        label: label.to_string(),
+                        value: val.to_string(),
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let receipt = ok
+        .get("receipt")
+        .and_then(Value::as_bool)
+        .unwrap_or(prepared.side_effect == SideEffect::Write);
+    ActionOutcome::Succeeded(SuccessData {
+        source,
+        title,
+        body,
+        details,
+        receipt,
+    })
+}
+
+fn map_failure_class(raw: &str) -> FailureClass {
+    match raw {
+        "auth" => FailureClass::Auth,
+        "network" => FailureClass::Network,
+        "invalid" | "invalid_argument" => FailureClass::InvalidArgument,
+        "not_found" | "notfound" => FailureClass::NotFound,
+        "rate_limited" | "ratelimited" => FailureClass::RateLimited,
+        "cancelled" => FailureClass::Cancelled,
+        _ => FailureClass::Internal,
     }
 }
 

@@ -2313,6 +2313,80 @@ pub async fn hand_off(app: &AppHandle, ext_id: &str, request: &str) -> HandOffOu
     }
 }
 
+/// [GRAIN] Why a third-party action call could not produce a result. A timeout is
+/// kept distinct from an unavailability because a *side-effecting* timeout is an
+/// unknown outcome (the action may have run), not a plain failure (§8.5).
+pub enum ActionCallError {
+    /// The worker did not answer within the deadline.
+    Timeout,
+    /// The worker could not be reached or the extension is gone.
+    Unavailable(String),
+}
+
+/// [GRAIN] Invoke one exact declared action on an extension worker (Extensions 2.0
+/// Phase 3b). Unlike [`hand_off`], which gives the worker the whole transcript,
+/// this sends the *chosen action id and validated arguments* — the V2 model. The
+/// worker's `"action"` handler runs the declared entrypoint and returns a
+/// structured result; the executor maps it to an `ActionOutcome`.
+///
+/// Enablement is re-checked here (time-of-use, §12.7), the cold worker is woken,
+/// and a deadline overrun is reported as [`ActionCallError::Timeout`] so the
+/// executor can decide unknown-vs-failed by side effect.
+pub async fn run_action(
+    app: &AppHandle,
+    ext_id: &str,
+    action_id: &str,
+    arguments: &Value,
+) -> Result<Value, ActionCallError> {
+    let Some(host) = HOST.get() else {
+        return Err(ActionCallError::Unavailable("extension host unavailable".into()));
+    };
+    let enabled = app
+        .try_state::<Arc<grain_core::extensions::ExtensionsRegistry>>()
+        .and_then(|registry| registry.record(ext_id))
+        .is_some_and(|record| record.enabled);
+    if !enabled {
+        return Err(ActionCallError::Unavailable(
+            "that extension is no longer enabled".into(),
+        ));
+    }
+    wake_for_request(app, ext_id);
+    if !host
+        .workers
+        .wait_connected(ext_id, HANDOFF_WAKE_DEADLINE)
+        .await
+    {
+        log::warn!("[ext:{ext_id}] action — worker did not start in time");
+        return Err(ActionCallError::Unavailable(
+            "that extension did not start in time".into(),
+        ));
+    }
+    match host
+        .workers
+        .call(
+            ext_id,
+            "action",
+            json!({ "action": action_id, "arguments": arguments }),
+            HANDOFF_DEADLINE,
+        )
+        .await
+    {
+        Ok(value) => {
+            clear_strikes(ext_id);
+            Ok(value)
+        }
+        Err(error) if error == "deadline exceeded" => {
+            record_strike(app, ext_id);
+            log::warn!("[ext:{ext_id}] action '{action_id}' timed out after {HANDOFF_DEADLINE:?}");
+            Err(ActionCallError::Timeout)
+        }
+        Err(error) => {
+            record_strike(app, ext_id);
+            Err(ActionCallError::Unavailable(error))
+        }
+    }
+}
+
 /// User cancellation is immediate: notify the handler's AbortSignal and drop
 /// the Rust waiter. The worker may finish later; its response has no recipient.
 pub fn cancel_session_stage(ext_id: &str, reason: &str) {
