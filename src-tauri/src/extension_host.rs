@@ -488,10 +488,6 @@ static HAS_ACTIONS: AtomicBool = AtomicBool::new(false);
 /// And for the Extension Mode pool: with nothing searchable installed, the
 /// recommendation path is one relaxed load and never touches the index.
 static HAS_RECOMMENDATIONS: AtomicBool = AtomicBool::new(false);
-/// [GRAIN] And for the V2 capability index (`docs/Extensions 2.0`): one relaxed
-/// load when nothing installed declares an action.
-static HAS_CAPABILITY_ACTIONS: AtomicBool = AtomicBool::new(false);
-
 /// [GRAIN] Cached example embeddings for the semantic leg of recommendation
 /// (`docs/Extensions V1/PLAN.md` §3.1). Held outside [`Index`] and behind its
 /// own lock for the same reason the retired calibration was: embedding a pool of
@@ -641,9 +637,7 @@ pub fn refresh_index(app: &AppHandle) {
     if crate::grain_space::is_enabled(app) {
         capability_inputs.extend(crate::action_exec::grain_space_actions());
     }
-    let capability_count = capability_inputs.len();
     let capability = grain_core::capability_index::CapabilityIndex::build(capability_inputs);
-    HAS_CAPABILITY_ACTIONS.store(capability_count > 0, Ordering::Relaxed);
 
     HAS_ACTIVATIONS.store(!by_event.is_empty(), Ordering::Relaxed);
     HAS_TRANSFORMS.store(!transforms.is_empty(), Ordering::Relaxed);
@@ -976,67 +970,81 @@ pub fn recommend(
     )
 }
 
-/// [GRAIN] Retrieve the Agent hot set for a request from the V2 capability index
-/// (`docs/Extensions 2.0/PLAN.md` §7). Pure and code-free: no worker wakes, no
-/// disk is touched. Lexical-only for now — the dense scores and the dynamic
-/// eligibility sets (surface context, auth) are injected by the caller once the
-/// Agent tool-loop wiring lands (Phase 2B); until then this is the honest,
-/// always-available floor.
-pub fn capability_retrieve(query: &str, k: usize) -> grain_core::capability_index::HotSet {
-    use grain_core::capability_index::{HotSet, QuerySource, RetrievalContext, RetrievalParams};
-    if !HAS_CAPABILITY_ACTIONS.load(Ordering::Relaxed) {
-        return HotSet::default();
-    }
+/// [GRAIN] Level-1 Agent extension directory (Extensions 2.0 Amendment D).
+/// Only installed third-party providers appear here; Grain Space remains a core
+/// host tool surface. The projection is in-memory and cannot wake a worker or
+/// resolve credentials.
+pub fn capability_extension_directory(
+) -> Vec<grain_core::capability_index::ExtensionDirectoryEntry> {
     let Some(host) = HOST.get() else {
-        return HotSet::default();
-    };
-    let empty = std::collections::HashSet::new();
-    let ctx = RetrievalContext {
-        dense: None,
-        context_ineligible: &empty,
-        auth_missing: &empty,
+        return Vec::new();
     };
     let index = host.index.read().unwrap();
-    index.capability.retrieve(
-        query,
-        &ctx,
-        RetrievalParams {
-            source: QuerySource::Transcript,
-            k,
-        },
-    )
+    index
+        .capability
+        .extension_directory()
+        .into_iter()
+        .filter(|entry| entry.extension_id != crate::action_exec::GRAIN_SPACE_EXT_ID)
+        .collect()
 }
 
-/// [GRAIN] Whether any installed extension declares a V2 capability action — the
-/// presence gate for exposing action tools to the Agent. One relaxed load when
-/// nothing is installed.
-pub fn has_capability_actions() -> bool {
-    HAS_CAPABILITY_ACTIONS.load(Ordering::Relaxed)
+pub struct ExtensionActionSet {
+    pub actions: Vec<grain_core::capability_index::ActionInput>,
+    pub manifest_digest: String,
 }
 
-/// [GRAIN] `search_actions` retrieval (`docs/Extensions 2.0/PLAN.md` §7.3): the
-/// Agent's discovery fallback over the whole installed set, optionally narrowed
-/// to one extension. Same pure, code-free path as [`capability_retrieve`].
-pub fn capability_search(
-    query: &str,
-    extension: Option<&str>,
-    limit: usize,
-) -> grain_core::capability_index::HotSet {
-    use grain_core::capability_index::{HotSet, RetrievalContext};
-    if !HAS_CAPABILITY_ACTIONS.load(Ordering::Relaxed) {
-        return HotSet::default();
+/// [GRAIN] Resolve all currently eligible action records for one exact extension
+/// id. Called only after `load_extension`; discovery itself stays code-free.
+pub fn capability_actions_for_extension(
+    app: &AppHandle,
+    extension_id: &str,
+) -> Result<ExtensionActionSet, String> {
+    if extension_id == crate::action_exec::GRAIN_SPACE_EXT_ID {
+        return Err("core providers are not loaded as extensions".to_string());
     }
+    let registry = app
+        .try_state::<Arc<grain_core::extensions::ExtensionsRegistry>>()
+        .ok_or_else(|| "extension registry is unavailable".to_string())?;
+    let record = registry
+        .record(extension_id)
+        .filter(|record| record.enabled)
+        .ok_or_else(|| "that extension is disabled or no longer installed".to_string())?;
+    let pack = load_manifest(app, extension_id)
+        .ok_or_else(|| "that extension's manifest is unavailable".to_string())?;
+    if !pack.has_runtime() {
+        return Err("that extension has no executable runtime".to_string());
+    }
+    let declared = &pack.manifest.contributes.actions;
+    let digest = grain_core::extensions::actions_fingerprint(declared);
+    if declared.is_empty() || record.actions_approved.as_deref() != Some(digest.as_str()) {
+        return Err("that extension's Agent actions are not currently approved".to_string());
+    }
+
     let Some(host) = HOST.get() else {
-        return HotSet::default();
-    };
-    let empty = std::collections::HashSet::new();
-    let ctx = RetrievalContext {
-        dense: None,
-        context_ineligible: &empty,
-        auth_missing: &empty,
+        return Err("extension host is unavailable".to_string());
     };
     let index = host.index.read().unwrap();
-    index.capability.search_actions(query, &ctx, extension, limit)
+    let actions: Vec<_> = index
+        .capability
+        .actions_for_extension(extension_id)
+        .into_iter()
+        .cloned()
+        .collect();
+    let expected_ids: std::collections::BTreeSet<String> = declared
+        .iter()
+        .map(|action| format!("{}:{}", pack.manifest.id, action.id.trim()))
+        .collect();
+    let indexed_ids: std::collections::BTreeSet<String> = actions
+        .iter()
+        .map(|action| action.canonical_id.clone())
+        .collect();
+    if indexed_ids != expected_ids {
+        return Err("that extension changed while its Agent tools were loading".to_string());
+    }
+    Ok(ExtensionActionSet {
+        actions,
+        manifest_digest: digest,
+    })
 }
 
 /// [GRAIN] The execution-relevant metadata for one action: its extension id,

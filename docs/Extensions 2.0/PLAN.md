@@ -6,11 +6,182 @@
 
 **Scope:** Extension discovery, Agent actions, launcher, and Dynamic UI
 
-**Implementation state:** Planning only; current contracts remain in force until a phase explicitly migrates them
+**Implementation state:** Active. Amendment D's two-level directory/loader runtime is implemented behind the existing Agent and action-execution contracts; end-to-end reference-extension validation remains.
 
 This plan replaces the product architecture in `docs/Extensions V1/PLAN.md`. V1 code and documentation remain useful as a migration baseline, evaluation harness, and record of implemented security controls. They must not be extended into a second permanent system.
 
 The supplied design documents and prior research are inputs, not normative specifications. This document resolves their contradictions against the current Grain codebase and the latest product direction.
+
+---
+
+## Amendment A (2026-08-28) — Dynamic UI is decoupled; the Agent chat is the interim surface
+
+**Decision.** Dynamic UI is removed from the critical path. Building the Dynamic UI runtime (Phases 5 and 7) as a prerequisite would stall the whole feature — it is a months-scale effort on its own. Instead we build the **entire functional stack now** — Grain Space, retrieval, the Agent, the extension→Agent connection, the recommendation algorithm, **and real extension execution** — and use the **existing Agent chat panel as the interim interaction surface**. Anything an action needs — confirmation, a follow-up field, a choice, a review, a result, a receipt — is rendered as **host-emitted markdown (and simple affordances) inside the Agent chat**. This makes the full stack end-to-end testable for accuracy immediately. Real Dynamic UI moves to a **parallel, non-blocking R&D track**.
+
+**The keystone that makes this clean — one contract, two renderers.** The semantic interaction protocol of §9.2 (`ConfirmAction`, `ChooseOne`, `ChooseMany`, `RequestText`, `RequestFields`, `TextResult`, `StructuredResult`, `Success`, `Error`, `ExecutionReceipt`, `Progress`) is the **host-owned contract**. It gets **two renderers**:
+
+1. **Markdown-in-chat renderer** — build now. Interactions are rendered as structured markdown in the Agent reply, with host-owned affordances for the side-effecting ones.
+2. **Dynamic UI rich renderer** — the parallel track (Phases 5/7). Swaps in later **behind the same contract**.
+
+Producers (the Agent, a built-in provider, an extension) emit interaction **requests**; they never render. So Dynamic UI arriving changes the *renderer*, not the *producer contract* — a refinement, never an overhaul. This is exactly the ownership §9.1 already demands ("the producer can request state transitions; it cannot create windows").
+
+**Invariants preserved (non-negotiable).** The interim surface being markdown does **not** relax any security requirement in §12, and confirmation remains a **Rust/host policy decision** (§2.5). Concretely: a risky prepared call is **not executed** when its tool call arrives; the host withholds it, emits a `ConfirmAction` interaction (rendered as a markdown confirmation with an explicit host affordance), and executes **only** after the host — not the model — receives the user's confirmation through that affordance. Extend the existing `AgentReply.confirm_delete` pattern rather than inventing a parallel path. A model writing "confirmed" in prose is never proof of confirmation.
+
+**Re-sequencing.**
+
+- **Phases 5 and 7 (Dynamic UI runtime + rich views): parallel track.** They no longer gate Phases 3, 4, or 6.
+- **New near-term critical path:**
+  1. **Interaction contract + markdown-in-chat renderer** — the interim Dynamic UI. The enabling layer for everything below.
+  2. **Phase 3 — third-party execution** on top of it: prepared calls, host risk policy, host-gated confirmation via the markdown surface, worker execution, receipts, cancellation, unknown-outcome handling.
+  3. **Phase 4 — multi-action composition**, using the same surface for per-step progress/results.
+  4. **Registry unification** (the Phase 2 tail): Grain Space and extensions execute through one generic provider interface.
+- **Phase 6 (Command shell)** UI also leans on the interim surface until Dynamic UI lands.
+
+**Amends §2.4.** "Agent interactions and extension action interactions use the same Grain-owned Dynamic UI session runtime" now reads: they use the same **interaction contract**; the **runtime behind it is markdown-in-chat now, Dynamic UI later**.
+
+All frontend work stays on `ui/grain-2.0` per the UI protocol; the interim markdown surface is Agent-panel chat rendering, not a new window or a browser harness.
+
+---
+
+## Amendment B (2026-08-28) — No third shortcut, no launcher, no extension-authored app UI. Only Dictation + Agent. (Host-rendered Agent Dynamic UI is NOT cancelled — see the clarification below.)
+
+**Decision.** Grain has exactly **two** invocation concepts: **Dictation** (speech → text) and the **Agent** (natural language → everything else). There is **no third shortcut**, **no Command shell**, **no Launcher**, **no extension-search overlay**, and **no extension-authored rich UI / standalone "mini-app"**. Extensions are reached **only conversationally, through the Agent**. Every extension interaction — a result, a confirmation, a follow-up, a choice, a review — is rendered as **markdown in the Agent chat** (Amendment A).
+
+**Why.** A third shortcut that pops an overlay to search and open extensions — each with its own dynamic UI — turns Grain into "many applications inside Grain," a launcher of mini-apps. That is Raycast. Grain is a speech-first tool; competing with Raycast in the launcher space is the wrong fight and dilutes the product. The Agent is the one door to extension capability, and it is conversational, not a menu.
+
+**This cancels (supersedes the referenced sections):**
+
+- **§1 "Command":** replaced by **"Agent."** The second concept is the Agent, not a Launcher+Agent shell.
+- **§2.1 "launcher-visible":** removed. Every non-dictation capability is **Agent-enabled or nothing**; the launcher/Agent contribution split collapses to one. `Standalone` now means "contributes Agent actions" (not "opens a view independently"); `Extend` is unchanged.
+- **§2.6 Shortcut contract:** no Command shortcut and no Extension-Mode→Command migration. Retire the Extension Mode binding; **add no third default binding.** Dictation and Agent are the only defaults (both already exist).
+- **§4 Target architecture:** drop the `Command shortcut → Command shell → Launcher projection` path. The Agent session is reached from the Agent shortcut; the Capability Index feeds **only** the Agent retriever + `search_actions` (its launcher projection, §6.2 `LauncherEntryRecord`, is cancelled — and was never built).
+- **§9.3 Rich-view layer, §9.5 launcher shell behavior, §10 Launcher (whole section):** cancelled.
+- **Phase 6 (Command shell + launcher) and Phase 7 (rich public views):** cancelled.
+
+**This does NOT cancel Dynamic UI (clarified 2026-08-28).** The line is *who authors the view*:
+
+- **KEPT — host-rendered Agent Dynamic UI (the second renderer; parallel R&D track).** The Agent rendering structured results from one or many extensions as coherent, native-looking cards that compose, merge, and carry follow-ups and confirmations — while staying legible ("this is GitHub, this is Teams, this is the summary I asked for"). Extensions supply **structure and data**; the host renders (§9.1). Composing *unrelated* extensions' outputs into one seamless surface is far harder than showing a single GitHub issue list — which is exactly why it develops in parallel and does not block the deterministic stack. The interaction contract therefore keeps **two renderers**: markdown-in-chat (build now) and host-rendered native Dynamic UI (parallel, Phase 5).
+- **CANCELLED — extension-authored standalone app UI.** A single extension shipping its *own whole-app view* (a Spotify app, a GitHub app with its own issue-creation screens) opened as a mini-app. That is the §9.3 rich-view / Phase 7 extension-view-SDK direction, and the Raycast mini-app model this amendment rejects.
+
+The rule: the **host may render richly; an extension may not author its own app UI.** Everything an extension contributes to the UI flows through the host-owned interaction contract as structure + data — rendered as markdown now, native cards later.
+
+**Unaffected.** The recommendation algorithm, Agent retrieval (hot set + `search_actions`), extension→Agent connection, Grain Space, and Phase 3/4 execution all stand — they were always the Agent path. Amendment B removes the launcher/overlay/rich-UI branch that Grain will not build.
+
+---
+
+## Amendment C (2026-08-29) — Initial vs Advanced version. Cloud, agent intelligence, and sub-agents.
+
+**Versioning.** Everything specified above and built so far is the **Initial version**: one Agent, one retrieval pass, direct action execution. It ships and gets proven first. This amendment records the **Advanced version** — additive intelligence on top. Nothing here changes the Initial version's contracts; do not start it until the Initial version is validated in real use.
+
+### C.1 The extension intelligence boundary (the governing rule)
+
+**Extension developers implement domain access. Grain implements intelligence.**
+
+An extension exposes only what its service *can provide* and *can do* — never workflow understanding, and never awareness that other extensions exist:
+
+```text
+Slack     Sources: search_messages, get_thread, find_user
+          Actions: send_message, reply
+GitHub    Sources: search_issues, get_issue, get_comments
+          Actions: create_issue, update_issue
+```
+
+Grain's Agent layer owns: intent, screen/app/selection context, memory and working state, which sources are relevant, query generation, retrieval + rerank, cross-service connection, action planning, multi-extension composition, freshness checks, confirmation policy, and learning reusable workflows.
+
+```text
+Extensions = eyes + hands      Grain Agent = brain      Grain Memory = continuity
+```
+
+The payoff: independently authored extensions participate in workflows their developers never coordinated on. "Didn't Sarah mention this yesterday? Check if we already have an issue, and if not create one from what she said" becomes context → memory → Slack search → GitHub search → compare → propose → confirm → GitHub action, with neither developer aware of the other.
+
+**Additive change this implies:** `Sources` becomes a first-class contribution type alongside `Actions` — a read that returns evidence, distinct from an act that changes the world. §6.2's `KnowledgeSourceRecord` and §8.6 are the existing hooks; the Advanced version promotes them to a real retrieval + execution path. The Initial version's `Action` + `SideEffect::Read` covers the simple case until then.
+
+### C.2 Progressive agent execution
+
+Not every request deserves a large workflow. Escalate only as ambiguity demands:
+
+- **Level 1 — Direct.** The user names the source or action ("Check Slack for what Raj said") → invoke it directly. This must handle **most** requests, cheaply. *(This is what the Initial version does today.)*
+- **Level 2 — Bounded investigation.** Several known sources ("Compare yesterday's meeting with the GitHub issue") → small parallel workers, each returning **compact evidence, not prose**, then one synthesis.
+- **Level 3 — Open investigation.** Genuinely ambiguous ("Didn't we already discuss this?") → use context + memory + project state + historical source usage to **score likely sources** (Slack 0.91, GitHub 0.84, Meetings 0.72, Gmail 0.19), search only the likely ones, and expand progressively only if evidence is thin.
+
+Level 3's source scoring is the Capability Index applied one level up — the same retrieval discipline (bounded candidate set, rank, expand on miss) already built and hardened for actions.
+
+### C.3 Model strategy
+
+Optimise **time to successful action**, not benchmark intelligence:
+
+```text
+Dictation cleanup  → cheap Flash, non-thinking
+Normal Agent       → fast Flash
+Source/sub-agents  → same Flash or cheaper
+Open investigation → several Flash workers in parallel
+Rare hard synthesis→ escalate to a stronger/Pro model
+```
+
+Most operations stay inexpensive because most requests are one source, a small retrieved context, a short tool call, and little generated output. Large multi-source investigations must remain **exceptional**, not the default shape.
+
+### C.4 Cloud's role
+
+The Agent architecture works with local **and** managed models. Grain Cloud is managed compute + continuity, **never a requirement for intelligence**:
+
+```text
+Grain Cloud    managed Agent inference · managed embeddings · optional stronger-model
+               escalation · sync · cross-device memory · hosted Grain Space
+Local/open     local LLM · local embeddings · local memory · BYOK APIs · local extensions
+```
+
+### C.5 Sequencing
+
+Advanced work begins only after the Initial version is proven end to end. Likely order when it does: (1) `Sources` as a first-class contribution, (2) Level 2 bounded parallel workers with compact-evidence returns, (3) source scoring for Level 3, (4) model-tier routing, (5) Cloud managed inference/continuity, (6) learned reusable workflows.
+
+---
+
+## Amendment D (2026-08-30) — Two-level extension discovery; one sequential Agent
+
+**Decision.** Replace action ranking, hot-set exposure, and `search_actions` with a two-level progressive-disclosure contract:
+
+1. **Extension directory.** Every Agent request receives a compact, deterministic directory of enabled extensions that currently have approved Agent actions. Each entry contains only the stable extension id, display name, one concise capability description, and action count. It is inert metadata: producing it never starts a worker or resolves credentials.
+2. **Extension load.** The Agent has one host meta-tool, `load_extension(extension_id)`. A successful call atomically exposes every approved action schema for that extension on the next model hop. Loaded extensions accumulate for the current request, so one Agent can work across GitHub, Slack, Calendar, and other providers without a second routing pass.
+
+Core host tools, such as Grain Space, may remain directly exposed because they are part of Grain rather than an installed extension. They still obey the same schema validation and execution policy.
+
+**Why this supersedes retrieval.** At the intended initial scale (roughly 25 enabled extensions), the capable Agent already has enough information to choose a provider from names and concise capability descriptions. Preselecting action schemas can hide a provider needed later in a multi-extension task, while a second semantic/BM25 router adds latency, model/storage cost, failure modes, and evaluation work. Grain should not predict a subset before the Agent has reasoned about the request.
+
+**Single-Agent execution.** The Initial version uses one Agent and a bounded sequential tool loop. The Agent may load and call several extensions, but calls execute one at a time in provider order. Multi-agent delegation and parallel execution remain deferred. Later parallelism belongs behind the executor boundary and must not change discovery, permissions, confirmation, or receipts.
+
+### D.1 Task-scoped loader contract
+
+- `load_extension` accepts one exact id from the directory; names, aliases, invented ids, disabled extensions, and unapproved manifests do not resolve.
+- Loading is idempotent. It rechecks current extension availability and authentication state each time, then publishes schemas atomically or publishes none.
+- Provider-facing action names remain deterministic, collision-checked, and bound to an authoritative task-local name→canonical-action map. A hash/prefix is an address, never authorization.
+- An action may execute only if its schema was offered at the start of that model round. A model cannot call `load_extension` and smuggle an undisclosed action into the same response.
+- The directory, schema descriptions, action titles, and tool results are untrusted prompt data: sanitized, size-bounded, and explicitly framed as data rather than instructions.
+- Loaded state exists only for one backend Agent request, persists across that request's model hops, and is destroyed at its terminal answer or confirmation hand-off. A confirmation resumes the exact prepared call without reconsulting the model, so it does not need a live tool registry.
+- A process interruption does not replay tool calls. The user retries the request; side-effecting calls retain the existing idempotency/unknown-outcome rules.
+
+### D.2 Hard bounds for the Initial version
+
+- At most 100 extension directory entries are placed in model context. Reaching this scale triggers evaluation of an additive `search_extensions` level; it does not revive action ranking.
+- At most 16 extensions and 128 extension action schemas may be loaded in one request.
+- One extension may expose no more than the manifest contract's existing 24-action ceiling.
+- The existing Agent wall-time and tool-hop budgets remain mandatory; the hop budget must accommodate load→call sequences across several extensions without becoming unbounded.
+
+### D.3 Security and lifecycle
+
+The existing Rust execution boundary remains authoritative. Loading a schema does not activate extension code and grants no permission. Before execution the host still validates arguments, action approval digest, enabled state, identity, realm/token, risk floor, confirmation, expiry, idempotency, output limits, and worker provenance. Credentials remain opaque host-owned state and there is exactly one account per extension.
+
+Extension disable/update/uninstall invalidates the index and causes later loads or calls to fail closed. Task-local state owns no worker, listener, credential, or background service and therefore needs no explicit long-lived cleanup path beyond dropping the request state.
+
+### D.4 Implementation sequence
+
+1. Add a pure extension-directory projection and task-local loaded-extension registry in `grain-core`, with deterministic ordering, sanitization, collision rejection, strict `load_extension` argument parsing, and hard bounds.
+2. Replace the live Agent hot-set/`search_actions` wiring with the directory plus loader while retaining the Capability Index only as an approved-action metadata store during this migration.
+3. Rebuild the provider tool list after every load. Reject action calls absent from the model round's offered-tool snapshot.
+4. Route loaded actions through the existing `prepare`/risk/confirmation/worker executor unchanged.
+5. Add tests for multiple sequential extension loads, idempotent load, unknown/disabled ids, collisions, limits, prompt sanitization, same-round smuggling, schema validation, confirmation, and state drop.
+6. After end-to-end validation, remove runtime retrieval code and retain the old benchmark only as historical evidence or a future >100-extension comparison harness.
+
+**Superseded sections.** Amendment D replaces §2.2's action-retrieval decision, §4's hot-set/`search_actions` path, §6's ranking role, §7.1–§7.5, Phase 1 as a shipping prerequisite, Phase 2's hot-set/search work, and §17's instruction to start with a retrieval benchmark. Their security, manifest-normalization, stable-name, measurement, and code-free-discovery requirements remain in force where applicable.
 
 ---
 

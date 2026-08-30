@@ -49,7 +49,7 @@
 //! Pure and model-free, like every retrieval module here, so the eval harness
 //! drives it headless with no running app.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use grain_sdk::manifest::{
     parse_utterance, ActionParamKind, ActionRisk, ExtensionManifest, UtterancePart,
@@ -212,6 +212,19 @@ pub struct ActionParamInput {
     pub name: String,
     pub kind: ActionParamKind,
     pub required: bool,
+}
+
+/// One inert Level-1 Agent directory entry (Extensions 2.0 Amendment D).
+///
+/// This is projected exclusively from already-enabled, approved action records;
+/// constructing it cannot activate an extension or touch credentials. Strings
+/// remain untrusted until `capability_agent` sanitises them for model context.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ExtensionDirectoryEntry {
+    pub extension_id: String,
+    pub name: String,
+    pub description: String,
+    pub action_count: usize,
 }
 
 impl ActionInput {
@@ -407,6 +420,52 @@ impl CapabilityIndex {
             .iter()
             .map(|doc| &doc.input)
             .find(|input| input.canonical_id == canonical_id)
+    }
+
+    /// Build the deterministic Level-1 extension directory from statically
+    /// eligible actions. One entry represents one provider, irrespective of how
+    /// many actions it contributes.
+    pub fn extension_directory(&self) -> Vec<ExtensionDirectoryEntry> {
+        let mut by_extension: BTreeMap<String, ExtensionDirectoryEntry> = BTreeMap::new();
+        for doc in &self.docs {
+            let input = &doc.input;
+            if !input.enabled || !input.platform_ok || input.quarantined {
+                continue;
+            }
+            let entry = by_extension
+                .entry(input.extension_id.clone())
+                .or_insert_with(|| ExtensionDirectoryEntry {
+                    extension_id: input.extension_id.clone(),
+                    name: input.provider_name.clone(),
+                    description: input
+                        .provider_context
+                        .iter()
+                        .find(|text| !text.trim().is_empty())
+                        .cloned()
+                        .unwrap_or_default(),
+                    action_count: 0,
+                });
+            entry.action_count += 1;
+            if entry.description.trim().is_empty() && !input.title.trim().is_empty() {
+                entry.description = format!("Provides actions including {}.", input.title.trim());
+            }
+        }
+        by_extension.into_values().collect()
+    }
+
+    /// Return every currently eligible action belonging to one exact extension
+    /// id. The caller uses these records to atomically publish Level-2 schemas.
+    pub fn actions_for_extension(&self, extension_id: &str) -> Vec<&ActionInput> {
+        self.docs
+            .iter()
+            .map(|doc| &doc.input)
+            .filter(|input| {
+                input.extension_id == extension_id
+                    && input.enabled
+                    && input.platform_ok
+                    && !input.quarantined
+            })
+            .collect()
     }
 
     /// Build the Agent hot set for one request.
@@ -1064,6 +1123,27 @@ mod tests {
             self.platform_ok = false;
             self
         }
+    }
+
+    #[test]
+    fn extension_directory_groups_only_static_eligible_actions() {
+        let mut github_create = action("com.example.github", "create");
+        github_create.provider_name = "GitHub".to_string();
+        github_create.provider_context = vec!["Work with repositories and issues.".to_string()];
+        let mut github_close = action("com.example.github", "close");
+        github_close.provider_name = "GitHub".to_string();
+        github_close.provider_context = github_create.provider_context.clone();
+        let mut disabled = action("com.example.slack", "send");
+        disabled.enabled = false;
+
+        let index = CapabilityIndex::build(vec![github_create, github_close, disabled]);
+        let directory = index.extension_directory();
+        assert_eq!(directory.len(), 1);
+        assert_eq!(directory[0].extension_id, "com.example.github");
+        assert_eq!(directory[0].name, "GitHub");
+        assert_eq!(directory[0].action_count, 2);
+        assert_eq!(index.actions_for_extension("com.example.github").len(), 2);
+        assert!(index.actions_for_extension("com.example.slack").is_empty());
     }
 
     fn empty_ctx() -> (HashSet<String>, HashSet<String>) {

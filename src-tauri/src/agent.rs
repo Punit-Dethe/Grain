@@ -25,6 +25,7 @@
 //! + `rotation_state`), and never assumes a UI is alive.
 
 use std::{
+    collections::HashSet,
     sync::{
         atomic::{AtomicBool, AtomicU64, Ordering},
         Arc, Mutex,
@@ -2317,7 +2318,8 @@ fn outcome_to_reply(outcome: grain_core::execution::ActionOutcome) -> AgentReply
 /// How many tool hops one turn may take before it is made to answer. Small on
 /// purpose: search → maybe read one in full → answer is the shape of nearly every
 /// real request, and an unbounded loop is a bill.
-const MAX_NOTE_TOOL_HOPS: usize = 4;
+const MAX_AGENT_TOOL_HOPS: usize = 8;
+const MAX_AGENT_TOOL_CALLS: usize = 24;
 
 /// Run one Agent turn with the notebook available as tools.
 ///
@@ -2342,24 +2344,19 @@ async fn run_with_note_tools(
     use crate::llm_client::{ChatEntry, ToolSpec};
 
     let note_tools = crate::grain_space::agent_tools::specs(app);
-    // The current request drives capability retrieval — the last thing the user
-    // said this turn. Its hot set of installed-extension actions rides alongside
-    // the notebook tools; on a machine with no action extensions this is empty and
-    // the turn is exactly the old note-tool (or plain) path.
-    let request = full
-        .iter()
-        .rev()
-        .find(|(role, _)| role == "user")
-        .map(|(_, content)| content.clone())
-        .unwrap_or_default();
-    let (mut exposure, mut cap_tools) = crate::capability::open(&request);
+    // Core tools are reserved names. Extension schemas begin with only the
+    // Level-2 loader and accumulate after successful loads.
+    let core_tool_names: Vec<String> = note_tools.iter().map(|tool| tool.name.clone()).collect();
+    let opened = crate::capability::open(&core_tool_names);
+    let mut exposure = opened.exposure;
+    let mut cap_tools = opened.specs;
 
     if note_tools.is_empty() && cap_tools.is_empty() {
         return Ok(AgentReply::plain(run_messages(app, full, image).await?));
     }
 
-    // Note tools + the current capability tools, each hop. `cap_tools` is rebuilt
-    // after every dispatch round because `search_actions` may widen the set.
+    // Core tools + the current extension schemas, rebuilt after every dispatch
+    // round because `load_extension` may have widened the set.
     let combined = |cap: &[ToolSpec]| -> Vec<ToolSpec> {
         let mut all = tools_cloned(&note_tools);
         all.extend(tools_cloned(cap));
@@ -2374,6 +2371,13 @@ async fn run_with_note_tools(
             _ => ChatEntry::User(content),
         })
         .collect();
+    if let Some(directory) = opened.directory_context {
+        let position = entries
+            .iter()
+            .take_while(|entry| matches!(entry, ChatEntry::System(_)))
+            .count();
+        entries.insert(position, ChatEntry::System(directory));
+    }
 
     let mut log = crate::grain_space::agent_tools::TurnLog::default();
     // Set when a risky action was withheld; it ends the turn and rides out on
@@ -2382,10 +2386,22 @@ async fn run_with_note_tools(
     let mut reply = run_messages_with_tools(app, entries.clone(), combined(&cap_tools), image).await?;
 
     let mut hops = 0usize;
-    while !reply.tool_calls.is_empty() && hops < MAX_NOTE_TOOL_HOPS {
+    let mut tool_calls_used = 0usize;
+    while !reply.tool_calls.is_empty() && hops < MAX_AGENT_TOOL_HOPS {
         hops += 1;
+        let offered_capability_names: HashSet<String> =
+            cap_tools.iter().map(|tool| tool.name.clone()).collect();
         entries.push(ChatEntry::AssistantToolCalls(reply.tool_calls.clone()));
         for call in &reply.tool_calls {
+            if tool_calls_used >= MAX_AGENT_TOOL_CALLS {
+                entries.push(ChatEntry::ToolResult {
+                    call_id: call.id.clone(),
+                    content: "Not run because this Agent request reached its tool-call limit."
+                        .to_string(),
+                });
+                continue;
+            }
+            tool_calls_used += 1;
             // Stop after the first withheld call. A provider may emit several
             // calls in one turn, but later calls must not run before the user
             // answers the one confirmation that was actually displayed.
@@ -2397,10 +2413,17 @@ async fn run_with_note_tools(
                 });
                 continue;
             }
-            // A capability tool (search_actions / act__…) is handled by the
+            // An extension capability tool (load_extension / act__…) is handled by the
             // registry; anything else is a notebook tool. `dispatch` returns None
             // when the call is not ours, so the two surfaces never collide.
-            let content = match crate::capability::dispatch(app, call, &mut exposure).await {
+            let content = match crate::capability::dispatch(
+                app,
+                call,
+                &mut exposure,
+                &offered_capability_names,
+            )
+            .await
+            {
                 Some(crate::capability::ToolResult::Text(text)) => text,
                 Some(crate::capability::ToolResult::Confirm(confirm)) => {
                     // A risky action was withheld. Close this tool call honestly
@@ -2423,7 +2446,7 @@ async fn run_with_note_tools(
         if pending_confirm.is_some() {
             break;
         }
-        // search_actions may have widened the exposed set; rebuild before the hop.
+        // load_extension may have widened the exposed set; rebuild before the hop.
         cap_tools = crate::capability::specs(&exposure);
         // The frame rides every hop, not just the first. The hop that produces
         // the ANSWER is the one that needs to see the screen, and an OpenAI-shaped
@@ -2451,7 +2474,7 @@ async fn run_with_note_tools(
     // nudge is safe — advertising NO tools is what makes it terminate, and leaving
     // a dangling assistant tool-call would be rejected by the API.
     if !reply.tool_calls.is_empty() {
-        info!("[GRAIN] agent: note-tool hop cap ({MAX_NOTE_TOOL_HOPS}) reached; forcing an answer");
+        info!("[GRAIN] agent: tool hop cap ({MAX_AGENT_TOOL_HOPS}) reached; forcing an answer");
         entries.push(ChatEntry::User(
             "Answer now, using what you already have.".to_string(),
         ));
