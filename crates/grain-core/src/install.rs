@@ -288,8 +288,11 @@ fn declared_digests(m: &grain_sdk::ExtensionManifest) -> ApprovalDigests {
             .then(|| ext::prompt_layers_fingerprint(&m.contributes.prompt_layers)),
         actions: (!m.contributes.actions.is_empty())
             .then(|| ext::actions_fingerprint(&m.contributes.actions)),
-        authentication: (!m.contributes.authentication.is_empty())
-            .then(|| ext::authentication_fingerprint(&m.contributes.authentication)),
+        authentication: m
+            .contributes
+            .authentication
+            .as_ref()
+            .map(ext::authentication_fingerprint),
         // [GRAIN] Unlike the other two this is keyed off `kind`, not off a list
         // being non-empty: what needs approving is being ELIGIBLE to receive the
         // user's words at all, and validation already guarantees a searchable

@@ -17,7 +17,7 @@ text/markdown now and Dynamic UI later.
 | Confirmation | Hardened | Exact prepared call is withheld and resumed without reconsulting the model | Real-app UX approval; test cancellation, close, expiry, and rapid resummon |
 | Third-party execution | Implemented | Lazy worker invocation receives only action id, validated arguments, and idempotency key | Durable host dedupe ledger before any automatic write retry; resumable follow-up contract |
 | Result handling | Hardened | Strict envelope, bounded/sanitised text, host-owned provenance and receipts | Add structured evidence/result size telemetry |
-| Authentication | Partially implemented | Public-client OAuth authorization-code + PKCE, loopback callback, refresh, OS keyring, exact-host token attachment | Provider adapters, action/source auth requirements, multi-account connections |
+| Authentication | Partially implemented | One optional service declaration and one host-vaulted account per extension; public-client OAuth authorization-code + PKCE, loopback callback, refresh, exact-host token attachment | Provider adapters and action/source auth requirements |
 | Composition | Not implemented | One Agent may make bounded sequential tool calls | Initial real-app validation first; Advanced Levels 2–3 below |
 | Sources | Contract seed only | Read actions and knowledge-source concepts | First-class `Sources` schema and evidence execution path |
 | Agent memory | Not implemented as an Agent subsystem | Conversation plus Grain Space notes/recall exist | Separate bounded working memory and routing/workflow memory |
@@ -69,10 +69,13 @@ extension OAuth code:
 PublicPkceLoopback | DeviceCode | ManagedBroker | ApiToken
 ```
 
+Each extension represents one service and has at most one account. Cross-service
+composition is exclusively an Agent concern: a GitHub extension cannot bundle a
+Teams or Calendar connection, and extension code never selects an account id.
+
 Add these fields before Sources ship:
 
-- stable `authRequirement` ids on each Action and Source;
-- `connectionId` so one extension may support several accounts;
+- a boolean `requiresAuth` on each Action and Source;
 - provider adapter + allowed issuer/token hosts in a reviewed host registry;
 - scopes and account identity in the approval fingerprint;
 - auth eligibility evaluated before ranking and again before execution;
@@ -95,12 +98,12 @@ Sources are not “safe actions.” They have a retrieval-specific contract:
 SourceDecl
   id, title, description
   querySchema
-  authRequirements[], capabilities[]
+  requiresAuth, capabilities[]
   freshnessPolicy, costClass, privacyClass
   maxItems, timeoutMs
 
 EvidenceEnvelope
-  sourceId, extensionId, connectionId
+  sourceId, extensionId
   retrievedAt, freshness
   items[] { id, title, excerpt, canonicalRef, occurredAt? }
   citations[], confidence?

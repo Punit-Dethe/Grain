@@ -1516,25 +1516,25 @@ async extensionGrant(id: string, permissions: string[]) : Promise<Result<null, s
     else return { status: "error", error: e  as any };
 }
 },
-async extensionAuthConnections(id: string) : Promise<Result<AuthConnection[], string>> {
+async extensionAuthConnection(id: string) : Promise<Result<AuthConnection | null, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("extension_auth_connections", { id }) };
+    return { status: "ok", data: await TAURI_INVOKE("extension_auth_connection", { id }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
 },
-async extensionAuthConnect(id: string, authId: string) : Promise<Result<AuthConnection, string>> {
+async extensionAuthConnect(id: string) : Promise<Result<AuthConnection, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("extension_auth_connect", { id, authId }) };
+    return { status: "ok", data: await TAURI_INVOKE("extension_auth_connect", { id }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
 },
-async extensionAuthDisconnect(id: string, authId: string) : Promise<Result<null, string>> {
+async extensionAuthDisconnect(id: string) : Promise<Result<null, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("extension_auth_disconnect", { id, authId }) };
+    return { status: "ok", data: await TAURI_INVOKE("extension_auth_disconnect", { id }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -3171,7 +3171,7 @@ grain_space_vault_path?: string;
  */
 grain_space_vault_folder?: string }
 export type AudioDevice = { index: string; name: string; is_default: boolean }
-export type AuthConnection = { id: string; provider_name: string; authorization_host: string; token_host: string; scopes: string[]; api_hosts: string[]; connection_id: string; 
+export type AuthConnection = { provider_name: string; authorization_host: string; token_host: string; scopes: string[]; api_hosts: string[];
 /**
  * `connected` | `needs_reauthorization` | `expired` | `disconnected` | `unavailable`
  */

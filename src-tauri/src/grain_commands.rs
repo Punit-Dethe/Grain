@@ -1167,7 +1167,6 @@ pub struct ActionInfo {
 
 #[derive(serde::Serialize, Clone)]
 pub struct AuthenticationApprovalInfo {
-    pub id: String,
     pub provider_name: String,
     pub scopes: Vec<String>,
     pub api_hosts: Vec<String>,
@@ -1184,7 +1183,6 @@ impl AuthenticationApprovalInfo {
                 .unwrap_or_default()
         };
         Self {
-            id: decl.id.clone(),
             provider_name: decl.provider_name.clone(),
             scopes: decl.scopes.clone(),
             api_hosts: decl.api_hosts.clone(),
@@ -1254,7 +1252,7 @@ pub fn extensions_overview(app: AppHandle) -> Result<Vec<ExtensionCard>, String>
                     .collect();
                 let has_detail = !p.manifest.contributes.settings.is_empty()
                     || !p.manifest.contributes.shortcuts.is_empty()
-                    || !p.manifest.contributes.authentication.is_empty()
+                    || p.manifest.contributes.authentication.is_some()
                     || !prompt_layers.is_empty()
                     || !actions.is_empty();
                 PackFacts {
@@ -1541,13 +1539,16 @@ pub fn extension_set_enabled(
                         .unwrap_or_default();
                     approved != ext::recommendation_fingerprint(&pack.manifest)
                 };
-                let declared_authentication = &pack.manifest.contributes.authentication;
-                let authentication_unapproved = !declared_authentication.is_empty() && {
+                let declared_authentication = pack.manifest.contributes.authentication.as_ref();
+                let authentication_unapproved = declared_authentication.is_some() && {
                     let approved = reg
                         .record(pack_id)
                         .and_then(|record| record.authentication_approved)
                         .unwrap_or_default();
-                    approved != ext::authentication_fingerprint(declared_authentication)
+                    approved
+                        != declared_authentication
+                            .map(ext::authentication_fingerprint)
+                            .unwrap_or_default()
                 };
                 if !missing.is_empty()
                     || unapproved
@@ -1565,15 +1566,9 @@ pub fn extension_set_enabled(
                     } else {
                         Vec::new()
                     };
-                    let authentication: Vec<AuthenticationApprovalInfo> =
-                        if authentication_unapproved {
-                            declared_authentication
-                                .iter()
-                                .map(AuthenticationApprovalInfo::from_decl)
-                                .collect()
-                        } else {
-                            Vec::new()
-                        };
+                    let authentication = authentication_unapproved
+                        .then(|| declared_authentication.map(AuthenticationApprovalInfo::from_decl))
+                        .flatten();
                     // One sheet carrying all three. Two sheets in a row is how a
                     // user learns to click through without reading.
                     return Err(serde_json::json!({
@@ -1756,9 +1751,14 @@ fn imported_update_can_stay_enabled(
     let actions_match = manifest.contributes.actions.is_empty()
         || prior.actions_approved.as_deref()
             == Some(ext::actions_fingerprint(&manifest.contributes.actions).as_str());
-    let authentication_match = manifest.contributes.authentication.is_empty()
-        || prior.authentication_approved.as_deref()
-            == Some(ext::authentication_fingerprint(&manifest.contributes.authentication).as_str());
+    let authentication_match = manifest
+        .contributes
+        .authentication
+        .as_ref()
+        .is_none_or(|declaration| {
+            prior.authentication_approved.as_deref()
+                == Some(ext::authentication_fingerprint(declaration).as_str())
+        });
     let recommendation_match = !manifest.kind.is_searchable()
         || prior.recommend_approved.as_deref()
             == Some(ext::recommendation_fingerprint(manifest).as_str());
@@ -1777,10 +1777,9 @@ mod imported_update_security_tests {
                 "version": "1.0.0",
                 "tier": "scripted",
                 "entry_source": "export default {}",
-                "permissions": ["auth:service", "net:api.example.com"],
+                "permissions": ["auth", "net:api.example.com"],
                 "contributes": {
-                    "authentication": [{
-                        "id": "service",
+                    "authentication": {
                         "type": "oauth2-pkce",
                         "providerName": "Service",
                         "clientId": "public-client",
@@ -1788,7 +1787,7 @@ mod imported_update_security_tests {
                         "tokenEndpoint": token_endpoint,
                         "scopes": ["read"],
                         "apiHosts": ["api.example.com"]
-                    }]
+                    }
                 }
             }
         }))
@@ -1806,7 +1805,7 @@ mod imported_update_security_tests {
             prompt_layers_approved: None,
             actions_approved: None,
             authentication_approved: Some(grain_core::extensions::authentication_fingerprint(
-                &pack.manifest.contributes.authentication,
+                pack.manifest.contributes.authentication.as_ref().unwrap(),
             )),
             recommend_approved: None,
             slots: Vec::new(),
@@ -2052,10 +2051,13 @@ fn register_unpacked_project(
         ),
         actions_approved: (!loaded.pack.manifest.contributes.actions.is_empty())
             .then(|| ext::actions_fingerprint(&loaded.pack.manifest.contributes.actions)),
-        authentication_approved: (!loaded.pack.manifest.contributes.authentication.is_empty())
-            .then(|| {
-                ext::authentication_fingerprint(&loaded.pack.manifest.contributes.authentication)
-            }),
+        authentication_approved: loaded
+            .pack
+            .manifest
+            .contributes
+            .authentication
+            .as_ref()
+            .map(ext::authentication_fingerprint),
         recommend_approved: loaded
             .pack
             .manifest
@@ -2880,8 +2882,11 @@ pub fn extension_grant(
     // declaration the user never saw.
     rec.actions_approved = (!manifest.contributes.actions.is_empty())
         .then(|| ext::actions_fingerprint(&manifest.contributes.actions));
-    rec.authentication_approved = (!manifest.contributes.authentication.is_empty())
-        .then(|| ext::authentication_fingerprint(&manifest.contributes.authentication));
+    rec.authentication_approved = manifest
+        .contributes
+        .authentication
+        .as_ref()
+        .map(ext::authentication_fingerprint);
     // Same act, same rule: recomputed from disk. Keyed off `kind` rather than a
     // list being non-empty, because what is being approved here is eligibility
     // to be handed the whole request — see `recommendation_fingerprint`.

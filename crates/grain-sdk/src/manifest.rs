@@ -208,8 +208,8 @@ pub struct OverlayDecl {
 pub struct Contributes {
     /// Host-owned OAuth connections. An extension receives status and may ask
     /// Grain to perform authenticated requests, but never receives tokens.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub authentication: Vec<AuthenticationDecl>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub authentication: Option<AuthenticationDecl>,
     /// Level 1–2 settings schema — the host renders the controls; the values
     /// live in the extension's own namespace (never `AppSettings`).
     #[serde(default)]
@@ -258,8 +258,6 @@ pub struct Contributes {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct AuthenticationDecl {
-    /// Extension-local service id, e.g. `github` or `linear`.
-    pub id: String,
     #[serde(rename = "type")]
     pub auth_type: AuthenticationType,
     #[serde(rename = "providerName", alias = "provider_name")]
@@ -1701,6 +1699,9 @@ pub const KNOWN_CAPABILITIES: &[&str] = &[
     "settings",
     "llm",
     "embed",
+    // One host-owned account connection for this extension. An extension is a
+    // single service/capability provider; cross-service work belongs to Agent.
+    "auth",
     // Phase 3 (SPEC §1.2): host-owned surfaces. Declaring a surface without
     // its capability is rejected — the grant is what the user actually approves.
     "surface:workspace",
@@ -1791,22 +1792,6 @@ pub fn network_capability_host(capability: &str) -> Option<&str> {
     valid.then_some(host)
 }
 
-/// Parameterised authentication grants name exactly one manifest declaration.
-pub fn authentication_capability_id(capability: &str) -> Option<&str> {
-    let id = capability.strip_prefix("auth:")?;
-    valid_authentication_id(id).then_some(id)
-}
-
-fn valid_authentication_id(id: &str) -> bool {
-    !id.is_empty()
-        && id.len() <= 64
-        && id
-            .bytes()
-            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
-        && id.as_bytes().first().is_some_and(u8::is_ascii_alphanumeric)
-        && id.as_bytes().last().is_some_and(u8::is_ascii_alphanumeric)
-}
-
 fn valid_https_endpoint(value: &str) -> bool {
     if value.len() > 2048
         || value.contains(['?', '#', '\\'])
@@ -1834,13 +1819,15 @@ fn valid_https_endpoint(value: &str) -> bool {
 }
 
 fn validate_authentication(
-    decls: &[AuthenticationDecl],
+    decl: Option<&AuthenticationDecl>,
     permissions: &[String],
 ) -> Result<(), String> {
-    if decls.len() > 8 {
-        return Err("at most 8 authentication declarations are allowed".into());
-    }
-    let mut ids = std::collections::HashSet::new();
+    let Some(decl) = decl else {
+        if permissions.iter().any(|permission| permission == "auth") {
+            return Err("permission 'auth' has no authentication declaration".into());
+        }
+        return Ok(());
+    };
     const RESERVED: &[&str] = &[
         "client_id",
         "redirect_uri",
@@ -1850,105 +1837,60 @@ fn validate_authentication(
         "code_challenge_method",
         "scope",
     ];
-    for decl in decls {
-        if !valid_authentication_id(&decl.id) || !ids.insert(decl.id.as_str()) {
-            return Err(format!(
-                "authentication id '{}' is invalid or duplicated",
-                decl.id
-            ));
-        }
-        if decl.provider_name.trim().is_empty() || decl.provider_name.len() > 80 {
-            return Err(format!(
-                "authentication '{}' requires a providerName",
-                decl.id
-            ));
-        }
-        if decl.client_id.trim().is_empty() || decl.client_id.len() > 512 {
-            return Err(format!(
-                "authentication '{}' requires a bounded clientId",
-                decl.id
-            ));
-        }
-        if !valid_https_endpoint(&decl.authorization_endpoint)
-            || !valid_https_endpoint(&decl.token_endpoint)
+    if decl.provider_name.trim().is_empty() || decl.provider_name.len() > 80 {
+        return Err("authentication requires a providerName".into());
+    }
+    if decl.client_id.trim().is_empty() || decl.client_id.len() > 512 {
+        return Err("authentication requires a bounded clientId".into());
+    }
+    if !valid_https_endpoint(&decl.authorization_endpoint)
+        || !valid_https_endpoint(&decl.token_endpoint)
+    {
+        return Err("authentication endpoints must be HTTPS URLs without query or fragment".into());
+    }
+    if decl.scopes.is_empty()
+        || decl.scopes.len() > 32
+        || decl.scopes.iter().any(|scope| {
+            scope.is_empty() || scope.len() > 256 || scope.bytes().any(|b| b <= 0x20 || b == 0x7f)
+        })
+    {
+        return Err("authentication requires 1-32 valid OAuth scopes".into());
+    }
+    if decl.redirect_methods != [RedirectMethod::Loopback] {
+        return Err("authentication redirectMethods must be ['loopback'] in API 1.x".into());
+    }
+    if decl.api_hosts.is_empty() || decl.api_hosts.len() > 16 {
+        return Err("authentication requires 1-16 apiHosts".into());
+    }
+    for host in &decl.api_hosts {
+        if network_capability_host(&format!("net:{host}")) != Some(host.as_str())
+            || !permissions
+                .iter()
+                .any(|permission| permission == &format!("net:{host}"))
         {
             return Err(format!(
-                "authentication '{}' endpoints must be HTTPS URLs without query or fragment",
-                decl.id
-            ));
-        }
-        if decl.scopes.is_empty()
-            || decl.scopes.len() > 32
-            || decl.scopes.iter().any(|scope| {
-                scope.is_empty()
-                    || scope.len() > 256
-                    || scope.bytes().any(|b| b <= 0x20 || b == 0x7f)
-            })
-        {
-            return Err(format!(
-                "authentication '{}' requires 1-32 valid OAuth scopes",
-                decl.id
-            ));
-        }
-        if decl.redirect_methods != [RedirectMethod::Loopback] {
-            return Err(format!(
-                "authentication '{}' redirectMethods must be ['loopback'] in API 1.x",
-                decl.id
-            ));
-        }
-        if decl.api_hosts.is_empty() || decl.api_hosts.len() > 16 {
-            return Err(format!(
-                "authentication '{}' requires 1-16 apiHosts",
-                decl.id
-            ));
-        }
-        for host in &decl.api_hosts {
-            if network_capability_host(&format!("net:{host}")) != Some(host.as_str())
-                || !permissions
-                    .iter()
-                    .any(|permission| permission == &format!("net:{host}"))
-            {
-                return Err(format!(
-                    "authentication '{}' apiHost '{}' requires the matching net permission",
-                    decl.id, host
-                ));
-            }
-        }
-        let cap = format!("auth:{}", decl.id);
-        if !permissions.contains(&cap) {
-            return Err(format!(
-                "authentication '{}' requires the '{}' permission",
-                decl.id, cap
-            ));
-        }
-        if decl.authorization_parameters.len() > 16
-            || decl.authorization_parameters.iter().any(|(key, value)| {
-                key.is_empty()
-                    || key.len() > 64
-                    || !key.bytes().all(|byte| {
-                        byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~')
-                    })
-                    || value.len() > 1024
-                    || value.bytes().any(|byte| byte < 0x20 || byte == 0x7f)
-                    || RESERVED
-                        .iter()
-                        .any(|reserved| key.eq_ignore_ascii_case(reserved))
-            })
-        {
-            return Err(format!(
-                "authentication '{}' has invalid authorizationParameters",
-                decl.id
+                "authentication apiHost '{host}' requires the matching net permission"
             ));
         }
     }
-    for permission in permissions {
-        if let Some(id) = authentication_capability_id(permission) {
-            if !decls.iter().any(|decl| decl.id == id) {
-                return Err(format!(
-                    "permission '{permission}' has no authentication declaration"
-                ));
-            }
-        }
+    if !permissions.iter().any(|permission| permission == "auth") {
+        return Err("authentication requires the 'auth' permission".into());
+    }
+    if decl.authorization_parameters.len() > 16
+        || decl.authorization_parameters.iter().any(|(key, value)| {
+            key.is_empty()
+                || key.len() > 64
+                || !key.bytes().all(|byte| {
+                    byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~')
+                })
+                || value.len() > 1024
+                || value.bytes().any(|byte| byte < 0x20 || byte == 0x7f)
+                || RESERVED
+                    .iter()
+                    .any(|reserved| key.eq_ignore_ascii_case(reserved))
+        })
+    {
+        return Err("authentication has invalid authorizationParameters".into());
     }
     Ok(())
 }
@@ -2120,7 +2062,6 @@ impl GrainPack {
                 for cap in &m.permissions {
                     if !KNOWN_CAPABILITIES.contains(&cap.as_str())
                         && network_capability_host(cap).is_none()
-                        && authentication_capability_id(cap).is_none()
                     {
                         return Err(format!("unknown capability '{cap}'"));
                     }
@@ -2159,7 +2100,6 @@ impl GrainPack {
                 for cap in &m.permissions {
                     if !KNOWN_CAPABILITIES.contains(&cap.as_str())
                         && network_capability_host(cap).is_none()
-                        && authentication_capability_id(cap).is_none()
                     {
                         return Err(format!("unknown capability '{cap}'"));
                     }
@@ -2200,9 +2140,9 @@ impl GrainPack {
         validate_classification(m)?;
         validate_prompt_layers(&m.contributes.prompt_layers, &m.slots)?;
         validate_actions(&m.contributes.actions, &m.permissions)?;
-        validate_authentication(&m.contributes.authentication, &m.permissions)?;
+        validate_authentication(m.contributes.authentication.as_ref(), &m.permissions)?;
 
-        if !m.contributes.authentication.is_empty() && m.tier != Tier::Scripted {
+        if m.contributes.authentication.is_some() && m.tier != Tier::Scripted {
             return Err("authentication declarations require a scripted extension".into());
         }
 
@@ -2227,7 +2167,7 @@ impl GrainPack {
         let declares_surface = m.surfaces.workspace.is_some() || m.surfaces.overlay.is_some();
         let contributes_code = !m.contributes.settings.is_empty()
             || !m.contributes.shortcuts.is_empty()
-            || !m.contributes.authentication.is_empty()
+            || m.contributes.authentication.is_some()
             || m.contributes.session_mode.is_some()
             // Unlike a prompt layer, an action has to be PERFORMED. A pack with
             // no runtime that declares one would route, win, and then have
@@ -3365,32 +3305,51 @@ mod tests {
     }
 
     #[test]
-    fn authentication_is_public_client_pkce_and_supports_multiple_services() {
-        let two_services = r#"{"manifest":{"id":"com.x.bridge","name":"Bridge","version":"1","tier":"scripted","entry_source":"x","permissions":["auth:linear","net:api.linear.app","auth:github","net:api.github.com"],"contributes":{"authentication":[{"id":"linear","type":"oauth2-pkce","providerName":"Linear","clientId":"linear-public","authorizationEndpoint":"https://linear.app/oauth/authorize","tokenEndpoint":"https://api.linear.app/oauth/token","scopes":["read"],"apiHosts":["api.linear.app"]},{"id":"github","type":"oauth2-pkce","providerName":"GitHub","clientId":"github-public","authorizationEndpoint":"https://github.com/login/oauth/authorize","tokenEndpoint":"https://github.com/login/oauth/access_token","scopes":["read:user"],"apiHosts":["api.github.com"]}]}}}"#;
-        assert_eq!(pack(two_services), Ok(()));
+    fn authentication_is_one_public_pkce_account_per_extension() {
+        let github = r#"{"manifest":{"id":"com.x.github","name":"GitHub","version":"1","tier":"scripted","entry_source":"x","permissions":["auth","net:api.github.com"],"contributes":{"authentication":{"type":"oauth2-pkce","providerName":"GitHub","clientId":"github-public","authorizationEndpoint":"https://github.com/login/oauth/authorize","tokenEndpoint":"https://github.com/login/oauth/access_token","scopes":["read:user"],"apiHosts":["api.github.com"]}}}}"#;
+        assert_eq!(pack(github), Ok(()));
 
-        let missing_host_grant = two_services.replace(",\"net:api.github.com\"", "");
+        let missing_host_grant = github.replace(",\"net:api.github.com\"", "");
         assert!(pack(&missing_host_grant).is_err());
 
-        let with_secret = two_services.replace(
+        let with_secret = github.replace(
             "\"clientId\":\"github-public\"",
             "\"clientId\":\"github-public\",\"clientSecret\":\"must-not-ship\"",
         );
         assert!(serde_json::from_str::<GrainPack>(&with_secret).is_err());
+
+        let two_services = r#"{"manifest":{"id":"com.x.bridge","name":"Bridge","version":"1","tier":"scripted","entry_source":"x","permissions":["auth","net:api.github.com"],"contributes":{"authentication":[{"type":"oauth2-pkce","providerName":"GitHub","clientId":"github-public","authorizationEndpoint":"https://github.com/login/oauth/authorize","tokenEndpoint":"https://github.com/login/oauth/access_token","scopes":["read:user"],"apiHosts":["api.github.com"]},{"type":"oauth2-pkce","providerName":"Linear","clientId":"linear-public","authorizationEndpoint":"https://linear.app/oauth/authorize","tokenEndpoint":"https://api.linear.app/oauth/token","scopes":["read"],"apiHosts":["api.linear.app"]}]}}}"#;
+        assert!(serde_json::from_str::<GrainPack>(&two_services).is_err());
+
+        assert!(pack(&github.replace("\"auth\",", "")).is_err());
+        assert!(pack(
+            r#"{"manifest":{"id":"com.x.auth","name":"Auth","version":"1","tier":"scripted","entry_source":"x","permissions":["auth"]}}"#
+        )
+        .is_err());
     }
 
     #[test]
     fn authentication_rejects_ambiguous_endpoints_and_reserved_parameter_case() {
-        let raw = r#"{"manifest":{"id":"com.x.auth","name":"Auth","version":"1","tier":"scripted","entry_source":"x","permissions":["auth:service","net:api.example.com"],"contributes":{"authentication":[{"id":"service","type":"oauth2-pkce","providerName":"Service","clientId":"public","authorizationEndpoint":"https://login.example.com/oauth/authorize","tokenEndpoint":"https://login.example.com/oauth/token","scopes":["read"],"apiHosts":["api.example.com"]}]}}}"#;
+        let raw = r#"{"manifest":{"id":"com.x.auth","name":"Auth","version":"1","tier":"scripted","entry_source":"x","permissions":["auth","net:api.example.com"],"contributes":{"authentication":{"type":"oauth2-pkce","providerName":"Service","clientId":"public","authorizationEndpoint":"https://login.example.com/oauth/authorize","tokenEndpoint":"https://login.example.com/oauth/token","scopes":["read"],"apiHosts":["api.example.com"]}}}}"#;
         let mut parsed: GrainPack = serde_json::from_str(raw).unwrap();
-        parsed.manifest.contributes.authentication[0]
+        parsed
+            .manifest
+            .contributes
+            .authentication
+            .as_mut()
+            .unwrap()
             .authorization_parameters
             .insert("STATE".into(), "override".into());
         assert!(parsed.validate().is_err());
 
         let mut parsed: GrainPack = serde_json::from_str(raw).unwrap();
-        parsed.manifest.contributes.authentication[0].token_endpoint =
-            r"https://login.example.com\@evil.example/token".into();
+        parsed
+            .manifest
+            .contributes
+            .authentication
+            .as_mut()
+            .unwrap()
+            .token_endpoint = r"https://login.example.com\@evil.example/token".into();
         assert!(parsed.validate().is_err());
     }
 

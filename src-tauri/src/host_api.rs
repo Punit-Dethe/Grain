@@ -119,7 +119,7 @@ pub fn required_capability(method: &str) -> Option<&'static str> {
         "llm.complete" => Some("llm"),
         // The real grant is derived from the parsed URL (`net:<exact-host>`).
         "net.fetch" => Some("__dynamic_net__"),
-        "auth.status" | "auth.connect" | "auth.disconnect" => Some("__dynamic_auth__"),
+        "auth.status" | "auth.connect" | "auth.disconnect" => Some("auth"),
         "embed" => Some("embed"),
         // [GRAIN] The `match.*` primitives (docs/Extensions V1/PLAN.md §4, §12)
         // take NO capability. A capability governs *reach*, and these reach
@@ -716,15 +716,6 @@ fn authorize(identity: &ClientIdentity, method: &str, params: &Value) -> HostRes
         authorize_net_url(identity, &param_nonempty_str(params, "url")?)?;
         return Ok(());
     }
-    if matches!(method, "auth.status" | "auth.connect" | "auth.disconnect") {
-        let auth_id = param_nonempty_str(params, "id")?;
-        let capability = format!("auth:{auth_id}");
-        return if has_capability(identity, &capability) {
-            Ok(())
-        } else {
-            Err(HostError::capability_denied(&capability, method))
-        };
-    }
     match required_capability(method) {
         Some("__unknown__") => Err(unknown_method(method)),
         Some(capability) if !has_capability(identity, capability) => {
@@ -803,8 +794,8 @@ fn validate_request(method: &str, params: &Value) -> HostResult<()> {
                 }
             }
             if let Some(auth) = params.get("auth") {
-                if !auth.is_string() || auth.as_str().is_some_and(str::is_empty) {
-                    return Err(invalid_argument("'auth' must be a non-empty string"));
+                if auth.as_bool() != Some(true) {
+                    return Err(invalid_argument("'auth' must be true when provided"));
                 }
                 if params.get("secret").is_some() {
                     return Err(invalid_argument(
@@ -813,9 +804,7 @@ fn validate_request(method: &str, params: &Value) -> HostResult<()> {
                 }
             }
         }
-        "auth.status" | "auth.connect" | "auth.disconnect" => {
-            param_nonempty_str(params, "id")?;
-        }
+        "auth.status" | "auth.connect" | "auth.disconnect" => {}
         "embed" => {
             let texts = param_strings(params, "texts")?;
             if texts.len() > EMBED_MAX_BATCH {
@@ -1304,7 +1293,7 @@ pub async fn dispatch(
             Ok(json!({ "text": text }))
         }
         "net.fetch" => {
-            if let Some(auth_id) = params.get("auth").and_then(Value::as_str) {
+            if params.get("auth").and_then(Value::as_bool) == Some(true) {
                 let raw_url = param_nonempty_str(&params, "url")?;
                 let (url, _) = net_url_and_capability(&raw_url)?;
                 let host = url.host_str().unwrap_or_default().to_ascii_lowercase();
@@ -1313,12 +1302,8 @@ pub async fn dispatch(
                     .manifest
                     .contributes
                     .authentication
-                    .into_iter()
-                    .find(|decl| decl.id == auth_id)
-                    .ok_or_else(|| {
-                        invalid_argument(format!("authentication '{auth_id}' is not declared"))
-                    })?;
-                let token = crate::grain_auth::access_token(app, &identity.id, auth_id, &host)
+                    .ok_or_else(|| invalid_argument("authentication is not declared"))?;
+                let token = crate::grain_auth::access_token(app, &identity.id, &host)
                     .await
                     .map_err(|error| {
                         unavailable(
@@ -1344,17 +1329,14 @@ pub async fn dispatch(
             }
         }
         "auth.status" => {
-            let id = param_nonempty_str(&params, "id")?;
-            let rows = crate::grain_auth::connections(app, &identity.id)
+            let connection = crate::grain_auth::connection(app, &identity.id)
                 .await
                 .map_err(internal_error)?;
-            serde_json::to_value(rows.into_iter().find(|row| row.id == id))
+            serde_json::to_value(connection)
                 .map_err(|error| internal_error(error.to_string()))
         }
         "auth.connect" => {
-            let id = param_nonempty_str(&params, "id")?;
-            let row =
-                crate::grain_auth::connect_from_extension(app.clone(), identity.id.clone(), id)
+            let row = crate::grain_auth::connect_from_extension(app.clone(), identity.id.clone())
                     .await
                     .map_err(|error| {
                         unavailable(error, "Retry from the extension settings page.")
@@ -1362,8 +1344,7 @@ pub async fn dispatch(
             serde_json::to_value(row).map_err(|error| internal_error(error.to_string()))
         }
         "auth.disconnect" => {
-            let id = param_nonempty_str(&params, "id")?;
-            crate::grain_auth::disconnect_from_extension(app.clone(), identity.id.clone(), id)
+            crate::grain_auth::disconnect_from_extension(app.clone(), identity.id.clone())
                 .await
                 .map_err(internal_error)?;
             Ok(Value::Null)
@@ -1960,7 +1941,7 @@ mod tests {
         assert_eq!(required_capability("net.fetch"), Some("__dynamic_net__"));
         assert_eq!(
             required_capability("auth.connect"),
-            Some("__dynamic_auth__")
+            Some("auth")
         );
         assert_eq!(required_capability("session.start"), Some("session:start"));
         assert_eq!(
@@ -2026,10 +2007,10 @@ mod tests {
     }
 
     #[test]
-    fn auth_gate_is_declaration_specific_and_fetch_credentials_do_not_mix() {
-        let github = named(&["auth:github", "net:api.github.com"]);
-        assert!(preflight(&github, "auth.status", &json!({ "id": "github" })).is_ok());
-        let denied = preflight(&github, "auth.connect", &json!({ "id": "linear" })).unwrap_err();
+    fn auth_gate_is_extension_scoped_and_fetch_credentials_do_not_mix() {
+        let github = named(&["auth", "net:api.github.com"]);
+        assert!(preflight(&github, "auth.status", &json!({})).is_ok());
+        let denied = preflight(&named(&[]), "auth.connect", &json!({})).unwrap_err();
         assert_eq!(denied.code, HostErrorCode::CapabilityDenied);
 
         let mixed = preflight(
@@ -2037,7 +2018,7 @@ mod tests {
             "net.fetch",
             &json!({
                 "url": "https://api.github.com/user",
-                "auth": "github",
+                "auth": true,
                 "secret": { "key": "token", "header": "authorization" }
             }),
         )

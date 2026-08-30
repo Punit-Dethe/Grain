@@ -1032,7 +1032,7 @@ pub fn run(cli_args: CliArgs) {
             grain_commands::extension_recommendation_lab_install,
             grain_commands::extension_recommendation_lab_remove,
             grain_commands::extension_grant,
-            grain_auth::extension_auth_connections,
+            grain_auth::extension_auth_connection,
             grain_auth::extension_auth_connect,
             grain_auth::extension_auth_disconnect,
             grain_commands::extension_take_slot,

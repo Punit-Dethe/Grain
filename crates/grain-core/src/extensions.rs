@@ -265,15 +265,12 @@ pub fn recommendation_fingerprint(manifest: &grain_sdk::manifest::ExtensionManif
     format!("{:x}", hasher.finalize())
 }
 
-/// Fingerprint all authentication declarations in manifest order. The
-/// declarations use a BTreeMap for provider parameters, so their JSON encoding
-/// is deterministic across runs and platforms.
-pub fn authentication_fingerprint(
-    declarations: &[grain_sdk::manifest::AuthenticationDecl],
-) -> String {
+/// Fingerprint the extension's single authentication declaration. Its BTreeMap
+/// provider parameters make the JSON encoding deterministic across platforms.
+pub fn authentication_fingerprint(declaration: &grain_sdk::manifest::AuthenticationDecl) -> String {
     use sha2::{Digest, Sha256};
-    let encoded = serde_json::to_vec(declarations)
-        .expect("authentication declarations are always JSON serializable");
+    let encoded = serde_json::to_vec(declaration)
+        .expect("authentication declaration is always JSON serializable");
     format!("{:x}", Sha256::digest(encoded))
 }
 
@@ -283,7 +280,6 @@ mod authentication_fingerprint_tests {
 
     fn declaration() -> grain_sdk::AuthenticationDecl {
         grain_sdk::AuthenticationDecl {
-            id: "github".into(),
             auth_type: grain_sdk::AuthenticationType::OAuth2Pkce,
             provider_name: "GitHub".into(),
             client_id: "public".into(),
@@ -299,13 +295,13 @@ mod authentication_fingerprint_tests {
     #[test]
     fn scope_or_host_changes_require_new_authentication_approval() {
         let original = declaration();
-        let fingerprint = authentication_fingerprint(std::slice::from_ref(&original));
+        let fingerprint = authentication_fingerprint(&original);
         let mut changed = original.clone();
         changed.scopes.push("repo".into());
-        assert_ne!(fingerprint, authentication_fingerprint(&[changed]));
+        assert_ne!(fingerprint, authentication_fingerprint(&changed));
         let mut changed = original;
         changed.api_hosts = vec!["uploads.github.com".into()];
-        assert_ne!(fingerprint, authentication_fingerprint(&[changed]));
+        assert_ne!(fingerprint, authentication_fingerprint(&changed));
     }
 }
 
