@@ -962,3 +962,89 @@ After that, move Grain Space tools through the generic Agent action registry. Th
 - [Shopify Remote DOM](https://github.com/Shopify/remote-dom): extension-controlled composition over a host-controlled component allowlist.
 
 These are architectural references, not contracts to copy wholesale. Grain’s low-RAM target, Rust capability boundary, local execution model, and two-shortcut UX remain decisive.
+
+---
+
+## Amendment E — Remote MCP development providers (2026-08-31)
+
+### Decision
+
+Before building more native extensions, Grain will use a small curated set of
+hosted MCP servers to prove the Agent platform against real tools and accounts.
+This is a **development integration layer**, not a decision to expose MCP as a
+public production extension format.
+
+The first catalog is GitHub, Linear, Notion, Atlassian, Slack, and Google
+Calendar. A provider represents one service and one connected account. Native
+extensions remain the production runtime and are not migrated or removed by
+this work.
+
+### Protocol and lifecycle boundary
+
+- Support remote HTTPS Streamable HTTP only.
+- Require MCP `2026-07-28` and its stateless discovery lifecycle.
+- Every operation is self-contained. Do not send `initialize`, retain
+  `Mcp-Session-Id`, open a standalone GET stream, spawn a process, or keep an
+  idle MCP connection/task alive.
+- Reject legacy/stateful servers with an actionable compatibility error.
+- Do not implement MCP Apps, arbitrary HTML, resources, prompts, subscriptions,
+  sampling, tasks, or Dynamic UI in this phase.
+
+### Authentication
+
+- Connecting and reauthorizing are explicit Settings operations; the Agent can
+  never start an OAuth flow during a task.
+- Use OAuth 2.1 Authorization Code + PKCE, protected-resource/authorization-
+  server metadata discovery, issuer validation, and the provider-supported
+  client-registration mechanism.
+- Persist tokens and dynamic client credentials only in the OS credential
+  vault. There is no plaintext fallback.
+- Linear, Notion, and Atlassian may use dynamic registration where advertised.
+  Slack and Google Calendar require a pre-registered client ID/secret supplied
+  through developer settings. GitHub supports its hosted endpoint and may use
+  either its supported OAuth registration path or an explicitly configured
+  client.
+- One account is stored per MCP provider. Disconnect deletes its credential.
+
+### Agent integration
+
+- Add connected, enabled MCP providers to the existing bounded Level-1
+  directory. Loading one performs a stateless `tools/list` and publishes the
+  resulting schemas on the next model round through the existing task-local
+  exposure map.
+- Treat server names, descriptions, schemas, annotations, and results as
+  untrusted data. Sanitize and bound them before model/UI exposure.
+- MCP tool annotations are hints, never authority. During this validation
+  phase every MCP call uses Grain's host-owned confirmation gate. The exact
+  provider, tool, arguments, endpoint identity, and tool-set digest are
+  revalidated after approval.
+- Preserve the Agent's current sequential tool loop and global hop/call/tool
+  ceilings. No parallel or multi-agent orchestrator is introduced here.
+- Return bounded text/structured results with provider provenance. Reject image,
+  audio, embedded-resource, input-required, task, and oversized results rather
+  than expanding the UI/runtime boundary.
+
+### Network and resource policy
+
+- Endpoints come from the compiled catalog; arbitrary URLs are not accepted.
+- Require HTTPS, disable redirects for MCP and sensitive OAuth exchanges, use
+  finite connect/request timeouts, cap response/event sizes, and never forward
+  credentials across origins.
+- Construct no idle engine. The only reusable runtime resource is one lazy HTTP
+  client/connection pool; each discovery or call service is cancelled and
+  dropped before returning.
+
+### Delivery order and exit gate
+
+1. Catalog, status, credential configuration, connect/disconnect, and a
+   Settings-only discovery check.
+2. Provider-neutral task-local schemas and MCP `tools/list` loading.
+3. Prepared-call/confirmation execution adapter and bounded result mapping.
+4. End-to-end tests with a deterministic local HTTPS/mock transport, followed
+   by manual account testing against at least five hosted providers.
+
+Exit gate: five real providers can be connected from Settings, discovered by a
+fresh Agent request, loaded only when relevant, called sequentially through the
+confirmation boundary, and fully cleaned up after each operation. No MCP
+process, session, listener, or tool schema survives beyond its documented
+scope.

@@ -1080,28 +1080,6 @@ pub fn approved_action_digest(
     (record.actions_approved.as_deref() == Some(digest.as_str())).then_some(digest)
 }
 
-/// [GRAIN] Build model tool definitions for the given canonical ids, under the
-/// index lock so nothing on the caller's side touches the index directly. Unknown
-/// ids are skipped. The host maps [`grain_core::capability_agent::ToolDef`] onto
-/// its transport `ToolSpec`.
-pub fn capability_tool_defs(
-    canonical_ids: &[String],
-) -> Vec<grain_core::capability_agent::ToolDef> {
-    let Some(host) = HOST.get() else {
-        return Vec::new();
-    };
-    let index = host.index.read().unwrap();
-    canonical_ids
-        .iter()
-        .filter_map(|id| {
-            index
-                .capability
-                .describe(id)
-                .map(grain_core::capability_agent::action_tool_def)
-        })
-        .collect()
-}
-
 /// The display name and one-line purpose for a pooled extension, for the
 /// recommendation event. Reads the manifest off disk, so it is called from the
 /// session's off-thread `deliver`, never a felt path.

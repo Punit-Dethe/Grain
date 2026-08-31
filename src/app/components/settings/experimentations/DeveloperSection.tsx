@@ -1,6 +1,14 @@
+/* eslint-disable i18next/no-literal-string -- developer-only validation UI copy is intentionally not part of the shipped localization surface. */
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { FlaskConical, FolderOpen, Trash2, X } from "lucide-react";
+import {
+  ExternalLink,
+  FlaskConical,
+  FolderOpen,
+  Network,
+  Trash2,
+  X,
+} from "lucide-react";
 import { LiveLogViewer, type LiveLogFilterChip } from "../debug/LiveLogViewer";
 
 interface DeveloperExtension {
@@ -12,6 +20,25 @@ interface ExtensionDeveloperStatus {
   enabled: boolean;
   loaded: DeveloperExtension[];
   lab_count: number;
+}
+
+interface McpProviderStatus {
+  id: string;
+  name: string;
+  description: string;
+  endpoint: string;
+  setup_url: string;
+  requires_client_credentials: boolean;
+  client_id_configured: boolean;
+  connected: boolean;
+  enabled: boolean;
+  state: string;
+}
+
+interface McpDiscoveryResult {
+  provider_name: string;
+  tool_count: number;
+  tools: string[];
 }
 
 // User-facing developer tooling labels. Constants keep the established
@@ -33,6 +60,245 @@ const LAB_DESCRIPTION =
   "Installs local, zero-permission fixtures through Grain's real unpacked-extension runtime. Core covers six representative cases; Stress expands the same test to 24 extensions.";
 const labLoadedLabel = (count: number) => `${count} loaded`;
 
+const McpProviders: React.FC<{
+  providers: McpProviderStatus[];
+  refresh: () => Promise<void>;
+}> = ({ providers, refresh }) => {
+  const [busy, setBusy] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [result, setResult] = useState<string | null>(null);
+  const [credentials, setCredentials] = useState<
+    Record<string, { clientId: string; clientSecret: string }>
+  >({});
+
+  const run = async (id: string, action: () => Promise<unknown>) => {
+    setBusy(id);
+    setError(null);
+    setResult(null);
+    try {
+      await action();
+      await refresh();
+    } catch (reason) {
+      setError(String(reason));
+    } finally {
+      setBusy("");
+    }
+  };
+
+  const saveCredentials = (provider: McpProviderStatus) => {
+    const values = credentials[provider.id] ?? {
+      clientId: "",
+      clientSecret: "",
+    };
+    void run(provider.id, async () => {
+      await invoke("mcp_set_client_credentials", {
+        id: provider.id,
+        clientId: values.clientId,
+        clientSecret: values.clientSecret,
+      });
+      // Do not retain a secret in React state after the vault accepts it.
+      setCredentials((current) => ({
+        ...current,
+        [provider.id]: { clientId: "", clientSecret: "" },
+      }));
+    });
+  };
+
+  const test = (provider: McpProviderStatus) => {
+    void run(provider.id, async () => {
+      const discovered = await invoke<McpDiscoveryResult>("mcp_test_provider", {
+        id: provider.id,
+      });
+      setResult(
+        `${discovered.provider_name}: ${discovered.tool_count} tools — ${discovered.tools.slice(0, 8).join(", ")}${discovered.tools.length > 8 ? "…" : ""}`,
+      );
+    });
+  };
+
+  return (
+    <div className="rounded-xl border border-line bg-paper-raised">
+      <div className="flex items-start gap-2.5 px-4 py-3">
+        <Network
+          className="mt-0.5 shrink-0 text-accent"
+          width={15}
+          height={15}
+          aria-hidden="true"
+        />
+        <div>
+          <div className="text-sm font-medium text-ink">
+            Hosted MCP validation
+          </div>
+          <p className="mt-1 max-w-xl text-xs leading-relaxed text-ink-faint">
+            Development-only, remote HTTPS providers for testing Grain&apos;s
+            real Agent discovery and tool-calling stack. No local MCP processes
+            or persistent sessions are started.
+          </p>
+        </div>
+      </div>
+
+      {(error || result) && (
+        <div
+          className={`border-t border-line px-4 py-2 text-xs ${error ? "text-red-600" : "text-ink-soft"}`}
+        >
+          {error ?? result}
+        </div>
+      )}
+
+      <div className="divide-y divide-line border-t border-line">
+        {providers.map((provider) => {
+          const values = credentials[provider.id] ?? {
+            clientId: "",
+            clientSecret: "",
+          };
+          return (
+            <div key={provider.id} className="px-4 py-3">
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-medium text-ink">
+                      {provider.name}
+                    </span>
+                    <span className="rounded-full border border-line px-1.5 py-0.5 text-[10px] text-ink-faint">
+                      {provider.connected ? "connected" : provider.state}
+                    </span>
+                  </div>
+                  <div className="mt-0.5 text-xs text-ink-faint">
+                    {provider.description}
+                  </div>
+                </div>
+                <a
+                  href={provider.setup_url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-1 text-xs text-ink-faint hover:text-ink"
+                >
+                  Setup <ExternalLink width={11} height={11} />
+                </a>
+                {provider.connected ? (
+                  <>
+                    <button
+                      type="button"
+                      className="button"
+                      disabled={busy === provider.id}
+                      onClick={() =>
+                        void run(provider.id, () =>
+                          invoke("mcp_set_provider_enabled", {
+                            id: provider.id,
+                            enabled: !provider.enabled,
+                          }),
+                        )
+                      }
+                    >
+                      {provider.enabled ? "Disable" : "Enable"}
+                    </button>
+                    <button
+                      type="button"
+                      className="button"
+                      disabled={busy === provider.id || !provider.enabled}
+                      onClick={() => test(provider)}
+                    >
+                      Test
+                    </button>
+                    <button
+                      type="button"
+                      className="button danger"
+                      disabled={busy === provider.id}
+                      onClick={() =>
+                        void run(provider.id, () =>
+                          invoke("mcp_disconnect_provider", {
+                            id: provider.id,
+                          }),
+                        )
+                      }
+                    >
+                      Disconnect
+                    </button>
+                  </>
+                ) : (
+                  <button
+                    type="button"
+                    className="button"
+                    disabled={
+                      busy === provider.id ||
+                      (provider.requires_client_credentials &&
+                        !provider.client_id_configured)
+                    }
+                    onClick={() =>
+                      void run(provider.id, () =>
+                        invoke("mcp_connect_provider", { id: provider.id }),
+                      )
+                    }
+                  >
+                    Connect
+                  </button>
+                )}
+              </div>
+
+              {provider.requires_client_credentials && !provider.connected && (
+                <div className="mt-3">
+                  <div className="mb-2 text-[10px] text-ink-faint">
+                    Register redirect URI:{" "}
+                    <code>http://127.0.0.1:31938/mcp/oauth/callback</code>
+                  </div>
+                  <div className="grid gap-2 sm:grid-cols-[1fr_1fr_auto]">
+                    <input
+                      value={values.clientId}
+                      maxLength={512}
+                      autoComplete="off"
+                      placeholder="OAuth client ID"
+                      aria-label={`${provider.name} OAuth client ID`}
+                      onChange={(event) =>
+                        setCredentials((current) => ({
+                          ...current,
+                          [provider.id]: {
+                            ...values,
+                            clientId: event.target.value,
+                          },
+                        }))
+                      }
+                      className="rounded-lg border border-line bg-paper px-2.5 py-1.5 text-xs text-ink outline-none focus:border-accent"
+                    />
+                    <input
+                      type="password"
+                      value={values.clientSecret}
+                      maxLength={4096}
+                      autoComplete="new-password"
+                      placeholder="OAuth client secret"
+                      aria-label={`${provider.name} OAuth client secret`}
+                      onChange={(event) =>
+                        setCredentials((current) => ({
+                          ...current,
+                          [provider.id]: {
+                            ...values,
+                            clientSecret: event.target.value,
+                          },
+                        }))
+                      }
+                      className="rounded-lg border border-line bg-paper px-2.5 py-1.5 text-xs text-ink outline-none focus:border-accent"
+                    />
+                    <button
+                      type="button"
+                      className="button"
+                      disabled={
+                        busy === provider.id ||
+                        !values.clientId.trim() ||
+                        !values.clientSecret
+                      }
+                      onClick={() => saveCredentials(provider)}
+                    >
+                      Save to vault
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+};
+
 const FILTER_CHIPS: readonly LiveLogFilterChip[] = [
   { id: "all", label: "All" },
   { id: "calls", label: "Calls", substring: "] call " },
@@ -48,16 +314,19 @@ export const DeveloperSection: React.FC<{
   onExtensionsChanged?: () => Promise<void>;
 }> = ({ onExtensionsChanged }) => {
   const [loaded, setLoaded] = useState<DeveloperExtension[]>([]);
+  const [mcpProviders, setMcpProviders] = useState<McpProviderStatus[]>([]);
   const [labCount, setLabCount] = useState(0);
   const [selectedId, setSelectedId] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
-    const status = await invoke<ExtensionDeveloperStatus>(
-      "extension_developer_status",
-    );
+    const [status, providers] = await Promise.all([
+      invoke<ExtensionDeveloperStatus>("extension_developer_status"),
+      invoke<McpProviderStatus[]>("mcp_provider_status"),
+    ]);
     setLoaded(status.loaded);
+    setMcpProviders(providers);
     setLabCount(status.lab_count);
     setSelectedId((current) =>
       status.loaded.some((extension) => extension.id === current)
@@ -246,6 +515,7 @@ export const DeveloperSection: React.FC<{
           </div>
         )}
         {loader}
+        <McpProviders providers={mcpProviders} refresh={refresh} />
         <div className="rounded-xl border border-line bg-paper-raised p-5 text-sm text-ink-soft">
           {EMPTY_MESSAGE}
         </div>
@@ -261,6 +531,7 @@ export const DeveloperSection: React.FC<{
         </div>
       )}
       {loader}
+      <McpProviders providers={mcpProviders} refresh={refresh} />
       <div className="flex flex-wrap items-end justify-between gap-3 rounded-xl border border-line bg-paper-raised p-4">
         <div className="min-w-0">
           <div className="text-sm font-medium text-ink">

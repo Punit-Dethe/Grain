@@ -1540,6 +1540,54 @@ async extensionAuthDisconnect(id: string) : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+async mcpProviderStatus() : Promise<Result<McpProviderStatus[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("mcp_provider_status") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async mcpSetClientCredentials(id: string, clientId: string, clientSecret: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("mcp_set_client_credentials", { id, clientId, clientSecret }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async mcpSetProviderEnabled(id: string, enabled: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("mcp_set_provider_enabled", { id, enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async mcpConnectProvider(id: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("mcp_connect_provider", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async mcpDisconnectProvider(id: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("mcp_disconnect_provider", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async mcpTestProvider(id: string) : Promise<Result<McpDiscoveryResult, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("mcp_test_provider", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 /**
  * Record the user's answer to a slot takeover prompt (SPEC §3.2). Hands `slot`
  * to `id` and disables whoever held it, in one step — the counterpart to
@@ -2075,6 +2123,21 @@ async agentCopy(text: string) : Promise<Result<null, string>> {
 async agentRun(messages: AgentMessage[], context: string | null) : Promise<Result<AgentReply, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("agent_run", { messages, context }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * [GRAIN] Resume a host-gated action confirmation (PLAN Amendment A, §2.5). The
+ * user approved (or declined) the exact prepared call named by `token`; the host
+ * revalidates and replays *that* call — the model is never re-consulted, so its
+ * nondeterminism cannot change what runs. Returns the receipt/result (or the
+ * decline) rendered for the chat.
+ */
+async agentConfirmAction(token: string, approve: boolean) : Promise<Result<AgentReply, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("agent_confirm_action", { token, approve }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2783,6 +2846,18 @@ export type ActionLogOutcome =
  */
 export type AgentAutocopy = "off" | "first" | "all"
 /**
+ * [GRAIN] A risky action awaiting the user's approval. Carries the exact
+ * prepared-call `token` the host resumes on approval (`agent_confirm_action`),
+ * plus everything the panel needs to show what will happen. `markdown` is the
+ * ready-to-render summary for the interim chat surface (renderer #1); the
+ * structured fields are for the native Dynamic UI renderer later.
+ */
+export type AgentConfirm = { token: string; title: string; summary: string; details: AgentConfirmField[]; side_effect: string; destinations: string[]; markdown: string }
+/**
+ * [GRAIN] One material argument of a pending action, for the confirmation panel.
+ */
+export type AgentConfirmField = { label: string; value: string }
+/**
  * [GRAIN] Agent context awareness: what (if anything) is read from the focused
  * field at summon and handed to the LLM as background. `Unique` reuses the
  * nearby-terms extractor (high-signal identifiers/names only); `Full` sends the
@@ -2828,7 +2903,14 @@ export type AgentReply = { text: string; sources: AgentSource[]; not_found: bool
  * the user asked to delete. Destructive, so the panel confirms in-place
  * before calling `grain_space_delete_note`. `None` on every other turn.
  */
-confirm_delete: AgentSource | null }
+confirm_delete: AgentSource | null;
+/**
+ * [GRAIN] Set when a risky extension action was withheld pending the user's
+ * approval (Extensions 2.0 §2.5 / Amendment A). Host-gated: the panel shows
+ * the exact action + arguments and, on approval, calls `agent_confirm_action`
+ * with the token — the model never approves. `None` on every other turn.
+ */
+confirm_action: AgentConfirm | null }
 /**
  * One evidence source behind a Grain Recall answer (RECALL-PLAN §6.2). `title`
  * is the note's title (falling back to its summary); `saved_at` is a Unix-
@@ -3037,6 +3119,18 @@ extensions_imported_v1?: boolean;
  * folder selection and load-unpacked projects. OFF by default.
  */
 extension_developer_mode?: boolean; 
+/**
+ * [GRAIN] Hosted MCP providers admitted to the Agent directory while the
+ * development integration layer is enabled. IDs are resolved exclusively
+ * through Grain's compiled HTTPS catalog; this is never an endpoint list.
+ */
+mcp_enabled_providers?: string[];
+/**
+ * [GRAIN] Non-secret OAuth client IDs for hosted MCP providers that do not
+ * support dynamic registration. Client secrets and tokens stay in the OS
+ * credential vault and never enter AppSettings.
+ */
+mcp_oauth_client_ids?: Partial<{ [key in string]: string }>;
 /**
  * [GRAIN] Silent nearby-term hints: when on (and context awareness is on),
  * read UNIQUE non-dictionary tokens (proper nouns, code identifiers, library
@@ -3581,6 +3675,12 @@ key_down: number; key_up: number; flags_changed: number; mouse: number; duration
 export type KeyboardImplementation = "tauri" | "handy_keys"
 export type LLMPrompt = { id: string; name: string; prompt: string }
 export type LogLevel = "trace" | "debug" | "info" | "warn" | "error"
+export type McpDiscoveryResult = { provider_id: string; provider_name: string; tool_count: number; tools: string[]; tool_set_digest: string }
+export type McpProviderStatus = { id: string; name: string; description: string; endpoint: string; setup_url: string; requires_client_credentials: boolean; client_id_configured: boolean; connected: boolean; enabled: boolean;
+/**
+ * `ready` | `needs_client_credentials` | `disconnected` | `unavailable`
+ */
+state: string }
 /**
  * The model's files were removed.
  */

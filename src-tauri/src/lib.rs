@@ -11,6 +11,7 @@
 //! That tree is upstream's, plus small marked `[GRAIN]` hooks. New Grain work
 //! belongs in `src/` (see the `grain_*` modules) or in `crates/`.
 
+mod action_exec; // [GRAIN] Phase 3 host executor — risk-gated prepare/confirm/execute over the action contract
 #[path = "handy/actions.rs"]
 mod actions;
 mod agent; // [GRAIN] summoned voice-first AI window (Phase 7)
@@ -24,6 +25,7 @@ pub mod audio_toolkit;
 #[path = "handy/autostart.rs"]
 mod autostart;
 mod bridge; // [GRAIN] Tauri-shell → headless DaemonEvent bus
+mod capability; // [GRAIN] Capability Index V2 host wiring — Agent hot-set tool exposure + dispatch
 #[path = "handy/catalog/mod.rs"]
 mod catalog;
 #[path = "handy/cli.rs"]
@@ -46,8 +48,6 @@ mod extension_misroutes; // [GRAIN] bounded decline counters -> conservative top
 mod extension_session; // [GRAIN] host-owned extension recording modes + bounded slow stage (Phase 4)
 mod extension_shortcuts; // [GRAIN] contributed global shortcuts, namespaced `ext:<id>:<sid>` (SPEC 3.3)
 mod extension_view; // [GRAIN] host-rendered standard Extension Mode component tree
-mod capability; // [GRAIN] Capability Index V2 host wiring — Agent hot-set tool exposure + dispatch
-mod action_exec; // [GRAIN] Phase 3 host executor — risk-gated prepare/confirm/execute over the action contract
 mod grain_actions; // [GRAIN] Grain's shortcut actions (rolling, Native ASR, switcher, agent, Grain Space)
 mod grain_audio_journal; // [GRAIN] bounded-RAM PCM backing for rolling sessions
 mod grain_auth; // [GRAIN] host-owned extension OAuth + OS credential vault
@@ -59,6 +59,7 @@ mod grain_events; // [GRAIN] typed payloads for the webview event surface (see t
                   // the alias keeps every `crate::llm_client::` path working.
 mod grain_llm_client;
 mod grain_locale; // [GRAIN] locale-tag resolution, owned in Rust (was duplicated in TS)
+mod grain_mcp; // [GRAIN] stateless hosted MCP development providers (2026-07-28 only)
 mod grain_onboarding; // [GRAIN] where a launching app lands: onboarding / permissions / app
                       // [GRAIN] Native-pill mic-level fan-out — Grain's replacement for upstream's
                       // webview `overlay.rs`, which likewise stays on disk un-compiled. The alias
@@ -420,6 +421,10 @@ fn initialize_core_logic(app_handle: &AppHandle) {
         .build()
         .expect("failed to build shared HTTP client");
     app_handle.manage(shared_http_client);
+    // [GRAIN] MCP is a development integration layer with its own reqwest 0.13
+    // pool (the official rmcp v3 transport). It creates no connection until a
+    // provider is explicitly connected/tested and holds no service at idle.
+    app_handle.manage(grain_mcp::McpHttpClient::build().expect("failed to build MCP HTTP client"));
     // [GRAIN] Agent: holds the selection captured at summon time until the window
     // reads it on mount. The window itself is created on demand and destroyed on close.
     app_handle.manage(agent::AgentState::default());
@@ -1035,6 +1040,12 @@ pub fn run(cli_args: CliArgs) {
             grain_auth::extension_auth_connection,
             grain_auth::extension_auth_connect,
             grain_auth::extension_auth_disconnect,
+            grain_mcp::mcp_provider_status,
+            grain_mcp::mcp_set_client_credentials,
+            grain_mcp::mcp_set_provider_enabled,
+            grain_mcp::mcp_connect_provider,
+            grain_mcp::mcp_disconnect_provider,
+            grain_mcp::mcp_test_provider,
             grain_commands::extension_take_slot,
             grain_commands::extension_settings_schema,
             grain_commands::extension_settings_sections,

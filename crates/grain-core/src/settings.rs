@@ -916,6 +916,16 @@ pub struct AppSettings {
     /// folder selection and load-unpacked projects. OFF by default.
     #[serde(default)]
     pub extension_developer_mode: bool,
+    /// [GRAIN] Hosted MCP providers admitted to the Agent directory while the
+    /// development integration layer is enabled. IDs are resolved exclusively
+    /// through Grain's compiled HTTPS catalog; this is never an endpoint list.
+    #[serde(default)]
+    pub mcp_enabled_providers: Vec<String>,
+    /// [GRAIN] Non-secret OAuth client IDs for hosted MCP providers that do not
+    /// support dynamic registration. Client secrets and tokens stay in the OS
+    /// credential vault and never enter AppSettings.
+    #[serde(default)]
+    pub mcp_oauth_client_ids: HashMap<String, String>,
     /// [GRAIN] Silent nearby-term hints: when on (and context awareness is on),
     /// read UNIQUE non-dictionary tokens (proper nouns, code identifiers, library
     /// names) from the focused field via UI Automation and pass them to the LLM as
@@ -1963,6 +1973,8 @@ pub fn get_default_settings() -> AppSettings {
         paste_catch_hold_ms: default_paste_catch_hold_ms(),
         extensions_imported_v1: false,
         extension_developer_mode: false,
+        mcp_enabled_providers: Vec::new(),
+        mcp_oauth_client_ids: HashMap::new(),
         context_nearby_terms: false,
         context_caret_text: false,
         agent_autocopy: AgentAutocopy::default(),

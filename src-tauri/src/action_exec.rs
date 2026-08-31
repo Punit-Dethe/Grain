@@ -75,7 +75,6 @@ impl PendingCalls {
         let index = list.iter().position(|call| call.token == token)?;
         Some(list.remove(index))
     }
-
 }
 
 /// Drop a held confirmation without executing it. Agent session teardown uses
@@ -156,8 +155,9 @@ pub async fn resume(app: &AppHandle, token: &str, approve: bool) -> ActionOutcom
     let Some(current_digest) = current_manifest_digest(app, &prepared) else {
         return ActionOutcome::Failed {
             class: FailureClass::Cancelled,
-            message: "The extension action is no longer approved or available â€” please ask again."
-                .to_string(),
+            message:
+                "The extension action is no longer approved or available â€” please ask again."
+                    .to_string(),
         };
     };
     match prepared.still_valid(&current_digest, now_ms()) {
@@ -180,6 +180,13 @@ pub async fn resume(app: &AppHandle, token: &str, approve: bool) -> ActionOutcom
 fn current_manifest_digest(app: &AppHandle, prepared: &PreparedCall) -> Option<String> {
     if prepared.extension_id == GRAIN_SPACE_EXT_ID {
         Some("builtin".to_string())
+    } else if prepared.extension_id.starts_with("mcp.") {
+        // The actual MCP tool-set digest is fetched and compared immediately
+        // before the call, on the same short-lived stateless service. Returning
+        // the prepared digest here preserves the generic confirmation contract
+        // without adding a separate network TOCTOU window.
+        crate::grain_mcp::is_enabled_extension(app, &prepared.extension_id)
+            .then(|| prepared.manifest_digest.clone())
     } else {
         crate::extension_host::approved_action_digest(
             app,
@@ -211,8 +218,38 @@ async fn execute_revalidated(app: &AppHandle, prepared: &PreparedCall) -> Action
 async fn execute(app: &AppHandle, prepared: &PreparedCall) -> ActionOutcome {
     if prepared.extension_id == GRAIN_SPACE_EXT_ID {
         grain_space_execute(app, prepared).await
+    } else if let Some(provider_id) = prepared.extension_id.strip_prefix("mcp.") {
+        mcp_execute(app, provider_id, prepared).await
     } else {
         third_party_execute(app, prepared).await
+    }
+}
+
+async fn mcp_execute(app: &AppHandle, provider_id: &str, prepared: &PreparedCall) -> ActionOutcome {
+    match crate::grain_mcp::call_tool(
+        app,
+        provider_id,
+        &prepared.action_id,
+        &prepared.arguments,
+        &prepared.manifest_digest,
+    )
+    .await
+    {
+        Ok(output) if output.is_error => ActionOutcome::Failed {
+            class: FailureClass::Internal,
+            message: output.text,
+        },
+        Ok(output) => ActionOutcome::Succeeded(SuccessData {
+            source: Some(prepared.provider_name.clone()),
+            title: Some(prepared.action_id.clone()),
+            body: Some(output.text),
+            details: Vec::new(),
+            receipt: true,
+        }),
+        Err(error) => ActionOutcome::Failed {
+            class: FailureClass::Network,
+            message: format!("The MCP action did not run: {error}"),
+        },
     }
 }
 
@@ -241,7 +278,10 @@ async fn third_party_execute(app: &AppHandle, prepared: &PreparedCall) -> Action
                         .to_string(),
                 }
             } else {
-                failed(FailureClass::Network, "The extension did not respond in time.")
+                failed(
+                    FailureClass::Network,
+                    "The extension did not respond in time.",
+                )
             }
         }
         Err(ActionCallError::Unavailable(message)) => failed(FailureClass::Internal, &message),
@@ -255,14 +295,20 @@ async fn third_party_execute(app: &AppHandle, prepared: &PreparedCall) -> Action
 /// trust boundary.
 fn parse_worker_outcome(value: Value, prepared: &PreparedCall) -> ActionOutcome {
     let Some(root) = value.as_object() else {
-        return failed(FailureClass::Internal, "The extension returned an invalid action result.");
+        return failed(
+            FailureClass::Internal,
+            "The extension returned an invalid action result.",
+        );
     };
     let recognized = ["error", "needsInteraction", "ok"]
         .into_iter()
         .filter(|key| root.contains_key(*key))
         .count();
     if recognized != 1 || root.len() != 1 {
-        return failed(FailureClass::Internal, "The extension returned an invalid action result.");
+        return failed(
+            FailureClass::Internal,
+            "The extension returned an invalid action result.",
+        );
     }
 
     if let Some(error) = root.get("error") {
@@ -314,21 +360,18 @@ fn parse_worker_outcome(value: Value, prepared: &PreparedCall) -> ActionOutcome 
         // Plain object data is still useful. Promote unreserved scalar fields to
         // bounded details rather than silently claiming success with "Done".
         if title.is_none() && body.is_none() && details.is_empty() {
-            details.extend(
-                object
-                    .iter()
-                    .take(16)
-                    .filter_map(|(label, value)| {
-                        let label = bounded_text(label, 80)?;
-                        let value = value_to_string(value)
-                            .and_then(|text| bounded_text(&text, 600))?;
-                        Some(Field { label, value })
-                    }),
-            );
+            details.extend(object.iter().take(16).filter_map(|(label, value)| {
+                let label = bounded_text(label, 80)?;
+                let value = value_to_string(value).and_then(|text| bounded_text(&text, 600))?;
+                Some(Field { label, value })
+            }));
         }
         (title, body, details)
     } else {
-        return failed(FailureClass::Internal, "The extension returned an invalid action result.");
+        return failed(
+            FailureClass::Internal,
+            "The extension returned an invalid action result.",
+        );
     };
 
     ActionOutcome::Succeeded(SuccessData {
@@ -454,7 +497,10 @@ async fn grain_space_execute(app: &AppHandle, prepared: &PreparedCall) -> Action
                         receipt: false,
                     })
                 }
-                Err(e) => failed(FailureClass::Internal, &format!("Could not search notes: {e}")),
+                Err(e) => failed(
+                    FailureClass::Internal,
+                    &format!("Could not search notes: {e}"),
+                ),
             }
         }
         "get_note" => {
@@ -469,7 +515,10 @@ async fn grain_space_execute(app: &AppHandle, prepared: &PreparedCall) -> Action
                     details: vec![],
                     receipt: false,
                 }),
-                Err(e) => failed(FailureClass::NotFound, &format!("Could not read that note: {e}")),
+                Err(e) => failed(
+                    FailureClass::NotFound,
+                    &format!("Could not read that note: {e}"),
+                ),
             }
         }
         "list_collections" => match crate::grain_space::collections(app).await {
@@ -487,7 +536,10 @@ async fn grain_space_execute(app: &AppHandle, prepared: &PreparedCall) -> Action
                 details: vec![],
                 receipt: false,
             }),
-            Err(e) => failed(FailureClass::Internal, &format!("Could not list collections: {e}")),
+            Err(e) => failed(
+                FailureClass::Internal,
+                &format!("Could not list collections: {e}"),
+            ),
         },
         "save_note" => {
             let Some(body) = str_arg(args, "body") else {
@@ -514,7 +566,10 @@ async fn grain_space_execute(app: &AppHandle, prepared: &PreparedCall) -> Action
                         receipt: true,
                     })
                 }
-                Err(e) => failed(FailureClass::Internal, &format!("Could not save the note: {e}")),
+                Err(e) => failed(
+                    FailureClass::Internal,
+                    &format!("Could not save the note: {e}"),
+                ),
             }
         }
         "append_to_note" => {
@@ -529,10 +584,16 @@ async fn grain_space_execute(app: &AppHandle, prepared: &PreparedCall) -> Action
                     details: vec![],
                     receipt: true,
                 }),
-                Err(e) => failed(FailureClass::Internal, &format!("Could not update that note: {e}")),
+                Err(e) => failed(
+                    FailureClass::Internal,
+                    &format!("Could not update that note: {e}"),
+                ),
             }
         }
-        other => failed(FailureClass::NotFound, &format!("Grain Space has no action '{other}'.")),
+        other => failed(
+            FailureClass::NotFound,
+            &format!("Grain Space has no action '{other}'."),
+        ),
     }
 }
 
@@ -594,10 +655,19 @@ pub fn grain_space_actions() -> Vec<grain_core::capability_index::ActionInput> {
             "search_notes",
             "Search your saved notes",
             ActionRisk::Safe,
-            &["what did I write about the meeting", "find my notes on onboarding"],
+            &[
+                "what did I write about the meeting",
+                "find my notes on onboarding",
+            ],
             &[("query", true)],
         ),
-        make("get_note", "Read a saved note in full", ActionRisk::Safe, &["read that note"], &[("id", true)]),
+        make(
+            "get_note",
+            "Read a saved note in full",
+            ActionRisk::Safe,
+            &["read that note"],
+            &[("id", true)],
+        ),
         make(
             "save_note",
             "Save a new note",
@@ -612,7 +682,13 @@ pub fn grain_space_actions() -> Vec<grain_core::capability_index::ActionInput> {
             &["add this to that note"],
             &[("id", true), ("text", true)],
         ),
-        make("list_collections", "List note collections", ActionRisk::Safe, &["what collections do I have"], &[]),
+        make(
+            "list_collections",
+            "List note collections",
+            ActionRisk::Safe,
+            &["what collections do I have"],
+            &[],
+        ),
     ]
 }
 
@@ -665,14 +741,20 @@ mod tests {
     fn worker_outcomes_are_strict_and_interactions_fail_honestly() {
         assert!(matches!(
             parse_worker_outcome(json!({ "result": "done" }), &third_party_call()),
-            ActionOutcome::Failed { class: FailureClass::Internal, .. }
+            ActionOutcome::Failed {
+                class: FailureClass::Internal,
+                ..
+            }
         ));
         assert!(matches!(
             parse_worker_outcome(
                 json!({ "needsInteraction": { "kind": "confirm" } }),
                 &third_party_call()
             ),
-            ActionOutcome::Failed { class: FailureClass::Internal, .. }
+            ActionOutcome::Failed {
+                class: FailureClass::Internal,
+                ..
+            }
         ));
     }
 }

@@ -14,7 +14,7 @@
 //! on a machine with no installed action extensions exposes nothing here and is
 //! byte-for-byte the old behaviour.
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 
 use crate::llm_client::{ToolCallOut, ToolSpec};
 use grain_core::capability_agent::{
@@ -44,41 +44,70 @@ fn to_spec(def: capability_agent::ToolDef) -> ToolSpec {
 /// The task-local directory, exposure state, initial schema list, and ephemeral
 /// context constructed at the start of one Agent request.
 pub struct Opened {
-    pub exposure: ExtensionExposure,
+    pub session: CapabilitySession,
     pub specs: Vec<ToolSpec>,
     pub directory_context: Option<String>,
 }
 
-pub fn open(reserved_names: &[String]) -> Opened {
+pub struct CapabilitySession {
+    exposure: ExtensionExposure,
+    actions: BTreeMap<String, SessionAction>,
+}
+
+struct SessionAction {
+    spec: ToolSpec,
+    origin: ActionOrigin,
+}
+
+enum ActionOrigin {
+    Native,
+    Mcp {
+        provider_id: String,
+        provider_name: String,
+        tool_name: String,
+        title: String,
+        input_schema: serde_json::Value,
+    },
+}
+
+pub fn open(app: &AppHandle, reserved_names: &[String]) -> Opened {
     let mut directory = crate::extension_host::capability_extension_directory();
+    directory.extend(crate::grain_mcp::directory(app));
+    directory.sort_by(|a, b| a.extension_id.cmp(&b.extension_id));
+    directory.dedup_by(|a, b| a.extension_id == b.extension_id);
     directory.truncate(MAX_DIRECTORY_EXTENSIONS);
     let exposure = ExtensionExposure::new(&directory, reserved_names);
     if !exposure.has_directory_entries() {
         return Opened {
-            exposure,
+            session: CapabilitySession {
+                exposure,
+                actions: BTreeMap::new(),
+            },
             specs: Vec::new(),
             directory_context: None,
         };
     }
     Opened {
-        exposure,
+        session: CapabilitySession {
+            exposure,
+            actions: BTreeMap::new(),
+        },
         specs: vec![to_spec(load_extension_tool_def())],
         directory_context: Some(capability_agent::extension_directory_context(&directory)),
     }
 }
 
 /// The loader plus every action schema published by successful prior loads.
-pub fn specs(exposure: &ExtensionExposure) -> Vec<ToolSpec> {
-    let ids = exposure.loaded_canonical_ids();
-    let mut specs = Vec::with_capacity(ids.len() + 1);
-    if exposure.has_directory_entries() {
+pub fn specs(session: &CapabilitySession) -> Vec<ToolSpec> {
+    let mut specs = Vec::with_capacity(session.actions.len() + 1);
+    if session.exposure.has_directory_entries() {
         specs.push(to_spec(load_extension_tool_def()));
     }
-    specs.extend(
-        crate::extension_host::capability_tool_defs(&ids)
-            .into_iter()
-            .map(to_spec),
-    );
+    specs.extend(session.actions.values().map(|action| ToolSpec {
+        name: action.spec.name.clone(),
+        description: action.spec.description.clone(),
+        parameters: action.spec.parameters.clone(),
+    }));
     specs
 }
 
@@ -88,7 +117,7 @@ pub fn specs(exposure: &ExtensionExposure) -> Vec<ToolSpec> {
 pub async fn dispatch(
     app: &AppHandle,
     call: &ToolCallOut,
-    exposure: &mut ExtensionExposure,
+    session: &mut CapabilitySession,
     offered_names: &HashSet<String>,
 ) -> Option<ToolResult> {
     if call.name == LOAD_EXTENSION {
@@ -97,13 +126,13 @@ pub async fn dispatch(
                 "load_extension was not available in this model round.".to_string(),
             ));
         }
-        return Some(ToolResult::Text(handle_load(app, call, exposure).await));
+        return Some(ToolResult::Text(handle_load(app, call, session).await));
     }
     // An action tool resolves through the session's exposure map — the
     // authoritative reverse of `tool_name`. An undisclosed or invented name
     // resolves to nothing here and falls through to the caller (which will report
     // "no such tool"): discovery is not authorisation.
-    let loaded = match resolve_offered_action(exposure, offered_names, &call.name) {
+    let loaded = match resolve_offered_action(&session.exposure, offered_names, &call.name) {
         Ok(Some(loaded)) => loaded,
         Ok(None) => return None,
         Err(message) => return Some(ToolResult::Text(message.to_string())),
@@ -111,6 +140,7 @@ pub async fn dispatch(
     Some(
         execute_action(
             app,
+            session,
             &loaded.canonical_id,
             &loaded.manifest_digest,
             &call.arguments,
@@ -135,22 +165,23 @@ fn resolve_offered_action(
 async fn handle_load(
     app: &AppHandle,
     call: &ToolCallOut,
-    exposure: &mut ExtensionExposure,
+    session: &mut CapabilitySession,
 ) -> String {
     let extension_id = match capability_agent::parse_load_extension_arguments(&call.arguments) {
         Ok(id) => id,
         Err(error) => return format!("Could not load extension: {error}."),
     };
-    let action_set = match crate::extension_host::capability_actions_for_extension(app, &extension_id)
-    {
-        Ok(action_set) => action_set,
-        Err(error) => return format!("Could not load extension '{extension_id}': {error}."),
-    };
+    if let Some(provider_id) = extension_id.strip_prefix("mcp.") {
+        return handle_mcp_load(app, &extension_id, provider_id, session).await;
+    }
+    let action_set =
+        match crate::extension_host::capability_actions_for_extension(app, &extension_id) {
+            Ok(action_set) => action_set,
+            Err(error) => return format!("Could not load extension '{extension_id}': {error}."),
+        };
 
     match crate::grain_auth::connection(app, &extension_id).await {
-        Ok(Some(connection))
-            if !matches!(connection.state.as_str(), "connected" | "expired") =>
-        {
+        Ok(Some(connection)) if !matches!(connection.state.as_str(), "connected" | "expired") => {
             return format!(
                 "Could not load extension '{extension_id}': its {} account is {}. Connect it in Grain Settings first.",
                 capability_agent::sanitize(&connection.provider_name, 96),
@@ -165,7 +196,7 @@ async fn handle_load(
         _ => {}
     }
 
-    let status = match exposure.load(
+    let status = match session.exposure.load(
         &extension_id,
         &action_set.actions,
         &action_set.manifest_digest,
@@ -176,6 +207,16 @@ async fn handle_load(
     if status == ExtensionLoadStatus::AlreadyLoaded {
         return format!(
             "Extension '{extension_id}' is already loaded; its tools remain available."
+        );
+    }
+
+    for action in &action_set.actions {
+        session.actions.insert(
+            action.canonical_id.clone(),
+            SessionAction {
+                spec: to_spec(capability_agent::action_tool_def(action)),
+                origin: ActionOrigin::Native,
+            },
         );
     }
 
@@ -194,22 +235,167 @@ async fn handle_load(
     )
 }
 
+async fn handle_mcp_load(
+    app: &AppHandle,
+    extension_id: &str,
+    provider_id: &str,
+    session: &mut CapabilitySession,
+) -> String {
+    let tool_set = match crate::grain_mcp::list_tools(app, provider_id).await {
+        Ok(tool_set) => tool_set,
+        Err(error) => return format!("Could not load MCP provider '{extension_id}': {error}."),
+    };
+    let actions: Vec<_> = tool_set
+        .tools
+        .iter()
+        .map(|tool| mcp_action_input(extension_id, &tool_set.provider_name, tool))
+        .collect();
+    let status = match session
+        .exposure
+        .load(extension_id, &actions, &tool_set.digest)
+    {
+        Ok(status) => status,
+        Err(error) => return format!("Could not load MCP provider '{extension_id}': {error}."),
+    };
+    if status == ExtensionLoadStatus::AlreadyLoaded {
+        return format!(
+            "MCP provider '{extension_id}' is already loaded; its tools remain available."
+        );
+    }
+
+    let mut lines = Vec::with_capacity(actions.len());
+    for (action, tool) in actions.iter().zip(&tool_set.tools) {
+        let parameters = serde_json::Value::Object(tool.input_schema.as_ref().clone());
+        let spec = ToolSpec {
+            name: capability_agent::tool_name(&action.canonical_id),
+            description: capability_agent::sanitize(
+                tool.description.as_deref().unwrap_or(&action.title),
+                1_200,
+            ),
+            parameters: parameters.clone(),
+        };
+        session.actions.insert(
+            action.canonical_id.clone(),
+            SessionAction {
+                spec,
+                origin: ActionOrigin::Mcp {
+                    provider_id: tool_set.provider_id.clone(),
+                    provider_name: tool_set.provider_name.clone(),
+                    tool_name: tool.name.to_string(),
+                    title: action.title.clone(),
+                    input_schema: parameters,
+                },
+            },
+        );
+        lines.push(format!(
+            "- {} — {}",
+            capability_agent::tool_name(&action.canonical_id),
+            capability_agent::sanitize(&action.title, 160)
+        ));
+    }
+    format!(
+        "Loaded MCP provider '{}' for this request. Its tools will be available on the next model round:\n{}",
+        capability_agent::sanitize(extension_id, 255),
+        lines.join("\n")
+    )
+}
+
+fn mcp_action_input(
+    extension_id: &str,
+    provider_name: &str,
+    tool: &rmcp::model::Tool,
+) -> grain_core::capability_index::ActionInput {
+    use grain_sdk::manifest::ActionRisk;
+    let tool_name = tool.name.to_string();
+    let title = tool
+        .title
+        .as_deref()
+        .or_else(|| {
+            tool.annotations
+                .as_ref()
+                .and_then(|value| value.title.as_deref())
+        })
+        .unwrap_or(&tool_name);
+    let description = tool.description.as_deref().unwrap_or_default();
+    grain_core::capability_index::ActionInput {
+        extension_id: extension_id.to_string(),
+        action_id: tool_name.clone(),
+        canonical_id: format!("{extension_id}:{tool_name}"),
+        provider_name: provider_name.to_string(),
+        title: capability_agent::sanitize(title, 160),
+        aliases: vec![provider_name.to_string()],
+        namespaces: Vec::new(),
+        tags: Vec::new(),
+        examples: Vec::new(),
+        phrases: Vec::new(),
+        params: Vec::new(),
+        when_to_use: String::new(),
+        when_not_to_use: String::new(),
+        description: capability_agent::sanitize(description, 1_200),
+        provider_context: Vec::new(),
+        // MCP annotations are explicitly untrusted hints. The execution path
+        // applies Confirm regardless of this placeholder.
+        risk: ActionRisk::Confirm,
+        enabled: true,
+        platform_ok: true,
+        quarantined: false,
+    }
+}
+
 /// Prepare and route one resolved action through the host executor: a `Safe`
 /// action runs in process now; a `Confirm` action is withheld and surfaced for
 /// the user's approval (never fed to the model as if it ran).
 async fn execute_action(
     app: &AppHandle,
+    session: &CapabilitySession,
     canonical: &str,
     loaded_manifest_digest: &str,
     arguments_json: &str,
 ) -> ToolResult {
+    let Some(session_action) = session.actions.get(canonical) else {
+        return ToolResult::Text(format!("The action \"{canonical}\" is not available."));
+    };
+    if let ActionOrigin::Mcp {
+        provider_id,
+        provider_name,
+        tool_name,
+        title,
+        input_schema,
+    } = &session_action.origin
+    {
+        let arguments = match parse_mcp_arguments(arguments_json, input_schema) {
+            Ok(arguments) => arguments,
+            Err(error) => {
+                return ToolResult::Text(format!("The action arguments are invalid: {error}."))
+            }
+        };
+        let extension_id = format!("mcp.{provider_id}");
+        let prepared = crate::action_exec::prepare(
+            canonical,
+            &extension_id,
+            tool_name,
+            provider_name,
+            arguments,
+            RiskClass::Confirm,
+            SideEffect::Write,
+            loaded_manifest_digest,
+        );
+        return match crate::action_exec::run_or_confirm(app, prepared, title).await {
+            crate::action_exec::Dispatch::Ran(outcome) => ToolResult::Text(outcome.model_summary()),
+            crate::action_exec::Dispatch::AwaitConfirm(interaction) => {
+                ToolResult::Confirm(to_agent_confirm(interaction))
+            }
+        };
+    }
+
     let Some(action) = crate::extension_host::capability_action_meta(canonical) else {
         return ToolResult::Text(format!("The action \"{canonical}\" is not available."));
     };
-    let arguments = match capability_agent::parse_and_validate_arguments(&action, arguments_json)
-    {
+    let arguments = match capability_agent::parse_and_validate_arguments(&action, arguments_json) {
         Ok(arguments) => arguments,
-        Err(error) => return ToolResult::Text(format!("The action arguments are invalid: {error}.")),
+        Err(error) => {
+            return ToolResult::Text(format!("The action arguments are invalid: {error}."))
+        }
     };
 
     // The host floor classifies the action; the axis retry/parallelism reads
@@ -225,8 +411,7 @@ async fn execute_action(
         && matches!(
             action.action_id.as_str(),
             "search_notes" | "get_note" | "list_collections"
-        )
-    {
+        ) {
         SideEffect::Read
     } else {
         SideEffect::Write
@@ -234,11 +419,7 @@ async fn execute_action(
     let digest = if builtin {
         Some("builtin".to_string())
     } else {
-        crate::extension_host::approved_action_digest(
-            app,
-            &action.extension_id,
-            &action.action_id,
-        )
+        crate::extension_host::approved_action_digest(app, &action.extension_id, &action.action_id)
     };
     let Some(digest) = digest else {
         return ToolResult::Text(
@@ -272,6 +453,43 @@ async fn execute_action(
             ToolResult::Confirm(to_agent_confirm(interaction))
         }
     }
+}
+
+fn parse_mcp_arguments(raw: &str, schema: &serde_json::Value) -> Result<serde_json::Value, String> {
+    const MAX_ARGUMENT_BYTES: usize = 64 * 1024;
+    if raw.len() > MAX_ARGUMENT_BYTES {
+        return Err("arguments exceed the 64 KiB limit".into());
+    }
+    let value: serde_json::Value =
+        serde_json::from_str(raw).map_err(|_| "arguments are not valid JSON")?;
+    let object = value.as_object().ok_or("arguments must be a JSON object")?;
+    let schema_object = schema.as_object().ok_or("the provider schema is invalid")?;
+    if let Some(required) = schema_object
+        .get("required")
+        .and_then(serde_json::Value::as_array)
+    {
+        for name in required.iter().filter_map(serde_json::Value::as_str) {
+            if !object.contains_key(name) {
+                return Err(format!("missing required argument '{name}'"));
+            }
+        }
+    }
+    if schema_object
+        .get("additionalProperties")
+        .and_then(serde_json::Value::as_bool)
+        == Some(false)
+    {
+        let properties = schema_object
+            .get("properties")
+            .and_then(serde_json::Value::as_object);
+        if let Some(name) = object
+            .keys()
+            .find(|name| !properties.is_some_and(|properties| properties.contains_key(*name)))
+        {
+            return Err(format!("unknown argument '{name}'"));
+        }
+    }
+    Ok(value)
 }
 
 fn loaded_digest_is_current(loaded: &str, current: &str) -> bool {
@@ -384,5 +602,22 @@ mod tests {
         assert!(loaded_digest_is_current("approved-a", "approved-a"));
         assert!(!loaded_digest_is_current("approved-a", "approved-b"));
         assert!(!loaded_digest_is_current("", "approved-a"));
+    }
+
+    #[test]
+    fn mcp_arguments_are_bounded_and_honor_required_and_closed_properties() {
+        let schema = serde_json::json!({
+            "type": "object",
+            "properties": { "query": { "type": "string" } },
+            "required": ["query"],
+            "additionalProperties": false
+        });
+        assert_eq!(
+            parse_mcp_arguments(r#"{"query":"grain"}"#, &schema).unwrap(),
+            serde_json::json!({ "query": "grain" })
+        );
+        assert!(parse_mcp_arguments("{}", &schema).is_err());
+        assert!(parse_mcp_arguments(r#"{"query":"grain","hidden":true}"#, &schema).is_err());
+        assert!(parse_mcp_arguments("[]", &schema).is_err());
     }
 }

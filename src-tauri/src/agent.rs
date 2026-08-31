@@ -2347,8 +2347,8 @@ async fn run_with_note_tools(
     // Core tools are reserved names. Extension schemas begin with only the
     // Level-2 loader and accumulate after successful loads.
     let core_tool_names: Vec<String> = note_tools.iter().map(|tool| tool.name.clone()).collect();
-    let opened = crate::capability::open(&core_tool_names);
-    let mut exposure = opened.exposure;
+    let opened = crate::capability::open(app, &core_tool_names);
+    let mut capability_session = opened.session;
     let mut cap_tools = opened.specs;
 
     if note_tools.is_empty() && cap_tools.is_empty() {
@@ -2383,7 +2383,8 @@ async fn run_with_note_tools(
     // Set when a risky action was withheld; it ends the turn and rides out on
     // `AgentReply.confirm_action` for the user to approve.
     let mut pending_confirm: Option<AgentConfirm> = None;
-    let mut reply = run_messages_with_tools(app, entries.clone(), combined(&cap_tools), image).await?;
+    let mut reply =
+        run_messages_with_tools(app, entries.clone(), combined(&cap_tools), image).await?;
 
     let mut hops = 0usize;
     let mut tool_calls_used = 0usize;
@@ -2419,7 +2420,7 @@ async fn run_with_note_tools(
             let content = match crate::capability::dispatch(
                 app,
                 call,
-                &mut exposure,
+                &mut capability_session,
                 &offered_capability_names,
             )
             .await
@@ -2447,7 +2448,7 @@ async fn run_with_note_tools(
             break;
         }
         // load_extension may have widened the exposed set; rebuild before the hop.
-        cap_tools = crate::capability::specs(&exposure);
+        cap_tools = crate::capability::specs(&capability_session);
         // The frame rides every hop, not just the first. The hop that produces
         // the ANSWER is the one that needs to see the screen, and an OpenAI-shaped
         // request is stateless — dropping the image after hop 1 would leave the
@@ -2462,7 +2463,10 @@ async fn run_with_note_tools(
             // No approve/deny button in the interim surface — ask in prose; the
             // user's next reply (yes/no) is read host-side and resumes the exact
             // call. `confirm_action` still rides out for a future native panel.
-            text: format!("{}\n\nWould you like me to go ahead? (yes / no)", confirm.markdown),
+            text: format!(
+                "{}\n\nWould you like me to go ahead? (yes / no)",
+                confirm.markdown
+            ),
             sources: Vec::new(),
             not_found: false,
             confirm_delete: None,
