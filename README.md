@@ -222,6 +222,10 @@ Grain Space is a built-in **extension** — built on the exact same platform des
 
 Because Space is just an extension, you can disable it entirely and it disappears — no residual process, no orphaned settings — or use it as a working example of what the platform can do before building your own.
 
+* **MCP connection** — open a host-mediated MCP (Model Control Protocol) connection for realtime model control, streaming telemetry, or bidirectional model I/O when explicitly requested and approved by the user. The host enforces permissions, proxies network access, and requires explicit allowlisting of remote hosts; extensions cannot bypass these controls.
+ * **Grain UI** — open an extension workspace, show temporary overlays, contribute settings, and use supported Grain UI slots.
+ * **Launching** — open safe web links or applications the user has explicitly selected and approved.
+
 Details: [product vision](docs/Grain%20Space%202.0/Grain%20space%20files/PRODUCT-VISION.md) · [knowledge architecture](docs/Grain%20Space%202.0/KNOWLEDGE-ARCHITECTURE-PLAN.md) · [Obsidian vault backend](docs/Grain%20Space%202.0/OBSIDIAN-PLAN.md)
 
 ## Local first, by default
