@@ -60,6 +60,12 @@ const LAB_DESCRIPTION =
   "Installs local, zero-permission fixtures through Grain's real unpacked-extension runtime. Core covers six representative cases; Stress expands the same test to 24 extensions.";
 const labLoadedLabel = (count: number) => `${count} loaded`;
 
+const MCP_TEST_PROMPTS: Record<string, string> = {
+  linear: "Show my five most recently updated Linear issues.",
+  notion: "Find the three most recently edited pages in my Notion workspace.",
+  atlassian: "List the Jira issues currently assigned to me.",
+};
+
 const McpProviders: React.FC<{
   providers: McpProviderStatus[];
   refresh: () => Promise<void>;
@@ -110,7 +116,7 @@ const McpProviders: React.FC<{
         id: provider.id,
       });
       setResult(
-        `${discovered.provider_name}: ${discovered.tool_count} tools — ${discovered.tools.slice(0, 8).join(", ")}${discovered.tools.length > 8 ? "…" : ""}`,
+        `${discovered.provider_name} is Agent-ready: ${discovered.tool_count} tools — ${discovered.tools.slice(0, 8).join(", ")}${discovered.tools.length > 8 ? "…" : ""}`,
       );
     });
   };
@@ -131,7 +137,13 @@ const McpProviders: React.FC<{
           <p className="mt-1 max-w-xl text-xs leading-relaxed text-ink-faint">
             Development-only, remote HTTPS providers for testing Grain&apos;s
             real Agent discovery and tool-calling stack. No local MCP processes
-            or persistent sessions are started.
+            or idle provider sessions are kept alive.
+          </p>
+          <p className="mt-1 max-w-xl text-xs leading-relaxed text-ink-soft">
+            Start with Linear, Notion, or Atlassian: each has one-click OAuth
+            and needs no developer app. Connecting also enables it for the
+            Agent. Use your configured Summon Agent shortcut (Alt+A by default
+            on Windows), then ask one of the example tasks below.
           </p>
         </div>
       </div>
@@ -161,6 +173,11 @@ const McpProviders: React.FC<{
                     <span className="rounded-full border border-line px-1.5 py-0.5 text-[10px] text-ink-faint">
                       {provider.connected ? "connected" : provider.state}
                     </span>
+                    {!provider.requires_client_credentials && (
+                      <span className="rounded-full border border-accent/30 px-1.5 py-0.5 text-[10px] text-accent">
+                        one-click login
+                      </span>
+                    )}
                   </div>
                   <div className="mt-0.5 text-xs text-ink-faint">
                     {provider.description}
@@ -229,10 +246,16 @@ const McpProviders: React.FC<{
                       )
                     }
                   >
-                    Connect
+                    Connect &amp; enable
                   </button>
                 )}
               </div>
+
+              {provider.enabled && MCP_TEST_PROMPTS[provider.id] && (
+                <div className="mt-2 text-[11px] text-ink-faint">
+                  Agent test: <code>{MCP_TEST_PROMPTS[provider.id]}</code>
+                </div>
+              )}
 
               {provider.requires_client_credentials && !provider.connected && (
                 <div className="mt-3">

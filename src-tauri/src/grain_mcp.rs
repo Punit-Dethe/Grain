@@ -1,8 +1,10 @@
 //! Hosted MCP development providers.
 //!
-//! This deliberately implements only the stateless MCP 2026-07-28 client
-//! lifecycle over catalog-owned HTTPS endpoints. It does not start processes,
-//! retain protocol sessions, subscribe, or expose MCP Apps/Dynamic UI.
+//! This deliberately implements only short-lived MCP clients over catalog-owned
+//! HTTPS endpoints. It prefers the stateless discovery lifecycle and can perform
+//! the standard protocol handshake required by current hosted providers. It does
+//! not start processes, retain protocol sessions, subscribe, or expose MCP
+//! Apps/Dynamic UI.
 
 use std::collections::{BTreeMap, HashSet};
 use std::sync::{Mutex, OnceLock};
@@ -55,14 +57,6 @@ enum Registration {
 
 const CATALOG: &[CatalogProvider] = &[
     CatalogProvider {
-        id: "github",
-        name: "GitHub",
-        description: "Repositories, issues, pull requests, and code workflows.",
-        endpoint: "https://api.githubcopilot.com/mcp/",
-        registration: Registration::Dynamic,
-        setup_url: "https://docs.github.com/en/copilot/how-tos/provide-context/use-mcp-in-your-ide/set-up-the-github-mcp-server",
-    },
-    CatalogProvider {
         id: "linear",
         name: "Linear",
         description: "Issues, projects, cycles, and team workflows.",
@@ -87,6 +81,18 @@ const CATALOG: &[CatalogProvider] = &[
         setup_url: "https://support.atlassian.com/atlassian-ai-gateway/docs/set-up-ides/",
     },
     CatalogProvider {
+        id: "github",
+        name: "GitHub",
+        description: "Repositories, issues, pull requests, and code workflows.",
+        endpoint: "https://api.githubcopilot.com/mcp/",
+        // GitHub's authorization metadata does not advertise Dynamic Client
+        // Registration. Treating it as DCR made the Connect button fail before
+        // the user ever reached GitHub. A developer OAuth app is required.
+        registration: Registration::PreRegistered,
+        setup_url:
+            "https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/creating-an-oauth-app",
+    },
+    CatalogProvider {
         id: "slack",
         name: "Slack",
         description: "Channels, messages, search, and collaboration workflows.",
@@ -100,7 +106,8 @@ const CATALOG: &[CatalogProvider] = &[
         description: "Calendars, events, availability, and invitations.",
         endpoint: "https://calendarmcp.googleapis.com/mcp/v1",
         registration: Registration::PreRegistered,
-        setup_url: "https://developers.google.com/workspace/calendar/api/guides/configure-mcp-server",
+        setup_url:
+            "https://developers.google.com/workspace/calendar/api/guides/configure-mcp-server",
     },
 ];
 
@@ -649,6 +656,21 @@ pub async fn mcp_connect_provider(
         .handle_callback_with_issuer(&callback.code, &callback.state, callback.issuer.as_deref())
         .await
         .map_err(|error| format!("OAuth callback failed: {error}"))?;
+    // A successful connection should be immediately useful. Requiring a second
+    // Enable click left the provider invisible to the Agent and also disabled
+    // the discovery check, which made a completed OAuth flow look broken.
+    let ctx = app
+        .try_state::<std::sync::Arc<grain_core::AppContext>>()
+        .ok_or("application context unavailable")?;
+    ctx.update_settings(|settings| {
+        settings
+            .mcp_enabled_providers
+            .retain(|current| current != &id);
+        settings.mcp_enabled_providers.push(id.clone());
+        settings.mcp_enabled_providers.sort();
+        settings.mcp_enabled_providers.dedup();
+    })
+    .map_err(|error| error.to_string())?;
     Ok(())
 }
 
@@ -684,6 +706,22 @@ fn client_info() -> ClientInfo {
         Implementation::new("grain", env!("CARGO_PKG_VERSION")).with_title("Grain"),
     )
     .with_protocol_version(ProtocolVersion::V_2026_07_28)
+}
+
+fn hosted_lifecycle() -> ClientLifecycleMode {
+    // Hosted providers are upgraded independently. Prefer the self-contained
+    // stateless lifecycle, but interoperate with the current Streamable HTTP
+    // protocol handshake when a server has not shipped `server/discover` yet.
+    // This is protocol negotiation only: Grain never launches or owns a server
+    // process, and the service is still cancelled at the end of every operation.
+    ClientLifecycleMode::Auto {
+        preferred_versions: vec![
+            ProtocolVersion::V_2026_07_28,
+            ProtocolVersion::V_2025_11_25,
+            ProtocolVersion::V_2025_06_18,
+        ],
+        legacy_version: Some(ProtocolVersion::V_2025_11_25),
+    }
 }
 
 async fn authorization_manager(
@@ -737,16 +775,11 @@ pub(crate) async fn list_tools(app: &AppHandle, provider_id: &str) -> Result<Mcp
         transport_config(item.endpoint),
     );
     let service = client_info()
-        .serve_with_lifecycle(
-            transport,
-            ClientLifecycleMode::Discover {
-                preferred_versions: vec![ProtocolVersion::V_2026_07_28],
-            },
-        )
+        .serve_with_lifecycle(transport, hosted_lifecycle())
         .await
         .map_err(|error| {
             format!(
-                "{} does not support Grain's stateless MCP lifecycle: {error}",
+                "{} did not complete MCP protocol negotiation: {error}",
                 item.name
             )
         })?;
@@ -829,16 +862,11 @@ pub(crate) async fn call_tool(
         transport_config(item.endpoint),
     );
     let service = client_info()
-        .serve_with_lifecycle(
-            transport,
-            ClientLifecycleMode::Discover {
-                preferred_versions: vec![ProtocolVersion::V_2026_07_28],
-            },
-        )
+        .serve_with_lifecycle(transport, hosted_lifecycle())
         .await
         .map_err(|error| {
             format!(
-                "{} no longer supports Grain's stateless MCP lifecycle: {error}",
+                "{} did not complete MCP protocol negotiation: {error}",
                 item.name
             )
         })?;
@@ -994,7 +1022,7 @@ fn validate_schema_value(
                 return Err("a schema string exceeds 4 KiB".into());
             }
             if value.chars().any(|character| {
-                character.is_control()
+                (character.is_control() && !matches!(character, '\n' | '\r' | '\t'))
                     || matches!(
                         character,
                         '\u{202A}'..='\u{202E}'
@@ -1111,6 +1139,30 @@ mod tests {
     }
 
     #[test]
+    fn catalog_has_three_zero_setup_validation_providers() {
+        let dynamic: Vec<_> = CATALOG
+            .iter()
+            .filter(|item| item.registration == Registration::Dynamic)
+            .map(|item| item.id)
+            .collect();
+        assert_eq!(dynamic, ["linear", "notion", "atlassian"]);
+    }
+
+    #[test]
+    fn hosted_lifecycle_keeps_a_current_protocol_fallback() {
+        let ClientLifecycleMode::Auto {
+            preferred_versions,
+            legacy_version,
+        } = hosted_lifecycle()
+        else {
+            panic!("hosted MCP must negotiate without assuming one server version");
+        };
+        assert_eq!(preferred_versions[0], ProtocolVersion::V_2026_07_28);
+        assert!(preferred_versions.contains(&ProtocolVersion::V_2025_11_25));
+        assert_eq!(legacy_version, Some(ProtocolVersion::V_2025_11_25));
+    }
+
+    #[test]
     fn tool_validation_rejects_bad_names_and_non_object_schemas() {
         let bad_name = Tool::new(
             "bad name",
@@ -1149,6 +1201,27 @@ mod tests {
             ])),
         );
         assert!(validate_tools(&[tool]).is_err());
+    }
+
+    #[test]
+    fn tool_validation_accepts_normal_multiline_descriptions() {
+        let tool = Tool::new(
+            "valid",
+            "valid",
+            std::sync::Arc::new(serde_json::Map::from_iter([
+                ("type".into(), serde_json::json!("object")),
+                (
+                    "properties".into(),
+                    serde_json::json!({
+                        "query": {
+                            "type": "string",
+                            "description": "First line.\nSecond line.\tExample value."
+                        }
+                    }),
+                ),
+            ])),
+        );
+        assert!(validate_tools(&[tool]).is_ok());
     }
 
     #[test]

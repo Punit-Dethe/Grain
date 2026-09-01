@@ -553,6 +553,10 @@
 .agc-confirm-delete {
   gap: 7px;
 }
+.agc-confirm-action {
+  gap: 7px;
+  padding: 8px 0 2px;
+}
 .agc-confirm-q {
   font-size: 11px;
   line-height: 1.4;
@@ -563,6 +567,7 @@
   gap: 6px;
 }
 .agc-forget-btn,
+.agc-action-btn,
 .agc-cancel-btn {
   padding: 4px 12px;
   border-radius: 999px;
@@ -572,6 +577,19 @@
     background 0.12s ease,
     color 0.12s ease,
     border-color 0.12s ease;
+}
+.agc-action-btn {
+  border: 1px solid var(--orange);
+  background: var(--orange);
+  color: #17171a;
+}
+.agc-action-btn:hover {
+  filter: brightness(1.08);
+}
+.agc-action-btn:disabled,
+.agc-cancel-btn:disabled {
+  cursor: default;
+  opacity: 0.45;
 }
 .agc-forget-btn {
   border: 1px solid #c0392f;

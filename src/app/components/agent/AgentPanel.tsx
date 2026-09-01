@@ -20,6 +20,7 @@ import {
   commands,
   type AgentMessage,
   type AgentAutocopy,
+  type AgentConfirm,
   type AgentPanelPosition,
   type AgentReply,
   type AgentSource,
@@ -52,6 +53,8 @@ interface ChatMessage {
   notFound?: boolean;
   // A `forget` turn hands us the memory to confirm before deletion (§7.2).
   confirmDelete?: AgentSource | null;
+  // A host-held extension/MCP call. Only the token displayed here can resume it.
+  confirmAction?: AgentConfirm | null;
 }
 
 const rid = () => `${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -214,6 +217,13 @@ export function AgentPanel() {
   const compactSources = versions[versionIdx]?.sources ?? [];
   const compactNotFound = versions[versionIdx]?.not_found ?? false;
   const compactConfirmDelete = versions[versionIdx]?.confirm_delete ?? null;
+  const compactConfirmAction = versions[versionIdx]?.confirm_action ?? null;
+  const expandedConfirmAction = [...messages]
+    .reverse()
+    .find((message) => message.role === "assistant")?.confirmAction;
+  const displayedConfirmAction = expanded
+    ? expandedConfirmAction
+    : compactConfirmAction;
 
   /** The window is on screen — render, and play the entrance. Idempotent: the
    * backend announces the reveal AND the panel checks for itself on mount, so
@@ -268,7 +278,7 @@ export function AgentPanel() {
             setVersionIdx(next.length - 1);
             return next;
           });
-          maybeAutoCopy(reply.text);
+          if (!reply.confirm_action) maybeAutoCopy(reply.text);
         } else {
           setError(res.error || t("agent.error"));
         }
@@ -295,7 +305,14 @@ export function AgentPanel() {
         if (res.status === "ok") {
           const reply = res.data;
           setMessages((prev) => [
-            ...prev,
+            // Any new turn after a pending action either resolved or cancelled
+            // that host token. Keep historical text, but never leave a stale
+            // approval button active in an older message.
+            ...prev.map((message) =>
+              message.confirmAction
+                ? { ...message, confirmAction: null }
+                : message,
+            ),
             {
               id: rid(),
               role: "assistant",
@@ -303,9 +320,10 @@ export function AgentPanel() {
               sources: reply.sources,
               notFound: reply.not_found,
               confirmDelete: reply.confirm_delete,
+              confirmAction: reply.confirm_action,
             },
           ]);
-          maybeAutoCopy(reply.text);
+          if (!reply.confirm_action) maybeAutoCopy(reply.text);
         } else {
           setError(res.error || t("agent.error"));
         }
@@ -344,6 +362,7 @@ export function AgentPanel() {
         sources: reply.sources,
         notFound: reply.not_found,
         confirmDelete: reply.confirm_delete,
+        confirmAction: reply.confirm_action,
       });
     }
     // ONE window, and it does not move. The window is already the conversation's
@@ -390,6 +409,12 @@ export function AgentPanel() {
   /** Confirm: paste the displayed reply back into the source app (backend
    * closes this window, refocuses the target, and pastes). */
   const confirm = useCallback(() => {
+    const pending = expandedRef.current
+      ? [...messagesRef.current]
+          .reverse()
+          .find((message) => message.role === "assistant")?.confirmAction
+      : versionsRef.current[versionIdxRef.current]?.confirm_action;
+    if (pending) return;
     const text = expandedRef.current
       ? lastReplyOf(messagesRef.current)
       : (versionsRef.current[versionIdxRef.current]?.text ?? "");
@@ -398,7 +423,12 @@ export function AgentPanel() {
   }, []);
 
   const retry = useCallback(() => {
-    if (busyRef.current || expandedRef.current || !instructionRef.current)
+    if (
+      busyRef.current ||
+      expandedRef.current ||
+      !instructionRef.current ||
+      versionsRef.current[versionIdxRef.current]?.confirm_action
+    )
       return;
     void runFirst(instructionRef.current);
   }, [runFirst]);
@@ -743,6 +773,7 @@ export function AgentPanel() {
             sources: reply.sources,
             notFound: reply.not_found,
             confirmDelete: reply.confirm_delete,
+            confirmAction: reply.confirm_action,
           });
         }
         base = seed;
@@ -905,6 +936,75 @@ export function AgentPanel() {
     setDeleteResolved((p) => ({ ...p, [noteId]: "cancelled" }));
   }, []);
 
+  /** Resume exactly the host-held action shown in this reply. The model is not
+   * called again and cannot substitute a provider, tool, or argument. */
+  const resolveAction = useCallback(
+    async (pending: AgentConfirm, approve: boolean) => {
+      if (busyRef.current) return;
+      setBusy(true);
+      setError(null);
+      try {
+        const response = await commands.agentConfirmAction(
+          pending.token,
+          approve,
+        );
+        if (response.status !== "ok") {
+          throw new Error(response.error || t("agent.error"));
+        }
+        const reply = response.data;
+        setVersions((current) =>
+          current.map((version) =>
+            version.confirm_action?.token === pending.token ? reply : version,
+          ),
+        );
+        setMessages((current) =>
+          current.map((message) =>
+            message.confirmAction?.token === pending.token
+              ? {
+                  ...message,
+                  content: reply.text,
+                  sources: reply.sources,
+                  notFound: reply.not_found,
+                  confirmDelete: reply.confirm_delete,
+                  confirmAction: reply.confirm_action,
+                }
+              : message,
+          ),
+        );
+        if (approve && !reply.confirm_action) maybeAutoCopy(reply.text);
+      } catch (reason) {
+        setError(reason instanceof Error ? reason.message : t("agent.error"));
+      } finally {
+        setBusy(false);
+      }
+    },
+    [maybeAutoCopy, t],
+  );
+
+  const renderConfirmAction = (pending: AgentConfirm) => (
+    <div className="agc-evidence agc-confirm-action">
+      <span className="agc-confirm-q">{pending.summary}</span>
+      <div className="agc-confirm-actions">
+        <button
+          type="button"
+          className="agc-action-btn"
+          disabled={busy}
+          onClick={() => void resolveAction(pending, true)}
+        >
+          {t("agent.confirm")}
+        </button>
+        <button
+          type="button"
+          className="agc-cancel-btn"
+          disabled={busy}
+          onClick={() => void resolveAction(pending, false)}
+        >
+          {t("tray.cancel")}
+        </button>
+      </div>
+    </div>
+  );
+
   /** The in-panel delete confirmation for a `forget` turn (RECALL-PLAN §7.2):
    * an explicit Delete / Keep choice — deletion never happens without a click. */
   const renderConfirmDelete = (src: AgentSource) => {
@@ -986,7 +1086,8 @@ export function AgentPanel() {
   const shortcutParts = followupShortcut
     ? followupShortcut.split("+").map(keycapLabel)
     : [];
-  const canConfirm = !busy && displayedReply.trim().length > 0;
+  const canConfirm =
+    !busy && !displayedConfirmAction && displayedReply.trim().length > 0;
   // Held back until the window is actually being shown — see `reveal`.
   const rootClass = `agent-panel-root${revealed ? " is-revealed" : ""}`;
 
@@ -1006,13 +1107,15 @@ export function AgentPanel() {
               sources: compactSources,
               notFound: compactNotFound,
               confirmDelete: compactConfirmDelete,
+              confirmAction: compactConfirmAction,
             },
           ]
         : [];
     const hasAnswer = thread.some((m) => m.role === "assistant");
     // Redo re-runs the first instruction only (there are no versions once the
     // conversation branches), so it lives under the sole pre-follow-up answer.
-    const canRedo = !expanded && !busy && versions.length > 0;
+    const canRedo =
+      !expanded && !busy && !displayedConfirmAction && versions.length > 0;
     // The shortcut reads as one unit, e.g. "Alt Q" — never split into chips.
     const shortcutLabel = shortcutParts.join(" ");
     const lastIdx = thread.length - 1;
@@ -1068,6 +1171,7 @@ export function AgentPanel() {
                       </div>
                       {renderEvidence(m.sources ?? [], m.notFound ?? false)}
                       {m.confirmDelete && renderConfirmDelete(m.confirmDelete)}
+                      {m.confirmAction && renderConfirmAction(m.confirmAction)}
                       {expanded && (
                         <div className="agc-c-tools">
                           <button
@@ -1261,6 +1365,8 @@ export function AgentPanel() {
                 {renderEvidence(compactSources, compactNotFound)}
                 {compactConfirmDelete &&
                   renderConfirmDelete(compactConfirmDelete)}
+                {compactConfirmAction &&
+                  renderConfirmAction(compactConfirmAction)}
               </>
             )}
             <div ref={endRef} />
@@ -1294,7 +1400,9 @@ export function AgentPanel() {
             <button
               type="button"
               className="agc-icon-btn"
-              disabled={busy || versions.length === 0}
+              disabled={
+                busy || !!displayedConfirmAction || versions.length === 0
+              }
               onClick={retry}
               title={t("agent.retry")}
             >
@@ -1350,6 +1458,9 @@ export function AgentPanel() {
               {m.role === "assistant" &&
                 m.confirmDelete &&
                 renderConfirmDelete(m.confirmDelete)}
+              {m.role === "assistant" &&
+                m.confirmAction &&
+                renderConfirmAction(m.confirmAction)}
             </div>
           ))}
 

@@ -982,11 +982,16 @@ this work.
 ### Protocol and lifecycle boundary
 
 - Support remote HTTPS Streamable HTTP only.
-- Require MCP `2026-07-28` and its stateless discovery lifecycle.
-- Every operation is self-contained. Do not send `initialize`, retain
-  `Mcp-Session-Id`, open a standalone GET stream, spawn a process, or keep an
-  idle MCP connection/task alive.
-- Reject legacy/stateful servers with an actionable compatibility error.
+- Prefer MCP `2026-07-28` stateless discovery. Current hosted providers upgrade
+  independently, so negotiate `2025-11-25`/`2025-06-18` when necessary and use
+  their required protocol initialization handshake.
+- A protocol handshake is not server lifecycle ownership. Every operation is
+  still self-contained: never spawn a provider process, open a standalone GET
+  stream, deliberately retain `Mcp-Session-Id`, or keep an idle MCP
+  connection/task alive. Cancel and drop the client service after each list or
+  call.
+- Reject stdio, SSE-only, arbitrary-URL, and unsupported protocol servers with
+  an actionable compatibility error.
 - Do not implement MCP Apps, arbitrary HTML, resources, prompts, subscriptions,
   sampling, tasks, or Dynamic UI in this phase.
 
@@ -999,11 +1004,10 @@ this work.
   client-registration mechanism.
 - Persist tokens and dynamic client credentials only in the OS credential
   vault. There is no plaintext fallback.
-- Linear, Notion, and Atlassian may use dynamic registration where advertised.
-  Slack and Google Calendar require a pre-registered client ID/secret supplied
-  through developer settings. GitHub supports its hosted endpoint and may use
-  either its supported OAuth registration path or an explicitly configured
-  client.
+- Linear, Notion, and Atlassian use their advertised dynamic registration and
+  form the zero-custom-app validation tranche. GitHub, Slack, and Google
+  Calendar require a pre-registered client ID/secret supplied through developer
+  settings.
 - One account is stored per MCP provider. Disconnect deletes its credential.
 
 ### Agent integration
@@ -1040,11 +1044,12 @@ this work.
    Settings-only discovery check.
 2. Provider-neutral task-local schemas and MCP `tools/list` loading.
 3. Prepared-call/confirmation execution adapter and bounded result mapping.
-4. End-to-end tests with a deterministic local HTTPS/mock transport, followed
-   by manual account testing against at least five hosted providers.
+4. Manual account testing against Linear, Notion, and Atlassian: connect,
+   discover, load from a fresh Agent request, confirm a call, and receive its
+   result. Then expand provider coverage without blocking core-platform work.
 
-Exit gate: five real providers can be connected from Settings, discovered by a
-fresh Agent request, loaded only when relevant, called sequentially through the
-confirmation boundary, and fully cleaned up after each operation. No MCP
-process, session, listener, or tool schema survives beyond its documented
-scope.
+Initial test gate: three real providers can be connected from Settings without
+creating OAuth apps, discovered by a fresh Agent request, loaded only when
+relevant, called sequentially through the confirmation boundary, and fully
+cleaned up after each operation. No MCP process, session, listener, or tool
+schema survives beyond its documented scope.
