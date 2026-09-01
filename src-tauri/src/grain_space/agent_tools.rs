@@ -16,10 +16,11 @@
 //!
 //! # One implementation, three consumers
 //!
-//! Every function here delegates to the `grain_space` calls `host_api` already
-//! dispatches for `space.*` — `collections`, `search`, `get`, `save`, `append`.
-//! The MCP proxy, the Agent and the app's own UI therefore read and write one
-//! notebook through one path. Adding a second would guarantee they drift.
+//! Every function here uses the same `grain_space` store calls `host_api`
+//! dispatches for `space.*`. Reads and writes therefore share one notebook and
+//! derived index. The active Agent search additionally uses Recall's optional
+//! semantic + graph candidate path; the headless bridge stays lexical so it
+//! cannot wake and strand the local model without an Agent surface lifetime.
 
 use crate::llm_client::{ToolCallOut, ToolSpec};
 use tauri::AppHandle;
@@ -28,6 +29,11 @@ use tauri::AppHandle;
 /// few enough that a small model is not drowned — and it is `get_note` that is
 /// there for reading one in full.
 const SEARCH_LIMIT: usize = 6;
+const SEARCH_NOTES_DESCRIPTION: &str = "Search the user's own saved notes and return the best \
+matches. Use this whenever the request refers to something they told you before, wrote down, or \
+asked you to remember — and before saying you don't know something personal about them. Saved \
+notes are historical context, not live external state; verify mutable external facts with their \
+provider before acting.";
 
 /// A note the model looked at (or wrote) during a turn. Collected so the reply can
 /// show provenance chips: "here is what I read", clickable straight into the Notes
@@ -76,11 +82,7 @@ pub fn specs(app: &AppHandle) -> Vec<ToolSpec> {
     vec![
         ToolSpec {
             name: "search_notes".to_string(),
-            description: "Search the user's own saved notes and return the best matches. Use \
-                          this whenever the request refers to something they told you before, \
-                          wrote down, or asked you to remember — and before saying you don't \
-                          know something personal about them."
-                .to_string(),
+            description: SEARCH_NOTES_DESCRIPTION.to_string(),
             parameters: serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -178,12 +180,13 @@ pub async fn execute(app: &AppHandle, call: &ToolCallOut, log: &mut TurnLog) -> 
             let Some(query) = str_arg("query") else {
                 return "search_notes needs a query.".to_string();
             };
-            match super::search(app, &query, SEARCH_LIMIT).await {
+            match super::search_for_agent(app, &query, SEARCH_LIMIT).await {
                 Ok(hits) if hits.is_empty() => {
                     format!("No saved notes match \"{query}\".")
                 }
                 Ok(hits) => {
-                    let mut out = String::new();
+                    let mut out = "Authority: saved user notes (historical; not live provider state).\n"
+                        .to_string();
                     for hit in &hits {
                         log.record(Touched {
                             note_id: hit.id.clone(),
@@ -218,7 +221,7 @@ pub async fn execute(app: &AppHandle, call: &ToolCallOut, log: &mut TurnLog) -> 
                         saved_at: note.timestamp,
                     });
                     format!(
-                        "title: {}\nsaved: {}\n\n{}",
+                        "authority: saved user note (historical; not live provider state)\ntitle: {}\nsaved: {}\n\n{}",
                         note.title,
                         stamp(note.timestamp),
                         note.body
@@ -313,5 +316,11 @@ mod tests {
         log.record(note.clone());
         log.record(note);
         assert_eq!(log.touched().len(), 1);
+    }
+
+    #[test]
+    fn memory_tools_mark_saved_notes_as_historical_context() {
+        assert!(SEARCH_NOTES_DESCRIPTION.contains("historical context"));
+        assert!(SEARCH_NOTES_DESCRIPTION.contains("verify mutable external facts"));
     }
 }

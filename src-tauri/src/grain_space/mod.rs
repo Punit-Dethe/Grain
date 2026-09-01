@@ -233,8 +233,9 @@ pub async fn collections(app: &AppHandle) -> Result<Vec<String>, String> {
         .map_err(|e| e.to_string())
 }
 
-/// The full hybrid search — FTS, vectors and the entity graph, fused — the same
-/// one the overlay's search box runs.
+/// Lightweight bridge search over the derived lexical index. It deliberately
+/// does not wake the local embedding model for a headless MCP request. The
+/// built-in Agent uses [`search_for_agent`] below for the full retrieval stack.
 pub async fn search(app: &AppHandle, query: &str, limit: usize) -> Result<Vec<SpaceHit>, String> {
     require_enabled(app)?;
     let be = backend::resolve(app)?;
@@ -246,6 +247,33 @@ pub async fn search(app: &AppHandle, query: &str, limit: usize) -> Result<Vec<Sp
     Ok(notes
         .into_iter()
         .take(limit)
+        .map(|n| SpaceHit {
+            snippet: n.tldr.clone(),
+            entities: n.entities.clone(),
+            saved_at: n.timestamp,
+            id: n.id,
+            title: n.title,
+        })
+        .collect())
+}
+
+/// Search for an active built-in Agent turn. Unlike the lightweight MCP bridge
+/// search above, this uses Recall's full candidate stack: natural-language FTS,
+/// the entity graph, and local BGE when the user enabled it and the model is on
+/// disk. BGE remains an optional quality leg; lexical + graph retrieval still
+/// works when it is disabled or unavailable.
+pub(crate) async fn search_for_agent(
+    app: &AppHandle,
+    query: &str,
+    limit: usize,
+) -> Result<Vec<SpaceHit>, String> {
+    require_enabled(app)?;
+    let be = backend::resolve(app)?;
+    let notes = recall::retrieve_for_agent(app, &be, query, limit)
+        .await
+        .map_err(|e| format!("{e:#}"))?;
+    Ok(notes
+        .into_iter()
         .map(|n| SpaceHit {
             snippet: n.tldr.clone(),
             entities: n.entities.clone(),

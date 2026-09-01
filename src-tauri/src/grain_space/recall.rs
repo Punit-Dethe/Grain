@@ -144,8 +144,11 @@ fn system_prompt(now: &str, weekday: &str) -> String {
          time (\"last week\", \"in June\" → pass minDate/maxDate as YYYY-MM-DD). One focused \
          search; never guess before searching.\n\
          \n\
-         ANSWER a question: one short, natural sentence (no preamble or lists); trust the newest \
-         memory if they disagree. End with one line: `SOURCES: M2, M4` (the memories you used, or \
+         ANSWER a question: one short, natural sentence (no preamble or lists). A saved date says \
+         when Grain captured a memory, not when its claim became true. If memories disagree, use \
+         one only when it explicitly supersedes the other; otherwise state the uncertainty and \
+         cite both rather than silently choosing the newest. End with one line: `SOURCES: M2, M4` \
+         (the memories you used, or \
          `SOURCES: none`). If it truly isn't saved after searching, end with `NOT_FOUND` instead \
          and stop asking questions.\n\
          \n\
@@ -228,6 +231,19 @@ async fn retrieve(
     range: Option<(i64, i64)>,
 ) -> Result<Vec<Note>> {
     retrieve_filtered(app, be, query, range, &Filters::default()).await
+}
+
+/// The normal Agent's notebook tool uses the same candidate generation and
+/// reranker as Recall. Keeping this thin entry point here prevents the everyday
+/// Agent from silently degrading to lexical-only search while Recall gets the
+/// FTS + optional semantic + graph stack.
+pub(crate) async fn retrieve_for_agent(
+    app: &AppHandle,
+    be: &Backend,
+    query: &str,
+    limit: usize,
+) -> Result<Vec<Note>> {
+    retrieve_inner(app, be, query, None, limit.clamp(1, CANDIDATE_POOL)).await
 }
 
 async fn retrieve_filtered(
@@ -1430,6 +1446,14 @@ mod tests {
         n.id = id.to_string();
         n.timestamp = ts;
         n
+    }
+
+    #[test]
+    fn recall_prompt_does_not_treat_recency_as_truth() {
+        let prompt = system_prompt("2026-09-01 12:00", "Tuesday");
+        assert!(prompt.contains("not when its claim became true"));
+        assert!(prompt.contains("cite both rather than silently choosing the newest"));
+        assert!(!prompt.contains("trust the newest memory"));
     }
 
     #[test]

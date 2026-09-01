@@ -136,30 +136,115 @@ an escalation for difficult final synthesis, never the default routing layer.
 Model selection is capability-based (tools, context, modality, local/cloud,
 latency and cost), not a hard-coded vendor name.
 
-### 3.3 Memory is three separate stores
+### 3.3 Memory is five logical tiers over four physical stores
 
-1. **Durable user knowledge:** explicit Grain Space notes and user-approved
+1. **Session scratch:** the current turn, unresolved goals, exact tool results,
+   and prepared-action state. Hard byte/turn bounds; destroyed at terminal state.
+2. **Recent episodic:** a bounded 48-hour record of source use, outcomes, and
+   project/entity context. This is a decaying routing feature, not factual truth.
+3. **Core profile projection:** stable preferences plus current themes projected
+   from user-approved durable knowledge. It is rebuildable, inspectable, and not
+   a second source of truth.
+4. **Durable user knowledge:** explicit Grain Space notes and user-approved
    saved material. Existing note recall remains this layer.
-2. **Bounded working memory:** ephemeral per-Agent-session facts, evidence refs,
-   unresolved goals, and provenance. It has byte/time limits and is destroyed at
-   terminal session state.
-3. **Routing/workflow memory:** compact host-owned success, decline, misroute,
-   source-use, and reusable-plan statistics. Store ids and aggregates, not raw
-   transcripts by default. Exact user naming, permissions, and auth eligibility
-   always outrank learned preferences.
+5. **Routing/workflow aggregates:** compact host-owned success, decline,
+   misroute, source-use, and reusable-plan statistics. Store ids and aggregates,
+   not raw transcripts by default.
 
-Do not turn Grain Space into an indiscriminate Agent transcript/vector store.
-User knowledge and system optimisation have different consent, retention,
-export, deletion, and poisoning risks.
+The physical stores are session scratch, bounded episodic, durable Grain Space,
+and routing aggregates; the profile is a projection. Do not turn Grain Space
+into an indiscriminate Agent transcript/vector store. User knowledge and system
+optimisation have different consent, retention, export, deletion, and poisoning
+risks.
 
-### 3.4 Cross-extension policy
+### 3.4 Agent-first truth and target resolution
+
+Agent-first means retrieval helps the Agent reach verified truth or a safe action
+quickly. It does **not** mean every query must begin with an LLM, or that the
+highest retrieval score becomes authoritative. Cheap host retrieval may prefetch
+candidates; the Agent decides whether evidence is sufficient, searches again,
+or asks the user.
+
+Authority is separate from relevance:
+
+| Evidence | What it may decide |
+|---|---|
+| Live provider read with canonical id and observation time | Current state of a mutable external object |
+| Exact user-authored Grain Space note | What the user recorded; possibly stale externally |
+| Extracted fact/profile projection | Personalisation and hypotheses; never an external write target by itself |
+| Recent/routing memory | Search order and whether to investigate sequentially or in bounded parallel |
+
+Similarity, graph distance, recency, and routing affinity affect candidate order
+only. Exact naming, permissions, account scope, live provider identity, and an
+explicit user choice outrank every learned score. A note's `savedAt` is capture
+time, not event time or proof that its claim is current.
+
+For “add this to the GitHub issue we have”:
+
+1. Memory may propose repositories, issue numbers, or previous workflows.
+2. The Agent loads GitHub and performs a live read/search in the eligible account.
+3. The Source returns canonical refs such as provider/account/repository/issue,
+   plus `observedAt` and a provider revision or `updatedAt` when available.
+4. Exactly one target may be prepared. Zero matches or several plausible matches
+   produce one concise clarification; newest-memory wins is forbidden.
+5. Confirmation names the canonical target and binds the prepared arguments. The
+   host revalidates provider revision when the provider supports conditional
+   writes; a changed target requires a fresh read and confirmation.
+
+Conflicting memories remain a visible evidence set. Grain may collapse them only
+when one explicitly supersedes the other or live evidence resolves the conflict.
+Unresolved disagreement is reported, never hidden by rank fusion.
+
+### 3.5 Retrieval weighting audit
+
+Grain's current Recall stack is a sound candidate pipeline, not yet a calibrated
+truth pipeline: independent lexical, optional local-BGE, and entity-graph legs;
+RRF to 20 candidates; then deterministic semantic/overlap/recency reranking to
+six. BGE should be the recommended quality setting, but it remains optional:
+lexical + graph retrieval must stay correct and useful without a 130 MB model.
+
+Do not change the current `0.35 RRF / 0.25 semantic / 0.25 overlap / 0.15 recency`
+blend by intuition. The graph's direct-vs-neighbour strength, capture time versus
+event time, conflict/version state, and source authority are currently missing
+signals; min-max semantic normalisation is also pool-relative. First add an eval
+corpus and log per-leg ranks/features, then tune against Recall@K, MRR, conflict
+accuracy, unsupported-fact rate, and ambiguous-write rate. Authority and evidence
+sufficiency remain post-retrieval gates, never additional relevance weights.
+
+### 3.6 Competitor audit: the Agent boundary
+
+Audit baseline: Supermemory `143024fa34f3648b93d5667ab78b79de6b22c62b`
+and Mem0 `71fba8d46436f88569d600f81a55208c38ad30b5` (2026-09-01).
+
+- **Supermemory is not uniformly agent-first.** Its public integrations offer
+  both automatic profile/query injection (and automatic conversation capture)
+  and explicit search/add tools. Its useful advantage is the memory ontology:
+  atomic facts, static/dynamic profiles, and `updates`/`extends`/`derives`
+  evolution, plus continuously synced document connectors. The public server
+  repository does not expose enough of the hosted retrieval engine to verify its
+  exact scoring or conflict algorithm.
+- **Mem0 is also integration-dependent.** It supports prompt injection, MCP, and
+  explicit Agent tools. Current OSS v3 is ADD-only with dense candidates,
+  keyword/entity boosts, optional reranking, and scoped memory ids; its hosted
+  temporal/graph behavior is not an open write-target resolver.
+- **Neither memory product solves Grain's GitHub example by memory retrieval
+  alone.** A synced/indexed GitHub record may improve candidate freshness, but a
+  safe update still requires a live provider identity read, ambiguity handling,
+  and a write bound to one canonical target.
+
+Grain should adopt fact evolution, profiles, event time, and raw-evidence links;
+it should not copy unconditional prompt injection or background capture. Grain's
+differentiator is one Agent that separates memory, live Sources, and Actions and
+can prove which one authorized each conclusion or effect.
+
+### 3.7 Cross-extension policy
 
 Moving evidence from Source A into Action B is a data transfer. Before preparing
 the action, the host records the source/destination, checks sensitivity and
 destination policy, minimises fields, and includes the transfer in confirmation
 when material. Neither extension may authorize the other.
 
-### 3.5 Cloud boundary
+### 3.8 Cloud boundary
 
 Local remains capable: local Agent/model where available, local embeddings,
 local memory, BYOK APIs, and local workers. Grain Cloud may add managed model
@@ -179,6 +264,10 @@ the Initial gates first:
   cancellation, uninstall/update race, and strict result handling;
 - real Tauri app visual approval of confirmation/result text surfaces;
 - provider tool capability matrix and auth-aware eligibility;
+- versioned host-owned `sideEffect` metadata so live reads and writes are
+  distinguishable before execution;
+- Agent truth policy: memory cannot authorize mutable external facts or targets;
+  ambiguous live targets never execute;
 - security tests for forged tools, stale/cross-session confirmation, prompt
   injection, oversized arguments/results, worker impersonation, and replay;
 - RAM/latency measurements with a realistic installed catalogue.
@@ -187,13 +276,16 @@ the Initial gates first:
 
 Add versioned SDK structs, manifest validation/fingerprints, registry/index
 projection, auth/capability eligibility, a strict EvidenceEnvelope, and one
-reference Source. Level 1 must work end to end before concurrency.
+reference Source. `EvidenceEnvelope` items must include authority class,
+`observedAt`, canonical ref, and optional provider revision/event time. Level 1
+must work end to end before concurrency.
 
 ### A2 — Working memory and provenance
 
 Add a bounded session-owned evidence registry referenced by ids in model
 context. Implement destruction, redaction, source citations, and cross-extension
-transfer policy. Do not add durable learning yet.
+transfer policy. Preserve conflict sets instead of silently picking by recency.
+Do not add durable learning yet.
 
 ### A3 — Level 2 bounded workers
 
@@ -205,6 +297,9 @@ No free-running background agents and no persistent worker engine.
 
 Build/evaluate the Source retriever separately from Action retrieval. Add source
 Recall@K, evidence sufficiency, one progressive expansion, and hard cost limits.
+Choose sequential investigation when the top source has high calibrated
+confidence and margin; use bounded parallel retrieval when confidence/margin is
+low. Memory features may change this order, never source eligibility or truth.
 
 ### A5 — Routing and workflow memory
 
@@ -230,6 +325,8 @@ phrases:
 - p50/p95 latency, model calls, tokens/cost, peak RAM, idle RAM, workers left alive;
 - auth repair success and permission/auth bypass attempts;
 - cancellation and ambiguous-write outcomes.
+- contradiction resolution, stale-memory/live-source disagreements, and exact
+  canonical-target accuracy;
 
 The Advanced architecture is ready to implement only when A0 is green. The next
 code change after A0 should be `SourceDecl` + `EvidenceEnvelope`, not a general
