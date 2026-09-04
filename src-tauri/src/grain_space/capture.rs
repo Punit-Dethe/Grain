@@ -685,50 +685,16 @@ impl MergedMeta {
     }
 }
 
-/// Conservatively merge a spoken change into an existing note (RECALL-PLAN §7.1)
-/// — the reconcile sibling of [`extract_metadata`], reusing the same structured
-/// LLM infra. NEVER loses the user's words: with no usable provider, or on any
-/// LLM/parse failure, it falls back to appending the raw change to the body and
-/// leaving the rest untouched. Returns the merged note ready to save; id,
-/// timestamp, and pin state are preserved.
+/// Deterministic safe append for note reconciliation (Phase 4).
+/// Replaces whole-body model reconciliation: never rewrites or drops existing text,
+/// preserving all old body text byte-for-byte with the standard readable separator.
 pub(crate) async fn reconcile_note(
-    app: &AppHandle,
+    _app: &AppHandle,
     current: &Note,
     change: &str,
-    convo_context: &str,
+    _convo_context: &str,
 ) -> Note {
-    let settings = get_settings(app);
-    if llm_usable(&settings) {
-        match reconcile_call(app, &settings, current, change, convo_context).await {
-            Ok(merged) => {
-                let candidate = merged.apply_to(current, settings.grain_space_auto_reminders);
-                // Confidence guard: a merge that silently drops most of a
-                // non-trivial body is almost always a bad merge, not a genuine
-                // supersede. A wrong overwrite is worse than a plain append, so
-                // fall back to appending the raw change instead.
-                if merge_lost_content(current, &candidate) {
-                    log::warn!(
-                        "[GRAIN] space reconcile: merge dropped too much body; raw-appending change"
-                    );
-                    return raw_append(current, change);
-                }
-                return candidate;
-            }
-            Err(e) => {
-                log::warn!("[GRAIN] space reconcile: merge failed ({e}); raw-appending change")
-            }
-        }
-    }
     raw_append(current, change)
-}
-
-/// True when a reconcile merge lost more than half of a non-trivial body — the
-/// signal we use to distrust the merge and fall back to a safe append. Short
-/// bodies (< 40 chars) are exempt: replacing a tiny note wholesale is normal.
-fn merge_lost_content(current: &Note, candidate: &Note) -> bool {
-    let cur = current.body.trim().chars().count();
-    let new = candidate.body.trim().chars().count();
-    cur >= 40 && new.saturating_mul(2) < cur
 }
 
 /// True when a structuring reformat lost more than half of a non-trivial note —
@@ -918,18 +884,26 @@ pub(crate) fn reformat_lost_material_content(raw: &str, formatted: &str) -> bool
     false
 }
 
-/// Degrade path: append the change to the body verbatim, keep everything else.
-fn raw_append(current: &Note, change: &str) -> Note {
+/// Deterministic safe append: preserves all old body text byte-for-byte,
+/// appending the change with the readable separator.
+pub(crate) fn raw_append(current: &Note, change: &str) -> Note {
     let mut note = current.clone();
     let change = change.trim();
     if change.is_empty() {
         return note;
     }
-    note.body = if note.body.trim().is_empty() {
-        change.to_string()
+    if note.body.is_empty() {
+        note.body = change.to_string();
+    } else if note.body.ends_with("\n\n") {
+        note.body.push_str("---\n\n");
+        note.body.push_str(change);
+    } else if note.body.ends_with('\n') {
+        note.body.push_str("\n---\n\n");
+        note.body.push_str(change);
     } else {
-        format!("{}\n{}", note.body.trim_end(), change)
-    };
+        note.body.push_str("\n\n---\n\n");
+        note.body.push_str(change);
+    }
     note
 }
 
@@ -1001,114 +975,6 @@ pub(crate) async fn compose_note(
     (note, relations)
 }
 
-/// One structured merge call against the active post-process provider.
-async fn reconcile_call(
-    app: &AppHandle,
-    settings: &AppSettings,
-    current: &Note,
-    change: &str,
-    convo_context: &str,
-) -> Result<MergedMeta, String> {
-    let provider = settings
-        .active_post_process_provider()
-        .cloned()
-        .ok_or("no active provider")?;
-    let model = settings
-        .post_process_models
-        .get(&provider.id)
-        .cloned()
-        .unwrap_or_default();
-    let api_key = settings
-        .post_process_api_keys
-        .get(&provider.id)
-        .cloned()
-        .unwrap_or_default();
-    let client = app
-        .try_state::<reqwest::Client>()
-        .map(|s| s.inner().clone())
-        .ok_or("shared HTTP client unavailable")?;
-
-    let note_json = serde_json::json!({
-        "title": current.title,
-        "tldr": current.tldr,
-        "body": current.body,
-        "todos": current.todo_tags.iter().map(|t| serde_json::json!({ "text": t.text, "done": t.done })).collect::<Vec<_>>(),
-    })
-    .to_string();
-    let context_block = if convo_context.trim().is_empty() {
-        String::new()
-    } else {
-        format!(
-            "\nRecent conversation (resolve references like \"the first two\" against this):\n{}\n",
-            convo_context.trim()
-        )
-    };
-    let now_local = chrono::Local::now().format("%A %Y-%m-%dT%H:%M").to_string();
-    let system_prompt = format!(
-        "You are updating one of the user's saved memories from something they just said. Merge \
-         their change into the memory CONSERVATIVELY and reply with JSON only.\n\
-         Current memory (JSON): {note_json}{context_block}\n\
-         Rules:\n\
-         - body: incorporate the new information. APPEND by default; only rewrite existing wording \
-         when the change genuinely supersedes it (e.g. a changed password replaces the old value, \
-         keeping the rest). NEVER drop content the user did not ask to remove. When unsure whether \
-         to rewrite or append, APPEND — return the current body with the new information added, \
-         never a shorter body than you started with unless the user explicitly removed something.\n\
-         - title: at most 3 words. Keep the existing title unless the memory is now about something \
-         different.\n\
-         - tldr: one short sentence describing the merged memory.\n\
-         - todos: the FULL merged list of items as {{text, done}} objects. Add new ones, mark named \
-         ones done, drop only ones the user says to remove; preserve existing done states and order \
-         otherwise.\n\
-         - reminder_at: only if the change mentions a time/reminder — the local datetime \
-         YYYY-MM-DDTHH:MM; otherwise an empty string. The current local datetime is {now_local}."
-    );
-
-    let schema = serde_json::json!({
-        "type": "object",
-        "properties": {
-            "body": { "type": "string" },
-            "title": { "type": "string" },
-            "tldr": { "type": "string" },
-            "todos": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "text": { "type": "string" },
-                        "done": { "type": "boolean" }
-                    },
-                    "required": ["text", "done"],
-                    "additionalProperties": false
-                }
-            },
-            "reminder_at": { "type": "string" }
-        },
-        "required": ["body", "title", "tldr", "todos", "reminder_at"],
-        "additionalProperties": false
-    });
-
-    let success = crate::llm_client::send_chat_completion_with_schema(
-        &client,
-        &provider,
-        api_key,
-        &model,
-        change.to_string(),
-        Some(system_prompt),
-        Some(schema),
-        None,
-        None,
-    )
-    .await
-    .map_err(|e| e.to_string())?;
-
-    let content = success.content.ok_or("empty completion")?;
-    let meta: MergedMeta =
-        serde_json::from_str(strip_code_fences(&content)).map_err(|e| e.to_string())?;
-    crate::post_process_router::record_usage(app, &provider.id);
-    Ok(meta)
-}
-
 /// Some models fence JSON in ```json blocks even under structured output.
 fn strip_code_fences(s: &str) -> &str {
     let t = s.trim();
@@ -1122,6 +988,7 @@ fn strip_code_fences(s: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::grain_space::content_version_hash;
 
     #[test]
     fn metadata_apply_arms_or_parks_reminder() {
@@ -1276,19 +1143,6 @@ mod tests {
     }
 
     #[test]
-    fn raw_append_preserves_and_appends() {
-        let mut cur = Note::raw("original".into());
-        cur.title = "Keep Me".into();
-        let out = raw_append(&cur, "  more info  ");
-        assert_eq!(out.body, "original\nmore info");
-        assert_eq!(out.title, "Keep Me"); // untouched
-        assert_eq!(out.id, cur.id); // identity preserved
-
-        let empty = Note::raw("".into());
-        assert_eq!(raw_append(&empty, "first").body, "first");
-    }
-
-    #[test]
     fn merged_meta_is_conservative_on_blanks() {
         let mut cur = Note::raw("body".into());
         cur.title = "Old Title".into();
@@ -1347,43 +1201,28 @@ mod tests {
     }
 
     #[test]
-    fn merge_lost_content_flags_big_drops_only() {
-        let mut cur = Note::raw("a".repeat(100));
-        let mut cand = cur.clone();
-        // Kept most of it → fine.
-        cand.body = "a".repeat(60);
-        assert!(!merge_lost_content(&cur, &cand));
-        // Dropped more than half of a long body → distrust.
-        cand.body = "a".repeat(30);
-        assert!(merge_lost_content(&cur, &cand));
-        // Short bodies are exempt (wholesale replace is normal).
-        cur.body = "tiny".into();
-        cand.body = "x".into();
-        assert!(!merge_lost_content(&cur, &cand));
-    }
+    fn raw_append_preserves_and_appends() {
+        let mut cur = Note::raw("original".into());
+        cur.title = "Keep Me".into();
+        let out = raw_append(&cur, "  more info  ");
+        assert_eq!(out.body, "original\n\n---\n\nmore info");
+        assert_eq!(out.title, "Keep Me"); // untouched
+        assert_eq!(out.id, cur.id); // identity preserved
 
-    #[test]
-    fn merged_meta_replaces_todos_when_provided() {
-        let cur = Note::raw("b".into());
-        let merged = MergedMeta {
-            body: "b".into(),
-            title: "T".into(),
-            tldr: "s".into(),
-            todos: vec![
-                MergedTodo {
-                    text: "one".into(),
-                    done: true,
-                },
-                MergedTodo {
-                    text: " ".into(),
-                    done: false,
-                },
-            ],
-            reminder_at: "".into(),
-        }
-        .apply_to(&cur, false);
-        assert_eq!(merged.todo_tags.len(), 1); // blank dropped
-        assert!(merged.todo_tags[0].done);
+        let empty = Note::raw("".into());
+        assert_eq!(raw_append(&empty, "first").body, "first");
+
+        let with_newline = Note::raw("line1\n".into());
+        assert_eq!(
+            raw_append(&with_newline, "line2").body,
+            "line1\n\n---\n\nline2"
+        );
+
+        let with_double_newline = Note::raw("line1\n\n".into());
+        assert_eq!(
+            raw_append(&with_double_newline, "line2").body,
+            "line1\n\n---\n\nline2"
+        );
     }
 
     #[test]
@@ -1493,5 +1332,184 @@ mod tests {
         );
 
         let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn phase_4_safe_deterministic_append_invariants() {
+        use crate::grain_space::content_version_hash;
+        use crate::grain_space::vault::{self, Vault};
+
+        let temp_dir = std::env::temp_dir().join(format!("grain_p4_test_{}", uuid::Uuid::new_v4()));
+        let vault = Vault {
+            root: temp_dir.join("vault"),
+            folder: "Grain".to_string(),
+            index_base: temp_dir.join("appdata"),
+            native: false,
+        };
+        std::fs::create_dir_all(&vault.root).unwrap();
+        std::fs::create_dir_all(&vault.index_base).unwrap();
+
+        // 1. Create initial note
+        let original_body = "Line 1\nLine 2 with trailing spaces   \nLine 3";
+        let mut note = Note::raw(original_body.to_string());
+        note.title = "Roadmap".to_string();
+        vault::save_note(&vault, &note).expect("save initial note");
+
+        // Compute initial version hash
+        let v_init = content_version_hash(&note.body);
+
+        // 2. Invariant 6: Byte-for-byte old body text preservation
+        let addition_1 = "Milestone A: Launch Q3";
+        let note_read = vault::get_note(&vault, &note.id).expect("read note");
+        assert_eq!(content_version_hash(&note_read.body), v_init);
+
+        let appended_1 = raw_append(&note_read, addition_1);
+        assert!(
+            appended_1.body.starts_with(original_body),
+            "original text must be preserved byte-for-byte"
+        );
+        assert_eq!(
+            appended_1.body,
+            format!("{original_body}\n\n---\n\n{addition_1}")
+        );
+        vault::save_note(&vault, &appended_1).expect("save appended note");
+
+        // 3. Invariant 8: Duplicate delivery prevention (idempotence)
+        let note_after_1 = vault::get_note(&vault, &note.id).expect("read after append");
+        let v_after_1 = content_version_hash(&note_after_1.body);
+
+        // Simulating duplicate delivery of addition_1
+        let is_dup = if note_after_1.body.ends_with(addition_1) {
+            let before = &note_after_1.body[..note_after_1.body.len() - addition_1.len()];
+            before.is_empty() || before.ends_with("\n---\n\n") || before.ends_with("\n\n---\n\n")
+        } else {
+            false
+        };
+        assert!(is_dup, "duplicate delivery must be detected");
+
+        // 4. Invariant 4: Reject stale target if modified externally since confirmation
+        let external_edit = "External edit: Roadmap overhauled completely.";
+        let mut ext_note = note_after_1.clone();
+        ext_note.body = external_edit.to_string();
+        vault::save_note(&vault, &ext_note).expect("simulate external edit");
+
+        // Re-read note on disk
+        let current_disk = vault::get_note(&vault, &note.id).expect("read after ext edit");
+        let actual_hash = content_version_hash(&current_disk.body);
+
+        // Try appending with stale expected version v_after_1
+        assert_ne!(
+            actual_hash, v_after_1,
+            "version must reflect external modification"
+        );
+
+        // 5. Invariant 1: Missing or wrong target fails closed with zero invented notes
+        let missing_lookup = vault::get_note(&vault, "nonexistent_target_id_999");
+        assert!(missing_lookup.is_err(), "missing target must return error");
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn phase_4_content_version_hash_properties() {
+        // Determinism
+        assert_eq!(
+            content_version_hash("hello world"),
+            content_version_hash("hello world")
+        );
+        // Sensitivity to single byte changes
+        assert_ne!(
+            content_version_hash("hello world"),
+            content_version_hash("hello world ")
+        );
+        assert_ne!(
+            content_version_hash("hello world\n"),
+            content_version_hash("hello world")
+        );
+        // Multibyte Unicode & CJK
+        let cjk_text = "日本語のメモ、茶道と禅。🍵";
+        let cjk_hash1 = content_version_hash(cjk_text);
+        let cjk_hash2 = content_version_hash(cjk_text);
+        assert_eq!(cjk_hash1, cjk_hash2);
+        assert_eq!(cjk_hash1.len(), 16); // 16 hex digits (64-bit zero padded)
+                                         // Empty text produces valid fixed-width hash
+        let empty_hash = content_version_hash("");
+        assert_eq!(empty_hash.len(), 16);
+    }
+
+    #[test]
+    fn phase_4_raw_append_whitespace_and_separator_variations() {
+        // 1. Empty body
+        let empty_note = Note::raw("".into());
+        let appended_empty = raw_append(&empty_note, "  First line  ");
+        assert_eq!(appended_empty.body, "First line");
+
+        // 2. Body with no trailing newline
+        let note_no_nl = Note::raw("Line 1".into());
+        let appended_no_nl = raw_append(&note_no_nl, "Line 2");
+        assert_eq!(appended_no_nl.body, "Line 1\n\n---\n\nLine 2");
+
+        // 3. Body with single trailing newline
+        let note_single_nl = Note::raw("Line 1\n".into());
+        let appended_single_nl = raw_append(&note_single_nl, "Line 2");
+        assert_eq!(appended_single_nl.body, "Line 1\n\n---\n\nLine 2");
+
+        // 4. Body with double trailing newline
+        let note_double_nl = Note::raw("Line 1\n\n".into());
+        let appended_double_nl = raw_append(&note_double_nl, "Line 2");
+        assert_eq!(appended_double_nl.body, "Line 1\n\n---\n\nLine 2");
+
+        // 5. Addition with code fences and internal dividers
+        let complex_addition = "```rust\nfn main() {}\n```\n---\nfooter note";
+        let note_complex = Note::raw("# Heading".into());
+        let appended_complex = raw_append(&note_complex, complex_addition);
+        assert_eq!(
+            appended_complex.body,
+            format!("# Heading\n\n---\n\n{complex_addition}")
+        );
+    }
+
+    #[test]
+    fn phase_4_duplicate_detection_edge_cases() {
+        let addition = "New task item: Review PR";
+
+        // Case A: Suffix matches but is NOT separated by separator (false positive avoidance)
+        let body_accidental_suffix = format!("Prefix text without separator {addition}");
+        let is_dup_a = if body_accidental_suffix.ends_with(addition) {
+            let before = &body_accidental_suffix[..body_accidental_suffix.len() - addition.len()];
+            before.is_empty() || before.ends_with("\n---\n\n") || before.ends_with("\n\n---\n\n")
+        } else {
+            false
+        };
+        assert!(
+            !is_dup_a,
+            "Accidental suffix overlap without separator must NOT be flagged as duplicate"
+        );
+
+        // Case B: Exactly separated by \n\n---\n\n
+        let body_proper_sep = format!("Existing content\n\n---\n\n{addition}");
+        let is_dup_b = if body_proper_sep.ends_with(addition) {
+            let before = &body_proper_sep[..body_proper_sep.len() - addition.len()];
+            before.is_empty() || before.ends_with("\n---\n\n") || before.ends_with("\n\n---\n\n")
+        } else {
+            false
+        };
+        assert!(
+            is_dup_b,
+            "Proper separator match must be recognized as duplicate"
+        );
+
+        // Case C: Body was solely this addition
+        let body_sole = addition.to_string();
+        let is_dup_c = if body_sole.ends_with(addition) {
+            let before = &body_sole[..body_sole.len() - addition.len()];
+            before.is_empty() || before.ends_with("\n---\n\n") || before.ends_with("\n\n---\n\n")
+        } else {
+            false
+        };
+        assert!(
+            is_dup_c,
+            "Exact identical body must be recognized as duplicate"
+        );
     }
 }

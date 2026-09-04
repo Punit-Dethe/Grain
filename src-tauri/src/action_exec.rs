@@ -614,7 +614,15 @@ async fn grain_space_execute(app: &AppHandle, prepared: &PreparedCall) -> Action
             let (Some(id), Some(text)) = (str_arg(args, "id"), str_arg(args, "text")) else {
                 return invalid("append_to_note needs an id and text.");
             };
-            match crate::grain_space::append(app, &id, &text).await {
+            let expected_version = str_arg(args, "expected_version");
+            match crate::grain_space::append_with_expected_version(
+                app,
+                &id,
+                &text,
+                expected_version.as_deref(),
+            )
+            .await
+            {
                 Ok(()) => {
                     let title = crate::grain_space::get(app, &id)
                         .await

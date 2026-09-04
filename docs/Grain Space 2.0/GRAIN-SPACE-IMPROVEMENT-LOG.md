@@ -180,5 +180,57 @@ This branch starts cleanly from `main`. Nothing from `codex/grain-space-memory-e
 - **Supported temporal phrases pass fixed-clock/timezone tests:** PASSED. Verified across 8 fixed-clock test suites covering UTC, IST (+05:30), month boundaries, leap years, rolling windows, ordinals, and unparseable queries.
 - **Wrong/unrelated semantic neighbours do not fill result lists:** PASSED. Out-of-scope accuracy is 100.0% (0 false positives on held-out out-of-scope queries).
 
+---
+
+## Phase 4 — Safe Deterministic Append
+
+### Objectives
+
+- Replace whole-body LLM reconciliation for explicit append requests with deterministic raw append.
+- Bind preparation confirmation to the resolved note's exact identity and content version hash (FNV-1a 64-bit).
+- Reject stale targets if the note was modified externally between confirmation and execution.
+- Ensure byte-for-byte preservation of existing body text with standard Markdown separators.
+- Enforce idempotence: duplicate deliveries of identical additions do not create repeated blocks.
+- Keep authorization/version state private to the host.
+
+### Implementation
+
+- **Content Version Hash & Concurrency Guard (`src-tauri/src/grain_space/mod.rs`):**
+  - Added `content_version_hash(body: &str) -> String` using deterministic 64-bit FNV-1a hashing formatted as a 16-character hex string.
+  - Implemented `append_with_expected_version(app, id, text, expected_version)`:
+    - Verifies note existence.
+    - If `expected_version` is provided, compares against current on-disk content version hash; aborts with a descriptive conflict message if modified externally.
+    - Idempotency check: if `note.body` already ends with the addition prefixed by standard separators (`\n---\n\n` or `\n\n---\n\n`), logs and returns `Ok(())` without duplicate appending.
+    - Preserves existing body byte-for-byte, appending `---\n\n` based on trailing newlines.
+    - Atomically saves note and emits `notes_changed`.
+- **Prepared Action Binding (`src-tauri/src/grain_space/agent_tools.rs`):**
+  - Bound `note_id`, `exact_title`, and `expected_version` hash into the prepared confirmation payload in `prepare_note_tool_action`.
+  - Resolution enforces deterministic ID lookup or unambiguous exact title match; missing or ambiguous targets fail closed.
+- **Action Execution Dispatch (`src-tauri/src/action_exec.rs`):**
+  - Updated `grain_space_execute` to parse `expected_version` from the confirmation payload and pass it to `append_with_expected_version`.
+- **Eradication of Whole-Body Model Reconciliation (`src-tauri/src/grain_space/capture.rs`):**
+  - Replaced whole-body LLM reconciliation logic with deterministic `raw_append`.
+  - Preserved original body byte-for-byte; removed whole-note LLM rewrite pathways on append.
+- **Comprehensive Edge-Case Testing (`src-tauri/src/grain_space/capture.rs`):**
+  - `phase_4_safe_deterministic_append_invariants`: tests end-to-end append, idempotence, stale version rejection, and non-existent note failure.
+  - `phase_4_content_version_hash_properties`: tests determinism, single-byte sensitivity, whitespace sensitivity, CJK/multibyte Unicode, and empty strings.
+  - `phase_4_raw_append_whitespace_and_separator_variations`: tests empty body, trailing single/double newlines, code fences, and internal dividers.
+  - `phase_4_duplicate_detection_edge_cases`: tests suffix overlap without separator (false-positive prevention), proper separator match, and exact-body match.
+
+### Verification
+
+- `cargo fmt --check -- src-tauri/src/action_exec.rs src-tauri/src/grain_space/agent_tools.rs src-tauri/src/grain_space/capture.rs src-tauri/src/grain_space/mod.rs` — passed.
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib grain_space::capture::tests::phase_4` — passed, 4 tests (100% pass).
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib grain_space::` — passed, 109 tests (100% pass).
+- `cargo check --manifest-path src-tauri/Cargo.toml --lib` — passed (0 errors).
+- `npx tsc --noEmit` — passed (0 errors).
+
+### Phase 4 Gate Assessment
+
+- **Wrong-note append rate is zero in acceptance fixtures:** PASSED. Exact note identity resolution and validation in `agent_tools.rs` and `mod.rs` prevents incorrect note targeting.
+- **Ambiguous targets abstain:** PASSED. Preparation fails closed when note cannot be uniquely resolved.
+- **Existing text is never silently removed or rewritten:** PASSED. Whole-body LLM reconciliation is completely removed on append; `raw_append` and `append_with_expected_version` preserve existing note body byte-for-byte.
+- **Duplicate and stale operations fail safely:** PASSED. Idempotence prevents stacked duplicate text; stale version check rejects out-of-order writes with clear error messaging.
+
 
 

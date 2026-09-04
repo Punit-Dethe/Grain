@@ -444,23 +444,88 @@ pub async fn save(app: &AppHandle, body: &str, supplied: SuppliedMeta) -> Result
     Ok(id)
 }
 
-/// Append to an existing note, under a rule. The running-log case: a session's
-/// decisions, a list that keeps growing. Never rewrites what is already there.
-pub async fn append(app: &AppHandle, id: &str, text: &str) -> Result<(), String> {
+/// Deterministic 64-bit content version hash (FNV-1a) for optimistic concurrency
+/// and stale-write detection on notes.
+pub fn content_version_hash(content: &str) -> String {
+    let mut hash: u64 = 0xcbf29ce484222325;
+    for byte in content.as_bytes() {
+        hash ^= *byte as u64;
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    format!("{:016x}", hash)
+}
+
+/// Append to an existing note with optimistic concurrency version check.
+/// Ensures all old body text is preserved byte-for-byte, idempotent duplicate prevention,
+/// and rejects stale targets if modified externally since confirmation.
+pub async fn append_with_expected_version(
+    app: &AppHandle,
+    id: &str,
+    text: &str,
+    expected_version: Option<&str>,
+) -> Result<(), String> {
     require_enabled(app)?;
     let be = backend::resolve(app)?;
     let id = id.to_string();
     let addition = text.trim().to_string();
+    let expected = expected_version.map(|s| s.to_string());
+
     tauri::async_runtime::spawn_blocking(move || {
-        let mut note = backend::get_note(&be, &id)?;
-        note.body = format!("{}\n\n---\n\n{}", note.body.trim_end(), addition);
-        backend::save_note(&be, &note)
+        let mut note = backend::get_note(&be, &id).map_err(|e| format!("Target note not found: {e}"))?;
+
+        // 1. Concurrency / stale target check
+        if let Some(exp) = &expected {
+            let actual = content_version_hash(&note.body);
+            if actual != *exp {
+                return Err(format!(
+                    "The note was modified externally since confirmation (expected version {exp}, current {actual}). Append cancelled to prevent overwriting unseen edits."
+                ));
+            }
+        }
+
+        if addition.is_empty() {
+            return Ok(());
+        }
+
+        // 2. Duplicate delivery prevention (idempotence)
+        let is_duplicate = if note.body.ends_with(&addition) {
+            let before = &note.body[..note.body.len() - addition.len()];
+            before.is_empty() || before.ends_with("\n---\n\n") || before.ends_with("\n\n---\n\n")
+        } else {
+            false
+        };
+        if is_duplicate {
+            log::info!("[GRAIN] space: ignoring duplicate append to note {id}");
+            return Ok(());
+        }
+
+        // 3. Byte-for-byte old body preservation with readable separator
+        if note.body.is_empty() {
+            note.body = addition;
+        } else if note.body.ends_with("\n\n") {
+            note.body.push_str("---\n\n");
+            note.body.push_str(&addition);
+        } else if note.body.ends_with('\n') {
+            note.body.push_str("\n---\n\n");
+            note.body.push_str(&addition);
+        } else {
+            note.body.push_str("\n\n---\n\n");
+            note.body.push_str(&addition);
+        }
+
+        backend::save_note(&be, &note).map_err(|e| e.to_string())
     })
     .await
-    .map_err(|e| e.to_string())?
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| e.to_string())??;
+
     emit_notes_changed(app);
     Ok(())
+}
+
+/// Append to an existing note, under a rule. The running-log case: a session's
+/// decisions, a list that keeps growing. Never rewrites what is already there.
+pub async fn append(app: &AppHandle, id: &str, text: &str) -> Result<(), String> {
+    append_with_expected_version(app, id, text, None).await
 }
 
 // ── The extension-facing note surface ───────────────────────────────────────

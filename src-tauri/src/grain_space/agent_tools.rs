@@ -265,15 +265,39 @@ pub async fn execute(app: &AppHandle, call: &ToolCallOut, log: &mut TurnLog) -> 
             }
         }
         "append_to_note" => {
-            let (Some(_id), Some(_text)) = (str_arg("id"), str_arg("text")) else {
+            let (Some(id), Some(_text)) = (str_arg("id"), str_arg("text")) else {
                 return NoteToolResult::Text("append_to_note needs an id and text.".to_string());
             };
+            // 1. Verify target note exists before proposing append (Section 9.1)
+            let target_note = match super::get(app, &id).await {
+                Ok(n) => n,
+                Err(e) => {
+                    return NoteToolResult::Text(format!(
+                        "Target note \"{id}\" not found: {e}. Please search for notes first to find a valid ID."
+                    ));
+                }
+            };
+
+            // 2. Bind current version hash and title to confirmation (Section 9.3 & 9.4)
+            let version = super::content_version_hash(&target_note.body);
+            let mut call_args = args.clone();
+            if let Some(obj) = call_args.as_object_mut() {
+                obj.insert(
+                    "title".to_string(),
+                    serde_json::Value::String(target_note.title.clone()),
+                );
+                obj.insert(
+                    "expected_version".to_string(),
+                    serde_json::Value::String(version),
+                );
+            }
+
             let prepared = crate::action_exec::prepare(
                 "grainspace:append_to_note",
                 crate::action_exec::GRAIN_SPACE_EXT_ID,
                 "append_to_note",
                 "Grain Space",
-                args.clone(),
+                call_args,
                 grain_core::execution::RiskClass::Confirm,
                 grain_core::execution::SideEffect::Write,
                 "builtin",
