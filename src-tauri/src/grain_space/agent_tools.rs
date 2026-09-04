@@ -162,9 +162,19 @@ pub fn specs(app: &AppHandle) -> Vec<ToolSpec> {
 ///
 /// Errors come back as TEXT, not as `Err`: a tool that cannot answer is
 /// information the model should have and reason about ("that note is gone, tell
-/// the user"), whereas failing the turn throws away a conversation over one bad
-/// argument.
-pub async fn execute(app: &AppHandle, call: &ToolCallOut, log: &mut TurnLog) -> String {
+/// The result of executing a notebook tool: either text to feed back to the
+/// model, or a host-gated confirmation awaiting the user's approval.
+pub enum NoteToolResult {
+    Text(String),
+    Confirm(crate::agent::AgentConfirm),
+}
+
+/// Execute one tool call and return what to feed back to the model.
+///
+/// Read operations (search_notes, get_note, list_collections) execute immediately
+/// and return text. Mutations (save_note, append_to_note) prepare a host-gated
+/// call and return a confirmation for the user to approve before execution.
+pub async fn execute(app: &AppHandle, call: &ToolCallOut, log: &mut TurnLog) -> NoteToolResult {
     let args: serde_json::Value =
         serde_json::from_str(&call.arguments).unwrap_or(serde_json::Value::Null);
     let str_arg = |key: &str| -> Option<String> {
@@ -178,11 +188,11 @@ pub async fn execute(app: &AppHandle, call: &ToolCallOut, log: &mut TurnLog) -> 
     match call.name.as_str() {
         "search_notes" => {
             let Some(query) = str_arg("query") else {
-                return "search_notes needs a query.".to_string();
+                return NoteToolResult::Text("search_notes needs a query.".to_string());
             };
             match super::search_for_agent(app, &query, SEARCH_LIMIT).await {
                 Ok(hits) if hits.is_empty() => {
-                    format!("No saved notes match \"{query}\".")
+                    NoteToolResult::Text(format!("No saved notes match \"{query}\"."))
                 }
                 Ok(hits) => {
                     let mut out =
@@ -205,14 +215,14 @@ pub async fn execute(app: &AppHandle, call: &ToolCallOut, log: &mut TurnLog) -> 
                             out.push_str(&format!("  about: {}\n", hit.entities.join(", ")));
                         }
                     }
-                    out
+                    NoteToolResult::Text(out)
                 }
-                Err(e) => format!("Could not search the notes: {e}"),
+                Err(e) => NoteToolResult::Text(format!("Could not search the notes: {e}")),
             }
         }
         "get_note" => {
             let Some(id) = str_arg("id") else {
-                return "get_note needs an id.".to_string();
+                return NoteToolResult::Text("get_note needs an id.".to_string());
             };
             match super::get(app, &id).await {
                 Ok(note) => {
@@ -221,72 +231,70 @@ pub async fn execute(app: &AppHandle, call: &ToolCallOut, log: &mut TurnLog) -> 
                         title: note.title.clone(),
                         saved_at: note.timestamp,
                     });
-                    format!(
+                    NoteToolResult::Text(format!(
                         "authority: saved user note (historical; not live provider state)\ntitle: {}\nsaved: {}\n\n{}",
                         note.title,
                         stamp(note.timestamp),
                         note.body
-                    )
+                    ))
                 }
-                Err(e) => format!("Could not read that note: {e}"),
+                Err(e) => NoteToolResult::Text(format!("Could not read that note: {e}")),
             }
         }
         "save_note" => {
-            let Some(body) = str_arg("body") else {
-                return "save_note needs a body.".to_string();
+            let Some(_body) = str_arg("body") else {
+                return NoteToolResult::Text("save_note needs a body.".to_string());
             };
-            let supplied = super::SuppliedMeta {
-                title: str_arg("title"),
-                summary: None,
-                question: None,
-                entities: Vec::new(),
-                collection: str_arg("collection"),
-            };
-            match super::save(app, &body, supplied).await {
-                Ok(id) => {
-                    // Read it back for the chip's real title: `save` may have
-                    // distilled one, and the chip should say what is on disk
-                    // rather than what the model proposed.
-                    if let Ok(note) = super::get(app, &id).await {
-                        log.record(Touched {
-                            note_id: note.id.clone(),
-                            title: note.title.clone(),
-                            saved_at: note.timestamp,
-                        });
-                        format!("Saved as \"{}\" (id {}).", note.title, note.id)
-                    } else {
-                        format!("Saved (id {id}).")
-                    }
+            let prepared = crate::action_exec::prepare(
+                "grainspace:save_note",
+                crate::action_exec::GRAIN_SPACE_EXT_ID,
+                "save_note",
+                "Grain Space",
+                args.clone(),
+                grain_core::execution::RiskClass::Confirm,
+                grain_core::execution::SideEffect::Write,
+                "builtin",
+            );
+            match crate::action_exec::run_or_confirm(app, prepared, "Save Note").await {
+                crate::action_exec::Dispatch::Ran(outcome) => {
+                    NoteToolResult::Text(outcome.model_summary())
                 }
-                Err(e) => format!("Could not save the note: {e}"),
+                crate::action_exec::Dispatch::AwaitConfirm(interaction) => {
+                    NoteToolResult::Confirm(crate::action_exec::to_agent_confirm(interaction))
+                }
             }
         }
         "append_to_note" => {
-            let (Some(id), Some(text)) = (str_arg("id"), str_arg("text")) else {
-                return "append_to_note needs an id and text.".to_string();
+            let (Some(_id), Some(_text)) = (str_arg("id"), str_arg("text")) else {
+                return NoteToolResult::Text("append_to_note needs an id and text.".to_string());
             };
-            match super::append(app, &id, &text).await {
-                Ok(()) => {
-                    if let Ok(note) = super::get(app, &id).await {
-                        log.record(Touched {
-                            note_id: note.id.clone(),
-                            title: note.title.clone(),
-                            saved_at: note.timestamp,
-                        });
-                        format!("Added to \"{}\".", note.title)
-                    } else {
-                        "Added.".to_string()
-                    }
+            let prepared = crate::action_exec::prepare(
+                "grainspace:append_to_note",
+                crate::action_exec::GRAIN_SPACE_EXT_ID,
+                "append_to_note",
+                "Grain Space",
+                args.clone(),
+                grain_core::execution::RiskClass::Confirm,
+                grain_core::execution::SideEffect::Write,
+                "builtin",
+            );
+            match crate::action_exec::run_or_confirm(app, prepared, "Append to Note").await {
+                crate::action_exec::Dispatch::Ran(outcome) => {
+                    NoteToolResult::Text(outcome.model_summary())
                 }
-                Err(e) => format!("Could not add to that note: {e}"),
+                crate::action_exec::Dispatch::AwaitConfirm(interaction) => {
+                    NoteToolResult::Confirm(crate::action_exec::to_agent_confirm(interaction))
+                }
             }
         }
         "list_collections" => match super::collections(app).await {
-            Ok(list) if list.is_empty() => "There are no collections yet.".to_string(),
-            Ok(list) => list.join("\n"),
-            Err(e) => format!("Could not list the collections: {e}"),
+            Ok(list) if list.is_empty() => {
+                NoteToolResult::Text("There are no collections yet.".to_string())
+            }
+            Ok(list) => NoteToolResult::Text(list.join("\n")),
+            Err(e) => NoteToolResult::Text(format!("Could not list the collections: {e}")),
         },
-        other => format!("There is no tool called {other}."),
+        other => NoteToolResult::Text(format!("There is no tool called {other}.")),
     }
 }
 
@@ -357,5 +365,40 @@ mod tests {
         for name in &expected {
             assert!(!name.is_empty());
         }
+    }
+
+    #[test]
+    fn mutation_prepared_calls_require_confirmation() {
+        let save_call = crate::action_exec::prepare(
+            "grainspace:save_note",
+            crate::action_exec::GRAIN_SPACE_EXT_ID,
+            "save_note",
+            "Grain Space",
+            serde_json::json!({ "body": "test note" }),
+            grain_core::execution::RiskClass::Confirm,
+            grain_core::execution::SideEffect::Write,
+            "builtin",
+        );
+        assert!(save_call.risk.needs_confirmation());
+        assert_eq!(
+            save_call.side_effect,
+            grain_core::execution::SideEffect::Write
+        );
+
+        let append_call = crate::action_exec::prepare(
+            "grainspace:append_to_note",
+            crate::action_exec::GRAIN_SPACE_EXT_ID,
+            "append_to_note",
+            "Grain Space",
+            serde_json::json!({ "id": "n1", "text": "added" }),
+            grain_core::execution::RiskClass::Confirm,
+            grain_core::execution::SideEffect::Write,
+            "builtin",
+        );
+        assert!(append_call.risk.needs_confirmation());
+        assert_eq!(
+            append_call.side_effect,
+            grain_core::execution::SideEffect::Write
+        );
     }
 }

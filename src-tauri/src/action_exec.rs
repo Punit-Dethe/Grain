@@ -444,6 +444,44 @@ fn confirm_interaction(prepared: &PreparedCall, title: &str) -> Interaction {
     }
 }
 
+/// Convert an [`Interaction`] to an [`crate::agent::AgentConfirm`] for the agent confirmation panel.
+pub(crate) fn to_agent_confirm(interaction: Interaction) -> crate::agent::AgentConfirm {
+    let markdown = grain_core::interaction::to_markdown(&interaction);
+    match interaction {
+        Interaction::Confirm {
+            token,
+            title,
+            summary,
+            details,
+            side_effect,
+            destinations,
+        } => crate::agent::AgentConfirm {
+            token,
+            title,
+            summary,
+            details: details
+                .into_iter()
+                .map(|field| crate::agent::AgentConfirmField {
+                    label: field.label,
+                    value: field.value,
+                })
+                .collect(),
+            side_effect,
+            destinations,
+            markdown,
+        },
+        _ => crate::agent::AgentConfirm {
+            token: String::new(),
+            title: "Confirm".to_string(),
+            summary: String::new(),
+            details: Vec::new(),
+            side_effect: String::new(),
+            destinations: Vec::new(),
+            markdown,
+        },
+    }
+}
+
 fn value_to_string(value: &Value) -> Option<String> {
     match value {
         Value::String(s) => Some(s.clone()),
@@ -577,16 +615,40 @@ async fn grain_space_execute(app: &AppHandle, prepared: &PreparedCall) -> Action
                 return invalid("append_to_note needs an id and text.");
             };
             match crate::grain_space::append(app, &id, &text).await {
+                Ok(()) => {
+                    let title = crate::grain_space::get(app, &id)
+                        .await
+                        .map(|note| note.title)
+                        .unwrap_or_else(|_| "note".to_string());
+                    ActionOutcome::Succeeded(SuccessData {
+                        source,
+                        title: Some("Updated note".to_string()),
+                        body: Some(format!("Added to \"{title}\".")),
+                        details: vec![],
+                        receipt: true,
+                    })
+                }
+                Err(e) => failed(
+                    FailureClass::Internal,
+                    &format!("Could not update that note: {e}"),
+                ),
+            }
+        }
+        "delete_note" => {
+            let Some(id) = str_arg(args, "id") else {
+                return invalid("delete_note needs an id.");
+            };
+            match crate::grain_space::delete(app, &id).await {
                 Ok(()) => ActionOutcome::Succeeded(SuccessData {
                     source,
-                    title: Some("Updated note".to_string()),
-                    body: Some("Added to the note.".to_string()),
+                    title: Some("Deleted note".to_string()),
+                    body: Some(format!("Deleted note {id}.")),
                     details: vec![],
                     receipt: true,
                 }),
                 Err(e) => failed(
                     FailureClass::Internal,
-                    &format!("Could not update that note: {e}"),
+                    &format!("Could not delete that note: {e}"),
                 ),
             }
         }
@@ -683,6 +745,13 @@ pub fn grain_space_actions() -> Vec<grain_core::capability_index::ActionInput> {
             &[("id", true), ("text", true)],
         ),
         make(
+            "delete_note",
+            "Delete a saved note",
+            ActionRisk::Confirm,
+            &["delete that note", "remove this note"],
+            &[("id", true)],
+        ),
+        make(
             "list_collections",
             "List note collections",
             ActionRisk::Safe,
@@ -756,5 +825,43 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn grain_space_mutations_require_confirmation() {
+        let decls = grain_space_actions();
+        for decl in &decls {
+            match decl.action_id.as_str() {
+                "save_note" | "append_to_note" | "delete_note" => {
+                    assert_eq!(decl.risk, grain_sdk::manifest::ActionRisk::Confirm);
+                }
+                "search_notes" | "get_note" | "list_collections" => {
+                    assert_eq!(decl.risk, grain_sdk::manifest::ActionRisk::Safe);
+                }
+                other => panic!("unexpected action id: {other}"),
+            }
+        }
+    }
+
+    #[test]
+    fn to_agent_confirm_preserves_interaction_data() {
+        let interaction = Interaction::Confirm {
+            token: "pc_test123".to_string(),
+            title: "Save Note".to_string(),
+            summary: "summary".to_string(),
+            details: vec![Field {
+                label: "title".to_string(),
+                value: "Meeting Notes".to_string(),
+            }],
+            side_effect: "Makes a change".to_string(),
+            destinations: vec!["Grain Space".to_string()],
+        };
+        let confirm = to_agent_confirm(interaction);
+        assert_eq!(confirm.token, "pc_test123");
+        assert_eq!(confirm.title, "Save Note");
+        assert_eq!(confirm.details.len(), 1);
+        assert_eq!(confirm.details[0].label, "title");
+        assert_eq!(confirm.details[0].value, "Meeting Notes");
+        assert!(confirm.markdown.contains("Meeting Notes"));
     }
 }

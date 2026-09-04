@@ -22,7 +22,6 @@ use grain_core::capability_agent::{
     MAX_DIRECTORY_EXTENSIONS, TOOL_NAME_PREFIX,
 };
 use grain_core::execution::{RiskClass, SideEffect};
-use grain_core::interaction::Interaction;
 use tauri::AppHandle;
 
 /// The result of dispatching one capability tool call: either text to feed back
@@ -383,7 +382,7 @@ async fn execute_action(
         return match crate::action_exec::run_or_confirm(app, prepared, title).await {
             crate::action_exec::Dispatch::Ran(outcome) => ToolResult::Text(outcome.model_summary()),
             crate::action_exec::Dispatch::AwaitConfirm(interaction) => {
-                ToolResult::Confirm(to_agent_confirm(interaction))
+                ToolResult::Confirm(crate::action_exec::to_agent_confirm(interaction))
             }
         };
     }
@@ -450,7 +449,7 @@ async fn execute_action(
         // `AgentReply.confirm_action` for the user to approve (§2.5). It is never
         // fed to the model as if it ran.
         crate::action_exec::Dispatch::AwaitConfirm(interaction) => {
-            ToolResult::Confirm(to_agent_confirm(interaction))
+            ToolResult::Confirm(crate::action_exec::to_agent_confirm(interaction))
         }
     }
 }
@@ -497,45 +496,6 @@ fn loaded_digest_is_current(loaded: &str, current: &str) -> bool {
 }
 
 /// Project a host `Interaction::Confirm` into the frontend confirmation type,
-/// with the interim markdown pre-rendered (renderer #1).
-fn to_agent_confirm(interaction: Interaction) -> crate::agent::AgentConfirm {
-    let markdown = grain_core::interaction::to_markdown(&interaction);
-    match interaction {
-        Interaction::Confirm {
-            token,
-            title,
-            summary,
-            details,
-            side_effect,
-            destinations,
-        } => crate::agent::AgentConfirm {
-            token,
-            title,
-            summary,
-            details: details
-                .into_iter()
-                .map(|field| crate::agent::AgentConfirmField {
-                    label: field.label,
-                    value: field.value,
-                })
-                .collect(),
-            side_effect,
-            destinations,
-            markdown,
-        },
-        // Only Confirm should reach here; render anything else as a bare prompt.
-        _ => crate::agent::AgentConfirm {
-            token: String::new(),
-            title: "Confirm".to_string(),
-            summary: String::new(),
-            details: Vec::new(),
-            side_effect: String::new(),
-            destinations: Vec::new(),
-            markdown,
-        },
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

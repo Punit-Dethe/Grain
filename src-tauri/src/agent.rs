@@ -2495,7 +2495,15 @@ async fn run_with_note_tools(
                     "Awaiting the user's approval before this runs — do not claim it is done."
                         .to_string()
                 }
-                None => crate::grain_space::agent_tools::execute(app, call, &mut log).await,
+                None => match crate::grain_space::agent_tools::execute(app, call, &mut log).await {
+                    crate::grain_space::agent_tools::NoteToolResult::Text(text) => text,
+                    crate::grain_space::agent_tools::NoteToolResult::Confirm(confirm) => {
+                        set_pending_action(app, Some(confirm.token.clone()));
+                        pending_confirm = Some(confirm);
+                        "Awaiting the user's approval before this runs — do not claim it is done."
+                            .to_string()
+                    }
+                },
             };
             entries.push(ChatEntry::ToolResult {
                 call_id: call.id.clone(),

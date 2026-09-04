@@ -14,9 +14,9 @@ This branch starts cleanly from `main`. Nothing from `codex/grain-space-memory-e
 
 | Phase | Status | Commit |
 |---|---|---|
-| 0 — Agent-first convergence and baseline | Complete | `a20e7852`, Phase 0 convergence |
-| 1 — One trusted note-tool execution path | Next | — |
-| 2 — Broad corpus and note construction | Pending | — |
+| 0 — Agent-first convergence and baseline | Complete | `a20e7852`, `6d669486` |
+| 1 — One trusted note-tool execution path | Complete | Phase 1 commit |
+| 2 — Broad corpus and note construction | Next | — |
 | 3 — Retrieval and temporal calibration | Pending | — |
 | 4 — Safe deterministic append | Pending | — |
 | 5 — End-to-end qualification | Pending | — |
@@ -54,4 +54,39 @@ This branch starts cleanly from `main`. Nothing from `codex/grain-space-memory-e
 - **An unrelated Agent request performs no Grain Space retrieval or embedding work:** PASSED. When no note tool call is generated, `execute` and `search_for_agent` are never invoked, and touched sources remain empty.
 - **A note question can call `search_notes`, optionally `get_note`, and answer with touched-note provenance:** PASSED. `agent_tools::execute` records touched note metadata into `TurnLog`, surfacing provenance chips in `AgentReply`.
 - **Existing Agent and Grain Space targeted tests pass:** PASSED (96/96 tests passed across both crates).
+
+## Phase 1 — One trusted note-tool execution path
+
+### Starting observations
+
+- `agent_tools::execute` previously contained duplicate mutation execution: `save_note` and `append_to_note` directly called `super::save` and `super::append` without host confirmation.
+- `action_exec.rs` already possessed the pure `PreparedCall`, risk evaluation, time-of-use revalidation, and host-managed confirmation machinery.
+- Unifying all mutations onto `action_exec` guarantees that the Agent, third-party extensions, and MCP respect the identical confirmation and persistence policies.
+
+### Changes
+
+- Refactored `grain_space::agent_tools::execute` to return `NoteToolResult` (`Text` or `Confirm`).
+- Routed `save_note` and `append_to_note` through `crate::action_exec::prepare` with `RiskClass::Confirm` and `SideEffect::Write`, followed by `crate::action_exec::run_or_confirm`.
+- Connected `agent_run`'s tool loop to withhold risky note mutations as `AgentConfirm`, halting the turn with a user confirmation prompt.
+- Handled confirmation resumption via `action_exec::resume`, executing the exact prepared operation via `grain_space_execute` without second-pass LLM intervention.
+- Added `delete_note` to `grain_space_actions` declaration and `grain_space_execute`.
+- Exported and deduplicated `to_agent_confirm` across `action_exec`, `capability`, and `agent_tools`.
+- Added unit tests in `action_exec` and `agent_tools` validating risk classification, confirmation preservation, and prepared call invariants.
+
+### Verification
+
+- `cargo fmt --check -- src-tauri/src/action_exec.rs src-tauri/src/agent.rs src-tauri/src/capability.rs src-tauri/src/grain_space/agent_tools.rs` — passed.
+- `cargo test --lib action_exec::` — passed, 5 tests (100% pass).
+- `cargo test --lib grain_space::agent_tools` — passed, 5 tests (100% pass).
+- `cargo test --lib agent::` — passed, 6 tests (100% pass).
+- `cargo test --lib grain_space::` — passed, 91 tests (100% pass).
+- `cargo check --lib` — passed (0 errors).
+- `npx tsc --noEmit` — passed (0 errors).
+
+### Phase 1 Gate Assessment
+
+- **No mutation bypass exists:** PASSED. All mutations (`save_note`, `append_to_note`) from the Agent loop construct host `PreparedCall` instances and route through `action_exec::run_or_confirm`. Direct unconfirmed write calls have been completely removed.
+- **Confirmation resumes the exact prepared operation without another model decision:** PASSED. User approval resumes the stored token in `action_exec::resume`, which revalidates at time-of-use and executes the exact prepared call on `grain_space_execute`.
+- **Tool results and errors remain bounded and safe for the Agent to consume:** PASSED. All outcomes return sanitized, bounded model summaries and interaction cards.
+
 
