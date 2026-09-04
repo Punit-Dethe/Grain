@@ -79,6 +79,76 @@ impl Default for ReminderState {
     }
 }
 
+fn default_schema_version() -> u32 {
+    1
+}
+
+fn default_revision() -> u64 {
+    1
+}
+
+pub fn local_timezone_name() -> String {
+    if let Ok(tz) = std::env::var("TZ") {
+        if !tz.trim().is_empty() {
+            return tz;
+        }
+    }
+    chrono::Local::now().offset().to_string()
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Type)]
+#[serde(rename_all = "snake_case")]
+pub enum NoteKind {
+    Note,
+    Daily,
+    Meeting,
+    ProjectLog,
+}
+
+impl Default for NoteKind {
+    fn default() -> Self {
+        NoteKind::Note
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Type)]
+#[serde(rename_all = "snake_case")]
+pub enum MemoryBlockKind {
+    RawCapture,
+    Append,
+    Transcript,
+    Decision,
+    Action,
+    Correction,
+    Body,
+}
+
+impl Default for MemoryBlockKind {
+    fn default() -> Self {
+        MemoryBlockKind::Body
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Type)]
+pub struct MemoryBlock {
+    pub id: String,
+    pub document_id: String,
+    pub kind: MemoryBlockKind,
+    pub text: String,
+    pub sequence: u32,
+    pub recorded_at: i64,
+    #[serde(default)]
+    pub event_start: Option<i64>,
+    #[serde(default)]
+    pub event_end: Option<i64>,
+    #[serde(default)]
+    pub source_ref: Option<String>,
+    #[serde(default)]
+    pub speaker: Option<String>,
+    #[serde(default)]
+    pub supersedes_block_id: Option<String>,
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Type)]
 pub struct Note {
     pub id: String,
@@ -113,6 +183,68 @@ pub struct Note {
     /// said".
     #[serde(default)]
     pub source: String,
+
+    // --- Schema V3 Fields (MEMORY-SYSTEM-PLAN §6.1) ---
+    #[serde(default = "default_schema_version")]
+    pub schema_version: u32,
+    #[serde(default)]
+    pub kind: NoteKind,
+    #[serde(default)]
+    pub updated_at: Option<i64>,
+    #[serde(default)]
+    pub timezone: String,
+    #[serde(default = "default_revision")]
+    pub revision: u64,
+    #[serde(default)]
+    pub content_hash: String,
+    #[serde(default)]
+    pub aliases: Vec<String>,
+    #[serde(default)]
+    pub occurrence_id: Option<String>,
+    #[serde(default)]
+    pub series_id: Option<String>,
+    #[serde(default)]
+    pub event_start: Option<i64>,
+    #[serde(default)]
+    pub event_end: Option<i64>,
+    #[serde(default)]
+    pub participants: Vec<String>,
+    #[serde(default)]
+    pub collection: Option<String>,
+    #[serde(default)]
+    pub blocks: Vec<MemoryBlock>,
+}
+
+impl Default for Note {
+    fn default() -> Self {
+        Note {
+            id: String::new(),
+            title: String::new(),
+            tldr: String::new(),
+            body: String::new(),
+            timestamp: 0,
+            todo_tags: Vec::new(),
+            reminder_state: ReminderState::default(),
+            is_pinned: false,
+            question: String::new(),
+            entities: Vec::new(),
+            source: String::new(),
+            schema_version: 1,
+            kind: NoteKind::Note,
+            updated_at: None,
+            timezone: String::new(),
+            revision: 1,
+            content_hash: String::new(),
+            aliases: Vec::new(),
+            occurrence_id: None,
+            series_id: None,
+            event_start: None,
+            event_end: None,
+            participants: Vec::new(),
+            collection: None,
+            blocks: Vec::new(),
+        }
+    }
 }
 
 /// Listing-only sidebar card (TAURI-OVERLAY-PLAN.md Phase A). NOT the locked
@@ -141,18 +273,36 @@ pub struct NoteCard {
 impl Note {
     /// A fresh raw note (Input B/C shape): blank title/tldr, stamped now.
     pub fn raw(body: String) -> Self {
+        let id = uuid::Uuid::new_v4().to_string();
+        let now = chrono::Utc::now().timestamp_millis();
+        let content_hash = super::block_codec::compute_content_hash(&body);
+        let blocks = super::block_codec::parse_blocks(&id, &body, now);
         Note {
-            id: uuid::Uuid::new_v4().to_string(),
+            id,
             title: String::new(),
             tldr: String::new(),
             body,
-            timestamp: chrono::Utc::now().timestamp_millis(),
+            timestamp: now,
             todo_tags: Vec::new(),
             reminder_state: ReminderState::default(),
             is_pinned: false,
             question: String::new(),
             entities: Vec::new(),
             source: String::new(),
+            schema_version: 3,
+            kind: NoteKind::Note,
+            updated_at: Some(now),
+            timezone: local_timezone_name(),
+            revision: 1,
+            content_hash,
+            aliases: Vec::new(),
+            occurrence_id: None,
+            series_id: None,
+            event_start: None,
+            event_end: None,
+            participants: Vec::new(),
+            collection: None,
+            blocks,
         }
     }
 }
@@ -195,17 +345,31 @@ mod tests {
         assert_eq!(
             keys,
             vec![
+                "aliases",
+                "blocks",
                 "body",
+                "collection",
+                "content_hash",
                 "entities",
+                "event_end",
+                "event_start",
                 "id",
                 "is_pinned",
+                "kind",
+                "occurrence_id",
+                "participants",
                 "question",
                 "reminder_state",
+                "revision",
+                "schema_version",
+                "series_id",
                 "source",
                 "timestamp",
+                "timezone",
                 "title",
                 "tldr",
-                "todo_tags"
+                "todo_tags",
+                "updated_at",
             ]
         );
         // An embedding must NEVER reach the note file — vectors are derived and
@@ -224,6 +388,27 @@ mod tests {
         assert_eq!(note.question, "");
         assert!(note.entities.is_empty());
         assert_eq!(note.source, "");
+        assert_eq!(note.schema_version, 1);
+        assert_eq!(note.kind, NoteKind::Note);
+        assert_eq!(note.revision, 1);
+        assert!(note.blocks.is_empty());
+    }
+
+    #[test]
+    fn notes_written_before_schema_v3_still_deserialize() {
+        let v2 = r#"{"id":"note-v2","title":"V2 Title","tldr":"Summary","body":"V2 content",
+            "timestamp":1700000000000,"todo_tags":[],"reminder_state":{"status":"none","fire_at":null},
+            "is_pinned":true,"question":"What is V2?","entities":["v2","arch"],"source":"selection"}"#;
+        let note: Note = serde_json::from_str(v2).unwrap();
+        assert_eq!(note.id, "note-v2");
+        assert_eq!(note.schema_version, 1);
+        assert_eq!(note.kind, NoteKind::Note);
+        assert_eq!(note.revision, 1);
+        assert!(note.aliases.is_empty());
+        assert!(note.participants.is_empty());
+        assert_eq!(note.content_hash, "");
+        assert_eq!(note.updated_at, None);
+        assert_eq!(note.event_start, None);
     }
 
     #[test]

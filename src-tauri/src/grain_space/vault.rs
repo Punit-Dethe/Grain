@@ -25,7 +25,8 @@ use anyhow::{anyhow, Context, Result};
 use rusqlite::{params, Connection};
 use sha2::{Digest, Sha256};
 
-use super::note::{Note, NoteCard, ReminderState, ReminderStatus, TodoTag};
+use super::block_codec;
+use super::note::{Note, NoteCard, NoteKind, ReminderState, ReminderStatus, TodoTag};
 
 /// One application-wide lock serializing every vault read/write and index op
 /// (same concurrency directive as the grain store: no WAL, single writer).
@@ -86,6 +87,11 @@ impl Vault {
 
     fn abs(&self, rel: &str) -> PathBuf {
         self.root.join(rel)
+    }
+
+    /// Explicitly adopt an imported/foreign Markdown document into Grain's managed Schema V3 format.
+    pub fn adopt_foreign_note(&self, id_or_rel: &str) -> Result<Note> {
+        adopt_foreign_note(self, id_or_rel)
     }
 }
 
@@ -180,8 +186,21 @@ fn yaml_unquote(raw: &str) -> String {
 /// `grain_id`, i.e. it is a foreign note.
 struct GrainMeta {
     grain_id: String,
+    schema_version: u32,
+    kind: NoteKind,
     tldr: String,
     created_ms: Option<i64>,
+    updated_ms: Option<i64>,
+    timezone: String,
+    revision: u64,
+    content_hash: String,
+    aliases: Vec<String>,
+    occurrence_id: Option<String>,
+    series_id: Option<String>,
+    event_start_ms: Option<i64>,
+    event_end_ms: Option<i64>,
+    participants: Vec<String>,
+    collection: Option<String>,
     pinned: bool,
     todos: Vec<TodoTag>,
     reminder: ReminderState,
@@ -254,8 +273,21 @@ fn emit_flow_list(items: &[String]) -> String {
 fn parse_grain_meta(fm: &str) -> Option<GrainMeta> {
     let mut meta = GrainMeta {
         grain_id: String::new(),
+        schema_version: 1,
+        kind: NoteKind::Note,
         tldr: String::new(),
         created_ms: None,
+        updated_ms: None,
+        timezone: String::new(),
+        revision: 1,
+        content_hash: String::new(),
+        aliases: Vec::new(),
+        occurrence_id: None,
+        series_id: None,
+        event_start_ms: None,
+        event_end_ms: None,
+        participants: Vec::new(),
+        collection: None,
         pinned: false,
         todos: Vec::new(),
         reminder: ReminderState::default(),
@@ -267,10 +299,22 @@ fn parse_grain_meta(fm: &str) -> Option<GrainMeta> {
     let mut reminder_status: Option<ReminderStatus> = None;
     let mut in_todos = false;
     let mut in_entities = false;
+    let mut in_aliases = false;
     for line in fm.lines() {
         let line = line.trim_end_matches('\r');
-        // A hand-authored block list under `entities:` — accept it even though
+        // A hand-authored block list under `aliases:` or `entities:` — accept it even though
         // we always emit the flow form, because the user's file wins.
+        if in_aliases {
+            let trimmed = line.trim_start();
+            if let Some(item) = trimmed.strip_prefix("- ") {
+                let item = yaml_unquote(item);
+                if !item.trim().is_empty() {
+                    meta.aliases.push(item.trim().to_string());
+                }
+                continue;
+            }
+            in_aliases = false;
+        }
         if in_entities {
             let trimmed = line.trim_start();
             if let Some(item) = trimmed.strip_prefix("- ") {
@@ -310,8 +354,31 @@ fn parse_grain_meta(fm: &str) -> Option<GrainMeta> {
         let value = value.trim();
         match key {
             "grain_id" => meta.grain_id = yaml_unquote(value),
+            "schema_version" => meta.schema_version = value.parse().unwrap_or(1),
+            "kind" => {
+                meta.kind = match yaml_unquote(value).as_str() {
+                    "daily" => NoteKind::Daily,
+                    "meeting" => NoteKind::Meeting,
+                    "project_log" => NoteKind::ProjectLog,
+                    _ => NoteKind::Note,
+                };
+            }
             "tldr" => meta.tldr = yaml_unquote(value),
             "created" => meta.created_ms = parse_local_datetime_ms(&yaml_unquote(value)),
+            "updated" => meta.updated_ms = parse_local_datetime_ms(&yaml_unquote(value)),
+            "timezone" => meta.timezone = yaml_unquote(value),
+            "revision" => meta.revision = value.parse().unwrap_or(1),
+            "content_hash" => meta.content_hash = yaml_unquote(value),
+            "aliases" => {
+                meta.aliases = parse_flow_list(value);
+                in_aliases = meta.aliases.is_empty();
+            }
+            "occurrence_id" => meta.occurrence_id = Some(yaml_unquote(value)).filter(|s| !s.is_empty()),
+            "series_id" => meta.series_id = Some(yaml_unquote(value)).filter(|s| !s.is_empty()),
+            "event_start" => meta.event_start_ms = parse_local_datetime_ms(&yaml_unquote(value)),
+            "event_end" => meta.event_end_ms = parse_local_datetime_ms(&yaml_unquote(value)),
+            "participants" => meta.participants = parse_flow_list(value),
+            "collection" => meta.collection = Some(yaml_unquote(value)).filter(|s| !s.is_empty()),
             "pinned" => meta.pinned = value.eq_ignore_ascii_case("true"),
             "todos" => in_todos = value.is_empty(),
             "question" => meta.question = yaml_unquote(value),
@@ -355,10 +422,23 @@ fn parse_grain_meta(fm: &str) -> Option<GrainMeta> {
 /// Frontmatter keys Grain owns and re-emits itself. Any OTHER key in an
 /// existing file's frontmatter is the user's own (Obsidian `tags`, `aliases`,
 /// `cssclass`, …) and must survive a save — see [`preserved_frontmatter`].
-const GRAIN_FM_KEYS: [&str; 10] = [
+const GRAIN_FM_KEYS: [&str; 23] = [
     "grain_id",
+    "schema_version",
+    "kind",
     "tldr",
     "created",
+    "updated",
+    "timezone",
+    "revision",
+    "content_hash",
+    "aliases",
+    "occurrence_id",
+    "series_id",
+    "event_start",
+    "event_end",
+    "participants",
+    "collection",
     "pinned",
     "todos",
     "reminder",
@@ -410,6 +490,16 @@ fn preserved_frontmatter(existing_text: &str) -> Vec<String> {
 fn emit_markdown_with(note: &Note, preserved: &[String]) -> String {
     let mut fm = String::from("---\n");
     fm.push_str(&format!("grain_id: {}\n", note.id));
+    if note.schema_version >= 3 {
+        fm.push_str(&format!("schema_version: {}\n", note.schema_version));
+        let kind_str = match note.kind {
+            NoteKind::Note => "note",
+            NoteKind::Daily => "daily",
+            NoteKind::Meeting => "meeting",
+            NoteKind::ProjectLog => "project_log",
+        };
+        fm.push_str(&format!("kind: {kind_str}\n"));
+    }
     if !note.tldr.trim().is_empty() {
         fm.push_str(&format!("tldr: {}\n", yaml_quote(note.tldr.trim())));
     }
@@ -423,10 +513,51 @@ fn emit_markdown_with(note: &Note, preserved: &[String]) -> String {
     if !note.entities.is_empty() {
         fm.push_str(&format!("entities: {}\n", emit_flow_list(&note.entities)));
     }
+    if !note.aliases.is_empty() {
+        fm.push_str(&format!("aliases: {}\n", emit_flow_list(&note.aliases)));
+    }
+    if !note.participants.is_empty() {
+        fm.push_str(&format!("participants: {}\n", emit_flow_list(&note.participants)));
+    }
+    if let Some(ref col) = note.collection {
+        if !col.trim().is_empty() {
+            fm.push_str(&format!("collection: {}\n", yaml_quote(col.trim())));
+        }
+    }
+    if let Some(ref occ) = note.occurrence_id {
+        if !occ.trim().is_empty() {
+            fm.push_str(&format!("occurrence_id: {}\n", yaml_quote(occ.trim())));
+        }
+    }
+    if let Some(ref ser) = note.series_id {
+        if !ser.trim().is_empty() {
+            fm.push_str(&format!("series_id: {}\n", yaml_quote(ser.trim())));
+        }
+    }
+    if let Some(start) = note.event_start {
+        fm.push_str(&format!("event_start: {}\n", format_local_datetime(start)));
+    }
+    if let Some(end) = note.event_end {
+        fm.push_str(&format!("event_end: {}\n", format_local_datetime(end)));
+    }
     fm.push_str(&format!(
         "created: {}\n",
         format_local_datetime(note.timestamp)
     ));
+    if let Some(upd) = note.updated_at {
+        if upd != note.timestamp {
+            fm.push_str(&format!("updated: {}\n", format_local_datetime(upd)));
+        }
+    }
+    if !note.timezone.trim().is_empty() {
+        fm.push_str(&format!("timezone: {}\n", yaml_quote(note.timezone.trim())));
+    }
+    if note.revision > 1 || note.schema_version >= 3 {
+        fm.push_str(&format!("revision: {}\n", note.revision));
+    }
+    if !note.content_hash.is_empty() {
+        fm.push_str(&format!("content_hash: {}\n", note.content_hash));
+    }
     if note.is_pinned {
         fm.push_str("pinned: true\n");
     }
@@ -587,19 +718,44 @@ fn read_md_note(rel_path: &str, text: &str, mtime_ms: i64) -> (Note, bool) {
     let (fm, body) = split_frontmatter(text);
     let body = body.trim_start_matches('\n').trim_end().to_string();
     if let Some(meta) = fm.and_then(parse_grain_meta) {
+        let ts = meta.created_ms.unwrap_or(mtime_ms);
+        let blocks = block_codec::parse_blocks(&meta.grain_id, &body, ts);
+        let content_hash = if meta.content_hash.is_empty() {
+            if body.is_empty() {
+                String::new()
+            } else {
+                block_codec::compute_content_hash(&body)
+            }
+        } else {
+            meta.content_hash
+        };
         return (
             Note {
                 id: meta.grain_id,
                 title: stem,
                 tldr: meta.tldr,
                 body,
-                timestamp: meta.created_ms.unwrap_or(mtime_ms),
+                timestamp: ts,
                 todo_tags: meta.todos,
                 reminder_state: meta.reminder,
                 is_pinned: meta.pinned,
                 question: meta.question,
                 entities: meta.entities,
                 source: meta.source,
+                schema_version: meta.schema_version,
+                kind: meta.kind,
+                updated_at: meta.updated_ms,
+                timezone: meta.timezone,
+                revision: meta.revision,
+                content_hash,
+                aliases: meta.aliases,
+                occurrence_id: meta.occurrence_id,
+                series_id: meta.series_id,
+                event_start: meta.event_start_ms,
+                event_end: meta.event_end_ms,
+                participants: meta.participants,
+                collection: meta.collection,
+                blocks,
             },
             true,
         );
@@ -607,9 +763,40 @@ fn read_md_note(rel_path: &str, text: &str, mtime_ms: i64) -> (Note, bool) {
     // A foreign note: never distilled, because distillation means writing to a
     // file we do not own (the v1 read-only rule). It still participates in
     // lexical and vector retrieval, and the graph reaches it by name match.
+    let fid = foreign_id(rel_path);
+    let blocks = block_codec::parse_blocks(&fid, &body, mtime_ms);
+    let content_hash = if body.is_empty() {
+        String::new()
+    } else {
+        block_codec::compute_content_hash(&body)
+    };
+    let mut foreign_aliases = Vec::new();
+    if let Some(fm_text) = fm {
+        let mut in_foreign_aliases = false;
+        for line in fm_text.lines() {
+            let line = line.trim_end_matches('\r');
+            if in_foreign_aliases {
+                let trimmed = line.trim_start();
+                if let Some(item) = trimmed.strip_prefix("- ") {
+                    let item = yaml_unquote(item);
+                    if !item.trim().is_empty() {
+                        foreign_aliases.push(item.trim().to_string());
+                    }
+                    continue;
+                }
+                in_foreign_aliases = false;
+            }
+            if let Some((k, v)) = line.split_once(':') {
+                if k.trim() == "aliases" {
+                    foreign_aliases = parse_flow_list(v.trim());
+                    in_foreign_aliases = foreign_aliases.is_empty();
+                }
+            }
+        }
+    }
     (
         Note {
-            id: foreign_id(rel_path),
+            id: fid,
             title: stem,
             tldr: String::new(),
             body,
@@ -620,6 +807,20 @@ fn read_md_note(rel_path: &str, text: &str, mtime_ms: i64) -> (Note, bool) {
             question: String::new(),
             entities: Vec::new(),
             source: String::new(),
+            schema_version: 1,
+            kind: NoteKind::Note,
+            updated_at: None,
+            timezone: String::new(),
+            revision: 0,
+            content_hash,
+            aliases: foreign_aliases,
+            occurrence_id: None,
+            series_id: None,
+            event_start: None,
+            event_end: None,
+            participants: Vec::new(),
+            collection: None,
+            blocks,
         },
         false,
     )
@@ -1488,10 +1689,20 @@ pub fn save_note(v: &Vault, note: &Note) -> Result<()> {
         }
     };
 
+    let mut note_to_save = note.clone();
+    if note_to_save.schema_version >= 3 {
+        if note_to_save.content_hash.is_empty() {
+            note_to_save.content_hash = block_codec::compute_content_hash(&note_to_save.body);
+        }
+        if note_to_save.blocks.is_empty() && !note_to_save.body.trim().is_empty() {
+            note_to_save.blocks = block_codec::parse_blocks(&note_to_save.id, &note_to_save.body, note_to_save.timestamp);
+        }
+    }
+
     // Two-way-sync-safe write: merge into any concurrent external edit rather
     // than overwrite it. The written text (clean-merge result or ours) becomes
     // the new merge base.
-    let written = safe_write(&abs, base.as_deref(), &emit_markdown_with(note, &preserved))?;
+    let written = safe_write(&abs, base.as_deref(), &emit_markdown_with(&note_to_save, &preserved))?;
 
     let rel = rel_key(&v.root, &abs)?;
     let mtime = file_mtime_ms(&abs).unwrap_or(0);
@@ -1533,6 +1744,92 @@ pub fn delete_note(v: &Vault, id: &str) -> Result<()> {
             Ok(())
         }
     }
+}
+
+/// Explicitly adopt an imported/foreign Markdown document into Grain's managed Schema V3 format.
+///
+/// If the document lives outside Grain's folder, it is moved into Grain's folder so that
+/// it can safely be mutated while preserving the read-only invariant for external notes.
+/// Existing user frontmatter (tags, aliases, etc.) is preserved.
+/// The document receives a fresh `grain_id`, `schema_version = 3`, `revision = 1`, and
+/// a normalized content hash. Its body is parsed into blocks.
+pub fn adopt_foreign_note(v: &Vault, id_or_rel: &str) -> Result<Note> {
+    ensure_vault(v)?;
+    let _guard = VAULT_LOCK.lock().unwrap();
+    let conn = open_index(v)?;
+
+    let (rel, foreign) = if let Some(pair) = path_of(&conn, id_or_rel)? {
+        pair
+    } else {
+        // Direct relative path or newly added file
+        let abs = v.abs(id_or_rel);
+        if abs.is_file() {
+            let r = rel_key(&v.root, &abs)?;
+            let text = fs::read_to_string(&abs).with_context(|| format!("read {}", abs.display()))?;
+            let mtime = file_mtime_ms(&abs).unwrap_or(0);
+            let (_, grain_owned) = read_md_note(&r, &text, mtime);
+            (r, !grain_owned)
+        } else {
+            reconcile_locked(v, &conn)?;
+            path_of(&conn, id_or_rel)?.ok_or_else(|| anyhow!("note not found for adoption: {id_or_rel}"))?
+        }
+    };
+
+    let abs = v.abs(&rel);
+    let text = fs::read_to_string(&abs).with_context(|| format!("read {}", abs.display()))?;
+    let mtime = file_mtime_ms(&abs).unwrap_or_else(|| chrono::Utc::now().timestamp_millis());
+    let (mut note, grain_owned) = read_md_note(&rel, &text, mtime);
+
+    if grain_owned && !foreign {
+        return Ok(note);
+    }
+
+    let preserved = preserved_frontmatter(&text);
+
+    // If outside Grain's folder, move it into Grain's folder
+    let target_abs = if in_grain_folder(v, &rel) {
+        abs.clone()
+    } else {
+        let stem = sanitize_filename(&note.title);
+        let dir = v.grain_dir();
+        fs::create_dir_all(&dir).context("create Grain folder in vault")?;
+        let target = unique_path(&dir, &stem, None);
+        fs::rename(&abs, &target).with_context(|| format!("move to {}", target.display()))?;
+        let _ = index_remove(&conn, &note.id);
+        target
+    };
+
+    let new_id = uuid::Uuid::new_v4().to_string();
+    let now = chrono::Utc::now().timestamp_millis();
+
+    note.id = new_id.clone();
+    note.schema_version = 3;
+    note.kind = NoteKind::Note;
+    note.timestamp = now;
+    note.updated_at = Some(now);
+    note.revision = 1;
+    note.content_hash = block_codec::compute_content_hash(&note.body);
+    note.blocks = block_codec::parse_blocks(&new_id, &note.body, now);
+    if note.source.is_empty() {
+        note.source = "adopted".into();
+    }
+
+    let rendered = emit_markdown_with(&note, &preserved);
+    atomic_write(&target_abs, &rendered)?;
+
+    let target_rel = rel_key(&v.root, &target_abs)?;
+    let target_mtime = file_mtime_ms(&target_abs).unwrap_or(now);
+    let size = fs::metadata(&target_abs).map(|m| m.len() as i64).unwrap_or(0);
+
+    let (mut indexed, _) = read_md_note(&target_rel, &rendered, target_mtime);
+    indexed.title = target_abs
+        .file_stem()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_else(|| note.title.clone());
+
+    index_upsert(&conn, &indexed, &target_rel, target_mtime, size, false, &rendered)?;
+
+    Ok(indexed)
 }
 
 // -- collections ------------------------------------------------------------
@@ -2402,6 +2699,7 @@ pub fn note_similarities(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::grain_space::note::MemoryBlockKind;
 
     fn temp_vault(tag: &str) -> Vault {
         let dir =
@@ -3521,6 +3819,116 @@ mod tests {
         let _ = outsider;
         let fid = foreign_id("Outsider.md");
         assert!(move_note_to_folder(&v, &fid, Some("Work")).is_err());
+        cleanup(&v);
+    }
+
+    #[test]
+    fn schema_v3_frontmatter_full_roundtrip() {
+        let mut note = Note::raw("Meeting minutes with Bob.\nDiscussed OAuth PKCE flow.".into());
+        note.id = "grain_test_v3_001".into();
+        note.title = "OAuth Sync".into();
+        note.schema_version = 3;
+        note.kind = NoteKind::Meeting;
+        note.revision = 4;
+        note.timezone = "America/New_York".into();
+        note.aliases = vec!["PKCE Review".into(), "OAuth Meeting".into()];
+        note.occurrence_id = Some("occ-test-99".into());
+        note.series_id = Some("series-auth-w".into());
+        note.event_start = Some(1710000000000);
+        note.event_end = Some(1710003600000);
+        note.participants = vec!["Alice".into(), "Bob".into()];
+        note.collection = Some("Architecture".into());
+        note.content_hash = block_codec::compute_content_hash(&note.body);
+        note.blocks = block_codec::parse_blocks(&note.id, &note.body, note.timestamp);
+
+        let md = emit_markdown_with(&note, &["custom_key: preserved_val".to_string()]);
+        assert!(md.contains("schema_version: 3"));
+        assert!(md.contains("kind: meeting"));
+        assert!(md.contains("revision: 4"));
+        assert!(md.contains("timezone: \"America/New_York\""));
+        assert!(md.contains("aliases: [PKCE Review, OAuth Meeting]"));
+        assert!(md.contains("occurrence_id: \"occ-test-99\""));
+        assert!(md.contains("series_id: \"series-auth-w\""));
+        assert!(md.contains("participants: [Alice, Bob]"));
+        assert!(md.contains("collection: \"Architecture\""));
+        assert!(md.contains("custom_key: preserved_val"));
+
+        let (read_back, grain_owned) = read_md_note("Architecture/OAuth Sync.md", &md, 0);
+        assert!(grain_owned);
+        assert_eq!(read_back.id, "grain_test_v3_001");
+        assert_eq!(read_back.schema_version, 3);
+        assert_eq!(read_back.kind, NoteKind::Meeting);
+        assert_eq!(read_back.revision, 4);
+        assert_eq!(read_back.timezone, "America/New_York");
+        assert_eq!(read_back.aliases, vec!["PKCE Review", "OAuth Meeting"]);
+        assert_eq!(read_back.occurrence_id.as_deref(), Some("occ-test-99"));
+        assert_eq!(read_back.series_id.as_deref(), Some("series-auth-w"));
+        assert_eq!(read_back.event_start, Some(1710000000000));
+        assert_eq!(read_back.event_end, Some(1710003600000));
+        assert_eq!(read_back.participants, vec!["Alice", "Bob"]);
+        assert_eq!(read_back.collection.as_deref(), Some("Architecture"));
+        assert_eq!(read_back.content_hash, note.content_hash);
+        assert_eq!(read_back.blocks.len(), 1);
+        assert_eq!(read_back.blocks[0].kind, MemoryBlockKind::Body);
+    }
+
+    #[test]
+    fn legacy_notes_without_schema_v3_load_cleanly() {
+        let text = "---\ngrain_id: legacy_id_123\ntldr: Legacy Note\ncreated: 2026-02-01T10:00:00.000\n---\nSimple un-bracketed body.";
+        let (note, owned) = read_md_note("Legacy.md", text, 999);
+        assert!(owned);
+        assert_eq!(note.schema_version, 1);
+        assert_eq!(note.kind, NoteKind::Note);
+        assert_eq!(note.revision, 1);
+        assert!(!note.content_hash.is_empty(), "content_hash generated from body");
+        assert_eq!(note.blocks.len(), 1);
+        assert_eq!(note.blocks[0].text, "Simple un-bracketed body.");
+    }
+
+    #[test]
+    fn adopt_foreign_note_moves_and_promotes_cleanly() {
+        let v = temp_vault("adopt_foreign");
+        let foreign_file = v.root.join("Imported Guide.md");
+        fs::write(
+            &foreign_file,
+            "---\ntags:\n  - obsidian\n  - docs\naliases: [Guide]\ncustom_prop: keep_me\n---\n# Guide\nDetailed guide content.",
+        )
+        .unwrap();
+
+        // 1. Initially recognized as foreign
+        let foreign_text = fs::read_to_string(&foreign_file).unwrap();
+        let (initial, grain_owned) = read_md_note("Imported Guide.md", &foreign_text, 0);
+        assert!(!grain_owned);
+        assert!(initial.id.starts_with('f'));
+
+        // 2. Explicit adoption
+        let adopted = adopt_foreign_note(&v, "Imported Guide.md").unwrap();
+        assert!(!adopted.id.starts_with('f'));
+        assert_eq!(adopted.schema_version, 3);
+        assert_eq!(adopted.revision, 1);
+        assert_eq!(adopted.kind, NoteKind::Note);
+        assert_eq!(adopted.source, "adopted");
+        assert!(!adopted.content_hash.is_empty());
+        assert_eq!(adopted.blocks.len(), 1);
+
+        // 3. File was moved into Grain folder
+        assert!(!foreign_file.exists(), "original foreign path was moved");
+        let grain_file = v.grain_dir().join("Imported Guide.md");
+        assert!(grain_file.exists(), "now lives in Grain folder");
+
+        // 4. Custom Obsidian frontmatter was preserved on disk
+        let on_disk = fs::read_to_string(&grain_file).unwrap();
+        assert!(on_disk.contains("tags:"));
+        assert!(on_disk.contains("- obsidian"));
+        assert!(on_disk.contains("custom_prop: keep_me"));
+        assert!(on_disk.contains("schema_version: 3"));
+
+        // 5. Listed as grain-owned (not readonly)
+        let cards = list_cards(&v).unwrap();
+        let card = cards.into_iter().find(|c| c.title == "Imported Guide").unwrap();
+        assert!(!card.readonly, "adopted note is editable and managed");
+        assert_eq!(card.id, adopted.id);
+
         cleanup(&v);
     }
 }

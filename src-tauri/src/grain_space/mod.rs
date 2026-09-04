@@ -15,6 +15,7 @@
 
 pub mod agent_tools;
 pub mod backend;
+pub mod block_codec;
 pub mod capture;
 pub mod commands;
 pub mod embed;
