@@ -31,7 +31,24 @@ const META_SAMPLE_CHARS: usize = 4000;
 /// no usable LLM (Input B / quick-add) or extraction fails, so a note — and the
 /// Recall source chip that cites it — is never blank. No network, no model.
 pub(crate) fn fallback_title(body: &str) -> String {
-    let title: String = body
+    let stripped = body.trim_start();
+    let cleaned = if stripped.starts_with('#') {
+        stripped.trim_start_matches('#').trim_start()
+    } else if let Some(rest) = stripped.strip_prefix("- [ ]") {
+        rest.trim_start()
+    } else if let Some(rest) = stripped.strip_prefix("- [x]") {
+        rest.trim_start()
+    } else if let Some(rest) = stripped.strip_prefix("-") {
+        rest.trim_start()
+    } else if let Some(rest) = stripped.strip_prefix("*") {
+        rest.trim_start()
+    } else if let Some(rest) = stripped.strip_prefix(">") {
+        rest.trim_start()
+    } else {
+        stripped
+    };
+
+    let title: String = cleaned
         .split_whitespace()
         .take(3)
         .collect::<Vec<_>>()
@@ -724,6 +741,183 @@ fn reformat_lost_content(raw: &str, formatted: &str) -> bool {
     r >= 40 && f.saturating_mul(2) < r
 }
 
+/// Extract URLs from text.
+fn extract_urls(text: &str) -> Vec<String> {
+    let mut urls = Vec::new();
+    for word in text.split_whitespace() {
+        let trimmed = word.trim_matches(|c: char| {
+            c == '('
+                || c == ')'
+                || c == '['
+                || c == ']'
+                || c == '<'
+                || c == '>'
+                || c == '"'
+                || c == '\''
+                || c == ','
+                || c == '.'
+        });
+        if (trimmed.starts_with("http://") || trimmed.starts_with("https://")) && trimmed.len() > 8
+        {
+            urls.push(trimmed.to_string());
+        }
+    }
+    urls
+}
+
+/// Extract significant numeric tokens (e.g. "555-0142", "$349", "150mg", "2026-09-04", "4000", "14.2", "10%").
+fn extract_significant_numbers(text: &str) -> Vec<String> {
+    let mut nums = Vec::new();
+    for word in text.split_whitespace() {
+        let trimmed = word.trim_matches(|c: char| {
+            c == '('
+                || c == ')'
+                || c == '['
+                || c == ']'
+                || c == '"'
+                || c == '\''
+                || c == ','
+                || c == '.'
+                || c == ';'
+                || c == ':'
+        });
+        let digit_count = trimmed.chars().filter(|c| c.is_ascii_digit()).count();
+        if digit_count >= 2 {
+            if !nums.contains(&trimmed.to_string()) {
+                nums.push(trimmed.to_string());
+            }
+        } else if digit_count == 1 {
+            let t = trimmed.to_ascii_lowercase();
+            if trimmed.starts_with('$')
+                || trimmed.starts_with('€')
+                || trimmed.starts_with('£')
+                || t.ends_with('%')
+                || t.ends_with("mg")
+                || t.ends_with("kg")
+                || t.ends_with("ml")
+                || t.ends_with("cm")
+                || t.ends_with("mm")
+                || t.ends_with("km")
+                || t.ends_with("am")
+                || t.ends_with("pm")
+                || t.ends_with("st")
+                || t.ends_with("nd")
+                || t.ends_with("rd")
+                || t.ends_with("th")
+            {
+                if !nums.contains(&trimmed.to_string()) {
+                    nums.push(trimmed.to_string());
+                }
+            }
+        }
+    }
+    nums
+}
+
+/// Extract quoted phrases of at least 6 characters from text.
+fn extract_quotes(text: &str) -> Vec<String> {
+    let mut quotes = Vec::new();
+    let quote_pairs = [('"', '"'), ('\'', '\''), ('“', '”'), ('‘', '’')];
+    for (start_q, end_q) in quote_pairs {
+        let mut start_idx = None;
+        for (i, c) in text.char_indices() {
+            if c == start_q && start_idx.is_none() {
+                start_idx = Some(i + c.len_utf8());
+            } else if c == end_q && start_idx.is_some() {
+                let start = start_idx.take().unwrap();
+                if i > start {
+                    let quoted = text[start..i].trim();
+                    if quoted.len() >= 6 && !quotes.contains(&quoted.to_string()) {
+                        quotes.push(quoted.to_string());
+                    }
+                }
+            }
+        }
+    }
+    quotes
+}
+
+/// Extract explicit uncertainty markers present in text.
+fn extract_uncertainty_markers(text: &str) -> Vec<&'static str> {
+    const CANDIDATES: &[&str] = &[
+        "maybe",
+        "perhaps",
+        "possibly",
+        "tentative",
+        "tentatively",
+        "not sure",
+        "unclear",
+        "approx",
+        "approximately",
+        "roughly",
+    ];
+    let lower = text.to_lowercase();
+    let mut found = Vec::new();
+    for &cand in CANDIDATES {
+        if lower.contains(cand) {
+            found.push(cand);
+        }
+    }
+    if text.contains('?') {
+        found.push("?");
+    }
+    found
+}
+
+/// Material content check: returns `true` if a formatted body dropped critical
+/// material facts from the raw input:
+/// - Shrink: lost more than half of the length (for bodies >= 40 chars).
+/// - URLs: any URL in raw that is missing in formatted.
+/// - Numbers & measurements: significant numeric tokens in raw (e.g. phone numbers,
+///   amounts, doses, years, ratios) missing in formatted.
+/// - Quotations: quoted phrases in raw missing in formatted.
+/// - Uncertainty markers: uncertainty words in raw ("maybe", "tentative", etc., and "?")
+///   missing in formatted.
+pub(crate) fn reformat_lost_material_content(raw: &str, formatted: &str) -> bool {
+    let raw = raw.trim();
+    let formatted = formatted.trim();
+
+    // 1. Overall length shrink check
+    if reformat_lost_content(raw, formatted) {
+        return true;
+    }
+
+    // 2. URLs must be preserved (case-insensitive)
+    let fmt_lower = formatted.to_lowercase();
+    for url in extract_urls(raw) {
+        if !fmt_lower.contains(&url.to_lowercase()) {
+            log::warn!("[GRAIN] space compose: reformat dropped URL: {url}");
+            return true;
+        }
+    }
+
+    // 3. Significant numbers, dates, and measurements
+    for num in extract_significant_numbers(raw) {
+        if !formatted.contains(&num) {
+            log::warn!("[GRAIN] space compose: reformat dropped numeric token: {num}");
+            return true;
+        }
+    }
+
+    // 4. Quotations
+    for quote in extract_quotes(raw) {
+        if !fmt_lower.contains(&quote.to_lowercase()) {
+            log::warn!("[GRAIN] space compose: reformat dropped quote: {quote}");
+            return true;
+        }
+    }
+
+    // 5. Uncertainty markers
+    for marker in extract_uncertainty_markers(raw) {
+        if !fmt_lower.contains(&marker.to_lowercase()) {
+            log::warn!("[GRAIN] space compose: reformat dropped uncertainty: {marker}");
+            return true;
+        }
+    }
+
+    false
+}
+
 /// Degrade path: append the change to the body verbatim, keep everything else.
 fn raw_append(current: &Note, change: &str) -> Note {
     let mut note = current.clone();
@@ -783,7 +977,7 @@ pub(crate) async fn compose_note(
                 let formatted = formatted.trim();
                 if structure
                     && !formatted.is_empty()
-                    && !reformat_lost_content(&note.body, formatted)
+                    && !reformat_lost_material_content(&note.body, formatted)
                 {
                     note.body = formatted.to_string();
                 }
@@ -797,6 +991,13 @@ pub(crate) async fn compose_note(
     if note.title.trim().is_empty() {
         note.title = fallback_title(&note.body);
     }
+    // Enforce hard bounds on presentation fields (Section 6 quality requirements).
+    note.title = note.title.split_whitespace().collect::<Vec<_>>().join(" ");
+    note.title = note.title.chars().take(80).collect();
+    if note.title.is_empty() {
+        note.title = fallback_title(&note.body);
+    }
+    note.tldr = note.tldr.trim().chars().take(240).collect();
     (note, relations)
 }
 
@@ -1183,5 +1384,114 @@ mod tests {
         .apply_to(&cur, false);
         assert_eq!(merged.todo_tags.len(), 1); // blank dropped
         assert!(merged.todo_tags[0].done);
+    }
+
+    #[test]
+    fn fallback_title_cleans_markdown_prefixes() {
+        assert_eq!(fallback_title("# Hello World today"), "Hello World today");
+        assert_eq!(
+            fallback_title("## Meeting Notes for Q3"),
+            "Meeting Notes for"
+        );
+        assert_eq!(fallback_title("- [ ] buy milk and eggs"), "buy milk and");
+        assert_eq!(fallback_title("* Important reminder"), "Important reminder");
+        assert_eq!(fallback_title("> Quote of the day"), "Quote of the");
+    }
+
+    #[test]
+    fn reformat_lost_material_content_preserves_urls() {
+        let raw = "Read this document: https://example.com/spec/v2 for more details";
+        let ok_fmt =
+            "## Reference\n\nRead this document: https://example.com/spec/v2 for more details";
+        assert!(!reformat_lost_material_content(raw, ok_fmt));
+
+        let bad_fmt = "## Reference\n\nRead the document for more details on the specification.";
+        assert!(reformat_lost_material_content(raw, bad_fmt));
+    }
+
+    #[test]
+    fn reformat_lost_material_content_preserves_numbers_and_dates() {
+        let raw = "Patient taking Amlodipine 5mg QD, BP is 140/90, next visit 2026-10-12, room 302, cost $42.50";
+        let ok_fmt = "- Medication: Amlodipine 5mg QD\n- BP: 140/90\n- Next visit: 2026-10-12\n- Room: 302\n- Cost: $42.50";
+        assert!(!reformat_lost_material_content(raw, ok_fmt));
+
+        // Missing dose / BP / date
+        let bad_fmt = "- Medication: Amlodipine\n- Status: elevated BP\n- Next visit scheduled next month\n- Room: 302\n- Cost: $42.50";
+        assert!(reformat_lost_material_content(raw, bad_fmt));
+    }
+
+    #[test]
+    fn reformat_lost_material_content_preserves_quotes() {
+        let raw = "Feynman once said: \"The first principle is that you must not fool yourself\" during his speech.";
+        let ok_fmt =
+            "> \"The first principle is that you must not fool yourself\"\n\n— Richard Feynman";
+        assert!(!reformat_lost_material_content(raw, ok_fmt));
+
+        let bad_fmt =
+            "Feynman talked about self deception in scientific research during his speech.";
+        assert!(reformat_lost_material_content(raw, bad_fmt));
+    }
+
+    #[test]
+    fn reformat_lost_material_content_preserves_uncertainty() {
+        let raw =
+            "We might launch next Tuesday, tentatively scheduled, maybe postponed if bugs arise?";
+        let ok_fmt =
+            "- Launch: next Tuesday (tentatively scheduled, maybe postponed if bugs arise?)";
+        assert!(!reformat_lost_material_content(raw, ok_fmt));
+
+        let bad_fmt = "- Launch: confirmed for next Tuesday.";
+        assert!(reformat_lost_material_content(raw, bad_fmt));
+    }
+
+    #[test]
+    fn phase_2_gate_explicit_capture_model_disabled_preserves_and_retrieves() {
+        use crate::grain_space::vault::{self, Vault};
+
+        let raw_capture = "Emergency contact Dr Alvarez at 408-555-0199, prescription Amlodipine 150mg on 2026-09-04 at cost $349.99. Reference: https://grain.local/spec/v2. Note: \"Always verify facts against active code\", tentatively scheduled maybe?";
+
+        // 1. Model disabled fallback derivation
+        let mut note = Note::raw(raw_capture.to_string());
+        note.title = fallback_title(&note.body);
+        assert!(!note.title.is_empty(), "fallback title must never be empty");
+        assert_eq!(note.body, raw_capture, "body must remain 100% verbatim");
+
+        // 2. Save note to an isolated test vault
+        let temp_dir = std::env::temp_dir().join(format!("grain_p2_gate_{}", uuid::Uuid::new_v4()));
+        let vault = Vault {
+            root: temp_dir.join("vault"),
+            folder: "Grain".to_string(),
+            index_base: temp_dir.join("appdata"),
+            native: false,
+        };
+        std::fs::create_dir_all(&vault.root).unwrap();
+        std::fs::create_dir_all(&vault.index_base).unwrap();
+
+        vault::save_note(&vault, &note).expect("save note must succeed");
+
+        // 3. Immediately retrievable through lexical search
+        let hit_phone = vault::search_notes_natural(&vault, "555-0199", None).unwrap();
+        assert_eq!(hit_phone.len(), 1, "must find note by phone number");
+        assert_eq!(hit_phone[0].id, note.id);
+
+        let hit_price = vault::search_notes_natural(&vault, "$349.99", None).unwrap();
+        assert_eq!(hit_price.len(), 1, "must find note by price");
+
+        let hit_url = vault::search_notes_natural(&vault, "grain.local/spec", None).unwrap();
+        assert_eq!(hit_url.len(), 1, "must find note by URL fragment");
+
+        let hit_quote =
+            vault::search_notes_natural(&vault, "verify facts active code", None).unwrap();
+        assert_eq!(hit_quote.len(), 1, "must find note by quote fragment");
+
+        let hit_uncertainty =
+            vault::search_notes_natural(&vault, "tentatively scheduled maybe", None).unwrap();
+        assert_eq!(
+            hit_uncertainty.len(),
+            1,
+            "must find note by uncertainty terms"
+        );
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
     }
 }

@@ -18,6 +18,7 @@ pub mod backend;
 pub mod capture;
 pub mod commands;
 pub mod embed;
+pub mod eval;
 pub mod graph;
 pub mod note;
 pub mod recall;

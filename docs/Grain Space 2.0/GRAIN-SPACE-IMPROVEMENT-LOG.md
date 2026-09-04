@@ -15,9 +15,9 @@ This branch starts cleanly from `main`. Nothing from `codex/grain-space-memory-e
 | Phase | Status | Commit |
 |---|---|---|
 | 0 — Agent-first convergence and baseline | Complete | `a20e7852`, `6d669486` |
-| 1 — One trusted note-tool execution path | Complete | Phase 1 commit |
-| 2 — Broad corpus and note construction | Next | — |
-| 3 — Retrieval and temporal calibration | Pending | — |
+| 1 — One trusted note-tool execution path | Complete | `899175ee` |
+| 2 — Broad corpus and note construction | Complete | Phase 2 commit |
+| 3 — Retrieval and temporal calibration | Next | — |
 | 4 — Safe deterministic append | Pending | — |
 | 5 — End-to-end qualification | Pending | — |
 
@@ -88,5 +88,45 @@ This branch starts cleanly from `main`. Nothing from `codex/grain-space-memory-e
 - **No mutation bypass exists:** PASSED. All mutations (`save_note`, `append_to_note`) from the Agent loop construct host `PreparedCall` instances and route through `action_exec::run_or_confirm`. Direct unconfirmed write calls have been completely removed.
 - **Confirmation resumes the exact prepared operation without another model decision:** PASSED. User approval resumes the stored token in `action_exec::resume`, which revalidates at time-of-use and executes the exact prepared call on `grain_space_execute`.
 - **Tool results and errors remain bounded and safe for the Agent to consume:** PASSED. All outcomes return sanitized, bounded model summaries and interaction cards.
+
+## Phase 2 — Broad corpus and note construction reliability
+
+### Starting observations
+
+- `reformat_lost_content` previously checked only character count ratio (`f * 2 < r`), allowing subtle LLM reformatting to drop material numbers (doses, phone numbers, prices), URLs, quotes, and uncertainty indicators.
+- No general-purpose, realistic evaluation corpus existed outside of extension recommendations; previous experiments relied heavily on developer-specific technical notes (OAuth, SAML, K8s).
+- Explicit captures with model disabled or failing need guaranteed fallback: deterministic title derivation from raw words (cleaning markdown headers/bullets) and immediate lexical searchability.
+
+### Changes
+
+- **Factual-preservation validation:** Implemented `reformat_lost_material_content` in `src-tauri/src/grain_space/capture.rs`. Validates that reformatting preserves:
+  - URLs (case-insensitive substring match).
+  - Significant numbers, dates, measurements, and phone numbers.
+  - Quoted strings (>= 6 chars).
+  - Explicit uncertainty markers ("maybe", "tentative", "?", etc.).
+  Rejects reformatted body and falls back to raw capture if any invariant is violated.
+- **Title and presentation bounds:**
+  - Enhanced `fallback_title` to strip leading Markdown headers (`#`, `##`), list bullets (`- [ ]`, `- [x]`, `*`), and blockquotes (`>`), bounding output to at most 3 words (<= 48 chars).
+  - Enforced strict bounds in `compose_note` on title (<= 80 chars) and summary `tldr` (<= 240 chars).
+- **General-Purpose Evaluation Corpus:** Created fixture corpus in `src-tauri/tests/fixtures/memory-eval/v1/corpus/` with 36 realistic markdown notes representing everyday user notes across 13 diverse domains (ideas, books, recipes, travel, purchases, quotes, personal facts, creative concepts, clinical medicine, legal contracts, structural architecture, culinary prep, 7th-grade science teaching, ordinary meetings, near-duplicate coffee settings, distinct timestamps, multilingual/Unicode scripts, long logs, malformed frontmatter, and prompt injection payloads).
+- **Golden Evaluation Set:** Created `src-tauri/tests/fixtures/memory-eval/v1/golden.json` containing 36 labeled evaluation queries across exact titles, keywords, near-duplicate disambiguation, injection safety, and out-of-scope queries with declared quality gates.
+- **Evaluation Harness:** Implemented `src-tauri/src/grain_space/eval.rs` and wired into `grain_eval.rs` under `--eval <golden.json>` for `mode: "memory"`, plus an automated Rust test (`memory_eval_golden_v1_passes`).
+- **Phase 2 Gate Tests:** Added unit tests in `capture.rs` verifying material preservation rules, markdown prefix stripping, and an end-to-end gate test (`phase_2_gate_explicit_capture_model_disabled_preserves_and_retrieves`).
+
+### Verification
+
+- `cargo fmt --check -- src-tauri/src/grain_space/capture.rs src-tauri/src/grain_space/eval.rs src-tauri/src/grain_space/mod.rs src-tauri/src/grain_eval.rs` — passed.
+- `cargo test --lib grain_space::capture` — passed, 19 tests (100% pass).
+- `cargo test --lib grain_space::eval` — passed (Recall@1: 100.0%, Recall@5: 100.0%, MRR: 1.000).
+- `cargo test --lib grain_space::` — passed, 98 tests (100% pass).
+- `cargo check --lib` — passed (0 errors).
+- `npx tsc --noEmit` — passed (0 errors).
+
+### Phase 2 Gate Assessment
+
+- **Every valid explicit capture is saved with the model disabled or failing:** PASSED. When the model is absent or errors, `compose_note` constructs a raw note with deterministic `fallback_title` and saves it via `vault::save_note`.
+- **Material names, numbers, dates, uncertainty, and URLs are retained:** PASSED. `reformat_lost_material_content` strictly guards numbers, dates, URLs, quotes, and uncertainty tokens against model omissions.
+- **Saved notes are immediately retrievable through lexical search:** PASSED. Verified in `phase_2_gate_explicit_capture_model_disabled_preserves_and_retrieves`: saved note is indexed synchronously and immediately retrievable across all factual signals.
+
 
 
