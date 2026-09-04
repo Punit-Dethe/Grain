@@ -1232,4 +1232,33 @@ mod tests {
         assert!(get_operation_by_idempotency_key(&conn, "idem_purge").unwrap().is_none());
         cleanup(&v);
     }
+
+    #[test]
+    fn test_crash_recovery_projection_dirty_resync() {
+        let v = temp_vault("crash_dirty");
+        let conn = open_index_pub(&v).unwrap();
+        // 1. Mark dirty as would happen during a crash
+        mark_projection_dirty(&conn, true).unwrap();
+        assert!(is_projection_dirty(&conn).unwrap());
+
+        // 2. Reconcile detects dirty projection and clears it upon re-sync
+        super::super::vault::list_notes(&v).unwrap();
+        let conn2 = open_index_pub(&v).unwrap();
+        assert!(!is_projection_dirty(&conn2).unwrap(), "reconcile must clear dirty flag after resync");
+        cleanup(&v);
+    }
+
+    #[test]
+    fn test_unadopted_foreign_document_refuses_target_token() {
+        let v = temp_vault("foreign_refuse");
+        let mut foreign = sample_note();
+        foreign.id = "f_unadopted_01".to_string();
+        foreign.schema_version = 1; // legacy / foreign
+
+        let res = issue_target_token(&v, &foreign, OperationKind::Append, None, Some(60));
+        assert!(res.is_err());
+        let err_str = res.err().unwrap().to_string();
+        assert!(err_str.contains("unadopted foreign document"), "must reject unadopted foreign docs: {err_str}");
+        cleanup(&v);
+    }
 }

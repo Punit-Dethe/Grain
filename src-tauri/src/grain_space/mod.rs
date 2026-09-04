@@ -28,6 +28,7 @@ pub mod mutation;
 pub mod note;
 pub mod recall;
 pub mod reminders;
+pub mod temporal;
 pub mod vault;
 
 use tauri::{AppHandle, Manager};

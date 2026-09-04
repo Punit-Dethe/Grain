@@ -2903,7 +2903,7 @@ export type AgentReply = { text: string; sources: AgentSource[]; not_found: bool
  * the user asked to delete. Destructive, so the panel confirms in-place
  * before calling `grain_space_delete_note`. `None` on every other turn.
  */
-confirm_delete: AgentSource | null;
+confirm_delete: AgentSource | null; 
 /**
  * [GRAIN] Set when a risky extension action was withheld pending the user's
  * approval (Extensions 2.0 §2.5 / Amendment A). Host-gated: the panel shows
@@ -3124,13 +3124,13 @@ extension_developer_mode?: boolean;
  * development integration layer is enabled. IDs are resolved exclusively
  * through Grain's compiled HTTPS catalog; this is never an endpoint list.
  */
-mcp_enabled_providers?: string[];
+mcp_enabled_providers?: string[]; 
 /**
  * [GRAIN] Non-secret OAuth client IDs for hosted MCP providers that do not
  * support dynamic registration. Client secrets and tokens stay in the OS
  * credential vault and never enter AppSettings.
  */
-mcp_oauth_client_ids?: Partial<{ [key in string]: string }>;
+mcp_oauth_client_ids?: Partial<{ [key in string]: string }>; 
 /**
  * [GRAIN] Silent nearby-term hints: when on (and context awareness is on),
  * read UNIQUE non-dictionary tokens (proper nouns, code identifiers, library
@@ -3265,7 +3265,7 @@ grain_space_vault_path?: string;
  */
 grain_space_vault_folder?: string }
 export type AudioDevice = { index: string; name: string; is_default: boolean }
-export type AuthConnection = { provider_name: string; authorization_host: string; token_host: string; scopes: string[]; api_hosts: string[];
+export type AuthConnection = { provider_name: string; authorization_host: string; token_host: string; scopes: string[]; api_hosts: string[]; 
 /**
  * `connected` | `needs_reauthorization` | `expired` | `disconnected` | `unavailable`
  */
@@ -3478,7 +3478,7 @@ needs: string[];
  * The author permits Auto-send and explains why. The user's setting can
  * only remove this eligibility, never grant it to another extension.
  */
-auto_send_eligible: boolean;
+auto_send_eligible: boolean; 
 /**
  * Effective per-extension state. This does not include the global beta
  * switch; it answers only whether this author-eligible extension is on the
@@ -3676,7 +3676,7 @@ export type KeyboardImplementation = "tauri" | "handy_keys"
 export type LLMPrompt = { id: string; name: string; prompt: string }
 export type LogLevel = "trace" | "debug" | "info" | "warn" | "error"
 export type McpDiscoveryResult = { provider_id: string; provider_name: string; tool_count: number; tools: string[]; tool_set_digest: string }
-export type McpProviderStatus = { id: string; name: string; description: string; endpoint: string; setup_url: string; requires_client_credentials: boolean; client_id_configured: boolean; connected: boolean; enabled: boolean;
+export type McpProviderStatus = { id: string; name: string; description: string; endpoint: string; setup_url: string; requires_client_credentials: boolean; client_id_configured: boolean; connected: boolean; enabled: boolean; 
 /**
  * `ready` | `needs_client_credentials` | `disconnected` | `unavailable`
  */
