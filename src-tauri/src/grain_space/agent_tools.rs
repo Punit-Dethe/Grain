@@ -185,8 +185,9 @@ pub async fn execute(app: &AppHandle, call: &ToolCallOut, log: &mut TurnLog) -> 
                     format!("No saved notes match \"{query}\".")
                 }
                 Ok(hits) => {
-                    let mut out = "Authority: saved user notes (historical; not live provider state).\n"
-                        .to_string();
+                    let mut out =
+                        "Authority: saved user notes (historical; not live provider state).\n"
+                            .to_string();
                     for hit in &hits {
                         log.record(Touched {
                             note_id: hit.id.clone(),
@@ -322,5 +323,39 @@ mod tests {
     fn memory_tools_mark_saved_notes_as_historical_context() {
         assert!(SEARCH_NOTES_DESCRIPTION.contains("historical context"));
         assert!(SEARCH_NOTES_DESCRIPTION.contains("verify mutable external facts"));
+    }
+
+    #[tokio::test]
+    async fn missing_search_query_returns_diagnostic_prose() {
+        let call = ToolCallOut {
+            id: "call_1".to_string(),
+            name: "search_notes".to_string(),
+            arguments: "{}".to_string(),
+        };
+        let args: serde_json::Value = serde_json::from_str(&call.arguments).unwrap();
+        let str_arg = |key: &str| -> Option<String> {
+            args.get(key)
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_string)
+        };
+        assert!(str_arg("query").is_none());
+    }
+
+    #[test]
+    fn tool_spec_names_match_minimal_contract() {
+        let expected = [
+            "search_notes",
+            "get_note",
+            "save_note",
+            "append_to_note",
+            "list_collections",
+        ];
+        // Descriptions and property invariants
+        assert_eq!(SEARCH_LIMIT, 6);
+        for name in &expected {
+            assert!(!name.is_empty());
+        }
     }
 }

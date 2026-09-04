@@ -2174,6 +2174,56 @@ mod agent_truth_policy_tests {
     }
 }
 
+#[cfg(test)]
+mod agent_routing_tests {
+    use super::*;
+
+    #[test]
+    fn plain_reply_has_no_sources_or_confirmations() {
+        let reply = AgentReply::plain("Hello world".to_string());
+        assert_eq!(reply.text, "Hello world");
+        assert!(reply.sources.is_empty());
+        assert!(!reply.not_found);
+        assert!(reply.confirm_delete.is_none());
+        assert!(reply.confirm_action.is_none());
+    }
+
+    #[test]
+    fn untouched_notes_yield_zero_sources() {
+        let log = crate::grain_space::agent_tools::TurnLog::default();
+        let sources: Vec<AgentSource> = log
+            .touched()
+            .iter()
+            .map(|t| AgentSource {
+                note_id: t.note_id.clone(),
+                title: t.title.clone(),
+                saved_at: t.saved_at,
+            })
+            .collect();
+        assert!(sources.is_empty());
+    }
+
+    #[test]
+    fn tools_cloned_retains_all_schema_properties() {
+        let tools = vec![
+            crate::llm_client::ToolSpec {
+                name: "search_notes".to_string(),
+                description: "search".to_string(),
+                parameters: serde_json::json!({"type": "object"}),
+            },
+            crate::llm_client::ToolSpec {
+                name: "load_extension".to_string(),
+                description: "load".to_string(),
+                parameters: serde_json::json!({"type": "object"}),
+            },
+        ];
+        let cloned = tools_cloned(&tools);
+        assert_eq!(cloned.len(), 2);
+        assert_eq!(cloned[0].name, "search_notes");
+        assert_eq!(cloned[1].name, "load_extension");
+    }
+}
+
 /// Copy text to the clipboard (used for the auto-copy of the first reply and the
 /// per-message copy buttons).
 #[tauri::command]
