@@ -465,7 +465,7 @@ fn fuse(fts: Vec<Note>, semantic: Vec<Note>, k: usize) -> Vec<Note> {
 /// profile; a candidate MISSING from a non-empty `sims` (no stored vector yet)
 /// scores a neutral 0.5 — absence of evidence is not evidence of irrelevance.
 /// Deterministic and testable; ties break toward the newer memory. Top `k`.
-fn rerank(
+pub(crate) fn rerank(
     query: &str,
     pool: Vec<(Note, f64)>,
     sims: &std::collections::HashMap<String, f64>,
@@ -540,7 +540,7 @@ fn rerank(
 }
 
 /// Lowercased alphanumeric query tokens (length ≥ 2) for term-overlap scoring.
-fn query_terms(query: &str) -> Vec<String> {
+pub(crate) fn query_terms(query: &str) -> Vec<String> {
     query
         .split(|c: char| !c.is_alphanumeric())
         .filter(|t| t.chars().count() >= 2)
