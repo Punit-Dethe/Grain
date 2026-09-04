@@ -907,7 +907,7 @@ fn file_mtime_ms(path: &Path) -> Option<i64> {
 
 /// Same shape as the grain store's index plus the vault columns: the file the
 /// row mirrors and the (mtime, size) fingerprint reconcile compares against.
-fn open_index(v: &Vault) -> Result<Connection> {
+pub(crate) fn open_index(v: &Vault) -> Result<Connection> {
     super::note::ensure_vec_extension();
     fs::create_dir_all(&v.index_base).context("create grain_space dir")?;
     let conn = Connection::open(v.index_path()).context("open vault index")?;
@@ -938,7 +938,12 @@ fn open_index(v: &Vault) -> Result<Connection> {
     // The entity graph lives in this SAME index file, so switching backends can
     // never mix two corpora's entities and "rebuild index" already covers it.
     super::graph::ensure_tables(&conn)?;
+    super::mutation::ensure_tables(&conn)?;
     Ok(conn)
+}
+
+pub fn open_index_pub(v: &Vault) -> Result<Connection> {
+    open_index(v)
 }
 
 fn vec_table_exists(conn: &Connection) -> bool {
@@ -1106,8 +1111,12 @@ fn walk_vault(root: &Path) -> Result<Vec<(String, i64, i64)>> {
 /// Called with `VAULT_LOCK` held.
 fn reconcile_locked(v: &Vault, conn: &Connection) -> Result<()> {
     let disk = walk_vault(&v.root)?;
+    let dirty = super::mutation::is_projection_dirty(conn).unwrap_or(false);
+    if dirty {
+        log::warn!("[GRAIN] vault: projection was dirty from prior crash; performing full index re-sync");
+    }
     let mut indexed: HashMap<String, (String, i64, i64, bool)> = HashMap::new();
-    {
+    if !dirty {
         let mut stmt =
             conn.prepare("SELECT path, id, mtime, size, foreign_note FROM notes_meta")?;
         let rows = stmt.query_map([], |r| {
@@ -1132,10 +1141,12 @@ fn reconcile_locked(v: &Vault, conn: &Connection) -> Result<()> {
     let mut added_foreign: Vec<(String, [u8; 32])> = Vec::new();
 
     for (rel, mtime, size) in &disk {
-        if let Some((_, im, is, _)) = indexed.get(rel) {
-            if im == mtime && is == size {
-                indexed.remove(rel);
-                continue;
+        if !dirty {
+            if let Some((_, im, is, _)) = indexed.get(rel) {
+                if im == mtime && is == size {
+                    indexed.remove(rel);
+                    continue;
+                }
             }
         }
         let abs = v.abs(rel);
@@ -1172,6 +1183,7 @@ fn reconcile_locked(v: &Vault, conn: &Connection) -> Result<()> {
         }
         index_remove(conn, &id)?;
     }
+    let _ = super::mutation::mark_projection_dirty(conn, false);
     Ok(())
 }
 
@@ -1233,7 +1245,7 @@ fn adopt_renamed_foreign(
 
 // -- public API (mirrors store.rs; each fn: lock → reconcile → work → drop) -------
 
-fn ensure_vault(v: &Vault) -> Result<()> {
+pub(crate) fn ensure_vault(v: &Vault) -> Result<()> {
     if v.native {
         // The Grain-managed vault is ours to create — an empty corpus must
         // behave like an empty store, never an error.
@@ -1737,10 +1749,12 @@ pub fn delete_note(v: &Vault, id: &str) -> Result<()> {
                 fs::remove_file(&abs).with_context(|| format!("delete {}", abs.display()))?;
             }
             index_remove(&conn, id)?;
+            let _ = super::mutation::purge_operations_for_document(&conn, id);
             Ok(())
         }
         None => {
             index_remove(&conn, id)?; // idempotent
+            let _ = super::mutation::purge_operations_for_document(&conn, id);
             Ok(())
         }
     }

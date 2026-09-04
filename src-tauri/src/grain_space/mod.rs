@@ -24,6 +24,7 @@ pub mod contract_tests;
 #[cfg(test)]
 pub mod eval;
 pub mod graph;
+pub mod mutation;
 pub mod note;
 pub mod recall;
 pub mod reminders;
@@ -447,23 +448,73 @@ pub async fn save(app: &AppHandle, body: &str, supplied: SuppliedMeta) -> Result
     Ok(id)
 }
 
-/// Append to an existing note, under a rule. The running-log case: a session's
-/// decisions, a list that keeps growing. Never rewrites what is already there.
+/// Append to an existing note using the transactional mutation engine.
+/// Protects against clobbering, records idempotency in the ledger,
+/// and re-encodes content using block codec with revision bumps.
 pub async fn append(app: &AppHandle, id: &str, text: &str) -> Result<(), String> {
     require_enabled(app)?;
     let be = backend::resolve(app)?;
     let id = id.to_string();
     let addition = text.trim().to_string();
     tauri::async_runtime::spawn_blocking(move || {
-        let mut note = backend::get_note(&be, &id)?;
-        note.body = format!("{}\n\n---\n\n{}", note.body.trim_end(), addition);
-        backend::save_note(&be, &note)
+        let note = backend::get_note(&be, &id)?;
+        let token = mutation::issue_target_token(
+            &be,
+            &note,
+            mutation::OperationKind::Append,
+            None,
+            Some(60),
+        )?;
+        let idempotency_key = uuid::Uuid::new_v4().to_string();
+        mutation::execute_transactional_append(
+            &be,
+            &token,
+            &idempotency_key,
+            &addition,
+            note::MemoryBlockKind::Append,
+            None,
+            None,
+        )?;
+        Ok::<(), anyhow::Error>(())
     })
     .await
     .map_err(|e| e.to_string())?
     .map_err(|e| e.to_string())?;
     emit_notes_changed(app);
     Ok(())
+}
+
+/// Transactional append using a caller-provided authenticated TargetToken and idempotency key.
+pub async fn append_transactional(
+    app: &AppHandle,
+    token: &mutation::TargetToken,
+    idempotency_key: &str,
+    text: &str,
+    block_kind: note::MemoryBlockKind,
+    speaker: Option<String>,
+    source_ref: Option<String>,
+) -> Result<mutation::MutationResult, String> {
+    require_enabled(app)?;
+    let be = backend::resolve(app)?;
+    let token = token.clone();
+    let key = idempotency_key.to_string();
+    let addition = text.trim().to_string();
+    let res = tauri::async_runtime::spawn_blocking(move || {
+        mutation::execute_transactional_append(
+            &be,
+            &token,
+            &key,
+            &addition,
+            block_kind,
+            speaker,
+            source_ref,
+        )
+    })
+    .await
+    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())?;
+    emit_notes_changed(app);
+    Ok(res)
 }
 
 // ── The extension-facing note surface ───────────────────────────────────────

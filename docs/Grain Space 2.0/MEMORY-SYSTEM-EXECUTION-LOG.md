@@ -12,8 +12,8 @@
 | **Phase 1** | Unify Grain Space Tool Policy & Confirmation Gates | **COMPLETED** | 6/6 contract tests passing; confirmation gate strictly enforced |
 | **Checkpoint A**| Security Review of Mutation Entry Points | **COMPLETED** | Zero direct write mutations; all writes gated via `action_exec` |
 | **Phase 2** | Schema V3 and Markdown Codec | **COMPLETED** | 107/107 tests passing; lossless block parsing & foreign adoption verified |
-| **Phase 3** | Transactional Mutation Engine | **NEXT** | Mutation ledger, target tokens, revision checks, safe rebase |
-| **Checkpoint B**| Correctness, Concurrency, Privacy & Crash Audit | *PENDING* | - |
+| **Phase 3** | Transactional Mutation Engine | **COMPLETED** | 119/119 tests passing; ledger, target tokens, append-safe rebase, privacy purge |
+| **Checkpoint B**| Correctness, Concurrency, Privacy & Crash Audit | **NEXT** | Verification against concurrency, crash, and privacy invariants |
 | **Phase 4** | Temporal Planner & Search Filters | *PENDING* | Golden temporal suite across DST / midnight / recurrent |
 | **Phase 5** | Block-Level Evidence & Write Targets | *PENDING* | Provenance attribution & target resolution |
 | **Phase 6** | Agent Memory Surface & Context Assembly | *PENDING* | Token budgeting, deduplication, latency benchmarks |
@@ -141,12 +141,87 @@
 
 ---
 
-## 6. Verification Results (Phase 2)
+## 5. Phase 3 — Transactional Mutation Engine
+
+### Deliverables Completed
+
+#### 1. Durable Ledger & Metadata Storage (`src-tauri/src/grain_space/mutation.rs`)
+- **`memory_operations` Table:**
+  - Tracks every mutation lifecycle state (`prepared`, `committed`, `failed`, `stale`, `rejected`).
+  - Columns: `operation_id`, `idempotency_key`, `document_id`, `base_revision`, `committed_revision`, `operation_kind`, `proposed_content_hash`, `state`, `created_at`, `completed_at`, `error_code`.
+- **`vault_meta` Table:**
+  - Tracks system flags such as `projection_dirty` to detect crashes during write operations and trigger projection rebuilds on startup.
+- **Privacy-Preserving Purge:**
+  - `purge_operations_for_document(conn, id)` removes all ledger entries associated with a document when `vault::delete_note` is called, ensuring raw operations and content hashes do not outlive the document.
+
+#### 2. Cryptographic Target Tokens (`issue_target_token`, `validate_target_token`)
+- **Opaque & Process-Local:** Signed with RFC 2104 HMAC-SHA256 using an ephemeral 256-bit CSPRNG key initialized once per process (`std::sync::OnceLock<[u8; 32]>`). Tokens cannot be forged across processes or leaked across app launches.
+- **Bound & Short-Lived:** Tokens strictly bind:
+  - `token_id`, `vault_path` (canonicalized), `document_id`, `base_revision`, `base_content_hash`, `allowed_operation`, `target_block_id`, `issued_at`, `expires_at` (default TTL 600 seconds).
+- **Fails Closed:** Rejects expired tokens, tampered signatures, cross-vault operations, mismatched operations, and unadopted foreign documents.
+
+#### 3. Transactional Operations & Append-Safe Rebase
+- **`execute_transactional_append`:**
+  - Validates token against document base revision and hash.
+  - If external edits occurred (`revision != base_revision`), safely rebases append operations to the end of the document, preserving external edits without clobbering.
+  - Formats content using `block_codec::emit_block` with unique sequential block ID (`{doc_id}-b{seq}`).
+  - Atomically increments revision, sets `schema_version = 3`, computes normalized content hash, marks projection dirty, writes to disk, marks projection clean, and commits ledger entry.
+- **`execute_transactional_correction`:**
+  - Appends a `MemoryBlockKind::Correction` block with `supersedes_block_id` referencing the superseded block.
+- **`execute_transactional_block_edit`:**
+  - Enforces strict revision comparison (fails closed on stale revisions).
+  - Updates target block content and regenerates note body cleanly via `block_codec::emit_blocks`.
+- **Idempotency Enforcement:**
+  - Replaying an identical operation with the same idempotency key and proposed content hash returns the previously committed result immediately without duplicating blocks.
+  - Conflicting operations reusing an idempotency key fail closed with `MutationError::IdempotencyConflict`.
+
+#### 4. Unified Dispatch Integration (`action_exec.rs` & `grain_space::mod.rs`)
+- Upgraded `grain_space::append` to use `issue_target_token` and `execute_transactional_append`.
+- Added `grain_space::append_transactional` for callers supplying explicit `TargetToken`s and idempotency keys.
+- Extended `action_exec.rs` `append_to_note` tool schema and execution to support optional authenticated `target_token`.
+
+---
+
+## 6. Discoveries, Findings & Root Cause Analysis
+
+### Finding 1: Windows Test Runner DLL Entry Point Crash (`0xc0000139`)
+- **Symptom:** Cargo test binaries (`handy_app_lib-*.exe`) exited immediately with `0xc0000139 (STATUS_ENTRYPOINT_NOT_FOUND)` on Windows.
+- **Root Cause Analysis:**
+  - Using a custom Win32 debugger script with `CreateProcessW` and `WaitForDebugEvent`, the failing import was identified as `TaskDialogIndirect` in `comctl32.dll`.
+  - `rfd` (imported by `tauri-plugin-dialog`) calls `TaskDialogIndirect`, which is only available in Microsoft Common Controls version 6.0+.
+  - On Windows, binaries lacking an embedded manifest linking Common Controls v6 load v5.82 by default, which lacks `TaskDialogIndirect`.
+- **Resolution:** Added a target-specific manifest linker argument to `src-tauri/build.rs`:
+  ```rust
+  if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
+      println!("cargo:rustc-link-arg=/MANIFESTDEPENDENCY:type='win32' name='Microsoft.Windows.Common-Controls' version='6.0.0.0' processorArchitecture='*' publicKeyToken='6595b64144ccf1df' language='*'");
+  }
+  ```
+  This completely resolved the crash across the entire test suite.
+
+### Finding 2: Obsidian Native Properties & `aliases` Preservation
+- **Symptom:** Foreign document adoption test initially dropped user `aliases: [Imp]` because `GRAIN_FM_KEYS` declared `aliases` as a Grain-managed key.
+- **Root Cause & Architectural Decision:**
+  - `aliases` is both a standard Obsidian property and a first-class Schema V3 field on `Note`.
+  - When `read_md_note` parses foreign notes, it now extracts `aliases` (both YAML flow sequence `[a, b]` and block list `- a`) directly into `Note.aliases`.
+  - When written out, `emit_markdown_with` outputs `Note.aliases` cleanly via `emit_flow_list`.
+  - This ensures user-defined Obsidian aliases are fully adopted into Grain's data model without losing their Obsidian readability.
+
+### Finding 3: Zero-Dependency Cryptographic Primitives in Backend
+- **Context:** The `hex` and `thiserror` crates are not in `src-tauri/Cargo.toml`.
+- **Architectural Decision:** Rather than adding external dependencies to the workspace:
+  - Standard `std::fmt::Display` and `std::error::Error` were implemented manually for `MutationError`, seamlessly converting to `anyhow::Error`.
+  - Inline byte-to-hex formatting helper (`hex_encode`) was implemented via `std::fmt::Write`.
+  - RFC 2104 HMAC-SHA256 was implemented directly using the existing `sha2::Sha256` dependency.
+
+---
+
+## 7. Verification Results (Phase 3)
 - Running `cargo test --manifest-path src-tauri/Cargo.toml --lib grain_space`:
-  - **107 passed; 0 failed; 0 ignored.**
+  - **119 passed; 0 failed; 0 ignored.**
   - Includes:
-    - 41 vault unit tests (including `schema_v3_frontmatter_full_roundtrip`, `adopt_foreign_note_moves_and_promotes_cleanly`, `legacy_notes_without_schema_v3_load_cleanly`).
-    - 4 block codec unit tests (`test_emit_and_parse_blocks_roundtrip`, `test_mixed_manual_edits_preserved_without_loss`, `test_content_hash_deterministic_crlf_lf`, `test_legacy_body_without_markers_parses_to_single_block`).
-    - 5 note schema tests (`json_schema_is_locked`, `notes_written_before_schema_v3_still_deserialize`, etc.).
-    - 6 contract tests (Phase 1 confirmation policy).
-    - 24-document evaluation corpus baseline test (`run_baseline_evaluation`).
+    - 12 mutation unit tests (`test_target_token_issue_and_validates_cleanly`, `test_expired_token_fails_closed`, `test_tampered_token_fails_closed`, `test_cross_vault_token_fails_closed`, `test_wrong_operation_token_fails_closed`, `test_transactional_append_exact_revision`, `test_idempotent_append_returns_identical_result_without_duplicate_block`, `test_idempotent_append_with_different_content_fails_closed`, `test_append_safe_rebase_on_external_concurrent_edit`, `test_correction_creates_superseding_block`, `test_block_edit_strict_revision_rejection`, `test_deletion_purges_ledger_records`).
+    - 41 vault unit tests.
+    - 4 block codec unit tests.
+    - 5 note schema tests.
+    - 6 contract tests.
+    - 24-document evaluation corpus baseline test.

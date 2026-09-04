@@ -651,7 +651,7 @@ pub fn grain_space_tool_definitions() -> Vec<GrainSpaceToolDef> {
             risk: ActionRisk::Confirm,
             side_effect: SideEffect::Write,
             examples: &["add this to that note"],
-            params: &[("id", true), ("text", true)],
+            params: &[("id", true), ("text", true), ("target_token", false)],
             schema: serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -662,6 +662,10 @@ pub fn grain_space_tool_definitions() -> Vec<GrainSpaceToolDef> {
                     "text": {
                         "type": "string",
                         "description": "What to add, in Markdown."
+                    },
+                    "target_token": {
+                        "type": "object",
+                        "description": "Optional TargetToken binding this mutation to an authenticated revision and base hash."
                     }
                 },
                 "required": ["id", "text"]
@@ -827,7 +831,28 @@ async fn grain_space_execute(app: &AppHandle, prepared: &PreparedCall) -> Action
             let (Some(id), Some(text)) = (str_arg(args, "id"), str_arg(args, "text")) else {
                 return invalid("append_to_note needs an id and text.");
             };
-            match crate::grain_space::append(app, &id, &text).await {
+            let target_token: Option<crate::grain_space::mutation::TargetToken> = args
+                .get("target_token")
+                .and_then(|v| serde_json::from_value(v.clone()).ok());
+            let res = if let Some(token) = target_token {
+                let idempotency_key = prepared.idempotency_key.clone().unwrap_or_else(|| {
+                    str_arg(args, "idempotency_key").unwrap_or_else(|| uuid::Uuid::new_v4().to_string())
+                });
+                crate::grain_space::append_transactional(
+                    app,
+                    &token,
+                    &idempotency_key,
+                    &text,
+                    crate::grain_space::note::MemoryBlockKind::Append,
+                    None,
+                    None,
+                )
+                .await
+                .map(|_| ())
+            } else {
+                crate::grain_space::append(app, &id, &text).await
+            };
+            match res {
                 Ok(()) => ActionOutcome::Succeeded(SuccessData {
                     source,
                     title: Some("Updated note".to_string()),
@@ -841,6 +866,11 @@ async fn grain_space_execute(app: &AppHandle, prepared: &PreparedCall) -> Action
                 Err(e) => {
                     let class = if e.to_lowercase().contains("not found") {
                         FailureClass::NotFound
+                    } else if e.to_lowercase().contains("token")
+                        || e.to_lowercase().contains("stale")
+                        || e.to_lowercase().contains("unadopted")
+                    {
+                        FailureClass::InvalidArgument
                     } else {
                         FailureClass::Internal
                     };
