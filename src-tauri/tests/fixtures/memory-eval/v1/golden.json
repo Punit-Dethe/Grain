@@ -6,7 +6,8 @@
   "thresholds": {
     "minRecallAt1": 0.70,
     "minRecallAt5": 0.90,
-    "minMrr": 0.75
+    "minMrr": 0.75,
+    "minOutOfScopeAccuracy": 0.90
   },
   "cases": [
     {

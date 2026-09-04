@@ -243,7 +243,24 @@ pub(crate) async fn retrieve_for_agent(
     query: &str,
     limit: usize,
 ) -> Result<Vec<Note>> {
-    retrieve_inner(app, be, query, None, limit.clamp(1, CANDIDATE_POOL)).await
+    let temporal_res = super::temporal::extract_temporal_range(query);
+    let effective_query = if temporal_res.clean_query.trim().is_empty() {
+        query
+    } else {
+        &temporal_res.clean_query
+    };
+    let range = temporal_res.range.map(|r| r.as_tuple());
+
+    let pool_limit = limit.clamp(1, CANDIDATE_POOL);
+    let hits = retrieve_inner(app, be, effective_query, range, pool_limit).await?;
+
+    // Section 8 invariant: read-only retrieval may perform one clearly bounded soft fallback
+    // if retrieval with temporal constraints yields zero hits.
+    if hits.is_empty() && range.is_some() {
+        retrieve_inner(app, be, effective_query, None, pool_limit).await
+    } else {
+        Ok(hits)
+    }
 }
 
 async fn retrieve_filtered(

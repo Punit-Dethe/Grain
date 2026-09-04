@@ -33,6 +33,8 @@ pub struct EvalThresholds {
     pub min_recall_at_5: f64,
     #[serde(rename = "minMrr")]
     pub min_mrr: f64,
+    #[serde(default, rename = "minOutOfScopeAccuracy")]
+    pub min_out_of_scope_accuracy: Option<f64>,
 }
 
 #[derive(Deserialize, Debug, Clone)]
@@ -216,6 +218,11 @@ pub fn evaluate_vault(
         }
         if mrr < th.min_mrr {
             passed = false;
+        }
+        if let Some(min_oos) = th.min_out_of_scope_accuracy {
+            if out_of_scope_accuracy < min_oos {
+                passed = false;
+            }
         }
     }
 

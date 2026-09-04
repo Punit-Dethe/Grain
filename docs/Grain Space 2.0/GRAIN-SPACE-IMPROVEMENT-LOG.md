@@ -128,5 +128,57 @@ This branch starts cleanly from `main`. Nothing from `codex/grain-space-memory-e
 - **Material names, numbers, dates, uncertainty, and URLs are retained:** PASSED. `reformat_lost_material_content` strictly guards numbers, dates, URLs, quotes, and uncertainty tokens against model omissions.
 - **Saved notes are immediately retrievable through lexical search:** PASSED. Verified in `phase_2_gate_explicit_capture_model_disabled_preserves_and_retrieves`: saved note is indexed synchronously and immediately retrievable across all factual signals.
 
+## Phase 3 — Retrieval and temporal calibration
+
+### Starting observations
+
+- Spoken natural-language questions ("what did we discuss yesterday?", "notes from last week") previously treated temporal tokens as raw search terms, causing missed hits or false ranking.
+- SQLite FTS5 natural-language search uses OR semantics to prevent 0-hit drops on conversational queries; however, without relevance gating, queries with multiple specific terms returned unrelated notes matching only a single accidental body word (e.g., "reduction" matching a recipe for an out-of-scope cryptography query).
+- Need deterministic host-side temporal parsing taking an explicit clock and timezone, producing `DateRange { start_ms, end_ms }` and clean queries without LLM overhead or external network calls.
+- Section 8 invariant must be enforced: read-only agent retrieval may perform one clearly bounded soft fallback without the temporal constraint if initial retrieval yields zero hits, while write-target operations must never weaken time constraints.
+
+### Changes
+
+- **Deterministic Host-side Temporal Parser (`src-tauri/src/grain_space/temporal.rs`):**
+  - Implemented `extract_temporal_range` and `extract_temporal_range_at` taking reference `now: DateTime<Tz>`.
+  - Parses: `today`, `yesterday`, `day before yesterday`, `this week`, `last week`, `this month`, `last month`, `last N days`, `past N days`, explicit ISO dates (`YYYY-MM-DD`, `YYYY/MM/DD`), named months with ordinals ("September 4th, 2026", "Aug 15th"), and date ranges ("YYYY-MM-DD to YYYY-MM-DD").
+  - Produces inclusive epoch timestamp range `DateRange { start_ms, end_ms }` and strips temporal tokens along with surrounding prepositions/articles ("from", "on", "in", "during", "since", "the").
+  - Preserves trailing sentence punctuation (`?`, `!`, `.`) for clean queries.
+  - Zero network, zero LLM, 100% deterministic.
+- **Relevance Score Gating (`src-tauri/src/grain_space/vault.rs`):**
+  - Implemented `query_content_terms`, `term_matches_text` (supporting exact and Unicode-safe prefix-stem matching), and `is_relevant_match`.
+  - For multi-term queries ($N \ge 3$), requires either matching multiple distinct terms or matching high-signal metadata (title, summary, distilled question, or entities), rejecting accidental 1-word hits in long note bodies.
+  - Integrated into `search_notes_natural`, eliminating false positives for out-of-scope queries across both direct search and recall candidate generation.
+- **Agent Retrieval Temporal Integration & Bounded Soft Fallback (`src-tauri/src/grain_space/recall.rs`):**
+  - Wired `temporal::extract_temporal_range` into `retrieve_for_agent`.
+  - Enforced Section 8 invariant: if retrieval with temporal constraints yields 0 hits on a read-only search, performs one bounded soft fallback without the temporal constraint.
+- **Evaluation Thresholds & Verification (`src-tauri/src/grain_space/eval.rs`, `golden.json`):**
+  - Added `minOutOfScopeAccuracy: 0.90` to `golden.json` thresholds and enforced in `evaluate_vault`.
+  - Comprehensive unit tests covering timezones, rolling windows, month/year boundaries, ordinals, leap years, and out-of-scope rejection.
+
+### Verification
+
+- `cargo fmt --check -- src-tauri/src/grain_space/temporal.rs src-tauri/src/grain_space/eval.rs src-tauri/src/grain_space/mod.rs src-tauri/src/grain_space/recall.rs src-tauri/src/grain_space/vault.rs` — passed.
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib grain_space::temporal` — passed, 8 tests (100% pass).
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib grain_space::vault::tests::test_is_relevant_match` — passed.
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib grain_space::eval` — passed:
+  - Total Cases: 36
+  - Relevant Cases: 34
+  - Out-of-Scope Cases: 2
+  - Recall@1: 100.0% (min: 70.0%)
+  - Recall@5: 100.0% (min: 90.0%)
+  - MRR: 1.000 (min: 0.750)
+  - Out-of-Scope Acc: 100.0% (min: 90.0%)
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib grain_space::` — passed, 107 tests (100% pass).
+- `cargo check --manifest-path src-tauri/Cargo.toml --lib` — passed (0 errors).
+- `npx tsc --noEmit` — passed (0 errors).
+
+### Phase 3 Gate Assessment
+
+- **Held-out Recall@5 and MRR meet declared baseline improvements:** PASSED. Measured Recall@1 = 100.0%, Recall@5 = 100.0%, MRR = 1.000 (all far exceeding gate thresholds).
+- **Model-disabled retrieval remains useful:** PASSED. Lexical FTS + entity graph + natural relevance gating operates without embedding model or LLM.
+- **Supported temporal phrases pass fixed-clock/timezone tests:** PASSED. Verified across 8 fixed-clock test suites covering UTC, IST (+05:30), month boundaries, leap years, rolling windows, ordinals, and unparseable queries.
+- **Wrong/unrelated semantic neighbours do not fill result lists:** PASSED. Out-of-scope accuracy is 100.0% (0 false positives on held-out out-of-scope queries).
+
 
 

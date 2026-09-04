@@ -1331,6 +1331,73 @@ fn natural_fts_query(query: &str) -> Option<String> {
     }
 }
 
+/// Query tokens (length >= 2 or non-ASCII) excluding stopwords for relevance evaluation.
+pub fn query_content_terms(query: &str) -> Vec<String> {
+    query
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|t| !t.is_empty())
+        .map(|t| t.to_lowercase())
+        .filter(|t| {
+            (t.chars().count() >= 2 || t.chars().any(|c| c > '\u{7f}'))
+                && !STOPWORDS.contains(&t.as_str())
+        })
+        .collect()
+}
+
+/// Helper to match query term against text supporting direct substring and prefix-stem matching.
+fn term_matches_text(term: &str, text: &str) -> bool {
+    if text.contains(term) {
+        return true;
+    }
+    let char_count = term.chars().count();
+    if char_count >= 4 {
+        let stem: String = term.chars().take(4).collect();
+        for word in text.split(|c: char| !c.is_alphanumeric()) {
+            if word.starts_with(&stem) && (word.chars().count() >= 4 || word == stem) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// Gating predicate to reject out-of-scope or unrelated matches from broad OR-FTS queries.
+/// Ensures queries with multiple specific terms do not return unrelated documents that merely
+/// share a single accidental token in their body.
+pub fn is_relevant_match(query: &str, note: &Note) -> bool {
+    let terms = query_content_terms(query);
+    if terms.is_empty() {
+        return true;
+    }
+
+    let hay_meta = format!(
+        "{} {} {} {}",
+        note.title,
+        note.tldr,
+        note.question,
+        note.entities.join(" ")
+    )
+    .to_lowercase();
+    let hay_body = note.body.to_lowercase();
+
+    let meta_matches = terms
+        .iter()
+        .filter(|t| term_matches_text(t, &hay_meta))
+        .count();
+    let total_matches = terms
+        .iter()
+        .filter(|t| term_matches_text(t, &hay_meta) || term_matches_text(t, &hay_body))
+        .count();
+
+    match terms.len() {
+        0 => true,
+        1 => total_matches >= 1,
+        2 => total_matches >= 2 || meta_matches >= 1,
+        3..=4 => total_matches >= 2 || meta_matches >= 1,
+        _ => total_matches >= 2 && (meta_matches >= 1 || total_matches >= 3),
+    }
+}
+
 /// FTS for a NATURAL-LANGUAGE question (the recall path): stopword-filtered
 /// content terms with OR semantics, ranked by BM25 (title 10× / tldr 5× /
 /// body 1×). Where `search_notes_ranged`'s implicit-AND suits search-as-you-
@@ -1374,7 +1441,11 @@ pub fn search_notes_natural(
     let mut out = Vec::with_capacity(rels.len());
     for rel in rels {
         match read_note_at(v, &rel) {
-            Ok(note) => out.push(note),
+            Ok(note) => {
+                if is_relevant_match(query, &note) {
+                    out.push(note);
+                }
+            }
             Err(e) => log::warn!("[GRAIN] vault natural search hit unreadable: {e:#}"),
         }
     }
@@ -3522,5 +3593,40 @@ mod tests {
         let fid = foreign_id("Outsider.md");
         assert!(move_note_to_folder(&v, &fid, Some("Work")).is_err());
         cleanup(&v);
+    }
+
+    #[test]
+    fn test_is_relevant_match_precision_and_rejection() {
+        let mut note = grain_note(
+            "Bistro Demi-Glace & Stocks",
+            "Slow simmer veal bones for 12 hours. Make a red wine reduction to finish.",
+        );
+        note.tldr = "Veal demi glace and wine reduction culinary stock prep.".to_string();
+        note.question = "How do you prepare bistro demi glace stock?".to_string();
+        note.entities = vec!["Demi-Glace".to_string(), "Bistro".to_string()];
+
+        // 1. Genuine query with high overlap
+        assert!(is_relevant_match("veal demi glace stock reduction", &note));
+
+        // 2. Query matching title
+        assert!(is_relevant_match("bistro stocks", &note));
+
+        // 3. Out-of-scope multi-word queries sharing only 1 accidental body term ("reduction")
+        assert!(!is_relevant_match(
+            "quantum cryptography lattice reduction algorithm",
+            &note
+        ));
+
+        // 4. Out-of-scope query sharing 0 terms
+        assert!(!is_relevant_match(
+            "orbital mechanics mars rover landing trajectory",
+            &note
+        ));
+
+        // 5. Single-term query matching body
+        assert!(is_relevant_match("reduction", &note));
+
+        // 6. Single-term query matching title
+        assert!(is_relevant_match("bistro", &note));
     }
 }
