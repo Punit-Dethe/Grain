@@ -14,36 +14,88 @@
 //! specs ride along in the request, and a turn that never touches notes never
 //! makes an extra round-trip.
 //!
-//! # One implementation, three consumers
+//! # Single Source of Truth & Safe Execution Gate
 //!
-//! Every function here uses the same `grain_space` store calls `host_api`
-//! dispatches for `space.*`. Reads and writes therefore share one notebook and
-//! derived index. The active Agent search additionally uses Recall's optional
-//! semantic + graph candidate path; the headless bridge stays lexical so it
-//! cannot wake and strand the local model without an Agent surface lifetime.
+//! All tool specifications are unified and published by `crate::action_exec`.
+//! All write operations (`save_note`, `append_to_note`) strictly traverse
+//! `action_exec::prepare` and `action_exec::run_or_confirm`, which enforces host
+//! confirmation policy. No note write can bypass user approval.
+
+use serde::{Deserialize, Serialize};
+use tauri::AppHandle;
 
 use crate::llm_client::{ToolCallOut, ToolSpec};
-use tauri::AppHandle;
 
 /// How many search hits a tool result carries. Enough to choose between notes,
 /// few enough that a small model is not drowned — and it is `get_note` that is
 /// there for reading one in full.
 const SEARCH_LIMIT: usize = 6;
-const SEARCH_NOTES_DESCRIPTION: &str = "Search the user's own saved notes and return the best \
-matches. Use this whenever the request refers to something they told you before, wrote down, or \
-asked you to remember — and before saying you don't know something personal about them. Saved \
-notes are historical context, not live external state; verify mutable external facts with their \
-provider before acting.";
+
+pub const ERR_INVALID_ARGUMENTS: &str = "invalid_arguments";
+pub const ERR_NOTE_NOT_FOUND: &str = "note_not_found";
+pub const ERR_SCHEMA_VIOLATION: &str = "schema_violation";
+pub const ERR_CONFIRMATION_REQUIRED: &str = "confirmation_required";
+pub const ERR_INTERNAL: &str = "internal_error";
+
+/// Stable machine-readable memory tool error codes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MemoryErrorCode {
+    InvalidArguments,
+    NoteNotFound,
+    SchemaViolation,
+    ConfirmationRequired,
+    Internal,
+}
+
+impl MemoryErrorCode {
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            Self::InvalidArguments => ERR_INVALID_ARGUMENTS,
+            Self::NoteNotFound => ERR_NOTE_NOT_FOUND,
+            Self::SchemaViolation => ERR_SCHEMA_VIOLATION,
+            Self::ConfirmationRequired => ERR_CONFIRMATION_REQUIRED,
+            Self::Internal => ERR_INTERNAL,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ToolErrorPayload {
+    pub code: String,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ToolErrorResponse {
+    pub ok: bool,
+    pub error: ToolErrorPayload,
+}
+
+impl ToolErrorResponse {
+    pub fn new(code: MemoryErrorCode, message: impl Into<String>) -> Self {
+        Self {
+            ok: false,
+            error: ToolErrorPayload {
+                code: code.as_str().to_string(),
+                message: message.into(),
+            },
+        }
+    }
+
+    pub fn to_json_string(&self) -> String {
+        serde_json::to_string(self).unwrap_or_else(|_| {
+            format!(
+                r#"{{"ok":false,"error":{{"code":"{}","message":"{}"}}}}"#,
+                self.error.code, self.error.message
+            )
+        })
+    }
+}
 
 /// A note the model looked at (or wrote) during a turn. Collected so the reply can
 /// show provenance chips: "here is what I read", clickable straight into the Notes
 /// tab.
-///
-/// This is deliberately "notes consulted", not "notes cited". Grain Recall asks the
-/// model to tag memories `[Mn]` and echo the ones it used in a SOURCES line, which
-/// is more precise when the model follows the convention and silently wrong when it
-/// does not. What the tool calls actually touched is not a convention — it is a
-/// fact we observed.
 #[derive(Debug, Clone)]
 pub struct Touched {
     pub note_id: String,
@@ -58,7 +110,7 @@ pub struct TurnLog {
 }
 
 impl TurnLog {
-    fn record(&mut self, note: Touched) {
+    pub fn record(&mut self, note: Touched) {
         if self.touched.iter().any(|t| t.note_id == note.note_id) {
             return; // a note read twice is still one source
         }
@@ -71,102 +123,58 @@ impl TurnLog {
 }
 
 /// The tool specs to advertise, or empty when the notebook is switched off.
-///
-/// Empty matters: with the feature off there is no notebook to reach, and
-/// advertising tools that can only fail would spend tokens teaching the model
-/// about a door that is bricked up.
+/// Re-exports the authoritative definitions published by `action_exec`.
 pub fn specs(app: &AppHandle) -> Vec<ToolSpec> {
     if !super::is_enabled(app) {
         return Vec::new();
     }
-    vec![
-        ToolSpec {
-            name: "search_notes".to_string(),
-            description: SEARCH_NOTES_DESCRIPTION.to_string(),
-            parameters: serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "query": {
-                        "type": "string",
-                        "description": "Focused search terms — the key nouns or topic."
-                    }
-                },
-                "required": ["query"]
-            }),
-        },
-        ToolSpec {
-            name: "get_note".to_string(),
-            description: "Read one note in full, by the id returned from search_notes. Use it \
-                          when a search snippet is not enough to answer."
-                .to_string(),
-            parameters: serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "id": { "type": "string", "description": "The note's id." }
-                },
-                "required": ["id"]
-            }),
-        },
-        ToolSpec {
-            name: "save_note".to_string(),
-            description: "Save a NEW note. Only when the user asks you to write something down, \
-                          remember it, or make a note of it — never as a side effect of \
-                          answering, rewriting or explaining something."
-                .to_string(),
-            parameters: serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "body": {
-                        "type": "string",
-                        "description": "The note itself, in Markdown. Keep the user's own \
-                                        wording and detail; do not summarise it away."
-                    },
-                    "title": {
-                        "type": "string",
-                        "description": "A short title. Optional — Grain writes one otherwise."
-                    },
-                    "collection": {
-                        "type": "string",
-                        "description": "An existing collection to file it under, from \
-                                        list_collections. Optional."
-                    }
-                },
-                "required": ["body"]
-            }),
-        },
-        ToolSpec {
-            name: "append_to_note".to_string(),
-            description: "Add text to the end of a note that already exists, by id. Use this \
-                          rather than save_note when the user is adding to something."
-                .to_string(),
-            parameters: serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "id": { "type": "string", "description": "The note's id." },
-                    "text": { "type": "string", "description": "What to add, in Markdown." }
-                },
-                "required": ["id", "text"]
-            }),
-        },
-        ToolSpec {
-            name: "list_collections".to_string(),
-            description: "List the collections the user files notes under. Use before \
-                          save_note when they say where a note belongs."
-                .to_string(),
-            parameters: serde_json::json!({ "type": "object", "properties": {} }),
-        },
-    ]
+    crate::action_exec::grain_space_tool_specs()
 }
 
-/// Execute one tool call and return what to feed back to the model.
+/// Dispatch one tool call through the unified action execution boundary.
 ///
-/// Errors come back as TEXT, not as `Err`: a tool that cannot answer is
-/// information the model should have and reason about ("that note is gone, tell
-/// the user"), whereas failing the turn throws away a conversation over one bad
-/// argument.
-pub async fn execute(app: &AppHandle, call: &ToolCallOut, log: &mut TurnLog) -> String {
-    let args: serde_json::Value =
-        serde_json::from_str(&call.arguments).unwrap_or(serde_json::Value::Null);
+/// Read operations (`search_notes`, `get_note`, `list_collections`) execute
+/// immediately and return `ToolResult::Text`.
+/// Write operations (`save_note`, `append_to_note`) strictly route through
+/// `action_exec::run_or_confirm`, which withholds them and returns
+/// `ToolResult::Confirm(confirm)` for explicit user approval.
+pub async fn dispatch(
+    app: &AppHandle,
+    call: &ToolCallOut,
+    log: &mut TurnLog,
+) -> crate::capability::ToolResult {
+    dispatch_opt(Some(app), call, log).await
+}
+
+/// Optional-AppHandle variant of `dispatch` used by headless test suites.
+pub async fn dispatch_opt(
+    app: Option<&AppHandle>,
+    call: &ToolCallOut,
+    log: &mut TurnLog,
+) -> crate::capability::ToolResult {
+    let args: serde_json::Value = match serde_json::from_str(&call.arguments) {
+        Ok(serde_json::Value::Object(map)) => serde_json::Value::Object(map),
+        Ok(serde_json::Value::Null) => serde_json::Value::Object(serde_json::Map::new()),
+        Ok(_) => {
+            return crate::capability::ToolResult::Text(
+                ToolErrorResponse::new(
+                    MemoryErrorCode::SchemaViolation,
+                    "Tool arguments must be a JSON object.",
+                )
+                .to_json_string(),
+            );
+        }
+        Err(err) => {
+            return crate::capability::ToolResult::Text(
+                ToolErrorResponse::new(
+                    MemoryErrorCode::SchemaViolation,
+                    format!("Malformed JSON arguments: {err}"),
+                )
+                .to_json_string(),
+            );
+        }
+    };
+
     let str_arg = |key: &str| -> Option<String> {
         args.get(key)
             .and_then(|v| v.as_str())
@@ -178,11 +186,26 @@ pub async fn execute(app: &AppHandle, call: &ToolCallOut, log: &mut TurnLog) -> 
     match call.name.as_str() {
         "search_notes" => {
             let Some(query) = str_arg("query") else {
-                return "search_notes needs a query.".to_string();
+                return crate::capability::ToolResult::Text(
+                    ToolErrorResponse::new(
+                        MemoryErrorCode::InvalidArguments,
+                        "search_notes needs a query.",
+                    )
+                    .to_json_string(),
+                );
+            };
+            let Some(app) = app else {
+                return crate::capability::ToolResult::Text(
+                    ToolErrorResponse::new(
+                        MemoryErrorCode::Internal,
+                        "AppHandle is required for search.",
+                    )
+                    .to_json_string(),
+                );
             };
             match super::search_for_agent(app, &query, SEARCH_LIMIT).await {
                 Ok(hits) if hits.is_empty() => {
-                    format!("No saved notes match \"{query}\".")
+                    crate::capability::ToolResult::Text(format!("No saved notes match \"{query}\"."))
                 }
                 Ok(hits) => {
                     let mut out = "Authority: saved user notes (historical; not live provider state).\n"
@@ -204,14 +227,35 @@ pub async fn execute(app: &AppHandle, call: &ToolCallOut, log: &mut TurnLog) -> 
                             out.push_str(&format!("  about: {}\n", hit.entities.join(", ")));
                         }
                     }
-                    out
+                    crate::capability::ToolResult::Text(out)
                 }
-                Err(e) => format!("Could not search the notes: {e}"),
+                Err(e) => crate::capability::ToolResult::Text(
+                    ToolErrorResponse::new(
+                        MemoryErrorCode::Internal,
+                        format!("Could not search the notes: {e}"),
+                    )
+                    .to_json_string(),
+                ),
             }
         }
         "get_note" => {
             let Some(id) = str_arg("id") else {
-                return "get_note needs an id.".to_string();
+                return crate::capability::ToolResult::Text(
+                    ToolErrorResponse::new(
+                        MemoryErrorCode::InvalidArguments,
+                        "get_note needs an id.",
+                    )
+                    .to_json_string(),
+                );
+            };
+            let Some(app) = app else {
+                return crate::capability::ToolResult::Text(
+                    ToolErrorResponse::new(
+                        MemoryErrorCode::Internal,
+                        "AppHandle is required to get a note.",
+                    )
+                    .to_json_string(),
+                );
             };
             match super::get(app, &id).await {
                 Ok(note) => {
@@ -220,72 +264,111 @@ pub async fn execute(app: &AppHandle, call: &ToolCallOut, log: &mut TurnLog) -> 
                         title: note.title.clone(),
                         saved_at: note.timestamp,
                     });
-                    format!(
+                    crate::capability::ToolResult::Text(format!(
                         "authority: saved user note (historical; not live provider state)\ntitle: {}\nsaved: {}\n\n{}",
                         note.title,
                         stamp(note.timestamp),
                         note.body
-                    )
+                    ))
                 }
-                Err(e) => format!("Could not read that note: {e}"),
+                Err(e) => crate::capability::ToolResult::Text(
+                    ToolErrorResponse::new(
+                        MemoryErrorCode::NoteNotFound,
+                        format!("Could not read note '{id}': {e}"),
+                    )
+                    .to_json_string(),
+                ),
             }
         }
         "save_note" => {
-            let Some(body) = str_arg("body") else {
-                return "save_note needs a body.".to_string();
-            };
-            let supplied = super::SuppliedMeta {
-                title: str_arg("title"),
-                summary: None,
-                question: None,
-                entities: Vec::new(),
-                collection: str_arg("collection"),
-            };
-            match super::save(app, &body, supplied).await {
-                Ok(id) => {
-                    // Read it back for the chip's real title: `save` may have
-                    // distilled one, and the chip should say what is on disk
-                    // rather than what the model proposed.
-                    if let Ok(note) = super::get(app, &id).await {
-                        log.record(Touched {
-                            note_id: note.id.clone(),
-                            title: note.title.clone(),
-                            saved_at: note.timestamp,
-                        });
-                        format!("Saved as \"{}\" (id {}).", note.title, note.id)
-                    } else {
-                        format!("Saved (id {id}).")
-                    }
+            if str_arg("body").is_none() {
+                return crate::capability::ToolResult::Text(
+                    ToolErrorResponse::new(
+                        MemoryErrorCode::InvalidArguments,
+                        "save_note needs a body.",
+                    )
+                    .to_json_string(),
+                );
+            }
+            let prepared = crate::action_exec::prepare_grain_space_call("save_note", args);
+            match crate::action_exec::run_or_confirm_opt(app, prepared, "Save note").await {
+                crate::action_exec::Dispatch::Ran(outcome) => {
+                    crate::capability::ToolResult::Text(outcome.model_summary())
                 }
-                Err(e) => format!("Could not save the note: {e}"),
+                crate::action_exec::Dispatch::AwaitConfirm(interaction) => {
+                    crate::capability::ToolResult::Confirm(crate::action_exec::to_agent_confirm(
+                        &interaction,
+                    ))
+                }
             }
         }
         "append_to_note" => {
-            let (Some(id), Some(text)) = (str_arg("id"), str_arg("text")) else {
-                return "append_to_note needs an id and text.".to_string();
-            };
-            match super::append(app, &id, &text).await {
-                Ok(()) => {
-                    if let Ok(note) = super::get(app, &id).await {
-                        log.record(Touched {
-                            note_id: note.id.clone(),
-                            title: note.title.clone(),
-                            saved_at: note.timestamp,
-                        });
-                        format!("Added to \"{}\".", note.title)
-                    } else {
-                        "Added.".to_string()
-                    }
+            if str_arg("id").is_none() || str_arg("text").is_none() {
+                return crate::capability::ToolResult::Text(
+                    ToolErrorResponse::new(
+                        MemoryErrorCode::InvalidArguments,
+                        "append_to_note needs an id and text.",
+                    )
+                    .to_json_string(),
+                );
+            }
+            let prepared = crate::action_exec::prepare_grain_space_call("append_to_note", args);
+            match crate::action_exec::run_or_confirm_opt(app, prepared, "Add to note").await {
+                crate::action_exec::Dispatch::Ran(outcome) => {
+                    crate::capability::ToolResult::Text(outcome.model_summary())
                 }
-                Err(e) => format!("Could not add to that note: {e}"),
+                crate::action_exec::Dispatch::AwaitConfirm(interaction) => {
+                    crate::capability::ToolResult::Confirm(crate::action_exec::to_agent_confirm(
+                        &interaction,
+                    ))
+                }
             }
         }
-        "list_collections" => match super::collections(app).await {
-            Ok(list) if list.is_empty() => "There are no collections yet.".to_string(),
-            Ok(list) => list.join("\n"),
-            Err(e) => format!("Could not list the collections: {e}"),
-        },
-        other => format!("There is no tool called {other}."),
+        "list_collections" => {
+            let Some(app) = app else {
+                return crate::capability::ToolResult::Text(
+                    ToolErrorResponse::new(
+                        MemoryErrorCode::Internal,
+                        "AppHandle is required to list collections.",
+                    )
+                    .to_json_string(),
+                );
+            };
+            match super::collections(app).await {
+                Ok(list) if list.is_empty() => {
+                    crate::capability::ToolResult::Text("There are no collections yet.".to_string())
+                }
+                Ok(list) => crate::capability::ToolResult::Text(list.join("\n")),
+                Err(e) => crate::capability::ToolResult::Text(
+                    ToolErrorResponse::new(
+                        MemoryErrorCode::Internal,
+                        format!("Could not list the collections: {e}"),
+                    )
+                    .to_json_string(),
+                ),
+            }
+        }
+        other => crate::capability::ToolResult::Text(
+            ToolErrorResponse::new(
+                MemoryErrorCode::SchemaViolation,
+                format!("There is no tool called '{other}'."),
+            )
+            .to_json_string(),
+        ),
+    }
+}
+
+/// Execute one tool call and return text. If a write was attempted that requires
+/// confirmation, returns a structured `confirmation_required` error code.
+#[allow(dead_code)]
+pub async fn execute(app: &AppHandle, call: &ToolCallOut, log: &mut TurnLog) -> String {
+    match dispatch(app, call, log).await {
+        crate::capability::ToolResult::Text(text) => text,
+        crate::capability::ToolResult::Confirm(_) => ToolErrorResponse::new(
+            MemoryErrorCode::ConfirmationRequired,
+            "Write operations require user confirmation and must be dispatched through action_exec.",
+        )
+        .to_json_string(),
     }
 }
 
@@ -319,8 +402,27 @@ mod tests {
     }
 
     #[test]
-    fn memory_tools_mark_saved_notes_as_historical_context() {
-        assert!(SEARCH_NOTES_DESCRIPTION.contains("historical context"));
-        assert!(SEARCH_NOTES_DESCRIPTION.contains("verify mutable external facts"));
+    fn tool_error_response_serializes_cleanly() {
+        let err = ToolErrorResponse::new(MemoryErrorCode::InvalidArguments, "save_note needs a body.");
+        let raw = err.to_json_string();
+        assert!(raw.contains(r#""code":"invalid_arguments""#));
+        assert!(raw.contains(r#""message":"save_note needs a body.""#));
+        assert!(raw.contains(r#""ok":false"#));
+
+        let parsed: ToolErrorResponse = serde_json::from_str(&raw).unwrap();
+        assert_eq!(parsed, err);
+    }
+
+    #[test]
+    fn specs_include_all_canonical_parameters() {
+        let defs = crate::action_exec::grain_space_tool_definitions();
+        let save = defs.iter().find(|d| d.action_id == "save_note").unwrap();
+        let props = save.schema.get("properties").unwrap();
+        assert!(props.get("body").is_some());
+        assert!(props.get("title").is_some());
+        assert!(props.get("summary").is_some());
+        assert!(props.get("question").is_some());
+        assert!(props.get("entities").is_some());
+        assert!(props.get("collection").is_some());
     }
 }

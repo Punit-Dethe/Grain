@@ -138,7 +138,12 @@ pub fn required_capability(method: &str) -> Option<&'static str> {
         // [GRAIN] Grain Space over MCP. `space` is NOT in KNOWN_CAPABILITIES, so
         // no manifest can request it and no permission sheet can grant it — it
         // exists only on the identity the app mints for its own proxy.
-        "space.collections" | "space.search" | "space.get" | "space.save" | "space.append" => {
+        "space.collections"
+        | "space.search"
+        | "space.get"
+        | "space.save"
+        | "space.append"
+        | "space.confirm" => {
             Some("space")
         }
         // [GRAIN] The same notebook, reached by an EXTENSION rather than by
@@ -1555,25 +1560,113 @@ pub async fn dispatch(
                         .collect()
                 })
                 .unwrap_or_default();
-            let supplied = crate::grain_space::SuppliedMeta {
-                title: opt("title"),
-                summary: opt("summary"),
-                question: opt("question"),
-                entities,
-                collection: opt("collection"),
-            };
-            let id = crate::grain_space::save(app, &body, supplied)
-                .await
-                .map_err(internal_error)?;
-            Ok(serde_json::json!({ "id": id }))
+            let mut args = serde_json::Map::new();
+            args.insert("body".to_string(), Value::String(body));
+            if let Some(t) = opt("title") {
+                args.insert("title".to_string(), Value::String(t));
+            }
+            if let Some(s) = opt("summary") {
+                args.insert("summary".to_string(), Value::String(s));
+            }
+            if let Some(q) = opt("question") {
+                args.insert("question".to_string(), Value::String(q));
+            }
+            if let Some(c) = opt("collection") {
+                args.insert("collection".to_string(), Value::String(c));
+            }
+            if !entities.is_empty() {
+                args.insert(
+                    "entities".to_string(),
+                    Value::Array(entities.into_iter().map(Value::String).collect()),
+                );
+            }
+            let prepared =
+                crate::action_exec::prepare_grain_space_call("save_note", Value::Object(args));
+            match crate::action_exec::run_or_confirm(app, prepared, "Save note").await {
+                crate::action_exec::Dispatch::Ran(outcome) => match outcome {
+                    grain_core::execution::ActionOutcome::Succeeded(data) => {
+                        let id = data
+                            .details
+                            .iter()
+                            .find(|f| f.label == "id")
+                            .map(|f| f.value.clone())
+                            .unwrap_or_default();
+                        Ok(serde_json::json!({ "id": id }))
+                    }
+                    grain_core::execution::ActionOutcome::Failed { message, .. } => {
+                        Err(internal_error(message))
+                    }
+                    _ => Err(internal_error("Unexpected action outcome")),
+                },
+                crate::action_exec::Dispatch::AwaitConfirm(interaction) => {
+                    let token = match &interaction {
+                        grain_core::interaction::Interaction::Confirm { token, .. } => token.clone(),
+                        _ => String::new(),
+                    };
+                    Ok(serde_json::json!({
+                        "status": "pending_confirm",
+                        "requiresConfirmation": true,
+                        "token": token,
+                        "interaction": interaction,
+                    }))
+                }
+            }
         }
         "space.append" => {
             let id = param_nonempty_str(&params, "id")?;
             let text = param_nonempty_str(&params, "text")?;
-            crate::grain_space::append(app, &id, &text)
-                .await
-                .map_err(internal_error)?;
-            Ok(serde_json::json!({ "id": id }))
+            let args = serde_json::json!({ "id": id, "text": text });
+            let prepared =
+                crate::action_exec::prepare_grain_space_call("append_to_note", args);
+            match crate::action_exec::run_or_confirm(app, prepared, "Add to note").await {
+                crate::action_exec::Dispatch::Ran(outcome) => match outcome {
+                    grain_core::execution::ActionOutcome::Succeeded(_) => {
+                        Ok(serde_json::json!({ "id": id }))
+                    }
+                    grain_core::execution::ActionOutcome::Failed { message, .. } => {
+                        Err(internal_error(message))
+                    }
+                    _ => Err(internal_error("Unexpected action outcome")),
+                },
+                crate::action_exec::Dispatch::AwaitConfirm(interaction) => {
+                    let token = match &interaction {
+                        grain_core::interaction::Interaction::Confirm { token, .. } => token.clone(),
+                        _ => String::new(),
+                    };
+                    Ok(serde_json::json!({
+                        "status": "pending_confirm",
+                        "requiresConfirmation": true,
+                        "token": token,
+                        "interaction": interaction,
+                    }))
+                }
+            }
+        }
+        "space.confirm" => {
+            let token = param_nonempty_str(&params, "token")?;
+            let approve = params
+                .get("approve")
+                .and_then(Value::as_bool)
+                .unwrap_or(true);
+            let outcome = crate::action_exec::resume(app, &token, approve).await;
+            match outcome {
+                grain_core::execution::ActionOutcome::Succeeded(data) => {
+                    let id = data
+                        .details
+                        .iter()
+                        .find(|f| f.label == "id")
+                        .map(|f| f.value.clone())
+                        .unwrap_or_default();
+                    Ok(serde_json::json!({ "status": "approved", "id": id }))
+                }
+                grain_core::execution::ActionOutcome::Cancelled => {
+                    Ok(serde_json::json!({ "status": "cancelled" }))
+                }
+                grain_core::execution::ActionOutcome::Failed { class, message } => {
+                    Err(internal_error(format!("{class:?}: {message}")))
+                }
+                _ => Err(internal_error("Unexpected action outcome")),
+            }
         }
         // [GRAIN] The `notes` capability's surface (NOTE-UI-EXTENSION-PLAN.md).
         // The reads mirror `space.*` deliberately rather than sharing an arm:

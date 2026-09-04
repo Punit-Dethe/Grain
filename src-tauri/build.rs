@@ -18,6 +18,9 @@ fn main() {
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("linux") {
         println!("cargo:rustc-link-arg=-Wl,-rpath,$ORIGIN/../lib/Grain:$ORIGIN/../lib");
     }
+    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
+        println!("cargo:rustc-link-arg=/MANIFESTDEPENDENCY:type='win32' name='Microsoft.Windows.Common-Controls' version='6.0.0.0' processorArchitecture='*' publicKeyToken='6595b64144ccf1df' language='*'");
+    }
 
     // Stage transcribe-cpp's shared runtime libraries (and the dlopen'd ggml
     // backend modules) for the installer. Self-gates on the shared /

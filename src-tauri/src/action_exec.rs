@@ -131,11 +131,26 @@ pub fn prepare(
 /// Route a prepared call: `Safe` executes now; `Confirm` is withheld and returned
 /// as an interaction for the user.
 pub async fn run_or_confirm(app: &AppHandle, prepared: PreparedCall, title: &str) -> Dispatch {
+    run_or_confirm_opt(Some(app), prepared, title).await
+}
+
+/// Optional-AppHandle variant of `run_or_confirm` used by headless tests and gates.
+pub async fn run_or_confirm_opt(
+    app: Option<&AppHandle>,
+    prepared: PreparedCall,
+    title: &str,
+) -> Dispatch {
     if prepared.risk.needs_confirmation() {
         let interaction = confirm_interaction(&prepared, title);
         PendingCalls::insert(prepared);
         Dispatch::AwaitConfirm(interaction)
     } else {
+        let Some(app) = app else {
+            return Dispatch::Ran(failed(
+                FailureClass::Internal,
+                "AppHandle required for action execution.",
+            ));
+        };
         Dispatch::Ran(execute_revalidated(app, &prepared).await)
     }
 }
@@ -143,6 +158,11 @@ pub async fn run_or_confirm(app: &AppHandle, prepared: PreparedCall, title: &str
 /// Approve (or decline) a held confirmation and run the *exact* call. Revalidates
 /// at time-of-use; a stale call is refused rather than run behind the user's back.
 pub async fn resume(app: &AppHandle, token: &str, approve: bool) -> ActionOutcome {
+    resume_opt(Some(app), token, approve).await
+}
+
+/// Optional-AppHandle variant of `resume` used by tests when approving or rejecting without AppHandle.
+pub async fn resume_opt(app: Option<&AppHandle>, token: &str, approve: bool) -> ActionOutcome {
     let Some(prepared) = PendingCalls::take(token) else {
         return ActionOutcome::Failed {
             class: FailureClass::NotFound,
@@ -152,11 +172,17 @@ pub async fn resume(app: &AppHandle, token: &str, approve: bool) -> ActionOutcom
     if !approve {
         return ActionOutcome::Cancelled;
     }
+    let Some(app) = app else {
+        return ActionOutcome::Failed {
+            class: FailureClass::Internal,
+            message: "AppHandle required to execute approved action.".to_string(),
+        };
+    };
     let Some(current_digest) = current_manifest_digest(app, &prepared) else {
         return ActionOutcome::Failed {
             class: FailureClass::Cancelled,
             message:
-                "The extension action is no longer approved or available â€” please ask again."
+                "The extension action is no longer approved or available — please ask again."
                     .to_string(),
         };
     };
@@ -464,6 +490,210 @@ fn str_arg(args: &Value, key: &str) -> Option<String> {
         .map(str::to_string)
 }
 
+pub fn to_agent_confirm(interaction: &Interaction) -> crate::agent::AgentConfirm {
+    let markdown = grain_core::interaction::to_markdown(interaction);
+    match interaction {
+        Interaction::Confirm {
+            token,
+            title,
+            summary,
+            details,
+            side_effect,
+            destinations,
+        } => crate::agent::AgentConfirm {
+            token: token.clone(),
+            title: title.clone(),
+            summary: summary.clone(),
+            details: details
+                .iter()
+                .map(|field| crate::agent::AgentConfirmField {
+                    label: field.label.clone(),
+                    value: field.value.clone(),
+                })
+                .collect(),
+            side_effect: side_effect.clone(),
+            destinations: destinations.clone(),
+            markdown,
+        },
+        _ => crate::agent::AgentConfirm {
+            token: String::new(),
+            title: "Confirm".to_string(),
+            summary: String::new(),
+            details: Vec::new(),
+            side_effect: String::new(),
+            destinations: Vec::new(),
+            markdown,
+        },
+    }
+}
+
+pub fn prepare_grain_space_call(action_id: &str, arguments: Value) -> PreparedCall {
+    let (risk, side_effect) = match action_id {
+        "save_note" | "append_to_note" => (RiskClass::Confirm, SideEffect::Write),
+        _ => (RiskClass::Safe, SideEffect::Read),
+    };
+    prepare(
+        &format!("{GRAIN_SPACE_EXT_ID}:{action_id}"),
+        GRAIN_SPACE_EXT_ID,
+        action_id,
+        "Grain Space",
+        arguments,
+        risk,
+        side_effect,
+        "builtin",
+    )
+}
+
+pub struct GrainSpaceToolDef {
+    pub action_id: &'static str,
+    pub title: &'static str,
+    pub description: &'static str,
+    pub risk: grain_sdk::manifest::ActionRisk,
+    #[allow(dead_code)]
+    pub side_effect: SideEffect,
+    pub examples: &'static [&'static str],
+    pub params: &'static [(&'static str, bool)],
+    pub schema: Value,
+}
+
+pub fn grain_space_tool_definitions() -> Vec<GrainSpaceToolDef> {
+    use grain_sdk::manifest::ActionRisk;
+    vec![
+        GrainSpaceToolDef {
+            action_id: "search_notes",
+            title: "Search your saved notes",
+            description: "Search the user's own saved notes and return the best matches. Use this whenever the request refers to something they told you before, wrote down, or asked you to remember — and before saying you don't know something personal about them. Saved notes are historical context, not live external state; verify mutable external facts with their provider before acting.",
+            risk: ActionRisk::Safe,
+            side_effect: SideEffect::Read,
+            examples: &["what did I write about the meeting", "find my notes on onboarding"],
+            params: &[("query", true)],
+            schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "Focused search terms — the key nouns or topic."
+                    }
+                },
+                "required": ["query"]
+            }),
+        },
+        GrainSpaceToolDef {
+            action_id: "get_note",
+            title: "Read a saved note in full",
+            description: "Read one note in full, by the id returned from search_notes. Use it when a search snippet is not enough to answer.",
+            risk: ActionRisk::Safe,
+            side_effect: SideEffect::Read,
+            examples: &["read that note"],
+            params: &[("id", true)],
+            schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "id": {
+                        "type": "string",
+                        "description": "The note's id."
+                    }
+                },
+                "required": ["id"]
+            }),
+        },
+        GrainSpaceToolDef {
+            action_id: "save_note",
+            title: "Save a new note",
+            description: "Save a NEW note. Only when the user asks you to write something down, remember it, or make a note of it — never as a side effect of answering, rewriting or explaining something.",
+            risk: ActionRisk::Confirm,
+            side_effect: SideEffect::Write,
+            examples: &["make a note of this", "write this down", "remember this"],
+            params: &[
+                ("body", true),
+                ("title", false),
+                ("summary", false),
+                ("question", false),
+                ("entities", false),
+                ("collection", false),
+            ],
+            schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "body": {
+                        "type": "string",
+                        "description": "The note itself, in Markdown. Keep the user's own wording and detail; do not summarise it away."
+                    },
+                    "title": {
+                        "type": "string",
+                        "description": "A short title. Optional — Grain writes one otherwise."
+                    },
+                    "summary": {
+                        "type": "string",
+                        "description": "A concise one-line summary of the note. Optional."
+                    },
+                    "question": {
+                        "type": "string",
+                        "description": "The core question or problem this note answers or addresses. Optional."
+                    },
+                    "entities": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "Key entities, topics, or tags mentioned in the note. Optional."
+                    },
+                    "collection": {
+                        "type": "string",
+                        "description": "An existing collection to file it under, from list_collections. Optional."
+                    }
+                },
+                "required": ["body"]
+            }),
+        },
+        GrainSpaceToolDef {
+            action_id: "append_to_note",
+            title: "Add to an existing note",
+            description: "Add text to the end of a note that already exists, by id. Use this rather than save_note when the user is adding to something.",
+            risk: ActionRisk::Confirm,
+            side_effect: SideEffect::Write,
+            examples: &["add this to that note"],
+            params: &[("id", true), ("text", true)],
+            schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "id": {
+                        "type": "string",
+                        "description": "The note's id."
+                    },
+                    "text": {
+                        "type": "string",
+                        "description": "What to add, in Markdown."
+                    }
+                },
+                "required": ["id", "text"]
+            }),
+        },
+        GrainSpaceToolDef {
+            action_id: "list_collections",
+            title: "List note collections",
+            description: "List the collections the user files notes under. Use before save_note when they say where a note belongs.",
+            risk: ActionRisk::Safe,
+            side_effect: SideEffect::Read,
+            examples: &["what collections do I have"],
+            params: &[],
+            schema: serde_json::json!({
+                "type": "object",
+                "properties": {}
+            }),
+        },
+    ]
+}
+
+pub fn grain_space_tool_specs() -> Vec<crate::llm_client::ToolSpec> {
+    grain_space_tool_definitions()
+        .into_iter()
+        .map(|def| crate::llm_client::ToolSpec {
+            name: def.action_id.to_string(),
+            description: def.description.to_string(),
+            parameters: def.schema,
+        })
+        .collect()
+}
+
 async fn grain_space_execute(app: &AppHandle, prepared: &PreparedCall) -> ActionOutcome {
     const SEARCH_LIMIT: usize = 6;
     let source = Some("Grain Space".to_string());
@@ -545,11 +775,29 @@ async fn grain_space_execute(app: &AppHandle, prepared: &PreparedCall) -> Action
             let Some(body) = str_arg(args, "body") else {
                 return invalid("save_note needs a body.");
             };
+            let entities: Vec<String> = args
+                .get("entities")
+                .and_then(Value::as_array)
+                .map(|a| {
+                    a.iter()
+                        .filter_map(Value::as_str)
+                        .map(str::to_string)
+                        .collect()
+                })
+                .or_else(|| {
+                    str_arg(args, "entities").map(|s| {
+                        s.split(',')
+                            .map(|part| part.trim().to_string())
+                            .filter(|part| !part.is_empty())
+                            .collect()
+                    })
+                })
+                .unwrap_or_default();
             let supplied = crate::grain_space::SuppliedMeta {
                 title: str_arg(args, "title"),
-                summary: None,
-                question: None,
-                entities: Vec::new(),
+                summary: str_arg(args, "summary"),
+                question: str_arg(args, "question"),
+                entities,
                 collection: str_arg(args, "collection"),
             };
             match crate::grain_space::save(app, &body, supplied).await {
@@ -562,7 +810,10 @@ async fn grain_space_execute(app: &AppHandle, prepared: &PreparedCall) -> Action
                         source,
                         title: Some("Saved note".to_string()),
                         body: Some(format!("Saved as \"{title}\".")),
-                        details: vec![],
+                        details: vec![Field {
+                            label: "id".to_string(),
+                            value: id,
+                        }],
                         receipt: true,
                     })
                 }
@@ -581,12 +832,202 @@ async fn grain_space_execute(app: &AppHandle, prepared: &PreparedCall) -> Action
                     source,
                     title: Some("Updated note".to_string()),
                     body: Some("Added to the note.".to_string()),
+                    details: vec![Field {
+                        label: "id".to_string(),
+                        value: id,
+                    }],
+                    receipt: true,
+                }),
+                Err(e) => {
+                    let class = if e.to_lowercase().contains("not found") {
+                        FailureClass::NotFound
+                    } else {
+                        FailureClass::Internal
+                    };
+                    failed(class, &format!("Could not update that note: {e}"))
+                }
+            }
+        }
+        other => failed(
+            FailureClass::NotFound,
+            &format!("Grain Space has no action '{other}'."),
+        ),
+    }
+}
+
+/// Standalone vault-level execution for unit and contract testing without AppHandle.
+#[allow(dead_code)]
+pub fn execute_grain_space_on_vault(
+    vault: &crate::grain_space::vault::Vault,
+    action_id: &str,
+    args: &Value,
+) -> ActionOutcome {
+    use crate::grain_space::note::Note;
+    use crate::grain_space::vault;
+
+    const SEARCH_LIMIT: usize = 6;
+    let source = Some("Grain Space".to_string());
+    match action_id {
+        "search_notes" => {
+            let Some(query) = str_arg(args, "query") else {
+                return invalid("search_notes needs a query.");
+            };
+            match vault::search_notes(vault, &query) {
+                Ok(notes) if notes.is_empty() => ActionOutcome::Succeeded(SuccessData {
+                    source,
+                    title: Some("No matching notes".to_string()),
+                    body: Some(format!("No saved notes match \"{query}\".")),
                     details: vec![],
+                    receipt: false,
+                }),
+                Ok(notes) => {
+                    let details = notes
+                        .into_iter()
+                        .take(SEARCH_LIMIT)
+                        .map(|n| Field {
+                            label: n.title,
+                            value: if !n.tldr.is_empty() {
+                                n.tldr
+                            } else {
+                                n.body.chars().take(200).collect()
+                            },
+                        })
+                        .collect();
+                    ActionOutcome::Succeeded(SuccessData {
+                        source,
+                        title: Some("Notes found".to_string()),
+                        body: None,
+                        details,
+                        receipt: false,
+                    })
+                }
+                Err(e) => failed(
+                    FailureClass::Internal,
+                    &format!("Could not search notes: {e}"),
+                ),
+            }
+        }
+        "get_note" => {
+            let Some(id) = str_arg(args, "id") else {
+                return invalid("get_note needs an id.");
+            };
+            match vault::get_note(vault, &id) {
+                Ok(note) => ActionOutcome::Succeeded(SuccessData {
+                    source,
+                    title: Some(note.title.clone()),
+                    body: Some(note.body.clone()),
+                    details: vec![],
+                    receipt: false,
+                }),
+                Err(e) => failed(
+                    FailureClass::NotFound,
+                    &format!("Could not read that note: {e}"),
+                ),
+            }
+        }
+        "list_collections" => match vault::list_folders(vault) {
+            Ok(list) if list.is_empty() => ActionOutcome::Succeeded(SuccessData {
+                source,
+                title: Some("Collections".to_string()),
+                body: Some("There are no collections yet.".to_string()),
+                details: vec![],
+                receipt: false,
+            }),
+            Ok(list) => ActionOutcome::Succeeded(SuccessData {
+                source,
+                title: Some("Collections".to_string()),
+                body: Some(list.join(", ")),
+                details: vec![],
+                receipt: false,
+            }),
+            Err(e) => failed(
+                FailureClass::Internal,
+                &format!("Could not list collections: {e}"),
+            ),
+        },
+        "save_note" => {
+            let Some(body) = str_arg(args, "body") else {
+                return invalid("save_note needs a body.");
+            };
+            let mut note = Note::raw(body.trim().to_string());
+            if let Some(t) = str_arg(args, "title") {
+                note.title = t.chars().take(80).collect();
+            }
+            if let Some(s) = str_arg(args, "summary") {
+                note.tldr = s;
+            }
+            if let Some(q) = str_arg(args, "question") {
+                note.question = q.chars().take(240).collect();
+            }
+            let entities: Vec<String> = args
+                .get("entities")
+                .and_then(Value::as_array)
+                .map(|a| {
+                    a.iter()
+                        .filter_map(Value::as_str)
+                        .map(str::to_string)
+                        .collect()
+                })
+                .or_else(|| {
+                    str_arg(args, "entities").map(|s| {
+                        s.split(',')
+                            .map(|part| part.trim().to_string())
+                            .filter(|part| !part.is_empty())
+                            .collect()
+                    })
+                })
+                .unwrap_or_default();
+            note.entities = entities;
+            let id = note.id.clone();
+            let title = note.title.clone();
+            let save_res = vault::save_note(vault, &note);
+            if let Some(col) = str_arg(args, "collection") {
+                let _ = vault::move_note_to_folder(vault, &id, Some(&col));
+            }
+            match save_res {
+                Ok(()) => ActionOutcome::Succeeded(SuccessData {
+                    source,
+                    title: Some("Saved note".to_string()),
+                    body: Some(format!("Saved as \"{title}\".")),
+                    details: vec![Field {
+                        label: "id".to_string(),
+                        value: id,
+                    }],
                     receipt: true,
                 }),
                 Err(e) => failed(
                     FailureClass::Internal,
-                    &format!("Could not update that note: {e}"),
+                    &format!("Could not save the note: {e}"),
+                ),
+            }
+        }
+        "append_to_note" => {
+            let (Some(id), Some(text)) = (str_arg(args, "id"), str_arg(args, "text")) else {
+                return invalid("append_to_note needs an id and text.");
+            };
+            match vault::get_note(vault, &id) {
+                Ok(mut note) => {
+                    note.body = format!("{}\n\n---\n\n{}", note.body.trim_end(), text.trim());
+                    match vault::save_note(vault, &note) {
+                        Ok(()) => ActionOutcome::Succeeded(SuccessData {
+                            source,
+                            title: Some("Updated note".to_string()),
+                            body: Some("Added to the note.".to_string()),
+                            details: vec![Field {
+                                label: "id".to_string(),
+                                value: id,
+                            }],
+                            receipt: true,
+                        }),
+                        Err(e) => failed(
+                            FailureClass::Internal,
+                            &format!("Could not update that note: {e}"),
+                        ),
+                    }
+                }
+                Err(e) => failed(
+                    FailureClass::NotFound,
+                    &format!("Could not find that note: {e}"),
                 ),
             }
         }
@@ -608,30 +1049,27 @@ fn failed(class: FailureClass, message: &str) -> ActionOutcome {
     }
 }
 
-/// The Grain Space actions, as built-in capability index inputs. Registered in
-/// `extension_host::refresh_index` when Grain Space is enabled, so they are
-/// retrieved and executed through the one action path like any other.
+/// The Grain Space actions, as built-in capability index inputs. Generated directly
+/// from `grain_space_tool_definitions()` so there is a single source of truth.
 pub fn grain_space_actions() -> Vec<grain_core::capability_index::ActionInput> {
     use grain_core::capability_index::ActionParamInput;
-    use grain_sdk::manifest::{ActionParamKind, ActionRisk};
+    use grain_sdk::manifest::ActionParamKind;
 
-    let make = |action_id: &str,
-                title: &str,
-                risk: ActionRisk,
-                examples: &[&str],
-                params: &[(&str, bool)]| {
-        grain_core::capability_index::ActionInput {
-            canonical_id: format!("{GRAIN_SPACE_EXT_ID}:{action_id}"),
+    grain_space_tool_definitions()
+        .into_iter()
+        .map(|def| grain_core::capability_index::ActionInput {
+            canonical_id: format!("{GRAIN_SPACE_EXT_ID}:{}", def.action_id),
             extension_id: GRAIN_SPACE_EXT_ID.to_string(),
-            action_id: action_id.to_string(),
+            action_id: def.action_id.to_string(),
             provider_name: "Grain Space".to_string(),
-            title: title.to_string(),
+            title: def.title.to_string(),
             aliases: vec!["Grain Space".to_string(), "notes".to_string()],
             namespaces: vec![GRAIN_SPACE_NS.to_string()],
             tags: vec!["note".to_string(), "notebook".to_string()],
-            examples: examples.iter().map(|s| s.to_string()).collect(),
+            examples: def.examples.iter().map(|s| s.to_string()).collect(),
             phrases: Vec::new(),
-            params: params
+            params: def
+                .params
                 .iter()
                 .map(|(name, required)| ActionParamInput {
                     name: (*name).to_string(),
@@ -641,55 +1079,14 @@ pub fn grain_space_actions() -> Vec<grain_core::capability_index::ActionInput> {
                 .collect(),
             when_to_use: String::new(),
             when_not_to_use: String::new(),
-            description: String::new(),
+            description: def.description.to_string(),
             provider_context: vec!["Your own saved notes in Grain Space.".to_string()],
-            risk,
+            risk: def.risk,
             enabled: true,
             platform_ok: true,
             quarantined: false,
-        }
-    };
-
-    vec![
-        make(
-            "search_notes",
-            "Search your saved notes",
-            ActionRisk::Safe,
-            &[
-                "what did I write about the meeting",
-                "find my notes on onboarding",
-            ],
-            &[("query", true)],
-        ),
-        make(
-            "get_note",
-            "Read a saved note in full",
-            ActionRisk::Safe,
-            &["read that note"],
-            &[("id", true)],
-        ),
-        make(
-            "save_note",
-            "Save a new note",
-            ActionRisk::Confirm,
-            &["make a note of this", "write this down", "remember this"],
-            &[("body", true), ("title", false), ("collection", false)],
-        ),
-        make(
-            "append_to_note",
-            "Add to an existing note",
-            ActionRisk::Confirm,
-            &["add this to that note"],
-            &[("id", true), ("text", true)],
-        ),
-        make(
-            "list_collections",
-            "List note collections",
-            ActionRisk::Safe,
-            &["what collections do I have"],
-            &[],
-        ),
-    ]
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -756,5 +1153,128 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn grain_space_tool_definitions_and_specs_are_unified() {
+        let defs = grain_space_tool_definitions();
+        let specs = grain_space_tool_specs();
+        let actions = grain_space_actions();
+
+        assert_eq!(defs.len(), 5);
+        assert_eq!(specs.len(), 5);
+        assert_eq!(actions.len(), 5);
+
+        let save_def = defs.iter().find(|d| d.action_id == "save_note").unwrap();
+        assert_eq!(save_def.risk, grain_sdk::manifest::ActionRisk::Confirm);
+        assert_eq!(save_def.side_effect, SideEffect::Write);
+
+        let save_spec = specs.iter().find(|s| s.name == "save_note").unwrap();
+        let props = save_spec.parameters.get("properties").unwrap();
+        assert!(props.get("body").is_some());
+        assert!(props.get("title").is_some());
+        assert!(props.get("summary").is_some());
+        assert!(props.get("question").is_some());
+        assert!(props.get("entities").is_some());
+        assert!(props.get("collection").is_some());
+    }
+
+    #[test]
+    fn grain_space_prepared_calls_classify_risk_and_side_effects() {
+        let save_call = prepare_grain_space_call(
+            "save_note",
+            json!({ "body": "Remember the deploy timeout is 45s", "title": "Deploy timeout" }),
+        );
+        assert_eq!(save_call.risk, RiskClass::Confirm);
+        assert_eq!(save_call.side_effect, SideEffect::Write);
+        assert!(save_call.token.starts_with("pc_"));
+        assert!(save_call.risk.needs_confirmation());
+
+        let append_call = prepare_grain_space_call(
+            "append_to_note",
+            json!({ "id": "note-123", "text": "Additional context" }),
+        );
+        assert_eq!(append_call.risk, RiskClass::Confirm);
+        assert_eq!(append_call.side_effect, SideEffect::Write);
+
+        let search_call = prepare_grain_space_call(
+            "search_notes",
+            json!({ "query": "deploy timeout" }),
+        );
+        assert_eq!(search_call.risk, RiskClass::Safe);
+        assert_eq!(search_call.side_effect, SideEffect::Read);
+        assert!(!search_call.risk.needs_confirmation());
+    }
+
+    #[test]
+    fn pending_calls_store_take_and_discard() {
+        let call = prepare_grain_space_call(
+            "save_note",
+            json!({ "body": "Held confirmation test" }),
+        );
+        let token = call.token.clone();
+
+        PendingCalls::insert(call);
+        assert!(discard(&token));
+        assert!(PendingCalls::take(&token).is_none());
+    }
+
+    #[test]
+    fn execute_grain_space_on_vault_handles_full_lifecycle() {
+        let temp = tempfile::tempdir().unwrap();
+        let vault = crate::grain_space::vault::Vault::native(temp.path().to_path_buf());
+
+        // 1. Save note with full metadata
+        let save_args = json!({
+            "body": "Auth endpoints require PKCE verification with S256 challenge.",
+            "title": "PKCE Auth Rule",
+            "summary": "PKCE auth requires S256 verification.",
+            "question": "How is PKCE challenge verified?",
+            "entities": ["auth", "pkce", "security"],
+            "collection": "Security"
+        });
+        let outcome = execute_grain_space_on_vault(&vault, "save_note", &save_args);
+        let ActionOutcome::Succeeded(data) = outcome else {
+            panic!("expected successful save");
+        };
+        let note_id = data.details.iter().find(|f| f.label == "id").unwrap().value.clone();
+        assert!(!note_id.is_empty());
+
+        // 2. Read note back and verify fields
+        let get_args = json!({ "id": note_id });
+        let get_outcome = execute_grain_space_on_vault(&vault, "get_note", &get_args);
+        let ActionOutcome::Succeeded(get_data) = get_outcome else {
+            panic!("expected successful get");
+        };
+        assert_eq!(get_data.title.as_deref(), Some("PKCE Auth Rule"));
+        assert!(get_data.body.as_deref().unwrap().contains("PKCE verification"));
+
+        // 3. Append to note
+        let append_args = json!({
+            "id": note_id,
+            "text": "Token refresh window is 300 seconds."
+        });
+        let append_outcome = execute_grain_space_on_vault(&vault, "append_to_note", &append_args);
+        assert!(matches!(append_outcome, ActionOutcome::Succeeded(_)));
+
+        // 4. Verify appended body
+        let get_after_append = execute_grain_space_on_vault(&vault, "get_note", &get_args);
+        let ActionOutcome::Succeeded(after_data) = get_after_append else {
+            panic!("expected successful get after append");
+        };
+        let body = after_data.body.unwrap();
+        assert!(body.contains("PKCE verification"));
+        assert!(body.contains("Token refresh window is 300 seconds."));
+
+        // 5. Non-existent note returns NotFound
+        let bad_get = execute_grain_space_on_vault(&vault, "get_note", &json!({ "id": "nonexistent" }));
+        assert!(matches!(bad_get, ActionOutcome::Failed { class: FailureClass::NotFound, .. }));
+
+        // 6. List collections shows Security
+        let colls = execute_grain_space_on_vault(&vault, "list_collections", &json!({}));
+        let ActionOutcome::Succeeded(coll_data) = colls else {
+            panic!("expected collections");
+        };
+        assert!(coll_data.body.unwrap().contains("Security"));
     }
 }

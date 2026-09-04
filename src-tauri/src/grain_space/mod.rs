@@ -19,6 +19,8 @@ pub mod capture;
 pub mod commands;
 pub mod embed;
 #[cfg(test)]
+pub mod contract_tests;
+#[cfg(test)]
 pub mod eval;
 pub mod graph;
 pub mod note;

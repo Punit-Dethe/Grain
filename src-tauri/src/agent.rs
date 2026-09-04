@@ -2429,7 +2429,7 @@ async fn run_with_note_tools(
             // An extension capability tool (load_extension / act__…) is handled by the
             // registry; anything else is a notebook tool. `dispatch` returns None
             // when the call is not ours, so the two surfaces never collide.
-            let content = match crate::capability::dispatch(
+            let tool_res = match crate::capability::dispatch(
                 app,
                 call,
                 &mut capability_session,
@@ -2437,8 +2437,13 @@ async fn run_with_note_tools(
             )
             .await
             {
-                Some(crate::capability::ToolResult::Text(text)) => text,
-                Some(crate::capability::ToolResult::Confirm(confirm)) => {
+                Some(res) => res,
+                None => crate::grain_space::agent_tools::dispatch(app, call, &mut log).await,
+            };
+
+            let content = match tool_res {
+                crate::capability::ToolResult::Text(text) => text,
+                crate::capability::ToolResult::Confirm(confirm) => {
                     // A risky action was withheld. Close this tool call honestly
                     // and end the turn to surface the confirmation; the model never
                     // sees it as done.
@@ -2447,7 +2452,6 @@ async fn run_with_note_tools(
                     "Awaiting the user's approval before this runs — do not claim it is done."
                         .to_string()
                 }
-                None => crate::grain_space::agent_tools::execute(app, call, &mut log).await,
             };
             entries.push(ChatEntry::ToolResult {
                 call_id: call.id.clone(),
