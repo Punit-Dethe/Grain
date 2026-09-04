@@ -18,12 +18,8 @@ use tauri::AppHandle;
 use super::backend::{self, Backend};
 use super::note::Note;
 
-/// Memories fed to the model per turn (post-fusion). Recall over precision —
-/// the model does the final filtering; an extra note costs a few hundred
-/// tokens, a missing one costs the answer.
-const TOP_K_PER_TURN: usize = 6;
 /// Dual-stage retrieval: fuse to a WIDE candidate pool, then rerank down to
-/// `TOP_K_PER_TURN`. The semantic leg already returns ~24 and FTS is cheap, so
+/// the requested limit. The semantic leg already returns ~24 and FTS is cheap, so
 /// widening to 20 candidates is effectively free (one pass), and the CPU
 /// reranker (RRF + term overlap + recency) picks the *relevant* 6, not just the
 /// top-6 by raw fused rank.
@@ -33,12 +29,8 @@ const CANDIDATE_POOL: usize = 20;
 /// later turns simply aren't added to the block. Personal-scale, short
 /// sessions — a handful of distinct memories is ample. This is the RAM/context
 /// safety bound now that note bodies are sent in full (no truncation).
+#[cfg(test)]
 const MAX_SESSION_MEMORIES: usize = 12;
-/// Max native `search_memory` tool round-trips per turn. Bounds the added
-/// latency/embedding work to the minority of turns that actually need to look
-/// again; after the cap we force a direct answer. Active-turn only — no idle
-/// cost ever.
-const MAX_TOOL_HOPS: usize = 3;
 /// RRF constant (standard).
 const RRF_K: f64 = 60.0;
 /// Notes the graph leg contributes per level. Deliberately smaller than the
@@ -79,22 +71,24 @@ const RERANK_LEX_W_RECENCY: f64 = 0.2;
 /// (in practice: long foreign Obsidian documents) does query-aware excerpting
 /// kick in, because one 100 KB note would otherwise drown a small edge model's
 /// whole context ("lost in the middle").
+#[cfg(test)]
 const FULL_BODY_CHARS: usize = 2800;
 /// Excerpt budget for a long note: the best-matching sections, in document
 /// order, up to about this many chars (~600 tokens). Sections come from the
 /// same markdown chunker the embeddings use, so what recall shows is aligned
 /// with what semantic search matched on.
+#[cfg(test)]
 const EXCERPT_BUDGET_CHARS: usize = 2400;
 
-/// Grain Recall session state, held in `AgentState` and cleared on each fresh
-/// summon. `ids[i]` is the note id shown as memory `M(i+1)`; the ordering is
-/// append-only within a session so source numbering stays stable and additive
-/// across follow-up turns.
+/// Legacy Recall session fixture retained only for parser/rendering regression
+/// tests. Production recall is stateless and runs through the unified Agent.
+#[cfg(test)]
 #[derive(Default)]
 pub struct RecallSession {
     ids: Vec<String>,
 }
 
+#[cfg(test)]
 impl RecallSession {
     pub fn clear(&mut self) {
         self.ids.clear();
@@ -121,16 +115,13 @@ impl RecallSession {
         self.ids.get(m.wrapping_sub(1)).map(String::as_str)
     }
 
-    /// All registered ids in M-order (for rebuilding the block each turn).
-    fn ordered(&self) -> Vec<String> {
-        self.ids.clone()
-    }
 }
 
 /// The Grain Recall system prompt. Kept tight on purpose: small edge models
 /// drift when the prompt is long, so this states the contract once, clearly —
 /// the create-vs-edit distinction and the single trailing line are the parts
 /// that must never blur.
+#[cfg(test)]
 fn system_prompt(now: &str, weekday: &str) -> String {
     format!(
         "You are Grain, the user's personal memory. Answer ONLY from their saved memories, which \
@@ -188,6 +179,7 @@ fn system_prompt(now: &str, weekday: &str) -> String {
 /// metadata->>'project_id'` JSON-path gymnastics. Folders and entities cover
 /// personal scale; "projects as named bundles of scope parameters" is an
 /// enterprise construct for 50,000 documents and is not built here.
+#[cfg(test)]
 #[derive(Default, Debug)]
 pub(crate) struct Filters {
     /// Keep only notes naming this entity (case/space-insensitive).
@@ -196,6 +188,7 @@ pub(crate) struct Filters {
     pub source: Option<String>,
 }
 
+#[cfg(test)]
 impl Filters {
     fn is_empty(&self) -> bool {
         self.entity.is_none() && self.source.is_none()
@@ -220,15 +213,6 @@ impl Filters {
         }
         true
     }
-}
-
-async fn retrieve(
-    app: &AppHandle,
-    be: &Backend,
-    query: &str,
-    range: Option<(i64, i64)>,
-) -> Result<Vec<Note>> {
-    retrieve_filtered(app, be, query, range, &Filters::default()).await
 }
 
 /// The normal Agent's notebook tool uses the same candidate generation and
@@ -257,32 +241,6 @@ pub(crate) async fn retrieve_for_agent(
     // weaken an explicit temporal constraint. If a time constraint yields zero hits, return empty
     // so the agent knows no matching note exists in that timeframe rather than selecting an old note.
     Ok(hits)
-}
-
-async fn retrieve_filtered(
-    app: &AppHandle,
-    be: &Backend,
-    query: &str,
-    range: Option<(i64, i64)>,
-    filters: &Filters,
-) -> Result<Vec<Note>> {
-    // With filters active, rank the WHOLE pool and narrow afterwards. Narrowing a
-    // top-6 list would silently return nothing when the match sits at rank 20 —
-    // a filter must sharpen the answer, never hide it.
-    let want = if filters.is_empty() {
-        TOP_K_PER_TURN
-    } else {
-        CANDIDATE_POOL
-    };
-    let hits = retrieve_inner(app, be, query, range, want).await?;
-    if filters.is_empty() {
-        return Ok(hits);
-    }
-    Ok(hits
-        .into_iter()
-        .filter(|note| filters.keep(note))
-        .take(TOP_K_PER_TURN)
-        .collect())
 }
 
 async fn retrieve_inner(
@@ -596,6 +554,7 @@ fn term_overlap(
 // -- memories block -------------------------------------------------------------
 
 /// Fraction of query terms present in `text` (lowercased containment).
+#[cfg(test)]
 fn text_overlap(terms: &[String], text: &str) -> f64 {
     if terms.is_empty() {
         return 0.0;
@@ -611,6 +570,7 @@ fn text_overlap(terms: &[String], text: &str) -> f64 {
 /// The first section gets a small bonus (a note's opening usually carries its
 /// identity, and it is the deterministic fallback when no term matches).
 /// Returns `None` for bodies within `FULL_BODY_CHARS` — those go verbatim.
+#[cfg(test)]
 fn excerpt_body(body: &str, terms: &[String]) -> Option<String> {
     if body.chars().count() <= FULL_BODY_CHARS {
         return None;
@@ -671,6 +631,7 @@ fn excerpt_body(body: &str, terms: &[String]) -> Option<String> {
 /// saved-age. Bodies within `FULL_BODY_CHARS` are VERBATIM (the no-truncation
 /// rule for real captures); longer ones are query-aware excerpts so a single
 /// giant vault note can't drown the model's context.
+#[cfg(test)]
 fn render_memory(m: usize, note: &Note, now_ms: i64, terms: &[String]) -> String {
     let mut out = String::new();
     out.push_str(&format!(
@@ -719,6 +680,7 @@ fn render_memory(m: usize, note: &Note, now_ms: i64, terms: &[String]) -> String
 
 /// "2026-07-06 14:32 (yesterday)" — absolute plus a relative hint small models
 /// read more reliably than raw timestamps.
+#[cfg(test)]
 fn saved_line(ts_ms: i64, now_ms: i64) -> String {
     use chrono::{Local, TimeZone};
     let abs = match Local.timestamp_millis_opt(ts_ms) {
@@ -729,6 +691,7 @@ fn saved_line(ts_ms: i64, now_ms: i64) -> String {
 }
 
 /// Human relative age: "just now", "3 hours ago", "yesterday", "2 weeks ago", …
+#[cfg(test)]
 fn relative_age(ts_ms: i64, now_ms: i64) -> String {
     let diff = (now_ms - ts_ms).max(0);
     let mins = diff / 60_000;
@@ -756,6 +719,7 @@ fn relative_age(ts_ms: i64, now_ms: i64) -> String {
     }
 }
 
+#[cfg(test)]
 fn plural(n: i64) -> &'static str {
     if n == 1 {
         ""
@@ -769,6 +733,7 @@ fn plural(n: i64) -> &'static str {
 /// A conversational-write action the model requested via the `ACTION:` line
 /// (RECALL-PLAN §7.2). The M-numbers reference memories in the current block.
 #[derive(Debug, PartialEq)]
+#[cfg(test)]
 pub enum RecallAction {
     /// Merge the turn text into memory Mn (append/update → reconcile LLM pass).
     Reconcile { m: usize },
@@ -783,6 +748,7 @@ pub enum RecallAction {
 /// What the model's trailing convention line told us. `sources`/`not_found` and
 /// `action` are mutually exclusive per turn (a turn either answers or acts).
 #[derive(Debug, Default, PartialEq)]
+#[cfg(test)]
 pub struct ParsedTail {
     pub sources: Vec<usize>,
     pub not_found: bool,
@@ -792,6 +758,7 @@ pub struct ParsedTail {
 /// Split the answer's trailing `SOURCES:` / `NOT_FOUND` line off the display
 /// text. Tolerant: an absent or malformed line just yields the whole text with
 /// no sources and no not-found (never an error, never a retry).
+#[cfg(test)]
 pub fn parse_tail(reply: &str) -> (String, ParsedTail) {
     let trimmed = reply.trim_end();
     let Some(last_break) = trimmed.rfind('\n') else {
@@ -858,6 +825,7 @@ pub fn parse_tail(reply: &str) -> (String, ParsedTail) {
 /// Tolerant of synonyms and phrasing; an unrecognized verb yields `None` (the
 /// turn is then treated as a plain answer). Todo indices are read only from the
 /// substring after the word "todo(s)" so an `Mn` number is never mistaken for one.
+#[cfg(test)]
 fn parse_action(rest: &str) -> Option<RecallAction> {
     let s = rest.trim();
     let verb = s.split_whitespace().next()?;
@@ -891,9 +859,9 @@ fn parse_action(rest: &str) -> Option<RecallAction> {
     }
 }
 
-#[cfg(test)]
 /// Parse a `YYYY-MM-DD` (or RFC3339) date into epoch ms in LOCAL time. When
 /// `end_of_day`, snap to 23:59:59.999 so a `maxDate` window is inclusive.
+#[cfg(test)]
 fn parse_date_ms(s: &str, end_of_day: bool) -> Option<i64> {
     use chrono::{Local, NaiveDate, NaiveTime, TimeZone};
     let s = s.trim();

@@ -54,6 +54,16 @@ const MATCH_MAX_PHRASE_BYTES: usize = 2 * 1024;
 const MATCH_MAX_TOTAL_PHRASE_BYTES: usize = 128 * 1024;
 const MATCH_MAX_ID_BYTES: usize = 128;
 
+/// Grain Space MCP is intentionally read-only until its requests can be placed
+/// on a user-owned confirmation surface. Bound every read at the host boundary.
+const SPACE_MAX_QUERY_BYTES: usize = 4 * 1024;
+const SPACE_MAX_ID_BYTES: usize = 128;
+const SPACE_MAX_NOTE_BODY_BYTES: usize = 16 * 1024;
+const SPACE_MAX_COLLECTIONS: usize = 256;
+const SPACE_MAX_CARDS: usize = 500;
+const SPACE_MAX_METADATA_BYTES: usize = 1024;
+const SPACE_MAX_METADATA_ITEMS: usize = 32;
+
 /// Extension egress is intentionally small and bounded. API-shaped responses
 /// fit comfortably; bulk transfer belongs in a purpose-built host capability.
 const NET_TIMEOUT: Duration = Duration::from_secs(15);
@@ -138,14 +148,11 @@ pub fn required_capability(method: &str) -> Option<&'static str> {
         // [GRAIN] Grain Space over MCP. `space` is NOT in KNOWN_CAPABILITIES, so
         // no manifest can request it and no permission sheet can grant it — it
         // exists only on the identity the app mints for its own proxy.
-        "space.collections" | "space.search" | "space.get" | "space.save" | "space.append" => {
-            Some("space")
-        }
-        // [GRAIN] The same notebook, reached by an EXTENSION rather than by
-        // Grain's own MCP proxy. Wider than `space.*` because a viewer edits:
-        // the read methods are shared, and these add the writes a UI needs.
-        "notes.cards" | "notes.search" | "notes.get" | "notes.save" | "notes.update"
-        | "notes.delete" | "notes.move" | "notes.pin" | "notes.reminder" => Some("notes"),
+        "space.collections" | "space.search" | "space.get" => Some("space"),
+        // [GRAIN] The same notebook, reached by an extension rather than the
+        // first-party MCP proxy. This remains read-only until extension writes
+        // have a user-owned approval channel.
+        "notes.cards" | "notes.search" | "notes.get" => Some("notes"),
         "open.url" => Some("open:url"),
         "open.app" | "open.pickApp" => Some("open:app"),
         _ => Some("__unknown__"), // unknown methods map to an ungrantable cap
@@ -480,6 +487,59 @@ fn param_nonempty_str(params: &Value, key: &str) -> HostResult<String> {
     } else {
         Ok(value)
     }
+}
+
+fn truncate_utf8(value: &mut String, max_bytes: usize) -> bool {
+    if value.len() <= max_bytes {
+        return false;
+    }
+    let mut boundary = max_bytes;
+    while boundary > 0 && !value.is_char_boundary(boundary) {
+        boundary -= 1;
+    }
+    value.truncate(boundary);
+    true
+}
+
+fn bounded_note_value(mut note: crate::grain_space::note::Note) -> HostResult<Value> {
+    let original_body_bytes = note.body.len();
+    let body_truncated = truncate_utf8(&mut note.body, SPACE_MAX_NOTE_BODY_BYTES);
+    let mut metadata_truncated = false;
+    for field in [
+        &mut note.title,
+        &mut note.tldr,
+        &mut note.question,
+        &mut note.source,
+    ] {
+        metadata_truncated |= truncate_utf8(field, SPACE_MAX_METADATA_BYTES);
+    }
+    if note.todo_tags.len() > SPACE_MAX_METADATA_ITEMS {
+        note.todo_tags.truncate(SPACE_MAX_METADATA_ITEMS);
+        metadata_truncated = true;
+    }
+    for todo in &mut note.todo_tags {
+        metadata_truncated |= truncate_utf8(&mut todo.text, SPACE_MAX_METADATA_BYTES);
+    }
+    if note.entities.len() > SPACE_MAX_METADATA_ITEMS {
+        note.entities.truncate(SPACE_MAX_METADATA_ITEMS);
+        metadata_truncated = true;
+    }
+    for entity in &mut note.entities {
+        metadata_truncated |= truncate_utf8(entity, SPACE_MAX_METADATA_BYTES);
+    }
+    let mut value = serde_json::to_value(note).map_err(|e| internal_error(e.to_string()))?;
+    if let Some(object) = value.as_object_mut() {
+        object.insert("truncated".to_string(), Value::Bool(body_truncated));
+        object.insert(
+            "metadataTruncated".to_string(),
+            Value::Bool(metadata_truncated),
+        );
+        object.insert(
+            "originalBodyBytes".to_string(),
+            Value::from(original_body_bytes as u64),
+        );
+    }
+    Ok(value)
 }
 
 fn param_strings(params: &Value, key: &str) -> HostResult<Vec<String>> {
@@ -824,6 +884,23 @@ fn validate_request(method: &str, params: &Value) -> HostResult<()> {
         "match.decide" => {
             param_scored_candidates(params)?;
             param_decide_policy(params)?;
+        }
+        "space.collections" | "notes.cards" => {}
+        "space.search" | "notes.search" => {
+            let query = param_nonempty_str(params, "query")?;
+            if query.len() > SPACE_MAX_QUERY_BYTES {
+                return Err(invalid_argument(format!(
+                    "'query' exceeds the {SPACE_MAX_QUERY_BYTES}-byte note search limit"
+                )));
+            }
+        }
+        "space.get" | "notes.get" => {
+            let id = param_nonempty_str(params, "id")?;
+            if id.len() > SPACE_MAX_ID_BYTES {
+                return Err(invalid_argument(format!(
+                    "'id' exceeds the {SPACE_MAX_ID_BYTES}-byte note id limit"
+                )));
+            }
         }
         "session.start" => {
             param_nonempty_str(params, "mode")?;
@@ -1332,15 +1409,12 @@ pub async fn dispatch(
             let connection = crate::grain_auth::connection(app, &identity.id)
                 .await
                 .map_err(internal_error)?;
-            serde_json::to_value(connection)
-                .map_err(|error| internal_error(error.to_string()))
+            serde_json::to_value(connection).map_err(|error| internal_error(error.to_string()))
         }
         "auth.connect" => {
             let row = crate::grain_auth::connect_from_extension(app.clone(), identity.id.clone())
-                    .await
-                    .map_err(|error| {
-                        unavailable(error, "Retry from the extension settings page.")
-                    })?;
+                .await
+                .map_err(|error| unavailable(error, "Retry from the extension settings page."))?;
             serde_json::to_value(row).map_err(|error| internal_error(error.to_string()))
         }
         "auth.disconnect" => {
@@ -1511,10 +1585,19 @@ pub async fn dispatch(
         // and they are reachable only from the `space` capability, which only
         // the MCP proxy's identity carries.
         "space.collections" => {
-            let names = crate::grain_space::collections(app)
+            let mut names = crate::grain_space::collections(app)
                 .await
                 .map_err(internal_error)?;
-            Ok(serde_json::json!({ "collections": names }))
+            let original_count = names.len();
+            names.truncate(SPACE_MAX_COLLECTIONS);
+            for name in &mut names {
+                truncate_utf8(name, SPACE_MAX_METADATA_BYTES);
+            }
+            Ok(serde_json::json!({
+                "collections": names,
+                "truncated": original_count > SPACE_MAX_COLLECTIONS,
+                "originalCount": original_count,
+            }))
         }
         "space.search" => {
             let query = param_nonempty_str(&params, "query")?;
@@ -1533,137 +1616,30 @@ pub async fn dispatch(
             let note = crate::grain_space::get(app, &id)
                 .await
                 .map_err(internal_error)?;
-            serde_json::to_value(note).map_err(|e| internal_error(e.to_string()))
+            bounded_note_value(note)
         }
-        "space.save" => {
-            if let Some(token) = params.get("confirm_token").and_then(Value::as_str) {
-                match crate::action_exec::resume(app, token, true).await {
-                    crate::action_exec::ActionOutcome::Succeeded(data) => {
-                        return Ok(serde_json::json!({ "status": "ok", "summary": data.body }));
-                    }
-                    crate::action_exec::ActionOutcome::Failed { message, .. } => {
-                        return Err(internal_error(message));
-                    }
-                    crate::action_exec::ActionOutcome::Cancelled => {
-                        return Err(internal_error("The action was cancelled."));
-                    }
-                    _ => return Err(internal_error("The action did not complete.")),
-                }
-            }
-            let body = param_nonempty_str(&params, "body")?;
-            let title = params
-                .get("title")
-                .and_then(Value::as_str)
-                .map(str::trim)
-                .filter(|v| !v.is_empty())
-                .map(str::to_string);
-            let final_title = title
-                .unwrap_or_else(|| crate::grain_space::capture::fallback_title(&body));
-            let collection = params.get("collection").and_then(Value::as_str).map(str::to_string);
-
-            let mut call_args = serde_json::Map::new();
-            call_args.insert("title".to_string(), serde_json::Value::String(final_title));
-            call_args.insert("body".to_string(), serde_json::Value::String(body));
-            if let Some(col) = collection {
-                call_args.insert("collection".to_string(), serde_json::Value::String(col));
-            }
-
-            let prepared = crate::action_exec::prepare(
-                "grainspace:save_note",
-                crate::action_exec::GRAIN_SPACE_EXT_ID,
-                "save_note",
-                "Grain Space",
-                serde_json::Value::Object(call_args),
-                grain_core::execution::RiskClass::Confirm,
-                grain_core::execution::SideEffect::Write,
-                "builtin",
-            );
-            match crate::action_exec::run_or_confirm(app, prepared, "Save Note").await {
-                crate::action_exec::Dispatch::Ran(outcome) => match outcome {
-                    crate::action_exec::ActionOutcome::Succeeded(_) => Ok(serde_json::json!({ "status": "ok" })),
-                    crate::action_exec::ActionOutcome::Failed { message, .. } => Err(internal_error(message)),
-                    _ => Err(internal_error("Action failed")),
-                },
-                crate::action_exec::Dispatch::AwaitConfirm(interaction) => {
-                    let token = match &interaction {
-                        grain_core::interaction::Interaction::Confirm { token, .. } => token.clone(),
-                        _ => String::new(),
-                    };
-                    Ok(serde_json::json!({
-                        "status": "needs_confirmation",
-                        "token": token,
-                        "title": "Save Note",
-                    }))
-                }
-            }
-        }
-        "space.append" => {
-            if let Some(token) = params.get("confirm_token").and_then(Value::as_str) {
-                match crate::action_exec::resume(app, token, true).await {
-                    crate::action_exec::ActionOutcome::Succeeded(_) => {
-                        return Ok(serde_json::json!({ "status": "ok" }));
-                    }
-                    crate::action_exec::ActionOutcome::Failed { message, .. } => {
-                        return Err(internal_error(message));
-                    }
-                    crate::action_exec::ActionOutcome::Cancelled => {
-                        return Err(internal_error("The action was cancelled."));
-                    }
-                    _ => return Err(internal_error("The action did not complete.")),
-                }
-            }
-            let id = param_nonempty_str(&params, "id")?;
-            let text = param_nonempty_str(&params, "text")?;
-            let target_note = crate::grain_space::get(app, &id)
-                .await
-                .map_err(internal_error)?;
-            let version = crate::grain_space::note_version_hash(&target_note.title, &target_note.body);
-
-            let mut call_args = serde_json::Map::new();
-            call_args.insert("id".to_string(), serde_json::Value::String(id.clone()));
-            call_args.insert("text".to_string(), serde_json::Value::String(text));
-            call_args.insert("title".to_string(), serde_json::Value::String(target_note.title));
-            call_args.insert("expected_version".to_string(), serde_json::Value::String(version));
-
-            let prepared = crate::action_exec::prepare(
-                "grainspace:append_to_note",
-                crate::action_exec::GRAIN_SPACE_EXT_ID,
-                "append_to_note",
-                "Grain Space",
-                serde_json::Value::Object(call_args),
-                grain_core::execution::RiskClass::Confirm,
-                grain_core::execution::SideEffect::Write,
-                "builtin",
-            );
-            match crate::action_exec::run_or_confirm(app, prepared, "Append to Note").await {
-                crate::action_exec::Dispatch::Ran(outcome) => match outcome {
-                    crate::action_exec::ActionOutcome::Succeeded(_) => Ok(serde_json::json!({ "status": "ok", "id": id })),
-                    crate::action_exec::ActionOutcome::Failed { message, .. } => Err(internal_error(message)),
-                    _ => Err(internal_error("Action failed")),
-                },
-                crate::action_exec::Dispatch::AwaitConfirm(interaction) => {
-                    let token = match &interaction {
-                        grain_core::interaction::Interaction::Confirm { token, .. } => token.clone(),
-                        _ => String::new(),
-                    };
-                    Ok(serde_json::json!({
-                        "status": "needs_confirmation",
-                        "token": token,
-                        "title": "Append to Note",
-                        "id": id,
-                    }))
-                }
-            }
-        }
-        // [GRAIN] The `notes` capability's surface (NOTE-UI-EXTENSION-PLAN.md).
+        // [GRAIN] The read-only `notes` capability surface.
         // The reads mirror `space.*` deliberately rather than sharing an arm:
         // the two capabilities are separately grantable and must stay separately
         // revocable, and collapsing them would make one imply the other.
         "notes.cards" => {
-            let cards = crate::grain_space::cards(app)
+            let mut cards = crate::grain_space::cards(app)
                 .await
                 .map_err(internal_error)?;
-            Ok(serde_json::json!({ "cards": cards }))
+            let original_count = cards.len();
+            cards.truncate(SPACE_MAX_CARDS);
+            for card in &mut cards {
+                truncate_utf8(&mut card.title, SPACE_MAX_METADATA_BYTES);
+                truncate_utf8(&mut card.tldr, SPACE_MAX_METADATA_BYTES);
+                if let Some(folder) = &mut card.folder {
+                    truncate_utf8(folder, SPACE_MAX_METADATA_BYTES);
+                }
+            }
+            Ok(serde_json::json!({
+                "cards": cards,
+                "truncated": original_count > SPACE_MAX_CARDS,
+                "originalCount": original_count,
+            }))
         }
         "notes.search" => {
             let query = param_nonempty_str(&params, "query")?;
@@ -1671,7 +1647,7 @@ pub async fn dispatch(
                 .get("limit")
                 .and_then(|v| v.as_u64())
                 .unwrap_or(20)
-                .clamp(1, 200) as usize;
+                .clamp(1, 50) as usize;
             let hits = crate::grain_space::search(app, &query, limit)
                 .await
                 .map_err(internal_error)?;
@@ -1682,75 +1658,7 @@ pub async fn dispatch(
             let note = crate::grain_space::get(app, &id)
                 .await
                 .map_err(internal_error)?;
-            serde_json::to_value(note).map_err(|e| internal_error(e.to_string()))
-        }
-        "notes.save" => {
-            let body = param_nonempty_str(&params, "body")?;
-            let supplied = crate::grain_space::SuppliedMeta {
-                title: params
-                    .get("title")
-                    .and_then(Value::as_str)
-                    .map(str::to_string),
-                ..Default::default()
-            };
-            let id = crate::grain_space::save(app, &body, supplied)
-                .await
-                .map_err(internal_error)?;
-            Ok(serde_json::json!({ "id": id }))
-        }
-        "notes.update" => {
-            let id = param_nonempty_str(&params, "id")?;
-            let title = params
-                .get("title")
-                .and_then(Value::as_str)
-                .map(str::to_string);
-            let body = params
-                .get("body")
-                .and_then(Value::as_str)
-                .map(str::to_string);
-            crate::grain_space::update(app, &id, title, body)
-                .await
-                .map_err(internal_error)?;
-            Ok(Value::Null)
-        }
-        "notes.delete" => {
-            let id = param_nonempty_str(&params, "id")?;
-            crate::grain_space::delete(app, &id)
-                .await
-                .map_err(internal_error)?;
-            Ok(Value::Null)
-        }
-        "notes.move" => {
-            let id = param_nonempty_str(&params, "id")?;
-            let folder = params
-                .get("folder")
-                .and_then(Value::as_str)
-                .map(str::trim)
-                .filter(|f| !f.is_empty())
-                .map(str::to_string);
-            crate::grain_space::move_to(app, &id, folder)
-                .await
-                .map_err(internal_error)?;
-            Ok(Value::Null)
-        }
-        "notes.pin" => {
-            let id = param_nonempty_str(&params, "id")?;
-            let pinned = params
-                .get("pinned")
-                .and_then(Value::as_bool)
-                .unwrap_or(true);
-            crate::grain_space::set_pinned(app, &id, pinned)
-                .await
-                .map_err(internal_error)?;
-            Ok(Value::Null)
-        }
-        "notes.reminder" => {
-            let id = param_nonempty_str(&params, "id")?;
-            let at = params.get("fireAt").and_then(Value::as_i64);
-            crate::grain_space::set_reminder(app, &id, at)
-                .await
-                .map_err(internal_error)?;
-            Ok(Value::Null)
+            bounded_note_value(note)
         }
         "open.url" => {
             // Scheme allowlist: http/https/mailto/tel ONLY. A decade of Electron
@@ -2019,10 +1927,7 @@ mod tests {
         assert_eq!(required_capability("storage.set"), Some("storage"));
         assert_eq!(required_capability("llm.complete"), Some("llm"));
         assert_eq!(required_capability("net.fetch"), Some("__dynamic_net__"));
-        assert_eq!(
-            required_capability("auth.connect"),
-            Some("auth")
-        );
+        assert_eq!(required_capability("auth.connect"), Some("auth"));
         assert_eq!(required_capability("session.start"), Some("session:start"));
         assert_eq!(
             required_capability("capture.selection"),
@@ -2058,12 +1963,10 @@ mod tests {
         assert!(has_capability(&viewer, "notes"));
         assert!(!has_capability(&viewer, "space"));
 
-        // Every gated `notes.*` method has a handler: gating one without
-        // routing it turns a typo into an internal error at call time.
+        for method in ["notes.cards", "notes.search", "notes.get"] {
+            assert_eq!(required_capability(method), Some("notes"), "{method}");
+        }
         for method in [
-            "notes.cards",
-            "notes.search",
-            "notes.get",
             "notes.save",
             "notes.update",
             "notes.delete",
@@ -2071,7 +1974,7 @@ mod tests {
             "notes.pin",
             "notes.reminder",
         ] {
-            assert_eq!(required_capability(method), Some("notes"), "{method}");
+            assert_eq!(required_capability(method), Some("__unknown__"), "{method}");
         }
 
         // Unknown methods require an ungrantable capability → always denied.
@@ -2372,10 +2275,7 @@ mod tests {
                 "match.lexical",
                 json!({"text": "run", "candidates": [{"id": "same", "phrases": ["run"]}, {"id": "same", "phrases": ["start"]}]}),
             ),
-            (
-                "match.decide",
-                json!({"candidates": too_many_scores}),
-            ),
+            ("match.decide", json!({"candidates": too_many_scores})),
             (
                 "match.decide",
                 json!({"candidates": [{"id": "same", "score": 0.9}, {"id": "same", "score": 0.8}]}),
@@ -2439,8 +2339,14 @@ mod tests {
             ("llm.complete", json!({"prompt": 4})),
             ("embed", json!({"texts": ["ok", 4]})),
             ("match.lexical", json!({})),
-            ("match.semantic", json!({"text": "play", "candidates": [{}]})),
-            ("match.decide", json!({"candidates": [{"id": "play", "score": 2}]})),
+            (
+                "match.semantic",
+                json!({"text": "play", "candidates": [{}]}),
+            ),
+            (
+                "match.decide",
+                json!({"candidates": [{"id": "play", "score": 2}]}),
+            ),
             ("session.start", json!({})),
             ("net.fetch", json!({})),
         ] {
@@ -2510,6 +2416,66 @@ mod tests {
             ));
             assert_typed(&error);
         }
+    }
+
+    #[test]
+    fn grain_space_bridges_are_read_only_and_host_bounded() {
+        let identity = named(&["space"]);
+        assert!(preflight(&identity, "space.collections", &json!({})).is_ok());
+        assert!(preflight(
+            &identity,
+            "space.search",
+            &json!({"query": "Kyoto packing"})
+        )
+        .is_ok());
+        assert!(preflight(&identity, "space.get", &json!({"id": "note-1"})).is_ok());
+
+        for method in ["space.save", "space.append"] {
+            let error = preflight(&identity, method, &json!({})).unwrap_err();
+            assert_eq!(error.code, HostErrorCode::UnknownMethod, "{method}");
+        }
+
+        let viewer = named(&["notes"]);
+        for method in ["notes.cards", "notes.search", "notes.get"] {
+            let params = match method {
+                "notes.search" => json!({"query": "Kyoto"}),
+                "notes.get" => json!({"id": "note-1"}),
+                _ => json!({}),
+            };
+            assert!(preflight(&viewer, method, &params).is_ok(), "{method}");
+        }
+        for method in [
+            "notes.save",
+            "notes.update",
+            "notes.delete",
+            "notes.move",
+            "notes.pin",
+            "notes.reminder",
+        ] {
+            let error = preflight(&viewer, method, &json!({})).unwrap_err();
+            assert_eq!(error.code, HostErrorCode::UnknownMethod, "{method}");
+        }
+
+        let query_error = preflight(
+            &identity,
+            "space.search",
+            &json!({"query": "x".repeat(SPACE_MAX_QUERY_BYTES + 1)}),
+        )
+        .unwrap_err();
+        assert_eq!(query_error.code, HostErrorCode::InvalidArgument);
+
+        let id_error = preflight(
+            &identity,
+            "space.get",
+            &json!({"id": "x".repeat(SPACE_MAX_ID_BYTES + 1)}),
+        )
+        .unwrap_err();
+        assert_eq!(id_error.code, HostErrorCode::InvalidArgument);
+
+        let mut unicode = "界".repeat(SPACE_MAX_NOTE_BODY_BYTES);
+        assert!(truncate_utf8(&mut unicode, SPACE_MAX_NOTE_BODY_BYTES));
+        assert!(unicode.len() <= SPACE_MAX_NOTE_BODY_BYTES);
+        assert!(std::str::from_utf8(unicode.as_bytes()).is_ok());
     }
 
     async fn serve_once(response: String) -> String {

@@ -3,7 +3,7 @@
 //! runtime, emit the changed event after mutations. No state is managed —
 //! every call opens and drops its own resources (zero idle RAM).
 
-use tauri::{AppHandle, Manager};
+use tauri::AppHandle;
 
 use super::backend::{self, Backend};
 use super::note::{self, Note, ReminderState, ReminderStatus};
@@ -604,17 +604,10 @@ pub async fn grain_space_recall_turn(
     crate::agent::agent_run(app, messages, None).await
 }
 
-/// Clear the shared Grain Recall session registry (the stable `Mn` memory ids).
-/// The chat rail calls this before the first turn of a NEW conversation,
-/// mirroring the reset the voice pill performs on each fresh summon — so a fresh
-/// thread never inherits M-numbers from a previous one. Rendered source chips
-/// carry their own note ids, so clearing the registry never breaks past turns.
+/// Compatibility command retained for older frontends.
+///
+/// Recall now runs through the stateless unified Agent tool loop, so there is no
+/// per-conversation memory-id registry to clear.
 #[tauri::command]
 #[specta::specta]
-pub fn grain_space_recall_reset(app: AppHandle) {
-    if let Some(state) = app.try_state::<crate::agent::AgentState>() {
-        if let Ok(mut session) = state.recall.lock() {
-            session.clear();
-        }
-    }
-}
+pub fn grain_space_recall_reset(_app: AppHandle) {}

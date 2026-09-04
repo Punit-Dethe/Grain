@@ -230,10 +230,6 @@ fn llm_usable(settings: &AppSettings) -> bool {
 /// The structured-output shape for the extraction call.
 #[derive(Deserialize, Debug, Default)]
 struct ExtractedMeta {
-    /// The note rewritten as tidy Markdown (structuring path only). Empty when
-    /// structuring was not requested — the verbatim body is then kept.
-    #[serde(default)]
-    body: String,
     title: String,
     tldr: String,
     #[serde(default)]
@@ -286,28 +282,14 @@ const MAX_ENTITIES: usize = 12;
 const MAX_RELATIONS: usize = 8;
 const MAX_ENTITY_NAME_CHARS: usize = 64;
 const MAX_QUESTION_CHARS: usize = 240;
+const MAX_TODOS: usize = 32;
+const MAX_TODO_CHARS: usize = 512;
 
 /// Normalize one entity name: trim, collapse whitespace, cap length. Empty when
 /// nothing usable is left.
 fn clean_entity_name(raw: &str) -> String {
     let collapsed = raw.split_whitespace().collect::<Vec<_>>().join(" ");
     collapsed.chars().take(MAX_ENTITY_NAME_CHARS).collect()
-}
-
-/// Clean a caller-supplied entity list to exactly the rules the extraction path
-/// enforces: normalised names, deduplicated by norm, first-come order, capped.
-///
-/// A list an MCP client sent is still untrusted input — the graph's identity
-/// rules are not the caller's to negotiate — so it goes through the same gate
-/// the model's own output does.
-pub(crate) fn clean_entity_names(raw: &[String]) -> Vec<String> {
-    let mut seen = std::collections::HashSet::new();
-    raw.iter()
-        .map(|name| clean_entity_name(name))
-        .filter(|name| !name.is_empty())
-        .filter(|name| seen.insert(entity_norm(name)))
-        .take(MAX_ENTITIES)
-        .collect()
 }
 
 /// The dedup key for an entity (LightRAG's `Dedupe`, applied at both ends —
@@ -414,9 +396,10 @@ impl ExtractedMeta {
         note.todo_tags = self
             .todos
             .into_iter()
-            .map(|t| t.trim().to_string())
+            .map(|t| t.trim().chars().take(MAX_TODO_CHARS).collect::<String>())
             .filter(|t| !t.is_empty())
             .map(|text| TodoTag { text, done: false })
+            .take(MAX_TODOS)
             .collect();
 
         let fire_at = parse_local_datetime_ms(self.reminder_at.trim());
@@ -462,7 +445,6 @@ async fn extract_metadata(
     settings: &AppSettings,
     body: &str,
     framing: Option<&str>,
-    structure: bool,
 ) -> Result<ExtractedMeta, String> {
     let provider = settings
         .active_post_process_provider()
@@ -485,19 +467,6 @@ async fn extract_metadata(
 
     let now_local = chrono::Local::now().format("%A %Y-%m-%dT%H:%M").to_string();
 
-    // Two modes share one call. STRUCTURING (freshly dictated/typed note, no
-    // selection): the model also returns a Markdown-formatted `body`. VERBATIM
-    // (a selection the user is saving): the body is preserved untouched and the
-    // `framing` line steers only the title/summary.
-    let body_rule = if structure {
-        "- body: the note as clean Markdown. Infer intent and format for readability using headings \
-         (#/##), bullet or numbered lists, `- [ ]` checklists for tasks, tables for tabular/columned \
-         data, **bold**, > quotes and `code`. Keep EVERY fact and detail — reformat and lightly drop \
-         only spoken filler; never summarize, invent, or omit content. Strip a leading command such \
-         as \"make a note that…\" or \"note:\". A single plain thought stays one line.\n"
-    } else {
-        ""
-    };
     let framing_line = match framing {
         Some(f) if !f.trim().is_empty() => format!(
             "\nThe user selected the note text and, to say what it is for, added: \"{}\". Use that \
@@ -506,15 +475,11 @@ async fn extract_metadata(
         ),
         _ => String::new(),
     };
-    let intro = if structure {
-        "You turn what the user just captured into a clean personal note. Reply with JSON only."
-    } else {
-        "You extract metadata from a personal note the user is saving. Reply with JSON only."
-    };
+    let intro =
+        "You extract metadata from a personal note the user is saving. Reply with JSON only.";
     let system_prompt = format!(
         "{intro}{framing_line}\n\
          Rules:\n\
-         {body_rule}\
          - title: at most 3 words, plain text.\n\
          - tldr: exactly one short sentence.\n\
          - todos: action items present in the note (empty array if none).\n\
@@ -537,27 +502,29 @@ async fn extract_metadata(
          - reminder_at: if a reminder/timer is requested, the local datetime it should fire as \
            YYYY-MM-DDTHH:MM; otherwise an empty string. The current local datetime is {now_local}.\
          {verbatim_tail}",
-        verbatim_tail = if structure {
-            ""
-        } else {
+        verbatim_tail =
             "\nNever rewrite or summarize away the note itself — you only produce metadata."
-        }
     );
 
-    let mut properties = serde_json::json!({
-        "title": { "type": "string" },
-        "tldr": { "type": "string" },
-        "todos": { "type": "array", "items": { "type": "string" } },
-        "reminder_at": { "type": "string" },
+    let properties = serde_json::json!({
+        "title": { "type": "string", "maxLength": 80 },
+        "tldr": { "type": "string", "maxLength": 240 },
+        "todos": {
+            "type": "array",
+            "maxItems": MAX_TODOS,
+            "items": { "type": "string", "maxLength": MAX_TODO_CHARS }
+        },
+        "reminder_at": { "type": "string", "maxLength": 19 },
         // Distillation (D2/D3). `kind` is an enum so the taxonomy is fixed by the
         // schema rather than by the prompt; Rust still re-validates on the way in.
-        "question": { "type": "string" },
+        "question": { "type": "string", "maxLength": MAX_QUESTION_CHARS },
         "entities": {
             "type": "array",
+            "maxItems": MAX_ENTITIES,
             "items": {
                 "type": "object",
                 "properties": {
-                    "name": { "type": "string" },
+                    "name": { "type": "string", "maxLength": MAX_ENTITY_NAME_CHARS },
                     "kind": { "type": "string", "enum": ENTITY_KINDS }
                 },
                 "required": ["name", "kind"],
@@ -566,19 +533,20 @@ async fn extract_metadata(
         },
         "relations": {
             "type": "array",
+            "maxItems": MAX_RELATIONS,
             "items": {
                 "type": "object",
                 "properties": {
-                    "from": { "type": "string" },
-                    "pred": { "type": "string" },
-                    "to": { "type": "string" }
+                    "from": { "type": "string", "maxLength": MAX_ENTITY_NAME_CHARS },
+                    "pred": { "type": "string", "maxLength": MAX_ENTITY_NAME_CHARS },
+                    "to": { "type": "string", "maxLength": MAX_ENTITY_NAME_CHARS }
                 },
                 "required": ["from", "pred", "to"],
                 "additionalProperties": false
             }
         }
     });
-    let mut required = vec![
+    let required = vec![
         "title",
         "tldr",
         "todos",
@@ -587,10 +555,6 @@ async fn extract_metadata(
         "entities",
         "relations",
     ];
-    if structure {
-        properties["body"] = serde_json::json!({ "type": "string" });
-        required.insert(0, "body");
-    }
     let schema = serde_json::json!({
         "type": "object",
         "properties": properties,
@@ -619,204 +583,9 @@ async fn extract_metadata(
     Ok(meta)
 }
 
-/// True when a structuring reformat lost more than half of a non-trivial note —
-/// the signal to distrust it and keep the verbatim body. Markdown formatting
-/// only ADDS characters, so a big shrink means the model summarized. Short notes
-/// (< 40 chars) are exempt: a one-liner legitimately stays short.
-fn reformat_lost_content(raw: &str, formatted: &str) -> bool {
-    let r = raw.trim().chars().count();
-    let f = formatted.trim().chars().count();
-    r >= 40 && f.saturating_mul(2) < r
-}
-
-/// Extract URLs from text.
-fn extract_urls(text: &str) -> Vec<String> {
-    let mut urls = Vec::new();
-    for word in text.split_whitespace() {
-        let trimmed = word.trim_matches(|c: char| {
-            c == '('
-                || c == ')'
-                || c == '['
-                || c == ']'
-                || c == '<'
-                || c == '>'
-                || c == '"'
-                || c == '\''
-                || c == ','
-                || c == '.'
-        });
-        if (trimmed.starts_with("http://") || trimmed.starts_with("https://")) && trimmed.len() > 8
-        {
-            urls.push(trimmed.to_string());
-        }
-    }
-    urls
-}
-
-/// Extract significant numeric tokens (e.g. "555-0142", "$349", "150mg", "2026-09-04", "4000", "14.2", "10%").
-fn extract_significant_numbers(text: &str) -> Vec<String> {
-    let mut nums = Vec::new();
-    for word in text.split_whitespace() {
-        let trimmed = word.trim_matches(|c: char| {
-            c == '('
-                || c == ')'
-                || c == '['
-                || c == ']'
-                || c == '"'
-                || c == '\''
-                || c == ','
-                || c == '.'
-                || c == ';'
-                || c == ':'
-        });
-        let digit_count = trimmed.chars().filter(|c| c.is_ascii_digit()).count();
-        if digit_count >= 2 {
-            if !nums.contains(&trimmed.to_string()) {
-                nums.push(trimmed.to_string());
-            }
-        } else if digit_count == 1 {
-            let t = trimmed.to_ascii_lowercase();
-            if trimmed.starts_with('$')
-                || trimmed.starts_with('€')
-                || trimmed.starts_with('£')
-                || t.ends_with('%')
-                || t.ends_with("mg")
-                || t.ends_with("kg")
-                || t.ends_with("ml")
-                || t.ends_with("cm")
-                || t.ends_with("mm")
-                || t.ends_with("km")
-                || t.ends_with("am")
-                || t.ends_with("pm")
-                || t.ends_with("st")
-                || t.ends_with("nd")
-                || t.ends_with("rd")
-                || t.ends_with("th")
-            {
-                if !nums.contains(&trimmed.to_string()) {
-                    nums.push(trimmed.to_string());
-                }
-            }
-        }
-    }
-    nums
-}
-
-/// Extract quoted phrases of at least 6 characters from text.
-fn extract_quotes(text: &str) -> Vec<String> {
-    let mut quotes = Vec::new();
-    let quote_pairs = [('"', '"'), ('\'', '\''), ('“', '”'), ('‘', '’')];
-    for (start_q, end_q) in quote_pairs {
-        let mut start_idx = None;
-        for (i, c) in text.char_indices() {
-            if c == start_q && start_idx.is_none() {
-                start_idx = Some(i + c.len_utf8());
-            } else if c == end_q && start_idx.is_some() {
-                let start = start_idx.take().unwrap();
-                if i > start {
-                    let quoted = text[start..i].trim();
-                    if quoted.len() >= 6 && !quotes.contains(&quoted.to_string()) {
-                        quotes.push(quoted.to_string());
-                    }
-                }
-            }
-        }
-    }
-    quotes
-}
-
-/// Extract explicit uncertainty markers present in text.
-fn extract_uncertainty_markers(text: &str) -> Vec<&'static str> {
-    const CANDIDATES: &[&str] = &[
-        "maybe",
-        "perhaps",
-        "possibly",
-        "tentative",
-        "tentatively",
-        "not sure",
-        "unclear",
-        "approx",
-        "approximately",
-        "roughly",
-    ];
-    let lower = text.to_lowercase();
-    let mut found = Vec::new();
-    for &cand in CANDIDATES {
-        if lower.contains(cand) {
-            found.push(cand);
-        }
-    }
-    if text.contains('?') {
-        found.push("?");
-    }
-    found
-}
-
-/// Material content check: returns `true` if a formatted body dropped critical
-/// material facts from the raw input:
-/// - Shrink: lost more than half of the length (for bodies >= 40 chars).
-/// - URLs: any URL in raw that is missing in formatted.
-/// - Numbers & measurements: significant numeric tokens in raw (e.g. phone numbers,
-///   amounts, doses, years, ratios) missing in formatted.
-/// - Quotations: quoted phrases in raw missing in formatted.
-/// - Uncertainty markers: uncertainty words in raw ("maybe", "tentative", etc., and "?")
-///   missing in formatted.
-pub(crate) fn reformat_lost_material_content(raw: &str, formatted: &str) -> bool {
-    let raw = raw.trim();
-    let formatted = formatted.trim();
-
-    // 1. Overall length shrink check
-    if reformat_lost_content(raw, formatted) {
-        return true;
-    }
-
-    // 2. URLs must be preserved (case-insensitive)
-    let fmt_lower = formatted.to_lowercase();
-    let dropped_urls = extract_urls(raw)
-        .into_iter()
-        .filter(|url| !fmt_lower.contains(&url.to_lowercase()))
-        .count();
-    if dropped_urls > 0 {
-        log::warn!("[GRAIN] space compose: reformat dropped {dropped_urls} URL(s) (reason: dropped_url)");
-        return true;
-    }
-
-    // 3. Significant numbers, dates, and measurements
-    let dropped_nums = extract_significant_numbers(raw)
-        .into_iter()
-        .filter(|num| !formatted.contains(num))
-        .count();
-    if dropped_nums > 0 {
-        log::warn!("[GRAIN] space compose: reformat dropped {dropped_nums} numeric token(s) (reason: dropped_numeric)");
-        return true;
-    }
-
-    // 4. Quotations
-    let dropped_quotes = extract_quotes(raw)
-        .into_iter()
-        .filter(|quote| !fmt_lower.contains(&quote.to_lowercase()))
-        .count();
-    if dropped_quotes > 0 {
-        log::warn!("[GRAIN] space compose: reformat dropped {dropped_quotes} quote(s) (reason: dropped_quote)");
-        return true;
-    }
-
-    // 5. Uncertainty markers
-    let dropped_markers = extract_uncertainty_markers(raw)
-        .into_iter()
-        .filter(|marker| !fmt_lower.contains(&marker.to_lowercase()))
-        .count();
-    if dropped_markers > 0 {
-        log::warn!("[GRAIN] space compose: reformat dropped {dropped_markers} uncertainty marker(s) (reason: dropped_uncertainty)");
-        return true;
-    }
-
-    false
-}
-
 /// Deterministic safe append: preserves all old body text byte-for-byte,
 /// appending the change with the readable separator.
-#[allow(dead_code)]
+#[cfg(test)]
 pub(crate) fn raw_append(current: &Note, change: &str) -> Note {
     let mut note = current.clone();
     let change = change.trim();
@@ -858,34 +627,10 @@ pub(crate) async fn compose_note(
     let mut relations = Vec::new();
     let settings = get_settings(app);
     if llm_usable(&settings) {
-        // Structure the body only for a freshly dictated/typed note (no framed
-        // selection) that fits the sample window — a truncated giant paste can't
-        // be safely reformatted, and a saved selection stays verbatim.
-        let fits = body.trim().chars().count() <= META_SAMPLE_CHARS;
-        let structure = framing.is_none() && fits;
         // Only a capped sample of a huge body is sent for metadata; the note
-        // body itself (set above) stays complete.
-        match extract_metadata(
-            app,
-            &settings,
-            &sample_for_meta(body.trim()),
-            framing,
-            structure,
-        )
-        .await
-        {
-            Ok(mut meta) => {
-                // Adopt the reformatted body only when it clearly preserved the
-                // content — a formatted note is longer, not shorter, so a big
-                // shrink means the model summarized and we keep the raw text.
-                let formatted = std::mem::take(&mut meta.body);
-                let formatted = formatted.trim();
-                if structure
-                    && !formatted.is_empty()
-                    && !reformat_lost_material_content(&note.body, formatted)
-                {
-                    note.body = formatted.to_string();
-                }
+        // body itself (set above) remains the durable source of truth.
+        match extract_metadata(app, &settings, &sample_for_meta(body.trim()), framing).await {
+            Ok(meta) => {
                 relations = meta.apply(&mut note, settings.grain_space_auto_reminders);
             }
             Err(e) => log::warn!("[GRAIN] space compose: extraction failed ({e}); raw note"),
@@ -946,6 +691,23 @@ mod tests {
 
         let parked = meta(false);
         assert_eq!(parked.reminder_state.status, ReminderStatus::Pending);
+    }
+
+    #[test]
+    fn metadata_todos_are_bounded_before_persistence() {
+        let mut note = Note::raw("body".into());
+        let meta = ExtractedMeta {
+            todos: (0..(MAX_TODOS + 10))
+                .map(|_| "界".repeat(MAX_TODO_CHARS + 10))
+                .collect(),
+            ..Default::default()
+        };
+        meta.apply(&mut note, false);
+        assert_eq!(note.todo_tags.len(), MAX_TODOS);
+        assert!(note
+            .todo_tags
+            .iter()
+            .all(|todo| todo.text.chars().count() == MAX_TODO_CHARS));
     }
 
     #[test]
@@ -1095,18 +857,6 @@ mod tests {
     }
 
     #[test]
-    fn reformat_lost_content_flags_summaries_only() {
-        let raw = "buy milk and eggs, call the plumber about the leak, book the dentist";
-        // A genuine reformat is longer (adds markdown) → trusted.
-        let formatted = "- [ ] buy milk and eggs\n- [ ] call the plumber about the leak\n- [ ] book the dentist";
-        assert!(!reformat_lost_content(raw, formatted));
-        // A summary that dropped over half the note → distrusted.
-        assert!(reformat_lost_content(raw, "- buy groceries"));
-        // Short notes are exempt (a one-liner stays short).
-        assert!(!reformat_lost_content("call mom", "call mom"));
-    }
-
-    #[test]
     fn raw_append_preserves_and_appends() {
         let mut cur = Note::raw("original".into());
         cur.title = "Keep Me".into();
@@ -1141,52 +891,6 @@ mod tests {
         assert_eq!(fallback_title("- [ ] buy milk and eggs"), "buy milk and");
         assert_eq!(fallback_title("* Important reminder"), "Important reminder");
         assert_eq!(fallback_title("> Quote of the day"), "Quote of the");
-    }
-
-    #[test]
-    fn reformat_lost_material_content_preserves_urls() {
-        let raw = "Read this document: https://example.com/spec/v2 for more details";
-        let ok_fmt =
-            "## Reference\n\nRead this document: https://example.com/spec/v2 for more details";
-        assert!(!reformat_lost_material_content(raw, ok_fmt));
-
-        let bad_fmt = "## Reference\n\nRead the document for more details on the specification.";
-        assert!(reformat_lost_material_content(raw, bad_fmt));
-    }
-
-    #[test]
-    fn reformat_lost_material_content_preserves_numbers_and_dates() {
-        let raw = "Patient taking Amlodipine 5mg QD, BP is 140/90, next visit 2026-10-12, room 302, cost $42.50";
-        let ok_fmt = "- Medication: Amlodipine 5mg QD\n- BP: 140/90\n- Next visit: 2026-10-12\n- Room: 302\n- Cost: $42.50";
-        assert!(!reformat_lost_material_content(raw, ok_fmt));
-
-        // Missing dose / BP / date
-        let bad_fmt = "- Medication: Amlodipine\n- Status: elevated BP\n- Next visit scheduled next month\n- Room: 302\n- Cost: $42.50";
-        assert!(reformat_lost_material_content(raw, bad_fmt));
-    }
-
-    #[test]
-    fn reformat_lost_material_content_preserves_quotes() {
-        let raw = "Feynman once said: \"The first principle is that you must not fool yourself\" during his speech.";
-        let ok_fmt =
-            "> \"The first principle is that you must not fool yourself\"\n\n— Richard Feynman";
-        assert!(!reformat_lost_material_content(raw, ok_fmt));
-
-        let bad_fmt =
-            "Feynman talked about self deception in scientific research during his speech.";
-        assert!(reformat_lost_material_content(raw, bad_fmt));
-    }
-
-    #[test]
-    fn reformat_lost_material_content_preserves_uncertainty() {
-        let raw =
-            "We might launch next Tuesday, tentatively scheduled, maybe postponed if bugs arise?";
-        let ok_fmt =
-            "- Launch: next Tuesday (tentatively scheduled, maybe postponed if bugs arise?)";
-        assert!(!reformat_lost_material_content(raw, ok_fmt));
-
-        let bad_fmt = "- Launch: confirmed for next Tuesday.";
-        assert!(reformat_lost_material_content(raw, bad_fmt));
     }
 
     #[test]
@@ -1242,7 +946,6 @@ mod tests {
 
     #[test]
     fn phase_4_safe_deterministic_append_invariants() {
-        use crate::grain_space::content_version_hash;
         use crate::grain_space::vault::{self, Vault};
 
         let temp_dir = std::env::temp_dir().join(format!("grain_p4_test_{}", uuid::Uuid::new_v4()));
@@ -1261,55 +964,33 @@ mod tests {
         note.title = "Roadmap".to_string();
         vault::save_note(&vault, &note).expect("save initial note");
 
-        // Compute initial version hash
-        let v_init = content_version_hash(&note.body);
+        let v_init =
+            vault::note_storage_version(&vault, &note.id).expect("read exact persisted version");
 
-        // 2. Invariant 6: Byte-for-byte old body text preservation
+        // 2. Invoke the production append primitive and verify byte-for-byte
+        // preservation of everything that was already in the body.
         let addition_1 = "Milestone A: Launch Q3";
-        let note_read = vault::get_note(&vault, &note.id).expect("read note");
-        assert_eq!(content_version_hash(&note_read.body), v_init);
-
-        let appended_1 = raw_append(&note_read, addition_1);
-        assert!(
-            appended_1.body.starts_with(original_body),
-            "original text must be preserved byte-for-byte"
-        );
+        vault::append_note_atomic(&vault, &note.id, addition_1, Some(&v_init))
+            .expect("append with current version");
+        let appended_1 = vault::get_note(&vault, &note.id).expect("read appended note");
         assert_eq!(
             appended_1.body,
             format!("{original_body}\n\n---\n\n{addition_1}")
         );
-        vault::save_note(&vault, &appended_1).expect("save appended note");
 
-        // 3. Invariant 8: Duplicate delivery prevention (idempotence)
-        let note_after_1 = vault::get_note(&vault, &note.id).expect("read after append");
-        let v_after_1 = content_version_hash(&note_after_1.body);
-
-        // Simulating duplicate delivery of addition_1
-        let is_dup = if note_after_1.body.ends_with(addition_1) {
-            let before = &note_after_1.body[..note_after_1.body.len() - addition_1.len()];
-            before.is_empty() || before.ends_with("\n---\n\n") || before.ends_with("\n\n---\n\n")
-        } else {
-            false
-        };
-        assert!(is_dup, "duplicate delivery must be detected");
-
-        // 4. Invariant 4: Reject stale target if modified externally since confirmation
+        // 3. Reject stale target if modified after preparation.
+        let v_after_1 =
+            vault::note_storage_version(&vault, &note.id).expect("read post-append version");
         let external_edit = "External edit: Roadmap overhauled completely.";
-        let mut ext_note = note_after_1.clone();
+        let mut ext_note = appended_1.clone();
         ext_note.body = external_edit.to_string();
         vault::save_note(&vault, &ext_note).expect("simulate external edit");
+        let stale = vault::append_note_atomic(&vault, &note.id, "must not land", Some(&v_after_1));
+        assert!(stale.is_err(), "stale append must fail closed");
+        let current_disk = vault::get_note(&vault, &note.id).expect("read after rejection");
+        assert_eq!(current_disk.body, external_edit);
 
-        // Re-read note on disk
-        let current_disk = vault::get_note(&vault, &note.id).expect("read after ext edit");
-        let actual_hash = content_version_hash(&current_disk.body);
-
-        // Try appending with stale expected version v_after_1
-        assert_ne!(
-            actual_hash, v_after_1,
-            "version must reflect external modification"
-        );
-
-        // 5. Invariant 1: Missing or wrong target fails closed with zero invented notes
+        // 4. Missing or wrong target fails closed with zero invented notes.
         let missing_lookup = vault::get_note(&vault, "nonexistent_target_id_999");
         assert!(missing_lookup.is_err(), "missing target must return error");
 

@@ -132,7 +132,8 @@ Rules:
 - Search/read operations are safe reads.
 - Save/append/delete operations use the host's normal confirmation policy.
 - A known note ID identifies a candidate; it does not bypass confirmation or stale-content validation.
-- All Agent, extension, MCP, and UI mutations converge on one host implementation.
+- All enabled Agent and first-party UI mutations converge on one host implementation; any future extension or MCP mutation must join that path.
+- The standalone Grain Space MCP bridge and extension `notes` capability remain read-only until a request can be surfaced to the user for out-of-band approval. A confirmation token or approval capability must never be returned to the calling model or extension worker.
 - Tool results identify saved notes as historical user context, not live truth from external providers.
 
 The contract stays small until evaluation proves another operation is necessary.

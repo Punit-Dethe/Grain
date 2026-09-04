@@ -341,16 +341,27 @@ pub fn classify_confirmation(said: &str) -> Confirmation {
     }
 }
 
-/// A deterministic default idempotency key for a side-effecting call: a hash of
-/// the canonical id and the normalised arguments. Two identical writes in a short
-/// window collapse to one. Only meaningful for [`SideEffect::Write`].
-pub fn default_idempotency_key(canonical_id: &str, arguments: &Value) -> String {
-    use std::hash::{Hash, Hasher};
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    canonical_id.hash(&mut hasher);
-    // Serialised form is stable for a normalised argument value.
-    arguments.to_string().hash(&mut hasher);
-    format!("idem_{:016x}", hasher.finish())
+/// A stable idempotency key for one prepared side-effecting operation.
+///
+/// Retries of the same prepared call share `operation_id`, while a later,
+/// intentional call with identical arguments gets a distinct key. Only
+/// meaningful for [`SideEffect::Write`].
+pub fn default_idempotency_key(
+    canonical_id: &str,
+    arguments: &Value,
+    operation_id: &str,
+) -> String {
+    use sha2::{Digest, Sha256};
+
+    let mut hasher = Sha256::new();
+    hasher.update(canonical_id.as_bytes());
+    hasher.update([0]);
+    // `serde_json::Map` is deterministic without the preserve_order feature,
+    // so the serialised arguments are a stable operation identity.
+    hasher.update(arguments.to_string().as_bytes());
+    hasher.update([0]);
+    hasher.update(operation_id.as_bytes());
+    format!("idem_{:x}", hasher.finalize())
 }
 
 #[cfg(test)]
@@ -501,10 +512,11 @@ mod tests {
     }
 
     #[test]
-    fn identical_writes_hash_to_the_same_idempotency_key() {
-        let a = default_idempotency_key("mail.send", &json!({ "to": "jack", "body": "hi" }));
-        let b = default_idempotency_key("mail.send", &json!({ "to": "jack", "body": "hi" }));
-        let c = default_idempotency_key("mail.send", &json!({ "to": "jill", "body": "hi" }));
+    fn retries_share_a_key_but_separate_operations_do_not() {
+        let args = json!({ "to": "jack", "body": "hi" });
+        let a = default_idempotency_key("mail.send", &args, "operation-a");
+        let b = default_idempotency_key("mail.send", &args, "operation-a");
+        let c = default_idempotency_key("mail.send", &args, "operation-b");
         assert_eq!(a, b);
         assert_ne!(a, c);
     }

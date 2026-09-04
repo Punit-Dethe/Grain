@@ -4,9 +4,10 @@
 //!
 //! Grain Space used to own three global chords: one to capture a note, one to ask
 //! your notes a question, one to open the notes window. The window became a tab,
-//! and the other two became this: the Agent gets the *same five tools the MCP
-//! bridge already exposes*, so there is one summon chord and the model's tool
-//! choice is what decides whether a turn is a rewrite, a question or a note.
+//! and the other two became this: the Agent gets five notebook tools, while the
+//! MCP bridge exposes the read-only subset. There is one summon chord and the
+//! model's tool choice is what decides whether a turn is a rewrite, a question
+//! or a note.
 //!
 //! One door with tools, not one door with a classifier. A classifier is a guess
 //! made before the model has read the request; a tool call is the model saying
@@ -135,7 +136,7 @@ pub fn specs(app: &AppHandle) -> Vec<ToolSpec> {
                     "title": {
                         "type": "string",
                         "description": "A short title. Optional — Grain writes one otherwise.",
-                        "maxLength": 300
+                        "maxLength": 80
                     },
                     "collection": {
                         "type": "string",
@@ -193,7 +194,8 @@ pub enum NoteToolResult {
 
 const MAX_QUERY_BYTES: usize = 4096;
 const MAX_ID_BYTES: usize = 128;
-const MAX_TITLE_BYTES: usize = 300;
+const MAX_TITLE_BYTES: usize = 80;
+const MAX_COLLECTION_BYTES: usize = 128;
 const MAX_BODY_BYTES: usize = 65536;
 const MAX_GET_NOTE_BODY_BYTES: usize = 16384;
 
@@ -284,7 +286,7 @@ pub async fn execute_opt(
                 Ok(note) => {
                     log.record(Touched {
                         note_id: note.id.clone(),
-                        title: note.title.clone(),
+                        title: super::bounded_bridge_text(note.title.clone(), 512),
                         saved_at: note.timestamp,
                     });
                     let rendered_body = if note.body.len() > MAX_GET_NOTE_BODY_BYTES {
@@ -303,7 +305,7 @@ pub async fn execute_opt(
                     };
                     NoteToolResult::Text(format!(
                         "authority: saved user note (historical; not live provider state)\ntitle: {}\nsaved: {}\n\n{}",
-                        note.title,
+                        super::bounded_bridge_text(note.title, 512),
                         stamp(note.timestamp),
                         rendered_body
                     ))
@@ -335,10 +337,25 @@ pub async fn execute_opt(
                 .unwrap_or_else(|| super::capture::fallback_title(&body));
             let final_title: String = final_title.chars().take(80).collect();
 
-            let mut call_args = args.clone();
-            if let Some(obj) = call_args.as_object_mut() {
-                obj.insert("title".to_string(), serde_json::Value::String(final_title));
-                obj.insert("body".to_string(), serde_json::Value::String(body));
+            let collection = str_arg("collection");
+            if let Some(value) = &collection {
+                if value.len() > MAX_COLLECTION_BYTES {
+                    return NoteToolResult::Text(format!(
+                        "save_note collection exceeds maximum allowed size ({MAX_COLLECTION_BYTES} bytes)."
+                    ));
+                }
+            }
+            // Canonicalize the operation instead of retaining undeclared model
+            // fields in the confirmation or its idempotency identity.
+            let mut call_args = serde_json::json!({
+                "title": final_title,
+                "body": body,
+            });
+            if let (Some(obj), Some(collection)) = (call_args.as_object_mut(), collection) {
+                obj.insert(
+                    "collection".to_string(),
+                    serde_json::Value::String(collection),
+                );
             }
 
             let prepared = crate::action_exec::prepare(
@@ -376,32 +393,26 @@ pub async fn execute_opt(
             }
             let Some(app) = app else {
                 return NoteToolResult::Text(
-                    "append_to_note requires active backend app handle to resolve target note.".to_string(),
+                    "append_to_note requires active backend app handle to resolve target note."
+                        .to_string(),
                 );
             };
-            // 1. Verify target note exists before proposing append (Section 9.1)
-            let target_note = match super::get(app, &id).await {
-                Ok(n) => n,
+            // Resolve the title and exact persisted version in one host-owned
+            // snapshot so confirmation cannot mix two external file states.
+            let (target_note, version) = match super::get_append_snapshot(app, &id).await {
+                Ok(snapshot) => snapshot,
                 Err(e) => {
                     return NoteToolResult::Text(format!(
                         "Target note \"{id}\" not found: {e}. Please search for notes first to find a valid ID."
                     ));
                 }
             };
-
-            // 2. Bind current version hash (title + body SHA-256) and title to confirmation (Section 9.3 & 9.4)
-            let version = super::note_version_hash(&target_note.title, &target_note.body);
-            let mut call_args = args.clone();
-            if let Some(obj) = call_args.as_object_mut() {
-                obj.insert(
-                    "title".to_string(),
-                    serde_json::Value::String(target_note.title.clone()),
-                );
-                obj.insert(
-                    "expected_version".to_string(),
-                    serde_json::Value::String(version),
-                );
-            }
+            let call_args = serde_json::json!({
+                "id": id,
+                "text": text,
+                "title": super::bounded_bridge_text(target_note.title, 512),
+                "expected_version": version,
+            });
 
             let prepared = crate::action_exec::prepare(
                 "grainspace:append_to_note",
@@ -432,7 +443,13 @@ pub async fn execute_opt(
                 Ok(list) if list.is_empty() => {
                     NoteToolResult::Text("There are no collections yet.".to_string())
                 }
-                Ok(list) => NoteToolResult::Text(list.join("\n")),
+                Ok(list) => NoteToolResult::Text(
+                    list.into_iter()
+                        .take(64)
+                        .map(|name| super::bounded_bridge_text(name, 256))
+                        .collect::<Vec<_>>()
+                        .join("\n"),
+                ),
                 Err(e) => NoteToolResult::Text(format!("Could not list the collections: {e}")),
             }
         }

@@ -249,6 +249,21 @@ pub fn evaluate_vault(
 pub fn run(golden_path: &Path, raw: &str, json: bool) -> Result<()> {
     let golden: MemoryGolden =
         serde_json::from_str(raw).context("failed to parse memory golden JSON")?;
+    if golden.schema_version != 1 {
+        return Err(anyhow!(
+            "unsupported memory evaluation schema version {}",
+            golden.schema_version
+        ));
+    }
+    if golden.mode != "memory" {
+        return Err(anyhow!(
+            "memory evaluator cannot run mode {:?}",
+            golden.mode
+        ));
+    }
+    if golden.cases.is_empty() {
+        return Err(anyhow!("memory evaluation must contain at least one case"));
+    }
 
     let corpus_dir = golden_path
         .parent()
@@ -339,14 +354,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn phase_5_end_to_end_journey() {
+    async fn phase_5_storage_journey_contract() {
         use crate::grain_llm_client::ToolCallOut;
         use crate::grain_space::agent_tools::{self, NoteToolResult, TurnLog};
         use crate::grain_space::note::Note;
-        use crate::grain_space::note_version_hash;
 
         let unique = uuid::Uuid::new_v4().to_string();
-        let base = std::env::temp_dir().join(format!("grain_p5_e2e_{unique}"));
+        let base = std::env::temp_dir().join(format!("grain_p5_storage_{unique}"));
         let vault = Vault {
             root: base.join("vault"),
             folder: "Grain".to_string(),
@@ -356,7 +370,7 @@ mod tests {
         fs::create_dir_all(&vault.root).unwrap();
         fs::create_dir_all(&vault.index_base).unwrap();
 
-        // 1. User asks agent to save a note: user input -> agent_tools::execute
+        // 1. A synthetic Agent tool call enters the production preparation path.
         let raw_user_body = "Packing list:\n- Passport\n- Camera";
         let raw_user_title = "Trip to Kyoto";
         let call = ToolCallOut {
@@ -372,7 +386,7 @@ mod tests {
 
         let tool_result = agent_tools::execute_opt(None, &call, &mut log).await;
 
-        // 2. Interaction::Confirm withheld for user approval
+        // 2. The write is withheld as an Interaction::Confirm.
         let confirm = match tool_result {
             NoteToolResult::Confirm(c) => c,
             other => panic!("Expected NoteToolResult::Confirm, got {:?}", other),
@@ -383,14 +397,18 @@ mod tests {
         assert!(confirm.markdown.contains("Trip to Kyoto"));
         assert!(confirm.markdown.contains("Passport"));
 
-        // 3. Approval: resume prepared action from pending registry
+        // 3. Inspect the held action without pretending this headless test drove
+        // the real confirmation UI or a live model.
         let prepared = crate::action_exec::take_pending(&confirm.token)
             .expect("held confirmation must be retrieved from pending calls");
         assert_eq!(prepared.action_id, "save_note");
         assert_eq!(prepared.risk, grain_core::execution::RiskClass::Confirm);
-        assert_eq!(prepared.side_effect, grain_core::execution::SideEffect::Write);
+        assert_eq!(
+            prepared.side_effect,
+            grain_core::execution::SideEffect::Write
+        );
 
-        // 4. Persistence: save confirmed data byte-for-byte to vault
+        // 4. Exercise the storage contract with the exact confirmed arguments.
         let confirmed_title = prepared
             .arguments
             .get("title")
@@ -408,7 +426,7 @@ mod tests {
         note.title = confirmed_title.to_string();
         vault::save_note(&vault, &note).expect("save confirmed note byte-for-byte");
 
-        // 5. Search and verification
+        // 5. Exercise search and read against the persisted note.
         let hits = vault::search_notes_natural(&vault, "Kyoto packing", None).expect("search");
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].title, "Trip to Kyoto");
@@ -416,9 +434,10 @@ mod tests {
 
         let read_note = vault::get_note(&vault, &note.id).expect("get note");
         assert_eq!(read_note.body, raw_user_body);
-        let expected_version = note_version_hash(&read_note.title, &read_note.body);
+        let expected_version =
+            vault::note_storage_version(&vault, &note.id).expect("read exact persisted version");
 
-        // 6. Safe Append via production atomic append implementation
+        // 6. Exercise the production atomic append primitive.
         let addition = "Hotel reservation confirmed: Ryokan Sakura";
         vault::append_note_atomic(&vault, &note.id, addition, Some(&expected_version))
             .expect("production atomic append must succeed with valid version");
@@ -497,7 +516,6 @@ mod tests {
     #[test]
     fn phase_5_external_edit_and_concurrency_failure() {
         use crate::grain_space::note::Note;
-        use crate::grain_space::note_version_hash;
 
         let unique = uuid::Uuid::new_v4().to_string();
         let base = std::env::temp_dir().join(format!("grain_p5_concurrency_{unique}"));
@@ -515,7 +533,8 @@ mod tests {
         vault::save_note(&vault, &note).expect("save initial note");
 
         // Agent prepares append and binds version hash v1
-        let v1 = note_version_hash(&note.title, &note.body);
+        let v1 =
+            vault::note_storage_version(&vault, &note.id).expect("read exact persisted version");
 
         // External edit occurs before confirmation
         let mut external_edit = note.clone();
@@ -548,23 +567,31 @@ mod tests {
 
     #[test]
     fn phase_5_operation_identity_idempotency() {
-        use crate::grain_space::check_and_record_idempotency;
+        use crate::grain_space::{
+            begin_idempotent_write, finish_idempotent_write, IdempotencyStart,
+        };
 
         let key = format!("op_key_{}", uuid::Uuid::new_v4());
+        assert!(matches!(
+            begin_idempotent_write(&key).unwrap(),
+            IdempotencyStart::Started
+        ));
         assert!(
-            !check_and_record_idempotency(&key),
-            "first execution must not be marked duplicate"
-        );
-        assert!(
-            check_and_record_idempotency(&key),
-            "second execution with same key must be detected as duplicate"
+            begin_idempotent_write(&key).is_err(),
+            "a concurrent duplicate must not execute"
         );
 
-        let other_key = format!("op_key_{}", uuid::Uuid::new_v4());
-        assert!(
-            !check_and_record_idempotency(&other_key),
-            "different key must not be blocked"
-        );
+        // A failed write releases its reservation so a genuine retry can run.
+        finish_idempotent_write(&key, false);
+        assert!(matches!(
+            begin_idempotent_write(&key).unwrap(),
+            IdempotencyStart::Started
+        ));
+        finish_idempotent_write(&key, true);
+        assert!(matches!(
+            begin_idempotent_write(&key).unwrap(),
+            IdempotencyStart::Duplicate
+        ));
     }
 
     #[tokio::test]
@@ -604,7 +631,7 @@ mod tests {
             _ => panic!("Expected text rejection for oversized body"),
         }
 
-        // 3. Oversized title (> 300 bytes)
+        // 3. Oversized title (> 80 bytes)
         let huge_title = "t".repeat(350);
         let call_title = ToolCallOut {
             id: "call_t".to_string(),

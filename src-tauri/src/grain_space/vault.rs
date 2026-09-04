@@ -626,10 +626,15 @@ fn read_md_note(rel_path: &str, text: &str, mtime_ms: i64) -> (Note, bool) {
 }
 
 fn read_note_at(v: &Vault, rel: &str) -> Result<Note> {
+    Ok(read_note_snapshot_at(v, rel)?.0)
+}
+
+fn read_note_snapshot_at(v: &Vault, rel: &str) -> Result<(Note, String)> {
     let abs = v.abs(rel);
     let text = fs::read_to_string(&abs).with_context(|| format!("read {}", abs.display()))?;
     let mtime = file_mtime_ms(&abs).unwrap_or_else(|| chrono::Utc::now().timestamp_millis());
-    Ok(read_md_note(rel, &text, mtime).0)
+    let note = read_md_note(rel, &text, mtime).0;
+    Ok((note, storage_version_hash(&text)))
 }
 
 /// Atomic tmp+rename write of `text` to `abs`.
@@ -1463,17 +1468,6 @@ pub fn search_notes_natural(
     Ok(out)
 }
 
-/// True when the vault has any indexed note at all (grain-owned OR foreign) —
-/// so recall over a vault of purely foreign Obsidian notes still runs.
-pub fn has_any_notes(v: &Vault) -> Result<bool> {
-    ensure_vault(v)?;
-    let _guard = VAULT_LOCK.lock().unwrap();
-    let conn = open_index(v)?;
-    reconcile_locked(v, &conn)?;
-    let count: i64 = conn.query_row("SELECT COUNT(*) FROM notes_meta", [], |r| r.get(0))?;
-    Ok(count > 0)
-}
-
 /// The absolute path of a note's file on disk (for an "Open in Obsidian"
 /// deep link). Reconciles once on a stale/missing index entry.
 pub fn note_abs_path(v: &Vault, id: &str) -> Result<PathBuf> {
@@ -1506,6 +1500,31 @@ pub fn get_note(v: &Vault, id: &str) -> Result<Note> {
     reconcile_locked(v, &conn)?;
     let (rel, _) = path_of(&conn, id)?.ok_or_else(|| anyhow!("note not found: {id}"))?;
     read_note_at(v, &rel)
+}
+
+/// Read the append target and its exact persisted version under one lock, so
+/// the title shown for confirmation always belongs to the version being bound.
+pub fn get_append_snapshot(v: &Vault, id: &str) -> Result<(Note, String)> {
+    ensure_vault(v)?;
+    super::note::validate_id(id)?;
+    let _guard = VAULT_LOCK.lock().unwrap();
+    let conn = open_index(v)?;
+    let mut existing = path_of(&conn, id)?;
+    if existing
+        .as_ref()
+        .is_some_and(|(rel, _)| !v.abs(rel).is_file())
+        || existing.is_none()
+    {
+        reconcile_locked(v, &conn)?;
+        existing = path_of(&conn, id)?;
+    }
+    let (rel, _) = existing.ok_or_else(|| anyhow!("note not found: {id}"))?;
+    if !in_grain_folder(v, &rel) {
+        return Err(anyhow!(
+            "This note lives outside Grain's folder — edit it in Obsidian."
+        ));
+    }
+    read_note_snapshot_at(v, &rel)
 }
 
 /// Create or update a note inside Grain's folder. Editability is by LOCATION,
@@ -1592,7 +1611,7 @@ pub fn save_note(v: &Vault, note: &Note) -> Result<()> {
 }
 
 /// Append to a note with single-critical-section atomic concurrency check.
-/// Evaluates expected_version against on-disk note title + body hash,
+/// Evaluates expected_version against the exact on-disk Markdown hash,
 /// preserving all old body text byte-for-byte and rejecting stale writes.
 pub fn append_note_atomic(
     v: &Vault,
@@ -1620,9 +1639,10 @@ pub fn append_note_atomic(
     let mtime = file_mtime_ms(&abs).unwrap_or_else(|| chrono::Utc::now().timestamp_millis());
     let (mut note, _) = read_md_note(&rel, &disk_text, mtime);
 
-    // 1. Concurrency / stale target check
+    // 1. Concurrency / stale target check. Hash the exact persisted Markdown,
+    // including frontmatter that an external editor may have changed.
     if let Some(exp) = expected_version {
-        let actual = super::note_version_hash(&note.title, &note.body);
+        let actual = storage_version_hash(&disk_text);
         if actual != exp {
             return Err(anyhow!(
                 "The note was modified externally since confirmation (expected version {exp}, current {actual}). Append cancelled to prevent overwriting unseen edits."
@@ -1652,6 +1672,16 @@ pub fn append_note_atomic(
     // 3. Write directly and update index under the same lock
     let preserved = preserved_frontmatter(&disk_text);
     let rendered = emit_markdown_with(&note, &preserved);
+    // `VAULT_LOCK` serializes Grain writers, not Obsidian. Re-read immediately
+    // before replacement so an external edit made while we prepared the append
+    // is rejected instead of being overwritten.
+    let before_write =
+        fs::read_to_string(&abs).with_context(|| format!("re-read {}", abs.display()))?;
+    if before_write != disk_text {
+        return Err(anyhow!(
+            "The note changed while the append was being prepared. Append cancelled."
+        ));
+    }
     atomic_write(&abs, &rendered)?;
 
     let new_mtime = file_mtime_ms(&abs).unwrap_or(mtime);
@@ -1659,6 +1689,19 @@ pub fn append_note_atomic(
     index_upsert(&conn, &note, &rel, new_mtime, new_size, false, &rendered)?;
 
     Ok(note)
+}
+
+fn storage_version_hash(markdown: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(markdown.as_bytes());
+    format!("{:x}", hasher.finalize())
+}
+
+/// Version of the exact Markdown currently persisted for a Grain-owned note.
+/// This is intentionally opaque to the Agent and confirmation UI.
+#[cfg(test)]
+pub fn note_storage_version(v: &Vault, id: &str) -> Result<String> {
+    Ok(get_append_snapshot(v, id)?.1)
 }
 
 /// Delete a note file inside Grain's folder + its index rows. Files outside the
@@ -2577,6 +2620,35 @@ mod tests {
         n.title = title.to_string();
         n.tldr = format!("Summary of {title}.");
         n
+    }
+
+    #[test]
+    fn append_rejects_frontmatter_only_external_edit() {
+        let v = temp_vault("append_frontmatter_stale");
+        let note = grain_note("Versioned", "original body");
+        save_note(&v, &note).unwrap();
+        let prepared_version = note_storage_version(&v, &note.id).unwrap();
+
+        let path = v.grain_dir().join("Versioned.md");
+        let markdown = fs::read_to_string(&path).unwrap();
+        let externally_edited = markdown.replace(
+            "tldr: \"Summary of Versioned.\"",
+            "tldr: \"Changed in Obsidian.\"",
+        );
+        assert_ne!(markdown, externally_edited);
+        fs::write(&path, externally_edited).unwrap();
+
+        let result = append_note_atomic(
+            &v,
+            &note.id,
+            "must not be appended",
+            Some(&prepared_version),
+        );
+        assert!(result.is_err());
+        assert!(!fs::read_to_string(&path)
+            .unwrap()
+            .contains("must not be appended"));
+        cleanup(&v);
     }
 
     #[test]

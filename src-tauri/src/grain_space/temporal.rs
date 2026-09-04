@@ -33,9 +33,6 @@ impl DateRange {
         (self.start_ms, self.end_ms)
     }
 
-    pub fn contains(&self, timestamp_ms: i64) -> bool {
-        timestamp_ms >= self.start_ms && timestamp_ms <= self.end_ms
-    }
 }
 
 /// The result of extracting temporal expressions from a search query.
@@ -67,7 +64,7 @@ fn end_of_day<Tz: TimeZone>(date: NaiveDate, tz: &Tz) -> Option<i64> {
         .map(|dt| dt.timestamp_millis())
 }
 
-/// Find ASCII needle case-insensitively at character boundaries.
+/// Find an ASCII phrase case-insensitively at Unicode-safe word boundaries.
 fn find_ascii_case_insensitive(haystack: &str, needle: &str) -> Option<usize> {
     if needle.is_empty() {
         return Some(0);
@@ -75,7 +72,16 @@ fn find_ascii_case_insensitive(haystack: &str, needle: &str) -> Option<usize> {
     let needle_len = needle.len();
     for (idx, _) in haystack.char_indices() {
         if idx + needle_len <= haystack.len() && haystack.is_char_boundary(idx + needle_len) {
-            if haystack[idx..idx + needle_len].eq_ignore_ascii_case(needle) {
+            let before_ok = haystack[..idx]
+                .chars()
+                .next_back()
+                .map_or(true, |c| !c.is_alphanumeric());
+            let after_ok = haystack[idx + needle_len..]
+                .chars()
+                .next()
+                .map_or(true, |c| !c.is_alphanumeric());
+            if before_ok && after_ok && haystack[idx..idx + needle_len].eq_ignore_ascii_case(needle)
+            {
                 return Some(idx);
             }
         }
@@ -179,7 +185,7 @@ pub fn extract_temporal_range_at<Tz: TimeZone>(
     let today_date = now.date_naive();
 
     // 1. "day before yesterday" (must precede "yesterday")
-    if q_lower.contains("day before yesterday") {
+    if has_word_boundary(&q_lower, "day before yesterday") {
         let d = today_date - Duration::days(2);
         if let (Some(start), Some(end)) = (start_of_day(d, &tz), end_of_day(d, &tz)) {
             return TemporalExtraction {
@@ -216,7 +222,7 @@ pub fn extract_temporal_range_at<Tz: TimeZone>(
     }
 
     // 4. "this week" (Monday to Sunday)
-    if q_lower.contains("this week") {
+    if has_word_boundary(&q_lower, "this week") {
         let days_from_mon = today_date.weekday().num_days_from_monday() as i64;
         let mon = today_date - Duration::days(days_from_mon);
         let sun = mon + Duration::days(6);
@@ -230,7 +236,7 @@ pub fn extract_temporal_range_at<Tz: TimeZone>(
     }
 
     // 5. "last week" (Previous Monday to previous Sunday)
-    if q_lower.contains("last week") {
+    if has_word_boundary(&q_lower, "last week") {
         let days_from_mon = today_date.weekday().num_days_from_monday() as i64;
         let this_mon = today_date - Duration::days(days_from_mon);
         let last_mon = this_mon - Duration::days(7);
@@ -245,7 +251,7 @@ pub fn extract_temporal_range_at<Tz: TimeZone>(
     }
 
     // 6. "this month"
-    if q_lower.contains("this month") {
+    if has_word_boundary(&q_lower, "this month") {
         let y = today_date.year();
         let m = today_date.month();
         let first_day = NaiveDate::from_ymd_opt(y, m, 1).unwrap();
@@ -266,7 +272,7 @@ pub fn extract_temporal_range_at<Tz: TimeZone>(
     }
 
     // 7. "last month"
-    if q_lower.contains("last month") {
+    if has_word_boundary(&q_lower, "last month") {
         let y = today_date.year();
         let m = today_date.month();
         let (prev_y, prev_m) = if m == 1 { (y - 1, 12) } else { (y, m - 1) };
@@ -621,6 +627,15 @@ mod tests {
         // "format" must not have "for" stripped to become "mat"
         let res2 = extract_temporal_range_at("today format check", now);
         assert_eq!(res2.clean_query, "format check");
+
+        // The cleaner must remove the bounded occurrence, not an earlier
+        // substring that merely contains the same letters.
+        let res3 = extract_temporal_range_at("notoday notes today", now);
+        assert_eq!(res3.clean_query, "notoday notes");
+
+        // Multi-word phrases require a boundary after the complete phrase.
+        let res4 = extract_temporal_range_at("plans for this weekend", now);
+        assert!(res4.range.is_none());
     }
 
     #[test]

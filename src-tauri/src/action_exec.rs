@@ -25,8 +25,7 @@ use std::sync::Mutex;
 
 pub use grain_core::execution::ActionOutcome;
 use grain_core::execution::{
-    default_idempotency_key, FailureClass, PreparedCall, RiskClass, SideEffect,
-    Stale, SuccessData,
+    default_idempotency_key, FailureClass, PreparedCall, RiskClass, SideEffect, Stale, SuccessData,
 };
 use grain_core::interaction::{Field, Interaction};
 use serde_json::Value;
@@ -110,11 +109,12 @@ pub fn prepare(
     side_effect: SideEffect,
     manifest_digest: &str,
 ) -> PreparedCall {
+    let token = mint_token(canonical_id);
     let idempotency_key = (side_effect == SideEffect::Write)
-        .then(|| default_idempotency_key(canonical_id, &arguments));
+        .then(|| default_idempotency_key(canonical_id, &arguments, &token));
     let prepared_at_ms = now_ms();
     PreparedCall {
-        token: mint_token(canonical_id),
+        token,
         canonical_id: canonical_id.to_string(),
         extension_id: extension_id.to_string(),
         action_id: action_id.to_string(),
@@ -130,7 +130,7 @@ pub fn prepare(
 }
 
 /// Retrieve and remove a held confirmation by token.
-#[allow(dead_code)]
+#[cfg(test)]
 pub fn take_pending(token: &str) -> Option<PreparedCall> {
     PendingCalls::take(token)
 }
@@ -442,6 +442,9 @@ fn confirm_interaction(prepared: &PreparedCall, title: &str) -> Interaction {
         .as_object()
         .map(|map| {
             map.iter()
+                // Optimistic-concurrency state is host-owned. The user confirms
+                // the human identity (title/id) and exact addition, not a digest.
+                .filter(|(key, _)| key.as_str() != "expected_version")
                 .filter_map(|(key, value)| {
                     value_to_string(value).map(|value| Field {
                         label: key.clone(),
@@ -589,13 +592,16 @@ async fn grain_space_execute(app: &AppHandle, prepared: &PreparedCall) -> Action
                 return invalid("get_note needs an id.");
             };
             match crate::grain_space::get(app, &id).await {
-                Ok(note) => ActionOutcome::Succeeded(SuccessData {
-                    source,
-                    title: Some(note.title.clone()),
-                    body: Some(note.body.clone()),
-                    details: vec![],
-                    receipt: false,
-                }),
+                Ok(note) => {
+                    let body = bounded_note_body(note.body, 16 * 1024);
+                    ActionOutcome::Succeeded(SuccessData {
+                        source,
+                        title: Some(note.title.clone()),
+                        body: Some(body),
+                        details: vec![],
+                        receipt: false,
+                    })
+                }
                 Err(e) => failed(
                     FailureClass::NotFound,
                     &format!("Could not read that note: {e}"),
@@ -613,7 +619,13 @@ async fn grain_space_execute(app: &AppHandle, prepared: &PreparedCall) -> Action
             Ok(list) => ActionOutcome::Succeeded(SuccessData {
                 source,
                 title: Some("Collections".to_string()),
-                body: Some(list.join(", ")),
+                body: Some(
+                    list.into_iter()
+                        .take(64)
+                        .map(|name| crate::grain_space::bounded_bridge_text(name, 256))
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                ),
                 details: vec![],
                 receipt: false,
             }),
@@ -628,7 +640,8 @@ async fn grain_space_execute(app: &AppHandle, prepared: &PreparedCall) -> Action
             };
             let title = str_arg(args, "title").unwrap_or_default();
             let collection = str_arg(args, "collection");
-            match crate::grain_space::save_verbatim(app, &title, &body, collection.as_deref()).await {
+            match crate::grain_space::save_verbatim(app, &title, &body, collection.as_deref()).await
+            {
                 Ok(id) => {
                     let title = crate::grain_space::get(app, &id)
                         .await
@@ -704,6 +717,21 @@ async fn grain_space_execute(app: &AppHandle, prepared: &PreparedCall) -> Action
             &format!("Grain Space has no action '{other}'."),
         ),
     }
+}
+
+fn bounded_note_body(body: String, max_bytes: usize) -> String {
+    if body.len() <= max_bytes {
+        return body;
+    }
+    let mut boundary = max_bytes;
+    while boundary > 0 && !body.is_char_boundary(boundary) {
+        boundary -= 1;
+    }
+    format!(
+        "{}\n\n[Truncated: showing first {boundary} of {} bytes. Note continues.]",
+        &body[..boundary],
+        body.len()
+    )
 }
 
 fn invalid(message: &str) -> ActionOutcome {
@@ -910,5 +938,29 @@ mod tests {
         assert_eq!(confirm.details[0].label, "title");
         assert_eq!(confirm.details[0].value, "Meeting Notes");
         assert!(confirm.markdown.contains("Meeting Notes"));
+    }
+
+    #[test]
+    fn note_version_is_not_exposed_in_confirmation() {
+        let call = prepare(
+            "grainspace:append_to_note",
+            GRAIN_SPACE_EXT_ID,
+            "append_to_note",
+            "Grain Space",
+            json!({
+                "id": "note-1",
+                "title": "Roadmap",
+                "text": "Ship it",
+                "expected_version": "secret-host-version"
+            }),
+            RiskClass::Confirm,
+            SideEffect::Write,
+            "builtin",
+        );
+        let rendered =
+            grain_core::interaction::to_markdown(&confirm_interaction(&call, "Append to Note"));
+        assert!(rendered.contains("Ship it"));
+        assert!(!rendered.contains("expected_version"));
+        assert!(!rendered.contains("secret-host-version"));
     }
 }

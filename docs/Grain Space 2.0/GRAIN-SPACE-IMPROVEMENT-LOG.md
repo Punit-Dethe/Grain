@@ -187,7 +187,7 @@ This branch starts cleanly from `main`. Nothing from `codex/grain-space-memory-e
 ### Objectives
 
 - Replace whole-body LLM reconciliation for explicit append requests with deterministic raw append.
-- Bind preparation confirmation to the resolved note's exact identity and content version hash (FNV-1a 64-bit).
+- Bind preparation confirmation to the resolved note's exact identity and a SHA-256 version of its exact persisted Markdown.
 - Reject stale targets if the note was modified externally between confirmation and execution.
 - Ensure byte-for-byte preservation of existing body text with standard Markdown separators.
 - Enforce idempotence: duplicate deliveries of identical additions do not create repeated blocks.
@@ -195,24 +195,20 @@ This branch starts cleanly from `main`. Nothing from `codex/grain-space-memory-e
 
 ### Implementation
 
-- **Content Version Hash & Concurrency Guard (`src-tauri/src/grain_space/mod.rs`):**
-  - Added `content_version_hash(body: &str) -> String` using deterministic 64-bit FNV-1a hashing formatted as a 16-character hex string.
-  - Implemented `append_with_expected_version(app, id, text, expected_version)`:
-    - Verifies note existence.
-    - If `expected_version` is provided, compares against current on-disk content version hash; aborts with a descriptive conflict message if modified externally.
-    - Idempotency check: if `note.body` already ends with the addition prefixed by standard separators (`\n---\n\n` or `\n\n---\n\n`), logs and returns `Ok(())` without duplicate appending.
-    - Preserves existing body byte-for-byte, appending `---\n\n` based on trailing newlines.
-    - Atomically saves note and emits `notes_changed`.
+- **Persisted Version & Concurrency Guard (`src-tauri/src/grain_space/vault.rs`, `src-tauri/src/grain_space/mod.rs`):**
+  - `get_append_snapshot` resolves the writable note, display title, and SHA-256 hash of the exact persisted Markdown under one vault lock.
+  - `append_note_atomic` compares that exact version (including frontmatter), preserves the existing body byte-for-byte, re-reads immediately before atomic replacement, and rejects stale targets.
+  - `append_with_idempotency` reserves an operation key while a write is in flight, records it only after success, and releases failed operations for safe retry. The bounded registry retains 256 completed and 32 in-flight keys.
 - **Prepared Action Binding (`src-tauri/src/grain_space/agent_tools.rs`):**
-  - Bound `note_id`, `exact_title`, and `expected_version` hash into the prepared confirmation payload in `prepare_note_tool_action`.
+  - Bound `id`, exact title, addition, and host-owned `expected_version` into the prepared action. The digest is removed from user/model-facing confirmation details.
   - Resolution enforces deterministic ID lookup or unambiguous exact title match; missing or ambiguous targets fail closed.
 - **Action Execution Dispatch (`src-tauri/src/action_exec.rs`):**
-  - Updated `grain_space_execute` to parse `expected_version` from the confirmation payload and pass it to `append_with_expected_version`.
+  - Updated `grain_space_execute` to pass the private `expected_version` and per-operation idempotency key to `append_with_idempotency`.
 - **Eradication of Whole-Body Model Reconciliation (`src-tauri/src/grain_space/capture.rs`):**
   - Replaced whole-body LLM reconciliation logic with deterministic `raw_append`.
   - Preserved original body byte-for-byte; removed whole-note LLM rewrite pathways on append.
 - **Comprehensive Edge-Case Testing (`src-tauri/src/grain_space/capture.rs`):**
-  - `phase_4_safe_deterministic_append_invariants`: tests end-to-end append, idempotence, stale version rejection, and non-existent note failure.
+  - `phase_4_safe_deterministic_append_invariants`: tests the production storage append, stale version rejection, byte preservation, and non-existent note failure.
   - `phase_4_content_version_hash_properties`: tests determinism, single-byte sensitivity, whitespace sensitivity, CJK/multibyte Unicode, and empty strings.
   - `phase_4_raw_append_whitespace_and_separator_variations`: tests empty body, trailing single/double newlines, code fences, and internal dividers.
   - `phase_4_duplicate_detection_edge_cases`: tests suffix overlap without separator (false-positive prevention), proper separator match, and exact-body match.
@@ -229,7 +225,7 @@ This branch starts cleanly from `main`. Nothing from `codex/grain-space-memory-e
 
 - **Wrong-note append rate is zero in acceptance fixtures:** PASSED. Exact note identity resolution and validation in `agent_tools.rs` and `mod.rs` prevents incorrect note targeting.
 - **Ambiguous targets abstain:** PASSED. Preparation fails closed when note cannot be uniquely resolved.
-- **Existing text is never silently removed or rewritten:** PASSED. Whole-body LLM reconciliation is completely removed on append; `raw_append` and `append_with_expected_version` preserve existing note body byte-for-byte.
+- **Existing text is never silently removed or rewritten:** PASSED. Whole-body LLM reconciliation is removed; the storage-layer atomic append preserves the existing note body byte-for-byte.
 - **Duplicate and stale operations fail safely:** PASSED. Idempotence prevents stacked duplicate text; stale version check rejects out-of-order writes with clear error messaging.
 
 ---
@@ -238,7 +234,7 @@ This branch starts cleanly from `main`. Nothing from `codex/grain-space-memory-e
 
 ### Objectives
 
-- Exercise end-to-end user journeys: speak/type -> Agent -> search/create/append -> confirmation -> result.
+- Exercise headless contracts for Agent preparation, search/create/append storage, confirmation holding, and result data.
 - Clean obsolete Recall-brain contracts (`run_turn`, `run_tool_loop`, `execute_search_memory`, `build_block_and_meta`, `session_registry`, `reconcile_note`, `MergedMeta`) after all consumers migrated to the unified Agent loop.
 - Test corrupt-index recovery, external-edit concurrency rejection, and vault-switching isolation.
 - Verify complete headless memory evaluation and full library test suites.
@@ -249,8 +245,8 @@ This branch starts cleanly from `main`. Nothing from `codex/grain-space-memory-e
   - Removed `run_turn`, `run_tool_loop`, `execute_search_memory`, `search_memory_spec`, `clone_tools`, `build_block_and_meta`, `session_registry`, `register_hits`, `read_note`, `persist`, `build_entries`, and `prepend_memories` from `recall.rs`.
   - Removed `MergedMeta`, `MergedTodo`, and `reconcile_note` from `capture.rs`.
   - Cleaned obsolete imports (`AgentMessage`, `AgentReply`, `AgentSource`, `Manager`).
-- **End-to-End Qualification Tests (`src-tauri/src/grain_space/eval.rs`):**
-  - `phase_5_end_to_end_journey`: exercises creation, synchronous lexical FTS5 search, read with content version hash computation, deterministic safe append with concurrency check, byte-for-byte preservation, and immediate re-indexing.
+- **Headless Qualification Tests (`src-tauri/src/grain_space/eval.rs`):**
+  - `phase_5_storage_journey_contract`: exercises Agent write preparation/holding plus direct production storage, lexical search, exact version computation, deterministic safe append, byte-for-byte preservation, and immediate re-indexing. It does not claim to drive a live model or the real Tauri confirmation UI.
   - `phase_5_corrupt_index_and_recovery`: verifies index destruction and zero-loss reconstruction from raw markdown notes via `vault::rebuild_index`.
   - `phase_5_external_edit_and_concurrency_failure`: tests stale version detection when an external edit occurs on disk between preparation and confirmation, ensuring stale writes fail closed and external edits remain uncorrupted.
   - `phase_5_vault_switching_isolation`: verifies multi-vault isolation, ensuring zero cross-vault leakage of search hits or notes between separate vaults.
@@ -265,10 +261,38 @@ This branch starts cleanly from `main`. Nothing from `codex/grain-space-memory-e
 
 ### Phase 5 Gate Assessment
 
-- **Core journeys work with weakest supported tool-calling model:** PASSED. Conversational flow is fully unified through standard Agent tool loop (`search_notes`, `read_note`, `prepare_create_note`, `prepare_append_note`, `list_recent_notes`) using minimal, rigid JSON schemas without custom text-parsing hacks or prompt-injected citations.
-- **No unresolved critical/high security or data-integrity issue:** PASSED. Safe append guarantees byte-for-byte preservation; content version hash prevents race conditions and stale overwrites; all mutation actions require explicit user confirmation.
-- **No unjustified idle or memory regression:** PASSED. Zero background daemons, zero resident polling loops; storage is accessed strictly on demand and drops resources immediately upon completion.
-- **Clean-checkout required checks pass with exact results recorded:** PASSED. Full Rust test suite passes (112/112 in `grain_space`), TypeScript compiler checks cleanly, and the complete headless evaluation golden harness passes all quality thresholds.
+- **Core journeys work with weakest supported tool-calling model:** MANUAL ACCEPTANCE NOT RUN. The headless schemas and routing contracts pass; live-model behavior must be judged in the real application.
+- **No unresolved critical/high security or data-integrity issue:** PASSED after the final hardening audit below.
+- **No unjustified idle or memory regression:** ARCHITECTURALLY PASSED, NOT MEASURED. No daemon, watcher, polling loop, or resident model was added; peak/idle RAM still requires real-app measurement.
+- **Clean-checkout required checks pass with exact results recorded:** see the final hardening audit below for the authoritative verification results.
 
+---
 
+## Final Security and Integrity Audit — 2026-09-04
 
+This section supersedes earlier gate claims where their scope differs.
+
+### Findings closed
+
+- Removed MCP and extension note-write routes that could not prove out-of-band user approval. In particular, the MCP caller can no longer receive a confirmation token and submit that token itself. Both bridges now expose bounded reads only; first-party Agent mutations remain behind Grain's confirmation surface.
+- Replaced post-write idempotency bookkeeping with bounded in-flight/completed operation state. Failed writes are retryable, concurrent duplicates fail closed, and distinct intentional operations with identical arguments receive distinct SHA-256 keys.
+- Bound append confirmation to one locked target/title/exact-Markdown snapshot. Frontmatter-only changes and late external edits are rejected, and the host-owned version digest is not exposed in confirmation details.
+- Removed model-authored note-body rewriting. Capture models now return metadata only; the captured text is the durable body. Metadata schemas and Rust normalization cap titles, summaries, questions, todos, entities, and relations.
+- Bounded bridge queries, IDs, bodies, metadata, result counts, collection lists, and Agent read output using UTF-8-safe truncation.
+- Published the MCP bearer-token file through an owner-only create-new temporary file and atomic rename; every mint revokes prior MCP identities even if the old file is missing/corrupt, and a failed publication revokes the new token.
+- Removed obsolete runtime Recall session state and dead bridge mutation implementations. Fixed temporal phrase boundaries and rolling-window behavior.
+- Validated the checked-in memory evaluation schema/version/mode instead of accepting unused or empty fixtures.
+
+### Verification
+
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib -- --test-threads=1` — 704 passed, 1 network test ignored, 0 failed.
+- `cargo test --manifest-path crates/grain-core/Cargo.toml` — 204 unit + 4 benchmark tests passed.
+- `cargo test --manifest-path crates/grain-sdk/Cargo.toml` — 96 passed.
+- `cargo test --manifest-path crates/grain-mcp/Cargo.toml` — 3 integration tests passed.
+- `cargo check --manifest-path src-tauri/Cargo.toml --lib` — passed; remaining warnings are pre-existing outside this Grain Space change.
+- `npm run test:unit` — 112 passed across 12 files.
+- `npx tsc --noEmit`, `npm run lint`, `npm run build`, `cargo fmt --all -- --check`, and `git diff --check` — passed.
+
+### Acceptance scope
+
+The code and headless contracts are closed for this pass. Real-application visual behavior, weakest-model task quality, and measured peak/idle RAM were not simulated by tests; those remain manual dogfood/acceptance checks rather than unimplemented code claims.

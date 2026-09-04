@@ -171,10 +171,6 @@ pub struct AgentState {
     /// Assist and Recall-labelled turns both use the unified Agent tool loop;
     /// Capture remains the explicit headless note-save path.
     pub mode: Mutex<AgentMode>,
-    /// Grain Recall session state: the ordered memory registry so `SOURCES: Mn`
-    /// numbering is stable and additive across follow-up turns. Index `i` holds
-    /// the note id for memory `M(i+1)`. Cleared on each fresh summon.
-    pub recall: Mutex<crate::grain_space::recall::RecallSession>,
     /// [GRAIN] CENTER-panel only: the current logical height the webview last
     /// requested via `agent_resize_panel`. Lets window transitions (reveal /
     /// follow-up focus) preserve an already-grown surface instead of snapping it
@@ -390,9 +386,6 @@ fn summon_inner(app: &AppHandle, agent_mode: AgentMode) {
             }
             if let Ok(mut g) = state.mode.lock() {
                 *g = agent_mode;
-            }
-            if let Ok(mut g) = state.recall.lock() {
-                g.clear();
             }
             if let Ok(mut g) = state.center_height.lock() {
                 *g = 0.0; // fresh session opens at the start height
