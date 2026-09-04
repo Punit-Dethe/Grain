@@ -130,6 +130,15 @@ pub fn save_note(b: &Backend, note: &Note) -> Result<()> {
     vault::save_note(b, note)
 }
 
+pub fn append_note_atomic(
+    b: &Backend,
+    id: &str,
+    addition: &str,
+    expected_version: Option<&str>,
+) -> Result<Note> {
+    vault::append_note_atomic(b, id, addition, expected_version)
+}
+
 pub fn delete_note(b: &Backend, id: &str) -> Result<()> {
     vault::delete_note(b, id)
 }

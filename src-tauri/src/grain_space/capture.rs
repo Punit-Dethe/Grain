@@ -772,35 +772,43 @@ pub(crate) fn reformat_lost_material_content(raw: &str, formatted: &str) -> bool
 
     // 2. URLs must be preserved (case-insensitive)
     let fmt_lower = formatted.to_lowercase();
-    for url in extract_urls(raw) {
-        if !fmt_lower.contains(&url.to_lowercase()) {
-            log::warn!("[GRAIN] space compose: reformat dropped URL: {url}");
-            return true;
-        }
+    let dropped_urls = extract_urls(raw)
+        .into_iter()
+        .filter(|url| !fmt_lower.contains(&url.to_lowercase()))
+        .count();
+    if dropped_urls > 0 {
+        log::warn!("[GRAIN] space compose: reformat dropped {dropped_urls} URL(s) (reason: dropped_url)");
+        return true;
     }
 
     // 3. Significant numbers, dates, and measurements
-    for num in extract_significant_numbers(raw) {
-        if !formatted.contains(&num) {
-            log::warn!("[GRAIN] space compose: reformat dropped numeric token: {num}");
-            return true;
-        }
+    let dropped_nums = extract_significant_numbers(raw)
+        .into_iter()
+        .filter(|num| !formatted.contains(num))
+        .count();
+    if dropped_nums > 0 {
+        log::warn!("[GRAIN] space compose: reformat dropped {dropped_nums} numeric token(s) (reason: dropped_numeric)");
+        return true;
     }
 
     // 4. Quotations
-    for quote in extract_quotes(raw) {
-        if !fmt_lower.contains(&quote.to_lowercase()) {
-            log::warn!("[GRAIN] space compose: reformat dropped quote: {quote}");
-            return true;
-        }
+    let dropped_quotes = extract_quotes(raw)
+        .into_iter()
+        .filter(|quote| !fmt_lower.contains(&quote.to_lowercase()))
+        .count();
+    if dropped_quotes > 0 {
+        log::warn!("[GRAIN] space compose: reformat dropped {dropped_quotes} quote(s) (reason: dropped_quote)");
+        return true;
     }
 
     // 5. Uncertainty markers
-    for marker in extract_uncertainty_markers(raw) {
-        if !fmt_lower.contains(&marker.to_lowercase()) {
-            log::warn!("[GRAIN] space compose: reformat dropped uncertainty: {marker}");
-            return true;
-        }
+    let dropped_markers = extract_uncertainty_markers(raw)
+        .into_iter()
+        .filter(|marker| !fmt_lower.contains(&marker.to_lowercase()))
+        .count();
+    if dropped_markers > 0 {
+        log::warn!("[GRAIN] space compose: reformat dropped {dropped_markers} uncertainty marker(s) (reason: dropped_uncertainty)");
+        return true;
     }
 
     false
@@ -1329,10 +1337,10 @@ mod tests {
         let cjk_hash1 = content_version_hash(cjk_text);
         let cjk_hash2 = content_version_hash(cjk_text);
         assert_eq!(cjk_hash1, cjk_hash2);
-        assert_eq!(cjk_hash1.len(), 16); // 16 hex digits (64-bit zero padded)
+        assert_eq!(cjk_hash1.len(), 64); // 64 hex digits (SHA-256)
                                          // Empty text produces valid fixed-width hash
         let empty_hash = content_version_hash("");
-        assert_eq!(empty_hash.len(), 16);
+        assert_eq!(empty_hash.len(), 64);
     }
 
     #[test]

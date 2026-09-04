@@ -1411,15 +1411,16 @@ pub fn search_notes_natural(
     range: Option<(i64, i64)>,
 ) -> Result<Vec<Note>> {
     ensure_vault(v)?;
-    let Some(fts_query) = natural_fts_query(query) else {
+    let fts_opt = natural_fts_query(query);
+    if fts_opt.is_none() && range.is_none() {
         return Ok(Vec::new());
-    };
+    }
     let _guard = VAULT_LOCK.lock().unwrap();
     let conn = open_index(v)?;
     reconcile_locked(v, &conn)?;
 
-    let rels: Vec<String> = match range {
-        Some((lo, hi)) => {
+    let rels: Vec<String> = match (fts_opt, range) {
+        (Some(fts_query), Some((lo, hi))) => {
             let mut stmt = conn.prepare(
                 "SELECT m.path FROM notes_fts f JOIN notes_meta m ON f.id = m.id \
                  WHERE notes_fts MATCH ?1 AND m.timestamp BETWEEN ?2 AND ?3 \
@@ -1428,7 +1429,7 @@ pub fn search_notes_natural(
             let rows = stmt.query_map(params![fts_query, lo, hi], |r| r.get::<_, String>(0))?;
             rows.collect::<rusqlite::Result<Vec<_>>>()?
         }
-        None => {
+        (Some(fts_query), None) => {
             let mut stmt = conn.prepare(
                 "SELECT m.path FROM notes_fts f JOIN notes_meta m ON f.id = m.id \
                  WHERE notes_fts MATCH ?1 \
@@ -1437,6 +1438,16 @@ pub fn search_notes_natural(
             let rows = stmt.query_map(params![fts_query], |r| r.get::<_, String>(0))?;
             rows.collect::<rusqlite::Result<Vec<_>>>()?
         }
+        (None, Some((lo, hi))) => {
+            let mut stmt = conn.prepare(
+                "SELECT m.path FROM notes_meta m \
+                 WHERE m.timestamp BETWEEN ?1 AND ?2 \
+                 ORDER BY m.timestamp DESC LIMIT 24",
+            )?;
+            let rows = stmt.query_map(params![lo, hi], |r| r.get::<_, String>(0))?;
+            rows.collect::<rusqlite::Result<Vec<_>>>()?
+        }
+        (None, None) => return Ok(Vec::new()),
     };
     let mut out = Vec::with_capacity(rels.len());
     for rel in rels {
@@ -1578,6 +1589,76 @@ pub fn save_note(v: &Vault, note: &Note) -> Result<()> {
     indexed.title = stem;
     index_upsert(&conn, &indexed, &rel, mtime, size, false, &written)?;
     Ok(())
+}
+
+/// Append to a note with single-critical-section atomic concurrency check.
+/// Evaluates expected_version against on-disk note title + body hash,
+/// preserving all old body text byte-for-byte and rejecting stale writes.
+pub fn append_note_atomic(
+    v: &Vault,
+    id: &str,
+    addition: &str,
+    expected_version: Option<&str>,
+) -> Result<Note> {
+    ensure_vault(v)?;
+    super::note::validate_id(id)?;
+    let _guard = VAULT_LOCK.lock().unwrap();
+    let conn = open_index(v)?;
+
+    let existing = path_of(&conn, id)?;
+    let Some((rel, _)) = existing else {
+        return Err(anyhow!("Target note not found: {id}"));
+    };
+    if !in_grain_folder(v, &rel) {
+        return Err(anyhow!(
+            "This note lives outside Grain's folder — edit it in Obsidian."
+        ));
+    }
+
+    let abs = v.abs(&rel);
+    let disk_text = fs::read_to_string(&abs).with_context(|| format!("read {}", abs.display()))?;
+    let mtime = file_mtime_ms(&abs).unwrap_or_else(|| chrono::Utc::now().timestamp_millis());
+    let (mut note, _) = read_md_note(&rel, &disk_text, mtime);
+
+    // 1. Concurrency / stale target check
+    if let Some(exp) = expected_version {
+        let actual = super::note_version_hash(&note.title, &note.body);
+        if actual != exp {
+            return Err(anyhow!(
+                "The note was modified externally since confirmation (expected version {exp}, current {actual}). Append cancelled to prevent overwriting unseen edits."
+            ));
+        }
+    }
+
+    let addition = addition.trim();
+    if addition.is_empty() {
+        return Ok(note);
+    }
+
+    // 2. Byte-for-byte old body preservation with readable separator
+    if note.body.is_empty() {
+        note.body = addition.to_string();
+    } else if note.body.ends_with("\n\n") {
+        note.body.push_str("---\n\n");
+        note.body.push_str(addition);
+    } else if note.body.ends_with('\n') {
+        note.body.push_str("\n---\n\n");
+        note.body.push_str(addition);
+    } else {
+        note.body.push_str("\n\n---\n\n");
+        note.body.push_str(addition);
+    }
+
+    // 3. Write directly and update index under the same lock
+    let preserved = preserved_frontmatter(&disk_text);
+    let rendered = emit_markdown_with(&note, &preserved);
+    atomic_write(&abs, &rendered)?;
+
+    let new_mtime = file_mtime_ms(&abs).unwrap_or(mtime);
+    let new_size = fs::metadata(&abs).map(|m| m.len() as i64).unwrap_or(0);
+    index_upsert(&conn, &note, &rel, new_mtime, new_size, false, &rendered)?;
+
+    Ok(note)
 }
 
 /// Delete a note file inside Grain's folder + its index rows. Files outside the

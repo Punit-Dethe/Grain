@@ -242,23 +242,21 @@ pub(crate) async fn retrieve_for_agent(
     limit: usize,
 ) -> Result<Vec<Note>> {
     let temporal_res = super::temporal::extract_temporal_range(query);
-    let effective_query = if temporal_res.clean_query.trim().is_empty() {
-        query
+    // If a temporal range was extracted, search using the stripped clean query so
+    // temporal keywords (e.g. "today") do not become spurious lexical search tokens.
+    let (effective_query, range) = if let Some(r) = temporal_res.range {
+        (temporal_res.clean_query.as_str(), Some(r.as_tuple()))
     } else {
-        &temporal_res.clean_query
+        (query, None)
     };
-    let range = temporal_res.range.map(|r| r.as_tuple());
 
     let pool_limit = limit.clamp(1, CANDIDATE_POOL);
     let hits = retrieve_inner(app, be, effective_query, range, pool_limit).await?;
 
-    // Section 8 invariant: read-only retrieval may perform one clearly bounded soft fallback
-    // if retrieval with temporal constraints yields zero hits.
-    if hits.is_empty() && range.is_some() {
-        retrieve_inner(app, be, effective_query, None, pool_limit).await
-    } else {
-        Ok(hits)
-    }
+    // Invariant (Section 8): Write-target searches and Agent retrieval must NEVER silently
+    // weaken an explicit temporal constraint. If a time constraint yields zero hits, return empty
+    // so the agent knows no matching note exists in that timeframe rather than selecting an old note.
+    Ok(hits)
 }
 
 async fn retrieve_filtered(
@@ -296,7 +294,7 @@ async fn retrieve_inner(
 ) -> Result<Vec<Note>> {
     let semantic_on = {
         let s = crate::settings::get_settings(app);
-        s.grain_space_semantic && super::embed::model_on_disk()
+        s.grain_space_semantic && super::embed::model_on_disk() && !query.trim().is_empty()
     };
     let half_life_days = crate::settings::get_settings(app).grain_space_decay_half_life_days;
 

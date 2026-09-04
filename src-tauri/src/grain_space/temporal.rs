@@ -111,11 +111,21 @@ fn clean_query_text(query: &str, phrase: &str) -> String {
             }
         }
 
-        // Clean after part
+        // Clean after part: prepositions must be matched on word boundaries
         let mut after_trimmed = after.trim();
         for prep in &["from", "on", "in", "during", "since", "for", "to"] {
-            if after_trimmed.to_lowercase().starts_with(prep) {
-                after_trimmed = after_trimmed[prep.len()..].trim();
+            let lower = after_trimmed.to_lowercase();
+            if lower == *prep {
+                after_trimmed = "";
+                break;
+            } else if lower.starts_with(prep) {
+                let rest = &lower[prep.len()..];
+                if rest.starts_with(char::is_whitespace)
+                    || rest.starts_with(|c: char| c == '?' || c == '!' || c == '.' || c == ',')
+                {
+                    after_trimmed = after_trimmed[prep.len()..].trim();
+                    break;
+                }
             }
         }
 
@@ -275,7 +285,8 @@ pub fn extract_temporal_range_at<Tz: TimeZone>(
 
     // 8. "last N days" or "past N days"
     if let Some((n, matched_str)) = parse_rolling_days(&q_lower) {
-        let start_date = today_date - Duration::days(n as i64);
+        let days_back = if n > 0 { (n as i64) - 1 } else { 0 };
+        let start_date = today_date - Duration::days(days_back);
         if let (Some(start), Some(end)) =
             (start_of_day(start_date, &tz), end_of_day(today_date, &tz))
         {
@@ -588,14 +599,28 @@ mod tests {
         let res = extract_temporal_range_at("commits in the last 7 days", now);
         assert_eq!(res.clean_query, "commits");
         let range = res.range.unwrap();
+        // Exact 7 calendar days inclusive of today: 2026-08-29 through 2026-09-04
         assert_eq!(
             range.start_ms,
-            start_of_day(NaiveDate::from_ymd_opt(2026, 8, 28).unwrap(), &tz).unwrap()
+            start_of_day(NaiveDate::from_ymd_opt(2026, 8, 29).unwrap(), &tz).unwrap()
         );
         assert_eq!(
             range.end_ms,
             end_of_day(NaiveDate::from_ymd_opt(2026, 9, 4).unwrap(), &tz).unwrap()
         );
+    }
+
+    #[test]
+    fn parse_preposition_word_boundary() {
+        let now = fixed_test_clock();
+
+        // "inbox" must not have "in" stripped to become "box"
+        let res1 = extract_temporal_range_at("today inbox", now);
+        assert_eq!(res1.clean_query, "inbox");
+
+        // "format" must not have "for" stripped to become "mat"
+        let res2 = extract_temporal_range_at("today format check", now);
+        assert_eq!(res2.clean_query, "format check");
     }
 
     #[test]

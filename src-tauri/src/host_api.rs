@@ -1536,44 +1536,124 @@ pub async fn dispatch(
             serde_json::to_value(note).map_err(|e| internal_error(e.to_string()))
         }
         "space.save" => {
+            if let Some(token) = params.get("confirm_token").and_then(Value::as_str) {
+                match crate::action_exec::resume(app, token, true).await {
+                    crate::action_exec::ActionOutcome::Succeeded(data) => {
+                        return Ok(serde_json::json!({ "status": "ok", "summary": data.body }));
+                    }
+                    crate::action_exec::ActionOutcome::Failed { message, .. } => {
+                        return Err(internal_error(message));
+                    }
+                    crate::action_exec::ActionOutcome::Cancelled => {
+                        return Err(internal_error("The action was cancelled."));
+                    }
+                    _ => return Err(internal_error("The action did not complete.")),
+                }
+            }
             let body = param_nonempty_str(&params, "body")?;
-            let opt = |k: &str| {
-                params
-                    .get(k)
-                    .and_then(Value::as_str)
-                    .map(str::trim)
-                    .filter(|v| !v.is_empty())
-                    .map(str::to_string)
-            };
-            let entities: Vec<String> = params
-                .get("entities")
-                .and_then(Value::as_array)
-                .map(|a| {
-                    a.iter()
-                        .filter_map(Value::as_str)
-                        .map(str::to_string)
-                        .collect()
-                })
-                .unwrap_or_default();
-            let supplied = crate::grain_space::SuppliedMeta {
-                title: opt("title"),
-                summary: opt("summary"),
-                question: opt("question"),
-                entities,
-                collection: opt("collection"),
-            };
-            let id = crate::grain_space::save(app, &body, supplied)
-                .await
-                .map_err(internal_error)?;
-            Ok(serde_json::json!({ "id": id }))
+            let title = params
+                .get("title")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|v| !v.is_empty())
+                .map(str::to_string);
+            let final_title = title
+                .unwrap_or_else(|| crate::grain_space::capture::fallback_title(&body));
+            let collection = params.get("collection").and_then(Value::as_str).map(str::to_string);
+
+            let mut call_args = serde_json::Map::new();
+            call_args.insert("title".to_string(), serde_json::Value::String(final_title));
+            call_args.insert("body".to_string(), serde_json::Value::String(body));
+            if let Some(col) = collection {
+                call_args.insert("collection".to_string(), serde_json::Value::String(col));
+            }
+
+            let prepared = crate::action_exec::prepare(
+                "grainspace:save_note",
+                crate::action_exec::GRAIN_SPACE_EXT_ID,
+                "save_note",
+                "Grain Space",
+                serde_json::Value::Object(call_args),
+                grain_core::execution::RiskClass::Confirm,
+                grain_core::execution::SideEffect::Write,
+                "builtin",
+            );
+            match crate::action_exec::run_or_confirm(app, prepared, "Save Note").await {
+                crate::action_exec::Dispatch::Ran(outcome) => match outcome {
+                    crate::action_exec::ActionOutcome::Succeeded(_) => Ok(serde_json::json!({ "status": "ok" })),
+                    crate::action_exec::ActionOutcome::Failed { message, .. } => Err(internal_error(message)),
+                    _ => Err(internal_error("Action failed")),
+                },
+                crate::action_exec::Dispatch::AwaitConfirm(interaction) => {
+                    let token = match &interaction {
+                        grain_core::interaction::Interaction::Confirm { token, .. } => token.clone(),
+                        _ => String::new(),
+                    };
+                    Ok(serde_json::json!({
+                        "status": "needs_confirmation",
+                        "token": token,
+                        "title": "Save Note",
+                    }))
+                }
+            }
         }
         "space.append" => {
+            if let Some(token) = params.get("confirm_token").and_then(Value::as_str) {
+                match crate::action_exec::resume(app, token, true).await {
+                    crate::action_exec::ActionOutcome::Succeeded(_) => {
+                        return Ok(serde_json::json!({ "status": "ok" }));
+                    }
+                    crate::action_exec::ActionOutcome::Failed { message, .. } => {
+                        return Err(internal_error(message));
+                    }
+                    crate::action_exec::ActionOutcome::Cancelled => {
+                        return Err(internal_error("The action was cancelled."));
+                    }
+                    _ => return Err(internal_error("The action did not complete.")),
+                }
+            }
             let id = param_nonempty_str(&params, "id")?;
             let text = param_nonempty_str(&params, "text")?;
-            crate::grain_space::append(app, &id, &text)
+            let target_note = crate::grain_space::get(app, &id)
                 .await
                 .map_err(internal_error)?;
-            Ok(serde_json::json!({ "id": id }))
+            let version = crate::grain_space::note_version_hash(&target_note.title, &target_note.body);
+
+            let mut call_args = serde_json::Map::new();
+            call_args.insert("id".to_string(), serde_json::Value::String(id.clone()));
+            call_args.insert("text".to_string(), serde_json::Value::String(text));
+            call_args.insert("title".to_string(), serde_json::Value::String(target_note.title));
+            call_args.insert("expected_version".to_string(), serde_json::Value::String(version));
+
+            let prepared = crate::action_exec::prepare(
+                "grainspace:append_to_note",
+                crate::action_exec::GRAIN_SPACE_EXT_ID,
+                "append_to_note",
+                "Grain Space",
+                serde_json::Value::Object(call_args),
+                grain_core::execution::RiskClass::Confirm,
+                grain_core::execution::SideEffect::Write,
+                "builtin",
+            );
+            match crate::action_exec::run_or_confirm(app, prepared, "Append to Note").await {
+                crate::action_exec::Dispatch::Ran(outcome) => match outcome {
+                    crate::action_exec::ActionOutcome::Succeeded(_) => Ok(serde_json::json!({ "status": "ok", "id": id })),
+                    crate::action_exec::ActionOutcome::Failed { message, .. } => Err(internal_error(message)),
+                    _ => Err(internal_error("Action failed")),
+                },
+                crate::action_exec::Dispatch::AwaitConfirm(interaction) => {
+                    let token = match &interaction {
+                        grain_core::interaction::Interaction::Confirm { token, .. } => token.clone(),
+                        _ => String::new(),
+                    };
+                    Ok(serde_json::json!({
+                        "status": "needs_confirmation",
+                        "token": token,
+                        "title": "Append to Note",
+                        "id": id,
+                    }))
+                }
+            }
         }
         // [GRAIN] The `notes` capability's surface (NOTE-UI-EXTENSION-PLAN.md).
         // The reads mirror `space.*` deliberately rather than sharing an arm:

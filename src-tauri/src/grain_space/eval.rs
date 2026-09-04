@@ -338,10 +338,12 @@ mod tests {
         assert!(result.is_ok(), "memory eval must pass: {:?}", result.err());
     }
 
-    #[test]
-    fn phase_5_end_to_end_journey() {
-        use crate::grain_space::content_version_hash;
+    #[tokio::test]
+    async fn phase_5_end_to_end_journey() {
+        use crate::grain_llm_client::ToolCallOut;
+        use crate::grain_space::agent_tools::{self, NoteToolResult, TurnLog};
         use crate::grain_space::note::Note;
+        use crate::grain_space::note_version_hash;
 
         let unique = uuid::Uuid::new_v4().to_string();
         let base = std::env::temp_dir().join(format!("grain_p5_e2e_{unique}"));
@@ -354,33 +356,76 @@ mod tests {
         fs::create_dir_all(&vault.root).unwrap();
         fs::create_dir_all(&vault.index_base).unwrap();
 
-        // 1. Create note
-        let initial_body = "Packing list:\n- Passport\n- Camera";
-        let mut note = Note::raw(initial_body.to_string());
-        note.title = "Trip to Kyoto".to_string();
-        vault::save_note(&vault, &note).expect("save initial note");
+        // 1. User asks agent to save a note: user input -> agent_tools::execute
+        let raw_user_body = "Packing list:\n- Passport\n- Camera";
+        let raw_user_title = "Trip to Kyoto";
+        let call = ToolCallOut {
+            id: "call_save_kyoto".to_string(),
+            name: "save_note".to_string(),
+            arguments: serde_json::json!({
+                "title": raw_user_title,
+                "body": raw_user_body,
+            })
+            .to_string(),
+        };
+        let mut log = TurnLog::new();
 
-        // 2. Search for the note
+        let tool_result = agent_tools::execute_opt(None, &call, &mut log).await;
+
+        // 2. Interaction::Confirm withheld for user approval
+        let confirm = match tool_result {
+            NoteToolResult::Confirm(c) => c,
+            other => panic!("Expected NoteToolResult::Confirm, got {:?}", other),
+        };
+        assert!(confirm.token.starts_with("pc_"));
+        assert_eq!(confirm.title, "Save Note");
+        assert_eq!(confirm.summary, "Save note \"Trip to Kyoto\"");
+        assert!(confirm.markdown.contains("Trip to Kyoto"));
+        assert!(confirm.markdown.contains("Passport"));
+
+        // 3. Approval: resume prepared action from pending registry
+        let prepared = crate::action_exec::take_pending(&confirm.token)
+            .expect("held confirmation must be retrieved from pending calls");
+        assert_eq!(prepared.action_id, "save_note");
+        assert_eq!(prepared.risk, grain_core::execution::RiskClass::Confirm);
+        assert_eq!(prepared.side_effect, grain_core::execution::SideEffect::Write);
+
+        // 4. Persistence: save confirmed data byte-for-byte to vault
+        let confirmed_title = prepared
+            .arguments
+            .get("title")
+            .and_then(|v| v.as_str())
+            .expect("title in prepared call");
+        let confirmed_body = prepared
+            .arguments
+            .get("body")
+            .and_then(|v| v.as_str())
+            .expect("body in prepared call");
+        assert_eq!(confirmed_title, raw_user_title);
+        assert_eq!(confirmed_body, raw_user_body);
+
+        let mut note = Note::raw(confirmed_body.to_string());
+        note.title = confirmed_title.to_string();
+        vault::save_note(&vault, &note).expect("save confirmed note byte-for-byte");
+
+        // 5. Search and verification
         let hits = vault::search_notes_natural(&vault, "Kyoto packing", None).expect("search");
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].title, "Trip to Kyoto");
+        assert_eq!(hits[0].id, note.id);
 
-        // 3. Read note and compute version hash
         let read_note = vault::get_note(&vault, &note.id).expect("get note");
-        let expected_version = content_version_hash(&read_note.body);
+        assert_eq!(read_note.body, raw_user_body);
+        let expected_version = note_version_hash(&read_note.title, &read_note.body);
 
-        // 4. Safe Append with version check
-        let current_disk = vault::get_note(&vault, &note.id).expect("reread for append");
-        assert_eq!(content_version_hash(&current_disk.body), expected_version);
-
+        // 6. Safe Append via production atomic append implementation
         let addition = "Hotel reservation confirmed: Ryokan Sakura";
-        let mut appended_note = current_disk.clone();
-        appended_note.body = format!("{}\n\n---\n\n{}", current_disk.body, addition);
-        vault::save_note(&vault, &appended_note).expect("save appended");
+        vault::append_note_atomic(&vault, &note.id, addition, Some(&expected_version))
+            .expect("production atomic append must succeed with valid version");
 
-        // 5. Verification of byte-for-byte preservation and updated search
+        // 7. Verification of byte-for-byte preservation and updated search
         let post_append = vault::get_note(&vault, &note.id).expect("read post-append");
-        assert!(post_append.body.starts_with(initial_body));
+        assert!(post_append.body.starts_with(raw_user_body));
         assert!(post_append.body.contains("Ryokan Sakura"));
         let post_hits =
             vault::search_notes_natural(&vault, "Ryokan Sakura", None).expect("search appended");
@@ -451,8 +496,8 @@ mod tests {
 
     #[test]
     fn phase_5_external_edit_and_concurrency_failure() {
-        use crate::grain_space::content_version_hash;
         use crate::grain_space::note::Note;
+        use crate::grain_space::note_version_hash;
 
         let unique = uuid::Uuid::new_v4().to_string();
         let base = std::env::temp_dir().join(format!("grain_p5_concurrency_{unique}"));
@@ -470,29 +515,152 @@ mod tests {
         vault::save_note(&vault, &note).expect("save initial note");
 
         // Agent prepares append and binds version hash v1
-        let v1 = content_version_hash(&note.body);
+        let v1 = note_version_hash(&note.title, &note.body);
 
         // External edit occurs before confirmation
         let mut external_edit = note.clone();
         external_edit.body = "Overhauled draft by user in Obsidian".to_string();
         vault::save_note(&vault, &external_edit).expect("save external edit");
 
-        // Re-read on disk and check concurrency
-        let on_disk = vault::get_note(&vault, &note.id).expect("get on disk");
-        let v2 = content_version_hash(&on_disk.body);
-        assert_ne!(v1, v2, "Version hash must change on external modification");
+        // Invoke real production append implementation with stale version hash v1
+        let append_res = vault::append_note_atomic(
+            &vault,
+            &note.id,
+            "Conflicting agent addition that must be rejected",
+            Some(&v1),
+        );
 
-        // Stale expected version check fails closed
-        let stale_check = if v2 != v1 {
-            Err("Stale version detected: note was modified externally.")
-        } else {
-            Ok(())
-        };
-        assert!(stale_check.is_err(), "Must fail closed on stale version");
+        // Assert failure closed: stale version rejected
+        assert!(append_res.is_err(), "Must fail closed on stale version");
+        let err_msg = append_res.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("modified externally") || err_msg.contains("Stale"),
+            "Error message must indicate external modification: {err_msg}"
+        );
 
-        // Note on disk remains exactly the user's external edit
+        // Note on disk remains exactly the user's external edit without 3-way merge
         let current = vault::get_note(&vault, &note.id).expect("get note");
         assert_eq!(current.body, "Overhauled draft by user in Obsidian");
+        assert!(!current.body.contains("Conflicting agent addition"));
+
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn phase_5_operation_identity_idempotency() {
+        use crate::grain_space::check_and_record_idempotency;
+
+        let key = format!("op_key_{}", uuid::Uuid::new_v4());
+        assert!(
+            !check_and_record_idempotency(&key),
+            "first execution must not be marked duplicate"
+        );
+        assert!(
+            check_and_record_idempotency(&key),
+            "second execution with same key must be detected as duplicate"
+        );
+
+        let other_key = format!("op_key_{}", uuid::Uuid::new_v4());
+        assert!(
+            !check_and_record_idempotency(&other_key),
+            "different key must not be blocked"
+        );
+    }
+
+    #[tokio::test]
+    async fn phase_5_host_argument_bounds_enforcement() {
+        use crate::grain_llm_client::ToolCallOut;
+        use crate::grain_space::agent_tools::{self, NoteToolResult, TurnLog};
+
+        let mut log = TurnLog::new();
+
+        // 1. Oversized query (> 4096 bytes)
+        let huge_query = "a".repeat(5000);
+        let call_query = ToolCallOut {
+            id: "call_q".to_string(),
+            name: "search_notes".to_string(),
+            arguments: serde_json::json!({ "query": huge_query }).to_string(),
+        };
+        let res_q = agent_tools::execute_opt(None, &call_query, &mut log).await;
+        match res_q {
+            NoteToolResult::Text(msg) => {
+                assert!(msg.contains("exceeds maximum allowed size"));
+            }
+            _ => panic!("Expected text rejection for oversized query"),
+        }
+
+        // 2. Oversized body (> 65536 bytes)
+        let huge_body = "b".repeat(70000);
+        let call_body = ToolCallOut {
+            id: "call_b".to_string(),
+            name: "save_note".to_string(),
+            arguments: serde_json::json!({ "body": huge_body }).to_string(),
+        };
+        let res_b = agent_tools::execute_opt(None, &call_body, &mut log).await;
+        match res_b {
+            NoteToolResult::Text(msg) => {
+                assert!(msg.contains("exceeds maximum allowed size"));
+            }
+            _ => panic!("Expected text rejection for oversized body"),
+        }
+
+        // 3. Oversized title (> 300 bytes)
+        let huge_title = "t".repeat(350);
+        let call_title = ToolCallOut {
+            id: "call_t".to_string(),
+            name: "save_note".to_string(),
+            arguments: serde_json::json!({ "title": huge_title, "body": "valid body" }).to_string(),
+        };
+        let res_t = agent_tools::execute_opt(None, &call_title, &mut log).await;
+        match res_t {
+            NoteToolResult::Text(msg) => {
+                assert!(msg.contains("exceeds maximum allowed size"));
+            }
+            _ => panic!("Expected text rejection for oversized title"),
+        }
+    }
+
+    #[test]
+    fn phase_5_temporal_search_without_lexical_fallback() {
+        use crate::grain_space::note::Note;
+        use chrono::{Datelike, Local, TimeZone};
+
+        let unique = uuid::Uuid::new_v4().to_string();
+        let base = std::env::temp_dir().join(format!("grain_p5_temporal_{unique}"));
+        let vault = Vault {
+            root: base.join("vault"),
+            folder: "Grain".to_string(),
+            index_base: base.join("appdata"),
+            native: false,
+        };
+        fs::create_dir_all(&vault.root).unwrap();
+        fs::create_dir_all(&vault.index_base).unwrap();
+
+        let now = Local::now();
+        let today_start = Local
+            .with_ymd_and_hms(now.year(), now.month(), now.day(), 0, 0, 0)
+            .unwrap()
+            .timestamp_millis();
+        let today_end = today_start + 86_400_000 - 1;
+
+        // Note 1: Created today, body contains NO temporal words like "today"
+        let mut note_today = Note::raw("Grocery shopping list: milk, eggs, bread".to_string());
+        note_today.title = "Groceries".to_string();
+        note_today.timestamp = today_start + 1000;
+        vault::save_note(&vault, &note_today).expect("save today note");
+
+        // Note 2: Created a week ago
+        let mut note_old = Note::raw("Car maintenance records: oil change".to_string());
+        note_old.title = "Car".to_string();
+        note_old.timestamp = today_start - 7 * 86_400_000;
+        vault::save_note(&vault, &note_old).expect("save old note");
+
+        // Temporal query with today's range and EMPTY query text
+        let hits = vault::search_notes_natural(&vault, "", Some((today_start, today_end)))
+            .expect("search");
+        assert_eq!(hits.len(), 1, "Must find exactly 1 note from today");
+        assert_eq!(hits[0].id, note_today.id);
+        assert_eq!(hits[0].title, "Groceries");
 
         let _ = fs::remove_dir_all(&base);
     }

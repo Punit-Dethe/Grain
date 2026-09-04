@@ -320,10 +320,17 @@ fn result_heading(source: Option<&str>, title: Option<&str>) -> String {
     }
 }
 
+const LONG_VALUE_MAX: usize = 4096;
+
 fn push_fields(out: &mut String, fields: &[Field]) {
     for field in fields.iter().take(24) {
         let label = sanitize(&field.label, LABEL_MAX);
-        let value = sanitize(&field.value, VALUE_MAX);
+        let max_val = if label.eq_ignore_ascii_case("body") || label.eq_ignore_ascii_case("text") {
+            LONG_VALUE_MAX
+        } else {
+            VALUE_MAX
+        };
+        let value = sanitize(&field.value, max_val);
         if label.is_empty() && value.is_empty() {
             continue;
         }

@@ -204,8 +204,13 @@ impl GrainSpace {
             "collection": p.collection,
         });
         self.relay("space.save", params, |v| {
-            let id = v.get("id").and_then(Value::as_str).unwrap_or("");
-            format!("Saved as {id}.")
+            if v.get("status").and_then(Value::as_str) == Some("needs_confirmation") {
+                let token = v.get("token").and_then(Value::as_str).unwrap_or("");
+                format!("Action held: requires user confirmation in Grain (confirmation token: {token}).")
+            } else {
+                let id = v.get("id").and_then(Value::as_str).unwrap_or("");
+                format!("Saved as {id}.")
+            }
         })
         .await
     }
@@ -219,8 +224,15 @@ impl GrainSpace {
         Parameters(p): Parameters<AppendParams>,
     ) -> Result<CallToolResult, ErrorData> {
         let params = json!({ "id": p.id, "text": p.text });
-        self.relay("space.append", params, |_| "Appended.".to_string())
-            .await
+        self.relay("space.append", params, |v| {
+            if v.get("status").and_then(Value::as_str) == Some("needs_confirmation") {
+                let token = v.get("token").and_then(Value::as_str).unwrap_or("");
+                format!("Action held: requires user confirmation in Grain (confirmation token: {token}).")
+            } else {
+                "Appended.".to_string()
+            }
+        })
+        .await
     }
 
     /// One call into the app, rendered both ways: `describe` writes the prose a

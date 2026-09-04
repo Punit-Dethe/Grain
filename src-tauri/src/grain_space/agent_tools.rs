@@ -58,6 +58,11 @@ pub struct TurnLog {
 }
 
 impl TurnLog {
+    #[allow(dead_code)]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
     fn record(&mut self, note: Touched) {
         if self.touched.iter().any(|t| t.note_id == note.note_id) {
             return; // a note read twice is still one source
@@ -88,7 +93,8 @@ pub fn specs(app: &AppHandle) -> Vec<ToolSpec> {
                 "properties": {
                     "query": {
                         "type": "string",
-                        "description": "Focused search terms — the key nouns or topic."
+                        "description": "Focused search terms — the key nouns or topic.",
+                        "maxLength": 4096
                     }
                 },
                 "required": ["query"]
@@ -102,7 +108,11 @@ pub fn specs(app: &AppHandle) -> Vec<ToolSpec> {
             parameters: serde_json::json!({
                 "type": "object",
                 "properties": {
-                    "id": { "type": "string", "description": "The note's id." }
+                    "id": {
+                        "type": "string",
+                        "description": "The note's id.",
+                        "maxLength": 128
+                    }
                 },
                 "required": ["id"]
             }),
@@ -119,16 +129,19 @@ pub fn specs(app: &AppHandle) -> Vec<ToolSpec> {
                     "body": {
                         "type": "string",
                         "description": "The note itself, in Markdown. Keep the user's own \
-                                        wording and detail; do not summarise it away."
+                                        wording and detail; do not summarise it away.",
+                        "maxLength": 65536
                     },
                     "title": {
                         "type": "string",
-                        "description": "A short title. Optional — Grain writes one otherwise."
+                        "description": "A short title. Optional — Grain writes one otherwise.",
+                        "maxLength": 300
                     },
                     "collection": {
                         "type": "string",
                         "description": "An existing collection to file it under, from \
-                                        list_collections. Optional."
+                                        list_collections. Optional.",
+                        "maxLength": 128
                     }
                 },
                 "required": ["body"]
@@ -142,8 +155,16 @@ pub fn specs(app: &AppHandle) -> Vec<ToolSpec> {
             parameters: serde_json::json!({
                 "type": "object",
                 "properties": {
-                    "id": { "type": "string", "description": "The note's id." },
-                    "text": { "type": "string", "description": "What to add, in Markdown." }
+                    "id": {
+                        "type": "string",
+                        "description": "The note's id.",
+                        "maxLength": 128
+                    },
+                    "text": {
+                        "type": "string",
+                        "description": "What to add, in Markdown.",
+                        "maxLength": 65536
+                    }
                 },
                 "required": ["id", "text"]
             }),
@@ -164,10 +185,17 @@ pub fn specs(app: &AppHandle) -> Vec<ToolSpec> {
 /// information the model should have and reason about ("that note is gone, tell
 /// The result of executing a notebook tool: either text to feed back to the
 /// model, or a host-gated confirmation awaiting the user's approval.
+#[derive(Debug, Clone)]
 pub enum NoteToolResult {
     Text(String),
     Confirm(crate::agent::AgentConfirm),
 }
+
+const MAX_QUERY_BYTES: usize = 4096;
+const MAX_ID_BYTES: usize = 128;
+const MAX_TITLE_BYTES: usize = 300;
+const MAX_BODY_BYTES: usize = 65536;
+const MAX_GET_NOTE_BODY_BYTES: usize = 16384;
 
 /// Execute one tool call and return what to feed back to the model.
 ///
@@ -175,6 +203,14 @@ pub enum NoteToolResult {
 /// and return text. Mutations (save_note, append_to_note) prepare a host-gated
 /// call and return a confirmation for the user to approve before execution.
 pub async fn execute(app: &AppHandle, call: &ToolCallOut, log: &mut TurnLog) -> NoteToolResult {
+    execute_opt(Some(app), call, log).await
+}
+
+pub async fn execute_opt(
+    app: Option<&AppHandle>,
+    call: &ToolCallOut,
+    log: &mut TurnLog,
+) -> NoteToolResult {
     let args: serde_json::Value =
         serde_json::from_str(&call.arguments).unwrap_or(serde_json::Value::Null);
     let str_arg = |key: &str| -> Option<String> {
@@ -189,6 +225,16 @@ pub async fn execute(app: &AppHandle, call: &ToolCallOut, log: &mut TurnLog) -> 
         "search_notes" => {
             let Some(query) = str_arg("query") else {
                 return NoteToolResult::Text("search_notes needs a query.".to_string());
+            };
+            if query.len() > MAX_QUERY_BYTES {
+                return NoteToolResult::Text(format!(
+                    "search_notes query exceeds maximum allowed size ({MAX_QUERY_BYTES} bytes)."
+                ));
+            }
+            let Some(app) = app else {
+                return NoteToolResult::Text(
+                    "search_notes requires active backend app handle.".to_string(),
+                );
             };
             match super::search_for_agent(app, &query, SEARCH_LIMIT).await {
                 Ok(hits) if hits.is_empty() => {
@@ -224,6 +270,16 @@ pub async fn execute(app: &AppHandle, call: &ToolCallOut, log: &mut TurnLog) -> 
             let Some(id) = str_arg("id") else {
                 return NoteToolResult::Text("get_note needs an id.".to_string());
             };
+            if id.len() > MAX_ID_BYTES {
+                return NoteToolResult::Text(format!(
+                    "get_note id exceeds maximum allowed size ({MAX_ID_BYTES} bytes)."
+                ));
+            }
+            let Some(app) = app else {
+                return NoteToolResult::Text(
+                    "get_note requires active backend app handle.".to_string(),
+                );
+            };
             match super::get(app, &id).await {
                 Ok(note) => {
                     log.record(Touched {
@@ -231,31 +287,71 @@ pub async fn execute(app: &AppHandle, call: &ToolCallOut, log: &mut TurnLog) -> 
                         title: note.title.clone(),
                         saved_at: note.timestamp,
                     });
+                    let rendered_body = if note.body.len() > MAX_GET_NOTE_BODY_BYTES {
+                        let mut boundary = MAX_GET_NOTE_BODY_BYTES;
+                        while boundary > 0 && !note.body.is_char_boundary(boundary) {
+                            boundary -= 1;
+                        }
+                        format!(
+                            "{}\n\n[Truncated: showing first {} of {} bytes. Note continues...]",
+                            &note.body[..boundary],
+                            boundary,
+                            note.body.len()
+                        )
+                    } else {
+                        note.body
+                    };
                     NoteToolResult::Text(format!(
                         "authority: saved user note (historical; not live provider state)\ntitle: {}\nsaved: {}\n\n{}",
                         note.title,
                         stamp(note.timestamp),
-                        note.body
+                        rendered_body
                     ))
                 }
                 Err(e) => NoteToolResult::Text(format!("Could not read that note: {e}")),
             }
         }
         "save_note" => {
-            let Some(_body) = str_arg("body") else {
+            let Some(body) = str_arg("body") else {
                 return NoteToolResult::Text("save_note needs a body.".to_string());
             };
+            if body.len() > MAX_BODY_BYTES {
+                return NoteToolResult::Text(format!(
+                    "save_note body exceeds maximum allowed size ({MAX_BODY_BYTES} bytes)."
+                ));
+            }
+            let raw_title = str_arg("title");
+            if let Some(t) = &raw_title {
+                if t.len() > MAX_TITLE_BYTES {
+                    return NoteToolResult::Text(format!(
+                        "save_note title exceeds maximum allowed size ({MAX_TITLE_BYTES} bytes)."
+                    ));
+                }
+            }
+            // Finalize note title and body BEFORE confirmation
+            let final_title = raw_title
+                .map(|t| t.split_whitespace().collect::<Vec<_>>().join(" "))
+                .filter(|t| !t.is_empty())
+                .unwrap_or_else(|| super::capture::fallback_title(&body));
+            let final_title: String = final_title.chars().take(80).collect();
+
+            let mut call_args = args.clone();
+            if let Some(obj) = call_args.as_object_mut() {
+                obj.insert("title".to_string(), serde_json::Value::String(final_title));
+                obj.insert("body".to_string(), serde_json::Value::String(body));
+            }
+
             let prepared = crate::action_exec::prepare(
                 "grainspace:save_note",
                 crate::action_exec::GRAIN_SPACE_EXT_ID,
                 "save_note",
                 "Grain Space",
-                args.clone(),
+                call_args,
                 grain_core::execution::RiskClass::Confirm,
                 grain_core::execution::SideEffect::Write,
                 "builtin",
             );
-            match crate::action_exec::run_or_confirm(app, prepared, "Save Note").await {
+            match crate::action_exec::run_or_confirm_opt(app, prepared, "Save Note").await {
                 crate::action_exec::Dispatch::Ran(outcome) => {
                     NoteToolResult::Text(outcome.model_summary())
                 }
@@ -265,8 +361,23 @@ pub async fn execute(app: &AppHandle, call: &ToolCallOut, log: &mut TurnLog) -> 
             }
         }
         "append_to_note" => {
-            let (Some(id), Some(_text)) = (str_arg("id"), str_arg("text")) else {
+            let (Some(id), Some(text)) = (str_arg("id"), str_arg("text")) else {
                 return NoteToolResult::Text("append_to_note needs an id and text.".to_string());
+            };
+            if id.len() > MAX_ID_BYTES {
+                return NoteToolResult::Text(format!(
+                    "append_to_note id exceeds maximum allowed size ({MAX_ID_BYTES} bytes)."
+                ));
+            }
+            if text.len() > MAX_BODY_BYTES {
+                return NoteToolResult::Text(format!(
+                    "append_to_note text exceeds maximum allowed size ({MAX_BODY_BYTES} bytes)."
+                ));
+            }
+            let Some(app) = app else {
+                return NoteToolResult::Text(
+                    "append_to_note requires active backend app handle to resolve target note.".to_string(),
+                );
             };
             // 1. Verify target note exists before proposing append (Section 9.1)
             let target_note = match super::get(app, &id).await {
@@ -278,8 +389,8 @@ pub async fn execute(app: &AppHandle, call: &ToolCallOut, log: &mut TurnLog) -> 
                 }
             };
 
-            // 2. Bind current version hash and title to confirmation (Section 9.3 & 9.4)
-            let version = super::content_version_hash(&target_note.body);
+            // 2. Bind current version hash (title + body SHA-256) and title to confirmation (Section 9.3 & 9.4)
+            let version = super::note_version_hash(&target_note.title, &target_note.body);
             let mut call_args = args.clone();
             if let Some(obj) = call_args.as_object_mut() {
                 obj.insert(
@@ -311,13 +422,20 @@ pub async fn execute(app: &AppHandle, call: &ToolCallOut, log: &mut TurnLog) -> 
                 }
             }
         }
-        "list_collections" => match super::collections(app).await {
-            Ok(list) if list.is_empty() => {
-                NoteToolResult::Text("There are no collections yet.".to_string())
+        "list_collections" => {
+            let Some(app) = app else {
+                return NoteToolResult::Text(
+                    "list_collections requires active backend app handle.".to_string(),
+                );
+            };
+            match super::collections(app).await {
+                Ok(list) if list.is_empty() => {
+                    NoteToolResult::Text("There are no collections yet.".to_string())
+                }
+                Ok(list) => NoteToolResult::Text(list.join("\n")),
+                Err(e) => NoteToolResult::Text(format!("Could not list the collections: {e}")),
             }
-            Ok(list) => NoteToolResult::Text(list.join("\n")),
-            Err(e) => NoteToolResult::Text(format!("Could not list the collections: {e}")),
-        },
+        }
         other => NoteToolResult::Text(format!("There is no tool called {other}.")),
     }
 }

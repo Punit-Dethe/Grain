@@ -23,8 +23,9 @@
 
 use std::sync::Mutex;
 
+pub use grain_core::execution::ActionOutcome;
 use grain_core::execution::{
-    default_idempotency_key, ActionOutcome, FailureClass, PreparedCall, RiskClass, SideEffect,
+    default_idempotency_key, FailureClass, PreparedCall, RiskClass, SideEffect,
     Stale, SuccessData,
 };
 use grain_core::interaction::{Field, Interaction};
@@ -128,16 +129,37 @@ pub fn prepare(
     }
 }
 
-/// Route a prepared call: `Safe` executes now; `Confirm` is withheld and returned
-/// as an interaction for the user.
-pub async fn run_or_confirm(app: &AppHandle, prepared: PreparedCall, title: &str) -> Dispatch {
+/// Retrieve and remove a held confirmation by token.
+#[allow(dead_code)]
+pub fn take_pending(token: &str) -> Option<PreparedCall> {
+    PendingCalls::take(token)
+}
+
+/// Route a prepared call with optional AppHandle: `Confirm` is withheld and returned
+/// as an interaction for the user; `Safe` executes now if AppHandle is present.
+pub async fn run_or_confirm_opt(
+    app: Option<&AppHandle>,
+    prepared: PreparedCall,
+    title: &str,
+) -> Dispatch {
     if prepared.risk.needs_confirmation() {
         let interaction = confirm_interaction(&prepared, title);
         PendingCalls::insert(prepared);
         Dispatch::AwaitConfirm(interaction)
-    } else {
+    } else if let Some(app) = app {
         Dispatch::Ran(execute_revalidated(app, &prepared).await)
+    } else {
+        Dispatch::Ran(failed(
+            FailureClass::Internal,
+            "App handle required for immediate execution of safe actions",
+        ))
     }
+}
+
+/// Route a prepared call: `Safe` executes now; `Confirm` is withheld and returned
+/// as an interaction for the user.
+pub async fn run_or_confirm(app: &AppHandle, prepared: PreparedCall, title: &str) -> Dispatch {
+    run_or_confirm_opt(Some(app), prepared, title).await
 }
 
 /// Approve (or decline) a held confirmation and run the *exact* call. Revalidates
@@ -415,7 +437,7 @@ fn map_failure_class(raw: &str) -> FailureClass {
 }
 
 fn confirm_interaction(prepared: &PreparedCall, title: &str) -> Interaction {
-    let details = prepared
+    let details: Vec<Field> = prepared
         .arguments
         .as_object()
         .map(|map| {
@@ -434,10 +456,31 @@ fn confirm_interaction(prepared: &PreparedCall, title: &str) -> Interaction {
         SideEffect::Read => "Reads your data".to_string(),
         SideEffect::None => String::new(),
     };
+
+    let summary = match prepared.action_id.as_str() {
+        "save_note" => {
+            let note_title = prepared
+                .arguments
+                .get("title")
+                .and_then(Value::as_str)
+                .unwrap_or("note");
+            format!("Save note \"{note_title}\"")
+        }
+        "append_to_note" => {
+            let note_title = prepared
+                .arguments
+                .get("title")
+                .and_then(Value::as_str)
+                .unwrap_or("note");
+            format!("Add to \"{note_title}\"")
+        }
+        _ => String::new(),
+    };
+
     Interaction::Confirm {
         token: prepared.token.clone(),
         title: title.to_string(),
-        summary: String::new(),
+        summary,
         details,
         side_effect,
         destinations: Vec::new(),
@@ -583,14 +626,9 @@ async fn grain_space_execute(app: &AppHandle, prepared: &PreparedCall) -> Action
             let Some(body) = str_arg(args, "body") else {
                 return invalid("save_note needs a body.");
             };
-            let supplied = crate::grain_space::SuppliedMeta {
-                title: str_arg(args, "title"),
-                summary: None,
-                question: None,
-                entities: Vec::new(),
-                collection: str_arg(args, "collection"),
-            };
-            match crate::grain_space::save(app, &body, supplied).await {
+            let title = str_arg(args, "title").unwrap_or_default();
+            let collection = str_arg(args, "collection");
+            match crate::grain_space::save_verbatim(app, &title, &body, collection.as_deref()).await {
                 Ok(id) => {
                     let title = crate::grain_space::get(app, &id)
                         .await
@@ -615,11 +653,12 @@ async fn grain_space_execute(app: &AppHandle, prepared: &PreparedCall) -> Action
                 return invalid("append_to_note needs an id and text.");
             };
             let expected_version = str_arg(args, "expected_version");
-            match crate::grain_space::append_with_expected_version(
+            match crate::grain_space::append_with_idempotency(
                 app,
                 &id,
                 &text,
                 expected_version.as_deref(),
+                prepared.idempotency_key.as_deref(),
             )
             .await
             {

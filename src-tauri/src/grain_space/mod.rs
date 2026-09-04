@@ -380,7 +380,10 @@ impl SuppliedMeta {
     /// True when the caller told us enough that a distillation call would only
     /// be re-deriving what we already have.
     fn covers_distillation(&self) -> bool {
-        self.title.is_some() && (self.question.is_some() || !self.entities.is_empty())
+        self.title.is_some()
+            || self.summary.is_some()
+            || self.question.is_some()
+            || !self.entities.is_empty()
     }
 }
 
@@ -444,25 +447,104 @@ pub async fn save(app: &AppHandle, body: &str, supplied: SuppliedMeta) -> Result
     Ok(id)
 }
 
-/// Deterministic 64-bit content version hash (FNV-1a) for optimistic concurrency
-/// and stale-write detection on notes.
-pub fn content_version_hash(content: &str) -> String {
-    let mut hash: u64 = 0xcbf29ce484222325;
-    for byte in content.as_bytes() {
-        hash ^= *byte as u64;
-        hash = hash.wrapping_mul(0x100000001b3);
+/// Save a note verbatim without invoking secondary model extraction or reformatting passes.
+/// Used by action execution following user confirmation to guarantee byte-for-byte fidelity.
+pub async fn save_verbatim(
+    app: &AppHandle,
+    title: &str,
+    body: &str,
+    collection: Option<&str>,
+) -> Result<String, String> {
+    require_enabled(app)?;
+    let backend = backend::resolve(app)?;
+
+    let mut note = note::Note::raw(body.trim().to_string());
+    note.source = "agent".to_string();
+    let clean_title = title.split_whitespace().collect::<Vec<_>>().join(" ");
+    let clean_title: String = clean_title.chars().take(80).collect();
+    note.title = if clean_title.trim().is_empty() {
+        capture::fallback_title(&note.body)
+    } else {
+        clean_title
+    };
+    let id = note.id.clone();
+    let be = backend.clone();
+    tauri::async_runtime::spawn_blocking(move || backend::save_note(&be, &note))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())?;
+
+    if let Some(folder) = collection {
+        let be = backend.clone();
+        let moved = id.clone();
+        let folder = folder.trim().to_string();
+        if !folder.is_empty() {
+            let _ = tauri::async_runtime::spawn_blocking(move || {
+                backend::move_note_to_folder(&be, &moved, Some(&folder))
+            })
+            .await;
+        }
     }
-    format!("{:016x}", hash)
+
+    emit_notes_changed(app);
+    reminders::sync(app);
+    Ok(id)
 }
 
-/// Append to an existing note with optimistic concurrency version check.
+use std::sync::Mutex;
+static SEEN_IDEMPOTENCY_KEYS: Mutex<Option<std::collections::VecDeque<String>>> = Mutex::new(None);
+const MAX_IDEMPOTENCY_KEYS: usize = 256;
+
+#[allow(dead_code)]
+pub(crate) fn check_and_record_idempotency(key: &str) -> bool {
+    let mut guard = SEEN_IDEMPOTENCY_KEYS.lock().unwrap();
+    let list = guard.get_or_insert_with(std::collections::VecDeque::new);
+    if list.iter().any(|k| k == key) {
+        return true; // duplicate!
+    }
+    if list.len() >= MAX_IDEMPOTENCY_KEYS {
+        list.pop_front();
+    }
+    list.push_back(key.to_string());
+    false
+}
+
+/// Cryptographic 256-bit content version hash (SHA-256) covering title and body
+/// for optimistic concurrency and stale-write detection on notes.
+pub fn note_version_hash(title: &str, body: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(title.as_bytes());
+    hasher.update(b"\n---\n");
+    hasher.update(body.as_bytes());
+    format!("{:064x}", hasher.finalize())
+}
+
+/// Single-string body helper for tests and backward compatibility.
+pub fn content_version_hash(content: &str) -> String {
+    note_version_hash("", content)
+}
+
+/// Append to an existing note with optimistic concurrency version check and
+/// operation-identity idempotency.
 /// Ensures all old body text is preserved byte-for-byte, idempotent duplicate prevention,
-/// and rejects stale targets if modified externally since confirmation.
+/// and rejects stale targets atomically if modified externally since confirmation.
 pub async fn append_with_expected_version(
     app: &AppHandle,
     id: &str,
     text: &str,
     expected_version: Option<&str>,
+) -> Result<(), String> {
+    append_with_idempotency(app, id, text, expected_version, None).await
+}
+
+/// Append with explicit operation identity key for deduplication.
+pub async fn append_with_idempotency(
+    app: &AppHandle,
+    id: &str,
+    text: &str,
+    expected_version: Option<&str>,
+    idempotency_key: Option<&str>,
 ) -> Result<(), String> {
     require_enabled(app)?;
     let be = backend::resolve(app)?;
@@ -470,50 +552,16 @@ pub async fn append_with_expected_version(
     let addition = text.trim().to_string();
     let expected = expected_version.map(|s| s.to_string());
 
+    if let Some(key) = idempotency_key {
+        if check_and_record_idempotency(key) {
+            log::info!("[GRAIN] space: duplicate append suppressed for idempotency key {key}");
+            return Ok(());
+        }
+    }
+
     tauri::async_runtime::spawn_blocking(move || {
-        let mut note = backend::get_note(&be, &id).map_err(|e| format!("Target note not found: {e}"))?;
-
-        // 1. Concurrency / stale target check
-        if let Some(exp) = &expected {
-            let actual = content_version_hash(&note.body);
-            if actual != *exp {
-                return Err(format!(
-                    "The note was modified externally since confirmation (expected version {exp}, current {actual}). Append cancelled to prevent overwriting unseen edits."
-                ));
-            }
-        }
-
-        if addition.is_empty() {
-            return Ok(());
-        }
-
-        // 2. Duplicate delivery prevention (idempotence)
-        let is_duplicate = if note.body.ends_with(&addition) {
-            let before = &note.body[..note.body.len() - addition.len()];
-            before.is_empty() || before.ends_with("\n---\n\n") || before.ends_with("\n\n---\n\n")
-        } else {
-            false
-        };
-        if is_duplicate {
-            log::info!("[GRAIN] space: ignoring duplicate append to note {id}");
-            return Ok(());
-        }
-
-        // 3. Byte-for-byte old body preservation with readable separator
-        if note.body.is_empty() {
-            note.body = addition;
-        } else if note.body.ends_with("\n\n") {
-            note.body.push_str("---\n\n");
-            note.body.push_str(&addition);
-        } else if note.body.ends_with('\n') {
-            note.body.push_str("\n---\n\n");
-            note.body.push_str(&addition);
-        } else {
-            note.body.push_str("\n\n---\n\n");
-            note.body.push_str(&addition);
-        }
-
-        backend::save_note(&be, &note).map_err(|e| e.to_string())
+        backend::append_note_atomic(&be, &id, &addition, expected.as_deref())
+            .map_err(|e| e.to_string())
     })
     .await
     .map_err(|e| e.to_string())??;
