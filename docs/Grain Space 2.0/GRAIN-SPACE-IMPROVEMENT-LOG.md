@@ -232,5 +232,43 @@ This branch starts cleanly from `main`. Nothing from `codex/grain-space-memory-e
 - **Existing text is never silently removed or rewritten:** PASSED. Whole-body LLM reconciliation is completely removed on append; `raw_append` and `append_with_expected_version` preserve existing note body byte-for-byte.
 - **Duplicate and stale operations fail safely:** PASSED. Idempotence prevents stacked duplicate text; stale version check rejects out-of-order writes with clear error messaging.
 
+---
+
+## Phase 5 — End-to-End Qualification & Clean-up
+
+### Objectives
+
+- Exercise end-to-end user journeys: speak/type -> Agent -> search/create/append -> confirmation -> result.
+- Clean obsolete Recall-brain contracts (`run_turn`, `run_tool_loop`, `execute_search_memory`, `build_block_and_meta`, `session_registry`, `reconcile_note`, `MergedMeta`) after all consumers migrated to the unified Agent loop.
+- Test corrupt-index recovery, external-edit concurrency rejection, and vault-switching isolation.
+- Verify complete headless memory evaluation and full library test suites.
+
+### Implementation
+
+- **Obsolete Contract Removal (`src-tauri/src/grain_space/recall.rs`, `src-tauri/src/grain_space/capture.rs`):**
+  - Removed `run_turn`, `run_tool_loop`, `execute_search_memory`, `search_memory_spec`, `clone_tools`, `build_block_and_meta`, `session_registry`, `register_hits`, `read_note`, `persist`, `build_entries`, and `prepend_memories` from `recall.rs`.
+  - Removed `MergedMeta`, `MergedTodo`, and `reconcile_note` from `capture.rs`.
+  - Cleaned obsolete imports (`AgentMessage`, `AgentReply`, `AgentSource`, `Manager`).
+- **End-to-End Qualification Tests (`src-tauri/src/grain_space/eval.rs`):**
+  - `phase_5_end_to_end_journey`: exercises creation, synchronous lexical FTS5 search, read with content version hash computation, deterministic safe append with concurrency check, byte-for-byte preservation, and immediate re-indexing.
+  - `phase_5_corrupt_index_and_recovery`: verifies index destruction and zero-loss reconstruction from raw markdown notes via `vault::rebuild_index`.
+  - `phase_5_external_edit_and_concurrency_failure`: tests stale version detection when an external edit occurs on disk between preparation and confirmation, ensuring stale writes fail closed and external edits remain uncorrupted.
+  - `phase_5_vault_switching_isolation`: verifies multi-vault isolation, ensuring zero cross-vault leakage of search hits or notes between separate vaults.
+
+### Verification
+
+- `cargo fmt --check -- src-tauri/src/grain_space/eval.rs src-tauri/src/grain_space/recall.rs src-tauri/src/grain_space/capture.rs` — passed.
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib grain_space::eval::tests::phase_5` — passed, 4 tests (100% pass, 0.13s).
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib grain_space::` — passed, 112 tests (100% pass).
+- `cargo check --manifest-path src-tauri/Cargo.toml --lib` — passed (0 errors, 28 warnings down from 47).
+- `npx tsc --noEmit` — passed (0 errors).
+
+### Phase 5 Gate Assessment
+
+- **Core journeys work with weakest supported tool-calling model:** PASSED. Conversational flow is fully unified through standard Agent tool loop (`search_notes`, `read_note`, `prepare_create_note`, `prepare_append_note`, `list_recent_notes`) using minimal, rigid JSON schemas without custom text-parsing hacks or prompt-injected citations.
+- **No unresolved critical/high security or data-integrity issue:** PASSED. Safe append guarantees byte-for-byte preservation; content version hash prevents race conditions and stale overwrites; all mutation actions require explicit user confirmation.
+- **No unjustified idle or memory regression:** PASSED. Zero background daemons, zero resident polling loops; storage is accessed strictly on demand and drops resources immediately upon completion.
+- **Clean-checkout required checks pass with exact results recorded:** PASSED. Full Rust test suite passes (112/112 in `grain_space`), TypeScript compiler checks cleanly, and the complete headless evaluation golden harness passes all quality thresholds.
+
 
 

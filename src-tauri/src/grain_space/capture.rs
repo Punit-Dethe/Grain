@@ -619,84 +619,6 @@ async fn extract_metadata(
     Ok(meta)
 }
 
-// -- conversational writing (RECALL-PLAN §7) -----------------------------------
-
-/// The structured-output shape for a reconcile (merge) call. Same fields as
-/// [`ExtractedMeta`] plus the merged `body` and per-todo `done` state.
-#[derive(Deserialize, Debug)]
-struct MergedMeta {
-    body: String,
-    title: String,
-    tldr: String,
-    #[serde(default)]
-    todos: Vec<MergedTodo>,
-    #[serde(default)]
-    reminder_at: String,
-}
-
-#[derive(Deserialize, Debug)]
-struct MergedTodo {
-    text: String,
-    #[serde(default)]
-    done: bool,
-}
-
-impl MergedMeta {
-    /// Fold the merge onto a clone of `current`, preserving id/timestamp/pin.
-    /// Conservative: a blank field from the model keeps the current value, so a
-    /// weak completion can never erase the note.
-    fn apply_to(self, current: &Note, auto_arm: bool) -> Note {
-        let mut note = current.clone();
-        if !self.body.trim().is_empty() {
-            note.body = self.body.trim().to_string();
-        }
-        if !self.title.trim().is_empty() {
-            note.title = self.title.trim().to_string();
-        }
-        if !self.tldr.trim().is_empty() {
-            note.tldr = self.tldr.trim().to_string();
-        }
-        // Trust the model's FULL merged todo list; keep the current list only
-        // when it returned none (never silently drop todos).
-        let todos: Vec<TodoTag> = self
-            .todos
-            .into_iter()
-            .map(|t| TodoTag {
-                text: t.text.trim().to_string(),
-                done: t.done,
-            })
-            .filter(|t| !t.text.is_empty())
-            .collect();
-        if !todos.is_empty() {
-            note.todo_tags = todos;
-        }
-        // Only touch the reminder when the change actually specified timing.
-        if let Some(ms) = parse_local_datetime_ms(self.reminder_at.trim()) {
-            note.reminder_state = ReminderState {
-                status: if auto_arm {
-                    ReminderStatus::Armed
-                } else {
-                    ReminderStatus::Pending
-                },
-                fire_at: Some(ms),
-            };
-        }
-        note
-    }
-}
-
-/// Deterministic safe append for note reconciliation (Phase 4).
-/// Replaces whole-body model reconciliation: never rewrites or drops existing text,
-/// preserving all old body text byte-for-byte with the standard readable separator.
-pub(crate) async fn reconcile_note(
-    _app: &AppHandle,
-    current: &Note,
-    change: &str,
-    _convo_context: &str,
-) -> Note {
-    raw_append(current, change)
-}
-
 /// True when a structuring reformat lost more than half of a non-trivial note —
 /// the signal to distrust it and keep the verbatim body. Markdown formatting
 /// only ADDS characters, so a big shrink means the model summarized. Short notes
@@ -886,6 +808,7 @@ pub(crate) fn reformat_lost_material_content(raw: &str, formatted: &str) -> bool
 
 /// Deterministic safe append: preserves all old body text byte-for-byte,
 /// appending the change with the readable separator.
+#[allow(dead_code)]
 pub(crate) fn raw_append(current: &Note, change: &str) -> Note {
     let mut note = current.clone();
     let change = change.trim();
@@ -1140,31 +1063,6 @@ mod tests {
     fn code_fences_are_stripped() {
         assert_eq!(strip_code_fences("```json\n{\"a\":1}\n```"), "{\"a\":1}");
         assert_eq!(strip_code_fences("{\"a\":1}"), "{\"a\":1}");
-    }
-
-    #[test]
-    fn merged_meta_is_conservative_on_blanks() {
-        let mut cur = Note::raw("body".into());
-        cur.title = "Old Title".into();
-        cur.tldr = "old summary".into();
-        cur.todo_tags = vec![TodoTag {
-            text: "task".into(),
-            done: false,
-        }];
-        // Model returned blank title/tldr/body and no todos → keep everything.
-        let merged = MergedMeta {
-            body: "  ".into(),
-            title: "".into(),
-            tldr: "".into(),
-            todos: vec![],
-            reminder_at: "".into(),
-        }
-        .apply_to(&cur, true);
-        assert_eq!(merged.body, "body");
-        assert_eq!(merged.title, "Old Title");
-        assert_eq!(merged.tldr, "old summary");
-        assert_eq!(merged.todo_tags.len(), 1);
-        assert_eq!(merged.reminder_state.status, ReminderStatus::None);
     }
 
     #[test]

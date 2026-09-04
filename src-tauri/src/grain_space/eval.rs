@@ -337,4 +337,217 @@ mod tests {
         let result = run(&golden_path, &raw, false);
         assert!(result.is_ok(), "memory eval must pass: {:?}", result.err());
     }
+
+    #[test]
+    fn phase_5_end_to_end_journey() {
+        use crate::grain_space::content_version_hash;
+        use crate::grain_space::note::Note;
+
+        let unique = uuid::Uuid::new_v4().to_string();
+        let base = std::env::temp_dir().join(format!("grain_p5_e2e_{unique}"));
+        let vault = Vault {
+            root: base.join("vault"),
+            folder: "Grain".to_string(),
+            index_base: base.join("appdata"),
+            native: false,
+        };
+        fs::create_dir_all(&vault.root).unwrap();
+        fs::create_dir_all(&vault.index_base).unwrap();
+
+        // 1. Create note
+        let initial_body = "Packing list:\n- Passport\n- Camera";
+        let mut note = Note::raw(initial_body.to_string());
+        note.title = "Trip to Kyoto".to_string();
+        vault::save_note(&vault, &note).expect("save initial note");
+
+        // 2. Search for the note
+        let hits = vault::search_notes_natural(&vault, "Kyoto packing", None).expect("search");
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].title, "Trip to Kyoto");
+
+        // 3. Read note and compute version hash
+        let read_note = vault::get_note(&vault, &note.id).expect("get note");
+        let expected_version = content_version_hash(&read_note.body);
+
+        // 4. Safe Append with version check
+        let current_disk = vault::get_note(&vault, &note.id).expect("reread for append");
+        assert_eq!(content_version_hash(&current_disk.body), expected_version);
+
+        let addition = "Hotel reservation confirmed: Ryokan Sakura";
+        let mut appended_note = current_disk.clone();
+        appended_note.body = format!("{}\n\n---\n\n{}", current_disk.body, addition);
+        vault::save_note(&vault, &appended_note).expect("save appended");
+
+        // 5. Verification of byte-for-byte preservation and updated search
+        let post_append = vault::get_note(&vault, &note.id).expect("read post-append");
+        assert!(post_append.body.starts_with(initial_body));
+        assert!(post_append.body.contains("Ryokan Sakura"));
+        let post_hits =
+            vault::search_notes_natural(&vault, "Ryokan Sakura", None).expect("search appended");
+        assert_eq!(post_hits.len(), 1);
+        assert_eq!(post_hits[0].id, note.id);
+
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn phase_5_corrupt_index_and_recovery() {
+        use crate::grain_space::note::Note;
+
+        let unique = uuid::Uuid::new_v4().to_string();
+        let base = std::env::temp_dir().join(format!("grain_p5_recovery_{unique}"));
+        let vault = Vault {
+            root: base.join("vault"),
+            folder: "Grain".to_string(),
+            index_base: base.join("appdata"),
+            native: false,
+        };
+        fs::create_dir_all(&vault.root).unwrap();
+        fs::create_dir_all(&vault.index_base).unwrap();
+
+        for i in 1..=3 {
+            let mut note = Note::raw(format!("Content of document {i} with key term alpha{i}"));
+            note.title = format!("Document {i}");
+            vault::save_note(&vault, &note).expect("save note");
+        }
+
+        assert_eq!(
+            vault::search_notes_natural(&vault, "alpha1", None)
+                .unwrap()
+                .len(),
+            1
+        );
+
+        // Corrupt / delete index files
+        let _ = fs::remove_dir_all(&vault.index_base);
+        fs::create_dir_all(&vault.index_base).unwrap();
+
+        // Rebuild index from disk markdown files
+        let reindexed = vault::rebuild_index(&vault).expect("rebuild index");
+        assert_eq!(reindexed, 3);
+
+        // Verify all documents are retrievable again
+        assert_eq!(
+            vault::search_notes_natural(&vault, "alpha1", None)
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(
+            vault::search_notes_natural(&vault, "alpha2", None)
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(
+            vault::search_notes_natural(&vault, "alpha3", None)
+                .unwrap()
+                .len(),
+            1
+        );
+
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn phase_5_external_edit_and_concurrency_failure() {
+        use crate::grain_space::content_version_hash;
+        use crate::grain_space::note::Note;
+
+        let unique = uuid::Uuid::new_v4().to_string();
+        let base = std::env::temp_dir().join(format!("grain_p5_concurrency_{unique}"));
+        let vault = Vault {
+            root: base.join("vault"),
+            folder: "Grain".to_string(),
+            index_base: base.join("appdata"),
+            native: false,
+        };
+        fs::create_dir_all(&vault.root).unwrap();
+        fs::create_dir_all(&vault.index_base).unwrap();
+
+        let mut note = Note::raw("Initial draft of architecture".to_string());
+        note.title = "Architecture".to_string();
+        vault::save_note(&vault, &note).expect("save initial note");
+
+        // Agent prepares append and binds version hash v1
+        let v1 = content_version_hash(&note.body);
+
+        // External edit occurs before confirmation
+        let mut external_edit = note.clone();
+        external_edit.body = "Overhauled draft by user in Obsidian".to_string();
+        vault::save_note(&vault, &external_edit).expect("save external edit");
+
+        // Re-read on disk and check concurrency
+        let on_disk = vault::get_note(&vault, &note.id).expect("get on disk");
+        let v2 = content_version_hash(&on_disk.body);
+        assert_ne!(v1, v2, "Version hash must change on external modification");
+
+        // Stale expected version check fails closed
+        let stale_check = if v2 != v1 {
+            Err("Stale version detected: note was modified externally.")
+        } else {
+            Ok(())
+        };
+        assert!(stale_check.is_err(), "Must fail closed on stale version");
+
+        // Note on disk remains exactly the user's external edit
+        let current = vault::get_note(&vault, &note.id).expect("get note");
+        assert_eq!(current.body, "Overhauled draft by user in Obsidian");
+
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn phase_5_vault_switching_isolation() {
+        use crate::grain_space::note::Note;
+
+        let unique = uuid::Uuid::new_v4().to_string();
+        let base_a = std::env::temp_dir().join(format!("grain_p5_va_{unique}"));
+        let vault_a = Vault {
+            root: base_a.join("vault"),
+            folder: "Grain".to_string(),
+            index_base: base_a.join("appdata"),
+            native: false,
+        };
+        let base_b = std::env::temp_dir().join(format!("grain_p5_vb_{unique}"));
+        let vault_b = Vault {
+            root: base_b.join("vault"),
+            folder: "Grain".to_string(),
+            index_base: base_b.join("appdata"),
+            native: false,
+        };
+        fs::create_dir_all(&vault_a.root).unwrap();
+        fs::create_dir_all(&vault_a.index_base).unwrap();
+        fs::create_dir_all(&vault_b.root).unwrap();
+        fs::create_dir_all(&vault_b.index_base).unwrap();
+
+        let mut note_a = Note::raw("Classified project codename Apollo".to_string());
+        note_a.title = "Vault A Note".to_string();
+        vault::save_note(&vault_a, &note_a).expect("save in A");
+
+        let mut note_b = Note::raw("Classified project codename Artemis".to_string());
+        note_b.title = "Vault B Note".to_string();
+        vault::save_note(&vault_b, &note_b).expect("save in B");
+
+        // Search in vault A
+        let hits_a = vault::search_notes_natural(&vault_a, "Classified project", None).unwrap();
+        assert_eq!(hits_a.len(), 1);
+        assert_eq!(hits_a[0].title, "Vault A Note");
+
+        // Search in vault B
+        let hits_b = vault::search_notes_natural(&vault_b, "Classified project", None).unwrap();
+        assert_eq!(hits_b.len(), 1);
+        assert_eq!(hits_b[0].title, "Vault B Note");
+
+        // Zero cross-contamination
+        assert!(vault::search_notes_natural(&vault_a, "Artemis", None)
+            .unwrap()
+            .is_empty());
+        assert!(vault::search_notes_natural(&vault_b, "Apollo", None)
+            .unwrap()
+            .is_empty());
+
+        let _ = fs::remove_dir_all(&base_a);
+        let _ = fs::remove_dir_all(&base_b);
+    }
 }
