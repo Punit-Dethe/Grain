@@ -67,12 +67,25 @@ fn end_of_day<Tz: TimeZone>(date: NaiveDate, tz: &Tz) -> Option<i64> {
         .map(|dt| dt.timestamp_millis())
 }
 
+/// Find ASCII needle case-insensitively at character boundaries.
+fn find_ascii_case_insensitive(haystack: &str, needle: &str) -> Option<usize> {
+    if needle.is_empty() {
+        return Some(0);
+    }
+    let needle_len = needle.len();
+    for (idx, _) in haystack.char_indices() {
+        if idx + needle_len <= haystack.len() && haystack.is_char_boundary(idx + needle_len) {
+            if haystack[idx..idx + needle_len].eq_ignore_ascii_case(needle) {
+                return Some(idx);
+            }
+        }
+    }
+    None
+}
+
 /// Strip a matched phrase and surrounding prepositions/articles ("from", "on", "in", "during", "since", "the") from the query.
 fn clean_query_text(query: &str, phrase: &str) -> String {
-    let q_lower = query.to_lowercase();
-    let p_lower = phrase.to_lowercase();
-
-    if let Some(pos) = q_lower.find(&p_lower) {
+    if let Some(pos) = find_ascii_case_insensitive(query, phrase) {
         let before = &query[..pos];
         let after = &query[pos + phrase.len()..];
 
@@ -306,35 +319,37 @@ pub fn extract_temporal_range_at<Tz: TimeZone>(
 
 /// Helper to check whole-word boundary for keywords (preventing false matches like "yesterdays" or "uptodate").
 fn has_word_boundary(text: &str, word: &str) -> bool {
-    let mut search_idx = 0;
-    while let Some(pos) = text[search_idx..].find(word) {
-        let abs_pos = search_idx + pos;
-        let before_ok = if abs_pos == 0 {
-            true
-        } else {
-            let prev = text[..abs_pos].chars().last().unwrap();
-            !prev.is_alphanumeric()
-        };
-        let end_pos = abs_pos + word.len();
-        let after_ok = if end_pos >= text.len() {
-            true
-        } else {
-            let next = text[end_pos..].chars().next().unwrap();
-            !next.is_alphanumeric()
-        };
-        if before_ok && after_ok {
-            return true;
+    let word_len = word.len();
+    for (idx, _) in text.char_indices() {
+        if idx + word_len <= text.len() && text.is_char_boundary(idx + word_len) {
+            if text[idx..idx + word_len].eq_ignore_ascii_case(word) {
+                let before_ok = idx == 0
+                    || text[..idx]
+                        .chars()
+                        .last()
+                        .map_or(true, |c| !c.is_alphanumeric());
+                let after_ok = idx + word_len >= text.len()
+                    || text[idx + word_len..]
+                        .chars()
+                        .next()
+                        .map_or(true, |c| !c.is_alphanumeric());
+                if before_ok && after_ok {
+                    return true;
+                }
+            }
         }
-        search_idx = abs_pos + word.len();
     }
     false
 }
 
 /// Parse "last N days" or "past N days".
 fn parse_rolling_days(text: &str) -> Option<(u32, String)> {
+    let lower = text.to_lowercase();
     for prefix in &["last ", "past "] {
-        if let Some(pos) = text.find(prefix) {
-            let rest = &text[pos + prefix.len()..];
+        let mut search_idx = 0;
+        while let Some(pos) = lower[search_idx..].find(prefix) {
+            let abs_pos = search_idx + pos;
+            let rest = &lower[abs_pos + prefix.len()..];
             let words: Vec<&str> = rest.split_whitespace().collect();
             if words.len() >= 2 && words[1].starts_with("day") {
                 if let Ok(n) = words[0].parse::<u32>() {
@@ -353,6 +368,7 @@ fn parse_rolling_days(text: &str) -> Option<(u32, String)> {
                     }
                 }
             }
+            search_idx = abs_pos + prefix.len();
         }
     }
     None
@@ -362,9 +378,11 @@ fn parse_rolling_days(text: &str) -> Option<(u32, String)> {
 fn parse_explicit_date_range(text: &str) -> Option<(NaiveDate, NaiveDate, String)> {
     let separators = [" to ", " - ", " and "];
     for sep in separators {
-        if let Some(pos) = text.find(sep) {
-            let left_part = text[..pos].trim();
-            let right_part = text[pos + sep.len()..].trim();
+        let mut search_idx = 0;
+        while let Some(pos) = text[search_idx..].find(sep) {
+            let abs_pos = search_idx + pos;
+            let left_part = text[..abs_pos].trim();
+            let right_part = text[abs_pos + sep.len()..].trim();
 
             let left_token = left_part.split_whitespace().last().unwrap_or("");
             let right_token = right_part.split_whitespace().next().unwrap_or("");
@@ -373,6 +391,7 @@ fn parse_explicit_date_range(text: &str) -> Option<(NaiveDate, NaiveDate, String
                 let matched = format!("{left_token}{sep}{right_token}");
                 return Some((d1, d2, matched));
             }
+            search_idx = abs_pos + sep.len();
         }
     }
     None
@@ -687,5 +706,26 @@ mod tests {
         // Invalid leap day: Feb 29, 2026 should not parse as a date
         let res = extract_temporal_range_at("invalid leap day on 2026-02-29", now);
         assert_eq!(res.range, None);
+
+        // Multiple "last" prefixes in query
+        let res = extract_temporal_range_at("last meeting in the last 7 days", now);
+        assert_eq!(res.clean_query, "last meeting");
+        assert!(res.range.is_some());
+        assert_eq!(res.phrase.as_deref(), Some("last 7 days"));
+
+        // Multiple separators in query
+        let res =
+            extract_temporal_range_at("apples and oranges between 2026-08-10 and 2026-08-20", now);
+        assert_eq!(res.clean_query, "apples and oranges");
+        assert!(res.range.is_some());
+
+        // Multibyte Unicode character without slicing panic
+        let res = extract_temporal_range_at("GROßARTIGE NOTIZEN YESTERDAY", now);
+        assert!(res.range.is_some());
+        assert_eq!(res.clean_query, "GROßARTIGE NOTIZEN");
+
+        let res = extract_temporal_range_at("日本語のメモ from today", now);
+        assert!(res.range.is_some());
+        assert_eq!(res.clean_query, "日本語のメモ");
     }
 }
