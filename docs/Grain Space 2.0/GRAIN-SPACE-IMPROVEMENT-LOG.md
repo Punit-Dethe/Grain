@@ -14,7 +14,7 @@ This branch starts cleanly from `main`. Nothing from `codex/grain-space-memory-e
 
 | Phase | Status | Commit |
 |---|---|---|
-| 0 — Agent-first convergence and baseline | In progress | — |
+| 0 — Agent-first convergence and baseline | In progress | `a20e7852` (routing slice) |
 | 1 — One trusted note-tool execution path | Pending | — |
 | 2 — Broad corpus and note construction | Pending | — |
 | 3 — Retrieval and temporal calibration | Pending | — |

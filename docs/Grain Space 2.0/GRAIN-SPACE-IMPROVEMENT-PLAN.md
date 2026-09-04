@@ -379,4 +379,3 @@ The work is complete when a user can speak naturally to the normal Grain Agent, 
 - [Mem MCP note tools](https://docs.mem.ai/mcp/supported-tools)
 - [SQLite FTS5](https://www.sqlite.org/fts5.html)
 - [Reciprocal Rank Fusion](https://research.google/pubs/reciprocal-rank-fusion-outperforms-condorcet-and-individual-rank-learning-methods/)
-
