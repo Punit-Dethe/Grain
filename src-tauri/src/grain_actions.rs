@@ -472,15 +472,9 @@ impl ShortcutAction for GrainSpaceQuickAddAction {
 // the app's own front door is part of the shortcut-bloat cleanup
 // (NOTES-TAB-PLAN.md Phase E).
 
-// Grain Recall (RECALL-PLAN R1) — summons the Agent surfaces in memory
-// mode (ask your notes, get an answer). Its OWN binding, distinct from
-// summon_agent: the mode is fixed by which key fired, never guessed.
-//
-// [GRAIN] The Agent can now do this from its own door too — it carries the
-// notebook as tools (`grain_space::agent_tools`), so "what did I note about X"
-// works from the single summon chord. This binding survives because retiring it
-// means retiring `AgentMode::Recall`, and that cascade runs through the pill's
-// submit flow; see NOTES-TAB-PLAN.md Phase E.
+// Grain Recall — a dedicated entry surface that captures no selection or paste
+// target. The submitted request still enters the unified Agent tool loop; this
+// action never performs transcript-driven retrieval itself.
 struct GrainSpaceRecallAction;
 
 impl ShortcutAction for GrainSpaceRecallAction {

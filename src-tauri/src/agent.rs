@@ -167,8 +167,9 @@ pub struct AgentState {
     /// only when the panel is expanded AND focused — never over the compact
     /// reply card. Set by `agent_set_panel_mode` / `show_panel`.
     pub panel_expanded: AtomicBool,
-    /// Which brain drives this session — set at summon by the binding that
-    /// fired (assist vs Grain Recall), never re-derived from the request.
+    /// Which capture/presentation mode opened this session. Conversational
+    /// Assist and Recall-labelled turns both use the unified Agent tool loop;
+    /// Capture remains the explicit headless note-save path.
     pub mode: Mutex<AgentMode>,
     /// Grain Recall session state: the ordered memory registry so `SOURCES: Mn`
     /// numbering is stable and additive across follow-up turns. Index `i` holds
@@ -257,15 +258,14 @@ impl AgentReply {
     }
 }
 
-/// Which brain drives the summoned surfaces. Fixed at summon by the binding
-/// that fired — never re-derived from the request text (two doors, not one
-/// door with a bouncer). See `RECALL-PLAN.md` §3.1.
+/// Which capture/presentation mode opened the summoned surfaces.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum AgentMode {
     /// The generic assistant: operates on the selection / focused field.
     #[default]
     Assist,
-    /// Grain Recall: answers the user's question from their saved memories.
+    /// Recall-labelled surface. Retrieval is still selected by the Agent
+    /// through `search_notes`; this mode does not select a different brain.
     Recall,
     /// Grain Space capture: structures the spoken/typed text (plus any current
     /// selection, saved verbatim as the note body) into a note and saves it.
@@ -294,10 +294,9 @@ pub fn summon(app: &AppHandle) {
     summon_inner(app, AgentMode::Assist);
 }
 
-/// Summon Grain Recall (memory mode): the SAME surfaces, but no selection /
-/// field / paste-target capture — a memory question operates on the user's
-/// saved notes, not on whatever they had highlighted. Distinct binding, so the
-/// mode is fixed here, never guessed by the AI.
+/// Summon the Recall-labelled Agent surface: the same unified Agent and tools,
+/// but without selection / field / paste-target capture. The label records the
+/// user's entry point; it does not trigger retrieval.
 pub fn summon_memory(app: &AppHandle) {
     summon_inner(app, AgentMode::Recall);
 }
@@ -2240,13 +2239,12 @@ pub async fn agent_run(
     messages: Vec<AgentMessage>,
     context: Option<String>,
 ) -> Result<AgentReply, String> {
-    // Grain Recall drives a different brain behind the panel: retrieve from
-    // saved memories, synthesize an answer with evidence. (Capture never reaches
-    // here — it runs headless from `dispatch_instruction`, no panel.) The mode is
-    // whatever the summoning binding fixed — never guessed.
-    if current_mode(&app) == AgentMode::Recall {
-        return crate::grain_space::recall::run_turn(&app, &messages).await;
-    }
+    // [GRAIN] Conversational turns always enter the same tool-using Agent. A
+    // Recall-labelled summon deliberately does not pre-search the transcript or
+    // inject notes here: the Agent must request `search_notes` when notes are
+    // relevant, and can combine those results with extension tools in one loop.
+    // Capture never reaches this command; it runs headlessly from
+    // `dispatch_instruction`.
     // [GRAIN] A risky action from a prior turn is waiting on the user. The interim
     // chat surface has no approve/deny button — the agent asked in prose, so the
     // user's reply IS the answer (Amendment A). The HOST reads it and resumes the
@@ -2287,8 +2285,8 @@ pub async fn agent_run(
         .try_state::<AgentState>()
         .and_then(|s| s.field_context.lock().ok().and_then(|g| g.clone()));
     let full = build_messages(&messages, context.as_deref(), field.as_ref());
-    // Only Assist reaches here (Recall returned above, Capture never opens a
-    // panel), so the frame — if this session has one — belongs to this turn.
+    // Capture never opens a panel. Assist may carry a frame; the Recall-labelled
+    // surface intentionally captured none.
     let image = screen_attachment(&app);
     run_with_note_tools(&app, full, image.as_ref()).await
 }
@@ -2547,9 +2545,9 @@ pub async fn run_conversation(
 }
 
 /// Run an ALREADY-BUILT `(role, content)` message list through the configured
-/// AI (single provider or the smart-rotation pool). Shared by the assistant
-/// (`run_conversation`, which prepends its selection/field framing) and Grain
-/// Recall (`recall.rs`, which builds its own system prompt + memories block).
+/// AI (single provider or the smart-rotation pool). Used by the plain assistant
+/// path after its selection/field framing. Conversational note access belongs to
+/// the unified tool loop, not this tool-free helper.
 ///
 /// `image`, when present, rides the last user turn and degrades to a text-only
 /// retry on a model that cannot take it (`llm_client::send_chat_with_image`).
