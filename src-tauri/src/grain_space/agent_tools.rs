@@ -56,6 +56,7 @@ pub struct Touched {
 #[derive(Debug, Default)]
 pub struct TurnLog {
     touched: Vec<Touched>,
+    fully_read: Vec<String>,
 }
 
 impl TurnLog {
@@ -69,6 +70,16 @@ impl TurnLog {
             return; // a note read twice is still one source
         }
         self.touched.push(note);
+    }
+
+    fn record_full_read(&mut self, note_id: &str) {
+        if !self.fully_read.iter().any(|id| id == note_id) {
+            self.fully_read.push(note_id.to_string());
+        }
+    }
+
+    fn was_fully_read(&self, note_id: &str) -> bool {
+        self.fully_read.iter().any(|id| id == note_id)
     }
 
     pub fn touched(&self) -> &[Touched] {
@@ -151,7 +162,8 @@ pub fn specs(app: &AppHandle) -> Vec<ToolSpec> {
         ToolSpec {
             name: "append_to_note".to_string(),
             description: "Add text to the end of a note that already exists, by id. Use this \
-                          rather than save_note when the user is adding to something."
+                          only for a simple additive update. Use rewrite_note when the user asks \
+                          to correct, reorganize, replace, or improve the note as a whole."
                 .to_string(),
             parameters: serde_json::json!({
                 "type": "object",
@@ -168,6 +180,52 @@ pub fn specs(app: &AppHandle) -> Vec<ToolSpec> {
                     }
                 },
                 "required": ["id", "text"]
+            }),
+        },
+        ToolSpec {
+            name: "rewrite_note".to_string(),
+            description: "Replace an existing note with a complete revised version. Use only \
+                          when the user asks to correct, reorganize, replace, or improve that \
+                          note. Search for and read the exact target first. `body` must be the \
+                          entire desired note, not instructions or a diff. This requires user \
+                          confirmation and fails if the note changes before approval."
+                .to_string(),
+            parameters: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "id": {
+                        "type": "string",
+                        "description": "The exact note id returned by search_notes.",
+                        "maxLength": 128
+                    },
+                    "body": {
+                        "type": "string",
+                        "description": "The complete replacement note in Markdown.",
+                        "maxLength": 65536
+                    },
+                    "title": {
+                        "type": "string",
+                        "description": "A refreshed short title for the revised content. Optional; Grain derives one otherwise.",
+                        "maxLength": 80
+                    },
+                    "summary": {
+                        "type": "string",
+                        "description": "A refreshed one-sentence summary used for retrieval. Optional.",
+                        "maxLength": 240
+                    },
+                    "question": {
+                        "type": "string",
+                        "description": "The main question the revised note answers, phrased as the user might search for it. Optional.",
+                        "maxLength": 240
+                    },
+                    "entities": {
+                        "type": "array",
+                        "description": "Specific people, apps, files, projects, places, or topics named in the revised note.",
+                        "maxItems": 12,
+                        "items": { "type": "string", "maxLength": 64 }
+                    }
+                },
+                "required": ["id", "body"]
             }),
         },
         ToolSpec {
@@ -202,7 +260,7 @@ const MAX_GET_NOTE_BODY_BYTES: usize = 16384;
 /// Execute one tool call and return what to feed back to the model.
 ///
 /// Read operations (search_notes, get_note, list_collections) execute immediately
-/// and return text. Mutations (save_note, append_to_note) prepare a host-gated
+/// and return text. Mutations (save_note, append_to_note, rewrite_note) prepare a host-gated
 /// call and return a confirmation for the user to approve before execution.
 pub async fn execute(app: &AppHandle, call: &ToolCallOut, log: &mut TurnLog) -> NoteToolResult {
     execute_opt(Some(app), call, log).await
@@ -284,11 +342,15 @@ pub async fn execute_opt(
             };
             match super::get(app, &id).await {
                 Ok(note) => {
+                    let fully_read = note.body.len() <= MAX_GET_NOTE_BODY_BYTES;
                     log.record(Touched {
                         note_id: note.id.clone(),
                         title: super::bounded_bridge_text(note.title.clone(), 512),
                         saved_at: note.timestamp,
                     });
+                    if fully_read {
+                        log.record_full_read(&note.id);
+                    }
                     let rendered_body = if note.body.len() > MAX_GET_NOTE_BODY_BYTES {
                         let mut boundary = MAX_GET_NOTE_BODY_BYTES;
                         while boundary > 0 && !note.body.is_char_boundary(boundary) {
@@ -391,6 +453,12 @@ pub async fn execute_opt(
                     "append_to_note text exceeds maximum allowed size ({MAX_BODY_BYTES} bytes)."
                 ));
             }
+            if !log.was_fully_read(&id) {
+                return NoteToolResult::Text(
+                    "Read the exact target note in full with get_note before rewriting it. Notes too large for a complete Agent read must be edited in the Notes tab."
+                        .to_string(),
+                );
+            }
             let Some(app) = app else {
                 return NoteToolResult::Text(
                     "append_to_note requires active backend app handle to resolve target note."
@@ -433,6 +501,95 @@ pub async fn execute_opt(
                 }
             }
         }
+        "rewrite_note" => {
+            let Some(id) = str_arg("id") else {
+                return NoteToolResult::Text("rewrite_note needs an id and body.".to_string());
+            };
+            let Some(body) = args
+                .get("body")
+                .and_then(|value| value.as_str())
+                .filter(|value| !value.trim().is_empty())
+                .map(str::to_string)
+            else {
+                return NoteToolResult::Text("rewrite_note needs an id and body.".to_string());
+            };
+            if id.len() > MAX_ID_BYTES {
+                return NoteToolResult::Text(format!(
+                    "rewrite_note id exceeds maximum allowed size ({MAX_ID_BYTES} bytes)."
+                ));
+            }
+            if body.len() > MAX_BODY_BYTES {
+                return NoteToolResult::Text(format!(
+                    "rewrite_note body exceeds maximum allowed size ({MAX_BODY_BYTES} bytes)."
+                ));
+            }
+            let Some(app) = app else {
+                return NoteToolResult::Text(
+                    "rewrite_note requires active backend app handle to resolve target note."
+                        .to_string(),
+                );
+            };
+            let (target_note, version) = match super::get_append_snapshot(app, &id).await {
+                Ok(snapshot) => snapshot,
+                Err(e) => {
+                    return NoteToolResult::Text(format!(
+                        "Target note \"{id}\" cannot be rewritten: {e}. Search for notes first to find an editable note."
+                    ));
+                }
+            };
+
+            let title = str_arg("title")
+                .map(|value| value.split_whitespace().collect::<Vec<_>>().join(" "))
+                .filter(|value| !value.is_empty())
+                .unwrap_or_else(|| super::capture::fallback_title(&body));
+            let title: String = title.chars().take(MAX_TITLE_BYTES).collect();
+            let summary: String = str_arg("summary")
+                .unwrap_or_default()
+                .chars()
+                .take(240)
+                .collect();
+            let question: String = str_arg("question")
+                .unwrap_or_default()
+                .chars()
+                .take(240)
+                .collect();
+            let entities = match canonical_entities(args.get("entities")) {
+                Ok(entities) => entities,
+                Err(message) => return NoteToolResult::Text(message),
+            };
+
+            // Only canonical, host-bounded fields enter the held operation.
+            // Metadata omitted by the model becomes empty rather than retaining
+            // stale retrieval claims from the old content.
+            let call_args = serde_json::json!({
+                "id": id,
+                "title": title,
+                "body": body,
+                "summary": summary,
+                "question": question,
+                "entities": entities,
+                "target_title": super::bounded_bridge_text(target_note.title, 512),
+                "expected_version": version,
+            });
+            let prepared = crate::action_exec::prepare(
+                "grainspace:rewrite_note",
+                crate::action_exec::GRAIN_SPACE_EXT_ID,
+                "rewrite_note",
+                "Grain Space",
+                call_args,
+                grain_core::execution::RiskClass::Confirm,
+                grain_core::execution::SideEffect::Write,
+                "builtin",
+            );
+            match crate::action_exec::run_or_confirm(app, prepared, "Rewrite Note").await {
+                crate::action_exec::Dispatch::Ran(outcome) => {
+                    NoteToolResult::Text(outcome.model_summary())
+                }
+                crate::action_exec::Dispatch::AwaitConfirm(interaction) => {
+                    NoteToolResult::Confirm(crate::action_exec::to_agent_confirm(interaction))
+                }
+            }
+        }
         "list_collections" => {
             let Some(app) = app else {
                 return NoteToolResult::Text(
@@ -455,6 +612,38 @@ pub async fn execute_opt(
         }
         other => NoteToolResult::Text(format!("There is no tool called {other}.")),
     }
+}
+
+fn canonical_entities(value: Option<&serde_json::Value>) -> Result<Vec<String>, String> {
+    let Some(value) = value else {
+        return Ok(Vec::new());
+    };
+    let Some(items) = value.as_array() else {
+        return Err("rewrite_note entities must be a list of text values.".to_string());
+    };
+    if items.len() > 12 {
+        return Err("rewrite_note entities exceeds maximum allowed count (12).".to_string());
+    }
+
+    let mut seen = std::collections::HashSet::new();
+    let mut entities = Vec::new();
+    for item in items {
+        let Some(raw) = item.as_str() else {
+            return Err("rewrite_note entities must contain only text values.".to_string());
+        };
+        let entity: String = raw
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+            .chars()
+            .take(64)
+            .collect();
+        if entity.is_empty() || !seen.insert(entity.to_lowercase()) {
+            continue;
+        }
+        entities.push(entity);
+    }
+    Ok(entities)
 }
 
 /// Human date for a tool result. The model reasons about "last Tuesday" far better
@@ -484,6 +673,15 @@ mod tests {
         log.record(note.clone());
         log.record(note);
         assert_eq!(log.touched().len(), 1);
+    }
+
+    #[test]
+    fn rewrite_requires_a_complete_read_of_the_exact_target() {
+        let mut log = TurnLog::default();
+        assert!(!log.was_fully_read("n1"));
+        log.record_full_read("n1");
+        assert!(log.was_fully_read("n1"));
+        assert!(!log.was_fully_read("n2"));
     }
 
     #[test]
@@ -517,6 +715,7 @@ mod tests {
             "get_note",
             "save_note",
             "append_to_note",
+            "rewrite_note",
             "list_collections",
         ];
         // Descriptions and property invariants
@@ -559,5 +758,31 @@ mod tests {
             append_call.side_effect,
             grain_core::execution::SideEffect::Write
         );
+
+        let rewrite_call = crate::action_exec::prepare(
+            "grainspace:rewrite_note",
+            crate::action_exec::GRAIN_SPACE_EXT_ID,
+            "rewrite_note",
+            "Grain Space",
+            serde_json::json!({ "id": "n1", "body": "replacement" }),
+            grain_core::execution::RiskClass::Confirm,
+            grain_core::execution::SideEffect::Write,
+            "builtin",
+        );
+        assert!(rewrite_call.risk.needs_confirmation());
+        assert_eq!(
+            rewrite_call.side_effect,
+            grain_core::execution::SideEffect::Write
+        );
+    }
+
+    #[test]
+    fn rewrite_entities_are_bounded_normalized_and_deduplicated() {
+        let value = serde_json::json!([" Grain   Space ", "grain space", "Rust"]);
+        assert_eq!(
+            canonical_entities(Some(&value)).unwrap(),
+            vec!["Grain Space", "Rust"]
+        );
+        assert!(canonical_entities(Some(&serde_json::json!({}))).is_err());
     }
 }

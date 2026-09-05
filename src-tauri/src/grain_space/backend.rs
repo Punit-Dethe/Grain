@@ -15,7 +15,7 @@ use anyhow::Result;
 use std::path::PathBuf;
 use tauri::AppHandle;
 
-use super::note::{Note, NoteCard, ReminderState};
+use super::note::{Note, NoteCard, NoteRewrite, ReminderState};
 use super::vault::{self, Vault};
 
 /// The resolved backend — since the unification, always a vault.
@@ -133,6 +133,15 @@ pub fn append_note_atomic(
     expected_version: Option<&str>,
 ) -> Result<Note> {
     vault::append_note_atomic(b, id, addition, expected_version)
+}
+
+pub fn rewrite_note_atomic(
+    b: &Backend,
+    id: &str,
+    replacement: &NoteRewrite,
+    expected_version: Option<&str>,
+) -> Result<Note> {
+    vault::rewrite_note_atomic(b, id, replacement, expected_version)
 }
 
 pub fn get_append_snapshot(b: &Backend, id: &str) -> Result<(Note, String)> {

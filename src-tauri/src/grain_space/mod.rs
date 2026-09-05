@@ -246,11 +246,7 @@ pub async fn search(app: &AppHandle, query: &str, limit: usize) -> Result<Vec<Sp
         .await
         .map_err(|e| e.to_string())?
         .map_err(|e| e.to_string())?;
-    Ok(notes
-        .into_iter()
-        .take(limit)
-        .map(bridge_hit)
-        .collect())
+    Ok(notes.into_iter().take(limit).map(bridge_hit).collect())
 }
 
 /// Search for an active built-in Agent turn. Unlike the lightweight MCP bridge
@@ -268,10 +264,7 @@ pub(crate) async fn search_for_agent(
     let notes = recall::retrieve_for_agent(app, &be, query, limit)
         .await
         .map_err(|e| format!("{e:#}"))?;
-    Ok(notes
-        .into_iter()
-        .map(bridge_hit)
-        .collect())
+    Ok(notes.into_iter().map(bridge_hit).collect())
 }
 
 /// One note in full, by id.
@@ -546,7 +539,10 @@ mod bridge_security_tests {
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            assert_eq!(std::fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
+            assert_eq!(
+                std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+                0o600
+            );
         }
 
         std::fs::remove_dir_all(dir).unwrap();
@@ -631,4 +627,47 @@ pub async fn delete(app: &AppHandle, id: &str) -> Result<(), String> {
         .map_err(|e| e.to_string())?;
     emit_notes_changed(app);
     Ok(())
+}
+
+/// Rewrite with explicit operation identity and exact-snapshot concurrency.
+/// The Agent-facing caller has already canonicalized every replacement field;
+/// this function owns replay suppression and the blocking storage boundary.
+pub async fn rewrite_with_idempotency(
+    app: &AppHandle,
+    id: &str,
+    replacement: note::NoteRewrite,
+    expected_version: Option<&str>,
+    idempotency_key: Option<&str>,
+) -> Result<note::Note, String> {
+    require_enabled(app)?;
+    let be = backend::resolve(app)?;
+    let id = id.to_string();
+    let expected = expected_version.map(str::to_string);
+
+    let reserved_key = match idempotency_key {
+        Some(key) => match begin_idempotent_write(key)? {
+            IdempotencyStart::Duplicate => {
+                log::info!("[GRAIN] space: duplicate rewrite delivery suppressed");
+                return get(app, &id).await;
+            }
+            IdempotencyStart::Started => Some(key.to_string()),
+        },
+        None => None,
+    };
+
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        backend::rewrite_note_atomic(&be, &id, &replacement, expected.as_deref())
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())
+    .and_then(|result| result);
+
+    if let Some(key) = &reserved_key {
+        finish_idempotent_write(key, result.is_ok());
+    }
+    let note = result?;
+
+    emit_notes_changed(app);
+    Ok(note)
 }

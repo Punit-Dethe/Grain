@@ -25,7 +25,7 @@ use anyhow::{anyhow, Context, Result};
 use rusqlite::{params, Connection};
 use sha2::{Digest, Sha256};
 
-use super::note::{Note, NoteCard, ReminderState, ReminderStatus, TodoTag};
+use super::note::{Note, NoteCard, NoteRewrite, ReminderState, ReminderStatus, TodoTag};
 
 /// One application-wide lock serializing every vault read/write and index op
 /// (same concurrency directive as the grain store: no WAL, single writer).
@@ -1691,6 +1691,108 @@ pub fn append_note_atomic(
     Ok(note)
 }
 
+/// Replace a Grain-owned note from one exact confirmed snapshot.
+///
+/// Unlike the editor's merge-aware [`save_note`], an Agent rewrite must never
+/// merge a proposed replacement with unseen user edits. The persisted version
+/// is therefore checked before any mutation and the file is re-read immediately
+/// before replacement. Identity and user-owned state survive; content-derived
+/// retrieval metadata and recency are refreshed from the confirmed replacement.
+pub fn rewrite_note_atomic(
+    v: &Vault,
+    id: &str,
+    replacement: &NoteRewrite,
+    expected_version: Option<&str>,
+) -> Result<Note> {
+    ensure_vault(v)?;
+    super::note::validate_id(id)?;
+    let _guard = VAULT_LOCK.lock().unwrap();
+    let conn = open_index(v)?;
+
+    let existing = path_of(&conn, id)?;
+    let Some((rel, _)) = existing else {
+        return Err(anyhow!("Target note not found: {id}"));
+    };
+    if !in_grain_folder(v, &rel) {
+        return Err(anyhow!(
+            "This note lives outside Grain's folder — edit it in Obsidian."
+        ));
+    }
+
+    let old_abs = v.abs(&rel);
+    let disk_text =
+        fs::read_to_string(&old_abs).with_context(|| format!("read {}", old_abs.display()))?;
+    if let Some(exp) = expected_version {
+        let actual = storage_version_hash(&disk_text);
+        if actual != exp {
+            return Err(anyhow!(
+                "The note was modified externally since confirmation (expected version {exp}, current {actual}). Rewrite cancelled to prevent overwriting unseen edits."
+            ));
+        }
+    }
+
+    let mtime = file_mtime_ms(&old_abs).unwrap_or_else(|| chrono::Utc::now().timestamp_millis());
+    let (mut note, _) = read_md_note(&rel, &disk_text, mtime);
+    note.title = replacement.title.clone();
+    note.tldr = replacement.tldr.clone();
+    note.body = replacement.body.clone();
+    note.question = replacement.question.clone();
+    note.entities = replacement.entities.clone();
+    note.timestamp = chrono::Utc::now().timestamp_millis();
+
+    let before_write =
+        fs::read_to_string(&old_abs).with_context(|| format!("re-read {}", old_abs.display()))?;
+    if before_write != disk_text {
+        return Err(anyhow!(
+            "The note changed while the rewrite was being prepared. Rewrite cancelled."
+        ));
+    }
+
+    let preserved = preserved_frontmatter(&disk_text);
+    let dir = old_abs.parent().unwrap_or(&v.root);
+    let desired_stem = sanitize_filename(&note.title);
+    let current_stem = old_abs
+        .file_stem()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_default();
+    let new_abs = if desired_stem == current_stem {
+        old_abs.clone()
+    } else {
+        unique_path(dir, &desired_stem, Some(old_abs.as_path()))
+    };
+    let actual_title = new_abs
+        .file_stem()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or(desired_stem);
+    note.title = actual_title;
+    let rendered = emit_markdown_with(&note, &preserved);
+
+    if new_abs == old_abs {
+        atomic_write(&old_abs, &rendered)?;
+    } else {
+        // Keep the old file intact until the replacement is durable. A failed
+        // cleanup can leave a duplicate, but never loses the user's original.
+        atomic_write(&new_abs, &rendered)?;
+        if let Err(error) = fs::remove_file(&old_abs) {
+            let _ = fs::remove_file(&new_abs);
+            return Err(error).with_context(|| format!("remove {}", old_abs.display()));
+        }
+    }
+
+    let new_rel = rel_key(&v.root, &new_abs)?;
+    let new_mtime = file_mtime_ms(&new_abs).unwrap_or(note.timestamp);
+    let new_size = fs::metadata(&new_abs).map(|m| m.len() as i64).unwrap_or(0);
+    index_upsert(
+        &conn, &note, &new_rel, new_mtime, new_size, false, &rendered,
+    )?;
+    // Never let hybrid retrieval consult a vector for the replaced content
+    // while the refreshed embedding is pending.
+    if vec_table_exists(&conn) {
+        purge_note_vectors(&conn, &note.id)?;
+    }
+    Ok(note)
+}
+
 fn storage_version_hash(markdown: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(markdown.as_bytes());
@@ -2648,6 +2750,116 @@ mod tests {
         assert!(!fs::read_to_string(&path)
             .unwrap()
             .contains("must not be appended"));
+        cleanup(&v);
+    }
+
+    #[test]
+    fn rewrite_replaces_content_and_metadata_but_preserves_user_state() {
+        let v = temp_vault("rewrite_complete");
+        let mut note = grain_note("Old Draft", "obsolete-token only");
+        note.timestamp = 1;
+        note.question = "what was obsolete?".into();
+        note.entities = vec!["Old Project".into()];
+        note.source = "dictation".into();
+        note.is_pinned = true;
+        note.todo_tags = vec![TodoTag {
+            text: "keep completed task state".into(),
+            done: true,
+        }];
+        note.reminder_state = ReminderState {
+            status: ReminderStatus::Armed,
+            fire_at: Some(9_999_999),
+        };
+        save_note(&v, &note).unwrap();
+
+        let stale = stale_embed_texts(&v).unwrap();
+        assert_eq!(stale.len(), 1);
+        let old_embedding_key = stale[0].0.clone();
+        let mut old_embedding = vec![0.0f32; 384];
+        old_embedding[0] = 1.0;
+        store_embeddings(&v, &[(old_embedding_key, old_embedding.clone())]).unwrap();
+        assert!(stale_embed_texts(&v).unwrap().is_empty());
+
+        // User-owned frontmatter must survive an Agent rewrite.
+        let old_path = v.grain_dir().join("Old Draft.md");
+        let disk = fs::read_to_string(&old_path).unwrap();
+        fs::write(
+            &old_path,
+            disk.replacen("---\n", "---\ncustom_property: keep-me\n", 1),
+        )
+        .unwrap();
+        let version = note_storage_version(&v, &note.id).unwrap();
+
+        let replacement = NoteRewrite {
+            title: "Current Plan".into(),
+            tldr: "The current launch plan.".into(),
+            body: "fresh-token is the corrected plan".into(),
+            question: "what is the current launch plan?".into(),
+            entities: vec!["Grain".into(), "Launch Plan".into()],
+        };
+        let rewritten = rewrite_note_atomic(&v, &note.id, &replacement, Some(&version)).unwrap();
+
+        assert_eq!(rewritten.id, note.id);
+        assert_eq!(rewritten.title, "Current Plan");
+        assert_eq!(rewritten.body, replacement.body);
+        assert_eq!(rewritten.tldr, replacement.tldr);
+        assert_eq!(rewritten.question, replacement.question);
+        assert_eq!(rewritten.entities, replacement.entities);
+        assert!(rewritten.timestamp > note.timestamp);
+        assert!(rewritten.is_pinned);
+        assert_eq!(rewritten.todo_tags, note.todo_tags);
+        assert_eq!(rewritten.reminder_state, note.reminder_state);
+        assert_eq!(rewritten.source, note.source);
+        assert!(!old_path.exists());
+
+        let new_path = v.grain_dir().join("Current Plan.md");
+        let rewritten_disk = fs::read_to_string(&new_path).unwrap();
+        assert!(rewritten_disk.contains("custom_property: keep-me"));
+        assert_eq!(search_notes(&v, "obsolete-token").unwrap().len(), 0);
+        let hits = search_notes(&v, "fresh-token").unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].id, note.id);
+        assert!(
+            semantic_search_ranged(&v, &old_embedding, 30, None, 0.5)
+                .unwrap()
+                .is_empty(),
+            "the old content vector must not survive a rewrite"
+        );
+        assert_eq!(stale_embed_texts(&v).unwrap().len(), 1);
+        cleanup(&v);
+    }
+
+    #[test]
+    fn rewrite_rejects_stale_and_foreign_targets_without_mutation() {
+        let v = temp_vault("rewrite_safety");
+        let note = grain_note("Versioned Rewrite", "original body");
+        save_note(&v, &note).unwrap();
+        let version = note_storage_version(&v, &note.id).unwrap();
+        let owned_path = v.grain_dir().join("Versioned Rewrite.md");
+        let external = fs::read_to_string(&owned_path)
+            .unwrap()
+            .replace("original body", "external body");
+        fs::write(&owned_path, &external).unwrap();
+
+        let replacement = NoteRewrite {
+            title: "Must Not Land".into(),
+            tldr: String::new(),
+            body: "replacement body".into(),
+            question: String::new(),
+            entities: Vec::new(),
+        };
+        assert!(rewrite_note_atomic(&v, &note.id, &replacement, Some(&version)).is_err());
+        assert_eq!(fs::read_to_string(&owned_path).unwrap(), external);
+        assert!(!v.grain_dir().join("Must Not Land.md").exists());
+
+        let foreign_path = v.root.join("Foreign.md");
+        fs::write(&foreign_path, "foreign original").unwrap();
+        let foreign = search_notes(&v, "foreign original").unwrap().remove(0);
+        assert!(rewrite_note_atomic(&v, &foreign.id, &replacement, None).is_err());
+        assert_eq!(
+            fs::read_to_string(&foreign_path).unwrap(),
+            "foreign original"
+        );
         cleanup(&v);
     }
 

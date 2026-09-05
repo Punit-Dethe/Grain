@@ -115,6 +115,20 @@ pub struct Note {
     pub source: String,
 }
 
+/// Host-sanitized replacement fields for an Agent-authored full-note rewrite.
+///
+/// This is deliberately not part of the persisted/wire schema. The storage
+/// layer applies it to the current note under the vault lock, preserving the
+/// note's identity and user-owned state (pin, reminder, source, todo state).
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct NoteRewrite {
+    pub title: String,
+    pub tldr: String,
+    pub body: String,
+    pub question: String,
+    pub entities: Vec<String>,
+}
+
 /// Listing-only sidebar card (TAURI-OVERLAY-PLAN.md Phase A). NOT the locked
 /// `Note` schema and never persisted: light metadata derived at list time so a
 /// browse ships no bodies to the webview.

@@ -443,7 +443,7 @@ fn confirm_interaction(prepared: &PreparedCall, title: &str) -> Interaction {
         .map(|map| {
             map.iter()
                 // Optimistic-concurrency state is host-owned. The user confirms
-                // the human identity (title/id) and exact addition, not a digest.
+                // the human identity and exact content, not a digest.
                 .filter(|(key, _)| key.as_str() != "expected_version")
                 .filter_map(|(key, value)| {
                     value_to_string(value).map(|value| Field {
@@ -476,6 +476,14 @@ fn confirm_interaction(prepared: &PreparedCall, title: &str) -> Interaction {
                 .and_then(Value::as_str)
                 .unwrap_or("note");
             format!("Add to \"{note_title}\"")
+        }
+        "rewrite_note" => {
+            let note_title = prepared
+                .arguments
+                .get("target_title")
+                .and_then(Value::as_str)
+                .unwrap_or("note");
+            format!("Replace \"{note_title}\" with the revised note")
         }
         _ => String::new(),
     };
@@ -665,12 +673,14 @@ async fn grain_space_execute(app: &AppHandle, prepared: &PreparedCall) -> Action
             let (Some(id), Some(text)) = (str_arg(args, "id"), str_arg(args, "text")) else {
                 return invalid("append_to_note needs an id and text.");
             };
-            let expected_version = str_arg(args, "expected_version");
+            let Some(expected_version) = str_arg(args, "expected_version") else {
+                return invalid("rewrite_note requires a host-bound note version.");
+            };
             match crate::grain_space::append_with_idempotency(
                 app,
                 &id,
                 &text,
-                expected_version.as_deref(),
+                Some(&expected_version),
                 prepared.idempotency_key.as_deref(),
             )
             .await
@@ -691,6 +701,75 @@ async fn grain_space_execute(app: &AppHandle, prepared: &PreparedCall) -> Action
                 Err(e) => failed(
                     FailureClass::Internal,
                     &format!("Could not update that note: {e}"),
+                ),
+            }
+        }
+        "rewrite_note" => {
+            let Some(id) = str_arg(args, "id") else {
+                return invalid("rewrite_note needs an id and body.");
+            };
+            let Some(body) = args
+                .get("body")
+                .and_then(Value::as_str)
+                .filter(|value| !value.trim().is_empty())
+                .map(str::to_string)
+            else {
+                return invalid("rewrite_note needs an id and body.");
+            };
+            if id.len() > 128 || body.len() > 65_536 {
+                return invalid("rewrite_note arguments exceed the allowed size.");
+            }
+
+            let raw_title = str_arg(args, "title")
+                .unwrap_or_else(|| crate::grain_space::capture::fallback_title(&body));
+            let title: String = raw_title
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ")
+                .chars()
+                .take(80)
+                .collect();
+            let tldr: String = str_arg(args, "summary")
+                .unwrap_or_default()
+                .chars()
+                .take(240)
+                .collect();
+            let question: String = str_arg(args, "question")
+                .unwrap_or_default()
+                .chars()
+                .take(240)
+                .collect();
+            let entities = match rewrite_entities(args.get("entities")) {
+                Ok(entities) => entities,
+                Err(message) => return invalid(&message),
+            };
+            let expected_version = str_arg(args, "expected_version");
+            let replacement = crate::grain_space::note::NoteRewrite {
+                title,
+                tldr,
+                body,
+                question,
+                entities,
+            };
+            match crate::grain_space::rewrite_with_idempotency(
+                app,
+                &id,
+                replacement,
+                expected_version.as_deref(),
+                prepared.idempotency_key.as_deref(),
+            )
+            .await
+            {
+                Ok(note) => ActionOutcome::Succeeded(SuccessData {
+                    source,
+                    title: Some("Rewritten note".to_string()),
+                    body: Some(format!("Replaced \"{}\".", note.title)),
+                    details: vec![],
+                    receipt: true,
+                }),
+                Err(e) => failed(
+                    FailureClass::Internal,
+                    &format!("Could not rewrite that note: {e}"),
                 ),
             }
         }
@@ -717,6 +796,38 @@ async fn grain_space_execute(app: &AppHandle, prepared: &PreparedCall) -> Action
             &format!("Grain Space has no action '{other}'."),
         ),
     }
+}
+
+fn rewrite_entities(value: Option<&Value>) -> Result<Vec<String>, String> {
+    let Some(value) = value else {
+        return Ok(Vec::new());
+    };
+    let Some(items) = value.as_array() else {
+        return Err("rewrite_note entities must be a list of text values.".to_string());
+    };
+    if items.len() > 12 {
+        return Err("rewrite_note entities exceeds maximum allowed count (12).".to_string());
+    }
+
+    let mut seen = std::collections::HashSet::new();
+    let mut entities = Vec::new();
+    for item in items {
+        let Some(raw) = item.as_str() else {
+            return Err("rewrite_note entities must contain only text values.".to_string());
+        };
+        let entity: String = raw
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+            .chars()
+            .take(64)
+            .collect();
+        if entity.is_empty() || !seen.insert(entity.to_lowercase()) {
+            continue;
+        }
+        entities.push(entity);
+    }
+    Ok(entities)
 }
 
 fn bounded_note_body(body: String, max_bytes: usize) -> String {
@@ -820,6 +931,17 @@ pub fn grain_space_actions() -> Vec<grain_core::capability_index::ActionInput> {
             &[("id", true), ("text", true)],
         ),
         make(
+            "rewrite_note",
+            "Replace and improve an existing note",
+            ActionRisk::Confirm,
+            &[
+                "rewrite that note with this corrected version",
+                "reorganize my note and replace the old draft",
+                "update that note instead of adding another section",
+            ],
+            &[("id", true), ("body", true), ("title", false)],
+        ),
+        make(
             "delete_note",
             "Delete a saved note",
             ActionRisk::Confirm,
@@ -907,7 +1029,7 @@ mod tests {
         let decls = grain_space_actions();
         for decl in &decls {
             match decl.action_id.as_str() {
-                "save_note" | "append_to_note" | "delete_note" => {
+                "save_note" | "append_to_note" | "rewrite_note" | "delete_note" => {
                     assert_eq!(decl.risk, grain_sdk::manifest::ActionRisk::Confirm);
                 }
                 "search_notes" | "get_note" | "list_collections" => {
@@ -916,6 +1038,16 @@ mod tests {
                 other => panic!("unexpected action id: {other}"),
             }
         }
+    }
+
+    #[test]
+    fn rewrite_execution_metadata_is_strict_and_bounded() {
+        let entities =
+            rewrite_entities(Some(&json!([" Grain   Space ", "grain space", "Rust"]))).unwrap();
+        assert_eq!(entities, vec!["Grain Space", "Rust"]);
+        assert!(rewrite_entities(Some(&json!({ "not": "a list" }))).is_err());
+        let too_many = Value::Array(vec![json!("x"); 13]);
+        assert!(rewrite_entities(Some(&too_many)).is_err());
     }
 
     #[test]
@@ -962,5 +1094,28 @@ mod tests {
         assert!(rendered.contains("Ship it"));
         assert!(!rendered.contains("expected_version"));
         assert!(!rendered.contains("secret-host-version"));
+
+        let rewrite = prepare(
+            "grainspace:rewrite_note",
+            GRAIN_SPACE_EXT_ID,
+            "rewrite_note",
+            "Grain Space",
+            json!({
+                "id": "note-1",
+                "target_title": "Roadmap",
+                "title": "Revised Roadmap",
+                "body": "Complete replacement",
+                "expected_version": "secret-rewrite-version"
+            }),
+            RiskClass::Confirm,
+            SideEffect::Write,
+            "builtin",
+        );
+        let rendered =
+            grain_core::interaction::to_markdown(&confirm_interaction(&rewrite, "Rewrite Note"));
+        assert!(rendered.contains("Complete replacement"));
+        assert!(rendered.contains("Replace \"Roadmap\""));
+        assert!(!rendered.contains("expected_version"));
+        assert!(!rendered.contains("secret-rewrite-version"));
     }
 }

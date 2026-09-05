@@ -296,3 +296,19 @@ This section supersedes earlier gate claims where their scope differs.
 ### Acceptance scope
 
 The code and headless contracts are closed for this pass. Real-application visual behavior, weakest-model task quality, and measured peak/idle RAM were not simulated by tests; those remain manual dogfood/acceptance checks rather than unimplemented code claims.
+
+---
+
+## First-Class Agent Rewrite — 2026-09-05
+
+- Added `rewrite_note` as a confirmed Agent tool for complete note replacement; append remains the narrow additive operation.
+- Rewrite requires the Agent to read the exact target in full, binds confirmation to the exact persisted Markdown version, rejects stale/foreign targets, and suppresses duplicate delivery.
+- The confirmed replacement refreshes title, summary, searchable question, entities, timestamp, filename, FTS, graph membership, and embedding-stale state. Note identity, collection, pin, reminder, todo state, source, and user-authored frontmatter are preserved.
+- Added focused coverage for confirmation gating/digest secrecy, metadata and index replacement, filename changes, replay safety, stale external edits, and foreign-note ownership.
+
+### Verification
+
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib grain_space:: -- --test-threads=1` — 119 passed.
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib -- --test-threads=1` — 708 passed, 1 network test ignored.
+- `npx tsc --noEmit`, `npm run lint`, `npm run build`, and `npm run test:unit -- --run` — passed (112 frontend tests).
+- Exact-file `rustfmt --check` and `git diff --check` — passed; the pre-existing generated `src/app/bindings.ts` worktree change remains outside this implementation.
