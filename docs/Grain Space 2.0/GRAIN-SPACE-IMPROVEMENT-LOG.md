@@ -309,6 +309,6 @@ The code and headless contracts are closed for this pass. Real-application visua
 ### Verification
 
 - `cargo test --manifest-path src-tauri/Cargo.toml --lib grain_space:: -- --test-threads=1` — 119 passed.
-- `cargo test --manifest-path src-tauri/Cargo.toml --lib -- --test-threads=1` — 708 passed, 1 network test ignored.
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib -- --test-threads=1` — 709 passed, 1 network test ignored.
 - `npx tsc --noEmit`, `npm run lint`, `npm run build`, and `npm run test:unit -- --run` — passed (112 frontend tests).
 - Exact-file `rustfmt --check` and `git diff --check` — passed; the pre-existing generated `src/app/bindings.ts` worktree change remains outside this implementation.
