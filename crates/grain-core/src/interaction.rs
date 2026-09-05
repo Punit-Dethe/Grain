@@ -320,10 +320,20 @@ fn result_heading(source: Option<&str>, title: Option<&str>) -> String {
     }
 }
 
+// Grain Space mutation inputs are host-bounded to this same size. Keeping the
+// confirmation value at the full bound means approval always covers the exact
+// body/addition that will be persisted, rather than an indistinguishable prefix.
+const LONG_VALUE_MAX: usize = 64 * 1024;
+
 fn push_fields(out: &mut String, fields: &[Field]) {
     for field in fields.iter().take(24) {
         let label = sanitize(&field.label, LABEL_MAX);
-        let value = sanitize(&field.value, VALUE_MAX);
+        let max_val = if label.eq_ignore_ascii_case("body") || label.eq_ignore_ascii_case("text") {
+            LONG_VALUE_MAX
+        } else {
+            VALUE_MAX
+        };
+        let value = sanitize(&field.value, max_val);
         if label.is_empty() && value.is_empty() {
             continue;
         }
@@ -389,6 +399,20 @@ mod tests {
         assert!(!md.contains("pc_1"));
         assert!(confirm.awaits_user());
         assert_eq!(confirm.token(), Some("pc_1"));
+    }
+
+    #[test]
+    fn note_confirmation_does_not_hide_an_approved_suffix() {
+        let body = format!("{}FINAL-SUFFIX", "x".repeat(8 * 1024));
+        let confirm = Interaction::Confirm {
+            token: "pc_long".into(),
+            title: "Save Note".into(),
+            summary: "Save it".into(),
+            details: vec![field("body", &body)],
+            side_effect: "Makes a change".into(),
+            destinations: vec![],
+        };
+        assert!(to_markdown(&confirm).contains("FINAL-SUFFIX"));
     }
 
     #[test]

@@ -19,7 +19,7 @@ const CAPABILITY_LABELS: Record<string, string> = {
   settings: "Save its own settings",
   llm: "Send text and images to your configured AI provider",
   embed: "Turn text into embeddings",
-  notes: "Read and change all your Grain Space notes",
+  notes: "Read all your Grain Space notes",
   "capture:selection": "Read your currently selected text",
   "capture:app": "See which app you're currently using",
   "capture:screen-text": "Read all the text on the window you're using",

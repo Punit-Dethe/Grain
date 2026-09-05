@@ -1108,7 +1108,7 @@ pub const ACTION_PARAMS_MAX: usize = 4;
 /// Capabilities whose effect leaves the machine or changes the user's data, and
 /// which therefore cannot be driven by an unbounded span of what Grain *thought*
 /// it heard. See [`validate_actions`].
-const SIDE_EFFECT_CAPABILITIES: &[&str] = &["open:url", "open:app", "notes"];
+const SIDE_EFFECT_CAPABILITIES: &[&str] = &["open:url", "open:app"];
 
 /// One piece of a parsed utterance template.
 ///
@@ -1712,14 +1712,12 @@ pub const KNOWN_CAPABILITIES: &[&str] = &[
     // whatever is selected in any app), so it is its own grant, meant to be
     // paired with a user-initiated trigger like a shortcut.
     "capture:selection",
-    // [GRAIN] Read and change the user's Grain Space notes. The widest-reaching
-    // grant the platform has — it is everything they have written down — so it
-    // is flagged and its permission sheet says so in those words.
+    // [GRAIN] Read the user's Grain Space notes. This remains highly sensitive
+    // (especially when combined with network access) and is flagged accordingly.
     //
     // It exists because a note VIEWER is a legitimate extension: Grain's own is
-    // one (NOTE-UI-EXTENSION-PLAN.md), and so is a third-party publisher, sync
-    // bridge or alternative editor. Refusing to have the capability would not
-    // make the platform safer, only unable to express what people will build.
+    // Write methods stay unavailable until a request can be placed on a
+    // user-owned, out-of-band confirmation surface.
     //
     // Distinct from the MCP bridge's `space`, which is absent from this list on
     // purpose: that one is minted by Grain for its own proxy and can never be

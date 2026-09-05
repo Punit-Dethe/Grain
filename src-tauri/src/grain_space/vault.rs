@@ -25,7 +25,7 @@ use anyhow::{anyhow, Context, Result};
 use rusqlite::{params, Connection};
 use sha2::{Digest, Sha256};
 
-use super::note::{Note, NoteCard, ReminderState, ReminderStatus, TodoTag};
+use super::note::{Note, NoteCard, NoteRewrite, ReminderState, ReminderStatus, TodoTag};
 
 /// One application-wide lock serializing every vault read/write and index op
 /// (same concurrency directive as the grain store: no WAL, single writer).
@@ -626,10 +626,15 @@ fn read_md_note(rel_path: &str, text: &str, mtime_ms: i64) -> (Note, bool) {
 }
 
 fn read_note_at(v: &Vault, rel: &str) -> Result<Note> {
+    Ok(read_note_snapshot_at(v, rel)?.0)
+}
+
+fn read_note_snapshot_at(v: &Vault, rel: &str) -> Result<(Note, String)> {
     let abs = v.abs(rel);
     let text = fs::read_to_string(&abs).with_context(|| format!("read {}", abs.display()))?;
     let mtime = file_mtime_ms(&abs).unwrap_or_else(|| chrono::Utc::now().timestamp_millis());
-    Ok(read_md_note(rel, &text, mtime).0)
+    let note = read_md_note(rel, &text, mtime).0;
+    Ok((note, storage_version_hash(&text)))
 }
 
 /// Atomic tmp+rename write of `text` to `abs`.
@@ -1331,6 +1336,73 @@ fn natural_fts_query(query: &str) -> Option<String> {
     }
 }
 
+/// Query tokens (length >= 2 or non-ASCII) excluding stopwords for relevance evaluation.
+pub fn query_content_terms(query: &str) -> Vec<String> {
+    query
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|t| !t.is_empty())
+        .map(|t| t.to_lowercase())
+        .filter(|t| {
+            (t.chars().count() >= 2 || t.chars().any(|c| c > '\u{7f}'))
+                && !STOPWORDS.contains(&t.as_str())
+        })
+        .collect()
+}
+
+/// Helper to match query term against text supporting direct substring and prefix-stem matching.
+fn term_matches_text(term: &str, text: &str) -> bool {
+    if text.contains(term) {
+        return true;
+    }
+    let char_count = term.chars().count();
+    if char_count >= 4 {
+        let stem: String = term.chars().take(4).collect();
+        for word in text.split(|c: char| !c.is_alphanumeric()) {
+            if word.starts_with(&stem) && (word.chars().count() >= 4 || word == stem) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// Gating predicate to reject out-of-scope or unrelated matches from broad OR-FTS queries.
+/// Ensures queries with multiple specific terms do not return unrelated documents that merely
+/// share a single accidental token in their body.
+pub fn is_relevant_match(query: &str, note: &Note) -> bool {
+    let terms = query_content_terms(query);
+    if terms.is_empty() {
+        return true;
+    }
+
+    let hay_meta = format!(
+        "{} {} {} {}",
+        note.title,
+        note.tldr,
+        note.question,
+        note.entities.join(" ")
+    )
+    .to_lowercase();
+    let hay_body = note.body.to_lowercase();
+
+    let meta_matches = terms
+        .iter()
+        .filter(|t| term_matches_text(t, &hay_meta))
+        .count();
+    let total_matches = terms
+        .iter()
+        .filter(|t| term_matches_text(t, &hay_meta) || term_matches_text(t, &hay_body))
+        .count();
+
+    match terms.len() {
+        0 => true,
+        1 => total_matches >= 1,
+        2 => total_matches >= 2 || meta_matches >= 1,
+        3..=4 => total_matches >= 2 || meta_matches >= 1,
+        _ => total_matches >= 2 && (meta_matches >= 1 || total_matches >= 3),
+    }
+}
+
 /// FTS for a NATURAL-LANGUAGE question (the recall path): stopword-filtered
 /// content terms with OR semantics, ranked by BM25 (title 10× / tldr 5× /
 /// body 1×). Where `search_notes_ranged`'s implicit-AND suits search-as-you-
@@ -1344,15 +1416,16 @@ pub fn search_notes_natural(
     range: Option<(i64, i64)>,
 ) -> Result<Vec<Note>> {
     ensure_vault(v)?;
-    let Some(fts_query) = natural_fts_query(query) else {
+    let fts_opt = natural_fts_query(query);
+    if fts_opt.is_none() && range.is_none() {
         return Ok(Vec::new());
-    };
+    }
     let _guard = VAULT_LOCK.lock().unwrap();
     let conn = open_index(v)?;
     reconcile_locked(v, &conn)?;
 
-    let rels: Vec<String> = match range {
-        Some((lo, hi)) => {
+    let rels: Vec<String> = match (fts_opt, range) {
+        (Some(fts_query), Some((lo, hi))) => {
             let mut stmt = conn.prepare(
                 "SELECT m.path FROM notes_fts f JOIN notes_meta m ON f.id = m.id \
                  WHERE notes_fts MATCH ?1 AND m.timestamp BETWEEN ?2 AND ?3 \
@@ -1361,7 +1434,7 @@ pub fn search_notes_natural(
             let rows = stmt.query_map(params![fts_query, lo, hi], |r| r.get::<_, String>(0))?;
             rows.collect::<rusqlite::Result<Vec<_>>>()?
         }
-        None => {
+        (Some(fts_query), None) => {
             let mut stmt = conn.prepare(
                 "SELECT m.path FROM notes_fts f JOIN notes_meta m ON f.id = m.id \
                  WHERE notes_fts MATCH ?1 \
@@ -1370,26 +1443,29 @@ pub fn search_notes_natural(
             let rows = stmt.query_map(params![fts_query], |r| r.get::<_, String>(0))?;
             rows.collect::<rusqlite::Result<Vec<_>>>()?
         }
+        (None, Some((lo, hi))) => {
+            let mut stmt = conn.prepare(
+                "SELECT m.path FROM notes_meta m \
+                 WHERE m.timestamp BETWEEN ?1 AND ?2 \
+                 ORDER BY m.timestamp DESC LIMIT 24",
+            )?;
+            let rows = stmt.query_map(params![lo, hi], |r| r.get::<_, String>(0))?;
+            rows.collect::<rusqlite::Result<Vec<_>>>()?
+        }
+        (None, None) => return Ok(Vec::new()),
     };
     let mut out = Vec::with_capacity(rels.len());
     for rel in rels {
         match read_note_at(v, &rel) {
-            Ok(note) => out.push(note),
+            Ok(note) => {
+                if is_relevant_match(query, &note) {
+                    out.push(note);
+                }
+            }
             Err(e) => log::warn!("[GRAIN] vault natural search hit unreadable: {e:#}"),
         }
     }
     Ok(out)
-}
-
-/// True when the vault has any indexed note at all (grain-owned OR foreign) —
-/// so recall over a vault of purely foreign Obsidian notes still runs.
-pub fn has_any_notes(v: &Vault) -> Result<bool> {
-    ensure_vault(v)?;
-    let _guard = VAULT_LOCK.lock().unwrap();
-    let conn = open_index(v)?;
-    reconcile_locked(v, &conn)?;
-    let count: i64 = conn.query_row("SELECT COUNT(*) FROM notes_meta", [], |r| r.get(0))?;
-    Ok(count > 0)
 }
 
 /// The absolute path of a note's file on disk (for an "Open in Obsidian"
@@ -1424,6 +1500,31 @@ pub fn get_note(v: &Vault, id: &str) -> Result<Note> {
     reconcile_locked(v, &conn)?;
     let (rel, _) = path_of(&conn, id)?.ok_or_else(|| anyhow!("note not found: {id}"))?;
     read_note_at(v, &rel)
+}
+
+/// Read the append target and its exact persisted version under one lock, so
+/// the title shown for confirmation always belongs to the version being bound.
+pub fn get_append_snapshot(v: &Vault, id: &str) -> Result<(Note, String)> {
+    ensure_vault(v)?;
+    super::note::validate_id(id)?;
+    let _guard = VAULT_LOCK.lock().unwrap();
+    let conn = open_index(v)?;
+    let mut existing = path_of(&conn, id)?;
+    if existing
+        .as_ref()
+        .is_some_and(|(rel, _)| !v.abs(rel).is_file())
+        || existing.is_none()
+    {
+        reconcile_locked(v, &conn)?;
+        existing = path_of(&conn, id)?;
+    }
+    let (rel, _) = existing.ok_or_else(|| anyhow!("note not found: {id}"))?;
+    if !in_grain_folder(v, &rel) {
+        return Err(anyhow!(
+            "This note lives outside Grain's folder — edit it in Obsidian."
+        ));
+    }
+    read_note_snapshot_at(v, &rel)
 }
 
 /// Create or update a note inside Grain's folder. Editability is by LOCATION,
@@ -1507,6 +1608,202 @@ pub fn save_note(v: &Vault, note: &Note) -> Result<()> {
     indexed.title = stem;
     index_upsert(&conn, &indexed, &rel, mtime, size, false, &written)?;
     Ok(())
+}
+
+/// Append to a note with single-critical-section atomic concurrency check.
+/// Evaluates expected_version against the exact on-disk Markdown hash,
+/// preserving all old body text byte-for-byte and rejecting stale writes.
+pub fn append_note_atomic(
+    v: &Vault,
+    id: &str,
+    addition: &str,
+    expected_version: Option<&str>,
+) -> Result<Note> {
+    ensure_vault(v)?;
+    super::note::validate_id(id)?;
+    let _guard = VAULT_LOCK.lock().unwrap();
+    let conn = open_index(v)?;
+
+    let existing = path_of(&conn, id)?;
+    let Some((rel, _)) = existing else {
+        return Err(anyhow!("Target note not found: {id}"));
+    };
+    if !in_grain_folder(v, &rel) {
+        return Err(anyhow!(
+            "This note lives outside Grain's folder — edit it in Obsidian."
+        ));
+    }
+
+    let abs = v.abs(&rel);
+    let disk_text = fs::read_to_string(&abs).with_context(|| format!("read {}", abs.display()))?;
+    let mtime = file_mtime_ms(&abs).unwrap_or_else(|| chrono::Utc::now().timestamp_millis());
+    let (mut note, _) = read_md_note(&rel, &disk_text, mtime);
+
+    // 1. Concurrency / stale target check. Hash the exact persisted Markdown,
+    // including frontmatter that an external editor may have changed.
+    if let Some(exp) = expected_version {
+        let actual = storage_version_hash(&disk_text);
+        if actual != exp {
+            return Err(anyhow!(
+                "The note was modified externally since confirmation (expected version {exp}, current {actual}). Append cancelled to prevent overwriting unseen edits."
+            ));
+        }
+    }
+
+    let addition = addition.trim();
+    if addition.is_empty() {
+        return Ok(note);
+    }
+
+    // 2. Byte-for-byte old body preservation with readable separator
+    if note.body.is_empty() {
+        note.body = addition.to_string();
+    } else if note.body.ends_with("\n\n") {
+        note.body.push_str("---\n\n");
+        note.body.push_str(addition);
+    } else if note.body.ends_with('\n') {
+        note.body.push_str("\n---\n\n");
+        note.body.push_str(addition);
+    } else {
+        note.body.push_str("\n\n---\n\n");
+        note.body.push_str(addition);
+    }
+
+    // 3. Write directly and update index under the same lock
+    let preserved = preserved_frontmatter(&disk_text);
+    let rendered = emit_markdown_with(&note, &preserved);
+    // `VAULT_LOCK` serializes Grain writers, not Obsidian. Re-read immediately
+    // before replacement so an external edit made while we prepared the append
+    // is rejected instead of being overwritten.
+    let before_write =
+        fs::read_to_string(&abs).with_context(|| format!("re-read {}", abs.display()))?;
+    if before_write != disk_text {
+        return Err(anyhow!(
+            "The note changed while the append was being prepared. Append cancelled."
+        ));
+    }
+    atomic_write(&abs, &rendered)?;
+
+    let new_mtime = file_mtime_ms(&abs).unwrap_or(mtime);
+    let new_size = fs::metadata(&abs).map(|m| m.len() as i64).unwrap_or(0);
+    index_upsert(&conn, &note, &rel, new_mtime, new_size, false, &rendered)?;
+
+    Ok(note)
+}
+
+/// Replace a Grain-owned note from one exact confirmed snapshot.
+///
+/// Unlike the editor's merge-aware [`save_note`], an Agent rewrite must never
+/// merge a proposed replacement with unseen user edits. The persisted version
+/// is therefore checked before any mutation and the file is re-read immediately
+/// before replacement. Identity and user-owned state survive; content-derived
+/// retrieval metadata and recency are refreshed from the confirmed replacement.
+pub fn rewrite_note_atomic(
+    v: &Vault,
+    id: &str,
+    replacement: &NoteRewrite,
+    expected_version: Option<&str>,
+) -> Result<Note> {
+    ensure_vault(v)?;
+    super::note::validate_id(id)?;
+    let _guard = VAULT_LOCK.lock().unwrap();
+    let conn = open_index(v)?;
+
+    let existing = path_of(&conn, id)?;
+    let Some((rel, _)) = existing else {
+        return Err(anyhow!("Target note not found: {id}"));
+    };
+    if !in_grain_folder(v, &rel) {
+        return Err(anyhow!(
+            "This note lives outside Grain's folder — edit it in Obsidian."
+        ));
+    }
+
+    let old_abs = v.abs(&rel);
+    let disk_text =
+        fs::read_to_string(&old_abs).with_context(|| format!("read {}", old_abs.display()))?;
+    if let Some(exp) = expected_version {
+        let actual = storage_version_hash(&disk_text);
+        if actual != exp {
+            return Err(anyhow!(
+                "The note was modified externally since confirmation (expected version {exp}, current {actual}). Rewrite cancelled to prevent overwriting unseen edits."
+            ));
+        }
+    }
+
+    let mtime = file_mtime_ms(&old_abs).unwrap_or_else(|| chrono::Utc::now().timestamp_millis());
+    let (mut note, _) = read_md_note(&rel, &disk_text, mtime);
+    note.title = replacement.title.clone();
+    note.tldr = replacement.tldr.clone();
+    note.body = replacement.body.clone();
+    note.question = replacement.question.clone();
+    note.entities = replacement.entities.clone();
+    note.timestamp = chrono::Utc::now().timestamp_millis();
+
+    let before_write =
+        fs::read_to_string(&old_abs).with_context(|| format!("re-read {}", old_abs.display()))?;
+    if before_write != disk_text {
+        return Err(anyhow!(
+            "The note changed while the rewrite was being prepared. Rewrite cancelled."
+        ));
+    }
+
+    let preserved = preserved_frontmatter(&disk_text);
+    let dir = old_abs.parent().unwrap_or(&v.root);
+    let desired_stem = sanitize_filename(&note.title);
+    let current_stem = old_abs
+        .file_stem()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_default();
+    let new_abs = if desired_stem == current_stem {
+        old_abs.clone()
+    } else {
+        unique_path(dir, &desired_stem, Some(old_abs.as_path()))
+    };
+    let actual_title = new_abs
+        .file_stem()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or(desired_stem);
+    note.title = actual_title;
+    let rendered = emit_markdown_with(&note, &preserved);
+
+    if new_abs == old_abs {
+        atomic_write(&old_abs, &rendered)?;
+    } else {
+        // Keep the old file intact until the replacement is durable. A failed
+        // cleanup can leave a duplicate, but never loses the user's original.
+        atomic_write(&new_abs, &rendered)?;
+        if let Err(error) = fs::remove_file(&old_abs) {
+            let _ = fs::remove_file(&new_abs);
+            return Err(error).with_context(|| format!("remove {}", old_abs.display()));
+        }
+    }
+
+    let new_rel = rel_key(&v.root, &new_abs)?;
+    let new_mtime = file_mtime_ms(&new_abs).unwrap_or(note.timestamp);
+    let new_size = fs::metadata(&new_abs).map(|m| m.len() as i64).unwrap_or(0);
+    index_upsert(
+        &conn, &note, &new_rel, new_mtime, new_size, false, &rendered,
+    )?;
+    // Never let hybrid retrieval consult a vector for the replaced content
+    // while the refreshed embedding is pending.
+    if vec_table_exists(&conn) {
+        purge_note_vectors(&conn, &note.id)?;
+    }
+    Ok(note)
+}
+
+fn storage_version_hash(markdown: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(markdown.as_bytes());
+    format!("{:x}", hasher.finalize())
+}
+
+/// Version of the exact Markdown currently persisted for a Grain-owned note.
+/// This is intentionally opaque to the Agent and confirmation UI.
+#[cfg(test)]
+pub fn note_storage_version(v: &Vault, id: &str) -> Result<String> {
+    Ok(get_append_snapshot(v, id)?.1)
 }
 
 /// Delete a note file inside Grain's folder + its index rows. Files outside the
@@ -2425,6 +2722,145 @@ mod tests {
         n.title = title.to_string();
         n.tldr = format!("Summary of {title}.");
         n
+    }
+
+    #[test]
+    fn append_rejects_frontmatter_only_external_edit() {
+        let v = temp_vault("append_frontmatter_stale");
+        let note = grain_note("Versioned", "original body");
+        save_note(&v, &note).unwrap();
+        let prepared_version = note_storage_version(&v, &note.id).unwrap();
+
+        let path = v.grain_dir().join("Versioned.md");
+        let markdown = fs::read_to_string(&path).unwrap();
+        let externally_edited = markdown.replace(
+            "tldr: \"Summary of Versioned.\"",
+            "tldr: \"Changed in Obsidian.\"",
+        );
+        assert_ne!(markdown, externally_edited);
+        fs::write(&path, externally_edited).unwrap();
+
+        let result = append_note_atomic(
+            &v,
+            &note.id,
+            "must not be appended",
+            Some(&prepared_version),
+        );
+        assert!(result.is_err());
+        assert!(!fs::read_to_string(&path)
+            .unwrap()
+            .contains("must not be appended"));
+        cleanup(&v);
+    }
+
+    #[test]
+    fn rewrite_replaces_content_and_metadata_but_preserves_user_state() {
+        let v = temp_vault("rewrite_complete");
+        let mut note = grain_note("Old Draft", "obsolete-token only");
+        note.timestamp = 1;
+        note.question = "what was obsolete?".into();
+        note.entities = vec!["Old Project".into()];
+        note.source = "dictation".into();
+        note.is_pinned = true;
+        note.todo_tags = vec![TodoTag {
+            text: "keep completed task state".into(),
+            done: true,
+        }];
+        note.reminder_state = ReminderState {
+            status: ReminderStatus::Armed,
+            fire_at: Some(9_999_999),
+        };
+        save_note(&v, &note).unwrap();
+
+        let stale = stale_embed_texts(&v).unwrap();
+        assert_eq!(stale.len(), 1);
+        let old_embedding_key = stale[0].0.clone();
+        let mut old_embedding = vec![0.0f32; 384];
+        old_embedding[0] = 1.0;
+        store_embeddings(&v, &[(old_embedding_key, old_embedding.clone())]).unwrap();
+        assert!(stale_embed_texts(&v).unwrap().is_empty());
+
+        // User-owned frontmatter must survive an Agent rewrite.
+        let old_path = v.grain_dir().join("Old Draft.md");
+        let disk = fs::read_to_string(&old_path).unwrap();
+        fs::write(
+            &old_path,
+            disk.replacen("---\n", "---\ncustom_property: keep-me\n", 1),
+        )
+        .unwrap();
+        let version = note_storage_version(&v, &note.id).unwrap();
+
+        let replacement = NoteRewrite {
+            title: "Current Plan".into(),
+            tldr: "The current launch plan.".into(),
+            body: "fresh-token is the corrected plan".into(),
+            question: "what is the current launch plan?".into(),
+            entities: vec!["Grain".into(), "Launch Plan".into()],
+        };
+        let rewritten = rewrite_note_atomic(&v, &note.id, &replacement, Some(&version)).unwrap();
+
+        assert_eq!(rewritten.id, note.id);
+        assert_eq!(rewritten.title, "Current Plan");
+        assert_eq!(rewritten.body, replacement.body);
+        assert_eq!(rewritten.tldr, replacement.tldr);
+        assert_eq!(rewritten.question, replacement.question);
+        assert_eq!(rewritten.entities, replacement.entities);
+        assert!(rewritten.timestamp > note.timestamp);
+        assert!(rewritten.is_pinned);
+        assert_eq!(rewritten.todo_tags, note.todo_tags);
+        assert_eq!(rewritten.reminder_state, note.reminder_state);
+        assert_eq!(rewritten.source, note.source);
+        assert!(!old_path.exists());
+
+        let new_path = v.grain_dir().join("Current Plan.md");
+        let rewritten_disk = fs::read_to_string(&new_path).unwrap();
+        assert!(rewritten_disk.contains("custom_property: keep-me"));
+        assert_eq!(search_notes(&v, "obsolete-token").unwrap().len(), 0);
+        let hits = search_notes(&v, "fresh-token").unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].id, note.id);
+        assert!(
+            semantic_search_ranged(&v, &old_embedding, 30, None, 0.5)
+                .unwrap()
+                .is_empty(),
+            "the old content vector must not survive a rewrite"
+        );
+        assert_eq!(stale_embed_texts(&v).unwrap().len(), 1);
+        cleanup(&v);
+    }
+
+    #[test]
+    fn rewrite_rejects_stale_and_foreign_targets_without_mutation() {
+        let v = temp_vault("rewrite_safety");
+        let note = grain_note("Versioned Rewrite", "original body");
+        save_note(&v, &note).unwrap();
+        let version = note_storage_version(&v, &note.id).unwrap();
+        let owned_path = v.grain_dir().join("Versioned Rewrite.md");
+        let external = fs::read_to_string(&owned_path)
+            .unwrap()
+            .replace("original body", "external body");
+        fs::write(&owned_path, &external).unwrap();
+
+        let replacement = NoteRewrite {
+            title: "Must Not Land".into(),
+            tldr: String::new(),
+            body: "replacement body".into(),
+            question: String::new(),
+            entities: Vec::new(),
+        };
+        assert!(rewrite_note_atomic(&v, &note.id, &replacement, Some(&version)).is_err());
+        assert_eq!(fs::read_to_string(&owned_path).unwrap(), external);
+        assert!(!v.grain_dir().join("Must Not Land.md").exists());
+
+        let foreign_path = v.root.join("Foreign.md");
+        fs::write(&foreign_path, "foreign original").unwrap();
+        let foreign = search_notes(&v, "foreign original").unwrap().remove(0);
+        assert!(rewrite_note_atomic(&v, &foreign.id, &replacement, None).is_err());
+        assert_eq!(
+            fs::read_to_string(&foreign_path).unwrap(),
+            "foreign original"
+        );
+        cleanup(&v);
     }
 
     #[test]
@@ -3522,5 +3958,40 @@ mod tests {
         let fid = foreign_id("Outsider.md");
         assert!(move_note_to_folder(&v, &fid, Some("Work")).is_err());
         cleanup(&v);
+    }
+
+    #[test]
+    fn test_is_relevant_match_precision_and_rejection() {
+        let mut note = grain_note(
+            "Bistro Demi-Glace & Stocks",
+            "Slow simmer veal bones for 12 hours. Make a red wine reduction to finish.",
+        );
+        note.tldr = "Veal demi glace and wine reduction culinary stock prep.".to_string();
+        note.question = "How do you prepare bistro demi glace stock?".to_string();
+        note.entities = vec!["Demi-Glace".to_string(), "Bistro".to_string()];
+
+        // 1. Genuine query with high overlap
+        assert!(is_relevant_match("veal demi glace stock reduction", &note));
+
+        // 2. Query matching title
+        assert!(is_relevant_match("bistro stocks", &note));
+
+        // 3. Out-of-scope multi-word queries sharing only 1 accidental body term ("reduction")
+        assert!(!is_relevant_match(
+            "quantum cryptography lattice reduction algorithm",
+            &note
+        ));
+
+        // 4. Out-of-scope query sharing 0 terms
+        assert!(!is_relevant_match(
+            "orbital mechanics mars rover landing trajectory",
+            &note
+        ));
+
+        // 5. Single-term query matching body
+        assert!(is_relevant_match("reduction", &note));
+
+        // 6. Single-term query matching title
+        assert!(is_relevant_match("bistro", &note));
     }
 }

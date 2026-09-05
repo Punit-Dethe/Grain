@@ -82,20 +82,29 @@ pub fn run(_app: &AppHandle, golden_path: &Path) -> i32 {
         }
     };
     if let Some(mode) = shape.get("mode") {
-        if mode.as_str() != Some("recommendation") {
+        if mode.as_str() == Some("recommendation") {
+            return match super::recommend_eval::run(golden_path, &raw, json_requested()) {
+                Ok(()) => 0,
+                Err(error) => {
+                    eprintln!("eval: {error}");
+                    2
+                }
+            };
+        } else if mode.as_str() == Some("memory") {
+            return match crate::grain_space::eval::run(golden_path, &raw, json_requested()) {
+                Ok(()) => 0,
+                Err(error) => {
+                    eprintln!("eval: {error}");
+                    2
+                }
+            };
+        } else {
             eprintln!(
-                "eval: unsupported eval mode {}; expected 'recommendation'",
+                "eval: unsupported eval mode {}; expected 'recommendation' or 'memory'",
                 mode
             );
             return 2;
         }
-        return match super::recommend_eval::run(golden_path, &raw, json_requested()) {
-            Ok(()) => 0,
-            Err(error) => {
-                eprintln!("eval: {error}");
-                2
-            }
-        };
     }
 
     let golden = match load_command_golden(golden_path, &raw) {

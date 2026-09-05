@@ -130,6 +130,10 @@ pub fn mint_surface_token(ext_id: &str, caps: std::collections::HashSet<String>)
 /// which is not in `KNOWN_CAPABILITIES` and therefore cannot be requested by a
 /// manifest or granted by a permission sheet.
 pub fn mint_mcp_token() -> String {
+    // Rotate by server-side identity as well as by the on-disk token. If the
+    // token file was deleted or corrupted, no undiscoverable old credential may
+    // become valid again when Grain Space is re-enabled.
+    registry().revoke_identity("grain.mcp", crate::events_auth::ClientRole::Mcp);
     let mut caps = std::collections::HashSet::new();
     caps.insert("space".to_string());
     mint_extension_token("grain.mcp", caps, crate::events_auth::ClientRole::Mcp)

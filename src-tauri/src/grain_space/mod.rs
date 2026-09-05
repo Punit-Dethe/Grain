@@ -18,10 +18,12 @@ pub mod backend;
 pub mod capture;
 pub mod commands;
 pub mod embed;
+pub mod eval;
 pub mod graph;
 pub mod note;
 pub mod recall;
 pub mod reminders;
+pub mod temporal;
 pub mod vault;
 
 use tauri::{AppHandle, Manager};
@@ -244,17 +246,7 @@ pub async fn search(app: &AppHandle, query: &str, limit: usize) -> Result<Vec<Sp
         .await
         .map_err(|e| e.to_string())?
         .map_err(|e| e.to_string())?;
-    Ok(notes
-        .into_iter()
-        .take(limit)
-        .map(|n| SpaceHit {
-            snippet: n.tldr.clone(),
-            entities: n.entities.clone(),
-            saved_at: n.timestamp,
-            id: n.id,
-            title: n.title,
-        })
-        .collect())
+    Ok(notes.into_iter().take(limit).map(bridge_hit).collect())
 }
 
 /// Search for an active built-in Agent turn. Unlike the lightweight MCP bridge
@@ -272,16 +264,7 @@ pub(crate) async fn search_for_agent(
     let notes = recall::retrieve_for_agent(app, &be, query, limit)
         .await
         .map_err(|e| format!("{e:#}"))?;
-    Ok(notes
-        .into_iter()
-        .map(|n| SpaceHit {
-            snippet: n.tldr.clone(),
-            entities: n.entities.clone(),
-            saved_at: n.timestamp,
-            id: n.id,
-            title: n.title,
-        })
-        .collect())
+    Ok(notes.into_iter().map(bridge_hit).collect())
 }
 
 /// One note in full, by id.
@@ -324,13 +307,41 @@ pub fn apply_mcp(app: &AppHandle, enabled: bool) {
         return;
     }
     let token = crate::events_server::mint_mcp_token();
-    let body = serde_json::json!({ "token": token, "port": 7124 });
-    if let Err(e) = std::fs::write(&path, body.to_string()) {
+    let body = serde_json::json!({ "token": &token, "port": 7124 });
+    if let Err(e) = write_mcp_token_file(&path, body.to_string().as_bytes()) {
+        crate::events_server::revoke_token(&token);
         log::warn!("[GRAIN] space mcp: could not write the token file: {e}");
         return;
     }
     restrict_to_owner(&path);
     log::info!("[GRAIN] space mcp: bridge on");
+}
+
+fn write_mcp_token_file(path: &std::path::Path, body: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+
+    let parent = path.parent().ok_or_else(|| {
+        std::io::Error::new(std::io::ErrorKind::InvalidInput, "token path has no parent")
+    })?;
+    std::fs::create_dir_all(parent)?;
+    let temp = parent.join(format!(".mcp-token-{}.tmp", uuid::Uuid::new_v4().simple()));
+    let result = (|| {
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let mut file = options.open(&temp)?;
+        file.write_all(body)?;
+        file.sync_all()?;
+        std::fs::rename(&temp, path)
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(&temp);
+    }
+    result
 }
 
 /// The token is a bearer secret; on unix the file is 0600. Windows inherits the
@@ -354,67 +365,26 @@ fn data_dir(app: &AppHandle) -> Result<std::path::PathBuf, String> {
         .ok_or_else(|| "app context unavailable".to_string())
 }
 
-/// Metadata an MCP client supplied with a note.
-///
-/// Every field is optional and every one that is present WINS over anything
-/// Grain would derive. The caller is a language model that has just read the
-/// conversation the note came out of; Grain's own extraction call sees the body
-/// and nothing else, costs a round trip to the user's provider, and — for the
-/// many users who have configured no provider at all — does not happen, leaving
-/// a plain-code title and no distillation on a note that a perfectly capable
-/// model just wrote. Preferring what the caller knows is cheaper AND better.
-#[derive(Default)]
-pub struct SuppliedMeta {
-    pub title: Option<String>,
-    pub summary: Option<String>,
-    /// Leads the text the note is indexed by, so this is the field that most
-    /// affects whether the note is found again.
-    pub question: Option<String>,
-    pub entities: Vec<String>,
-    pub collection: Option<String>,
-}
-
-impl SuppliedMeta {
-    /// True when the caller told us enough that a distillation call would only
-    /// be re-deriving what we already have.
-    fn covers_distillation(&self) -> bool {
-        self.title.is_some() && (self.question.is_some() || !self.entities.is_empty())
-    }
-}
-
-/// Save a note sent over the bridge. Returns its id.
-///
-/// Preference order: what the caller supplied → Grain's own distillation when it
-/// did not and a provider exists → a verbatim note with a plain-code title.
-pub async fn save(app: &AppHandle, body: &str, supplied: SuppliedMeta) -> Result<String, String> {
+/// Save a note verbatim without invoking secondary model extraction or reformatting passes.
+/// Used by action execution following user confirmation to guarantee byte-for-byte fidelity.
+pub async fn save_verbatim(
+    app: &AppHandle,
+    title: &str,
+    body: &str,
+    collection: Option<&str>,
+) -> Result<String, String> {
     require_enabled(app)?;
     let backend = backend::resolve(app)?;
 
-    let (mut note, relations) = if supplied.covers_distillation() {
-        (note::Note::raw(body.trim().to_string()), Vec::new())
+    let mut note = note::Note::raw(body.trim().to_string());
+    note.source = "agent".to_string();
+    let clean_title = title.split_whitespace().collect::<Vec<_>>().join(" ");
+    let clean_title: String = clean_title.chars().take(80).collect();
+    note.title = if clean_title.trim().is_empty() {
+        capture::fallback_title(&note.body)
     } else {
-        capture::compose_note(app, body, None, "mcp").await
+        clean_title
     };
-    note.source = "mcp".to_string();
-    if let Some(t) = supplied.title {
-        note.title = t.chars().take(80).collect();
-    }
-    if let Some(s) = supplied.summary {
-        note.tldr = s;
-    }
-    if let Some(q) = supplied.question {
-        note.question = q.chars().take(240).collect();
-    }
-    if !supplied.entities.is_empty() {
-        // Normalised and capped exactly as the capture path does — a supplied
-        // entity list is still untrusted input, and the graph's identity rules
-        // are not negotiable by the caller.
-        note.entities = capture::clean_entity_names(&supplied.entities);
-    }
-    if note.title.trim().is_empty() {
-        note.title = capture::fallback_title(&note.body);
-    }
-
     let id = note.id.clone();
     let be = backend.clone();
     tauri::async_runtime::spawn_blocking(move || backend::save_note(&be, &note))
@@ -422,53 +392,216 @@ pub async fn save(app: &AppHandle, body: &str, supplied: SuppliedMeta) -> Result
         .map_err(|e| e.to_string())?
         .map_err(|e| e.to_string())?;
 
-    if !relations.is_empty() {
-        let be = backend.clone();
-        let _ = tauri::async_runtime::spawn_blocking(move || {
-            backend::record_relations(&be, &relations)
-        })
-        .await;
-    }
-    if let Some(folder) = supplied.collection {
+    if let Some(folder) = collection {
         let be = backend.clone();
         let moved = id.clone();
-        let _ = tauri::async_runtime::spawn_blocking(move || {
-            backend::move_note_to_folder(&be, &moved, Some(&folder))
-        })
-        .await;
+        let folder = folder.trim().to_string();
+        if !folder.is_empty() {
+            let _ = tauri::async_runtime::spawn_blocking(move || {
+                backend::move_note_to_folder(&be, &moved, Some(&folder))
+            })
+            .await;
+        }
     }
+
     emit_notes_changed(app);
     reminders::sync(app);
     Ok(id)
 }
 
-/// Append to an existing note, under a rule. The running-log case: a session's
-/// decisions, a list that keeps growing. Never rewrites what is already there.
-pub async fn append(app: &AppHandle, id: &str, text: &str) -> Result<(), String> {
+use std::collections::{HashSet, VecDeque};
+use std::sync::Mutex;
+
+#[derive(Default)]
+struct IdempotencyRegistry {
+    completed: VecDeque<String>,
+    in_flight: HashSet<String>,
+}
+
+static IDEMPOTENCY: Mutex<Option<IdempotencyRegistry>> = Mutex::new(None);
+const MAX_IDEMPOTENCY_KEYS: usize = 256;
+const MAX_IN_FLIGHT_WRITES: usize = 32;
+
+enum IdempotencyStart {
+    Duplicate,
+    Started,
+}
+
+fn begin_idempotent_write(key: &str) -> Result<IdempotencyStart, String> {
+    let mut guard = IDEMPOTENCY
+        .lock()
+        .map_err(|_| "Write replay registry is unavailable.".to_string())?;
+    let registry = guard.get_or_insert_with(IdempotencyRegistry::default);
+    if registry.completed.iter().any(|existing| existing == key) {
+        return Ok(IdempotencyStart::Duplicate);
+    }
+    if registry.in_flight.contains(key) {
+        return Err("That exact write is already being applied.".to_string());
+    }
+    if registry.in_flight.len() >= MAX_IN_FLIGHT_WRITES {
+        return Err("Too many note writes are already in progress.".to_string());
+    }
+    registry.in_flight.insert(key.to_string());
+    Ok(IdempotencyStart::Started)
+}
+
+fn finish_idempotent_write(key: &str, succeeded: bool) {
+    let Ok(mut guard) = IDEMPOTENCY.lock() else {
+        return;
+    };
+    let registry = guard.get_or_insert_with(IdempotencyRegistry::default);
+    registry.in_flight.remove(key);
+    if !succeeded || registry.completed.iter().any(|existing| existing == key) {
+        return;
+    }
+    if registry.completed.len() >= MAX_IDEMPOTENCY_KEYS {
+        registry.completed.pop_front();
+    }
+    registry.completed.push_back(key.to_string());
+}
+
+/// Cryptographic 256-bit content version hash (SHA-256) covering title and body
+/// for optimistic concurrency and stale-write detection on notes.
+#[cfg(test)]
+pub fn note_version_hash(title: &str, body: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(title.as_bytes());
+    hasher.update(b"\n---\n");
+    hasher.update(body.as_bytes());
+    format!("{:064x}", hasher.finalize())
+}
+
+/// Single-string body helper for tests and backward compatibility.
+#[cfg(test)]
+pub fn content_version_hash(content: &str) -> String {
+    note_version_hash("", content)
+}
+
+pub async fn get_append_snapshot(
+    app: &AppHandle,
+    id: &str,
+) -> Result<(note::Note, String), String> {
+    require_enabled(app)?;
+    let be = backend::resolve(app)?;
+    let id = id.to_string();
+    tauri::async_runtime::spawn_blocking(move || backend::get_append_snapshot(&be, &id))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())
+}
+
+pub(crate) fn bounded_bridge_text(mut value: String, max_bytes: usize) -> String {
+    if value.len() <= max_bytes {
+        return value;
+    }
+    let mut boundary = max_bytes;
+    while boundary > 0 && !value.is_char_boundary(boundary) {
+        boundary -= 1;
+    }
+    value.truncate(boundary);
+    value
+}
+
+fn bridge_hit(note: note::Note) -> SpaceHit {
+    SpaceHit {
+        id: note.id,
+        title: bounded_bridge_text(note.title, 512),
+        snippet: bounded_bridge_text(note.tldr, 1024),
+        entities: note
+            .entities
+            .into_iter()
+            .take(16)
+            .map(|entity| bounded_bridge_text(entity, 128))
+            .collect(),
+        saved_at: note.timestamp,
+    }
+}
+
+#[cfg(test)]
+mod bridge_security_tests {
+    use super::*;
+
+    #[test]
+    fn token_file_is_published_complete_without_temp_residue() {
+        let dir = std::env::temp_dir().join(format!(
+            "grain-mcp-token-test-{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        let path = dir.join(MCP_TOKEN_FILE);
+        write_mcp_token_file(&path, br#"{"token":"secret","port":7124}"#).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            r#"{"token":"secret","port":7124}"#
+        );
+        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 1);
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+                0o600
+            );
+        }
+
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn bridge_metadata_bounds_preserve_utf8() {
+        let bounded = bounded_bridge_text("界".repeat(1024), 128);
+        assert!(bounded.len() <= 128);
+        assert!(std::str::from_utf8(bounded.as_bytes()).is_ok());
+    }
+}
+
+/// Append with explicit operation identity key for deduplication.
+pub async fn append_with_idempotency(
+    app: &AppHandle,
+    id: &str,
+    text: &str,
+    expected_version: Option<&str>,
+    idempotency_key: Option<&str>,
+) -> Result<(), String> {
     require_enabled(app)?;
     let be = backend::resolve(app)?;
     let id = id.to_string();
     let addition = text.trim().to_string();
-    tauri::async_runtime::spawn_blocking(move || {
-        let mut note = backend::get_note(&be, &id)?;
-        note.body = format!("{}\n\n---\n\n{}", note.body.trim_end(), addition);
-        backend::save_note(&be, &note)
+    let expected = expected_version.map(|s| s.to_string());
+
+    let reserved_key = match idempotency_key {
+        Some(key) => match begin_idempotent_write(key)? {
+            IdempotencyStart::Duplicate => {
+                log::info!("[GRAIN] space: duplicate append delivery suppressed");
+                return Ok(());
+            }
+            IdempotencyStart::Started => Some(key.to_string()),
+        },
+        None => None,
+    };
+
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        backend::append_note_atomic(&be, &id, &addition, expected.as_deref())
+            .map_err(|e| e.to_string())
     })
     .await
-    .map_err(|e| e.to_string())?
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| e.to_string())
+    .and_then(|result| result);
+
+    if let Some(key) = &reserved_key {
+        finish_idempotent_write(key, result.is_ok());
+    }
+    result?;
+
     emit_notes_changed(app);
     Ok(())
 }
 
-// ── The extension-facing note surface ───────────────────────────────────────
+// ── The extension-facing read surface ───────────────────────────────────────
 //
-// [GRAIN] What the `notes` capability reaches (NOTE-UI-EXTENSION-PLAN.md). The
-// MCP bridge's `space.*` covers reading and adding; a VIEWER also edits, so
-// these add the rest. Everything routes through the same `vault.rs` calls the
-// app's own UI uses — including the Grain-folder scoping — so an extension
-// cannot reach a file outside the notebook, and there is no second code path
-// that could drift from the first.
+// Both the `notes` extension capability and first-party MCP bridge remain
+// read-only until writes have a user-owned, out-of-band approval path.
 
 /// Note cards for a listing: the small shape, without bodies.
 pub async fn cards(app: &AppHandle) -> Result<Vec<note::NoteCard>, String> {
@@ -480,40 +613,10 @@ pub async fn cards(app: &AppHandle) -> Result<Vec<note::NoteCard>, String> {
         .map_err(|e| e.to_string())
 }
 
-/// Replace a note's editable content. Identity, timestamps and the file's place
-/// on disk are the store's to keep — a caller supplies what it edited, not a
-/// whole record it might have stale.
-pub async fn update(
-    app: &AppHandle,
-    id: &str,
-    title: Option<String>,
-    body: Option<String>,
-) -> Result<(), String> {
-    require_enabled(app)?;
-    let be = backend::resolve(app)?;
-    let id = id.to_string();
-    tauri::async_runtime::spawn_blocking(move || {
-        let mut note = backend::get_note(&be, &id)?;
-        if let Some(t) = title {
-            note.title = t.chars().take(80).collect();
-        }
-        if let Some(b) = body {
-            note.body = b;
-        }
-        backend::save_note(&be, &note)
-    })
-    .await
-    .map_err(|e| e.to_string())?
-    .map_err(|e| e.to_string())?;
-    emit_notes_changed(app);
-    Ok(())
-}
-
 /// Delete one note.
 ///
-/// Unlike the MCP bridge, a viewer DOES get this: a person clicking delete in a
-/// note window has decided, and refusing would just send them to the file
-/// manager. The grant that reaches it is flagged and user-approved.
+/// Internal deletion primitive. Callers must enforce the normal confirmation
+/// policy before entering this host-owned storage path.
 pub async fn delete(app: &AppHandle, id: &str) -> Result<(), String> {
     require_enabled(app)?;
     let be = backend::resolve(app)?;
@@ -526,61 +629,45 @@ pub async fn delete(app: &AppHandle, id: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// Move a note between collections. `None` puts it loose in the Grain folder.
-pub async fn move_to(app: &AppHandle, id: &str, folder: Option<String>) -> Result<(), String> {
+/// Rewrite with explicit operation identity and exact-snapshot concurrency.
+/// The Agent-facing caller has already canonicalized every replacement field;
+/// this function owns replay suppression and the blocking storage boundary.
+pub async fn rewrite_with_idempotency(
+    app: &AppHandle,
+    id: &str,
+    replacement: note::NoteRewrite,
+    expected_version: Option<&str>,
+    idempotency_key: Option<&str>,
+) -> Result<note::Note, String> {
     require_enabled(app)?;
     let be = backend::resolve(app)?;
     let id = id.to_string();
-    tauri::async_runtime::spawn_blocking(move || {
-        backend::move_note_to_folder(&be, &id, folder.as_deref())
+    let expected = expected_version.map(str::to_string);
+
+    let reserved_key = match idempotency_key {
+        Some(key) => match begin_idempotent_write(key)? {
+            IdempotencyStart::Duplicate => {
+                log::info!("[GRAIN] space: duplicate rewrite delivery suppressed");
+                return get(app, &id).await;
+            }
+            IdempotencyStart::Started => Some(key.to_string()),
+        },
+        None => None,
+    };
+
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        backend::rewrite_note_atomic(&be, &id, &replacement, expected.as_deref())
+            .map_err(|e| e.to_string())
     })
     .await
-    .map_err(|e| e.to_string())?
-    .map_err(|e| e.to_string())?;
-    emit_notes_changed(app);
-    Ok(())
-}
+    .map_err(|e| e.to_string())
+    .and_then(|result| result);
 
-/// Pin or unpin.
-pub async fn set_pinned(app: &AppHandle, id: &str, pinned: bool) -> Result<(), String> {
-    require_enabled(app)?;
-    let be = backend::resolve(app)?;
-    let id = id.to_string();
-    tauri::async_runtime::spawn_blocking(move || backend::set_pinned(&be, &id, pinned))
-        .await
-        .map_err(|e| e.to_string())?
-        .map_err(|e| e.to_string())?;
-    emit_notes_changed(app);
-    Ok(())
-}
+    if let Some(key) = &reserved_key {
+        finish_idempotent_write(key, result.is_ok());
+    }
+    let note = result?;
 
-/// Arm or clear a note's reminder. `fire_at` is a unix timestamp in seconds;
-/// `None` dismisses whatever was set.
-///
-/// The last thing a note viewer needs that reading and writing bodies does not
-/// cover — a reminder is a property of the note, and setting it from the window
-/// where you are reading it is the obvious place.
-///
-/// A timestamp rather than a local datetime string, matching the command the
-/// app's own UI calls: whoever renders the picker already knows the user's
-/// timezone, and re-parsing a formatted string in Rust would only add a place
-/// for the two to disagree.
-pub async fn set_reminder(app: &AppHandle, id: &str, fire_at: Option<i64>) -> Result<(), String> {
-    require_enabled(app)?;
-    let be = backend::resolve(app)?;
-    let id = id.to_string();
-    let state = match fire_at {
-        Some(at) => note::ReminderState {
-            status: note::ReminderStatus::Armed,
-            fire_at: Some(at),
-        },
-        None => note::ReminderState::default(),
-    };
-    tauri::async_runtime::spawn_blocking(move || backend::set_reminder(&be, &id, state))
-        .await
-        .map_err(|e| e.to_string())?
-        .map_err(|e| e.to_string())?;
-    reminders::sync(app);
     emit_notes_changed(app);
-    Ok(())
+    Ok(note)
 }

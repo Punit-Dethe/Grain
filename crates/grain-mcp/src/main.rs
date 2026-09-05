@@ -60,40 +60,6 @@ struct IdParams {
     id: String,
 }
 
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
-struct SaveParams {
-    /// The note itself. Kept verbatim — Grain never rewrites what you send.
-    body: String,
-    /// A short title. Supply it: you have the conversation this note came out
-    /// of, and Grain does not. Omitted, Grain derives one.
-    #[serde(default)]
-    title: Option<String>,
-    /// One line saying what the note is about, shown when listing notes.
-    #[serde(default)]
-    summary: Option<String>,
-    /// The specific question this note answers, if it answers one. This leads
-    /// the text the note is indexed by, so a good one is worth more to future
-    /// retrieval than anything else here.
-    #[serde(default)]
-    question: Option<String>,
-    /// The concrete things the note is about — names, tools, files, people.
-    /// These become graph nodes, so later notes mentioning the same things
-    /// become findable from this one.
-    #[serde(default)]
-    entities: Option<Vec<String>>,
-    /// A collection to file it under. Omitted, the note sits loose.
-    #[serde(default)]
-    collection: Option<String>,
-}
-
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
-struct AppendParams {
-    /// The note to append to.
-    id: String,
-    /// Text to add at the end, under a rule.
-    text: String,
-}
-
 #[tool_router]
 impl GrainSpace {
     fn new(link: AppLink) -> Self {
@@ -160,7 +126,7 @@ impl GrainSpace {
 
     #[tool(
         name = "get_note",
-        description = "Read one note from the user's Grain Space notebook in full, by id."
+        description = "Read one bounded note excerpt from the user's Grain Space notebook, by id."
     )]
     async fn get_note(
         &self,
@@ -172,55 +138,6 @@ impl GrainSpace {
             format!("# {title}\n\n{body}")
         })
         .await
-    }
-
-    /// Metadata is OPTIONAL and, when supplied, WINS.
-    ///
-    /// The caller is a language model that has just read the conversation this
-    /// note came out of; Grain's own extraction call sees only the body. Asking
-    /// the app to re-derive a title it would derive worse, from less, at the
-    /// cost of a second call to the user's provider, was a habit carried over
-    /// from voice capture — where there is no model in the loop yet. It is also
-    /// the only path that works for the many users with no provider configured
-    /// at all: without these fields such a note is saved with a plain-code title
-    /// and no distillation, and is found less well ever after.
-    ///
-    /// Grain still validates everything on the way in, and still distils when
-    /// the fields are absent.
-    #[tool(
-        name = "save_note",
-        description = "Save a note to the user's Grain Space notebook. Supply title, summary, question and entities yourself — you have the context Grain does not, and it saves a second AI call."
-    )]
-    async fn save_note(
-        &self,
-        Parameters(p): Parameters<SaveParams>,
-    ) -> Result<CallToolResult, ErrorData> {
-        let params = json!({
-            "body": p.body,
-            "title": p.title,
-            "summary": p.summary,
-            "question": p.question,
-            "entities": p.entities,
-            "collection": p.collection,
-        });
-        self.relay("space.save", params, |v| {
-            let id = v.get("id").and_then(Value::as_str).unwrap_or("");
-            format!("Saved as {id}.")
-        })
-        .await
-    }
-
-    #[tool(
-        name = "append_to_note",
-        description = "Append text to the end of an existing note, under a horizontal rule. For running logs — a session's decisions, a list you keep adding to."
-    )]
-    async fn append_to_note(
-        &self,
-        Parameters(p): Parameters<AppendParams>,
-    ) -> Result<CallToolResult, ErrorData> {
-        let params = json!({ "id": p.id, "text": p.text });
-        self.relay("space.append", params, |_| "Appended.".to_string())
-            .await
     }
 
     /// One call into the app, rendered both ways: `describe` writes the prose a
@@ -263,9 +180,10 @@ impl ServerHandler for GrainSpace {
         info.capabilities = ServerCapabilities::builder().enable_tools().build();
         info.server_info = Implementation::new("grain-space", env!("CARGO_PKG_VERSION"));
         info.instructions = Some(
-            "The user's Grain Space notebook: notes they dictated or saved, searchable by \
-             full text, meaning and the entities they mention. Search it before answering \
-             questions about the user's own work, decisions or past sessions."
+            "Read-only access to the user's Grain Space notebook: notes they dictated or saved, \
+             searchable by full text, meaning and the entities they mention. Search it before \
+             answering questions about the user's own work, decisions or past sessions. Note \
+             mutations remain available through Grain's Agent, where the user can approve them."
                 .into(),
         );
         info

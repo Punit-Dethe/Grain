@@ -78,6 +78,13 @@ impl TokenRegistry {
         self.map.write().unwrap().remove(token);
     }
 
+    pub fn revoke_identity(&self, id: &str, role: ClientRole) {
+        self.map
+            .write()
+            .unwrap()
+            .retain(|_, identity| identity.id != id || identity.role != role);
+    }
+
     /// Authenticate a connection's FIRST frame. `None` = drop the connection.
     ///
     /// Rejects: non-JSON, JSON that isn't a [`ClientHello`], empty tokens, and
@@ -274,5 +281,22 @@ mod tests {
             prior = Some(token);
             assert_eq!(reg.len(), 1);
         }
+    }
+
+    #[test]
+    fn identity_revocation_removes_only_the_target_role() {
+        let reg = registry_with_pill_and_ext();
+        reg.register(
+            "surface-secret".into(),
+            ClientIdentity {
+                id: "com.example.a".into(),
+                role: ClientRole::Surface,
+                caps: CapabilitySet::Named(Default::default()),
+            },
+        );
+        reg.revoke_identity("com.example.a", ClientRole::Worker);
+        assert!(reg.authenticate(r#"{"token":"ext-a-secret"}"#).is_none());
+        assert!(reg.authenticate(r#"{"token":"surface-secret"}"#).is_some());
+        assert!(reg.authenticate(r#"{"token":"pill-secret"}"#).is_some());
     }
 }

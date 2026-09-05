@@ -31,7 +31,24 @@ const META_SAMPLE_CHARS: usize = 4000;
 /// no usable LLM (Input B / quick-add) or extraction fails, so a note — and the
 /// Recall source chip that cites it — is never blank. No network, no model.
 pub(crate) fn fallback_title(body: &str) -> String {
-    let title: String = body
+    let stripped = body.trim_start();
+    let cleaned = if stripped.starts_with('#') {
+        stripped.trim_start_matches('#').trim_start()
+    } else if let Some(rest) = stripped.strip_prefix("- [ ]") {
+        rest.trim_start()
+    } else if let Some(rest) = stripped.strip_prefix("- [x]") {
+        rest.trim_start()
+    } else if let Some(rest) = stripped.strip_prefix("-") {
+        rest.trim_start()
+    } else if let Some(rest) = stripped.strip_prefix("*") {
+        rest.trim_start()
+    } else if let Some(rest) = stripped.strip_prefix(">") {
+        rest.trim_start()
+    } else {
+        stripped
+    };
+
+    let title: String = cleaned
         .split_whitespace()
         .take(3)
         .collect::<Vec<_>>()
@@ -213,10 +230,6 @@ fn llm_usable(settings: &AppSettings) -> bool {
 /// The structured-output shape for the extraction call.
 #[derive(Deserialize, Debug, Default)]
 struct ExtractedMeta {
-    /// The note rewritten as tidy Markdown (structuring path only). Empty when
-    /// structuring was not requested — the verbatim body is then kept.
-    #[serde(default)]
-    body: String,
     title: String,
     tldr: String,
     #[serde(default)]
@@ -269,28 +282,14 @@ const MAX_ENTITIES: usize = 12;
 const MAX_RELATIONS: usize = 8;
 const MAX_ENTITY_NAME_CHARS: usize = 64;
 const MAX_QUESTION_CHARS: usize = 240;
+const MAX_TODOS: usize = 32;
+const MAX_TODO_CHARS: usize = 512;
 
 /// Normalize one entity name: trim, collapse whitespace, cap length. Empty when
 /// nothing usable is left.
 fn clean_entity_name(raw: &str) -> String {
     let collapsed = raw.split_whitespace().collect::<Vec<_>>().join(" ");
     collapsed.chars().take(MAX_ENTITY_NAME_CHARS).collect()
-}
-
-/// Clean a caller-supplied entity list to exactly the rules the extraction path
-/// enforces: normalised names, deduplicated by norm, first-come order, capped.
-///
-/// A list an MCP client sent is still untrusted input — the graph's identity
-/// rules are not the caller's to negotiate — so it goes through the same gate
-/// the model's own output does.
-pub(crate) fn clean_entity_names(raw: &[String]) -> Vec<String> {
-    let mut seen = std::collections::HashSet::new();
-    raw.iter()
-        .map(|name| clean_entity_name(name))
-        .filter(|name| !name.is_empty())
-        .filter(|name| seen.insert(entity_norm(name)))
-        .take(MAX_ENTITIES)
-        .collect()
 }
 
 /// The dedup key for an entity (LightRAG's `Dedupe`, applied at both ends —
@@ -397,9 +396,10 @@ impl ExtractedMeta {
         note.todo_tags = self
             .todos
             .into_iter()
-            .map(|t| t.trim().to_string())
+            .map(|t| t.trim().chars().take(MAX_TODO_CHARS).collect::<String>())
             .filter(|t| !t.is_empty())
             .map(|text| TodoTag { text, done: false })
+            .take(MAX_TODOS)
             .collect();
 
         let fire_at = parse_local_datetime_ms(self.reminder_at.trim());
@@ -445,7 +445,6 @@ async fn extract_metadata(
     settings: &AppSettings,
     body: &str,
     framing: Option<&str>,
-    structure: bool,
 ) -> Result<ExtractedMeta, String> {
     let provider = settings
         .active_post_process_provider()
@@ -468,19 +467,6 @@ async fn extract_metadata(
 
     let now_local = chrono::Local::now().format("%A %Y-%m-%dT%H:%M").to_string();
 
-    // Two modes share one call. STRUCTURING (freshly dictated/typed note, no
-    // selection): the model also returns a Markdown-formatted `body`. VERBATIM
-    // (a selection the user is saving): the body is preserved untouched and the
-    // `framing` line steers only the title/summary.
-    let body_rule = if structure {
-        "- body: the note as clean Markdown. Infer intent and format for readability using headings \
-         (#/##), bullet or numbered lists, `- [ ]` checklists for tasks, tables for tabular/columned \
-         data, **bold**, > quotes and `code`. Keep EVERY fact and detail — reformat and lightly drop \
-         only spoken filler; never summarize, invent, or omit content. Strip a leading command such \
-         as \"make a note that…\" or \"note:\". A single plain thought stays one line.\n"
-    } else {
-        ""
-    };
     let framing_line = match framing {
         Some(f) if !f.trim().is_empty() => format!(
             "\nThe user selected the note text and, to say what it is for, added: \"{}\". Use that \
@@ -489,15 +475,11 @@ async fn extract_metadata(
         ),
         _ => String::new(),
     };
-    let intro = if structure {
-        "You turn what the user just captured into a clean personal note. Reply with JSON only."
-    } else {
-        "You extract metadata from a personal note the user is saving. Reply with JSON only."
-    };
+    let intro =
+        "You extract metadata from a personal note the user is saving. Reply with JSON only.";
     let system_prompt = format!(
         "{intro}{framing_line}\n\
          Rules:\n\
-         {body_rule}\
          - title: at most 3 words, plain text.\n\
          - tldr: exactly one short sentence.\n\
          - todos: action items present in the note (empty array if none).\n\
@@ -520,27 +502,29 @@ async fn extract_metadata(
          - reminder_at: if a reminder/timer is requested, the local datetime it should fire as \
            YYYY-MM-DDTHH:MM; otherwise an empty string. The current local datetime is {now_local}.\
          {verbatim_tail}",
-        verbatim_tail = if structure {
-            ""
-        } else {
+        verbatim_tail =
             "\nNever rewrite or summarize away the note itself — you only produce metadata."
-        }
     );
 
-    let mut properties = serde_json::json!({
-        "title": { "type": "string" },
-        "tldr": { "type": "string" },
-        "todos": { "type": "array", "items": { "type": "string" } },
-        "reminder_at": { "type": "string" },
+    let properties = serde_json::json!({
+        "title": { "type": "string", "maxLength": 80 },
+        "tldr": { "type": "string", "maxLength": 240 },
+        "todos": {
+            "type": "array",
+            "maxItems": MAX_TODOS,
+            "items": { "type": "string", "maxLength": MAX_TODO_CHARS }
+        },
+        "reminder_at": { "type": "string", "maxLength": 19 },
         // Distillation (D2/D3). `kind` is an enum so the taxonomy is fixed by the
         // schema rather than by the prompt; Rust still re-validates on the way in.
-        "question": { "type": "string" },
+        "question": { "type": "string", "maxLength": MAX_QUESTION_CHARS },
         "entities": {
             "type": "array",
+            "maxItems": MAX_ENTITIES,
             "items": {
                 "type": "object",
                 "properties": {
-                    "name": { "type": "string" },
+                    "name": { "type": "string", "maxLength": MAX_ENTITY_NAME_CHARS },
                     "kind": { "type": "string", "enum": ENTITY_KINDS }
                 },
                 "required": ["name", "kind"],
@@ -549,19 +533,20 @@ async fn extract_metadata(
         },
         "relations": {
             "type": "array",
+            "maxItems": MAX_RELATIONS,
             "items": {
                 "type": "object",
                 "properties": {
-                    "from": { "type": "string" },
-                    "pred": { "type": "string" },
-                    "to": { "type": "string" }
+                    "from": { "type": "string", "maxLength": MAX_ENTITY_NAME_CHARS },
+                    "pred": { "type": "string", "maxLength": MAX_ENTITY_NAME_CHARS },
+                    "to": { "type": "string", "maxLength": MAX_ENTITY_NAME_CHARS }
                 },
                 "required": ["from", "pred", "to"],
                 "additionalProperties": false
             }
         }
     });
-    let mut required = vec![
+    let required = vec![
         "title",
         "tldr",
         "todos",
@@ -570,10 +555,6 @@ async fn extract_metadata(
         "entities",
         "relations",
     ];
-    if structure {
-        properties["body"] = serde_json::json!({ "type": "string" });
-        required.insert(0, "body");
-    }
     let schema = serde_json::json!({
         "type": "object",
         "properties": properties,
@@ -602,140 +583,27 @@ async fn extract_metadata(
     Ok(meta)
 }
 
-// -- conversational writing (RECALL-PLAN §7) -----------------------------------
-
-/// The structured-output shape for a reconcile (merge) call. Same fields as
-/// [`ExtractedMeta`] plus the merged `body` and per-todo `done` state.
-#[derive(Deserialize, Debug)]
-struct MergedMeta {
-    body: String,
-    title: String,
-    tldr: String,
-    #[serde(default)]
-    todos: Vec<MergedTodo>,
-    #[serde(default)]
-    reminder_at: String,
-}
-
-#[derive(Deserialize, Debug)]
-struct MergedTodo {
-    text: String,
-    #[serde(default)]
-    done: bool,
-}
-
-impl MergedMeta {
-    /// Fold the merge onto a clone of `current`, preserving id/timestamp/pin.
-    /// Conservative: a blank field from the model keeps the current value, so a
-    /// weak completion can never erase the note.
-    fn apply_to(self, current: &Note, auto_arm: bool) -> Note {
-        let mut note = current.clone();
-        if !self.body.trim().is_empty() {
-            note.body = self.body.trim().to_string();
-        }
-        if !self.title.trim().is_empty() {
-            note.title = self.title.trim().to_string();
-        }
-        if !self.tldr.trim().is_empty() {
-            note.tldr = self.tldr.trim().to_string();
-        }
-        // Trust the model's FULL merged todo list; keep the current list only
-        // when it returned none (never silently drop todos).
-        let todos: Vec<TodoTag> = self
-            .todos
-            .into_iter()
-            .map(|t| TodoTag {
-                text: t.text.trim().to_string(),
-                done: t.done,
-            })
-            .filter(|t| !t.text.is_empty())
-            .collect();
-        if !todos.is_empty() {
-            note.todo_tags = todos;
-        }
-        // Only touch the reminder when the change actually specified timing.
-        if let Some(ms) = parse_local_datetime_ms(self.reminder_at.trim()) {
-            note.reminder_state = ReminderState {
-                status: if auto_arm {
-                    ReminderStatus::Armed
-                } else {
-                    ReminderStatus::Pending
-                },
-                fire_at: Some(ms),
-            };
-        }
-        note
-    }
-}
-
-/// Conservatively merge a spoken change into an existing note (RECALL-PLAN §7.1)
-/// — the reconcile sibling of [`extract_metadata`], reusing the same structured
-/// LLM infra. NEVER loses the user's words: with no usable provider, or on any
-/// LLM/parse failure, it falls back to appending the raw change to the body and
-/// leaving the rest untouched. Returns the merged note ready to save; id,
-/// timestamp, and pin state are preserved.
-pub(crate) async fn reconcile_note(
-    app: &AppHandle,
-    current: &Note,
-    change: &str,
-    convo_context: &str,
-) -> Note {
-    let settings = get_settings(app);
-    if llm_usable(&settings) {
-        match reconcile_call(app, &settings, current, change, convo_context).await {
-            Ok(merged) => {
-                let candidate = merged.apply_to(current, settings.grain_space_auto_reminders);
-                // Confidence guard: a merge that silently drops most of a
-                // non-trivial body is almost always a bad merge, not a genuine
-                // supersede. A wrong overwrite is worse than a plain append, so
-                // fall back to appending the raw change instead.
-                if merge_lost_content(current, &candidate) {
-                    log::warn!(
-                        "[GRAIN] space reconcile: merge dropped too much body; raw-appending change"
-                    );
-                    return raw_append(current, change);
-                }
-                return candidate;
-            }
-            Err(e) => {
-                log::warn!("[GRAIN] space reconcile: merge failed ({e}); raw-appending change")
-            }
-        }
-    }
-    raw_append(current, change)
-}
-
-/// True when a reconcile merge lost more than half of a non-trivial body — the
-/// signal we use to distrust the merge and fall back to a safe append. Short
-/// bodies (< 40 chars) are exempt: replacing a tiny note wholesale is normal.
-fn merge_lost_content(current: &Note, candidate: &Note) -> bool {
-    let cur = current.body.trim().chars().count();
-    let new = candidate.body.trim().chars().count();
-    cur >= 40 && new.saturating_mul(2) < cur
-}
-
-/// True when a structuring reformat lost more than half of a non-trivial note —
-/// the signal to distrust it and keep the verbatim body. Markdown formatting
-/// only ADDS characters, so a big shrink means the model summarized. Short notes
-/// (< 40 chars) are exempt: a one-liner legitimately stays short.
-fn reformat_lost_content(raw: &str, formatted: &str) -> bool {
-    let r = raw.trim().chars().count();
-    let f = formatted.trim().chars().count();
-    r >= 40 && f.saturating_mul(2) < r
-}
-
-/// Degrade path: append the change to the body verbatim, keep everything else.
-fn raw_append(current: &Note, change: &str) -> Note {
+/// Deterministic safe append: preserves all old body text byte-for-byte,
+/// appending the change with the readable separator.
+#[cfg(test)]
+pub(crate) fn raw_append(current: &Note, change: &str) -> Note {
     let mut note = current.clone();
     let change = change.trim();
     if change.is_empty() {
         return note;
     }
-    note.body = if note.body.trim().is_empty() {
-        change.to_string()
+    if note.body.is_empty() {
+        note.body = change.to_string();
+    } else if note.body.ends_with("\n\n") {
+        note.body.push_str("---\n\n");
+        note.body.push_str(change);
+    } else if note.body.ends_with('\n') {
+        note.body.push_str("\n---\n\n");
+        note.body.push_str(change);
     } else {
-        format!("{}\n{}", note.body.trim_end(), change)
-    };
+        note.body.push_str("\n\n---\n\n");
+        note.body.push_str(change);
+    }
     note
 }
 
@@ -759,34 +627,10 @@ pub(crate) async fn compose_note(
     let mut relations = Vec::new();
     let settings = get_settings(app);
     if llm_usable(&settings) {
-        // Structure the body only for a freshly dictated/typed note (no framed
-        // selection) that fits the sample window — a truncated giant paste can't
-        // be safely reformatted, and a saved selection stays verbatim.
-        let fits = body.trim().chars().count() <= META_SAMPLE_CHARS;
-        let structure = framing.is_none() && fits;
         // Only a capped sample of a huge body is sent for metadata; the note
-        // body itself (set above) stays complete.
-        match extract_metadata(
-            app,
-            &settings,
-            &sample_for_meta(body.trim()),
-            framing,
-            structure,
-        )
-        .await
-        {
-            Ok(mut meta) => {
-                // Adopt the reformatted body only when it clearly preserved the
-                // content — a formatted note is longer, not shorter, so a big
-                // shrink means the model summarized and we keep the raw text.
-                let formatted = std::mem::take(&mut meta.body);
-                let formatted = formatted.trim();
-                if structure
-                    && !formatted.is_empty()
-                    && !reformat_lost_content(&note.body, formatted)
-                {
-                    note.body = formatted.to_string();
-                }
+        // body itself (set above) remains the durable source of truth.
+        match extract_metadata(app, &settings, &sample_for_meta(body.trim()), framing).await {
+            Ok(meta) => {
                 relations = meta.apply(&mut note, settings.grain_space_auto_reminders);
             }
             Err(e) => log::warn!("[GRAIN] space compose: extraction failed ({e}); raw note"),
@@ -797,115 +641,14 @@ pub(crate) async fn compose_note(
     if note.title.trim().is_empty() {
         note.title = fallback_title(&note.body);
     }
+    // Enforce hard bounds on presentation fields (Section 6 quality requirements).
+    note.title = note.title.split_whitespace().collect::<Vec<_>>().join(" ");
+    note.title = note.title.chars().take(80).collect();
+    if note.title.is_empty() {
+        note.title = fallback_title(&note.body);
+    }
+    note.tldr = note.tldr.trim().chars().take(240).collect();
     (note, relations)
-}
-
-/// One structured merge call against the active post-process provider.
-async fn reconcile_call(
-    app: &AppHandle,
-    settings: &AppSettings,
-    current: &Note,
-    change: &str,
-    convo_context: &str,
-) -> Result<MergedMeta, String> {
-    let provider = settings
-        .active_post_process_provider()
-        .cloned()
-        .ok_or("no active provider")?;
-    let model = settings
-        .post_process_models
-        .get(&provider.id)
-        .cloned()
-        .unwrap_or_default();
-    let api_key = settings
-        .post_process_api_keys
-        .get(&provider.id)
-        .cloned()
-        .unwrap_or_default();
-    let client = app
-        .try_state::<reqwest::Client>()
-        .map(|s| s.inner().clone())
-        .ok_or("shared HTTP client unavailable")?;
-
-    let note_json = serde_json::json!({
-        "title": current.title,
-        "tldr": current.tldr,
-        "body": current.body,
-        "todos": current.todo_tags.iter().map(|t| serde_json::json!({ "text": t.text, "done": t.done })).collect::<Vec<_>>(),
-    })
-    .to_string();
-    let context_block = if convo_context.trim().is_empty() {
-        String::new()
-    } else {
-        format!(
-            "\nRecent conversation (resolve references like \"the first two\" against this):\n{}\n",
-            convo_context.trim()
-        )
-    };
-    let now_local = chrono::Local::now().format("%A %Y-%m-%dT%H:%M").to_string();
-    let system_prompt = format!(
-        "You are updating one of the user's saved memories from something they just said. Merge \
-         their change into the memory CONSERVATIVELY and reply with JSON only.\n\
-         Current memory (JSON): {note_json}{context_block}\n\
-         Rules:\n\
-         - body: incorporate the new information. APPEND by default; only rewrite existing wording \
-         when the change genuinely supersedes it (e.g. a changed password replaces the old value, \
-         keeping the rest). NEVER drop content the user did not ask to remove. When unsure whether \
-         to rewrite or append, APPEND — return the current body with the new information added, \
-         never a shorter body than you started with unless the user explicitly removed something.\n\
-         - title: at most 3 words. Keep the existing title unless the memory is now about something \
-         different.\n\
-         - tldr: one short sentence describing the merged memory.\n\
-         - todos: the FULL merged list of items as {{text, done}} objects. Add new ones, mark named \
-         ones done, drop only ones the user says to remove; preserve existing done states and order \
-         otherwise.\n\
-         - reminder_at: only if the change mentions a time/reminder — the local datetime \
-         YYYY-MM-DDTHH:MM; otherwise an empty string. The current local datetime is {now_local}."
-    );
-
-    let schema = serde_json::json!({
-        "type": "object",
-        "properties": {
-            "body": { "type": "string" },
-            "title": { "type": "string" },
-            "tldr": { "type": "string" },
-            "todos": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "text": { "type": "string" },
-                        "done": { "type": "boolean" }
-                    },
-                    "required": ["text", "done"],
-                    "additionalProperties": false
-                }
-            },
-            "reminder_at": { "type": "string" }
-        },
-        "required": ["body", "title", "tldr", "todos", "reminder_at"],
-        "additionalProperties": false
-    });
-
-    let success = crate::llm_client::send_chat_completion_with_schema(
-        &client,
-        &provider,
-        api_key,
-        &model,
-        change.to_string(),
-        Some(system_prompt),
-        Some(schema),
-        None,
-        None,
-    )
-    .await
-    .map_err(|e| e.to_string())?;
-
-    let content = success.content.ok_or("empty completion")?;
-    let meta: MergedMeta =
-        serde_json::from_str(strip_code_fences(&content)).map_err(|e| e.to_string())?;
-    crate::post_process_router::record_usage(app, &provider.id);
-    Ok(meta)
 }
 
 /// Some models fence JSON in ```json blocks even under structured output.
@@ -921,6 +664,7 @@ fn strip_code_fences(s: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::grain_space::content_version_hash;
 
     #[test]
     fn metadata_apply_arms_or_parks_reminder() {
@@ -947,6 +691,23 @@ mod tests {
 
         let parked = meta(false);
         assert_eq!(parked.reminder_state.status, ReminderStatus::Pending);
+    }
+
+    #[test]
+    fn metadata_todos_are_bounded_before_persistence() {
+        let mut note = Note::raw("body".into());
+        let meta = ExtractedMeta {
+            todos: (0..(MAX_TODOS + 10))
+                .map(|_| "界".repeat(MAX_TODO_CHARS + 10))
+                .collect(),
+            ..Default::default()
+        };
+        meta.apply(&mut note, false);
+        assert_eq!(note.todo_tags.len(), MAX_TODOS);
+        assert!(note
+            .todo_tags
+            .iter()
+            .all(|todo| todo.text.chars().count() == MAX_TODO_CHARS));
     }
 
     #[test]
@@ -1075,44 +836,6 @@ mod tests {
     }
 
     #[test]
-    fn raw_append_preserves_and_appends() {
-        let mut cur = Note::raw("original".into());
-        cur.title = "Keep Me".into();
-        let out = raw_append(&cur, "  more info  ");
-        assert_eq!(out.body, "original\nmore info");
-        assert_eq!(out.title, "Keep Me"); // untouched
-        assert_eq!(out.id, cur.id); // identity preserved
-
-        let empty = Note::raw("".into());
-        assert_eq!(raw_append(&empty, "first").body, "first");
-    }
-
-    #[test]
-    fn merged_meta_is_conservative_on_blanks() {
-        let mut cur = Note::raw("body".into());
-        cur.title = "Old Title".into();
-        cur.tldr = "old summary".into();
-        cur.todo_tags = vec![TodoTag {
-            text: "task".into(),
-            done: false,
-        }];
-        // Model returned blank title/tldr/body and no todos → keep everything.
-        let merged = MergedMeta {
-            body: "  ".into(),
-            title: "".into(),
-            tldr: "".into(),
-            todos: vec![],
-            reminder_at: "".into(),
-        }
-        .apply_to(&cur, true);
-        assert_eq!(merged.body, "body");
-        assert_eq!(merged.title, "Old Title");
-        assert_eq!(merged.tldr, "old summary");
-        assert_eq!(merged.todo_tags.len(), 1);
-        assert_eq!(merged.reminder_state.status, ReminderStatus::None);
-    }
-
-    #[test]
     fn fallback_title_uses_first_words() {
         assert_eq!(fallback_title("buy milk, eggs and bread"), "buy milk, eggs");
         assert_eq!(fallback_title("done."), "done");
@@ -1134,54 +857,246 @@ mod tests {
     }
 
     #[test]
-    fn reformat_lost_content_flags_summaries_only() {
-        let raw = "buy milk and eggs, call the plumber about the leak, book the dentist";
-        // A genuine reformat is longer (adds markdown) → trusted.
-        let formatted = "- [ ] buy milk and eggs\n- [ ] call the plumber about the leak\n- [ ] book the dentist";
-        assert!(!reformat_lost_content(raw, formatted));
-        // A summary that dropped over half the note → distrusted.
-        assert!(reformat_lost_content(raw, "- buy groceries"));
-        // Short notes are exempt (a one-liner stays short).
-        assert!(!reformat_lost_content("call mom", "call mom"));
+    fn raw_append_preserves_and_appends() {
+        let mut cur = Note::raw("original".into());
+        cur.title = "Keep Me".into();
+        let out = raw_append(&cur, "  more info  ");
+        assert_eq!(out.body, "original\n\n---\n\nmore info");
+        assert_eq!(out.title, "Keep Me"); // untouched
+        assert_eq!(out.id, cur.id); // identity preserved
+
+        let empty = Note::raw("".into());
+        assert_eq!(raw_append(&empty, "first").body, "first");
+
+        let with_newline = Note::raw("line1\n".into());
+        assert_eq!(
+            raw_append(&with_newline, "line2").body,
+            "line1\n\n---\n\nline2"
+        );
+
+        let with_double_newline = Note::raw("line1\n\n".into());
+        assert_eq!(
+            raw_append(&with_double_newline, "line2").body,
+            "line1\n\n---\n\nline2"
+        );
     }
 
     #[test]
-    fn merge_lost_content_flags_big_drops_only() {
-        let mut cur = Note::raw("a".repeat(100));
-        let mut cand = cur.clone();
-        // Kept most of it → fine.
-        cand.body = "a".repeat(60);
-        assert!(!merge_lost_content(&cur, &cand));
-        // Dropped more than half of a long body → distrust.
-        cand.body = "a".repeat(30);
-        assert!(merge_lost_content(&cur, &cand));
-        // Short bodies are exempt (wholesale replace is normal).
-        cur.body = "tiny".into();
-        cand.body = "x".into();
-        assert!(!merge_lost_content(&cur, &cand));
+    fn fallback_title_cleans_markdown_prefixes() {
+        assert_eq!(fallback_title("# Hello World today"), "Hello World today");
+        assert_eq!(
+            fallback_title("## Meeting Notes for Q3"),
+            "Meeting Notes for"
+        );
+        assert_eq!(fallback_title("- [ ] buy milk and eggs"), "buy milk and");
+        assert_eq!(fallback_title("* Important reminder"), "Important reminder");
+        assert_eq!(fallback_title("> Quote of the day"), "Quote of the");
     }
 
     #[test]
-    fn merged_meta_replaces_todos_when_provided() {
-        let cur = Note::raw("b".into());
-        let merged = MergedMeta {
-            body: "b".into(),
-            title: "T".into(),
-            tldr: "s".into(),
-            todos: vec![
-                MergedTodo {
-                    text: "one".into(),
-                    done: true,
-                },
-                MergedTodo {
-                    text: " ".into(),
-                    done: false,
-                },
-            ],
-            reminder_at: "".into(),
-        }
-        .apply_to(&cur, false);
-        assert_eq!(merged.todo_tags.len(), 1); // blank dropped
-        assert!(merged.todo_tags[0].done);
+    fn phase_2_gate_explicit_capture_model_disabled_preserves_and_retrieves() {
+        use crate::grain_space::vault::{self, Vault};
+
+        let raw_capture = "Emergency contact Dr Alvarez at 408-555-0199, prescription Amlodipine 150mg on 2026-09-04 at cost $349.99. Reference: https://grain.local/spec/v2. Note: \"Always verify facts against active code\", tentatively scheduled maybe?";
+
+        // 1. Model disabled fallback derivation
+        let mut note = Note::raw(raw_capture.to_string());
+        note.title = fallback_title(&note.body);
+        assert!(!note.title.is_empty(), "fallback title must never be empty");
+        assert_eq!(note.body, raw_capture, "body must remain 100% verbatim");
+
+        // 2. Save note to an isolated test vault
+        let temp_dir = std::env::temp_dir().join(format!("grain_p2_gate_{}", uuid::Uuid::new_v4()));
+        let vault = Vault {
+            root: temp_dir.join("vault"),
+            folder: "Grain".to_string(),
+            index_base: temp_dir.join("appdata"),
+            native: false,
+        };
+        std::fs::create_dir_all(&vault.root).unwrap();
+        std::fs::create_dir_all(&vault.index_base).unwrap();
+
+        vault::save_note(&vault, &note).expect("save note must succeed");
+
+        // 3. Immediately retrievable through lexical search
+        let hit_phone = vault::search_notes_natural(&vault, "555-0199", None).unwrap();
+        assert_eq!(hit_phone.len(), 1, "must find note by phone number");
+        assert_eq!(hit_phone[0].id, note.id);
+
+        let hit_price = vault::search_notes_natural(&vault, "$349.99", None).unwrap();
+        assert_eq!(hit_price.len(), 1, "must find note by price");
+
+        let hit_url = vault::search_notes_natural(&vault, "grain.local/spec", None).unwrap();
+        assert_eq!(hit_url.len(), 1, "must find note by URL fragment");
+
+        let hit_quote =
+            vault::search_notes_natural(&vault, "verify facts active code", None).unwrap();
+        assert_eq!(hit_quote.len(), 1, "must find note by quote fragment");
+
+        let hit_uncertainty =
+            vault::search_notes_natural(&vault, "tentatively scheduled maybe", None).unwrap();
+        assert_eq!(
+            hit_uncertainty.len(),
+            1,
+            "must find note by uncertainty terms"
+        );
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn phase_4_safe_deterministic_append_invariants() {
+        use crate::grain_space::vault::{self, Vault};
+
+        let temp_dir = std::env::temp_dir().join(format!("grain_p4_test_{}", uuid::Uuid::new_v4()));
+        let vault = Vault {
+            root: temp_dir.join("vault"),
+            folder: "Grain".to_string(),
+            index_base: temp_dir.join("appdata"),
+            native: false,
+        };
+        std::fs::create_dir_all(&vault.root).unwrap();
+        std::fs::create_dir_all(&vault.index_base).unwrap();
+
+        // 1. Create initial note
+        let original_body = "Line 1\nLine 2 with trailing spaces   \nLine 3";
+        let mut note = Note::raw(original_body.to_string());
+        note.title = "Roadmap".to_string();
+        vault::save_note(&vault, &note).expect("save initial note");
+
+        let v_init =
+            vault::note_storage_version(&vault, &note.id).expect("read exact persisted version");
+
+        // 2. Invoke the production append primitive and verify byte-for-byte
+        // preservation of everything that was already in the body.
+        let addition_1 = "Milestone A: Launch Q3";
+        vault::append_note_atomic(&vault, &note.id, addition_1, Some(&v_init))
+            .expect("append with current version");
+        let appended_1 = vault::get_note(&vault, &note.id).expect("read appended note");
+        assert_eq!(
+            appended_1.body,
+            format!("{original_body}\n\n---\n\n{addition_1}")
+        );
+
+        // 3. Reject stale target if modified after preparation.
+        let v_after_1 =
+            vault::note_storage_version(&vault, &note.id).expect("read post-append version");
+        let external_edit = "External edit: Roadmap overhauled completely.";
+        let mut ext_note = appended_1.clone();
+        ext_note.body = external_edit.to_string();
+        vault::save_note(&vault, &ext_note).expect("simulate external edit");
+        let stale = vault::append_note_atomic(&vault, &note.id, "must not land", Some(&v_after_1));
+        assert!(stale.is_err(), "stale append must fail closed");
+        let current_disk = vault::get_note(&vault, &note.id).expect("read after rejection");
+        assert_eq!(current_disk.body, external_edit);
+
+        // 4. Missing or wrong target fails closed with zero invented notes.
+        let missing_lookup = vault::get_note(&vault, "nonexistent_target_id_999");
+        assert!(missing_lookup.is_err(), "missing target must return error");
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn phase_4_content_version_hash_properties() {
+        // Determinism
+        assert_eq!(
+            content_version_hash("hello world"),
+            content_version_hash("hello world")
+        );
+        // Sensitivity to single byte changes
+        assert_ne!(
+            content_version_hash("hello world"),
+            content_version_hash("hello world ")
+        );
+        assert_ne!(
+            content_version_hash("hello world\n"),
+            content_version_hash("hello world")
+        );
+        // Multibyte Unicode & CJK
+        let cjk_text = "日本語のメモ、茶道と禅。🍵";
+        let cjk_hash1 = content_version_hash(cjk_text);
+        let cjk_hash2 = content_version_hash(cjk_text);
+        assert_eq!(cjk_hash1, cjk_hash2);
+        assert_eq!(cjk_hash1.len(), 64); // 64 hex digits (SHA-256)
+                                         // Empty text produces valid fixed-width hash
+        let empty_hash = content_version_hash("");
+        assert_eq!(empty_hash.len(), 64);
+    }
+
+    #[test]
+    fn phase_4_raw_append_whitespace_and_separator_variations() {
+        // 1. Empty body
+        let empty_note = Note::raw("".into());
+        let appended_empty = raw_append(&empty_note, "  First line  ");
+        assert_eq!(appended_empty.body, "First line");
+
+        // 2. Body with no trailing newline
+        let note_no_nl = Note::raw("Line 1".into());
+        let appended_no_nl = raw_append(&note_no_nl, "Line 2");
+        assert_eq!(appended_no_nl.body, "Line 1\n\n---\n\nLine 2");
+
+        // 3. Body with single trailing newline
+        let note_single_nl = Note::raw("Line 1\n".into());
+        let appended_single_nl = raw_append(&note_single_nl, "Line 2");
+        assert_eq!(appended_single_nl.body, "Line 1\n\n---\n\nLine 2");
+
+        // 4. Body with double trailing newline
+        let note_double_nl = Note::raw("Line 1\n\n".into());
+        let appended_double_nl = raw_append(&note_double_nl, "Line 2");
+        assert_eq!(appended_double_nl.body, "Line 1\n\n---\n\nLine 2");
+
+        // 5. Addition with code fences and internal dividers
+        let complex_addition = "```rust\nfn main() {}\n```\n---\nfooter note";
+        let note_complex = Note::raw("# Heading".into());
+        let appended_complex = raw_append(&note_complex, complex_addition);
+        assert_eq!(
+            appended_complex.body,
+            format!("# Heading\n\n---\n\n{complex_addition}")
+        );
+    }
+
+    #[test]
+    fn phase_4_duplicate_detection_edge_cases() {
+        let addition = "New task item: Review PR";
+
+        // Case A: Suffix matches but is NOT separated by separator (false positive avoidance)
+        let body_accidental_suffix = format!("Prefix text without separator {addition}");
+        let is_dup_a = if body_accidental_suffix.ends_with(addition) {
+            let before = &body_accidental_suffix[..body_accidental_suffix.len() - addition.len()];
+            before.is_empty() || before.ends_with("\n---\n\n") || before.ends_with("\n\n---\n\n")
+        } else {
+            false
+        };
+        assert!(
+            !is_dup_a,
+            "Accidental suffix overlap without separator must NOT be flagged as duplicate"
+        );
+
+        // Case B: Exactly separated by \n\n---\n\n
+        let body_proper_sep = format!("Existing content\n\n---\n\n{addition}");
+        let is_dup_b = if body_proper_sep.ends_with(addition) {
+            let before = &body_proper_sep[..body_proper_sep.len() - addition.len()];
+            before.is_empty() || before.ends_with("\n---\n\n") || before.ends_with("\n\n---\n\n")
+        } else {
+            false
+        };
+        assert!(
+            is_dup_b,
+            "Proper separator match must be recognized as duplicate"
+        );
+
+        // Case C: Body was solely this addition
+        let body_sole = addition.to_string();
+        let is_dup_c = if body_sole.ends_with(addition) {
+            let before = &body_sole[..body_sole.len() - addition.len()];
+            before.is_empty() || before.ends_with("\n---\n\n") || before.ends_with("\n\n---\n\n")
+        } else {
+            false
+        };
+        assert!(
+            is_dup_c,
+            "Exact identical body must be recognized as duplicate"
+        );
     }
 }

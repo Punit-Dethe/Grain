@@ -23,9 +23,9 @@
 
 use std::sync::Mutex;
 
+pub use grain_core::execution::ActionOutcome;
 use grain_core::execution::{
-    default_idempotency_key, ActionOutcome, FailureClass, PreparedCall, RiskClass, SideEffect,
-    Stale, SuccessData,
+    default_idempotency_key, FailureClass, PreparedCall, RiskClass, SideEffect, Stale, SuccessData,
 };
 use grain_core::interaction::{Field, Interaction};
 use serde_json::Value;
@@ -109,11 +109,12 @@ pub fn prepare(
     side_effect: SideEffect,
     manifest_digest: &str,
 ) -> PreparedCall {
+    let token = mint_token(canonical_id);
     let idempotency_key = (side_effect == SideEffect::Write)
-        .then(|| default_idempotency_key(canonical_id, &arguments));
+        .then(|| default_idempotency_key(canonical_id, &arguments, &token));
     let prepared_at_ms = now_ms();
     PreparedCall {
-        token: mint_token(canonical_id),
+        token,
         canonical_id: canonical_id.to_string(),
         extension_id: extension_id.to_string(),
         action_id: action_id.to_string(),
@@ -128,16 +129,37 @@ pub fn prepare(
     }
 }
 
-/// Route a prepared call: `Safe` executes now; `Confirm` is withheld and returned
-/// as an interaction for the user.
-pub async fn run_or_confirm(app: &AppHandle, prepared: PreparedCall, title: &str) -> Dispatch {
+/// Retrieve and remove a held confirmation by token.
+#[cfg(test)]
+pub fn take_pending(token: &str) -> Option<PreparedCall> {
+    PendingCalls::take(token)
+}
+
+/// Route a prepared call with optional AppHandle: `Confirm` is withheld and returned
+/// as an interaction for the user; `Safe` executes now if AppHandle is present.
+pub async fn run_or_confirm_opt(
+    app: Option<&AppHandle>,
+    prepared: PreparedCall,
+    title: &str,
+) -> Dispatch {
     if prepared.risk.needs_confirmation() {
         let interaction = confirm_interaction(&prepared, title);
         PendingCalls::insert(prepared);
         Dispatch::AwaitConfirm(interaction)
-    } else {
+    } else if let Some(app) = app {
         Dispatch::Ran(execute_revalidated(app, &prepared).await)
+    } else {
+        Dispatch::Ran(failed(
+            FailureClass::Internal,
+            "App handle required for immediate execution of safe actions",
+        ))
     }
+}
+
+/// Route a prepared call: `Safe` executes now; `Confirm` is withheld and returned
+/// as an interaction for the user.
+pub async fn run_or_confirm(app: &AppHandle, prepared: PreparedCall, title: &str) -> Dispatch {
+    run_or_confirm_opt(Some(app), prepared, title).await
 }
 
 /// Approve (or decline) a held confirmation and run the *exact* call. Revalidates
@@ -415,11 +437,14 @@ fn map_failure_class(raw: &str) -> FailureClass {
 }
 
 fn confirm_interaction(prepared: &PreparedCall, title: &str) -> Interaction {
-    let details = prepared
+    let details: Vec<Field> = prepared
         .arguments
         .as_object()
         .map(|map| {
             map.iter()
+                // Optimistic-concurrency state is host-owned. The user confirms
+                // the human identity and exact content, not a digest.
+                .filter(|(key, _)| key.as_str() != "expected_version")
                 .filter_map(|(key, value)| {
                     value_to_string(value).map(|value| Field {
                         label: key.clone(),
@@ -434,13 +459,80 @@ fn confirm_interaction(prepared: &PreparedCall, title: &str) -> Interaction {
         SideEffect::Read => "Reads your data".to_string(),
         SideEffect::None => String::new(),
     };
+
+    let summary = match prepared.action_id.as_str() {
+        "save_note" => {
+            let note_title = prepared
+                .arguments
+                .get("title")
+                .and_then(Value::as_str)
+                .unwrap_or("note");
+            format!("Save note \"{note_title}\"")
+        }
+        "append_to_note" => {
+            let note_title = prepared
+                .arguments
+                .get("title")
+                .and_then(Value::as_str)
+                .unwrap_or("note");
+            format!("Add to \"{note_title}\"")
+        }
+        "rewrite_note" => {
+            let note_title = prepared
+                .arguments
+                .get("target_title")
+                .and_then(Value::as_str)
+                .unwrap_or("note");
+            format!("Replace \"{note_title}\" with the revised note")
+        }
+        _ => String::new(),
+    };
+
     Interaction::Confirm {
         token: prepared.token.clone(),
         title: title.to_string(),
-        summary: String::new(),
+        summary,
         details,
         side_effect,
         destinations: Vec::new(),
+    }
+}
+
+/// Convert an [`Interaction`] to an [`crate::agent::AgentConfirm`] for the agent confirmation panel.
+pub(crate) fn to_agent_confirm(interaction: Interaction) -> crate::agent::AgentConfirm {
+    let markdown = grain_core::interaction::to_markdown(&interaction);
+    match interaction {
+        Interaction::Confirm {
+            token,
+            title,
+            summary,
+            details,
+            side_effect,
+            destinations,
+        } => crate::agent::AgentConfirm {
+            token,
+            title,
+            summary,
+            details: details
+                .into_iter()
+                .map(|field| crate::agent::AgentConfirmField {
+                    label: field.label,
+                    value: field.value,
+                })
+                .collect(),
+            side_effect,
+            destinations,
+            markdown,
+        },
+        _ => crate::agent::AgentConfirm {
+            token: String::new(),
+            title: "Confirm".to_string(),
+            summary: String::new(),
+            details: Vec::new(),
+            side_effect: String::new(),
+            destinations: Vec::new(),
+            markdown,
+        },
     }
 }
 
@@ -508,13 +600,16 @@ async fn grain_space_execute(app: &AppHandle, prepared: &PreparedCall) -> Action
                 return invalid("get_note needs an id.");
             };
             match crate::grain_space::get(app, &id).await {
-                Ok(note) => ActionOutcome::Succeeded(SuccessData {
-                    source,
-                    title: Some(note.title.clone()),
-                    body: Some(note.body.clone()),
-                    details: vec![],
-                    receipt: false,
-                }),
+                Ok(note) => {
+                    let body = bounded_note_body(note.body, 16 * 1024);
+                    ActionOutcome::Succeeded(SuccessData {
+                        source,
+                        title: Some(note.title.clone()),
+                        body: Some(body),
+                        details: vec![],
+                        receipt: false,
+                    })
+                }
                 Err(e) => failed(
                     FailureClass::NotFound,
                     &format!("Could not read that note: {e}"),
@@ -532,7 +627,13 @@ async fn grain_space_execute(app: &AppHandle, prepared: &PreparedCall) -> Action
             Ok(list) => ActionOutcome::Succeeded(SuccessData {
                 source,
                 title: Some("Collections".to_string()),
-                body: Some(list.join(", ")),
+                body: Some(
+                    list.into_iter()
+                        .take(64)
+                        .map(|name| crate::grain_space::bounded_bridge_text(name, 256))
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                ),
                 details: vec![],
                 receipt: false,
             }),
@@ -545,14 +646,10 @@ async fn grain_space_execute(app: &AppHandle, prepared: &PreparedCall) -> Action
             let Some(body) = str_arg(args, "body") else {
                 return invalid("save_note needs a body.");
             };
-            let supplied = crate::grain_space::SuppliedMeta {
-                title: str_arg(args, "title"),
-                summary: None,
-                question: None,
-                entities: Vec::new(),
-                collection: str_arg(args, "collection"),
-            };
-            match crate::grain_space::save(app, &body, supplied).await {
+            let title = str_arg(args, "title").unwrap_or_default();
+            let collection = str_arg(args, "collection");
+            match crate::grain_space::save_verbatim(app, &title, &body, collection.as_deref()).await
+            {
                 Ok(id) => {
                     let title = crate::grain_space::get(app, &id)
                         .await
@@ -576,17 +673,121 @@ async fn grain_space_execute(app: &AppHandle, prepared: &PreparedCall) -> Action
             let (Some(id), Some(text)) = (str_arg(args, "id"), str_arg(args, "text")) else {
                 return invalid("append_to_note needs an id and text.");
             };
-            match crate::grain_space::append(app, &id, &text).await {
-                Ok(()) => ActionOutcome::Succeeded(SuccessData {
+            let Some(expected_version) = str_arg(args, "expected_version") else {
+                return invalid("rewrite_note requires a host-bound note version.");
+            };
+            match crate::grain_space::append_with_idempotency(
+                app,
+                &id,
+                &text,
+                Some(&expected_version),
+                prepared.idempotency_key.as_deref(),
+            )
+            .await
+            {
+                Ok(()) => {
+                    let title = crate::grain_space::get(app, &id)
+                        .await
+                        .map(|note| note.title)
+                        .unwrap_or_else(|_| "note".to_string());
+                    ActionOutcome::Succeeded(SuccessData {
+                        source,
+                        title: Some("Updated note".to_string()),
+                        body: Some(format!("Added to \"{title}\".")),
+                        details: vec![],
+                        receipt: true,
+                    })
+                }
+                Err(e) => failed(
+                    FailureClass::Internal,
+                    &format!("Could not update that note: {e}"),
+                ),
+            }
+        }
+        "rewrite_note" => {
+            let Some(id) = str_arg(args, "id") else {
+                return invalid("rewrite_note needs an id and body.");
+            };
+            let Some(body) = args
+                .get("body")
+                .and_then(Value::as_str)
+                .filter(|value| !value.trim().is_empty())
+                .map(str::to_string)
+            else {
+                return invalid("rewrite_note needs an id and body.");
+            };
+            if id.len() > 128 || body.len() > 65_536 {
+                return invalid("rewrite_note arguments exceed the allowed size.");
+            }
+
+            let raw_title = str_arg(args, "title")
+                .unwrap_or_else(|| crate::grain_space::capture::fallback_title(&body));
+            let title: String = raw_title
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ")
+                .chars()
+                .take(80)
+                .collect();
+            let tldr: String = str_arg(args, "summary")
+                .unwrap_or_default()
+                .chars()
+                .take(240)
+                .collect();
+            let question: String = str_arg(args, "question")
+                .unwrap_or_default()
+                .chars()
+                .take(240)
+                .collect();
+            let entities = match rewrite_entities(args.get("entities")) {
+                Ok(entities) => entities,
+                Err(message) => return invalid(&message),
+            };
+            let expected_version = str_arg(args, "expected_version");
+            let replacement = crate::grain_space::note::NoteRewrite {
+                title,
+                tldr,
+                body,
+                question,
+                entities,
+            };
+            match crate::grain_space::rewrite_with_idempotency(
+                app,
+                &id,
+                replacement,
+                expected_version.as_deref(),
+                prepared.idempotency_key.as_deref(),
+            )
+            .await
+            {
+                Ok(note) => ActionOutcome::Succeeded(SuccessData {
                     source,
-                    title: Some("Updated note".to_string()),
-                    body: Some("Added to the note.".to_string()),
+                    title: Some("Rewritten note".to_string()),
+                    body: Some(format!("Replaced \"{}\".", note.title)),
                     details: vec![],
                     receipt: true,
                 }),
                 Err(e) => failed(
                     FailureClass::Internal,
-                    &format!("Could not update that note: {e}"),
+                    &format!("Could not rewrite that note: {e}"),
+                ),
+            }
+        }
+        "delete_note" => {
+            let Some(id) = str_arg(args, "id") else {
+                return invalid("delete_note needs an id.");
+            };
+            match crate::grain_space::delete(app, &id).await {
+                Ok(()) => ActionOutcome::Succeeded(SuccessData {
+                    source,
+                    title: Some("Deleted note".to_string()),
+                    body: Some(format!("Deleted note {id}.")),
+                    details: vec![],
+                    receipt: true,
+                }),
+                Err(e) => failed(
+                    FailureClass::Internal,
+                    &format!("Could not delete that note: {e}"),
                 ),
             }
         }
@@ -595,6 +796,53 @@ async fn grain_space_execute(app: &AppHandle, prepared: &PreparedCall) -> Action
             &format!("Grain Space has no action '{other}'."),
         ),
     }
+}
+
+fn rewrite_entities(value: Option<&Value>) -> Result<Vec<String>, String> {
+    let Some(value) = value else {
+        return Ok(Vec::new());
+    };
+    let Some(items) = value.as_array() else {
+        return Err("rewrite_note entities must be a list of text values.".to_string());
+    };
+    if items.len() > 12 {
+        return Err("rewrite_note entities exceeds maximum allowed count (12).".to_string());
+    }
+
+    let mut seen = std::collections::HashSet::new();
+    let mut entities = Vec::new();
+    for item in items {
+        let Some(raw) = item.as_str() else {
+            return Err("rewrite_note entities must contain only text values.".to_string());
+        };
+        let entity: String = raw
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+            .chars()
+            .take(64)
+            .collect();
+        if entity.is_empty() || !seen.insert(entity.to_lowercase()) {
+            continue;
+        }
+        entities.push(entity);
+    }
+    Ok(entities)
+}
+
+fn bounded_note_body(body: String, max_bytes: usize) -> String {
+    if body.len() <= max_bytes {
+        return body;
+    }
+    let mut boundary = max_bytes;
+    while boundary > 0 && !body.is_char_boundary(boundary) {
+        boundary -= 1;
+    }
+    format!(
+        "{}\n\n[Truncated: showing first {boundary} of {} bytes. Note continues.]",
+        &body[..boundary],
+        body.len()
+    )
 }
 
 fn invalid(message: &str) -> ActionOutcome {
@@ -683,6 +931,24 @@ pub fn grain_space_actions() -> Vec<grain_core::capability_index::ActionInput> {
             &[("id", true), ("text", true)],
         ),
         make(
+            "rewrite_note",
+            "Replace and improve an existing note",
+            ActionRisk::Confirm,
+            &[
+                "rewrite that note with this corrected version",
+                "reorganize my note and replace the old draft",
+                "update that note instead of adding another section",
+            ],
+            &[("id", true), ("body", true), ("title", false)],
+        ),
+        make(
+            "delete_note",
+            "Delete a saved note",
+            ActionRisk::Confirm,
+            &["delete that note", "remove this note"],
+            &[("id", true)],
+        ),
+        make(
             "list_collections",
             "List note collections",
             ActionRisk::Safe,
@@ -756,5 +1022,100 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn grain_space_mutations_require_confirmation() {
+        let decls = grain_space_actions();
+        for decl in &decls {
+            match decl.action_id.as_str() {
+                "save_note" | "append_to_note" | "rewrite_note" | "delete_note" => {
+                    assert_eq!(decl.risk, grain_sdk::manifest::ActionRisk::Confirm);
+                }
+                "search_notes" | "get_note" | "list_collections" => {
+                    assert_eq!(decl.risk, grain_sdk::manifest::ActionRisk::Safe);
+                }
+                other => panic!("unexpected action id: {other}"),
+            }
+        }
+    }
+
+    #[test]
+    fn rewrite_execution_metadata_is_strict_and_bounded() {
+        let entities =
+            rewrite_entities(Some(&json!([" Grain   Space ", "grain space", "Rust"]))).unwrap();
+        assert_eq!(entities, vec!["Grain Space", "Rust"]);
+        assert!(rewrite_entities(Some(&json!({ "not": "a list" }))).is_err());
+        let too_many = Value::Array(vec![json!("x"); 13]);
+        assert!(rewrite_entities(Some(&too_many)).is_err());
+    }
+
+    #[test]
+    fn to_agent_confirm_preserves_interaction_data() {
+        let interaction = Interaction::Confirm {
+            token: "pc_test123".to_string(),
+            title: "Save Note".to_string(),
+            summary: "summary".to_string(),
+            details: vec![Field {
+                label: "title".to_string(),
+                value: "Meeting Notes".to_string(),
+            }],
+            side_effect: "Makes a change".to_string(),
+            destinations: vec!["Grain Space".to_string()],
+        };
+        let confirm = to_agent_confirm(interaction);
+        assert_eq!(confirm.token, "pc_test123");
+        assert_eq!(confirm.title, "Save Note");
+        assert_eq!(confirm.details.len(), 1);
+        assert_eq!(confirm.details[0].label, "title");
+        assert_eq!(confirm.details[0].value, "Meeting Notes");
+        assert!(confirm.markdown.contains("Meeting Notes"));
+    }
+
+    #[test]
+    fn note_version_is_not_exposed_in_confirmation() {
+        let call = prepare(
+            "grainspace:append_to_note",
+            GRAIN_SPACE_EXT_ID,
+            "append_to_note",
+            "Grain Space",
+            json!({
+                "id": "note-1",
+                "title": "Roadmap",
+                "text": "Ship it",
+                "expected_version": "secret-host-version"
+            }),
+            RiskClass::Confirm,
+            SideEffect::Write,
+            "builtin",
+        );
+        let rendered =
+            grain_core::interaction::to_markdown(&confirm_interaction(&call, "Append to Note"));
+        assert!(rendered.contains("Ship it"));
+        assert!(!rendered.contains("expected_version"));
+        assert!(!rendered.contains("secret-host-version"));
+
+        let rewrite = prepare(
+            "grainspace:rewrite_note",
+            GRAIN_SPACE_EXT_ID,
+            "rewrite_note",
+            "Grain Space",
+            json!({
+                "id": "note-1",
+                "target_title": "Roadmap",
+                "title": "Revised Roadmap",
+                "body": "Complete replacement",
+                "expected_version": "secret-rewrite-version"
+            }),
+            RiskClass::Confirm,
+            SideEffect::Write,
+            "builtin",
+        );
+        let rendered =
+            grain_core::interaction::to_markdown(&confirm_interaction(&rewrite, "Rewrite Note"));
+        assert!(rendered.contains("Complete replacement"));
+        assert!(rendered.contains("Replace \"Roadmap\""));
+        assert!(!rendered.contains("expected_version"));
+        assert!(!rendered.contains("secret-rewrite-version"));
     }
 }

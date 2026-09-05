@@ -113,19 +113,13 @@ const BRIDGE = `<script>(function(){
       connect: function(){ return call("auth.connect", {}); },
       disconnect: function(){ return call("auth.disconnect", {}); }
     },
-    // [GRAIN] The notes capability (NOTE-UI-EXTENSION-PLAN.md). Typed rather
-    // than left to grain.call so the surface API is discoverable, and so the
-    // shapes stay in one place when the note UI moves out of the app.
+    // [GRAIN] Read-only until extension mutations have a user-owned approval
+    // channel. Never add a write here that returns approval credentials to the
+    // worker.
     notes: {
       cards: function(){ return call("notes.cards", {}).then(function(r){ return r && r.cards != null ? r.cards : r; }); },
       search: function(q, limit){ return call("notes.search", { query: String(q), limit: limit }).then(function(r){ return r && r.results != null ? r.results : r; }); },
-      get: function(id){ return call("notes.get", { id: String(id) }); },
-      save: function(body, title){ return call("notes.save", { body: String(body), title: title }); },
-      update: function(id, fields){ fields = fields || {}; return call("notes.update", { id: String(id), title: fields.title, body: fields.body }); },
-      "delete": function(id){ return call("notes.delete", { id: String(id) }); },
-      move: function(id, folder){ return call("notes.move", { id: String(id), folder: folder }); },
-      pin: function(id, pinned){ return call("notes.pin", { id: String(id), pinned: pinned !== false }); },
-      reminder: function(id, fireAt){ return call("notes.reminder", { id: String(id), fireAt: fireAt == null ? null : Number(fireAt) }); }
+      get: function(id){ return call("notes.get", { id: String(id) }); }
     },
     workspace: { close: function(){ return call("workspace.close", {}); } },
     overlay: { dismiss: function(){ return call("overlay.dismiss", {}); } },

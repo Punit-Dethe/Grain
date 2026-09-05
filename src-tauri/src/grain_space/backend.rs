@@ -15,7 +15,7 @@ use anyhow::Result;
 use std::path::PathBuf;
 use tauri::AppHandle;
 
-use super::note::{Note, NoteCard, ReminderState};
+use super::note::{Note, NoteCard, NoteRewrite, ReminderState};
 use super::vault::{self, Vault};
 
 /// The resolved backend — since the unification, always a vault.
@@ -122,12 +122,30 @@ pub fn note_abs_path(b: &Backend, id: &str) -> Result<Option<std::path::PathBuf>
 /// Whether the corpus has ANY notes (grain-owned or foreign) — the recall
 /// empty-corpus fast path. For an Obsidian vault this includes foreign notes,
 /// so a vault with only the user's own notes is still recall-able.
-pub fn has_any_notes(b: &Backend) -> Result<bool> {
-    vault::has_any_notes(b)
-}
-
 pub fn save_note(b: &Backend, note: &Note) -> Result<()> {
     vault::save_note(b, note)
+}
+
+pub fn append_note_atomic(
+    b: &Backend,
+    id: &str,
+    addition: &str,
+    expected_version: Option<&str>,
+) -> Result<Note> {
+    vault::append_note_atomic(b, id, addition, expected_version)
+}
+
+pub fn rewrite_note_atomic(
+    b: &Backend,
+    id: &str,
+    replacement: &NoteRewrite,
+    expected_version: Option<&str>,
+) -> Result<Note> {
+    vault::rewrite_note_atomic(b, id, replacement, expected_version)
+}
+
+pub fn get_append_snapshot(b: &Backend, id: &str) -> Result<(Note, String)> {
+    vault::get_append_snapshot(b, id)
 }
 
 pub fn delete_note(b: &Backend, id: &str) -> Result<()> {
