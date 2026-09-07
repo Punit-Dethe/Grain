@@ -236,11 +236,16 @@ pub(crate) fn mirror_stream_text(app: &AppHandle, committed: &str, tentative: &s
 }
 
 /// Tear down every Grain surface a cancel has to clear, on top of upstream's
-/// `utils::cancel_current_operation`: the master chords, any rolling session,
-/// and any live stream worker (whose command channel would otherwise stay open
-/// and block the next `start_stream`) — then hide the pill. The discarded
-/// transcript is intentionally dropped.
+/// `utils::cancel_current_operation`: foreground watching, the master chords,
+/// any rolling session, and any live stream worker (whose command channel would
+/// otherwise stay open and block the next `start_stream`) — then hide the pill.
+/// The discarded transcript is intentionally dropped.
 pub(crate) fn cancel_session(app: &AppHandle) {
+    // Normal Stop tears this down in `emit_recording_stopped`; Cancel bypasses
+    // that transition, so it must retire the OS hooks and pending icon resolve
+    // here. Leaving them installed keeps observing foreground app/site changes
+    // after Grain has returned to idle.
+    crate::surface_watch::stop(app);
     crate::extension_session::cancel(app);
     let extension_mode_cancelled = action_session::cancel(app);
     crate::master_key::unregister_chords(app);
