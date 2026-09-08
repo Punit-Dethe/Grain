@@ -1,15 +1,10 @@
 //! [GRAIN] Pill skin — which BODY LOOK the collapsed pill wears.
 //!
-//! Orthogonal to [`crate::PillTheme`], and deliberately so:
-//! - a **skin** is Grain's own built-in *form* — the pill's geometry and the
-//!   shape of its voice visualisation. The user picks one in Settings.
-//! - a **theme** is an extension's *colours* for a given state, painted into
-//!   whatever form the skin defines.
-//!
-//! Keeping them apart means a theme keeps working when the user switches skin,
-//! and a new skin costs no theme migration. The skin crosses the wire inside
-//! [`crate::DaemonEvent::PillSkin`] and is also the persisted `pill_skin`
-//! setting (grain-core re-exports it).
+//! A skin is Grain's own built-in form: the pill's geometry and the shape of its
+//! voice visualisation. The user picks one in Settings. Extensions cannot add,
+//! recolour, or replace skins. The choice crosses the wire inside
+//! [`crate::DaemonEvent::PillSkin`] and is also the persisted `pill_skin` setting
+//! (grain-core re-exports it).
 
 use serde::{Deserialize, Serialize};
 

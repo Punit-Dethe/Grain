@@ -236,6 +236,24 @@ impl StoreState {
 fn project_entries(entries: &[IndexEntry], revocations: &Revocations) -> Vec<StoreEntry> {
     entries
         .iter()
+        .filter(|entry| {
+            entry.id != "grain.agent-center-layout"
+                && !entry.capabilities.iter().any(|capability| {
+                    matches!(
+                        capability.as_str(),
+                        "surface:workspace" | "surface:overlay" | "pill:slots"
+                    )
+                })
+                && !entry.extends.iter().any(|surface| {
+                    matches!(
+                        surface.as_str(),
+                        "pill.theme"
+                            | "agent.reply-surface"
+                            | "overlay.recording"
+                            | "overlay.pointer"
+                    ) || surface.starts_with("overrides:")
+                })
+        })
         .map(|e| StoreEntry {
             id: e.id.clone(),
             name: e.name.clone(),
@@ -1033,8 +1051,8 @@ mod tests {
 
     // The REAL end-to-end against the live GitHub-hosted catalogue: a fresh
     // StoreState (embedded seed roots → raw.githubusercontent base URL) →
-    // refresh over the network → verify against pinned keys → install the Agent
-    // centre layout from its content-addressed blob. Network-dependent, so it is
+    // refresh over the network → verify against pinned keys → install a scripted
+    // extension from its content-addressed blob. Network-dependent, so it is
     // #[ignore]d in normal runs; run with `cargo test -- --ignored live_github`.
     #[test]
     #[ignore = "network: fetches the live GitHub-hosted catalogue"]
@@ -1051,23 +1069,9 @@ mod tests {
         assert!(
             view.entries
                 .iter()
-                .any(|e| e.id == "grain.agent-center-layout"),
-            "the centre layout is published in the live catalogue"
+                .all(|entry| entry.id != "grain.agent-center-layout"),
+            "visual-only packs are hidden even if a stale catalogue publishes them"
         );
-
-        rt.block_on(install_entry(
-            &state,
-            &reg,
-            &ext_root,
-            &client,
-            "grain.agent-center-layout",
-            "1.0.0",
-        ))
-        .expect("install the centre layout from the live blob");
-
-        let rec = reg.record("grain.agent-center-layout").expect("installed");
-        assert_eq!(rec.trust, grain_sdk::Trust::Core);
-        assert_eq!(rec.variant_slots, vec!["agent.reply-surface".to_string()]);
 
         // Voice Actions — the scripted extension exercising the new
         // open:url/open:app capabilities — installs the same way.

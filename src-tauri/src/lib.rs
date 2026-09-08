@@ -95,7 +95,6 @@ mod net_diag; // [GRAIN] shared reqwest transport-error diagnostics (upstream #1
 mod paste_tx;
 mod pill_icon; // [GRAIN] pill identity — the foreground app's icon → pill
 mod pill_skin; // [GRAIN] pill skin delivery — the built-in look setting → pill
-mod pill_theme; // [GRAIN] pill theme delivery (SPEC 9) — pill.theme slot occupant → pill
 #[path = "handy/portable.rs"]
 pub mod portable;
 mod post_process_router; // [GRAIN] post-process (LLM) dispatcher (single vs rotation)
@@ -111,7 +110,6 @@ mod signal_handle;
 mod stt_client; // [GRAIN] S2: HTTP STT adapters (OpenAI / Deepgram / AssemblyAI)
 mod stt_router; // [GRAIN] S3: STT dispatcher (local vs cloud rotation)
 mod surface_watch; // [GRAIN] follow the foreground app mid-session (settled)
-mod surfaces; // [GRAIN] host-owned UI surfaces (SPEC 1.2) — the sleeping workspace window
 mod tdt_flow; // [GRAIN] capability-gated transactional TDT Flow orchestration
 #[path = "handy/transcription_coordinator.rs"]
 mod transcription_coordinator;
@@ -1051,7 +1049,6 @@ pub fn run(cli_args: CliArgs) {
             grain_commands::extension_settings_sections,
             grain_commands::extension_pick_app,
             grain_commands::extension_capture_app,
-            grain_commands::extension_host_call,
             grain_commands::extension_shortcuts_status,
             grain_commands::grain_action_listen,
             grain_commands::grain_action_log,
@@ -1062,15 +1059,10 @@ pub fn run(cli_args: CliArgs) {
             grain_commands::change_auto_send_setting,
             grain_commands::change_auto_send_for_extension,
             grain_commands::extension_setting_set,
-            grain_commands::extension_surface_init,
-            grain_commands::extension_surface_ui_ready,
-            grain_commands::extension_surface_sleep_ready,
-            grain_commands::extension_surface_payload,
             extension_view::extension_view_init,
             extension_view::extension_view_ready,
             extension_view::extension_view_choose,
             extension_view::extension_view_download_model,
-            extension_view::extension_view_event,
             extension_view::extension_view_copy,
             extension_view::extension_view_open_extensions,
             extension_view::extension_view_output,
@@ -1429,9 +1421,6 @@ pub fn run(cli_args: CliArgs) {
                 // [GRAIN] Reconcile built-ins with what this build ships,
                 // now that AppContext + the registry are managed. Default off.
                 extension_host::reconcile_builtin_packs(&app.handle());
-                // [GRAIN] The Agent's reply-surface slot is the one occupancy
-                // whose truth lives in settings, not the registry (SPEC §10.2).
-                grain_commands::sync_agent_reply_surface_slot(&app.handle());
             }
 
             let mut settings = get_settings(&app.handle());
@@ -1552,8 +1541,8 @@ pub fn run(cli_args: CliArgs) {
                 // Update tray icon to match new theme, maintaining idle state
                 utils::change_tray_icon(&window.app_handle(), utils::TrayIconState::Idle);
                 // [GRAIN] The tray is not the only surface that follows the OS.
-                // Re-resolve and tell the pill, the capsule, extension surfaces
-                // and every webview at once — a no-op in effect unless the user
+                // Re-resolve and tell the pill, capsule, and every host webview
+                // at once — a no-op in effect unless the user
                 // is on `ThemeMode::System`.
                 grain_theme::refresh_from_os(&window.app_handle());
             }

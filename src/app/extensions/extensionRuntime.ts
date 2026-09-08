@@ -29,11 +29,8 @@ const CAPABILITY_LABELS: Record<string, string> = {
 };
 
 const SLOT_LABELS: Record<string, string> = {
-  "overlay.recording": "the recording overlay",
-  "overlay.pointer": "the pointer overlay",
-  "pill.theme": "the pill's look",
-  "agent.reply-surface": "the Agent's reply panel",
   "output.destination": "where your text is sent",
+  "prompt.main": "Grain's main dictation instruction",
   "prompt.context": "what Grain tells the AI about the app you are typing in",
 };
 
@@ -66,12 +63,7 @@ export function capabilityLabel(capability: string): string {
 }
 
 export function slotLabel(slot: string): string {
-  return (
-    SLOT_LABELS[slot] ??
-    (slot.startsWith("overrides:")
-      ? `the \u201c${slot.slice("overrides:".length)}\u201d setting`
-      : slot)
-  );
+  return SLOT_LABELS[slot] ?? slot;
 }
 
 export interface ApprovalRequest {
@@ -161,9 +153,9 @@ export function sortExtensionCards<
 }
 
 /**
- * Where each host surface is configured.
+ * Where each host-owned settings contribution is configured.
  *
- * A surface id is what an extension *declares* it extends — a slot it claims
+ * A destination id is what an extension *declares* it extends — a behavior slot
  * ([`KNOWN_SLOTS`]), an anchor its settings rows attach to ([`ANCHORS`]), or the
  * surface its payload feeds. This one table turns that declaration into a place
  * in the app, and it answers both halves of the same question:
@@ -177,12 +169,10 @@ export function sortExtensionCards<
  * never says "context", though its manifest anchors it to `context.after`. A
  * new extension is placed correctly by declaring a surface, and by nothing else.
  *
- * Grain's three extension shapes fall out of this: **in-place** extensions take
- * a slot, **anchored** ones contribute rows at an anchor, and **full-page** ones
- * declare neither and get a page of their own.
+ * Extensions can take behavior slots, contribute rows at a host anchor, or get
+ * a normal Grain-rendered settings page of their own.
  */
 const SURFACE_DESTINATIONS: Record<string, ExtensionDestination> = {
-  "agent.reply-surface": { kind: "tools", section: "agent" },
   "agent.after": { kind: "tools", section: "agent" },
   "snippets.after": { kind: "tools", section: "snippets" },
   "context.after": { kind: "tools", section: "context" },

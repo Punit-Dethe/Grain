@@ -3,13 +3,10 @@
 //! # Why this is not `localStorage`
 //!
 //! It used to be. `ThemeContext.tsx` kept the preference under
-//! `grain-theme-settings`, and `extension-surface.ts` read *that same key* to
-//! decide how to style a sandboxed extension frame — which worked only because
-//! the two happen to share a browser origin, and told you nothing at all if the
-//! surface you needed to style was the native pill.
+//! `grain-theme-settings`, which told native surfaces such as the pill nothing.
 //!
 //! Grain paints more than one webview: the settings window, the agent panel, the
-//! switcher capsule, extension surfaces, and a winit/Floem pill that has no
+//! switcher capsule, Agent/Extension Mode windows, and a winit/Floem pill with no
 //! browser storage to read. A preference that only one of them can see is not a
 //! preference, it is a local variable. So the preference is a settings field
 //! ([`grain_core::settings::ThemeMode`]) and this module owns the two jobs that
@@ -27,7 +24,7 @@
 //! # Both buses, because both audiences exist
 //!
 //! The change goes out as a Tauri event (Grain's webviews) *and* as
-//! [`DaemonEvent::ThemeConfig`] (the pill and extension surfaces). That is the
+//! [`DaemonEvent::ThemeConfig`] (the pill and other native clients). That is the
 //! same split `grain_events` documents — not a duplication, two transports for
 //! two kinds of consumer.
 

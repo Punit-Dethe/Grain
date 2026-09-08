@@ -27,12 +27,11 @@ pub enum CapabilitySet {
 }
 
 /// The protocol a token may speak. Keeping this separate from capabilities
-/// prevents a surface or developer client from ever being treated as a worker.
+/// prevents a developer client from ever being treated as a worker.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ClientRole {
     Pill,
     Worker,
-    Surface,
     DevControl,
     /// [GRAIN] The Grain Space MCP proxy (`grain-mcp`). It speaks the same
     /// request frame extension workers use, so the bridge needed no new
@@ -287,16 +286,16 @@ mod tests {
     fn identity_revocation_removes_only_the_target_role() {
         let reg = registry_with_pill_and_ext();
         reg.register(
-            "surface-secret".into(),
+            "dev-secret".into(),
             ClientIdentity {
                 id: "com.example.a".into(),
-                role: ClientRole::Surface,
+                role: ClientRole::DevControl,
                 caps: CapabilitySet::Named(Default::default()),
             },
         );
         reg.revoke_identity("com.example.a", ClientRole::Worker);
         assert!(reg.authenticate(r#"{"token":"ext-a-secret"}"#).is_none());
-        assert!(reg.authenticate(r#"{"token":"surface-secret"}"#).is_some());
+        assert!(reg.authenticate(r#"{"token":"dev-secret"}"#).is_some());
         assert!(reg.authenticate(r#"{"token":"pill-secret"}"#).is_some());
     }
 }

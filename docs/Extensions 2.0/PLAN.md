@@ -2,15 +2,34 @@
 
 **Status:** Approved architecture and implementation plan
 
-**Date:** 2026-08-28
+**Date:** 2026-09-08
 
-**Scope:** Extension discovery, Agent actions, launcher, and Dynamic UI
+**Scope:** Extension discovery, Agent actions, execution, and host-owned presentation
 
-**Implementation state:** Active. Amendment D's two-level directory/loader runtime is implemented behind the existing Agent and action-execution contracts; end-to-end reference-extension validation remains.
+**Implementation state:** Active. Amendment D's two-level directory/loader runtime is implemented behind the existing Agent and action-execution contracts. Amendment E's visual-ownership cleanup is implemented on `ui/grain-2.0`; real-application visual approval and end-to-end reference-extension validation remain.
 
 This plan replaces the product architecture in `docs/Extensions V1/PLAN.md`. V1 code and documentation remain useful as a migration baseline, evaluation harness, and record of implemented security controls. They must not be extended into a second permanent system.
 
 The supplied design documents and prior research are inputs, not normative specifications. This document resolves their contradictions against the current Grain codebase and the latest product direction.
+
+---
+
+## Amendment E (2026-09-08) — Extensions expose capabilities, never visuals
+
+**Decision.** Extension-authored visuals are removed from the current public contract. Extensions may expose actions, authentication, prompt/data contributions, shortcuts, and Grain-rendered declarative settings. They may return bounded data or text. They may not supply HTML, CSS, component trees, themes, skins, custom settings panels, workspace/overlay windows, or replacement layouts.
+
+The two existing appearance choices remain Grain features:
+
+- Pill `Wave` and `Matrix` are native `PillSkin` settings.
+- Agent `Side card` and `Center panel` are native `agent_panel_position` settings.
+
+The Center panel no longer depends on the retired `grain.agent-center-layout` pack or `agent.reply-surface` slot. The prewarmed Extension Mode window remains host-owned and may render only routing, choice, progress, and finite text results; it cannot interpret extension-provided views.
+
+**Enforcement.** Pack, developer, and trusted-catalogue validation all reject retired visual capabilities, visual slots/variants, `overrides:*`, surface declarations, pill-theme payloads, and nested panel settings. Registry publishing validates before deriving signed metadata. Worker and frontend bridges for authored surfaces are removed, including the main-window relay that previously let a panel invoke host APIs as an extension identity.
+
+Old visual fields remain deserializable only as compatibility tombstones so unsupported manifests fail with a specific error. They are not exported as the author SDK or rendered by Grain. Registry healing deletes stale visual slot occupancy and the retired center-layout record.
+
+This amendment supersedes any later section that describes current extension-authored rich views, workspace/overlay web surfaces, custom panels, visual slots, or extension-defined pill/Agent appearance. Future host-rendered Dynamic UI, if built, consumes Grain-owned semantic interaction data; it does not restore author control of pixels. See `VISUAL-OWNERSHIP.md` for the implementation boundary.
 
 ---
 

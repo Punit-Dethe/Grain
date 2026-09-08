@@ -23,8 +23,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use grain_sdk::{
-    AgentInputKind, DaemonEvent, OverlayPosition, PillAction, PillPattern, PillSkin,
-    PillStateTheme, PillTheme, SessionMode, PILL_ICON_PX,
+    AgentInputKind, DaemonEvent, OverlayPosition, PillAction, PillSkin, SessionMode, PILL_ICON_PX,
 };
 
 use tiny_skia::{
@@ -1128,22 +1127,8 @@ impl Aura {
         }
     }
 
-    // (theme lookup lives at module scope as `theme_for_state`.)
-
-    fn roll(&mut self, state: PillState, amp: f32, theme: Option<&PillStateTheme>) {
+    fn roll(&mut self, state: PillState, amp: f32) {
         self.phase += 1.0;
-        // [GRAIN] SPEC §9: a themed state renders a named pattern in the theme's
-        // dot colour; an unthemed one — or a theme that set no dot colour, or a
-        // pattern this build doesn't know — keeps Grain's own motion for that
-        // state. This is why no theme can blank the pill: every gap is a
-        // fallback, never a skipped render.
-        if self.roll_themed_field(theme) {
-            // Recording keeps its button overlay even when themed.
-            if state == PillState::Recording {
-                self.roll_button();
-            }
-            return;
-        }
         match state {
             PillState::Idle => self.roll_idle(),
             PillState::Processing => {
@@ -1155,73 +1140,6 @@ impl Aura {
             }
             // [GRAIN] B4: placeholder — calm dim grid (reuse idle until designed).
             PillState::Fallback => self.roll_idle(),
-        }
-    }
-
-    /// Render one of the named theme patterns into the dot field. Returns whether
-    /// it drew anything — `false` means "no usable theme for this state, use the
-    /// default." A themed state with no `dot` colour keeps Grain's dots, and an
-    /// `Unsupported` pattern keeps Grain's motion.
-    fn roll_themed_field(&mut self, theme: Option<&PillStateTheme>) -> bool {
-        let Some(t) = theme else { return false };
-        let Some(dot) = t.dot else { return false };
-        match t.pattern {
-            PillPattern::Static => self.roll_pattern_static(dot),
-            PillPattern::Breathe => self.roll_pattern_breathe(dot),
-            PillPattern::Sweep => self.roll_pattern_sweep(dot),
-            PillPattern::Unsupported => return false,
-        }
-        true
-    }
-
-    /// A solid field at the theme colour over a slow breathing base.
-    fn roll_pattern_static(&mut self, dot: [u8; 3]) {
-        let a = 0.55 + 0.10 * (self.phase * 0.05).sin();
-        self.fill_field(dot, a);
-    }
-
-    /// The whole field pulses together — a calm, uniform breath.
-    fn roll_pattern_breathe(&mut self, dot: [u8; 3]) {
-        // 0.5±0.5·sin maps to 0..1; scale into a visible, non-black band.
-        let a = 0.18 + 0.57 * (0.5 + 0.5 * (self.phase * 0.05).sin());
-        self.fill_field(dot, a);
-    }
-
-    /// A soft band crosses the field — Grain's idle motion, in the theme colour.
-    fn roll_pattern_sweep(&mut self, dot: [u8; 3]) {
-        let sweep = (self.phase * 0.02).rem_euclid(1.0);
-        let breath = 0.07 + 0.04 * (self.phase * 0.06).sin();
-        for r in 0..ROWS {
-            for c in 0..COLS {
-                let idx = r * COLS + c;
-                if is_edge(c, r) {
-                    self.dots[idx] = NONE;
-                    continue;
-                }
-                let p = c as f32 / COLS as f32;
-                let mut dist = (p - sweep).abs();
-                if dist > 0.5 {
-                    dist = 1.0 - dist;
-                }
-                let bump = (-(dist * 8.0).powi(2)).exp();
-                let a = (breath + 0.40 * bump).clamp(0.0, 0.80);
-                self.dots[idx] = [dot[0], dot[1], dot[2], (a * 255.0) as u8];
-            }
-        }
-    }
-
-    /// Fill every non-edge dot with `dot` at alpha `a`.
-    fn fill_field(&mut self, dot: [u8; 3], a: f32) {
-        let alpha = (a.clamp(0.0, 1.0) * 255.0) as u8;
-        for r in 0..ROWS {
-            for c in 0..COLS {
-                let idx = r * COLS + c;
-                self.dots[idx] = if is_edge(c, r) {
-                    NONE
-                } else {
-                    [dot[0], dot[1], dot[2], alpha]
-                };
-            }
         }
     }
 
@@ -1762,21 +1680,16 @@ impl WaveField {
 ///
 /// A free function rather than a method so the preview test paints the exact
 /// pixels that ship, instead of a copy of this that can quietly drift from it.
-/// `themed_dot` is an extension theme's colour, which still wins over the
-/// state's own ink — a theme keeps working across a skin change.
-///
 /// [GRAIN] `open` is the capsule's eased opening factor (1.0 = fully open, the
 /// only value that ever reaches a settled pill). Below 1 the layout does NOT
 /// move: every element keeps its final position and is simply gated by how far
 /// inside the still-growing capsule it already is, so the wave (centre) lights
 /// up first and the left mark (far left) arrives last.
-#[allow(clippy::too_many_arguments)]
 fn paint_wave_body(
     pixmap: &mut Pixmap,
     geom: PillGeom,
     state: PillState,
     prompt_recording: bool,
-    themed_dot: Option<[u8; 3]>,
     icon: Option<&Pixmap>,
     wave: &WaveField,
     open: f32,
@@ -1791,12 +1704,12 @@ fn paint_wave_body(
     };
     let cy = geom.y_off + geom.body_h / 2.0;
 
-    let ink = themed_dot.unwrap_or(match state {
+    let ink = match state {
         PillState::Recording if prompt_recording => WAVE_INK_PROMPT,
         PillState::Recording => WAVE_INK,
         PillState::Processing => WAVE_INK_PROCESSING,
         PillState::Idle | PillState::Fallback => WAVE_INK_IDLE,
-    });
+    };
 
     // The left cap holds either the app icon (pill identity) or the plain state
     // disc; the wave takes whatever is left. The slot is sized to whichever is
@@ -1971,16 +1884,6 @@ fn draw_wave_bars(
                 None,
             );
         }
-    }
-}
-
-fn theme_for_state(theme: Option<&PillTheme>, state: PillState) -> Option<&PillStateTheme> {
-    let t = theme?;
-    match state {
-        PillState::Idle => t.idle.as_ref(),
-        PillState::Recording => t.recording.as_ref(),
-        PillState::Processing => t.processing.as_ref(),
-        PillState::Fallback => t.fallback.as_ref(),
     }
 }
 
@@ -3230,14 +3133,9 @@ struct Remote {
     /// user releases the shortcut, even though the worker's drain can still
     /// emit a few trailing `Asr*` events while finalizing.
     asr: AsrDisplay,
-    /// [GRAIN] Active pill theme (SPEC §9), or `None` for Grain's own look. Set
-    /// by `PillTheme`; scope is the COLLAPSED pill only (the Studio field and
-    /// the agent card stay Grain's). Every gap falls back per-state, so no theme
-    /// can blank the pill.
-    theme: Option<PillTheme>,
     /// [GRAIN] The built-in LOOK the collapsed pill wears. Sent on connect and
-    /// whenever the user changes the setting. Unlike a theme this changes the
-    /// pill's geometry, so `about_to_wait` resizes the window when it moves.
+    /// whenever the user changes the setting. This changes the pill's geometry,
+    /// so `about_to_wait` resizes the window when it moves.
     skin: PillSkin,
     /// [GRAIN] Pill identity: the icon of the app being dictated into, already
     /// decoded to `PILL_ICON_PX`² premultiplied RGBA. `None` = draw the plain
@@ -3272,7 +3170,6 @@ impl Default for Remote {
             agent_submit_req_seq: 0,
             agent_input_saved_seq: 0,
             asr: AsrDisplay::default(),
-            theme: None,
             skin: PillSkin::default(),
             icon: None,
             icon_seq: 0,
@@ -3479,11 +3376,6 @@ fn apply_event(remote: &Mutex<Remote>, ev: DaemonEvent) {
             r.asr.committed.clear();
             r.asr.partial.clear();
         }
-        // [GRAIN] SPEC §9: adopt (or clear) the pill theme. Data only — nothing
-        // here executes theme-supplied code; the renderer reads the colours.
-        DaemonEvent::PillTheme { theme } => {
-            r.theme = theme;
-        }
         DaemonEvent::PillSkin { skin } => {
             r.skin = skin;
         }
@@ -3623,10 +3515,6 @@ fn spawn_event_client(
                                             | DaemonEvent::AgentInputSubmitRequest
                                             | DaemonEvent::ExtensionRecommend { .. }
                                             | DaemonEvent::ExtensionRecommendClear
-                                            // A theme can arrive while the pill is
-                                            // hidden (on connect); wake so the next
-                                            // reveal already wears it.
-                                            | DaemonEvent::PillTheme { .. }
                                             // A skin also arrives on connect, and it
                                             // decides the window SIZE — wake so the
                                             // resize happens before the next reveal.
@@ -3793,9 +3681,6 @@ struct App {
     /// blitted through the same tiny-skia path as `icon` above.
     prompt_record_icon: Pixmap,
     state: PillState,
-    /// [GRAIN] Active pill theme (mirrors `Remote::theme`, SPEC §9). Read by the
-    /// collapsed-pill roll; `None` is Grain's own look.
-    theme: Option<PillTheme>,
     /// [GRAIN] Prompt Record active for this session (mirrors `Remote`). Drives the
     /// collapsed pill's blue dot tint and the Studio waveform's sky-blue tint — the
     /// sole visual indicator of Prompt Record.
@@ -3945,7 +3830,6 @@ impl App {
             last_icon_seq: 0,
             prompt_record_icon: prompt_record_icon(),
             state: PillState::Idle,
-            theme: None,
             prompt_recording: false,
             amp: 0.0,
             // [GRAIN] The single shared font loads LAZILY (on the first text
@@ -5122,18 +5006,12 @@ impl App {
                 anti_alias: true,
                 ..Default::default()
             };
-            // [GRAIN] SPEC §9: a themed state may recolour the capsule; an
-            // unthemed one (or a theme that set only dot colours) keeps Grain's
-            // near-black body. Collapsed pill only — the Studio card is not
-            // themeable.
-            let body_rgba = theme_for_state(self.theme.as_ref(), self.state)
-                .and_then(|t| t.background)
-                .unwrap_or([
-                    GRAIN_SURFACE[0],
-                    GRAIN_SURFACE[1],
-                    GRAIN_SURFACE[2],
-                    GRAIN_SURFACE_A,
-                ]);
+            let body_rgba = [
+                GRAIN_SURFACE[0],
+                GRAIN_SURFACE[1],
+                GRAIN_SURFACE[2],
+                GRAIN_SURFACE_A,
+            ];
             body.set_color(Color::from_rgba8(
                 body_rgba[0],
                 body_rgba[1],
@@ -5148,14 +5026,8 @@ impl App {
                 pixmap.fill_path(&path, &body, FillRule::Winding, Transform::identity(), None);
             }
             // …and its hairline rim, so the capsule keeps its edge against a
-            // dark desktop. Skipped for a themed body: an extension that picked
-            // its own background did not ask for our outline on top of it.
-            if theme_for_state(self.theme.as_ref(), self.state)
-                .and_then(|t| t.background)
-                .is_none()
-            {
-                stroke_grain_rim(&mut pixmap, bx0, y_off, bx1 - bx0, pill_h, r, 1.0);
-            }
+            // dark desktop.
+            stroke_grain_rim(&mut pixmap, bx0, y_off, bx1 - bx0, pill_h, r, 1.0);
 
             // 2) The voice visualisation — whichever the active skin defines.
             match self.skin {
@@ -5413,15 +5285,13 @@ impl App {
     /// at the LEFT and a smooth centre-line waveform filling the RIGHT.
     ///
     /// First-pass proportions; the `WAVE_*` consts are the dial board for the
-    /// final visual spec. A theme's `dot` colour still wins over the state ink,
-    /// so an extension theme keeps working across a skin change.
+    /// final visual spec.
     fn draw_wave_body(&self, pixmap: &mut Pixmap, geom: PillGeom, open: f32) {
         paint_wave_body(
             pixmap,
             geom,
             self.state,
             self.prompt_recording,
-            theme_for_state(self.theme.as_ref(), self.state).and_then(|t| t.dot),
             self.icon.as_ref(),
             &self.wave,
             open,
@@ -6199,7 +6069,6 @@ impl ApplicationHandler<UserEvent> for App {
             } else if self.prompt_recording || self.prompt_record_requested {
                 self.prompt_record_hover = false;
             }
-            self.theme = r.theme.clone();
             self.asr = r.asr.clone();
 
             // [GRAIN] Native agent input shown/hidden by the core. Adopt it
@@ -6617,8 +6486,7 @@ impl ApplicationHandler<UserEvent> for App {
                             _ => self.aura.roll_studio(amp),
                         }
                     } else if self.mode == PillMode::Collapsed {
-                        let state_theme = theme_for_state(self.theme.as_ref(), self.state);
-                        self.aura.roll(self.state, amp, state_theme);
+                        self.aura.roll(self.state, amp);
                     }
                     self.next_roll = now + ROLL_INTERVAL;
                 }
@@ -7832,7 +7700,7 @@ mod tests {
                 (_, Some(_)) => &f_icon,
                 (_, None) => &f_dot,
             };
-            paint_wave_body(&mut pixmap, geom, state, false, None, icon, wave, 1.0);
+            paint_wave_body(&mut pixmap, geom, state, false, icon, wave, 1.0);
 
             // Composite over a neutral desktop grey and magnify (nearest, so the
             // actual pixels are what you inspect).
@@ -7945,157 +7813,6 @@ mod tests {
         assert!(state.session_owner.is_none());
         assert!(matches!(state.state, PillState::Idle));
         assert_eq!(state.session_owner_seq, started_seq.wrapping_add(1));
-    }
-
-    /// Non-edge dots the field can light — the cells a pattern actually paints.
-    fn lit_count(a: &Aura) -> usize {
-        (0..ROWS * COLS)
-            .filter(|&i| {
-                let c = i % COLS;
-                let r = i / COLS;
-                !is_edge(c, r) && a.dots[i][3] > 0
-            })
-            .count()
-    }
-
-    fn state_theme(dot: [u8; 3], pattern: PillPattern) -> PillStateTheme {
-        PillStateTheme {
-            background: None,
-            dot: Some(dot),
-            pattern,
-        }
-    }
-
-    /// A themed state paints the WHOLE inner field in the theme's colour — so a
-    /// custom look is unmistakably applied, never a faint tweak on Grain's dots.
-    #[test]
-    fn a_themed_field_paints_every_inner_dot_in_the_theme_colour() {
-        for pattern in [PillPattern::Static, PillPattern::Breathe] {
-            let mut a = Aura::new();
-            a.phase = 3.0; // a phase where every pattern is mid-swing, not a zero
-            let t = state_theme([10, 220, 90], pattern);
-            assert!(
-                a.roll_themed_field(Some(&t)),
-                "a colour+pattern must render"
-            );
-            let inner = (ROWS * COLS)
-                - a.dots
-                    .iter()
-                    .enumerate()
-                    .filter(|(i, _)| is_edge(i % COLS, i / COLS))
-                    .count();
-            assert_eq!(lit_count(&a), inner, "static/breathe light the whole field");
-            let lit = a.dots.iter().find(|d| d[3] > 0).unwrap();
-            assert_eq!([lit[0], lit[1], lit[2]], [10, 220, 90]);
-        }
-    }
-
-    /// The three named patterns actually differ — `breathe` moves the whole
-    /// field between two phases; a bad copy-paste that made them identical would
-    /// fail here.
-    #[test]
-    fn breathe_alpha_changes_between_phases() {
-        let dot = [200, 50, 50];
-        let mut a = Aura::new();
-        a.phase = 0.0;
-        a.roll_pattern_breathe(dot);
-        let first = a.dots.iter().find(|d| d[3] > 0).map(|d| d[3]).unwrap();
-        a.phase = 31.0; // ~half a breathe period later (0.05 rad/frame)
-        a.roll_pattern_breathe(dot);
-        let later = a.dots.iter().find(|d| d[3] > 0).map(|d| d[3]).unwrap();
-        assert_ne!(first, later, "breathe must animate, not sit static");
-    }
-
-    /// No theme, an Unsupported pattern, or a theme that set no dot colour all
-    /// mean "keep Grain's own motion" — the guarantee that no theme blanks the
-    /// pill by leaving a state unrendered.
-    #[test]
-    fn a_gap_falls_back_rather_than_rendering_nothing() {
-        let mut a = Aura::new();
-        assert!(!a.roll_themed_field(None), "no theme → default");
-        let unknown = state_theme([1, 2, 3], PillPattern::Unsupported);
-        assert!(
-            !a.roll_themed_field(Some(&unknown)),
-            "unknown pattern → default"
-        );
-        let no_dot = PillStateTheme {
-            background: Some([0, 0, 0, 255]),
-            dot: None,
-            pattern: PillPattern::Static,
-        };
-        assert!(
-            !a.roll_themed_field(Some(&no_dot)),
-            "no dot colour → default"
-        );
-    }
-
-    /// [GRAIN] Render the three themed patterns to a PNG for the eye (SPEC §9).
-    /// Not an assertion — it draws each named pattern in a distinct colour so a
-    /// human can confirm the field is filled, coloured, and shaped as intended.
-    #[test]
-    fn themed_patterns_render_to_png() {
-        let cell = 14u32;
-        let pad = 10u32;
-        let field_w = COLS as u32 * cell;
-        let field_h = ROWS as u32 * cell;
-        let rows: [(&str, [u8; 3], PillPattern); 3] = [
-            ("static", [0, 220, 120], PillPattern::Static),
-            ("breathe", [120, 170, 255], PillPattern::Breathe),
-            ("sweep", [255, 120, 60], PillPattern::Sweep),
-        ];
-        let bw = field_w + pad * 2;
-        let bh = (field_h + pad) * rows.len() as u32 + pad;
-        let mut bg = Pixmap::new(bw, bh).unwrap();
-        bg.fill(Color::from_rgba8(8, 8, 10, 255));
-
-        for (i, (_name, dot, pattern)) in rows.into_iter().enumerate() {
-            let mut a = Aura::new();
-            a.phase = 7.0; // a lit phase for every pattern
-            assert!(a.roll_themed_field(Some(&state_theme(dot, pattern))));
-            let y0 = pad + i as u32 * (field_h + pad);
-            for r in 0..ROWS {
-                for c in 0..COLS {
-                    let px = a.dots[r * COLS + c];
-                    if px[3] == 0 {
-                        continue;
-                    }
-                    let mut p = Paint::default();
-                    p.set_color(Color::from_rgba8(px[0], px[1], px[2], px[3]));
-                    let x = pad + c as u32 * cell;
-                    let yy = y0 + r as u32 * cell;
-                    if let Some(rect) = Rect::from_xywh(
-                        x as f32 + 1.0,
-                        yy as f32 + 1.0,
-                        cell as f32 - 2.0,
-                        cell as f32 - 2.0,
-                    ) {
-                        bg.fill_path(
-                            &PathBuilder::from_rect(rect),
-                            &p,
-                            FillRule::Winding,
-                            Transform::identity(),
-                            None,
-                        );
-                    }
-                }
-            }
-        }
-        let path = std::env::temp_dir().join("grain_pill_theme_preview.png");
-        bg.save_png(&path).expect("save png");
-        eprintln!("PILL_THEME_PREVIEW_PNG={}", path.display());
-    }
-
-    /// The state→theme mapping is the load-bearing wiring: a theme that styles
-    /// only Recording must not accidentally style Idle.
-    #[test]
-    fn theme_for_state_maps_each_state_independently() {
-        let theme = PillTheme {
-            recording: Some(state_theme([9, 9, 9], PillPattern::Sweep)),
-            ..Default::default()
-        };
-        assert!(theme_for_state(Some(&theme), PillState::Recording).is_some());
-        assert!(theme_for_state(Some(&theme), PillState::Idle).is_none());
-        assert!(theme_for_state(None, PillState::Recording).is_none());
     }
 
     fn font() -> fontdue::Font {

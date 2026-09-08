@@ -3,23 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 
 type Match = { id: string; score: number; margin?: number };
 type Decision = { pick: string } | { ambiguous: string[] } | { none: true };
-type ViewNode = {
-  type: string;
-  text?: string;
-  label?: string;
-  value?: string;
-  children?: ViewNode[];
-};
-type View = {
-  root: ViewNode;
-  actions: { id: string; label: string }[];
-};
-type Reply = { view?: View; message?: string; error?: string };
-type ViewEvent = {
-  kind: "submit" | "cancel" | "change";
-  target?: string;
-  values?: Record<string, string | boolean>;
-};
+type Reply = { message?: string; error?: string };
 
 const source = readFileSync(
   new URL("../../src-tauri/src/extension_lab_runtime.js", import.meta.url),
@@ -52,31 +36,12 @@ function decide(
   };
 }
 
-function nodes(root: ViewNode): ViewNode[] {
-  return [root, ...(root.children ?? []).flatMap(nodes)];
-}
-
-function badges(reply: Reply): string[] {
-  return nodes(reply.view!.root)
-    .filter((node) => node.type === "badge")
-    .map((node) => node.text ?? "");
-}
-
-function metadata(reply: Reply): string[] {
-  return nodes(reply.view!.root)
-    .filter((node) => node.type === "metadata")
-    .map((node) => `${node.label}: ${node.value}`);
-}
-
 function runtime(options: {
   extensionId?: string;
   lexical?: Match[] | Error;
   semantic?: Match[] | Error;
 }) {
   let onRequest: ((request: string) => Promise<Reply>) | undefined;
-  let onEvent:
-    | ((event: ViewEvent) => Reply | void | Promise<Reply | void>)
-    | undefined;
   const semantic = options.semantic ?? [];
   const lexical = options.lexical ?? [];
   const grain = {
@@ -96,11 +61,6 @@ function runtime(options: {
         ) => decide(candidates, policy),
       ),
     },
-    ui: {
-      onEvent(handler: typeof onEvent) {
-        onEvent = handler;
-      },
-    },
     onRequest(handler: typeof onRequest) {
       onRequest = handler;
     },
@@ -110,9 +70,8 @@ function runtime(options: {
     options.extensionId ?? "com.grain.lab.stream-music",
   );
   new Function("grain", extensionSource)(grain);
-  if (!onRequest || !onEvent)
-    throw new Error("lab handlers were not registered");
-  return { onRequest, onEvent, grain };
+  if (!onRequest) throw new Error("lab request handler was not registered");
+  return { onRequest, grain };
 }
 
 describe("Recommendation Lab internal command diagnostic", () => {
@@ -173,7 +132,7 @@ describe("Recommendation Lab internal command diagnostic", () => {
           }),
         ]),
       );
-      expect(metadata(reply)[0]).toContain(`1. ${title}`);
+      expect(reply.message).toContain(`1. ${title}`);
     },
   );
 
@@ -248,14 +207,15 @@ describe("Recommendation Lab internal command diagnostic", () => {
 
     const reply = await lab.onRequest("find this album without playing it");
 
-    expect(badges(reply)).toEqual(["Executed", "Auto-send"]);
+    expect(reply.message).toContain("command decision: executed");
+    expect(reply.message).toContain("Auto-send");
     expect(lab.grain.match.decide).toHaveBeenCalledWith(expect.any(Array), {
       minConfidence: 0.5,
       margin: 0.15,
     });
   });
 
-  it("surfaces close commands as Suggested and resolves the choice in-place", async () => {
+  it("reports close commands as ambiguous without exposing extension UI", async () => {
     const lab = runtime({
       semantic: [
         { id: "play-track", score: 0.72 },
@@ -265,19 +225,8 @@ describe("Recommendation Lab internal command diagnostic", () => {
     });
     const suggested = await lab.onRequest("play this one, maybe put it next");
 
-    expect(badges(suggested)).toEqual(["Suggested"]);
-    expect(suggested.view!.actions.map((action) => action.id)).toEqual([
-      "choose-play-track",
-      "choose-queue-track",
-      "cancel-diagnostic",
-    ]);
-
-    const resolved = await lab.onEvent({
-      kind: "submit",
-      target: "choose-queue-track",
-      values: {},
-    });
-    expect(badges(resolved as Reply)).toEqual(["Executed", "User selected"]);
+    expect(suggested.message).toContain("command decision: suggested");
+    expect(suggested).not.toHaveProperty("view");
   });
 
   it("never lets lexical evidence reorder a clear semantic command", async () => {
@@ -293,8 +242,8 @@ describe("Recommendation Lab internal command diagnostic", () => {
       "can you play the next song from Spotify?",
     );
 
-    expect(badges(reply)).toEqual(["Executed"]);
-    expect(metadata(reply)[0]).toContain("1. Next song");
+    expect(reply.message).toContain("command decision: executed");
+    expect(reply.message).toContain("1. Next song");
     expect(lab.grain.match.decide).toHaveBeenNthCalledWith(
       1,
       [
@@ -303,33 +252,6 @@ describe("Recommendation Lab internal command diagnostic", () => {
       ],
       { minConfidence: 0.5, margin: 0.05 },
     );
-  });
-
-  it("rejects a command choice that the validated view did not offer", async () => {
-    const lab = runtime({
-      semantic: [
-        { id: "play-track", score: 0.72 },
-        { id: "queue-track", score: 0.69 },
-      ],
-    });
-    await lab.onRequest("play this one next");
-
-    const reply = await lab.onEvent({
-      kind: "submit",
-      target: "choose-merge-pull-request",
-      values: {},
-    });
-
-    expect(reply).toEqual({
-      error: "The selected command was not offered by this view.",
-    });
-    expect(
-      await lab.onEvent({
-        kind: "submit",
-        target: "choose-play-track",
-        values: {},
-      }),
-    ).toBeUndefined();
   });
 
   it("executes a semantic paraphrase with no lexical hit", async () => {
@@ -345,10 +267,8 @@ describe("Recommendation Lab internal command diagnostic", () => {
       "put on the collection I made for dinner",
     );
 
-    expect(badges(reply)).toEqual(["Executed"]);
-    expect(metadata(reply)[0]).toContain(
-      "Semantic 79.0% · lexical diagnostic —",
-    );
+    expect(reply.message).toContain("command decision: executed");
+    expect(reply.message).toContain("semantic 79.0%, lexical —");
   });
 
   it("never executes from lexical evidence when semantic matching is unavailable", async () => {
@@ -359,11 +279,9 @@ describe("Recommendation Lab internal command diagnostic", () => {
 
     const reply = await lab.onRequest("skip track");
 
-    expect(badges(reply)).toEqual(["Semantic unavailable"]);
-    expect(reply.view!.actions[0].id).toBe("finish-diagnostic");
-    expect(metadata(reply)[0]).toContain(
-      "Semantic — · lexical diagnostic 100.0%",
-    );
+    expect(reply.message).toContain("Semantic matching is unavailable");
+    expect(reply.message).toContain("semantic —, lexical 100.0%");
+    expect(reply).not.toHaveProperty("view");
   });
 
   it("makes a host rejection of both matching APIs explicit", async () => {
@@ -374,9 +292,8 @@ describe("Recommendation Lab internal command diagnostic", () => {
 
     const reply = await lab.onRequest("play song");
 
-    expect(badges(reply)).toEqual(["Matching unavailable"]);
-    expect(nodes(reply.view!.root).map((node) => node.text)).toContain(
-      "Both matching signals are unavailable. No command ran. Restart Grain after updating, reinstall the lab fixtures, and retry.",
+    expect(reply.message).toContain(
+      "Both matching signals are unavailable. No command ran.",
     );
   });
 });

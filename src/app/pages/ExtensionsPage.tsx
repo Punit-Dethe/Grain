@@ -76,7 +76,6 @@ const SETTING_KINDS = new Set<SettingRow["kind"]>([
   "app_path",
   "url",
   "list",
-  "panel",
   "unsupported",
 ]);
 

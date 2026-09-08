@@ -19,10 +19,6 @@ pub const MAX_MANIFEST_BYTES: u64 = 1024 * 1024;
 pub const MAX_PROJECT_FILE_BYTES: u64 = 5 * 1024 * 1024;
 pub const MAX_ENTRY_BYTES: u64 = MAX_PROJECT_FILE_BYTES;
 
-const MAX_OVERLAY_WIDTH: u32 = 720;
-const MAX_OVERLAY_HEIGHT: u32 = 480;
-const MAX_OVERLAY_TIMEOUT_MS: u32 = 15_000;
-
 const IGNORED_DIRECTORIES: &[&str] = &[".git", "dist", "node_modules", "target"];
 
 /// [GRAIN] Whether a finding blocks.
@@ -303,7 +299,6 @@ fn check_manifest(root: &Path, report: &mut DoctorReport) {
     check_api_version(&project, report);
     check_pack_contract(&project, report);
     check_activations(&project, report);
-    check_surface_budgets(&project, report);
     check_recommendation(&project, report);
     check_icon(root, &project, report);
 }
@@ -719,30 +714,6 @@ fn require_activation_capability(
     }
 }
 
-fn check_surface_budgets(project: &ExtensionProjectManifest, report: &mut DoctorReport) {
-    let Some(overlay) = &project.manifest.surfaces.overlay else {
-        return;
-    };
-    if let Some([width, height]) = overlay.size {
-        if width == 0 || height == 0 || width > MAX_OVERLAY_WIDTH || height > MAX_OVERLAY_HEIGHT {
-            report.findings.push(Finding::project(
-                "E_BUDGET",
-                "manifest.json",
-                format!("overlay size {width}x{height} exceeds the 720x480 host budget or is zero"),
-            ));
-        }
-    }
-    if let Some(timeout) = overlay.timeout_ms {
-        if timeout == 0 || timeout > MAX_OVERLAY_TIMEOUT_MS {
-            report.findings.push(Finding::project(
-                "E_BUDGET",
-                "manifest.json",
-                format!("overlay timeout {timeout} ms exceeds the 15000 ms host budget or is zero"),
-            ));
-        }
-    }
-}
-
 fn scan_submitted_files(root: &Path, report: &mut DoctorReport) {
     let mut pending = vec![root.to_path_buf()];
     while let Some(directory) = pending.pop() {
@@ -1051,7 +1022,7 @@ mod tests {
         )
         .unwrap();
         let report = doctor(directory.path());
-        for code in ["E_MANIFEST", "E_ACTIVATION", "E_BUDGET"] {
+        for code in ["E_MANIFEST", "E_ACTIVATION"] {
             assert!(
                 report.findings.iter().any(|finding| finding.code == code),
                 "missing {code}: {report}"

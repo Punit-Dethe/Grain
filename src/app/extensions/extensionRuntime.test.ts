@@ -59,7 +59,6 @@ const row = (anchor: string | null): ExtensionSettingRow => ({
   options: [],
   fields: [],
   item_label: null,
-  ui_source: null,
 });
 
 const sections = (anchor: string | null): ExtensionSettingsSection[] => [
@@ -155,14 +154,6 @@ describe("tool recommendations", () => {
     ).toEqual([]);
   });
 
-  it("recommends an in-place extension beside the surface it replaces", () => {
-    const centre = entry({
-      id: "grain.agent-center-layout",
-      extends: ["agent.reply-surface"],
-    });
-    expect(matchToolRecommendations([centre], "agent")).toEqual([centre]);
-  });
-
   it("does not recommend what is already installed", () => {
     const voiceActions = entry({
       id: "grain.voice-actions",
@@ -229,9 +220,9 @@ describe("extension collection helpers", () => {
     });
     expect(
       parseSlotConflict(
-        '{"slotConflict":{"slot":"pill.theme","currentOccupant":"old"}}',
+        '{"slotConflict":{"slot":"output.destination","currentOccupant":"old"}}',
       ),
-    ).toEqual({ slot: "pill.theme", currentOccupant: "old" });
+    ).toEqual({ slot: "output.destination", currentOccupant: "old" });
   });
 
   it("parses an approval that is only about prompt text", () => {
@@ -324,22 +315,7 @@ describe("extension collection helpers", () => {
   });
 });
 
-describe("in-place extension routing", () => {
-  it("sends a surface-taking extension to the control it changes", () => {
-    // grain.agent-center-layout has no settings of its own — it swaps the
-    // Agent's reply surface — so a preview would leave the user hunting for
-    // the Look picker it actually affects.
-    expect(
-      extensionDestination(
-        card({
-          id: "grain.agent-center-layout",
-          slots: ["agent.reply-surface"],
-        }),
-        [],
-      ),
-    ).toEqual({ kind: "tools", section: "agent" });
-  });
-
+describe("extension settings routing", () => {
   it("still prefers an extension's own page when it has one", () => {
     expect(
       extensionDestination(

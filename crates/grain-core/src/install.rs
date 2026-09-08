@@ -140,7 +140,6 @@ pub fn plan_record(
     granted: Vec<String>,
     prior: Option<&ExtensionRecord>,
     slots: Vec<String>,
-    variant_slots: Vec<String>,
     digests: ApprovalDigests,
 ) -> ExtensionRecord {
     // A removed declaration removes its grant too. Keeping stale grants would
@@ -193,10 +192,9 @@ pub fn plan_record(
         artifact_sha256: Some(entry.sha256.clone()),
         granted,
         // Slots come from the pack manifest we just installed â€” not the prior
-        // record â€” so an update that changes them is reflected, and a fresh
-        // store install actually claims what it declares (SPEC Â§3.2, Â§10.2).
+        // record — so an update that changes them is reflected, and a fresh
+        // store install actually claims what it declares (SPEC §3.2).
         slots,
-        variant_slots,
         // The PRIOR approval is carried forward untouched. Installing is not
         // approving: if the text changed, this no longer matches the
         // declaration, the layers stay inert, and the enable path shows the user
@@ -229,19 +227,12 @@ pub fn install_from_verified_entry(
         .map(|r| r.granted.clone())
         .unwrap_or_default();
     let manifest = manifest_of(bytes);
-    let (slots, variant_slots) = manifest
+    let slots = manifest
         .as_ref()
-        .map(|m| (m.slots.clone(), m.variant_slots.clone()))
+        .map(|m| m.slots.clone())
         .unwrap_or_default();
     let digests = manifest.as_ref().map(declared_digests).unwrap_or_default();
-    let record = plan_record(
-        entry,
-        granted,
-        prior.as_ref(),
-        slots,
-        variant_slots,
-        digests,
-    );
+    let record = plan_record(entry, granted, prior.as_ref(), slots, digests);
     reg.install(record)
         .map_err(|e| InstallError::Io(e.to_string()))?;
     Ok(dir)
@@ -381,7 +372,6 @@ mod tests {
             authentication_approved: None,
             recommend_approved: None,
             slots: vec![],
-            variant_slots: vec![],
             dev: None,
             trust: Trust::UNTRUSTED_DEFAULT,
         };
@@ -395,7 +385,7 @@ mod tests {
         // Property 2: trust flows from a verified entry through plan_record.
         let bytes = b"{\"id\":\"com.example.ok\"}";
         let e = entry("com.example.ok", "1.0.0", Trust::Verified, &[], bytes);
-        let record = plan_record(&e, vec![], None, vec![], vec![], ApprovalDigests::default());
+        let record = plan_record(&e, vec![], None, vec![], ApprovalDigests::default());
         assert_eq!(record.trust, Trust::Verified);
         assert_eq!(record.installed_version, "1.0.0");
     }
@@ -412,7 +402,6 @@ mod tests {
             vec![],
             None,
             vec![],
-            vec![],
             ApprovalDigests::default(),
         );
         assert_eq!(prior.trust, Trust::Verified);
@@ -423,7 +412,6 @@ mod tests {
             &new_entry,
             vec![],
             Some(&prior),
-            vec![],
             vec![],
             ApprovalDigests::default(),
         );
@@ -512,7 +500,6 @@ mod tests {
             authentication_approved: None,
             recommend_approved: None,
             slots: vec![],
-            variant_slots: vec![],
             dev: None,
             trust: Trust::Verified,
         };
@@ -522,7 +509,6 @@ mod tests {
             &e,
             vec![],
             Some(&approved),
-            vec![],
             vec![],
             ApprovalDigests {
                 prompt_layers: Some("fingerprint-of-1.0".into()),
@@ -538,7 +524,6 @@ mod tests {
             &e,
             vec![],
             Some(&approved),
-            vec![],
             vec![],
             ApprovalDigests {
                 prompt_layers: Some("fingerprint-of-1.1".into()),
@@ -573,7 +558,6 @@ mod tests {
             authentication_approved: None,
             recommend_approved: None,
             slots: vec![],
-            variant_slots: vec![],
             dev: None,
             trust: Trust::Verified,
         };
@@ -583,7 +567,6 @@ mod tests {
             &e,
             vec![],
             Some(&approved),
-            vec![],
             vec![],
             ApprovalDigests {
                 actions: Some("actions-of-1.0".into()),
@@ -599,7 +582,6 @@ mod tests {
             &e,
             vec![],
             Some(&approved),
-            vec![],
             vec![],
             ApprovalDigests {
                 actions: Some("actions-of-1.1".into()),
@@ -635,7 +617,6 @@ mod tests {
             authentication_approved: None,
             recommend_approved: Some("recommend-of-1.0".into()),
             slots: vec![],
-            variant_slots: vec![],
             dev: None,
             trust: Trust::Verified,
         };
@@ -645,7 +626,6 @@ mod tests {
             &e,
             vec![],
             Some(&approved),
-            vec![],
             vec![],
             ApprovalDigests {
                 recommend: Some("recommend-of-1.0".into()),
@@ -661,7 +641,6 @@ mod tests {
             &e,
             vec![],
             Some(&approved),
-            vec![],
             vec![],
             ApprovalDigests {
                 recommend: Some("recommend-of-1.1".into()),
@@ -696,7 +675,6 @@ mod tests {
             authentication_approved: None,
             recommend_approved: Some("recommend-of-1.0".into()),
             slots: vec![],
-            variant_slots: vec![],
             dev: None,
             trust: Trust::Verified,
         };
@@ -706,7 +684,6 @@ mod tests {
             &e,
             vec![],
             Some(&approved),
-            vec![],
             vec![],
             ApprovalDigests {
                 prompt_layers: Some("layers-of-1.1".into()),

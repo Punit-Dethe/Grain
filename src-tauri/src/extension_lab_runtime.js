@@ -851,7 +851,6 @@
   // state merely because this single-file lab template contains it.
   var selectedConfig = configs[extensionId] || null;
   configs = null;
-  var active = null;
   var COMMAND_FLOOR = 0.5;
   // Calibrated against the lab's natural-utterance corpus. Five points keeps
   // genuinely close commands in Suggested while allowing clear transport
@@ -1073,450 +1072,7 @@
     return "No command cleared the 50% semantic floor. The extension refuses to guess.";
   }
 
-  function diagnosticBadges(analysis) {
-    var badges = [];
-    if (analysis.state === "executed") {
-      badges.push({ type: "badge", text: "Executed", tone: "success" });
-      if (analysis.autoSend) {
-        badges.push({ type: "badge", text: "Auto-send", tone: "info" });
-      }
-      if (analysis.selectedByUser) {
-        badges.push({ type: "badge", text: "User selected", tone: "neutral" });
-      }
-    } else if (analysis.state === "suggested") {
-      badges.push({ type: "badge", text: "Suggested", tone: "warning" });
-    } else if (analysis.state === "unavailable") {
-      badges.push({
-        type: "badge",
-        text: analysis.lexicalAvailable
-          ? "Semantic unavailable"
-          : "Matching unavailable",
-        tone: "danger",
-      });
-    } else {
-      badges.push({ type: "badge", text: "Unresolved", tone: "muted" });
-    }
-    return badges;
-  }
-
-  function diagnosticView(config, request, analysis) {
-    var rankedRows = analysis.ranked.slice(0, 5).map(function (row, index) {
-      return {
-        type: "metadata",
-        label: String(index + 1) + ". " + row.title,
-        value:
-          "Semantic " +
-          percent(row.semanticScore) +
-          " · lexical diagnostic " +
-          percent(row.lexicalScore),
-      };
-    });
-    var actions = [];
-    if (analysis.state === "suggested") {
-      actions = analysis.suggested.map(function (id, index) {
-        var command = commandById(config, id);
-        return {
-          id: "choose-" + id,
-          label: command ? command.title : id,
-          intent: index === 0 ? "primary" : "secondary",
-          kind: "submit",
-        };
-      });
-    } else {
-      actions.push({
-        id: "finish-diagnostic",
-        label:
-          analysis.state === "executed" ? "Finish test" : "Close diagnostic",
-        intent: "primary",
-        kind: "submit",
-      });
-    }
-    actions.push({
-      id: "cancel-diagnostic",
-      label: "Cancel",
-      intent: "cancel",
-      kind: "cancel",
-    });
-    return {
-      version: 1,
-      title: config.name + " command decision",
-      description:
-        "Same-window Recommendation Lab instrumentation. No external action is performed.",
-      root: {
-        type: "stack",
-        gap: "md",
-        children: [
-          {
-            type: "section",
-            title: "Decision",
-            children: [
-              {
-                type: "inline",
-                gap: "sm",
-                align: "start",
-                wrap: true,
-                children: diagnosticBadges(analysis),
-              },
-              { type: "text", text: diagnosticStatus(analysis) },
-            ],
-          },
-          {
-            type: "section",
-            title: "Ranked internal commands",
-            children: rankedRows,
-          },
-          {
-            type: "section",
-            title: "Evidence policy",
-            children: [
-              {
-                type: "metadata",
-                label: "Signals",
-                value:
-                  "Semantic " +
-                  (analysis.semanticAvailable ? "available" : "unavailable") +
-                  " · lexical " +
-                  (analysis.lexicalAvailable ? "available" : "unavailable"),
-              },
-              {
-                type: "metadata",
-                label: "Thresholds",
-                value:
-                  "Semantic floor 50.0% · ask margin 8.0% · Auto-send margin 15.0%",
-              },
-              {
-                type: "metadata",
-                label: "Auto-send rule",
-                value:
-                  "Safe command + semantic clear winner. Lexical evidence can never enable it.",
-              },
-              {
-                type: "metadata",
-                label: "Original request",
-                value: request.slice(0, 2048),
-              },
-            ],
-          },
-        ],
-      },
-      actions: actions,
-    };
-  }
-
-  function metadata(request, command) {
-    return [
-      { type: "metadata", label: "Resolved command", value: command },
-      {
-        type: "metadata",
-        label: "Original request",
-        value: request.slice(0, 2048),
-      },
-    ];
-  }
-
-  function confirmView(config, request, command, danger) {
-    return {
-      version: 1,
-      title: danger ? "Review consequential action" : "Confirm request",
-      description:
-        config.name +
-        " resolved one of " +
-        config.commands.length +
-        " internal commands.",
-      root: {
-        type: "stack",
-        gap: "md",
-        children: [
-          {
-            type: "section",
-            title: config.name,
-            children: metadata(request, command),
-          },
-          {
-            type: "text",
-            tone: danger ? "warning" : "muted",
-            text: danger
-              ? "This lab action is drawn with Grain's destructive-action treatment. It does not touch real data."
-              : "The fixture waits for explicit confirmation before returning its result.",
-          },
-        ],
-      },
-      actions: [
-        {
-          id: "confirm",
-          label: danger ? "Run test action" : "Confirm",
-          intent: danger ? "danger" : "primary",
-          kind: "submit",
-        },
-        { id: "cancel", label: "Cancel", intent: "cancel", kind: "cancel" },
-      ],
-    };
-  }
-
-  function formView(config, request, command) {
-    var children = metadata(request, command);
-    if (config.mode === "issue-form") {
-      children = children.concat([
-        {
-          type: "text_field",
-          id: "title",
-          label: "Issue title",
-          value: request.slice(0, 120),
-          required: true,
-          maxLength: 120,
-        },
-        {
-          type: "text_area",
-          id: "details",
-          label: "Description",
-          value: request,
-          rows: 5,
-          maxLength: 2000,
-        },
-        {
-          type: "select",
-          id: "priority",
-          label: "Priority",
-          value: "medium",
-          options: [
-            { value: "low", label: "Low" },
-            { value: "medium", label: "Medium" },
-            { value: "high", label: "High" },
-            { value: "urgent", label: "Urgent" },
-          ],
-        },
-        {
-          type: "checkbox",
-          id: "notify",
-          label: "Notify the project team",
-          checked: true,
-        },
-      ]);
-    } else if (config.mode === "calendar-form") {
-      children = children.concat([
-        {
-          type: "text_field",
-          id: "title",
-          label: "Event title",
-          value: request.slice(0, 100),
-          required: true,
-          maxLength: 100,
-        },
-        {
-          type: "text_field",
-          id: "when",
-          label: "Date and time",
-          value: "Tomorrow at 10:00",
-          required: true,
-          maxLength: 80,
-        },
-        {
-          type: "text_area",
-          id: "attendees",
-          label: "Attendees",
-          placeholder: "Names or email addresses",
-          rows: 3,
-          maxLength: 500,
-        },
-      ]);
-    } else if (config.mode === "message-form") {
-      children = children.concat([
-        {
-          type: "text_field",
-          id: "recipient",
-          label: "Recipient",
-          placeholder: "Person, channel, or address",
-          required: true,
-          maxLength: 120,
-        },
-        {
-          type: "text_area",
-          id: "message",
-          label: "Message",
-          value: request,
-          rows: 6,
-          required: true,
-          maxLength: 2000,
-        },
-      ]);
-    } else if (config.mode === "task-form") {
-      children = children.concat([
-        {
-          type: "text_field",
-          id: "task",
-          label: "Task",
-          value: request.slice(0, 160),
-          required: true,
-          maxLength: 160,
-        },
-        {
-          type: "select",
-          id: "priority",
-          label: "Priority",
-          value: "normal",
-          options: [
-            { value: "normal", label: "Normal" },
-            { value: "high", label: "High" },
-          ],
-        },
-      ]);
-    } else if (config.mode === "contact-form") {
-      children = children.concat([
-        {
-          type: "text_field",
-          id: "name",
-          label: "Name",
-          required: true,
-          maxLength: 120,
-        },
-        { type: "text_field", id: "email", label: "Email", maxLength: 200 },
-        { type: "text_field", id: "phone", label: "Phone", maxLength: 80 },
-      ]);
-    } else if (config.mode === "expense-form") {
-      children = children.concat([
-        {
-          type: "text_field",
-          id: "amount",
-          label: "Amount",
-          placeholder: "0.00",
-          required: true,
-          maxLength: 32,
-        },
-        {
-          type: "select",
-          id: "category",
-          label: "Category",
-          value: "meals",
-          options: [
-            { value: "meals", label: "Meals" },
-            { value: "travel", label: "Travel" },
-            { value: "software", label: "Software" },
-            { value: "other", label: "Other" },
-          ],
-        },
-        {
-          type: "checkbox",
-          id: "reimbursable",
-          label: "Reimbursable",
-          checked: false,
-        },
-      ]);
-    } else {
-      children = children.concat([
-        {
-          type: "text_field",
-          id: "destination",
-          label: "Destination",
-          required: true,
-          maxLength: 120,
-        },
-        {
-          type: "text_area",
-          id: "preferences",
-          label: "Preferences",
-          value: request,
-          rows: 5,
-          maxLength: 1600,
-        },
-      ]);
-    }
-    return {
-      version: 1,
-      title: config.name,
-      description:
-        "Editable Grain-rendered form from a Recommendation Lab extension.",
-      root: {
-        type: "stack",
-        gap: "md",
-        children: [
-          { type: "section", title: "Request details", children: children },
-        ],
-      },
-      actions: [
-        {
-          id: "submit",
-          label: "Complete test",
-          intent: "primary",
-          kind: "submit",
-        },
-        { id: "cancel", label: "Cancel", intent: "cancel", kind: "cancel" },
-      ],
-    };
-  }
-
-  grain.ui.onEvent(function (event) {
-    if (!active) return;
-    if (event.kind === "cancel") {
-      active = null;
-      return;
-    }
-    if (event.kind === "change") return;
-    if (active.kind === "command-diagnostic") {
-      if (event.target.indexOf("choose-") === 0) {
-        var selected = event.target.slice("choose-".length);
-        if (active.analysis.suggested.indexOf(selected) < 0) {
-          active = null;
-          return {
-            error: "The selected command was not offered by this view.",
-          };
-        }
-        active.analysis = {
-          state: "executed",
-          ranked: active.analysis.ranked,
-          suggested: [],
-          pick: selected,
-          autoSend: false,
-          selectedByUser: true,
-          lexicalAvailable: active.analysis.lexicalAvailable,
-          semanticAvailable: active.analysis.semanticAvailable,
-        };
-        return {
-          view: diagnosticView(active.config, active.request, active.analysis),
-        };
-      }
-      if (event.target !== "finish-diagnostic") {
-        active = null;
-        return { error: "The command diagnostic received an unknown action." };
-      }
-      var diagnostic = active;
-      active = null;
-      if (diagnostic.analysis.state === "executed") {
-        var resolved = commandById(diagnostic.config, diagnostic.analysis.pick);
-        return {
-          message:
-            diagnostic.config.name +
-            " completed the simulated '" +
-            (resolved ? resolved.title : diagnostic.analysis.pick) +
-            "' command." +
-            (diagnostic.analysis.autoSend
-              ? " It satisfied the semantic-only Auto-send policy."
-              : " It did not Auto-send."),
-        };
-      }
-      return {
-        message:
-          diagnostic.config.name +
-          " closed the diagnostic without executing an internal command.",
-      };
-    }
-    var values = event.values || {};
-    var fields = Object.keys(values)
-      .map(function (key) {
-        return key + "=" + String(values[key]);
-      })
-      .join(", ");
-    var message =
-      active.config.name +
-      " completed '" +
-      active.command +
-      "' in the Recommendation Lab.";
-    if (fields) message += "\n\nSubmitted values: " + fields;
-    active = null;
-    return { message: message };
-  });
-
   grain.onRequest(async function (request) {
-    active = null;
     var config = selectedConfig;
     if (!config) return { error: "Recommendation Lab profile is missing" };
     var lower = request.toLowerCase();
@@ -1541,15 +1097,29 @@
     if (config.commandDiagnostic === true) {
       try {
         var analysis = await diagnoseCommand(request, config);
-        active = {
-          kind: "command-diagnostic",
-          config: config,
-          request: request,
-          analysis: analysis,
+        var top = analysis.ranked.slice(0, 5).map(function (row, index) {
+          return (
+            String(index + 1) +
+            ". " +
+            row.title +
+            " — semantic " +
+            percent(row.semanticScore) +
+            ", lexical " +
+            percent(row.lexicalScore)
+          );
+        });
+        return {
+          message:
+            config.name +
+            " command decision: " +
+            analysis.state +
+            "." +
+            (analysis.autoSend ? " Auto-send." : "") +
+            "\n\n" +
+            diagnosticStatus(analysis) +
+            (top.length ? "\n\n" + top.join("\n") : ""),
         };
-        return { view: diagnosticView(config, request, analysis) };
       } catch (_) {
-        active = null;
         return {
           error:
             "The internal command diagnostic could not complete safely. Retry after checking the semantic model.",
@@ -1578,16 +1148,13 @@
       };
     }
     if (config.mode === "completion") return {};
-    active = {
-      kind: "legacy-lab",
-      config: config,
-      request: request,
-      command: command,
+    return {
+      message:
+        config.name +
+        " simulated '" +
+        command +
+        "'.\n\nOriginal request: " +
+        request,
     };
-    if (config.mode === "confirm")
-      return { view: confirmView(config, request, command, false) };
-    if (config.mode === "danger")
-      return { view: confirmView(config, request, command, true) };
-    return { view: formView(config, request, command) };
   });
 })();

@@ -261,34 +261,9 @@ export const GRAIN_RUNTIME_JS = `(function () {
         return req("match.decide", { candidates: candidates || [], policy: policy || {} });
       }
     },
-    // The extension asks for ITS OWN workspace surface (SPEC §1.2) — there is
-    // no id to pass, because the host derives which extension is calling from
-    // the channel, not from an argument. The payload reaches the surface UI on
-    // mount (and an already-open surface via its payload event).
-    workspace: {
-      open: function (payload) { return req("workspace.open", { payload: payload == null ? null : payload }); },
-      close: function () { return req("workspace.close", {}); }
-    },
-    // A transient HUD (SPEC 1.2). Host-budgeted in size and lifetime — it
-    // auto-dismisses, so an extension cannot leave one on screen.
-    overlay: {
-      show: function (payload) { return req("overlay.show", { payload: payload == null ? null : payload }); },
-      dismiss: function () { return req("overlay.dismiss", {}); }
-    },
     session: {
       start: function (options) {
         return req("session.start", { mode: String(options && options.mode || "") });
-      }
-    },
-    // Standard Extension Surface: the worker owns workflow state, while Grain
-    // renders the allowlisted tree and sends only stable-id events back here.
-    ui: {
-      onEvent: function (fn) {
-        handlers.surface = function (p) {
-          return Promise.resolve(fn(p && p.event ? p.event : { kind: "cancel" })).then(function (out) {
-            return out == null ? {} : out;
-          });
-        };
       }
     },
     // Launch side effects (SPEC 1.3). The host enforces safety: open.url accepts
@@ -323,12 +298,11 @@ export const GRAIN_RUNTIME_JS = `(function () {
     },
     // The user accepted this extension in Extension Mode (Extensions V1, sec 3),
     // and the WHOLE request is handed over — the full transcript, verbatim, not
-    // extracted parameters. The extension owns everything from here:
-    // interpretation (reach for grain.match.* or call llm() with its own tool
-    // schema), any clarification, and the result.
+    // extracted parameters. The extension interprets the request (reach for
+    // grain.match.* or call llm() with its own tool schema), but Grain owns
+    // every rendered result.
     //
-    // Four shapes may be returned:
-    //   { view }                  show Grain's standard remote component tree
+    // Three shapes may be returned:
     //   undefined / { message }   it was handled ({ message } is a short result)
     //   { decline }               wrong owner; reopen the chooser without it
     //   { error }                 right owner, but the request failed

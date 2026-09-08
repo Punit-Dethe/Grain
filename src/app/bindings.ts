@@ -817,18 +817,12 @@ async grainSpaceSearch(query: string) : Promise<Result<Note[], string>> {
 }
 },
 /**
- * Run one Grain Recall turn for the overlay's chat rail. This is the SAME
- * retrieval + synthesis brain the voice Recall pill drives
- * (`recall::run_turn`) — hybrid retrieve, memories block, bounded
- * `search_memory` tool loop, `SOURCES:`/`NOT_FOUND`/`ACTION:` tail — only now
- * fed by messages typed into the in-window chat instead of the summon panel.
+ * Run one conversational turn for the Notes workspace chat rail.
  * 
- * Deliberately NOT gated on `AgentMode`: that mode is fixed by whichever voice
- * binding fired, but the chat rail is a distinct surface that always means
- * Recall, so it calls `run_turn` directly. `run_turn` still gates on the master
- * toggle and returns friendly prose for an empty corpus. The chat maintains its
- * own message history frontend-side and sends the whole thread each turn (the
- * same shape `agent_run` receives).
+ * Converged onto the unified Agent tool loop (`agent_run`): the Agent is
+ * advertised the standard note tools (`search_notes`, `get_note`, etc.) and
+ * decides whether to retrieve, without speculative pre-retrieval over the raw
+ * transcript.
  */
 async grainSpaceRecallTurn(messages: AgentMessage[]) : Promise<Result<AgentReply, string>> {
     try {
@@ -839,11 +833,10 @@ async grainSpaceRecallTurn(messages: AgentMessage[]) : Promise<Result<AgentReply
 }
 },
 /**
- * Clear the shared Grain Recall session registry (the stable `Mn` memory ids).
- * The chat rail calls this before the first turn of a NEW conversation,
- * mirroring the reset the voice pill performs on each fresh summon — so a fresh
- * thread never inherits M-numbers from a previous one. Rendered source chips
- * carry their own note ids, so clearing the registry never breaks past turns.
+ * Compatibility command retained for older frontends.
+ *
+ * Recall now runs through the stateless unified Agent tool loop, so there is no
+ * per-conversation memory-id registry to clear.
  */
 async grainSpaceRecallReset() : Promise<void> {
     await TAURI_INVOKE("grain_space_recall_reset");
@@ -1666,24 +1659,6 @@ async extensionCaptureApp(id: string) : Promise<Result<string | null, string>> {
 }
 },
 /**
- * [GRAIN] The custom card's host channel (SPEC §4.1 Level 3). A `panel` setting
- * renders the extension's own UI in a sandboxed iframe; that iframe posts host
- * calls up to Grain's (trusted) settings page, which relays them here. The
- * panel gets EXACTLY the capabilities the user granted this extension: the
- * grants come from the registry RECORD, never from the caller, so a card can
- * neither assert another identity nor widen its own. Every method is then
- * capability-checked by `host_api::dispatch`, identically to a worker. The
- * error crosses back as the same `{code,message,hint,…}` shape the worker gets.
- */
-async extensionHostCall(id: string, method: string, params: JsonValue) : Promise<Result<JsonValue, JsonValue>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("extension_host_call", { id, method, params }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
  * The live state of one extension's contributed shortcuts (SPEC §3.3), so the
  * settings section can show a chord that is registered — and name the holder
  * of one that isn't, rather than leaving a dead hotkey unexplained.
@@ -1824,34 +1799,6 @@ async extensionSettingSet(id: string, key: string, value: JsonValue) : Promise<R
     else return { status: "error", error: e  as any };
 }
 },
-/**
- * The wrapper page collecting its identity and the markup to render. Handed
- * over once per open; a second asker gets nothing rather than a live token.
- */
-async extensionSurfaceInit() : Promise<SurfaceInit | null> {
-    return await TAURI_INVOKE("extension_surface_init");
-},
-/**
- * Frontend ack: the surface UI is mounted — reveal the window.
- */
-async extensionSurfaceUiReady() : Promise<void> {
-    await TAURI_INVOKE("extension_surface_ui_ready");
-},
-/**
- * Frontend ack: the surface UI is unmounted — hide and suspend now.
- */
-async extensionSurfaceSleepReady() : Promise<void> {
-    await TAURI_INVOKE("extension_surface_sleep_ready");
-},
-/**
- * The wrapper page collecting the payload its surface was opened with, to hand
- * to the iframe on mount. Keyed on the calling window, so a surface only ever
- * receives its own — and consumed once, so a re-mount does not replay a stale
- * one.
- */
-async extensionSurfacePayload() : Promise<JsonValue | null> {
-    return await TAURI_INVOKE("extension_surface_payload");
-},
 async extensionViewInit() : Promise<ExtensionViewInit | null> {
     return await TAURI_INVOKE("extension_view_init");
 },
@@ -1874,14 +1821,6 @@ async extensionViewChoose(sessionId: number, presentationId: number, extensionId
 async extensionViewDownloadModel(sessionId: number) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("extension_view_download_model", { sessionId }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async extensionViewEvent(sessionId: number, event: ExtensionViewEvent) : Promise<Result<ExtensionViewEventResult, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("extension_view_event", { sessionId, event }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2897,7 +2836,7 @@ export type AgentPanelPosition = "side" | "center"
  * evidence footer / escape hatch (RECALL-PLAN §6); Assist always returns an
  * empty `sources` and `not_found = false`, so the panel renders no footer.
  */
-export type AgentReply = { text: string; sources: AgentSource[]; not_found: boolean; 
+export type AgentReply = { text: string; sources: AgentSource[]; not_found: boolean;
 /**
  * Set only by a Grain Recall `forget` turn (RECALL-PLAN §7.2): the memory
  * the user asked to delete. Destructive, so the panel confirms in-place
@@ -3118,7 +3057,7 @@ extensions_imported_v1?: boolean;
  * separate from diagnostic `debug_mode`: only this switch allows native
  * folder selection and load-unpacked projects. OFF by default.
  */
-extension_developer_mode?: boolean; 
+extension_developer_mode?: boolean;
 /**
  * [GRAIN] Hosted MCP providers admitted to the Agent directory while the
  * development integration layer is enabled. IDs are resolved exclusively
@@ -3426,11 +3365,7 @@ capabilities: string[];
  */
 has_detail: boolean; 
 /**
- * [GRAIN] Host surfaces this extension takes over, e.g.
- * `agent.reply-surface`. An "in-place" extension has no settings page of
- * its own — it changes a control that already exists somewhere in the app
- * — so this is what lets the UI open the place it actually affects
- * instead of dead-ending on a preview.
+ * [GRAIN] Non-visual behavior slots this extension takes over.
  */
 slots: string[]; 
 /**
@@ -3562,11 +3497,7 @@ fields: ExtensionSettingField[];
 /**
  * Singular noun for a `list`'s Add button / row header.
  */
-item_label: string | null; 
-/**
- * The card's self-contained HTML, for a `panel` field (None otherwise).
- */
-ui_source: string | null }
+item_label: string | null }
 /**
  * One row of an extension's settings section: the declaration flattened into
  * exactly what a control needs, plus the value to show.
@@ -3603,24 +3534,12 @@ fields: ExtensionSettingField[];
 /**
  * Singular noun for a `list`'s Add button / row header.
  */
-item_label: string | null; 
-/**
- * The card's self-contained HTML, for a `panel` row (None otherwise).
- */
-ui_source: string | null }
+item_label: string | null }
 /**
  * One enabled extension's settings, ready to render.
  */
 export type ExtensionSettingsSection = { id: string; name: string; rows: ExtensionSettingRow[] }
-export type ExtensionView = { version?: number; title: string; description?: string | null; root: ViewNode; actions?: ViewAction[] }
-export type ExtensionViewContent = { kind: "routing"; request_preview: string | null } | { kind: "choose"; presentation_id: number; request_preview: string; candidates: ExtensionChoiceCandidate[]; name_only: boolean } | { kind: "running"; automatic: boolean } | { kind: "view"; view: ExtensionView } | { kind: "result"; message: string; tone: ResultTone; can_copy: boolean; can_insert: boolean; can_replace: boolean; can_open_extensions: boolean; dismiss_after_ms: number | null }
-export type ExtensionViewEvent = { kind: "change"; target: string; value: ViewValue; values?: Partial<{ [key in string]: ViewValue }> } | { kind: "submit"; target: string; values?: Partial<{ [key in string]: ViewValue }> } | { kind: "cancel" }
-export type ExtensionViewEventResult = { 
-/**
- * A `change` handler that returns nothing keeps the user's local field
- * state instead of rehydrating the author tree's original defaults.
- */
-unchanged: boolean; content: ExtensionViewContent }
+export type ExtensionViewContent = { kind: "routing"; request_preview: string | null } | { kind: "choose"; presentation_id: number; request_preview: string; candidates: ExtensionChoiceCandidate[]; name_only: boolean } | { kind: "running"; automatic: boolean } | { kind: "result"; message: string; tone: ResultTone; can_copy: boolean; can_insert: boolean; can_replace: boolean; can_open_extensions: boolean; dismiss_after_ms: number | null }
 export type ExtensionViewInit = { sessionId: number; extensionId: string | null; extensionName: string | null; content: ExtensionViewContent }
 export type GpuDeviceOption = { id: string; name: string; total_vram_mb: number }
 /**
@@ -4209,16 +4128,6 @@ export type SttProviderKind =
  */
 "openai" | "deepgram" | "assemblyai"
 /**
- * What the wrapper page needs to boot. Handed over once, in response to the
- * page asking for it — never placed in the URL, where it would be readable
- * from the window title bar, logs and crash dumps.
- */
-export type SurfaceInit = { extensionId: string; token: string; 
-/**
- * The extension's HTML, rendered into a sandboxed iframe.
- */
-uiSource: string; sleepEvent: string; reviveEvent: string; payloadEvent: string; reloadEvent: string }
-/**
  * Broadcast when the effective colour scheme changes — either because the user
  * picked a different mode, or because the OS flipped while on `System`.
  */
@@ -4282,16 +4191,6 @@ notes: string | null;
  * RFC 3339 publication date as `latest.json` reported it.
  */
 date: string | null }
-export type ViewAction = { id: string; label: string; intent?: ViewActionIntent; kind?: ViewActionKind; disabled?: boolean }
-export type ViewActionIntent = "primary" | "secondary" | "danger" | "cancel"
-export type ViewActionKind = "submit" | "cancel"
-export type ViewAlign = "start" | "center" | "end" | "stretch" | "space_between"
-export type ViewGap = "xs" | "sm" | "md" | "lg"
-export type ViewHeadingLevel = "one" | "two" | "three"
-export type ViewNode = { type: "stack"; gap?: ViewGap; children?: ViewNode[] } | { type: "inline"; gap?: ViewGap; align?: ViewAlign; wrap?: boolean; children?: ViewNode[] } | { type: "grid"; columns: number; gap?: ViewGap; children?: ViewNode[] } | { type: "section"; title?: string | null; children?: ViewNode[] } | { type: "divider" } | { type: "heading"; text: string; level?: ViewHeadingLevel } | { type: "text"; text: string; tone?: ViewTone } | { type: "badge"; text: string; tone?: ViewTone } | { type: "metadata"; label: string; value: string } | { type: "text_field"; id: string; label: string; value?: string; placeholder?: string | null; required?: boolean; disabled?: boolean; maxLength?: number | null } | { type: "text_area"; id: string; label: string; value?: string; placeholder?: string | null; rows?: number; required?: boolean; disabled?: boolean; maxLength?: number | null } | { type: "select"; id: string; label: string; value?: string; options: ViewOption[]; required?: boolean; disabled?: boolean } | { type: "checkbox"; id: string; label: string; checked?: boolean; required?: boolean; disabled?: boolean }
-export type ViewOption = { value: string; label: string }
-export type ViewTone = "neutral" | "muted" | "info" | "success" | "warning" | "danger"
-export type ViewValue = string | boolean
 export type WindowsMicrophonePermissionStatus = { supported: boolean; overall_access: PermissionAccess; device_access: PermissionAccess; app_access: PermissionAccess; desktop_app_access: PermissionAccess }
 
 /** tauri-specta globals **/

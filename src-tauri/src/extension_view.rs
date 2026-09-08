@@ -1,15 +1,12 @@
 //! Grain-rendered session UI for Extension Mode.
 //!
 //! The same prewarmed Tauri window owns routing, choice, execution progress,
-//! confirmation, and finite results. A selected extension may supply only a
-//! validated [`grain_sdk::ExtensionView`] tree. Grain owns the webview, DOM,
-//! components, styling, focus, trusted action bar, and lifecycle; no extension
-//! HTML, CSS, script, token, or Tauri authority enters this window.
+//! and finite results. Grain owns every element, style, transition, focus rule,
+//! and lifecycle; extensions can return data and text, never UI declarations.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 
-use grain_sdk::{ExtensionView, ExtensionViewEvent};
 use serde::Serialize;
 use specta::Type;
 use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
@@ -112,9 +109,6 @@ pub enum ExtensionViewContent {
     Running {
         automatic: bool,
     },
-    View {
-        view: ExtensionView,
-    },
     Result {
         message: String,
         tone: ResultTone,
@@ -165,15 +159,6 @@ pub struct ExtensionViewInit {
     pub content: ExtensionViewContent,
 }
 
-#[derive(Clone, Debug, Serialize, Type)]
-#[serde(rename_all = "camelCase")]
-pub struct ExtensionViewEventResult {
-    /// A `change` handler that returns nothing keeps the user's local field
-    /// state instead of rehydrating the author tree's original defaults.
-    pub unchanged: bool,
-    pub content: ExtensionViewContent,
-}
-
 impl From<&ActiveView> for ExtensionViewInit {
     fn from(active: &ActiveView) -> Self {
         Self {
@@ -212,23 +197,6 @@ fn notify_closed(app: &AppHandle, removed: &ActiveView) {
             if let Some(request_id) = removed.request_id {
                 crate::grain_actions::action_session::dismiss_request_from_view(request_id);
             }
-        }
-        ExtensionViewContent::View { .. } => {
-            let (Some(extension_id), Some(_extension_name)) =
-                (&removed.extension_id, &removed.extension_name)
-            else {
-                return;
-            };
-            action_log::record(
-                &removed.request,
-                Some(extension_id.clone()),
-                None,
-                None,
-                ActionLogOutcome::Refused {
-                    reason: "user cancelled confirmation".into(),
-                },
-            );
-            crate::extension_host::notify_surface_cancel(extension_id, removed.session_id);
         }
         ExtensionViewContent::Result { .. } => {}
     }
@@ -504,33 +472,8 @@ pub fn present_running(
     )
 }
 
-/// Present an extension-authored, Grain-rendered component tree.
-pub fn present(
-    app: &AppHandle,
-    extension_id: &str,
-    request: &str,
-    view: ExtensionView,
-) -> Result<u64, String> {
-    view.validate()?;
-    let name = extension_name(app, extension_id);
-    store_and_emit(
-        app,
-        ActiveView {
-            session_id: NEXT_SESSION.fetch_add(1, Ordering::Relaxed),
-            request_id: None,
-            extension_id: Some(extension_id.to_string()),
-            extension_name: Some(name),
-            request: request.to_string(),
-            content: ExtensionViewContent::View { view },
-            busy: false,
-            pill_session_id: None,
-        },
-        true,
-    )
-}
-
 /// Show a finite host-owned outcome. Used when an extension returns a message
-/// without first opening an editable view, and after a view action completes.
+/// after it completes a request.
 pub fn present_result(
     app: &AppHandle,
     extension_id: &str,
@@ -631,15 +574,6 @@ pub fn destroy(app: &AppHandle) {
     schedule_window_destroy(app);
 }
 
-/// Keep the owning worker out of the idle reaper while its standard view is
-/// visible. Closing the finite view restores the normal idle policy.
-pub fn owns_extension(extension_id: &str) -> bool {
-    active().lock().unwrap().as_ref().is_some_and(|active| {
-        active.extension_id.as_deref() == Some(extension_id)
-            && matches!(&active.content, ExtensionViewContent::View { .. })
-    })
-}
-
 /// Whether a painted-but-not-yet-ready renderer is responsible for retiring
 /// this native pill. Used by the recorder tail so a fast ranking pass cannot
 /// hide the pill before a cold webview becomes visible.
@@ -663,15 +597,14 @@ pub fn destroy_for_extension(app: &AppHandle, extension_id: &str) {
     }
 }
 
-/// A crashed/reaped worker invalidates an interactive view, but a finite result
-/// no longer depends on that worker and must remain copyable until the user
-/// closes it.
+/// A crashed/reaped worker invalidates an in-progress request, but a finite
+/// result no longer depends on that worker and remains copyable until closed.
 pub fn fail_interactive_for_extension(app: &AppHandle, extension_id: &str, reason: &str) {
     let init = {
         let mut slot = active().lock().unwrap();
         let Some(active) = slot.as_mut().filter(|active| {
             active.extension_id.as_deref() == Some(extension_id)
-                && matches!(&active.content, ExtensionViewContent::View { .. })
+                && matches!(&active.content, ExtensionViewContent::Running { .. })
         }) else {
             return;
         };
@@ -828,112 +761,6 @@ pub async fn extension_view_download_model(
         current.busy = false;
     }
     Ok(())
-}
-
-#[tauri::command]
-#[specta::specta]
-pub async fn extension_view_event(
-    app: AppHandle,
-    window: WebviewWindow,
-    session_id: u64,
-    event: ExtensionViewEvent,
-) -> Result<ExtensionViewEventResult, String> {
-    if !caller_is_view(&window) {
-        return Err("extension view command called from the wrong window".into());
-    }
-    let extension_id = {
-        let mut slot = active().lock().unwrap();
-        let active = slot
-            .as_mut()
-            .filter(|active| active.session_id == session_id)
-            .ok_or("stale extension view session")?;
-        if active.busy {
-            return Err("an extension view event is already in flight".into());
-        }
-        let ExtensionViewContent::View { view } = &active.content else {
-            return Err("this extension view has already completed".into());
-        };
-        view.validate_event(&event)?;
-        active.busy = true;
-        active
-            .extension_id
-            .clone()
-            .ok_or("this extension view has no owning extension")?
-    };
-
-    let outcome =
-        crate::extension_host::surface_event(&app, &extension_id, session_id, event).await;
-    let mut slot = active().lock().unwrap();
-    let active = slot
-        .as_mut()
-        .filter(|active| active.session_id == session_id)
-        .ok_or("stale extension view session")?;
-    active.busy = false;
-    if matches!(&active.content, ExtensionViewContent::Result { .. }) {
-        return Ok(ExtensionViewEventResult {
-            unchanged: false,
-            content: active.content.clone(),
-        });
-    }
-
-    let unchanged = matches!(
-        &outcome,
-        crate::extension_host::SurfaceEventOutcome::Unchanged
-    );
-    match outcome {
-        crate::extension_host::SurfaceEventOutcome::View(next) => {
-            next.validate()?;
-            active.content = ExtensionViewContent::View { view: next };
-        }
-        crate::extension_host::SurfaceEventOutcome::Unchanged => {}
-        crate::extension_host::SurfaceEventOutcome::Done(message) => {
-            let message = message
-                .filter(|message| !message.trim().is_empty())
-                .map(|message| bounded_message(&message))
-                .unwrap_or_else(|| "Done".into());
-            active.content = result_content(message, ResultTone::Success, true, None);
-            action_log::record(
-                &active.request,
-                active.extension_id.clone(),
-                None,
-                None,
-                ActionLogOutcome::Ran { confirmed: true },
-            );
-            active.request.clear();
-        }
-        crate::extension_host::SurfaceEventOutcome::Failed(reason) => {
-            let reason = bounded_message(&reason);
-            active.content = result_content(reason.clone(), ResultTone::Danger, false, None);
-            action_log::record(
-                &active.request,
-                active.extension_id.clone(),
-                None,
-                None,
-                ActionLogOutcome::Failed { reason },
-            );
-            active.request.clear();
-        }
-        crate::extension_host::SurfaceEventOutcome::Unknown => {
-            active.content = result_content(
-                "Grain stopped waiting, so the extension's final outcome is unknown.".into(),
-                ResultTone::Warning,
-                false,
-                None,
-            );
-            action_log::record(
-                &active.request,
-                active.extension_id.clone(),
-                None,
-                None,
-                ActionLogOutcome::Unknown,
-            );
-            active.request.clear();
-        }
-    }
-    Ok(ExtensionViewEventResult {
-        unchanged,
-        content: active.content.clone(),
-    })
 }
 
 #[tauri::command]

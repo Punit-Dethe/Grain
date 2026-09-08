@@ -58,7 +58,6 @@ pub const DAEMON_EVENT_VARIANTS: &[&str] = &[
     "AsrSessionFinal",
     "AsrError",
     "ExtensionDisabled",
-    "PillTheme",
     "PillSkin",
     "PillIcon",
 ];
@@ -444,19 +443,8 @@ pub enum DaemonEvent {
         reason: String,
     },
 
-    /// [GRAIN] Pill theme (SPEC §9): the look the pill should render, sent when
-    /// the pill authenticates and whenever the `pill.theme` slot occupant
-    /// changes. `None` means Grain's own default theme (the slot reverted to
-    /// core). Data only — no extension code runs in the pill.
-    PillTheme {
-        #[serde(default)]
-        theme: Option<crate::PillTheme>,
-    },
-
     /// [GRAIN] Which built-in look the collapsed pill should wear. Sent when the
     /// pill authenticates and whenever the user changes the `pill_skin` setting.
-    /// Separate from [`DaemonEvent::PillTheme`] on purpose: a skin is Grain's own
-    /// *form* (geometry + visualisation), a theme is an extension's *colours*.
     /// Changing it resizes the pill window, so it is never sent per frame.
     PillSkin {
         #[serde(default)]
@@ -533,7 +521,6 @@ impl DaemonEvent {
             AsrSessionFinal { .. } => "AsrSessionFinal",
             AsrError { .. } => "AsrError",
             ExtensionDisabled { .. } => "ExtensionDisabled",
-            PillTheme { .. } => "PillTheme",
             PillSkin { .. } => "PillSkin",
             PillIcon { .. } => "PillIcon",
         }

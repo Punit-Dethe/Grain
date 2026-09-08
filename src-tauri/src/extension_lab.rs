@@ -655,7 +655,7 @@ mod tests {
     }
 
     #[test]
-    fn corpus_covers_core_stress_and_runtime_surface_paths() {
+    fn corpus_covers_core_stress_and_runtime_result_paths() {
         assert_eq!(profiles().len(), STRESS_COUNT);
         assert_eq!(ids(CORE_COUNT).len(), CORE_COUNT);
         assert!(
@@ -671,15 +671,14 @@ mod tests {
             "grain.match.lexical",
             "grain.match.semantic",
             "grain.match.decide",
-            "grain.ui.onEvent",
             "grain.onRequest",
-            "text: \"Suggested\"",
-            "text: \"Executed\"",
-            "text: \"Auto-send\"",
+            "command decision: ",
+            " Auto-send.",
+            "Original request: ",
             "semanticAutoDecision.pick === decision.pick",
             "decline:",
             "error:",
-            "kind: \"submit\"",
+            "message:",
         ] {
             assert!(
                 LAB_RUNTIME.contains(required),

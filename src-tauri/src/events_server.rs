@@ -117,10 +117,6 @@ pub fn mint_worker_token(ext_id: &str, caps: std::collections::HashSet<String>) 
     mint_extension_token(ext_id, caps, crate::events_auth::ClientRole::Worker)
 }
 
-pub fn mint_surface_token(ext_id: &str, caps: std::collections::HashSet<String>) -> String {
-    mint_extension_token(ext_id, caps, crate::events_auth::ClientRole::Surface)
-}
-
 /// [GRAIN] Mint the identity the Grain Space MCP proxy authenticates with, and
 /// hand the token to it through a file only this user can read.
 ///
@@ -490,7 +486,6 @@ async fn handle(stream: TcpStream, ctx: Arc<AppContext>, app: AppHandle) {
     // The authenticated role, not its capability set, decides which protocol
     // this socket speaks and whether the worker host tracks it for reaping.
     let is_worker = identity.role == crate::events_auth::ClientRole::Worker;
-    let is_surface = identity.role == crate::events_auth::ClientRole::Surface;
     // The MCP proxy is a request/response client and nothing else: it never
     // subscribes to events and never receives a host call.
     let is_mcp = identity.role == crate::events_auth::ClientRole::Mcp;
@@ -502,16 +497,8 @@ async fn handle(stream: TcpStream, ctx: Arc<AppContext>, app: AppHandle) {
         };
         Some(activity)
     } else if identity.role == crate::events_auth::ClientRole::Pill {
-        // [GRAIN] SPEC §9: greet the pill (the non-extension `All` client) with
-        // the current theme, so its very first reveal already wears it — a
-        // broadcast reaches only clients already connected, and the pill
-        // connects late. A worker never themes anything, so it is skipped.
-        if let Some(frame) = crate::pill_theme::welcome_frame(&app) {
-            let _ = out_tx.send(Message::Text(frame.into()));
-        }
-        // [GRAIN] …and with the built-in SKIN it should wear. Same reasoning as
-        // the theme above (the pill connects after any broadcast), but this one
-        // also decides the window's SIZE, so it must land before the first show.
+        // [GRAIN] Greet the pill with the built-in SKIN it should wear. This
+        // also decides the window's size, so it must land before the first show.
         if let Some(frame) = crate::pill_skin::welcome_frame(&app) {
             let _ = out_tx.send(Message::Text(frame.into()));
         }
@@ -562,7 +549,7 @@ async fn handle(stream: TcpStream, ctx: Arc<AppContext>, app: AppHandle) {
                             .unwrap_or(0);
                         la.store(now, Ordering::Relaxed);
                     }
-                    if is_worker || is_surface || is_mcp {
+                    if is_worker || is_mcp {
                         match serde_json::from_str::<grain_sdk::HostFrame>(&txt) {
                             Ok(grain_sdk::HostFrame::Request(req)) => {
                                 // Capability-checked host API. Dispatch off the

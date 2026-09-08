@@ -114,7 +114,6 @@ pub fn set_context_profile_instruction(
     settings::write_settings(&app, settings);
     Ok(())
 }
-
 /// [GRAIN] A supported site's favicon as a PNG data URL, or `None`.
 ///
 /// Async and one host per call, so the settings UI paints immediately and each
@@ -489,49 +488,7 @@ pub fn change_agent_panel_position_setting(
     let mut settings = settings::get_settings(&app);
     settings.agent_panel_position = position;
     settings::write_settings(&app, settings);
-    sync_agent_reply_surface_slot(&app);
     Ok(())
-}
-
-/// [GRAIN] Keep the `agent.reply-surface` slot claim in step with the Agent's
-/// position setting (SPEC §3.2 + §10.2).
-///
-/// The centre-layout variant is the one occupant whose truth lives outside the
-/// registry: enabling it merely adds it to the position dropdown, and
-/// *selecting* it is what takes the slot. Reconciling here means a third-party
-/// reply-surface pack sees the centre variant as the incumbent — rather than
-/// seeing Grain's default and displacing a shipped look nobody mentioned.
-///
-/// A third-party occupant is never overwritten; this only ever moves the slot
-/// between core and the centre variant.
-pub fn sync_agent_reply_surface_slot(app: &AppHandle) {
-    use grain_core::extensions as ext;
-    let Some(reg) = app.try_state::<std::sync::Arc<ext::ExtensionsRegistry>>() else {
-        return;
-    };
-    match reg.slot_occupant(ext::AGENT_REPLY_SURFACE_SLOT).as_deref() {
-        Some(ext::CORE_DEFAULT) | Some(ext::AGENT_CENTER_VARIANT_ID) | None => {}
-        Some(_) => return,
-    }
-    let wants_center =
-        settings::get_settings(app).agent_panel_position == settings::AgentPanelPosition::Center;
-    let center = wants_center && reg.is_enabled(ext::AGENT_CENTER_VARIANT_ID);
-    // Migration (Phase 5C): the centre layout is no longer shipped. An existing
-    // user who had Centre selected but has not installed the pack falls back to
-    // Side, so the Agent never tries to render a look whose extension is gone.
-    if wants_center && !reg.is_enabled(ext::AGENT_CENTER_VARIANT_ID) {
-        let mut s = settings::get_settings(app);
-        s.agent_panel_position = settings::AgentPanelPosition::Side;
-        settings::write_settings(app, s);
-    }
-    let occupant = if center {
-        ext::AGENT_CENTER_VARIANT_ID
-    } else {
-        ext::CORE_DEFAULT
-    };
-    if let Err(e) = reg.set_slot_claim(ext::AGENT_REPLY_SURFACE_SLOT, occupant) {
-        log::warn!("[GRAIN] could not sync the agent reply-surface slot: {e}");
-    }
 }
 
 /// [GRAIN] Detect the foreground app right now. Returns `None` when nothing can be
@@ -835,11 +792,7 @@ pub struct ExtensionCard {
     /// The pack declares settings or shortcuts, so it has a section of its own
     /// worth opening. Free to compute — Overview already reads every manifest.
     pub has_detail: bool,
-    /// [GRAIN] Host surfaces this extension takes over, e.g.
-    /// `agent.reply-surface`. An "in-place" extension has no settings page of
-    /// its own — it changes a control that already exists somewhere in the app
-    /// — so this is what lets the UI open the place it actually affects
-    /// instead of dead-ending on a preview.
+    /// [GRAIN] Non-visual behavior slots this extension takes over.
     pub slots: Vec<String>,
     /// [GRAIN] Prompt layers this pack contributes.
     ///
@@ -1347,12 +1300,7 @@ pub fn extensions_overview(app: AppHandle) -> Result<Vec<ExtensionCard>, String>
             auto_send_enabled: auto_send_eligible && !auto_send_disabled.contains(&rec.id),
             auto_send_note,
             has_detail,
-            slots: rec
-                .slots
-                .iter()
-                .chain(rec.variant_slots.iter())
-                .cloned()
-                .collect(),
+            slots: rec.slots.clone(),
         });
     }
     Ok(cards)
@@ -1442,20 +1390,6 @@ pub fn extension_set_enabled(
                     let _ = unregister_shortcut(&app, binding.clone());
                 }
             }
-        }
-        ext::AGENT_CENTER_VARIANT_ID => {
-            reg.set_enabled(&id, enabled).map_err(|e| e.to_string())?;
-            // SPEC §10.2: disabling the variant while it is the active look
-            // falls the position back to the built-in default (side).
-            if !enabled {
-                let mut settings = settings::get_settings(&app);
-                if settings.agent_panel_position == settings::AgentPanelPosition::Center {
-                    settings.agent_panel_position = settings::AgentPanelPosition::Side;
-                    settings::write_settings(&app, settings);
-                }
-            }
-            sync_agent_reply_surface_slot(&app);
-            return Ok(());
         }
         // Imported packs: registry bit + payload application.
         pack_id if reg.is_installed(pack_id) => {
@@ -1607,8 +1541,6 @@ pub fn extension_set_enabled(
             if !enabled {
                 crate::extension_host::stop_extension(pack_id, "extension disabled");
                 crate::grain_auth::cancel_extension(pack_id);
-                crate::surfaces::extension::destroy(&app, pack_id);
-                crate::surfaces::overlay::dismiss(&app, pack_id);
             }
             // The activation/transform index is what the paste path and event
             // bus read; it must never lag the registry.
@@ -1809,7 +1741,6 @@ mod imported_update_security_tests {
             )),
             recommend_approved: None,
             slots: Vec::new(),
-            variant_slots: Vec::new(),
             dev: None,
             trust: grain_sdk::Trust::Dev,
         }
@@ -1920,8 +1851,6 @@ fn stop_extension_runtime(app: &AppHandle, id: &str, reason: &str) {
     use grain_core::extensions as ext;
     crate::extension_host::stop_extension(id, reason);
     crate::grain_auth::cancel_extension(id);
-    crate::surfaces::extension::destroy(app, id);
-    crate::surfaces::overlay::dismiss(app, id);
     if let Some(ctx) = app.try_state::<std::sync::Arc<grain_core::AppContext>>() {
         let _ = ctx.update_settings(|state| ext::remove_prompt_pack(state, id));
     }
@@ -2040,7 +1969,6 @@ fn register_unpacked_project(
         artifact_sha256: None,
         granted,
         slots: loaded.pack.manifest.slots.clone(),
-        variant_slots: Vec::new(),
         // Dev records approve their own prompt layers. The user pointed Grain
         // at a folder on their own disk, which is the same act as approving it,
         // and the alternative is a permission sheet on every iteration of a
@@ -2304,19 +2232,12 @@ pub struct ExtensionSettingField {
     pub fields: Vec<ExtensionSettingField>,
     /// Singular noun for a `list`'s Add button / row header.
     pub item_label: Option<String>,
-    /// The card's self-contained HTML, for a `panel` field (None otherwise).
-    pub ui_source: Option<String>,
 }
 
 /// Flatten a declaration into its renderer schema (no value). Shared by
 /// top-level rows and nested list fields.
 fn field_schema(decl: &grain_sdk::SettingDecl) -> ExtensionSettingField {
     use grain_sdk::SettingKind as K;
-    // A `panel` carries its markup out to the renderer; every other kind has none.
-    let ui_source = match &decl.kind {
-        K::Panel { ui_source, .. } => Some(ui_source.clone()),
-        _ => None,
-    };
     let (kind, min, max, step, options, fields, item_label) = match &decl.kind {
         K::Bool => ("bool", None, None, None, vec![], vec![], None),
         K::String => ("string", None, None, None, vec![], vec![], None),
@@ -2359,7 +2280,7 @@ fn field_schema(decl: &grain_sdk::SettingDecl) -> ExtensionSettingField {
             fields.iter().map(field_schema).collect(),
             item_label.clone(),
         ),
-        K::Panel { .. } => ("panel", None, None, None, vec![], vec![], None),
+        K::Panel { .. } => ("unsupported", None, None, None, vec![], vec![], None),
         K::Unsupported => ("unsupported", None, None, None, vec![], vec![], None),
     };
     ExtensionSettingField {
@@ -2373,7 +2294,6 @@ fn field_schema(decl: &grain_sdk::SettingDecl) -> ExtensionSettingField {
         options,
         fields,
         item_label,
-        ui_source,
     }
 }
 
@@ -2409,8 +2329,6 @@ pub struct ExtensionSettingRow {
     pub fields: Vec<ExtensionSettingField>,
     /// Singular noun for a `list`'s Add button / row header.
     pub item_label: Option<String>,
-    /// The card's self-contained HTML, for a `panel` row (None otherwise).
-    pub ui_source: Option<String>,
 }
 
 fn setting_row(
@@ -2434,7 +2352,6 @@ fn setting_row(
         options: schema.options,
         fields: schema.fields,
         item_label: schema.item_label,
-        ui_source: schema.ui_source,
     }
 }
 
@@ -2472,13 +2389,13 @@ fn rows_for(
 ) -> Vec<ExtensionSettingRow> {
     let mut rows: Vec<ExtensionSettingRow> = decls
         .into_iter()
-        .filter(|d| !matches!(d.kind, grain_sdk::SettingKind::Unsupported))
+        .filter(|d| {
+            !matches!(
+                &d.kind,
+                grain_sdk::SettingKind::Unsupported | grain_sdk::SettingKind::Panel { .. }
+            )
+        })
         .map(|decl| {
-            // A panel (custom card) holds no host-managed value — it manages its
-            // own state through the extension API — so it skips schema resolution.
-            if matches!(decl.kind, grain_sdk::SettingKind::Panel { .. }) {
-                return setting_row(decl, serde_json::Value::Null, None);
-            }
             let stored = if matches!(decl.kind, grain_sdk::SettingKind::Secret) {
                 let marker = if ctx
                     .extension_secret(&crate::host_api::extension_secret_key(ext_id, &decl.key))
@@ -2687,10 +2604,6 @@ pub fn extension_import_pack(
         // words at all. `None` means never approved, so an import that has not
         // been reviewed under this contract simply is not ranked.
         recommend_approved: prior.as_ref().and_then(|r| r.recommend_approved.clone()),
-        // Phase 5C: variant slots (SPEC §10.2) are declared by the manifest now
-        // that they are externalised — the Agent centre layout ships as a real
-        // pack rather than a host-synthesised record.
-        variant_slots: pack.manifest.variant_slots.clone(),
         dev: None,
         // A manually imported local file is UNTRUSTED, always — even if a
         // store-verified record for this id existed. Trust comes only from the
@@ -2775,62 +2688,6 @@ pub fn extension_capture_app(
         .ok_or("app context unavailable")?;
     crate::host_api::approve_app(&ctx.data_dir, &id, &path).map_err(|e| e.to_string())?;
     Ok(Some(path))
-}
-
-/// [GRAIN] The custom card's host channel (SPEC §4.1 Level 3). A `panel` setting
-/// renders the extension's own UI in a sandboxed iframe; that iframe posts host
-/// calls up to Grain's (trusted) settings page, which relays them here. The
-/// panel gets EXACTLY the capabilities the user granted this extension: the
-/// grants come from the registry RECORD, never from the caller, so a card can
-/// neither assert another identity nor widen its own. Every method is then
-/// capability-checked by `host_api::dispatch`, identically to a worker. The
-/// error crosses back as the same `{code,message,hint,…}` shape the worker gets.
-#[tauri::command]
-#[specta::specta]
-pub async fn extension_host_call(
-    app: AppHandle,
-    window: tauri::WebviewWindow,
-    id: String,
-    method: String,
-    params: serde_json::Value,
-) -> Result<serde_json::Value, serde_json::Value> {
-    use grain_core::extensions as ext;
-    let internal = |message: &str, hint: &str| {
-        serde_json::to_value(grain_sdk::HostError::new(
-            grain_sdk::HostErrorCode::Internal,
-            message,
-            hint,
-        ))
-        .unwrap_or_else(|_| serde_json::json!({ "code": "E_INTERNAL", "message": message }))
-    };
-    require_main_window(&window).map_err(|error| internal(&error, ""))?;
-    let reg = app
-        .try_state::<std::sync::Arc<ext::ExtensionsRegistry>>()
-        .ok_or_else(|| internal("extensions registry unavailable", ""))?;
-    let record = reg.record(&id).ok_or_else(|| {
-        internal(
-            "unknown extension",
-            "Reinstall the extension and try again.",
-        )
-    })?;
-    if !record.enabled {
-        return Err(internal(
-            "extension is disabled",
-            "Enable the extension to use its settings card.",
-        ));
-    }
-    let identity = crate::events_auth::ClientIdentity {
-        id: id.clone(),
-        role: crate::events_auth::ClientRole::Surface,
-        caps: crate::events_auth::CapabilitySet::Named(record.granted.iter().cloned().collect()),
-    };
-    crate::host_api::dispatch(&app, &identity, &method, params)
-        .await
-        .map_err(|error| {
-            serde_json::to_value(&error).unwrap_or_else(
-                |_| serde_json::json!({ "code": "E_INTERNAL", "message": error.message }),
-            )
-        })
 }
 
 /// Record the user's approval of what an extension asked for (SPEC §6) —
@@ -2919,17 +2776,6 @@ pub fn extension_take_slot(
         .ok_or("extensions registry unavailable")?;
     let displaced = reg.take_slot(&id, &slot).map_err(|e| e.to_string())?;
 
-    // Displacing the centre layout must also drop the position setting, or the
-    // Agent would keep rendering a look whose slot it no longer owns.
-    let center_lost = displaced.as_deref() == Some(ext::AGENT_CENTER_VARIANT_ID)
-        || (slot == ext::AGENT_REPLY_SURFACE_SLOT && id != ext::AGENT_CENTER_VARIANT_ID);
-    if center_lost {
-        let mut settings = settings::get_settings(&app);
-        if settings.agent_panel_position == settings::AgentPanelPosition::Center {
-            settings.agent_panel_position = settings::AgentPanelPosition::Side;
-            settings::write_settings(&app, settings);
-        }
-    }
     if let Some(prev) = &displaced {
         // The loser is disabled by `take_slot`; its payloads must come off too.
         stop_extension_runtime(&app, prev, "extension lost an exclusive slot");
@@ -3025,8 +2871,6 @@ pub async fn extension_uninstall(
     // (SPEC §6: shortcuts unregistered, slots released, storage wiped).
     crate::extension_host::stop_extension(&id, "extension uninstalled");
     crate::extension_shortcuts::forget(&app, &id);
-    crate::surfaces::extension::destroy(&app, &id);
-    crate::surfaces::overlay::dismiss(&app, &id);
     if purge {
         let _ = std::fs::remove_file(pack_path(&app, &id)?);
         crate::extension_icons::purge(&app, &id)?;
@@ -3034,50 +2878,4 @@ pub async fn extension_uninstall(
     }
     crate::extension_host::refresh_index(&app);
     Ok(())
-}
-
-// ── Extension workspace surfaces (SPEC §1.2, §7.1) ────────────────────────────
-//
-// These three are called by `extension-surface.html` — Grain's wrapper page —
-// and never by extension code, which sits in a sandboxed iframe with no Tauri
-// IPC. Every one of them derives WHICH extension is calling from the calling
-// window's own label, so there is no argument to point at somebody else's
-// surface.
-
-/// The wrapper page collecting its identity and the markup to render. Handed
-/// over once per open; a second asker gets nothing rather than a live token.
-#[tauri::command]
-#[specta::specta]
-pub fn extension_surface_init(
-    window: tauri::WebviewWindow,
-) -> Option<crate::surfaces::extension::SurfaceInit> {
-    crate::surfaces::extension::take_init(window.label())
-}
-
-/// Frontend ack: the surface UI is mounted — reveal the window.
-#[tauri::command]
-#[specta::specta]
-pub fn extension_surface_ui_ready(app: AppHandle, window: tauri::WebviewWindow) {
-    if let Some(id) = crate::surfaces::extension::id_for_label(window.label()) {
-        crate::surfaces::workspace::ui_ready(&app, &id);
-    }
-}
-
-/// Frontend ack: the surface UI is unmounted — hide and suspend now.
-#[tauri::command]
-#[specta::specta]
-pub fn extension_surface_sleep_ready(app: AppHandle, window: tauri::WebviewWindow) {
-    if let Some(id) = crate::surfaces::extension::id_for_label(window.label()) {
-        crate::surfaces::workspace::sleep_ready(&app, &id);
-    }
-}
-
-/// The wrapper page collecting the payload its surface was opened with, to hand
-/// to the iframe on mount. Keyed on the calling window, so a surface only ever
-/// receives its own — and consumed once, so a re-mount does not replay a stale
-/// one.
-#[tauri::command]
-#[specta::specta]
-pub fn extension_surface_payload(window: tauri::WebviewWindow) -> Option<serde_json::Value> {
-    crate::surfaces::extension::take_payload(window.label())
 }

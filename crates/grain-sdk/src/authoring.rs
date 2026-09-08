@@ -49,106 +49,6 @@ export type GrainErrorCode =
   | "E_UNAVAILABLE"
   | "E_INTERNAL";
 
-/** Grain-rendered standard extension UI. Authors control structure and state;
- * Grain owns every actual element, style, focus rule, and trusted action bar. */
-export type GrainViewGap = "xs" | "sm" | "md" | "lg";
-export type GrainViewTone =
-  | "neutral"
-  | "muted"
-  | "info"
-  | "success"
-  | "warning"
-  | "danger";
-export type GrainViewNode =
-  | { type: "stack"; gap?: GrainViewGap; children?: GrainViewNode[] }
-  | {
-      type: "inline";
-      gap?: GrainViewGap;
-      align?: "start" | "center" | "end" | "stretch" | "space_between";
-      wrap?: boolean;
-      children?: GrainViewNode[];
-    }
-  | { type: "grid"; columns: 1 | 2 | 3; gap?: GrainViewGap; children?: GrainViewNode[] }
-  | { type: "section"; title?: string; children?: GrainViewNode[] }
-  | { type: "divider" }
-  | { type: "heading"; text: string; level?: "one" | "two" | "three" }
-  | { type: "text"; text: string; tone?: GrainViewTone }
-  | { type: "badge"; text: string; tone?: GrainViewTone }
-  | { type: "metadata"; label: string; value: string }
-  | {
-      type: "text_field";
-      id: string;
-      label: string;
-      value?: string;
-      placeholder?: string;
-      required?: boolean;
-      disabled?: boolean;
-      maxLength?: number;
-    }
-  | {
-      type: "text_area";
-      id: string;
-      label: string;
-      value?: string;
-      placeholder?: string;
-      rows?: number;
-      required?: boolean;
-      disabled?: boolean;
-      maxLength?: number;
-    }
-  | {
-      type: "select";
-      id: string;
-      label: string;
-      value?: string;
-      options: readonly { value: string; label: string }[];
-      required?: boolean;
-      disabled?: boolean;
-    }
-  | {
-      type: "checkbox";
-      id: string;
-      label: string;
-      checked?: boolean;
-      required?: boolean;
-      disabled?: boolean;
-    };
-
-export interface GrainView {
-  version?: 1;
-  title: string;
-  description?: string;
-  root: GrainViewNode;
-  actions?: readonly {
-    id: string;
-    label: string;
-    intent?: "primary" | "secondary" | "danger" | "cancel";
-    kind?: "submit" | "cancel";
-    disabled?: boolean;
-  }[];
-}
-
-export type GrainViewValue = string | boolean;
-export type GrainViewEvent =
-  | {
-      kind: "change";
-      target: string;
-      value: GrainViewValue;
-      values: Readonly<Record<string, GrainViewValue>>;
-    }
-  | {
-      kind: "submit";
-      target: string;
-      values: Readonly<Record<string, GrainViewValue>>;
-    }
-  | { kind: "cancel" };
-
-export type GrainViewReply =
-  | { view: GrainView }
-  | { message?: string }
-  | { decline: string }
-  | { error: string };
-
 export interface GrainApi {
   readonly activation: GrainActivation | null;
   readonly caps: readonly GrainCapability[];
@@ -268,25 +168,8 @@ export interface GrainApi {
      * this extension) or null if cancelled. The only way to make a path launchable. */
     pickApp(): Promise<string | null>;
   };
-  readonly workspace: {
-    open(payload?: JsonValue): Promise<unknown>;
-    close(): Promise<unknown>;
-  };
-  readonly overlay: {
-    show(payload?: JsonValue): Promise<unknown>;
-    dismiss(): Promise<unknown>;
-  };
   readonly session: {
     start(options: { mode: string }): Promise<unknown>;
-  };
-  readonly ui: {
-    /** Handle stable-id events from Grain's standard Extension Surface. Return
-     * a replacement tree to update it, or a finite outcome to close it. */
-    onEvent(
-      handler: (
-        event: GrainViewEvent,
-      ) => GrainViewReply | void | Promise<GrainViewReply | void>,
-    ): void;
   };
 
   onTransform(handler: (text: string) => string | Promise<string>): void;
@@ -320,13 +203,11 @@ export interface GrainApi {
       request: string,
     ) =>
       | void
-      | { view: GrainView }
       | { message?: string }
       | { decline: string }
       | { error: string }
       | Promise<
           | void
-          | { view: GrainView }
           | { message?: string }
           | { decline: string }
           | { error: string }

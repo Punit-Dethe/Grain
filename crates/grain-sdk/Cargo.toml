@@ -8,7 +8,7 @@ authors.workspace = true
 
 [dependencies]
 serde = { workspace = true }
-# Opaque payload passthrough (pill themes) in the manifest types.
+# JSON values for bounded action/default data and retired-field tombstones.
 serde_json = { workspace = true }
 # Type reflection so settings-visible types (OverlayPosition) keep generating
 # frontend bindings exactly as before the move out of grain-core.

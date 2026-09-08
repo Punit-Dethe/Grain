@@ -1,4 +1,4 @@
-import { StrictMode, type ReactNode } from "react";
+import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
@@ -8,7 +8,6 @@ import {
   ArrowRight,
   Check,
   CheckCircle2,
-  ChevronDown,
   Clipboard,
   Download,
   LoaderCircle,
@@ -25,11 +24,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   ExtensionViewContent,
   ExtensionChoiceCandidate,
-  ExtensionViewEvent,
-  ExtensionViewEventResult,
   ExtensionViewInit,
-  ViewNode,
-  ViewValue,
 } from "@/bindings";
 import {
   filterChoiceCandidates,
@@ -37,11 +32,8 @@ import {
 } from "./extension-view-model";
 import "./extension-view.css";
 
-type Values = Record<string, ViewValue>;
 type Session = ExtensionViewInit;
 type Content = ExtensionViewContent;
-type EventResult = ExtensionViewEventResult;
-type ViewEvent = Exclude<ExtensionViewEvent, { kind: "cancel" }>;
 
 const PRESENT_EVENT = "extension-view://present";
 const THEME_EVENT = "theme-changed";
@@ -57,9 +49,6 @@ const COPY = {
   error: "The extension surface could not be loaded.",
   retry: "Close this window and try the request again.",
   safeBoundary: "Secure Grain surface",
-  select: "Select an option",
-  sendsTo: "Grain sends this action to",
-  destructive: "This action can make a destructive change through",
   finishing: "Finishing your request",
   finding: "Finding the right extension",
   routingHint:
@@ -83,205 +72,8 @@ const COPY = {
     "The extension is working on your request. Grain will keep the result in this window.",
 } as const;
 
-function collectValues(node: ViewNode, values: Values = {}): Values {
-  switch (node.type) {
-    case "text_field":
-    case "text_area":
-    case "select":
-      values[node.id] = node.value ?? "";
-      break;
-    case "checkbox":
-      values[node.id] = node.checked ?? false;
-      break;
-    case "stack":
-    case "inline":
-    case "grid":
-    case "section":
-      for (const child of node.children ?? []) collectValues(child, values);
-      break;
-  }
-  return values;
-}
-
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
-}
-
-type RendererProps = {
-  node: ViewNode;
-  path: string;
-  values: Values;
-  disabled: boolean;
-  setLocal: (id: string, value: ViewValue) => void;
-  sendChange: (id: string, value: ViewValue) => void;
-};
-
-function NodeRenderer(props: RendererProps): ReactNode {
-  const { node, path, values, disabled, setLocal, sendChange } = props;
-  const renderChildren = (children?: ViewNode[]) =>
-    children?.map((child, index) => (
-      <NodeRenderer
-        {...props}
-        key={"id" in child ? child.id : `${path}-${index}`}
-        node={child}
-        path={`${path}-${index}`}
-      />
-    ));
-
-  switch (node.type) {
-    case "stack":
-      return (
-        <div className="ev-stack" data-gap={node.gap ?? "md"}>
-          {renderChildren(node.children)}
-        </div>
-      );
-    case "inline":
-      return (
-        <div
-          className="ev-inline"
-          data-align={node.align ?? "start"}
-          data-gap={node.gap ?? "md"}
-          data-wrap={node.wrap ? "true" : "false"}
-        >
-          {renderChildren(node.children)}
-        </div>
-      );
-    case "grid":
-      return (
-        <div
-          className="ev-grid"
-          data-columns={node.columns}
-          data-gap={node.gap ?? "md"}
-        >
-          {renderChildren(node.children)}
-        </div>
-      );
-    case "section":
-      return (
-        <section className="ev-section">
-          {node.title ? (
-            <h2 className="ev-section-title">{node.title}</h2>
-          ) : null}
-          <div className="ev-section-body">{renderChildren(node.children)}</div>
-        </section>
-      );
-    case "divider":
-      return <hr className="ev-divider" />;
-    case "heading": {
-      const level = node.level ?? "two";
-      // The trusted view title is the page's single h1. Author heading levels
-      // are relative to it so a tree cannot create competing top-level titles.
-      if (level === "one")
-        return <h2 className="ev-heading ev-heading-1">{node.text}</h2>;
-      if (level === "three")
-        return <h4 className="ev-heading ev-heading-3">{node.text}</h4>;
-      return <h3 className="ev-heading ev-heading-2">{node.text}</h3>;
-    }
-    case "text":
-      return (
-        <p className="ev-text" data-tone={node.tone ?? "neutral"}>
-          {node.text}
-        </p>
-      );
-    case "badge":
-      return (
-        <span className="ev-badge" data-tone={node.tone ?? "neutral"}>
-          {node.text}
-        </span>
-      );
-    case "metadata":
-      return (
-        <dl className="ev-metadata">
-          <dt>{node.label}</dt>
-          <dd>{node.value}</dd>
-        </dl>
-      );
-    case "text_field":
-      return (
-        <label className="ev-field">
-          <span className="ev-label">
-            {node.label}
-            {node.required ? <span aria-hidden="true">*</span> : null}
-          </span>
-          <input
-            disabled={disabled || node.disabled}
-            maxLength={node.maxLength ?? undefined}
-            onBlur={(event) => sendChange(node.id, event.currentTarget.value)}
-            onChange={(event) => setLocal(node.id, event.currentTarget.value)}
-            placeholder={node.placeholder ?? undefined}
-            required={node.required}
-            type="text"
-            value={String(values[node.id] ?? "")}
-          />
-        </label>
-      );
-    case "text_area":
-      return (
-        <label className="ev-field">
-          <span className="ev-label">
-            {node.label}
-            {node.required ? <span aria-hidden="true">*</span> : null}
-          </span>
-          <textarea
-            disabled={disabled || node.disabled}
-            maxLength={node.maxLength ?? undefined}
-            onBlur={(event) => sendChange(node.id, event.currentTarget.value)}
-            onChange={(event) => setLocal(node.id, event.currentTarget.value)}
-            placeholder={node.placeholder ?? undefined}
-            required={node.required}
-            rows={node.rows ?? 5}
-            value={String(values[node.id] ?? "")}
-          />
-        </label>
-      );
-    case "select":
-      return (
-        <label className="ev-field">
-          <span className="ev-label">
-            {node.label}
-            {node.required ? <span aria-hidden="true">*</span> : null}
-          </span>
-          <span className="ev-select-wrap">
-            <select
-              disabled={disabled || node.disabled}
-              onChange={(event) =>
-                sendChange(node.id, event.currentTarget.value)
-              }
-              required={node.required}
-              value={String(values[node.id] ?? "")}
-            >
-              <option disabled={node.required} value="">
-                {COPY.select}
-              </option>
-              {node.options.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-            <ChevronDown aria-hidden="true" size={15} strokeWidth={1.8} />
-          </span>
-        </label>
-      );
-    case "checkbox":
-      return (
-        <label className="ev-check">
-          <input
-            checked={Boolean(values[node.id])}
-            disabled={disabled || node.disabled}
-            onChange={(event) =>
-              sendChange(node.id, event.currentTarget.checked)
-            }
-            required={node.required}
-            type="checkbox"
-          />
-          <span className="ev-check-box" aria-hidden="true">
-            <Check size={13} strokeWidth={2.5} />
-          </span>
-          <span>{node.label}</span>
-        </label>
-      );
-  }
 }
 
 function CandidateIcon({ candidate }: { candidate: ExtensionChoiceCandidate }) {
@@ -618,7 +410,6 @@ function ResultView({
 
 function ExtensionViewApp() {
   const [session, setSession] = useState<Session | null>(null);
-  const [values, setValues] = useState<Values>({});
   const [busy, setBusy] = useState(false);
   const [modelBusy, setModelBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -627,8 +418,6 @@ function ExtensionViewApp() {
   const readySession = useRef<number | null>(null);
   const copyTimer = useRef<number | null>(null);
   const autoCloseTimer = useRef<number | null>(null);
-  const eventQueue = useRef<Promise<void>>(Promise.resolve());
-  const pendingEvents = useRef(0);
 
   const adopt = useCallback((next: Session) => {
     if (sessionRef.current && next.sessionId < sessionRef.current.sessionId)
@@ -639,8 +428,6 @@ function ExtensionViewApp() {
     setBusy(false);
     setModelBusy(false);
     setCopied(false);
-    if (next.content.kind === "view")
-      setValues(collectValues(next.content.view.root));
   }, []);
 
   useEffect(() => {
@@ -745,71 +532,6 @@ function ExtensionViewApp() {
     return () => window.removeEventListener("keydown", onKey);
   }, [close]);
 
-  const applyResult = useCallback((result: EventResult) => {
-    if (!result.unchanged && result.content.kind === "view")
-      setValues(collectValues(result.content.view.root));
-    setSession((current) => {
-      const next = current ? { ...current, content: result.content } : current;
-      sessionRef.current = next;
-      return next;
-    });
-  }, []);
-
-  const send = useCallback(
-    (event: ViewEvent) => {
-      const queuedFor = sessionRef.current;
-      if (!queuedFor || queuedFor.content.kind !== "view")
-        return Promise.resolve();
-      pendingEvents.current += 1;
-      // A blur-generated change must not disable the button that is about to
-      // receive the same pointer click. It is still serialized ahead of submit;
-      // only the submit itself makes the surface visibly busy.
-      if (event.kind === "submit") setBusy(true);
-      setError(null);
-      const task = eventQueue.current
-        .catch(() => undefined)
-        .then(async () => {
-          const current = sessionRef.current;
-          if (
-            !current ||
-            current.sessionId !== queuedFor.sessionId ||
-            current.content.kind !== "view"
-          )
-            return;
-          const result = await invoke<EventResult>("extension_view_event", {
-            sessionId: current.sessionId,
-            event,
-          });
-          applyResult(result);
-        })
-        .catch((reason) => {
-          if (sessionRef.current?.sessionId === queuedFor.sessionId)
-            setError(errorMessage(reason));
-        })
-        .finally(() => {
-          pendingEvents.current = Math.max(0, pendingEvents.current - 1);
-          if (pendingEvents.current === 0) setBusy(false);
-        });
-      eventQueue.current = task;
-      return task;
-    },
-    [applyResult],
-  );
-
-  const setLocal = useCallback(
-    (id: string, value: ViewValue) =>
-      setValues((current) => ({ ...current, [id]: value })),
-    [],
-  );
-  const sendChange = useCallback(
-    (id: string, value: ViewValue) => {
-      const next = { ...values, [id]: value };
-      setValues(next);
-      void send({ kind: "change", target: id, value, values: next });
-    },
-    [send, values],
-  );
-
   const copyResult = useCallback(async () => {
     if (!session || session.content.kind !== "result") return;
     try {
@@ -887,15 +609,6 @@ function ExtensionViewApp() {
     }
   }, [modelBusy, session]);
 
-  const currentView =
-    session?.content.kind === "view" ? session.content.view : null;
-  const destructive = useMemo(
-    () =>
-      currentView?.actions?.some(
-        (action) => action.intent === "danger" && !action.disabled,
-      ) ?? false,
-    [currentView],
-  );
   const ownerName = session?.extensionName ?? COPY.mode;
 
   if (!session) {
@@ -954,40 +667,6 @@ function ExtensionViewApp() {
             automatic={session.content.automatic}
             extensionName={ownerName}
           />
-        ) : session.content.kind === "view" ? (
-          <form
-            className="ev-stage"
-            id="extension-view-form"
-            onSubmit={(event) => {
-              event.preventDefault();
-              const primary =
-                session.content.kind === "view"
-                  ? session.content.view.actions?.find(
-                      (action) =>
-                        (action.intent ?? "primary") === "primary" &&
-                        (action.kind ?? "submit") === "submit" &&
-                        !action.disabled,
-                    )
-                  : undefined;
-              if (primary)
-                void send({ kind: "submit", target: primary.id, values });
-            }}
-          >
-            <div className="ev-intro">
-              <h1>{session.content.view.title}</h1>
-              {session.content.view.description ? (
-                <p>{session.content.view.description}</p>
-              ) : null}
-            </div>
-            <NodeRenderer
-              disabled={busy}
-              node={session.content.view.root}
-              path="root"
-              sendChange={sendChange}
-              setLocal={setLocal}
-              values={values}
-            />
-          </form>
         ) : (
           <div className="ev-stage">
             <ResultView
@@ -1007,52 +686,7 @@ function ExtensionViewApp() {
         ) : null}
       </div>
 
-      {currentView ? (
-        <footer className="ev-footer">
-          <div
-            className="ev-trust"
-            data-danger={destructive ? "true" : "false"}
-          >
-            {destructive ? (
-              <AlertTriangle aria-hidden="true" size={14} />
-            ) : (
-              <ShieldCheck aria-hidden="true" size={14} />
-            )}
-            <span>
-              {destructive ? COPY.destructive : COPY.sendsTo}{" "}
-              <strong>{ownerName}</strong>.
-            </span>
-          </div>
-          <div className="ev-actions">
-            {(currentView.actions ?? []).map((action) => {
-              const cancel = (action.kind ?? "submit") === "cancel";
-              return (
-                <button
-                  className="ev-action"
-                  data-intent={action.intent ?? "primary"}
-                  disabled={(!cancel && busy) || action.disabled}
-                  key={action.id}
-                  onClick={() =>
-                    cancel
-                      ? void close()
-                      : void send({ kind: "submit", target: action.id, values })
-                  }
-                  type="button"
-                >
-                  {busy && !cancel ? (
-                    <LoaderCircle
-                      aria-hidden="true"
-                      className="ev-spinner"
-                      size={15}
-                    />
-                  ) : null}
-                  {action.label}
-                </button>
-              );
-            })}
-          </div>
-        </footer>
-      ) : session.content.kind === "result" ? (
+      {session.content.kind === "result" ? (
         <footer className="ev-footer ev-footer-result">
           <div className="ev-trust">
             <ShieldCheck aria-hidden="true" size={14} />

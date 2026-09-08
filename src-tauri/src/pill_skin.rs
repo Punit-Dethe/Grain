@@ -1,14 +1,12 @@
 //! [GRAIN] Delivering the pill SKIN (the built-in look) from settings to the pill.
 //!
-//! The sibling of `pill_theme`, and it works the same way for the same reason:
-//! the skin is *data*, resolved here and sent to the pill as a
+//! The skin is native Grain data, resolved here and sent to the pill as a
 //! [`DaemonEvent::PillSkin`]. Two delivery moments, and both matter:
 //! - **on connect** the pill is handed the current skin directly (a broadcast
 //!   only reaches an already-connected client, and the pill connects late);
 //! - **on change** it is broadcast, from the settings command that wrote it.
 //!
-//! Where a theme comes from an extension and may be absent, a skin always has a
-//! value — so this resolves to a concrete [`PillSkin`], never an `Option`.
+//! A skin always has a value, so this resolves to a concrete [`PillSkin`].
 
 use std::sync::Arc;
 

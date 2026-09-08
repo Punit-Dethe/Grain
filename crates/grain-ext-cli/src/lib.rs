@@ -4,9 +4,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use anyhow::{bail, Context, Result};
+use grain_sdk::manifest::Surfaces;
 use grain_sdk::{
     Contributes, DaemonEvent, ExtensionManifest, ExtensionProjectManifest, GrainPack, PackPayloads,
-    ShortcutDecl, Surfaces, Tier, GRAIN_API_TYPESCRIPT, GRAIN_API_VERSION, KNOWN_CAPABILITIES,
+    ShortcutDecl, Tier, GRAIN_API_TYPESCRIPT, GRAIN_API_VERSION, KNOWN_CAPABILITIES,
 };
 use specta::TypeCollection;
 use specta_typescript::{BigIntExportBehavior, Typescript};
@@ -381,9 +382,8 @@ fn scaffold_manifest(name: &str, id: &str) -> ExtensionProjectManifest {
                     default_binding: Some("Ctrl+Alt+Shift+G".into()),
                 }],
                 session_mode: None,
-                // The scaffold declares neither. Both are approval-bearing
-                // surfaces, so a starter template that pre-fills them would
-                // teach authors to ship a consent prompt they never chose.
+                // The scaffold declares neither authentication nor session
+                // mode; both require an explicit author decision and consent.
                 ..Default::default()
             },
             companion: None,

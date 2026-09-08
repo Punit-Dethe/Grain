@@ -15,8 +15,7 @@
 //!   new; the implementation stays where it is. Their toggle order is tracked
 //!   here by id (a toggle bumps the sequence without creating a record's
 //!   install data).
-//! - **Installed packs** (the Agent centre-layout variant now; imported
-//!   `.grainpack` files in the next chunk) are full records.
+//! - **Installed packs** imported as `.grainpack` files are full records.
 
 use std::collections::HashMap;
 use std::fs;
@@ -29,26 +28,15 @@ use serde::{Deserialize, Serialize};
 
 pub const EXTENSIONS_FILE: &str = "extensions.json";
 
-/// The Agent centre-layout surface-variant pack (SPEC §10.2) — pre-known so
-/// the upgrade import can install it for existing users, who had the centre
-/// option before the platform existed.
-pub const AGENT_CENTER_VARIANT_ID: &str = "grain.agent-center-layout";
+/// Retired visual-only pack. Kept only long enough to remove stale local
+/// registry state; both Agent layouts now belong to native settings.
+const RETIRED_AGENT_CENTER_VARIANT_ID: &str = "grain.agent-center-layout";
 
 /// Reserved occupant id standing for Grain's own built-in behaviour in a slot.
 /// SPEC §3.2: "core defaults are occupants" — so a slot is never *free*, and the
 /// first extension to claim one still faces an explicit takeover prompt rather
 /// than silently displacing shipped behaviour.
 pub const CORE_DEFAULT: &str = "grain.core";
-
-/// The slot the centre-layout variant occupies when it is the active look
-/// (SPEC §10.2). It has no `.grainpack.json` on disk — it is synthesized by
-/// `load` — so its declared slots are backfilled here or nothing would know it
-/// competes for the Agent's reply surface.
-pub const AGENT_REPLY_SURFACE_SLOT: &str = "agent.reply-surface";
-
-/// The slot a pill-theme pack occupies (SPEC §9). Core holds it by default;
-/// whoever holds it supplies the pill's look.
-pub const PILL_THEME_SLOT: &str = "pill.theme";
 
 /// Ids reserved for Grain's own always-present features. They are not installed
 /// and cannot be uninstalled — each has a tab in the Extensions hub whose first
@@ -136,21 +124,9 @@ pub struct ExtensionRecord {
     /// from the manifest at install so occupancy is answerable from memory —
     /// no pack file is ever read to decide who owns a slot.
     ///
-    /// These are **claimed on enable**: turning the pack on takes the position,
-    /// which is what a pill theme or an output destination should do.
+    /// These are **claimed on enable**: turning the pack on takes the position.
     #[serde(default)]
     pub slots: Vec<String>,
-    /// Positions this pack *offers* itself for rather than claims — SPEC §10.2's
-    /// **surface variant**. Enabling adds the pack as a choice in a host-owned
-    /// chooser; a core setting decides who actually occupies the slot, so
-    /// enabling alone is not a takeover and must not raise a conflict.
-    ///
-    /// Today the centre-layout variant is the only member (its occupancy is
-    /// `agent_panel_position`). No manifest syntax expresses this yet —
-    /// deliberately: per the capability-governance doctrine, the name is
-    /// reserved and the shape waits for a real third-party consumer.
-    #[serde(default)]
-    pub variant_slots: Vec<String>,
     /// A load-unpacked project currently overriding this id. The effective
     /// record stays at the normal map key, so every capability/slot/lifecycle
     /// path sees exactly one extension. Any installed version is parked here
@@ -653,10 +629,8 @@ pub struct ExtensionsRegistry {
 impl ExtensionsRegistry {
     /// Load (or initialize) the registry.
     ///
-    /// Phase 5C: the Agent centre layout is **no longer synthesised or seeded**
-    /// here — it is a real external pack installed from the store like any other
-    /// (its code left the app). `settings_file_preexisted` is retained for call
-    /// compatibility and any future upgrade migration, but nothing is seeded.
+    /// `settings_file_preexisted` is retained for call compatibility. Visual
+    /// extension records are retired during load; Grain now owns its appearance.
     pub fn load(data_dir: &Path, _settings_file_preexisted: bool) -> Result<Self> {
         let path = data_dir.join(EXTENSIONS_FILE);
         let state = if path.exists() {
@@ -680,33 +654,24 @@ impl ExtensionsRegistry {
         Ok(reg)
     }
 
-    /// Bring a registry file written before slots existed up to date, and make
-    /// SPEC §3.2's "core defaults are occupants" literally true in storage.
-    ///
-    /// Two repairs, both idempotent:
-    /// 1. Every known slot with no claim is claimed by `CORE_DEFAULT`. A slot is
-    ///    therefore never *free*, so a claim can never look uncontested and
-    ///    silently displace shipped behaviour.
-    /// 2. The centre-layout variant's slot is backfilled as a **variant** slot
-    ///    (offered, not claimed). It is the one record with no pack file on
-    ///    disk, so nothing else can tell us it competes for
-    ///    `agent.reply-surface` — and it is offered rather than claimed because
-    ///    SPEC §10.2 makes enabling it merely add it to the position dropdown.
-    ///    Registries written by the first slots build recorded it under `slots`,
-    ///    where enabling it collided with core's own default; move it.
+    /// Reconcile persisted slot state with the current contract. Visual slots
+    /// and variants are deliberately discarded: appearance is native-only.
     fn heal_slots(&self) {
         let mut state = self.state.write().unwrap();
+        state.records.remove(RETIRED_AGENT_CENTER_VARIANT_ID);
+        for record in state.records.values_mut() {
+            record
+                .slots
+                .retain(|slot| grain_sdk::manifest::KNOWN_SLOTS.contains(&slot.as_str()));
+        }
+        state
+            .slot_claims
+            .retain(|slot, _| grain_sdk::manifest::KNOWN_SLOTS.contains(&slot.as_str()));
         for slot in grain_sdk::manifest::KNOWN_SLOTS {
             state
                 .slot_claims
                 .entry((*slot).to_string())
                 .or_insert_with(|| CORE_DEFAULT.to_string());
-        }
-        if let Some(rec) = state.records.get_mut(AGENT_CENTER_VARIANT_ID) {
-            rec.slots.retain(|s| s != AGENT_REPLY_SURFACE_SLOT);
-            if rec.variant_slots.is_empty() {
-                rec.variant_slots = vec![AGENT_REPLY_SURFACE_SLOT.to_string()];
-            }
         }
     }
 
@@ -794,8 +759,7 @@ impl ExtensionsRegistry {
     // ── Slots (SPEC §3.2: at most one enabled occupant per slot) ───────────
 
     /// Who currently holds `slot` — an extension id, or `CORE_DEFAULT` for
-    /// Grain's own behaviour. `None` only for a slot nothing has ever claimed
-    /// and that has no core default (`overrides:*`, `provides:*`).
+    /// Grain's own behaviour.
     pub fn slot_occupant(&self, slot: &str) -> Option<String> {
         self.state.read().unwrap().slot_claims.get(slot).cloned()
     }
@@ -816,10 +780,6 @@ impl ExtensionsRegistry {
     /// The first slot this extension *claims* that somebody else holds, if any.
     /// The gate for enabling: a conflict must reach the user as a takeover
     /// prompt, never be resolved silently or by load order.
-    ///
-    /// Reads `slots` only. A `variant_slots` entry is an offer, not a claim —
-    /// enabling a surface variant adds it to a chooser and changes no occupant,
-    /// so raising a conflict there would block a pack from ever being turned on.
     pub fn slot_conflict(&self, id: &str) -> Option<SlotConflict> {
         let state = self.state.read().unwrap();
         let rec = state.records.get(id)?;
@@ -829,7 +789,7 @@ impl ExtensionsRegistry {
                     slot: slot.clone(),
                     current_occupant: occupant.clone(),
                 }),
-                // Unclaimed and no core default (`overrides:*`): free to take.
+                // A valid slot can only be unclaimed in stale/corrupt state.
                 _ => None,
             }
         })
@@ -846,12 +806,7 @@ impl ExtensionsRegistry {
             let declares = state
                 .records
                 .get(challenger)
-                .map(|r| {
-                    r.slots
-                        .iter()
-                        .chain(r.variant_slots.iter())
-                        .any(|s| s == slot)
-                })
+                .map(|r| r.slots.iter().any(|s| s == slot))
                 .unwrap_or(false);
             if !declares {
                 anyhow::bail!("'{challenger}' does not declare slot '{slot}'");
@@ -1008,14 +963,7 @@ impl ExtensionsRegistry {
                 drop(state);
                 return self.save();
             }
-            // Both lists count as declared: a variant still legitimately holds
-            // the slot while it is the selected look.
-            let declared: Vec<String> = record
-                .slots
-                .iter()
-                .chain(record.variant_slots.iter())
-                .cloned()
-                .collect();
+            let declared = record.slots.clone();
             state.records.insert(id.clone(), record);
             // An update may drop a slot it used to declare; holding a claim on
             // a slot you no longer declare would block everyone else forever.
@@ -1146,24 +1094,40 @@ mod tests {
     }
 
     #[test]
-    fn fresh_install_has_no_center_variant() {
+    fn load_retires_visual_extension_state() {
         let dir = tmp();
-        let reg = ExtensionsRegistry::load(dir.path(), false).unwrap();
-        assert!(!reg.is_installed(AGENT_CENTER_VARIANT_ID));
-    }
+        let stale = r#"{
+          "records": {
+            "grain.agent-center-layout": {
+              "id": "grain.agent-center-layout", "enabled": true,
+              "slots": [], "variant_slots": ["agent.reply-surface"]
+            },
+            "com.example.visual": {
+              "id": "com.example.visual", "enabled": true,
+              "slots": ["pill.theme", "output.destination"],
+              "variant_slots": ["overlay.recording"]
+            }
+          },
+          "slot_claims": {
+            "pill.theme": "com.example.visual",
+            "agent.reply-surface": "grain.agent-center-layout",
+            "output.destination": "com.example.visual"
+          }
+        }"#;
+        fs::write(dir.path().join(EXTENSIONS_FILE), stale).unwrap();
 
-    #[test]
-    fn center_variant_installs_as_a_pack_and_enables() {
-        // Phase 5C: the centre layout is a real external pack now — installed
-        // from the store, not seeded. Installing + enabling it works like any
-        // other variant pack, and it is NOT present until installed.
-        let dir = tmp();
-        let reg = ExtensionsRegistry::load(dir.path(), true).unwrap();
-        assert!(!reg.is_installed(AGENT_CENTER_VARIANT_ID), "not shipped");
-        reg.install(variant_pack(AGENT_CENTER_VARIANT_ID)).unwrap();
-        reg.set_enabled(AGENT_CENTER_VARIANT_ID, true)
-            .expect("enabling a variant pack is never a takeover");
-        assert!(reg.is_enabled(AGENT_CENTER_VARIANT_ID));
+        let reg = ExtensionsRegistry::load(dir.path(), false).unwrap();
+        assert!(!reg.is_installed(RETIRED_AGENT_CENTER_VARIANT_ID));
+        assert_eq!(
+            reg.record("com.example.visual").unwrap().slots,
+            vec!["output.destination".to_string()]
+        );
+        assert_eq!(reg.slot_occupant("pill.theme"), None);
+        assert_eq!(reg.slot_occupant("agent.reply-surface"), None);
+        assert_eq!(
+            reg.slot_occupant("output.destination").as_deref(),
+            Some("com.example.visual")
+        );
     }
 
     #[test]
@@ -1206,17 +1170,9 @@ mod tests {
             authentication_approved: None,
             recommend_approved: None,
             slots: slots.iter().map(|s| s.to_string()).collect(),
-            variant_slots: vec![],
             dev: None,
             trust: Trust::UNTRUSTED_DEFAULT,
         }
-    }
-
-    /// A surface-variant pack (SPEC §10.2) — offers a slot, claims none.
-    fn variant_pack(id: &str) -> ExtensionRecord {
-        let mut r = pack(id, &[]);
-        r.variant_slots = vec![AGENT_REPLY_SURFACE_SLOT.to_string()];
-        r
     }
 
     #[test]
@@ -1336,31 +1292,32 @@ mod tests {
                 "slot '{slot}' must not start free"
             );
         }
-        // A slot with no core default stays unclaimed until someone takes it.
-        assert_eq!(reg.slot_occupant("overrides:always_on_microphone"), None);
+        assert_eq!(reg.slot_occupant("pill.theme"), None);
     }
 
     #[test]
     fn claim_conflicts_then_takeover_then_release() {
         let dir = tmp();
         let reg = ExtensionsRegistry::load(dir.path(), false).unwrap();
-        reg.install(pack("a", &["pill.theme"])).unwrap();
-        reg.install(pack("b", &["pill.theme"])).unwrap();
+        reg.install(pack("a", &["output.destination"])).unwrap();
+        reg.install(pack("b", &["output.destination"])).unwrap();
 
-        // Grain's own theme is the incumbent, so even the FIRST claim conflicts.
         assert_eq!(
             reg.slot_conflict("a"),
             Some(SlotConflict {
-                slot: "pill.theme".into(),
+                slot: "output.destination".into(),
                 current_occupant: CORE_DEFAULT.into(),
             })
         );
         assert!(reg.set_enabled("a", true).is_err(), "no silent steal");
 
         // Takeover from core displaces nobody, then enabling succeeds.
-        assert_eq!(reg.take_slot("a", "pill.theme").unwrap(), None);
+        assert_eq!(reg.take_slot("a", "output.destination").unwrap(), None);
         assert!(reg.set_enabled("a", true).unwrap());
-        assert_eq!(reg.slot_occupant("pill.theme").as_deref(), Some("a"));
+        assert_eq!(
+            reg.slot_occupant("output.destination").as_deref(),
+            Some("a")
+        );
 
         // A second claimant sees the real occupant, not the core default.
         assert_eq!(
@@ -1370,7 +1327,7 @@ mod tests {
         // Takeover disables the incumbent in the same transaction: SPEC §3.2
         // has no state where two enabled extensions both own a slot.
         assert_eq!(
-            reg.take_slot("b", "pill.theme").unwrap().as_deref(),
+            reg.take_slot("b", "output.destination").unwrap().as_deref(),
             Some("a")
         );
         assert!(!reg.is_enabled("a"));
@@ -1379,7 +1336,7 @@ mod tests {
         // Disable releases back to Grain's default — never to the loser.
         reg.set_enabled("b", false).unwrap();
         assert_eq!(
-            reg.slot_occupant("pill.theme").as_deref(),
+            reg.slot_occupant("output.destination").as_deref(),
             Some(CORE_DEFAULT)
         );
         assert!(reg.slots_held("b").is_empty());
@@ -1389,96 +1346,11 @@ mod tests {
     fn taking_an_undeclared_slot_is_refused() {
         let dir = tmp();
         let reg = ExtensionsRegistry::load(dir.path(), false).unwrap();
-        reg.install(pack("a", &["pill.theme"])).unwrap();
-        assert!(reg.take_slot("a", "output.destination").is_err());
-        assert!(reg.take_slot("ghost", "pill.theme").is_err());
+        reg.install(pack("a", &["output.destination"])).unwrap();
+        assert!(reg.take_slot("a", "prompt.main").is_err());
+        assert!(reg.take_slot("ghost", "output.destination").is_err());
         assert_eq!(
             reg.slot_occupant("output.destination").as_deref(),
-            Some(CORE_DEFAULT)
-        );
-    }
-
-    #[test]
-    fn center_variant_declares_its_slot_from_its_manifest() {
-        // Phase 5C: the centre variant is a real installed pack whose manifest
-        // declares the variant slot. Installing it records the offer; selecting
-        // the centre look is what actually takes the reply surface (SPEC §10.2).
-        let dir = tmp();
-        let reg = ExtensionsRegistry::load(dir.path(), false).unwrap();
-        reg.install(variant_pack(AGENT_CENTER_VARIANT_ID)).unwrap();
-        assert_eq!(
-            reg.record(AGENT_CENTER_VARIANT_ID).unwrap().variant_slots,
-            vec![AGENT_REPLY_SURFACE_SLOT.to_string()]
-        );
-
-        // …and a registry written before slots existed is still healed on load.
-        let stale = format!(
-            r#"{{"records":{{"{id}":{{"id":"{id}","enabled":true,"toggle_seq":0,
-               "installed_version":"1.0.0","granted":[]}}}}}}"#,
-            id = AGENT_CENTER_VARIANT_ID
-        );
-        fs::write(dir.path().join(EXTENSIONS_FILE), stale).unwrap();
-        let reg = ExtensionsRegistry::load(dir.path(), false).unwrap();
-        assert_eq!(
-            reg.record(AGENT_CENTER_VARIANT_ID).unwrap().variant_slots,
-            vec![AGENT_REPLY_SURFACE_SLOT.to_string()]
-        );
-        assert_eq!(
-            reg.slot_occupant(AGENT_REPLY_SURFACE_SLOT).as_deref(),
-            Some(CORE_DEFAULT),
-            "the sidebar is the built-in default until the centre look is selected"
-        );
-
-        // Selecting the centre look is what takes the slot (SPEC §10.2).
-        reg.set_slot_claim(AGENT_REPLY_SURFACE_SLOT, AGENT_CENTER_VARIANT_ID)
-            .unwrap();
-        reg.install(pack("rival", &[AGENT_REPLY_SURFACE_SLOT]))
-            .unwrap();
-        assert_eq!(
-            reg.slot_conflict("rival").unwrap().current_occupant,
-            AGENT_CENTER_VARIANT_ID.to_string()
-        );
-    }
-
-    #[test]
-    fn enabling_a_surface_variant_is_not_a_takeover() {
-        // Regression (reported live): toggling the centre layout on failed with
-        // "agent.reply-surface is occupied by grain.core". Enabling a variant
-        // only adds it to the position dropdown (SPEC §10.2) — it changes no
-        // occupant, so treating the declaration as a claim made the pack
-        // impossible to turn on at all.
-        let dir = tmp();
-        let reg = ExtensionsRegistry::load(dir.path(), false).unwrap();
-        reg.install(variant_pack(AGENT_CENTER_VARIANT_ID)).unwrap();
-
-        assert_eq!(reg.slot_conflict(AGENT_CENTER_VARIANT_ID), None);
-        reg.set_enabled(AGENT_CENTER_VARIANT_ID, true)
-            .expect("enabling a variant must not be refused");
-        assert_eq!(
-            reg.slot_occupant(AGENT_REPLY_SURFACE_SLOT).as_deref(),
-            Some(CORE_DEFAULT),
-            "enabling offers the look; it does not select it"
-        );
-
-        // A pack that genuinely CLAIMS the same slot still faces the prompt.
-        reg.install(pack("rival", &[AGENT_REPLY_SURFACE_SLOT]))
-            .unwrap();
-        assert!(reg.set_enabled("rival", true).is_err());
-    }
-
-    #[test]
-    fn a_selected_variant_still_releases_its_slot_on_disable() {
-        // Occupancy is what releases, not declaration — so switching the
-        // centre look off hands the reply surface back to core.
-        let dir = tmp();
-        let reg = ExtensionsRegistry::load(dir.path(), false).unwrap();
-        reg.install(variant_pack(AGENT_CENTER_VARIANT_ID)).unwrap();
-        reg.set_enabled(AGENT_CENTER_VARIANT_ID, true).unwrap();
-        reg.set_slot_claim(AGENT_REPLY_SURFACE_SLOT, AGENT_CENTER_VARIANT_ID)
-            .unwrap();
-        reg.set_enabled(AGENT_CENTER_VARIANT_ID, false).unwrap();
-        assert_eq!(
-            reg.slot_occupant(AGENT_REPLY_SURFACE_SLOT).as_deref(),
             Some(CORE_DEFAULT)
         );
     }
@@ -1487,22 +1359,21 @@ mod tests {
     fn an_update_that_drops_a_slot_releases_it() {
         let dir = tmp();
         let reg = ExtensionsRegistry::load(dir.path(), false).unwrap();
-        reg.install(pack("a", &["pill.theme"])).unwrap();
-        reg.take_slot("a", "pill.theme").unwrap();
+        reg.install(pack("a", &["output.destination"])).unwrap();
+        reg.take_slot("a", "output.destination").unwrap();
         reg.set_enabled("a", true).unwrap();
 
-        // v2 no longer themes the pill, but does want the output slot.
-        let mut v2 = pack("a", &["output.destination"]);
+        let mut v2 = pack("a", &["prompt.main"]);
         v2.enabled = true;
         reg.install(v2).unwrap();
         assert_eq!(
-            reg.slot_occupant("pill.theme").as_deref(),
+            reg.slot_occupant("output.destination").as_deref(),
             Some(CORE_DEFAULT),
             "a dropped slot must not stay held forever"
         );
         // The newly declared slot is not auto-granted — it needs a takeover.
         assert_eq!(
-            reg.slot_occupant("output.destination").as_deref(),
+            reg.slot_occupant("prompt.main").as_deref(),
             Some(CORE_DEFAULT)
         );
         assert!(reg.slot_conflict("a").is_some());
@@ -1512,20 +1383,15 @@ mod tests {
     fn uninstall_releases_slots() {
         let dir = tmp();
         let reg = ExtensionsRegistry::load(dir.path(), false).unwrap();
-        reg.install(pack("a", &["overlay.recording", "overrides:x"]))
-            .unwrap();
-        reg.take_slot("a", "overlay.recording").unwrap();
-        reg.take_slot("a", "overrides:x").unwrap();
-        assert_eq!(reg.slots_held("a").len(), 2);
+        reg.install(pack("a", &["output.destination"])).unwrap();
+        reg.take_slot("a", "output.destination").unwrap();
+        assert_eq!(reg.slots_held("a").len(), 1);
 
         reg.uninstall("a").unwrap();
         assert_eq!(
-            reg.slot_occupant("overlay.recording").as_deref(),
+            reg.slot_occupant("output.destination").as_deref(),
             Some(CORE_DEFAULT)
         );
-        // A slot with no core default disappears entirely rather than being
-        // left pointing at an uninstalled extension.
-        assert_eq!(reg.slot_occupant("overrides:x"), None);
     }
 
     #[test]
@@ -1533,13 +1399,16 @@ mod tests {
         let dir = tmp();
         {
             let reg = ExtensionsRegistry::load(dir.path(), false).unwrap();
-            reg.install(pack("a", &["pill.theme"])).unwrap();
-            reg.take_slot("a", "pill.theme").unwrap();
+            reg.install(pack("a", &["output.destination"])).unwrap();
+            reg.take_slot("a", "output.destination").unwrap();
             reg.set_enabled("a", true).unwrap();
         }
         let reg = ExtensionsRegistry::load(dir.path(), false).unwrap();
-        assert_eq!(reg.slot_occupant("pill.theme").as_deref(), Some("a"));
-        assert_eq!(reg.slots_held("a"), vec!["pill.theme".to_string()]);
+        assert_eq!(
+            reg.slot_occupant("output.destination").as_deref(),
+            Some("a")
+        );
+        assert_eq!(reg.slots_held("a"), vec!["output.destination".to_string()]);
     }
 
     #[test]

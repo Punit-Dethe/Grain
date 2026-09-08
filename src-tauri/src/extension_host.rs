@@ -31,9 +31,7 @@ use std::sync::{Arc, Mutex, OnceLock, RwLock};
 use std::time::{Duration, Instant};
 
 use grain_core::{AppContext, DaemonEvent};
-use grain_sdk::{
-    daemon_event_capability, ExtensionView, ExtensionViewEvent, GrainPack, HostCall, HostFrame,
-};
+use grain_sdk::{daemon_event_capability, GrainPack, HostCall, HostFrame};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tauri::{AppHandle, Emitter, Listener, Manager, WebviewUrl, WebviewWindowBuilder};
@@ -679,11 +677,6 @@ pub fn refresh_index(app: &AppHandle) {
     // the async runtime, so this stays safe even when the change was caused by
     // a shortcut press.
     crate::extension_shortcuts::sync(app);
-    // Same logic for the pill theme (SPEC §9): a change to the `pill.theme` slot
-    // occupant only happens through a registry mutation, and this runs on every
-    // one. The broadcast reaches a connected pill; a pill that connects later
-    // gets the theme in its welcome instead.
-    crate::pill_theme::broadcast(app);
     for (id, pack, granted) in startup_workers {
         if !is_running(&id) {
             log::info!("[ext:{id}] life activation startup");
@@ -755,7 +748,7 @@ fn collect_prompt_layers(
 ///
 /// 1. **Classification** (`docs/Extensions V1/PLAN.md` §2). Only a `searchable`
 ///    extension may be handed what the user said. Most of the platform is
-///    `extending` — prompt layers, pill themes, App Modes — and without this
+///    `extending` — prompt layers, settings, App Modes — and without this
 ///    every one of them competes for "next song". Declared, never inferred: an
 ///    extension can legitimately be searchable *and* own a shortcut, so
 ///    "does it declare commands?" is the wrong question.
@@ -1819,8 +1812,7 @@ fn reap_idle() {
         None => return,
     };
     for id in host.workers.idle_victims(now_secs(), IDLE_REAP_SECS) {
-        if crate::extension_session::is_owned_by(&id) || crate::extension_view::owns_extension(&id)
-        {
+        if crate::extension_session::is_owned_by(&id) {
             continue;
         }
         kill_worker(&id, "idle timeout");
@@ -2098,18 +2090,14 @@ const HANDOFF_DEADLINE: Duration = Duration::from_secs(20);
 /// repeat, while the cost of waiting is a pill that says "working" for another
 /// moment.
 const HANDOFF_WAKE_DEADLINE: Duration = Duration::from_secs(3);
-/// A UI interaction should return a replacement tree or finite outcome quickly;
-/// unlike the initial request it has no network-sized interpretation phase.
-const SURFACE_EVENT_DEADLINE: Duration = Duration::from_secs(10);
+/// An interactive request should return its finite text outcome quickly; unlike
+/// the initial request it has no network-sized interpretation phase.
 
 /// What a handed-off request produced.
 #[derive(Debug, PartialEq)]
 pub enum HandOffOutcome {
     /// The extension handled it. The optional line is a short result to show.
     Done(Option<String>),
-    /// The extension needs Grain's standard, host-rendered surface before it can
-    /// finish. The worker remains alive and receives stable-id `surface` events.
-    View(ExtensionView),
     /// The extension is healthy but is not the right owner for this request.
     /// Grain must reopen the chooser with this extension removed rather than
     /// treating a routing correction as an execution failure.
@@ -2129,7 +2117,7 @@ fn validate_request_reply_shape(value: &Value) -> Result<(), String> {
     let object = value
         .as_object()
         .ok_or("extension request replies must be objects")?;
-    const ALLOWED: [&str; 4] = ["view", "message", "decline", "error"];
+    const ALLOWED: [&str; 3] = ["message", "decline", "error"];
     if let Some(key) = object.keys().find(|key| !ALLOWED.contains(&key.as_str())) {
         return Err(format!("unsupported extension request reply field '{key}'"));
     }
@@ -2148,15 +2136,6 @@ fn parse_handoff_outcome(value: Value) -> HandOffOutcome {
     if let Err(reason) = validate_request_reply_shape(&value) {
         return HandOffOutcome::Failed(reason);
     }
-    if let Some(view) = value.get("view") {
-        return match serde_json::from_value::<ExtensionView>(view.clone()) {
-            Ok(view) => match view.validate() {
-                Ok(()) => HandOffOutcome::View(view),
-                Err(reason) => HandOffOutcome::Failed(format!("invalid extension view: {reason}")),
-            },
-            Err(error) => HandOffOutcome::Failed(format!("invalid extension view: {error}")),
-        };
-    }
     if let Some(reason) = value.get("decline").and_then(Value::as_str) {
         return HandOffOutcome::Declined(reason.to_string());
     }
@@ -2169,95 +2148,6 @@ fn parse_handoff_outcome(value: Value) -> HandOffOutcome {
             .and_then(Value::as_str)
             .map(str::to_string),
     )
-}
-
-#[derive(Debug, PartialEq)]
-pub enum SurfaceEventOutcome {
-    View(ExtensionView),
-    Unchanged,
-    Done(Option<String>),
-    Unknown,
-    Failed(String),
-}
-
-fn parse_surface_outcome(value: Value, finish_on_empty: bool) -> SurfaceEventOutcome {
-    if let Err(reason) = validate_request_reply_shape(&value) {
-        return SurfaceEventOutcome::Failed(reason);
-    }
-    if let Some(view) = value.get("view") {
-        return match serde_json::from_value::<ExtensionView>(view.clone()) {
-            Ok(view) => match view.validate() {
-                Ok(()) => SurfaceEventOutcome::View(view),
-                Err(reason) => {
-                    SurfaceEventOutcome::Failed(format!("invalid extension view: {reason}"))
-                }
-            },
-            Err(error) => SurfaceEventOutcome::Failed(format!("invalid extension view: {error}")),
-        };
-    }
-    if let Some(error) = value.get("error").and_then(Value::as_str) {
-        return SurfaceEventOutcome::Failed(error.to_string());
-    }
-    if let Some(reason) = value.get("decline").and_then(Value::as_str) {
-        return SurfaceEventOutcome::Failed(format!(
-            "extension declined after presenting its confirmation: {reason}"
-        ));
-    }
-    if !finish_on_empty && value.as_object().is_some_and(serde_json::Map::is_empty) {
-        return SurfaceEventOutcome::Unchanged;
-    }
-    SurfaceEventOutcome::Done(
-        value
-            .get("message")
-            .and_then(Value::as_str)
-            .map(str::to_string),
-    )
-}
-
-/// Deliver one validated stable-id UI event to the worker that owns the active
-/// standard surface. The renderer itself holds no extension capability.
-pub async fn surface_event(
-    _app: &AppHandle,
-    ext_id: &str,
-    session_id: u64,
-    event: ExtensionViewEvent,
-) -> SurfaceEventOutcome {
-    let finish_on_empty = matches!(&event, ExtensionViewEvent::Submit { .. });
-    let Some(host) = HOST.get() else {
-        return SurfaceEventOutcome::Failed("extension host unavailable".into());
-    };
-    match host
-        .workers
-        .call(
-            ext_id,
-            "surface",
-            json!({ "sessionId": session_id, "event": event }),
-            SURFACE_EVENT_DEADLINE,
-        )
-        .await
-    {
-        Ok(value) => parse_surface_outcome(value, finish_on_empty),
-        Err(error) if error == "deadline exceeded" && finish_on_empty => {
-            SurfaceEventOutcome::Unknown
-        }
-        Err(error) => SurfaceEventOutcome::Failed(error),
-    }
-}
-
-/// Best-effort cancellation for a window closed through native chrome. It is a
-/// one-way lifecycle signal: closing never waits on extension code.
-pub fn notify_surface_cancel(ext_id: &str, session_id: u64) {
-    let Some(host) = HOST.get() else {
-        return;
-    };
-    let _ = host.workers.notify(
-        ext_id,
-        "surface",
-        json!({
-            "sessionId": session_id,
-            "event": { "kind": "cancel" }
-        }),
-    );
 }
 
 /// Wake the extension the request was handed to, if it is cold.
@@ -2733,7 +2623,6 @@ pub fn reload_dev_extension(
         .filter(|permission| requested.contains(permission))
         .cloned()
         .collect::<Vec<_>>();
-    let permissions_changed = granted != prior.granted;
     reg.install(grain_core::extensions::ExtensionRecord {
         id: id.to_string(),
         enabled,
@@ -2742,7 +2631,6 @@ pub fn reload_dev_extension(
         artifact_sha256: None,
         granted: granted.clone(),
         slots: loaded.pack.manifest.slots.clone(),
-        variant_slots: prior.variant_slots,
         // A hot reload re-approves, for the same reason the initial dev load
         // does: this is the author's own project on their own disk, and the
         // prompt text is the thing they are iterating on.
@@ -2788,24 +2676,9 @@ pub fn reload_dev_extension(
     if had_worker && enabled && !is_running(id) {
         spawn_worker(app, id, &loaded.pack, granted, None);
     }
-    let remounted_surfaces = if enabled && !permissions_changed {
-        if loaded.pack.manifest.surfaces.workspace.is_none() {
-            crate::surfaces::extension::destroy(app, id);
-        }
-        if loaded.pack.manifest.surfaces.overlay.is_none() {
-            crate::surfaces::overlay::dismiss(app, id);
-        }
-        crate::surfaces::extension::reload(app, id, &loaded.pack)
-    } else {
-        crate::surfaces::extension::destroy(app, id);
-        crate::surfaces::overlay::dismiss(app, id);
-        false
-    };
-
     let worker_count = HOST.get().map(|host| host.workers.len()).unwrap_or(0);
     Ok(grain_sdk::DevReloadResult {
         restarted_worker: had_worker && enabled,
-        remounted_surfaces,
         enabled,
         worker_count,
         token_count: crate::events_server::token_count(),
@@ -2822,7 +2695,7 @@ pub fn reload_dev_extension(
 /// launch, so it sat under "Installed · not active" in everyone's list forever,
 /// as a demo nobody asked for. (Unrelated to Grain Space's auto-filing, which is
 /// a real feature and stays.)
-const RETIRED_BUILTINS: &[&str] = &["grain.auto-categorize"];
+const RETIRED_BUILTINS: &[&str] = &["grain.auto-categorize", "grain.agent-center-layout"];
 
 /// Take retired built-ins off an existing install: the record, the pack file on
 /// disk, and anything the pack stored. Idempotent — after the first boot there
@@ -2848,30 +2721,6 @@ fn retire_builtin_packs(app: &AppHandle) {
     }
 }
 
-/// [GRAIN] Phase 5C migration: the Agent centre layout used to be a synthesised
-/// record with no pack file on disk. Now it is a real external pack. An existing
-/// install still carries the stale synthesised record, which renders as an
-/// "Unreadable pack" (no file to load). Drop it on boot so it disappears from
-/// the list; the user reinstalls it from the store. Only removes a record that
-/// has no loadable pack and is not a live dev project.
-pub fn migrate_externalized_builtins(app: &AppHandle) {
-    use grain_core::extensions::AGENT_CENTER_VARIANT_ID as CENTER;
-    let Some(reg) = app.try_state::<Arc<grain_core::extensions::ExtensionsRegistry>>() else {
-        return;
-    };
-    let Some(rec) = reg.record(CENTER) else {
-        return;
-    };
-    if rec.dev.is_some() {
-        return; // a dev project owns it — leave it alone
-    }
-    if load_manifest(app, CENTER).is_none() {
-        log::info!("[GRAIN] migrating stale synthesised '{CENTER}' record → removed (reinstall from store)");
-        let _ = reg.uninstall(CENTER);
-        refresh_index(app);
-    }
-}
-
 /// Bring the installed set in line with what this build actually ships. Called
 /// once after `AppContext` + `ExtensionsRegistry` are managed.
 ///
@@ -2880,7 +2729,6 @@ pub fn migrate_externalized_builtins(app: &AppHandle) {
 /// same way anyone else's are, so this only has to clean up after the ones that
 /// were seeded into existing installs.
 pub fn reconcile_builtin_packs(app: &AppHandle) {
-    migrate_externalized_builtins(app);
     retire_builtin_packs(app);
 }
 
@@ -2989,7 +2837,6 @@ mod tests {
                 .is_searchable()
                 .then(|| grain_core::extensions::recommendation_fingerprint(&pack.manifest)),
             slots: vec![],
-            variant_slots: vec![],
             dev: None,
             trust: grain_sdk::Trust::UNTRUSTED_DEFAULT,
         }
@@ -2998,7 +2845,7 @@ mod tests {
     const SEARCHABLE: &str = r#","kind":"searchable","recommend":{"purpose":"Play music",
         "examples":["next song","pause the music"]}"#;
 
-    /// Most of the platform is `extending` — prompt layers, pill themes, App
+    /// Most of the platform is `extending` — prompt layers, settings, App
     /// Modes. Without the classification gate every one of them would compete
     /// for "next song" against the extension that actually plays music.
     #[test]
@@ -3125,7 +2972,7 @@ mod tests {
     }
 
     #[test]
-    fn standard_view_replies_validate_and_change_can_be_noop() {
+    fn visual_replies_are_rejected_even_when_the_tree_looks_valid() {
         let reply = json!({
             "view": {
                 "version": 1,
@@ -3135,21 +2982,9 @@ mod tests {
             }
         });
         assert!(matches!(
-            parse_handoff_outcome(reply.clone()),
-            HandOffOutcome::View(_)
+            parse_handoff_outcome(reply),
+            HandOffOutcome::Failed(_)
         ));
-        assert!(matches!(
-            parse_surface_outcome(reply, false),
-            SurfaceEventOutcome::View(_)
-        ));
-        assert_eq!(
-            parse_surface_outcome(json!({}), false),
-            SurfaceEventOutcome::Unchanged
-        );
-        assert_eq!(
-            parse_surface_outcome(json!({}), true),
-            SurfaceEventOutcome::Done(None)
-        );
         assert!(matches!(
             parse_handoff_outcome(json!({
                 "view": {
@@ -3165,8 +3000,8 @@ mod tests {
             HandOffOutcome::Failed(_)
         ));
         assert!(matches!(
-            parse_surface_outcome(json!({ "html": "<button>forged</button>" }), true),
-            SurfaceEventOutcome::Failed(_)
+            parse_handoff_outcome(json!({ "html": "<button>forged</button>" })),
+            HandOffOutcome::Failed(_)
         ));
     }
 

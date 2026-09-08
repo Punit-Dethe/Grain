@@ -165,11 +165,10 @@ enum Cmd {
         out: PathBuf,
     },
     /// Build a single-file `.grainpack.json` from a project directory: inline the
-    /// entry file into `entry_source`, inline any surface `ui_source` file, and
-    /// emit the runtime `GrainPack`. This is the runtime's native single-file
-    /// format (the worker/surface loaders read embedded sources).
+    /// worker entry file into `entry_source`, validate the host-owned UI boundary,
+    /// and emit the runtime `GrainPack`.
     BuildPack {
-        /// Project directory containing `manifest.json` + the entry/surface files.
+        /// Project directory containing `manifest.json` and the worker entry file.
         #[arg(long)]
         src: PathBuf,
         /// Output `.grainpack.json` path.
@@ -361,9 +360,8 @@ fn main() -> Result<()> {
 }
 
 /// Inline a scripted project into a single-file runtime `GrainPack`:
-/// `manifest.json` + the entry file → `entry_source`, and each surface's
-/// `ui_source` file → its inlined HTML. The result is what the runtime loads
-/// directly (embedded sources), and what `publish` then hashes/signs.
+/// `manifest.json` + the entry file → `entry_source`. The result is what the
+/// runtime loads directly, and what `publish` then hashes/signs.
 fn build_pack(src: PathBuf, out: PathBuf) -> Result<()> {
     let manifest_raw = fs::read_to_string(src.join("manifest.json"))
         .with_context(|| format!("read {}/manifest.json", src.display()))?;
@@ -383,93 +381,18 @@ fn build_pack(src: PathBuf, out: PathBuf) -> Result<()> {
         manifest.as_object_mut().unwrap().remove("entry");
     }
 
-    // Inline each surface's uiSource when it names a project file.
-    //
-    // Both spellings are read because the manifest schema accepts both; the
-    // camel one is what the rest of a manifest uses and what an author will
-    // write. A declared surface with NEITHER is an error rather than a default,
-    // which is the whole point: a missing uiSource used to build cleanly and
-    // ship a window with nothing in it.
-    if let Some(surfaces) = manifest.get_mut("surfaces").and_then(|v| v.as_object_mut()) {
-        for (name, surface) in surfaces.iter_mut() {
-            let key = if surface.get("uiSource").is_some() {
-                "uiSource"
-            } else {
-                "ui_source"
-            };
-            let ui_file = surface.get(key).and_then(|v| v.as_str()).map(String::from);
-            let Some(ui_file) = ui_file.filter(|f| !f.trim().is_empty()) else {
-                anyhow::bail!(
-                    "surface '{name}' declares no uiSource — a surface with no UI \
-                     would build and then open an empty window"
-                );
-            };
-            let candidate = src.join(&ui_file);
-            // Only inline when it is actually a file in the project (a short
-            // path); otherwise assume it is already inline HTML.
-            if candidate.is_file() {
-                let html = fs::read_to_string(&candidate)
-                    .with_context(|| format!("read uiSource {ui_file}"))?;
-                surface[key] = serde_json::Value::String(html);
-            } else if !ui_file.contains('<') {
-                // Neither a file we could find nor markup. Almost always a typo
-                // in the filename, and silently shipping the literal string as
-                // the UI is the least useful thing we could do with it.
-                anyhow::bail!(
-                    "surface '{name}' names uiSource '{ui_file}', which is not a file in \
-                     {} and does not look like HTML",
-                    src.display()
-                );
-            }
-        }
-    }
-
-    // Inline each custom card's (`panel`) uiSource when it names a project file
-    // — the same treatment surfaces get, so a card's HTML lives in its own file
-    // rather than as a giant string inside manifest.json.
-    if let Some(settings) = manifest
-        .get_mut("contributes")
-        .and_then(|c| c.get_mut("settings"))
-        .and_then(|s| s.as_array_mut())
-    {
-        for setting in settings.iter_mut() {
-            if setting.get("kind").and_then(|k| k.as_str()) != Some("panel") {
-                continue;
-            }
-            let ui_file = setting
-                .get("uiSource")
-                .or_else(|| setting.get("ui_source"))
-                .and_then(|v| v.as_str())
-                .map(String::from);
-            if let Some(ui_file) = ui_file {
-                // `grain://<view-id>` names a HOST-implemented view compiled into
-                // Grain (builtin tier only) — there is no file to inline, and it
-                // must survive packing verbatim.
-                let candidate = src.join(&ui_file);
-                if candidate.is_file() {
-                    let html = fs::read_to_string(&candidate)
-                        .with_context(|| format!("read panel uiSource {ui_file}"))?;
-                    let obj = setting.as_object_mut().unwrap();
-                    obj.remove("ui_source");
-                    obj.insert("uiSource".into(), serde_json::Value::String(html));
-                }
-            }
-        }
-    }
-
-    let pack = serde_json::json!({ "manifest": manifest, "payloads": {} });
+    let pack: grain_sdk::GrainPack = serde_json::from_value(serde_json::json!({
+        "manifest": manifest,
+        "payloads": {}
+    }))
+    .context("project does not parse as a GrainPack")?;
+    pack.validate_trusted()
+        .map_err(|error| anyhow::anyhow!("invalid extension: {error}"))?;
     let json = format!("{}\n", serde_json::to_string_pretty(&pack)?);
     if let Some(parent) = out.parent() {
         fs::create_dir_all(parent).ok();
     }
     fs::write(&out, json).with_context(|| format!("write {}", out.display()))?;
-    // Sanity: the emitted pack must parse as a GrainPack. Full `validate()` is
-    // the CI check-job's business for community submissions; it also reserves
-    // the `grain.` id prefix for first-party built-ins, which is exactly what
-    // core/ packs legitimately use — so we structurally parse here and let the
-    // reserved-prefix rule stay an import-time (untrusted) guard.
-    let _built: grain_sdk::GrainPack = serde_json::from_slice(&fs::read(&out)?)
-        .context("emitted pack does not parse as a GrainPack")?;
     println!(
         "built {} ({} bytes)",
         out.display(),
@@ -660,15 +583,17 @@ fn roots(
 
 /// Read the manifest out of a `.grainpack` (JSON embeds it; ZIP carries a
 /// `manifest.json` entry).
-/// The manifest and the host surfaces the artifact extends. Both come out of
-/// the same parse: the surfaces are derived from declarations inside the pack,
-/// and the index is the only place a browsing client can read them from.
+/// The manifest and host-owned positions the artifact extends. Validation runs
+/// before metadata derivation so retired visual declarations can never enter a
+/// signed catalogue index.
 fn manifest_of(bytes: &[u8]) -> Result<(grain_sdk::ExtensionManifest, Vec<String>)> {
     use grain_core::pack::{detect_shape, PackShape};
     match detect_shape(bytes) {
         PackShape::Json => {
             let pack: grain_sdk::GrainPack =
                 serde_json::from_slice(bytes).context("parse JSON grainpack")?;
+            pack.validate_trusted()
+                .map_err(|error| anyhow::anyhow!("validate grainpack: {error}"))?;
             let extends = pack.extends();
             Ok((pack.manifest, extends))
         }
@@ -682,6 +607,12 @@ fn manifest_of(bytes: &[u8]) -> Result<(grain_sdk::ExtensionManifest, Vec<String
             let manifest: grain_sdk::ExtensionManifest =
                 serde_json::from_slice(&m).context("parse manifest.json")?;
             let _ = fs::remove_dir_all(&tmp);
+            grain_sdk::GrainPack {
+                manifest: manifest.clone(),
+                payloads: grain_sdk::PackPayloads::default(),
+            }
+            .validate_host_owned_ui()
+            .map_err(|error| anyhow::anyhow!("validate host-owned UI boundary: {error}"))?;
             let extends = manifest.extends();
             Ok((manifest, extends))
         }

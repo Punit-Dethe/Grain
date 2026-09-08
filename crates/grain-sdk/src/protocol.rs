@@ -137,7 +137,6 @@ pub enum DevControlFrame {
 #[serde(rename_all = "camelCase")]
 pub struct DevReloadResult {
     pub restarted_worker: bool,
-    pub remounted_surfaces: bool,
     pub enabled: bool,
     pub worker_count: usize,
     pub token_count: usize,

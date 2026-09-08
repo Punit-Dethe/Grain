@@ -15,14 +15,14 @@ specialized workflows without making those tools feel like separate applications
 ## Product Purpose
 
 Grain turns speech into text and routes explicit requests to user-approved
-extensions while keeping capture, recommendation, permissions, and trusted UI
-under host control.
+extensions while keeping capture, recommendation, permissions, and every
+rendered surface under host control.
 
 ## Positioning
 
 Grain combines an on-device, low-overhead ASR core with a capability-scoped
-extension runtime. Extensions control workflow and content; Grain controls the
-security boundary, native interaction language, and resource lifetime.
+extension runtime. Extensions provide service capabilities and bounded data;
+Grain controls intelligence, presentation, security, and resource lifetime.
 
 ## Operating Context
 
@@ -36,15 +36,14 @@ finite tasks rather than extension-owned conversations.
 - Rust/Tauri owns backend state; React/TypeScript surfaces communicate only via
   Tauri commands and events.
 - Correctness, low RAM/CPU overhead, and explicit cleanup are mandatory.
-- Standard extension UI is an allowlisted remote component tree rendered by
-  Grain. Authors may compose layout, content, fields, and semantic actions, but
-  may not supply HTML, CSS, scripts, arbitrary colors, or window behavior.
+- Extensions cannot supply UI. Grain renders declarative settings, Agent
+  interactions, routing, progress, and finite text results using native choices.
+- Authors may not supply HTML, CSS, component trees, themes, skins, windows, or
+  replacement layouts.
 - Rendering UI grants no functional capability. Extension actions continue to
   run through the authenticated, capability-checked worker runtime.
-- Interaction targets use stable IDs and every tree/event is quota-validated.
 - The standard confirmation/result surface is keyboard-operable and retains no
   extension state after it closes.
-- Arbitrary custom UI is not part of the standard V1 surface.
 
 ## Brand Commitments
 
@@ -61,11 +60,11 @@ focus, and motion.
 
 ## Product Principles
 
-- Give extension authors layout freedom, not styling or host authority.
+- Give extension authors capability and data freedom, not pixels or host authority.
 - Make trusted boundaries obvious without adding repetitive consent friction.
 - Keep actions semantic, serializable, replayable, and capability-separated.
 - Reclaim every worker, window, listener, tree, and credential when unused.
-- Grow the component vocabulary from real extension needs.
+- Keep future rich rendering behind a Grain-owned semantic interaction contract.
 
 ## Accessibility & Inclusion
 

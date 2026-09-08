@@ -143,8 +143,6 @@ pub fn required_capability(method: &str) -> Option<&'static str> {
         "capture.app" => Some("capture:app"),
         "capture.screenText" => Some("capture:screen-text"),
         "capture.screenImage" => Some("capture:screen-image"),
-        "workspace.open" | "workspace.close" => Some("surface:workspace"),
-        "overlay.show" | "overlay.dismiss" => Some("surface:overlay"),
         // [GRAIN] Grain Space over MCP. `space` is NOT in KNOWN_CAPABILITIES, so
         // no manifest can request it and no permission sheet can grant it — it
         // exists only on the identity the app mints for its own proxy.
@@ -913,8 +911,7 @@ fn validate_request(method: &str, params: &Value) -> HostResult<()> {
         "open.app" => {
             param_nonempty_str(params, "path")?;
         }
-        "doc.list" | "capture.selection" | "capture.app" | "workspace.open" | "workspace.close"
-        | "overlay.show" | "overlay.dismiss" | "open.pickApp" => {}
+        "doc.list" | "capture.selection" | "capture.app" | "open.pickApp" => {}
         _ => return Err(unknown_method(method)),
     }
     Ok(())
@@ -1242,41 +1239,6 @@ pub async fn dispatch(
             Ok(Value::Null)
         }
         "doc.list" => Ok(json!({ "keys": store.doc_list().map_err(storage_error)? })),
-        // [GRAIN] SPEC §1.2: the extension asks for ITS OWN workspace and gets
-        // nothing else — there is no id parameter to point at another
-        // extension's surface, because identity comes from the channel.
-        "workspace.open" => {
-            crate::surfaces::extension::open(app, &identity.id, params.get("payload").cloned())
-                .map_err(|error| {
-                    typed_error(
-                        HostErrorCode::InvalidManifest,
-                        format!("workspace.open failed: {error}"),
-                        "Declare a valid workspace surface in manifest.json, then reload the extension.",
-                    )
-                })?;
-            Ok(Value::Null)
-        }
-        "workspace.close" => {
-            crate::surfaces::extension::close(app, &identity.id);
-            Ok(Value::Null)
-        }
-        // [GRAIN] SPEC §1.2: a transient HUD for THIS extension, host-budgeted
-        // in size and lifetime — same channel-derived identity as workspace.
-        "overlay.show" => {
-            crate::surfaces::overlay::show(app, &identity.id, params.get("payload").cloned())
-                .map_err(|error| {
-                    typed_error(
-                        HostErrorCode::InvalidManifest,
-                        format!("overlay.show failed: {error}"),
-                        "Declare a valid overlay surface in manifest.json, then reload the extension.",
-                    )
-                })?;
-            Ok(Value::Null)
-        }
-        "overlay.dismiss" => {
-            crate::surfaces::overlay::dismiss(app, &identity.id);
-            Ok(Value::Null)
-        }
         "settings.get" => {
             let key = param_str(&params, "key")?;
             if crate::grain_commands::setting_decl(app, &identity.id, &key)
@@ -2310,8 +2272,6 @@ mod tests {
             ("embed", "embed"),
             ("session.start", "session:start"),
             ("capture.selection", "capture:selection"),
-            ("workspace.open", "surface:workspace"),
-            ("overlay.show", "surface:overlay"),
         ] {
             let error = preflight(&no_caps, method, &json!({})).unwrap_err();
             assert_eq!(error.code, HostErrorCode::CapabilityDenied, "{method}");
@@ -2326,8 +2286,6 @@ mod tests {
             "embed",
             "session:start",
             "capture:selection",
-            "surface:workspace",
-            "surface:overlay",
             "net:api.example.com",
         ]);
         for (method, params) in [
@@ -2383,10 +2341,6 @@ mod tests {
             ),
             ("session.start", json!({"mode": "note"})),
             ("capture.selection", json!({})),
-            ("workspace.open", json!({})),
-            ("workspace.close", json!({})),
-            ("overlay.show", json!({})),
-            ("overlay.dismiss", json!({})),
             (
                 "net.fetch",
                 json!({"url": "https://api.example.com/v1", "method": "GET"}),
@@ -2398,6 +2352,16 @@ mod tests {
         let unknown = preflight(&all_caps, "os.exec", &json!({})).unwrap_err();
         assert_eq!(unknown.code, HostErrorCode::UnknownMethod);
         assert_typed(&unknown);
+
+        for retired in [
+            "workspace.open",
+            "workspace.close",
+            "overlay.show",
+            "overlay.dismiss",
+        ] {
+            let error = preflight(&all_caps, retired, &json!({})).unwrap_err();
+            assert_eq!(error.code, HostErrorCode::UnknownMethod, "{retired}");
+        }
     }
 
     #[test]

@@ -95,20 +95,18 @@ pub struct ExtensionManifest {
     /// stays a single shareable file (guide Step 4). Empty for tier-A.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub entry_source: String,
-    /// [GRAIN] Phase 3 (SPEC §1.2): surfaces the extension DECLARES. Extensions
-    /// never create windows — the host builds, places, sleeps and destroys them.
+    /// Retired visual declarations. Kept only as a deserialization tombstone so
+    /// old manifests fail with a precise error instead of being silently ignored.
+    #[doc(hidden)]
     #[serde(default)]
     pub surfaces: Surfaces,
     /// [GRAIN] Phase 3 (SPEC §3): exclusive positions claimed. At most one
     /// enabled occupant per slot; claiming an occupied slot prompts a takeover.
     #[serde(default)]
     pub slots: Vec<String>,
-    /// [GRAIN] SPEC §10.2 surface variants: positions the pack *offers* itself
-    /// for rather than claims. Enabling adds it to a host-owned chooser; a core
-    /// setting decides occupancy, so enabling alone changes no occupant and is
-    /// not a takeover. The Agent centre layout is the canonical example
-    /// (occupancy = `agent_panel_position`). Externalised in Phase 5C: a real
-    /// pack declares this instead of the host synthesising it.
+    /// Retired visual variant declarations. Any non-empty value is rejected at
+    /// every validation boundary; native appearance choices live in Grain.
+    #[doc(hidden)]
     #[serde(default)]
     pub variant_slots: Vec<String>,
     /// [GRAIN] Phase 3 (SPEC §4): declarative contributions the host renders or
@@ -148,8 +146,9 @@ impl CompanionDecl {
     }
 }
 
-/// Surfaces an extension may declare (SPEC §1.2). Each requires the matching
-/// `surface:*` capability — declaring one without it is rejected at import.
+/// Retired extension-authored surface declarations. Deserialization support is
+/// intentionally retained only to reject old manifests with an actionable error.
+#[doc(hidden)]
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Surfaces {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -158,8 +157,8 @@ pub struct Surfaces {
     pub overlay: Option<OverlayDecl>,
 }
 
-/// An app-class window: built hidden once, shown on summon, UI unmounted +
-/// hidden on close, destroyed after idle (the generalized Grain Space pattern).
+/// Retired workspace declaration tombstone.
+#[doc(hidden)]
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct WorkspaceDecl {
     pub title: String,
@@ -171,20 +170,13 @@ pub struct WorkspaceDecl {
         skip_serializing_if = "Option::is_none"
     )]
     pub min_size: Option<[u32; 2]>,
-    /// The workspace UI as a self-contained HTML document, embedded so a
-    /// scripted pack stays one shareable file.
-    ///
-    /// It is loaded into a **sandboxed iframe** — opaque origin, no Tauri IPC,
-    /// no reach into the page around it (SPEC §7.1: a UI surface gets its own
-    /// realm). That surrounding page is Grain's code and is the only thing
-    /// holding the surface token, so the extension's own markup cannot forge an
-    /// identity by asserting one in a payload.
+    /// Retired authored markup, retained only so validation can reject it.
     #[serde(default, rename = "uiSource", alias = "ui_source")]
     pub ui_source: String,
 }
 
-/// A transient HUD: created per invocation, destroyed on dismiss. The host
-/// enforces the size and lifetime budget — an overlay cannot linger.
+/// Retired overlay declaration tombstone.
+#[doc(hidden)]
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct OverlayDecl {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -197,9 +189,7 @@ pub struct OverlayDecl {
         skip_serializing_if = "Option::is_none"
     )]
     pub timeout_ms: Option<u32>,
-    /// The overlay UI as a self-contained HTML document, rendered into the same
-    /// sandboxed iframe a workspace uses (SPEC §7.1). Embedded so the pack stays
-    /// one shareable file.
+    /// Retired authored markup, retained only so validation can reject it.
     #[serde(default, rename = "uiSource", alias = "ui_source")]
     pub ui_source: String,
 }
@@ -616,7 +606,7 @@ fn is_deceptive_char(c: char) -> bool {
 // follow from that and both live here:
 //
 //   · Not every extension can own a request. Most of the platform today is
-//     prompt layers and pill themes, and without `kind` every one of them would
+//     prompt layers and declarative settings, and without `kind` they would
 //     compete with a music extension for "next song" (§2).
 //   · What Grain ranks an extension BY is its own declaration, separate from
 //     whatever commands the extension has internally — a translator has no
@@ -1524,22 +1514,14 @@ pub enum SettingKind {
     /// `open:url` (http/https/mailto/tel), so a stored value is always safe to
     /// open and a typo is caught on entry.
     Url,
-    /// [GRAIN] A CUSTOM CARD (SPEC §4.1 Level 3): the extension's own HTML/JS,
-    /// rendered in a sandboxed iframe where the declarative controls can't
-    /// express the UI. Unlike every other kind it stores NO value — it manages
-    /// its own state through `grain.settings`/`grain.storage`. It carries the
-    /// shared `anchor`, so a card renders at a feature (e.g. `snippets.after`)
-    /// or in the extension's own section. Same opaque-origin sandbox a workspace
-    /// surface uses (SPEC §7.1); every host call it makes is capability-checked
-    /// in Rust, exactly like a worker's.
+    /// Retired authored settings card. Kept only as a deserialization tombstone;
+    /// every validation boundary rejects it because Grain owns all rendered UI.
+    #[doc(hidden)]
     Panel {
-        /// The card UI as a self-contained HTML document, embedded so the pack
-        /// stays one shareable file.
+        /// Retired authored markup.
         #[serde(default, rename = "uiSource", alias = "ui_source")]
         ui_source: String,
-        /// Words settings-search must find this card by — the host cannot read
-        /// inside the iframe, so without these the card is unsearchable. At
-        /// least one non-blank term is required at import.
+        /// Retired search metadata.
         #[serde(default, rename = "searchTerms", alias = "search_terms")]
         search_terms: Vec<String>,
     },
@@ -1662,15 +1644,20 @@ pub fn validate_extension_version(version: &str) -> Result<(), String> {
 
 /// Exclusive positions (SPEC §3). Core defaults are occupants too, so a claim
 /// on any of these can displace a shipped feature — never silently.
-pub const KNOWN_SLOTS: &[&str] = &[
+pub const KNOWN_SLOTS: &[&str] = &["output.destination", PROMPT_MAIN_SLOT, PROMPT_CONTEXT_SLOT];
+
+/// Visual extension points retired from the public contract. They remain
+/// explicit tombstones so old or hand-written packs fail loudly rather than
+/// installing with declarations Grain silently ignores.
+const RETIRED_VISUAL_SLOTS: &[&str] = &[
     "overlay.recording",
     "overlay.pointer",
     "pill.theme",
     "agent.reply-surface",
-    "output.destination",
-    PROMPT_MAIN_SLOT,
-    PROMPT_CONTEXT_SLOT,
 ];
+
+const RETIRED_VISUAL_CAPABILITIES: &[&str] =
+    &["surface:workspace", "surface:overlay", "pill:slots"];
 
 /// The selected generic dictation prompt. A claimant supplies the complete
 /// replacement; Prompt Record and the terminal output contract remain host-owned.
@@ -1702,11 +1689,6 @@ pub const KNOWN_CAPABILITIES: &[&str] = &[
     // One host-owned account connection for this extension. An extension is a
     // single service/capability provider; cross-service work belongs to Agent.
     "auth",
-    // Phase 3 (SPEC §1.2): host-owned surfaces. Declaring a surface without
-    // its capability is rejected — the grant is what the user actually approves.
-    "surface:workspace",
-    "surface:overlay",
-    "pill:slots",
     // Phase 3 (Grain Space Test): read the user's current selection — the
     // quick-add path a note-capture extension needs. Sensitive (it reads
     // whatever is selected in any app), so it is its own grant, meant to be
@@ -1908,9 +1890,9 @@ pub struct PromptPackEntry {
 pub struct PackPayloads {
     #[serde(default)]
     pub prompts: Vec<PromptPackEntry>,
-    /// Pill theme JSON (SPEC §9.4) — stored and validated on import; rendering
-    /// lands with the pill-side evaluator. Kept opaque here so the theme
-    /// schema can evolve without an sdk release.
+    /// Retired pill-theme payload. Kept only as a deserialization tombstone;
+    /// every validation boundary rejects it.
+    #[doc(hidden)]
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pill_theme: Option<serde_json::Value>,
     /// The submission-validated 512² PNG master, embedded in the single-file
@@ -1926,7 +1908,7 @@ pub struct PackPayloads {
 }
 
 impl ExtensionManifest {
-    /// The host surfaces this extension extends, in declaration order.
+    /// The host-owned settings/prompt positions this extension extends.
     ///
     /// This is the single answer to "where in Grain does this belong?", and it
     /// is derived only from what the manifest *declares* — the slots it claims
@@ -1942,8 +1924,10 @@ impl ExtensionManifest {
     /// Prose is not a placement contract; these declarations are.
     pub fn extends(&self) -> Vec<String> {
         let mut out = Vec::new();
-        for slot in self.slots.iter().chain(self.variant_slots.iter()) {
-            push_surface(&mut out, slot);
+        for slot in &self.slots {
+            if KNOWN_SLOTS.contains(&slot.as_str()) {
+                push_surface(&mut out, slot);
+            }
         }
         for decl in &self.contributes.settings {
             if let Some(anchor) = &decl.anchor {
@@ -1963,6 +1947,13 @@ pub struct GrainPack {
 }
 
 impl GrainPack {
+    /// Enforce Grain's host-owned UI boundary without requiring the rest of the
+    /// pack to be materialized. Registry tooling uses this for legacy ZIP
+    /// artifacts before deriving any catalogue metadata.
+    pub fn validate_host_owned_ui(&self) -> Result<(), String> {
+        validate_no_visual_customization(self)
+    }
+
     /// Decode the optional icon master with a strict allocation bound. Full PNG
     /// decoding belongs to the host/checker; the SDK cheaply enforces the wire
     /// shape and advertised dimensions at every pack-validation boundary.
@@ -2001,15 +1992,12 @@ impl GrainPack {
         }
     }
 
-    /// [`ExtensionManifest::extends`] plus the surfaces this pack's payloads
-    /// feed — a tier-A pack contributes by shipping data, not by declaring.
+    /// [`ExtensionManifest::extends`] plus host-owned destinations fed by
+    /// non-executable payload data.
     pub fn extends(&self) -> Vec<String> {
         let mut out = self.manifest.extends();
         if !self.payloads.prompts.is_empty() {
             push_surface(&mut out, SURFACE_PROMPTS);
-        }
-        if self.payloads.pill_theme.is_some() {
-            push_surface(&mut out, "pill.theme");
         }
         out
     }
@@ -2037,6 +2025,7 @@ impl GrainPack {
         let m = &self.manifest;
         validate_extension_id(&m.id)?;
         validate_extension_version(&m.version)?;
+        self.validate_host_owned_ui()?;
         // `grain.` is reserved: a USER-imported pack may not claim a first-party
         // identity. Packs Grain publishes are validated on the path that installs
         // them from the signed catalogue, not through this importer.
@@ -2119,11 +2108,10 @@ impl GrainPack {
     fn validate_phase3(&self) -> Result<(), String> {
         let m = &self.manifest;
 
-        // Slots may be claimed by any tier (a pill theme is tier-A), but only
-        // from the known list — an unknown slot is a silent no-op otherwise.
+        // Slots may be claimed by any tier, but only from the known non-visual
+        // list — an unknown slot is a silent no-op otherwise.
         for slot in &m.slots {
-            let known = KNOWN_SLOTS.contains(&slot.as_str()) || slot.starts_with("overrides:"); // `overrides:<core-setting>`
-            if !known {
+            if !KNOWN_SLOTS.contains(&slot.as_str()) {
                 return Err(format!("unknown slot '{slot}'"));
             }
         }
@@ -2155,14 +2143,13 @@ impl GrainPack {
             return Err("activation 'onStartup' requires the 'resident' permission".into());
         }
 
-        // Surfaces and code-backed contributions need code to back them.
+        // Code-backed contributions need code to back them.
         //
         // Prompt layers are deliberately NOT in this list: static text plus a
         // host-evaluated match is exactly the kind of contribution an inert pack
         // should be able to make, and requiring a runtime for it would push
         // authors toward code they do not need — which is the more dangerous
         // outcome, not the safer one.
-        let declares_surface = m.surfaces.workspace.is_some() || m.surfaces.overlay.is_some();
         let contributes_code = !m.contributes.settings.is_empty()
             || !m.contributes.shortcuts.is_empty()
             || m.contributes.authentication.is_some()
@@ -2171,33 +2158,8 @@ impl GrainPack {
             // no runtime that declares one would route, win, and then have
             // nothing to call.
             || !m.contributes.actions.is_empty();
-        if (declares_surface || contributes_code) && m.tier == Tier::Pack {
-            return Err("surfaces and contributes require a scripted or native runtime".into());
-        }
-
-        // A declared surface must be backed by the capability the user grants.
-        for (declared, cap) in [
-            (m.surfaces.workspace.is_some(), "surface:workspace"),
-            (m.surfaces.overlay.is_some(), "surface:overlay"),
-        ] {
-            if declared && !m.permissions.iter().any(|p| p == cap) {
-                return Err(format!(
-                    "declaring this surface requires the '{cap}' permission"
-                ));
-            }
-        }
-
-        // A surface with nothing to render is a window that opens blank and
-        // cannot be explained to the user — reject it at import, not at open.
-        if let Some(w) = &m.surfaces.workspace {
-            if w.ui_source.trim().is_empty() {
-                return Err("a workspace surface requires ui_source".into());
-            }
-        }
-        if let Some(o) = &m.surfaces.overlay {
-            if o.ui_source.trim().is_empty() {
-                return Err("an overlay surface requires ui_source".into());
-            }
+        if contributes_code && m.tier == Tier::Pack {
+            return Err("contributes require a scripted or native runtime".into());
         }
 
         let mut seen = std::collections::HashSet::new();
@@ -2215,25 +2177,6 @@ impl GrainPack {
                 if options.is_empty() {
                     return Err(format!("select setting '{}' has no options", s.key));
                 }
-            }
-            // A custom card is the extension's own UI: it must ship markup, and
-            // must be searchable (the host can't read inside its iframe).
-            if let SettingKind::Panel {
-                ui_source,
-                search_terms,
-            } = &s.kind
-            {
-                if ui_source.trim().is_empty() {
-                    return Err(format!("panel setting '{}' requires uiSource", s.key));
-                }
-                if search_terms.iter().all(|t| t.trim().is_empty()) {
-                    return Err(format!("panel setting '{}' requires searchTerms", s.key));
-                }
-                // `grain://<view-id>` renders a HOST component with the host's
-                // own privileges instead of author markup in an opaque-origin
-                // iframe. Only a builtin (already forced to a `grain.` id) may
-                // name one; otherwise a community pack could ask to be rendered
-                // as if it were Grain's own code.
             }
             if matches!(s.kind, SettingKind::Secret)
                 && s.default.as_str().is_some_and(|value| !value.is_empty())
@@ -2292,22 +2235,6 @@ impl GrainPack {
             }
         }
 
-        // A pill theme (SPEC §9) is stored opaque so its schema can evolve, but
-        // it is checked HERE so a malformed one is rejected at import rather than
-        // silently ignored at delivery. It still degrades field-by-field once
-        // valid — an unknown pattern or a partial theme is fine; a wrong shape
-        // (a string, a number) is not.
-        if let Some(theme) = &self.payloads.pill_theme {
-            if serde_json::from_value::<crate::PillTheme>(theme.clone()).is_err() {
-                return Err("payloads.pill_theme is not a valid pill theme".into());
-            }
-            // A theme only takes effect while the pack holds the `pill.theme`
-            // slot; a theme with no claim would install and do nothing, which is
-            // a packaging mistake worth catching early.
-            if !m.slots.iter().any(|s| s == "pill.theme") {
-                return Err("a pack shipping a pill theme must claim the 'pill.theme' slot".into());
-            }
-        }
         Ok(())
     }
 
@@ -2319,6 +2246,64 @@ impl GrainPack {
     pub fn has_runtime(&self) -> bool {
         matches!(self.manifest.tier, Tier::Scripted | Tier::Native)
     }
+}
+
+fn setting_contains_visual_panel(setting: &SettingDecl) -> bool {
+    match &setting.kind {
+        SettingKind::Panel { .. } => true,
+        SettingKind::List { fields, .. } => fields.iter().any(setting_contains_visual_panel),
+        _ => false,
+    }
+}
+
+/// Grain owns every rendered surface. Keep the old fields deserializable long
+/// enough to provide a precise compatibility error, but admit none of them at
+/// any install boundary (untrusted, developer, or signed catalogue).
+fn validate_no_visual_customization(pack: &GrainPack) -> Result<(), String> {
+    let manifest = &pack.manifest;
+    if manifest.surfaces.workspace.is_some() || manifest.surfaces.overlay.is_some() {
+        return Err(
+            "extension-authored workspace and overlay surfaces are not supported; Grain owns all UI"
+                .into(),
+        );
+    }
+    if let Some(capability) = manifest
+        .permissions
+        .iter()
+        .find(|capability| RETIRED_VISUAL_CAPABILITIES.contains(&capability.as_str()))
+    {
+        return Err(format!(
+            "visual capability '{capability}' is not supported; Grain owns all UI"
+        ));
+    }
+    if let Some(slot) = manifest.slots.iter().find(|slot| {
+        RETIRED_VISUAL_SLOTS.contains(&slot.as_str()) || slot.starts_with("overrides:")
+    }) {
+        return Err(format!(
+            "visual slot '{slot}' is not supported; Grain owns all UI"
+        ));
+    }
+    if !manifest.variant_slots.is_empty() {
+        return Err("extension-provided UI variants are not supported; use Grain's native appearance settings".into());
+    }
+    if manifest
+        .contributes
+        .settings
+        .iter()
+        .any(setting_contains_visual_panel)
+    {
+        return Err(
+            "custom settings panels are not supported; use Grain-rendered declarative settings"
+                .into(),
+        );
+    }
+    if pack.payloads.pill_theme.is_some() {
+        return Err(
+            "extension pill themes are not supported; Wave and Matrix are native Grain settings"
+                .into(),
+        );
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -2971,15 +2956,14 @@ mod tests {
 
     #[test]
     fn extends_reads_slots_anchors_and_payloads() {
-        // A slot claimed, a slot offered, a settings anchor and a payload are
-        // four different ways of saying "I change this part of Grain"; all four
-        // have to answer in the same vocabulary or the placement is a guess.
+        // Retired visual declarations are tombstones, not catalogue placement
+        // metadata, even before the validation boundary rejects the artifact.
         assert_eq!(
             extends_of(
                 r#"{"manifest":{"id":"com.x.a","name":"A","version":"1.0","tier":"pack",
                     "variant_slots":["agent.reply-surface"]}}"#
             ),
-            vec!["agent.reply-surface"]
+            Vec::<String>::new()
         );
         assert_eq!(
             extends_of(
@@ -3005,7 +2989,7 @@ mod tests {
                 r#"{"manifest":{"id":"com.x.d","name":"D","version":"1.0","tier":"scripted",
                     "entry_source":"//","slots":["pill.theme"],"variant_slots":["pill.theme"]}}"#
             ),
-            vec!["pill.theme"]
+            Vec::<String>::new()
         );
         // Nothing declared = no host surface, which is what earns a page of its
         // own rather than a slot beside someone else's control.
@@ -3027,23 +3011,20 @@ mod tests {
     }
 
     #[test]
-    fn pill_theme_pack_validates() {
-        // A data pack claiming the pill.theme slot and carrying a partial theme.
-        assert_eq!(
-            pack(
-                r#"{"manifest":{"id":"com.x.neon","name":"Neon","version":"1","tier":"pack",
-                    "slots":["pill.theme"]},
-                    "payloads":{"pill_theme":{"recording":{"dot":[0,255,120],"pattern":"breathe"}}}}"#
-            ),
-            Ok(())
-        );
-        // A theme with no slot claim would install and do nothing — rejected.
+    fn visual_customization_is_rejected_at_every_trust_boundary() {
+        let json = r#"{"manifest":{"id":"com.x.neon","name":"Neon","version":"1","tier":"pack",
+                "slots":["pill.theme"]},
+                "payloads":{"pill_theme":{"recording":{"dot":[0,255,120],"pattern":"breathe"}}}}"#;
+        let visual: GrainPack = serde_json::from_str(json).unwrap();
+        assert!(visual.validate().is_err());
+        assert!(visual.validate_dev().is_err());
+        assert!(visual.validate_trusted().is_err());
+
         assert!(pack(
             r#"{"manifest":{"id":"com.x.neon","name":"Neon","version":"1","tier":"pack"},
                 "payloads":{"pill_theme":{"idle":{"dot":[1,2,3]}}}}"#
         )
         .is_err());
-        // A wrong-shaped theme is rejected at import, not ignored at delivery.
         assert!(pack(
             r#"{"manifest":{"id":"com.x.neon","name":"Neon","version":"1","tier":"pack",
                 "slots":["pill.theme"]},
@@ -3136,18 +3117,14 @@ mod tests {
         assert!(pack.validate_trusted().is_ok());
     }
 
-    /// A full Phase-3 scripted manifest parses and validates, and the settings
-    /// schema keeps its internally-tagged shape.
+    /// Native declarative controls remain available after authored UI removal.
     #[test]
-    fn phase3_declarations_parse_and_validate() {
+    fn declarative_settings_and_shortcuts_parse_and_validate() {
         let json = r#"{"manifest":{
             "id":"com.x.spaces","name":"Spaces","version":"1","tier":"scripted",
-            "permissions":["storage","surface:workspace","resident"],
+            "permissions":["storage","resident"],
             "activation":["onStartup"],
             "entry_source":"grain.log.info('hi')",
-            "surfaces":{"workspace":{"title":"Spaces","min_size":[900,600],
-                "ui_source":"<h1>Spaces</h1>"}},
-            "slots":["agent.reply-surface","overrides:overlay_position"],
             "contributes":{
                 "settings":[
                     {"key":"tone","label":"Tone","kind":"select",
@@ -3159,10 +3136,6 @@ mod tests {
             }}}"#;
         let p: GrainPack = serde_json::from_str(json).unwrap();
         assert_eq!(p.validate(), Ok(()));
-        assert_eq!(
-            p.manifest.surfaces.workspace.unwrap().min_size,
-            Some([900, 600])
-        );
         assert!(matches!(
             p.manifest.contributes.settings[0].kind,
             SettingKind::Select { .. }
@@ -3178,19 +3151,19 @@ mod tests {
                     "entry_source":"x"{extra}}}}}"#
             ))
         };
-        // A surface without its capability is rejected — the grant is the point.
+        // Visual declarations and visual capabilities are retired regardless of
+        // whether an old manifest supplies both halves of the old contract.
         assert!(scripted(r#","surfaces":{"workspace":{"title":"T","ui_source":"<p>x"}}"#).is_err());
         assert!(scripted(
             r#","permissions":["surface:workspace"],
                "surfaces":{"workspace":{"title":"T","ui_source":"<p>x"}}"#
         )
-        .is_ok());
-        // An overlay is the same story: needs its capability and its UI.
+        .is_err());
         assert!(scripted(
             r#","permissions":["surface:overlay"],
                "surfaces":{"overlay":{"ui_source":"<p>x"}}"#
         )
-        .is_ok());
+        .is_err());
         assert!(scripted(r#","surfaces":{"overlay":{"ui_source":"<p>x"}}"#).is_err());
         assert!(scripted(
             r#","permissions":["surface:overlay"],"surfaces":{"overlay":{"timeout_ms":2000}}"#
@@ -3204,7 +3177,7 @@ mod tests {
         .is_err());
         // Unknown slot / anchor, duplicate keys, empty select.
         assert!(scripted(r#","slots":["not.a.slot"]"#).is_err());
-        assert!(scripted(r#","slots":["pill.theme"]"#).is_ok());
+        assert!(scripted(r#","slots":["pill.theme"]"#).is_err());
         assert!(scripted(
             r#","contributes":{"settings":[{"key":"a","label":"A","kind":"bool"},{"key":"a","label":"B","kind":"bool"}]}"#
         )
@@ -3224,19 +3197,17 @@ mod tests {
                 "entry_source":"x","contributes":{"shortcuts":[{"id":"go","label":"Go"}]}}}"#
         )
         .is_err());
-        // Data packs have no code, so they cannot declare surfaces or
-        // contributions — but they CAN claim a slot (a pill theme does).
+        // Data packs have no code, so they cannot declare contributions, and
+        // retired visual slots are rejected for every tier.
         assert!(pack(
             r#"{"manifest":{"id":"com.x.t","name":"T","version":"1","tier":"pack",
                 "contributes":{"shortcuts":[{"id":"a","label":"A"}]}}}"#
         )
         .is_err());
-        assert_eq!(
-            pack(
-                r#"{"manifest":{"id":"com.x.t","name":"T","version":"1","tier":"pack","slots":["pill.theme"]}}"#
-            ),
-            Ok(())
-        );
+        assert!(pack(
+            r#"{"manifest":{"id":"com.x.t","name":"T","version":"1","tier":"pack","slots":["pill.theme"]}}"#
+        )
+        .is_err());
     }
 
     #[test]

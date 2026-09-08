@@ -9,8 +9,6 @@ import React, {
 import { invoke } from "@tauri-apps/api/core";
 import { ShieldCheck, X } from "lucide-react";
 import type { ExtensionCard, StoreEntry } from "@/bindings";
-import { useTheme } from "../../../contexts/ThemeContext";
-import { serializeExtensionPalette } from "@/lib/extensionTheme";
 import {
   StudioExtensionCard,
   StudioExtensionMoreCard,
@@ -41,7 +39,6 @@ type SettingKindName =
   | "app_path"
   | "url"
   | "list"
-  | "panel"
   | "unsupported";
 
 /** The SCHEMA of one field (no value) — mirror of Rust `ExtensionSettingField`.
@@ -57,8 +54,6 @@ export interface SettingField {
   options: { value: string; label: string }[];
   fields: SettingField[];
   item_label: string | null;
-  /** The card HTML for a `panel` field (null otherwise). */
-  ui_source: string | null;
 }
 
 /** Mirror of the Rust `ExtensionSettingRow` (grain_commands.rs). Local type
@@ -78,8 +73,6 @@ export interface SettingRow {
   options: { value: string; label: string }[];
   fields: SettingField[];
   item_label: string | null;
-  /** The card HTML for a `panel` row (null otherwise). */
-  ui_source: string | null;
 }
 
 export interface SettingsSection {
@@ -120,7 +113,7 @@ const ANCHOR_SURFACES: Record<Anchor, readonly string[]> = {
   "snippets.after": ["snippets.after"],
   "dictation.pipeline.after": ["dictation.pipeline.after", "dictation.prompts"],
   "context.after": ["context.after"],
-  "agent.after": ["agent.after", "agent.reply-surface"],
+  "agent.after": ["agent.after"],
   "grainspace.after": ["grainspace.after"],
   "models.after": ["models.after"],
 };
@@ -161,202 +154,6 @@ const addListLabel = (noun: string) => `+ Add ${noun}`;
 function pickAppFor(extId: string): Promise<string | null> {
   return invoke<string | null>("extension_pick_app", { id: extId });
 }
-
-/** [GRAIN] The runtime injected ahead of a custom card's HTML (SPEC §4.1 Level
- * 3). It gives the sandboxed iframe a `window.grain` that is a postMessage proxy
- * to this (trusted) settings page, which relays each call to the host — so an
- * author writes a card exactly like a worker/surface. The iframe is sandboxed
- * (`allow-scripts` only, opaque origin), so this channel is the ONLY thing it
- * has, and every method is capability-checked in Rust. A ResizeObserver reports
- * the content height so the host can grow the frame to fit (no inner scrollbar).*/
-const PANEL_BRIDGE = `<script>(function(){
-  var seq=0, pending={};
-  function call(method, params){
-    return new Promise(function(resolve,reject){
-      var id=++seq; pending[id]={resolve:resolve,reject:reject};
-      parent.postMessage({__grain:1,id:id,method:method,params:params||{}}, "*");
-    });
-  }
-  function asErr(raw){
-    var info = raw && typeof raw==="object" ? raw : {code:"E_INTERNAL",message:String(raw),hint:"",docs:""};
-    var e=new Error(String(info.message||"Host call failed")); e.name="GrainError";
-    e.code=String(info.code||"E_INTERNAL"); e.hint=String(info.hint||""); e.docs=String(info.docs||"");
-    if(info.capability!=null) e.capability=String(info.capability); return e;
-  }
-  window.addEventListener("message", function(ev){
-    var d=ev.data; if(!d||d.__grainres!==1) return;
-    var p=pending[d.id]; if(!p) return; delete pending[d.id];
-    if(d.err!=null) p.reject(asErr(d.err)); else p.resolve(d.ok);
-  });
-  function contentHeight(){
-    var d=document.documentElement, b=document.body;
-    return Math.ceil(Math.max(
-      d?d.scrollHeight:0, b?b.scrollHeight:0,
-      b?b.getBoundingClientRect().height:0
-    ));
-  }
-  function postHeight(){ try{ parent.postMessage({__grainresize:1,height:contentHeight()}, "*"); }catch(e){} }
-  window.addEventListener("load", postHeight);
-  try{
-    var ro=new ResizeObserver(postHeight);
-    ro.observe(document.documentElement);
-    if(document.body) ro.observe(document.body);
-  }catch(e){ var t=setInterval(postHeight,500); addEventListener("pagehide",function(){clearInterval(t);}); }
-  window.grain={
-    log:{info:function(m){return call("log.info",{msg:String(m)});},warn:function(m){return call("log.warn",{msg:String(m)});}},
-    storage:{get:function(k){return call("storage.get",{key:k});},set:function(k,v){return call("storage.set",{key:k,value:v});},"delete":function(k){return call("storage.delete",{key:k});}},
-    settings:{get:function(k){return call("settings.get",{key:k});},set:function(k,v){return call("settings.set",{key:k,value:v});}},
-    llm:{complete:function(p){return call("llm.complete",{prompt:String(p)});}},
-    embed:function(t){return call("embed",{texts:t}).then(function(r){return r&&r.vectors!=null?r.vectors:r;});},
-    open:{url:function(u){return call("open.url",{url:String(u)});},app:function(p){return call("open.app",{path:String(p)});},pickApp:function(){return call("open.pickApp",{}).then(function(r){return r&&r.path!=null?r.path:null;});}},
-    capture:{selection:function(){return call("capture.selection",{}).then(function(r){return r&&r.text!=null?r.text:null;});}},
-    focusedApp:function(){return call("capture.app",{});},
-    call:call
-  };
-})();<\/script>`;
-
-/** Cards grow to fit rather than scrolling inside (see the bridge). The ceiling
- * only exists so a runaway card can't produce a mile-long frame; the settings
- * page itself scrolls long content. */
-const PANEL_MIN_HEIGHT = 80;
-const PANEL_MAX_HEIGHT = 2400;
-
-/** Grain's live palette, handed to the card as `--grain-*` custom properties so
- * an author can adopt the app's colours rather than guess at them. Read from the
- * computed root each time a card mounts, so it cannot drift from the tokens the
- * rest of the settings window is drawn with. */
-const hostPalette = (): string => {
-  const root = getComputedStyle(document.documentElement);
-  // Only tokens that actually RESOLVED — the same filter extension-surface.ts
-  // carries, and for the same reason: an empty custom property is still a SET
-  // one, so emitting `--grain-paper:` would make an author's
-  // `var(--grain-paper, #ece5da)` resolve to nothing instead of to their
-  // fallback, and the card would render with no colour at all. Cards were
-  // missing this, so a token rename would have broken them while surfaces
-  // degraded gracefully (docs/UI 2.0/PLAN.md §6.1).
-  return serializeExtensionPalette((name) => root.getPropertyValue(name));
-};
-
-/**
- * Grain owns a card's colour scheme; the operating system does not.
- *
- * A sandboxed iframe has an opaque origin, so `prefers-color-scheme` inside it
- * reports the SYSTEM setting — which is the wrong answer whenever the user's OS
- * and their Grain theme disagree, and is exactly why a card rendered dark inside
- * a light Grain. Rewriting the author's query to a condition that tracks GRAIN
- * asks nothing of the author, so it corrects cards that are already installed as
- * well as ones written against `[data-grain-theme]`.
- *
- * `(min-width:0)` always matches; `(max-width:0)` never does.
- */
-export function alignColorScheme(src: string, dark: boolean): string {
-  const on = "(min-width:0)";
-  const off = "(max-width:0)";
-  return src
-    .replace(/\(\s*prefers-color-scheme\s*:\s*dark\s*\)/gi, dark ? on : off)
-    .replace(/\(\s*prefers-color-scheme\s*:\s*light\s*\)/gi, dark ? off : on);
-}
-
-/** The full document handed to a card's frame: host bridge, then Grain's theme,
- * then the author's markup. The theme is written into the document rather than
- * messaged in after load, so a card can never paint in the wrong one first. */
-const panelDocument = (uiSource: string, dark: boolean): string =>
-  PANEL_BRIDGE +
-  `<style>:root{color-scheme:${dark ? "dark" : "light"};${hostPalette()}}` +
-  `html,body{margin:0;padding:0;}html{overflow:hidden;}</style>` +
-  `<script>document.documentElement.setAttribute("data-grain-theme","${
-    dark ? "dark" : "light"
-  }");<\/script>` +
-  alignColorScheme(uiSource, dark);
-
-/** [GRAIN] A custom card (SPEC §4.1 Level 3): the extension's own HTML in a
- * sandboxed iframe. Created on scroll-into-view and destroyed on unmount (the
- * "destroy if not in use" rule). Host calls from the frame are relayed to
- * `extension_host_call` with a FIXED extension id — the iframe can neither forge
- * an identity nor reach another extension's grants. */
-const PanelCard: React.FC<{ extId: string; uiSource: string }> = ({
-  extId,
-  uiSource,
-}) => {
-  const containerRef = useRef<HTMLDivElement | null>(null);
-  const frameRef = useRef<HTMLIFrameElement | null>(null);
-  const [mounted, setMounted] = useState(false);
-  const [height, setHeight] = useState(320);
-  const { isSettingsDark } = useTheme();
-
-  // Lazy-mount: build the iframe (and the extension's DOM/JS realm) only once it
-  // scrolls into view.
-  useEffect(() => {
-    const el = containerRef.current;
-    if (!el || mounted) return;
-    const io = new IntersectionObserver((entries) => {
-      if (entries.some((e) => e.isIntersecting)) setMounted(true);
-    });
-    io.observe(el);
-    return () => io.disconnect();
-  }, [mounted]);
-
-  // Relay calls (and height reports) from THIS frame only; the id is ours.
-  useEffect(() => {
-    if (!mounted) return;
-    const onMsg = (ev: MessageEvent) => {
-      const d = ev.data as {
-        __grain?: number;
-        __grainresize?: number;
-        [k: string]: unknown;
-      } | null;
-      if (
-        !d ||
-        !frameRef.current ||
-        ev.source !== frameRef.current.contentWindow
-      )
-        return;
-      if (d.__grainresize === 1 && typeof d.height === "number") {
-        setHeight(
-          Math.min(Math.max(d.height, PANEL_MIN_HEIGHT), PANEL_MAX_HEIGHT),
-        );
-        return;
-      }
-      if (d.__grain !== 1 || typeof d.method !== "string") return;
-      const id = d.id;
-      const reply = (ok: unknown, err: unknown) =>
-        frameRef.current?.contentWindow?.postMessage(
-          { __grainres: 1, id, ok, err },
-          "*",
-        );
-      void invoke("extension_host_call", {
-        id: extId,
-        method: d.method,
-        params: (d.params as unknown) ?? {},
-      })
-        .then((ok) => reply(ok, null))
-        .catch((err) => reply(null, err));
-    };
-    window.addEventListener("message", onMsg);
-    return () => window.removeEventListener("message", onMsg);
-  }, [mounted, extId]);
-
-  return (
-    // No border, no radius, no background: the card draws its OWN surface, and
-    // wrapping that in a second one is what made an extension read as a foreign
-    // thing bolted into the page. The frame is given the width and gets out of
-    // the way. Changing theme rewrites the document (see `panelDocument`), which
-    // reloads the frame — correct by construction, and the only moment a card is
-    // ever rebuilt.
-    <div ref={containerRef} className="w-full">
-      {mounted && (
-        <iframe
-          ref={frameRef}
-          title="Extension settings card"
-          sandbox="allow-scripts"
-          srcDoc={panelDocument(uiSource, isSettingsDark)}
-          className="w-full block border-0 bg-transparent"
-          style={{ height }}
-        />
-      )}
-    </div>
-  );
-};
 
 /** [GRAIN] The `app_path` control: primary action is "Capture focused app" — a
  * short countdown lets the user switch to the target app, then the host
@@ -870,123 +667,78 @@ export const ExtensionSettings: React.FC<{
 
   if (rows.length === 0) return null;
 
-  // A custom card renders EDGE TO EDGE, outside the settings container: it
-  // draws its own surface, and nesting that inside Grain's bordered row list
-  // stacked two frames around one piece of UI. So consecutive ordinary rows are
-  // grouped into a container and each panel is emitted bare between them, with
-  // the declared order preserved either way.
-  const groups: { panel: boolean; rows: SettingRow[] }[] = [];
-  for (const row of rows) {
-    const panel = row.kind === "panel";
-    const last = groups[groups.length - 1];
-    if (!panel && last && !last.panel) last.rows.push(row);
-    else groups.push({ panel, rows: [row] });
-  }
-
-  const renderPanel = (row: SettingRow) => (
-    <div key={row.key} className="space-y-2">
-      {(row.label || row.description) && (
-        <div className="px-1">
-          {row.label && (
-            <div className="text-sm font-medium text-ink">{row.label}</div>
-          )}
-          {row.description && (
-            <div className="text-xs text-ink-soft">{row.description}</div>
-          )}
-        </div>
-      )}
-      {row.ui_source ? (
-        <PanelCard extId={section.id} uiSource={row.ui_source} />
-      ) : null}
-    </div>
-  );
-
-  const renderGroup = (
-    group: { panel: boolean; rows: SettingRow[] },
-    i: number,
-  ) =>
-    group.panel ? (
-      renderPanel(group.rows[0])
-    ) : (
-      <div
-        key={`rows-${i}`}
-        className="rounded-xl border border-line bg-paper-raised divide-y divide-line"
-      >
-        {group.rows.map((row) =>
-          row.kind === "list" ? (
-            // A list is a full-width editor: label on top, rows below.
-            <div key={row.key} className="px-4 py-3 space-y-2">
-              {(row.label || row.description || row.notice) && (
-                <div>
-                  {row.label && (
-                    <div className="text-sm font-medium text-ink">
-                      {row.label}
-                    </div>
-                  )}
-                  {row.description && (
-                    <div className="text-xs text-ink-soft">
-                      {row.description}
-                    </div>
-                  )}
-                  {row.notice && (
-                    <div className="text-xs text-amber-600 mt-0.5">
-                      {row.notice}
-                    </div>
-                  )}
-                </div>
-              )}
-              <ListEditor
-                field={{
-                  key: row.key,
-                  label: row.label,
-                  description: row.description,
-                  kind: "list",
-                  min: row.min,
-                  max: row.max,
-                  step: row.step,
-                  options: row.options,
-                  fields: row.fields,
-                  item_label: row.item_label,
-                  ui_source: null,
-                }}
-                value={
-                  Array.isArray(row.value)
-                    ? (row.value as Record<string, unknown>[])
-                    : []
-                }
-                extId={section.id}
-                disabled={busy === row.key}
-                onChange={(v) => void commit(row, v)}
-              />
-            </div>
-          ) : (
-            <div key={row.key} className="flex items-center gap-3 px-4 py-3">
-              <div className="flex-1 min-w-0">
-                <div className="text-sm text-ink">{row.label}</div>
-                {row.description && (
-                  <div className="text-xs text-ink-faint">
-                    {row.description}
+  const renderRows = () => (
+    <div className="rounded-xl border border-line bg-paper-raised divide-y divide-line">
+      {rows.map((row) =>
+        row.kind === "list" ? (
+          // A list is a full-width editor: label on top, rows below.
+          <div key={row.key} className="px-4 py-3 space-y-2">
+            {(row.label || row.description || row.notice) && (
+              <div>
+                {row.label && (
+                  <div className="text-sm font-medium text-ink">
+                    {row.label}
                   </div>
                 )}
-                {/* A value the user did not change must say so (SPEC §6:
-                    "invalid values → default + notice"). */}
+                {row.description && (
+                  <div className="text-xs text-ink-soft">{row.description}</div>
+                )}
                 {row.notice && (
                   <div className="text-xs text-amber-600 mt-0.5">
                     {row.notice}
                   </div>
                 )}
               </div>
-              <Control
-                row={row}
-                extId={section.id}
-                disabled={busy === row.key}
-                onCommit={(v) => void commit(row, v)}
-              />
+            )}
+            <ListEditor
+              field={{
+                key: row.key,
+                label: row.label,
+                description: row.description,
+                kind: "list",
+                min: row.min,
+                max: row.max,
+                step: row.step,
+                options: row.options,
+                fields: row.fields,
+                item_label: row.item_label,
+              }}
+              value={
+                Array.isArray(row.value)
+                  ? (row.value as Record<string, unknown>[])
+                  : []
+              }
+              extId={section.id}
+              disabled={busy === row.key}
+              onChange={(v) => void commit(row, v)}
+            />
+          </div>
+        ) : (
+          <div key={row.key} className="flex items-center gap-3 px-4 py-3">
+            <div className="flex-1 min-w-0">
+              <div className="text-sm text-ink">{row.label}</div>
+              {row.description && (
+                <div className="text-xs text-ink-faint">{row.description}</div>
+              )}
+              {/* A value the user did not change must say so (SPEC §6:
+                    "invalid values → default + notice"). */}
+              {row.notice && (
+                <div className="text-xs text-amber-600 mt-0.5">
+                  {row.notice}
+                </div>
+              )}
             </div>
-          ),
-        )}
-      </div>
-    );
+            <Control
+              row={row}
+              extId={section.id}
+              disabled={busy === row.key}
+              onCommit={(v) => void commit(row, v)}
+            />
+          </div>
+        ),
+      )}
+    </div>
+  );
 
   return (
     <div className="space-y-2">
@@ -995,7 +747,7 @@ export const ExtensionSettings: React.FC<{
           {error}
         </div>
       )}
-      {groups.map(renderGroup)}
+      {renderRows()}
     </div>
   );
 };

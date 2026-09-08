@@ -914,28 +914,6 @@ fn run_hand_off(
                     crate::extension_view::destroy(&app);
                 }
             }
-            HandOffOutcome::View(view) => {
-                crate::extension_misroutes::record_accepted_route(&app, &extension_id);
-                let _gate = request_gate().lock().unwrap();
-                if REQUEST_EPOCH.load(Ordering::SeqCst) != request_id {
-                    return;
-                }
-                if let Err(reason) =
-                    crate::extension_view::present(&app, &extension_id, &request, view)
-                {
-                    log::warn!("[GRAIN] extension mode: could not present view: {reason}");
-                    action_log::record(
-                        &request,
-                        Some(extension_id.clone()),
-                        None,
-                        None,
-                        ActionLogOutcome::Failed {
-                            reason: reason.clone(),
-                        },
-                    );
-                    crate::extension_view::destroy(&app);
-                }
-            }
             HandOffOutcome::Declined(reason) => {
                 crate::extension_misroutes::record_decline(&app, &extension_id);
                 log::info!(
