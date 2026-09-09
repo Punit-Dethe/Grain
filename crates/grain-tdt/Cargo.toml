@@ -1,0 +1,9 @@
+[package]
+name = "grain-tdt"
+version = "0.1.0"
+edition.workspace = true
+license = "Apache-2.0"
+authors.workspace = true
+description = "Parakeet TDT window geometry and token overlap merging for Grain Flow"
+
+[dependencies]
