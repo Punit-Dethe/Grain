@@ -34,7 +34,11 @@
   },
   "src-tauri/src/managers/transcription.rs": {
     "kind": "parallel",
-    "grain": ["src-tauri/src/rolling.rs", "crates/rolling-window/src"],
-    "why": "Merged in handy/, but real-time chunking/streaming has a Grain-only parallel in the rolling engine (rolling.rs + rolling-window crate) that upstream's batch/streaming fixes cannot reach. Check whether the fixed bug-class exists there too."
+    "grain": [
+      "src-tauri/src/rolling.rs",
+      "src-tauri/src/tdt_flow.rs",
+      "crates/grain-tdt/src"
+    ],
+    "why": "Merged in handy/, but Parakeet TDT Flow has Grain-only capture scheduling, native adaptation, and window/token logic that upstream's batch/streaming fixes cannot reach. Check whether the fixed bug-class exists there too."
   }
 }

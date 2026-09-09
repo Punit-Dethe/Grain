@@ -1,0 +1,13 @@
+Grain Parakeet TDT decoder extension
+
+The opt-in Parakeet TDT window decoder behavior in
+src/arch/parakeet/decoder.cpp and decoder.h is adapted from FluidAudio:
+https://github.com/FluidInference/FluidAudio
+Reference commit: 3fd63887eef1dc25edea8263ce4b44aa854d898b
+Sources/FluidAudio/ASR/Parakeet/Decoder/TdtDecoderV3.swift
+
+FluidAudio is distributed under the Apache License, Version 2.0.
+The referenced source contains no individual copyright notice.
+Grain modifications: independent C++ implementation for ggml tensors, an
+explicit stateless native extension contract, validation, and error handling.
+See GRAIN-FLUIDAUDIO-LICENSE for the Apache License, Version 2.0.

@@ -3005,6 +3005,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "grain-tdt"
+version = "0.1.0"
+
+[[package]]
 name = "gtk"
 version = "0.18.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3140,6 +3144,7 @@ dependencies = [
  "grain-core",
  "grain-pill",
  "grain-sdk",
+ "grain-tdt",
  "gtk",
  "gtk-layer-shell",
  "handy-keys",
@@ -3163,7 +3168,6 @@ dependencies = [
  "reqwest 0.13.2",
  "rmcp",
  "rodio",
- "rolling-window",
  "rubato",
  "rusqlite",
  "rusqlite_migration",
@@ -6621,13 +6625,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "rolling-window"
-version = "0.1.0"
-dependencies = [
- "strsim",
-]
-
-[[package]]
 name = "rubato"
 version = "0.16.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8988,7 +8985,7 @@ dependencies = [
 
 [[package]]
 name = "transcribe-cpp"
-version = "0.2.0"
+version = "0.2.3"
 dependencies = [
  "log",
  "thiserror 2.0.18",
@@ -8997,7 +8994,7 @@ dependencies = [
 
 [[package]]
 name = "transcribe-cpp-sys"
-version = "0.2.0"
+version = "0.2.3"
 dependencies = [
  "cmake",
  "serde_json",

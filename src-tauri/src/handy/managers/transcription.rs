@@ -25,7 +25,7 @@ use tauri::{AppHandle, Emitter, Manager};
 use tauri_specta::Event;
 use transcribe_cpp::{
     Backend, Feature, Model, ModelOptions, RunExtension, RunOptions, Session, StreamOptions, Task,
-    TimestampKind, Transcript, WhisperRunOptions,
+    WhisperRunOptions,
 };
 
 const STREAM_PERF_LOG_INTERVAL: Duration = Duration::from_secs(5);
@@ -1466,7 +1466,7 @@ impl TranscriptionManager {
 
     /// [GRAIN] Resolve one persisted language intent through the selected
     /// model's catalog capabilities and transcribe-cpp's run-option gate.
-    /// TDT Flow calls this before engine checkout so its language behavior
+    /// Flow calls this before engine checkout so its language behavior
     /// matches Batch and Native ASR without duplicating Handy policy.
     pub(crate) fn grain_transcribe_cpp_language_for_model(
         &self,
@@ -1482,88 +1482,48 @@ impl TranscriptionManager {
     }
 
     /// [GRAIN] Hold one checked-out transcribe.cpp session for an entire Grain
-    /// flow lifecycle. This is deliberately policy-free: capability routing,
-    /// descriptor planning, retries, cancellation, and text assembly stay in
+    /// Flow lifecycle. This is deliberately policy-free: capability routing,
+    /// window planning, recovery, cancellation, and token assembly stay in
     /// Grain-owned modules. The wrapper only reuses Handy's existing load wait,
     /// panic isolation, stale-model reconciliation, and exclusive engine lease.
-    pub(crate) fn with_grain_tdt_flow_session<T>(
+    pub(crate) fn with_grain_flow_session<T>(
         &self,
+        expected_model: &str,
         f: impl FnOnce(&mut Session) -> Result<T>,
     ) -> Result<T> {
         self.touch_activity();
-        let settings = get_settings(&self.app_handle);
-        let active_model = self
-            .get_current_model()
-            .unwrap_or_else(|| settings.selected_model.clone());
 
         // The engine is removed from its mutex for this entire closure. Publish
         // that ownership before checkout so status/load paths cannot mistake the
         // long TDT session for an unloaded model and allocate a second engine.
         let lease_id = allocate_engine_owner_id(&self.next_stream_worker_id)?;
         let _lease = EngineLeaseGuard::acquire(lease_id, Arc::clone(&self.active_engine_lease))?;
-        self.with_engine_session(&active_model, f)
-    }
 
-    /// [GRAIN] Decode one rolling-window chunk and return the FULL transcript
-    /// (text + word timings), NOT post-processed. The rolling driver owns the
-    /// dedup/assembly and applies custom-word + filler correction ONCE on the
-    /// assembled transcript at session end, so this path deliberately skips
-    /// per-chunk post-processing AND the idle/immediate unload (the session is
-    /// still live). The finest supported timestamps up to word level are
-    /// requested so the timeline assembler can dedup overlaps by position
-    /// without probing unsupported modes. Rolling deliberately sends no
-    /// previous-transcript prompt, keeping chunk policy model-agnostic and
-    /// preventing one bad hypothesis from biasing later windows.
-    pub fn transcribe_rolling_chunk(&self, audio: &[f32]) -> Result<Transcript> {
-        if audio.is_empty() {
-            return Ok(Transcript::default());
+        // start_session normally initiated this load before capture. If another
+        // model was already loading, that request was deliberately coalesced by
+        // initiate_model_load_for; after it completes, synchronously reconcile
+        // the exact Flow generation before checking out the shared engine.
+        {
+            let mut is_loading = self.is_loading.lock().unwrap();
+            while *is_loading {
+                is_loading = self.loading_condvar.wait(is_loading).unwrap();
+            }
         }
-        self.touch_activity();
-
-        let settings = get_settings(&self.app_handle);
-        let active_model = self
-            .get_current_model()
-            .unwrap_or_else(|| settings.selected_model.clone());
-        let validated_language =
-            effective_language_for_model(&settings, self.model_manager.as_ref(), &active_model);
-
-        self.with_engine_session(&active_model, |session| {
-            let model = session.model();
-            let caps = model.capabilities();
-            let model_supports_translate = caps.supports_translate;
-            // [GRAIN] Cap the request at the loaded model's immutable
-            // capability. Unsupported word requests otherwise pay for a full
-            // failed decode before retrying every rolling chunk.
-            let rolling_timestamps = match caps.max_timestamp_kind {
-                TimestampKind::Token | TimestampKind::Word => TimestampKind::Word,
-                TimestampKind::Segment => TimestampKind::Segment,
-                TimestampKind::None => TimestampKind::None,
-                TimestampKind::Auto => TimestampKind::Auto,
-            };
-            let model_languages = caps.languages;
-
-            let run_plan = transcribe_cpp_run_plan(
-                settings.translate_to_english,
-                &validated_language,
-                &model_languages,
-                model_supports_translate,
-            );
-
-            // Segment-only and timestamp-free output is never presented as fake
-            // word evidence; the integration selects lexical seam handling.
-            let run_options = RunOptions {
-                task: run_plan.task,
-                language: run_plan.language,
-                target_language: run_plan.target_language,
-                timestamps: rolling_timestamps,
-                family: None,
-                ..Default::default()
-            };
-
-            session
-                .run(audio, &run_options)
-                .map_err(|e| anyhow::anyhow!("rolling chunk transcription failed: {}", e))
-        })
+        let reload_pending = self.reload_model_on_next_use.load(Ordering::Acquire);
+        if reload_pending || self.get_current_model().as_deref() != Some(expected_model) {
+            let _loading = self.try_start_loading().ok_or_else(|| {
+                anyhow::anyhow!("another model load started while Flow was reconciling its model")
+            })?;
+            self.reload_model_on_next_use
+                .store(false, Ordering::Release);
+            self.load_model(expected_model)?;
+        }
+        if self.get_current_model().as_deref() != Some(expected_model) {
+            return Err(anyhow::anyhow!(
+                "Flow loaded a stale model generation instead of '{expected_model}'"
+            ));
+        }
+        self.with_engine_session(expected_model, f)
     }
 }
 

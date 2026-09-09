@@ -27,7 +27,7 @@ The rules here supersede repeated dated rows in the audit history below.
 | `actions.rs` | Preserve Grain's compiled structure/hooks; port post-processing fixes to `grain_post_process.rs` and `grain_actions.rs`. Do not restore Handy web-overlay policy. |
 | `commands/history.rs`, `managers/history.rs` | Merge upstream history/schema fixes. Retry must retain upstream behavior through Grain's relocated post-processing call. Preserve the Windows delete retry and the narrow `[GRAIN]` retention-deletion event hook until upstream emits `HistoryUpdatePayload::Deleted` for automatic cleanup. No other Grain history policy belongs here. |
 | `shortcut/mod.rs` | Merge upstream key fixes; preserve Grain binding IDs and both bulk/per-binding suspension APIs. Keep retired theme/VAD bindings absent. |
-| `managers/transcription.rs` | Preserve Grain engine ownership, routing, context-bias, and narrow TDT hooks; re-thread upstream decode/device/language fixes and assess rolling in parallel. |
+| `managers/transcription.rs` | Preserve Grain engine ownership, routing, context-bias, and the narrow Flow engine-lease hook; re-thread upstream decode/device/language fixes and assess Grain's Parakeet TDT Flow path in parallel. |
 | `audio_toolkit/text.rs` | Merge upstream algorithms; port finalization and word-boundary changes into `handy/audio_toolkit/grain_text.rs`. |
 | `audio_toolkit/audio/resampler.rs` | Keep the tail-drain fix while merging upstream; never restore an upstream `finish()` that drops delayed frames. |
 | recorder / audio manager | Preserve marked rolling/conditioning hooks and Grain's capture contract; do not partially add Handy's retired webview arming API. |
@@ -48,7 +48,7 @@ coverage for `grain_* as upstream_name` inert module aliases.
 | `src-tauri/src/actions.rs` | relocated | `src-tauri/src/grain_post_process.rs`<br>`src-tauri/src/grain_actions.rs` |
 | `src-tauri/src/audio_toolkit/text.rs` | relocated | `src-tauri/src/handy/audio_toolkit/grain_text.rs` |
 | `src-tauri/src/llm_client.rs` | inert | `src-tauri/src/grain_llm_client.rs`<br>`src-tauri/src/net_diag.rs`<br>`src-tauri/src/stt_client.rs` |
-| `src-tauri/src/managers/transcription.rs` | parallel | `src-tauri/src/rolling.rs`<br>`crates/rolling-window/src` |
+| `src-tauri/src/managers/transcription.rs` | parallel | `src-tauri/src/rolling.rs`<br>`src-tauri/src/tdt_flow.rs`<br>`crates/grain-tdt/src` |
 | `src-tauri/src/overlay.rs` | inert | `crates/grain-pill/src/lib.rs`<br>`src-tauri/src/grain_overlay.rs` |
 | `src-tauri/src/settings.rs` | inert | `src-tauri/src/grain_settings.rs`<br>`crates/grain-core/src/settings.rs` |
 <!-- END GENERATED RELOCATION POLICY -->
