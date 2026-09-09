@@ -69,10 +69,13 @@ hand-edit it.
 
 On this Windows checkout, CMake's Visual Studio generator cannot use the deep
 Cargo path reliably. Validation used Ninja, disabled ggml ccache, and the
-existing short `C:\\t` target directory. The Grain lib-test executable currently
-terminates in the Windows loader with `STATUS_ENTRYPOINT_NOT_FOUND` before the
-Rust harness starts; this is tracked as a packaged/staged DLL regression gate,
-not counted as passing test coverage.
+existing short `C:\\t` target directory. Cargo's Windows lib-test executable has
+no embedded application manifest, so it initially resolved legacy Common
+Controls without `TaskDialogIndirect` and stopped before the Rust harness.
+Injecting the standard Common Controls v6 manifest into that disposable test
+artifact allowed the journal, TDT routing/timing, and rolling-service tests to
+run. PE inspection separately confirmed the staged transcribe.cpp and DirectML
+imports/exports; the failure was not a TDT DLL regression.
 
 ## Updating
 

@@ -1,6 +1,6 @@
 # Parakeet TDT Flow rewrite
 
-Status: native v0.2.3 upgrade and production Flow integration implemented on `core/rolling-window`, 2026-09-10. Real-model parity, soak, and the Windows packaged-runtime gate remain open.
+Status: native v0.2.3 upgrade and production Flow integration implemented on `core/rolling-window`, 2026-09-10. Real-model parity, soak, and packaged-application validation remain open.
 Owner intent: reproduce FluidVoice's Parakeet TDT v2/v3 recording behavior, simplify Grain's Flow implementation, and upgrade transcribe.cpp. This document is the durable execution and handoff record; update checkboxes and evidence as work lands. Do not infer completion from a design decision.
 
 ## Scope and invariants
@@ -76,8 +76,8 @@ Optional FluidVoice CTC vocabulary rescoring and pronunciation customization are
 - [x] TDT decoder/session, short path, cached preview, stable windows, finalization and one clean replay.
 - [x] Flow service and action wiring; early model gate and explicit start errors.
 - [x] Delete superseded runtime/crate/native APIs; update active docs and licenses.
-- [ ] App/native checks, real-model parity, latency/memory soak, packaged backend regression.
-- [ ] Final integrated review, commit and push only task-owned files. Keep branch isolated from main; commit completed phases separately.
+- [ ] App/native checks, real-model parity, latency/memory soak, packaged backend regression (compile and targeted unit gates are green; real-model/package gates remain).
+- [x] Final integrated review, commit and push only task-owned files. Keep branch isolated from main; commit completed phases separately.
 
 ## Acceptance evidence required
 
@@ -108,13 +108,13 @@ Optional FluidVoice CTC vocabulary rescoring and pronunciation customization are
 - Replaced the vendor trees with exact published transcribe.cpp `0.2.3` sources (`63a44d9`) and pinned both Cargo dependencies to `=0.2.3`. The additive ABI is now stateless `PKFW` window decoding plus full-sequence detokenization; the old native Flow handle/state-carry protocol is gone. ABI digest `418591c6f5ca103b` and generated bindings pass bindgen check.
 - Flow now accepts only reviewed Parakeet TDT v2/v3 model IDs and matching loaded metadata, rejects translation before capture, journals exact Float32 audio, and runs one coalescing serial worker. Stable windows retain only merged tokens; previews revisit only the mutable tail. Disabled previews still finalize stable windows. Finish reuses the exact-sample cache, and non-cancellation failure gets one fresh-accumulator replay through the same journal/TDT path.
 - Deleted `crates/rolling-window` and all timeline/VAD seam/descriptor/debt/fallback machinery. The Handy tree retains only its marked shared-engine lease hook and the existing every-frame capture hook.
-- Verification now green: `grain-tdt` 16 tests; safe-wrapper materialization test; both Clippy runs with warnings denied; full Grain `cargo check`; native v0.2.3 compilation; bindgen `--check`. The Windows Grain lib-test binary compiles but the loader exits before the harness with `STATUS_ENTRYPOINT_NOT_FOUND`; do not count journal/Flow unit filters as executed until the staged DLL issue is fixed.
+- Verification now green: `grain-tdt` 16 tests; safe-wrapper materialization test; both Clippy runs with warnings denied; full Grain `cargo check`; native v0.2.3 compilation; bindgen `--check`; 4 journal tests, 2 TDT routing/timing tests, and 2 rolling-service tests. Cargo's Windows lib-test executable has no embedded application manifest and therefore initially resolved legacy Common Controls without `TaskDialogIndirect`; injecting the standard Common Controls v6 manifest into that disposable test artifact allowed the Rust harness to run. PE import/export inspection independently confirmed the staged transcribe.cpp and DirectML ABI, so this was not a TDT DLL regression.
 - FluidAudio attribution and its Apache-2.0 license are retained in both the pure Rust crate and the native sys package. No FluidVoice GPL application source was copied.
 - Final pre-commit review fixed two parity/correctness gaps: the opt-in native decoder now primes fresh predictor state with the model's blank token as FluidAudio's SOS (ordinary native decode keeps its upstream zero-vector sentinel), and Flow allowlists the catalog's six v2/v3 quantizations exactly. The manager lease also reconciles the requested model synchronously after any coalesced in-flight load, preventing a different Parakeet generation from being used.
 
 ### Next concrete implementation step
 
-Resolve the Windows staged-DLL `STATUS_ENTRYPOINT_NOT_FOUND` gate, then validate the packaged app with real reviewed Parakeet TDT v2 and v3 GGUF models. Capture token/text/timestamp parity fixtures around the 15-second transition and repeated/fast/multilingual tails, followed by stop-latency and >2-hour/50-session RAM/temp-file soak. Keep cross-backend FluidAudio comparisons separate from identical-GGUF regression evidence.
+Validate the packaged app with real reviewed Parakeet TDT v2 and v3 GGUF models. Capture token/text/timestamp parity fixtures around the 15-second transition and repeated/fast/multilingual tails, followed by stop-latency and >2-hour/50-session RAM/temp-file soak. Keep cross-backend FluidAudio comparisons separate from identical-GGUF regression evidence.
 
 ## Resume procedure
 

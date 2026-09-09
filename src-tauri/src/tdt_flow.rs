@@ -23,7 +23,7 @@ pub(crate) fn validate_model(model_id: &str, translate_to_english: bool) -> Resu
         return Err("Flow does not support translation; select transcription mode".into());
     }
     let reviewed = model_id
-        .split_once('/')
+        .rsplit_once('/')
         .and_then(|(repository, filename)| match repository {
             "handy-computer/parakeet-tdt-0.6b-v2-gguf" => {
                 filename.strip_prefix("parakeet-tdt-0.6b-v2-")
