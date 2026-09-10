@@ -138,11 +138,22 @@ impl PcmJournalReader {
         end_frame: u64,
         output: &mut Vec<f32>,
     ) -> std::io::Result<()> {
-        let frames = end_frame.saturating_sub(start_frame) as usize;
-        let bytes = frames.saturating_mul(BYTES_PER_FRAME as usize);
+        let invalid_range = || {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "PCM journal frame range exceeds addressable file bounds",
+            )
+        };
+        let frames = usize::try_from(end_frame.checked_sub(start_frame).ok_or_else(invalid_range)?)
+            .map_err(|_| invalid_range())?;
+        let bytes = frames
+            .checked_mul(BYTES_PER_FRAME as usize)
+            .ok_or_else(invalid_range)?;
+        let offset = start_frame
+            .checked_mul(BYTES_PER_FRAME)
+            .ok_or_else(invalid_range)?;
         self.encoded.resize(bytes, 0);
-        self.file
-            .seek(SeekFrom::Start(start_frame.saturating_mul(BYTES_PER_FRAME)))?;
+        self.file.seek(SeekFrom::Start(offset))?;
         self.file.read_exact(&mut self.encoded)?;
         output.clear();
         if output.capacity() < frames {
@@ -210,5 +221,25 @@ mod tests {
 
         assert_eq!(journal.frame_count(), 960_000);
         assert_eq!(journal.byte_len(), 3_840_000);
+    }
+
+    #[test]
+    fn invalid_ranges_fail_instead_of_saturating() {
+        let journal = PcmJournal::create().unwrap();
+        journal.append(&[0.25, 0.5]).unwrap();
+        let mut reader = journal.reader().unwrap();
+        let mut output = vec![9.0];
+
+        assert_eq!(
+            reader.read_f32_range(2, 1, &mut output).unwrap_err().kind(),
+            std::io::ErrorKind::InvalidInput
+        );
+        assert_eq!(
+            reader
+                .read_f32_range(u64::MAX, u64::MAX, &mut output)
+                .unwrap_err()
+                .kind(),
+            std::io::ErrorKind::InvalidInput
+        );
     }
 }

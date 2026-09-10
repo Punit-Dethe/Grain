@@ -12,13 +12,16 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use grain_core::DaemonEvent;
-use tauri::AppHandle;
+use tauri::{AppHandle, Manager};
 use transcribe_cpp::CancelToken;
 
 use crate::grain_audio_journal::{PcmJournal, PcmJournalReader};
+use crate::managers::model::ModelManager;
 use crate::managers::transcription::TranscriptionManager;
 use crate::settings::get_settings;
-use crate::tdt_flow::{TdtAccumulator, TdtRunConfig};
+use crate::tdt_flow::{
+    validate_model_installation, TdtAccumulator, TdtRunConfig,
+};
 
 const PREVIEW_MIN_SAMPLES: u64 = grain_tdt::SAMPLE_RATE;
 const PREVIEW_INTERVAL: Duration = Duration::from_millis(600);
@@ -28,10 +31,14 @@ struct PreviewSink {
     app: AppHandle,
     session_id: u64,
     scrap_that: bool,
+    active_generation: Arc<AtomicU64>,
 }
 
 impl PreviewSink {
     fn emit(&self, text: &str) {
+        if !generation_is_current(&self.active_generation, self.session_id) {
+            return;
+        }
         let (committed, tentative) = if self.scrap_that {
             crate::audio_toolkit::scrub_stream_preview("", text)
         } else {
@@ -51,7 +58,11 @@ impl PreviewSink {
 pub struct RollingTranscriber {
     tm: Arc<TranscriptionManager>,
     active: Mutex<Option<Arc<RollingSession>>>,
-    active_generation: AtomicU64,
+    active_generation: Arc<AtomicU64>,
+}
+
+fn generation_is_current(active_generation: &AtomicU64, session_id: u64) -> bool {
+    active_generation.load(Ordering::Acquire) == session_id
 }
 
 #[derive(Clone)]
@@ -92,7 +103,7 @@ impl RollingTranscriber {
         Self {
             tm,
             active: Mutex::new(None),
-            active_generation: AtomicU64::new(0),
+            active_generation: Arc::new(AtomicU64::new(0)),
         }
     }
 
@@ -105,6 +116,22 @@ impl RollingTranscriber {
         let settings = get_settings(&app);
         crate::tdt_flow::validate_model(&settings.selected_model, settings.translate_to_english)?;
         let model_id = settings.selected_model.clone();
+        let is_downloaded = app
+            .try_state::<Arc<ModelManager>>()
+            .and_then(|models| models.get_model_info(&model_id))
+            .is_some_and(|model| model.is_downloaded);
+        validate_model_installation(is_downloaded)?;
+
+        // Serialize replacement through the active-session lock. The worker
+        // owns the model lease for its whole lifetime, so spawning its
+        // replacement before cancellation/join would make the new worker lose
+        // lease admission and fail the recording immediately.
+        let mut active = self.active.lock().unwrap();
+        if let Some(previous) = active.take() {
+            log::warn!("[GRAIN] replacing an unfinished Flow session");
+            previous.request_cancel();
+            previous.join_cancelled();
+        }
         let _barrier = establish_model_load_barrier(&self.active_generation, session_id, || {
             self.tm.initiate_model_load_for(model_id.clone());
             Ok(())
@@ -120,16 +147,13 @@ impl RollingTranscriber {
             app,
             session_id,
             scrap_that: settings.scrap_that_enabled,
+            active_generation: Arc::clone(&self.active_generation),
         });
         let session = Arc::new(
             RollingSession::start(Arc::clone(self), session_id, config, sink)
                 .map_err(|error| format!("Flow could not create its audio journal: {error}"))?,
         );
-        let previous = self.active.lock().unwrap().replace(session);
-        if let Some(previous) = previous {
-            log::warn!("[GRAIN] replacing an unfinished Flow session");
-            self.retire_cancelled_session(previous, false);
-        }
+        *active = Some(session);
         log::info!("[GRAIN] Flow session started (preview={preview})");
         Ok(())
     }
@@ -154,15 +178,11 @@ impl RollingTranscriber {
 
     pub fn cancel_session(self: &Arc<Self>) {
         if let Some(session) = self.active.lock().unwrap().take() {
-            self.retire_cancelled_session(session, true);
+            self.retire_cancelled_session(session);
         }
     }
 
-    fn retire_cancelled_session(
-        self: &Arc<Self>,
-        session: Arc<RollingSession>,
-        unload_when_current: bool,
-    ) {
+    fn retire_cancelled_session(self: &Arc<Self>, session: Arc<RollingSession>) {
         let session_id = session.session_id;
         session.request_cancel();
         let transcriber = Arc::downgrade(self);
@@ -170,9 +190,6 @@ impl RollingTranscriber {
             .name("grain-flow-cancel".into())
             .spawn(move || {
                 session.join_cancelled();
-                if !unload_when_current {
-                    return;
-                }
                 let Some(transcriber) = transcriber.upgrade() else {
                     return;
                 };
@@ -505,5 +522,14 @@ mod tests {
     fn preview_contract_is_one_second_then_completion_plus_six_hundred_ms() {
         assert_eq!(PREVIEW_MIN_SAMPLES, 16_000);
         assert_eq!(PREVIEW_INTERVAL, Duration::from_millis(600));
+    }
+
+    #[test]
+    fn stale_preview_generation_is_rejected() {
+        let generation = AtomicU64::new(11);
+        assert!(generation_is_current(&generation, 11));
+        assert!(!generation_is_current(&generation, 10));
+        generation.store(12, Ordering::Release);
+        assert!(!generation_is_current(&generation, 11));
     }
 }

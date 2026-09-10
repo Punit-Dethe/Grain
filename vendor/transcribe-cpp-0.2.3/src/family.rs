@@ -284,6 +284,13 @@ impl StreamExtension {
     }
 }
 
+/// Overwrite `slot` only when the caller provided a value.
+fn set<T>(slot: &mut T, value: Option<T>) {
+    if let Some(v) = value {
+        *slot = v;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{ParakeetTdtWindowOptions, RunExtRaw, RunExtension};
@@ -311,12 +318,5 @@ mod tests {
         assert_eq!(ext.decode_end_frame, 186);
         assert_eq!(ext.timestamp_offset_frames, 161);
         assert!(ext.finalize_tail);
-    }
-}
-
-/// Overwrite `slot` only when the caller provided a value.
-fn set<T>(slot: &mut T, value: Option<T>) {
-    if let Some(v) = value {
-        *slot = v;
     }
 }

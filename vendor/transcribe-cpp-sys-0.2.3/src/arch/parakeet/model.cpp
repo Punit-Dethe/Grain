@@ -3351,8 +3351,14 @@ bool accepts_ext_kind(const transcribe_model * model, transcribe_ext_slot slot, 
     }
     const auto * pm = static_cast<const ParakeetModel *>(model);
     if (slot == TRANSCRIBE_EXT_SLOT_RUN) {
+        const auto & durations = pm->host_decoder.tdt_durations;
+        const bool exact_fluid_durations = durations.size() == 5 && durations[0] == 0 && durations[1] == 1 &&
+                                           durations[2] == 2 && durations[3] == 3 && durations[4] == 4;
+        const bool exact_fluid_blank =
+            (pm->variant == "tdt-0.6b-v2" && pm->host_decoder.blank_id == 1024) ||
+            (pm->variant == "tdt-0.6b-v3" && pm->host_decoder.blank_id == 8192);
         const bool reviewed_tdt = pm->host_decoder.head_kind == HostHeadKind::TDT &&
-                                  (pm->variant == "tdt-0.6b-v2" || pm->variant == "tdt-0.6b-v3");
+                                  exact_fluid_blank && exact_fluid_durations;
         return reviewed_tdt && kind == TRANSCRIBE_EXT_KIND_PARAKEET_TDT_WINDOW;
     }
     if (slot != TRANSCRIBE_EXT_SLOT_STREAM) {
