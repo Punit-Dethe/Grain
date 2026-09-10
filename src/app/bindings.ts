@@ -4140,11 +4140,8 @@ export type ThemeChanged = { mode: ThemeMode; resolved: ResolvedTheme }
  * 
  * It lives in settings rather than `localStorage` because Grain paints more
  * surfaces than the settings window: the native pill, the switcher capsule,
- * the agent panel and every sandboxed extension surface all need the same
- * answer, and only one of them is a webview that could read the browser store.
- * `extension-surface.ts` used to reach across and read the settings window's
- * `localStorage` key directly, which worked only because they happen to share
- * an origin.
+ * the Agent and host-owned Extension Mode windows all need the same answer,
+ * while the native surfaces cannot read a browser store.
  */
 export type ThemeMode = "system" | "light" | "dark"
 /**
