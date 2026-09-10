@@ -206,18 +206,21 @@ pub fn change_binding(
     let mut updated_binding = binding_to_modify.clone();
     updated_binding.current_binding = binding;
 
-    // Register the new binding
-    if let Err(e) = register_shortcut(&app, updated_binding.clone()) {
-        let error_msg = format!("Failed to register shortcut: {}", e);
-        error!("change_binding error: {}", error_msg);
-        restore_registration(&app, &binding_to_modify);
-        return Ok(BindingResponse {
-            success: false,
-            binding: None,
-            error: Some(error_msg),
-        });
+    // [GRAIN] Persist edits to an unavailable feature without claiming its
+    // accelerator. It will be registered when the feature becomes available.
+    if crate::grain_flow_availability::shortcut_should_hold(&app, &settings, &id) {
+        if let Err(e) = register_shortcut(&app, updated_binding.clone()) {
+            let error_msg = format!("Failed to register shortcut: {}", e);
+            error!("change_binding error: {}", error_msg);
+            restore_registration(&app, &binding_to_modify);
+            return Ok(BindingResponse {
+                success: false,
+                binding: None,
+                error: Some(error_msg),
+            });
+        }
+        crate::extension_shortcuts::note_registered(&updated_binding); // [GRAIN]
     }
-    crate::extension_shortcuts::note_registered(&updated_binding); // [GRAIN]
 
     // Update the binding in the settings
     settings.bindings.insert(id, updated_binding.clone());
@@ -237,6 +240,12 @@ pub fn change_binding(
 /// Best-effort re-register of the previous binding after a failed change,
 /// so a failure leaves the user's shortcut working exactly as before.
 fn restore_registration(app: &AppHandle, binding: &ShortcutBinding) {
+    // [GRAIN] A failed editor operation must not re-arm an unavailable Flow
+    // key (or any other currently gated binding).
+    let settings = get_settings(app);
+    if !crate::grain_flow_availability::shortcut_should_hold(app, &settings, &binding.id) {
+        return;
+    }
     if let Err(e) = register_shortcut(app, binding.clone()) {
         error!(
             "Failed to restore previous binding '{}' ({}): {}",
@@ -291,10 +300,9 @@ pub fn suspend_binding(app: AppHandle, id: String) -> Result<(), String> {
 pub fn resume_all_shortcuts(app: &AppHandle) {
     let settings = get_settings(app);
     for (id, binding) in &settings.bindings {
-        if id == "cancel" {
-            continue;
-        }
-        if id == "transcribe_with_post_process" && !settings.post_process_enabled {
+        // [GRAIN] The same gate used at both initialization paths also applies
+        // after the shortcut editor releases its temporary suspension.
+        if !crate::grain_flow_availability::shortcut_should_hold(app, &settings, id) {
             continue;
         }
         if let Err(e) = register_shortcut(app, binding.clone()) {
@@ -325,6 +333,12 @@ pub fn resume_all_bindings(app: AppHandle) -> Result<(), String> {
 #[specta::specta]
 pub fn resume_binding(app: AppHandle, id: String) -> Result<(), String> {
     if let Some(b) = settings::get_bindings(&app).get(&id).cloned() {
+        // [GRAIN] Editing/resuming a disabled Flow key must not bypass the
+        // model-specific registration gate.
+        let settings = get_settings(&app);
+        if !crate::grain_flow_availability::shortcut_should_hold(&app, &settings, &id) {
+            return Ok(());
+        }
         if let Err(e) = register_shortcut(&app, b.clone()) {
             error!("resume_binding error for id '{}': {}", id, e);
             return Err(e);
@@ -506,7 +520,7 @@ fn register_all_shortcuts_for_implementation(
         // skipped only the post-processing key, so switching Tauri↔HandyKeys
         // silently gave disabled features (Agent, Grain Space) global hotkeys
         // and re-armed every capture mode. One shared predicate closes that gap.
-        if !grain_core::capture::shortcut_holds_hotkey(&current_settings, id) {
+        if !crate::grain_flow_availability::shortcut_should_hold(app, &current_settings, id) {
             continue;
         }
 
@@ -631,9 +645,11 @@ pub fn change_sound_theme_setting(app: AppHandle, theme: String) -> Result<(), S
 #[tauri::command]
 #[specta::specta]
 pub fn change_translate_to_english_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
+    let was_flow_available = crate::grain_flow_availability::is_available(&app); // [GRAIN]
     let mut settings = settings::get_settings(&app);
     settings.translate_to_english = enabled;
     settings::write_settings(&app, settings);
+    crate::grain_flow_availability::reconcile_after_change(&app, was_flow_available); // [GRAIN]
     Ok(())
 }
 

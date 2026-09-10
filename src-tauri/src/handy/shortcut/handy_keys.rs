@@ -432,7 +432,7 @@ pub fn init_shortcuts(app: &AppHandle) -> Result<(), String> {
     for (id, default_binding) in default_bindings {
         // [GRAIN] Shared gate with the Tauri implementation and the impl-switch
         // path — see `grain_core::capture::shortcut_holds_hotkey`.
-        if !grain_core::capture::shortcut_holds_hotkey(&user_settings, &id) {
+        if !crate::grain_flow_availability::shortcut_should_hold(app, &user_settings, &id) {
             continue;
         }
 

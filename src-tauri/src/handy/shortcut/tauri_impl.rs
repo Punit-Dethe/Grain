@@ -23,7 +23,7 @@ pub fn init_shortcuts(app: &AppHandle) {
         // [GRAIN] Which shortcuts hold a global hotkey (dynamic keys, AI keys
         // without post-processing, inactive capture modes, disabled features)
         // is one shared decision — see `grain_core::capture::shortcut_holds_hotkey`.
-        if !grain_core::capture::shortcut_holds_hotkey(&user_settings, &id) {
+        if !crate::grain_flow_availability::shortcut_should_hold(app, &user_settings, &id) {
             continue;
         }
         let binding = user_settings

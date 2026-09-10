@@ -75,6 +75,9 @@ Optional FluidVoice CTC vocabulary rescoring and pronunciation customization are
 - [x] Float32 journal, exact overlap reads, coalesced wake/close/cancel lifecycle and cleanup implementation.
 - [x] TDT decoder/session, short path, cached preview, stable windows, finalization and one clean replay.
 - [x] Flow service and action wiring; early model gate and explicit start errors.
+- [x] Daily-use capability gating: unavailable Flow UI/preview/AI choices, silent
+      stale triggers, and live shortcut reconciliation across model/install/
+      translation changes. Onboarding remains intentionally out of scope.
 - [x] Delete superseded runtime/crate/native APIs; update active docs and licenses.
 - [ ] App/native checks, real-model parity, latency/memory soak, packaged backend regression (compile and targeted unit gates are green; real-model/package gates remain).
 - [x] Final integrated review, commit and push only task-owned files. Keep branch isolated from main; commit completed phases separately.
@@ -115,6 +118,12 @@ Optional FluidVoice CTC vocabulary rescoring and pronunciation customization are
 - Dynamic ggml input does not need CoreML's fixed 240,000-sample zero padding: Parakeet's reflect mel count is `floor(samples/160)+1`, its three non-causal stride-2 pre-encode convolutions produce `ceil(melFrames/8)`, and PKFW applies Fluid's separate half-open range `[contextFrames, ceil(contentSamples/1280))`. For every supported window this range is within the dynamic encoder output, while no padding frame is decoded. Later windows intentionally decode one fewer content-position than a zero-context window because Fluid treats `actualAudioFrames` as the absolute effective sequence limit rather than adding context.
 - Audit fixes now reject a selected-but-undownloaded model before capture, suppress previews whose session generation is no longer active, cancel/join an unfinished worker before admitting its replacement to the exclusive model lease, reject reversed/unaddressable journal reads instead of saturating arithmetic, and expose PKFW only when loaded v2/v3 metadata has Fluid's exact blank id and duration bins `[0,1,2,3,4]`. The wrapper test module was also moved after helper items so the current warnings-as-errors Clippy gate passes.
 - Second-pass verification is green: `grain-tdt` 16 tests; wrapper PKFW materialization test; wrapper and pure-core Clippy with warnings denied; native compilation through full app `cargo check`; bindgen ABI check; upstream policy check; 5 journal, 3 TDT adapter, and 3 rolling lifecycle targeted app tests. The graph review reported the critical review priorities as `frame_count`, `RollingSessionOutput`, and `start_session`; the new range, installation, and generation regressions cover the changed decisions, while real-model and long-running lifecycle evidence remains explicitly open below.
+- Daily-use gating now shares one exact Rust artifact predicate across shortcut
+  registration and native admission, mirrors it in a tested renderer helper,
+  and adds the host installation check at dispatch. Model switches, downloads,
+  deletion, rescans, translation changes, keyboard-backend switches, and
+  shortcut-editor resume all converge on the same outcome: unavailable Flow is
+  visible but inert, while a stale AI-start preference safely uses Standard.
 
 ### Next concrete implementation step
 

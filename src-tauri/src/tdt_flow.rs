@@ -14,28 +14,11 @@ use crate::grain_audio_journal::{PcmJournal, PcmJournalReader};
 
 const ENCODER_FRAME_MS: i64 = FRAME_SAMPLES as i64 * 1_000 / SAMPLE_RATE as i64;
 
-/// Exact catalog artifacts reviewed for the Flow runtime. Quantization is the
-/// only variable suffix; custom/local lookalikes do not silently opt in.
-const REVIEWED_QUANTIZATIONS: &[&str] = &["Q4_K_M", "Q5_K_M", "Q6_K", "Q8_0", "F16", "F32"];
-
 pub(crate) fn validate_model(model_id: &str, translate_to_english: bool) -> Result<(), String> {
     if translate_to_english {
         return Err("Flow does not support translation; select transcription mode".into());
     }
-    let reviewed = model_id
-        .rsplit_once('/')
-        .and_then(|(repository, filename)| match repository {
-            "handy-computer/parakeet-tdt-0.6b-v2-gguf" => {
-                filename.strip_prefix("parakeet-tdt-0.6b-v2-")
-            }
-            "handy-computer/parakeet-tdt-0.6b-v3-gguf" => {
-                filename.strip_prefix("parakeet-tdt-0.6b-v3-")
-            }
-            _ => None,
-        })
-        .and_then(|suffix| suffix.strip_suffix(".gguf"))
-        .is_some_and(|quant| REVIEWED_QUANTIZATIONS.contains(&quant));
-    if !reviewed {
+    if !grain_core::capture::is_reviewed_flow_model(model_id) {
         return Err("Flow requires a reviewed Parakeet TDT 0.6B v2 or v3 GGUF model".into());
     }
     Ok(())
@@ -220,6 +203,7 @@ mod tests {
 
     #[test]
     fn routing_is_exact_and_translation_is_rejected() {
+        const REVIEWED_QUANTIZATIONS: &[&str] = &["Q4_K_M", "Q5_K_M", "Q6_K", "Q8_0", "F16", "F32"];
         for version in ["v2", "v3"] {
             for quant in REVIEWED_QUANTIZATIONS {
                 let model = format!("handy-computer/parakeet-tdt-0.6b-{version}-gguf/parakeet-tdt-0.6b-{version}-{quant}.gguf");

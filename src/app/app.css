@@ -2578,6 +2578,10 @@ html[data-theme="light"] .model-role-tabs {
   text-align: left;
 }
 
+.capture-mode-option.is-disabled {
+  opacity: 0.58;
+}
+
 .capture-mode-copy {
   flex: 1;
   min-width: 0;
