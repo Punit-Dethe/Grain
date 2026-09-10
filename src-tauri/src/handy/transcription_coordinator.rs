@@ -41,8 +41,24 @@ enum Command {
 /// Pipeline lifecycle, owned exclusively by the coordinator thread.
 enum Stage {
     Idle,
-    Recording(String), // binding_id
+    // [GRAIN] Keep the engine resolved at start. In particular, an AI key that
+    // fell back from unavailable Flow to Standard must stop that same engine
+    // even if the selected model changes while the user is speaking.
+    Recording {
+        binding_id: String,
+        action_id: String,
+    },
     Processing,
+}
+
+fn recorded_action_id<'a>(stage: &'a Stage, binding_id: &str) -> Option<&'a str> {
+    match stage {
+        Stage::Recording {
+            binding_id: started_by,
+            action_id,
+        } if started_by == binding_id => Some(action_id),
+        _ => None,
+    }
 }
 
 fn classify_ptt_event(
@@ -106,7 +122,7 @@ impl TranscriptionCoordinator {
                             Ok(cmd) => cmd,
                             Err(mpsc::RecvTimeoutError::Timeout) => {
                                 if let Some(pending) = pending_release.take() {
-                                    if matches!(&stage, Stage::Recording(id) if id == &pending.binding_id)
+                                    if matches!(&stage, Stage::Recording { binding_id, .. } if binding_id == &pending.binding_id)
                                     {
                                         stop(
                                             &app,
@@ -138,7 +154,7 @@ impl TranscriptionCoordinator {
                                 .as_ref()
                                 .map(|pending| pending.binding_id.as_str());
                             let recording_binding = match &stage {
-                                Stage::Recording(id) => Some(id.as_str()),
+                                Stage::Recording { binding_id, .. } => Some(binding_id.as_str()),
                                 _ => None,
                             };
 
@@ -179,7 +195,7 @@ impl TranscriptionCoordinator {
                                 if is_pressed && matches!(stage, Stage::Idle) {
                                     start(&app, &mut stage, &binding_id, &hotkey_string);
                                 } else if !is_pressed
-                                    && matches!(&stage, Stage::Recording(id) if id == &binding_id)
+                                    && matches!(&stage, Stage::Recording { binding_id: id, .. } if id == &binding_id)
                                 {
                                     stop(&app, &mut stage, &binding_id, &hotkey_string);
                                 }
@@ -189,8 +205,12 @@ impl TranscriptionCoordinator {
                                         // [GRAIN] the AI key starts one too
                                         start(&app, &mut stage, &binding_id, &hotkey_string);
                                     }
-                                    Stage::Recording(id) => {
+                                    Stage::Recording {
+                                        binding_id: id,
+                                        action_id,
+                                    } => {
                                         let start_id = id.clone();
+                                        let start_action_id = action_id.clone();
                                         if &binding_id == id {
                                             stop(&app, &mut stage, &start_id, &hotkey_string);
                                         } else if binding_id == "transcribe_send_to_ai"
@@ -198,7 +218,13 @@ impl TranscriptionCoordinator {
                                             && grain_core::capture::ends_with_ai(&get_settings(&app))
                                         {
                                             let h = &hotkey_string;
-                                            stop_with_intent(&app, &mut stage, &start_id, h, true);
+                                            stop_with_intent(
+                                                &app,
+                                                &mut stage,
+                                                &start_action_id,
+                                                h,
+                                                true,
+                                            );
                                         } else {
                                             debug!(
                                                 "Ignoring press for '{binding_id}': pipeline busy"
@@ -217,7 +243,8 @@ impl TranscriptionCoordinator {
                             pending_release = None;
                             // Don't reset during processing — wait for the pipeline to finish.
                             if !matches!(stage, Stage::Processing)
-                                && (recording_was_active || matches!(stage, Stage::Recording(_)))
+                                && (recording_was_active
+                                    || matches!(stage, Stage::Recording { .. }))
                             {
                                 stage = Stage::Idle;
                             }
@@ -280,8 +307,9 @@ impl TranscriptionCoordinator {
 }
 
 fn start(app: &AppHandle, stage: &mut Stage, binding_id: &str, hotkey_string: &str) {
-    // [GRAIN] see grain_core::capture::action_id_for
-    let action_id = grain_core::capture::action_id_for(&get_settings(app), binding_id).to_string();
+    // [GRAIN] Includes the host-side Flow installation gate for a stale AI
+    // start-mode preference.
+    let action_id = crate::grain_flow_availability::action_id_for(app, binding_id);
     let Some(action) = ACTION_MAP.get(action_id.as_str()) else {
         warn!("No action in ACTION_MAP for '{action_id}'");
         return;
@@ -291,7 +319,10 @@ fn start(app: &AppHandle, stage: &mut Stage, binding_id: &str, hotkey_string: &s
         .try_state::<Arc<AudioRecordingManager>>()
         .map_or(false, |a| a.is_recording())
     {
-        *stage = Stage::Recording(binding_id.to_string());
+        *stage = Stage::Recording {
+            binding_id: binding_id.to_string(),
+            action_id,
+        };
     } else {
         debug!("Start for '{binding_id}' did not begin recording; staying idle");
     }
@@ -300,26 +331,27 @@ fn start(app: &AppHandle, stage: &mut Stage, binding_id: &str, hotkey_string: &s
 fn stop(app: &AppHandle, stage: &mut Stage, binding_id: &str, hotkey_string: &str) {
     // [GRAIN] see grain_core::capture::should_route_to_ai
     let ai = grain_core::capture::should_route_to_ai(&get_settings(app), binding_id);
-    stop_with_intent(app, stage, binding_id, hotkey_string, ai);
+    let action_id = recorded_action_id(stage, binding_id)
+        .map(str::to_owned)
+        .unwrap_or_else(|| crate::grain_flow_availability::action_id_for(app, binding_id));
+    stop_with_intent(app, stage, &action_id, hotkey_string, ai);
 }
 
 fn stop_with_intent(
     app: &AppHandle,
     stage: &mut Stage,
-    start_id: &str,
+    action_id: &str,
     hotkey_string: &str,
     send_to_ai: bool,
 ) {
-    // [GRAIN] see grain_core::capture::action_id_for
-    let action_id = grain_core::capture::action_id_for(&get_settings(app), start_id).to_string();
-    let Some(action) = ACTION_MAP.get(action_id.as_str()) else {
+    let Some(action) = ACTION_MAP.get(action_id) else {
         warn!("No action in ACTION_MAP for '{action_id}'");
         return;
     };
     if send_to_ai {
         action.set_post_process_override(true);
     }
-    action.stop(app, &action_id, hotkey_string);
+    action.stop(app, action_id, hotkey_string);
     if send_to_ai {
         action.set_post_process_override(false);
     }
@@ -329,6 +361,19 @@ fn stop_with_intent(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn stop_uses_the_engine_resolved_when_recording_started() {
+        let stage = Stage::Recording {
+            binding_id: "transcribe_send_to_ai".into(),
+            action_id: "transcribe".into(),
+        };
+        assert_eq!(
+            recorded_action_id(&stage, "transcribe_send_to_ai"),
+            Some("transcribe")
+        );
+        assert_eq!(recorded_action_id(&stage, "transcribe_realtime"), None);
+    }
 
     #[test]
     fn push_to_talk_release_while_recording_defers_release() {

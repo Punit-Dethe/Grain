@@ -2,6 +2,8 @@ import React from "react";
 import { useTranslation } from "react-i18next";
 import { ToggleSwitch } from "../ui/ToggleSwitch";
 import { useSettings } from "../../hooks/useSettings";
+import { useModelStore } from "@/stores/modelStore";
+import { getFlowAvailability } from "@/lib/flowAvailability";
 
 interface RollingLivePreviewProps {
   descriptionMode?: "inline" | "tooltip";
@@ -17,8 +19,17 @@ export const RollingLivePreview: React.FC<RollingLivePreviewProps> = React.memo(
   ({ descriptionMode = "tooltip", grouped = false }) => {
     const { t } = useTranslation();
     const { getSetting, updateSetting, isUpdating } = useSettings();
+    const { models, currentModel } = useModelStore();
 
     const enabled = getSetting("rolling_live_preview") ?? false;
+    const availability = getFlowAvailability(
+      models,
+      currentModel,
+      getSetting("translate_to_english") ?? false,
+    );
+    const description = availability.available
+      ? t("settings.speechToText.rollingLivePreview.description")
+      : t(`settings.speechToText.flowUnavailable.${availability.reason}`);
 
     return (
       <ToggleSwitch
@@ -26,9 +37,10 @@ export const RollingLivePreview: React.FC<RollingLivePreviewProps> = React.memo(
         onChange={(v) => updateSetting("rolling_live_preview", v)}
         isUpdating={isUpdating("rolling_live_preview")}
         label={t("settings.speechToText.rollingLivePreview.label")}
-        description={t("settings.speechToText.rollingLivePreview.description")}
+        description={description}
         descriptionMode={descriptionMode}
         grouped={grouped}
+        disabled={!availability.available}
       />
     );
   },

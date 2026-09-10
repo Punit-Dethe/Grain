@@ -58,6 +58,7 @@ mod grain_events; // [GRAIN] typed payloads for the webview event surface (see t
                   // UN-COMPILED (no `mod llm_client;`) so upstream merges land conflict-free;
                   // the alias keeps every `crate::llm_client::` path working.
 mod grain_llm_client;
+mod grain_flow_availability; // [GRAIN] model/install/settings gate + Flow shortcut reconciliation
 mod grain_locale; // [GRAIN] locale-tag resolution, owned in Rust (was duplicated in TS)
 mod grain_mcp; // [GRAIN] stateless hosted MCP development providers (2026-07-28 only)
 mod grain_onboarding; // [GRAIN] where a launching app lands: onboarding / permissions / app
@@ -99,7 +100,7 @@ mod pill_skin; // [GRAIN] pill skin delivery — the built-in look setting → p
 pub mod portable;
 mod post_process_router; // [GRAIN] post-process (LLM) dispatcher (single vs rotation)
 mod prompt_record; // [GRAIN] Prompt Record: split content vs spoken AI instruction at the pill-control mark
-mod rolling; // [GRAIN] real-time rolling-window transcription engine
+mod rolling; // [GRAIN] Parakeet TDT Flow capture and scheduling service
 mod rotation_state; // [GRAIN] smart-rotation trackers (cooldowns + headroom), shared by both routers
 #[path = "handy/secure_input.rs"]
 mod secure_input;
@@ -110,7 +111,7 @@ mod signal_handle;
 mod stt_client; // [GRAIN] S2: HTTP STT adapters (OpenAI / Deepgram / AssemblyAI)
 mod stt_router; // [GRAIN] S3: STT dispatcher (local vs cloud rotation)
 mod surface_watch; // [GRAIN] follow the foreground app mid-session (settled)
-mod tdt_flow; // [GRAIN] capability-gated transactional TDT Flow orchestration
+mod tdt_flow; // [GRAIN] capability-gated stateless TDT window adapter/accumulator
 #[path = "handy/transcription_coordinator.rs"]
 mod transcription_coordinator;
 #[path = "handy/tray.rs"]
@@ -399,9 +400,9 @@ fn initialize_core_logic(app_handle: &AppHandle) {
     // load — with `dynamic-backends` this dlopens the ggml modules next to the
     // exe; skipping it leaves ZERO compute devices and every GGUF load fails.
     managers::transcription::init_transcribe_backend();
-    // [GRAIN] Rolling-window driver. Since the transcribe-cpp unification it owns
-    // NO engine of its own — chunks are transcribed through the shared
-    // TranscriptionManager (one resident model across Batch/Rolling/Native ASR).
+    // [GRAIN] Flow owns capture scheduling but no model engine. Its serial worker
+    // leases the shared TranscriptionManager model for stateless Parakeet TDT
+    // windows, keeping one resident model across Batch/Flow/Native ASR.
     let rolling_transcriber = Arc::new(rolling::RollingTranscriber::new(
         transcription_manager.clone(),
     ));

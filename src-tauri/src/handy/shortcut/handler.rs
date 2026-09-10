@@ -36,6 +36,13 @@ pub fn handle_shortcut_event(
 
     // Transcribe bindings are handled by the coordinator.
     if is_transcribe_binding(binding_id) {
+        // [GRAIN] Flow is model-specific. The key is normally unregistered
+        // while unavailable, but this host-side guard also rejects an event
+        // already queued during a model/translation transition. Stay silent:
+        // an unavailable shortcut must not surface a recording failure.
+        if !crate::grain_flow_availability::binding_can_start(app, binding_id) {
+            return;
+        }
         // [GRAIN] Extension Mode owns its raw-ASR request until ranking has
         // published or been superseded. Its recorder is already idle during
         // processing, so the audio singleton alone cannot stop a second capture

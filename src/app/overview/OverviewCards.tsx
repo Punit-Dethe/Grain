@@ -5,6 +5,8 @@ import { useTranslation } from "react-i18next";
 import { useSettings } from "@/hooks/useSettings";
 import { formatKeyPart } from "@/lib/utils/keyboard";
 import { MAX_CUSTOM_WORD_LENGTH, normalizeCustomWord } from "@/lib/customWords";
+import { getFlowAvailability } from "@/lib/flowAvailability";
+import { useModelStore } from "@/stores/modelStore";
 import { hashForRoute } from "../navigation";
 
 const COPY = {
@@ -23,6 +25,7 @@ const COPY = {
     title: "Shortcuts",
     body: "Your quick keys to start dictating.",
     aiOff: "AI off",
+    flowOff: "Unavailable",
     none: "Not set",
   },
   agent: {
@@ -174,11 +177,17 @@ function ShortcutsCard() {
   const { t } = useTranslation();
   const { getSetting } = useSettings();
   const bindings = getSetting("bindings") ?? {};
+  const { models, currentModel } = useModelStore();
 
   const captureId = FLOW_BINDING_ID;
   const capture = bindings[captureId];
   const ai = bindings[AI_BINDING_ID];
   const aiActive = (getSetting("post_process_enabled") ?? false) && Boolean(ai);
+  const flowAvailable = getFlowAvailability(
+    models,
+    currentModel,
+    getSetting("translate_to_english") ?? false,
+  ).available;
 
   const label = (id: string, fallback?: string) =>
     t(`settings.general.shortcut.bindings.${id}.name`, fallback ?? id);
@@ -193,7 +202,8 @@ function ShortcutsCard() {
       <div className="overview-shortcut-list">
         <ShortcutRow
           label={label(captureId, capture?.name)}
-          combination={capture?.current_binding || null}
+          combination={flowAvailable ? capture?.current_binding || null : null}
+          offLabel={flowAvailable ? undefined : COPY.shortcuts.flowOff}
         />
         <ShortcutRow
           label={label(AI_BINDING_ID, ai?.name)}

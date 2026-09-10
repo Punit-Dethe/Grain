@@ -666,6 +666,11 @@
         "label": "Flow live preview",
         "description": "Show text as you speak while dictating in Flow. Off by default; turning it on adds extra transcription work, so it uses more CPU/GPU while you dictate. It has no effect on the other capture modes."
       },
+      "flowUnavailable": {
+        "model": "Select and download Parakeet TDT v2 or v3 in Transcription settings to use Flow.",
+        "translation": "Turn off Translate to English to use Flow.",
+        "modelAndTranslation": "Select and download Parakeet TDT v2 or v3 in Transcription settings, then turn off Translate to English to use Flow."
+      },
       "localModel": {
         "title": "Standard model",
         "none": "No model selected",
@@ -735,7 +740,10 @@
         "unavailable": "Handled in the cloud",
         "standard": {
           "label": "Standard",
-          "purpose": "Used by Standard and Flow captures"
+          "purpose": "Used by Standard captures",
+          "purposeFlow": "Used by Standard and Flow captures",
+          "purposeCloud": "Saved for Standard while cloud providers are active",
+          "purposeFlowCloud": "Used by Flow; Standard currently uses cloud providers"
         },
         "streaming": {
           "label": "Streaming",

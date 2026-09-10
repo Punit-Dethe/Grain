@@ -15,8 +15,8 @@ import { ExtensionAnchor } from "../experimentations/ExtensionSettings";
 // [GRAIN] The unified Transcription tab. Top to bottom: the local model
 // (collapsible picker), the local engine settings, then the cloud providers — one
 // surface for the whole transcription pipeline. Smart rotation lives in the cloud
-// header; turning it on grays out the local model (cloud handles transcription),
-// and it's blocked (with an error) when no provider is configured.
+// header. The local picker stays usable because Flow always runs locally even
+// while Standard capture is routed to cloud providers.
 export const SpeechToTextSettings: React.FC = () => {
   const { t } = useTranslation();
   const pool = useSttPool();
@@ -87,11 +87,10 @@ export const SpeechToTextSettings: React.FC = () => {
 
       {/* 1) Both model roles in one picker: two slots that say what each is
           for and whether it is filled, over one tabbed library. */}
-      <ModelPicker disabled={smartRotation} />
+      <ModelPicker cloudActive={smartRotation} />
 
-      {/* 2) On-device model behaviour: Flow preview, unload. The rolling
-          window length is fixed by the model-agnostic engine defaults and is
-          intentionally not user-configurable. */}
+      {/* 2) On-device model behaviour. Flow geometry is fixed by the reviewed
+          Parakeet TDT v2/v3 contract and is intentionally not configurable. */}
       <SettingsGroup title={t("settings.speechToText.groups.engine")}>
         <RollingLivePreview descriptionMode="tooltip" grouped />
         <ModelUnloadTimeoutSetting descriptionMode="tooltip" grouped />

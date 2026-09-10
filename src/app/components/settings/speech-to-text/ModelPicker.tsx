@@ -1,7 +1,9 @@
 /**
  * [GRAIN] One model picker for both roles.
  *
- * Grain needs two models: one for Standard and Flow, one for Live streaming.
+ * Grain needs two model slots: one local model and one Live streaming model.
+ * Flow can use the local slot only when it contains a reviewed Parakeet TDT
+ * artifact; Standard may use the slot or the cloud pool.
  * They were two visually identical collapsibles stacked on top of each other,
  * which asked the user to work out from their titles alone that these were
  * different registries serving different capture modes — and gave no answer at
@@ -19,12 +21,13 @@ import { useModelStore } from "@/stores/modelStore";
 import { useSettings } from "@/hooks/useSettings";
 import { ModelLibrary } from "../ModelLibrary";
 import { AsrModelLibrary } from "../AsrModelLibrary";
+import { getFlowAvailability } from "@/lib/flowAvailability";
 
 export type ModelRole = "standard" | "streaming";
 
 interface ModelPickerProps {
-  /** Cloud smart-rotation is on — the on-device Standard model is bypassed. */
-  disabled?: boolean;
+  /** Standard capture is routed to cloud; Flow still needs the local slot. */
+  cloudActive?: boolean;
 }
 
 interface SlotProps {
@@ -99,7 +102,7 @@ const ModelSlot: React.FC<SlotProps> = ({
 };
 
 export const ModelPicker: React.FC<ModelPickerProps> = ({
-  disabled = false,
+  cloudActive = false,
 }) => {
   const { t } = useTranslation();
   const { getSetting } = useSettings();
@@ -123,12 +126,6 @@ export const ModelPicker: React.FC<ModelPickerProps> = ({
     if (openRole) setMounted((prev) => ({ ...prev, [openRole]: true }));
   }, [openRole]);
 
-  // Cloud rotation takes the Standard model out of the pipeline; an open
-  // Standard tab would be editing something with no effect.
-  useEffect(() => {
-    if (disabled && openRole === "standard") setOpenRole(null);
-  }, [disabled, openRole]);
-
   const selectedAsrModel = getSetting("selected_asr_model") ?? "";
   const streamingModels = useMemo(
     () => allModels.filter((m) => m.supports_streaming),
@@ -139,6 +136,20 @@ export const ModelPicker: React.FC<ModelPickerProps> = ({
     allModels.find((m) => m.id === currentModel)?.name ?? null;
   const streamingName =
     streamingModels.find((m) => m.id === selectedAsrModel)?.name ?? null;
+  const flowAvailable = getFlowAvailability(
+    allModels,
+    currentModel,
+    getSetting("translate_to_english") ?? false,
+  ).available;
+  const standardPurpose = t(
+    cloudActive && flowAvailable
+      ? "settings.speechToText.picker.standard.purposeFlowCloud"
+      : cloudActive
+        ? "settings.speechToText.picker.standard.purposeCloud"
+        : flowAvailable
+          ? "settings.speechToText.picker.standard.purposeFlow"
+          : "settings.speechToText.picker.standard.purpose",
+  );
 
   // Close the library once a role's model actually changes — the question that
   // opened it has been answered.
@@ -170,11 +181,10 @@ export const ModelPicker: React.FC<ModelPickerProps> = ({
           <ModelSlot
             role="standard"
             label={t("settings.speechToText.picker.standard.label")}
-            purpose={t("settings.speechToText.picker.standard.purpose")}
+            purpose={standardPurpose}
             modelName={standardName}
             open={openRole === "standard"}
-            disabled={disabled}
-            disabledNote={t("settings.speechToText.localModel.disabledByCloud")}
+            disabled={false}
             onOpen={() => toggle("standard")}
           />
           <ModelSlot
@@ -206,20 +216,18 @@ export const ModelPicker: React.FC<ModelPickerProps> = ({
                 role="tablist"
                 aria-label={t("settings.speechToText.picker.title")}
               >
-                {(["standard", "streaming"] as const)
-                  .filter((role) => role === "streaming" || !disabled)
-                  .map((role) => (
-                    <button
-                      key={role}
-                      type="button"
-                      role="tab"
-                      aria-selected={openRole === role}
-                      className={openRole === role ? "active" : ""}
-                      onClick={() => setOpenRole(role)}
-                    >
-                      {t(`settings.speechToText.picker.${role}.label`)}
-                    </button>
-                  ))}
+                {(["standard", "streaming"] as const).map((role) => (
+                  <button
+                    key={role}
+                    type="button"
+                    role="tab"
+                    aria-selected={openRole === role}
+                    className={openRole === role ? "active" : ""}
+                    onClick={() => setOpenRole(role)}
+                  >
+                    {t(`settings.speechToText.picker.${role}.label`)}
+                  </button>
+                ))}
               </div>
               {mounted.standard && (
                 <div hidden={openRole !== "standard"}>

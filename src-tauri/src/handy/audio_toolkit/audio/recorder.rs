@@ -80,9 +80,8 @@ pub type AudioFrameCallback = Arc<dyn Fn(&[f32]) + Send + Sync + 'static>;
 /// [GRAIN] Callback invoked with EVERY resampled 16 kHz mono frame while
 /// recording (not just the frames that pass VAD), plus the frame's
 /// voice-activity decision: `Some(true)` voiced, `Some(false)` non-speech,
-/// `None` when VAD is bypassed. The rolling-window engine keeps a continuous
-/// timeline and only uses the decision for segmentation, so it needs the raw
-/// stream — unlike [`AudioFrameCallback`], which sees post-VAD frames.
+/// `None` when VAD is bypassed. Flow journals this exact continuous stream;
+/// unlike [`AudioFrameCallback`], it must not lose non-speech frames.
 pub type SampleFrameCallback = Arc<dyn Fn(&[f32], Option<bool>) + Send + Sync + 'static>;
 
 pub struct AudioRecorder {
@@ -92,8 +91,7 @@ pub struct AudioRecorder {
     vad: Option<VadConfig>,
     level_cb: Option<Arc<dyn Fn(Vec<f32>) + Send + Sync + 'static>>,
     audio_cb: Option<AudioFrameCallback>,
-    // [GRAIN] every-frame callback for the rolling-window engine (see
-    // `SampleFrameCallback`).
+    // [GRAIN] every-frame callback for Flow (see `SampleFrameCallback`).
     sample_cb: Option<SampleFrameCallback>,
     // [GRAIN] when true, run voice conditioning (85 Hz high-pass per frame +
     // boost-only AGC on the finalized buffer) before VAD/STT. A live atomic so a
@@ -158,7 +156,7 @@ impl AudioRecorder {
     }
 
     /// [GRAIN] Stream every 16 kHz mono frame live while recording (for the
-    /// rolling-window engine) with its voice-activity decision. Same threading
+    /// Flow) with its voice-activity decision. Same threading
     /// rules as [`with_audio_callback`](Self::with_audio_callback): keep it cheap.
     pub fn with_sample_callback<F>(mut self, cb: F) -> Self
     where
@@ -1241,9 +1239,8 @@ fn run_consumer(
                     retain_full_audio,
                 );
                 captured_frames += f.len();
-                // [GRAIN] stream the resampled 16 kHz frame to the rolling-window
-                // engine with its voice-activity decision (rolling keeps EVERY frame
-                // for a continuous timeline; `speech` only drives its silence gate).
+                // [GRAIN] stream every resampled 16 kHz frame to Flow. It journals
+                // the exact continuous stream and intentionally ignores VAD.
                 if let Some(cb) = &sample_cb {
                     cb(f, speech);
                 }

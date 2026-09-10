@@ -53,7 +53,7 @@ src-tauri/src/handy/   Handy's tree, byte-preserved + small marked [GRAIN]
 src-tauri/src/         Grain: composition roots (lib.rs, main.rs) + grain_*
                        modules, agent, bridge, rolling, routers, grain_space…
 crates/                Grain crates (grain-core, grain-pill, provider-router,
-                       rolling-window).
+                       grain-tdt).
 ```
 
 Three files inside `handy/` are **inert** — byte-identical to upstream but

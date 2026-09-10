@@ -1,8 +1,8 @@
 //! [GRAIN] Capture-mode policy.
 //!
 //! Grain has three ways to start a capture — Standard, Flow and Live — and a
-//! fourth shortcut that routes a transcript to AI. All three capture modes are
-//! always live; the only per-mode question left is what the AI key starts.
+//! fourth shortcut that routes a transcript to AI. Flow is intentionally
+//! narrower: only the reviewed Parakeet TDT v2/v3 catalog artifacts can run it.
 //!
 //! This module is the single place that answers "what does the AI key do, and
 //! which shortcuts hold a global hotkey?". The Handy-derived shortcut backends
@@ -10,6 +10,33 @@
 //! implementations cannot drift apart on it.
 
 use crate::settings::{AppSettings, CAPTURE_MODE_IDS};
+
+const REVIEWED_FLOW_QUANTIZATIONS: &[&str] = &["Q4_K_M", "Q5_K_M", "Q6_K", "Q8_0", "F16", "F32"];
+
+/// Exact catalog artifacts reviewed for Flow. Matching a family-like name is
+/// deliberately insufficient: custom models and new quantizations must pass
+/// the native/accuracy qualification gate before they can claim this path.
+pub fn is_reviewed_flow_model(model_id: &str) -> bool {
+    model_id
+        .rsplit_once('/')
+        .and_then(|(repository, filename)| match repository {
+            "handy-computer/parakeet-tdt-0.6b-v2-gguf" => {
+                filename.strip_prefix("parakeet-tdt-0.6b-v2-")
+            }
+            "handy-computer/parakeet-tdt-0.6b-v3-gguf" => {
+                filename.strip_prefix("parakeet-tdt-0.6b-v3-")
+            }
+            _ => None,
+        })
+        .and_then(|suffix| suffix.strip_suffix(".gguf"))
+        .is_some_and(|quant| REVIEWED_FLOW_QUANTIZATIONS.contains(&quant))
+}
+
+/// Settings-only Flow eligibility. Installation is host state and is checked
+/// separately by the Tauri shell before a capture starts.
+pub fn flow_is_eligible(settings: &AppSettings) -> bool {
+    !settings.translate_to_english && is_reviewed_flow_model(&settings.selected_model)
+}
 
 /// Is `id` one of the three capture-starting bindings?
 pub fn is_capture_mode(id: &str) -> bool {
@@ -62,16 +89,21 @@ pub fn shortcut_holds_hotkey(settings: &AppSettings, id: &str) -> bool {
     if id.starts_with("grain_space_") && !settings.grain_space_enabled {
         return false;
     }
+    if id == "transcribe_realtime" && !flow_is_eligible(settings) {
+        return false;
+    }
     true
 }
 
 /// Which mode the AI shortcut starts when pressed from idle.
 ///
-/// All three capture modes are always live, so this is a free choice. Falls
-/// back to Standard if the stored value is not a mode we ship — settings files
-/// outlive the code that wrote them.
+/// Falls back to Standard if the stored value is not a mode we ship, or if it
+/// names Flow while the selected model/settings cannot run Flow. The stored
+/// preference is left intact so selecting a reviewed model restores it.
 pub fn ai_start_mode(settings: &AppSettings) -> &str {
-    if is_capture_mode(&settings.capture_ai_start_mode) {
+    if is_capture_mode(&settings.capture_ai_start_mode)
+        && (settings.capture_ai_start_mode != "transcribe_realtime" || flow_is_eligible(settings))
+    {
         &settings.capture_ai_start_mode
     } else {
         CAPTURE_MODE_IDS[0]
@@ -121,19 +153,57 @@ mod tests {
     use crate::settings::get_default_settings;
 
     #[test]
-    fn every_capture_mode_holds_a_key() {
-        // All three capture modes are always live — none is ever narrowed away.
-        let s = get_default_settings();
-        for id in CAPTURE_MODE_IDS {
-            assert!(shortcut_holds_hotkey(&s, id));
+    fn reviewed_flow_model_ids_are_exact() {
+        for version in ["v2", "v3"] {
+            for quant in REVIEWED_FLOW_QUANTIZATIONS {
+                let id = format!("handy-computer/parakeet-tdt-0.6b-{version}-gguf/parakeet-tdt-0.6b-{version}-{quant}.gguf");
+                assert!(is_reviewed_flow_model(&id), "rejected {id}");
+            }
+        }
+        for id in [
+            "handy-computer/parakeet-tdt-0.6b-v1-gguf/parakeet-tdt-0.6b-v1-Q8_0.gguf",
+            "local/parakeet-tdt-0.6b-v3-Q8_0.gguf",
+            "handy-computer/parakeet-tdt-0.6b-v3-gguf/parakeet-tdt-0.6b-v3-Q8_0.bin",
+            "handy-computer/parakeet-tdt-0.6b-v3-gguf/parakeet-tdt-0.6b-v3-Q2_K.gguf",
+        ] {
+            assert!(!is_reviewed_flow_model(id), "accepted {id}");
         }
     }
 
+    fn with_reviewed_flow_model(mut settings: AppSettings) -> AppSettings {
+        settings.selected_model =
+            "handy-computer/parakeet-tdt-0.6b-v3-gguf/parakeet-tdt-0.6b-v3-Q8_0.gguf".into();
+        settings
+    }
+
     #[test]
-    fn ai_start_mode_is_a_free_choice() {
+    fn flow_holds_a_key_only_when_eligible() {
         let mut s = get_default_settings();
+        assert!(!shortcut_holds_hotkey(&s, "transcribe_realtime"));
+
+        s = with_reviewed_flow_model(s);
+        for id in CAPTURE_MODE_IDS {
+            assert!(shortcut_holds_hotkey(&s, id));
+        }
+
+        s.translate_to_english = true;
+        assert!(!shortcut_holds_hotkey(&s, "transcribe_realtime"));
+        assert!(shortcut_holds_hotkey(&s, "transcribe"));
+        assert!(shortcut_holds_hotkey(&s, "transcribe_native_asr"));
+    }
+
+    #[test]
+    fn ai_start_mode_uses_flow_only_when_eligible() {
+        let mut s = with_reviewed_flow_model(get_default_settings());
         s.capture_ai_start_mode = "transcribe_realtime".to_string();
         assert_eq!(ai_start_mode(&s), "transcribe_realtime");
+
+        s.selected_model = "openai/whisper/ggml-base.bin".into();
+        assert_eq!(ai_start_mode(&s), "transcribe");
+
+        s = with_reviewed_flow_model(s);
+        s.translate_to_english = true;
+        assert_eq!(ai_start_mode(&s), "transcribe");
     }
 
     #[test]
@@ -147,7 +217,7 @@ mod tests {
 
     #[test]
     fn the_ai_key_borrows_a_capture_engine_but_others_run_their_own() {
-        let mut s = get_default_settings();
+        let mut s = with_reviewed_flow_model(get_default_settings());
         s.capture_ai_start_mode = "transcribe_realtime".to_string();
         assert_eq!(
             action_id_for(&s, "transcribe_send_to_ai"),
@@ -181,15 +251,13 @@ mod tests {
     }
 
     #[test]
-    fn gate_hides_disabled_features_but_keeps_every_capture_mode() {
-        // Every feature off: the capture modes still hold keys (always live);
-        // the feature-gated keys do not.
-        let mut s = get_default_settings();
+    fn gate_hides_disabled_features_and_ineligible_flow() {
+        let mut s = with_reviewed_flow_model(get_default_settings());
         s.post_process_enabled = false;
         s.agent_enabled = false;
         s.grain_space_enabled = false;
 
-        // All three capture modes hold a key regardless of feature toggles.
+        // Feature toggles do not affect the three eligible capture modes.
         for id in CAPTURE_MODE_IDS {
             assert!(shortcut_holds_hotkey(&s, id));
         }
@@ -225,7 +293,7 @@ mod tests {
 
     #[test]
     fn gate_registers_everything_its_features_are_on() {
-        let mut s = get_default_settings();
+        let mut s = with_reviewed_flow_model(get_default_settings());
         s.post_process_enabled = true;
         s.agent_enabled = true;
         s.grain_space_enabled = true;

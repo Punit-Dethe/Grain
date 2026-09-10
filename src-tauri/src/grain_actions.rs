@@ -79,16 +79,6 @@ pub(crate) fn emit_session_started(app: &AppHandle, session_id: u64, mode: Sessi
     emit_session_started_with_owner(app, session_id, mode, None);
 }
 
-/// Keep explicit TDT projector bytes intact; all generic rolling output retains
-/// its historical lowercase/punctuation-stripping canonicalization.
-fn finalize_rolling_surface(text: String, preserves_native_text: bool) -> String {
-    if preserves_native_text {
-        text
-    } else {
-        rolling_window::canonicalize_text(&text)
-    }
-}
-
 fn emit_session_started_with_owner(
     app: &AppHandle,
     session_id: u64,
@@ -508,9 +498,8 @@ impl ShortcutAction for GrainSpaceCaptureAction {
     fn stop(&self, _app: &AppHandle, _binding_id: &str, _shortcut_str: &str) {}
 }
 
-// Real-time rolling-window transcribe action. Streams audio through the
-// rolling engine in the background and pastes only a complete assembled
-// transcript. Unrepaired chunk gaps fail explicitly instead of looking valid.
+// Parakeet TDT Flow action. Journals exact capture audio while one serial worker
+// finalizes stable windows and refreshes the mutable tail.
 struct RealtimeTranscribeAction {
     post_process_override: AtomicBool,
 }
@@ -530,13 +519,7 @@ impl ShortcutAction for RealtimeTranscribeAction {
         // the manager's load predicate before it spawns the rolling worker. The
         // model itself still loads asynchronously, so recording startup does not
         // wait for weights or allocate a second engine.
-        let rolling_started = rt.start_session(app.clone(), sid, preview);
-        {
-            let rm = Arc::clone(&rm);
-            std::thread::spawn(move || {
-                let _ = rm.preload_vad();
-            });
-        }
+        let rolling_error = rt.start_session(app.clone(), sid, preview).err();
 
         change_tray_icon(app, TrayIconState::Recording);
         // C1: no Handy webview overlay on the real-time path — the winit
@@ -544,33 +527,24 @@ impl ShortcutAction for RealtimeTranscribeAction {
 
         let binding_id = binding_id.to_string();
         let is_always_on = get_settings(app).always_on_microphone;
-        // Rolling receives EVERY frame via the sample callback no matter
-        // the policy; the policy gives the rolling cursor its per-frame voice
-        // decisions. Offline profile — the
-        // `vad_enabled` toggle was never ported into grain-core settings.
-        let vad_policy = VadPolicy::Offline;
-        let mut recording_error: Option<String> = None;
-        if is_always_on {
+        // Flow uses exact continuous audio and does not load or run the ASR VAD.
+        let vad_policy = VadPolicy::Disabled;
+        let mut recording_error = rolling_error;
+        if recording_error.is_some() {
+            // Model/capability rejection happens before microphone capture.
+        } else if is_always_on {
             let rm_mute = Arc::clone(&rm);
             let app2 = app.clone();
             std::thread::spawn(move || {
                 play_feedback_sound_blocking(&app2, SoundType::Start);
                 rm_mute.apply_mute();
             });
-            let start = if rolling_started {
-                rm.try_start_recording_low_ram(&binding_id, vad_policy)
-            } else {
-                rm.try_start_recording(&binding_id, vad_policy)
-            };
+            let start = rm.try_start_recording_low_ram(&binding_id, vad_policy);
             if let Err(e) = start {
                 recording_error = Some(e);
             }
         } else {
-            let start = if rolling_started {
-                rm.try_start_recording_low_ram(&binding_id, vad_policy)
-            } else {
-                rm.try_start_recording(&binding_id, vad_policy)
-            };
+            let start = rm.try_start_recording_low_ram(&binding_id, vad_policy);
             match start {
                 Ok(()) => {
                     let app2 = app.clone();
@@ -631,7 +605,6 @@ impl ShortcutAction for RealtimeTranscribeAction {
         unregister_session_shortcuts(app);
         let ah = app.clone();
         let rm = Arc::clone(&app.state::<Arc<AudioRecordingManager>>());
-        let tm = Arc::clone(&app.state::<Arc<TranscriptionManager>>());
         let hm = Arc::clone(&app.state::<Arc<HistoryManager>>());
         let rt = Arc::clone(&app.state::<Arc<crate::rolling::RollingTranscriber>>());
 
@@ -652,9 +625,7 @@ impl ShortcutAction for RealtimeTranscribeAction {
         tauri::async_runtime::spawn(async move {
             let _guard = FinishGuard(ah.clone());
 
-            // Empty on the normal rolling path: its PCM16 journal owns audio.
-            // A Vec is retained only if journal creation failed and recording
-            // deliberately fell back to the legacy capture contract.
+            // Empty on Flow: its Float32 journal owns the complete recording.
             let Some(samples) = rm.stop_recording(&binding_id, cancel_generation) else {
                 rt.cancel_session();
                 if !rm.was_cancelled_since(cancel_generation) {
@@ -688,77 +659,66 @@ impl ShortcutAction for RealtimeTranscribeAction {
             // utterance (content + spoken instruction mixed), so it can't be split.
             // Re-transcribe the two audio slices batch-style instead. This extra
             // pass only happens when the user actually armed Prompt Record.
-            let (final_text, spoken_prompt, post_process, pipeline_error) = if let Some(m) =
-                prompt_mark.filter(|&m| m > 0 && m < audio_len)
-            {
-                let prompt_audio = match rolling.as_ref() {
-                    Some(output) => output.materialize_audio().unwrap_or_else(|error| {
-                        error!("Failed to read rolling Prompt Record audio: {error}");
-                        Vec::new()
-                    }),
-                    None => samples.clone(),
-                };
-                let (content_res, spoken) =
-                    crate::prompt_record::transcribe_split(&ah, prompt_audio, Some(m)).await;
-                // `transcribe_split` routes through the STT dispatcher, which
-                // finalizes internally — don't finalize again. Batch-style
-                // re-transcription has no rolling seams.
-                let content = rolling_window::canonicalize_text(&content_res.unwrap_or_default());
-                (
-                    content,
-                    spoken.clone(),
-                    post_process || spoken.is_some(),
-                    None,
-                )
-            } else if let Some(error) = rolling
-                .as_ref()
-                .and_then(|output| output.error.as_ref())
-                .cloned()
-            {
-                (String::new(), None, false, Some(error))
-            } else {
-                let preserves_native_text = rolling
-                    .as_ref()
-                    .is_some_and(|output| output.preserves_native_text);
-                let assembled = !rolling_text.trim().is_empty();
-                let ft = if assembled {
-                    // Apply the shared final-text stage (custom-word dictionary
-                    // + filler/stutter filtering) ONCE on the assembled transcript.
-                    // The rolling engine never biases via Whisper `initial_prompt`, so
-                    // the fuzzy custom-word pass must run here. Done once per dictation,
-                    // NOT per 15-20s chunk.
-                    let settings = get_settings(&ah);
-                    crate::audio_toolkit::finalize_transcript(
-                        &rolling_text,
-                        &settings.custom_words,
-                        settings.word_correction_threshold,
-                        // [GRAIN] #1738: filler removal keys on the transcription
-                        // output language (intent), not the UI language.
-                        &settings.selected_language,
-                        &settings.custom_filler_words,
-                        settings.filler_word_removal_enabled,
-                        false,
-                        // [GRAIN] Snippets built-in extension gate (SPEC 10.1): disabled ->
-                        // empty slice, the zero-cost no-op path.
-                        if settings.snippets_enabled {
-                            &settings.snippets
-                        } else {
-                            &[]
-                        },
-                        settings.scrap_that_enabled,
+            let (final_text, spoken_prompt, post_process, pipeline_error) =
+                if let Some(m) = prompt_mark.filter(|&m| m > 0 && m < audio_len) {
+                    let prompt_audio = match rolling.as_ref() {
+                        Some(output) => output.materialize_audio().unwrap_or_else(|error| {
+                            error!("Failed to read rolling Prompt Record audio: {error}");
+                            Vec::new()
+                        }),
+                        None => samples.clone(),
+                    };
+                    let (content_res, spoken) =
+                        crate::prompt_record::transcribe_split(&ah, prompt_audio, Some(m)).await;
+                    // `transcribe_split` routes through the STT dispatcher, which
+                    // finalizes internally — don't finalize again. Batch-style
+                    // re-transcription has no rolling seams.
+                    let content = content_res.unwrap_or_default();
+                    (
+                        content,
+                        spoken.clone(),
+                        post_process || spoken.is_some(),
+                        None,
                     )
-                } else if rolling.is_none() && !samples.is_empty() {
-                    warn!("[GRAIN] rolling journal unavailable — using retained legacy capture");
-                    // Journal creation failed before capture, so the recorder
-                    // deliberately retained the legacy buffer. This is not a
-                    // rolling retry and cannot create an invisible middle gap.
-                    tm.transcribe(samples.clone()).unwrap_or_default()
+                } else if let Some(error) = rolling
+                    .as_ref()
+                    .and_then(|output| output.error.as_ref())
+                    .cloned()
+                {
+                    (String::new(), None, false, Some(error))
                 } else {
-                    String::new()
+                    let assembled = !rolling_text.trim().is_empty();
+                    let ft = if assembled {
+                        // Apply the shared final-text stage (custom-word dictionary
+                        // + filler/stutter filtering) ONCE on the assembled transcript.
+                        // Flow never biases windows through a prior text prompt, so
+                        // the fuzzy custom-word pass must run here. Done once per dictation,
+                        // NOT per 15-20s chunk.
+                        let settings = get_settings(&ah);
+                        crate::audio_toolkit::finalize_transcript(
+                            &rolling_text,
+                            &settings.custom_words,
+                            settings.word_correction_threshold,
+                            // [GRAIN] #1738: filler removal keys on the transcription
+                            // output language (intent), not the UI language.
+                            &settings.selected_language,
+                            &settings.custom_filler_words,
+                            settings.filler_word_removal_enabled,
+                            false,
+                            // [GRAIN] Snippets built-in extension gate (SPEC 10.1): disabled ->
+                            // empty slice, the zero-cost no-op path.
+                            if settings.snippets_enabled {
+                                &settings.snippets
+                            } else {
+                                &[]
+                            },
+                            settings.scrap_that_enabled,
+                        )
+                    } else {
+                        String::new()
+                    };
+                    (ft, None, post_process, None)
                 };
-                let ft = finalize_rolling_surface(ft, preserves_native_text);
-                (ft, None, post_process, None)
-            };
 
             // Keep the pre-LLM transcript alive through persistence. History's
             // Original/AI comparison is only meaningful when the raw side is
@@ -786,7 +746,7 @@ impl ShortcutAction for RealtimeTranscribeAction {
                         tauri::async_runtime::spawn_blocking(move || output.save_wav(&wav_path))
                             .await;
                     if let Ok(Err(error)) = result {
-                        error!("Failed to save rolling journal WAV: {error}");
+                        error!("Failed to save Flow journal WAV: {error}");
                     }
                 } else {
                     let samples_for_wav = samples.clone();
@@ -835,7 +795,7 @@ impl ShortcutAction for RealtimeTranscribeAction {
 }
 
 // Native ASR — push-to-talk live streaming, on the SAME unified
-// TranscriptionManager engine as Batch/Rolling: the shortcut loads the selected
+// TranscriptionManager engine as Batch/Flow: the shortcut loads the selected
 // streaming model into the shared slot, opens the mic (frames fan out to the
 // manager's StreamRouter), and the manager's stream worker emits live committed
 // text to the Studio Window (`AsrStreamText` `DaemonEvent`s — this action only
@@ -1089,7 +1049,7 @@ impl ShortcutAction for NativeAsrAction {
 /// Register every Grain action into the shared `ACTION_MAP`. Called once from
 /// `actions.rs` — the single hook the Handy-derived registry needs.
 pub(crate) fn register(map: &mut HashMap<String, Arc<dyn ShortcutAction>>) {
-    // Real-time rolling-window transcription.
+    // Parakeet TDT Flow transcription.
     map.insert(
         "transcribe_realtime".to_string(),
         Arc::new(RealtimeTranscribeAction {
@@ -1165,23 +1125,4 @@ pub(crate) fn register(map: &mut HashMap<String, Arc<dyn ShortcutAction>>) {
         "grain_space_recall".to_string(),
         Arc::new(GrainSpaceRecallAction) as Arc<dyn ShortcutAction>,
     );
-}
-
-#[cfg(test)]
-mod tests {
-    use super::finalize_rolling_surface;
-
-    #[test]
-    fn tdt_surface_preserves_model_native_bytes() {
-        let native = "Hello, Grain! NASA's TDT Works—Today.".to_string();
-        assert_eq!(finalize_rolling_surface(native.clone(), true), native);
-    }
-
-    #[test]
-    fn generic_surface_retains_existing_canonicalization() {
-        assert_eq!(
-            finalize_rolling_surface("Hello, Grain!".to_string(), false),
-            "hello grain"
-        );
-    }
 }

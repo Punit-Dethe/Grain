@@ -2,7 +2,7 @@
 //!
 //! Runs ONCE per dictation on the fully assembled transcript (all engines —
 //! Batch, Rolling, Live — paste a single final string, so this is the one
-//! choke point). Matching must survive rolling-window chunk artifacts:
+//! choke point). Matching must survive transcription punctuation artifacts:
 //! capitalization drift ("Grain GitHub Repo"), punctuation injected at chunk
 //! boundaries ("grain, github repo."), and word splits/merges ("git hub" vs
 //! "github"). No LLM, no allocation-heavy regex — a single linear scan.

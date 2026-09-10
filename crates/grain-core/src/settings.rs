@@ -103,8 +103,8 @@ pub struct LLMPrompt {
 
 /// [GRAIN] A voice snippet: when the (normalized) trigger phrase appears in a
 /// final transcript, it is replaced by the expansion text verbatim. Matching is
-/// case/punctuation tolerant so rolling-window chunk artifacts ("Grain, GitHub
-/// repo.") still expand.
+/// case/punctuation tolerant so transcription punctuation ("Grain, GitHub repo.")
+/// still expands.
 #[derive(Serialize, Deserialize, Debug, Clone, Type)]
 pub struct Snippet {
     pub id: String,
@@ -1665,7 +1665,7 @@ pub fn get_default_settings() -> AppSettings {
         },
     );
 
-    // [GRAIN] dedicated real-time (rolling-window) transcribe shortcut.
+    // [GRAIN] dedicated Parakeet TDT Flow shortcut.
     #[cfg(target_os = "macos")]
     let default_realtime_shortcut = "option+space";
     #[cfg(not(target_os = "macos"))]
@@ -1675,7 +1675,7 @@ pub fn get_default_settings() -> AppSettings {
         ShortcutBinding {
             id: "transcribe_realtime".to_string(),
             name: "Flow".to_string(),
-            description: "Rolling-window transcription that processes as you speak.".to_string(),
+            description: "Fast Parakeet TDT transcription that processes as you speak.".to_string(),
             default_binding: default_realtime_shortcut.to_string(),
             current_binding: default_realtime_shortcut.to_string(),
         },
