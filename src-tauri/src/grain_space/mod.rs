@@ -381,10 +381,13 @@ pub async fn save_verbatim(
     let clean_title = title.split_whitespace().collect::<Vec<_>>().join(" ");
     let clean_title: String = clean_title.chars().take(80).collect();
     note.title = if clean_title.trim().is_empty() {
-        capture::fallback_title(&note.body)
+        note::opening_markdown_heading(&note.body)
+            .unwrap_or_else(|| capture::fallback_title(&note.body))
     } else {
         clean_title
     };
+    note.title = note.title.chars().take(80).collect();
+    note.body = note::remove_duplicate_title_heading(&note.title, &note.body);
     let id = note.id.clone();
     let be = backend.clone();
     tauri::async_runtime::spawn_blocking(move || backend::save_note(&be, &note))

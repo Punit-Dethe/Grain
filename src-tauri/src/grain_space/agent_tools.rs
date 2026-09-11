@@ -133,15 +133,21 @@ pub fn specs(app: &AppHandle) -> Vec<ToolSpec> {
             name: "save_note".to_string(),
             description: "Save a NEW note. Only when the user asks you to write something down, \
                           remember it, or make a note of it — never as a side effect of \
-                          answering, rewriting or explaining something."
+                          answering, rewriting or explaining something. Write one coherent, \
+                          specific note: retain the user's concrete facts and useful detail, \
+                          but do not pad, repeat, or add generic filler. The title is stored \
+                          separately, so never repeat it as an opening heading in the body."
                 .to_string(),
             parameters: serde_json::json!({
                 "type": "object",
                 "properties": {
                     "body": {
                         "type": "string",
-                        "description": "The note itself, in Markdown. Keep the user's own \
-                                        wording and detail; do not summarise it away.",
+                        "description": "The complete note body in Markdown. Keep the user's \
+                                        wording, concrete facts, and useful detail. Use only the \
+                                        structure and length the content needs: no padding, \
+                                        repetition, generic filler, or opening heading that \
+                                        duplicates the separate title field.",
                         "maxLength": 65536
                     },
                     "title": {
@@ -163,7 +169,8 @@ pub fn specs(app: &AppHandle) -> Vec<ToolSpec> {
             name: "append_to_note".to_string(),
             description: "Add text to the end of a note that already exists, by id. Use this \
                           only for a simple additive update. Use rewrite_note when the user asks \
-                          to correct, reorganize, replace, or improve the note as a whole."
+                          to correct, reorganize, replace, or improve the note as a whole. Add \
+                          only the new information once; do not restate the existing note."
                 .to_string(),
             parameters: serde_json::json!({
                 "type": "object",
@@ -187,8 +194,13 @@ pub fn specs(app: &AppHandle) -> Vec<ToolSpec> {
             description: "Replace an existing note with a complete revised version. Use only \
                           when the user asks to correct, reorganize, replace, or improve that \
                           note. Search for and read the exact target first. `body` must be the \
-                          entire desired note, not instructions or a diff. This requires user \
-                          confirmation and fails if the note changes before approval."
+                          entire desired note, not instructions or a diff. Preserve every useful \
+                          source fact and the user's intent unless the requested transformation \
+                          requires condensing or removing them. Integrate each change in its \
+                          logical place, and match the length and structure to the content. Do \
+                          not pad, recap, repeat points, or add generic filler. The title is a \
+                          separate field; never repeat it as the body's opening heading. This \
+                          requires user confirmation and fails if the note changes before approval."
                 .to_string(),
             parameters: serde_json::json!({
                 "type": "object",
@@ -200,7 +212,10 @@ pub fn specs(app: &AppHandle) -> Vec<ToolSpec> {
                     },
                     "body": {
                         "type": "string",
-                        "description": "The complete replacement note in Markdown.",
+                        "description": "The complete replacement note in Markdown. Preserve \
+                                        unchanged facts and specific wording where useful; \
+                                        integrate requested changes once. Be as detailed as the \
+                                        content requires, with no filler or duplicate title heading.",
                         "maxLength": 65536
                     },
                     "title": {
@@ -394,10 +409,12 @@ pub async fn execute_opt(
             }
             // Finalize note title and body BEFORE confirmation
             let final_title = raw_title
+                .or_else(|| super::note::opening_markdown_heading(&body))
                 .map(|t| t.split_whitespace().collect::<Vec<_>>().join(" "))
                 .filter(|t| !t.is_empty())
                 .unwrap_or_else(|| super::capture::fallback_title(&body));
             let final_title: String = final_title.chars().take(80).collect();
+            let final_body = super::note::remove_duplicate_title_heading(&final_title, &body);
 
             let collection = str_arg("collection");
             if let Some(value) = &collection {
@@ -411,7 +428,7 @@ pub async fn execute_opt(
             // fields in the confirmation or its idempotency identity.
             let mut call_args = serde_json::json!({
                 "title": final_title,
-                "body": body,
+                "body": final_body,
             });
             if let (Some(obj), Some(collection)) = (call_args.as_object_mut(), collection) {
                 obj.insert(
@@ -455,7 +472,7 @@ pub async fn execute_opt(
             }
             if !log.was_fully_read(&id) {
                 return NoteToolResult::Text(
-                    "Read the exact target note in full with get_note before rewriting it. Notes too large for a complete Agent read must be edited in the Notes tab."
+                    "Read the exact target note in full with get_note before appending to it. Notes too large for a complete Agent read must be edited in the Notes tab."
                         .to_string(),
                 );
             }
@@ -523,6 +540,12 @@ pub async fn execute_opt(
                     "rewrite_note body exceeds maximum allowed size ({MAX_BODY_BYTES} bytes)."
                 ));
             }
+            if !log.was_fully_read(&id) {
+                return NoteToolResult::Text(
+                    "Read the exact target note in full with get_note before rewriting it. Notes too large for a complete Agent read must be edited in the Notes tab."
+                        .to_string(),
+                );
+            }
             let Some(app) = app else {
                 return NoteToolResult::Text(
                     "rewrite_note requires active backend app handle to resolve target note."
@@ -539,10 +562,12 @@ pub async fn execute_opt(
             };
 
             let title = str_arg("title")
+                .or_else(|| super::note::opening_markdown_heading(&body))
                 .map(|value| value.split_whitespace().collect::<Vec<_>>().join(" "))
                 .filter(|value| !value.is_empty())
                 .unwrap_or_else(|| super::capture::fallback_title(&body));
             let title: String = title.chars().take(MAX_TITLE_BYTES).collect();
+            let body = super::note::remove_duplicate_title_heading(&title, &body);
             let summary: String = str_arg("summary")
                 .unwrap_or_default()
                 .chars()
@@ -706,6 +731,26 @@ mod tests {
                 .map(str::to_string)
         };
         assert!(str_arg("query").is_none());
+    }
+
+    #[tokio::test]
+    async fn rewrite_requires_a_full_read_before_host_resolution() {
+        let call = ToolCallOut {
+            id: "call_rewrite".to_string(),
+            name: "rewrite_note".to_string(),
+            arguments: serde_json::json!({
+                "id": "note-1",
+                "title": "Project Plan",
+                "body": "A complete replacement."
+            })
+            .to_string(),
+        };
+        let mut log = TurnLog::default();
+        let result = execute_opt(None, &call, &mut log).await;
+        let NoteToolResult::Text(message) = result else {
+            panic!("rewrite without a full read must not reach confirmation");
+        };
+        assert!(message.contains("Read the exact target note in full"));
     }
 
     #[test]

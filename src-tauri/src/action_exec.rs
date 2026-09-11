@@ -721,6 +721,7 @@ async fn grain_space_execute(app: &AppHandle, prepared: &PreparedCall) -> Action
             }
 
             let raw_title = str_arg(args, "title")
+                .or_else(|| crate::grain_space::note::opening_markdown_heading(&body))
                 .unwrap_or_else(|| crate::grain_space::capture::fallback_title(&body));
             let title: String = raw_title
                 .split_whitespace()
@@ -729,6 +730,7 @@ async fn grain_space_execute(app: &AppHandle, prepared: &PreparedCall) -> Action
                 .chars()
                 .take(80)
                 .collect();
+            let body = crate::grain_space::note::remove_duplicate_title_heading(&title, &body);
             let tldr: String = str_arg(args, "summary")
                 .unwrap_or_default()
                 .chars()
