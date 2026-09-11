@@ -174,6 +174,15 @@ pub fn move_note_to_folder(b: &Backend, id: &str, folder: Option<&str>) -> Resul
     vault::move_note_to_folder(b, id, folder)
 }
 
+/// Persist the user's manual ordering for notes inside one folder.
+pub fn reorder_notes_in_folder(
+    b: &Backend,
+    folder: Option<&str>,
+    ordered_ids: &[String],
+) -> Result<()> {
+    vault::reorder_notes_in_folder(b, folder, ordered_ids)
+}
+
 /// Delete a Grain subfolder ("collection"), moving its notes back to the Grain
 /// root first so none are lost.
 pub fn delete_folder(b: &Backend, folder: &str) -> Result<()> {

@@ -10,9 +10,19 @@ import {
   type ViewUpdate,
   WidgetType,
 } from "@codemirror/view";
-import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
-import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
 import {
+  defaultKeymap,
+  history,
+  historyKeymap,
+  indentWithTab,
+} from "@codemirror/commands";
+import {
+  markdown,
+  markdownKeymap,
+  markdownLanguage,
+} from "@codemirror/lang-markdown";
+import {
+  bracketMatching,
   HighlightStyle,
   syntaxHighlighting,
   syntaxTree,
@@ -460,11 +470,21 @@ function MarkdownEditor(
       extensions: [
         history(),
         formatKeymap,
-        keymap.of([...defaultKeymap, ...historyKeymap]),
+        // Markdown's own Enter/Backspace behavior must precede the generic
+        // keymap: it continues lists and blockquotes, and exits an empty item
+        // exactly like dedicated desktop Markdown editors. Tab indents the
+        // current list level without introducing another editor subsystem.
+        keymap.of([
+          ...markdownKeymap,
+          indentWithTab,
+          ...defaultKeymap,
+          ...historyKeymap,
+        ]),
         markdown({
           base: markdownLanguage,
           extensions: grainMarkdownExtensions,
         }),
+        bracketMatching(),
         syntaxHighlighting(mdHighlight),
         richDecorations,
         grainTableField,
@@ -473,6 +493,11 @@ function MarkdownEditor(
         cmPlaceholder(placeholder),
         EditorState.readOnly.of(readOnly),
         EditorView.editable.of(!readOnly),
+        EditorView.contentAttributes.of({
+          "aria-label": placeholder,
+          spellcheck: "true",
+          autocapitalize: "sentences",
+        }),
         EditorView.updateListener.of((update) => {
           if (!update.docChanged) return;
           if (update.transactions.some((tr) => tr.annotation(External))) return;

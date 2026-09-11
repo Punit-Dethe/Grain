@@ -145,6 +145,10 @@ pub struct NoteCard {
     /// separators so the sidebar can render a nested tree. `None` = the note
     /// sits loose directly in the Grain folder (shown under "Notes").
     pub folder: Option<String>,
+    /// Optional manual position inside `folder`. This is presentation metadata
+    /// from the local derived index, never part of the Markdown note or its
+    /// locked frontmatter schema. `None` keeps the normal newest-first order.
+    pub manual_order: Option<i64>,
     /// True = authored OUTSIDE Grain (an Obsidian file inside the Grain folder
     /// with no `grain_id` yet). Still fully editable — Grain adopts it on first
     /// edit; the flag only groups it below the divider in the loose "Notes"

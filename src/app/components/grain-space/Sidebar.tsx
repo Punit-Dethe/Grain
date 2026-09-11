@@ -18,6 +18,7 @@ import {
   RECENT_NOTES_PAGE_SIZE,
   revealMoreRecentNotes,
 } from "./recentNotesPagination";
+import { moveNoteId, orderFolderNotes, type DropEdge } from "./noteOrdering";
 
 /**
  * [GRAIN] The Notes rail (NOTES-TAB-PLAN.md Phase B).
@@ -208,6 +209,8 @@ type Props = {
   onCreateFolder: (name: string) => void;
   /** File a note into a folder — `null` moves it back out to the Grain root. */
   onMoveNote: (id: string, folder: string | null) => void;
+  /** Persist the exact visible order of notes already inside one folder. */
+  onReorderNotes: (folder: string, orderedIds: string[]) => void;
   /** Delete a collection. Its notes are moved back to the root, not destroyed. */
   onDeleteFolder: (folder: string) => void;
 };
@@ -229,6 +232,7 @@ export function Sidebar({
   onCreate,
   onCreateFolder,
   onMoveNote,
+  onReorderNotes,
   onDeleteFolder,
 }: Props) {
   const { t } = useTranslation();
@@ -258,8 +262,15 @@ export function Sidebar({
   // Drag state. The note id rides in a ref as well as the dataTransfer, because
   // `dragover` is not allowed to read the payload — and the drop target has to
   // know whether to highlight before the drop happens.
-  const draggingRef = useRef<string | null>(null);
+  const draggingRef = useRef<{
+    id: string;
+    folder: string | null;
+  } | null>(null);
   const [dropTarget, setDropTarget] = useState<string | null>(null);
+  const [rowDrop, setRowDrop] = useState<{
+    id: string;
+    edge: DropEdge;
+  } | null>(null);
 
   const toggleSection = (key: string) =>
     setCollapsed((c) => ({ ...c, [key]: !c[key] }));
@@ -337,19 +348,18 @@ export function Sidebar({
     }
   }, [recentVisibleCount, visibleRecentCount]);
 
-  /** Card of the note being dragged, so a no-op move can be declined. */
-  const dragFolderOf = (id: string): string | null =>
-    cards.find((c) => c.id === id)?.folder ?? null;
-
-  const beginDrag = (id: string) => (e: React.DragEvent) => {
-    draggingRef.current = id;
-    e.dataTransfer.setData("text/plain", id);
+  const beginDrag = (card: NoteCard) => (e: React.DragEvent) => {
+    // Cache the folder with the id. `dragover` fires for every pointer move, so
+    // it must not scan the full card list just to validate a same-folder drop.
+    draggingRef.current = { id: card.id, folder: card.folder };
+    e.dataTransfer.setData("text/plain", card.id);
     e.dataTransfer.effectAllowed = "move";
   };
 
   const endDrag = () => {
     draggingRef.current = null;
     setDropTarget(null);
+    setRowDrop(null);
   };
 
   /** Drop-zone handlers for a folder path (`null` = the Grain root). */
@@ -357,10 +367,10 @@ export function Sidebar({
     const key = folder ?? "__grain_root__";
     return {
       onDragOver: (e: React.DragEvent) => {
-        const id = draggingRef.current;
+        const dragged = draggingRef.current;
         // Refusing the no-op keeps the highlight honest: no drop indicator on
         // the folder the note is already in.
-        if (!id || dragFolderOf(id) === folder) return;
+        if (!dragged || dragged.folder === folder) return;
         e.preventDefault();
         e.dataTransfer.dropEffect = "move";
         setDropTarget(key);
@@ -370,23 +380,103 @@ export function Sidebar({
       },
       onDrop: (e: React.DragEvent) => {
         e.preventDefault();
-        const id = draggingRef.current ?? e.dataTransfer.getData("text/plain");
+        const dragged = draggingRef.current;
+        const id = dragged?.id ?? e.dataTransfer.getData("text/plain");
         endDrag();
-        if (!id || dragFolderOf(id) === folder) return;
+        if (!id || dragged?.folder === folder) return;
         onMoveNote(id, folder);
       },
       "data-drop": dropTarget === key ? "on" : undefined,
     };
   };
 
-  const cardRow = (card: NoteCard, depth = 0) => (
+  const reorder = (
+    siblings: readonly NoteCard[],
+    folder: string,
+    sourceId: string,
+    targetId: string,
+    edge: DropEdge,
+  ) => {
+    const ids = siblings.map((card) => card.id);
+    const orderedIds = moveNoteId(ids, sourceId, targetId, edge);
+    if (orderedIds.every((id, index) => id === ids[index])) return;
+    onReorderNotes(folder, orderedIds);
+  };
+
+  const cardRow = (
+    card: NoteCard,
+    depth = 0,
+    siblings?: readonly NoteCard[],
+  ) => (
     <button
       key={card.id}
       type="button"
       draggable
-      onDragStart={beginDrag(card.id)}
+      onDragStart={beginDrag(card)}
       onDragEnd={endDrag}
-      className={`gs-row${selectedId === card.id ? " gs-row--on" : ""}`}
+      onDragOver={(e) => {
+        const dragged = draggingRef.current;
+        if (
+          !siblings ||
+          !dragged ||
+          dragged.id === card.id ||
+          dragged.folder !== card.folder
+        ) {
+          return;
+        }
+        e.preventDefault();
+        e.stopPropagation();
+        e.dataTransfer.dropEffect = "move";
+        const rect = e.currentTarget.getBoundingClientRect();
+        const edge: DropEdge =
+          e.clientY < rect.top + rect.height / 2 ? "before" : "after";
+        setDropTarget(null);
+        setRowDrop({ id: card.id, edge });
+      }}
+      onDragLeave={(e) => {
+        if (
+          e.relatedTarget instanceof Node &&
+          e.currentTarget.contains(e.relatedTarget)
+        ) {
+          return;
+        }
+        setRowDrop((current) => (current?.id === card.id ? null : current));
+      }}
+      onDrop={(e) => {
+        const dragged = draggingRef.current;
+        const edge = rowDrop?.id === card.id ? rowDrop.edge : "before";
+        if (!siblings || !dragged || dragged.folder !== card.folder) {
+          return;
+        }
+        e.preventDefault();
+        e.stopPropagation();
+        if (card.folder) {
+          reorder(siblings, card.folder, dragged.id, card.id, edge);
+        }
+        endDrag();
+      }}
+      onKeyDown={(e) => {
+        if (
+          !siblings ||
+          !card.folder ||
+          !e.altKey ||
+          !["ArrowUp", "ArrowDown"].includes(e.key)
+        ) {
+          return;
+        }
+        const index = siblings.findIndex((sibling) => sibling.id === card.id);
+        const target = siblings[index + (e.key === "ArrowUp" ? -1 : 1)];
+        if (!target) return;
+        e.preventDefault();
+        reorder(
+          siblings,
+          card.folder,
+          card.id,
+          target.id,
+          e.key === "ArrowUp" ? "before" : "after",
+        );
+      }}
+      className={`gs-row${selectedId === card.id ? " gs-row--on" : ""}${rowDrop?.id === card.id ? ` gs-row--drop-${rowDrop.edge}` : ""}`}
       style={depth ? { paddingLeft: 12 + depth * 16 } : undefined}
       onClick={() => onSelectCard(card)}
       title={card.title.trim() || t("grainSpaceOverlay.untitled")}
@@ -426,6 +516,7 @@ export function Sidebar({
       a.name.localeCompare(b.name),
     );
     const count = subtreeCount(node);
+    const orderedNotes = orderFolderNotes(node.notes);
     if (variant === "next") {
       return (
         <div key={node.path} className="gs-next-folder-node">
@@ -447,7 +538,7 @@ export function Sidebar({
           {open && (
             <div className="gs-next-folder-children">
               {subs.map((child) => renderFolder(child, depth + 1))}
-              {node.notes.map((c) => cardRow(c, depth + 1))}
+              {orderedNotes.map((c) => cardRow(c, depth + 1, orderedNotes))}
             </div>
           )}
         </div>
@@ -475,7 +566,7 @@ export function Sidebar({
         {open && (
           <>
             {subs.map((child) => renderFolder(child, depth + 1))}
-            {node.notes.map((c) => cardRow(c, depth + 1))}
+            {orderedNotes.map((c) => cardRow(c, depth + 1, orderedNotes))}
           </>
         )}
       </div>

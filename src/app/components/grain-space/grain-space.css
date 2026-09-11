@@ -355,6 +355,32 @@
   cursor: grabbing;
 }
 
+/* Reordering is insertion, not containment: a hairline between siblings says
+ * exactly where the note will land without moving the list under the pointer. */
+.gs-row--drop-before::before,
+.gs-row--drop-after::after {
+  content: "";
+  position: absolute;
+  z-index: 1;
+  inset-inline: var(--gs-sp-2);
+  height: 1px;
+  background: var(--orange);
+  pointer-events: none;
+}
+
+.gs-row--drop-before::before {
+  top: -1px;
+}
+
+.gs-row--drop-after::after {
+  bottom: -1px;
+}
+
+.gs-row:focus-visible {
+  outline: 1px solid var(--orange);
+  outline-offset: -1px;
+}
+
 /* Section header — quiet disclosure row: chevron + label + count. */
 .gs-section {
   display: flex;

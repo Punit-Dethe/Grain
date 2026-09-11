@@ -3536,18 +3536,21 @@ html[data-theme="light"] .next-settings-content .app-select__control {
 }
 
 .grain-root .gs-next .gs-column {
-  max-width: calc(760px + 104px);
-  padding: 0 26px;
+  max-width: calc(var(--gs-measure) + 104px);
+  /* One horizontal inset owns the complete prose axis. Previously the column,
+     title and CodeMirror scroller each added 26px, placing body copy a full
+     inset to the right of the title. */
+  padding: 0 52px;
 }
 
 .grain-root .gs-next .gs-meta {
-  padding: 56px 26px 0;
+  padding: 56px 0 0;
   color: var(--text-4);
   font-size: 11px;
 }
 
 .grain-root .gs-next .gs-title {
-  padding: 12px 26px 18px;
+  padding: 12px 0 18px;
   color: var(--text-1);
   font-size: 32px;
   line-height: 1.08;
@@ -3556,14 +3559,22 @@ html[data-theme="light"] .next-settings-content .app-select__control {
 
 .grain-root .gs-next .gs-edit,
 .grain-root .gs-next .gs-ed-loading {
-  padding-inline: 26px;
+  padding-inline: 0;
+}
+
+.grain-root .gs-next .gs-edit .cm-scroller {
+  padding-inline: 0;
 }
 
 .grain-root .gs-next .gs-edit .cm-content,
 .grain-root .gs-next .gs-bodytext {
   color: var(--text-2);
-  font-size: 14px;
-  line-height: 1.75;
+  font-size: 16px;
+  line-height: 1.68;
+}
+
+.grain-root .gs-next .gs-bodytext {
+  padding-inline: 0;
 }
 
 .grain-root .gs-next .gs-actions {
@@ -3833,7 +3844,7 @@ html[data-theme="light"] .grain-root .gs-next .gs-chat-bubble--user {
   }
 
   .grain-root .gs-next .gs-column {
-    padding-inline: 10px;
+    padding-inline: 24px;
   }
 }
 

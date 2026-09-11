@@ -88,6 +88,9 @@ export function GrainSpaceOverlay({
   const saveTimer = useRef<number | undefined>(undefined);
   const lexicalTimer = useRef<number | undefined>(undefined);
   const hybridTimer = useRef<number | undefined>(undefined);
+  // Reorder commands replace a folder's complete order. Serialize rapid
+  // keyboard/drag operations so an older IPC request cannot commit last.
+  const reorderQueueRef = useRef<Promise<void>>(Promise.resolve());
   /** Bumped per search. A staged search has two responses in flight and the slow
    * one can land after the user has typed further, so every write to `results` is
    * checked against this — without it, a late hybrid reply for "wif" overwrites
@@ -369,6 +372,43 @@ export function GrainSpaceOverlay({
     [acceptResults],
   );
 
+  const reorderNotes = useCallback(
+    (folder: string, orderedIds: string[]) => {
+      const positions = new Map(orderedIds.map((id, index) => [id, index]));
+      // The rail should settle under the pointer immediately. The command emits
+      // notes-changed after committing, which replaces this optimistic order
+      // with the backend's canonical result (or the next refresh repairs an
+      // error without maintaining a second state machine here).
+      setCards((current) =>
+        current.map((card) => {
+          if (card.folder !== folder) return card;
+          const position = positions.get(card.id);
+          return {
+            ...card,
+            manual_order: position ?? card.manual_order,
+          };
+        }),
+      );
+      reorderQueueRef.current = reorderQueueRef.current
+        .then(async () => {
+          const result = await commands.grainSpaceReorderNotes(
+            folder,
+            orderedIds,
+          );
+          if (result.status !== "ok") {
+            console.error("Grain Space: reorder failed:", result.error);
+            await refresh();
+          }
+        })
+        .catch(async (error) => {
+          // Keep the queue usable after an unexpected invoke rejection.
+          console.error("Grain Space: reorder failed:", error);
+          await refresh();
+        });
+    },
+    [refresh],
+  );
+
   /**
    * Read the corpus from scratch: backend settings, then the listing, then open
    * whichever note we should land on.
@@ -639,6 +679,9 @@ export function GrainSpaceOverlay({
           onCreate={() => void newNote()}
           onCreateFolder={(name) => void createFolder(name)}
           onMoveNote={(id, folder) => void moveNote(id, folder)}
+          onReorderNotes={(folder, orderedIds) =>
+            void reorderNotes(folder, orderedIds)
+          }
           onDeleteFolder={(folder) => void deleteFolder(folder)}
         />
 

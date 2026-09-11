@@ -199,6 +199,26 @@ pub async fn grain_space_move_note(
     result
 }
 
+/// Save a manual ordering for notes within one collection. This never rewrites
+/// note files: the order is lightweight local presentation metadata.
+#[tauri::command]
+#[specta::specta]
+pub async fn grain_space_reorder_notes(
+    app: AppHandle,
+    folder: Option<String>,
+    ordered_ids: Vec<String>,
+) -> Result<(), String> {
+    let be = gate(&app)?;
+    let result = blocking(move || {
+        backend::reorder_notes_in_folder(&be, folder.as_deref(), &ordered_ids)
+    })
+    .await;
+    if result.is_ok() {
+        emit_notes_changed(&app);
+    }
+    result
+}
+
 /// Delete a Grain collection (subfolder). Its notes are moved back to the Grain
 /// root — they reappear as loose notes — and the empty folder is removed. Never
 /// deletes a note.

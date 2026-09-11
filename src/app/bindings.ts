@@ -547,6 +547,18 @@ async grainSpaceMoveNote(id: string, folder: string | null) : Promise<Result<Not
 }
 },
 /**
+ * Save a manual ordering for notes within one collection. This never rewrites
+ * note files: the order is lightweight local presentation metadata.
+ */
+async grainSpaceReorderNotes(folder: string | null, orderedIds: string[]) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("grain_space_reorder_notes", { folder, orderedIds }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Every Grain subfolder, including the empty ones — the sidebar's folder tree.
  * Distinct from `grain_space_list_folders`, which answers "which folders hold
  * notes" for capture routing; a folder the user just made holds none yet.
@@ -3711,6 +3723,12 @@ export type NoteCard = { id: string; title: string; tldr: string; timestamp: num
  * sits loose directly in the Grain folder (shown under "Notes").
  */
 folder: string | null; 
+/**
+ * Optional manual position inside `folder`. This is presentation metadata
+ * from the local derived index, never part of the Markdown note or its
+ * locked frontmatter schema. `None` keeps the normal newest-first order.
+ */
+manual_order: number | null;
 /**
  * True = authored OUTSIDE Grain (an Obsidian file inside the Grain folder
  * with no `grain_id` yet). Still fully editable — Grain adopts it on first

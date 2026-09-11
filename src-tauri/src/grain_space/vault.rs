@@ -16,7 +16,7 @@
 //! watcher, zero idle RAM (OBSIDIAN-PLAN.md §5). Writes are atomic
 //! (tmp + rename) and never touch `.obsidian/`.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -730,6 +730,11 @@ fn open_index(v: &Vault) -> Result<Connection> {
         );
         CREATE VIRTUAL TABLE IF NOT EXISTS notes_fts USING fts5(
             id UNINDEXED, title, tldr, body
+        );
+        CREATE TABLE IF NOT EXISTS note_order (
+            note_id  TEXT PRIMARY KEY,
+            folder   TEXT NOT NULL,
+            position INTEGER NOT NULL
         );",
     )?;
     // Migrate an index created before the merge-base column existed. `content`
@@ -830,6 +835,7 @@ fn indexed_content(conn: &Connection, id: &str) -> Option<String> {
 fn index_remove(conn: &Connection, id: &str) -> Result<()> {
     conn.execute("DELETE FROM notes_meta WHERE id = ?1", params![id])?;
     conn.execute("DELETE FROM notes_fts WHERE id = ?1", params![id])?;
+    conn.execute("DELETE FROM note_order WHERE note_id = ?1", params![id])?;
     if vec_table_exists(conn) {
         purge_note_vectors(conn, id)?;
     }
@@ -1160,12 +1166,28 @@ pub fn list_cards(v: &Vault) -> Result<Vec<NoteCard>> {
         })?;
         rows.collect::<rusqlite::Result<Vec<_>>>()?
     };
+    let manual_order: HashMap<String, (String, i64)> = {
+        let mut stmt = conn.prepare("SELECT note_id, folder, position FROM note_order")?;
+        let rows = stmt.query_map([], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                (r.get::<_, String>(1)?, r.get::<_, i64>(2)?),
+            ))
+        })?;
+        rows.collect::<rusqlite::Result<HashMap<_, _>>>()?
+    };
     let mut cards = Vec::with_capacity(rows.len());
     for (id, rel, timestamp, foreign) in rows {
         if !in_grain_folder(v, &rel) {
             continue; // the user's own vault files — never shown in the note UI
         }
         let folder = folder_of(v, &rel);
+        let folder_key = folder.as_deref().unwrap_or("");
+        let position = manual_order
+            .get(&id)
+            .and_then(|(ordered_folder, position)| {
+                (ordered_folder == folder_key).then_some(*position)
+            });
         if foreign {
             let stem = Path::new(&rel)
                 .file_stem()
@@ -1179,6 +1201,7 @@ pub fn list_cards(v: &Vault) -> Result<Vec<NoteCard>> {
                 is_pinned: false,
                 reminder_state: ReminderState::default(),
                 folder,
+                manual_order: position,
                 readonly: true,
             });
             continue;
@@ -1192,6 +1215,7 @@ pub fn list_cards(v: &Vault) -> Result<Vec<NoteCard>> {
                 is_pinned: n.is_pinned,
                 reminder_state: n.reminder_state,
                 folder,
+                manual_order: position,
                 readonly: false,
             }),
             Err(e) => log::warn!("[GRAIN] vault list_cards: {e:#}"),
@@ -2015,7 +2039,49 @@ pub fn move_note_to_folder(v: &Vault, id: &str, folder: Option<&str>) -> Result<
     let (mut indexed, grain_owned) = read_md_note(&new_rel, &text, mtime);
     indexed.title = stem;
     index_upsert(&conn, &indexed, &new_rel, mtime, size, !grain_owned, &text)?;
+    // A position only has meaning inside its original folder. The destination
+    // falls back to newest-first until the user explicitly places it there.
+    conn.execute("DELETE FROM note_order WHERE note_id = ?1", params![id])?;
     read_note_at(v, &new_rel)
+}
+
+/// Persist the visible order for notes in one folder. The list may be partial
+/// when a concurrent capture arrived after the UI read; every supplied id must
+/// still be unique and currently belong to this exact folder. Missing notes
+/// retain the default newest-first fallback after the explicitly ordered rows.
+pub fn reorder_notes_in_folder(
+    v: &Vault,
+    folder: Option<&str>,
+    ordered_ids: &[String],
+) -> Result<()> {
+    ensure_vault(v)?;
+    let _guard = VAULT_LOCK.lock().unwrap();
+    let mut conn = open_index(v)?;
+    reconcile_locked(v, &conn)?;
+
+    let folder_key = folder.unwrap_or("").trim_matches(['/', '\\']).replace('\\', "/");
+    let mut seen = HashSet::with_capacity(ordered_ids.len());
+    for id in ordered_ids {
+        super::note::validate_id(id)?;
+        if !seen.insert(id) {
+            return Err(anyhow!("duplicate note id in manual order"));
+        }
+        let (rel, _) = path_of(&conn, id)?.ok_or_else(|| anyhow!("note not found: {id}"))?;
+        if !in_grain_folder(v, &rel) || folder_of(v, &rel).as_deref().unwrap_or("") != folder_key {
+            return Err(anyhow!("note does not belong to the requested folder: {id}"));
+        }
+    }
+
+    let tx = conn.transaction()?;
+    tx.execute("DELETE FROM note_order WHERE folder = ?1", params![folder_key])?;
+    for (position, id) in ordered_ids.iter().enumerate() {
+        tx.execute(
+            "INSERT INTO note_order (note_id, folder, position) VALUES (?1, ?2, ?3)",
+            params![id, folder_key, position as i64],
+        )?;
+    }
+    tx.commit()?;
+    Ok(())
 }
 
 /// Collect every `.md` file under `dir` (recursively), as absolute paths.
@@ -2101,6 +2167,12 @@ pub fn delete_folder(v: &Vault, folder: &str) -> Result<()> {
     // row), and rows for anything that vanished from disk are dropped.
     let conn = open_index(v)?;
     reconcile_locked(v, &conn)?;
+    let folder_key = segs.join("/");
+    conn.execute(
+        "DELETE FROM note_order
+         WHERE folder = ?1 OR substr(folder, 1, length(?1) + 1) = ?1 || '/'",
+        params![folder_key],
+    )?;
     Ok(())
 }
 
@@ -3957,6 +4029,52 @@ mod tests {
         let _ = outsider;
         let fid = foreign_id("Outsider.md");
         assert!(move_note_to_folder(&v, &fid, Some("Work")).is_err());
+        cleanup(&v);
+    }
+
+    #[test]
+    fn manual_folder_order_is_persistent_scoped_and_cleared_on_move() {
+        let v = temp_vault("manual-order");
+        let a = grain_note("Alpha", "one");
+        let b = grain_note("Bravo", "two");
+        let c = grain_note("Charlie", "three");
+        let outside = grain_note("Outside", "root");
+        for note in [&a, &b, &c, &outside] {
+            save_note(&v, note).unwrap();
+        }
+        for note in [&a, &b, &c] {
+            move_note_to_folder(&v, &note.id, Some("Work")).unwrap();
+        }
+
+        let order = vec![b.id.clone(), c.id.clone(), a.id.clone()];
+        reorder_notes_in_folder(&v, Some("Work"), &order).unwrap();
+        let mut cards: Vec<_> = list_cards(&v)
+            .unwrap()
+            .into_iter()
+            .filter(|card| card.folder.as_deref() == Some("Work"))
+            .collect();
+        cards.sort_by_key(|card| card.manual_order);
+        assert_eq!(
+            cards.iter().map(|card| &card.id).collect::<Vec<_>>(),
+            order.iter().collect::<Vec<_>>()
+        );
+
+        assert!(reorder_notes_in_folder(
+            &v,
+            Some("Work"),
+            &[a.id.clone(), a.id.clone()]
+        )
+        .is_err());
+        assert!(reorder_notes_in_folder(&v, Some("Work"), &[outside.id.clone()]).is_err());
+
+        move_note_to_folder(&v, &a.id, None).unwrap();
+        let moved = list_cards(&v)
+            .unwrap()
+            .into_iter()
+            .find(|card| card.id == a.id)
+            .unwrap();
+        assert_eq!(moved.folder, None);
+        assert_eq!(moved.manual_order, None);
         cleanup(&v);
     }
 
