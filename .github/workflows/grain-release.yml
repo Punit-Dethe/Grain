@@ -205,33 +205,14 @@ jobs:
           releaseDraft: ${{ github.event_name != 'workflow_dispatch' || inputs.draft }}
           prerelease: false
           releaseBody: |
-            # Grain v0.0.4
+            # Grain v0.0.5
 
-            A focused release improving everyday navigation, extensions, prompting, and the reliability of Parakeet TDT Flow.
+            This update improves Grain Space editing and keeps extension visuals under Grain's control.
 
-            ### Interface and extensions
-
-            - Refined sidebar and content positioning, and reorganized the sidebar for clearer navigation.
-            - Reworked the Extension Store so extension details open as a full page with more room to understand each extension.
-            - Changed Studio Extend and `.next` extension experiences to open in focused pop-ups instead of rendering inside the page.
-            - Refined extension styling and presentation across the app.
-            - Added host-owned authentication for extensions.
-            - Standardized extension icons at the API boundary for consistent presentation.
-            - Restored settings that had become hidden during the UI migration.
-
-            ### Flow and dictation
-
-            - Rebuilt Rolling Window Flow around the reviewed Parakeet TDT v2 and v3 models for faster, accurate streaming behavior.
-            - Added model-aware Flow availability across settings, shortcuts, live preview, and daily dictation paths.
-            - Re-audited Flow and fixed three memory-lifecycle issues, along with additional stability and cleanup improvements.
-            - Re-audited dictation prompt priority, fixing ordering bugs and reducing unnecessary work.
-            - Hardened prompt extensions with stricter security boundaries and reliability fixes.
-            - Removed cursor-aware and unique-word Prompt Priority forms from production surfaces.
-
-            ### Fixes and maintenance
-
-            - Fixed multiple AI history tracking and consistency issues.
-            - Fixed global Escape-key ownership when Agent and dictation are enabled together.
-            - Improved and fixed the upstream maintenance workflow.
+            - Aligned note title and body layout and refined Markdown editing.
+            - Added manual note ordering within folders, including drag-and-drop rearrangement.
+            - Prevented the Agent from duplicating a note's title as a body heading.
+            - Removed extension-provided visual customization in favor of Grain-owned presentation.
+            - Hid the Extensions sidebar entry in production builds.
           # NSIS installer only (matches tauri.conf.json windows.nsis).
           args: "--bundles nsis"
