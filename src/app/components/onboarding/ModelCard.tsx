@@ -55,6 +55,7 @@ interface ModelCardProps {
   downloadProgress?: number;
   downloadSpeed?: number; // MB/s
   showRecommended?: boolean;
+  showFlowSupport?: boolean;
 }
 
 const ModelCard: React.FC<ModelCardProps> = ({
@@ -70,6 +71,7 @@ const ModelCard: React.FC<ModelCardProps> = ({
   downloadProgress,
   downloadSpeed,
   showRecommended = true,
+  showFlowSupport = false,
 }) => {
   const { t } = useTranslation();
   const isFeatured = variant === "featured";
@@ -145,6 +147,11 @@ const ModelCard: React.FC<ModelCardProps> = ({
             </h3>
             {showRecommended && model.is_recommended && (
               <Badge variant="primary">{t("onboarding.recommended")}</Badge>
+            )}
+            {showFlowSupport && (
+              <span className="inline-flex items-center rounded-md border border-line bg-paper-sunken/60 px-2 py-0.5 text-xs font-medium leading-none text-ink-soft">
+                {t("modelSelector.capabilities.supportsFlow")}
+              </span>
             )}
             {status === "active" && (
               <Badge variant="primary">

@@ -42,7 +42,7 @@ use crate::managers::transcription::TranscriptionManager;
 // [GRAIN] `recommended` is intentionally a broad catalog badge. Onboarding
 // needs one editorial default per model family, so keep that narrower policy in
 // Grain-owned code instead of adding another feature to the Handy model types.
-const BEST_STANDARD_REPO_ID: &str = "handy-computer/canary-180m-flash-gguf";
+const BEST_STANDARD_REPO_ID: &str = "handy-computer/parakeet-tdt-0.6b-v2-gguf";
 const BEST_ASR_REPO_ID: &str = "handy-computer/parakeet-unified-en-0.6b-gguf";
 
 /// Which screen the app should open on.
@@ -548,11 +548,11 @@ mod tests {
     #[test]
     fn best_model_repo_matching_requires_a_registry_child() {
         assert!(belongs_to_repo(
-            "handy-computer/canary-180m-flash-gguf/canary-Q8_0.gguf",
+            "handy-computer/parakeet-tdt-0.6b-v2-gguf/parakeet-tdt-0.6b-v2-Q8_0.gguf",
             BEST_STANDARD_REPO_ID,
         ));
         assert!(!belongs_to_repo(
-            "handy-computer/canary-180m-flash-gguf-extra/model.gguf",
+            "handy-computer/parakeet-tdt-0.6b-v2-gguf-extra/model.gguf",
             BEST_STANDARD_REPO_ID,
         ));
     }
