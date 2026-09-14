@@ -423,6 +423,7 @@ function Sidebar({
           <div className="nav-label">{group.label}</div>
           <div className="nav-list">
             {group.items.map((item) => {
+              if (!import.meta.env.DEV && item.page === "extensions") return null;
               const active =
                 item.page === route.page ||
                 (item.page === "extensions" &&
