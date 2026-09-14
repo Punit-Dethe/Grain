@@ -214,5 +214,7 @@ jobs:
             - Prevented the Agent from duplicating a note's title as a body heading.
             - Removed extension-provided visual customization in favor of Grain-owned presentation.
             - Hid the Extensions sidebar entry in production builds.
+            - Changed the onboarding Standard default to Parakeet TDT 0.6B v2.
+            - Marked reviewed Parakeet V2 and V3 models as supporting Flow in the Standard model list.
           # NSIS installer only (matches tauri.conf.json windows.nsis).
           args: "--bundles nsis"
