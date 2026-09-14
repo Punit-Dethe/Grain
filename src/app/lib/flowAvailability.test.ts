@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import type { ModelInfo } from "@/bindings";
 import { getFlowAvailability, isReviewedFlowModelId } from "./flowAvailability";
 
+const v2 =
+  "handy-computer/parakeet-tdt-0.6b-v2-gguf/parakeet-tdt-0.6b-v2-Q8_0.gguf";
 const v3 =
   "handy-computer/parakeet-tdt-0.6b-v3-gguf/parakeet-tdt-0.6b-v3-Q8_0.gguf";
 
@@ -10,6 +12,7 @@ const model = (id: string, is_downloaded = true): ModelInfo =>
 
 describe("Flow availability", () => {
   it("accepts only reviewed v2/v3 catalog artifacts and quantizations", () => {
+    expect(isReviewedFlowModelId(v2)).toBe(true);
     expect(isReviewedFlowModelId(v3)).toBe(true);
     expect(
       isReviewedFlowModelId(
@@ -22,6 +25,9 @@ describe("Flow availability", () => {
   });
 
   it("requires the selected artifact to be installed", () => {
+    expect(getFlowAvailability([model(v2)], v2, false)).toEqual({
+      available: true,
+    });
     expect(getFlowAvailability([model(v3)], v3, false)).toEqual({
       available: true,
     });

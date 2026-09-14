@@ -6,6 +6,7 @@ import type { ModelCardStatus } from "@/components/onboarding";
 import { ModelCard } from "@/components/onboarding";
 import { useModelStore } from "@/stores/modelStore";
 import { LANGUAGES } from "@/lib/constants/languages.ts";
+import { isReviewedFlowModelId } from "@/lib/flowAvailability";
 import { type ModelInfo } from "@/bindings";
 
 // [GRAIN] The local-model browser — downloaded vs. available models, language
@@ -301,6 +302,7 @@ export const ModelLibrary: React.FC = () => {
             downloadProgress={getDownloadProgress(model.id)}
             downloadSpeed={getDownloadSpeed(model.id)}
             showRecommended={false}
+            showFlowSupport={isReviewedFlowModelId(model.id)}
           />
         ))}
       </div>
@@ -323,6 +325,7 @@ export const ModelLibrary: React.FC = () => {
               downloadProgress={getDownloadProgress(model.id)}
               downloadSpeed={getDownloadSpeed(model.id)}
               showRecommended={false}
+              showFlowSupport={isReviewedFlowModelId(model.id)}
             />
           ))}
         </div>

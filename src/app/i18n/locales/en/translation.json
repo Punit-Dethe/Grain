@@ -378,7 +378,8 @@
       "multiLanguage": "Multi-language",
       "languageOnly": "{{language}} Only",
       "translation": "Can translate to English",
-      "translate": "Translate to English"
+      "translate": "Translate to English",
+      "supportsFlow": "Supports Flow"
     }
   },
   "settings": {
