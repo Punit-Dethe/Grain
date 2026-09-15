@@ -379,6 +379,18 @@ const ROLL_INTERVAL: Duration = Duration::from_millis(80);
 /// first shown frame re-parses the font (~a few ms), invisible to the user.
 const IDLE_FREE_AFTER: Duration = Duration::from_secs(30);
 
+/// Advance the existing close animation. A renewed visibility request reverses
+/// the fade immediately, even when the surface never reached its hidden state.
+/// Returns true only when an unopposed close has finished.
+fn advance_visibility_fade(want_visible: bool, closing: &mut bool, alpha: &mut f32) -> bool {
+    if want_visible {
+        *closing = false;
+    }
+    let target = if *closing { 0.0 } else { 1.0 };
+    *alpha += (target - *alpha) * 0.18;
+    *closing && *alpha < 0.02
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum PillState {
     Idle,
@@ -2812,8 +2824,9 @@ mod present {
         HDC, HGDIOBJ,
     };
     use windows::Win32::UI::WindowsAndMessaging::{
-        GetWindowLongPtrW, SetWindowLongPtrW, ShowWindow, UpdateLayeredWindow, GWL_EXSTYLE,
-        SW_HIDE, SW_SHOWNOACTIVATE, ULW_ALPHA, WS_EX_LAYERED, WS_EX_NOACTIVATE,
+        GetWindowLongPtrW, SetWindowLongPtrW, SetWindowPos, ShowWindow, UpdateLayeredWindow,
+        GWL_EXSTYLE, HWND_TOPMOST, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_SHOWWINDOW, SW_HIDE,
+        SW_SHOWNOACTIVATE, ULW_ALPHA, WS_EX_LAYERED, WS_EX_NOACTIVATE,
     };
 
     fn hwnd_of(window: &winit::window::Window) -> Option<HWND> {
@@ -2847,6 +2860,21 @@ mod present {
         if let Some(hwnd) = hwnd_of(window) {
             unsafe {
                 let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+                // AlwaysOnTop at creation is insufficient after another topmost
+                // window covers us. Reassert native Z-order on every reveal;
+                // winit can cache the unchanged window level and skip the call.
+                // Keep the dictation target focused and retain the primed size.
+                if let Err(error) = SetWindowPos(
+                    hwnd,
+                    HWND_TOPMOST,
+                    0,
+                    0,
+                    0,
+                    0,
+                    SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW,
+                ) {
+                    eprintln!("window: failed to show topmost: {error}");
+                }
             }
         }
     }
@@ -6412,9 +6440,8 @@ impl ApplicationHandler<UserEvent> for App {
                 // Ease the Studio Window's whole-window fade. A no-op for the
                 // collapsed pill (which never sets `closing` and always
                 // targets full opacity, so `studio_alpha` just sits at 1.0).
-                let target_alpha = if self.closing { 0.0 } else { 1.0 };
-                self.studio_alpha += (target_alpha - self.studio_alpha) * 0.18;
-                if self.closing && self.studio_alpha < 0.02 {
+                if advance_visibility_fade(want_visible, &mut self.closing, &mut self.studio_alpha)
+                {
                     self.studio_alpha = 0.0;
                     self.closing = false;
                     self.offer_fade_close = false;
@@ -6603,6 +6630,9 @@ impl ApplicationHandler<UserEvent> for App {
                                 h,
                                 Self::center_w_for(self.mode, self.skin, w),
                             );
+                            // The new recording also needs to regain Z-order
+                            // when it reuses an already-visible preview/offer.
+                            present::show_window(window);
                         }
                     }
                 }
@@ -6673,6 +6703,38 @@ pub fn run_pill() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn renewed_visibility_reverses_a_close_before_it_can_hide() {
+        // Exercise both an early interruption and the last frame before hide.
+        for initial_alpha in [1.0, 0.2, 0.021, 0.001] {
+            let mut alpha = initial_alpha;
+            let mut closing = true;
+            assert!(!advance_visibility_fade(true, &mut closing, &mut alpha));
+            assert!(!closing);
+            assert!(alpha >= initial_alpha);
+            for _ in 0..60 {
+                assert!(!advance_visibility_fade(true, &mut closing, &mut alpha));
+            }
+            assert!(alpha > 0.99);
+        }
+    }
+
+    #[test]
+    fn a_close_still_finishes_after_the_renewed_request_ends() {
+        let mut alpha = 0.2;
+        let mut closing = true;
+        assert!(!advance_visibility_fade(true, &mut closing, &mut alpha));
+        // The lifecycle starts a new close when the renewed request ends.
+        closing = true;
+        for _ in 0..60 {
+            if advance_visibility_fade(false, &mut closing, &mut alpha) {
+                assert!(alpha < 0.02);
+                return;
+            }
+        }
+        panic!("an unopposed close must finish so idle rendering can stop");
+    }
 
     #[test]
     fn extension_recommendations_never_promote_the_capture_pill() {
