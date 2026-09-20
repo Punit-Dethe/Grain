@@ -521,45 +521,26 @@ impl ShortcutAction for RealtimeTranscribeAction {
         // wait for weights or allocate a second engine.
         let rolling_error = rt.start_session(app.clone(), sid, preview).err();
 
-        change_tray_icon(app, TrayIconState::Recording);
         // C1: no Handy webview overlay on the real-time path — the winit
         // pill is the only surface, driven by the DaemonEvents below.
 
         let binding_id = binding_id.to_string();
-        let is_always_on = get_settings(app).always_on_microphone;
         // Flow uses exact continuous audio and does not load or run the ASR VAD.
         let vad_policy = VadPolicy::Disabled;
         let mut recording_error = rolling_error;
-        if recording_error.is_some() {
-            // Model/capability rejection happens before microphone capture.
-        } else if is_always_on {
-            let rm_mute = Arc::clone(&rm);
-            let app2 = app.clone();
-            std::thread::spawn(move || {
-                play_feedback_sound_blocking(&app2, SoundType::Start);
-                rm_mute.apply_mute();
-            });
-            let start = rm.try_start_recording_low_ram(&binding_id, vad_policy);
-            if let Err(e) = start {
+        if recording_error.is_none() {
+            // A speaker cue is ordinary microphone input. Flow uses the visual
+            // recording indicator so short speech can begin immediately without
+            // the cue masking its first word or delaying capture.
+            if let Err(e) = rm.try_start_recording_low_ram(&binding_id, vad_policy) {
                 recording_error = Some(e);
-            }
-        } else {
-            let start = rm.try_start_recording_low_ram(&binding_id, vad_policy);
-            match start {
-                Ok(()) => {
-                    let app2 = app.clone();
-                    let rm = Arc::clone(&rm);
-                    std::thread::spawn(move || {
-                        std::thread::sleep(std::time::Duration::from_millis(100));
-                        play_feedback_sound_blocking(&app2, SoundType::Start);
-                        rm.apply_mute();
-                    });
-                }
-                Err(e) => recording_error = Some(e),
+            } else {
+                rm.apply_mute();
             }
         }
 
         if recording_error.is_none() {
+            change_tray_icon(app, TrayIconState::Recording);
             // With the live preview on, use the Studio Window (NativeAsr) so the
             // growing caption has room; otherwise the compact dictation pill.
             emit_session_started(
@@ -615,7 +596,6 @@ impl ShortcutAction for RealtimeTranscribeAction {
         change_tray_icon(app, TrayIconState::Transcribing);
         // C1: pill already showed "processing" from RecordingStopped above.
         rm.remove_mute();
-        play_feedback_sound(app, SoundType::Stop);
 
         let binding_id = binding_id.to_string();
         let post_process = self.post_process_override.load(Ordering::Relaxed);
@@ -626,7 +606,9 @@ impl ShortcutAction for RealtimeTranscribeAction {
             let _guard = FinishGuard(ah.clone());
 
             // Empty on Flow: its Float32 journal owns the complete recording.
-            let Some(samples) = rm.stop_recording(&binding_id, cancel_generation) else {
+            let stopped = rm.stop_recording(&binding_id, cancel_generation);
+            play_feedback_sound(&ah, SoundType::Stop);
+            let Some(samples) = stopped else {
                 rt.cancel_session();
                 if !rm.was_cancelled_since(cancel_generation) {
                     crate::bridge::emit(
