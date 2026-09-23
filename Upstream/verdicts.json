@@ -191,6 +191,16 @@
   "6d92e2cc6902c18d8d3362872fda889172bdb261": {
     "notes": "Improved `nl` translations."
   },
+  "7c31572d1973415a7115ff28226198a1d752cebe": {
+    "frontend_review": {
+      "outcome": "adapted",
+      "problem": "Settings sections retained the previous section's scroll position",
+      "destinations": [
+        "src/app/pages/SettingsPage.tsx"
+      ],
+      "evidence": "SettingsPage resets its persistent scroll container on activeSection changes; TypeScript and targeted ESLint pass"
+    }
+  },
   "8282c4001d61aa9ee1fc0b7c63e81ea83529d068": {
     "notes": "Adapted the Apple-only fn/Globe shortcut limitation to Grain's user documentation.",
     "status": "Merged",
