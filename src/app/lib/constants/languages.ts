@@ -140,7 +140,10 @@ export const recognitionLanguage = (languageCode: string): string => {
 export const supportsLanguageCode = (
   supported: string[],
   languageCode: string,
-): boolean =>
-  supported.some(
-    (lang) => recognitionLanguage(lang) === recognitionLanguage(languageCode),
-  );
+): boolean => {
+  const canonical = (code: string): string => {
+    const base = recognitionLanguage(code);
+    return base === "nb" ? "no" : base === "fil" ? "tl" : base;
+  };
+  return supported.some((lang) => canonical(lang) === canonical(languageCode));
+};

@@ -63,6 +63,25 @@
   "12f02e2a9645295c95a156b83bbb2f054df2aea4": {
     "notes": "Backend plumbing merged; selected_channel setting ported into crates/grain-core AppSettings (upstream settings.rs inert). Upstream ChannelSelector.tsx dropped (frontend frozen); set_selected_channel command kept + registered for Grain's own UI."
   },
+  "141f981d4ddae9f16194e3021aa06b61d86e9735": {
+    "frontend_review": {
+      "outcome": "adapted",
+      "problem": "Spaced compound key names fail shortcut parsers",
+      "destinations": [
+        "src/app/lib/utils/keyboard.ts",
+        "src/app/lib/utils/keyboard.test.ts"
+      ],
+      "evidence": "Grain keyboard utility now stores compact parser tokens and renders friendly labels; six focused tests pass."
+    },
+    "suppressed_review": {
+      "outcome": "adapted",
+      "problem": "CI regression check for compound shortcut names",
+      "destinations": [
+        "src/app/lib/utils/keyboard.test.ts"
+      ],
+      "evidence": "Grain's focused Vitest suite verifies compact stored names and readable labels for six compound keys."
+    }
+  },
   "148e5492f43dd0b4a80680ee92bebe6459a4ef3a": {
     "notes": "PORTED: reasoning-rejection retry added to grain_llm_client post_chat (upstream #1809). On a 400/422 to a request carrying reasoning-disable fields, retry once without them and remember the endpoint (url|model) process-wide so later calls skip them. Grain gates reasoning by provider, so this only affects a 'custom' endpoint pointed at a strict API; +2 unit tests."
   },
@@ -101,11 +120,56 @@
   "1fd3f912e2ea950d1694c68199b6e215926b1c81": {
     "notes": "Hoisted the sonner Toaster in AppInner so that model download errors are visible during onboarding."
   },
+  "20ada47d7f98f916d554cf883940dcb83aa9143f": {
+    "frontend_review": {
+      "outcome": "not-applicable",
+      "problem": "Experimental Earshot VAD selector",
+      "destinations": [],
+      "evidence": "Grain exposes only the existing Silero VAD path; the experimental backend and selector were excluded from this sync pending capture-policy review."
+    },
+    "suppressed_review": {
+      "outcome": "not-applicable",
+      "problem": "Earshot dependency in Cargo lockfile",
+      "destinations": [],
+      "evidence": "Experimental Earshot backend was excluded; Grain continues using its Silero capture path."
+    },
+    "ports": {
+      "src-tauri/src/settings.rs": {
+        "outcome": "not-applicable",
+        "destinations": [
+          "src-tauri/src/grain_settings.rs",
+          "crates/grain-core/src/settings.rs"
+        ],
+        "evidence": "Experimental selectable Earshot backend was excluded; Grain keeps its current Silero recorder contract."
+      }
+    }
+  },
   "2203a826c62a83022fc40d0ea6314d218c73f9c0": {
     "notes": "ASCII/Soundex custom-word guard (is_supported_fuzzy_key) present in Grain's handy/audio_toolkit/text.rs; rolling has no separate Soundex matcher (its 'fuzzy' is seam dedup), so the shared finalization carries the fix."
   },
   "2211da652ea408191c6ab74e850d1155360d7304": {
     "notes": "Ported stream:false into grain_llm_client ChatCompletionRequest (all 4 call sites); upstream's llm_client.rs is inert. Grain parses full JSON on every path."
+  },
+  "258899a260b5c67769a8de16a6e41589b9a7063e": {
+    "ports": {
+      "src-tauri/src/actions.rs": {
+        "outcome": "ported",
+        "destinations": [
+          "src-tauri/src/grain_post_process.rs",
+          "src-tauri/src/grain_actions.rs"
+        ],
+        "evidence": "Compiled Handy action completion log calls redact_text; Grain actions do not log transcript bodies."
+      },
+      "src-tauri/src/managers/transcription.rs": {
+        "outcome": "ported",
+        "destinations": [
+          "src-tauri/src/rolling.rs",
+          "src-tauri/src/tdt_flow.rs",
+          "crates/grain-tdt/src"
+        ],
+        "evidence": "Shared TranscriptionManager redacts final result in release logs; rolling and TDT Flow log session metadata only."
+      }
+    }
   },
   "286e66cb4d9d3e858b320c49a5aafeafd114eede": {
     "frontend_review": {
@@ -113,6 +177,24 @@
       "problem": "Handy regenerated bindings with trailing whitespace changes",
       "destinations": [],
       "evidence": "The upstream diff is whitespace in a generated binding file; Grain generates src/app/bindings.ts from its own Rust API and never hand-merges it"
+    }
+  },
+  "2bdf9ac05724fd6fa22f28dabb664c54a43fae3c": {
+    "frontend_review": {
+      "outcome": "not-applicable",
+      "problem": "Indonesian Handy app translation",
+      "destinations": [],
+      "evidence": "Grain's app-locale list is independently curated; this merge does not add a new product locale."
+    }
+  },
+  "2c5c7601d8db493feeb251702e950f11c8326728": {
+    "suppressed_review": {
+      "outcome": "adapted",
+      "problem": "Implicit Vulkan layers can crash Windows capture",
+      "destinations": [
+        "src-tauri/src/main.rs"
+      ],
+      "evidence": "Grain main now sets VK_LOADER_LAYERS_DISABLE before backend startup while honoring explicit settings and the opt-out."
     }
   },
   "2cf157d96290056fe07b4a2a42c26584c00655b8": {
@@ -272,6 +354,19 @@
       "problem": "Keeping the merge-owned lockfile at 0.3.3 would silently omit newly supported physical shortcut keys."
     }
   },
+  "5ec2276a40ddfa1276ffa4fd845763e9dc31d1c3": {
+    "ports": {
+      "src-tauri/src/actions.rs": {
+        "outcome": "not-applicable",
+        "destinations": [
+          "src-tauri/src/grain_post_process.rs",
+          "src-tauri/src/grain_actions.rs"
+        ],
+        "evidence": "The actions hunk only renames Handy tray calls for its new writer; Grain's branded tray API remains the call target. Tray rewrite is deferred."
+      }
+    },
+    "notes": "Single-writer tray architecture deferred: Grain retains its branded single-icon menu and current tray call sites; review as a dedicated tray port."
+  },
   "5f54e17cfca5fd8fd5c61b3dd8aeb37ae45edbbc": {
     "notes": "Bumped transcribe-cpp to 0.1.1."
   },
@@ -290,6 +385,37 @@
   },
   "6d92e2cc6902c18d8d3362872fda889172bdb261": {
     "notes": "Improved `nl` translations."
+  },
+  "6fa850612e1297dd93ddaa64499454030bba2340": {
+    "frontend_review": {
+      "outcome": "adapted",
+      "problem": "Norwegian disappears when a model advertises nb",
+      "destinations": [
+        "src/app/lib/constants/languages.ts",
+        "src-tauri/src/handy/managers/model.rs"
+      ],
+      "evidence": "Grain language picker and backend now compare no/nb aliases; focused tests cover both paths."
+    },
+    "suppressed_review": {
+      "outcome": "adapted",
+      "problem": "Language alias must stay covered by checks",
+      "destinations": [
+        "src/app/lib/constants/languages.test.ts",
+        "src-tauri/src/handy/managers/model.rs"
+      ],
+      "evidence": "Norwegian no/nb and Filipino fil/tl aliases are covered by Grain frontend and Rust regression tests."
+    },
+    "ports": {
+      "src-tauri/src/managers/transcription.rs": {
+        "outcome": "ported",
+        "destinations": [
+          "src-tauri/src/rolling.rs",
+          "src-tauri/src/tdt_flow.rs",
+          "crates/grain-tdt/src"
+        ],
+        "evidence": "Shared language evidence and effective_language now canonicalize no/nb and fil/tl; Grain Flow delegates language selection to the same manager helper."
+      }
+    }
   },
   "7c31572d1973415a7115ff28226198a1d752cebe": {
     "frontend_review": {
@@ -339,6 +465,14 @@
     "notes": "Irrelevant (Grain is an independent fork).",
     "status": "Ignored"
   },
+  "8f9cf53cd1410cda26beea39ff802ac306e39585": {
+    "suppressed_review": {
+      "outcome": "not-applicable",
+      "problem": "Handy Omarchy web overlay instructions",
+      "destinations": [],
+      "evidence": "Grain's recording indicator is the native grain-pill surface, not Handy's Wayland web overlay."
+    }
+  },
   "8fd6691286805cd95e3c86b008606c81a822e4cd": {
     "suppressed_review": {
       "outcome": "already-covered",
@@ -352,6 +486,14 @@
   },
   "96afb0cf335d0c6b5d6d92c9af9e14f4c3f4ef0b": {
     "notes": "memory.rs (glibc allocator tuning) git mv'd into handy/ with #[path]; trim_freed_memory() hook ported by hand into Grain's diverged FinishGuard::drop (merge left actions.rs untouched)."
+  },
+  "988521f873e5296e4e07b05caa4fc962fe981976": {
+    "frontend_review": {
+      "outcome": "not-applicable",
+      "problem": "Handy onboarding preview in debug UI",
+      "destinations": [],
+      "evidence": "Grain owns a different onboarding flow and does not expose Handy's preview components."
+    }
   },
   "99052eefa6c15c32d11d7ccc29f3d14b6ae26cb8": {
     "notes": "Ported the explicit post-type xdotool keyup cleanup for both sides of Control/Shift/Alt/Super. --clearmodifiers alone can restore a modifier released during typing and leave XTEST latched.",
@@ -371,6 +513,18 @@
   },
   "a6df742880ada3c006ad376c1a89d8565b003e69": {
     "notes": "Recover poisoned mutexes inside Drop impls using `match` + logged warnings."
+  },
+  "a6eed7541f7206373a93768a43d6d894c947f4c3": {
+    "ports": {
+      "src-tauri/src/settings.rs": {
+        "outcome": "ported",
+        "destinations": [
+          "src-tauri/src/grain_settings.rs",
+          "crates/grain-core/src/settings.rs"
+        ],
+        "evidence": "grain_settings::get_stored_binding now returns a typed error for unknown IDs; reset_binding propagates it instead of panicking."
+      }
+    }
   },
   "a70ac84fd66819d171a0bce156e4f729aa46527a": {
     "notes": "reliable_paste setting present in grain-core AppSettings; paste-reliability handled in Grain's paste path."
@@ -439,6 +593,44 @@
   "b00ae666c57e972b2d3494fc76d8166ffa59032e": {
     "notes": "hf-hub fork pin bumped 63b6034->9918f11"
   },
+  "b0266607df2ae726852576e3a88d3064c9d84f9e": {
+    "frontend_review": {
+      "outcome": "adapted",
+      "problem": "Nix installs cannot self-update",
+      "destinations": [
+        "flake.nix",
+        "src-tauri/src/grain_update.rs"
+      ],
+      "evidence": "flake.nix sets GRAIN_DISABLE_UPDATER; grain_update gates automatic and manual checks and installation."
+    },
+    "suppressed_review": {
+      "outcome": "adapted",
+      "problem": "Nix package must disable in-app updater",
+      "destinations": [
+        "flake.nix",
+        "src-tauri/src/grain_update.rs"
+      ],
+      "evidence": "Grain's Nix wrapper sets GRAIN_DISABLE_UPDATER and Rust blocks checks and installation under that environment."
+    },
+    "ports": {
+      "src-tauri/src/overlay.rs": {
+        "outcome": "not-applicable",
+        "destinations": [
+          "crates/grain-pill/src/lib.rs",
+          "src-tauri/src/grain_overlay.rs"
+        ],
+        "evidence": "Handy web overlay's updater controls are inert in Grain; native grain-pill has no update-check surface."
+      },
+      "src-tauri/src/settings.rs": {
+        "outcome": "not-applicable",
+        "destinations": [
+          "src-tauri/src/grain_settings.rs",
+          "crates/grain-core/src/settings.rs"
+        ],
+        "evidence": "Grain's updater policy is implemented in grain_update and Nix wrapper rather than the inert Handy settings module."
+      }
+    }
+  },
   "b428ae4c9c8aecba00d0e44e14d6466d9687795f": {
     "notes": "transcription.rs part = improved GPU-fallback warning (Linux/non-Linux split); merged clean into Grain's transcription.rs. Verified in v0.9.5 sync."
   },
@@ -491,11 +683,60 @@
     "notes": "Grain uses a single branded tray icon by design",
     "status": "Ignored"
   },
+  "bf8756c3a88a59c964259b929d6cd99f2059a115": {
+    "suppressed_review": {
+      "outcome": "already-covered",
+      "problem": "WebView2 dependency in generated Cargo lockfile",
+      "destinations": [
+        "src-tauri/Cargo.toml"
+      ],
+      "evidence": "Grain already pins webview2-com 0.38 for Grain Space; the separate main-window accelerator behavior remains deferred."
+    },
+    "notes": "Main-window WebView2 accelerator suppression deferred to Grain's lazy window builder; webview2-com dependency already present."
+  },
   "bff4db7e757125b00ca5d93afacb902c19e3eb8c": {
     "notes": "Ported live log viewer and perf cli."
   },
   "c06cce72f61ef1eb8b3565121825a5d57a72033a": {
     "notes": "Fixed VAD crash on Cyrillic paths."
+  },
+  "c62a5fcdef4196e0ab36ea56cd3863f8f17fd9c5": {
+    "frontend_review": {
+      "outcome": "not-applicable",
+      "problem": "New hold-or-toggle shortcut mode",
+      "destinations": [],
+      "evidence": "Grain currently uses a boolean push-to-talk contract plus Flow-specific start/stop routing; upstream UI commands are absent. Feature deferred for a dedicated capture-mode port."
+    },
+    "suppressed_review": {
+      "outcome": "not-applicable",
+      "problem": "Handy release docs for hold-or-toggle mode",
+      "destinations": [],
+      "evidence": "That capture mode was not introduced in Grain in this compatibility round."
+    },
+    "ports": {
+      "src-tauri/src/settings.rs": {
+        "outcome": "not-applicable",
+        "destinations": [
+          "src-tauri/src/grain_settings.rs",
+          "crates/grain-core/src/settings.rs"
+        ],
+        "evidence": "The new hold-or-toggle setting is not part of Grain's current boolean push-to-talk capture contract; full feature port is deferred."
+      }
+    },
+    "notes": "Hold-or-toggle activation mode deferred; do not expose upstream UI until Grain capture-mode and Flow semantics are ported together."
+  },
+  "c6fa60da2f13a5af660fba17f37af548855119c5": {
+    "ports": {
+      "src-tauri/src/overlay.rs": {
+        "outcome": "not-applicable",
+        "destinations": [
+          "crates/grain-pill/src/lib.rs",
+          "src-tauri/src/grain_overlay.rs"
+        ],
+        "evidence": "Handy web overlay transitions are inert; Grain's native pill has separate session events."
+      }
+    },
+    "notes": "Shortcut parity state-machine rewrite deferred because Grain coordinator retains action IDs and Flow routing across start/stop."
   },
   "c89b7bf38974ad317177389f5bfe28236f0d64e3": {
     "frontend_review": {
@@ -546,6 +787,15 @@
   "d1bc82a0ee5be3ab0e84c834c472ee559847c627": {
     "notes": "Upstream branch merge. No code to port."
   },
+  "d54c88eb35abab47cdf1d0e2e82add346cc2a9b9": {
+    "suppressed_review": {
+      "outcome": "not-applicable",
+      "problem": "Recorder ring-buffer dependency lockfile",
+      "destinations": [],
+      "evidence": "The large microphone callback rewrite and its dependency were deferred; Grain's current rolling and conditioning recorder contract remains in place."
+    },
+    "notes": "Real-time-safe microphone ring-buffer rewrite deferred for dedicated rolling/conditioning and capture-lifecycle review."
+  },
   "d55ea7ef12b82176239264d0b5078cd07b114687": {
     "frontend_review": {
       "destinations": [
@@ -593,8 +843,31 @@
   "db003f38b1aef4eb967ac3419bebc851d680f71c": {
     "notes": "Adopted upstream idle-skip (if recording gating) around the resampler while keeping Grain's conditioning + rolling sample_cb closure; dropped now-redundant inner recording guards."
   },
+  "db1aaac7aaf5cd397da3fed55389d1b7fcec032e": {
+    "suppressed_review": {
+      "outcome": "already-covered",
+      "problem": "transcribe.cpp 0.2.3 dependency lockfile",
+      "destinations": [
+        "src-tauri/Cargo.toml",
+        "vendor/TRANSCRIBE-CPP.md"
+      ],
+      "evidence": "Grain already pins exact transcribe-cpp 0.2.3 and carries the reviewed vendored TDT patch contract."
+    }
+  },
   "dc01346d1cf2ca44b2c726b7140c93dbf929c086": {
     "notes": "Ported language selector improvements."
+  },
+  "dc5bdc9d098649a389f07327f77c20e9a896768b": {
+    "ports": {
+      "src-tauri/src/actions.rs": {
+        "outcome": "ported",
+        "destinations": [
+          "src-tauri/src/grain_post_process.rs",
+          "src-tauri/src/grain_actions.rs"
+        ],
+        "evidence": "The shared FinishGuard now calls maybe_unload_immediately on every early exit before notifying the coordinator; all Grain and Handy call sites pass the manager."
+      }
+    }
   },
   "dd6cc676112b9c8123ebd34c6765444b7a855cfb": {
     "notes": "FFT scaling already present in `recorder.rs` (likely ported during audio perf rewrite)."
@@ -602,8 +875,49 @@
   "e1152d86935562264d7c5637d77ce2e29aeef57e": {
     "notes": "overlay.rs inert; grain-pill does its own Windows multi-monitor positioning (MonitorFromPoint/GetMonitorInfoW on the cursor's monitor work area). n/a."
   },
+  "e29520d623e2dea86ef1b13d452eea5440ddfe7d": {
+    "frontend_review": {
+      "outcome": "not-applicable",
+      "problem": "Windows webview overlay text scaling",
+      "destinations": [],
+      "evidence": "Grain displays the native grain-pill overlay, not Handy's RecordingOverlay.css webview."
+    },
+    "ports": {
+      "src-tauri/src/overlay.rs": {
+        "outcome": "not-applicable",
+        "destinations": [
+          "crates/grain-pill/src/lib.rs",
+          "src-tauri/src/grain_overlay.rs"
+        ],
+        "evidence": "Text scaling change targets Handy's webview RecordingOverlay; Grain uses native grain-pill."
+      }
+    }
+  },
   "e2c72a25ff48f280729e9e9bac289802c2c01cfd": {
     "notes": "Throttled `emit_levels` to 30 FPS in `overlay.rs`."
+  },
+  "e4ae0d44b4de21b981e0c8e478d0c93a2ffd3420": {
+    "frontend_review": {
+      "outcome": "adapted",
+      "problem": "Deleted model files leave stale active/loading UI",
+      "destinations": [
+        "src-tauri/src/handy/managers/model.rs",
+        "src-tauri/src/handy/managers/transcription.rs",
+        "src/app/stores/modelStore.ts"
+      ],
+      "evidence": "Model manager now clears an unavailable selection; transcription manager emits loading_failed on early errors and Grain modelStore refreshes current status on model-state-changed."
+    },
+    "ports": {
+      "src-tauri/src/managers/transcription.rs": {
+        "outcome": "ported",
+        "destinations": [
+          "src-tauri/src/rolling.rs",
+          "src-tauri/src/tdt_flow.rs",
+          "crates/grain-tdt/src"
+        ],
+        "evidence": "Shared TranscriptionManager emits loading_failed for missing ID and path failures; Grain Flow checks installed status before starting and uses that manager's model-load barrier."
+      }
+    }
   },
   "e526733f09844c150bdaa0889ff9b9e456cc30dc": {
     "notes": "AUDIT 2026-07-17: startup WEBVIEW_LOG_STREAMING.store was missing, so the live log viewer was empty until debug mode was toggled. Fixed."
@@ -619,6 +933,20 @@
   "eb9301e01c8f53383eea5d5252035c4aabe75bc3": {
     "notes": "Added `reset()` to `FrameResampler` on `Cmd::Start`."
   },
+  "ed1bfb9bbc51742af4f0917356986ba12f29ad1c": {
+    "frontend_review": {
+      "outcome": "not-applicable",
+      "problem": "Catalan Handy app translation",
+      "destinations": [],
+      "evidence": "Grain's app-locale list is independently curated; this merge does not add a new product locale."
+    },
+    "suppressed_review": {
+      "outcome": "not-applicable",
+      "problem": "Handy Catalan translation contribution docs",
+      "destinations": [],
+      "evidence": "Grain did not add Catalan to its independently curated app locales in this round."
+    }
+  },
   "f0f7e7ff4674eb0d4fceb4da49f75934555f55b4": {
     "notes": "Added dual paste delays (before/after), bumped slider to 500ms, and updated translations."
   },
@@ -628,6 +956,17 @@
   "f4e3587bac44eead5896bb8809076e4ce59caf00": {
     "notes": "Clean cherry-pick. Danish translation file taken verbatim; languages.ts updated with da entry at priority 24.",
     "status": "Merged"
+  },
+  "f6fac42e2ede6857a7c46bfac05ac25ae25d0ca3": {
+    "suppressed_review": {
+      "outcome": "already-covered",
+      "problem": "Updater dependency and generated lockfiles",
+      "destinations": [
+        "package.json",
+        "src-tauri/Cargo.lock"
+      ],
+      "evidence": "Grain package.json uses plugin 2.10.1 and Cargo.lock already resolves tauri-plugin-updater 2.10.1; Bun frozen install passed."
+    }
   },
   "f79a907fc0d3a1ef689bc338de35ab0bcab68029": {
     "notes": "Added the cancel-generation infra Grain lacked; cancel now aborts in-flight LLM/paste"

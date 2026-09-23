@@ -33,9 +33,10 @@ pub(crate) struct RecordingErrorEvent {
 
 /// Drop guard that notifies the [`TranscriptionCoordinator`] when the
 /// transcription pipeline finishes — whether it completes normally or panics.
-pub(crate) struct FinishGuard(pub(crate) AppHandle); // [GRAIN] pub(crate): shared with grain_actions
+pub(crate) struct FinishGuard(pub(crate) AppHandle, pub(crate) Arc<TranscriptionManager>); // [GRAIN] shared with grain_actions
 impl Drop for FinishGuard {
     fn drop(&mut self) {
+        self.1.maybe_unload_immediately("transcription session");
         if let Some(c) = self.0.try_state::<TranscriptionCoordinator>() {
             c.notify_processing_finished();
         }
@@ -457,7 +458,7 @@ impl ShortcutAction for TranscribeAction {
         let cancel_generation = rm.cancel_generation();
 
         tauri::async_runtime::spawn(async move {
-            let _guard = FinishGuard(ah.clone());
+            let _guard = FinishGuard(ah.clone(), Arc::clone(&tm));
             debug!(
                 "Starting async transcription task for binding: {}",
                 binding_id
@@ -548,7 +549,7 @@ impl ShortcutAction for TranscribeAction {
                             debug!(
                                 "Transcription completed in {:?}: '{}'",
                                 transcription_time.elapsed(),
-                                transcription
+                                crate::utils::redact_text(&transcription)
                             );
 
                             // [GRAIN] pill is already in "processing" from the

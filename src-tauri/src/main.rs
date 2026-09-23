@@ -28,5 +28,17 @@ fn main() {
         std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
     }
 
+    #[cfg(target_os = "windows")]
+    {
+        // Disable implicit Vulkan layers before the backend initializes; preserve
+        // explicit loader settings and the user's opt-out.
+        let keep_layers = std::env::var("HANDY_KEEP_VULKAN_IMPLICIT_LAYERS")
+            .map(|value| matches!(value.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on"))
+            .unwrap_or(false);
+        if std::env::var_os("VK_LOADER_LAYERS_DISABLE").is_none() && !keep_layers {
+            std::env::set_var("VK_LOADER_LAYERS_DISABLE", "~implicit~");
+        }
+    }
+
     handy_app_lib::run(cli_args)
 }

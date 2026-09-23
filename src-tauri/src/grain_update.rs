@@ -193,6 +193,9 @@ fn surface_update(app: &AppHandle, update: &UpdateInfo) {
 #[tauri::command]
 #[specta::specta]
 pub async fn check_for_update(app: AppHandle, force: bool) -> Result<Option<UpdateInfo>, String> {
+    if std::env::var_os("GRAIN_DISABLE_UPDATER").is_some() {
+        return Ok(None);
+    }
     if !force && !crate::settings::get_settings(&app).update_checks_enabled {
         return Ok(None);
     }
@@ -232,6 +235,9 @@ pub async fn check_for_update(app: AppHandle, force: bool) -> Result<Option<Upda
 #[tauri::command]
 #[specta::specta]
 pub async fn install_update(app: AppHandle) -> Result<(), String> {
+    if std::env::var_os("GRAIN_DISABLE_UPDATER").is_some() {
+        return Err("Updates are managed by the package manager".to_string());
+    }
     let updater = app.updater().map_err(|e| e.to_string())?;
     let update = updater
         .check()

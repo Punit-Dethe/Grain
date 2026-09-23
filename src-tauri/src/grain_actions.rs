@@ -597,7 +597,7 @@ impl ShortcutAction for RealtimeTranscribeAction {
         // recording buffer (or later, mid-pipeline) is observed.
         let cancel_generation = rm.cancel_generation();
         tauri::async_runtime::spawn(async move {
-            let _guard = FinishGuard(ah.clone());
+            let _guard = FinishGuard(ah.clone(), Arc::clone(&tm));
 
             // Empty on Flow: its Float32 journal owns the complete recording.
             let stopped = rm.stop_recording(&binding_id, cancel_generation);
@@ -897,7 +897,7 @@ impl ShortcutAction for NativeAsrAction {
         // recording buffer (or later, mid-pipeline) is observed.
         let cancel_generation = rm.cancel_generation();
         tauri::async_runtime::spawn(async move {
-            let _guard = FinishGuard(ah.clone());
+            let _guard = FinishGuard(ah.clone(), Arc::clone(&tm));
 
             // The mic frames already reached the stream worker live; keep the
             // captured samples only as the batch-fallback input (mirrors Handy:

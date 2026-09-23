@@ -56,12 +56,21 @@ def run_gate(label: str, argv: list[str]) -> bool:
         encoding="utf-8",
         errors="replace",
     )
-    lines = [ln for ln in (result.stdout or "").strip().splitlines() if ln.strip()]
-    tail = lines[-1] if lines else (result.stderr or "").strip()[:200]
-    print(f"  {'PASS' if result.returncode == 0 else 'FAIL'}  {label}: {tail}")
-    if result.returncode != 0 and len(lines) > 1:
-        for line in lines[:-1][-12:]:
+    stdout_lines = [ln for ln in (result.stdout or "").splitlines() if ln.strip()]
+    stderr_lines = [ln for ln in (result.stderr or "").splitlines() if ln.strip()]
+    if result.returncode == 0:
+        summary = stdout_lines[-1] if stdout_lines else "OK"
+        print(f"  PASS  {label}: {summary}")
+    else:
+        # Gates such as the ratchet write failures to stderr but progress to
+        # stdout. Never let a stdout notice hide the actual failures.
+        details = stderr_lines + stdout_lines
+        summary = details[0] if details else "failed without output"
+        print(f"  FAIL  {label}: {summary}")
+        for line in details[1:13]:
             print(f"        {line}")
+        if len(details) > 13:
+            print(f"        ... and {len(details) - 13} more line(s)")
     return result.returncode == 0
 
 
