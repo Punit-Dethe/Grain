@@ -198,7 +198,7 @@ struct Foreground {
 /// needs to be one rule, this is the line to change — and the log line in
 /// `detect` already names which rung answered, so the case is diagnosable.
 fn foreground(settings: &grain_core::AppSettings) -> Foreground {
-    let Some(ctx) = crate::context_detect::detect_active_context(false, false) else {
+    let Some(ctx) = crate::context_detect::detect_active_context() else {
         return Foreground {
             app: None,
             site: None,

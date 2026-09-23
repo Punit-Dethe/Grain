@@ -22,13 +22,8 @@
 //!    makes the multilingual tokenizer drift, in the well-known failure where an
 //!    English utterance starts emitting CJK.
 //!
-//! # Ordering contract
-//!
-//! Terms are held **least- to most-important**, because that is the order the
-//! budget consumes them in: the front is what gets dropped. Concretely the
-//! user's standing dictionary goes in first, and anything derived from the
-//! current surface (which is far more likely to be about *this* utterance) is
-//! appended after it, so it is the last thing sacrificed.
+//! The user's standing dictionary is followed by action vocabulary only when
+//! an extension action capture explicitly supplies it.
 //!
 //! # Cost
 //!
@@ -64,7 +59,7 @@ impl BiasSet {
     /// ones, so callers add from least to most specific.
     ///
     /// De-duplicates case-insensitively, keeping the FIRST spelling seen: a
-    /// user's `PyTorch` is not silently replaced by a screen-scraped `pytorch`.
+    /// user's `PyTorch` is not silently replaced by another spelling.
     pub fn extend<I, S>(&mut self, terms: I)
     where
         I: IntoIterator<Item = S>,
@@ -160,8 +155,8 @@ fn collapse_whitespace(s: &str) -> String {
 
 /// Build the bias set for a transcription from the user's standing dictionary.
 ///
-/// Kept separate from [`BiasSet::extend`] so the surface-derived sources can be
-/// layered on top by the caller without this module knowing about them.
+/// Kept separate from [`BiasSet::extend`] so action vocabulary can be layered
+/// on top without this module knowing about action sessions.
 pub fn from_custom_words(custom_words: &[String]) -> BiasSet {
     let mut set = BiasSet::new();
     set.extend(custom_words);
@@ -169,79 +164,19 @@ pub fn from_custom_words(custom_words: &[String]) -> BiasSet {
 }
 
 // ---------------------------------------------------------------------------
-// Per-session surface terms
+// Per-session action vocabulary
 // ---------------------------------------------------------------------------
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 
-/// Terms read from the focused field when the recording started, waiting to be
-/// folded into the next transcription's prefix.
-///
-/// A `Mutex<Vec<String>>` and nothing else: when the feature is off no thread is
-/// spawned, nothing is written, and this stays an empty `Vec` that never
-/// allocates. There is no watcher, no timer and no task — the capture is a
-/// single one-shot thread that runs while the user is already speaking and then
-/// exits.
-static SESSION_TERMS: Mutex<Vec<String>> = Mutex::new(Vec::new());
+/// Action vocabulary waiting for the current action transcription.
+static ACTION_TERMS: Mutex<Vec<String>> = Mutex::new(Vec::new());
 
-/// Bumped on every arm. A capture thread only publishes if its generation is
-/// still current, so a slow read from an abandoned session can never land in a
-/// later one — the same guard `master_key` uses for its deferred registrations.
-static SESSION_GEN: AtomicU64 = AtomicU64::new(0);
+/// A late cleanup must not erase vocabulary from a newer action session.
+static ACTION_GEN: AtomicU64 = AtomicU64::new(0);
 
-/// Read the focused field's distinctive terms for THIS recording, off-thread.
-///
-/// # Why at record start
-///
-/// This is the whole reason context can reach the recognizer at all. Reading at
-/// transcription time would put a 30–120 ms UI-Automation round-trip directly in
-/// front of the decoder; reading at record start overlaps it with the user
-/// speaking, which is dead time already, so it costs nothing on the critical
-/// path. If the user speaks for 300 ms and stops, the read simply loses the race
-/// and the transcription proceeds unbiased — never delayed.
-///
-/// Gated on the same opt-in as the LLM-side hint, because it reads the same
-/// content. Biasing keeps it strictly on-device, so this widens no consent.
-pub fn arm_session(app: &tauri::AppHandle) {
-    // Clear FIRST, unconditionally, and only then decide whether to capture.
-    //
-    // This is what makes a separate "disarm" unnecessary and, more to the point,
-    // impossible to forget. Every way a stash could go stale — the user
-    // cancelled the last recording, the read failed, the feature was switched
-    // off between sessions — ends the same way: the next session starts empty.
-    // A cancel hook would have had to be threaded through several paths and
-    // would still have missed the "feature turned off" case.
-    let generation = SESSION_GEN.fetch_add(1, Ordering::SeqCst) + 1;
-    if let Ok(mut guard) = SESSION_TERMS.lock() {
-        *guard = Vec::new();
-    }
-
-    let settings = crate::settings::get_settings(app);
-    if !settings.context_awareness_enabled || !settings.context_nearby_terms {
-        return;
-    }
-    log::debug!("[GRAIN] bias: capturing surface terms for this recording");
-    std::thread::spawn(move || {
-        let Some(text) = crate::context_detect::read_focused_text() else {
-            return;
-        };
-        let terms = crate::context_detect::extract_unique_terms(&text);
-        if terms.is_empty() {
-            return;
-        }
-        // Publish only if this session is still the current one.
-        if SESSION_GEN.load(Ordering::SeqCst) != generation {
-            return;
-        }
-        if let Ok(mut guard) = SESSION_TERMS.lock() {
-            *guard = terms;
-        }
-    });
-}
-
-/// Seed this session's bias with the **action vocabulary** instead of the
-/// surface (`docs/Extensions V1/PLAN.md` §3).
+/// Seed this session's bias with action vocabulary (`docs/Extensions V1/PLAN.md` §3).
 ///
 /// The dominant real-world failure in action routing is not the router, it is
 /// transcription of the words that identify the action — "skip" arriving as
@@ -249,15 +184,14 @@ pub fn arm_session(app: &tauri::AppHandle) {
 /// already declared in the manifest, already approved by the user, and already
 /// in memory in the host's index.
 ///
-/// Static, host-owned, and no privacy cost — unlike the surface path this reads
-/// nothing about what the user is doing, so it is not gated on the context
-/// opt-in. Biasing from an extension's own *data* (contacts, playlist names)
+/// Static, host-owned, and no privacy cost: it reads nothing about what the
+/// user is doing. Biasing from an extension's own data (contacts, playlist names)
 /// would be a different question and is not built.
 ///
 /// Synchronous because there is nothing to fetch: the terms are already here.
 pub fn arm_action_session(terms: Vec<String>) -> u64 {
-    let generation = SESSION_GEN.fetch_add(1, Ordering::SeqCst) + 1;
-    if let Ok(mut guard) = SESSION_TERMS.lock() {
+    let generation = ACTION_GEN.fetch_add(1, Ordering::SeqCst) + 1;
+    if let Ok(mut guard) = ACTION_TERMS.lock() {
         *guard = terms;
     }
     generation
@@ -267,10 +201,9 @@ pub fn arm_action_session(terms: Vec<String>) -> u64 {
 /// it. Otherwise a cancelled/failed Extension Mode capture can bias the next,
 /// unrelated dictation.
 pub fn clear_action_session(generation: u64) {
-    if let Ok(mut guard) = SESSION_TERMS.lock() {
-        // A newer dictation may already have published its own focused-field
-        // bias. A late Extension Mode cleanup must never erase that session.
-        if SESSION_GEN.load(Ordering::SeqCst) == generation {
+    if let Ok(mut guard) = ACTION_TERMS.lock() {
+        // A late cleanup must never erase a newer action session.
+        if ACTION_GEN.load(Ordering::SeqCst) == generation {
             guard.clear();
         }
     }
@@ -282,36 +215,30 @@ pub fn clear_action_session(generation: u64) {
 /// The single entry point the transcription path calls, so the upstream file
 /// carries one marked line and none of this module's lifecycle.
 ///
-/// Ordering is the contract from the module docs: the standing dictionary goes
-/// in first and the surface terms after it, because the tail survives
-/// truncation and something visible on screen right now is more likely to be
-/// about *this* utterance than a global entry is.
+/// The standing dictionary goes first; explicit action vocabulary follows it.
 pub fn for_transcription(settings: &grain_core::AppSettings) -> Option<String> {
     let mut set = from_custom_words(&settings.custom_words);
     let dictionary_terms = set.terms.len();
-    if let Ok(mut guard) = SESSION_TERMS.lock() {
+    if let Ok(mut guard) = ACTION_TERMS.lock() {
         set.extend(std::mem::take(&mut *guard));
     }
-    let surface_terms = set.terms.len() - dictionary_terms;
+    let action_terms = set.terms.len() - dictionary_terms;
     let rendered = set.render();
 
-    // [GRAIN] Whether the recognizer was actually biased, and by how much of
-    // what was offered. `kept` below `dictionary+surface` is the budget doing
-    // its job — the visible signal for the truncation that used to happen
-    // silently inside whisper. Counts and byte lengths only, never the terms.
+    // Counts and byte lengths only, never the terms.
     if let Some(prefix) = &rendered {
         let kept = prefix.split(SEPARATOR).count();
         log::info!(
             "[GRAIN] bias: {kept} term(s), {} bytes (from {dictionary_terms} dictionary \
-             + {surface_terms} surface{})",
+             + {action_terms} action{})",
             prefix.len(),
-            if kept < dictionary_terms + surface_terms {
+            if kept < dictionary_terms + action_terms {
                 ", budget trimmed the rest"
             } else {
                 ""
             },
         );
-    } else if dictionary_terms + surface_terms > 0 {
+    } else if dictionary_terms + action_terms > 0 {
         log::info!("[GRAIN] bias: nothing usable from {dictionary_terms} dictionary term(s)");
     }
 
@@ -321,6 +248,8 @@ pub fn for_transcription(settings: &grain_core::AppSettings) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    static ACTION_TEST_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn empty_renders_to_none() {
@@ -412,54 +341,38 @@ mod tests {
         assert!(rendered.len() <= MAX_PROMPT_BYTES);
     }
 
-    /// Later sources outrank earlier ones — the ordering contract the whole
-    /// budget depends on.
+    /// Explicit action terms follow the standing dictionary.
     #[test]
     fn later_sources_outrank_earlier_ones() {
         let mut set = from_custom_words(&["Standing".into()]);
-        set.extend(["FromScreen"]);
+        set.extend(["ActionName"]);
         let rendered = set.render().unwrap();
-        assert_eq!(rendered, "Standing, FromScreen");
-        assert!(rendered.ends_with("FromScreen"));
+        assert_eq!(rendered, "Standing, ActionName");
+        assert!(rendered.ends_with("ActionName"));
     }
 
-    /// Surface terms must outrank the standing dictionary: something visible on
-    /// screen right now is far likelier to be about THIS utterance, and the tail
-    /// is what survives truncation.
+    /// Consuming action vocabulary must empty it for the next transcription.
     #[test]
-    fn surface_terms_land_in_the_privileged_tail() {
-        let mut set = from_custom_words(&["Alpha".into(), "Beta".into()]);
-        set.extend(["OnScreenTerm"]);
-        assert!(set.render().unwrap().ends_with("OnScreenTerm"));
-    }
-
-    /// Consuming the session stash must empty it, so one dictation's terms can
-    /// never bias the next.
-    #[test]
-    fn session_terms_are_consumed_exactly_once() {
-        *SESSION_TERMS.lock().unwrap() = vec!["Ephemeral".to_string()];
+    fn action_terms_are_consumed_exactly_once() {
+        let _lock = ACTION_TEST_LOCK.lock().unwrap();
+        *ACTION_TERMS.lock().unwrap() = vec!["Ephemeral".to_string()];
 
         let mut first = BiasSet::new();
-        first.extend(std::mem::take(&mut *SESSION_TERMS.lock().unwrap()));
+        first.extend(std::mem::take(&mut *ACTION_TERMS.lock().unwrap()));
         assert_eq!(first.render().unwrap(), "Ephemeral");
 
         // Second read sees nothing — the stash gave up ownership.
-        assert!(SESSION_TERMS.lock().unwrap().is_empty());
+        assert!(ACTION_TERMS.lock().unwrap().is_empty());
     }
 
-    /// The generation guard: a capture thread from an abandoned session must not
-    /// publish into a later one.
+    /// A late cleanup must not clear a newer action session.
     #[test]
-    fn stale_generation_never_publishes() {
-        let stale_generation = SESSION_GEN.fetch_add(1, Ordering::SeqCst) + 1;
-        // A newer session arms, superseding the one above.
-        SESSION_GEN.fetch_add(1, Ordering::SeqCst);
-
-        // This is the check the capture thread makes before writing.
-        assert_ne!(
-            SESSION_GEN.load(Ordering::SeqCst),
-            stale_generation,
-            "an abandoned session's read would have been published"
-        );
+    fn stale_action_cleanup_preserves_newer_terms() {
+        let _lock = ACTION_TEST_LOCK.lock().unwrap();
+        let stale_generation = arm_action_session(vec!["Old".into()]);
+        let new_generation = arm_action_session(vec!["New".into()]);
+        clear_action_session(stale_generation);
+        assert_eq!(*ACTION_TERMS.lock().unwrap(), vec!["New".to_string()]);
+        clear_action_session(new_generation);
     }
 }

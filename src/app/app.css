@@ -5089,22 +5089,6 @@ html[data-theme="light"] .context-custom-profile-card {
   background: #ffffff;
 }
 
-.context-profile-options {
-  min-width: 0;
-}
-
-.next-settings-content .context-profile-options .setting-row {
-  padding-inline: 2px;
-}
-
-.next-settings-content
-  .context-profile-options
-  .setting-row
-  + .setting-row::before {
-  right: 2px;
-  left: 2px;
-}
-
 html[data-theme="light"] .context-profile-tabs {
   background: #f0f0f2;
 }

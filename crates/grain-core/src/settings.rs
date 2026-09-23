@@ -185,7 +185,7 @@ impl Default for AgentAutocopy {
 
 /// [GRAIN] Agent context awareness: what (if anything) is read from the focused
 /// field at summon and handed to the LLM as background. `Unique` reuses the
-/// nearby-terms extractor (high-signal identifiers/names only); `Full` sends the
+/// unique-term extractor (high-signal identifiers/names only); `Full` sends the
 /// capped raw field text. OFF by default — reading field content is opt-in.
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Type)]
 #[serde(rename_all = "snake_case")]
@@ -923,26 +923,6 @@ pub struct AppSettings {
     /// credential vault and never enter AppSettings.
     #[serde(default)]
     pub mcp_oauth_client_ids: HashMap<String, String>,
-    /// [GRAIN] Silent nearby-term hints: when on (and context awareness is on),
-    /// read UNIQUE non-dictionary tokens (proper nouns, code identifiers, library
-    /// names) from the focused field via UI Automation and pass them to the LLM as
-    /// an *additive, low-authority* bias — never the raw text, never persisted,
-    /// never surfaced in the UI. OFF by default because it reads the focused
-    /// field's content; password fields are always skipped.
-    #[serde(default)]
-    pub context_nearby_terms: bool,
-    /// [GRAIN] Seamless insertion: read the nearest useful sentence fragment on
-    /// either side of the caret (maximum 200 left / 80 right) and give it to the
-    /// post-processing LLM as compact L/R context, so dictating into the middle
-    /// of a sentence flows. An empty neighbourhood adds no cursor prompt.
-    ///
-    /// **This is a SEPARATE opt-in from [`Self::context_nearby_terms`] on
-    /// purpose.** That one promises to send unique tokens and explicitly never
-    /// raw text; this one sends a raw excerpt of what surrounds the caret.
-    /// Folding it into the same switch would quietly break the narrower
-    /// promise, so it gets its own. OFF by default; password fields skipped.
-    #[serde(default)]
-    pub context_caret_text: bool,
     /// [GRAIN] Which Agent replies are auto-copied to the clipboard (off / first
     /// reply only / every reply). Default `first` — the original behavior.
     #[serde(default)]
@@ -1972,8 +1952,6 @@ pub fn get_default_settings() -> AppSettings {
         extension_developer_mode: false,
         mcp_enabled_providers: Vec::new(),
         mcp_oauth_client_ids: HashMap::new(),
-        context_nearby_terms: false,
-        context_caret_text: false,
         agent_autocopy: AgentAutocopy::default(),
         agent_quick_enabled: false,
         agent_context_mode: AgentContextMode::default(),
@@ -2019,6 +1997,25 @@ impl AppSettings {
         self.post_process_providers
             .iter_mut()
             .find(|provider| provider.id == provider_id)
+    }
+}
+
+#[cfg(test)]
+mod retired_dictation_context_tests {
+    use super::AppSettings;
+
+    #[test]
+    fn old_content_capture_switches_are_discarded_on_save() {
+        let mut stored = serde_json::to_value(AppSettings::default()).unwrap();
+        stored["context_awareness_enabled"] = serde_json::json!(true);
+        stored["context_nearby_terms"] = serde_json::json!(true);
+        stored["context_caret_text"] = serde_json::json!(true);
+
+        let settings: AppSettings = serde_json::from_value(stored).unwrap();
+        assert!(settings.context_awareness_enabled);
+        let saved = serde_json::to_value(settings).unwrap();
+        assert!(saved.get("context_nearby_terms").is_none());
+        assert!(saved.get("context_caret_text").is_none());
     }
 }
 

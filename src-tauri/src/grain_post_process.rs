@@ -107,10 +107,7 @@ pub(crate) async fn post_process_transcription(
     // `compose_prompt` is always consulted because Grain owns the final output
     // envelope even when no spoken instruction or profile is present.
     let ctx = if settings.context_awareness_enabled {
-        crate::context_detect::detect_active_context(
-            settings.context_nearby_terms,
-            settings.context_caret_text,
-        )
+        crate::context_detect::detect_active_context()
     } else {
         None
     };

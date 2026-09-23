@@ -1001,8 +1001,6 @@ pub fn run(cli_args: CliArgs) {
             grain_commands::change_capture_end_with_ai_setting,
             grain_commands::change_capture_always_ai_setting,
             grain_commands::change_context_awareness_enabled_setting,
-            grain_commands::change_context_nearby_terms_setting,
-            grain_commands::change_context_caret_text_setting,
             grain_commands::change_agent_autocopy_setting,
             grain_commands::change_agent_quick_enabled_setting,
             grain_commands::change_agent_context_mode_setting,

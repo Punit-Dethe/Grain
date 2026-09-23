@@ -819,12 +819,7 @@ pub fn classify(facts: FocusFacts) -> FocusTarget {
     }
 }
 
-/// The text immediately around the caret, for seamless insertion.
-///
-/// Dictating into the middle of an existing sentence is where the pipeline is
-/// most obviously wrong today: it capitalizes the first word and drops the
-/// leading space, so the user fixes the same two things by hand every time. The
-/// model can only get that right if it can see what it is landing between.
+/// A bounded caret neighbourhood used by explicit focus probes such as Paste Catch.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct CaretContext {
     /// Relevant text immediately before the caret (at most
@@ -840,9 +835,7 @@ impl CaretContext {
         self.before.trim().is_empty() && self.after.trim().is_empty()
     }
 
-    /// Reduce a raw UIA neighbourhood to the nearest useful sentence fragments.
-    /// Completed sentences and other lines cannot affect the insertion seam, so
-    /// they are discarded instead of spending tokens and distracting the model.
+    /// Reduce a raw UIA neighbourhood to the nearest sentence fragments.
     fn from_surrounding(before: &str, after: &str) -> Option<Self> {
         let mut context = Self {
             before: relevant_left_fragment(before),
@@ -858,8 +851,7 @@ impl CaretContext {
     }
 }
 
-/// Maximum cursor-context budgets. The left side carries more grammatical state
-/// than the right, so the capture is deliberately asymmetric.
+/// Bounds for focus probes; the left side helps verify that text landed.
 const MAX_CARET_LEFT_CHARS: usize = 200;
 const MAX_CARET_RIGHT_CHARS: usize = 80;
 
@@ -1169,9 +1161,8 @@ fn is_browser_exe(stem: &str) -> bool {
         .any(|k| stem == *k || (k.len() >= 4 && stem.contains(k)))
 }
 
-/// Cap on how many nearby terms we forward — keeps the prompt bounded and the
-/// hint genuinely "additive" rather than a dump.
-const MAX_NEARBY_TERMS: usize = 12;
+/// Cap on unique terms used by the explicitly invoked Agent field-context mode.
+const MAX_UNIQUE_TERMS: usize = 12;
 /// Cap on how much focused-field text we scan for terms (bounds cost on huge docs).
 const MAX_SCAN_CHARS: usize = 4000;
 
@@ -1465,18 +1456,15 @@ const COMMON_WORDS: &[&str] = &[
     "basically",
 ];
 
-/// Extract UNIQUE, non-dictionary tokens worth biasing the LLM with — the
-/// additive hint the user asked for (proper nouns like `Rita`/`Google`, and
-/// identifiers/libraries like `useGrainStore`, `snake_case`, `PyTorch`), NOT raw
-/// prose. A token is kept when it "looks intentional":
+/// Extract unique high-signal terms for Agent's explicit field-context mode.
+/// A token is kept when it "looks intentional":
 ///   * has an internal capital (camelCase / PascalCase), or
 ///   * contains `_` or a digit (identifiers/versions), or
 ///   * is Capitalized (a likely proper noun), or
 ///   * is an ALL-CAPS acronym (≥2 chars),
 /// and it is not an ordinary lowercase English word (checked against
 /// [`COMMON_WORDS`]). De-duplicated case-insensitively, first-seen casing kept,
-/// capped at [`MAX_NEARBY_TERMS`]. This is what makes it *reduce* hallucination:
-/// we never pass gaps or partial sentences, only high-signal names.
+/// capped at [`MAX_UNIQUE_TERMS`].
 pub fn extract_unique_terms(text: &str) -> Vec<String> {
     let text: String = text.chars().take(MAX_SCAN_CHARS).collect();
     let mut seen = std::collections::HashSet::new();
@@ -1509,7 +1497,7 @@ pub fn extract_unique_terms(text: &str) -> Vec<String> {
 
         if seen.insert(lower) {
             out.push(tok.to_string());
-            if out.len() >= MAX_NEARBY_TERMS {
+            if out.len() >= MAX_UNIQUE_TERMS {
                 break;
             }
         }
@@ -1555,13 +1543,6 @@ pub struct ActiveContext {
     /// How much of the above is structural evidence rather than a heuristic.
     /// Gates whether the site may override the app category.
     pub confidence: Confidence,
-    /// Text either side of the caret, when the seamless-insertion opt-in is on
-    /// and the surface exposes a caret. Ephemeral: never stored, never logged.
-    pub caret: Option<CaretContext>,
-    /// Unique non-dictionary tokens read from the focused field (proper nouns,
-    /// identifiers, library names) — an ADDITIVE bias hint, never raw text. Empty
-    /// unless the nearby-terms opt-in is on and something was found.
-    pub nearby_terms: Vec<String>,
 }
 
 impl ActiveContext {
@@ -1774,16 +1755,14 @@ pub fn compose_prompt(
 
 /// Detect the foreground app/site. `None` on unsupported platforms or on any
 /// failure (caller then falls back to BASE-only). Cheap: one Win32 round-trip for
-/// the app; UI Automation is consulted only for browser URLs and for whichever
-/// of the two content opt-ins (`read_nearby_terms`, `read_caret`) are on.
-pub fn detect_active_context(read_nearby_terms: bool, read_caret: bool) -> Option<ActiveContext> {
+/// the app; UI Automation is consulted only for browser URLs.
+pub fn detect_active_context() -> Option<ActiveContext> {
     #[cfg(windows)]
     {
-        windows_impl::detect(read_nearby_terms, read_caret)
+        windows_impl::detect()
     }
     #[cfg(not(windows))]
     {
-        let _ = (read_nearby_terms, read_caret);
         None
     }
 }
@@ -1860,7 +1839,7 @@ mod windows_impl {
         GetForegroundWindow, GetWindowTextW, GetWindowThreadProcessId,
     };
 
-    pub(super) fn detect(read_nearby_terms: bool, read_caret: bool) -> Option<ActiveContext> {
+    pub(super) fn detect() -> Option<ActiveContext> {
         unsafe {
             // Each of these bails to BASE-only behavior. They used to bail
             // SILENTLY, which made "the feature did nothing" and "the feature is
@@ -1903,16 +1882,13 @@ mod windows_impl {
             let category = category_for_exe(&exe);
             let app_name = window_title(hwnd).unwrap_or_else(|| exe.clone());
 
-            // UI Automation is only worth spinning up when we actually need it:
-            // a browser (for the URL) or the nearby-terms opt-in. Everything here
-            // is best-effort and SILENT — any failure just yields None/empty.
+            // UI Automation is only needed for browser URLs. Everything here is
+            // best-effort and SILENT — any failure just yields None/empty.
             let is_browser = is_browser_exe(&exe);
-            let scan = if is_browser || read_nearby_terms || read_caret {
-                super::uia::read(hwnd, is_browser, read_nearby_terms, read_caret)
+            let scan = if is_browser {
+                super::uia::read(hwnd, true)
             } else {
-                // Neither the URL nor the terms are wanted, so UI Automation is
-                // never spun up at all — the common non-browser path costs one
-                // Win32 round-trip and nothing else.
+                // The common non-browser path never spins up UI Automation.
                 Default::default()
             };
 
@@ -1968,25 +1944,12 @@ mod windows_impl {
             };
             log::info!(
                 "[GRAIN] context: {exe} → {category:?} [{site_note}] | field={:?} \
-                 confidence={:?} url={}({}) region={} | caret={} terms={}",
+                 confidence={:?} url={}({}) region={}",
                 scan.field,
                 scan.confidence,
                 scan.url_host.as_deref().unwrap_or("-"),
                 scan.url_source,
                 scan.region.as_deref().unwrap_or("-"),
-                scan.caret
-                    .as_ref()
-                    .map(|c| format!("{}b/{}b", c.before.len(), c.after.len()))
-                    .unwrap_or_else(|| if read_caret {
-                        "none".into()
-                    } else {
-                        "off".into()
-                    }),
-                if read_nearby_terms {
-                    scan.terms.len().to_string()
-                } else {
-                    "off".to_string()
-                },
             );
 
             Some(ActiveContext {
@@ -1999,8 +1962,6 @@ mod windows_impl {
                 field: scan.field,
                 region: scan.region,
                 confidence: scan.confidence,
-                caret: scan.caret,
-                nearby_terms: scan.terms,
             })
         }
     }
@@ -2077,14 +2038,15 @@ mod windows_impl {
     }
 }
 
-/// [GRAIN] UI-Automation reads: browser URL host + focused-field unique terms.
+/// [GRAIN] UI-Automation reads for browser site detection and explicit Agent/
+/// Paste Catch operations.
 /// Everything here is **best-effort and SILENT** — every call swallows failure
 /// into `None`/empty, and password fields are never read. No UI is ever shown.
 #[cfg(windows)]
 mod uia {
     use super::{
-        extract_unique_terms, host_from_url, CaretContext, Confidence, ControlClass, FieldKind,
-        FocusFacts, FocusIdentity, FocusProbe, MAX_CARET_LEFT_CHARS, MAX_CARET_RIGHT_CHARS,
+        host_from_url, CaretContext, Confidence, ControlClass, FieldKind, FocusFacts,
+        FocusIdentity, FocusProbe, MAX_CARET_LEFT_CHARS, MAX_CARET_RIGHT_CHARS,
     };
     use windows::Win32::Foundation::HWND;
     use windows::Win32::System::Com::{
@@ -2152,8 +2114,6 @@ mod uia {
         pub field: FieldKind,
         pub region: Option<String>,
         pub confidence: Confidence,
-        pub terms: Vec<String>,
-        pub caret: Option<CaretContext>,
         /// Which rung of the URL ladder produced the host. Logged, so a browser
         /// that resolves badly can be diagnosed without guessing at which
         /// mechanism failed.
@@ -2167,8 +2127,6 @@ mod uia {
                 field: FieldKind::default(),
                 region: None,
                 confidence: Confidence::default(),
-                terms: Vec::new(),
-                caret: None,
                 url_source: "not-attempted",
             }
         }
@@ -2322,12 +2280,7 @@ mod uia {
     /// It is also cheaper than what it replaces: one upward walk of ~15 hops
     /// instead of a subtree sweep, with every property for each hop fetched in a
     /// single cross-process call via the cache request.
-    pub(super) fn read(
-        hwnd: HWND,
-        want_url: bool,
-        want_terms: bool,
-        want_caret: bool,
-    ) -> FocusScan {
+    pub(super) fn read(hwnd: HWND, want_url: bool) -> FocusScan {
         unsafe {
             let _com = ComGuard::init();
             let automation: IUIAutomation =
@@ -2358,21 +2311,9 @@ mod uia {
 
             scan.field = field_kind(&focused);
 
-            // A password field is never read, and never contributes terms. This
-            // is checked before anything else touches its content.
+            // A password field is never read.
             if scan.field == FieldKind::Password {
                 return scan;
-            }
-
-            if want_terms {
-                scan.terms = match read_text_content(&focused) {
-                    Some(text) => extract_unique_terms(&text),
-                    None => Vec::new(),
-                };
-            }
-
-            if want_caret {
-                scan.caret = read_caret(&focused).filter(|c| !c.is_empty());
             }
 
             let (url, region) = walk_ancestors(&automation, &focused, want_url);
@@ -2603,11 +2544,6 @@ mod uia {
                     .and_then(|v| host_from_url(&v))
             })
     }
-
-    // [GRAIN] `read_focused_terms` used to fetch the focused element a second
-    // time to extract terms. The focus-anchored scan already holds that element,
-    // so the term extraction is inline in `read` and this is gone rather than
-    // kept as a second way to do the same thing.
 
     /// Harvest the foreground window's visible text from its accessibility tree.
     ///
@@ -3254,8 +3190,6 @@ mod tests {
             field: FieldKind::Unknown,
             region: None,
             confidence: Confidence::Guess,
-            caret: None,
-            nearby_terms: Vec::new(),
         }
     }
 
@@ -3486,22 +3420,14 @@ mod tests {
         ));
     }
 
-    /// Captured cursor/field data no longer participates in dictation prompts.
+    /// The field shape remains routing metadata, not dictated text.
     #[test]
-    fn cursor_and_field_data_do_not_change_the_prompt() {
+    fn field_shape_does_not_change_the_prompt() {
         let mut s = AppSettings::default();
         s.context_awareness_enabled = true;
         let mut c = ctx("unknownapp", AppCategory::Other);
         c.field = FieldKind::SingleLine;
-        c.caret = Some(CaretContext {
-            before: "left".into(),
-            after: "right".into(),
-        });
-        c.nearby_terms = vec!["Tauri".into()];
         let out = compose("BASE", &s, Some(&c), None);
-        assert!(!out.contains("left"));
-        assert!(!out.contains("right"));
-        assert!(!out.contains("Tauri"));
         assert!(!out.contains("SINGLE-LINE"));
     }
 
@@ -4230,18 +4156,7 @@ mod tests {
         let terms = extract_unique_terms(&text);
         assert_eq!(terms, vec!["Rita".to_string()]); // de-duped.
         let many: String = (0..50).map(|i| format!("Ident{i} ")).collect();
-        assert!(extract_unique_terms(&many).len() <= MAX_NEARBY_TERMS);
-    }
-
-    #[test]
-    fn nearby_terms_are_not_added_to_the_dictation_prompt() {
-        let mut s = AppSettings::default();
-        s.context_awareness_enabled = true;
-        let mut c = ctx("unknownapp", AppCategory::Other);
-        c.nearby_terms = vec!["Rita".into(), "PyTorch".into()];
-        let out = compose("BASE ${output}", &s, Some(&c), None);
-        assert!(!out.contains("Nearby terms"));
-        assert!(!out.contains("Rita, PyTorch"));
+        assert!(extract_unique_terms(&many).len() <= MAX_UNIQUE_TERMS);
     }
 
     #[test]

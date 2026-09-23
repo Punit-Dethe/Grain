@@ -196,12 +196,6 @@ pub(crate) fn register_session_shortcuts(app: &AppHandle) {
     // init, because it now also *starts* a capture from idle — a key that only
     // exists once you are already recording cannot do that. Re-registering it
     // per session would just collide with the global one.
-    // [GRAIN] Read the focused field's distinctive terms for this recording,
-    // off-thread, so they can bias the recognizer. Deliberately here and not at
-    // transcription time: this overlaps the user speaking, which is dead time
-    // already, instead of putting a UI-Automation round-trip in front of the
-    // decoder. No-ops entirely when the opt-in is off.
-    crate::context_bias::arm_session(app);
 }
 
 /// Release what [`register_session_shortcuts`] took.

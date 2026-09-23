@@ -151,10 +151,6 @@ const settingUpdaters: {
     commands.changeCaptureAlwaysAiSetting(value as boolean),
   context_awareness_enabled: (value) =>
     commands.changeContextAwarenessEnabledSetting(value as boolean),
-  context_nearby_terms: (value) =>
-    commands.changeContextNearbyTermsSetting(value as boolean),
-  context_caret_text: (value) =>
-    commands.changeContextCaretTextSetting(value as boolean),
   scrap_that_enabled: (value) =>
     commands.changeScrapThatEnabledSetting(value as boolean),
   agent_autocopy: (value) =>

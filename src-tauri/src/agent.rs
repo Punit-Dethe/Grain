@@ -1055,7 +1055,7 @@ pub(crate) fn capture_selection(app: &AppHandle) -> Option<String> {
 }
 
 /// [GRAIN] Agent context awareness: read the still-focused field at summon.
-/// `Unique` reuses the nearby-terms extractor (high-signal identifiers/names
+/// `Unique` uses the unique-term extractor (high-signal identifiers/names
 /// only); `Full` takes the capped raw text. Best-effort and silent — any failure
 /// simply yields `None` (behaves as if the mode were off). Password fields are
 /// never read (enforced inside `read_focused_text`).
