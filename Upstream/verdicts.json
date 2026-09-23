@@ -373,6 +373,16 @@
   "bc6a41e418dda66a1f8d0b123e6a83880a66b6a1": {
     "notes": "Ported silently during Dark Mode / UI overhaul. Grain's `Dropdown` already uses the identical grid fix."
   },
+  "bc7facea3a777869182203cfcf5c90f7a98efd99": {
+    "frontend_review": {
+      "outcome": "adapted",
+      "problem": "Debug paste-delay control capped manual waits at 500 ms",
+      "destinations": [
+        "src/app/components/settings/debug/PasteDelay.tsx"
+      ],
+      "evidence": "Grain PasteDelay slider now permits 5000 ms; TypeScript and targeted ESLint pass"
+    }
+  },
   "bd8e549a742eaf9c1f54a6bf111bc53929375320": {
     "notes": "Conflict reconciled against Grain en structure: kept Grain-only keys (loadModels/downloadModel, multiLanguage, acceleration.whisper, flat overlay, translateToEnglish.descriptionUnsupported, acknowledgments.whisper, footer downloadUpdate/restart), skipped upstream-only keys absent from en (existingModelsTitle/showAllModels/showFewerModels, languageCount, selectModel, voiceActivityDetection, ggml ack, overlay.style/position split), took upstream's sentence-case Spanish corrections + liveLogs block (present in Grain en)."
   },
