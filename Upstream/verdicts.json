@@ -131,6 +131,16 @@
   "485f4ade00169fd8a620c17d1478ad198252e953": {
     "notes": "Added CLT fallback logic in `build.rs`."
   },
+  "496a80cc151c8cfba3130c29ce2082f8f10f4f57": {
+    "frontend_review": {
+      "outcome": "adapted",
+      "problem": "History settings showed Copied before clipboard writing succeeded",
+      "destinations": [
+        "src/app/components/settings/history/HistorySettings.tsx"
+      ],
+      "evidence": "Grain HistorySettings now awaits clipboard success and reports failure; frontend build and targeted ESLint pass"
+    }
+  },
   "497653014c3293be09adc082305c14e6abdfa3f0": {
     "notes": "Clean cherry-pick"
   },

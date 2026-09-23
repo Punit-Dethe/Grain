@@ -253,8 +253,10 @@ export const HistorySettings: React.FC<HistorySettingsProps> = ({
   const copyToClipboard = async (text: string) => {
     try {
       await navigator.clipboard.writeText(text);
+      return true;
     } catch (error) {
       console.error("Failed to copy to clipboard:", error);
+      return false;
     }
   };
 
@@ -548,7 +550,7 @@ interface HistoryEntryProps {
   variant: "settings" | "next";
   viewMode: HistoryViewMode;
   onToggleSaved: () => void;
-  copyText: (text: string) => void;
+  copyText: (text: string) => Promise<boolean>;
   getAudioUrl: (fileName: string) => Promise<string | null>;
   deleteAudio: (id: number) => Promise<void>;
   retryTranscription: (id: number) => Promise<void>;
@@ -587,13 +589,21 @@ const HistoryEntryComponent: React.FC<HistoryEntryProps> = ({
     [getAudioUrl, entry.file_name],
   );
 
-  const handleCopyText = () => {
+  const handleCopyText = async () => {
     if (!hasText) {
       return;
     }
 
     // Copy whatever is currently shown — processed text in PRO, raw in TRS.
-    copyText(displayText);
+    const copied = await copyText(displayText);
+    if (!copied) {
+      toast.error(
+        t("settings.history.copyError", {
+          defaultValue: "Failed to copy transcription to clipboard.",
+        }),
+      );
+      return;
+    }
     setShowCopied(true);
     setTimeout(() => setShowCopied(false), 2000);
   };
