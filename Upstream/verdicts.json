@@ -56,6 +56,18 @@
   "1c4f21acd2bab81f75a0cd7556cd3bb7399ffd9a": {
     "notes": "Bumped version to 0.9.1 in Cargo.toml, tauri.conf.json, and package.json."
   },
+  "1cd92662805790da9c81639724c3eee5945211bc": {
+    "frontend_review": {
+      "outcome": "already-covered",
+      "problem": "Onboarding could overflow horizontally when classic scrollbars reserve width",
+      "destinations": [
+        "src/app/components/onboarding/onboarding.css",
+        "src/app/components/onboarding/Onboarding.tsx",
+        "src/app/components/onboarding/AccessibilityOnboarding.tsx"
+      ],
+      "evidence": "Grain onboarding uses a fixed inset shell, width constrained content, and an internal scrolling stage rather than w-screen containers"
+    }
+  },
   "1fd3f912e2ea950d1694c68199b6e215926b1c81": {
     "notes": "Hoisted the sonner Toaster in AppInner so that model download errors are visible during onboarding."
   },
@@ -64,6 +76,14 @@
   },
   "2211da652ea408191c6ab74e850d1155360d7304": {
     "notes": "Ported stream:false into grain_llm_client ChatCompletionRequest (all 4 call sites); upstream's llm_client.rs is inert. Grain parses full JSON on every path."
+  },
+  "286e66cb4d9d3e858b320c49a5aafeafd114eede": {
+    "frontend_review": {
+      "outcome": "not-applicable",
+      "problem": "Handy regenerated bindings with trailing whitespace changes",
+      "destinations": [],
+      "evidence": "The upstream diff is whitespace in a generated binding file; Grain generates src/app/bindings.ts from its own Rust API and never hand-merges it"
+    }
   },
   "2cf157d96290056fe07b4a2a42c26584c00655b8": {
     "frontend_review": {
@@ -94,6 +114,16 @@
   },
   "31d8fc2442c2412d6e9de6e018cf70edfbc37ca5": {
     "notes": "transcribe.cpp introduction — Grain's entire transcription is unified on transcribe-cpp (managers/transcription.rs); absorbed as architecture, not a discrete port."
+  },
+  "330b2ddbed3daab8f1fb09385cc1aaf73708e9d7": {
+    "frontend_review": {
+      "outcome": "already-covered",
+      "problem": "Mac non-Apple mouse scrollbars lacked custom thumb styling",
+      "destinations": [
+        "src/app/app.css"
+      ],
+      "evidence": "Grain app.css scopes scrollbar styling by component and has no macOS exclusion around its custom scrollbars"
+    }
   },
   "38825767cf933f59b90209c3f3c5f1e3bbe98766": {
     "notes": "Adapted to Grain flat onboarding layout; store/ModelCard infra already present"
