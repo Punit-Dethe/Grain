@@ -37,6 +37,13 @@ The rules here supersede repeated dated rows in the audit history below.
 | `.gitignore` | Merge normally; inspect final rule order and both forks' `!path` negations. `merge=union` is disabled because it can preserve contradictory intent. |
 | `src/**` | Grain-owned; discard upstream UI code, but complete the frontend-knowledge review and port host facts into Rust. |
 
+The 2026-09-23 ancestry merge keeps several upstream subsystem rewrites
+deferred. Its 26 ratchet increases and the reason for each affected path are
+recorded in [REVIEW-2026-09-23.md](REVIEW-2026-09-23.md). The increased budget
+tracks that reviewed temporary divergence; it does not mark the deferred tray,
+VAD, recorder, shortcut, Secure Input, macOS activation, or WebView2 behavior as
+implemented in Grain.
+
 ### Runtime relocation policy (generated from `relocations.json`)
 
 `policy_check.py` requires this block to match the JSON exactly and also derives
@@ -142,8 +149,8 @@ Any frontend change in a sync is a hard failure.
 
 Docs (`README`, `AGENTS.md`, `CLAUDE.md`, `BUILD.md`, `CRUSH.md`,
 `CONTRIBUTING*`), `.github/workflows/**`, `tauri.conf.json` +
-`tauri.windows.conf.json` (identity `com.grain.app`, **no auto-updater —
-never re-add**), lockfiles (regenerate after merges), `website/`, `docs/`,
+`tauri.windows.conf.json` (identity `com.grain.app`, Grain-owned updater
+policy), lockfiles (regenerate after merges), `website/`, `docs/`,
 `Upstream/`.
 
 ## Build & repo-root files
