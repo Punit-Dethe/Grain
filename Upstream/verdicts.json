@@ -1,4 +1,24 @@
 {
+  "055c7a5eb87305ff6e8348aa164de6c6745a3b50": {
+    "status": "Ignored",
+    "notes": "Reorders Handy Development Setup heading in its README; Grain has its own Build from source section",
+    "suppressed_review": {
+      "outcome": "not-applicable",
+      "problem": "Handy repositioned its Development Setup link",
+      "destinations": [],
+      "evidence": "Grain README already links BUILD.md from its own Build from source section"
+    }
+  },
+  "05e0aedd2906f0d82722735f930465950c476b90": {
+    "status": "Ignored",
+    "notes": "Handy v0.9.7 release version only; Grain owns its independent package version and generated lockfiles",
+    "suppressed_review": {
+      "outcome": "not-applicable",
+      "problem": "Handy release bump changes its product version",
+      "destinations": [],
+      "evidence": "The commit changes only Handy version strings in package, Cargo, lockfile and Tauri config; Grain version is 0.0.5"
+    }
+  },
   "07637ea932bcc9d9813f2f6caa7c766b89a513f6": {
     "notes": "logging-only change to transcription.rs; no behavioral effect on Grain's path."
   },
@@ -206,6 +226,26 @@
   "5276dd3cc75885c723ab7d09fdb3345e3968dca7": {
     "notes": "Turkish semantic corrections manually ported to Grain-owned src/app locale schema, with Grain branding."
   },
+  "53766a27922985f2a4d858f3615dff99dbc9b7d8": {
+    "status": "Ignored",
+    "notes": "Moves Handy sponsor links within its README; Grain does not publish Handy sponsor copy",
+    "suppressed_review": {
+      "outcome": "not-applicable",
+      "problem": "Handy moved its sponsor section",
+      "destinations": [],
+      "evidence": "The diff only relocates Handy-specific sponsor markup and does not change app behavior"
+    }
+  },
+  "53c55d706514443580ca25327b256b303ab22ea7": {
+    "status": "Ignored",
+    "notes": "Handy README restructuring and obsolete-model cleanup are Handy-owned documentation; Grain has its own README and build guide",
+    "suppressed_review": {
+      "outcome": "not-applicable",
+      "problem": "Handy reorganized and slimmed its README",
+      "destinations": [],
+      "evidence": "Grain README uses a separate feature and build structure; no runtime code or shared user instructions changed"
+    }
+  },
   "5464bfaa0826ec367a052514d87575f92e0113fc": {
     "notes": "Kept Grain non-panicking icon load; menu now reflects real state"
   },
@@ -237,6 +277,16 @@
   },
   "66e57ca865778dfdeb78bf1a4e69a0accc399ca1": {
     "notes": "Added OpenBLAS checks to Linux CI/packaging."
+  },
+  "691751149328fd13365f83e60e69df28c535f543": {
+    "status": "Ignored",
+    "notes": "Adds a Handy sponsor and logo; Grain does not import Handy sponsorship assets",
+    "suppressed_review": {
+      "outcome": "not-applicable",
+      "problem": "Handy added a sponsor logo to its README",
+      "destinations": [],
+      "evidence": "Sponsorship copy and image are Handy-specific and do not change Grain product behavior"
+    }
   },
   "6d92e2cc6902c18d8d3362872fda889172bdb261": {
     "notes": "Improved `nl` translations."
@@ -289,6 +339,17 @@
     "notes": "Irrelevant (Grain is an independent fork).",
     "status": "Ignored"
   },
+  "8fd6691286805cd95e3c86b008606c81a822e4cd": {
+    "suppressed_review": {
+      "outcome": "already-covered",
+      "problem": "Handy's updater lockfile needed a bounded 2.10.1 range and matching Nix hash",
+      "destinations": [
+        "bun.lock",
+        ".nix/bun-lock-hash"
+      ],
+      "evidence": "Grain bun.lock already has ~2.10.1 and bun install --frozen-lockfile passed its Nix derivative check"
+    }
+  },
   "96afb0cf335d0c6b5d6d92c9af9e14f4c3f4ef0b": {
     "notes": "memory.rs (glibc allocator tuning) git mv'd into handy/ with #[path]; trim_freed_memory() hook ported by hand into Grain's diverged FinishGuard::drop (merge left actions.rs untouched)."
   },
@@ -316,6 +377,16 @@
   },
   "a92a4d5e497bc1d7bc8d228c77636c4e600453a9": {
     "notes": "Fixed Tauri memory leak from overlay."
+  },
+  "af48dd68a64d58aad128fdbb920492a03da53c79": {
+    "status": "Ignored",
+    "notes": "Handy v0.9.6 release version only; Grain owns its independent package version and generated lockfiles",
+    "suppressed_review": {
+      "outcome": "not-applicable",
+      "problem": "Handy release bump changes its product version",
+      "destinations": [],
+      "evidence": "The commit changes only Handy version strings in package, Cargo, lockfile and Tauri config; Grain version is 0.0.5"
+    }
   },
   "afbe763dcac5a2c14d5c6d1b8215639a563ffbef": {
     "notes": "Batch path only; rolling keeps Word timestamps + coarse fallback"
@@ -389,6 +460,16 @@
   "b9925d01972a933544d0344a2e62360580368f18": {
     "notes": "Upstream version bump; Grain versions independently",
     "status": "Ignored"
+  },
+  "ba10ce1943ef34e93c09494027fc0b9ced2e8a44": {
+    "suppressed_review": {
+      "outcome": "adapted",
+      "problem": "Debian and Ubuntu package installation with dpkg can leave runtime dependencies unresolved",
+      "destinations": [
+        "README.md"
+      ],
+      "evidence": "Grain README Quick start now directs users to install its .deb through APT"
+    }
   },
   "bc6a41e418dda66a1f8d0b123e6a83880a66b6a1": {
     "notes": "Ported silently during Dark Mode / UI overhaul. Grain's `Dropdown` already uses the identical grid fix."

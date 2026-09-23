@@ -270,6 +270,7 @@ First-run onboarding introduces Batch, Flow, and ASR, then guides you through mo
 5. Enable only the extensions and workflows you want — everything else stays off.
 
 Grain targets Windows, macOS, and Linux. Linux text insertion may require `wtype` or `dotool` under Wayland.
+On Debian or Ubuntu, install the downloaded `.deb` with `sudo apt install ./Grain_*.deb` so APT resolves its dependencies.
 
 ### Known input and audio behavior
 
