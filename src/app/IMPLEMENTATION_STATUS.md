@@ -5,7 +5,7 @@
 | Shell      | Window chrome, theme, navigation                        | Complete          | Working             | Uses real Tauri window and theme APIs.                    |
 | Overview   | Open Notes                                              | Complete          | Working             | Routes to the real Notes workspace.                       |
 | Overview   | Recent transcriptions                                   | Complete          | Working             | Shares one live History controller with History.          |
-| Overview   | Start Flow                                              | Visible, disabled | Intentionally inert | No renderer-callable capture command; backend/API owner.  |
+| Overview   | Studio shortcut                                         | Complete          | Working             | Opens the Dictionary section in Studio.                   |
 | Overview   | Standard capture                                        | Visible, disabled | Intentionally inert | Shortcut exists, no renderer-callable capture command.    |
 | Overview   | Flow capture                                            | Visible, disabled | Intentionally inert | Shortcut exists, no renderer-callable capture command.    |
 | Overview   | Quick note                                              | Visible, disabled | Intentionally inert | Notes CRUD is not the capture workflow.                   |

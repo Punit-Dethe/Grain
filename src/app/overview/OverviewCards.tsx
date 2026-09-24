@@ -1,10 +1,7 @@
-import { useMemo, useState } from "react";
-import { ArrowRight, BookOpen, FileText, Keyboard, Plus } from "lucide-react";
-import { toast } from "sonner";
+import { ArrowRight, BookOpen, FileText, Keyboard } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { useSettings } from "@/hooks/useSettings";
 import { formatKeyPart } from "@/lib/utils/keyboard";
-import { MAX_CUSTOM_WORD_LENGTH, normalizeCustomWord } from "@/lib/customWords";
 import { getFlowAvailability } from "@/lib/flowAvailability";
 import { useModelStore } from "@/stores/modelStore";
 import { hashForRoute } from "../navigation";
@@ -17,9 +14,8 @@ const COPY = {
   },
   dictionary: {
     title: "Dictionary",
-    body: "Add unique words, names, or jargon Grain should always recognize.",
-    placeholder: "Add custom word...",
-    add: "Add word",
+    body: "Teach Grain the names and terms you use.",
+    explore: "Go to dictionary",
   },
   shortcuts: {
     title: "Shortcuts",
@@ -30,8 +26,7 @@ const COPY = {
   },
   agent: {
     title: "Agent",
-    body: "Select any text on screen and summon AI to rewrite or summarize.",
-    bodyOff: "Select any text on screen and summon AI to rewrite or summarize.",
+    body: "Rewrite or summarize selected text right where you work.",
     shortcutLabel: "Shortcut",
     enable: "Turn on in Studio",
   },
@@ -106,7 +101,11 @@ function SnippetsCard() {
       <div className="overview-card-footer">
         <div className="overview-cta-row">
           <span className="overview-card-cta">{COPY.snippets.explore}</span>
-          <ArrowRight size={13} className="overview-cta-arrow" aria-hidden="true" />
+          <ArrowRight
+            size={13}
+            className="overview-cta-arrow"
+            aria-hidden="true"
+          />
         </div>
       </div>
     </button>
@@ -114,61 +113,28 @@ function SnippetsCard() {
 }
 
 function DictionaryCard() {
-  const { getSetting, updateSetting, isUpdating } = useSettings();
-  const [word, setWord] = useState("");
-  const words = useMemo(() => getSetting("custom_words") ?? [], [getSetting]);
-  const busy = isUpdating("custom_words");
-
-  const submit = () => {
-    const candidate = normalizeCustomWord(word);
-    if (!candidate || candidate.length > MAX_CUSTOM_WORD_LENGTH) return;
-    if (words.includes(candidate)) {
-      toast.error(`"${candidate}" is already in your dictionary.`);
-      return;
-    }
-    void updateSetting("custom_words", [...words, candidate]);
-    setWord("");
-    toast.success(`Added "${candidate}" to your dictionary.`);
-  };
-
   return (
-    <div className="overview-card overview-card--static">
+    <button
+      className="overview-card overview-card--interactive"
+      type="button"
+      onClick={() => go(hashForRoute({ page: "tools", section: "dictionary" }))}
+    >
       <div className="overview-card-header">
         <BookOpen className="overview-card-icon" size={18} strokeWidth={1.8} />
         <strong className="overview-card-title">{COPY.dictionary.title}</strong>
       </div>
       <p className="overview-card-desc">{COPY.dictionary.body}</p>
       <div className="overview-card-footer">
-        <div className="overview-add-row">
-          <input
-            className="overview-add-input"
-            value={word}
-            spellCheck={false}
-            maxLength={MAX_CUSTOM_WORD_LENGTH}
-            disabled={busy}
-            placeholder={COPY.dictionary.placeholder}
-            aria-label={COPY.dictionary.add}
-            onChange={(event) => setWord(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter") {
-                event.preventDefault();
-                submit();
-              }
-            }}
+        <div className="overview-cta-row">
+          <span className="overview-card-cta">{COPY.dictionary.explore}</span>
+          <ArrowRight
+            size={13}
+            className="overview-cta-arrow"
+            aria-hidden="true"
           />
-          <button
-            className="overview-add-btn"
-            type="button"
-            title={COPY.dictionary.add}
-            aria-label={COPY.dictionary.add}
-            disabled={busy || word.trim().length === 0}
-            onClick={submit}
-          >
-            <Plus size={14} aria-hidden="true" />
-          </button>
         </div>
       </div>
-    </div>
+    </button>
   );
 }
 
@@ -230,19 +196,23 @@ function AgentCard() {
         <AgentGlyph />
         <strong className="overview-card-title">{COPY.agent.title}</strong>
       </div>
-      <p className="overview-card-desc">
-        {enabled ? COPY.agent.body : COPY.agent.bodyOff}
-      </p>
+      <p className="overview-card-desc">{COPY.agent.body}</p>
       <div className="overview-card-footer">
         {combination ? (
           <div className="overview-shortcut-row overview-agent-row">
-            <span className="overview-shortcut-label">{COPY.agent.shortcutLabel}</span>
+            <span className="overview-shortcut-label">
+              {COPY.agent.shortcutLabel}
+            </span>
             <Keycap combination={combination} />
           </div>
         ) : (
           <div className="overview-cta-row">
             <span className="overview-card-cta">{COPY.agent.enable}</span>
-            <ArrowRight size={13} className="overview-cta-arrow" aria-hidden="true" />
+            <ArrowRight
+              size={13}
+              className="overview-cta-arrow"
+              aria-hidden="true"
+            />
           </div>
         )}
       </div>
@@ -253,7 +223,11 @@ function AgentCard() {
 /** The prototype's Agent face — clean inline SVG glyph. */
 function AgentGlyph() {
   return (
-    <svg viewBox="0 0 24 24" className="overview-card-icon overview-agent-svg" aria-hidden="true">
+    <svg
+      viewBox="0 0 24 24"
+      className="overview-card-icon overview-agent-svg"
+      aria-hidden="true"
+    >
       <rect x="5.25" y="6" width="13.5" height="10.5" rx="4.25" />
       <circle cx="10" cy="11.25" r="1" />
       <circle cx="14" cy="11.25" r="1" />
@@ -261,7 +235,6 @@ function AgentGlyph() {
     </svg>
   );
 }
-
 
 export function OverviewCards() {
   return (

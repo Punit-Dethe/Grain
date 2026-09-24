@@ -58,13 +58,13 @@ const TOOL_COPY: Record<
   context: {
     title: "Context awareness",
     description:
-      "Grain uses the active application to match terminology, tone, and formatting.",
+      "Grain uses the active application to match terminology, tone, and formatting. Your words land naturally in messages, documents, and other apps.",
     icon: Sparkles,
   },
   agent: {
     title: "Agent",
     description:
-      "Configure Grain's local writing assistant and the actions available from selected text.",
+      "Configure Grain's local writing assistant and the actions available from selected text, without leaving your workspace.",
     icon: Bot,
   },
 };
@@ -270,8 +270,7 @@ function StudioExtensionArea({
 }
 
 type DictionaryDialogState =
-  | { mode: "add" }
-  | { mode: "edit"; original: string };
+  { mode: "add" } | { mode: "edit"; original: string };
 
 function ToolDialog({
   id,
@@ -974,7 +973,9 @@ export function ToolsPage({ section }: { section: ToolSectionId }) {
                     <h1 id="next-tool-title">
                       {section === "dictionary"
                         ? "Personal Dictionary"
-                        : copy.title}
+                        : section === "agent"
+                          ? "Grain Agent"
+                          : copy.title}
                     </h1>
                     <p>{copy.description}</p>
                   </div>

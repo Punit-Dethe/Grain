@@ -259,7 +259,7 @@ html[data-theme="light"] body {
     ),
     /* One step below the content bubble, so the bubble reads as a raised
        plane rather than a border drawn on the same colour. */
-      var(--bg-0);
+    var(--bg-0);
   transition: grid-template-columns 0.32s var(--ease-out);
 }
 
@@ -1526,7 +1526,7 @@ html[data-theme="light"] .hero {
 .overview-card {
   min-width: 0;
   min-height: 164px;
-  padding: 18px;
+  padding: 16px;
   display: flex;
   flex-direction: column;
   position: relative;
@@ -1586,7 +1586,7 @@ html[data-theme="light"] .overview-card--interactive:hover {
   align-items: center;
   gap: 10px;
   min-width: 0;
-  margin-bottom: 10px;
+  margin-bottom: 8px;
 }
 
 .overview-card-icon {
@@ -1654,7 +1654,7 @@ html[data-theme="light"] .overview-card-desc {
 /* Card Footer / Accessory */
 .overview-card-footer {
   margin-top: auto;
-  padding-top: 16px;
+  padding-top: 12px;
   display: flex;
   align-items: center;
   min-width: 0;
@@ -1663,10 +1663,10 @@ html[data-theme="light"] .overview-card-desc {
 /* -- Shortcuts list -- */
 .overview-shortcut-list {
   margin-top: auto;
-  padding-top: 14px;
+  padding-top: 10px;
   display: flex;
   flex-direction: column;
-  gap: 9px;
+  gap: 8px;
 }
 
 .overview-shortcut-row {
@@ -1713,8 +1713,8 @@ html[data-theme="light"] .overview-shortcut-label {
   color: var(--text-1);
   background: transparent;
   font-family: inherit;
-  font-size: 12px;
-  font-weight: 600;
+  font-size: 14px;
+  font-weight: 620;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
@@ -1765,108 +1765,6 @@ html[data-theme="light"] .overview-cta-arrow {
 
 .overview-card--interactive:hover .overview-cta-arrow {
   transform: translateX(3px);
-}
-
-/* -- Dictionary card input -- */
-.overview-add-row {
-  margin-top: auto;
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  height: 30px;
-  width: 100%;
-  padding-right: 3px;
-  border: 1px solid var(--hairline, rgba(255, 255, 255, 0.12));
-  border-radius: 7px;
-  background: rgba(0, 0, 0, 0.2);
-  transition:
-    border-color 0.15s ease,
-    background 0.15s ease;
-}
-
-.overview-add-row:focus-within {
-  border-color: var(--accent, #8faaff);
-  background: rgba(0, 0, 0, 0.35);
-}
-
-.overview-add-input {
-  flex: 1;
-  min-width: 0;
-  height: 100%;
-  padding: 0 0 0 9px;
-  border: 0;
-  color: var(--text-1);
-  background: none;
-  font-size: 11.5px;
-  outline: none;
-}
-
-.overview-add-input::placeholder {
-  color: var(--text-4, #5c6265);
-}
-
-.overview-add-btn {
-  flex: none;
-  width: 22px;
-  height: 22px;
-  display: grid;
-  place-items: center;
-  border: 0;
-  border-radius: 5px;
-  color: var(--text-3);
-  background: rgba(255, 255, 255, 0.07);
-  cursor: pointer;
-  transition:
-    background 0.15s ease,
-    color 0.15s ease,
-    transform 0.1s ease;
-}
-
-.overview-add-btn:hover:not(:disabled) {
-  color: #ffffff;
-  background: var(--accent, #8faaff);
-  transform: scale(1.05);
-}
-
-.overview-add-btn:disabled {
-  opacity: 0.3;
-  cursor: default;
-}
-
-html[data-theme="light"] .overview-add-row {
-  height: 34px;
-  padding-right: 0;
-  border: 0;
-  border-bottom: 1px solid #eeebe3;
-  border-radius: 0;
-  background: transparent;
-}
-
-html[data-theme="light"] .overview-add-row:focus-within {
-  border-color: #1a1a1a;
-  background: transparent;
-  box-shadow: none;
-}
-
-html[data-theme="light"] .overview-add-input {
-  padding-left: 0;
-  color: #1a1a1a;
-}
-
-html[data-theme="light"] .overview-add-input::placeholder {
-  color: #6b675f;
-}
-
-html[data-theme="light"] .overview-add-btn {
-  width: 26px;
-  height: 26px;
-  color: #1a1a1a;
-  background: transparent;
-}
-
-html[data-theme="light"] .overview-add-btn:hover:not(:disabled) {
-  color: #1a1a1a;
-  background: #eeebe3;
 }
 
 .section-head-actions {
@@ -2898,7 +2796,10 @@ html[data-theme="light"] :is(.history-feed, .recent-feed) .transcript-card {
   padding: 18px 20px;
 }
 
-html[data-theme="light"] :is(.history-feed, .recent-feed) .transcript-head time {
+html[data-theme="light"]
+  :is(.history-feed, .recent-feed)
+  .transcript-head
+  time {
   color: #45433f;
   font-size: 12.5px;
 }
@@ -2929,7 +2830,11 @@ html[data-theme="light"] :is(.history-feed, .recent-feed) .audio-track-input {
 
 html[data-theme="light"]
   :is(.history-feed, .recent-feed)
-  :is(.transcript-actions button:hover, .transcript-actions button.active, .play-mini:hover) {
+  :is(
+    .transcript-actions button:hover,
+    .transcript-actions button.active,
+    .play-mini:hover
+  ) {
   background: #f5f4f0;
 }
 
@@ -4069,6 +3974,8 @@ html[data-theme="light"] .grain-root .gs-next .gs-chat-bubble--user {
   grid-column: 2;
   grid-row: 1;
   justify-self: end;
+  align-self: start;
+  margin-top: 3px;
   display: grid;
   place-items: center;
 }
@@ -4124,8 +4031,9 @@ html[data-theme="light"] .grain-root .gs-next .gs-chat-bubble--user {
 
   .studio-feature-toggle {
     position: absolute;
-    top: 18px;
-    right: 18px;
+    top: 24px;
+    right: 22px;
+    margin-top: 0;
   }
 }
 

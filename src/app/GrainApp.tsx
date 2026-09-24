@@ -21,6 +21,7 @@ import { ThemeProvider, useTheme } from "@/contexts/ThemeContext";
 import { useSettings } from "@/hooks/useSettings";
 import { useModelStore } from "@/stores/modelStore";
 import {
+  hashForRoute,
   routeFromHash,
   routeUsesCompactGlobalRail,
   type AppRoute,
@@ -62,7 +63,7 @@ const PROTOTYPE_COPY = {
   processed: "AI processed",
   beta: "Beta",
   heroTitle: "Speak before the thought disappears.",
-  startFlow: "Start Flow",
+  studio: "Studio",
   openNotes: "Open notes",
   quickActions: "Start here",
   quickActionsBody:
@@ -423,7 +424,8 @@ function Sidebar({
           <div className="nav-label">{group.label}</div>
           <div className="nav-list">
             {group.items.map((item) => {
-              if (!import.meta.env.DEV && item.page === "extensions") return null;
+              if (!import.meta.env.DEV && item.page === "extensions")
+                return null;
               const active =
                 item.page === route.page ||
                 (item.page === "extensions" &&
@@ -548,8 +550,17 @@ function OverviewPage({ history }: { history: HistoryController }) {
               <h2>{PROTOTYPE_COPY.heroTitle}</h2>
             </div>
             <div className="hero-actions">
-              <button className="button primary" type="button" disabled>
-                {PROTOTYPE_COPY.startFlow}
+              <button
+                className="button primary"
+                type="button"
+                onClick={() => {
+                  window.location.hash = hashForRoute({
+                    page: "tools",
+                    section: "dictionary",
+                  });
+                }}
+              >
+                {PROTOTYPE_COPY.studio}
               </button>
               <button
                 className="button secondary-glass"
