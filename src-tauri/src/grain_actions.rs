@@ -602,7 +602,6 @@ impl ShortcutAction for RealtimeTranscribeAction {
 
             // Empty on Flow: its Float32 journal owns the complete recording.
             let stopped = rm.stop_recording(&binding_id, cancel_generation);
-            play_feedback_sound(&ah, SoundType::Stop);
             let Some(samples) = stopped else {
                 rt.cancel_session();
                 if !rm.was_cancelled_since(cancel_generation) {
@@ -714,6 +713,25 @@ impl ShortcutAction for RealtimeTranscribeAction {
             };
             let final_text = processed.final_text;
 
+            // Deliver text before WAV export and history I/O. Neither is needed
+            // by the paste path, and both can take noticeable time on slow disks.
+            if final_text.trim().is_empty() {
+                change_tray_icon(&ah, TrayIconState::Idle);
+            } else {
+                let ah_clone = ah.clone();
+                ah.run_on_main_thread(move || {
+                    if let Err(e) = utils::paste(final_text, ah_clone.clone()) {
+                        error!("Failed to paste real-time transcription: {e}");
+                        let _ = ah_clone.emit("paste-error", ());
+                    }
+                    change_tray_icon(&ah_clone, TrayIconState::Idle);
+                })
+                .unwrap_or_else(|e| {
+                    error!("Failed to run paste on main thread: {e:?}");
+                    change_tray_icon(&ah, TrayIconState::Idle);
+                });
+            }
+
             if audio_len > 0 {
                 let file_name = format!("grain-{}.wav", chrono::Utc::now().timestamp());
                 let wav_path = hm.recordings_dir().join(&file_name);
@@ -741,23 +759,6 @@ impl ShortcutAction for RealtimeTranscribeAction {
                 ) {
                     error!("Failed to save history entry: {e}");
                 }
-            }
-
-            if final_text.trim().is_empty() {
-                change_tray_icon(&ah, TrayIconState::Idle);
-            } else {
-                let ah_clone = ah.clone();
-                ah.run_on_main_thread(move || {
-                    if let Err(e) = utils::paste(final_text, ah_clone.clone()) {
-                        error!("Failed to paste real-time transcription: {e}");
-                        let _ = ah_clone.emit("paste-error", ());
-                    }
-                    change_tray_icon(&ah_clone, TrayIconState::Idle);
-                })
-                .unwrap_or_else(|e| {
-                    error!("Failed to run paste on main thread: {e:?}");
-                    change_tray_icon(&ah, TrayIconState::Idle);
-                });
             }
 
             // B2: processing finished → pill hides.
