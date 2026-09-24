@@ -1,4 +1,4 @@
-import { useEffect, type ComponentType } from "react";
+import { useEffect, useLayoutEffect, useRef, type ComponentType } from "react";
 import { useTranslation } from "react-i18next";
 import { AboutSettings } from "@/components/settings/about/AboutSettings";
 import { DebugSettings } from "@/components/settings/debug/DebugSettings";
@@ -34,11 +34,16 @@ interface SettingsPageProps {
 }
 
 export function SettingsPage({ section }: SettingsPageProps) {
+  const scrollRef = useRef<HTMLDivElement>(null);
   const { t } = useTranslation();
   const { settings, isLoading } = useSettings();
   const enabled = isSettingsSectionEnabled(section, settings);
   const activeSection = isLoading ? section : enabled ? section : "capture";
   const ActiveSection = sectionComponents[activeSection];
+
+  useLayoutEffect(() => {
+    scrollRef.current?.scrollTo({ top: 0 });
+  }, [activeSection]);
 
   useEffect(() => {
     if (!isLoading && !enabled) {
@@ -137,7 +142,7 @@ export function SettingsPage({ section }: SettingsPageProps) {
             className="settings-canvas"
             aria-labelledby="next-settings-title"
           >
-            <div className="settings-scroll">
+            <div ref={scrollRef} className="settings-scroll">
               <div className="settings-content">
                 <header className="settings-main-heading">
                   <h1 id="next-settings-title">{t("ui2.settings.title")}</h1>

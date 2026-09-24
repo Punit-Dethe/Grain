@@ -122,6 +122,7 @@ mod tray_i18n;
 mod utils;
 
 pub use cli::CliArgs;
+pub use utils::env_flag_enabled;
 
 /// [GRAIN] Whether `--eval <golden.json>` was passed (Extensions V1 P3). Read by
 /// `main` *before* clap so the upstream `CliArgs` never has to know the flag —

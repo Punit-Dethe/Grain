@@ -12,6 +12,15 @@ pub use crate::clipboard::*;
 pub use crate::overlay::*;
 pub use crate::tray::*;
 
+/// Preserve diagnostic text in development builds, but redact transcripts in releases.
+pub fn redact_text(text: &str) -> &str {
+    if cfg!(debug_assertions) {
+        text
+    } else {
+        "[REDACTED]"
+    }
+}
+
 #[cfg(any(test, all(target_os = "windows", target_arch = "x86_64")))]
 const IMAGE_FILE_MACHINE_ARM64: u16 = 0xaa64;
 
@@ -93,8 +102,9 @@ pub fn cancel_current_operation(app: &AppHandle) {
         grain_core::DaemonEvent::SessionCancelled { session_id: 0 },
     );
 
-    // Unload model if immediate unload is enabled
+    // Abandon any live streaming transcription before checking unload policy.
     let tm = app.state::<Arc<TranscriptionManager>>();
+    tm.cancel_stream();
     tm.maybe_unload_immediately("cancellation");
 
     // Notify coordinator so it can keep lifecycle state coherent.
@@ -127,6 +137,29 @@ pub fn is_kde_plasma() -> bool {
 #[cfg(target_os = "linux")]
 pub fn is_kde_wayland() -> bool {
     is_wayland() && is_kde_plasma()
+}
+
+/// Check if running on GNOME with Wayland (Mutter lacks wtype's virtual-keyboard protocol).
+#[cfg(target_os = "linux")]
+pub fn is_gnome_wayland() -> bool {
+    is_wayland()
+        && std::env::var("XDG_CURRENT_DESKTOP")
+            .map(|v| v.to_uppercase().contains("GNOME"))
+            .unwrap_or(false)
+}
+
+/// Returns true when the environment variable is set to a truthy value
+/// (e.g. "1", "true", "yes", "on").
+/// "0", "false", "no", "off" and empty string are treated as falsy (case-insensitive).
+/// Returns false when the variable is not set.
+pub fn env_flag_enabled(name: &str) -> bool {
+    match std::env::var(name) {
+        Ok(v) => !matches!(
+            v.trim().to_ascii_lowercase().as_str(),
+            "" | "0" | "false" | "no" | "off"
+        ),
+        Err(_) => false,
+    }
 }
 
 #[cfg(test)]

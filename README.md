@@ -270,11 +270,21 @@ First-run onboarding introduces Batch, Flow, and ASR, then guides you through mo
 5. Enable only the extensions and workflows you want — everything else stays off.
 
 Grain targets Windows, macOS, and Linux. Linux text insertion may require `wtype` or `dotool` under Wayland.
+On Debian or Ubuntu, install the downloaded `.deb` with `sudo apt install ./Grain_*.deb` so APT resolves its dependencies.
 
 ### Known input and audio behavior
 
 - On macOS, recording through a Bluetooth headset microphone can temporarily reduce playback quality or volume because Bluetooth switches into bidirectional audio mode. Keep the headset as the output and select the Mac's built-in microphone or an external microphone in Grain to avoid it.
 - On macOS, shortcuts containing the `fn`/Globe key work only on Apple keyboards. Third-party keyboards usually handle `Fn` entirely in firmware and send no key event to macOS; use `control`, `option`, `shift`, `command`, or a regular key for a shortcut that must work across keyboards.
+
+### Earlier clipboard text is pasted instead of your transcript
+
+If History shows the correct transcript but another app receives text you copied earlier, that app may be reading the clipboard after Grain restores its previous contents. Open Grain's main window and press `Cmd+Shift+D` (macOS) or `Ctrl+Shift+D` (Windows/Linux) to show Debug settings.
+
+- On macOS and Windows, try **Reliable Paste** with a clipboard paste method. It waits for the receiving app to read the text before restoring your clipboard.
+- Otherwise, increase **Paste Delay (After)** and retry in the affected app. **Paste Delay (Before)** waits before sending the paste shortcut and addresses a different problem.
+
+If it persists, report your OS, receiving app, paste method, Reliable Paste setting, and both delay values. Keep private dictated text out of logs you share.
 
 ## Build from source
 

@@ -83,8 +83,11 @@ pub fn get_bindings(app: &AppHandle) -> HashMap<String, ShortcutBinding> {
     get_settings(app).bindings
 }
 
-pub fn get_stored_binding(app: &AppHandle, id: &str) -> ShortcutBinding {
-    get_bindings(app).get(id).unwrap().clone()
+pub fn get_stored_binding(app: &AppHandle, id: &str) -> Result<ShortcutBinding, String> {
+    get_bindings(app)
+        .get(id)
+        .cloned()
+        .ok_or_else(|| format!("Binding with id '{}' not found", id))
 }
 
 pub fn get_history_limit(app: &AppHandle) -> usize {

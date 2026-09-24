@@ -102,6 +102,15 @@ fn base_language(language: &str) -> &str {
     }
 }
 
+/// Match equivalent language codes without changing the model's returned code.
+pub(crate) fn canonical_language_code(language: &str) -> &str {
+    match base_language(language) {
+        "nb" => "no",
+        "fil" => "tl",
+        base => base,
+    }
+}
+
 fn canonicalize_supported_languages(languages: Vec<String>) -> Vec<String> {
     let mut seen = HashSet::new();
     let mut canonical = Vec::with_capacity(languages.len());
@@ -276,10 +285,15 @@ pub fn effective_language(
     }
 
     if intent != "auto" {
-        if let Some(code) = supported_languages
+        let exact_base_match = supported_languages
             .iter()
-            .find(|language| base_language(language) == base_language(intent))
-        {
+            .find(|language| base_language(language) == base_language(intent));
+        let equivalent_match = || {
+            supported_languages.iter().find(|language| {
+                canonical_language_code(language) == canonical_language_code(intent)
+            })
+        };
+        if let Some(code) = exact_base_match.or_else(equivalent_match) {
             if intent == "zh-Hans" || intent == "zh-Hant" {
                 return intent.to_string();
             }
@@ -1044,15 +1058,18 @@ impl ModelManager {
             let models = self.available_models.lock().unwrap();
             let entry = models.get(&settings.selected_model);
             let exists = entry.is_some();
+            let is_downloaded = entry.is_some_and(|m| m.is_downloaded);
             let is_streaming = entry.map(|m| m.supports_streaming).unwrap_or(false);
             drop(models);
 
-            if !exists || is_streaming {
+            if !is_downloaded || is_streaming {
                 info!(
                     "Selected model '{}' is {} — clearing selection",
                     settings.selected_model,
-                    if exists {
+                    if is_streaming {
                         "a streaming model (batch selection must be standard)"
+                    } else if exists {
+                        "not available on disk"
                     } else {
                         "not found in available models"
                     }
@@ -2180,6 +2197,12 @@ mod tests {
         assert_eq!(effective_language("ja", &languages, true), "ja-JP");
         // An unsupported intent still auto-detects when the model can.
         assert_eq!(effective_language("fr", &languages, true), "auto");
+    }
+
+    #[test]
+    fn test_effective_language_resolves_alias_to_model_code() {
+        assert_eq!(effective_language("no", &["nb".to_string()], false), "nb");
+        assert_eq!(effective_language("tl", &["fil".to_string()], false), "fil");
     }
 
     #[test]
