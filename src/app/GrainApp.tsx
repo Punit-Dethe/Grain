@@ -60,6 +60,9 @@ const PROTOTYPE_COPY = {
   original: "Original",
   processed: "AI processed",
   beta: "Beta",
+  heroTitle: "Speak before the thought disappears.",
+  startFlow: "Start Flow",
+  openNotes: "Open notes",
   quickActions: "Start here",
   quickActionsBody:
     "Your keys, your words, and what Grain can be taught to do.",
@@ -539,6 +542,25 @@ function OverviewPage({ history }: { history: HistoryController }) {
             src={overviewHero}
             alt="Motion-blurred person walking through a landscape at dusk"
           />
+          <div className="hero-content">
+            <div className="hero-copy">
+              <h2>{PROTOTYPE_COPY.heroTitle}</h2>
+            </div>
+            <div className="hero-actions">
+              <button className="button primary" type="button" disabled>
+                {PROTOTYPE_COPY.startFlow}
+              </button>
+              <button
+                className="button secondary-glass"
+                type="button"
+                onClick={() => {
+                  window.location.hash = "/notes";
+                }}
+              >
+                {PROTOTYPE_COPY.openNotes}
+              </button>
+            </div>
+          </div>
         </div>
 
         <div className="section-head compact-section-head">
