@@ -19,8 +19,8 @@
   --ev-danger: #ff938a;
   --ev-info: #8bbdcb;
   font-family:
-    "Inter Variable", Inter, "Segoe UI Variable Text", "Segoe UI", system-ui,
-    sans-serif;
+    "IBM Plex Sans Variable", "Segoe UI Variable Text", "Segoe UI",
+    system-ui, sans-serif;
   font-synthesis: none;
 }
 

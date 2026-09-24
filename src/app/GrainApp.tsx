@@ -39,6 +39,7 @@ import { OverviewCards } from "./overview/OverviewCards";
 import overviewHero from "./overview/overview-hero.jpg";
 import { UpdateNotice } from "@/components/UpdateNotice";
 import { QuickPanel } from "./quick-panel/QuickPanel";
+import "@fontsource-variable/ibm-plex-sans/wght.css";
 import "./app.css";
 
 /** ⌘ K on macOS, Ctrl K elsewhere — matches the platform's palette convention. */

@@ -30,6 +30,7 @@ import {
   filterChoiceCandidates,
   resolveChoiceSelection,
 } from "./extension-view-model";
+import "@fontsource-variable/ibm-plex-sans/wght.css";
 import "./extension-view.css";
 
 type Session = ExtensionViewInit;

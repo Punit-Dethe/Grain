@@ -60,7 +60,7 @@
   --shadow-lg: 0 4px 16px rgba(30, 27, 22, 0.06);
   --mono:
     "JetBrains Mono", ui-monospace, "Cascadia Mono", "Consolas", monospace;
-  --body: "Inter", system-ui, "Segoe UI", -apple-system, sans-serif;
+  --body: "IBM Plex Sans Variable", system-ui, "Segoe UI", sans-serif;
 
   /* ── Design tokens (see DESIGN.md) ───────────────────────────────────── */
   /* Spacing — 4px base. */
