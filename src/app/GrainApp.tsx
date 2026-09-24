@@ -36,6 +36,7 @@ import {
   type HistoryController,
 } from "./history/useHistoryController";
 import { OverviewCards } from "./overview/OverviewCards";
+import overviewHero from "./overview/overview-hero.jpg";
 import { UpdateNotice } from "@/components/UpdateNotice";
 import { QuickPanel } from "./quick-panel/QuickPanel";
 import "./app.css";
@@ -58,12 +59,7 @@ const PROTOTYPE_COPY = {
   quickPanelShortcut: "Ctrl K",
   original: "Original",
   processed: "AI processed",
-  heroTopline: "On-device · Parakeet TDT 0.6B",
   beta: "Beta",
-  heroKicker: "Grain is listening when you are",
-  heroTitle: "Speak before the thought disappears.",
-  startFlow: "Start Flow",
-  openNotes: "Open notes",
   quickActions: "Start here",
   quickActionsBody:
     "Your keys, your words, and what Grain can be taught to do.",
@@ -473,216 +469,6 @@ function Sidebar({
   );
 }
 
-const BRAID_COLORS = [
-  [66, 139, 235], // electric blue
-  [76, 204, 213], // cyan
-  [159, 106, 226], // violet
-] as const;
-
-function clamp(v: number, a: number, b: number): number {
-  return Math.max(a, Math.min(b, v));
-}
-
-function lerp(a: number, b: number, t: number): number {
-  return a + (b - a) * t;
-}
-
-function smooth(a: number, b: number, x: number): number {
-  const v = clamp((x - a) / (b - a), 0, 1);
-  return v * v * (3 - 2 * v);
-}
-
-function mixRGB(
-  a: readonly [number, number, number],
-  b: readonly [number, number, number],
-  t: number,
-): [number, number, number] {
-  return [
-    Math.round(lerp(a[0], b[0], t)),
-    Math.round(lerp(a[1], b[1], t)),
-    Math.round(lerp(a[2], b[2], t)),
-  ];
-}
-
-function colorAt(t: number): [number, number, number] {
-  const norm = clamp(t, 0, 1);
-  if (norm < 0.5) return mixRGB(BRAID_COLORS[0], BRAID_COLORS[1], norm * 2);
-  return mixRGB(BRAID_COLORS[1], BRAID_COLORS[2], (norm - 0.5) * 2);
-}
-
-function hash(x: number, y: number): number {
-  let n = x * 374761393 + y * 668265263;
-  n = (n ^ (n >> 13)) * 1274126177;
-  return ((n ^ (n >> 16)) >>> 0) / 4294967295;
-}
-
-function DitherCanvas() {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const { isDark } = useTheme();
-  const isDarkRef = useRef(isDark);
-
-  useEffect(() => {
-    isDarkRef.current = isDark;
-  }, [isDark]);
-
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    const context = canvas?.getContext("2d");
-    if (!canvas || !context) return;
-
-    const reducedMotion = window.matchMedia(
-      "(prefers-reduced-motion: reduce)",
-    ).matches;
-    let animationFrame = 0;
-
-    const resize = () => {
-      const r = canvas.getBoundingClientRect();
-      const dpr = Math.min(window.devicePixelRatio || 1, 1.5);
-      const w = Math.max(1, Math.floor(r.width * dpr));
-      const h = Math.max(1, Math.floor(r.height * dpr));
-
-      if (canvas.width !== w || canvas.height !== h) {
-        canvas.width = w;
-        canvas.height = h;
-      }
-    };
-
-    const draw = (now: number) => {
-      resize();
-
-      const t = reducedMotion ? 0 : now / 1000;
-      const w = canvas.width;
-      const h = canvas.height;
-      const dark =
-        isDarkRef.current && document.documentElement.dataset.theme !== "light";
-
-      context.clearRect(0, 0, w, h);
-
-      const dpr = Math.min(window.devicePixelRatio || 1, 1.5);
-      const cell = 4.1 * dpr;
-      const cols = Math.ceil(w / cell);
-      const rows = Math.ceil(h / cell);
-
-      // Precompute column-invariant wave trajectory arrays for ~15x performance gain
-      const c1Arr = new Float32Array(cols);
-      const c2Arr = new Float32Array(cols);
-      const c3Arr = new Float32Array(cols);
-      const echoCenterArr = new Float32Array(cols);
-      const edgeFadeArr = new Float32Array(cols);
-      const driftYArr = new Float32Array(cols);
-      const xNormArr = new Float32Array(cols);
-
-      const maxCols = Math.max(1, cols - 1);
-      for (let gx = 0; gx < cols; gx++) {
-        const x = gx / maxCols;
-        xNormArr[gx] = x;
-        c1Arr[gx] =
-          0.23 +
-          0.11 * Math.sin(x * 5.5 - t * 0.72) +
-          0.018 * Math.sin(x * 14.0 + t * 0.25);
-        c2Arr[gx] =
-          0.39 +
-          0.1 * Math.sin(x * 5.5 - t * 0.72 + 2.05) +
-          0.014 * Math.sin(x * 12.0 - t * 0.18);
-        c3Arr[gx] = 0.55 + 0.095 * Math.sin(x * 5.5 - t * 0.72 + 4.1);
-        echoCenterArr[gx] =
-          0.13 + 0.72 * x + 0.05 * Math.sin(x * 8.0 + t * 0.35);
-        edgeFadeArr[gx] =
-          0.72 + 0.28 * smooth(0.0, 0.12, x) * (1 - smooth(0.9, 1.0, x));
-        driftYArr[gx] = Math.cos(t * 0.38 + gx * 0.06) * cell * 0.035;
-      }
-
-      const maxRows = Math.max(1, rows - 1);
-      const colorDriftT = 0.025 * Math.sin(t * 0.25);
-      const baseAlpha = dark ? 0.57 : 0.48;
-
-      for (let gy = 0; gy < rows; gy++) {
-        const y = gy / maxRows;
-        const driftX = Math.sin(t * 0.45 + gy * 0.075) * cell * 0.045;
-        const pulseY = gy * 0.03;
-
-        for (let gx = 0; gx < cols; gx++) {
-          const c1 = c1Arr[gx];
-          const c2 = c2Arr[gx];
-          const c3 = c3Arr[gx];
-
-          const d1 = Math.abs(y - c1);
-          const d2 = Math.abs(y - c2);
-          const d3 = Math.abs(y - c3);
-
-          // Thin cores + softer atmospheric wings
-          const r1 = 1 - smooth(0.004, 0.044, d1);
-          const r2 = (1 - smooth(0.004, 0.044, d2)) * 0.92;
-          const r3 = (1 - smooth(0.004, 0.044, d3)) * 0.76;
-
-          const wing1 = (1 - smooth(0.04, 0.15, d1)) * 0.16;
-          const wing2 = (1 - smooth(0.04, 0.15, d2)) * 0.13;
-          const wing3 = (1 - smooth(0.04, 0.15, d3)) * 0.1;
-
-          // Secondary echo arc
-          const echoDist = Math.abs(y - echoCenterArr[gx]);
-          const echo = (1 - smooth(0.01, 0.055, echoDist)) * 0.22;
-
-          let density = clamp(
-            r1 + r2 + r3 + wing1 + wing2 + wing3 + echo,
-            0,
-            1,
-          );
-
-          density *= edgeFadeArr[gx];
-
-          const threshold = hash(gx, gy);
-          const active = smooth(threshold - 0.13, threshold + 0.12, density);
-          if (active < 0.045) continue;
-
-          // Color calculation
-          const x = xNormArr[gx];
-          const cp = clamp(0.05 + x * 0.78 + y * 0.18 + colorDriftT, 0, 1);
-          const rgb = colorAt(cp);
-
-          let boost = 0.78;
-          if (d1 < d2 && d1 < d3) boost = 1;
-          else if (d2 < d3) boost = 0.9;
-
-          const alpha = baseAlpha * (0.15 + active * 0.85) * boost;
-          const pulse = 1 + 0.035 * Math.sin(t * 1.5 + gx * 0.07 + pulseY);
-          const size = cell * (0.11 + active * 0.49) * pulse;
-
-          const px = gx * cell + cell * 0.5 + driftX;
-          const py = gy * cell + cell * 0.5 + driftYArr[gx];
-
-          context.fillStyle = `rgba(${rgb[0]},${rgb[1]},${rgb[2]},${alpha})`;
-
-          if ((gx * 2 + gy) % 10 === 0) {
-            context.beginPath();
-            context.arc(px, py, Math.max(size * 0.4, 0.42), 0, Math.PI * 2);
-            context.fill();
-          } else {
-            context.fillRect(
-              px - size * 0.5,
-              py - size * 0.5,
-              Math.max(size, 0.6),
-              Math.max(size, 0.6),
-            );
-          }
-        }
-      }
-
-      if (!reducedMotion) {
-        animationFrame = requestAnimationFrame(draw);
-      }
-    };
-
-    animationFrame = requestAnimationFrame(draw);
-
-    return () => {
-      cancelAnimationFrame(animationFrame);
-    };
-  }, [isDark]);
-
-  return <canvas ref={canvasRef} aria-hidden="true" />;
-}
-
 function ViewSwitch({
   mode,
   onChange,
@@ -747,27 +533,12 @@ function OverviewPage({ history }: { history: HistoryController }) {
   return (
     <section className="page active" data-page-panel="overview">
       <div className="page-wrap wide">
-        <div className="hero refined-hero">
-          <DitherCanvas />
-          <div className="hero-content">
-            <div className="hero-copy">
-              <h2>{PROTOTYPE_COPY.heroTitle}</h2>
-            </div>
-            <div className="hero-actions">
-              <button className="button primary" type="button" disabled>
-                {PROTOTYPE_COPY.startFlow}
-              </button>
-              <button
-                className="button secondary-glass"
-                type="button"
-                onClick={() => {
-                  window.location.hash = "/notes";
-                }}
-              >
-                {PROTOTYPE_COPY.openNotes}
-              </button>
-            </div>
-          </div>
+        <div className="hero">
+          <img
+            className="hero-image"
+            src={overviewHero}
+            alt="Motion-blurred person walking through a landscape at dusk"
+          />
         </div>
 
         <div className="section-head compact-section-head">

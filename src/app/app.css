@@ -1373,13 +1373,10 @@ h3 {
 
 /* Overview */
 .hero {
-  position: relative;
   height: clamp(372px, 47vh, 500px);
   margin-bottom: -30px;
   overflow: hidden;
-  isolation: isolate;
   border-radius: var(--hero-radius);
-  clip-path: inset(0 round var(--hero-radius));
   background: var(--bg-2, #15171c);
   border: 1px solid var(--hairline, rgba(255, 255, 255, 0.07));
 }
@@ -1389,100 +1386,11 @@ html[data-theme="light"] .hero {
   border-color: #e1e3e8;
 }
 
-.hero canvas {
-  position: absolute;
-  inset: 0;
+.hero-image {
   width: 100%;
   height: 100%;
   display: block;
-}
-
-.hero::before,
-.hero::after {
-  display: none;
-}
-
-.hero-design-trigger {
-  position: absolute;
-  z-index: 8;
-  top: 15px;
-  right: 15px;
-  color: rgba(255, 255, 255, 0.68);
-  background: rgba(12, 14, 18, 0.3);
-  backdrop-filter: blur(18px) saturate(125%);
-  box-shadow:
-    inset 0 1px rgba(255, 255, 255, 0.055),
-    0 10px 28px rgba(0, 0, 0, 0.15);
-}
-
-.hero-topline {
-  position: absolute;
-  z-index: 5;
-  top: 17px;
-  left: 20px;
-  display: flex;
-  align-items: center;
-  color: rgba(255, 255, 255, 0.61);
-  font-size: 9.5px;
-  letter-spacing: 0.025em;
-}
-
-.live-dot {
-  display: none;
-}
-
-.hero-content {
-  position: absolute;
-  z-index: 5;
-  right: 22px;
-  bottom: 32px;
-  left: 22px;
-  display: flex;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: 24px;
-}
-
-.hero-copy {
-  max-width: 600px;
-}
-
-.hero-kicker {
-  margin-bottom: 7px;
-  color: rgba(255, 255, 255, 0.66);
-  font-size: 10.5px;
-}
-
-.hero h2 {
-  max-width: 540px;
-  color: #fff;
-  font-size: clamp(25px, 2.7vw, 34px);
-  font-weight: 560;
-  line-height: 1.04;
-  letter-spacing: -0.043em;
-}
-
-.hero p {
-  max-width: 510px;
-  margin: 10px 0 0;
-  color: rgba(255, 255, 255, 0.62);
-  font-size: 11.5px;
-  line-height: 1.55;
-}
-
-.hero-actions {
-  display: flex;
-  flex: 0 0 auto;
-  gap: 8px;
-}
-
-.hero .button.secondary-glass {
-  color: rgba(255, 255, 255, 0.88);
-  background: rgba(17, 19, 23, 0.48);
-  backdrop-filter: blur(26px) saturate(135%);
-  box-shadow:
-    inset 0 1px rgba(255, 255, 255, 0.09),
-    0 22px 70px rgba(0, 0, 0, 0.35);
+  object-fit: cover;
 }
 
 .section-head {
@@ -2964,24 +2872,6 @@ html[data-theme="light"] .theme-toggle:hover {
   background: rgba(28, 34, 43, 0.055);
 }
 
-html[data-theme="light"] .hero h2 {
-  color: #1c2028;
-}
-
-html[data-theme="light"] .hero p,
-html[data-theme="light"] .hero-kicker,
-html[data-theme="light"] .hero-topline {
-  color: rgba(27, 32, 40, 0.63);
-}
-
-html[data-theme="light"] .hero-design-trigger {
-  color: rgba(28, 34, 43, 0.68);
-  background: rgba(255, 255, 255, 0.46);
-  box-shadow:
-    inset 0 1px rgba(255, 255, 255, 0.86),
-    0 10px 28px rgba(49, 58, 72, 0.1);
-}
-
 html[data-theme="light"] .button {
   border: 0;
   color: #393a3f;
@@ -3018,13 +2908,6 @@ html[data-theme="light"] .grain-root .toggle.on span {
 
 html[data-theme="light"] .grain-root .toggle.on {
   background: var(--accent) !important;
-}
-
-html[data-theme="light"] .hero .button.secondary-glass {
-  border: 0;
-  color: #2d333c;
-  background: rgba(255, 255, 255, 0.58);
-  box-shadow: 0 10px 26px rgba(48, 57, 71, 0.08);
 }
 
 html[data-theme="light"] .quick-card {
