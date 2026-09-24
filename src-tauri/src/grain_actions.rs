@@ -588,8 +588,9 @@ impl ShortcutAction for RealtimeTranscribeAction {
         // finalize (recording overrode processing until now).
         let session_id = emit_recording_stopped(app);
 
-        change_tray_icon(app, TrayIconState::Transcribing);
-        // C1: pill already showed "processing" from RecordingStopped above.
+        // [GRAIN] Recording and Transcribing use the same tray icon and menu.
+        // The pill already shows processing; rebuilding that tray before the
+        // recorder stops only delays the capture boundary and final text.
         rm.remove_mute();
 
         let binding_id = binding_id.to_string();
