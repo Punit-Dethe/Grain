@@ -591,7 +591,6 @@ impl ShortcutAction for RealtimeTranscribeAction {
         // [GRAIN] Recording and Transcribing use the same tray icon and menu.
         // The pill already shows processing; rebuilding that tray before the
         // recorder stops only delays the capture boundary and final text.
-        rm.remove_mute();
 
         let binding_id = binding_id.to_string();
         let post_process = self.post_process_override.load(Ordering::Relaxed);
@@ -603,6 +602,9 @@ impl ShortcutAction for RealtimeTranscribeAction {
 
             // Empty on Flow: its Float32 journal owns the complete recording.
             let stopped = rm.stop_recording(&binding_id, cancel_generation);
+            // Keep speaker output muted until the recorder has drained. Restore
+            // it on either stop result, without blocking the shortcut thread.
+            rm.remove_mute();
             let Some(samples) = stopped else {
                 rt.cancel_session();
                 if !rm.was_cancelled_since(cancel_generation) {
@@ -714,23 +716,35 @@ impl ShortcutAction for RealtimeTranscribeAction {
             };
             let final_text = processed.final_text;
 
-            // Deliver text before WAV export and history I/O. Neither is needed
-            // by the paste path, and both can take noticeable time on slow disks.
-            if final_text.trim().is_empty() {
+            // Keep WAV export and history I/O behind the actual paste callback,
+            // not merely its dispatch. Disk work can otherwise contend with
+            // insertion while the main thread is still waiting to run it.
+            let paste_complete = if final_text.trim().is_empty() {
                 change_tray_icon(&ah, TrayIconState::Idle);
+                None
             } else {
                 let ah_clone = ah.clone();
-                ah.run_on_main_thread(move || {
+                let (done_tx, done_rx) = tokio::sync::oneshot::channel();
+                match ah.run_on_main_thread(move || {
                     if let Err(e) = utils::paste(final_text, ah_clone.clone()) {
                         error!("Failed to paste real-time transcription: {e}");
                         let _ = ah_clone.emit("paste-error", ());
                     }
                     change_tray_icon(&ah_clone, TrayIconState::Idle);
+                    let _ = done_tx.send(());
                 })
-                .unwrap_or_else(|e| {
-                    error!("Failed to run paste on main thread: {e:?}");
-                    change_tray_icon(&ah, TrayIconState::Idle);
-                });
+                {
+                    Ok(()) => Some(done_rx),
+                    Err(e) => {
+                        error!("Failed to run paste on main thread: {e:?}");
+                        change_tray_icon(&ah, TrayIconState::Idle);
+                        None
+                    }
+                }
+            };
+
+            if let Some(done) = paste_complete {
+                let _ = done.await;
             }
 
             if audio_len > 0 {
