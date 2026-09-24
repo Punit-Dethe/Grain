@@ -5,7 +5,6 @@ import { ModelSettingsCard } from "@/components/settings/general/ModelSettingsCa
 import { PushToTalk } from "@/components/settings/PushToTalk";
 import { ShortcutInput } from "@/components/settings/ShortcutInput";
 import { SettingsGroup } from "@/components/ui/SettingsGroup";
-import { ToggleSwitch } from "@/components/ui/ToggleSwitch";
 import { useSettings } from "@/hooks/useSettings";
 
 /**
@@ -19,36 +18,16 @@ import { useSettings } from "@/hooks/useSettings";
  */
 export function CapturePane() {
   const { t } = useTranslation();
-  const { getSetting, updateSetting, isUpdating } = useSettings();
+  const { getSetting } = useSettings();
   const pushToTalk = getSetting("push_to_talk");
-  const autoSendEnabled = getSetting("auto_send_enabled") ?? false;
-  const experimentalEnabled = getSetting("experimental_enabled") ?? false;
   const isLinux = type() === "linux";
 
   return (
     <div className="max-w-4xl w-full mx-auto space-y-7">
       <CaptureModes />
 
-      <SettingsGroup
-        title={t("ui2.capture.extensionMode.group")}
-        info={t("ui2.capture.extensionMode.info")}
-      >
-        <ShortcutInput shortcutId="extension_mode" grouped />
-        <ToggleSwitch
-          checked={autoSendEnabled}
-          disabled={!experimentalEnabled && !autoSendEnabled}
-          isUpdating={isUpdating("auto_send_enabled")}
-          onChange={(enabled) => updateSetting("auto_send_enabled", enabled)}
-          label={t("ui2.capture.extensionMode.autoSend.title")}
-          description={t(
-            experimentalEnabled
-              ? "ui2.capture.extensionMode.autoSend.description"
-              : "ui2.capture.extensionMode.autoSend.paused",
-          )}
-          descriptionMode="inline"
-          grouped
-        />
-      </SettingsGroup>
+      {/* Extension Mode remains a backend shortcut, but its experimental
+          controls are not part of the production Capture settings. */}
 
       <SettingsGroup
         title={t("ui2.settings.groups.recording")}

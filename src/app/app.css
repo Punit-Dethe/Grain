@@ -1590,7 +1590,7 @@ html[data-theme="light"] .hero {
 /* ---------------------------------------------------------------------------
  * Overview cards (Start here)
  *
- * Refined 4-card grid with seamless borderless surfaces, natural icon placement,
+ * Refined 4-card grid with subtle borders, natural icon placement,
  * balanced 2-line typography, and clean horizontal baseline across all four cards.
  * ------------------------------------------------------------------------- */
 
@@ -1609,7 +1609,7 @@ html[data-theme="light"] .hero {
   flex-direction: column;
   position: relative;
   border-radius: var(--radius-md, 12px);
-  border: 1px solid rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(200, 205, 214, 0.17);
   background: var(--bg-2, #15181d);
   color: var(--text-1);
   text-align: left;
@@ -1623,7 +1623,7 @@ html[data-theme="light"] .hero {
 }
 
 button.overview-card {
-  border: 1px solid rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(200, 205, 214, 0.17);
   outline: none;
   cursor: pointer;
 }
@@ -1634,7 +1634,7 @@ button.overview-card {
 
 .overview-card--interactive:hover {
   background: #1a1e24;
-  border-color: rgba(255, 255, 255, 0.12);
+  border-color: rgba(200, 205, 214, 0.28);
   transform: translateY(-1.5px);
   box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25);
 }
@@ -1643,10 +1643,10 @@ button.overview-card {
   cursor: default;
 }
 
-/* Light theme: clean seamless floating card surface without harsh borders */
+/* Light theme: a quiet grey edge keeps the four cards distinct. */
 html[data-theme="light"] .overview-card,
 html[data-theme="light"] button.overview-card {
-  border: 0;
+  border: 1px solid #e1e4e8;
   background: #ffffff;
   box-shadow:
     0 1px 3px rgba(0, 0, 0, 0.04),
@@ -1655,6 +1655,7 @@ html[data-theme="light"] button.overview-card {
 
 html[data-theme="light"] .overview-card--interactive:hover {
   background: #ffffff;
+  border-color: #cfd3da;
   box-shadow:
     0 4px 14px rgba(0, 0, 0, 0.07),
     0 1px 3px rgba(0, 0, 0, 0.03);
@@ -2862,6 +2863,10 @@ html[data-theme="light"] .capture-mode-option {
   border-radius: 8px;
 }
 
+.post-processing-pane {
+  --on-accent: #fff;
+}
+
 /* The settings toggle is defined entirely by the ToggleSwitch/Switch
    components (self-consistent geometry, accent track ON, --toggle-off track
    OFF). No CSS override here — a prior `:has()` override forced `transform`
@@ -3376,12 +3381,19 @@ html[data-theme="light"] .next-settings-content .app-select__control {
 }
 
 .grain-root .gs-next-folder-row {
-  gap: 8px;
+  gap: 10px;
+  min-height: 44px;
+  padding-block: 10px;
+}
+
+.grain-root .gs-next-folder-row .gs-row-title {
+  font-size: 14px;
+  font-weight: 620;
 }
 
 .grain-root .gs-next-folder-row .gs-row-folder-icon {
   flex: none;
-  color: var(--text-4);
+  color: var(--text-3);
 }
 
 .grain-root .gs-next-folder-row:hover .gs-row-folder-icon,
@@ -3392,7 +3404,7 @@ html[data-theme="light"] .next-settings-content .app-select__control {
 .grain-root .gs-next-folder-row .gs-row-count {
   margin-left: auto;
   color: var(--text-4);
-  font-size: 9px;
+  font-size: 11px;
 }
 
 .grain-root .gs-next-folder-row .gs-row-chev {
@@ -4085,53 +4097,6 @@ html[data-theme="light"] .grain-root .gs-next .gs-chat-bubble--user {
 .tools-nav button.active {
   color: var(--text-1);
   background: rgba(255, 255, 255, 0.07);
-}
-
-.tools-sidebar-spacer {
-  flex: 1;
-  min-height: 24px;
-}
-
-.tools-browse {
-  margin: 0 2px;
-  min-height: 46px;
-  padding: 7px 9px 7px 10px;
-  border-radius: 8px;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 8px;
-  color: var(--text-2);
-  background: rgba(255, 255, 255, 0.024);
-  box-shadow: inset 0 0 0 1px var(--hairline-soft);
-  text-align: left;
-  cursor: pointer;
-  transition:
-    color 0.15s,
-    background 0.15s;
-}
-
-.tools-browse:hover {
-  color: var(--text-1);
-  background: rgba(255, 255, 255, 0.042);
-}
-
-.tools-browse strong {
-  display: block;
-  font-size: 11px;
-  font-weight: 590;
-}
-
-.tools-browse-copy > span {
-  display: block;
-  margin-top: 1px;
-  color: var(--text-4);
-  font-size: 9.5px;
-  line-height: 1.3;
-}
-
-.tools-browse > svg {
-  color: var(--text-4);
 }
 
 .tools-canvas {
@@ -7388,10 +7353,6 @@ html[data-theme="light"] .tools-nav button:hover {
 html[data-theme="light"] .tools-nav button.active {
   color: #202124;
   background: #dedfe2;
-}
-html[data-theme="light"] .tools-browse {
-  background: rgba(28, 34, 43, 0.035);
-  box-shadow: inset 0 0 0 1px rgba(31, 35, 42, 0.07);
 }
 html[data-theme="light"] .tools-canvas {
   background: transparent;

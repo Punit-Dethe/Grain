@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { ArrowRight, Blocks, BookOpen, Keyboard, Plus } from "lucide-react";
+import { ArrowRight, BookOpen, FileText, Keyboard, Plus } from "lucide-react";
 import { toast } from "sonner";
 import { useTranslation } from "react-i18next";
 import { useSettings } from "@/hooks/useSettings";
@@ -10,10 +10,10 @@ import { useModelStore } from "@/stores/modelStore";
 import { hashForRoute } from "../navigation";
 
 const COPY = {
-  extensions: {
-    title: "Extensions",
-    body: "Supercharge your workflow with voice actions, modes, and tools.",
-    explore: "Browse extensions",
+  snippets: {
+    title: "Snippets",
+    body: "Expand a short spoken phrase into text you use often.",
+    explore: "Manage snippets",
   },
   dictionary: {
     title: "Dictionary",
@@ -92,21 +92,21 @@ function ShortcutRow({
   );
 }
 
-function ExtensionsCard() {
+function SnippetsCard() {
   return (
     <button
       className="overview-card overview-card--interactive"
       type="button"
-      onClick={() => go(hashForRoute({ page: "extensions", view: "store" }))}
+      onClick={() => go(hashForRoute({ page: "tools", section: "snippets" }))}
     >
       <div className="overview-card-header">
-        <Blocks className="overview-card-icon" size={18} strokeWidth={1.8} />
-        <strong className="overview-card-title">{COPY.extensions.title}</strong>
+        <FileText className="overview-card-icon" size={18} strokeWidth={1.8} />
+        <strong className="overview-card-title">{COPY.snippets.title}</strong>
       </div>
-      <p className="overview-card-desc">{COPY.extensions.body}</p>
+      <p className="overview-card-desc">{COPY.snippets.body}</p>
       <div className="overview-card-footer">
         <div className="overview-cta-row">
-          <span className="overview-card-cta">{COPY.extensions.explore}</span>
+          <span className="overview-card-cta">{COPY.snippets.explore}</span>
           <ArrowRight size={13} className="overview-cta-arrow" aria-hidden="true" />
         </div>
       </div>
@@ -268,9 +268,9 @@ export function OverviewCards() {
   return (
     <div className="overview-grid">
       <ShortcutsCard />
-      <DictionaryCard />
       <AgentCard />
-      <ExtensionsCard />
+      <DictionaryCard />
+      <SnippetsCard />
     </div>
   );
 }

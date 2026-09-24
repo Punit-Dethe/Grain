@@ -3,7 +3,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Bot,
   BookOpen,
-  ChevronRight,
   Code2,
   CornerDownRight,
   Plus,
@@ -995,23 +994,6 @@ export function ToolsPage({ section }: { section: ToolSectionId }) {
                 );
               })}
             </nav>
-            <div className="tools-sidebar-spacer" />
-            <button
-              className="tools-browse"
-              type="button"
-              onClick={() => {
-                window.location.hash = hashForRoute({
-                  page: "extensions",
-                  view: "store",
-                }).slice(1);
-              }}
-            >
-              <span className="tools-browse-copy">
-                <strong>Browse extensions</strong>
-                <span>Add capabilities to Studio</span>
-              </span>
-              <ChevronRight size={14} aria-hidden="true" />
-            </button>
           </aside>
           <section className="tools-canvas" aria-labelledby="next-tool-title">
             <div className="tools-scroll">

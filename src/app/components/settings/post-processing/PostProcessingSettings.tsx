@@ -388,7 +388,7 @@ export const PostProcessingSettings: React.FC = () => {
   const { t } = useTranslation();
 
   return (
-    <div className="max-w-4xl w-full mx-auto space-y-6">
+    <div className="post-processing-pane max-w-4xl w-full mx-auto space-y-6">
       {/* Providers + smart rotation — the unified add-provider pool. */}
       <PostProcessingSettingsApi />
 

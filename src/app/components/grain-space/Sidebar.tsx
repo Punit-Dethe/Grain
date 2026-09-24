@@ -528,11 +528,11 @@ export function Sidebar({
             onContextMenu={openFolderMenu(node)}
             {...dropZone(node.path)}
           >
-            <Folder className="gs-row-folder-icon" width={14} height={14} />
+            <Folder className="gs-row-folder-icon" width={18} height={18} />
             <span className="gs-row-title">{node.name}</span>
             {count > 0 && <span className="gs-row-count">{count}</span>}
             <span className={`gs-row-chev${open ? " gs-row-chev--open" : ""}`}>
-              <ChevronRight width={13} height={13} />
+              <ChevronRight width={16} height={16} />
             </span>
           </button>
           {open && (
