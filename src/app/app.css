@@ -306,25 +306,29 @@ html[data-theme="light"] body {
 
 .grain-wordmark {
   display: flex;
-  align-items: baseline;
-  gap: 8px;
+  align-items: center;
+  gap: 10px;
+}
+
+.grain-mark {
+  display: block;
+  width: 28px;
+  height: 28px;
+  flex: 0 0 28px;
+  object-fit: contain;
+  filter: invert(1);
 }
 
 .grain-wordmark strong {
-  font-size: 18px;
-  font-weight: 700;
+  font-family: "IBM Plex Sans Variable", var(--font-sans);
+  font-size: 22px;
+  font-weight: 600;
   line-height: 1;
-  letter-spacing: 0.005em;
+  letter-spacing: -0.045em;
 }
 
-/* Rides the wordmark's baseline. Dim and small, so it reads as a status tag
-   rather than part of the brand. */
-.grain-beta {
-  color: var(--text-4);
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
+html[data-theme="light"] .grain-mark {
+  filter: none;
 }
 
 .window-actions {
@@ -2117,21 +2121,10 @@ html[data-theme="light"] .overview-cta-arrow {
   gap: 0;
 }
 
-.app.notes-mode .grain-beta {
+.app.notes-mode .grain-wordmark strong {
   display: none;
 }
 
-.app.notes-mode .grain-wordmark strong {
-  font-size: 0;
-}
-
-.app.notes-mode .grain-wordmark strong::after {
-  content: "G";
-  font-size: 17px;
-  letter-spacing: 0;
-}
-
-.app.notes-mode .grain-wordmark span,
 .app.notes-mode .nav-label,
 .app.notes-mode .nav-item > span,
 .app.notes-mode .model-status,
@@ -3678,17 +3671,9 @@ html[data-theme="light"] .grain-root .gs-next .gs-chat-bubble--user {
   }
 
   .grain-wordmark strong {
-    font-size: 0;
+    display: none;
   }
 
-  .grain-wordmark strong::after {
-    content: "G";
-    font-size: 17px;
-    letter-spacing: 0;
-  }
-
-  .grain-wordmark span,
-  .grain-beta,
   .sidebar .nav-label,
   .sidebar .nav-item > span,
   .sidebar .model-status,

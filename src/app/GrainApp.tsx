@@ -38,6 +38,7 @@ import {
 } from "./history/useHistoryController";
 import { OverviewCards } from "./overview/OverviewCards";
 import overviewHero from "./overview/overview-hero.jpg";
+import grainMark from "./branding/grain-mark.png";
 import { UpdateNotice } from "@/components/UpdateNotice";
 import { QuickPanel } from "./quick-panel/QuickPanel";
 import "@fontsource-variable/ibm-plex-sans/wght.css";
@@ -57,11 +58,11 @@ let onboardingResolution: ReturnType<
 > | null = null;
 
 const PROTOTYPE_COPY = {
+  brand: "Grain",
   quickPanel: "Quick Search",
   quickPanelShortcut: "Ctrl K",
   original: "Original",
   processed: "AI processed",
-  beta: "Beta",
   heroTitle: "Speak before the thought disappears.",
   studio: "Studio",
   openNotes: "Open notes",
@@ -418,8 +419,8 @@ function Sidebar({
         style={{ WebkitAppRegion: "drag" } as CSSProperties}
       >
         <div className="grain-wordmark">
-          <strong>GRAIN</strong>
-          <span className="grain-beta">{PROTOTYPE_COPY.beta}</span>
+          <img className="grain-mark" src={grainMark} alt={PROTOTYPE_COPY.brand} />
+          <strong aria-hidden="true">{PROTOTYPE_COPY.brand}</strong>
         </div>
       </div>
       {NAV_GROUPS.map((group) => (
