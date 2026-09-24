@@ -8,6 +8,7 @@ import {
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { platform } from "@tauri-apps/plugin-os";
 import { Toaster } from "sonner";
+import { ArrowRight, FileText, Mic } from "lucide-react";
 import { HistorySettings } from "@/components/settings/history/HistorySettings";
 import { AudioPlayerGroup } from "@/components/ui/AudioPlayer";
 import Onboarding, {
@@ -60,10 +61,20 @@ const PROTOTYPE_COPY = {
   original: "Original",
   processed: "AI processed",
   beta: "Beta",
-  heroTitle: "Speak before the thought disappears.",
-  startFlow: "Start Flow",
+  heroKicker: "Welcome to Grain",
+  heroLineOne: "Speak before",
+  heroLineTwo: "the thought",
+  heroLineThree: "disappears.",
+  heroBodyLead: "Turn your voice into clear text, useful knowledge,",
+  heroBodyEnd: "and a memory you can actually use.",
+  heroSideOne: "Voice becomes",
+  heroSideTwo: "structure",
+  startFlow: "Open Studio",
   openNotes: "Open notes",
-  quickActions: "Start here",
+  quickActionsEyebrow: "Start creating",
+  quickActions: "From voice to understanding.",
+  quickActionsDescription:
+    "Everything you need to capture, refine, and reuse your ideas.",
   quickActionsBody:
     "Your keys, your words, and what Grain can be taught to do.",
   recent: "Recent transcriptions",
@@ -413,7 +424,15 @@ function Sidebar({
         style={{ WebkitAppRegion: "drag" } as CSSProperties}
       >
         <div className="grain-wordmark">
-          <strong>GRAIN</strong>
+          {route.page === "overview" && (
+            <span className="grain-mark" aria-hidden="true">
+              <i />
+              <i />
+              <i />
+              <i />
+            </span>
+          )}
+          <strong>{route.page === "overview" ? "Grain" : "GRAIN"}</strong>
           <span className="grain-beta">{PROTOTYPE_COPY.beta}</span>
         </div>
       </div>
@@ -422,7 +441,8 @@ function Sidebar({
           <div className="nav-label">{group.label}</div>
           <div className="nav-list">
             {group.items.map((item) => {
-              if (!import.meta.env.DEV && item.page === "extensions") return null;
+              if (!import.meta.env.DEV && item.page === "extensions")
+                return null;
               const active =
                 item.page === route.page ||
                 (item.page === "extensions" &&
@@ -451,7 +471,7 @@ function Sidebar({
       ))}
       <div className="sidebar-spacer" />
       <UpdateNotice />
-      <div className="model-status">
+      <div className="model-status" data-ready={cloudStt || isModelLoaded}>
         <div className="status-row">
           <strong>{modelStatus.title}</strong>
         </div>
@@ -544,11 +564,31 @@ function OverviewPage({ history }: { history: HistoryController }) {
           />
           <div className="hero-content">
             <div className="hero-copy">
-              <h2>{PROTOTYPE_COPY.heroTitle}</h2>
+              <span className="hero-kicker">{PROTOTYPE_COPY.heroKicker}</span>
+              <h2>
+                {PROTOTYPE_COPY.heroLineOne}
+                <br />
+                {PROTOTYPE_COPY.heroLineTwo}
+                <br />
+                <em>{PROTOTYPE_COPY.heroLineThree}</em>
+              </h2>
+              <p>
+                {PROTOTYPE_COPY.heroBodyLead}
+                <br className="hero-desktop-break" />{" "}
+                {PROTOTYPE_COPY.heroBodyEnd}
+              </p>
             </div>
             <div className="hero-actions">
-              <button className="button primary" type="button" disabled>
+              <button
+                className="button primary"
+                type="button"
+                onClick={() => {
+                  window.location.hash = "/tools/dictionary";
+                }}
+              >
+                <Mic size={17} aria-hidden="true" />
                 {PROTOTYPE_COPY.startFlow}
+                <ArrowRight size={16} aria-hidden="true" />
               </button>
               <button
                 className="button secondary-glass"
@@ -557,18 +597,28 @@ function OverviewPage({ history }: { history: HistoryController }) {
                   window.location.hash = "/notes";
                 }}
               >
+                <FileText size={16} aria-hidden="true" />
                 {PROTOTYPE_COPY.openNotes}
               </button>
             </div>
           </div>
+          <span className="hero-side-note" aria-hidden="true">
+            {PROTOTYPE_COPY.heroSideOne}
+            <br />
+            {PROTOTYPE_COPY.heroSideTwo}
+          </span>
         </div>
 
-        <div className="section-head compact-section-head">
-          <div>
+        <div className="overview-intro-grid">
+          <div className="overview-intro">
+            <span className="overview-eyebrow">
+              {PROTOTYPE_COPY.quickActionsEyebrow}
+            </span>
             <h2>{PROTOTYPE_COPY.quickActions}</h2>
+            <p>{PROTOTYPE_COPY.quickActionsDescription}</p>
           </div>
+          <OverviewCards />
         </div>
-        <OverviewCards />
 
         <div className="section-head transcript-section-head">
           <div>
@@ -778,7 +828,7 @@ function NextShell() {
 
   return (
     <div
-      className={`app grain-root${routeUsesCompactGlobalRail(route) ? " notes-mode" : ""}`}
+      className={`app grain-root${routeUsesCompactGlobalRail(route) ? " notes-mode" : ""}${route.page === "overview" ? " overview-shell" : ""}`}
       data-global-rail={
         routeUsesCompactGlobalRail(route) ? "compact" : "expanded"
       }

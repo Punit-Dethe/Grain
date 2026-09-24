@@ -95,7 +95,7 @@ function ShortcutRow({
 function SnippetsCard() {
   return (
     <button
-      className="overview-card overview-card--interactive"
+      className="overview-card overview-card--interactive overview-card--snippets"
       type="button"
       onClick={() => go(hashForRoute({ page: "tools", section: "snippets" }))}
     >
@@ -107,7 +107,11 @@ function SnippetsCard() {
       <div className="overview-card-footer">
         <div className="overview-cta-row">
           <span className="overview-card-cta">{COPY.snippets.explore}</span>
-          <ArrowRight size={13} className="overview-cta-arrow" aria-hidden="true" />
+          <ArrowRight
+            size={13}
+            className="overview-cta-arrow"
+            aria-hidden="true"
+          />
         </div>
       </div>
     </button>
@@ -133,7 +137,7 @@ function DictionaryCard() {
   };
 
   return (
-    <div className="overview-card overview-card--static">
+    <div className="overview-card overview-card--static overview-card--dictionary">
       <div className="overview-card-header">
         <BookOpen className="overview-card-icon" size={18} strokeWidth={1.8} />
         <strong className="overview-card-title">{COPY.dictionary.title}</strong>
@@ -193,7 +197,7 @@ function ShortcutsCard() {
     t(`settings.general.shortcut.bindings.${id}.name`, fallback ?? id);
 
   return (
-    <div className="overview-card overview-card--static">
+    <div className="overview-card overview-card--static overview-card--shortcuts">
       <div className="overview-card-header">
         <Keyboard className="overview-card-icon" size={18} strokeWidth={1.8} />
         <strong className="overview-card-title">{COPY.shortcuts.title}</strong>
@@ -223,7 +227,7 @@ function AgentCard() {
 
   return (
     <button
-      className="overview-card overview-card--interactive"
+      className="overview-card overview-card--interactive overview-card--agent"
       type="button"
       onClick={() => go(hashForRoute({ page: "tools", section: "agent" }))}
     >
@@ -237,13 +241,19 @@ function AgentCard() {
       <div className="overview-card-footer">
         {combination ? (
           <div className="overview-shortcut-row overview-agent-row">
-            <span className="overview-shortcut-label">{COPY.agent.shortcutLabel}</span>
+            <span className="overview-shortcut-label">
+              {COPY.agent.shortcutLabel}
+            </span>
             <Keycap combination={combination} />
           </div>
         ) : (
           <div className="overview-cta-row">
             <span className="overview-card-cta">{COPY.agent.enable}</span>
-            <ArrowRight size={13} className="overview-cta-arrow" aria-hidden="true" />
+            <ArrowRight
+              size={13}
+              className="overview-cta-arrow"
+              aria-hidden="true"
+            />
           </div>
         )}
       </div>
@@ -254,7 +264,11 @@ function AgentCard() {
 /** The prototype's Agent face — clean inline SVG glyph. */
 function AgentGlyph() {
   return (
-    <svg viewBox="0 0 24 24" className="overview-card-icon overview-agent-svg" aria-hidden="true">
+    <svg
+      viewBox="0 0 24 24"
+      className="overview-card-icon overview-agent-svg"
+      aria-hidden="true"
+    >
       <rect x="5.25" y="6" width="13.5" height="10.5" rx="4.25" />
       <circle cx="10" cy="11.25" r="1" />
       <circle cx="14" cy="11.25" r="1" />
@@ -262,7 +276,6 @@ function AgentGlyph() {
     </svg>
   );
 }
-
 
 export function OverviewCards() {
   return (
