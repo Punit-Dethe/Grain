@@ -47,22 +47,21 @@ function go(hash: string) {
   window.location.hash = hash.slice(1);
 }
 
-/**
- * A chord as one keycap per key.
- */
+/** A shortcut chord without keycap boxes. */
 function Keycap({ combination }: { combination: string }) {
   const keys = combination
     .split("+")
     .map((part) => formatKeyPart(part))
     .filter(Boolean);
   return (
-    <span className="overview-keys">
+    <kbd className="overview-keys">
       {keys.map((key, index) => (
-        <kbd className="overview-key" key={`${key}-${index}`}>
+        <span className="overview-key-part" key={`${key}-${index}`}>
+          {index > 0 && <span className="overview-key-separator">+</span>}
           {key}
-        </kbd>
+        </span>
       ))}
-    </span>
+    </kbd>
   );
 }
 

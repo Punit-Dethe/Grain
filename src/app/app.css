@@ -1,9 +1,7 @@
 @import "tailwindcss";
 
-/* [GRAIN] Palette of record: docs/UI 2.0/grain_base.html. The values below are
-   that file's tokens verbatim. Do not "tidy" them toward a neutral grey — the
-   base is deliberately cool and slightly green-tinted, and the ambient lilac
-   and sage washes in `.app` are part of it. */
+/* Dark-theme tokens retain the UI 2.0 base. The light-theme overrides below
+   use Grain's warm paper and charcoal experiment. */
 @theme {
   --color-paper: #0e1013;
   --color-paper-raised: #181c21;
@@ -91,14 +89,14 @@
 }
 
 .grain-root[data-theme="light"] {
-  --color-paper: #f5f6f8;
-  --color-paper-raised: #e6e9ee;
-  --color-paper-sunken: #eef0f3;
-  --color-ink: #17191d;
-  --color-ink-soft: #737a84;
-  --color-ink-faint: #9aa0a9;
-  --color-accent: #637bd1;
-  --color-line: rgba(24, 29, 37, 0.1);
+  --color-paper: #fcfcfb;
+  --color-paper-raised: #fcfcfb;
+  --color-paper-sunken: #f5f4f0;
+  --color-ink: #1a1a1a;
+  --color-ink-soft: #625f59;
+  --color-ink-faint: #6b675f;
+  --color-accent: #1a1a1a;
+  --color-line: rgba(26, 26, 26, 0.1);
 }
 
 /* The eight `--color-*` names are also declared here, not only on `.grain-root`.
@@ -108,45 +106,48 @@
    makes the theme unconditional. */
 html[data-theme="light"] {
   color-scheme: light;
-  --color-paper: #f5f6f8;
-  --color-paper-raised: #e6e9ee;
-  --color-paper-sunken: #eef0f3;
-  --color-ink: #17191d;
-  --color-ink-soft: #737a84;
-  --color-ink-faint: #9aa0a9;
-  --color-accent: #637bd1;
-  --color-line: rgba(24, 29, 37, 0.1);
-  --color-text: #17191d;
-  --color-background: #f5f6f8;
-  --color-mid-gray: #9aa0a9;
-  --bg-0: #ffffff;
-  --bg-1: #f5f6f8;
-  --bg-2: #eef0f3;
-  --bg-3: #e6e9ee;
-  --bg-4: #dce0e6;
-  --text-1: #17191d;
-  --text-2: #4f555e;
-  --text-3: #737a84;
-  --text-4: #9aa0a9;
-  --hairline: rgba(24, 29, 37, 0.1);
-  --hairline-soft: rgba(24, 29, 37, 0.065);
-  --toggle-off: #cbd2dc;
-  --accent: #637bd1;
-  --accent-strong: #536bc2;
-  --accent-hover: #536bc2;
-  --accent-soft: rgba(99, 123, 209, 0.12);
-  --accent-soft-hover: rgba(99, 123, 209, 0.18);
-  --accent-focus: rgba(99, 123, 209, 0.28);
-  --accent-glow: rgba(99, 123, 209, 0.2);
-  --accent-ink: #ffffff;
+  --color-paper: #fcfcfb;
+  --color-paper-raised: #fcfcfb;
+  --color-paper-sunken: #f5f4f0;
+  --color-ink: #1a1a1a;
+  --color-ink-soft: #625f59;
+  --color-ink-faint: #6b675f;
+  --color-accent: #1a1a1a;
+  --color-line: rgba(26, 26, 26, 0.1);
+  --color-text: #1a1a1a;
+  --color-background: #fcfcfb;
+  --color-background-ui: #1a1a1a;
+  --color-logo-primary: #1a1a1a;
+  --color-mid-gray: #6b675f;
+  --color-status-info: #625f59;
+  --bg-0: #fcfcfb;
+  --bg-1: #f5f4f0;
+  --bg-2: #f5f4f0;
+  --bg-3: #eeebe3;
+  --bg-4: #eeebe3;
+  --text-1: #1a1a1a;
+  --text-2: #45433f;
+  --text-3: #625f59;
+  --text-4: #6b675f;
+  --hairline: rgba(26, 26, 26, 0.1);
+  --hairline-soft: rgba(26, 26, 26, 0.065);
+  --toggle-off: #dad5cc;
+  --accent: #1a1a1a;
+  --accent-strong: #111111;
+  --accent-hover: #333333;
+  --accent-soft: rgba(26, 26, 26, 0.07);
+  --accent-soft-hover: rgba(26, 26, 26, 0.11);
+  --accent-focus: rgba(26, 26, 26, 0.25);
+  --accent-glow: rgba(26, 26, 26, 0.08);
+  --accent-ink: #fcfcfb;
   --peach: #d99678;
-  --lilac: #8b7fd1;
+  --lilac: #6b675f;
   --sage: #7fb493;
-  --sky: #70b3c2;
-  --glass-fill: rgba(255, 255, 255, 0.68);
+  --sky: #6b675f;
+  --glass-fill: rgba(252, 252, 251, 0.82);
   --glass-highlight: rgba(255, 255, 255, 0.92);
   --shadow-float:
-    0 26px 80px rgba(37, 45, 58, 0.16), 0 2px 10px rgba(37, 45, 58, 0.08);
+    0 26px 80px rgba(26, 26, 26, 0.14), 0 2px 10px rgba(26, 26, 26, 0.07);
 }
 
 html,
@@ -184,7 +185,7 @@ body {
 }
 
 html[data-theme="light"] body {
-  background: #e9ecf1;
+  background: #fcfcfb;
 }
 
 .grain-root,
@@ -276,22 +277,6 @@ html[data-theme="light"] body {
   transition: grid-template-columns 0.32s var(--ease-out);
 }
 
-/* The light shell carries the same two washes, re-tinted (grain_base.html). */
-html[data-theme="light"] .app {
-  background:
-    radial-gradient(
-      900px 520px at 25% -24%,
-      rgba(139, 127, 209, 0.08),
-      transparent 68%
-    ),
-    radial-gradient(
-      760px 540px at 100% 110%,
-      rgba(127, 180, 147, 0.065),
-      transparent 66%
-    ),
-    var(--bg-1);
-}
-
 .app::after {
   content: "";
   position: fixed;
@@ -322,14 +307,13 @@ html[data-theme="light"] .app {
   -webkit-app-region: drag;
 }
 
-/* The brand belongs to the rail below the 38px window-control row. The extra
-   8px keeps its cap height visibly clear of the header instead of straddling
-   that boundary. Inline padding preserves the nav icon axis. */
+/* Lower the brand and navigation together while preserving the gap from the
+   wordmark to Workspace. Inline padding preserves the nav icon axis. */
 .sidebar-brand {
   flex: 0 0 auto;
   display: flex;
   align-items: center;
-  padding: calc(var(--titlebar) + 8px) 11px 16px;
+  padding: calc(var(--titlebar) + 16px) 11px 16px;
   color: var(--text-1);
   -webkit-app-region: drag;
 }
@@ -1031,12 +1015,12 @@ html[data-theme="light"] .theme-toggle .moon-icon {
 }
 
 html[data-theme="light"] .update-check-btn {
-  border-color: #e0e0e3;
-  background: #fafafb;
+  border-color: #eeebe3;
+  background: #fcfcfb;
 }
 
 html[data-theme="light"] .update-progress {
-  background: rgba(35, 42, 54, 0.12);
+  background: rgba(26, 26, 26, 0.12);
 }
 
 .quick-panel-button {
@@ -1383,8 +1367,8 @@ h3 {
 }
 
 html[data-theme="light"] .hero {
-  background: #fbfbfc;
-  border-color: #e1e3e8;
+  background: #fcfcfb;
+  border-color: #eeebe3;
 }
 
 .hero-image {
@@ -1543,25 +1527,25 @@ html[data-theme="light"] .hero {
 /* ---------------------------------------------------------------------------
  * Overview cards (Start here)
  *
- * Refined 4-card grid with subtle borders, natural icon placement,
- * balanced 2-line typography, and clean horizontal baseline across all four cards.
+ * Two open columns give shortcut labels, descriptions, and actions room to
+ * breathe without changing what each card does.
  * ------------------------------------------------------------------------- */
 
 .overview-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 14px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
   align-items: stretch;
 }
 
 .overview-card {
   min-width: 0;
-  min-height: 160px;
-  padding: 16px 18px;
+  min-height: 170px;
+  padding: 22px 24px;
   display: flex;
   flex-direction: column;
   position: relative;
-  border-radius: var(--radius-md, 12px);
+  border-radius: 14px;
   border: 1px solid rgba(200, 205, 214, 0.17);
   background: var(--bg-2, #15181d);
   color: var(--text-1);
@@ -1596,32 +1580,28 @@ button.overview-card {
   cursor: default;
 }
 
-/* Light theme: a quiet grey edge keeps the four cards distinct. */
+/* The cards sit on the primary paper tone with only a warm, quiet edge. */
 html[data-theme="light"] .overview-card,
 html[data-theme="light"] button.overview-card {
-  border: 1px solid #e1e4e8;
-  background: #ffffff;
-  box-shadow:
-    0 1px 3px rgba(0, 0, 0, 0.04),
-    0 3px 8px rgba(0, 0, 0, 0.03);
+  border: 1px solid #eeebe3;
+  background: #fcfcfb;
+  box-shadow: none;
 }
 
 html[data-theme="light"] .overview-card--interactive:hover {
-  background: #ffffff;
-  border-color: #cfd3da;
-  box-shadow:
-    0 4px 14px rgba(0, 0, 0, 0.07),
-    0 1px 3px rgba(0, 0, 0, 0.03);
-  transform: translateY(-1.5px);
+  background: #f5f4f0;
+  border-color: rgba(26, 26, 26, 0.18);
+  box-shadow: none;
+  transform: none;
 }
 
 /* Card Header */
 .overview-card-header {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   min-width: 0;
-  margin-bottom: 6px;
+  margin-bottom: 10px;
 }
 
 .overview-card-icon {
@@ -1651,16 +1631,16 @@ html[data-theme="light"] .overview-card--interactive:hover {
 }
 
 html[data-theme="light"] .overview-card-icon {
-  color: #555b66;
+  color: #625f59;
 }
 
 html[data-theme="light"] .overview-card--interactive:hover .overview-card-icon {
-  color: var(--accent, #637bd1);
+  color: #1a1a1a;
 }
 
 .overview-card-title {
   display: block;
-  font-size: 13.5px;
+  font-size: 15px;
   font-weight: 600;
   color: var(--text-1);
   letter-spacing: -0.01em;
@@ -1670,30 +1650,26 @@ html[data-theme="light"] .overview-card--interactive:hover .overview-card-icon {
 }
 
 html[data-theme="light"] .overview-card-title {
-  color: #17191d;
+  color: #1a1a1a;
 }
 
 /* Card Description (Multi-line flowing prose) */
 .overview-card-desc {
   margin: 0;
-  font-size: 11.5px;
-  line-height: 1.45;
+  font-size: 12.5px;
+  line-height: 1.5;
   color: var(--text-3, #7d8385);
   white-space: normal;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
 }
 
 html[data-theme="light"] .overview-card-desc {
-  color: #737a84;
+  color: #625f59;
 }
 
 /* Card Footer / Accessory */
 .overview-card-footer {
   margin-top: auto;
-  padding-top: 14px;
+  padding-top: 20px;
   display: flex;
   align-items: center;
   min-width: 0;
@@ -1702,17 +1678,17 @@ html[data-theme="light"] .overview-card-desc {
 /* -- Shortcuts list -- */
 .overview-shortcut-list {
   margin-top: auto;
-  padding-top: 10px;
+  padding-top: 18px;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 12px;
 }
 
 .overview-shortcut-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
+  gap: 20px;
   min-width: 0;
 }
 
@@ -1721,53 +1697,52 @@ html[data-theme="light"] .overview-card-desc {
   min-width: 0;
   overflow: hidden;
   color: var(--text-3, #7d8385);
-  font-size: 11.5px;
+  font-size: 12px;
   font-weight: 450;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 html[data-theme="light"] .overview-shortcut-label {
-  color: #737a84;
+  color: #625f59;
 }
 
 .overview-shortcut-off {
   flex: none;
   color: var(--text-4, #5c6265);
-  font-size: 11px;
-  font-style: italic;
+  font-size: 12px;
 }
 
-/* Keycaps */
-.overview-keys {
+/* A chord reads as text, with deliberate space around each plus. */
+.overview-card .overview-keys {
   flex: 0 1 auto;
   min-width: 0;
   display: inline-flex;
-  flex-wrap: wrap;
-  gap: 3px;
+  align-items: center;
+  gap: 8px;
   justify-content: flex-end;
-}
-
-.overview-key {
-  flex: none;
-  padding: 2px 7px;
-  border: 1px solid var(--hairline, rgba(255, 255, 255, 0.12));
-  border-radius: 5px;
-  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.25);
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
   color: var(--text-1);
-  background: rgba(255, 255, 255, 0.06);
-  font-family: var(--font-mono, ui-monospace, monospace);
-  font-size: 11px;
-  font-weight: 550;
+  background: transparent;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
 
-html[data-theme="light"] .overview-key {
-  border-color: #d2d5dc;
-  background: #f4f5f7;
-  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.06);
-  color: #1e2229;
+.overview-key-part {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.overview-key-separator {
+  color: var(--text-4);
+  font-weight: 450;
 }
 
 /* -- Agent row & CTA row -- */
@@ -1791,7 +1766,7 @@ html[data-theme="light"] .overview-key {
 }
 
 html[data-theme="light"] .overview-card-cta {
-  color: #4b68c8;
+  color: #1a1a1a;
 }
 
 .overview-cta-arrow {
@@ -1800,7 +1775,7 @@ html[data-theme="light"] .overview-card-cta {
 }
 
 html[data-theme="light"] .overview-cta-arrow {
-  color: #4b68c8;
+  color: #1a1a1a;
 }
 
 .overview-card--interactive:hover .overview-cta-arrow {
@@ -1874,79 +1849,39 @@ html[data-theme="light"] .overview-cta-arrow {
 }
 
 html[data-theme="light"] .overview-add-row {
-  border-color: #dcdfe4;
-  background: #f7f8fa;
-}
-
-html[data-theme="light"] .overview-add-row:focus-within {
-  border-color: var(--accent, #637bd1);
-  background: #ffffff;
-  box-shadow: 0 0 0 2px rgba(99, 123, 209, 0.12);
-}
-
-html[data-theme="light"] .overview-add-input {
-  color: #17191d;
-}
-
-html[data-theme="light"] .overview-add-input::placeholder {
-  color: #9aa0a9;
-}
-
-.overview-add-btn {
-  flex: none;
-  width: 22px;
-  height: 22px;
-  display: grid;
-  place-items: center;
+  height: 34px;
+  padding-right: 0;
   border: 0;
-  border-radius: 5px;
-  color: var(--text-3);
-  background: rgba(255, 255, 255, 0.07);
-  cursor: pointer;
-  transition:
-    background 0.15s ease,
-    color 0.15s ease,
-    transform 0.1s ease;
-}
-
-.overview-add-btn:hover:not(:disabled) {
-  color: #ffffff;
-  background: var(--accent, #8faaff);
-  transform: scale(1.05);
-}
-
-.overview-add-btn:disabled {
-  opacity: 0.3;
-  cursor: default;
-}
-
-html[data-theme="light"] .overview-add-row {
-  border-color: #dcdfe4;
-  background: #f7f8fa;
+  border-bottom: 1px solid #eeebe3;
+  border-radius: 0;
+  background: transparent;
 }
 
 html[data-theme="light"] .overview-add-row:focus-within {
-  border-color: var(--accent, #637bd1);
-  background: #ffffff;
-  box-shadow: 0 0 0 2px rgba(99, 123, 209, 0.12);
+  border-color: #1a1a1a;
+  background: transparent;
+  box-shadow: none;
 }
 
 html[data-theme="light"] .overview-add-input {
-  color: #17191d;
+  padding-left: 0;
+  color: #1a1a1a;
 }
 
 html[data-theme="light"] .overview-add-input::placeholder {
-  color: #9aa0a9;
+  color: #6b675f;
 }
 
 html[data-theme="light"] .overview-add-btn {
-  background: #e6e8ec;
-  color: #555b66;
+  width: 26px;
+  height: 26px;
+  color: #1a1a1a;
+  background: transparent;
 }
 
 html[data-theme="light"] .overview-add-btn:hover:not(:disabled) {
-  background: var(--accent, #637bd1);
-  color: #ffffff;
+  color: #1a1a1a;
+  background: #eeebe3;
 }
 
 .section-head-actions {
@@ -2561,7 +2496,7 @@ html[data-theme="light"] .model-role-tabs {
 }
 
 html[data-theme="light"] .capture-mode-option {
-  background: rgba(24, 29, 37, 0.035);
+  background: #f5f4f0;
 }
 
 /* About has no section rail of its own — it is one surface, not a set. */
@@ -2850,25 +2785,14 @@ html[data-theme="light"] .page {
   background: transparent;
 }
 
-/* Grey shell, white bubble. */
+/* Warm shell, paper content surface. */
 html[data-theme="light"] .main {
-  background: #ffffff;
-  box-shadow: 0 1px 2px rgba(24, 29, 37, 0.05);
+  background: #fcfcfb;
+  box-shadow: 0 1px 2px rgba(26, 26, 26, 0.05);
 }
 
 html[data-theme="light"] .app {
-  background:
-    radial-gradient(
-      900px 520px at 28% -20%,
-      rgba(99, 123, 209, 0.055),
-      transparent 66%
-    ),
-    radial-gradient(
-      880px 600px at 100% 110%,
-      rgba(111, 169, 158, 0.045),
-      transparent 65%
-    ),
-    #f0f1f3;
+  background: #f5f4f0;
 }
 
 html[data-theme="light"] .titlebar,
@@ -2878,71 +2802,71 @@ html[data-theme="light"] .sidebar {
 
 html[data-theme="light"] .window-button,
 html[data-theme="light"] .theme-toggle {
-  color: #77787e;
+  color: #625f59;
 }
 
 html[data-theme="light"] .nav-label {
-  color: #94959b;
+  color: #6b675f;
 }
 
 html[data-theme="light"] .nav-item,
 html[data-theme="light"] .quick-panel-button {
-  color: #5f6066;
+  color: #625f59;
 }
 
 html[data-theme="light"] .nav-item .icon,
 html[data-theme="light"] .quick-panel-button .icon {
-  color: #77787e;
+  color: #6b675f;
 }
 
 html[data-theme="light"] .nav-item:hover,
 html[data-theme="light"] .quick-panel-button:hover {
-  color: #292a2e;
-  background: #e1e1e3;
+  color: #1a1a1a;
+  background: #eeebe3;
 }
 
 html[data-theme="light"] .nav-item.active {
-  color: #202124;
-  background: #dcdcdf;
+  color: #1a1a1a;
+  background: #eeebe3;
   box-shadow: none;
 }
 
 html[data-theme="light"] .model-status {
-  background: #e1e1e3;
-  box-shadow: inset 0 0 0 1px #d7d7da;
+  background: #eeebe3;
+  box-shadow: none;
 }
 
 html[data-theme="light"] .window-button:hover,
 html[data-theme="light"] .theme-toggle:hover {
-  background: rgba(28, 34, 43, 0.055);
+  background: rgba(26, 26, 26, 0.055);
 }
 
 html[data-theme="light"] .button {
   border: 0;
-  color: #393a3f;
-  background: #ededee;
+  color: #1a1a1a;
+  background: #eeebe3;
   box-shadow: none;
 }
 
 html[data-theme="light"] .button:hover {
-  background: #e7e7e9;
+  background: #e8e4da;
 }
 
 html[data-theme="light"] .grain-root .segmented,
 html[data-theme="light"] .grain-root .search-field,
 html[data-theme="light"] .grain-root .select {
   color: var(--text-2);
-  background-color: rgba(28, 34, 43, 0.05);
-  box-shadow: inset 0 0 0 1px rgba(28, 34, 43, 0.025);
+  background-color: #f5f4f0;
+  box-shadow: inset 0 0 0 1px rgba(26, 26, 26, 0.04);
 }
 
 html[data-theme="light"] .grain-root .segmented button.active {
-  background: rgba(255, 255, 255, 0.86);
-  box-shadow: 0 3px 10px rgba(35, 42, 54, 0.07);
+  background: #fcfcfb;
+  box-shadow: none;
 }
 
 html[data-theme="light"] .grain-root .toggle {
-  background: #ccd1d8;
+  background: #dad5cc;
 }
 
 html[data-theme="light"] .grain-root .toggle span,
@@ -2956,29 +2880,29 @@ html[data-theme="light"] .grain-root .toggle.on {
 }
 
 html[data-theme="light"] .quick-card {
-  border: 1px solid #e0e0e3;
-  background: #f5f5f6;
+  border: 1px solid #eeebe3;
+  background: #f5f4f0;
   box-shadow: none;
 }
 
 html[data-theme="light"] .quick-card:hover {
-  border-color: #d7d7da;
-  background: #f1f1f2;
+  border-color: rgba(26, 26, 26, 0.16);
+  background: #eeebe3;
   box-shadow: none;
 }
 
 html[data-theme="light"] .action-icon {
-  color: #8b92a0;
+  color: #625f59;
 }
 
 html[data-theme="light"] .action-copy small {
-  color: #656c78;
+  color: #625f59;
 }
 
 html[data-theme="light"] .transcript-feed,
 html[data-theme="light"] .history-feed {
-  border: 1px solid #e0e0e3;
-  background: #f5f5f6;
+  border: 1px solid #eeebe3;
+  background: #f5f4f0;
 }
 
 html[data-theme="light"] .transcript-card {
@@ -2986,42 +2910,42 @@ html[data-theme="light"] .transcript-card {
 }
 
 html[data-theme="light"] .transcript-card + .transcript-card {
-  box-shadow: inset 0 1px #e8e8ea;
+  box-shadow: inset 0 1px #eeebe3;
 }
 
 html[data-theme="light"] .transcript-card:hover {
-  background: #f0f0f1;
+  background: #eeebe3;
 }
 
 html[data-theme="light"] .transcript-body {
-  color: #343a43;
+  color: #45433f;
 }
 
 html[data-theme="light"] .view-switch,
 html[data-theme="light"] .history-search {
-  border: 1px solid #e0e0e3;
-  background: #f0f0f1;
+  border: 1px solid #eeebe3;
+  background: #f5f4f0;
   box-shadow: none;
 }
 
 html[data-theme="light"] .view-switch button.active,
 html[data-theme="light"] .filter-pill.active {
-  background: #dedee1;
+  background: #eeebe3;
   box-shadow: none;
 }
 
 html[data-theme="light"] kbd,
 html[data-theme="light"] .keycap {
-  background: #e9e9eb;
-  box-shadow: inset 0 0 0 1px #dcdcdf;
+  background: #eeebe3;
+  box-shadow: inset 0 0 0 1px rgba(26, 26, 26, 0.08);
 }
 
 html[data-theme="light"] .settings-sidebar-pane {
-  background: rgba(241, 241, 242, 0.72);
+  background: rgba(245, 244, 240, 0.82);
 }
 
 html[data-theme="light"] .settings-sidebar-pane::after {
-  background: #dedee1;
+  background: #eeebe3;
 }
 
 html[data-theme="light"] .settings-canvas {
@@ -3029,17 +2953,17 @@ html[data-theme="light"] .settings-canvas {
 }
 
 html[data-theme="light"] .settings-nav button {
-  color: #65666c;
+  color: #625f59;
 }
 
 html[data-theme="light"] .settings-nav button:hover {
-  color: #25262a;
-  background: #e6e6e8;
+  color: #1a1a1a;
+  background: #eeebe3;
 }
 
 html[data-theme="light"] .settings-nav button.active {
-  color: #202124;
-  background: #dedee1;
+  color: #1a1a1a;
+  background: #eeebe3;
   box-shadow: none;
 }
 
@@ -3056,11 +2980,11 @@ html[data-theme="light"]
   .next-settings-content
   .setting-row
   + .setting-row::before {
-  background: #e2e2e4;
+  background: #eeebe3;
 }
 
 html[data-theme="light"] .next-settings-content .setting-row p {
-  color: #73747a;
+  color: #625f59;
 }
 
 html[data-theme="light"]
@@ -3069,9 +2993,9 @@ html[data-theme="light"]
 html[data-theme="light"] .next-settings-content textarea,
 html[data-theme="light"] .next-settings-content select,
 html[data-theme="light"] .next-settings-content .app-select__control {
-  color: #303136 !important;
-  background: rgba(28, 34, 43, 0.045) !important;
-  box-shadow: inset 0 0 0 1px #dcdcdf !important;
+  color: #1a1a1a !important;
+  background: #f5f4f0 !important;
+  box-shadow: inset 0 0 0 1px #eeebe3 !important;
 }
 
 /* (light-theme toggle track handled by --toggle-off; no override needed) */
@@ -3648,7 +3572,7 @@ html[data-theme="light"] .next-settings-content .app-select__control {
   align-self: flex-end;
   max-width: 88%;
   border-color: transparent;
-  background: rgba(142, 168, 253, 0.1);
+  background: var(--accent-soft);
 }
 
 .grain-root .gs-next .gs-chat-source {
@@ -3679,8 +3603,8 @@ html[data-theme="light"] .next-settings-content .app-select__control {
 }
 
 .grain-root .gs-next .gs-chat-input:focus-within {
-  border-color: rgba(142, 168, 253, 0.28);
-  box-shadow: 0 0 0 3px rgba(142, 168, 253, 0.08);
+  border-color: var(--accent-focus);
+  box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
 .grain-root .gs-next .gs-chat-send {
@@ -3698,77 +3622,77 @@ html[data-theme="light"] .next-settings-content .app-select__control {
 
 html[data-theme="light"] .grain-root .gs-next .gs-frame {
   --paper: transparent;
-  --side: rgba(241, 241, 242, 0.72);
-  --side-2: rgba(241, 241, 242, 0.82);
-  --hover: rgba(28, 34, 43, 0.05);
-  --sel: rgba(255, 255, 255, 0.78);
-  --selected-row: rgba(255, 255, 255, 0.78);
-  --editor-sheet: rgba(250, 250, 250, 0.72);
-  --calendar-sheet: rgba(250, 250, 250, 0.72);
-  --scroll-thumb: rgba(32, 33, 36, 0.14);
-  --scroll-thumb-hover: rgba(32, 33, 36, 0.24);
+  --side: rgba(245, 244, 240, 0.82);
+  --side-2: rgba(245, 244, 240, 0.9);
+  --hover: rgba(26, 26, 26, 0.05);
+  --sel: #eeebe3;
+  --selected-row: #eeebe3;
+  --editor-sheet: rgba(252, 252, 251, 0.82);
+  --calendar-sheet: rgba(252, 252, 251, 0.82);
+  --scroll-thumb: rgba(26, 26, 26, 0.14);
+  --scroll-thumb-hover: rgba(26, 26, 26, 0.24);
 }
 
 html[data-theme="light"] .grain-root .gs-next .gs-side {
-  background: rgba(241, 241, 242, 0.72);
+  background: rgba(245, 244, 240, 0.82);
 }
 
 html[data-theme="light"] .grain-root .gs-next .gs-side::after,
 html[data-theme="light"] .grain-root .gs-next .gs-actions {
-  border-color: #dedee1;
+  border-color: #eeebe3;
 }
 
 html[data-theme="light"] .grain-root .gs-next .gs-actions {
-  background: rgba(250, 250, 250, 0.72);
+  background: rgba(252, 252, 251, 0.82);
 }
 
 html[data-theme="light"] .grain-root .gs-next-chat-control,
 html[data-theme="light"] .grain-root .gs-next-editor-settings {
-  color: #5f6672;
-  background: rgba(255, 255, 255, 0.72);
+  color: #625f59;
+  background: rgba(252, 252, 251, 0.82);
   box-shadow:
-    inset 0 0 0 1px rgba(32, 33, 36, 0.09),
-    0 8px 24px rgba(32, 33, 36, 0.08);
+    inset 0 0 0 1px rgba(26, 26, 26, 0.09),
+    0 8px 24px rgba(26, 26, 26, 0.08);
 }
 
 html[data-theme="light"] .grain-root .gs-next-chat-control:hover,
 html[data-theme="light"] .grain-root .gs-next-chat-control.is-open,
 html[data-theme="light"] .grain-root .gs-next-editor-settings:hover {
-  color: #202124;
-  background: rgba(255, 255, 255, 0.92);
+  color: #1a1a1a;
+  background: #fcfcfb;
 }
 
 html[data-theme="light"] .grain-root .gs-next .gs-row:hover,
 html[data-theme="light"] .grain-root .gs-next-nav-row:hover,
 html[data-theme="light"] .grain-root .gs-next-nav-row.is-active {
-  background: rgba(28, 34, 43, 0.05);
+  background: #eeebe3;
 }
 
 html[data-theme="light"] .grain-root .gs-next .gs-row--on {
-  background: rgba(255, 255, 255, 0.78);
+  background: #eeebe3;
   box-shadow: none;
 }
 
 html[data-theme="light"] .grain-root .gs-next .gs-chat {
-  background: rgba(244, 244, 245, 0.88);
-  border-color: #dedee1;
-  box-shadow: -24px 0 60px rgba(32, 33, 36, 0.08);
+  background: rgba(245, 244, 240, 0.9);
+  border-color: #eeebe3;
+  box-shadow: -24px 0 60px rgba(26, 26, 26, 0.08);
 }
 
 html[data-theme="light"] .grain-root .gs-next .gs-chat-tab:hover,
 html[data-theme="light"] .grain-root .gs-next .gs-chat-tab--on,
 html[data-theme="light"] .grain-root .gs-next .gs-chat-close:hover {
-  background: rgba(32, 33, 36, 0.055);
+  background: rgba(26, 26, 26, 0.055);
 }
 
 html[data-theme="light"] .grain-root .gs-next .gs-chat-card,
 html[data-theme="light"] .grain-root .gs-next .gs-chat-source,
 html[data-theme="light"] .grain-root .gs-next .gs-chat-confirm {
-  background: rgba(255, 255, 255, 0.56);
+  background: rgba(252, 252, 251, 0.7);
 }
 
 html[data-theme="light"] .grain-root .gs-next .gs-chat-bubble--user {
-  background: rgba(74, 104, 194, 0.09);
+  background: #eeebe3;
 }
 
 @media (max-width: 1100px) {
@@ -3896,6 +3820,10 @@ html[data-theme="light"] .grain-root .gs-next .gs-chat-bubble--user {
 }
 
 @media (max-width: 780px) {
+  .overview-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
   .section-head {
     align-items: flex-start;
   }
@@ -4101,7 +4029,7 @@ html[data-theme="light"] .grain-root .gs-next .gs-chat-bubble--user {
 }
 
 .tool-master-toggle input:checked + .tool-master-toggle-track {
-  background: #5269c7;
+  background: var(--accent);
 }
 
 .tool-master-toggle input:checked + .tool-master-toggle-track::after {
@@ -4980,25 +4908,25 @@ html[data-theme="light"] .grain-root .gs-next .gs-chat-bubble--user {
 }
 
 html[data-theme="light"] .context-custom-profile-card {
-  background: #ffffff;
+  background: #fcfcfb;
 }
 
 html[data-theme="light"] .context-profile-tabs {
-  background: #f0f0f2;
+  background: #f5f4f0;
 }
 
 html[data-theme="light"] .context-profile-tabs button.active,
 html[data-theme="light"] .context-profile-mode button.active {
-  color: #202124;
-  background: #ffffff;
+  color: #1a1a1a;
+  background: #eeebe3;
 }
 
 html[data-theme="light"] .context-profile-card {
-  background: #ffffff;
+  background: #fcfcfb;
 }
 
 html[data-theme="light"] .context-profile-mode {
-  background: #f0f0f2;
+  background: #f5f4f0;
 }
 
 @media (max-width: 700px) {
@@ -5208,7 +5136,7 @@ html[data-theme="light"] .context-profile-mode {
   justify-content: center;
   gap: 5px;
   color: #fff;
-  background: #5269c7;
+  background: var(--accent);
   font-size: 12px;
   font-weight: 640;
   cursor: pointer;
@@ -5219,7 +5147,7 @@ html[data-theme="light"] .context-profile-mode {
 
 .dictionary-add-button:hover,
 .dictionary-save-button:hover {
-  background: #6078d5;
+  background: var(--accent-hover);
 }
 
 .next-settings-content .dictionary-add-button,
@@ -6169,7 +6097,7 @@ article.studio-extension-card {
 
 .button.developer-on {
   color: var(--accent);
-  box-shadow: inset 0 0 0 1px rgba(142, 168, 253, 0.3);
+  box-shadow: inset 0 0 0 1px var(--accent-focus);
 }
 
 .extension-toolbar {
@@ -6212,7 +6140,7 @@ article.studio-extension-card {
 }
 
 .installed-extension-card:focus-visible {
-  box-shadow: 0 0 0 3px rgba(142, 168, 253, 0.18);
+  box-shadow: 0 0 0 3px var(--accent-focus);
 }
 
 .extension-disabled .extension-artwork,
@@ -7268,21 +7196,21 @@ html[data-theme="light"] .installed-extension-actions {
 }
 
 html[data-theme="light"] .tools-sidebar-pane {
-  background: rgba(241, 241, 242, 0.72);
+  background: rgba(245, 244, 240, 0.82);
 }
 html[data-theme="light"] .tools-sidebar-pane::after {
-  background: #dedfe2;
+  background: #eeebe3;
 }
 html[data-theme="light"] .tools-nav button {
-  color: #65666c;
+  color: #625f59;
 }
 html[data-theme="light"] .tools-nav button:hover {
-  color: #26272a;
-  background: #e8e8ea;
+  color: #1a1a1a;
+  background: #eeebe3;
 }
 html[data-theme="light"] .tools-nav button.active {
-  color: #202124;
-  background: #dedfe2;
+  color: #1a1a1a;
+  background: #eeebe3;
 }
 html[data-theme="light"] .tools-canvas {
   background: transparent;
@@ -7291,34 +7219,34 @@ html[data-theme="light"] .installed-extension-card,
 html[data-theme="light"] .permission-row,
 html[data-theme="light"] .extension-detail-disclosure,
 html[data-theme="light"] .extension-detail-readme-section {
-  background: #fff;
-  box-shadow: inset 0 0 0 1px rgba(31, 35, 42, 0.07);
+  background: #fcfcfb;
+  box-shadow: inset 0 0 0 1px rgba(26, 26, 26, 0.07);
 }
 
 html[data-theme="light"] .polished-store-card {
-  border-color: rgba(31, 35, 42, 0.09);
-  background: #fff;
+  border-color: rgba(26, 26, 26, 0.09);
+  background: #fcfcfb;
   box-shadow: none;
 }
 
 html[data-theme="light"] .studio-extension-card {
-  background: #fff;
+  background: #fcfcfb;
 }
 
 html[data-theme="light"] .extension-configure-backdrop {
-  background: rgba(35, 40, 49, 0.42);
+  background: rgba(26, 26, 26, 0.42);
 }
 
 html[data-theme="light"] .extension-configure-dialog {
-  background: var(--bg-1);
+  background: #fcfcfb;
 }
 
 html[data-theme="light"] .developer-drawer {
-  background: rgba(248, 249, 251, 0.84);
+  background: rgba(252, 252, 251, 0.84);
 }
 
 html[data-theme="light"] .extension-empty-state {
-  background: rgba(255, 255, 255, 0.38);
+  background: rgba(252, 252, 251, 0.52);
 }
 
 @media (max-width: 1120px) {
