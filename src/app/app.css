@@ -1054,7 +1054,6 @@ kbd,
   border: 1px solid var(--hairline);
   border-radius: var(--radius-lg);
   background: var(--bg-1);
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.22);
 }
 
 .page {
@@ -2774,7 +2773,6 @@ html[data-theme="light"] .page {
 /* Warm shell, paper content surface. */
 html[data-theme="light"] .main {
   background: #fcfcfb;
-  box-shadow: 0 1px 2px rgba(26, 26, 26, 0.05);
 }
 
 html[data-theme="light"] .app {
@@ -4045,8 +4043,8 @@ html[data-theme="light"] .grain-root .gs-next .gs-chat-bubble--user {
 
 .studio-feature-copy {
   grid-column: 1;
-  grid-row: 1 / 4;
-  align-self: center;
+  grid-row: 1;
+  align-self: start;
   max-width: 650px;
 }
 
@@ -4071,12 +4069,8 @@ html[data-theme="light"] .grain-root .gs-next .gs-chat-bubble--user {
   grid-column: 2;
   grid-row: 1;
   justify-self: end;
-  padding: 7px 9px;
-  border-radius: 999px;
   display: grid;
   place-items: center;
-  background: rgba(252, 252, 251, 0.94);
-  box-shadow: 0 3px 16px rgba(0, 0, 0, 0.12);
 }
 
 .studio-feature-toggle .tool-master-toggle {
@@ -4084,17 +4078,26 @@ html[data-theme="light"] .grain-root .gs-next .gs-chat-bubble--user {
   display: block;
 }
 
-.studio-feature-learn {
-  grid-column: 2;
+.studio-feature-toggle .tool-master-toggle-track {
+  box-shadow: 0 0 0 1px rgba(252, 252, 251, 0.8);
+}
+
+.next-settings-content .studio-feature-hero button.studio-feature-learn {
+  grid-column: 1;
   grid-row: 3;
-  justify-self: end;
+  justify-self: start;
   align-self: end;
   min-height: 38px;
   padding: 0 16px;
-  border: 0;
-  border-radius: 8px;
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid rgba(255, 255, 255, 0.6);
+  border-radius: 999px;
   color: #1a1a1a;
-  background: #fcfcfb;
+  -webkit-text-fill-color: #1a1a1a;
+  background: rgba(252, 252, 251, 0.84);
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
   font-size: 13px;
   font-weight: 640;
   white-space: nowrap;
@@ -4105,32 +4108,24 @@ html[data-theme="light"] .grain-root .gs-next .gs-chat-bubble--user {
 @media (max-width: 780px) {
   .studio-feature-hero {
     min-height: 240px;
-    padding: 68px 22px 22px;
+    padding: 22px;
     grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: auto auto;
+    grid-template-rows: auto 1fr auto;
     row-gap: 24px;
   }
 
   .studio-feature-hero:not(.has-toggle) {
     min-height: 206px;
-    padding-top: 22px;
   }
 
-  .studio-feature-copy {
-    grid-column: 1;
-    grid-row: 1;
+  .studio-feature-hero.has-toggle .studio-feature-copy {
+    padding-right: 54px;
   }
 
   .studio-feature-toggle {
     position: absolute;
     top: 18px;
     right: 18px;
-  }
-
-  .studio-feature-learn {
-    grid-column: 1;
-    grid-row: 2;
-    justify-self: start;
   }
 }
 
