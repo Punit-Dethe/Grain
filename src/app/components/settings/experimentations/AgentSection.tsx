@@ -29,7 +29,7 @@ const LOOK_OPTIONS: { value: AgentPanelPosition; label: string }[] = [
 ];
 
 /** [GRAIN] Agent settings — the rows BELOW the tool's master switch (the one
- * pinned to the page heading in Studio), rendered as one ungrouped list.
+ * in Studio's feature card), rendered as one ungrouped list.
  *
  * There are no sub-headings. Seven controls split across "Reply surface",
  * "Replies" and "Input & context" spent three headings naming what the rows

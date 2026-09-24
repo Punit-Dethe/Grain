@@ -31,6 +31,7 @@ import {
 } from "@/extensions/StudioExtensionCard";
 import { useSettings } from "@/hooks/useSettings";
 import { hashForRoute, type ToolSectionId } from "../navigation";
+import studioFeatureBg from "../overview/studio-feature-bg.webp";
 import {
   matchToolRecommendations,
   studioShelfMode,
@@ -44,13 +45,14 @@ const TOOL_COPY: Record<
 > = {
   dictionary: {
     title: "Dictionary",
-    description: "Teach Grain the words that matter to you.",
+    description:
+      "Add names, product terms, and specialist words Grain should recognize. Your dictionary stays on this device.",
     icon: BookOpen,
   },
   snippets: {
     title: "Snippets",
     description:
-      "Create reusable text, links, signatures, and phrases that Grain can expand from your voice.",
+      "Say a short trigger phrase and Grain replaces it with your saved text. Snippets stay on this device.",
     icon: Code2,
   },
   context: {
@@ -491,24 +493,6 @@ function DictionaryTool() {
 
   return (
     <section className="dictionary-workspace" aria-label="Personal dictionary">
-      <div className="dictionary-guide">
-        <div className="dictionary-guide-copy">
-          <h2>How to use your personal dictionary</h2>
-          <p>
-            Add names, product terms, and specialist words Grain should
-            recognize. Your dictionary stays on this device.
-          </p>
-          <button type="button" className="dictionary-learn-more" disabled>
-            Learn more
-          </button>
-        </div>
-        <div className="dictionary-guide-examples" aria-hidden="true">
-          <span>Grain</span>
-          <span>Tauri</span>
-          <span>MacBook Pro</span>
-        </div>
-      </div>
-
       <div className="dictionary-toolbar">
         <label className="dictionary-search tool-search">
           <Search size={17} aria-hidden="true" />
@@ -816,24 +800,6 @@ function SnippetsTool() {
         className="dictionary-workspace studio-core-workspace"
         aria-label="Personal shortcuts"
       >
-        <div className="dictionary-guide snippets-guide">
-          <div className="dictionary-guide-copy">
-            <h2>How to use snippets</h2>
-            <p>
-              Say a short trigger phrase and Grain replaces it with your saved
-              text. Snippets stay on this device.
-            </p>
-            <button type="button" className="dictionary-learn-more" disabled>
-              Learn more
-            </button>
-          </div>
-          <div className="dictionary-guide-examples" aria-hidden="true">
-            <span>my email</span>
-            <span>meeting link</span>
-            <span>sign off</span>
-          </div>
-        </div>
-
         <div className="dictionary-toolbar">
           <label className="dictionary-search tool-search">
             <Search size={17} aria-hidden="true" />
@@ -939,9 +905,7 @@ function AgentTool() {
 
   return (
     <>
-      {/* The page title and its master switch already name the feature and turn
-          it on (see the heading above); the settings simply appear below them,
-          the same way Snippets and Context awareness do. */}
+      {/* The image card above owns the title and switch; only settings appear here. */}
       {enabled && (
         <>
           <section className="agent-workspace tool-component-host studio-core-workspace">
@@ -999,9 +963,14 @@ export function ToolsPage({ section }: { section: ToolSectionId }) {
             <div className="tools-scroll">
               <div className="tools-content next-settings-content">
                 <header
-                  className={`tool-main-heading ${section === "snippets" || section === "context" || section === "agent" ? "has-toggle" : ""}`}
+                  className={`studio-feature-hero${section === "dictionary" ? "" : " has-toggle"}`}
                 >
-                  <div>
+                  <img
+                    className="studio-feature-image"
+                    src={studioFeatureBg}
+                    alt=""
+                  />
+                  <div className="studio-feature-copy">
                     <h1 id="next-tool-title">
                       {section === "dictionary"
                         ? "Personal Dictionary"
@@ -1009,9 +978,20 @@ export function ToolsPage({ section }: { section: ToolSectionId }) {
                     </h1>
                     <p>{copy.description}</p>
                   </div>
-                  {section === "snippets" && <SnippetsMasterToggle />}
-                  {section === "context" && <ContextMasterToggle />}
-                  {section === "agent" && <AgentMasterToggle />}
+                  {section !== "dictionary" && (
+                    <div className="studio-feature-toggle">
+                      {section === "snippets" && <SnippetsMasterToggle />}
+                      {section === "context" && <ContextMasterToggle />}
+                      {section === "agent" && <AgentMasterToggle />}
+                    </div>
+                  )}
+                  <button
+                    type="button"
+                    className="studio-feature-learn"
+                    disabled
+                  >
+                    Learn more
+                  </button>
                 </header>
                 {section === "dictionary" ? (
                   <DictionaryTool />
