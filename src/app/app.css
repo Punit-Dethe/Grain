@@ -3206,7 +3206,7 @@ html[data-theme="light"] .next-settings-content .app-select__control {
 }
 
 .grain-root .gs-next .gs-side {
-  width: 272px;
+  width: 262px;
   padding: 0 9px 14px;
   background: rgba(8, 10, 13, 0.48);
   backdrop-filter: blur(16px) saturate(110%);
@@ -3381,11 +3381,11 @@ html[data-theme="light"] .next-settings-content .app-select__control {
 }
 
 .grain-root .gs-next .gs-next-folder-row {
-  gap: 12px;
-  min-height: 48px;
-  margin-block: 3px;
-  padding-block: 10px;
-  padding-right: 14px;
+  gap: 11px;
+  min-height: 42px;
+  margin-block: 2px;
+  padding-block: 8px;
+  padding-right: 12px;
 }
 
 .grain-root .gs-next-folder-row .gs-row-title {
@@ -3854,7 +3854,7 @@ html[data-theme="light"] .grain-root .gs-next .gs-chat-bubble--user {
 
 @media (max-width: 760px) {
   .grain-root .gs-next .gs-side {
-    width: 238px;
+    width: 228px;
   }
 
   .grain-root .gs-next .gs-column {
