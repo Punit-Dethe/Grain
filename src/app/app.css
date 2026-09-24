@@ -1710,7 +1710,7 @@ html[data-theme="light"] .overview-shortcut-label {
   border: 0;
   border-radius: 0;
   box-shadow: none;
-  color: var(--text-1);
+  color: var(--text-2);
   background: transparent;
   font-family: inherit;
   font-size: 14px;
