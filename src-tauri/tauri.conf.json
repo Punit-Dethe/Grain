@@ -15,7 +15,7 @@
     "security": {
       "csp": null,
       "assetProtocol": {
-        "enable": false,
+        "enable": true,
         "scope": []
       }
     }

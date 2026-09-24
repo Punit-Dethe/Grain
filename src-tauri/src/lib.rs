@@ -388,6 +388,16 @@ fn initialize_core_logic(app_handle: &AppHandle) {
     let history_manager =
         Arc::new(HistoryManager::new(app_handle).expect("Failed to initialize history manager"));
 
+    // [GRAIN] Serve only our recordings through the asset protocol. This avoids
+    // copying full WAV files into JS without restoring Handy's unrestricted scope,
+    // and follows the portable recordings directory when portable mode is on.
+    if let Err(error) = app_handle
+        .asset_protocol_scope()
+        .allow_directory(history_manager.recordings_dir(), false)
+    {
+        log::error!("Failed to allow history recordings for playback: {error}");
+    }
+
     // Apply accelerator preferences before any model loads
     managers::transcription::apply_accelerator_settings(app_handle);
 

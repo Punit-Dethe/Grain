@@ -77,6 +77,7 @@ export function HistoryCard({
       copiedTimer.current = window.setTimeout(() => setCopied(false), 2000);
     } catch (error) {
       console.error("Failed to copy history text:", error);
+      toast.error(t("settings.history.copyError"));
     }
   };
 
@@ -131,15 +132,17 @@ export function HistoryCard({
             type="button"
             onClick={() => void copy()}
             disabled={!hasText || retrying}
-            title={copied ? "Copied" : t("settings.history.copyToClipboard")}
+            title={copied ? t("settings.history.copied") : t("settings.history.copyToClipboard")}
+            aria-label={copied ? t("settings.history.copied") : t("settings.history.copyToClipboard")}
           >
-            <PrototypeIcon name="copy" />
+            <PrototypeIcon name={copied ? "check" : "copy"} />
           </button>
           <button
             type="button"
             className={entry.saved ? "active" : ""}
             onClick={() => void controller.toggleSaved(entry.id)}
             disabled={retrying}
+            aria-pressed={entry.saved}
             title={
               entry.saved
                 ? t("settings.history.unsave")

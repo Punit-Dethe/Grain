@@ -1893,14 +1893,17 @@ html[data-theme="light"] .overview-cta-arrow {
   cursor: pointer;
 }
 
-.transcript-actions button:hover,
-.transcript-actions button.active {
+.transcript-actions button:hover {
   color: var(--text-1);
   background: rgba(255, 255, 255, 0.055);
 }
 
 .transcript-actions button.active {
-  color: var(--accent);
+  color: var(--text-1);
+}
+
+.transcript-actions button[aria-pressed="true"] .icon {
+  fill: currentColor;
 }
 
 .transcript-actions .is-retrying .icon {
@@ -2832,7 +2835,6 @@ html[data-theme="light"]
   :is(.history-feed, .recent-feed)
   :is(
     .transcript-actions button:hover,
-    .transcript-actions button.active,
     .play-mini:hover
   ) {
   background: #f5f4f0;

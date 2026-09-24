@@ -43,6 +43,7 @@ const IconButton: React.FC<{
         : "text-text/50 hover:text-logo-primary"
     }`}
     title={title}
+    aria-pressed={active}
   >
     {children}
   </button>
@@ -569,6 +570,9 @@ const HistoryEntryComponent: React.FC<HistoryEntryProps> = ({
   const { t, i18n } = useTranslation();
   const [showCopied, setShowCopied] = useState(false);
   const [retrying, setRetrying] = useState(false);
+  const copiedTimer = useRef<number | undefined>(undefined);
+
+  useEffect(() => () => window.clearTimeout(copiedTimer.current), []);
 
   // An entry has a processed version only when the AI returned text. The TRS/PRO
   // toggle appears ONLY then; processed text is shown by default. Re-transcribing
@@ -605,7 +609,8 @@ const HistoryEntryComponent: React.FC<HistoryEntryProps> = ({
       return;
     }
     setShowCopied(true);
-    setTimeout(() => setShowCopied(false), 2000);
+    window.clearTimeout(copiedTimer.current);
+    copiedTimer.current = window.setTimeout(() => setShowCopied(false), 2000);
   };
 
   const handleDeleteEntry = async () => {
@@ -648,17 +653,18 @@ const HistoryEntryComponent: React.FC<HistoryEntryProps> = ({
               disabled={!hasText || retrying}
               title={
                 showCopied
-                  ? PROTOTYPE_HISTORY_COPY.copied
+                  ? t("settings.history.copied")
                   : t("settings.history.copyToClipboard")
               }
             >
-              <PrototypeIcon name="copy" />
+              <PrototypeIcon name={showCopied ? "check" : "copy"} />
             </button>
             <button
               type="button"
               className={entry.saved ? "active" : ""}
               onClick={onToggleSaved}
               disabled={retrying}
+              aria-pressed={entry.saved}
               title={
                 entry.saved
                   ? t("settings.history.unsave")
