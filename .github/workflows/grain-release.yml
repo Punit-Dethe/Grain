@@ -205,16 +205,17 @@ jobs:
           releaseDraft: ${{ github.event_name != 'workflow_dispatch' || inputs.draft }}
           prerelease: false
           releaseBody: |
-            # Grain v0.0.5
+            # Grain v0.0.6
 
-            This update improves Grain Space editing and keeps extension visuals under Grain's control.
+            This update refreshes Grain's interface and improves history, notes, context awareness, Flow reliability, and overall performance.
 
-            - Aligned note title and body layout and refined Markdown editing.
-            - Added manual note ordering within folders, including drag-and-drop rearrangement.
-            - Prevented the Agent from duplicating a note's title as a body heading.
-            - Removed extension-provided visual customization in favor of Grain-owned presentation.
-            - Hid the Extensions sidebar entry in production builds.
-            - Changed the onboarding Standard default to Parakeet TDT 0.6B v2.
-            - Marked reviewed Parakeet V2 and V3 models as supporting Flow in the Standard model list.
+            - Refreshed the application UI with a cleaner, more cohesive design and updated Grain branding.
+            - Fixed History audio playback, starring, copying, and action feedback.
+            - Simplified the Overview section.
+            - Fixed URL handling in Notes and improved the Notes window UI.
+            - Simplified Context Awareness by removing unnecessary complexity and improving performance.
+            - Prevented the start sound from leaking into Flow recordings when input and output use the same audio device.
+            - Improved overall performance.
+            - Audited Grain's divergence and brought the application back in line with upstream Handy.
           # NSIS installer only (matches tauri.conf.json windows.nsis).
           args: "--bundles nsis"
