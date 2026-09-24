@@ -3206,7 +3206,7 @@ html[data-theme="light"] .next-settings-content .app-select__control {
 }
 
 .grain-root .gs-next .gs-side {
-  width: 252px;
+  width: 272px;
   padding: 0 9px 14px;
   background: rgba(8, 10, 13, 0.48);
   backdrop-filter: blur(16px) saturate(110%);
@@ -3380,10 +3380,12 @@ html[data-theme="light"] .next-settings-content .app-select__control {
   padding-bottom: 4px;
 }
 
-.grain-root .gs-next-folder-row {
-  gap: 10px;
-  min-height: 44px;
+.grain-root .gs-next .gs-next-folder-row {
+  gap: 12px;
+  min-height: 48px;
+  margin-block: 3px;
   padding-block: 10px;
+  padding-right: 14px;
 }
 
 .grain-root .gs-next-folder-row .gs-row-title {
@@ -3852,7 +3854,7 @@ html[data-theme="light"] .grain-root .gs-next .gs-chat-bubble--user {
 
 @media (max-width: 760px) {
   .grain-root .gs-next .gs-side {
-    width: 218px;
+    width: 238px;
   }
 
   .grain-root .gs-next .gs-column {
