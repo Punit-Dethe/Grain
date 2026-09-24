@@ -436,6 +436,7 @@ impl ShortcutAction for TranscribeAction {
 
         let ah = app.clone();
         let rm = Arc::clone(&app.state::<Arc<AudioRecordingManager>>());
+        let tm = Arc::clone(&app.state::<Arc<TranscriptionManager>>());
         let hm = Arc::clone(&app.state::<Arc<HistoryManager>>());
 
         change_tray_icon(app, TrayIconState::Transcribing);

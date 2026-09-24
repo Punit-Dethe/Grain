@@ -30,12 +30,11 @@ fn main() {
 
     #[cfg(target_os = "windows")]
     {
-        // Disable implicit Vulkan layers before the backend initializes; preserve
-        // explicit loader settings and the user's opt-out.
-        let keep_layers = std::env::var("HANDY_KEEP_VULKAN_IMPLICIT_LAYERS")
-            .map(|value| matches!(value.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on"))
-            .unwrap_or(false);
-        if std::env::var_os("VK_LOADER_LAYERS_DISABLE").is_none() && !keep_layers {
+        // Avoid overlay/capture layer crashes (#2049). Set before backend
+        // initialization, preserving user overrides.
+        if std::env::var_os("VK_LOADER_LAYERS_DISABLE").is_none()
+            && !handy_app_lib::env_flag_enabled("HANDY_KEEP_VULKAN_IMPLICIT_LAYERS")
+        {
             std::env::set_var("VK_LOADER_LAYERS_DISABLE", "~implicit~");
         }
     }

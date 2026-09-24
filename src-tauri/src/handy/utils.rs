@@ -148,6 +148,20 @@ pub fn is_gnome_wayland() -> bool {
             .unwrap_or(false)
 }
 
+/// Returns true when the environment variable is set to a truthy value
+/// (e.g. "1", "true", "yes", "on").
+/// "0", "false", "no", "off" and empty string are treated as falsy (case-insensitive).
+/// Returns false when the variable is not set.
+pub fn env_flag_enabled(name: &str) -> bool {
+    match std::env::var(name) {
+        Ok(v) => !matches!(
+            v.trim().to_ascii_lowercase().as_str(),
+            "" | "0" | "false" | "no" | "off"
+        ),
+        Err(_) => false,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

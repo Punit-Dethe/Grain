@@ -7,7 +7,7 @@
   "src-tauri/resources/default_settings.json": 2,
   "src-tauri/src/audio_toolkit/audio/recorder/tests.rs (deleted)": 418,
   "src-tauri/src/audio_toolkit/vad/earshot.rs (deleted)": 116,
-  "src-tauri/src/handy/actions.rs": 665,
+  "src-tauri/src/handy/actions.rs": 664,
   "src-tauri/src/handy/audio_toolkit/audio/mod.rs": 2,
   "src-tauri/src/handy/audio_toolkit/audio/recorder.rs": 1337,
   "src-tauri/src/handy/audio_toolkit/audio/resampler.rs": 231,
@@ -34,8 +34,8 @@
   "src-tauri/src/handy/signal_handle.rs": 2,
   "src-tauri/src/handy/transcription_coordinator.rs": 1616,
   "src-tauri/src/handy/tray.rs": 642,
-  "src-tauri/src/handy/utils.rs": 69,
-  "src-tauri/src/lib.rs": 1021,
-  "src-tauri/src/main.rs": 27,
+  "src-tauri/src/handy/utils.rs": 55,
+  "src-tauri/src/lib.rs": 1022,
+  "src-tauri/src/main.rs": 16,
   "src-tauri/tauri.conf.json": 24
 }

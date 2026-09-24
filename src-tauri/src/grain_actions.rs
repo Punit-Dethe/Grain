@@ -580,6 +580,7 @@ impl ShortcutAction for RealtimeTranscribeAction {
         unregister_session_shortcuts(app);
         let ah = app.clone();
         let rm = Arc::clone(&app.state::<Arc<AudioRecordingManager>>());
+        let tm = Arc::clone(&app.state::<Arc<TranscriptionManager>>());
         let hm = Arc::clone(&app.state::<Arc<HistoryManager>>());
         let rt = Arc::clone(&app.state::<Arc<crate::rolling::RollingTranscriber>>());
 

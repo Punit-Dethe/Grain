@@ -42,7 +42,8 @@ deferred. Its 26 ratchet increases and the reason for each affected path are
 recorded in [REVIEW-2026-09-23.md](REVIEW-2026-09-23.md). The increased budget
 tracks that reviewed temporary divergence; it does not mark the deferred tray,
 VAD, recorder, shortcut, Secure Input, macOS activation, or WebView2 behavior as
-implemented in Grain.
+implemented in Grain. The exact deferred commit queue for the next sync is
+[DEFERRED-PORTS.md](DEFERRED-PORTS.md).
 
 ### Runtime relocation policy (generated from `relocations.json`)
 

@@ -7,6 +7,10 @@ upstream updates are absorbed. The per-file conflict policy lives in
 [UPSTREAM-DIVERGENCE.md](UPSTREAM-DIVERGENCE.md); fixes we should send _to_
 Handy live in [UPSTREAMABLE.md](UPSTREAMABLE.md).
 
+**Before the next sync, read [DEFERRED-PORTS.md](DEFERRED-PORTS.md).** It lists
+the exact Handy commits already present in ancestry whose runtime behavior
+Grain has deliberately not implemented yet.
+
 ## The short version
 
 **The common case is reviewing a PR, not running a procedure.** Every 2 hours
