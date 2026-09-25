@@ -455,10 +455,12 @@ impl Plan {
 /// Two guards, and they catch different things:
 /// - `generation` — the surface moved on while this resolve was in flight, so
 ///   these pixels are for a window or tab the user has already left.
+/// - `surface_watch` — Alt+Tab is showing its temporary shell surface, so keep
+///   the previous icon until the selected window becomes active.
 /// - `SHOWING` — the pill is already displaying exactly this, so emitting would
 ///   make the pill decode a payload to arrive at the picture it is drawing.
 fn show(app: &AppHandle, generation: u64, key: &IconKey, rgba: &[u8]) {
-    if RESOLVE_GEN.load(Ordering::Relaxed) != generation {
+    if crate::surface_watch::is_switching() || RESOLVE_GEN.load(Ordering::Relaxed) != generation {
         return;
     }
     let mut showing = SHOWING.lock().unwrap();

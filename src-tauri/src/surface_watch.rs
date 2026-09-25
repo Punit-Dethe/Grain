@@ -14,10 +14,10 @@
 //! # Why there is no polling
 //!
 //! These are OS hooks: they fire when something actually changes and cost
-//! nothing at all in between. No timer, no thread, no "check every N ms". They
-//! live only for the length of a session.
+//! nothing at all in between. No polling timer or dedicated thread. They live
+//! only for the length of a session.
 //!
-//! # Why TWO hooks
+//! # Why foreground and focus hooks
 //!
 //! `EVENT_SYSTEM_FOREGROUND` fires when the foreground *window* changes — which
 //! a tab switch is not. Switching from GitHub to Gmail inside one browser window
@@ -28,6 +28,11 @@
 //! `EVENT_OBJECT_FOCUS` covers the rest: changing tab moves focus to the new
 //! tab's document. Together they answer the only question that matters — has
 //! the place my text is going to land changed?
+//!
+//! Windows also sends `EVENT_SYSTEM_SWITCHSTART` and `SWITCHEND` around Alt+Tab.
+//! The switcher is a temporary shell surface, not the paste target. Hold the
+//! last icon while it is open and resolve once when the switch completes (or is
+//! cancelled), without delaying ordinary window or tab changes.
 //!
 //! # Immediate updates without a worker per event
 //!
@@ -48,6 +53,12 @@ static RESOLVING: AtomicBool = AtomicBool::new(false);
 /// False between sessions; makes a resolver in flight give up rather than repaint
 /// a pill that is no longer showing.
 static ACTIVE: AtomicBool = AtomicBool::new(false);
+/// The Windows task switcher is in front. Its shell icon is never a paste target.
+static SWITCHING: AtomicBool = AtomicBool::new(false);
+
+pub(crate) fn is_switching() -> bool {
+    SWITCHING.load(Ordering::Acquire)
+}
 
 /// Set once, on the first session. The hook callback is a bare `extern "system"`
 /// function with nowhere to carry state, so the handle has to be reachable
@@ -57,6 +68,7 @@ static APP: OnceLock<AppHandle> = OnceLock::new();
 /// Begin following the foreground for this session.
 pub fn start(app: &AppHandle) {
     let _ = APP.set(app.clone());
+    SWITCHING.store(false, Ordering::Release);
     ACTIVE.store(true, Ordering::Release);
     #[cfg(windows)]
     {
@@ -74,6 +86,7 @@ pub fn start(app: &AppHandle) {
 /// during the session's tail cannot repaint the pill after the session ended.
 pub fn stop(app: &AppHandle) {
     ACTIVE.store(false, Ordering::Release);
+    SWITCHING.store(false, Ordering::Release);
     // The worker checks ACTIVE, but resolves already in flight do not —
     // they answer to the icon path's own generation counter, so retire that too.
     crate::pill_icon::cancel_pending();
@@ -93,7 +106,7 @@ pub fn stop(app: &AppHandle) {
 /// pump, and a UI Automation read here would stall the UI of whatever app the
 /// user just switched to. Two atomics are the whole cost of an event.
 fn note_change() {
-    if !ACTIVE.load(Ordering::Acquire) {
+    if !ACTIVE.load(Ordering::Acquire) || is_switching() {
         return;
     }
     CHANGE_SEQ.fetch_add(1, Ordering::AcqRel);
@@ -108,12 +121,14 @@ fn note_change() {
     tauri::async_runtime::spawn_blocking(move || {
         let mut observed = CHANGE_SEQ.load(Ordering::Acquire);
         loop {
-            if ACTIVE.load(Ordering::Acquire) {
+            if ACTIVE.load(Ordering::Acquire) && !is_switching() {
                 observed = CHANGE_SEQ.load(Ordering::Acquire);
                 // Keep the current icon if this one read cannot name the surface.
-                crate::pill_icon::refresh(&app);
+                if !is_switching() {
+                    crate::pill_icon::refresh(&app);
+                }
                 let changed = CHANGE_SEQ.load(Ordering::Acquire) != observed;
-                if ACTIVE.load(Ordering::Acquire) && changed {
+                if ACTIVE.load(Ordering::Acquire) && !is_switching() && changed {
                     continue;
                 }
             }
@@ -122,6 +137,7 @@ fn note_change() {
             // either starts its own worker or is picked up by this one.
             RESOLVING.store(false, Ordering::Release);
             if !ACTIVE.load(Ordering::Acquire)
+                || is_switching()
                 || CHANGE_SEQ.load(Ordering::Acquire) == observed
                 || RESOLVING.swap(true, Ordering::AcqRel)
             {
@@ -131,6 +147,27 @@ fn note_change() {
     });
 }
 
+/// Suspend only icon resolution; the current pixels remain on the pill.
+#[cfg(windows)]
+fn switch_started() {
+    if !ACTIVE.load(Ordering::Acquire) {
+        return;
+    }
+    SWITCHING.store(true, Ordering::Release);
+    CHANGE_SEQ.fetch_add(1, Ordering::AcqRel);
+    crate::pill_icon::cancel_pending();
+}
+
+/// Also refreshes when Windows sends SWITCHEND without SWITCHSTART.
+#[cfg(windows)]
+fn switch_ended() {
+    // Retire any read that slipped in while the switcher was opening. Only the
+    // fresh read below may publish pixels after the switcher closes.
+    crate::pill_icon::cancel_pending();
+    SWITCHING.store(false, Ordering::Release);
+    note_change();
+}
+
 #[cfg(windows)]
 mod windows_impl {
     use std::sync::atomic::{AtomicIsize, Ordering};
@@ -138,44 +175,62 @@ mod windows_impl {
     use windows::Win32::Foundation::HWND;
     use windows::Win32::UI::Accessibility::{SetWinEventHook, UnhookWinEvent, HWINEVENTHOOK};
     use windows::Win32::UI::WindowsAndMessaging::{
-        EVENT_OBJECT_FOCUS, EVENT_SYSTEM_FOREGROUND, OBJID_CLIENT, WINEVENT_OUTOFCONTEXT,
-        WINEVENT_SKIPOWNPROCESS,
+        EVENT_OBJECT_FOCUS, EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_SWITCHEND,
+        EVENT_SYSTEM_SWITCHSTART, OBJID_CLIENT, WINEVENT_OUTOFCONTEXT, WINEVENT_SKIPOWNPROCESS,
     };
 
     /// The live hooks, or 0. Raw handles so install/remove are a few atomics
     /// rather than another lock on the main thread's path.
     ///
-    /// Two, because the events are not adjacent: `EVENT_SYSTEM_FOREGROUND`
-    /// (0x0003) and `EVENT_OBJECT_FOCUS` (0x8005) are far apart, and one hook
-    /// spanning both would also deliver everything in between.
+    /// Foreground and focus need separate hooks. The two switch events are
+    /// adjacent, so one range covers both without subscribing to other events.
     static FOREGROUND_HOOK: AtomicIsize = AtomicIsize::new(0);
     static FOCUS_HOOK: AtomicIsize = AtomicIsize::new(0);
+    static SWITCH_HOOK: AtomicIsize = AtomicIsize::new(0);
 
     // SKIPOWNPROCESS: Grain's own windows coming forward is not the user
     // choosing a paste target.
     const FLAGS: u32 = WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS;
 
     pub fn install() {
-        hook_one(&FOREGROUND_HOOK, EVENT_SYSTEM_FOREGROUND, Some(on_event));
-        hook_one(&FOCUS_HOOK, EVENT_OBJECT_FOCUS, Some(on_focus));
+        hook(
+            &SWITCH_HOOK,
+            EVENT_SYSTEM_SWITCHSTART,
+            EVENT_SYSTEM_SWITCHEND,
+            Some(on_switch),
+        );
+        hook(
+            &FOREGROUND_HOOK,
+            EVENT_SYSTEM_FOREGROUND,
+            EVENT_SYSTEM_FOREGROUND,
+            Some(on_event),
+        );
+        hook(
+            &FOCUS_HOOK,
+            EVENT_OBJECT_FOCUS,
+            EVENT_OBJECT_FOCUS,
+            Some(on_focus),
+        );
     }
 
-    fn hook_one(
+    fn hook(
         slot: &AtomicIsize,
-        event: u32,
+        event_min: u32,
+        event_max: u32,
         proc: windows::Win32::UI::Accessibility::WINEVENTPROC,
     ) {
         if slot.load(Ordering::Relaxed) != 0 {
             return; // already following
         }
-        // SAFETY: a single-event range, no module (out-of-context hooks take a
-        // function pointer in this process), and no process/thread filter.
-        let hook = unsafe { SetWinEventHook(event, event, None, proc, 0, 0, FLAGS) };
+        // SAFETY: these are one event or an adjacent pair, with no module
+        // (out-of-context hooks take a function pointer in this process) and no
+        // process/thread filter.
+        let hook = unsafe { SetWinEventHook(event_min, event_max, None, proc, 0, 0, FLAGS) };
         slot.store(hook.0 as isize, Ordering::Relaxed);
     }
 
     pub fn remove() {
-        for slot in [&FOREGROUND_HOOK, &FOCUS_HOOK] {
+        for slot in [&FOREGROUND_HOOK, &FOCUS_HOOK, &SWITCH_HOOK] {
             let raw = slot.swap(0, Ordering::Relaxed);
             if raw == 0 {
                 continue;
@@ -201,12 +256,29 @@ mod windows_impl {
         super::note_change();
     }
 
+    /// The switcher is transient. Leave the last icon in place until END gives
+    /// us the selected window; cancelling a switch is handled the same way.
+    unsafe extern "system" fn on_switch(
+        _hook: HWINEVENTHOOK,
+        event: u32,
+        _hwnd: HWND,
+        _id_object: i32,
+        _id_child: i32,
+        _thread: u32,
+        _time: u32,
+    ) {
+        match event {
+            EVENT_SYSTEM_SWITCHSTART => super::switch_started(),
+            EVENT_SYSTEM_SWITCHEND => super::switch_ended(),
+            _ => {}
+        }
+    }
+
     /// Focus, filtered to the window's own client area.
     ///
     /// Focus events also fire for carets, menu items and scrollbars; `OBJID_CLIENT`
     /// keeps this to "something in the content took focus", which is what a tab
-    /// switch looks like, and drops a good deal of noise before it reaches the
-    /// settle logic.
+    /// switch looks like, and drops a good deal of noise before resolution.
     unsafe extern "system" fn on_focus(
         _hook: HWINEVENTHOOK,
         _event: u32,
