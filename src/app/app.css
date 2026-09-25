@@ -1554,7 +1554,7 @@ html[data-theme="light"] .hero {
   line-height: 1.4;
 }
 
-.overview-start-button {
+.grain-root .overview-start-button {
   min-height: 31px;
   width: 100%;
   padding: 0 11px;
@@ -1562,7 +1562,7 @@ html[data-theme="light"] .hero {
   align-items: center;
   justify-content: center;
   gap: 7px;
-  border: 1px solid var(--hairline);
+  border: 1px solid color-mix(in srgb, var(--text-1) 22%, transparent);
   border-radius: 8px;
   color: var(--text-2);
   background: transparent;
@@ -1573,7 +1573,7 @@ html[data-theme="light"] .hero {
   transition: background 0.16s ease;
 }
 
-.overview-start-button:hover {
+.grain-root .overview-start-button:hover {
   background: var(--accent-soft);
 }
 
