@@ -335,9 +335,15 @@ fn summon_inner(app: &AppHandle, agent_mode: AgentMode) {
             return;
         }
 
-        // A fresh summon supersedes any lingering Quick-Agent offer.
-        clear_followup_offer(&app);
-        clear_pending_action(&app);
+        // The recorder is shared with every dictation mode. Reject a summon
+        // before capturing context or showing an input card when one owns it.
+        if app
+            .try_state::<Arc<AudioRecordingManager>>()
+            .is_some_and(|audio| audio.is_recording())
+        {
+            log::debug!("[GRAIN] agent: summon ignored while dictation is recording");
+            return;
+        }
 
         // What each mode captures at summon:
         // - Assist:  selection + field context + paste-target (it operates on
@@ -359,6 +365,17 @@ fn summon_inner(app: &AppHandle, agent_mode: AgentMode) {
         } else {
             None
         };
+        let start_guard = crate::grain_actions::capture_start_guard();
+        // Capturing the selection can take long enough for another shortcut to
+        // start dictation. The audio manager decides ownership atomically; a
+        // competing capture must not change Agent state or present its card.
+        // A missing microphone still permits the existing typed Agent input.
+        if !start_dictation(&app) {
+            return;
+        }
+        // A fresh summon supersedes any lingering Quick-Agent offer.
+        clear_followup_offer(&app);
+        clear_pending_action(&app);
         let chars = c.as_ref().map(|s| s.chars().count() as u32).unwrap_or(0);
         // Identifies THIS summon. The screen frame is taken at the end (below),
         // after the user already has their listening card, so it needs a way to
@@ -395,10 +412,10 @@ fn summon_inner(app: &AppHandle, agent_mode: AgentMode) {
             // until it actually expands into the conversation stage.
             state.panel_expanded.store(false, Ordering::SeqCst);
         }
+        drop(start_guard);
 
-        // Start dictation + present the native input RIGHT AWAY — the panel
-        // work below must never delay the "it's listening" feedback.
-        start_dictation(&app);
+        // Present the native input RIGHT AWAY after checking recorder ownership —
+        // the panel work below must never delay the "it's listening" feedback.
         crate::bridge::emit(
             &app,
             DaemonEvent::AgentInputShow {
@@ -488,6 +505,14 @@ pub fn panel_dictation_target(app: &AppHandle) -> bool {
         .unwrap_or(false)
 }
 
+/// While the Agent card or reply panel is open, ordinary dictation shortcuts
+/// must leave its recording and conversation surface alone.
+pub(crate) fn blocks_dictation(app: &AppHandle) -> bool {
+    app.try_state::<AgentState>()
+        .is_some_and(|state| state.input_active.load(Ordering::SeqCst))
+        || app.get_webview_window(PANEL_LABEL).is_some()
+}
+
 /// The current agent mode (defaults to Assist if state is somehow unavailable).
 fn current_mode(app: &AppHandle) -> AgentMode {
     app.try_state::<AgentState>()
@@ -511,8 +536,11 @@ fn prepare_panel(app: &AppHandle) -> Result<(), String> {
 
 /// Start the agent dictation (warm the local model/VAD exactly like the batch
 /// press path would, so the transcript is ready quickly on submit).
-fn start_dictation(app: &AppHandle) {
+fn start_dictation(app: &AppHandle) -> bool {
     let rm = Arc::clone(&app.state::<Arc<AudioRecordingManager>>());
+    if rm.is_recording() {
+        return false;
+    }
     if !crate::stt_router::will_route_to_cloud(app) {
         let tm = app.state::<Arc<TranscriptionManager>>();
         tm.initiate_model_load();
@@ -525,9 +553,17 @@ fn start_dictation(app: &AppHandle) {
     }
     // Agent dictation is a batch-style capture: offline VAD profile (VAD is
     // always on — grain-core settings have no `vad_enabled` toggle).
-    if let Err(e) = rm.try_start_recording(AGENT_BINDING, crate::audio_toolkit::VadPolicy::Offline)
-    {
-        warn!("[GRAIN] agent: failed to start dictation: {e}");
+    match rm.try_start_recording(AGENT_BINDING, crate::audio_toolkit::VadPolicy::Offline) {
+        Ok(()) => true,
+        Err(e) => {
+            if rm.is_recording() {
+                log::debug!("[GRAIN] agent: another capture claimed the recorder");
+                false
+            } else {
+                warn!("[GRAIN] agent: failed to start dictation: {e}");
+                true // preserve the typed-input fallback when the mic is unavailable
+            }
+        }
     }
 }
 
@@ -1517,7 +1553,7 @@ pub fn input_typing(app: &AppHandle, active: bool) {
     if active {
         app.state::<Arc<AudioRecordingManager>>().cancel_recording();
     } else {
-        start_dictation(app);
+        let _ = start_dictation(app);
     }
 }
 

@@ -22,7 +22,7 @@ use grain_core::{DaemonEvent, SessionMode};
 use log::{error, warn};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, MutexGuard};
 use tauri::{AppHandle, Emitter, Manager};
 
 /// [GRAIN] The action log (`docs/Extensions V1/PLAN.md`).
@@ -57,6 +57,14 @@ pub(crate) mod recommend_eval;
 
 /// Monotonic id for the current recording session (pill events).
 pub(crate) static SESSION_ID: AtomicU64 = AtomicU64::new(0);
+
+/// Serialize only capture startup. The recorder itself arbitrates ownership,
+/// but some dictation actions prewarm or change UI before claiming it.
+static CAPTURE_START_GATE: Mutex<()> = Mutex::new(());
+
+pub(crate) fn capture_start_guard() -> MutexGuard<'static, ()> {
+    CAPTURE_START_GATE.lock().unwrap_or_else(|e| e.into_inner())
+}
 
 /// The current pill session id, for emitters outside this module (the
 /// unified TranscriptionManager mirrors live stream text to the pill).
@@ -201,6 +209,16 @@ pub(crate) fn register_session_shortcuts(app: &AppHandle) {
 /// Release what [`register_session_shortcuts`] took.
 pub(crate) fn unregister_session_shortcuts(app: &AppHandle) {
     crate::master_key::unregister_chords(app);
+}
+
+/// One capture owns the shared recorder at a time. The coordinator checks this
+/// before starting any dictation engine, including when Agent has released its
+/// microphone for typing but still owns the input card or reply panel.
+pub(crate) fn dictation_start_blocked(app: &AppHandle) -> bool {
+    crate::agent::blocks_dictation(app)
+        || app
+            .try_state::<Arc<AudioRecordingManager>>()
+            .is_some_and(|audio| audio.is_recording())
 }
 
 /// Mirror a live streaming snapshot to the native pill's Studio Window over the

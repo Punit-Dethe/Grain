@@ -307,6 +307,14 @@ impl TranscriptionCoordinator {
 }
 
 fn start(app: &AppHandle, stage: &mut Stage, binding_id: &str, hotkey_string: &str) {
+    // [GRAIN] The Agent card/panel and every recording mode are mutually
+    // exclusive. Check at the serialized start point, before an action can
+    // prewarm a model, start a stream, or replace the active pill.
+    let _start_guard = crate::grain_actions::capture_start_guard();
+    if crate::grain_actions::dictation_start_blocked(app) {
+        debug!("Ignoring press for '{binding_id}': another capture mode is active");
+        return;
+    }
     // [GRAIN] Includes the host-side Flow installation gate for a stale AI
     // start-mode preference.
     let action_id = crate::grain_flow_availability::action_id_for(app, binding_id);
