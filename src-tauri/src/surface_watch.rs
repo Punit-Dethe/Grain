@@ -29,10 +29,11 @@
 //! tab's document. Together they answer the only question that matters — has
 //! the place my text is going to land changed?
 //!
-//! Windows also sends `EVENT_SYSTEM_SWITCHSTART` and `SWITCHEND` around Alt+Tab.
-//! The switcher is a temporary shell surface, not the paste target. Hold the
-//! last icon while it is open and resolve once when the switch completes (or is
-//! cancelled), without delaying ordinary window or tab changes.
+//! The Alt+Tab switcher is a temporary shell surface, not the paste target.
+//! Windows' switch start/end events are not delivered by every shell version,
+//! so the foreground window is also checked for the switcher's own topmost tool
+//! windows. Hold the last icon there; the final app's foreground event resolves
+//! its icon without a timer.
 //!
 //! # Immediate updates without a worker per event
 //!
@@ -53,11 +54,21 @@ static RESOLVING: AtomicBool = AtomicBool::new(false);
 /// False between sessions; makes a resolver in flight give up rather than repaint
 /// a pill that is no longer showing.
 static ACTIVE: AtomicBool = AtomicBool::new(false);
-/// The Windows task switcher is in front. Its shell icon is never a paste target.
+/// Switch start/end notifications, where the shell supplies them.
 static SWITCHING: AtomicBool = AtomicBool::new(false);
 
 pub(crate) fn is_switching() -> bool {
-    SWITCHING.load(Ordering::Acquire)
+    if SWITCHING.load(Ordering::Acquire) {
+        return true;
+    }
+    #[cfg(windows)]
+    {
+        return windows_impl::task_switcher_visible();
+    }
+    #[cfg(not(windows))]
+    {
+        false
+    }
 }
 
 /// Set once, on the first session. The hook callback is a bare `extern "system"`
@@ -102,11 +113,18 @@ pub fn stop(app: &AppHandle) {
 
 /// The surface may have changed. Resolve it on a worker right away.
 ///
-/// Deliberately does almost nothing: this runs on the main thread's message
-/// pump, and a UI Automation read here would stall the UI of whatever app the
-/// user just switched to. Two atomics are the whole cost of an event.
+/// This runs on the main thread's message pump. The switcher check reads only
+/// window metadata; the UI Automation read stays on the worker so it cannot
+/// stall the app the user just switched to.
 fn note_change() {
-    if !ACTIVE.load(Ordering::Acquire) || is_switching() {
+    if !ACTIVE.load(Ordering::Acquire) {
+        return;
+    }
+    if is_switching() {
+        // An in-flight result must not outlive the temporary shell window and
+        // land just before the selected app's foreground event is processed.
+        CHANGE_SEQ.fetch_add(1, Ordering::AcqRel);
+        crate::pill_icon::cancel_pending();
         return;
     }
     CHANGE_SEQ.fetch_add(1, Ordering::AcqRel);
@@ -175,9 +193,35 @@ mod windows_impl {
     use windows::Win32::Foundation::HWND;
     use windows::Win32::UI::Accessibility::{SetWinEventHook, UnhookWinEvent, HWINEVENTHOOK};
     use windows::Win32::UI::WindowsAndMessaging::{
-        EVENT_OBJECT_FOCUS, EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_SWITCHEND,
-        EVENT_SYSTEM_SWITCHSTART, OBJID_CLIENT, WINEVENT_OUTOFCONTEXT, WINEVENT_SKIPOWNPROCESS,
+        GetClassNameW, GetForegroundWindow, GetWindowLongPtrW, EVENT_OBJECT_FOCUS,
+        EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_SWITCHEND, EVENT_SYSTEM_SWITCHSTART, GWL_EXSTYLE,
+        OBJID_CLIENT, WINEVENT_OUTOFCONTEXT, WINEVENT_SKIPOWNPROCESS, WS_EX_TOOLWINDOW,
+        WS_EX_TOPMOST,
     };
+
+    /// Windows 11's switcher uses these shell windows in the actual foreground
+    /// without sending SWITCHSTART/SWITCHEND. Their class plus tool/topmost style
+    /// distinguishes them from a real File Explorer window, which must remain
+    /// a valid dictation target.
+    pub(super) fn task_switcher_visible() -> bool {
+        let hwnd = unsafe { GetForegroundWindow() };
+        if hwnd.0.is_null() {
+            return false;
+        }
+        let ex_style = unsafe { GetWindowLongPtrW(hwnd, GWL_EXSTYLE) } as u32;
+        let switcher_style = WS_EX_TOOLWINDOW.0 | WS_EX_TOPMOST.0;
+        if ex_style & switcher_style != switcher_style {
+            return false;
+        }
+        let mut class = [0u16; 64];
+        let len = unsafe { GetClassNameW(hwnd, &mut class) }.max(0) as usize;
+        let class = &class[..len];
+        class_is(class, b"ForegroundStaging") || class_is(class, b"XamlExplorerHostIslandWindow")
+    }
+
+    fn class_is(wide: &[u16], ascii: &[u8]) -> bool {
+        wide.len() == ascii.len() && wide.iter().zip(ascii).all(|(a, b)| *a == u16::from(*b))
+    }
 
     /// The live hooks, or 0. Raw handles so install/remove are a few atomics
     /// rather than another lock on the main thread's path.
