@@ -38,6 +38,11 @@ import {
 } from "./history/useHistoryController";
 import { OverviewCards } from "./overview/OverviewCards";
 import overviewHero from "./overview/overview-hero.jpg";
+import overviewHeroOption2 from "./overview/overview-hero-option-2.webp";
+import overviewHeroOption3 from "./overview/overview-hero-option-3.webp";
+import overviewHeroOption4 from "./overview/studio-feature-agent.webp";
+import overviewHeroOption5 from "./overview/studio-feature-bg.webp";
+import overviewHeroOption6 from "./overview/studio-feature-context.webp";
 import grainMark from "./branding/grain-mark.png";
 import { UpdateNotice } from "@/components/UpdateNotice";
 import { QuickPanel } from "./quick-panel/QuickPanel";
@@ -512,8 +517,36 @@ function ViewSwitch({
   );
 }
 
+const OVERVIEW_HERO_IMAGES = [
+  {
+    src: overviewHero,
+    alt: "Motion-blurred person running through a sunlit field",
+  },
+  {
+    src: overviewHeroOption2,
+    alt: "Person running across a vivid mountain landscape",
+  },
+  {
+    src: overviewHeroOption3,
+    alt: "Person running through a landscape with glowing digital patterns",
+  },
+  {
+    src: overviewHeroOption4,
+    alt: "Figure in a flower field beneath a ringed planet",
+  },
+  {
+    src: overviewHeroOption5,
+    alt: "Rider on horseback against an orange sunset and digital pattern",
+  },
+  {
+    src: overviewHeroOption6,
+    alt: "Person running through a mountain landscape under a bright star",
+  },
+] as const;
+
 function OverviewPage({ history }: { history: HistoryController }) {
   const [mode, setMode] = useState<HistoryViewMode>("original");
+  const [heroImageIndex, setHeroImageIndex] = useState(0);
 
   const processedEntries = history.entries.filter(wasPostProcessRequested);
 
@@ -550,9 +583,27 @@ function OverviewPage({ history }: { history: HistoryController }) {
         <div className="hero">
           <img
             className="hero-image"
-            src={overviewHero}
-            alt="Motion-blurred person running through a sunlit field"
+            src={OVERVIEW_HERO_IMAGES[heroImageIndex].src}
+            alt={OVERVIEW_HERO_IMAGES[heroImageIndex].alt}
           />
+          <div
+            className="hero-image-picker"
+            role="group"
+            aria-label="Hero image options"
+          >
+            {OVERVIEW_HERO_IMAGES.map((image, index) => (
+              <button
+                key={image.src}
+                className="hero-image-option"
+                type="button"
+                aria-label={`Show hero image ${index + 1} of ${OVERVIEW_HERO_IMAGES.length}`}
+                aria-pressed={heroImageIndex === index}
+                onClick={() => setHeroImageIndex(index)}
+              >
+                {index + 1}
+              </button>
+            ))}
+          </div>
           <div className="hero-content">
             <div className="hero-copy">
               <h2>{PROTOTYPE_COPY.heroTitle}</h2>
