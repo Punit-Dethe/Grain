@@ -1,6 +1,6 @@
 # Stop-time caret context for dictation
 
-Status: design only, 2026-09-25. Application code has not been changed. This plan supersedes the capture-at-start recommendation in `FLUIDVOICE-AUDIT.md` and the caret-exclusion portions of `docs/Prompt Priority/PLAN.md`. The user's target is the field at the moment recording stops.
+Status: implemented in code on 2026-09-25; real-app Windows caret behavior still needs manual validation. This plan supersedes the capture-at-start recommendation in `FLUIDVOICE-AUDIT.md` and the caret-exclusion portions of `docs/Prompt Priority/PLAN.md`. The user's target is the field at the moment recording stops.
 
 ## Decision and evidence
 
@@ -34,17 +34,16 @@ One per-session value, owned by the stop-to-paste operation and dropped afterwar
 
 ```text
 StopContext {
-  session_id, captured_at,
+  context_enabled,             // feature gate as it stood at Stop
   surface: app/site/region/field + confidence,
   caret: Unavailable | Known {
     before, after,                 // bounded, from selection edges
-    has_selection,                // distinguish selection from empty field
-    left/right boundary facts     // space, line break, terminal punctuation
+    has_selection                 // distinguish selection from empty field
   }
 }
 ```
 
-Build surface and caret from the **same focused element** where possible, especially for browser URL/profile selection. Preserve `Known { before: "", after: "" }`; Grain currently drops that by filtering empty `CaretContext`, which conflates a blank composer with inaccessible context. Preserve boundary facts *before* `relevant_left_fragment`/`relevant_right_fragment` trim or cut sentences. Keep the current 200-left/80-right capture ceiling, then enforce an additional UTF-8-safe **400-byte model payload ceiling**. Read only the text adjacent to the selection, never the whole field or a whole email thread. Store plain snapshot data, not COM objects.
+Build surface and caret from the **same focused element** where possible, especially for browser URL/profile selection. Preserve `Known { before: "", after: "" }`; the existing Paste Catch `CaretContext` still filters that case, so Stop uses its own type. Preserve spaces, line breaks and punctuation in the raw seam text. Keep the current 200-left/80-right capture ceiling, then enforce an additional UTF-8-safe **400-byte neighboring-text ceiling**. Read only the text adjacent to the selection, never the whole field or a whole email thread. Store plain snapshot data, not COM objects. The owning async stop operation supplies the session lifetime; no redundant session ID or timestamp is stored in the snapshot.
 
 Do not use `read_focus_probe()` unchanged: when it finds no caret, it reads the whole `ValuePattern` value for Paste Catch (`context_detect.rs:2786-2794`). The stop-time reader should return `Unavailable` for such a field unless a bounded caret read is possible. It must never fetch a long field merely to infer where an insertion might be.
 
@@ -56,7 +55,7 @@ There is no delivery-time identity or seam comparison. The stop-time read is aut
 2. Read UIA directly on the existing coordinator thread before the Stop UI transition. The read stays bounded to the focused element and 200/80 neighboring characters; measure its latency on real apps. If it fails, return no caret context. Do not add a new worker, listener, cache, or second read after Stop. Push-to-talk release has an existing 50 ms grace period to reject synthetic key-up events (`handy/transcription_coordinator.rs:11-12, 169-179`); capture when that release becomes an accepted Stop, never on a release that may be canceled.
 3. Pass the snapshot by value through the existing async transcription and `process_transcription_output` path. Keep app/site/profile and caret tied to the same stop snapshot. Do not call `detect_active_context()` again for that session when a valid snapshot exists. Cancel discards it.
 4. Compose one LLM request. Resolve the existing main prompt, active profile/extension context, and Prompt Record as today. Add a conditional host-owned **insertion contract** immediately before the final output contract. It scopes every editable rule to the replacement span; it is not a seventh configurable priority tier. Put the transcript and a serialized, size-bounded `before`/`after` data object in the user message. Label adjacent text as untrusted reference data. Keep the no-caret request byte-for-byte compatible where practical. Update both structured-output and legacy/failover provider paths, including token estimates and `${output}` handling.
-5. Paste the model's result once through the existing route. Do not recheck target or caret, re-run the model, or repair the model's text after processing. The existing optional `append_trailing_space` setting is a separate paste policy that can defeat an exact seam; decide at Stop to suppress that automatic suffix for contextual insertion, then pass that fixed option through the normal paste call. Other paste modes retain their current policy.
+5. Paste the model's result once through the existing route. Do not recheck target or caret, re-run the model, or repair the model's text after processing. The existing optional `append_trailing_space` setting is a separate paste policy that can defeat an exact seam; suppress that automatic suffix when a Stop snapshot with a known caret produces an LLM result. Other paste modes retain their current policy.
 
 The Windows overlay is configured non-activating (`handy/overlay.rs:410-470`), so the usual hotkey/pill Stop can inspect the external target. A stop command invoked from a focused Grain window may have already lost that focus; it must degrade to no caret context. A small `[GRAIN]` hook in Handy-derived stop/paste files may carry the value, but capture logic, request building and seam logic belong in Grain-owned modules.
 

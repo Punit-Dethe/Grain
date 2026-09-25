@@ -193,6 +193,9 @@ pub(crate) struct ProcessedTranscription {
     pub final_text: String,
     pub post_processed_text: Option<String>,
     pub post_process_prompt: Option<String>,
+    // [GRAIN] The LLM produced a caret-fitted span; paste it without the
+    // optional automatic suffix, which would change its right-hand seam.
+    pub suppress_trailing_space: bool,
 }
 
 /// Resolve the persisted language *intent* into the language the currently-loaded
@@ -226,12 +229,15 @@ pub(crate) async fn process_transcription_output(
     // instruction is actually applied regardless of which shortcut stopped the
     // session.
     spoken_prompt: Option<String>,
+    // [GRAIN] Captured synchronously at the accepted Stop action.
+    stop_context: Option<&crate::context_detect::StopContext>,
 ) -> ProcessedTranscription {
     let settings = get_settings(app);
 
     let mut final_text = transcription.to_string();
     let mut post_processed_text: Option<String> = None;
     let mut post_process_prompt: Option<String> = None;
+    let mut suppress_trailing_space = false;
 
     // Resolve the language the transcription actually ran in (the persisted
     // intent coerced against the loaded model's capabilities) so OpenCC keys off
@@ -257,11 +263,13 @@ pub(crate) async fn process_transcription_output(
             &settings,
             &final_text,
             spoken_prompt.as_deref(),
+            stop_context,
         )
         .await
         {
             post_processed_text = Some(processed_text.clone());
             final_text = processed_text;
+            suppress_trailing_space = stop_context.is_some_and(|s| s.caret.is_some());
 
             if let Some(prompt_id) = &settings.post_process_selected_prompt_id {
                 if let Some(prompt) = settings
@@ -281,6 +289,7 @@ pub(crate) async fn process_transcription_output(
         final_text,
         post_processed_text,
         post_process_prompt,
+        suppress_trailing_space,
     }
 }
 
@@ -426,6 +435,13 @@ impl ShortcutAction for TranscribeAction {
     }
 
     fn stop(&self, app: &AppHandle, binding_id: &str, _shortcut_str: &str) {
+        // [GRAIN] One immutable Stop-time read, before Grain changes its UI.
+        let rm = Arc::clone(&app.state::<Arc<AudioRecordingManager>>());
+        let post_process = self.post_process || self.post_process_override.load(Ordering::Relaxed);
+        let stop_context = (crate::settings::get_settings(app).context_awareness_enabled
+            && (post_process || rm.has_prompt_mark()))
+        .then(crate::context_detect::capture_stop_context)
+        .unwrap_or_default();
         // Unregister the cancel shortcut when transcription stops
         shortcut::unregister_cancel_shortcut(app);
         // [GRAIN] release the session-only shortcuts (chords + send-to-AI).
@@ -435,7 +451,6 @@ impl ShortcutAction for TranscribeAction {
         debug!("TranscribeAction::stop called for binding: {}", binding_id);
 
         let ah = app.clone();
-        let rm = Arc::clone(&app.state::<Arc<AudioRecordingManager>>());
         let tm = Arc::clone(&app.state::<Arc<TranscriptionManager>>());
         let hm = Arc::clone(&app.state::<Arc<HistoryManager>>());
 
@@ -451,7 +466,6 @@ impl ShortcutAction for TranscribeAction {
         play_feedback_sound(app, SoundType::Stop);
 
         let binding_id = binding_id.to_string(); // Clone binding_id for the async task
-        let post_process = self.post_process || self.post_process_override.load(Ordering::Relaxed);
 
         // Snapshot NOW (before transcription starts): any cancel_recording()
         // after this point — including one landing mid-LLM — bumps the
@@ -565,6 +579,7 @@ impl ShortcutAction for TranscribeAction {
                                     &transcription,
                                     post_process,
                                     spoken_prompt,
+                                    Some(&stop_context),
                                 ),
                                 || rm.was_cancelled_since(cancel_generation),
                             )
@@ -599,8 +614,13 @@ impl ShortcutAction for TranscribeAction {
                                 let ah_clone = ah.clone();
                                 let paste_time = Instant::now();
                                 let final_text = processed.final_text;
+                                let suppress_trailing_space = processed.suppress_trailing_space;
                                 ah.run_on_main_thread(move || {
-                                    match utils::paste(final_text, ah_clone.clone()) {
+                                    match utils::paste_with_options(
+                                        final_text,
+                                        ah_clone.clone(),
+                                        suppress_trailing_space,
+                                    ) {
                                         Ok(()) => debug!(
                                             "Text pasted successfully in {:?}",
                                             paste_time.elapsed()

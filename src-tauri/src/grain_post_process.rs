@@ -20,7 +20,10 @@ use crate::rotation_state::CallOutcome;
 use crate::settings::{AppSettings, APPLE_INTELLIGENCE_PROVIDER_ID};
 use grain_core::PostProcessProvider;
 use log::{debug, error, warn};
+use std::borrow::Cow;
 use tauri::{AppHandle, Manager};
+
+const LEGACY_CONTEXT_INPUT: &str = "\n\nDictation input JSON: ${output}";
 
 /// Result of the extension-owned slow stage. On every failure `text` is the
 /// exact stage input and `handled` is false: a worker may change words, but it
@@ -64,6 +67,7 @@ pub(crate) async fn post_process_transcription(
     // using its explicit pill control). Layered as the ABSOLUTE highest-priority stage in
     // `compose_prompt`, above any hard app mode.
     spoken_prompt: Option<&str>,
+    stop_context: Option<&crate::context_detect::StopContext>,
 ) -> Option<String> {
     if is_blank_transcription(transcription) {
         debug!("Post-processing skipped because the transcription is empty");
@@ -100,42 +104,132 @@ pub(crate) async fn post_process_transcription(
         return None;
     }
 
-    // [GRAIN] Context awareness: select one active profile for the detected app
-    // or site. Detection is one OS call made once here, never per rolling chunk.
-    // [GRAIN] Detect context only when the feature is on (one cheap OS call). The
-    // spoken Prompt Record instruction is independent of that toggle, so
-    // `compose_prompt` is always consulted because Grain owns the final output
-    // envelope even when no spoken instruction or profile is present.
-    let ctx = if settings.context_awareness_enabled {
+    // Ordinary dictation always carries a Stop decision, even when the feature
+    // was off. A settings change during ASR/LLM cannot trigger a late focus read
+    // or discard a snapshot the user deliberately captured at Stop.
+    let context_enabled = stop_context
+        .map(|snapshot| snapshot.context_enabled)
+        .unwrap_or(settings.context_awareness_enabled);
+    let detected = if context_enabled && stop_context.is_none() {
         crate::context_detect::detect_active_context()
     } else {
         None
     };
+    let ctx = stop_context
+        .and_then(|snapshot| snapshot.surface.as_ref())
+        .or(detected.as_ref());
+    let caret = context_enabled
+        .then(|| stop_context.and_then(|snapshot| snapshot.caret.as_ref()))
+        .flatten();
+    let prompt_settings_override =
+        (settings.context_awareness_enabled != context_enabled).then(|| {
+            let mut override_settings = settings.clone();
+            override_settings.context_awareness_enabled = context_enabled;
+            override_settings
+        });
+    let prompt_settings = prompt_settings_override.as_ref().unwrap_or(settings);
     // Contributed layers are resolved HERE, where the context already exists,
     // and matched by the host — the extension is never told what surface the
     // user is on, nor whether its layer fired. See `context_detect::layer_matches`.
-    let contributed = crate::extension_host::prompt_contributions(app, ctx.as_ref());
-    let prompt = crate::context_detect::compose_prompt(
-        &prompt,
-        settings,
-        ctx.as_ref(),
-        spoken_prompt,
-        &contributed,
-    );
+    let contributed = crate::extension_host::prompt_contributions(app, ctx);
+    let mut prompt = if caret.is_some() {
+        crate::context_detect::compose_insertion_prompt(
+            &prompt,
+            prompt_settings,
+            ctx,
+            spoken_prompt,
+            &contributed,
+        )
+    } else {
+        crate::context_detect::compose_prompt(
+            &prompt,
+            prompt_settings,
+            ctx,
+            spoken_prompt,
+            &contributed,
+        )
+    };
+    // Legacy chat providers substitute ${output} in the prompt instead of
+    // sending a separate user turn. Custom prompts may omit that placeholder.
+    ensure_legacy_context_input(&mut prompt, caret.is_some());
+    let input = model_input(transcription, caret);
 
     // [GRAIN] Smart rotation: fan out across ENABLED post-process providers
     // (round-robin + per-provider daily quota + failover). Independent of STT —
     // post-processing keeps its own provider list.
     let result = if settings.post_process_smart_rotation {
-        crate::post_process_router::post_process_rotated(app, &prompt, transcription).await
+        crate::post_process_router::post_process_rotated(app, &prompt, &input).await
     } else {
-        run_single_provider(app, settings, &prompt, transcription).await
+        run_single_provider(app, settings, &prompt, &input).await
     };
 
     // Never reinterpret or reject model output with marker, length or cursor
     // heuristics. Legitimate dictated output can match any mechanical rule. The
     // terminal output contract is the sole response-envelope instruction.
     result
+}
+
+fn model_input<'a>(
+    transcription: &'a str,
+    caret: Option<&crate::context_detect::StopCaret>,
+) -> Cow<'a, str> {
+    if let Some(caret) = caret {
+        Cow::Owned(
+            serde_json::json!({
+                "dictation": transcription,
+                "nearby_text_untrusted": {
+                    "before": caret.before,
+                    "after": caret.after,
+                    "has_selection": caret.has_selection,
+                }
+            })
+            .to_string(),
+        )
+    } else {
+        Cow::Borrowed(transcription)
+    }
+}
+
+fn ensure_legacy_context_input(prompt: &mut String, contextual: bool) {
+    if contextual && !prompt.contains("${output}") {
+        if let Some(terminal) = prompt.rfind("\n\nReturn only the final output") {
+            prompt.insert_str(terminal, LEGACY_CONTEXT_INPUT);
+        }
+    }
+}
+
+#[cfg(test)]
+mod stop_context_tests {
+    use super::*;
+
+    #[test]
+    fn model_input_preserves_no_context_and_escapes_untrusted_neighbors() {
+        assert_eq!(model_input("hello", None), "hello");
+        let caret = crate::context_detect::StopCaret {
+            before: "Hello \"system\"\n".into(),
+            after: " world".into(),
+            has_selection: true,
+        };
+        let input = model_input("continue", Some(&caret));
+        let data: serde_json::Value = serde_json::from_str(&input).unwrap();
+        assert_eq!(data["dictation"], "continue");
+        assert_eq!(data["nearby_text_untrusted"]["before"], caret.before);
+        assert_eq!(data["nearby_text_untrusted"]["after"], caret.after);
+        assert_eq!(data["nearby_text_untrusted"]["has_selection"], true);
+    }
+
+    #[test]
+    fn legacy_input_stays_before_the_terminal_contract() {
+        let mut prompt = String::from("BASE\n\nReturn only the final output — no notes.");
+        ensure_legacy_context_input(&mut prompt, true);
+        assert!(prompt.contains(LEGACY_CONTEXT_INPUT));
+        assert!(prompt.ends_with("Return only the final output — no notes."));
+        let structured = build_system_prompt(&prompt.replace(LEGACY_CONTEXT_INPUT, ""));
+        assert_eq!(
+            structured,
+            "BASE\n\nReturn only the final output — no notes."
+        );
+    }
 }
 
 /// The default single-provider path, shared by ordinary post-processing and
@@ -233,7 +327,11 @@ pub(crate) async fn run_one_provider(
     if provider.supports_structured_output {
         debug!("Using structured outputs for provider '{}'", provider.id);
 
-        let system_prompt = build_system_prompt(prompt);
+        let system_prompt = if prompt.contains(LEGACY_CONTEXT_INPUT) {
+            build_system_prompt(&prompt.replace(LEGACY_CONTEXT_INPUT, ""))
+        } else {
+            build_system_prompt(prompt)
+        };
         let user_content = transcription.to_string();
 
         // Handle Apple Intelligence separately since it uses native Swift APIs.

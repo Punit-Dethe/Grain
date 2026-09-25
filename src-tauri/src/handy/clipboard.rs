@@ -764,6 +764,16 @@ fn should_send_auto_submit(auto_submit: bool, paste_method: PasteMethod) -> bool
 }
 
 pub fn paste(text: String, app_handle: AppHandle) -> Result<(), String> {
+    paste_with_options(text, app_handle, false)
+}
+
+// [GRAIN] A caret-fitted LLM span owns its right-hand boundary. This option is
+// fixed at Stop; no target re-read or text repair happens during delivery.
+pub fn paste_with_options(
+    text: String,
+    app_handle: AppHandle,
+    suppress_trailing_space: bool,
+) -> Result<(), String> {
     // [GRAIN] Dictation INTO the Agent conversation window: if that panel is the
     // focused window, the user is dictating into its follow-up box — hand the
     // transcript to it as an event instead of an OS paste. An OS paste there
@@ -784,7 +794,7 @@ pub fn paste(text: String, app_handle: AppHandle) -> Result<(), String> {
     // and the chord could fire a real command in the target app. The transcript
     // is held on the clipboard behind a visible offer instead. Every
     // inconclusive reading returns false and leaves this path untouched.
-    if crate::paste_catch::intercept(&app_handle, &text) {
+    if !suppress_trailing_space && crate::paste_catch::intercept(&app_handle, &text) {
         return Ok(());
     }
 
@@ -794,7 +804,7 @@ pub fn paste(text: String, app_handle: AppHandle) -> Result<(), String> {
     let paste_delay_after_ms = settings.paste_delay_after_ms;
 
     // Append trailing space if setting is enabled
-    let text = if settings.append_trailing_space {
+    let text = if settings.append_trailing_space && !suppress_trailing_space {
         format!("{} ", text)
     } else {
         text

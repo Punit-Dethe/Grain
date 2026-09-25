@@ -68,7 +68,7 @@ const TOOL_COPY: Record<
   context: {
     title: "Context awareness",
     description:
-      "Grain uses the active application to match terminology, tone, and formatting. Your words land naturally in messages, documents, and other apps.",
+      "At Stop, Grain reads the active app and nearby caret text (Windows). With AI post-processing, your words and that short context go to your selected AI provider so the insertion fits.",
     icon: Sparkles,
   },
   agent: {

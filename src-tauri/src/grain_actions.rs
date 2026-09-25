@@ -576,10 +576,15 @@ impl ShortcutAction for RealtimeTranscribeAction {
     }
 
     fn stop(&self, app: &AppHandle, binding_id: &str, _shortcut_str: &str) {
+        let rm = Arc::clone(&app.state::<Arc<AudioRecordingManager>>());
+        let post_process = self.post_process_override.load(Ordering::Relaxed);
+        let stop_context = (crate::settings::get_settings(app).context_awareness_enabled
+            && (post_process || rm.has_prompt_mark()))
+        .then(crate::context_detect::capture_stop_context)
+        .unwrap_or_default();
         shortcut::unregister_cancel_shortcut(app);
         unregister_session_shortcuts(app);
         let ah = app.clone();
-        let rm = Arc::clone(&app.state::<Arc<AudioRecordingManager>>());
         let tm = Arc::clone(&app.state::<Arc<TranscriptionManager>>());
         let hm = Arc::clone(&app.state::<Arc<HistoryManager>>());
         let rt = Arc::clone(&app.state::<Arc<crate::rolling::RollingTranscriber>>());
@@ -593,7 +598,6 @@ impl ShortcutAction for RealtimeTranscribeAction {
         rm.remove_mute();
 
         let binding_id = binding_id.to_string();
-        let post_process = self.post_process_override.load(Ordering::Relaxed);
         // Snapshot before the stop so a cancel landing during the extra
         // recording buffer (or later, mid-pipeline) is observed.
         let cancel_generation = rm.cancel_generation();
@@ -706,11 +710,19 @@ impl ShortcutAction for RealtimeTranscribeAction {
                     final_text: String::new(),
                     post_processed_text: None,
                     post_process_prompt: None,
+                    suppress_trailing_space: false,
                 }
             } else {
-                process_transcription_output(&ah, &transcription_text, post_process, spoken_prompt)
-                    .await
+                process_transcription_output(
+                    &ah,
+                    &transcription_text,
+                    post_process,
+                    spoken_prompt,
+                    Some(&stop_context),
+                )
+                .await
             };
+            let suppress_trailing_space = processed.suppress_trailing_space;
             let final_text = processed.final_text;
 
             // Deliver text before WAV export and history I/O. Neither is needed
@@ -720,7 +732,11 @@ impl ShortcutAction for RealtimeTranscribeAction {
             } else {
                 let ah_clone = ah.clone();
                 ah.run_on_main_thread(move || {
-                    if let Err(e) = utils::paste(final_text, ah_clone.clone()) {
+                    if let Err(e) = utils::paste_with_options(
+                        final_text,
+                        ah_clone.clone(),
+                        suppress_trailing_space,
+                    ) {
                         error!("Failed to paste real-time transcription: {e}");
                         let _ = ah_clone.emit("paste-error", ());
                     }
@@ -879,12 +895,16 @@ impl ShortcutAction for NativeAsrAction {
     }
 
     fn stop(&self, app: &AppHandle, binding_id: &str, _shortcut_str: &str) {
+        let rm = Arc::clone(&app.state::<Arc<AudioRecordingManager>>());
+        let stop_context = (crate::settings::get_settings(app).context_awareness_enabled
+            && rm.has_prompt_mark())
+        .then(crate::context_detect::capture_stop_context)
+        .unwrap_or_default();
         shortcut::unregister_cancel_shortcut(app);
         // Release the master chords (and the switcher, if open).
         crate::master_key::unregister_chords(app);
 
         let ah = app.clone();
-        let rm = Arc::clone(&app.state::<Arc<AudioRecordingManager>>());
         let tm = Arc::clone(&app.state::<Arc<TranscriptionManager>>());
         let hm = Arc::clone(&app.state::<Arc<HistoryManager>>());
         let binding_id = binding_id.to_string();
@@ -948,7 +968,9 @@ impl ShortcutAction for NativeAsrAction {
             .await
             .unwrap_or_default();
 
-            let final_text = if let Some(m) = prompt_mark.filter(|&m| m > 0 && m < samples.len()) {
+            let (final_text, suppress_trailing_space) = if let Some(m) =
+                prompt_mark.filter(|&m| m > 0 && m < samples.len())
+            {
                 // Prompt Record on the streaming path: the live transcript
                 // covered content + the spoken instruction together, so it can't be
                 // split. Re-transcribe the two audio slices and post-process the
@@ -958,7 +980,10 @@ impl ShortcutAction for NativeAsrAction {
                 let (content_res, spoken) =
                     crate::prompt_record::transcribe_split(&ah, samples.clone(), Some(m)).await;
                 let content = content_res.unwrap_or_default();
-                let processed = process_transcription_output(&ah, &content, true, spoken).await;
+                let processed =
+                    process_transcription_output(&ah, &content, true, spoken, Some(&stop_context))
+                        .await;
+                let suppress_trailing_space = processed.suppress_trailing_space;
                 let ft = processed.final_text;
                 if !ft.trim().is_empty() {
                     if let Err(e) = hm.save_entry(
@@ -978,10 +1003,10 @@ impl ShortcutAction for NativeAsrAction {
                         },
                     );
                 }
-                ft
+                (ft, suppress_trailing_space)
             } else {
                 if finalized.trim().is_empty() {
-                    String::new()
+                    (String::new(), false)
                 } else {
                     if let Err(e) =
                         hm.save_entry(String::new(), finalized.clone(), false, None, None)
@@ -997,7 +1022,7 @@ impl ShortcutAction for NativeAsrAction {
                             text: finalized.clone(),
                         },
                     );
-                    finalized
+                    (finalized, false)
                 }
             };
 
@@ -1006,7 +1031,11 @@ impl ShortcutAction for NativeAsrAction {
             } else {
                 let ah_clone = ah.clone();
                 ah.run_on_main_thread(move || {
-                    if let Err(e) = utils::paste(final_text, ah_clone.clone()) {
+                    if let Err(e) = utils::paste_with_options(
+                        final_text,
+                        ah_clone.clone(),
+                        suppress_trailing_space,
+                    ) {
                         error!("Failed to paste Native ASR transcription: {e}");
                         let _ = ah_clone.emit("paste-error", ());
                     }

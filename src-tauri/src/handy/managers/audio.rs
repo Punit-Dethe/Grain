@@ -906,6 +906,12 @@ impl AudioRecordingManager {
         self.prompt_mark.lock().unwrap().take()
     }
 
+    /// [GRAIN] Peek only to decide whether Stop needs a caret snapshot before
+    /// the async transcription tail consumes the mark.
+    pub fn has_prompt_mark(&self) -> bool {
+        self.prompt_mark.lock().unwrap().is_some()
+    }
+
     pub fn update_selected_device(&self) -> Result<(), anyhow::Error> {
         // Device settings changed; re-enumerate the device and restart capture.
         self.invalidate_device_cache();

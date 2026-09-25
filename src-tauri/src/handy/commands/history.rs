@@ -96,9 +96,14 @@ pub async fn retry_history_entry_transcription(
     // [GRAIN] Match upstream retry semantics while calling Grain's relocated
     // post-processing pipeline. Prompt Record cannot be reconstructed from the
     // unsplit history transcript, so its instruction is absent on retry.
-    let processed =
-        process_transcription_output(&app, &transcription, entry.post_process_requested, None)
-            .await;
+    let processed = process_transcription_output(
+        &app,
+        &transcription,
+        entry.post_process_requested,
+        None,
+        None,
+    )
+    .await;
     history_manager
         .update_transcription(
             id,

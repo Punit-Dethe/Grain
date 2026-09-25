@@ -830,6 +830,48 @@ pub struct CaretContext {
     pub after: String,
 }
 
+/// Immutable, bounded evidence captured at the accepted Stop action. A known
+/// empty caret is different from an inaccessible field.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StopCaret {
+    pub before: String,
+    pub after: String,
+    pub has_selection: bool,
+}
+
+impl StopCaret {
+    fn from_surrounding(before: &str, after: &str, has_selection: bool) -> Self {
+        // Keep the characters nearest each seam. This also caps the UTF-8
+        // payload (260 + 140 bytes) for CJK and emoji without splitting chars.
+        fn tail_bytes(text: &str, limit: usize) -> String {
+            let mut start = text.len().saturating_sub(limit);
+            while !text.is_char_boundary(start) {
+                start += 1;
+            }
+            text[start..].to_string()
+        }
+        fn head_bytes(text: &str, limit: usize) -> String {
+            let mut end = text.len().min(limit);
+            while !text.is_char_boundary(end) {
+                end -= 1;
+            }
+            text[..end].to_string()
+        }
+        Self {
+            before: tail_bytes(before, 260),
+            after: head_bytes(after, 140),
+            has_selection,
+        }
+    }
+}
+
+#[derive(Debug, Default)]
+pub struct StopContext {
+    pub context_enabled: bool,
+    pub surface: Option<ActiveContext>,
+    pub caret: Option<StopCaret>,
+}
+
 impl CaretContext {
     pub(crate) fn is_empty(&self) -> bool {
         self.before.trim().is_empty() && self.after.trim().is_empty()
@@ -1588,6 +1630,27 @@ pub fn compose_prompt(
     spoken_instruction: Option<&str>,
     contributed: &Contributions,
 ) -> String {
+    compose_prompt_inner(base, settings, ctx, spoken_instruction, contributed, false)
+}
+
+pub(crate) fn compose_insertion_prompt(
+    base: &str,
+    settings: &AppSettings,
+    ctx: Option<&ActiveContext>,
+    spoken_instruction: Option<&str>,
+    contributed: &Contributions,
+) -> String {
+    compose_prompt_inner(base, settings, ctx, spoken_instruction, contributed, true)
+}
+
+fn compose_prompt_inner(
+    base: &str,
+    settings: &AppSettings,
+    ctx: Option<&ActiveContext>,
+    spoken_instruction: Option<&str>,
+    contributed: &Contributions,
+    insertion: bool,
+) -> String {
     let spoken = spoken_instruction
         .map(|s| s.trim())
         .filter(|s| !s.is_empty());
@@ -1734,6 +1797,9 @@ pub fn compose_prompt(
     }
     // Host-owned response envelope: always last and independent of every
     // replaceable/user-editable prompt source.
+    if insertion {
+        stack.push_insertion_contract();
+    }
     stack.push_contract();
 
     let out = stack.render();
@@ -1759,11 +1825,40 @@ pub fn compose_prompt(
 pub fn detect_active_context() -> Option<ActiveContext> {
     #[cfg(windows)]
     {
-        windows_impl::detect()
+        windows_impl::detect(false).surface
     }
     #[cfg(not(windows))]
     {
         None
+    }
+}
+
+/// One Stop-time read. No listener or later validation: the value belongs only
+/// to this dictation and is dropped after its one processing/paste path.
+pub(crate) fn capture_stop_context() -> StopContext {
+    #[cfg(windows)]
+    {
+        let started = std::time::Instant::now();
+        let mut snapshot = windows_impl::detect(true);
+        snapshot.context_enabled = true;
+        log::debug!(
+            "[GRAIN] stop context: elapsed={:?} surface={} caret={} neighbor_bytes={}",
+            started.elapsed(),
+            snapshot.surface.is_some(),
+            snapshot.caret.is_some(),
+            snapshot
+                .caret
+                .as_ref()
+                .map_or(0, |c| c.before.len() + c.after.len()),
+        );
+        snapshot
+    }
+    #[cfg(not(windows))]
+    {
+        StopContext {
+            context_enabled: true,
+            ..StopContext::default()
+        }
     }
 }
 
@@ -1828,7 +1923,7 @@ pub fn focused_has_selection() -> bool {
 
 #[cfg(windows)]
 mod windows_impl {
-    use super::{category_for_exe, is_browser_exe, ActiveContext, Confidence};
+    use super::{category_for_exe, is_browser_exe, ActiveContext, Confidence, StopContext};
     use windows::Win32::Foundation::{CloseHandle, HANDLE, HWND, MAX_PATH};
     use windows::Win32::Storage::Packaging::Appx::GetApplicationUserModelId;
     use windows::Win32::System::Threading::{
@@ -1839,7 +1934,7 @@ mod windows_impl {
         GetForegroundWindow, GetWindowTextW, GetWindowThreadProcessId,
     };
 
-    pub(super) fn detect() -> Option<ActiveContext> {
+    pub(super) fn detect(capture_caret: bool) -> StopContext {
         unsafe {
             // Each of these bails to BASE-only behavior. They used to bail
             // SILENTLY, which made "the feature did nothing" and "the feature is
@@ -1848,14 +1943,14 @@ mod windows_impl {
             let hwnd: HWND = GetForegroundWindow();
             if hwnd.0.is_null() {
                 log::info!("[GRAIN] context: no context — no foreground window");
-                return None;
+                return StopContext::default();
             }
 
             let mut pid: u32 = 0;
             GetWindowThreadProcessId(hwnd, Some(&mut pid));
             if pid == 0 {
                 log::info!("[GRAIN] context: no context — foreground window has no process");
-                return None;
+                return StopContext::default();
             }
 
             let Some((exe_path, aumid)) = process_identity(pid) else {
@@ -1866,7 +1961,7 @@ mod windows_impl {
                     "[GRAIN] context: no context — cannot read process {pid} \
                      (elevated target?)"
                 );
-                return None;
+                return StopContext::default();
             };
             // Stem = file name without extension, lowercased.
             let exe = std::path::Path::new(&exe_path)
@@ -1876,7 +1971,7 @@ mod windows_impl {
                 .to_ascii_lowercase();
             if exe.is_empty() {
                 log::info!("[GRAIN] context: no context — unnamed executable");
-                return None;
+                return StopContext::default();
             }
 
             let category = category_for_exe(&exe);
@@ -1885,8 +1980,8 @@ mod windows_impl {
             // UI Automation is only needed for browser URLs. Everything here is
             // best-effort and SILENT — any failure just yields None/empty.
             let is_browser = is_browser_exe(&exe);
-            let scan = if is_browser {
-                super::uia::read(hwnd, true)
+            let scan = if is_browser || capture_caret {
+                super::uia::read(hwnd, is_browser, capture_caret && pid != std::process::id())
             } else {
                 // The common non-browser path never spins up UI Automation.
                 Default::default()
@@ -1952,17 +2047,21 @@ mod windows_impl {
                 scan.region.as_deref().unwrap_or("-"),
             );
 
-            Some(ActiveContext {
-                app_name,
-                exe,
-                exe_path,
-                aumid,
-                category,
-                url_host: scan.url_host,
-                field: scan.field,
-                region: scan.region,
-                confidence: scan.confidence,
-            })
+            StopContext {
+                context_enabled: false,
+                caret: scan.caret,
+                surface: Some(ActiveContext {
+                    app_name,
+                    exe,
+                    exe_path,
+                    aumid,
+                    category,
+                    url_host: scan.url_host,
+                    field: scan.field,
+                    region: scan.region,
+                    confidence: scan.confidence,
+                }),
+            }
         }
     }
 
@@ -2046,7 +2145,7 @@ mod windows_impl {
 mod uia {
     use super::{
         host_from_url, CaretContext, Confidence, ControlClass, FieldKind, FocusFacts,
-        FocusIdentity, FocusProbe, MAX_CARET_LEFT_CHARS, MAX_CARET_RIGHT_CHARS,
+        FocusIdentity, FocusProbe, StopCaret, MAX_CARET_LEFT_CHARS, MAX_CARET_RIGHT_CHARS,
     };
     use windows::Win32::Foundation::HWND;
     use windows::Win32::System::Com::{
@@ -2112,6 +2211,7 @@ mod uia {
     pub(super) struct FocusScan {
         pub url_host: Option<String>,
         pub field: FieldKind,
+        pub caret: Option<StopCaret>,
         pub region: Option<String>,
         pub confidence: Confidence,
         /// Which rung of the URL ladder produced the host. Logged, so a browser
@@ -2125,6 +2225,7 @@ mod uia {
             Self {
                 url_host: None,
                 field: FieldKind::default(),
+                caret: None,
                 region: None,
                 confidence: Confidence::default(),
                 url_source: "not-attempted",
@@ -2280,7 +2381,7 @@ mod uia {
     /// It is also cheaper than what it replaces: one upward walk of ~15 hops
     /// instead of a subtree sweep, with every property for each hop fetched in a
     /// single cross-process call via the cache request.
-    pub(super) fn read(hwnd: HWND, want_url: bool) -> FocusScan {
+    pub(super) fn read(hwnd: HWND, want_url: bool, want_caret: bool) -> FocusScan {
         unsafe {
             let _com = ComGuard::init();
             let automation: IUIAutomation =
@@ -2309,11 +2410,21 @@ mod uia {
                 return scan;
             };
 
+            if super::windows_impl::foreground_window().is_none_or(|current| current.0 != hwnd.0) {
+                // Browser editors can run in a separate renderer process.
+                // Compare the foreground top-level window instead.
+                return scan;
+            }
+
             scan.field = field_kind(&focused);
 
             // A password field is never read.
             if scan.field == FieldKind::Password {
                 return scan;
+            }
+
+            if want_caret && focused.CurrentIsEnabled().map(|b| b.as_bool()) == Ok(true) {
+                scan.caret = read_stop_caret(&focused);
             }
 
             let (url, region) = walk_ancestors(&automation, &focused, want_url);
@@ -2435,14 +2546,32 @@ mod uia {
     /// is what keeps this bounded on a large document: the alternative,
     /// `GetText` over a doc-anchored range, returns text from the top of the
     /// file, which is both expensive and not the text we need.
-    unsafe fn read_caret(element: &IUIAutomationElement) -> Option<CaretContext> {
+    unsafe fn read_caret_ranges(
+        element: &IUIAutomationElement,
+        strict: bool,
+    ) -> Option<(String, String, bool)> {
         let pattern: IUIAutomationTextPattern = element
             .GetCurrentPatternAs::<IUIAutomationTextPattern>(UIA_TextPatternId)
             .ok()?;
         let selection = pattern.GetSelection().ok()?;
+        if strict && selection.Length().ok()? != 1 {
+            return None;
+        }
         // No selection array at all means no caret to anchor on (some read-only
         // surfaces). Nothing to do; not an error.
         let caret = selection.GetElement(0).ok()?;
+        let has_selection = if strict {
+            caret
+                .CompareEndpoints(
+                    TextPatternRangeEndpoint_Start,
+                    &caret,
+                    TextPatternRangeEndpoint_End,
+                )
+                .ok()?
+                != 0
+        } else {
+            false
+        };
         let left_span = MAX_CARET_LEFT_CHARS as i32;
         let right_span = MAX_CARET_RIGHT_CHARS as i32;
 
@@ -2467,8 +2596,7 @@ mod uia {
                     .ok()?;
                 range.GetText(-1).ok()
             })
-            .map(|s| s.to_string())
-            .unwrap_or_default();
+            .map(|s| s.to_string());
 
         // After: collapse to the trailing edge, then extend forwards.
         let after = caret
@@ -2491,10 +2619,47 @@ mod uia {
                     .ok()?;
                 range.GetText(-1).ok()
             })
-            .map(|s| s.to_string())
-            .unwrap_or_default();
+            .map(|s| s.to_string());
 
+        if strict && (before.is_none() || after.is_none()) {
+            return None;
+        }
+        Some((
+            before.unwrap_or_default(),
+            after.unwrap_or_default(),
+            has_selection,
+        ))
+    }
+
+    unsafe fn read_caret(element: &IUIAutomationElement) -> Option<CaretContext> {
+        let (before, after, _) = read_caret_ranges(element, false)?;
         CaretContext::from_surrounding(&before, &after)
+    }
+
+    unsafe fn read_stop_caret(element: &IUIAutomationElement) -> Option<StopCaret> {
+        // TextPattern also exists on read-only pages; require editable evidence.
+        let value = element
+            .GetCurrentPatternAs::<IUIAutomationValuePattern>(UIA_ValuePatternId)
+            .ok();
+        if value
+            .as_ref()
+            .and_then(|v| v.CurrentIsReadOnly().ok())
+            .is_some_and(|b| b.as_bool())
+        {
+            return None;
+        }
+        let editable = element
+            .GetCurrentPatternAs::<IUIAutomationTextEditPattern>(UIA_TextEditPatternId)
+            .is_ok()
+            || value
+                .and_then(|v| v.CurrentIsReadOnly().ok())
+                .is_some_and(|b| !b.as_bool())
+            || element.CurrentControlType().ok() == Some(UIA_EditControlTypeId);
+        if !editable {
+            return None;
+        }
+        let (before, after, has_selection) = read_caret_ranges(element, true)?;
+        Some(StopCaret::from_surrounding(&before, &after, has_selection))
     }
 
     /// What shape of field the caret is in.
@@ -3145,6 +3310,47 @@ mod site_table_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn stop_caret_preserves_empty_and_seam_whitespace() {
+        let empty = StopCaret::from_surrounding("", "", false);
+        assert_eq!(empty.before, "");
+        assert_eq!(empty.after, "");
+        let seam = StopCaret::from_surrounding("Hello ", " world", true);
+        assert_eq!(seam.before, "Hello ");
+        assert_eq!(seam.after, " world");
+        assert!(seam.has_selection);
+    }
+
+    #[test]
+    fn stop_caret_caps_utf8_at_nearest_boundaries() {
+        let caret = StopCaret::from_surrounding(&"界".repeat(200), &"🙂".repeat(80), false);
+        assert!(caret.before.len() <= 260);
+        assert!(caret.after.len() <= 140);
+        assert!(caret.before.ends_with('界'));
+        assert!(caret.after.starts_with('🙂'));
+    }
+
+    #[test]
+    fn insertion_contract_follows_editable_rules_and_precedes_output_envelope() {
+        let mut settings = AppSettings::default();
+        settings.context_awareness_enabled = true;
+        let prompt = compose_insertion_prompt(
+            "Format as an email.",
+            &settings,
+            None,
+            Some("Make this concise"),
+            &Contributions::default(),
+        );
+        let spoken = prompt.find("Make this concise").unwrap();
+        let insertion = prompt.find("Return only the dictated span").unwrap();
+        let terminal = prompt.rfind("Return only the final output").unwrap();
+        assert!(spoken < insertion && insertion < terminal);
+        assert!(
+            !compose_prompt("BASE", &settings, None, None, &Contributions::default(),)
+                .contains("dictated span")
+        );
+    }
 
     /// `compose_prompt` with no contributed layers — the shape almost every
     /// test here wants, kept as a helper so adding a parameter to the real
