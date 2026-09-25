@@ -1365,6 +1365,34 @@ html[data-theme="light"] .hero {
   object-fit: cover;
 }
 
+.hero-image-toggle {
+  position: absolute;
+  z-index: 1;
+  top: 16px;
+  right: 16px;
+  display: grid;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  place-items: center;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 9px;
+  color: #fff;
+  background: rgba(17, 19, 23, 0.14);
+  backdrop-filter: blur(8px);
+  cursor: pointer;
+}
+
+.hero-image-toggle:hover {
+  border-color: rgba(255, 255, 255, 0.8);
+  background: rgba(17, 19, 23, 0.3);
+}
+
+.hero-image-toggle:focus-visible {
+  outline: 2px solid #fff;
+  outline-offset: 2px;
+}
+
 .hero-content {
   position: absolute;
   right: 22px;

@@ -37,7 +37,8 @@ import {
   type HistoryController,
 } from "./history/useHistoryController";
 import { OverviewCards } from "./overview/OverviewCards";
-import overviewHero from "./overview/overview-hero.jpg";
+import overviewHeroOption2 from "./overview/overview-hero-option-2.webp";
+import overviewHeroOption4 from "./overview/studio-feature-agent.webp";
 import grainMark from "./branding/grain-mark.png";
 import { UpdateNotice } from "@/components/UpdateNotice";
 import { QuickPanel } from "./quick-panel/QuickPanel";
@@ -512,8 +513,20 @@ function ViewSwitch({
   );
 }
 
+const OVERVIEW_HERO_IMAGES = [
+  {
+    src: overviewHeroOption2,
+    alt: "Person running across a vivid mountain landscape",
+  },
+  {
+    src: overviewHeroOption4,
+    alt: "Figure in a flower field beneath a ringed planet",
+  },
+] as const;
+
 function OverviewPage({ history }: { history: HistoryController }) {
   const [mode, setMode] = useState<HistoryViewMode>("original");
+  const [heroImageIndex, setHeroImageIndex] = useState(0);
 
   const processedEntries = history.entries.filter(wasPostProcessRequested);
 
@@ -550,9 +563,20 @@ function OverviewPage({ history }: { history: HistoryController }) {
         <div className="hero">
           <img
             className="hero-image"
-            src={overviewHero}
-            alt="Motion-blurred person running through a sunlit field"
+            src={OVERVIEW_HERO_IMAGES[heroImageIndex].src}
+            alt={OVERVIEW_HERO_IMAGES[heroImageIndex].alt}
           />
+          <button
+            className="hero-image-toggle"
+            type="button"
+            aria-label={
+              heroImageIndex === 0 ? "Show hero image 4" : "Show hero image 2"
+            }
+            title="Switch hero image"
+            onClick={() => setHeroImageIndex((current) => 1 - current)}
+          >
+            <Icon name="refresh" small />
+          </button>
           <div className="hero-content">
             <div className="hero-copy">
               <h2>{PROTOTYPE_COPY.heroTitle}</h2>
