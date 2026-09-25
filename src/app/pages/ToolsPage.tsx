@@ -31,6 +31,7 @@ import {
 } from "@/extensions/StudioExtensionCard";
 import { useSettings } from "@/hooks/useSettings";
 import { hashForRoute, type ToolSectionId } from "../navigation";
+import studioFeatureAgentBg from "../overview/studio-feature-agent.webp";
 import studioFeatureBg from "../overview/studio-feature-bg.webp";
 import {
   matchToolRecommendations,
@@ -966,7 +967,11 @@ export function ToolsPage({ section }: { section: ToolSectionId }) {
                 >
                   <img
                     className="studio-feature-image"
-                    src={studioFeatureBg}
+                    src={
+                      section === "agent"
+                        ? studioFeatureAgentBg
+                        : studioFeatureBg
+                    }
                     alt=""
                   />
                   <div className="studio-feature-copy">
