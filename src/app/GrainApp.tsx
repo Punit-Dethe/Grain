@@ -419,7 +419,11 @@ function Sidebar({
         style={{ WebkitAppRegion: "drag" } as CSSProperties}
       >
         <div className="grain-wordmark">
-          <img className="grain-mark" src={grainMark} alt={PROTOTYPE_COPY.brand} />
+          <img
+            className="grain-mark"
+            src={grainMark}
+            alt={PROTOTYPE_COPY.brand}
+          />
           <strong aria-hidden="true">{PROTOTYPE_COPY.brand}</strong>
         </div>
       </div>
@@ -547,7 +551,7 @@ function OverviewPage({ history }: { history: HistoryController }) {
           <img
             className="hero-image"
             src={overviewHero}
-            alt="Motion-blurred person walking through a landscape at dusk"
+            alt="Motion-blurred person running through a sunlit field"
           />
           <div className="hero-content">
             <div className="hero-copy">

@@ -1345,7 +1345,7 @@ h3 {
 /* Overview */
 .hero {
   position: relative;
-  height: clamp(372px, 47vh, 500px);
+  height: clamp(352px, 44vh, 470px);
   margin-bottom: -30px;
   overflow: hidden;
   border-radius: var(--hero-radius);
@@ -1514,29 +1514,112 @@ html[data-theme="light"] .hero {
 /* ---------------------------------------------------------------------------
  * Overview cards (Start here)
  *
- * Four compact cards form a single, scannable row. Narrow windows can scroll
- * that row without squeezing the shortcuts into illegible fragments.
+ * A compact tray groups the introduction and four essentials. Tiles expand
+ * across wide windows and remain scrollable when the app is narrow.
  * ------------------------------------------------------------------------- */
 
-.overview-grid {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(205px, 1fr));
+.overview-start-tray {
+  display: flex;
   gap: 12px;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-lg);
+  background: var(--bg-2);
+}
+
+.overview-start-intro {
+  flex: 0 0 190px;
+  min-width: 0;
+  padding: 5px 4px 3px 6px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.overview-start-intro strong {
+  display: block;
+  color: var(--text-1);
+  font-size: 14px;
+  font-weight: 620;
+  line-height: 1.25;
+  letter-spacing: -0.015em;
+}
+
+.overview-start-intro p {
+  margin: 5px 0 0;
+  color: var(--text-3);
+  font-size: 11.5px;
+  line-height: 1.4;
+}
+
+.grain-root .overview-start-button {
+  min-height: 31px;
+  width: 100%;
+  padding: 0 11px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  border: 1px solid color-mix(in srgb, var(--text-1) 22%, transparent);
+  border-radius: 8px;
+  color: var(--text-2);
+  background: transparent;
+  font: inherit;
+  font-size: 11.5px;
+  font-weight: 620;
+  cursor: pointer;
+  transition: background 0.16s ease;
+}
+
+.grain-root .overview-start-button:hover {
+  background: var(--accent-soft);
+}
+
+.overview-start-button:focus-visible,
+.overview-grid:focus-visible,
+button.overview-card:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+button.overview-card:focus-visible {
+  outline-offset: -2px;
+}
+
+.overview-grid {
+  flex: 1;
+  display: flex;
+  gap: 8px;
+  min-width: 0;
   align-items: stretch;
   overflow-x: auto;
+  overflow-y: hidden;
   scrollbar-width: thin;
+  scrollbar-color: var(--text-4) transparent;
+}
+
+.overview-grid::-webkit-scrollbar {
+  height: 5px;
+}
+
+.overview-grid::-webkit-scrollbar-thumb {
+  border-radius: 5px;
+  background: var(--text-4);
 }
 
 .overview-card {
+  flex: 1 0 154px;
   min-width: 0;
-  min-height: 164px;
-  padding: 16px;
+  min-height: 130px;
+  padding: 11px 12px;
   display: flex;
   flex-direction: column;
   position: relative;
-  border-radius: 14px;
-  border: 1px solid rgba(200, 205, 214, 0.17);
-  background: var(--bg-2, #15181d);
+  border-radius: 11px;
+  border: 1px solid var(--hairline);
+  background: var(--bg-3);
   color: var(--text-1);
   text-align: left;
   box-sizing: border-box;
@@ -1549,9 +1632,12 @@ html[data-theme="light"] .hero {
 }
 
 button.overview-card {
-  border: 1px solid rgba(200, 205, 214, 0.17);
-  outline: none;
+  border: 1px solid var(--hairline);
   cursor: pointer;
+}
+
+.overview-card--shortcuts {
+  flex-basis: 210px;
 }
 
 .overview-card--interactive {
@@ -1559,38 +1645,37 @@ button.overview-card {
 }
 
 .overview-card--interactive:hover {
-  background: #1a1e24;
-  border-color: rgba(200, 205, 214, 0.28);
-  transform: translateY(-1.5px);
-  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25);
+  background: var(--bg-4);
+  border-color: var(--accent-soft-hover);
+  transform: translateY(-1px);
 }
 
 .overview-card--static {
   cursor: default;
 }
 
-/* The cards sit on the primary paper tone with only a warm, quiet edge. */
 html[data-theme="light"] .overview-card,
 html[data-theme="light"] button.overview-card {
-  border: 1px solid #eeebe3;
+  border: 1px solid var(--hairline-soft);
   background: #fcfcfb;
   box-shadow: none;
 }
 
 html[data-theme="light"] .overview-card--interactive:hover {
-  background: #f5f4f0;
-  border-color: rgba(26, 26, 26, 0.18);
-  box-shadow: none;
-  transform: none;
+  background: #ffffff;
+  border-color: var(--hairline);
+  box-shadow: 0 3px 10px rgba(26, 26, 26, 0.06);
 }
 
 /* Card Header */
 .overview-card-header {
   display: flex;
-  align-items: center;
-  gap: 10px;
+  align-items: flex-start;
+  flex-direction: column;
+  gap: 6px;
   min-width: 0;
-  margin-bottom: 8px;
+  margin-top: 0;
+  margin-bottom: 2px;
 }
 
 .overview-card-icon {
@@ -1629,7 +1714,7 @@ html[data-theme="light"] .overview-card--interactive:hover .overview-card-icon {
 
 .overview-card-title {
   display: block;
-  font-size: 15px;
+  font-size: 13px;
   font-weight: 600;
   color: var(--text-1);
   letter-spacing: -0.01em;
@@ -1642,23 +1727,10 @@ html[data-theme="light"] .overview-card-title {
   color: #1a1a1a;
 }
 
-/* Card Description (Multi-line flowing prose) */
-.overview-card-desc {
-  margin: 0;
-  font-size: 13px;
-  line-height: 1.5;
-  color: var(--text-3, #7d8385);
-  white-space: normal;
-}
-
-html[data-theme="light"] .overview-card-desc {
-  color: #625f59;
-}
-
 /* Card Footer / Accessory */
 .overview-card-footer {
   margin-top: auto;
-  padding-top: 12px;
+  padding-top: 7px;
   display: flex;
   align-items: center;
   min-width: 0;
@@ -1667,10 +1739,10 @@ html[data-theme="light"] .overview-card-desc {
 /* -- Shortcuts list -- */
 .overview-shortcut-list {
   margin-top: auto;
-  padding-top: 10px;
+  padding-top: 6px;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 4px;
 }
 
 .overview-shortcut-row {
@@ -1686,7 +1758,7 @@ html[data-theme="light"] .overview-card-desc {
   min-width: 0;
   overflow: hidden;
   color: var(--text-3, #7d8385);
-  font-size: 12px;
+  font-size: 10.5px;
   font-weight: 450;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1699,7 +1771,7 @@ html[data-theme="light"] .overview-shortcut-label {
 .overview-shortcut-off {
   flex: none;
   color: var(--text-4, #5c6265);
-  font-size: 12px;
+  font-size: 10px;
 }
 
 /* A chord reads as text, with deliberate space around each plus. */
@@ -1708,7 +1780,7 @@ html[data-theme="light"] .overview-shortcut-label {
   min-width: 0;
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  gap: 4px;
   justify-content: flex-end;
   padding: 0;
   border: 0;
@@ -1717,7 +1789,7 @@ html[data-theme="light"] .overview-shortcut-label {
   color: var(--text-2);
   background: transparent;
   font-family: inherit;
-  font-size: 14px;
+  font-size: 12px;
   font-weight: 620;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
@@ -1726,7 +1798,7 @@ html[data-theme="light"] .overview-shortcut-label {
 .overview-key-part {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  gap: 4px;
 }
 
 .overview-key-separator {
@@ -1748,7 +1820,7 @@ html[data-theme="light"] .overview-shortcut-label {
 }
 
 .overview-card-cta {
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 550;
   color: var(--accent, #8faaff);
   transition: color 0.15s ease;
@@ -1769,6 +1841,36 @@ html[data-theme="light"] .overview-cta-arrow {
 
 .overview-card--interactive:hover .overview-cta-arrow {
   transform: translateX(3px);
+}
+
+@media (max-width: 700px) {
+  .overview-start-tray {
+    flex-direction: column;
+  }
+
+  .overview-start-intro {
+    flex: none;
+    flex-direction: row;
+    align-items: center;
+    padding: 3px 4px;
+  }
+
+  .overview-start-button {
+    flex: 0 0 auto;
+    width: auto;
+    min-width: 120px;
+  }
+}
+
+@media (max-width: 460px) {
+  .overview-start-intro {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .overview-start-button {
+    width: 100%;
+  }
 }
 
 .section-head-actions {
@@ -2826,10 +2928,7 @@ html[data-theme="light"] :is(.history-feed, .recent-feed) .audio-track-input {
 
 html[data-theme="light"]
   :is(.history-feed, .recent-feed)
-  :is(
-    .transcript-actions button:hover,
-    .play-mini:hover
-  ) {
+  :is(.transcript-actions button:hover, .play-mini:hover) {
   background: #f5f4f0;
 }
 

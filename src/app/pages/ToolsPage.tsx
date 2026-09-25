@@ -31,13 +31,23 @@ import {
 } from "@/extensions/StudioExtensionCard";
 import { useSettings } from "@/hooks/useSettings";
 import { hashForRoute, type ToolSectionId } from "../navigation";
+import studioFeatureAgentBg from "../overview/studio-feature-agent.webp";
 import studioFeatureBg from "../overview/studio-feature-bg.webp";
+import studioFeatureContextBg from "../overview/studio-feature-context.webp";
+import studioFeatureSnippetsBg from "../overview/studio-feature-snippets.webp";
 import {
   matchToolRecommendations,
   studioShelfMode,
   unwrapResult,
   type ToolSection,
 } from "../extensions/extensionRuntime";
+
+const STUDIO_FEATURE_IMAGES: Record<ToolSectionId, string> = {
+  dictionary: studioFeatureBg,
+  snippets: studioFeatureSnippetsBg,
+  context: studioFeatureContextBg,
+  agent: studioFeatureAgentBg,
+};
 
 const TOOL_COPY: Record<
   ToolSectionId,
@@ -966,7 +976,7 @@ export function ToolsPage({ section }: { section: ToolSectionId }) {
                 >
                   <img
                     className="studio-feature-image"
-                    src={studioFeatureBg}
+                    src={STUDIO_FEATURE_IMAGES[section]}
                     alt=""
                   />
                   <div className="studio-feature-copy">

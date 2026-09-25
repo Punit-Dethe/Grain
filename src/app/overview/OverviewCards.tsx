@@ -7,26 +7,27 @@ import { useModelStore } from "@/stores/modelStore";
 import { hashForRoute } from "../navigation";
 
 const COPY = {
+  intro: {
+    title: "Get comfortable with Grain.",
+    body: "Your shortcuts and tools, all in one place.",
+    action: "Get started",
+  },
   snippets: {
     title: "Snippets",
-    body: "Expand a short spoken phrase into text you use often.",
     explore: "Manage snippets",
   },
   dictionary: {
     title: "Dictionary",
-    body: "Teach Grain the names and terms you use.",
     explore: "Go to dictionary",
   },
   shortcuts: {
     title: "Shortcuts",
-    body: "Your quick keys to start dictating.",
     aiOff: "AI off",
     flowOff: "Unavailable",
     none: "Not set",
   },
   agent: {
     title: "Agent",
-    body: "Rewrite or summarize selected text right where you work.",
     shortcutLabel: "Shortcut",
     enable: "Turn on in Studio",
   },
@@ -97,7 +98,6 @@ function SnippetsCard() {
         <FileText className="overview-card-icon" size={18} strokeWidth={1.8} />
         <strong className="overview-card-title">{COPY.snippets.title}</strong>
       </div>
-      <p className="overview-card-desc">{COPY.snippets.body}</p>
       <div className="overview-card-footer">
         <div className="overview-cta-row">
           <span className="overview-card-cta">{COPY.snippets.explore}</span>
@@ -123,7 +123,6 @@ function DictionaryCard() {
         <BookOpen className="overview-card-icon" size={18} strokeWidth={1.8} />
         <strong className="overview-card-title">{COPY.dictionary.title}</strong>
       </div>
-      <p className="overview-card-desc">{COPY.dictionary.body}</p>
       <div className="overview-card-footer">
         <div className="overview-cta-row">
           <span className="overview-card-cta">{COPY.dictionary.explore}</span>
@@ -158,12 +157,11 @@ function ShortcutsCard() {
     t(`settings.general.shortcut.bindings.${id}.name`, fallback ?? id);
 
   return (
-    <div className="overview-card overview-card--static">
+    <div className="overview-card overview-card--static overview-card--shortcuts">
       <div className="overview-card-header">
         <Keyboard className="overview-card-icon" size={18} strokeWidth={1.8} />
         <strong className="overview-card-title">{COPY.shortcuts.title}</strong>
       </div>
-      <p className="overview-card-desc">{COPY.shortcuts.body}</p>
       <div className="overview-shortcut-list">
         <ShortcutRow
           label={label(captureId, capture?.name)}
@@ -196,7 +194,6 @@ function AgentCard() {
         <AgentGlyph />
         <strong className="overview-card-title">{COPY.agent.title}</strong>
       </div>
-      <p className="overview-card-desc">{COPY.agent.body}</p>
       <div className="overview-card-footer">
         {combination ? (
           <div className="overview-shortcut-row overview-agent-row">
@@ -238,11 +235,34 @@ function AgentGlyph() {
 
 export function OverviewCards() {
   return (
-    <div className="overview-grid">
-      <ShortcutsCard />
-      <AgentCard />
-      <DictionaryCard />
-      <SnippetsCard />
+    <div className="overview-start-tray">
+      <div className="overview-start-intro">
+        <div>
+          <strong>{COPY.intro.title}</strong>
+          <p>{COPY.intro.body}</p>
+        </div>
+        <button
+          className="overview-start-button"
+          type="button"
+          onClick={() =>
+            go(hashForRoute({ page: "settings", section: "capture" }))
+          }
+        >
+          {COPY.intro.action}
+          <ArrowRight size={14} aria-hidden="true" />
+        </button>
+      </div>
+      <div
+        className="overview-grid"
+        role="region"
+        aria-label="Start here options"
+        tabIndex={0}
+      >
+        <ShortcutsCard />
+        <AgentCard />
+        <DictionaryCard />
+        <SnippetsCard />
+      </div>
     </div>
   );
 }
