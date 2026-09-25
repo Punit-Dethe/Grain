@@ -1562,9 +1562,9 @@ html[data-theme="light"] .hero {
   align-items: center;
   justify-content: center;
   gap: 7px;
-  border: 1px solid color-mix(in srgb, var(--text-2) 26%, transparent);
+  border: 1px solid var(--hairline);
   border-radius: 8px;
-  color: var(--text-1);
+  color: var(--text-2);
   background: transparent;
   font: inherit;
   font-size: 11.5px;
