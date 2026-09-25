@@ -15,6 +15,122 @@ use crate::shortcut::{register_shortcut, unregister_shortcut};
 use log::warn;
 use tauri::{AppHandle, Manager};
 
+/// The five capture/Agent keys reserve their saved chords even while a feature
+/// is disabled and its OS shortcut is unregistered. Other bindings are outside
+/// this policy.
+pub(crate) fn capture_shortcut_conflicts(
+    settings: &settings::AppSettings,
+    id: &str,
+    candidate: &str,
+) -> bool {
+    const IDS: [&str; 5] = [
+        "transcribe",
+        "transcribe_realtime",
+        "transcribe_native_asr",
+        "summon_agent",
+        "transcribe_send_to_ai",
+    ];
+    if !IDS.contains(&id) {
+        return false;
+    }
+
+    fn conflicts<T: std::str::FromStr + PartialEq>(
+        settings: &settings::AppSettings,
+        ids: &[&str],
+        id: &str,
+        candidate: &str,
+    ) -> bool {
+        let Ok(candidate) = candidate.parse::<T>() else {
+            return false; // The existing validator reports malformed shortcuts.
+        };
+        ids.iter().filter(|other| **other != id).any(|other| {
+            settings
+                .bindings
+                .get(*other)
+                .and_then(|binding| binding.current_binding.parse::<T>().ok())
+                .is_some_and(|stored| stored == candidate)
+        })
+    }
+
+    match settings.keyboard_implementation {
+        settings::KeyboardImplementation::Tauri => {
+            conflicts::<tauri_plugin_global_shortcut::Shortcut>(settings, &IDS, id, candidate)
+        }
+        settings::KeyboardImplementation::HandyKeys => {
+            conflicts::<handy_keys::Hotkey>(settings, &IDS, id, candidate)
+        }
+    }
+}
+
+#[cfg(test)]
+mod capture_shortcut_conflict_tests {
+    use super::*;
+
+    #[test]
+    fn every_capture_and_agent_pair_conflicts_even_when_features_are_off() {
+        let ids = [
+            "transcribe",
+            "transcribe_realtime",
+            "transcribe_native_asr",
+            "summon_agent",
+            "transcribe_send_to_ai",
+        ];
+        for implementation in [
+            settings::KeyboardImplementation::Tauri,
+            settings::KeyboardImplementation::HandyKeys,
+        ] {
+            for owner in ids {
+                let mut settings = settings::get_default_settings();
+                settings.keyboard_implementation = implementation;
+                settings.agent_enabled = false;
+                settings.post_process_enabled = false;
+                settings.bindings.get_mut(owner).unwrap().current_binding =
+                    "alt+shift+space".into();
+
+                for target in ids.into_iter().filter(|id| *id != owner) {
+                    assert!(
+                        capture_shortcut_conflicts(&settings, target, "Shift+Alt+Space"),
+                        "{implementation:?}: {owner} should reserve its key from {target}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn the_policy_does_not_claim_a_binding_it_does_not_own() {
+        for implementation in [
+            settings::KeyboardImplementation::Tauri,
+            settings::KeyboardImplementation::HandyKeys,
+        ] {
+            let mut settings = settings::get_default_settings();
+            settings.keyboard_implementation = implementation;
+            assert!(!capture_shortcut_conflicts(
+                &settings,
+                "transcribe",
+                "not_a_key"
+            ));
+            assert!(!capture_shortcut_conflicts(
+                &settings,
+                "transcribe",
+                &settings.bindings["transcribe"].current_binding
+            ));
+            assert!(!capture_shortcut_conflicts(
+                &settings,
+                "prompt_next",
+                &settings.bindings["transcribe"].current_binding
+            ));
+            settings.bindings.get_mut("prompt_next").unwrap().current_binding =
+                "alt+ctrl+f9".into();
+            assert!(!capture_shortcut_conflicts(
+                &settings,
+                "summon_agent",
+                "ctrl+alt+f9"
+            ));
+        }
+    }
+}
+
 /// [GRAIN] A one-shot snapshot of the current foreground app, for the "capture
 /// focused app" button when creating a mode. Backend-side detection so the same
 /// exe-stem normalization used at match time pre-fills the matcher exactly.

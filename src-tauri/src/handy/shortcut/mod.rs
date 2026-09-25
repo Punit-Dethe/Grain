@@ -167,6 +167,15 @@ pub fn change_binding(
         }
     };
 
+    // [GRAIN] Disabled capture/Agent features still reserve their saved chord.
+    if crate::grain_commands::capture_shortcut_conflicts(&settings, &id, &binding) {
+        return Ok(BindingResponse {
+            success: false,
+            binding: None,
+            error: Some("This shortcut is already in use.".to_string()),
+        });
+    }
+
     // If this is a dynamic binding, just update the settings and return
     // It's managed dynamically, so we don't register/unregister here.
     // [GRAIN] The list lives in `grain_core::capture` so every registration path
