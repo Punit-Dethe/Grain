@@ -1345,7 +1345,7 @@ h3 {
 /* Overview */
 .hero {
   position: relative;
-  height: clamp(372px, 47vh, 500px);
+  height: clamp(352px, 44vh, 470px);
   margin-bottom: -30px;
   overflow: hidden;
   border-radius: var(--hero-radius);

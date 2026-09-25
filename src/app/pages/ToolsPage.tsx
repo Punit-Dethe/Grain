@@ -34,6 +34,7 @@ import { hashForRoute, type ToolSectionId } from "../navigation";
 import studioFeatureAgentBg from "../overview/studio-feature-agent.webp";
 import studioFeatureBg from "../overview/studio-feature-bg.webp";
 import studioFeatureContextBg from "../overview/studio-feature-context.webp";
+import studioFeatureSnippetsBg from "../overview/studio-feature-snippets.webp";
 import {
   matchToolRecommendations,
   studioShelfMode,
@@ -43,7 +44,7 @@ import {
 
 const STUDIO_FEATURE_IMAGES: Record<ToolSectionId, string> = {
   dictionary: studioFeatureBg,
-  snippets: studioFeatureBg,
+  snippets: studioFeatureSnippetsBg,
   context: studioFeatureContextBg,
   agent: studioFeatureAgentBg,
 };
