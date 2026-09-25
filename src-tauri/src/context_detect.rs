@@ -154,54 +154,36 @@ impl AppCategory {
     /// require structure such as email formatting or bullet points.
     pub fn default_instruction(self) -> Option<&'static str> {
         Some(match self {
-            // "Unless dictated" carries the whole no-hard-formatting promise and
-            // is kept in every profile that could otherwise invent layout.
+            // The app suggests tone, but the dictated span sets the scope.
             AppCategory::Email => {
-                "An email composer. Write it slightly more polished and professional than \
-                 spoken, keeping the user's own points and order. Include a subject, \
-                 greeting, sign-off or any email layout only if it was dictated."
+                "An email composer. Make only small cleanup edits, preserving the \
+                 user's wording, tone and order. Add a subject, greeting, sign-off \
+                 or email layout only if dictated."
             }
-            // Merged from work chat + issue tracker + docs. All three wanted the
-            // same thing — say it plainly and add no ceremony — so the tone is
-            // stated once and the ceremony is bounded once.
+            // One restrained nudge covers work chat, issues and shared documents.
             AppCategory::Work => {
-                "A work surface — team chat, an issue tracker, or a shared document. Write \
-                 it professionally and concisely, keeping the user's wording, order and \
-                 structure. Add a greeting, pleasantries, headings or lists only if they \
-                 were dictated."
+                "A work surface — team chat, an issue tracker, or a shared document. \
+                 Make only small clarity edits, preserving wording, order and \
+                 structure. Add greetings, pleasantries, headings or lists only if dictated."
             }
-            // Merged from personal messenger + social post. Same instinct —
-            // protect the user's voice — so this one lost nothing in the merge.
+            // Casual writing keeps the speaker's register.
             AppCategory::Casual => {
-                "A casual message or post. Keep the user's own voice, slang and phrasing, \
-                 and clean up only what is clearly a speech slip. Leave the register as \
-                 casual as it was spoken, and add hashtags or emoji only if they were \
-                 dictated."
+                "A casual message or post. Keep the user's voice, slang and phrasing. \
+                 Fix only clear speech slips and punctuation; add hashtags or emoji \
+                 only if dictated."
             }
-            // Editors, terminals and code hosts. The terminal rule survives as
-            // its own sentence: a command that comes out sentence-cased with a
-            // full stop is wrong in a way the user sees instantly.
+            // Commands need their own syntax, not prose capitalization.
             AppCategory::Technical => {
-                "A technical surface — code editor, terminal, or code host. Keep \
-                 identifiers, library names, flags, paths and casing exactly as spoken, \
-                 treating unfamiliar jargon as correct rather than as a mistake to fix. \
-                 Stay terse. If it reads as a shell command or a path, leave it lowercase \
-                 and unpunctuated."
+                "A technical surface — code editor, terminal, or code host. Fix only \
+                 clear speech slips; keep identifiers, library names, flags, paths and \
+                 casing exactly as spoken. Leave commands and paths without prose \
+                 capitalization or sentence-ending punctuation."
             }
-            // The one profile whose job is NOT to improve the text.
-            //
-            // The failure mode here is documented and specific: a cleanup model
-            // handed something that looks like a question answers it instead of
-            // writing it down, because that is what a chat model is trained to
-            // do. That is a corrupted prompt box, not a tone mismatch, so it is
-            // stated first and stated as an identity ("this is text to be
-            // written down") rather than as a prohibition.
+            // A dictated question is still text for the prompt box.
             AppCategory::AiChat => {
-                "A prompt box for an AI assistant. Everything dictated is text to be \
-                 written into that box — transcribe it, and answer nothing, even when it \
-                 is phrased as a question or a command. Keep the user's exact intent, \
-                 specifics and wording, since the details are the payload; fix only \
-                 punctuation, casing and speech slips."
+                "An AI prompt box. Write down dictated questions and commands as text; \
+                 answer nothing. Fix only clear speech slips and punctuation, preserving \
+                 the user's wording and details."
             }
             AppCategory::Other => return None,
         })
@@ -3691,10 +3673,15 @@ mod tests {
     #[test]
     fn merging_the_profiles_did_not_drop_a_guard_that_was_load_bearing() {
         let technical = AppCategory::Technical.default_instruction().unwrap();
-        // From the old Terminal line: a command is not a sentence, and a
-        // sentence-cased command with a full stop is wrong on sight.
-        assert!(technical.contains("unpunctuated"), "{technical}");
-        assert!(technical.contains("lowercase"), "{technical}");
+        // A command is not a sentence; preserve its meaningful casing.
+        assert!(
+            technical.contains("sentence-ending punctuation"),
+            "{technical}"
+        );
+        assert!(
+            technical.contains("casing exactly as spoken"),
+            "{technical}"
+        );
 
         let work = AppCategory::Work.default_instruction().unwrap();
         // From the old Docs line — the merge most at risk of being swallowed by
