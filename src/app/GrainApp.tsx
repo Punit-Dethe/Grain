@@ -67,6 +67,7 @@ const PROTOTYPE_COPY = {
   studio: "Studio",
   openNotes: "Open notes",
   quickActions: "Start here",
+  quickActionsLink: "Explore tools",
   quickActionsBody:
     "Your keys, your words, and what Grain can be taught to do.",
   recent: "Recent transcriptions",
@@ -419,7 +420,11 @@ function Sidebar({
         style={{ WebkitAppRegion: "drag" } as CSSProperties}
       >
         <div className="grain-wordmark">
-          <img className="grain-mark" src={grainMark} alt={PROTOTYPE_COPY.brand} />
+          <img
+            className="grain-mark"
+            src={grainMark}
+            alt={PROTOTYPE_COPY.brand}
+          />
           <strong aria-hidden="true">{PROTOTYPE_COPY.brand}</strong>
         </div>
       </div>
@@ -583,6 +588,18 @@ function OverviewPage({ history }: { history: HistoryController }) {
           <div>
             <h2>{PROTOTYPE_COPY.quickActions}</h2>
           </div>
+          <button
+            className="text-button"
+            type="button"
+            onClick={() => {
+              window.location.hash = hashForRoute({
+                page: "tools",
+                section: "dictionary",
+              });
+            }}
+          >
+            {PROTOTYPE_COPY.quickActionsLink}
+          </button>
         </div>
         <OverviewCards />
 
