@@ -551,7 +551,7 @@ function OverviewPage({ history }: { history: HistoryController }) {
           <img
             className="hero-image"
             src={overviewHero}
-            alt="Motion-blurred person walking through a landscape at dusk"
+            alt="Motion-blurred figure running across a colorful landscape at dusk"
           />
           <div className="hero-content">
             <div className="hero-copy">
