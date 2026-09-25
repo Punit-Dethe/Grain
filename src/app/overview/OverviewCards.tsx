@@ -10,28 +10,28 @@ import { useModelStore } from "@/stores/modelStore";
 import { hashForRoute } from "../navigation";
 
 const COPY = {
-  intro: {
-    title: "Make Grain yours.",
-    body: "Set your keys, teach new words, and explore more.",
-    action: "Get started",
-  },
   extensions: {
     title: "Extensions",
+    body: "Supercharge your workflow with voice actions, modes, and tools.",
     explore: "Browse extensions",
   },
   dictionary: {
     title: "Dictionary",
+    body: "Add unique words, names, or jargon Grain should always recognize.",
     placeholder: "Add custom word...",
     add: "Add word",
   },
   shortcuts: {
     title: "Shortcuts",
+    body: "Your quick keys to start dictating.",
     aiOff: "AI off",
     flowOff: "Unavailable",
     none: "Not set",
   },
   agent: {
     title: "Agent",
+    body: "Select any text on screen and summon AI to rewrite or summarize.",
+    bodyOff: "Select any text on screen and summon AI to rewrite or summarize.",
     shortcutLabel: "Shortcut",
     enable: "Turn on in Studio",
   },
@@ -99,21 +99,15 @@ function ExtensionsCard() {
       type="button"
       onClick={() => go(hashForRoute({ page: "extensions", view: "store" }))}
     >
-      <span className="overview-card-number" aria-hidden="true">
-        04
-      </span>
       <div className="overview-card-header">
         <Blocks className="overview-card-icon" size={18} strokeWidth={1.8} />
         <strong className="overview-card-title">{COPY.extensions.title}</strong>
       </div>
+      <p className="overview-card-desc">{COPY.extensions.body}</p>
       <div className="overview-card-footer">
         <div className="overview-cta-row">
           <span className="overview-card-cta">{COPY.extensions.explore}</span>
-          <ArrowRight
-            size={13}
-            className="overview-cta-arrow"
-            aria-hidden="true"
-          />
+          <ArrowRight size={13} className="overview-cta-arrow" aria-hidden="true" />
         </div>
       </div>
     </button>
@@ -140,13 +134,11 @@ function DictionaryCard() {
 
   return (
     <div className="overview-card overview-card--static">
-      <span className="overview-card-number" aria-hidden="true">
-        02
-      </span>
       <div className="overview-card-header">
         <BookOpen className="overview-card-icon" size={18} strokeWidth={1.8} />
         <strong className="overview-card-title">{COPY.dictionary.title}</strong>
       </div>
+      <p className="overview-card-desc">{COPY.dictionary.body}</p>
       <div className="overview-card-footer">
         <div className="overview-add-row">
           <input
@@ -202,13 +194,11 @@ function ShortcutsCard() {
 
   return (
     <div className="overview-card overview-card--static">
-      <span className="overview-card-number" aria-hidden="true">
-        01
-      </span>
       <div className="overview-card-header">
         <Keyboard className="overview-card-icon" size={18} strokeWidth={1.8} />
         <strong className="overview-card-title">{COPY.shortcuts.title}</strong>
       </div>
+      <p className="overview-card-desc">{COPY.shortcuts.body}</p>
       <div className="overview-shortcut-list">
         <ShortcutRow
           label={label(captureId, capture?.name)}
@@ -237,29 +227,23 @@ function AgentCard() {
       type="button"
       onClick={() => go(hashForRoute({ page: "tools", section: "agent" }))}
     >
-      <span className="overview-card-number" aria-hidden="true">
-        03
-      </span>
       <div className="overview-card-header">
         <AgentGlyph />
         <strong className="overview-card-title">{COPY.agent.title}</strong>
       </div>
+      <p className="overview-card-desc">
+        {enabled ? COPY.agent.body : COPY.agent.bodyOff}
+      </p>
       <div className="overview-card-footer">
         {combination ? (
           <div className="overview-shortcut-row overview-agent-row">
-            <span className="overview-shortcut-label">
-              {COPY.agent.shortcutLabel}
-            </span>
+            <span className="overview-shortcut-label">{COPY.agent.shortcutLabel}</span>
             <Keycap combination={combination} />
           </div>
         ) : (
           <div className="overview-cta-row">
             <span className="overview-card-cta">{COPY.agent.enable}</span>
-            <ArrowRight
-              size={13}
-              className="overview-cta-arrow"
-              aria-hidden="true"
-            />
+            <ArrowRight size={13} className="overview-cta-arrow" aria-hidden="true" />
           </div>
         )}
       </div>
@@ -270,11 +254,7 @@ function AgentCard() {
 /** The prototype's Agent face — clean inline SVG glyph. */
 function AgentGlyph() {
   return (
-    <svg
-      viewBox="0 0 24 24"
-      className="overview-card-icon overview-agent-svg"
-      aria-hidden="true"
-    >
+    <svg viewBox="0 0 24 24" className="overview-card-icon overview-agent-svg" aria-hidden="true">
       <rect x="5.25" y="6" width="13.5" height="10.5" rx="4.25" />
       <circle cx="10" cy="11.25" r="1" />
       <circle cx="14" cy="11.25" r="1" />
@@ -283,36 +263,14 @@ function AgentGlyph() {
   );
 }
 
+
 export function OverviewCards() {
   return (
-    <div className="overview-start-tray">
-      <div className="overview-start-intro">
-        <div>
-          <strong>{COPY.intro.title}</strong>
-          <p>{COPY.intro.body}</p>
-        </div>
-        <button
-          className="overview-start-button"
-          type="button"
-          onClick={() =>
-            go(hashForRoute({ page: "tools", section: "dictionary" }))
-          }
-        >
-          {COPY.intro.action}
-          <ArrowRight size={14} aria-hidden="true" />
-        </button>
-      </div>
-      <div
-        className="overview-grid"
-        role="region"
-        aria-label="Start here options"
-        tabIndex={0}
-      >
-        <ShortcutsCard />
-        <DictionaryCard />
-        <AgentCard />
-        <ExtensionsCard />
-      </div>
+    <div className="overview-grid">
+      <ShortcutsCard />
+      <DictionaryCard />
+      <AgentCard />
+      <ExtensionsCard />
     </div>
   );
 }
