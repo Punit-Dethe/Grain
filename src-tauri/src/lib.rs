@@ -110,7 +110,7 @@ mod shortcut;
 mod signal_handle;
 mod stt_client; // [GRAIN] S2: HTTP STT adapters (OpenAI / Deepgram / AssemblyAI)
 mod stt_router; // [GRAIN] S3: STT dispatcher (local vs cloud rotation)
-mod surface_watch; // [GRAIN] follow the foreground app mid-session (settled)
+mod surface_watch; // [GRAIN] follow the foreground app mid-session
 mod tdt_flow; // [GRAIN] capability-gated stateless TDT window adapter/accumulator
 #[path = "handy/transcription_coordinator.rs"]
 mod transcription_coordinator;

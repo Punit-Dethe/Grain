@@ -29,57 +29,25 @@
 //! tab's document. Together they answer the only question that matters — has
 //! the place my text is going to land changed?
 //!
-//! # Why there is no timer to cancel
+//! # Immediate updates without a worker per event
 //!
-//! A change must be *held* before it counts, or alt-tabbing past a window would
-//! rewrite the pill. Rather than track and cancel timers, every event just
-//! stamps the time; ONE settle task sleeps until the stamp is old enough. Focus
-//! events are far too frequent to spawn a task each — a busy second would leave
-//! dozens of them asleep — so the task is spawned only when none is already
-//! running, and re-sleeps instead of exiting if more events arrived while it
-//! waited.
+//! The hook only bumps a sequence number and starts a worker if none is running.
+//! That worker resolves the foreground immediately, then checks the sequence
+//! again so a switch made during resolution is not lost. No timer delays a
+//! change, and bursts of focus events do not create a thread for each event.
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::OnceLock;
-use std::time::{Duration, Instant};
 
 use tauri::AppHandle;
 
-/// How long a surface must hold before Grain believes you meant it.
-///
-/// # Why windows and tabs wait the same
-///
-/// A window switch used to wait five seconds while a tab switch waited this, on
-/// the reasoning that alt-tabbing *past* a window should not rewrite the pill.
-/// But that case was already covered, and by this module's better half: every
-/// event restamps [`LAST_CHANGE_MS`], so passing through a window pushes the
-/// finish line out rather than settling on it. The long wait only ever fired for
-/// someone who stopped on a window for over a second — which is not passing
-/// through, it is arriving.
-///
-/// What the five seconds was quietly also buying was time for a browser to build
-/// its accessibility tree. That is a retry, not a delay: it is now handled where
-/// it belongs, by the one re-resolve `pill_icon` schedules when a browser has
-/// not named its address yet. Paying it here charged every app switch for a
-/// problem only browsers have, and still did nothing for tab switches.
-const SETTLE: Duration = Duration::from_millis(1200);
-
-/// Milliseconds (since `EPOCH`) of the most recent surface change. The settle
-/// task compares against this rather than owning a deadline, so a change that
-/// arrives while it is asleep simply moves the finish line.
-static LAST_CHANGE_MS: AtomicU64 = AtomicU64::new(0);
-/// Whether a settle task is alive. Keeps event volume and task count unrelated.
-static SETTLING: AtomicBool = AtomicBool::new(false);
-/// False between sessions; makes a settle in flight give up rather than repaint
+/// Incremented by each surface event, including events arriving during a read.
+static CHANGE_SEQ: AtomicU64 = AtomicU64::new(0);
+/// At most one foreground resolver runs at a time.
+static RESOLVING: AtomicBool = AtomicBool::new(false);
+/// False between sessions; makes a resolver in flight give up rather than repaint
 /// a pill that is no longer showing.
 static ACTIVE: AtomicBool = AtomicBool::new(false);
-
-/// Start of the monotonic clock these timestamps are measured against.
-static EPOCH: OnceLock<Instant> = OnceLock::new();
-
-fn now_ms() -> u64 {
-    EPOCH.get_or_init(Instant::now).elapsed().as_millis() as u64
-}
 
 /// Set once, on the first session. The hook callback is a bare `extern "system"`
 /// function with nowhere to carry state, so the handle has to be reachable
@@ -89,7 +57,7 @@ static APP: OnceLock<AppHandle> = OnceLock::new();
 /// Begin following the foreground for this session.
 pub fn start(app: &AppHandle) {
     let _ = APP.set(app.clone());
-    ACTIVE.store(true, Ordering::Relaxed);
+    ACTIVE.store(true, Ordering::Release);
     #[cfg(windows)]
     {
         // The hooks must be installed from a thread with a message pump, which
@@ -102,11 +70,11 @@ pub fn start(app: &AppHandle) {
     }
 }
 
-/// Stop following. Also stands down any settle still in flight, so a change made
+/// Stop following. Also stands down any resolver still in flight, so a change made
 /// during the session's tail cannot repaint the pill after the session ended.
 pub fn stop(app: &AppHandle) {
-    ACTIVE.store(false, Ordering::Relaxed);
-    // The settle task checks ACTIVE, but resolves already in flight do not —
+    ACTIVE.store(false, Ordering::Release);
+    // The worker checks ACTIVE, but resolves already in flight do not —
     // they answer to the icon path's own generation counter, so retire that too.
     crate::pill_icon::cancel_pending();
     #[cfg(windows)]
@@ -119,41 +87,47 @@ pub fn stop(app: &AppHandle) {
     }
 }
 
-/// The surface may have changed. Stamp the time; settle later.
+/// The surface may have changed. Resolve it on a worker right away.
 ///
 /// Deliberately does almost nothing: this runs on the main thread's message
 /// pump, and a UI Automation read here would stall the UI of whatever app the
-/// user just switched to. Two atomics is the whole cost of an event.
+/// user just switched to. Two atomics are the whole cost of an event.
 fn note_change() {
-    if !ACTIVE.load(Ordering::Relaxed) {
+    if !ACTIVE.load(Ordering::Acquire) {
         return;
     }
-    LAST_CHANGE_MS.store(now_ms(), Ordering::Relaxed);
-    // Already counting down — that task will pick up the new stamp.
-    if SETTLING.swap(true, Ordering::AcqRel) {
+    CHANGE_SEQ.fetch_add(1, Ordering::AcqRel);
+    // An in-flight read will pick up the new sequence when it finishes.
+    if RESOLVING.swap(true, Ordering::AcqRel) {
         return;
     }
     let Some(app) = APP.get().cloned() else {
-        SETTLING.store(false, Ordering::Release);
+        RESOLVING.store(false, Ordering::Release);
         return;
     };
-    tauri::async_runtime::spawn(async move {
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut observed = CHANGE_SEQ.load(Ordering::Acquire);
         loop {
-            tokio::time::sleep(SETTLE).await;
-            if !ACTIVE.load(Ordering::Relaxed) {
-                break;
-            }
-            let quiet_for = now_ms().saturating_sub(LAST_CHANGE_MS.load(Ordering::Relaxed));
-            if quiet_for + 1 >= SETTLE.as_millis() as u64 {
-                // Held long enough to mean it. Re-resolve, keeping the current
-                // icon if the surface cannot be named this time.
+            if ACTIVE.load(Ordering::Acquire) {
+                observed = CHANGE_SEQ.load(Ordering::Acquire);
+                // Keep the current icon if this one read cannot name the surface.
                 crate::pill_icon::refresh(&app);
+                let changed = CHANGE_SEQ.load(Ordering::Acquire) != observed;
+                if ACTIVE.load(Ordering::Acquire) && changed {
+                    continue;
+                }
+            }
+
+            // Release before checking again: an event racing with this exit
+            // either starts its own worker or is picked up by this one.
+            RESOLVING.store(false, Ordering::Release);
+            if !ACTIVE.load(Ordering::Acquire)
+                || CHANGE_SEQ.load(Ordering::Acquire) == observed
+                || RESOLVING.swap(true, Ordering::AcqRel)
+            {
                 break;
             }
-            // Something moved while we slept; wait out the remainder instead of
-            // spawning a second task for it.
         }
-        SETTLING.store(false, Ordering::Release);
     });
 }
 

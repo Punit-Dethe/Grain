@@ -168,7 +168,7 @@ pub(crate) fn extension_mode_started(app: &AppHandle) -> u64 {
 pub(crate) fn emit_recording_stopped(app: &AppHandle) -> u64 {
     let session_id = current_session_id();
     // [GRAIN] Nothing left to follow — drop the hook rather than leave it live
-    // between sessions, and invalidate any settle still counting down.
+    // between sessions, and invalidate any icon resolution still in flight.
     crate::surface_watch::stop(app);
     crate::bridge::emit(app, DaemonEvent::RecordingStopped { session_id });
     session_id
