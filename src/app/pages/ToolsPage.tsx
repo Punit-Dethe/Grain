@@ -30,6 +30,7 @@ import {
   StudioExtensionMoreCard,
 } from "@/extensions/StudioExtensionCard";
 import { useSettings } from "@/hooks/useSettings";
+import { MAX_CUSTOM_WORD_LENGTH, normalizeCustomWord } from "@/lib/customWords";
 import { hashForRoute, type ToolSectionId } from "../navigation";
 import studioFeatureAgentBg from "../overview/studio-feature-agent.webp";
 import studioFeatureBg from "../overview/studio-feature-bg.webp";
@@ -410,7 +411,6 @@ function DictionaryTermDialog({
             data-dialog-initial-focus
             className="dictionary-dialog-input"
             value={term}
-            maxLength={50}
             spellCheck={false}
             autoComplete="off"
             disabled={busy}
@@ -463,16 +463,18 @@ function DictionaryTool() {
   }, [query, words]);
 
   const saveTerm = async (value: string) => {
-    const candidate = value.trim().replace(/[<>"']/g, "");
+    const candidate = normalizeCustomWord(value);
     if (!candidate) return "Enter a term to continue.";
-    if (/\s/.test(candidate)) return "Use one word or a hyphenated term.";
-    if (candidate.length > 50) return "Keep the term under 50 characters.";
+    if (candidate.length > MAX_CUSTOM_WORD_LENGTH) {
+      return `Keep the term to ${MAX_CUSTOM_WORD_LENGTH} characters or fewer.`;
+    }
 
     const original = dialog?.mode === "edit" ? dialog.original : null;
     const duplicate = words.some(
       (word) =>
         word !== original &&
-        word.toLocaleLowerCase() === candidate.toLocaleLowerCase(),
+        normalizeCustomWord(word).toLocaleLowerCase() ===
+          candidate.toLocaleLowerCase(),
     );
     if (duplicate) return `“${candidate}” is already in your dictionary.`;
 
