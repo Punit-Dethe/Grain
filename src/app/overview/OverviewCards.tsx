@@ -94,9 +94,6 @@ function SnippetsCard() {
       type="button"
       onClick={() => go(hashForRoute({ page: "tools", section: "snippets" }))}
     >
-      <span className="overview-card-number" aria-hidden="true">
-        04
-      </span>
       <div className="overview-card-header">
         <FileText className="overview-card-icon" size={18} strokeWidth={1.8} />
         <strong className="overview-card-title">{COPY.snippets.title}</strong>
@@ -122,9 +119,6 @@ function DictionaryCard() {
       type="button"
       onClick={() => go(hashForRoute({ page: "tools", section: "dictionary" }))}
     >
-      <span className="overview-card-number" aria-hidden="true">
-        03
-      </span>
       <div className="overview-card-header">
         <BookOpen className="overview-card-icon" size={18} strokeWidth={1.8} />
         <strong className="overview-card-title">{COPY.dictionary.title}</strong>
@@ -164,9 +158,6 @@ function ShortcutsCard() {
 
   return (
     <div className="overview-card overview-card--static overview-card--shortcuts">
-      <span className="overview-card-number" aria-hidden="true">
-        01
-      </span>
       <div className="overview-card-header">
         <Keyboard className="overview-card-icon" size={18} strokeWidth={1.8} />
         <strong className="overview-card-title">{COPY.shortcuts.title}</strong>
@@ -199,9 +190,6 @@ function AgentCard() {
       type="button"
       onClick={() => go(hashForRoute({ page: "tools", section: "agent" }))}
     >
-      <span className="overview-card-number" aria-hidden="true">
-        02
-      </span>
       <div className="overview-card-header">
         <AgentGlyph />
         <strong className="overview-card-title">{COPY.agent.title}</strong>

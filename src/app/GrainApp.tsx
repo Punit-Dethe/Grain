@@ -67,7 +67,6 @@ const PROTOTYPE_COPY = {
   studio: "Studio",
   openNotes: "Open notes",
   quickActions: "Start here",
-  quickActionsLink: "Explore tools",
   quickActionsBody:
     "Your keys, your words, and what Grain can be taught to do.",
   recent: "Recent transcriptions",
@@ -588,18 +587,6 @@ function OverviewPage({ history }: { history: HistoryController }) {
           <div>
             <h2>{PROTOTYPE_COPY.quickActions}</h2>
           </div>
-          <button
-            className="text-button"
-            type="button"
-            onClick={() => {
-              window.location.hash = hashForRoute({
-                page: "tools",
-                section: "dictionary",
-              });
-            }}
-          >
-            {PROTOTYPE_COPY.quickActionsLink}
-          </button>
         </div>
         <OverviewCards />
 
