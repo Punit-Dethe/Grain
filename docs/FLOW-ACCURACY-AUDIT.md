@@ -2,6 +2,8 @@
 
 Status: investigation and offline experiments complete. Production capture, decoding and window policy are unchanged. This is an evidence-based implementation plan, not an accuracy-parity claim.
 
+Follow-up: [Parakeet v2 research round two](PARAKEET-V2-FLOW-RESEARCH.md) identifies NVIDIA's v2-specific stateful buffered inference results and adds that candidate alongside the pause-aware baseline. Its revised experiment plan supersedes the experiment ordering below; no production change has been selected.
+
 ## Findings
 
 The same Parakeet v2 Q8_0 artifact produces different text when Grain changes its input windows. The strongest measured contributor is recognition within bounded windows. The custom Fluid-style decoder also changes endings and punctuation. Neither replacing the decoder alone nor adding a fixed two seconds of future context removed the observed disagreements.
