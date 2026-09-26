@@ -46,6 +46,14 @@ def check(pin: dict, metadata: bool, official: bool, target: str | None = None) 
         for name in PACKAGES:
             require(patches.get(name) == {"git": pin["repository"], "rev": pin["revision"]},
                     f"{workspace.name}: {name} must use the canonical paired Git pin")
+        declarations = [manifest.get("dependencies", {}).get("transcribe-cpp")]
+        declarations.extend(section.get("dependencies", {}).get("transcribe-cpp")
+                            for section in manifest.get("target", {}).values())
+        declarations = [value for value in declarations if value is not None]
+        require(bool(declarations) and all(isinstance(value, dict)
+                and value.get("version") == f"={pin['version']}"
+                and value.get("default-features") is False for value in declarations),
+                f"{workspace.name}: wrapper dependencies must retain exact version and disabled defaults")
         locked = tomllib.loads((workspace / "Cargo.lock").read_text(encoding="utf-8"))
         for name in PACKAGES:
             packages = [p for p in locked["package"] if p["name"] == name]
@@ -56,18 +64,23 @@ def check(pin: dict, metadata: bool, official: bool, target: str | None = None) 
             host = target or next(line[6:] for line in run("rustc", "-vV").splitlines() if line.startswith("host: "))
             resolved = json.loads(run("cargo", "metadata", "--locked", "--format-version", "1",
                                       "--filter-platform", host, cwd=workspace))
-            nodes = {node["id"]: node for node in resolved["resolve"]["nodes"]}
             for name in PACKAGES:
                 packages = [p for p in resolved["packages"] if p["name"] == name]
                 require(len(packages) == 1 and packages[0]["source"] == source(pin),
                         f"{workspace.name}: {name} metadata has a path/registry/duplicate source")
-                features = set(nodes[packages[0]["id"]]["features"])
+                # metadata --filter-platform filters resolve edges, but its
+                # feature lists still combine target-specific dependencies.
+                # tree uses resolver v2's actual feature set for this target.
+                feature_text = run("cargo", "tree", "--locked", "--target", host,
+                                   "--package", name, "--depth", "0", "--prefix", "none",
+                                   "--format", "{f}", cwd=workspace)
+                features = set(filter(None, feature_text.split(",")))
                 required = {"dynamic-backends", "shared"}
                 if workspace.name == "src-tauri":
                     required = ({"metal"} if "apple-darwin" in host else set()
                                 if host == "aarch64-pc-windows-msvc" else required | {"vulkan"})
-                require(required <= features, f"{workspace.name}: {name} missing features {required - features}")
-                require("default" not in features, f"{workspace.name}: {name} accidentally enables defaults")
+                require(features == required,
+                        f"{workspace.name}: {name} target features {sorted(features)} must be {sorted(required)}")
     print(f"Native source pair verified: {pin['revision']}")
 
 
@@ -94,16 +107,24 @@ def bootstrap(pin: dict) -> None:
     print(f"Native development checkout created: {checkout}")
 
 
+def runtime_library(directory: Path) -> Path:
+    # Grain stages Linux's SONAME (.so.0), while installed native prefixes
+    # normally expose .so -> .so.0 -> .so.0.2.3 symlinks to the same file.
+    libraries = {path.resolve() for path in directory.iterdir() if path.is_file()
+                 and (path.name in ("transcribe.dll", "libtranscribe.dylib")
+                      or re.fullmatch(r"libtranscribe\.so(?:\.[0-9]+)*", path.name))}
+    require(len(libraries) == 1, "Expected exactly one platform libtranscribe in --runtime-dir")
+    return next(iter(libraries))
+
+
 def runtime(pin: dict, directory: Path) -> None:
     directory = directory.resolve(strict=True)
-    filenames = ("transcribe.dll", "libtranscribe.so", "libtranscribe.dylib")
-    libraries = [directory / name for name in filenames if (directory / name).is_file()]
-    require(len(libraries) == 1, "Expected exactly one platform libtranscribe in --runtime-dir")
+    library = runtime_library(directory)
     # Keep the DLL search handle alive until every query finishes. This CLI
     # exits after inspection; no library or discovery service survives it.
     search = os.add_dll_directory(str(directory)) if sys.platform == "win32" else None
     try:
-        lib = ctypes.CDLL(str(libraries[0]))
+        lib = ctypes.CDLL(str(library))
         lib.transcribe_grain_contract_revision.restype = ctypes.c_uint32
         require(lib.transcribe_grain_contract_revision() == pin["contract_revision"], "Runtime contract revision mismatch")
         for function, expected in (("transcribe_grain_patch_id", pin["patch_identity"]),
@@ -121,7 +142,7 @@ def runtime(pin: dict, directory: Path) -> None:
         lib.transcribe_backend_available.argtypes = [ctypes.c_int]
         lib.transcribe_backend_available.restype = ctypes.c_bool
         require(lib.transcribe_backend_available(1), "Runtime is missing the required CPU fallback")
-        print(f"Runtime contract and backend discovery verified: {libraries[0]}")
+        print(f"Runtime contract and backend discovery verified: {library}")
     finally:
         if search:
             search.close()

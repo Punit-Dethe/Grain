@@ -221,8 +221,8 @@ transcribe-cpp = { version = "=0.2.3", default-features = false, features = [
 [patch.crates-io]
 # [GRAIN] Paired immutable native fork; preserve exact upstream versions/features.
 # See ../native/transcribe-fork.json and ../docs/TRANSCRIBE-CPP-FORK.md.
-transcribe-cpp = { git = "https://github.com/Punit-Dethe/transcribe.cpp.git", rev = "7be200645db2e9296b08794c615a3e346f1b17f4" }
-transcribe-cpp-sys = { git = "https://github.com/Punit-Dethe/transcribe.cpp.git", rev = "7be200645db2e9296b08794c615a3e346f1b17f4" }
+transcribe-cpp = { git = "https://github.com/Punit-Dethe/transcribe.cpp.git", rev = "2d336ea878ded786f63dd53520beed8fc6192c61" }
+transcribe-cpp-sys = { git = "https://github.com/Punit-Dethe/transcribe.cpp.git", rev = "2d336ea878ded786f63dd53520beed8fc6192c61" }
 tao = { git = "https://github.com/cjpais/tao", rev = "c3bee28c1d446d95f08c95c3b6f8d4bde052b876" }
 tao-macros = { git = "https://github.com/cjpais/tao", rev = "c3bee28c1d446d95f08c95c3b6f8d4bde052b876" }
 
