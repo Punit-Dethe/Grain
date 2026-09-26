@@ -11,23 +11,33 @@ export function EmbeddingSettings() {
   const [error, setError] = useState<string | null>(null);
   const alive = useRef(false);
   const operation = useRef(false);
+  const statusVersion = useRef(0);
 
   useEffect(() => {
     let active = true;
     alive.current = true;
     const unlisten: (() => void)[] = [];
     const refresh = async () => {
+      if (!active) return;
+      const version = ++statusVersion.current;
       try {
         const value = await commands.grainEmbedModelStatus();
-        if (active) setStatus(value);
+        if (active && version === statusVersion.current) {
+          setStatus(value);
+          if (value !== "downloading") setProgress(null);
+        }
       } catch (reason) {
-        if (active) setError(String(reason));
+        if (active && version === statusVersion.current)
+          setError(String(reason));
       }
     };
     const subscribe = async () => {
       const registrations = [
         events.grainEmbedModelProgress.listen(({ payload }) => {
           if (!active) return;
+          // An older status request must not hide a live download's cancel
+          // button after this event has already established the newer state.
+          statusVersion.current++;
           setStatus("downloading");
           setProgress(payload.percentage);
         }),
@@ -63,6 +73,7 @@ export function EmbeddingSettings() {
     // Cancellation remains available while the download command is pending.
     if (action !== "cancel" && operation.current) return;
     if (action !== "cancel") operation.current = true;
+    statusVersion.current++;
     setBusy(true);
     setError(null);
     if (action === "download") {
@@ -81,11 +92,17 @@ export function EmbeddingSettings() {
     } finally {
       if (action !== "cancel") operation.current = false;
       if (alive.current) {
+        const version = ++statusVersion.current;
         try {
           const value = await commands.grainEmbedModelStatus();
-          if (alive.current) setStatus(value);
+          if (alive.current && version === statusVersion.current) {
+            setStatus(value);
+            if (value !== "downloading") setProgress(null);
+          }
         } catch (reason) {
-          if (alive.current) setError(String(reason));
+          if (alive.current && version === statusVersion.current) {
+            setError(String(reason));
+          }
         }
         if (alive.current) setBusy(operation.current);
       }

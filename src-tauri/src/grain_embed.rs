@@ -133,9 +133,7 @@ pub async fn grain_embed_uninstall_model(
     Ok(())
 }
 
-/// Bridges hf-hub progress to the settings UI. Only the big
-/// `model.safetensors` transfer reports (config + tokenizer are ~1 KB / ~700 KB
-/// — invisible next to the weights).
+/// Bridges each hf-hub file transfer's progress to the settings UI.
 #[derive(Clone)]
 struct EmbedDownloadProgress {
     app: AppHandle,
@@ -194,20 +192,25 @@ impl Progress for EmbedDownloadProgress {
 /// Resumable: hf-hub keeps `.part` files, and files already cached are skipped.
 /// Emits `MODEL_COMPLETE_EVENT` / `MODEL_ERROR_EVENT` after cache verification.
 pub async fn download_model(app: AppHandle) -> Result<(), String> {
-    if model_on_disk() {
-        crate::extension_host::refresh_index(&app);
-        let _ = app.emit(MODEL_COMPLETE_EVENT, ());
-        return Ok(());
-    }
-
-    let token = CancellationToken::new();
-    {
+    let token = {
         let mut slot = DOWNLOAD.lock().unwrap();
         if slot.is_some() {
             return Err("model download already running".to_string());
         }
-        *slot = Some(token.clone());
-    }
+        // Serialize the readiness check with uninstall and download admission.
+        if model_on_disk() {
+            None
+        } else {
+            let token = CancellationToken::new();
+            *slot = Some(token.clone());
+            Some(token)
+        }
+    };
+    let Some(token) = token else {
+        crate::extension_host::refresh_index(&app);
+        let _ = app.emit(MODEL_COMPLETE_EVENT, ());
+        return Ok(());
+    };
 
     let result = download_files(&app, token).await;
 
@@ -297,7 +300,7 @@ impl Drop for Engine {
 
 static ENGINE: Mutex<Option<Engine>> = Mutex::new(None);
 
-/// Drop the engine (thread joined, weights freed). No-op when not running.
+/// Join the worker on application exit, releasing its weights before shutdown.
 pub fn shutdown_engine() {
     *ENGINE.lock().unwrap() = None;
 }
@@ -334,7 +337,17 @@ pub fn shutdown_engine_if_idle(app: &AppHandle) {
     use tauri::Manager;
     let panel_open = app.get_webview_window(crate::agent::PANEL_LABEL).is_some();
     if !panel_open && !extension_mode_warm() {
-        shutdown_engine();
+        let app = app.clone();
+        // Dropping Engine joins its worker, including any pending inference.
+        // Window destruction and the async reaper must not block on that join.
+        tauri::async_runtime::spawn_blocking(move || {
+            let mut slot = ENGINE.lock().unwrap();
+            // A new use may have refreshed the TTL while cleanup was queued.
+            if !extension_mode_warm() && app.get_webview_window(crate::agent::PANEL_LABEL).is_none()
+            {
+                *slot = None;
+            }
+        });
     }
 }
 
@@ -426,16 +439,27 @@ fn spawn_reaper(app: AppHandle) {
                 .load(Ordering::Relaxed)
                 .saturating_sub(now_ms());
             if remaining == 0 {
+                // A touch can refresh the deadline after the expiry check but
+                // before ownership is released. Either this task resumes its
+                // watch, or a concurrent touch has already started a new one.
+                if release_or_reclaim_reaper(&REAPER_RUNNING, extension_mode_warm) {
+                    continue;
+                }
+                shutdown_engine_if_idle(&app);
                 break;
             }
             tokio::time::sleep(Duration::from_millis(remaining)).await;
         }
-        REAPER_RUNNING.store(false, Ordering::SeqCst);
-        // A `touch` that raced in after the loop broke but before the flag
-        // cleared is self-healing: `embed` re-spawns lazily, and the next touch
-        // starts a fresh reaper. So an early reclaim costs one reload at worst.
-        shutdown_engine_if_idle(&app);
     });
+}
+
+fn release_or_reclaim_reaper(running: &AtomicBool, is_warm: impl FnOnce() -> bool) -> bool {
+    // Acquire a racing touch's ownership update before reading its deadline.
+    running.swap(false, Ordering::SeqCst);
+    is_warm()
+        && running
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .is_ok()
 }
 
 /// BGE v1.5's retrieval instruction. ASYMMETRIC by design: the model card
@@ -620,7 +644,62 @@ fn embed_batch(
 
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::Ordering;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    #[test]
+    fn late_touch_keeps_a_reaper_until_the_extended_deadline() {
+        let running = AtomicBool::new(true);
+        // The loop observed expiry, then a touch saw the old owner and extended
+        // the deadline without spawning another task.
+        assert!(super::release_or_reclaim_reaper(&running, || true));
+        assert!(running.load(Ordering::SeqCst));
+        assert!(!super::release_or_reclaim_reaper(&running, || false));
+        assert!(!running.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn late_touch_with_a_new_reaper_does_not_create_duplicate_owners() {
+        let running = AtomicBool::new(true);
+        assert!(!super::release_or_reclaim_reaper(&running, || {
+            // A touch starts its own watcher after the old owner releases.
+            assert!(!running.swap(true, Ordering::SeqCst));
+            true
+        }));
+        assert!(running.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn engine_teardown_completes_pending_requests_and_joins_the_worker() {
+        use super::{mpsc, Arc, Engine, Request};
+
+        let exited = Arc::new(AtomicBool::new(false));
+        let worker_exited = exited.clone();
+        let (tx, rx) = mpsc::channel();
+        let join = std::thread::spawn(move || {
+            for Request::Embed { texts, reply } in rx {
+                assert_eq!(texts, ["pending"]);
+                reply.send(Ok(vec![vec![1.0]])).unwrap();
+            }
+            worker_exited.store(true, Ordering::SeqCst);
+        });
+        let engine = Engine {
+            tx: Some(tx),
+            join: Some(join),
+        };
+        let (reply, result) = mpsc::channel();
+        engine
+            .tx
+            .as_ref()
+            .unwrap()
+            .send(Request::Embed {
+                texts: vec!["pending".into()],
+                reply,
+            })
+            .unwrap();
+        drop(engine);
+        assert_eq!(result.recv().unwrap().unwrap(), vec![vec![1.0]]);
+        assert!(exited.load(Ordering::SeqCst));
+    }
 
     #[test]
     fn cancellation_reserves_download_until_transfer_cleanup() {

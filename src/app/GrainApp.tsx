@@ -65,7 +65,6 @@ const PROTOTYPE_COPY = {
   processed: "AI processed",
   heroTitle: "Speak before the thought disappears.",
   studio: "Studio",
-  openNotes: "Open notes",
   quickActions: "Start here",
   quickActionsBody:
     "Your keys, your words, and what Grain can be taught to do.",
@@ -586,15 +585,6 @@ function OverviewPage({ history }: { history: HistoryController }) {
               >
                 {PROTOTYPE_COPY.studio}
               </button>
-              <button
-                className="button secondary-glass"
-                type="button"
-                onClick={() => {
-                  window.location.hash = "/notes";
-                }}
-              >
-                {PROTOTYPE_COPY.openNotes}
-              </button>
             </div>
           </div>
         </div>
@@ -814,7 +804,7 @@ function NextShell() {
 
   return (
     <div
-      className={`app grain-root${routeUsesCompactGlobalRail(route) ? " notes-mode" : ""}`}
+      className="app grain-root"
       data-global-rail={
         routeUsesCompactGlobalRail(route) ? "compact" : "expanded"
       }
