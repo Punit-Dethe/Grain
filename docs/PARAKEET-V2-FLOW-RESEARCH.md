@@ -2,6 +2,8 @@
 
 Date: 2026-09-26. Scope: Parakeet TDT 0.6B **v2**, especially Grain's installed Handy Q8_0 GGUF. This round changes research and the experiment plan only. The offline evaluator from [the first audit](FLOW-ACCURACY-AUDIT.md) is ready; no additional accuracy measurements or production changes were made here.
 
+Subsequent implementation: [fix plan](FLOW-ACCURACY-IMPLEMENTATION.md) and [accuracy/speed selection](FLOW-ACCURACY-SPEED.md). They record measurements and the production policy selected after this research round.
+
 ## Conclusions
 
 1. **Other users report this kind of degradation with v2 itself.** Reduced future context can cause substantial deletion errors. This establishes a relevant failure mode, not the cause or magnitude of Grain's errors.

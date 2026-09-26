@@ -328,7 +328,7 @@ fn run_session(
         Ok(value) => value,
         Err(error) => return WorkerOutput::failure(error),
     };
-    let mut audio = Vec::with_capacity(grain_tdt::MAX_MODEL_SAMPLES as usize);
+    let mut audio = Vec::with_capacity(accumulator.max_input_samples());
     let mut first_error: Option<String> = None;
     let started = Instant::now();
 

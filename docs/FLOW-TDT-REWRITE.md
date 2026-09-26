@@ -3,6 +3,7 @@
 Status: native v0.2.3 upgrade and production Flow integration implemented on `core/rolling-window`, 2026-09-10. Real-model parity, soak, and packaged-application validation remain open.
 Update (2026-09-26): Flow live preview was removed. Flow processes stable windows during recording and renders one final transcript at stop.
 Accuracy audit (2026-09-26): identical-sample v2 Q8_0 comparisons now reproduce lexical differences from ordinary GGUF Batch on longer recordings. Decoder-only replacement and fixed two-second lookahead did not establish parity. See [the evidence and next implementation plan](FLOW-ACCURACY-AUDIT.md); real-model release gates remain open.
+V2 accuracy/speed update (2026-09-26): v2 now uses ordinary Batch native decoding with a 24-second ceiling, quiet cuts near that ceiling and two-second overlap. Inputs through 24 seconds are supplied whole without alignment padding; all token timestamps use the read origin. V3 retains the Fluid window contract described below. The earlier shared-v2/v3 geometry and decoder sections are historical for v2. See [implementation](FLOW-ACCURACY-IMPLEMENTATION.md) and [measurements and limits](FLOW-ACCURACY-SPEED.md).
 Owner intent: reproduce FluidVoice's Parakeet TDT v2/v3 recording behavior, simplify Grain's Flow implementation, and upgrade transcribe.cpp. This document is the durable execution and handoff record; update checkboxes and evidence as work lands. Do not infer completion from a design decision.
 
 ## Scope and invariants
@@ -25,7 +26,7 @@ Use the local repositories; no GitHub browsing is needed.
   - `Sources/FluidAudio/ASR/Parakeet/Decoder/` and `Shared/ASRConstants.swift`
 - transcribe.cpp: `Refrence/transcribe.cpp`; target stable `v0.2.3` (`63a44d9`), not the later unrelated Voxtral commit. Current vendor base is published 0.2.0, upstream `93151602c670f0dbf6703b1d87a8822f87581a0b`.
 
-## Intended behavior
+## Original Fluid behavior (retained for v3; superseded for v2)
 
 1. Journal exact 16 kHz mono Float32 capture samples on disk. Preserve causal capture high-pass if enabled; remove per-window gain normalization because it changes shared overlap samples. Convert to PCM16 only when saving history WAV. Approximate temporary disk cost: 230.4 MB/hour; model input RAM stays bounded.
 2. Through **240,000 samples inclusive**, final transcription uses the complete prefix with isolated decoder state. Never finalize a 238,080-sample chunk before crossing the 240,000-sample short-path threshold. Pad this short input to the next 1,280-sample frame only when that stays <=240,000. This alignment does not change journal count or reported duration. Fluid's short call leaves decoder `isLastChunk=false`, including final transcription.

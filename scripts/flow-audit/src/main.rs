@@ -1,4 +1,4 @@
-//! Offline comparison using the production Flow layout and merger.
+//! Offline comparison using historical and production Flow layouts/merger.
 //! Audio stays local; JSON transcripts go only to the explicitly requested file.
 use std::{error::Error, path::Path, time::Instant};
 
@@ -54,11 +54,20 @@ fn flow(
     pcm: &[f32],
     native_decoder: bool,
     right_context_samples: usize,
+    independent_samples: Option<u64>,
+    prefer_pause: bool,
 ) -> Result<(String, Value)> {
     let mut merged = Vec::new();
     let mut measurements = Vec::new();
-    let mut audio = Vec::with_capacity(grain_tdt::MAX_MODEL_SAMPLES as usize);
-    for window in windows(pcm.len() as u64) {
+    let mut audio = Vec::with_capacity(
+        independent_samples.unwrap_or(grain_tdt::MAX_MODEL_SAMPLES) as usize
+            + right_context_samples,
+    );
+    let work = independent_samples.map_or_else(
+        || windows(pcm.len() as u64),
+        |limit| independent_windows(pcm, limit, prefer_pause),
+    );
+    for window in work {
         audio.clear();
         let read_end = if native_decoder {
             (window.read_end as usize)
@@ -88,12 +97,12 @@ fn flow(
             }
             let mut frame = (token.t0_ms / 80) as u64;
             if native_decoder {
-                // Diagnostic only: a normal decode has already seen the context
-                // frame. Filtering tokens cannot reproduce a bounded decoder
-                // that starts fresh at the selected frame. Do not use this as a
-                // production replacement without a native range adapter.
-                if frame < window.context_frames() as u64
-                    || frame >= (window.context_frames() + window.content_frames()) as u64
+                // Only the historical-window diagnostic filters context after
+                // decoding; it cannot reproduce a decoder starting there.
+                // Independent native windows retain the complete Batch output.
+                if independent_samples.is_none()
+                    && (frame < window.context_frames() as u64
+                        || frame >= (window.context_frames() + window.content_frames()) as u64)
                 {
                     continue;
                 }
@@ -126,6 +135,45 @@ fn flow(
         session.model().detokenize(&ids)?.trim().to_owned(),
         json!(measurements),
     ))
+}
+
+fn independent_windows(pcm: &[f32], limit: u64, prefer_pause: bool) -> Vec<Window> {
+    let total = pcm.len() as u64;
+    if prefer_pause {
+        let mut cursor = grain_tdt::NativeWindowCursor::with_max_samples(limit).unwrap();
+        let mut work = Vec::new();
+        while let Some(input) = cursor.next_stable(total) {
+            let window = cursor
+                .prefer_pause(
+                    input,
+                    &pcm[input.read_start as usize..input.read_end as usize],
+                )
+                .unwrap();
+            assert!(cursor.commit(window));
+            work.push(window);
+        }
+        if let Some(window) = cursor.tail(total) {
+            work.push(window);
+        }
+        return work;
+    }
+    let mut work = Vec::new();
+    let stride = limit - grain_tdt::OVERLAP_SAMPLES;
+    let mut start = 0;
+    while start < total {
+        let end = (start + limit).min(total);
+        work.push(Window {
+            chunk_start: start,
+            read_start: start,
+            read_end: end,
+            is_last: end == total,
+        });
+        if end == total {
+            break;
+        }
+        start += stride;
+    }
+    work
 }
 
 fn words(text: &str) -> Vec<String> {
@@ -171,12 +219,49 @@ fn main() -> Result<()> {
     if right_context_ms > 4_000 {
         return Err("diagnostic right context must be between 0 and 4000 ms".into());
     }
+    let independent_ms: u64 = std::env::var("FLOW_AUDIT_INDEPENDENT_MS")
+        .unwrap_or_else(|_| (grain_tdt::NATIVE_MAX_SAMPLES * 1_000 / SAMPLE_RATE).to_string())
+        .parse()?;
+    if !(15_040..=30_000).contains(&independent_ms) || !independent_ms.is_multiple_of(80) {
+        return Err(
+            "independent window must be 15040..30000 ms and frame-aligned (e.g. 24960)".into(),
+        );
+    }
+    let prefer_pause = std::env::var("FLOW_AUDIT_PREFER_PAUSE").as_deref() == Ok("1");
+    let resource_mode = std::env::var("FLOW_AUDIT_RESOURCE_MODE").ok();
+    if resource_mode
+        .as_deref()
+        .is_some_and(|mode| !matches!(mode, "legacy" | "candidate" | "batch"))
+    {
+        return Err("resource mode must be legacy, candidate or batch".into());
+    }
+    let repeats: usize = std::env::var("FLOW_AUDIT_REPEATS")
+        .unwrap_or_else(|_| "1".to_owned())
+        .parse()?;
+    if !(1..=3).contains(&repeats) || (repeats > 1 && resource_mode.is_none()) {
+        return Err("repeats must be 1..3 and require resource mode for repeated passes".into());
+    }
+    let threads: i32 = std::env::var("FLOW_AUDIT_THREADS")
+        .unwrap_or_else(|_| "4".to_owned())
+        .parse()?;
+    if !(1..=8).contains(&threads) {
+        return Err("thread count must be 1..8".into());
+    }
+    let backend = match std::env::var("FLOW_AUDIT_BACKEND")
+        .as_deref()
+        .unwrap_or("cpu")
+    {
+        "cpu" => Backend::Cpu,
+        "vulkan" => Backend::Vulkan,
+        "auto" => Backend::Auto,
+        _ => return Err("backend must be cpu, vulkan or auto".into()),
+    };
     transcribe_cpp::disable_logging();
     transcribe_cpp::init_backends(&args[1])?;
     let model = Model::load_with(
         &args[0],
         &ModelOptions {
-            backend: Backend::Cpu,
+            backend,
             ..Default::default()
         },
     )?;
@@ -187,20 +272,68 @@ fn main() -> Result<()> {
         return Err("model does not support Grain's reviewed TDT window extension".into());
     }
     let mut session = model.session_with(&SessionOptions {
-        n_threads: 4,
+        n_threads: threads,
         ..Default::default()
     })?;
     let mut rows = Vec::new();
-    for path in &args[3..] {
+    for path in args[3..].iter().cycle().take((args.len() - 3) * repeats) {
+        let pass = rows.len() / (args.len() - 3) + 1;
         let audio = load_audio(Path::new(path))?;
         if audio.len() < SAMPLE_RATE as usize {
             return Err("Flow requires at least one second of audio".into());
+        }
+        if let Some(mode) = &resource_mode {
+            let candidate = mode == "candidate";
+            let start = Instant::now();
+            if mode == "batch" {
+                let result = session.run(&audio, &options())?;
+                println!("batch: {:.3}s compute", start.elapsed().as_secs_f64());
+                rows.push(json!({"file": Path::new(path).file_name().unwrap_or_default().to_string_lossy(),
+                    "samples": audio.len(), "text": result.text, "pass": pass, "compute_seconds": start.elapsed().as_secs_f64()}));
+                std::fs::write(
+                    &args[2],
+                    serde_json::to_vec_pretty(&json!({
+                        "resource_mode": mode, "recordings": rows,
+                        "backend": model.backend(), "threads": threads,
+                        "note": "Ordinary complete-audio Batch only."
+                    }))?,
+                )?;
+                continue;
+            }
+            let (text, work) = flow(
+                &mut session,
+                &audio,
+                candidate,
+                0,
+                candidate.then_some(independent_ms * SAMPLE_RATE / 1_000),
+                candidate && prefer_pause,
+            )?;
+            println!(
+                "{}: {} windows, {:.3}s compute",
+                mode,
+                work.as_array().unwrap().len(),
+                start.elapsed().as_secs_f64()
+            );
+            rows.push(
+                json!({"file": Path::new(path).file_name().unwrap_or_default().to_string_lossy(),
+                "samples": audio.len(), "text": text, "pass": pass, "windows": work}),
+            );
+            std::fs::write(
+                &args[2],
+                serde_json::to_vec_pretty(&json!({
+                    "resource_mode": mode, "recordings": rows,
+                    "backend": model.backend(), "threads": threads,
+                    "independent_window_ms": independent_ms, "independent_prefer_pause": prefer_pause,
+                    "note": "One pipeline only; no Batch inference or accuracy comparison."
+                }))?,
+            )?;
+            continue;
         }
         let start = Instant::now();
         let batch = session.run(&audio, &options())?;
         let batch_seconds = start.elapsed().as_secs_f64();
         let start = Instant::now();
-        let (current, current_windows) = flow(&mut session, &audio, false, 0)?;
+        let (current, current_windows) = flow(&mut session, &audio, false, 0, None, false)?;
         let flow_seconds = start.elapsed().as_secs_f64();
         let start = Instant::now();
         let (native, native_windows) = flow(
@@ -208,11 +341,24 @@ fn main() -> Result<()> {
             &audio,
             true,
             (right_context_ms * SAMPLE_RATE / 1_000) as usize,
+            None,
+            false,
         )?;
         let native_seconds = start.elapsed().as_secs_f64();
+        let start = Instant::now();
+        let (independent, independent_work) = flow(
+            &mut session,
+            &audio,
+            true,
+            0,
+            Some(independent_ms * SAMPLE_RATE / 1_000),
+            prefer_pause,
+        )?;
+        let independent_seconds = start.elapsed().as_secs_f64();
         let baseline = words(&batch.text);
         let current_edits = word_edits(&baseline, &words(&current));
         let native_edits = word_edits(&baseline, &words(&native));
+        let independent_edits = word_edits(&baseline, &words(&independent));
         let mut row = json!({
             "file": Path::new(path).file_name().unwrap_or_default().to_string_lossy(),
             "samples": audio.len(), "batch": batch.text, "flow": current,
@@ -226,6 +372,9 @@ fn main() -> Result<()> {
             "batch_words": baseline.len(), "flow_word_edits_to_batch": current_edits,
             "native_windows_word_edits_to_batch": native_edits,
             "flow_windows": current_windows, "native_windows": native_windows,
+            "independent_native": independent, "independent_windows": independent_work,
+            "independent_word_edits_to_batch": independent_edits,
+            "independent_total_compute_seconds": independent_seconds,
         });
         if let Some(reference) = &reference {
             let expected = words(reference);
@@ -239,14 +388,16 @@ fn main() -> Result<()> {
                 json!(word_edits(&expected, &words(&current)) as f64 / expected.len() as f64);
             row["native_windows_word_error_rate"] =
                 json!(word_edits(&expected, &words(&native)) as f64 / expected.len() as f64);
+            row["independent_word_error_rate"] =
+                json!(word_edits(&expected, &words(&independent)) as f64 / expected.len() as f64);
         }
         println!(
-            "{}: {:.2}s, {} windows, Flow/Batch word edits={}, diagnostic native windows/Batch={}",
+            "{}: {:.2}s, {} windows, Flow/Batch word edits={}, diagnostic native windows/Batch={}, independent/Batch={}",
             row["file"].as_str().unwrap_or_default(),
             audio.len() as f64 / SAMPLE_RATE as f64,
             row["flow_windows"].as_array().unwrap().len(),
             current_edits,
-            native_edits
+            native_edits, independent_edits
         );
         rows.push(row);
         // Keep progress if a later native decode fails.
@@ -254,9 +405,12 @@ fn main() -> Result<()> {
             &args[2],
             serde_json::to_vec_pretty(&json!({
                 "model_variant": model.variant(), "backend": model.backend(),
+                "threads": threads,
                 "native_version": transcribe_cpp::version(), "recordings": rows,
                 "diagnostic_right_context_ms": right_context_ms,
-                "note": "Identical WAV samples; no capture, VAD, normalization, dictionary or LLM pass. Batch disagreement is not WER. Timings measure total compute, not stop latency. Native-window output is a diagnostic, not a production implementation.",
+                "independent_window_ms": independent_ms,
+                "independent_prefer_pause": prefer_pause,
+                "note": "Identical WAV samples; no capture, VAD, normalization, dictionary or LLM pass. Batch disagreement is not WER. Timings measure total compute, not stop latency. Historical-window filtering is diagnostic; independent quiet windows share production v2 policy.",
             }))?,
         )?;
     }

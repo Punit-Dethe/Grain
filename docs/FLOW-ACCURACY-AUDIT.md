@@ -1,8 +1,8 @@
 # Flow accuracy audit — 2026-09-26
 
-Status: investigation and offline experiments complete. Production capture, decoding and window policy are unchanged. This is an evidence-based implementation plan, not an accuracy-parity claim.
+Status: historical investigation and initial offline experiments complete. The follow-up [implementation plan](FLOW-ACCURACY-IMPLEMENTATION.md) and [accuracy/speed measurements](FLOW-ACCURACY-SPEED.md) supersede this report's unchanged-production status. This is not an accuracy-parity claim.
 
-Follow-up: [Parakeet v2 research round two](PARAKEET-V2-FLOW-RESEARCH.md) identifies NVIDIA's v2-specific stateful buffered inference results and adds that candidate alongside the pause-aware baseline. Its revised experiment plan supersedes the experiment ordering below; no production change has been selected.
+Follow-up: [Parakeet v2 research round two](PARAKEET-V2-FLOW-RESEARCH.md) identifies NVIDIA's v2-specific stateful buffered inference results and adds that candidate alongside the pause-aware baseline. The implementation and measurements linked above record the subsequent selection.
 
 ## Findings
 

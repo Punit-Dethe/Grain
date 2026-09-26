@@ -3,8 +3,9 @@
 Compares the exact same local WAV through:
 
 1. Ordinary transcribe.cpp Batch inference.
-2. Current Flow inference using production `grain-tdt` window geometry and token merging.
+2. Historical Fluid-style Flow inference, retained as the regression baseline.
 3. A diagnostic using ordinary inference on the same windows, with optional extra right context. Context tokens are filtered **after** decoding; this is not a production bounded-decoder implementation.
+4. Independent ordinary native inference with a frame-aligned ceiling and optional quiet cuts. This shares the production v2 cursor and token merger; it does not filter context tokens.
 
 This standalone tool is excluded from application builds. It loads one model, runs sequentially, and releases it on exit. Batch evaluation needs the entire WAV in memory; use bounded evaluation clips rather than hour-long recordings. No microphone, Tauri, LLM, dictionary, VAD or Grain gain normalization is involved. PCM16 history recordings have already been quantized; they do not recreate the original Float32 journal bit-for-bit.
 
@@ -39,6 +40,41 @@ $env:FLOW_AUDIT_REFERENCE = 'C:\path\intended-transcript.txt'
 # Run the same command.
 Remove-Item Env:FLOW_AUDIT_REFERENCE
 ```
+
+Window sweep, 15040..30000 milliseconds in 80 ms steps (default production ceiling, 24000):
+
+```powershell
+$env:FLOW_AUDIT_INDEPENDENT_MS = '24000'
+$env:FLOW_AUDIT_PREFER_PAUSE = '1' # 720 ms quiet in the last 3.04 s
+# Run with a separate report per ceiling.
+Remove-Item Env:FLOW_AUDIT_INDEPENDENT_MS, Env:FLOW_AUDIT_PREFER_PAUSE
+```
+
+For isolated resource measurements, set `FLOW_AUDIT_RESOURCE_MODE` to `legacy`,
+`candidate` or `batch`. This runs only that pipeline; compare transcripts to a
+separately measured Batch report. Run each mode in its own process for meaningful
+peak-memory comparisons. `FLOW_AUDIT_THREADS` accepts 1..8 (default 4).
+`FLOW_AUDIT_BACKEND` accepts `cpu` (default), `vulkan` or `auto`; reports record the
+actual loaded backend. Explicit Vulkan errors if unavailable. CPU with two
+threads on this desktop is a constrained-thread check, not a laptop benchmark.
+`FLOW_AUDIT_REPEATS=2` or `3` repeats the supplied fixtures in the same process
+(resource mode only); each row records its `pass`. This separates first-use
+shader/shape work from warm decodes without loading another model. Always pair
+GPU candidates with Batch on the same GPU backend.
+
+The app adapter also has an opt-in real-model journal regression test. Supply
+`GRAIN_FLOW_TEST_MODEL`, `GRAIN_FLOW_TEST_NATIVE_DIR`, and
+`GRAIN_FLOW_TEST_CASES` (path to a local JSON array of `{ "path": "WAV path",
+"expected": "offline candidate text" }`). It exercises incremental appends and
+fresh-accumulator replay using the actual production adapter and Float32 journal:
+
+```powershell
+cargo test --manifest-path src-tauri/Cargo.toml --lib real_model_journal_partition_and_fresh_replay_match_offline_policy -- --ignored
+```
+
+Use PCM16 mono 16 kHz fixtures for this test. No private fixtures or transcripts
+are stored in the repository. On Windows, the lib-test executable may need the
+Common Controls v6 manifest described in `docs/FLOW-TDT-REWRITE.md`.
 
 Without ground truth, edit counts measure **disagreement with Batch**, not word error rate. The word comparison ignores case and punctuation at word edges; it does not implement language-specific tokenization. Exact transcripts remain available for punctuation, casing and multilingual inspection. Timings measure total compute, not live recording stop latency; CPU warmup and execution order affect comparisons.
 
