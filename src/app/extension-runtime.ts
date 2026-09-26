@@ -10,8 +10,7 @@
 // The supervisor injects four consts ABOVE this shim before running it:
 //   const __GRAIN_EXT_ID__   = "com.example.ext";
 //   const __GRAIN_TOKEN__    = "<per-worker secret>";
-//   const __GRAIN_CAPS__     = ["storage", "llm", ...];
-//   const __GRAIN_ACTIVATION__ = { "TranscriptionComplete": {...} } | null;
+//   const __GRAIN_CAPS__     = ["storage", "auth", "net:api.example.com"];
 //
 // Authored in plain ES2017 with no template literals or `${}` so it embeds
 // cleanly in the backtick string below.
@@ -20,14 +19,12 @@ export const GRAIN_RUNTIME_JS = `(function () {
   var EXT_ID = __GRAIN_EXT_ID__;
   var TOKEN = __GRAIN_TOKEN__;
   var CAPS = __GRAIN_CAPS__;
-  var ACTIVATION = __GRAIN_ACTIVATION__;
 
   var ws = new WebSocket("ws://127.0.0.1:7124");
   var reqSeq = 0;
   var pending = new Map();     // request id -> { resolve, reject }
-  var handlers = {};           // "transform" | "sessionResult" -> fn
-  var sessionAbort = null;     // AbortController for the one active slow stage
-  var onEventFn = null;
+  var handlers = Object.create(null); // exact tool calls only
+  var closed = false;
   var outbox = [];             // frames queued until the socket opens
   var open = false;
 
@@ -50,17 +47,23 @@ export const GRAIN_RUNTIME_JS = `(function () {
     for (var i = 0; i < outbox.length; i++) ws.send(outbox[i]);
     outbox.length = 0;
   };
-  ws.onclose = function () { open = false; fatal("socket closed"); };
+  ws.onclose = function () {
+    open = false;
+    closed = true;
+    outbox.length = 0;
+    pending.forEach(function (p) { p.reject(new Error("tool connection closed")); });
+    pending.clear();
+    fatal("socket closed");
+  };
   ws.onerror = function () { fatal("socket error"); };
 
   ws.onmessage = function (e) {
     var msg;
     try { msg = JSON.parse(e.data); } catch (err) { return; }
-    if (typeof msg === "string") { deliverEvent(msg); return; }  // unit-variant event
+    if (!msg || typeof msg !== "object") return;
     if (msg.res) { resolveReq(msg.res); return; }
     if (msg.call) { onHostCall(msg.call); return; }
     if (msg.grain_api !== undefined) { return; }                 // welcome
-    deliverEvent(msg);                                           // struct-variant event
   };
 
   function resolveReq(res) {
@@ -88,6 +91,7 @@ export const GRAIN_RUNTIME_JS = `(function () {
   }
 
   function req(method, params) {
+    if (closed) return Promise.reject(new Error("tool connection closed"));
     return new Promise(function (resolve, reject) {
       var id = ++reqSeq;
       pending.set(id, { resolve: resolve, reject: reject });
@@ -109,12 +113,7 @@ export const GRAIN_RUNTIME_JS = `(function () {
       } } });
       return;
     }
-    if (call.method === "session.cancel") {
-      if (sessionAbort) sessionAbort.abort();
-      if (call.call_id) send({ callres: { call_id: call.call_id, ok: null } });
-      return;
-    }
-    var handler = handlers[call.method];
+    var handler = call.method === "action" ? handlers.action : null;
     if (!handler) {
       send({ callres: { call_id: call.call_id, err: "no handler for " + call.method } });
       return;
@@ -129,22 +128,8 @@ export const GRAIN_RUNTIME_JS = `(function () {
       });
   }
 
-  function deliverEvent(ev) {
-    if (typeof onEventFn === "function") {
-      try { onEventFn(ev); } catch (e) { fatal(e); }
-    }
-  }
-
-  // A cold worker woken by a shortcut press carries the press as its
-  // activation. It is NOT a DaemonEvent, so onEvent must not replay it.
-  function activationShortcut() {
-    var s = ACTIVATION && ACTIVATION.Shortcut;
-    return s && s.id ? String(s.id) : null;
-  }
-
   var grain = {
-    activation: ACTIVATION,
-    caps: CAPS,
+    caps: Object.freeze(CAPS.slice()),
     extId: EXT_ID,
     log: {
       info: function (m) { return req("log.info", { msg: String(m) }); },
@@ -154,56 +139,6 @@ export const GRAIN_RUNTIME_JS = `(function () {
       get: function (k) { return req("storage.get", { key: String(k) }); },
       set: function (k, v) { return req("storage.set", { key: String(k), value: v }); },
       "delete": function (k) { return req("storage.delete", { key: String(k) }); }
-    },
-    // A document store: one file per key (SPEC 3.4), for collections a KV blob
-    // would be the wrong shape for — notes, records, anything that grows.
-    doc: {
-      get: function (k) { return req("doc.get", { key: String(k) }); },
-      put: function (k, v) { return req("doc.put", { key: String(k), value: v }); },
-      "delete": function (k) { return req("doc.delete", { key: String(k) }); },
-      list: function () { return req("doc.list", {}).then(function (r) { return r && r.keys != null ? r.keys : r; }); }
-    },
-    // Read the user's current selection (needs the capture:selection grant).
-    // Resolves to the selected text, or null when nothing is selected.
-    captureSelection: function () {
-      return req("capture.selection", {}).then(function (r) { return r && r.text != null ? r.text : null; });
-    },
-    // The foreground app right now (needs capture:app): { name, exe, exePath,
-    // urlHost } or null. The primitive for context-aware extensions.
-    focusedApp: function () {
-      return req("capture.app", {});
-    },
-    // The foreground window's visible text, from its accessibility tree — never
-    // a screenshot (needs the capture:screen-text grant). Resolves to the text,
-    // or null when the surface exposes nothing readable.
-    screenText: function () {
-      return req("capture.screenText", {}).then(function (r) { return r && r.text != null ? r.text : null; });
-    },
-    // A PNG of the foreground window (needs the capture:screen-image grant) as
-    // { mime, width, height, base64 }, or null. Pass it straight to llm() to ask
-    // a model about it. Grain itself never captures one.
-    screenImage: function () {
-      return req("capture.screenImage", {});
-    },
-    settings: {
-      get: function (k) { return req("settings.get", { key: String(k) }); },
-      set: function (k, v) { return req("settings.set", { key: String(k), value: v }); }
-    },
-    llm: {
-      // The second argument is optional and takes what screenImage() returns.
-      // A model that cannot read images is handled by the host: the same call
-      // is retried without it, so this still resolves to an answer rather than
-      // throwing. (No backticks in here — this whole body is a template
-      // literal, see the note at the top of the file.)
-      complete: function (prompt, image) {
-        var params = { prompt: String(prompt) };
-        if (image && image.base64) {
-          params.image = { base64: String(image.base64), mime: String(image.mime || "image/png") };
-        }
-        return req("llm.complete", params).then(function (r) {
-          return r && r.text != null ? r.text : r;
-        });
-      }
     },
     // Network access is always host-proxied and requires an exact net:<host>
     // grant. The worker itself never receives a browser fetch capability.
@@ -228,91 +163,6 @@ export const GRAIN_RUNTIME_JS = `(function () {
       connect: function () { return req("auth.connect", {}); },
       disconnect: function () { return req("auth.disconnect", {}); }
     },
-    // On-device embeddings (the shared BGE model). Resolves to an
-    // array of vectors, one per input text.
-    embed: function (texts) {
-      return req("embed", { texts: texts }).then(function (r) {
-        return r && r.vectors != null ? r.vectors : r;
-      });
-    },
-    // Rank the extension's OWN commands against a request (Extensions V1, sec 4).
-    // Three composable pieces, callable in any order and none required: lexical
-    // is a fast name/verb match, semantic understands paraphrase (loads the
-    // on-device model on demand, no capability needed), decide turns a ranking
-    // into pick / ask / decline. These are conveniences over the same machinery
-    // Grain uses to rank extensions; an extension may skip them entirely and
-    // call llm() with its own tool schema instead.
-    match: {
-      // candidates: [{ id, phrases: [string] }] -> [{ id, score }] best-first.
-      lexical: function (text, candidates) {
-        return req("match.lexical", { text: String(text), candidates: candidates || [] }).then(function (r) {
-          return r && r.matches != null ? r.matches : r;
-        });
-      },
-      // candidates: [{ id, examples: [string] }] -> [{ id, score, margin }].
-      semantic: function (text, candidates) {
-        return req("match.semantic", { text: String(text), candidates: candidates || [] }).then(function (r) {
-          return r && r.matches != null ? r.matches : r;
-        });
-      },
-      // candidates: [{ id, score }], policy: { minConfidence, margin } ->
-      // { pick } | { ambiguous } | { none }.
-      decide: function (candidates, policy) {
-        return req("match.decide", { candidates: candidates || [], policy: policy || {} });
-      }
-    },
-    session: {
-      start: function (options) {
-        return req("session.start", { mode: String(options && options.mode || "") });
-      }
-    },
-    // Launch side effects (SPEC 1.3). The host enforces safety: open.url accepts
-    // only http/https/mailto/tel; open.app launches ONLY a path the user picked
-    // via open.pickApp (which returns the chosen path and records approval).
-    open: {
-      url: function (u) { return req("open.url", { url: String(u) }); },
-      app: function (p) { return req("open.app", { path: String(p) }); },
-      pickApp: function () {
-        return req("open.pickApp", {}).then(function (r) { return r && r.path != null ? r.path : null; });
-      }
-    },
-    // A transform returns the rewritten text (a string); an empty string
-    // suppresses the paste (SPEC §3.3).
-    onTransform: function (fn) { handlers.transform = function (p) { return fn(p.text); }; },
-    onSessionStage: function (fn) {
-      handlers.sessionStage = function (p) {
-        var controller = new AbortController();
-        sessionAbort = controller;
-        return Promise.resolve(fn(p.text, { mode: String(p.mode || ""), signal: controller.signal }))
-          .then(function (out) {
-            if (sessionAbort === controller) sessionAbort = null;
-            return out;
-          }, function (err) {
-            if (sessionAbort === controller) sessionAbort = null;
-            throw err;
-          });
-      };
-    },
-    onSessionResult: function (fn) {
-      grain.onSessionStage(function (text) { return fn(text); });
-    },
-    // The user accepted this extension in Extension Mode (Extensions V1, sec 3),
-    // and the WHOLE request is handed over — the full transcript, verbatim, not
-    // extracted parameters. The extension interprets the request (reach for
-    // grain.match.* or call llm() with its own tool schema), but Grain owns
-    // every rendered result.
-    //
-    // Three shapes may be returned:
-    //   undefined / { message }   it was handled ({ message } is a short result)
-    //   { decline }               wrong owner; reopen the chooser without it
-    //   { error }                 right owner, but the request failed
-    onRequest: function (fn) {
-      handlers.request = function (p) {
-        return Promise.resolve(fn(String((p && p.request) || ""))).then(function (out) {
-          return out == null ? {} : out;
-        });
-      };
-    },
     // [GRAIN] Extensions 2.0 (Amendment C): the extension declares its actions
     // here, one handler per declared action id. Grain's Agent chooses the EXACT
     // action and sends validated arguments — the extension never sees the
@@ -324,9 +174,15 @@ export const GRAIN_RUNTIME_JS = `(function () {
     //   { needsInteraction: <interaction> }
     //   grain.actions({ create_issue: async function (args) { return { title, body }; } })
     actions: function (map) {
+      // Copy own functions once; later prototype/map mutation cannot introduce
+      // a different callable under an approved tool identity.
+      var tools = Object.create(null);
+      Object.keys(map || {}).forEach(function (key) {
+        if (typeof map[key] === "function") tools[key] = map[key];
+      });
       handlers.action = function (p) {
         var name = p && p.action;
-        var fn = map && map[name];
+        var fn = tools[name];
         if (typeof fn !== "function") {
           return { error: { class: "not_found", message: "no such action: " + name } };
         }
@@ -345,33 +201,11 @@ export const GRAIN_RUNTIME_JS = `(function () {
             return { error: { class: "internal", message: (e && e.message) || String(e) } };
           });
       };
-    },
-    // A shortcut press is acknowledged on RECEIPT, not on completion: the
-    // handler runs detached so an extension that opens an LLM call from a
-    // hotkey is never mistaken for an unresponsive one.
-    onShortcut: function (fn) {
-      handlers.shortcut = function (p) {
-        Promise.resolve()
-          .then(function () { return fn(String(p && p.id)); })
-          .catch(function (e) {
-            grain.log.warn("shortcut handler failed: " + ((e && e.message) || e));
-          });
-        return null;
-      };
-      var woke = activationShortcut();
-      if (woke != null) {
-        Promise.resolve().then(function () { handlers.shortcut({ id: woke }); });
-      }
-    },
-    onEvent: function (fn) {
-      onEventFn = fn;
-      if (ACTIVATION != null && activationShortcut() == null) {
-        // Fire once for the event that woke this worker — the broadcast is
-        // already past, so its payload travels in the injected activation.
-        Promise.resolve().then(function () { deliverEvent(ACTIVATION); });
-      }
     }
   };
-  self.grain = grain;
+  Object.keys(grain).forEach(function (key) {
+    if (grain[key] && typeof grain[key] === "object") Object.freeze(grain[key]);
+  });
+  self.grain = Object.freeze(grain);
 })();
 `;

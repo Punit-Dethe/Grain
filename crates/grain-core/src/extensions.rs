@@ -605,6 +605,8 @@ pub struct SlotConflict {
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 struct RegistryFile {
+    #[serde(default)]
+    tool_only_migration_version: u32,
     /// Persistent refusal reasons. A restart or old grant must not reactivate
     /// an incompatible package; a validated replacement clears quarantine.
     #[serde(default)]
@@ -630,6 +632,28 @@ pub struct ExtensionsRegistry {
 }
 
 impl ExtensionsRegistry {
+    /// Checkpoint only after archival and settings persistence succeed. Validation
+    /// still runs on every startup; this version never bypasses the live profile.
+    pub fn finish_tool_only_migration(&self) -> Result<()> {
+        let mut state = self.state.write().unwrap();
+        if state.tool_only_migration_version == 1 {
+            return Ok(());
+        }
+        if state.tool_only_migration_version > 1 {
+            anyhow::bail!("unsupported extension migration version");
+        }
+        let mut completed = state.clone();
+        completed.tool_only_migration_version = 1;
+        let bytes = serde_json::to_vec_pretty(&completed)?;
+        atomic_write(&self.path, &bytes)?;
+        *state = completed;
+        Ok(())
+    }
+
+    pub fn tool_only_migration_version(&self) -> u32 {
+        self.state.read().unwrap().tool_only_migration_version
+    }
+
     pub fn quarantine_reason(&self, id: &str) -> Option<String> {
         self.state.read().unwrap().quarantined.get(id).cloned()
     }
@@ -1158,6 +1182,79 @@ mod tests {
         assert!(reg.set_enabled("com.x.old", true).is_err());
     }
 
+    #[test]
+    fn interrupted_binding_retirement_preserves_chords_and_checkpoints_after_commit() {
+        let dir = tmp();
+        let reg = ExtensionsRegistry::load(dir.path(), false).unwrap();
+        let mut settings = crate::settings::AppSettings::default();
+        let core_before = serde_json::to_value(&settings.bindings).unwrap();
+        let binding = crate::settings::ShortcutBinding {
+            id: "ext:com.example.old:open".into(),
+            name: "Open".into(),
+            description: "Edited".into(),
+            default_binding: "".into(),
+            current_binding: "Ctrl+Shift+J".into(),
+        };
+        settings.bindings.insert(binding.id.clone(), binding);
+        archive_retired_bindings(dir.path(), &settings).unwrap();
+        assert_eq!(reg.tool_only_migration_version(), 0);
+        archive_retired_bindings(dir.path(), &settings).unwrap(); // interrupted before settings commit
+        retire_extension_bindings(&mut settings);
+        assert_eq!(
+            serde_json::to_value(&settings.bindings).unwrap(),
+            core_before
+        );
+        reg.finish_tool_only_migration().unwrap();
+        reg.finish_tool_only_migration().unwrap();
+        drop(reg);
+        let reg = ExtensionsRegistry::load(dir.path(), true).unwrap();
+        assert_eq!(reg.tool_only_migration_version(), 1);
+        let archive: Vec<serde_json::Value> = serde_json::from_slice(
+            &fs::read(dir.path().join("retired-extension-bindings.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(archive.len(), 1);
+        assert_eq!(archive[0][1]["current_binding"], "Ctrl+Shift+J");
+    }
+
+    #[test]
+    fn a_failed_checkpoint_write_remains_retryable_in_the_same_process() {
+        let dir = tmp();
+        let reg = ExtensionsRegistry::load(dir.path(), false).unwrap();
+        let original = fs::read(&reg.path).unwrap();
+        fs::remove_file(&reg.path).unwrap();
+        fs::create_dir(&reg.path).unwrap(); // deterministic rename failure
+        assert!(reg.finish_tool_only_migration().is_err());
+        assert_eq!(reg.tool_only_migration_version(), 0);
+        fs::remove_dir(&reg.path).unwrap();
+        fs::write(&reg.path, original).unwrap();
+        reg.finish_tool_only_migration().unwrap();
+        assert_eq!(reg.tool_only_migration_version(), 1);
+    }
+
+    #[test]
+    fn a_corrupt_binding_archive_cannot_be_overwritten_or_marked_migrated() {
+        let dir = tmp();
+        let reg = ExtensionsRegistry::load(dir.path(), false).unwrap();
+        let mut settings = crate::settings::AppSettings::default();
+        let binding = crate::settings::ShortcutBinding {
+            id: "ext:com.example.old:open".into(),
+            name: "Open".into(),
+            description: "".into(),
+            default_binding: "".into(),
+            current_binding: "Ctrl+J".into(),
+        };
+        settings.bindings.insert(binding.id.clone(), binding);
+        let path = dir.path().join("retired-extension-bindings.json");
+        fs::write(&path, "preserve malformed archive").unwrap();
+        assert!(archive_retired_bindings(dir.path(), &settings).is_err());
+        assert_eq!(
+            fs::read_to_string(path).unwrap(),
+            "preserve malformed archive"
+        );
+        assert_eq!(reg.tool_only_migration_version(), 0);
+    }
+
     fn tmp() -> tempfile::TempDir {
         tempfile::tempdir().unwrap()
     }
@@ -1568,6 +1665,46 @@ pub fn archive_retired_prompts(
         anyhow::bail!("retired prompt archive exceeds 8 MiB");
     }
     atomic_write(&path, &bytes)
+}
+
+/// Preserve custom chords before detaching the extension binding namespace.
+/// Archives are inert and deduplicate exact key/value pairs on interrupted restart.
+pub fn archive_retired_bindings(
+    data_dir: &Path,
+    settings: &crate::settings::AppSettings,
+) -> Result<()> {
+    let retired: Vec<serde_json::Value> = settings
+        .bindings
+        .iter()
+        .filter(|(key, _)| key.starts_with("ext:"))
+        .map(|(key, binding)| serde_json::to_value((key, binding)))
+        .collect::<std::result::Result<_, _>>()?;
+    if retired.is_empty() {
+        return Ok(());
+    }
+    let path = data_dir.join("retired-extension-bindings.json");
+    let mut preserved: Vec<serde_json::Value> = if path.exists() {
+        if fs::metadata(&path)?.len() > 8 * 1024 * 1024 {
+            anyhow::bail!("retired binding archive exceeds 8 MiB");
+        }
+        serde_json::from_slice(&fs::read(&path)?)?
+    } else {
+        Vec::new()
+    };
+    for value in retired {
+        if !preserved.contains(&value) {
+            preserved.push(value);
+        }
+    }
+    let bytes = serde_json::to_vec_pretty(&preserved)?;
+    if bytes.len() > 8 * 1024 * 1024 {
+        anyhow::bail!("retired binding archive exceeds 8 MiB");
+    }
+    atomic_write(&path, &bytes)
+}
+
+pub fn retire_extension_bindings(settings: &mut crate::settings::AppSettings) {
+    settings.bindings.retain(|id, _| !id.starts_with("ext:"));
 }
 
 fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {

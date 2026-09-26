@@ -108,15 +108,6 @@ pub fn reset_live() {
     live_map().lock().unwrap().clear();
 }
 
-pub fn status_for(ext_id: &str) -> Vec<ShortcutStatus> {
-    status_map()
-        .lock()
-        .unwrap()
-        .get(ext_id)
-        .cloned()
-        .unwrap_or_default()
-}
-
 /// Reconcile every extension shortcut registration with the registry.
 ///
 /// Deferred onto the async runtime **always**, never run inline: registering a

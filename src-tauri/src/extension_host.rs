@@ -150,6 +150,14 @@ impl Workers {
         map.remove(ext_id)
     }
 
+    fn owns_token(&self, ext_id: &str, token: &str) -> bool {
+        self.map
+            .lock()
+            .unwrap()
+            .get(ext_id)
+            .is_some_and(|worker| worker.token == token)
+    }
+
     fn len(&self) -> usize {
         self.map.lock().unwrap().len()
     }
@@ -973,11 +981,13 @@ struct SpawnPayload {
 #[derive(Clone, Serialize)]
 struct KillPayload {
     ext_id: String,
+    token: String,
 }
 
 #[derive(Deserialize)]
 struct DiedPayload {
     ext_id: String,
+    token: String,
     #[serde(default)]
     reason: String,
     #[serde(default)]
@@ -1115,6 +1125,12 @@ pub fn start(app: AppHandle, _ctx: Arc<AppContext>) {
     // Supervisor → host: a worker crashed or reported a fatal error.
     app.listen("ext-host://died", move |ev| {
         if let Ok(p) = serde_json::from_str::<DiedPayload>(ev.payload()) {
+            if !HOST
+                .get()
+                .is_some_and(|host| host.workers.owns_token(&p.ext_id, &p.token))
+            {
+                return;
+            }
             let detail = HOST
                 .get()
                 .and_then(|host| host.workers.dev_source(&p.ext_id))
@@ -1122,7 +1138,7 @@ pub fn start(app: AppHandle, _ctx: Arc<AppContext>) {
                 .or_else(|| p.stack.clone())
                 .unwrap_or_else(|| p.reason.clone());
             log::error!("[ext:{}] error {detail}", p.ext_id);
-            kill_worker(&p.ext_id, "worker reported death");
+            kill_worker_inner(&p.ext_id, "worker reported death", Some(&p.token), false);
         }
     });
 
@@ -1338,6 +1354,9 @@ fn on_supervisor_ready() {
         (host.app.clone(), std::mem::take(&mut sup.queue))
     };
     for payload in queued {
+        if !host.workers.owns_token(&payload.ext_id, &payload.token) {
+            continue;
+        }
         let _ = app.emit_to(SUPERVISOR_LABEL, "ext-host://spawn", payload);
     }
 }
@@ -1363,21 +1382,6 @@ fn kill_worker_inner(ext_id: &str, reason: &str, token: Option<&str>, preserve_s
     if worker.kind == RuntimeKind::Companion {
         crate::extension_companion::stop(ext_id, reason);
     }
-    // A reload/disable may reap the worker while its session-owned slow stage
-    // is awaiting a result. Give the worker's AbortSignal one best-effort turn
-    // before closing the socket, then release the host-side waiter below.
-    if crate::extension_session::is_owned_by(ext_id) {
-        if let Some(conn) = &worker.conn {
-            let frame = HostFrame::Call(HostCall {
-                call_id: 0,
-                method: "session.cancel".to_string(),
-                params: json!({ "reason": reason }),
-            });
-            if let Ok(payload) = serde_json::to_string(&frame) {
-                let _ = conn.out_tx.send(Message::Text(payload.into()));
-            }
-        }
-    }
     crate::extension_view::fail_interactive_for_extension(&host.app, ext_id, reason);
     crate::events_server::revoke_token(&worker.token);
     let _ = host.app.emit_to(
@@ -1385,6 +1389,7 @@ fn kill_worker_inner(ext_id: &str, reason: &str, token: Option<&str>, preserve_s
         "ext-host://kill",
         KillPayload {
             ext_id: ext_id.to_string(),
+            token: worker.token.clone(),
         },
     );
     if let Some(conn) = &worker.conn {
@@ -2189,10 +2194,19 @@ pub fn reconcile_builtin_packs(app: &AppHandle) -> Result<(), String> {
     if let Some(ctx) = app.try_state::<Arc<AppContext>>() {
         grain_core::extensions::archive_retired_prompts(&ctx.data_dir, &ctx.settings())
             .map_err(|error| format!("preserve retired extension prompts: {error}"))?;
-        ctx.update_settings(grain_core::extensions::retire_extension_prompts)
-            .map_err(|error| error.to_string())?;
+        grain_core::extensions::archive_retired_bindings(&ctx.data_dir, &ctx.settings())
+            .map_err(|error| format!("preserve retired extension bindings: {error}"))?;
+        ctx.update_settings(|settings| {
+            grain_core::extensions::retire_extension_prompts(settings);
+            grain_core::extensions::retire_extension_bindings(settings);
+        })
+        .map_err(|error| error.to_string())?;
     }
     retire_builtin_packs(app)?;
+    if let Some(reg) = app.try_state::<Arc<grain_core::extensions::ExtensionsRegistry>>() {
+        reg.finish_tool_only_migration()
+            .map_err(|error| error.to_string())?;
+    }
     Ok(())
 }
 
@@ -2682,6 +2696,22 @@ mod tests {
     }
 
     #[test]
+    fn stale_failure_and_queued_spawn_cannot_own_a_replacement_worker() {
+        let workers = Workers::new();
+        let mut old = worker(0, false);
+        old.token = "old".into();
+        workers.insert("tools", old);
+        assert!(workers.owns_token("tools", "old"));
+        let mut replacement = worker(1, false);
+        replacement.token = "new".into();
+        workers.insert("tools", replacement);
+        assert!(!workers.owns_token("tools", "old"));
+        assert!(workers.owns_token("tools", "new"));
+        assert!(workers.remove_if_token("tools", "old").is_none());
+        assert_eq!(workers.len(), 1);
+    }
+
+    #[test]
     fn ten_worker_replacements_leave_one_live_worker() {
         let workers = Workers::new();
         for generation in 0..10 {
@@ -2717,6 +2747,7 @@ mod tests {
         let mapped = map_worker_error(
             &DevSource { root, entry },
             &DiedPayload {
+                token: "fixture".into(),
                 ext_id: "com.example.dev".into(),
                 reason: "Uncaught Error: mapped".into(),
                 stack: Some("Error: mapped\n    at blob:grain-worker:23:3".into()),

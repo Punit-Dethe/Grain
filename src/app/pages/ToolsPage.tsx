@@ -11,24 +11,10 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import {
-  commands,
-  type Snippet,
-  type StoreEntry,
-  type StoreView,
-} from "@/bindings";
+import { commands, type Snippet } from "@/bindings";
 import { AgentSection } from "@/components/settings/experimentations/AgentSection";
 import { ContextAwareSection } from "@/components/settings/experimentations/ContextAwareSection";
-import {
-  ExtensionAnchor,
-  type Anchor,
-  type ExtensionAnchorSnapshot,
-} from "@/components/settings/experimentations/ExtensionSettings";
 import { SettingsGroup } from "@/components/ui/SettingsGroup";
-import {
-  StudioExtensionCard,
-  StudioExtensionMoreCard,
-} from "@/extensions/StudioExtensionCard";
 import { useSettings } from "@/hooks/useSettings";
 import { MAX_CUSTOM_WORD_LENGTH, normalizeCustomWord } from "@/lib/customWords";
 import {
@@ -40,12 +26,7 @@ import studioFeatureAgentBg from "../overview/studio-feature-agent.webp";
 import studioFeatureBg from "../overview/studio-feature-bg.webp";
 import studioFeatureContextBg from "../overview/studio-feature-context.webp";
 import studioFeatureSnippetsBg from "../overview/studio-feature-snippets.webp";
-import {
-  matchToolRecommendations,
-  studioShelfMode,
-  unwrapResult,
-  type ToolSection,
-} from "../extensions/extensionRuntime";
+import { type ToolSection } from "../extensions/extensionRuntime";
 
 const STUDIO_FEATURE_IMAGES: Record<ToolSection, string> = {
   dictionary: studioFeatureBg,
@@ -83,206 +64,6 @@ const TOOL_COPY: Record<
     icon: Bot,
   },
 };
-
-function useToolCatalogue() {
-  const [entries, setEntries] = useState<StoreEntry[]>([]);
-  const [view, setView] = useState<StoreView | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [installing, setInstalling] = useState<string | null>(null);
-  const aliveRef = useRef(true);
-
-  const refresh = useCallback(async () => {
-    const nextView = await commands.storeBrowse().then(unwrapResult);
-    if (!aliveRef.current) return false;
-    setView(nextView);
-    setEntries(nextView.entries);
-    return true;
-  }, []);
-
-  useEffect(() => {
-    aliveRef.current = true;
-    void refresh()
-      .catch((reason) => aliveRef.current && setError(String(reason)))
-      .finally(() => aliveRef.current && setLoading(false));
-    return () => {
-      aliveRef.current = false;
-      void commands.storeClose();
-    };
-  }, [refresh]);
-
-  const install = useCallback(async (entry: StoreEntry) => {
-    setInstalling(entry.id);
-    setError(null);
-    try {
-      unwrapResult(await commands.storeInstall(entry.id, entry.version));
-      return aliveRef.current;
-    } catch (reason) {
-      if (aliveRef.current) setError(String(reason));
-      return false;
-    } finally {
-      if (aliveRef.current) setInstalling(null);
-    }
-  }, []);
-
-  return { entries, view, loading, error, installing, install };
-}
-
-function openToolStore(title: string) {
-  window.location.hash = `${hashForRoute({ page: "extensions", view: "store" })}?q=${encodeURIComponent(title)}`;
-}
-
-type ToolCatalogue = ReturnType<typeof useToolCatalogue>;
-
-function ToolRecommendations({
-  tool,
-  catalogue,
-  onInstalled,
-}: {
-  tool: ToolSection;
-  catalogue: ToolCatalogue;
-  onInstalled: () => void;
-}) {
-  const recommendations = useMemo(
-    () => matchToolRecommendations(catalogue.entries, tool, new Set(), 2),
-    [catalogue.entries, tool],
-  );
-  const title = TOOL_COPY[tool].title;
-  const storeSurface =
-    tool === "snippets"
-      ? "snippets.after"
-      : tool === "context"
-        ? "context.after"
-        : "agent.after";
-
-  if (!catalogue.loading && recommendations.length === 0) return null;
-
-  return (
-    <section
-      className="extension-recommendations"
-      data-recommendations={tool}
-      aria-busy={catalogue.loading || undefined}
-    >
-      <div className="recommendation-heading">
-        <div>
-          <h2>Enhance {title}</h2>
-          <p>
-            Add a focused capability without changing where this tool lives.
-          </p>
-        </div>
-      </div>
-
-      {catalogue.error && (
-        <div className="tool-inline-error">{catalogue.error}</div>
-      )}
-      {catalogue.view && catalogue.view.status !== "fresh" && (
-        <div className="tool-muted-state">
-          {catalogue.view.status === "needs-newer-client"
-            ? "These recommendations require a newer version of Grain."
-            : "Offline — recommendations use the last verified catalogue and installs are paused."}
-        </div>
-      )}
-      {catalogue.loading ? (
-        <div className="tool-muted-state" role="status">
-          Loading recommendations…
-        </div>
-      ) : (
-        <div
-          className="studio-extension-grid"
-          data-card-count={recommendations.length + 1}
-        >
-          {recommendations.map((entry) => (
-            <StudioExtensionCard
-              key={`${entry.id}@${entry.version}`}
-              name={entry.name}
-              description={entry.description}
-              meta={`${entry.author || "Community"} · ${entry.installs.toLocaleString()} installs`}
-              badge={
-                entry.trust === "core"
-                  ? "Built in"
-                  : entry.trust === "dev"
-                    ? "Development"
-                    : "Verified"
-              }
-              badgeTone={
-                entry.trust === "core"
-                  ? "core"
-                  : entry.trust === "dev"
-                    ? "dev"
-                    : "verified"
-              }
-              surface={storeSurface}
-              primaryLabel={
-                catalogue.installing === entry.id ? "Installing…" : "Install"
-              }
-              primaryDisabled={
-                catalogue.installing !== null || !catalogue.view?.can_install
-              }
-              onPrimary={() => {
-                void catalogue
-                  .install(entry)
-                  .then((installed) => installed && onInstalled());
-              }}
-            />
-          ))}
-          <StudioExtensionMoreCard
-            title="View more extensions"
-            description={`Explore everything made for ${title}.`}
-            surface={storeSurface}
-            detail={
-              recommendations.length === 0 ? "Browse the store" : undefined
-            }
-            onClick={() => openToolStore(title)}
-          />
-        </div>
-      )}
-    </section>
-  );
-}
-
-function StudioExtensionArea({
-  anchor,
-  tool,
-}: {
-  anchor: Anchor;
-  tool: ToolSection;
-}) {
-  const catalogue = useToolCatalogue();
-  const [snapshot, setSnapshot] = useState<ExtensionAnchorSnapshot | null>(
-    null,
-  );
-  const [refreshKey, setRefreshKey] = useState(0);
-  const handleSnapshot = useCallback(
-    (nextSnapshot: ExtensionAnchorSnapshot) => setSnapshot(nextSnapshot),
-    [],
-  );
-  const handleInstalled = useCallback(
-    () => setRefreshKey((value) => value + 1),
-    [],
-  );
-
-  return (
-    <>
-      <ExtensionAnchor
-        key={refreshKey}
-        anchor={anchor}
-        catalogueEntries={catalogue.entries}
-        onSnapshot={handleSnapshot}
-      />
-      {import.meta.env.DEV &&
-        snapshot &&
-        !snapshot.loading &&
-        !snapshot.error &&
-        studioShelfMode(snapshot.installedCount) === "recommendations" && (
-          <ToolRecommendations
-            tool={tool}
-            catalogue={catalogue}
-            onInstalled={handleInstalled}
-          />
-        )}
-    </>
-  );
-}
 
 type DictionaryDialogState =
   { mode: "add" } | { mode: "edit"; original: string };
@@ -891,7 +672,6 @@ function SnippetsTool() {
           />
         )}
       </section>
-      <StudioExtensionArea anchor="snippets.after" tool="snippets" />
     </>
   );
 }
@@ -907,7 +687,6 @@ function ContextTool() {
           <section className="context-awareness-workspace studio-core-workspace">
             <ContextAwareSection />
           </section>
-          <StudioExtensionArea anchor="context.after" tool="context" />
         </>
       )}
     </>
@@ -928,7 +707,6 @@ function AgentTool() {
               <AgentSection />
             </SettingsGroup>
           </section>
-          <StudioExtensionArea anchor="agent.after" tool="agent" />
         </>
       )}
     </>
