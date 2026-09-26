@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "generatedAt": "2026-09-26T15:43:26.368Z",
+  "generatedAt": "2026-09-26T16:12:29.114Z",
   "title": "Design System: Grain onboarding",
   "extensions": {
     "colorMeta": {
@@ -287,6 +287,10 @@
       "label": {
         "displayName": "Control label",
         "purpose": "Native field labels."
+      },
+      "preview": {
+        "displayName": "Illustrative transcript",
+        "purpose": "Primary mode-teaching surface; large readable text with source compact overrides."
       }
     },
     "shadows": [],
@@ -302,14 +306,19 @@
         "purpose": "Existing mode selector background change."
       },
       {
-        "name": "content-change",
-        "value": "180ms ease-out",
-        "purpose": "Existing mode-explainer opacity change."
-      },
-      {
         "name": "input-meter",
         "value": "120ms linear",
         "purpose": "Existing real microphone-level transform feedback."
+      },
+      {
+        "name": "preview-work",
+        "value": "200ms ease-out",
+        "purpose": "Finite user-triggered processing lane; manual stages and no transitions for reduced motion."
+      },
+      {
+        "name": "preview-capture",
+        "value": "180ms ease",
+        "purpose": "Capture marks change tone during the finite preview; never autoplay."
       }
     ],
     "breakpoints": [
@@ -386,10 +395,11 @@
   ],
   "narrative": {
     "northStar": "Grain's setup workbench",
-    "overview": "This record applies only to onboarding. It records the Operate-mode overhaul inside Grain's established visual identity; it does not establish a global visual world. A quiet journey rail frames one focused setup task. Existing Grain artwork and mark connect the setup to the main application.\n\nSource authority is `src/app/components/onboarding/`, shared `WindowChrome.tsx`, scoped `GrainApp.tsx` integration, and inherited `src/app/app.css` tokens. [PRODUCT.md](../../PRODUCT.md) supplies product constraints. The implemented source wins over the surface brief.",
+    "overview": "This record appliesonly to onboarding. It records the Operate-mode overhaul inside Grain's established visual identity; it does not establish a global visual world. A quiet journey rail frames one focused setup task. The Grain mark, inherited type, and surfaces connect setup to the main application. The rail has no artwork: user feedback favored less decoration and more breathing room.\n\nSource authority is `src/app/components/onboarding/`, shared `WindowChrome.tsx`, scoped `GrainApp.tsx` integration, and inherited `src/app/app.css` tokens. [PRODUCT.md](../../PRODUCT.md) supplies product constraints. The implemented source wins over the surface brief.",
     "keyCharacteristics": [
       "Warm paper and charcoal in light mode; existing Grain dark theme.",
-      "IBM Plex Sans, thin borders, rounded task panels, restrained scenic artwork.",
+      "IBM Plex Sans, thin borders, rounded task panels, and generous space between groups.",
+      "One replayable mode preview replaces numbered instructions and repeated explanations.",
       "Native window chrome, a scrollable stage, and an always-reachable footer."
     ],
     "rules": [
@@ -405,15 +415,16 @@
       }
     ],
     "dos": [
-      "**Do** inherit Grain's theme, font, artwork, icons, and native chrome.",
+      "**Do** inherit Grain's theme, font, mark, icons, and native chrome.",
       "**Do** preserve the scrollable stage, reachable footer, visible focus, and semantic labels.",
       "**Do** keep family selection independent and derive Try/Shortcuts availability from the shared draft.",
-      "**Do** use brief functional transitions (160–180ms); honor reduced motion by removing animation and transitions.",
+      "**Do** use brief functional transitions (160–200ms); honor reduced motion with manual preview stages and no animation or transitions.",
+      "**Do** keep normal-state copy concise and show diagnostic or recovery detail when needed.",
       "**Do** verify visuals with `bun run dev:onboarding` in the real Tauri app. This debug replay does not reset installed models or saved settings."
     ],
     "donts": [
       "**Don't** promote this rail/workbench composition into a global rule for other Grain surfaces.",
-      "**Don't** substitute simulated download, audio, transcription, or permission states for real APIs.",
+      "**Don't** substitute simulated states for real download, permission, microphone, or Try APIs; the learning preview is explicitly illustrative.",
       "**Don't** present the Flow practice check as the rolling-capture experience.",
       "**Don't** introduce external imagery, new runtime dependencies, autoplay decoration, or a tall fixed showcase.",
       "**Don't** use browser/computer automation, screenshot replicas, mock Tauri, or alternate visual render paths."

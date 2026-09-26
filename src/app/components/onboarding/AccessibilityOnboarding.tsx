@@ -647,7 +647,9 @@ const AccessibilityOnboarding: React.FC<AccessibilityOnboardingProps> = ({
               <div className="onboarding-mic-main">
                 <div className="onboarding-mic-copy">
                   <strong>{statusCopy.title}</strong>
-                  <span>{statusCopy.detail}</span>
+                  {testStatus !== "idle" && testStatus !== "success" && (
+                    <span>{statusCopy.detail}</span>
+                  )}
                 </div>
                 {hasLevelResult ? (
                   <div className="onboarding-level-result">
@@ -675,25 +677,13 @@ const AccessibilityOnboarding: React.FC<AccessibilityOnboardingProps> = ({
                     ))}
                   </div>
                 )}
-                <div className="onboarding-mic-result">
-                  {testStatus === "success" ? (
-                    <span className="onboarding-success-mark">
-                      <Check aria-hidden="true" />
-                    </span>
-                  ) : null}
-                  <span>
-                    {testStatus === "success"
-                      ? t("onboarding.setup.microphone.inputGood")
-                      : isTesting
-                        ? t("onboarding.setup.microphone.checkingInput", {
-                            count: secondsRemaining,
-                          })
-                        : testStatus === "too-quiet" ||
-                            testStatus === "too-loud"
-                          ? t("onboarding.setup.microphone.adjustAndRetry")
-                          : t("onboarding.setup.microphone.ready")}
-                  </span>
-                </div>
+                {isTesting && (
+                  <div className="onboarding-mic-result">
+                    {t("onboarding.setup.microphone.checkingInput", {
+                      count: secondsRemaining,
+                    })}
+                  </div>
+                )}
               </div>
             </div>
           )}

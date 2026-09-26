@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { ArrowRight, ChevronLeft, FileText, Radio, Waves } from "lucide-react";
 import { OnboardingLayout } from "./OnboardingLayout";
+import { ModePreview } from "./ModePreview";
 
 interface ModesOnboardingProps {
   onBack: () => void;
@@ -16,7 +17,7 @@ export default function ModesOnboarding({
 }: ModesOnboardingProps) {
   const { t } = useTranslation();
   const [mode, setMode] = useState<(typeof MODES)[number]>("flow");
-  const ModeIcon = MODE_ICONS[mode];
+
   return (
     <OnboardingLayout
       step={1}
@@ -45,7 +46,6 @@ export default function ModesOnboarding({
       <section className="onboarding-modes-step">
         <div className="onboarding-heading">
           <h1>{t("onboarding.setup.modes.title")}</h1>
-          <p>{t("onboarding.setup.modes.description")}</p>
         </div>
         <div
           className="onboarding-mode-tabs"
@@ -68,37 +68,9 @@ export default function ModesOnboarding({
             );
           })}
         </div>
-        <div className="onboarding-mode-explainer" key={mode}>
-          <div className="onboarding-mode-explainer-heading">
-            <ModeIcon aria-hidden="true" />
-            <div>
-              <h2>{t(`onboarding.setup.modes.${mode}.title`)}</h2>
-              <p>{t(`onboarding.setup.modes.${mode}.explanation`)}</p>
-            </div>
-          </div>
-          <ol className="onboarding-mode-sequence">
-            {[1, 2, 3].map((item) => (
-              <li key={item}>
-                <span aria-hidden="true">{item}</span>
-                <div>
-                  <strong>
-                    {t(`onboarding.setup.modes.${mode}.sequence${item}`)}
-                  </strong>
-                  <p>
-                    {t(`onboarding.setup.modes.${mode}.sequence${item}Detail`)}
-                  </p>
-                </div>
-              </li>
-            ))}
-          </ol>
-          <div className="onboarding-mode-example">
-            <span>{t("onboarding.setup.modes.exampleLabel")}</span>
-            <p>{t("onboarding.setup.modes.exampleText")}</p>
-            <small>{t(`onboarding.setup.modes.${mode}.exampleHint`)}</small>
-          </div>
-        </div>
-        <p className="onboarding-support-note">
-          {t("onboarding.setup.modes.modelNote")}
+        <ModePreview key={mode} mode={mode} />
+        <p className="onboarding-mode-caption">
+          {t(`onboarding.setup.modes.${mode}.takeaway`)}
         </p>
       </section>
     </OnboardingLayout>

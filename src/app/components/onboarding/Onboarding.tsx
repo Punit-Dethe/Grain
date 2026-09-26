@@ -434,9 +434,6 @@ export default function Onboarding({
             </button>
           </div>
         )}
-        <p className="onboarding-support-note">
-          {t("onboarding.setup.models.laterNote")}
-        </p>
       </section>
     </OnboardingLayout>
   );

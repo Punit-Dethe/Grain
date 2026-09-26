@@ -1,4 +1,4 @@
-/* First-run workbench: Grain's existing paper, type, artwork and native chrome. */
+/* First-run workbench: Grain's existing paper, type and native chrome. */
 .onboarding-shell {
   --onboarding-danger: #ff938a;
   height: 100%;
@@ -102,46 +102,12 @@
   background: var(--bg-3);
   border-color: transparent;
 }
-.onboarding-journey-art {
-  position: relative;
-  min-height: 100px;
-  flex: 1;
-  overflow: hidden;
-  border-radius: 14px;
-}
-.onboarding-journey-art img {
-  width: 100%;
-  height: 100%;
-  position: absolute;
-  inset: 0;
-  object-fit: cover;
-  object-position: 66% center;
-}
-.onboarding-journey-art::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(180deg, transparent 25%, rgba(12, 24, 28, 0.88));
-}
-.onboarding-journey-art p {
-  position: absolute;
-  z-index: 1;
-  bottom: 0;
-  left: 0;
-  margin: 0;
-  padding: 19px;
-  color: #fffdf7;
-  font-size: 22px;
-  line-height: 1.22;
-  font-weight: 580;
-  letter-spacing: -0.025em;
-  text-wrap: balance;
-}
 .onboarding-local-note {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin: 15px 0 0;
+  margin: auto 0 0;
+  padding-top: 24px;
   color: var(--text-3);
   font-size: 12px;
 }
@@ -176,7 +142,7 @@
   min-width: 0;
   min-height: 0;
   overflow: auto;
-  padding: 20px clamp(24px, 5vw, 64px) 30px;
+  padding: 30px clamp(24px, 5vw, 64px) 36px;
   overscroll-behavior: contain;
   scrollbar-width: thin;
   scrollbar-color: var(--text-4) transparent;
@@ -197,7 +163,7 @@
   min-width: 0;
 }
 .onboarding-heading {
-  margin-bottom: 27px;
+  margin-bottom: 32px;
 }
 .onboarding-heading h1 {
   margin: 0 0 10px;
@@ -355,10 +321,10 @@
 .onboarding-mic-panel {
   display: grid;
   grid-template-columns: 70px minmax(0, 1fr);
-  gap: 24px;
+  gap: 28px;
   align-items: center;
   margin-top: 22px;
-  padding: 24px;
+  padding: 30px;
   border: 1px solid var(--hairline);
   border-radius: 13px;
   background: var(--bg-1);
@@ -426,13 +392,6 @@
   margin-top: 10px;
   font-size: 12px;
   color: var(--text-2);
-}
-.onboarding-success-mark {
-  display: inline-flex;
-}
-.onboarding-success-mark svg {
-  width: 15px;
-  height: 15px;
 }
 .onboarding-level-result {
   margin-top: 20px;
@@ -507,13 +466,13 @@
   cursor: pointer;
 }
 
-/* Mode explanations: selectable, honest examples; no autoplay demonstration. */
+/* Finite illustrative previews; real microphone tests remain on the next step. */
 .onboarding-mode-tabs,
 .onboarding-test-tabs {
   display: flex;
   gap: 4px;
   padding: 4px;
-  margin-bottom: 18px;
+  margin-bottom: 24px;
   border-radius: 10px;
   background: var(--bg-1);
 }
@@ -548,102 +507,125 @@
   width: 17px;
   height: 17px;
 }
-.onboarding-mode-explainer {
-  border: 1px solid var(--hairline);
-  border-radius: 13px;
-  overflow: hidden;
-  animation: onboarding-content-change 180ms ease-out;
-}
-@keyframes onboarding-content-change {
-  from {
-    opacity: 0.78;
-  }
-  to {
-    opacity: 1;
-  }
-}
-.onboarding-mode-explainer-heading {
-  display: flex;
-  align-items: flex-start;
-  gap: 13px;
-  padding: 20px 22px 12px;
-}
-.onboarding-mode-explainer-heading > svg {
-  width: 23px;
-  height: 23px;
-  margin-top: 2px;
-  flex-shrink: 0;
-}
-.onboarding-mode-explainer h2 {
-  margin: 0 0 5px;
-  font-size: 19px;
-  font-weight: 580;
-  letter-spacing: -0.015em;
-}
-.onboarding-mode-explainer-heading p {
-  margin: 0;
-  color: var(--text-2);
-  font-size: 13px;
-}
-.onboarding-mode-sequence {
-  list-style: none;
-  margin: 0;
-  padding: 4px 22px 18px;
-  display: grid;
-  gap: 13px;
-}
-.onboarding-mode-sequence li {
-  display: flex;
-  align-items: flex-start;
-  gap: 12px;
-}
-.onboarding-mode-sequence li > span {
-  display: grid;
-  place-items: center;
-  flex-shrink: 0;
-  width: 23px;
-  height: 23px;
-  color: var(--text-2);
-  border-radius: 50%;
-  background: var(--bg-2);
-  font-size: 12px;
-}
-.onboarding-mode-sequence strong {
-  font-size: 13px;
-  font-weight: 550;
-}
-.onboarding-mode-sequence p {
-  color: var(--text-3);
-  font-size: 12px;
-  margin: 1px 0 0;
-}
-.onboarding-mode-example {
-  padding: 15px 22px;
-  border-top: 1px solid var(--hairline);
+.onboarding-mode-preview {
+  padding: 24px 28px;
+  border-radius: 14px;
   background: var(--bg-1);
 }
-.onboarding-mode-example > span {
+.onboarding-preview-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
   color: var(--text-3);
-  font-size: 12px;
+  font-size: 13px;
 }
-.onboarding-mode-example p {
-  margin: 6px 0;
-  font-size: 18px;
-  letter-spacing: -0.02em;
+.onboarding-shell .onboarding-preview-play {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 34px;
+  padding: 0 10px;
+  border-radius: 7px;
+  color: var(--text-1);
+  background: var(--color-paper);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
 }
-.onboarding-mode-example small {
+.onboarding-preview-play svg {
+  width: 14px;
+  height: 14px;
+}
+.onboarding-preview-play:hover:not(:disabled) {
+  background: var(--bg-3);
+}
+.onboarding-preview-audio {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  margin: 25px 0 28px;
+}
+.onboarding-preview-mic {
+  display: grid;
+  place-items: center;
+  width: 42px;
+  height: 42px;
+  flex-shrink: 0;
+  border: 1px solid var(--hairline);
+  border-radius: 50%;
+}
+.onboarding-preview-mic svg {
+  width: 20px;
+  height: 20px;
+}
+.onboarding-preview-lanes {
+  width: 100%;
+  min-width: 0;
+}
+.onboarding-preview-wave {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 36px;
+  gap: 4px;
+}
+.onboarding-preview-wave i {
+  flex: 1;
+  max-width: 8px;
+  min-width: 2px;
+  border-radius: 3px;
+  background: var(--hairline);
+  transition: background 180ms ease;
+}
+.onboarding-preview-wave i.captured {
+  background: var(--text-2);
+}
+.onboarding-preview-work {
+  height: 3px;
+  background: var(--hairline);
+  margin-top: 10px;
+  border-radius: 2px;
+  overflow: hidden;
+}
+.onboarding-preview-work i {
   display: block;
-  font-size: 12px;
-  color: var(--text-2);
+  width: 100%;
+  height: 100%;
+  background: var(--text-1);
+  transform-origin: left center;
+  transition: transform 200ms ease-out;
 }
-
+.onboarding-preview-transcript {
+  min-height: 76px;
+  max-width: 26ch;
+  margin: 0;
+  font-size: 26px;
+  line-height: 1.42;
+  letter-spacing: -0.025em;
+  text-wrap: balance;
+}
+.onboarding-preview-transcript > span {
+  color: var(--text-3);
+}
+.onboarding-preview-status {
+  margin: 18px 0 0;
+  color: var(--text-2);
+  font-size: 13px;
+}
+.onboarding-mode-caption {
+  margin: 20px 0 0;
+  color: var(--text-2);
+  font-size: 14px;
+  line-height: 1.5;
+}
 /* Model families: real independent checkboxes, generous targets and native pickers. */
 .onboarding-model-families {
   padding: 0;
   margin: 0;
   border: 0;
   display: grid;
-  gap: 12px;
+  gap: 20px;
   min-width: 0;
 }
 .onboarding-model-family {
@@ -652,7 +634,7 @@
   align-items: center;
   column-gap: 22px;
   min-width: 0;
-  padding: 18px 20px;
+  padding: 24px;
   border: 1px solid var(--hairline);
   border-radius: 13px;
   background: var(--color-paper);
@@ -718,7 +700,7 @@
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  margin-top: 17px;
+  margin-top: 24px;
   color: var(--text-2);
   font-size: 13px;
 }
@@ -787,9 +769,8 @@
 
 /* Real transcription test and shortcut editing. */
 .onboarding-transcription-test {
-  padding: 22px;
-  border: 1px solid var(--hairline);
-  border-radius: 13px;
+  padding: 28px;
+  border-radius: 14px;
   background: var(--bg-1);
   display: grid;
   grid-template-rows: auto minmax(110px, auto) auto;
@@ -884,26 +865,9 @@
   border-radius: 13px;
   overflow: hidden;
 }
-.onboarding-shortcut-editor-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 14px 18px;
-  background: var(--bg-1);
-  border-bottom: 1px solid var(--hairline);
-}
-.onboarding-shortcut-editor-head strong {
-  font-size: 14px;
-  font-weight: 550;
-}
-.onboarding-shortcut-editor-head > span {
-  font-size: 12px;
-  color: var(--text-3);
-}
 .onboarding-shortcut-list .setting-row {
-  padding: 15px 18px;
-  min-height: 78px;
+  padding: 20px 24px;
+  min-height: 88px;
   border-bottom: 1px solid var(--hairline);
 }
 .onboarding-shortcut-list .setting-row:last-child {
@@ -924,29 +888,6 @@
   text-align: center;
   padding: 7px 9px;
 }
-.onboarding-ready-note {
-  display: flex;
-  align-items: flex-start;
-  gap: 12px;
-  padding-top: 21px;
-  margin-top: 23px;
-  border-top: 1px solid var(--hairline);
-}
-.onboarding-ready-note > svg {
-  width: 21px;
-  height: 21px;
-  flex-shrink: 0;
-}
-.onboarding-ready-note strong {
-  font-size: 15px;
-  font-weight: 550;
-}
-.onboarding-ready-note p {
-  margin: 4px 0 0;
-  color: var(--text-2);
-  font-size: 13px;
-}
-
 @media (max-height: 720px) and (min-width: 861px) {
   .onboarding-journey {
     padding-top: 16px;
@@ -964,57 +905,37 @@
     top: 35px;
     height: 15px;
   }
-  .onboarding-journey-art p {
-    font-size: 20px;
-  }
   .onboarding-workbench {
     grid-template-rows: 42px minmax(0, 1fr) auto;
   }
   .onboarding-stage {
-    padding-top: 12px;
-    padding-bottom: 22px;
+    padding-top: 22px;
+    padding-bottom: 28px;
   }
   .onboarding-heading {
-    margin-bottom: 20px;
+    margin-bottom: 28px;
   }
   .onboarding-heading h1 {
     font-size: 29px;
   }
   .onboarding-model-family {
-    padding: 14px 17px;
-  }
-  .onboarding-model-family-label strong {
-    font-size: 16px;
+    padding: 20px;
   }
   .onboarding-model-choice {
     margin-top: 0;
   }
-  .onboarding-model-choice .onboarding-select {
-    min-height: 36px;
-    padding-block: 6px;
-  }
-  .onboarding-mode-explainer-heading {
-    padding-top: 15px;
-  }
-  .onboarding-mode-sequence {
-    gap: 9px;
-    padding-bottom: 13px;
-  }
-  .onboarding-mode-example {
-    padding-block: 12px;
-  }
   .onboarding-footer {
     padding-block: 14px;
   }
-}
-@media (min-width: 861px) {
-  .onboarding-mode-sequence {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 17px;
-    padding-top: 12px;
+  .onboarding-mode-preview {
+    padding: 22px 26px;
   }
-  .onboarding-mode-sequence li {
-    gap: 8px;
+  .onboarding-preview-audio {
+    margin-block: 20px 24px;
+  }
+  .onboarding-preview-transcript {
+    font-size: 24px;
+    min-height: 69px;
   }
 }
 @media (max-width: 1050px) and (min-width: 861px) {
@@ -1042,6 +963,30 @@
     grid-column: 1;
   }
 }
+@media (max-height: 660px) and (min-width: 861px) {
+  .onboarding-stage {
+    padding-block: 20px;
+  }
+  .onboarding-heading {
+    margin-bottom: 24px;
+  }
+  .onboarding-mode-tabs,
+  .onboarding-test-tabs {
+    margin-bottom: 20px;
+  }
+  .onboarding-mode-preview {
+    padding: 20px 26px;
+  }
+  .onboarding-preview-audio {
+    margin-block: 12px 18px;
+  }
+  .onboarding-preview-status {
+    margin-top: 16px;
+  }
+  .onboarding-mode-caption {
+    margin-top: 16px;
+  }
+}
 @media (max-width: 860px) {
   .onboarding-shell {
     grid-template-columns: minmax(0, 1fr);
@@ -1051,6 +996,9 @@
     grid-column: 1;
     grid-row: 2;
     padding: 12px 20px 16px;
+  }
+  .onboarding-local-note {
+    display: none;
   }
   .onboarding-brand {
     margin-bottom: 13px;
@@ -1081,17 +1029,13 @@
     height: 24px;
     font-size: 11px;
   }
-  .onboarding-journey-art,
-  .onboarding-local-note {
-    display: none;
-  }
   .onboarding-workbench {
     grid-column: 1;
     grid-row: 3;
     margin: 0 12px 12px;
   }
   .onboarding-stage {
-    padding: 12px 25px 24px;
+    padding: 24px 25px 30px;
   }
   .onboarding-workbench-header {
     padding-inline: 25px;
@@ -1194,20 +1138,15 @@
   .onboarding-mode-tabs svg {
     display: none;
   }
-  .onboarding-mode-explainer-heading,
-  .onboarding-mode-example {
-    padding-inline: 17px;
+  .onboarding-mode-preview {
+    padding: 20px;
   }
-  .onboarding-mode-sequence {
-    padding-inline: 17px;
+  .onboarding-preview-transcript {
+    font-size: 23px;
+    min-height: 100px;
   }
   .onboarding-test-controls {
     flex-wrap: wrap;
-  }
-  .onboarding-shortcut-editor-head {
-    align-items: flex-start;
-    flex-direction: column;
-    gap: 4px;
   }
   .onboarding-shortcut-list .setting-row {
     flex-wrap: wrap;

@@ -47,10 +47,6 @@ export default function ShortcutsOnboarding({
           <p>{t("onboarding.setup.shortcuts.description")}</p>
         </div>
         <div className="onboarding-shortcut-editor">
-          <div className="onboarding-shortcut-editor-head">
-            <strong>{t("onboarding.setup.shortcuts.shortcutLabel")}</strong>
-            <span>{t("onboarding.setup.shortcuts.editHint")}</span>
-          </div>
           <div className="onboarding-shortcut-list">
             {availableModes.map((mode) => (
               <ShortcutInput
@@ -65,13 +61,6 @@ export default function ShortcutsOnboarding({
         <p className="onboarding-support-note">
           {t("onboarding.setup.shortcuts.settingsNote")}
         </p>
-        <div className="onboarding-ready-note">
-          <Check aria-hidden="true" />
-          <span>
-            <strong>{t("onboarding.setup.shortcuts.readyTitle")}</strong>
-            <p>{t("onboarding.setup.shortcuts.readyDescription")}</p>
-          </span>
-        </div>
       </section>
     </OnboardingLayout>
   );

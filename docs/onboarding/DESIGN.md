@@ -35,6 +35,10 @@ typography:
   body:
     fontSize: "14px"
     lineHeight: 1.55
+  preview:
+    fontSize: "26px"
+    lineHeight: 1.42
+    letterSpacing: "-0.025em"
   label:
     fontSize: "13px"
     fontWeight: 500
@@ -81,17 +85,18 @@ components:
 
 **Creative North Star: "Grain's setup workbench"**
 
-This record applies only to onboarding. It records the Operate-mode overhaul inside Grain's established visual identity; it does not establish a global visual world. A quiet journey rail frames one focused setup task. Existing Grain artwork and mark connect the setup to the main application.
+This record applies only to onboarding. It records the Operate-mode overhaul inside Grain's established visual identity; it does not establish a global visual world. A quiet journey rail frames one focused setup task. The Grain mark, inherited type, and surfaces connect setup to the main application. The rail has no artwork: user feedback favored less decoration and more breathing room.
 
 Source authority is `src/app/components/onboarding/`, shared `WindowChrome.tsx`, scoped `GrainApp.tsx` integration, and inherited `src/app/app.css` tokens. [PRODUCT.md](../../PRODUCT.md) supplies product constraints. The implemented source wins over the surface brief.
 
 **Key Characteristics:**
 
 - Warm paper and charcoal in light mode; existing Grain dark theme.
-- IBM Plex Sans, thin borders, rounded task panels, restrained scenic artwork.
+- IBM Plex Sans, thin borders, rounded task panels, and generous space between groups.
+- One replayable mode preview replaces numbered instructions and repeated explanations.
 - Native window chrome, a scrollable stage, and an always-reachable footer.
 
-**Verification boundary:** this is a source-derived record. Production frontend and native builds, lint, formatting, type checks, and 110 unit tests passed in the implementation session. Rendered visual confirmation remains pending the user in the real Tauri application; no browser harness or automated screenshot was used.
+**Verification boundary:** this is a source-derived record. Production frontend build, lint, formatting, type checks, Rust check, settings parity, and 115 unit tests passed in the refinement session. The native build passed in the preceding implementation session. Rendered visual confirmation remains pending the user in the real Tauri application; no browser harness or automated screenshot was used.
 
 ## Colors
 
@@ -116,7 +121,8 @@ Paper holds the workbench; the first background tone groups related content. The
 ### Hierarchy
 
 - **Headline:** the frontmatter ramp for the current task; balanced wrapping, with compact overrides in Layout.
-- **Title:** model-family and microphone headings. Mode explanations use a slightly larger title (19px).
+- **Title:** model-family and microphone headings.
+- **Preview:** large transcript text (26px), reducing to (24px) on compact wide windows and (23px) on narrow windows.
 - **Body:** introductory copy, limited to 65 characters per line where the layout allows.
 - **Label:** field names and controls. Secondary status and supporting copy use (12–13px).
 
@@ -124,27 +130,29 @@ Paper holds the workbench; the first background tone groups related content. The
 
 The wide shell reserves a journey rail (254px) beside a shrink-safe workbench. The rail narrows to (224px) between (861–1050px). The workbench has a header, `minmax(0, 1fr)` stage, and footer. Its task width is bounded to (700px). Only the stage scrolls; its visible scrollbar and keyboard focus remain available.
 
-At widths of (860px) or less, the journey becomes horizontal progress and the artwork disappears. At (580px) or less, progress labels yield to numbered steps while the workbench header retains the current step count; model cards stack and controls wrap. On wide windows at heights of (720px) or less, spacing and header height compact, and the task heading becomes (29px). Narrow headings use (28px), then (27px).
+At widths of (860px) or less, the journey becomes horizontal progress. At (580px) or less, progress labels yield to numbered steps while the workbench header retains the current step count; model cards stack and controls wrap. On wide windows at heights of (720px) or less, spacing and header height compact, and the task heading becomes (29px). Narrow headings use (28px), then (27px). Preserve readable controls and space between groups; cut redundant text before compressing the layout.
 
 **The Reachable Actions Rule.** Preserve the native chrome and footer outside the content scroller. Let task content scroll instead of imposing a tall minimum stage. Native window sizing uses the actual monitor work area; CSS must remain shrink-safe when the available area is smaller.
 
 ## Elevation & Depth
 
-The onboarding shell uses tonal layering and fine borders rather than card shadows. The existing scenic artwork has a dark scrim for its caption; this local treatment is not a new gradient palette. Focus uses a secondary-text outline (2px) with an offset (3px), without glow or shadow.
+The onboarding shell uses tonal layering and fine borders rather than card shadows or decorative imagery. Focus uses a secondary-text outline (2px) with an offset (3px), without glow or shadow.
 
 ## Shapes
 
-Controls use the control radius; model, microphone, explanation, test, and shortcut panels share the panel radius. The workbench is gently rounded (16px), reducing to (12px) at the narrow breakpoint. Progress numbers and microphone controls are circular. Use the existing Lucide icons and Grain assets.
+Controls use the control radius; model, microphone, test, and shortcut panels share the panel radius. The illustrative preview uses (14px). The workbench is gently rounded (16px), reducing to (12px) at the narrow breakpoint. Progress numbers and microphone controls are circular. Use the existing Lucide icons and Grain mark.
 
 ## Components
 
 ### Buttons and fields
 
-Primary actions are compact, solid, and theme-relative, with minimum heights matching the recorded component tokens. Back and Skip are quiet text actions with tonal hover feedback. Disabled buttons remain visible at half opacity. Native selects retain associated labels, bounded width, and ellipsis. The component token heights describe normal minimum heights; compact model selectors reduce to (36px).
+Primary actions are compact, solid, and theme-relative, with minimum heights matching the recorded component tokens. Back and Skip are quiet text actions with tonal hover feedback. Disabled buttons remain visible at half opacity. Native selects retain associated labels, bounded width, and ellipsis.
 
 ### Journey and mode navigation
 
-The ordered five-step journey covers Microphone, Modes, Models, Try, and Shortcuts. The current item uses `aria-current="step"`; completed items show checks. Task headings receive focus once when each step appears. Mode selectors use pressed buttons in a labeled group. Learning examples are selectable and static, with a brief opacity change rather than autoplay.
+The ordered five-step journey covers Microphone, Modes, Models, Try, and Shortcuts. The current item uses `aria-current="step"`; completed items show checks. Task headings receive focus once when each step appears. Mode selectors use pressed buttons in a labeled group.
+
+Mode learning centers one clearly labeled illustrative preview. Play runs a finite recording/work lane and transcript sequence; Replay runs it again. Standard waits to process until capture stops. Flow processes earlier speech during capture; both batch modes show final text after stopping. Streaming reveals words during capture. One short takeaway supplies the model-family distinction. There are no autoplay loops or numerical latency claims. Reduced motion uses three manual Next stages with no timers or progressive word animation. Mode changes reset the preview; dispose all timers and the motion-preference listener. Announce status and the final phrase, not every word.
 
 ### Model-family cards
 
@@ -160,16 +168,17 @@ Practice status and live output report real Tauri commands/events. Cancel captur
 
 ### Do:
 
-- **Do** inherit Grain's theme, font, artwork, icons, and native chrome.
+- **Do** inherit Grain's theme, font, mark, icons, and native chrome.
 - **Do** preserve the scrollable stage, reachable footer, visible focus, and semantic labels.
 - **Do** keep family selection independent and derive Try/Shortcuts availability from the shared draft.
-- **Do** use brief functional transitions (160–180ms); honor reduced motion by removing animation and transitions.
+- **Do** use brief functional transitions (160–200ms); honor reduced motion with manual preview stages and no animation or transitions.
+- **Do** keep normal-state copy concise and show diagnostic or recovery detail when needed.
 - **Do** verify visuals with `bun run dev:onboarding` in the real Tauri app. This debug replay does not reset installed models or saved settings.
 
 ### Don't:
 
 - **Don't** promote this rail/workbench composition into a global rule for other Grain surfaces.
-- **Don't** substitute simulated download, audio, transcription, or permission states for real APIs.
+- **Don't** substitute simulated states for real download, permission, microphone, or Try APIs; the learning preview is explicitly illustrative.
 - **Don't** present the Flow practice check as the rolling-capture experience.
 - **Don't** introduce external imagery, new runtime dependencies, autoplay decoration, or a tall fixed showcase.
 - **Don't** use browser/computer automation, screenshot replicas, mock Tauri, or alternate visual render paths.

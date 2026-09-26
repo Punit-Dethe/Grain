@@ -62,8 +62,8 @@
         "shortcuts": "Shortcuts"
       },
       "microphone": {
-        "title": "Choose your microphone",
-        "description": "Pick the input you normally use, then speak normally for five seconds so Grain can check its level.",
+        "title": "Check your microphone",
+        "description": "Choose an input, then speak for five seconds.",
         "inputLabel": "Input device",
         "checking": "Checking microphone access…",
         "test": "Test microphone",
@@ -84,114 +84,76 @@
         "noSignalDetail": "Speak continuously, check the selected input, and try again",
         "error": "Microphone could not start",
         "errorDetail": "Choose another input or try again",
-        "inputGood": "Level confirmed. You’re ready to continue.",
         "checkingInput_one": "Checking level · {{count}} second left",
         "checkingInput_other": "Checking level · {{count}} seconds left",
-        "adjustAndRetry": "Adjust the level, then test again.",
         "quiet": "Quiet",
         "balanced": "Balanced",
         "loud": "Loud",
-        "ready": "Ready when you are.",
         "allow": "Allow microphone",
         "waitingPermission": "Waiting for permission…",
         "enableShortcuts": "Enable shortcuts",
         "shortcutsTitle": "Enable global shortcuts",
         "shortcutsDescription": "Accessibility access lets Grain start capture and paste text in other apps.",
-        "footerHint": "Audio is checked locally and is not saved.",
+        "footerHint": "Local check. Audio isn’t saved.",
         "errors": {
           "continue": "Microphone setup could not finish. Please try again."
         }
       },
       "modes": {
-        "title": "Find your speaking rhythm",
-        "description": "Choose how your words arrive. Each mode has its own shortcut, and you can switch whenever you like.",
-        "skip": "Skip overview",
+        "title": "See how your words arrive",
+        "description": "Play a preview. Try your microphone on the next steps.",
+        "skip": "Skip preview",
         "back": "Back",
-        "next": "Next mode",
         "chooseModels": "Choose models",
-        "showMode": "Show {{mode}} mode",
-        "recording": "Recording…",
-        "stageRecording": "Recording",
-        "stageLoading": "Loading",
         "standard": {
           "title": "Standard",
-          "subtitle": "For the cleanest final transcript",
-          "traitOne": "Most accurate",
-          "traitTwo": "Formatted",
-          "recordingTime": "5 minutes",
-          "label": "Transcribes after you stop",
-          "loadingTime": "15 seconds",
-          "processing": "",
-          "result": "This is how Grain returns a clean, accurate, and properly punctuated transcription.",
-          "footnote": "Processing time depends on your model, device and recording length.",
-          "explanation": "Transcribe the full recording after you finish speaking.",
-          "sequence1": "Start recording",
-          "sequence1Detail": "Use the button or your Standard shortcut.",
-          "sequence2": "Speak at your pace",
-          "sequence2Detail": "Grain records your complete thought.",
-          "sequence3": "Stop to transcribe",
-          "sequence3Detail": "Your batch model processes the recording.",
-          "exampleHint": "The complete transcript arrives after you stop."
+          "takeaway": "Batch model · records first, transcribes after you stop."
         },
         "flow": {
           "title": "Flow",
-          "subtitle": "For long everyday dictation",
-          "traitOne": "Accurate",
-          "traitTwo": "Near-instant",
-          "recordingTime": "10 minutes",
-          "label": "Records normally, then returns almost immediately",
-          "processing": "",
-          "confirmation": "Pasted in 1–2 seconds",
-          "result": "this is how grain keeps long dictation fast and accurate without making you wait",
-          "footnote": "Flow requires a supported Parakeet model and translation to English turned off.",
-          "explanation": "Process speech in rolling windows for a quicker finish.",
-          "sequence1": "Start Flow",
-          "sequence1Detail": "Use the button or your Flow shortcut.",
-          "sequence2": "Keep the thought going",
-          "sequence2Detail": "Your batch model processes speech as you go.",
-          "sequence3": "Stop and finish",
-          "sequence3Detail": "Grain completes the remaining speech.",
-          "exampleHint": "Flow works through the recording while you speak. It is different from native live ASR."
+          "takeaway": "Batch model · works while you speak, finishes after you stop."
         },
         "streaming": {
           "title": "Streaming",
-          "subtitle": "Words appear live",
-          "traitOne": "Real-time",
-          "traitTwo": "Fast",
-          "label": "Words appear live",
-          "processing": "",
-          "result": "",
-          "footnote": "Use it when immediate feedback matters.",
-          "explanation": "See words appear live through a native streaming ASR model.",
-          "sequence1": "Start Streaming",
-          "sequence1Detail": "Use the button or your Streaming shortcut.",
-          "sequence2": "Watch words arrive",
-          "sequence2Detail": "Your ASR model returns text as you speak.",
-          "sequence3": "Stop to finalize",
-          "sequence3Detail": "Grain finishes the live transcript.",
-          "exampleHint": "Words appear during recording, with the final text settled when you stop."
+          "takeaway": "ASR model · words appear live while you speak."
         },
-        "exampleLabel": "Example transcript",
-        "exampleText": "Let’s move tomorrow’s meeting to eleven.",
-        "modelNote": "Standard and Flow use batch models. Streaming uses a separate ASR model. Next, choose either family or both."
+        "preview": {
+          "label": "Illustrative preview",
+          "play": "Play",
+          "replay": "Replay",
+          "next": "Next",
+          "phrase": "Let’s move tomorrow’s meeting to eleven.",
+          "placeholder": "Watch what happens when you speak.",
+          "waitingText": "Your words are being recorded.",
+          "finishingText": "Preparing your transcript…",
+          "ready": "Choose Play to see this mode.",
+          "complete": "Recording stopped · transcript ready",
+          "standard": {
+            "recording": "Recording · the model waits",
+            "finishing": "Recording stopped · transcribing"
+          },
+          "flow": {
+            "recording": "Recording · the model is working",
+            "finishing": "Recording stopped · finishing"
+          },
+          "streaming": {
+            "recording": "Recording · words arrive live",
+            "finishing": "Recording stopped · finalizing"
+          }
+        }
       },
       "models": {
-        "title": "Make room for your voice",
-        "description": "Choose a batch model, a streaming ASR model, or both. Install only what you need today.",
-        "local": "Runs locally",
+        "title": "Choose your models",
+        "description": "Install either family or both. You can add more later.",
         "standard": {
           "title": "Batch model",
-          "description": "Standard transcription, plus Flow with a supported Parakeet model.",
-          "detail": "The recommended batch model supports both Standard and Flow."
+          "description": "Standard + Flow with supported Parakeet models."
         },
         "streaming": {
-          "title": "Streaming ASR model",
-          "description": "Native live transcription for Streaming mode.",
-          "detail": "A streaming model is optimized to return speech as it arrives."
+          "title": "Streaming ASR",
+          "description": "Live words in Streaming mode."
         },
-        "toggle": "Toggle {{family}} model",
         "resolving": "Choosing recommended model…",
-        "change": "Change",
         "selected_one": "{{count}} model selected",
         "selected_other": "{{count}} models selected",
         "downloadSize": "{{size}} download",
@@ -215,7 +177,6 @@
         "modelLabel": "Model",
         "noneSelected": "Select at least one model family to continue.",
         "retryInstall": "Retry installation",
-        "laterNote": "You can add or change models later in Settings → Speech to Text.",
         "defaultsFallback": "Recommendations could not load. You can still choose from the available models below.",
         "unavailable": "No model available",
         "chooseAlternative": "Choose another family or retry the recommendations.",
@@ -224,7 +185,7 @@
       },
       "try": {
         "title": "Give your voice a first run",
-        "description": "Check your microphone and selected models. This test stays inside setup and does not paste into other apps.",
+        "description": "Try your models here. Nothing is pasted into other apps.",
         "modeLabel": "Test capture mode",
         "placeholder": "Your test transcription will appear here.",
         "ready": "Ready",
@@ -259,28 +220,13 @@
         "emptyResult": "No speech was recognized. Speak for a few seconds and try again."
       },
       "shortcuts": {
-        "title": "Your voice, one shortcut away",
-        "description": "These shortcuts match the models you chose. Keep the defaults or make them your own.",
-        "modeLabel": "Default capture mode",
-        "shortcutLabel": "Capture shortcuts",
-        "editHint": "Click the keys, then press your new key combination.",
-        "allModes": "All three capture modes are enabled. Set each global shortcut below.",
-        "settingsNote": "You can change shortcuts in Settings → Capture and add more models whenever you need them.",
+        "title": "Set your shortcuts",
+        "description": "Click a shortcut, then press the keys you want.",
+        "settingsNote": "Change these later in Settings → Capture.",
         "back": "Back",
-        "finish": "Open Grain",
-        "modes": {
-          "flow": "Fast everyday dictation",
-          "standard": "The cleanest final transcript",
-          "streaming": "Live text"
-        },
-        "errors": {
-          "mode": "Grain could not change the default capture mode. Try again."
-        },
-        "readyTitle": "You’re ready to begin",
-        "readyDescription": "Open Grain, then try a capture shortcut in an app where you normally type."
+        "finish": "Open Grain"
       },
       "loading": "Preparing your workspace…",
-      "journeyTitle": "A little setup. A lot more flow.",
       "localNote": "Speech models stay on this device.",
       "stepCount": "Step {{current}} of {{total}}"
     },

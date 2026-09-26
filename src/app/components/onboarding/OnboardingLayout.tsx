@@ -4,7 +4,6 @@ import { Check, ShieldCheck } from "lucide-react";
 import { useTheme } from "@/contexts/ThemeContext";
 import { WindowChrome } from "../WindowChrome";
 import grainMark from "../../branding/grain-mark.png";
-import journeyArtwork from "../../overview/overview-hero-option-2.webp";
 import "./onboarding.css";
 
 const STEPS = ["microphone", "modes", "models", "try", "shortcuts"] as const;
@@ -71,10 +70,6 @@ export function OnboardingLayout({
             </li>
           ))}
         </ol>
-        <div className="onboarding-journey-art">
-          <img src={journeyArtwork} alt="" />
-          <p>{t("onboarding.setup.journeyTitle")}</p>
-        </div>
         <p className="onboarding-local-note">
           <ShieldCheck aria-hidden="true" />
           {t("onboarding.setup.localNote")}
