@@ -845,11 +845,6 @@ pub struct AppSettings {
     pub transcribe_gpu_device: Option<String>,
     #[serde(default)]
     pub extra_recording_buffer_ms: u64,
-    /// [GRAIN] Voice conditioning before VAD + STT: 85 Hz high-pass (de-rumble)
-    ///   + boost-only noise-gated AGC for quiet/laptop mics. On by default; helps
-    ///     accuracy on low-volume input without touching already-loud audio.
-    #[serde(default = "default_audio_conditioning")]
-    pub audio_conditioning: bool,
     /// [GRAIN] Context awareness (post-processing only): when on, the backend
     /// detects the foreground app/site right before LLM post-processing and layers
     /// an automatic SOFT context line (tone/vocab, never restructuring) on top of
@@ -973,9 +968,6 @@ fn default_model() -> String {
 }
 fn default_always_on_microphone() -> bool {
     false
-}
-fn default_audio_conditioning() -> bool {
-    true
 }
 /// Paste Catch defaults ON: without it a paste that misses the field destroys
 /// the transcript, and the detection only ever acts on positive evidence.
@@ -1792,7 +1784,6 @@ pub fn get_default_settings() -> AppSettings {
         transcribe_accelerator: TranscribeAcceleratorSetting::default(),
         transcribe_gpu_device: default_transcribe_gpu_device(),
         extra_recording_buffer_ms: 0,
-        audio_conditioning: default_audio_conditioning(),
         context_awareness_enabled: false,
         context_profile_instructions: Vec::new(),
         context_custom_profiles: Vec::new(),
@@ -1993,6 +1984,30 @@ mod prompt_migration_tests {
             "my edited instructions"
         );
         assert!(!ensure_post_process_defaults(&mut settings));
+    }
+}
+
+#[cfg(test)]
+mod retired_audio_conditioning_tests {
+    use super::*;
+
+    #[test]
+    fn old_voice_processing_setting_is_ignored_without_losing_other_settings() {
+        for enabled in [false, true] {
+            let settings: AppSettings = serde_json::from_value(serde_json::json!({
+                "audio_conditioning": enabled,
+                "transcribe_accelerator": "cpu",
+                "selected_channel": 1
+            }))
+            .unwrap();
+            assert_eq!(
+                settings.transcribe_accelerator,
+                TranscribeAcceleratorSetting::Cpu
+            );
+            assert_eq!(settings.selected_channel, Some(1));
+            let stored = serde_json::to_value(settings).unwrap();
+            assert!(stored.get("audio_conditioning").is_none());
+        }
     }
 }
 

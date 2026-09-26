@@ -3,7 +3,7 @@
 //! registration/dispatch machinery in that module; these are the setting
 //! mutators for Grain's own features — context awareness,
 //! "scrap that", snippets, voice actions, app modes, the Agent,
-//! rolling preview, audio conditioning.
+//! rolling preview.
 //!
 //! Each is still a `#[tauri::command]`, so the command NAME (and therefore the
 //! frontend `invoke` + generated bindings) is unchanged by the move; only the
@@ -651,24 +651,6 @@ pub fn change_pill_show_app_icon_setting(app: AppHandle, enabled: bool) -> Resul
     let mut settings = settings::get_settings(&app);
     settings.pill_show_app_icon = enabled;
     settings::write_settings(&app, settings);
-    Ok(())
-}
-
-/// [GRAIN] Toggle voice conditioning (85 Hz high-pass + boost-only AGC for quiet
-/// mics). Persists the setting and live-updates the open recorder so it applies
-/// to the next captured frame without a restart. (Rolling re-reads it per session.)
-#[tauri::command]
-#[specta::specta]
-pub fn change_audio_conditioning_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
-    let mut settings = settings::get_settings(&app);
-    settings.audio_conditioning = enabled;
-    settings::write_settings(&app, settings);
-
-    if let Some(rm) =
-        app.try_state::<std::sync::Arc<crate::managers::audio::AudioRecordingManager>>()
-    {
-        rm.set_conditioning(enabled);
-    }
     Ok(())
 }
 

@@ -177,18 +177,6 @@ const SETTING_DEFS: SettingDef[] = [
     keywords: ["mic", "input device", "recording device"],
   },
   {
-    id: "voice-processing",
-    titleKey: "settings.debug.voiceProcessing.label",
-    section: "audio",
-    keywords: [
-      "noise",
-      "agc",
-      "high pass",
-      "audio conditioning",
-      "clean audio",
-    ],
-  },
-  {
     id: "mute-while-recording",
     titleKey: "settings.debug.muteWhileRecording.label",
     section: "audio",

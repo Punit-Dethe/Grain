@@ -954,10 +954,6 @@
         "label": "Mute While Recording",
         "description": "Mute system audio during recording"
       },
-      "voiceProcessing": {
-        "label": "Voice Processing",
-        "description": "Clean up quiet or low-clarity mics: high-pass filter + gentle volume boost for better accuracy"
-      },
       "appendTrailingSpace": {
         "label": "Append Trailing Space",
         "description": "Add a space after pasted transcription"
@@ -1211,7 +1207,7 @@
         "recording": "Holding a recording",
         "recordingInfo": "Whether a capture is held down or toggled, and how one is cancelled part-way through.",
         "input": "Microphone",
-        "inputInfo": "The device Grain records from, and the conditioning applied to it before transcription.",
+        "inputInfo": "The microphone and input channel Grain records from.",
         "feedback": "Sound feedback",
         "feedbackInfo": "The chimes Grain plays when a capture starts and finishes, and where they are played.",
         "insertion": "Text insertion",

@@ -4,7 +4,6 @@ import { ChannelSelector } from "@/components/settings/ChannelSelector";
 import { MicrophoneSelector } from "@/components/settings/MicrophoneSelector";
 import { MuteWhileRecording } from "@/components/settings/MuteWhileRecording";
 import { OutputDeviceSelector } from "@/components/settings/OutputDeviceSelector";
-import { VoiceProcessing } from "@/components/settings/VoiceProcessing";
 import { VolumeSlider } from "@/components/settings/VolumeSlider";
 import { SettingsGroup } from "@/components/ui/SettingsGroup";
 import { useSettings } from "@/hooks/useSettings";
@@ -28,7 +27,6 @@ export function AudioPane() {
       >
         <MicrophoneSelector descriptionMode="tooltip" grouped />
         <ChannelSelector descriptionMode="tooltip" grouped />
-        <VoiceProcessing descriptionMode="tooltip" grouped />
         <MuteWhileRecording descriptionMode="tooltip" grouped />
       </SettingsGroup>
 

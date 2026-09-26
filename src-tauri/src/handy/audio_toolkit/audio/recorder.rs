@@ -14,7 +14,7 @@ use cpal::{
 };
 
 use crate::audio_toolkit::{
-    audio::{normalize_gain, AudioVisualiser, FrameResampler, HighPass},
+    audio::{AudioVisualiser, FrameResampler},
     constants,
     vad::{self, VadFrame},
     VoiceActivityDetector,
@@ -93,17 +93,11 @@ pub struct AudioRecorder {
     audio_cb: Option<AudioFrameCallback>,
     // [GRAIN] every-frame callback for Flow (see `SampleFrameCallback`).
     sample_cb: Option<SampleFrameCallback>,
-    // [GRAIN] when true, run voice conditioning (85 Hz high-pass per frame +
-    // boost-only AGC on the finalized buffer) before VAD/STT. A live atomic so a
-    // settings toggle takes effect immediately on the already-open recorder
-    // (the recorder is created once and reused for the app's lifetime). Default
-    // off here; the audio manager seeds it from settings (default on).
-    conditioning: Arc<AtomicBool>,
     // [GRAIN] Live length (in 16 kHz mono samples) of the current recording's
     // finalized buffer, mirrored out of the worker thread once per captured chunk.
     // Used by Prompt Record to mark the content→instruction split point at click
     // time: the value is a valid index into the `Vec<f32>` that `stop()` returns
-    // (VAD compaction and stop-time padding/AGC only ever append or rescale — they
+    // (VAD compaction and stop-time padding only ever appends — they
     // never reorder the prefix). Reset to 0 on each `Start`.
     recorded_len: Arc<AtomicUsize>,
     /// Which input channel to use. None = average all (original behavior).
@@ -127,7 +121,6 @@ impl AudioRecorder {
             level_cb: None,
             audio_cb: None,
             sample_cb: None,
-            conditioning: Arc::new(AtomicBool::new(false)),
             recorded_len: Arc::new(AtomicUsize::new(0)),
             selected_channel: None,
             config_cache: Arc::new(Mutex::new(None)),
@@ -141,18 +134,6 @@ impl AudioRecorder {
     /// spoken content→instruction boundary.
     pub fn recorded_len(&self) -> usize {
         self.recorded_len.load(Ordering::Relaxed)
-    }
-
-    /// [GRAIN] Seed voice conditioning (high-pass + boost-only AGC) at build time.
-    pub fn with_conditioning(self, enabled: bool) -> Self {
-        self.conditioning.store(enabled, Ordering::Relaxed);
-        self
-    }
-
-    /// [GRAIN] Toggle voice conditioning on the running recorder — takes effect on
-    /// the next captured frame, so a settings change applies without a restart.
-    pub fn set_conditioning(&self, enabled: bool) {
-        self.conditioning.store(enabled, Ordering::Relaxed);
     }
 
     /// [GRAIN] Stream every 16 kHz mono frame live while recording (for the
@@ -245,7 +226,6 @@ impl AudioRecorder {
         // Move the optional real-time audio frame callback into the worker thread
         let audio_cb = self.audio_cb.clone();
         let sample_cb = self.sample_cb.clone(); // [GRAIN]
-        let conditioning = self.conditioning.clone(); // [GRAIN] live atomic
         let recorded_len = self.recorded_len.clone(); // [GRAIN] Prompt Record split mark
         let selected_channel = self.selected_channel;
         let config_cache = Arc::clone(&self.config_cache);
@@ -391,7 +371,6 @@ impl AudioRecorder {
                         level_cb,
                         audio_cb,
                         sample_cb,
-                        conditioning,
                         recorded_len,
                         stop_flag,
                         capture_overflow,
@@ -746,7 +725,6 @@ mod tests {
                 Some(Arc::new(move |frame: &[f32], _speech| {
                     streamed_cb.lock().unwrap().extend_from_slice(frame);
                 })),
-                Arc::new(AtomicBool::new(false)),
                 Arc::new(AtomicUsize::new(0)),
                 Arc::new(AtomicBool::new(false)),
                 Arc::new(AtomicBool::new(false)),
@@ -801,6 +779,12 @@ mod tests {
         assert!(!rolling.is_empty());
     }
 
+    // [GRAIN] Audio parity regression uses the private recorder consumer.
+    include!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/src/grain_audio_capture_tests.rs"
+    ));
+
     #[test]
     fn capture_overflow_fails_stop_instead_of_returning_partial_audio() {
         let (sample_tx, sample_rx) = mpsc::channel();
@@ -819,7 +803,6 @@ mod tests {
                 Some(Arc::new(move |_frame: &[f32], _speech| {
                     let _ = processed_tx.try_send(());
                 })),
-                Arc::new(AtomicBool::new(false)),
                 Arc::new(AtomicUsize::new(0)),
                 Arc::new(AtomicBool::new(false)),
                 worker_overflow,
@@ -871,7 +854,6 @@ mod tests {
                 None,
                 None,
                 None,
-                Arc::new(AtomicBool::new(false)),
                 Arc::new(AtomicUsize::new(0)),
                 Arc::new(AtomicBool::new(false)),
                 worker_overflow,
@@ -896,7 +878,6 @@ fn run_consumer(
     level_cb: Option<Arc<dyn Fn(Vec<f32>) + Send + Sync + 'static>>,
     audio_cb: Option<AudioFrameCallback>,
     sample_cb: Option<SampleFrameCallback>, // [GRAIN] rolling engine feed
-    conditioning: Arc<AtomicBool>,          // [GRAIN] live toggle
     recorded_len: Arc<AtomicUsize>,         // [GRAIN] Prompt Record split mark
     stop_flag: Arc<AtomicBool>,
     capture_overflow: Arc<AtomicBool>, // [GRAIN] bounded capture queue state
@@ -914,12 +895,6 @@ fn run_consumer(
     let mut retain_full_audio = true; // [GRAIN]
     let mut captured_frames = 0usize; // [GRAIN] rolling Prompt Record timeline
     let mut capture_failed = false; // [GRAIN] current session exceeded queue bound
-
-    // [GRAIN] Voice conditioning state. The high-pass runs at 16 kHz (after the
-    // FrameResampler), filtering each frame in `scratch` before it reaches VAD,
-    // the batch buffer, and the rolling sample callback. Reset on every Start.
-    let mut highpass = HighPass::new(constants::WHISPER_SAMPLE_RATE);
-    let mut scratch = Vec::<f32>::new();
 
     // ---------- latency instrumentation ---------------------------------- //
     // First-chunk arrival exposes the play()->samples-flowing gap; the
@@ -1033,7 +1008,6 @@ fn run_consumer(
                     captured_frames = 0;
                     recorded_len.store(0, Ordering::Relaxed); // [GRAIN] fresh mark baseline
                     recording = true;
-                    highpass.reset(); // [GRAIN] fresh filter state per session
                     visualizer.reset();
                     frame_resampler.reset();
                     // Reconfigure the single VAD engine for this session's policy
@@ -1058,16 +1032,8 @@ fn run_consumer(
                     // reach the rolling cursor before its later stop-flush.
                     if let Some(AudioChunk::Samples(raw)) = pending.take() {
                         frame_resampler.push(&raw, &mut |frame: &[f32]| {
-                            let f: &[f32] = if conditioning.load(Ordering::Relaxed) {
-                                scratch.clear();
-                                scratch.extend_from_slice(frame);
-                                highpass.process_in_place(&mut scratch);
-                                &scratch
-                            } else {
-                                frame
-                            };
                             let speech = handle_frame(
-                                f,
+                                frame,
                                 true,
                                 vad_policy,
                                 &vad,
@@ -1075,9 +1041,9 @@ fn run_consumer(
                                 &mut processed_samples,
                                 retain_full_audio,
                             );
-                            captured_frames += f.len();
+                            captured_frames += frame.len();
                             if let Some(cb) = &sample_cb {
-                                cb(f, speech);
+                                cb(frame, speech);
                             }
                         });
                     }
@@ -1090,16 +1056,8 @@ fn run_consumer(
                         match sample_rx.recv_timeout(Duration::from_secs(2)) {
                             Ok(AudioChunk::Samples(remaining)) => {
                                 frame_resampler.push(&remaining, &mut |frame: &[f32]| {
-                                    let f: &[f32] = if conditioning.load(Ordering::Relaxed) {
-                                        scratch.clear();
-                                        scratch.extend_from_slice(frame);
-                                        highpass.process_in_place(&mut scratch);
-                                        &scratch
-                                    } else {
-                                        frame
-                                    };
                                     let speech = handle_frame(
-                                        f,
+                                        frame,
                                         true,
                                         vad_policy,
                                         &vad,
@@ -1107,12 +1065,12 @@ fn run_consumer(
                                         &mut processed_samples,
                                         retain_full_audio,
                                     );
-                                    captured_frames += f.len();
+                                    captured_frames += frame.len();
                                     // [GRAIN] Keep rolling aligned with the same
                                     // finalized resampled stream during the
                                     // device-channel drain.
                                     if let Some(cb) = &sample_cb {
-                                        cb(f, speech);
+                                        cb(frame, speech);
                                     }
                                 });
                             }
@@ -1125,18 +1083,9 @@ fn run_consumer(
                         }
                     }
 
-                    let conditioning_on = conditioning.load(Ordering::Relaxed); // [GRAIN]
                     frame_resampler.finish(&mut |frame: &[f32]| {
-                        let f: &[f32] = if conditioning_on {
-                            scratch.clear();
-                            scratch.extend_from_slice(frame);
-                            highpass.process_in_place(&mut scratch);
-                            &scratch
-                        } else {
-                            frame
-                        };
                         let speech = handle_frame(
-                            f,
+                            frame,
                             true,
                             vad_policy,
                             &vad,
@@ -1144,21 +1093,14 @@ fn run_consumer(
                             &mut processed_samples,
                             retain_full_audio,
                         );
-                        captured_frames += f.len();
+                        captured_frames += frame.len();
                         // [GRAIN] The resampler can retain a partial final frame;
                         // deliver it before `stop_recording` replies and the
                         // caller flushes the rolling cursor.
                         if let Some(cb) = &sample_cb {
-                            cb(f, speech);
+                            cb(frame, speech);
                         }
                     });
-
-                    // [GRAIN] boost-only noise-gated AGC over the whole capture —
-                    // lifts quiet/laptop-mic speech toward a comfortable STT level
-                    // without touching already-loud audio. Length is unchanged.
-                    if conditioning_on {
-                        normalize_gain(&mut processed_samples);
-                    }
 
                     let reply = if capture_failed || capture_overflow.load(Ordering::Acquire) {
                         processed_samples.clear();
@@ -1218,19 +1160,8 @@ fn run_consumer(
 
             // ---------- existing pipeline ------------------------------------ //
             frame_resampler.push(&raw, &mut |frame: &[f32]| {
-                // [GRAIN] high-pass the 16 kHz frame (de-rumble) before it reaches
-                // VAD, the batch buffer, and the rolling engine. Stateful across
-                // frames; the enclosing `if recording` keeps the idle mic free.
-                let f: &[f32] = if conditioning.load(Ordering::Relaxed) {
-                    scratch.clear();
-                    scratch.extend_from_slice(frame);
-                    highpass.process_in_place(&mut scratch);
-                    &scratch
-                } else {
-                    frame
-                };
                 let speech = handle_frame(
-                    f,
+                    frame,
                     recording,
                     vad_policy,
                     &vad,
@@ -1238,11 +1169,11 @@ fn run_consumer(
                     &mut processed_samples,
                     retain_full_audio,
                 );
-                captured_frames += f.len();
+                captured_frames += frame.len();
                 // [GRAIN] stream every resampled 16 kHz frame to Flow. It journals
                 // the exact continuous stream and intentionally ignores VAD.
                 if let Some(cb) = &sample_cb {
-                    cb(f, speech);
+                    cb(frame, speech);
                 }
             });
         }

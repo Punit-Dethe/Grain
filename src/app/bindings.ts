@@ -774,19 +774,6 @@ async changeMuteWhileRecordingSetting(enabled: boolean) : Promise<Result<null, s
     else return { status: "error", error: e  as any };
 }
 },
-/**
- * [GRAIN] Toggle voice conditioning (85 Hz high-pass + boost-only AGC for quiet
- * mics). Persists the setting and live-updates the open recorder so it applies
- * to the next captured frame without a restart. (Rolling re-reads it per session.)
- */
-async changeAudioConditioningSetting(enabled: boolean) : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("change_audio_conditioning_setting", { enabled }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
 async changeAppendTrailingSpaceSetting(enabled: boolean) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("change_append_trailing_space_setting", { enabled }) };
@@ -2466,12 +2453,6 @@ reliable_paste?: boolean; paste_delay_after_ms?: number; typing_tool?: TypingToo
  * Never persist process-local registry indices.
  */
 transcribe_gpu_device?: string | null; extra_recording_buffer_ms?: number;
-/**
- * [GRAIN] Voice conditioning before VAD + STT: 85 Hz high-pass (de-rumble)
- * + boost-only noise-gated AGC for quiet/laptop mics. On by default; helps
- * accuracy on low-volume input without touching already-loud audio.
- */
-audio_conditioning?: boolean;
 /**
  * [GRAIN] Context awareness (post-processing only): when on, the backend
  * detects the foreground app/site right before LLM post-processing and layers

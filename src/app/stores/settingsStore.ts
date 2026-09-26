@@ -274,8 +274,6 @@ const settingUpdaters: {
     commands.changeTranscribeGpuDevice(value as string | null),
   extra_recording_buffer_ms: (value) =>
     commands.changeExtraRecordingBufferSetting(value as number),
-  audio_conditioning: (value) =>
-    commands.changeAudioConditioningSetting(value as boolean),
   // [GRAIN] Native ASR model selection — separate registry from `selected_model`.
   selected_asr_model: (value) => commands.selectAsrModel(value as string),
 };

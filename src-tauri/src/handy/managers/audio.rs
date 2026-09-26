@@ -305,12 +305,6 @@ fn create_audio_recorder(
         VAD_ONSET_FRAMES,
     );
 
-    // [GRAIN] Voice conditioning (high-pass + boost-only AGC) follows the
-    // setting; default on. Captured at recorder creation — a device/setting
-    // change recreates the recorder, picking up the new value (and
-    // `set_conditioning` live-toggles the open recorder in between).
-    let conditioning = get_settings(app_handle).audio_conditioning;
-
     // Recorder with VAD, a spectrum-level callback that forwards level updates to
     // the frontend, and an audio-frame callback that feeds live streaming via a
     // shared `StreamRouter` (captured directly, not via Tauri state — see its docs).
@@ -321,7 +315,6 @@ fn create_audio_recorder(
             VAD_OFFLINE_HANGOVER_FRAMES,
             VAD_STREAMING_HANGOVER_FRAMES,
         )
-        .with_conditioning(conditioning) // [GRAIN]
         .with_selected_channel(selected_channel)
         .with_level_callback({
             let app_handle = app_handle.clone();
@@ -863,15 +856,6 @@ impl AudioRecordingManager {
             Err("Recorder not available".to_string())
         } else {
             Err("Already recording".to_string())
-        }
-    }
-
-    /// [GRAIN] Live-toggle voice conditioning on the open recorder (if any). A
-    /// freshly created recorder seeds the flag from settings, so this only needs
-    /// to nudge the currently-open one for the change to take effect immediately.
-    pub fn set_conditioning(&self, enabled: bool) {
-        if let Some(rec) = self.recorder.lock().unwrap().as_ref() {
-            rec.set_conditioning(enabled);
         }
     }
 

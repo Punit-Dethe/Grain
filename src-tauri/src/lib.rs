@@ -1384,7 +1384,6 @@ fn command_bindings() -> Builder<tauri::Wry> {
             shortcut::suspend_all_bindings,
             shortcut::resume_all_bindings,
             shortcut::change_mute_while_recording_setting,
-            grain_commands::change_audio_conditioning_setting,
             shortcut::change_append_trailing_space_setting,
             grain_commands::extensions_overview,
             grain_store::store_browse,
