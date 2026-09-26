@@ -103,6 +103,8 @@ docs/
 # sibling subdirectory (owner decision, 2026-07-24) — one directory tree for
 # cross-referencing, its own git for clean separation. Never tracked here.
 grain-extensions/
+# transcribe.cpp source fork: independent repository, co-located for development.
+/native/transcribe.cpp/
 # Python bytecode (scripts/)
 __pycache__/
 

@@ -11,9 +11,13 @@ remain upstream-owned and unchanged.
 - Upstream commit: `63a44d9239d610b3908e8a66b384924cd4a77217`
 - Release/tag commit: `v0.2.3`, `63a44d9239d610b3908e8a66b384924cd4a77217`
 - Published crate SHA-256:
-  - `transcribe-cpp-0.2.3.crate`: `703e6432c6fbb7ff38c367a42731a69e81c69b36bc06ff748f0f59f969ae71a4`
-  - `transcribe-cpp-sys-0.2.3.crate`: `83b02641c75c2d390c1f796e6e4fc89408ed917d4af5b7d956a57d59cc0e82c6`
+  - `transcribe-cpp-0.2.3.crate`: `b405c121ef674311b9e8eba83e45d859663da681952c7b95b730792ffde358e7`
+  - `transcribe-cpp-sys-0.2.3.crate`: `00e81030804f0ce2dd83761ba18e90e0c0c0c2794d68ca008e24245ed6d2702e`
 - `.cargo_vcs_info.json` in both trees records the same release commit.
+
+The archive hashes were independently verified against downloaded official
+crate payloads and crates.io records on 2026-09-26. The earlier recorded hashes
+were incorrect; source comparison confirms the narrow functional patch below.
 
 `src-tauri/Cargo.toml` pins both dependencies to exact `=0.2.3` and redirects
 them with `[patch.crates-io]`. The wrapper path dependency points only to the
