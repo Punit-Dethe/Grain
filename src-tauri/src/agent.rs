@@ -76,11 +76,11 @@ const FOLLOWUP_OFFER_TTL: Duration = Duration::from_secs(8);
 const FIELD_CONTEXT_MAX_CHARS: usize = 6000;
 
 /// Panel geometry (logical px). The COMPACT reply card sits in the bottom-right
-/// corner (the reference design); the EXPANDED conversation keeps the old
-/// sidebar footprint but stays anchored bottom-right.
+/// corner; the EXPANDED conversation occupies the full side footprint.
 ///
-/// The card fills its window exactly — it casts no drop shadow, so there is no
-/// transparent gutter to budget for and these are the visible sizes.
+/// On Windows the transparent window stays at the expanded footprint and its
+/// native region follows the visible card. Other platforms size the window to
+/// the card. There is no drop shadow or gutter to budget for.
 const PANEL_W: f64 = 500.0;
 const PANEL_COMPACT_W: f64 = 432.0;
 const PANEL_COMPACT_H: f64 = 488.0;
@@ -885,9 +885,10 @@ fn panel_position(app: &AppHandle) -> AgentPanelPosition {
 fn panel_start_size(app: &AppHandle) -> (f64, f64) {
     if panel_position(app) == AgentPanelPosition::Center {
         (PANEL_CENTER_W, PANEL_CENTER_START_H)
-    } else if app
-        .try_state::<AgentState>()
-        .is_some_and(|state| state.panel_expanded.load(Ordering::SeqCst))
+    } else if cfg!(windows)
+        || app
+            .try_state::<AgentState>()
+            .is_some_and(|state| state.panel_expanded.load(Ordering::SeqCst))
     {
         (PANEL_W, PANEL_SIDE_MAX_H)
     } else {
@@ -895,9 +896,7 @@ fn panel_start_size(app: &AppHandle) -> (f64, f64) {
     }
 }
 
-/// The native hit area follows the visible side card. Reserving the expanded
-/// footprint while compact blocks clicks in unrelated apps even if the webview
-/// paints those pixels transparent.
+/// The two visible side-card sizes, clamped to the monitor work area.
 fn side_size(work_w: f64, work_h: f64, expanded: bool) -> (f64, f64) {
     let max_w = (work_w - 2.0 * PANEL_MARGIN).max(1.0);
     let max_h = (work_h - 2.0 * PANEL_MARGIN).max(1.0);
@@ -911,26 +910,21 @@ fn side_size(work_w: f64, work_h: f64, expanded: bool) -> (f64, f64) {
     }
 }
 
-/// Move AND resize in a single step.
+/// Move AND resize in a single step when bounds really change.
 ///
 /// `set_size` + `set_position` are two window operations, and between them the
 /// window exists at the new size in the OLD place. For a surface anchored to its
-/// bottom-right corner that intermediate is catastrophic rather than cosmetic:
-/// growing 432x488 → 500x880 with the top-left pinned pushes the bottom-right
-/// corner — the very corner the card is glued to — clean off the bottom-right of
-/// the screen, so the card DISAPPEARS for those frames and then reappears at the
-/// corrected position. That is the "it opens, then glitches and opens again"
-/// everything else was being blamed for; no amount of CSS can hide a card the
-/// compositor has moved off the display. Doing both in one `SetWindowPos` means
-/// the anchored corner never moves at all, which is what lets the card be pinned
-/// across the resize and grow on its own terms afterwards.
+/// bottom-right corner, resizing with the top-left pinned pushes the card off
+/// screen. Windows keeps the SIDE viewport fixed during expansion; this atomic
+/// path still serves initial placement, CENTER, and the fallback without a
+/// native window region.
 ///
 /// `SWP_NOCOPYBITS` matters here too: without it Windows blits the old client
 /// bits into the top-left of the larger window, leaving a stale copy of the
 /// compact card sitting in the wrong corner until the webview repaints over it.
 fn set_bounds(window: &tauri::WebviewWindow, x: f64, y: f64, w: f64, h: f64) {
     #[cfg(windows)]
-    if set_bounds_win32(window, x, y, w, h) {
+    if bounds_match_win32(window, x, y, w, h) || set_bounds_win32(window, x, y, w, h) {
         return;
     }
     // Position first, then size: the fallback still shows an intermediate, but
@@ -938,6 +932,78 @@ fn set_bounds(window: &tauri::WebviewWindow, x: f64, y: f64, w: f64, h: f64) {
     // sizing first throws the anchored corner off the edge.
     let _ = window.set_position(tauri::LogicalPosition::new(x, y));
     let _ = window.set_size(tauri::LogicalSize::new(w, h));
+}
+
+/// Avoid a redundant SetWindowPos during compact → expanded on Windows. Even a
+/// no-op bounds update can make WebView2 present an intermediate frame.
+#[cfg(windows)]
+fn bounds_match_win32(window: &tauri::WebviewWindow, x: f64, y: f64, w: f64, h: f64) -> bool {
+    let (Ok(scale), Ok(pos), Ok(size)) = (
+        window.scale_factor(),
+        window.outer_position(),
+        window.outer_size(),
+    ) else {
+        return false;
+    };
+    let px = |v: f64| (v * scale).round() as i32;
+    pos.x == px(x) && pos.y == px(y) && size.width as i32 == px(w) && size.height as i32 == px(h)
+}
+
+/// Clip the full-size Windows host to the compact card while leaving its
+/// WebView viewport unchanged. Windows owns a successful region until the next
+/// SetWindowRgn or window destruction; only failed regions are deleted here.
+#[cfg(windows)]
+fn set_side_region_win32(
+    window: &tauri::WebviewWindow,
+    expanded: bool,
+    compact_w: f64,
+    compact_h: f64,
+) -> bool {
+    use windows::Win32::Foundation::{HWND, POINT, RECT};
+    use windows::Win32::Graphics::Gdi::{
+        ClientToScreen, CreateRectRgn, DeleteObject, SetWindowRgn, HGDIOBJ,
+    };
+    use windows::Win32::UI::WindowsAndMessaging::{GetClientRect, GetWindowRect};
+
+    let (Ok(raw), Ok(scale)) = (window.hwnd(), window.scale_factor()) else {
+        return false;
+    };
+    let hwnd = HWND(raw.0 as isize as _);
+    unsafe {
+        if expanded {
+            return SetWindowRgn(hwnd, None, true) != 0;
+        }
+        // Regions use outer-window coordinates; the card sits in the client
+        // area. Account for any invisible border around the frameless window.
+        let mut outer = RECT::default();
+        let mut client = RECT::default();
+        let mut client_origin = POINT::default();
+        if GetWindowRect(hwnd, &mut outer).is_err()
+            || GetClientRect(hwnd, &mut client).is_err()
+            || !ClientToScreen(hwnd, &mut client_origin).as_bool()
+        {
+            return false;
+        }
+        let client_w = client.right - client.left;
+        let client_h = client.bottom - client.top;
+        if client_w <= 0 || client_h <= 0 {
+            return false;
+        }
+        let right = client_origin.x - outer.left + client_w;
+        let bottom = client_origin.y - outer.top + client_h;
+        let card_w = ((compact_w * scale).round() as i32).clamp(1, client_w);
+        let card_h = ((compact_h * scale).round() as i32).clamp(1, client_h);
+        let region = CreateRectRgn(right - card_w, bottom - card_h, right, bottom);
+        if region.0.is_null() {
+            return false;
+        }
+        if SetWindowRgn(hwnd, Some(region), true) != 0 {
+            true
+        } else {
+            let _ = DeleteObject(HGDIOBJ(region.0));
+            false
+        }
+    }
 }
 
 /// One atomic move+resize. `false` if the handle or scale factor is unavailable,
@@ -974,6 +1040,8 @@ fn set_bounds_win32(window: &tauri::WebviewWindow, x: f64, y: f64, w: f64, h: f6
 /// surface never snaps back).
 fn place_panel(window: &tauri::WebviewWindow) {
     if panel_position(window.app_handle()) == AgentPanelPosition::Center {
+        #[cfg(windows)]
+        let _ = set_side_region_win32(window, true, 0.0, 0.0);
         let stored = window
             .app_handle()
             .try_state::<AgentState>()
@@ -990,13 +1058,28 @@ fn place_panel(window: &tauri::WebviewWindow) {
 
     let metrics = monitor_work_logical(window).or_else(|| monitor_logical(window));
     if let Some((ox, oy, sw, sh)) = metrics {
-        // Keep the bottom-right corner fixed as the native hit area grows from
-        // the compact card to the conversation. The frontend waits for this
-        // bounds change before it animates the card within the larger viewport.
         let expanded = window
             .app_handle()
             .try_state::<AgentState>()
             .is_some_and(|state| state.panel_expanded.load(Ordering::SeqCst));
+
+        #[cfg(windows)]
+        {
+            // Keep the WebView viewport fixed. The compact native region gives
+            // clicks outside the card back to the app underneath; expansion
+            // removes that region before the CSS card animation begins.
+            let (w, h) = side_size(sw, sh, true);
+            let (cw, ch) = side_size(sw, sh, false);
+            let x = ox + sw - w - PANEL_MARGIN;
+            let y = oy + sh - h - PANEL_MARGIN;
+            set_bounds(window, x, y, w, h);
+            if set_side_region_win32(window, expanded, cw, ch) {
+                return;
+            }
+            warn!("[GRAIN] agent: side window region unavailable; using native card bounds");
+        }
+
+        // Cross-platform fallback: reserve only the visible card's footprint.
         let (w, h) = side_size(sw, sh, expanded);
         let x = ox + sw - w - PANEL_MARGIN;
         let y = oy + sh - h - PANEL_MARGIN;
@@ -1293,16 +1376,15 @@ pub fn agent_take_instruction(app: AppHandle) -> Option<String> {
         .and_then(|s| s.pending_instruction.lock().ok().and_then(|mut g| g.take()))
 }
 
-/// Resize/reposition the panel between the COMPACT reply card and the EXPANDED
-/// conversation, and swap the global Enter accordingly: compact owns a global
+/// Change the side panel's native input region (or resize the fallback window)
+/// and swap the global Enter accordingly: compact owns a global
 /// Enter (= Confirm/paste); expanded owns an in-window input, so a registered
 /// global Enter would swallow the user's keystrokes.
 ///
 /// ASYNC on purpose: a sync command runs on the MAIN thread, and calling
 /// `set_size` on a visible window from inside a command on the main thread
-/// deadlocks on Windows (tauri#3990 / tao#381) — that was the "panel ghosts a
-/// few seconds after expanding" freeze. On a runtime worker the window ops are
-/// proxied to the event loop safely.
+/// deadlocks on Windows (tauri#3990 / tao#381). On a runtime worker the window
+/// operations are proxied to the event loop safely.
 #[tauri::command]
 #[specta::specta]
 pub async fn agent_set_panel_mode(app: AppHandle, expanded: bool) -> Result<(), String> {
@@ -1604,16 +1686,14 @@ fn reveal_panel_loading(app: &AppHandle) {
         let win = match app2.get_webview_window(PANEL_LABEL) {
             Some(w) => w,
             None => match build_window(&app2, PANEL_LABEL, sw, sh) {
-                Ok(w) => {
-                    place_panel(&w);
-                    w
-                }
+                Ok(w) => w,
                 Err(e) => {
                     error!("[GRAIN] agent: failed to build panel for reveal: {e}");
                     return;
                 }
             },
         };
+        place_panel(&win);
         let _ = app2.emit_to(PANEL_LABEL, "agent-loading", ());
         reveal_panel(&win);
     });

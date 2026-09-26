@@ -1,8 +1,8 @@
 /* [GRAIN] Agent styles — the centred palette + the right-side panel, ported 1:1
  * from the reference Assist design (beige / mechanical). Self-contained so the
  * summoned windows need no other CSS. Colours are the reference's exact values;
- * `inkA(a)` (ink at alpha a) = rgba(20, 19, 18, a). The windows are transparent
- * and exactly card-sized, so the rounded corners read as a floating panel. */
+ * `inkA(a)` (ink at alpha a) = rgba(20, 19, 18, a). The windows are transparent;
+ * the side card sits at the bottom-right of its native surface. */
 
 .agent-palette,
 .agent-panel-root {
@@ -259,12 +259,9 @@
  * the backend holds the window back a beat so the first painted frame is the
  * armed one, never the resting card.
  *
- * The card GROWS from the corner its window is anchored to. That corner is the
- * one point a resize never moves — the side panel is pinned bottom-right, so
- * the window only ever extends up and to the left, which is exactly the region
- * the card has not covered yet early in the animation. Expanding from there
- * therefore hides the resize instead of racing it, and it is also what makes
- * the motion read as one surface opening out rather than a card sliding in.
+ * The side card grows up and left from its anchored bottom-right corner. On
+ * Windows the viewport stays fixed; the native input region releases the
+ * transparent area just before that growth starts.
  *
  * Two keyframes only: the timing function restarts at every stop, so an
  * intermediate keyframe splices two curves together and renders as a stutter.
@@ -293,12 +290,9 @@
 }
 
 /* ── Growing (compact → conversation) ──────────────────────────────────────
- * The window resize itself cannot be animated: it is one native step, and
- * doing it in stages risks the tauri#3990 freeze. So the card is detached from
- * the window for the transition — pinned to its own box at the anchored
- * corner, which makes the resize underneath it a no-op on screen — and then
- * its box is animated to the new footprint. It genuinely grows up and to the
- * left, in the one window, with nothing blanking in between.
+ * The card's box animates inside the fixed Windows viewport. On other systems
+ * the backend first grows the native window while the compact box stays pinned
+ * to the bottom-right corner.
  *
  * The size is animated via the Web Animations API rather than CSS, because the
  * start and end boxes are only known at runtime. */
@@ -321,10 +315,10 @@
   right: 0;
   bottom: 0;
 }
-/* Match the compact native window in `agent.rs`. While the native bounds grow,
- * this card stays pinned to the bottom-right corner at its old size. Once the
- * larger viewport is ready, the card animates into the expanded footprint.
- * The min() clamp matches the native work-area clamp on small screens. */
+/* Match the compact native region in `agent.rs`. On Windows the WebView already
+ * fills the conversation footprint, while the native region exposes only this
+ * compact card to pointer input. Other platforms keep compact native bounds.
+ * The min() clamp matches the backend's work-area clamp on small screens. */
 .agc-card:not(.agc-center):not(.agc-card--expanded) {
   width: min(432px, 100%);
   height: min(488px, 100%);

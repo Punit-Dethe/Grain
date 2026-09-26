@@ -372,10 +372,9 @@ export function AgentPanel() {
         confirmAction: reply.confirm_action,
       });
     }
-    // Pin the compact card to its current box before growing the native window.
-    // The bottom-right corner stays anchored, so the newly exposed transparent
-    // area is invisible until the card animation starts. Offset dimensions
-    // exclude the entrance transform, unlike getBoundingClientRect().
+    // Pin the compact card before changing the native input region. On Windows
+    // its WebView viewport is already full size; other platforms may resize the
+    // native window here. Offset dimensions exclude the entrance transform.
     const card = cardRef.current;
     const from = {
       w: card?.offsetWidth || window.innerWidth,
@@ -388,11 +387,13 @@ export function AgentPanel() {
     try {
       const result = await commands.agentSetPanelMode(true);
       if (result.status === "error") throw new Error(result.error);
-      // The command applies native bounds first; wait for the webview to see
-      // the new viewport before measuring the animation's target.
-      await new Promise<void>((resolve) =>
-        requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
-      );
+      // The fixed Windows viewport is ready immediately. A compact viewport
+      // still needs a frame or two for a native resize to reach the WebView.
+      if (window.innerWidth <= from.w || window.innerHeight <= from.h) {
+        await new Promise<void>((resolve) =>
+          requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+        );
+      }
       if (!cardRef.current) return;
       growFromRef.current = from;
       setMessages(seed);
@@ -662,6 +663,7 @@ export function AgentPanel() {
       // backwards` instead is what flashed the full-size card for one frame at
       // the start of the growth. `fill: forwards` then holds the end box until
       // the finish handler hands the card back to the stylesheet.
+      el.classList.remove("is-appearing");
       el.classList.add("is-growing");
       el.style.width = `${from.w}px`;
       el.style.height = `${from.h}px`;
