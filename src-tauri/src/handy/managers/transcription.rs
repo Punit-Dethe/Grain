@@ -619,8 +619,9 @@ impl TranscriptionManager {
                             accelerator,
                             settings.transcribe_gpu_device.as_deref(),
                         );
-                        // An exact opaque device is compatible with Backend::Auto.
-                        // Without one, retain Grain's explicit backend preference.
+                        // Backend::Auto accepts an exact GPU device. Without a
+                        // valid exact device, backend selection handles the
+                        // retired generic GPU state and host CPU guard.
                         let backend = if device.is_some() {
                             Backend::Auto
                         } else {
@@ -1972,50 +1973,29 @@ fn resolve_device_index(index: usize) -> Result<(Backend, Option<transcribe_cpp:
 
 /// Map Handy's whisper accelerator setting to a transcribe-cpp [`Backend`].
 ///
-/// `Auto` lets the library pick the best device (with CPU fallback). `Cpu` forces
-/// strict CPU. `Gpu` requests the platform GPU backend, but only if a device for
-/// it is actually registered — otherwise it falls back to `Auto` so the load
-/// never fails outright on a machine without that GPU backend. An emulated x64
-/// process on Windows ARM64 forces strict CPU for every setting.
+/// `Auto` lets the library pick the best device (with CPU fallback), while
+/// `Cpu` forces strict CPU. `Gpu` only remains as the companion setting for an
+/// exact device; without a valid exact device it has the retired generic GPU
+/// state's new Auto semantics. An emulated x64 process on Windows ARM64 forces
+/// strict CPU for every setting.
 fn select_transcribe_backend(setting: TranscribeAcceleratorSetting) -> Backend {
-    match effective_transcribe_accelerator(setting, transcribe_gpu_disabled_for_host()) {
-        TranscribeAcceleratorSetting::Cpu => Backend::Cpu,
-        TranscribeAcceleratorSetting::Auto => Backend::Auto,
-        TranscribeAcceleratorSetting::Gpu => {
-            #[cfg(target_os = "macos")]
-            let candidates = [Backend::Metal];
-            #[cfg(not(target_os = "macos"))]
-            let candidates = [Backend::Cuda, Backend::Rocm, Backend::Vulkan];
+    select_transcribe_backend_for_host(setting, transcribe_gpu_disabled_for_host())
+}
 
-            match candidates
-                .into_iter()
-                .find(|&b| transcribe_cpp::backend_available(b))
-            {
-                Some(b) => b,
-                None => {
-                    #[cfg(target_os = "linux")]
-                    warn!(
-                        "GPU acceleration was requested, but no transcribe.cpp GPU backend is \
-                         registered; falling back to Auto (usually CPU). Run with \
-                         --list-devices to inspect detected devices; VK_LOADER_DEBUG=error can \
-                         reveal Vulkan loader or driver failures"
-                    );
-                    #[cfg(not(target_os = "linux"))]
-                    warn!(
-                        "GPU acceleration was requested, but no transcribe.cpp GPU backend is \
-                         registered; falling back to Auto (usually CPU). Run with \
-                         --list-devices to inspect detected devices"
-                    );
-                    Backend::Auto
-                }
-            }
-        }
+fn select_transcribe_backend_for_host(
+    setting: TranscribeAcceleratorSetting,
+    gpu_disabled: bool,
+) -> Backend {
+    match effective_transcribe_accelerator(setting, gpu_disabled) {
+        TranscribeAcceleratorSetting::Cpu => Backend::Cpu,
+        TranscribeAcceleratorSetting::Auto | TranscribeAcceleratorSetting::Gpu => Backend::Auto,
     }
 }
 
-/// Resolve a persisted stable GPU identity to this process's fresh opaque
-/// device handle. Registry indices and handles are process-local and are never
-/// stored across launches.
+/// Resolve the user's persisted GPU identity to a fresh opaque 0.2 device
+/// handle. Registry indices and handles are process-local, so settings store a
+/// key based on the backend's stable `device_id` (falling back to name for
+/// backends such as Metal that do not report one).
 fn resolve_gpu_device(
     setting: TranscribeAcceleratorSetting,
     gpu_device: Option<&str>,
@@ -2029,7 +2009,7 @@ fn resolve_gpu_device(
     });
     if resolved.is_none() {
         warn!(
-            "Stored transcribe GPU device '{}' is no longer available; using automatic GPU selection",
+            "Stored transcribe GPU device '{}' is no longer available; using automatic device selection",
             gpu_device
         );
     }
@@ -2260,6 +2240,18 @@ mod tests {
             available_transcribe_accelerators(false),
             ["auto", "cpu", "gpu"]
         );
+        assert_eq!(
+            select_transcribe_backend_for_host(TranscribeAcceleratorSetting::Auto, false),
+            Backend::Auto
+        );
+        assert_eq!(
+            select_transcribe_backend_for_host(TranscribeAcceleratorSetting::Cpu, false),
+            Backend::Cpu
+        );
+        assert_eq!(
+            select_transcribe_backend_for_host(TranscribeAcceleratorSetting::Gpu, false),
+            Backend::Auto
+        );
         for kind in ["cpu", "accel", "metal", "cuda", "vulkan", "gpu"] {
             assert!(transcribe_device_allowed(kind, false));
         }
@@ -2275,6 +2267,10 @@ mod tests {
             assert_eq!(
                 effective_transcribe_accelerator(setting, true),
                 TranscribeAcceleratorSetting::Cpu
+            );
+            assert_eq!(
+                select_transcribe_backend_for_host(setting, true),
+                Backend::Cpu
             );
         }
         assert_eq!(available_transcribe_accelerators(true), ["cpu"]);

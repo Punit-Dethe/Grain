@@ -122,6 +122,17 @@ conflict rules.
 | `managers/transcription.rs` (TDT lifecycle, 2026-08-21)                           | Narrow additive `[GRAIN]` boundary hooks: `with_grain_tdt_flow_session` exposes the existing load wait, checked exclusive checkout, panic isolation, and stale-model reconciliation for one long-lived Grain closure; `grain_transcribe_cpp_language_for_model` reuses Handy's model-aware language coercion/run-option gate. Native ASR reserves the same checked engine-owner token before opening its router, so it cannot silently drain while TDT owns the session. No capability routing, descriptor scheduling, retry, cancellation, text assembly, or TDT model policy lives here. | Keep these hooks policy-free. If engine ownership or language coercion changes upstream, reimplement only the same checkout/admission/reconcile and language-gate boundaries; all TDT orchestration remains outside `handy/`. |
 | `grain_audio_journal.rs`, `rolling.rs`, `tdt_flow.rs`, `grain_actions.rs` (2026-08-21) | Grain-only TDT Flow path: close-aware right-lookahead waits over the append-only PCM16 journal; explicit `commit_end_frame`; one serial worker with same-descriptor retry; native cancellation; exact delta assembly; and an internal finalization marker that bypasses only generic rolling canonicalization. Routing uses a Grain-owned exact catalog-ID overlay for the reviewed Parakeet TDT v2/v3 GGUF quants because those published artifacts predate and lack `stt.capability.tdt_flow`; native begin remains default-off for missing metadata and validates Parakeet architecture plus a TDT head when the reviewed caller override is used. Untagged models retain unchanged generic descriptors, reads, assembler, recovery, and output canonicalization. | Keep the generated upstream catalog verbatim and the two-model overlay in Grain-owned code. Do not infer routing from architecture, variant, `supports_streaming`, or arbitrary filenames; adding another model requires explicit review and a tag. Preserve native default-off behavior and loud failure for a tagged artifact whose architecture/head is incompatible. |
 
+## GPU selection parity audit (2026-09-26)
+
+Audited against fetched Handy `8f9cf53cd1410cda26beea39ff802ac306e39585`.
+Removed Grain's CUDA/ROCm/Vulkan (Metal on macOS) preference when an exact
+persisted GPU is missing. `select_transcribe_backend`, its host helper,
+`resolve_gpu_device`, and the accelerator host tests now match Handy: an exact
+available device is honored; otherwise Auto delegates selection and CPU fallback
+to transcribe.cpp. Explicit CPU and emulated Windows x64-on-ARM64 stay CPU-only.
+Do not reintroduce a backend priority list. See
+[`GPU-OFFLOADING-AUDIT.md`](../docs/GPU-OFFLOADING-AUDIT.md) for scope and evidence.
+
 ## Grain-only subsystems (no upstream counterpart — never expect upstream changes)
 
 `grain_actions.rs`, `grain_commands.rs`, `grain_post_process.rs`,
