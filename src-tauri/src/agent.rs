@@ -82,6 +82,8 @@ const FIELD_CONTEXT_MAX_CHARS: usize = 6000;
 /// The card fills its window exactly — it casts no drop shadow, so there is no
 /// transparent gutter to budget for and these are the visible sizes.
 const PANEL_W: f64 = 500.0;
+const PANEL_COMPACT_W: f64 = 432.0;
+const PANEL_COMPACT_H: f64 = 488.0;
 /// Tallest the SIDE window ever gets (the conversation on a big screen).
 const PANEL_SIDE_MAX_H: f64 = 880.0;
 const PANEL_MARGIN: f64 = 20.0;
@@ -883,39 +885,30 @@ fn panel_position(app: &AppHandle) -> AgentPanelPosition {
 fn panel_start_size(app: &AppHandle) -> (f64, f64) {
     if panel_position(app) == AgentPanelPosition::Center {
         (PANEL_CENTER_W, PANEL_CENTER_START_H)
-    } else {
-        // SIDE opens at the full envelope — there is only one size. See
-        // [`side_envelope`].
+    } else if app
+        .try_state::<AgentState>()
+        .is_some_and(|state| state.panel_expanded.load(Ordering::SeqCst))
+    {
         (PANEL_W, PANEL_SIDE_MAX_H)
+    } else {
+        (PANEL_COMPACT_W, PANEL_COMPACT_H)
     }
 }
 
-/// The SIDE window's footprint — the SAME for the compact card and the
-/// conversation, deliberately.
-///
-/// Growing the window at the moment the user expands is the thing that could
-/// never be made smooth, and each fix only moved the seam: the resize is one
-/// instant native step that the webview's own render loop knows nothing about,
-/// so whatever the newly exposed region paints for its first frame or two lands
-/// in the middle of the animation, and the animation cannot even measure its own
-/// target until the resize has actually been applied. Racing that was the whole
-/// bug, in three different costumes.
-///
-/// So the window never resizes while it is on screen. It opens at the size the
-/// conversation will need, and expanding is a pure CSS growth inside a window
-/// that does not move a pixel. Nothing to race.
-///
-/// The compact card is therefore no longer a window size at all — it is a box in
-/// this window's bottom-right corner, owned entirely by `agent.css`. Nothing here
-/// needs its dimensions, which is why they are not mirrored in this file: a copy
-/// nothing reads is a copy that silently goes stale.
-///
-/// The cost is honest and bounded: while compact, the transparent area above and
-/// left of the card belongs to this window, so clicks there hit it instead of
-/// whatever is behind. That is the same region the conversation occupies anyway,
-/// on a surface that lives seconds and closes on Esc.
-fn side_envelope(work_h: f64) -> (f64, f64) {
-    (PANEL_W, (work_h - 110.0).clamp(360.0, PANEL_SIDE_MAX_H))
+/// The native hit area follows the visible side card. Reserving the expanded
+/// footprint while compact blocks clicks in unrelated apps even if the webview
+/// paints those pixels transparent.
+fn side_size(work_w: f64, work_h: f64, expanded: bool) -> (f64, f64) {
+    let max_w = (work_w - 2.0 * PANEL_MARGIN).max(1.0);
+    let max_h = (work_h - 2.0 * PANEL_MARGIN).max(1.0);
+    if expanded {
+        (
+            PANEL_W.min(max_w),
+            (work_h - 110.0).clamp(360.0, PANEL_SIDE_MAX_H).min(max_h),
+        )
+    } else {
+        (PANEL_COMPACT_W.min(max_w), PANEL_COMPACT_H.min(max_h))
+    }
 }
 
 /// Move AND resize in a single step.
@@ -997,10 +990,14 @@ fn place_panel(window: &tauri::WebviewWindow) {
 
     let metrics = monitor_work_logical(window).or_else(|| monitor_logical(window));
     if let Some((ox, oy, sw, sh)) = metrics {
-        // ONE footprint for both stages, anchored PANEL_MARGIN in from the
-        // bottom-right — so this only ever runs while the window is hidden or
-        // already at this exact box, and expanding moves nothing native at all.
-        let (w, h) = side_envelope(sh);
+        // Keep the bottom-right corner fixed as the native hit area grows from
+        // the compact card to the conversation. The frontend waits for this
+        // bounds change before it animates the card within the larger viewport.
+        let expanded = window
+            .app_handle()
+            .try_state::<AgentState>()
+            .is_some_and(|state| state.panel_expanded.load(Ordering::SeqCst));
+        let (w, h) = side_size(sw, sh, expanded);
         let x = ox + sw - w - PANEL_MARGIN;
         let y = oy + sh - h - PANEL_MARGIN;
         set_bounds(window, x, y, w, h);
@@ -1854,6 +1851,9 @@ pub fn open_followup(app: &AppHandle) {
         register_followup_shortcut(app);
         // Expanded → the global Enter must stay unregistered (in-window input).
         let _ = crate::shortcut::unregister_shortcut(app, submit_binding());
+        if let Some(state) = app.try_state::<AgentState>() {
+            state.panel_expanded.store(true, Ordering::SeqCst);
+        }
 
         // Not on the main thread (we're on a shortcut/WS thread), so resizing
         // the window here is safe (tauri#3990 only bites main-thread resizes).

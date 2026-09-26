@@ -164,6 +164,7 @@ export function AgentPanel() {
   // presence tells the reveal effect to animate the card's box open from there
   // instead of playing the plain opening growth. Consumed once.
   const growFromRef = useRef<{ w: number; h: number } | null>(null);
+  const expandingRef = useRef(false);
   const [followupShortcut, setFollowupShortcut] = useState<string>("");
   // Which reply surface this session is rendering — loaded at mount. `side` is
   // the original bottom-right card; `center` is the sleek center-top panel.
@@ -338,7 +339,7 @@ export function AgentPanel() {
   );
 
   /** Expand into the conversation stage (button / shortcut / pill offer). */
-  const expand = useCallback(() => {
+  const expand = useCallback(async () => {
     if (expandedRef.current) {
       followupRef.current?.focus();
       return;
@@ -346,7 +347,13 @@ export function AgentPanel() {
     // The first run is still in flight — expanding now would strand its reply
     // in the (hidden) version list. The button is disabled; this also covers
     // the global follow-up shortcut.
-    if (busyRef.current || versionsRef.current.length === 0) return;
+    if (
+      expandingRef.current ||
+      busyRef.current ||
+      versionsRef.current.length === 0
+    )
+      return;
+    expandingRef.current = true;
     // Freeze the displayed version into the conversation history (evidence and
     // not-found carried through so the footer persists after expanding).
     const reply = versionsRef.current[versionIdxRef.current];
@@ -365,21 +372,10 @@ export function AgentPanel() {
         confirmAction: reply.confirm_action,
       });
     }
-    // ONE window, and it does not move. The window is already the conversation's
-    // footprint (`side_envelope` in `agent.rs`) — the compact card is just a box
-    // in its bottom-right corner — so expanding is that box growing to fill a
-    // window that never resizes. No native step to hide, race, or wait for.
-    //
-    // Measure the CARD, not the viewport: the viewport is the target, and it has
-    // been the target the whole time. Reading the window for the start box was
-    // only ever correct while the window itself was being resized, and when that
-    // read lost its race it returned the target — collapsing the growth to
-    // nothing and falling through to the entrance animation instead, which
-    // played scale(0.86)→1 on the full-size conversation. That is the "big card
-    // compacts, then the expanded appears".
-    // `offsetWidth/Height`, not the bounding rect: the rect includes transforms,
-    // so expanding while the entrance is still scaling would read a shrunken box
-    // and grow from the wrong size. Same reason `reportHeight` uses it.
+    // Pin the compact card to its current box before growing the native window.
+    // The bottom-right corner stays anchored, so the newly exposed transparent
+    // area is invisible until the card animation starts. Offset dimensions
+    // exclude the entrance transform, unlike getBoundingClientRect().
     const card = cardRef.current;
     const from = {
       w: card?.offsetWidth || window.innerWidth,
@@ -389,14 +385,28 @@ export function AgentPanel() {
       card.style.width = `${from.w}px`;
       card.style.height = `${from.h}px`;
     }
-    growFromRef.current = from;
-    setMessages(seed);
-    setExpanded(true);
-    setAppearNonce((n) => n + 1);
-    window.setTimeout(() => followupRef.current?.focus(), 60);
-    // State only now (which brain owns Enter, whether dictation routes into the
-    // panel). It no longer touches the window, so nothing waits on it.
-    void commands.agentSetPanelMode(true).catch(() => {});
+    try {
+      const result = await commands.agentSetPanelMode(true);
+      if (result.status === "error") throw new Error(result.error);
+      // The command applies native bounds first; wait for the webview to see
+      // the new viewport before measuring the animation's target.
+      await new Promise<void>((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+      );
+      if (!cardRef.current) return;
+      growFromRef.current = from;
+      setMessages(seed);
+      setExpanded(true);
+      setAppearNonce((n) => n + 1);
+      window.setTimeout(() => followupRef.current?.focus(), 60);
+    } catch {
+      // Keep the compact card usable if the native resize fails.
+      card?.style.removeProperty("width");
+      card?.style.removeProperty("height");
+      void commands.agentSetPanelMode(false).catch(() => {});
+    } finally {
+      expandingRef.current = false;
+    }
   }, []);
 
   /** Open the CENTER follow-up field (button click or the continuation
