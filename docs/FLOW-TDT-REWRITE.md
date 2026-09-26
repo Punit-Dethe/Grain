@@ -2,6 +2,7 @@
 
 Status: native v0.2.3 upgrade and production Flow integration implemented on `core/rolling-window`, 2026-09-10. Real-model parity, soak, and packaged-application validation remain open.
 Update (2026-09-26): Flow live preview was removed. Flow processes stable windows during recording and renders one final transcript at stop.
+Accuracy audit (2026-09-26): identical-sample v2 Q8_0 comparisons now reproduce lexical differences from ordinary GGUF Batch on longer recordings. Decoder-only replacement and fixed two-second lookahead did not establish parity. See [the evidence and next implementation plan](FLOW-ACCURACY-AUDIT.md); real-model release gates remain open.
 Owner intent: reproduce FluidVoice's Parakeet TDT v2/v3 recording behavior, simplify Grain's Flow implementation, and upgrade transcribe.cpp. This document is the durable execution and handoff record; update checkboxes and evidence as work lands. Do not infer completion from a design decision.
 
 ## Scope and invariants

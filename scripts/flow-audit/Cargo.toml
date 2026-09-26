@@ -1,0 +1,14 @@
+[package]
+name = "grain-flow-audit"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# Offline evaluation only; never linked into the application.
+[workspace]
+
+[dependencies]
+grain-tdt = { path = "../../crates/grain-tdt" }
+transcribe-cpp = { path = "../../vendor/transcribe-cpp-0.2.3", default-features = false, features = ["dynamic-backends"] }
+hound = "3.5"
+serde_json = "1"
