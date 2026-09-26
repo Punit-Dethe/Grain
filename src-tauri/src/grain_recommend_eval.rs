@@ -192,7 +192,7 @@ pub fn run(golden_path: &Path, raw: &str, json: bool) -> Result<(), String> {
             "recommendation eval requires the semantic model, but {} is not installed; \
              install it, use semanticMode='optional', or use semanticMode='disabled' \
              for an explicit name-only run",
-            crate::grain_space::embed::MODEL_REPO
+            crate::grain_embed::MODEL_REPO
         ));
     }
 
@@ -678,17 +678,16 @@ fn validate_single_line(label: &str, value: &str) -> Result<(), String> {
 }
 
 fn semantic_scores(extensions: &[LoadedExtension], cases: &[Case]) -> Result<SemanticRun, String> {
-    if !crate::grain_space::embed::model_on_disk() {
+    if !crate::grain_embed::model_on_disk() {
         return Ok(SemanticRun::default());
     }
 
     let index_started = Instant::now();
     let mut extension_vectors = Vec::with_capacity(extensions.len());
     for extension in extensions {
-        let vectors =
-            crate::grain_space::embed::embed(extension.examples.clone()).map_err(|error| {
-                format!("embed recommend examples for '{}': {error:#}", extension.id)
-            })?;
+        let vectors = crate::grain_embed::embed(extension.examples.clone()).map_err(|error| {
+            format!("embed recommend examples for '{}': {error:#}", extension.id)
+        })?;
         if vectors.len() != extension.examples.len() {
             return Err(format!(
                 "embedder returned {} vectors for {} examples on '{}'",
@@ -705,7 +704,7 @@ fn semantic_scores(extensions: &[LoadedExtension], cases: &[Case]) -> Result<Sem
     let mut query_embedding_millis = Vec::with_capacity(cases.len());
     for case in cases {
         let query_started = Instant::now();
-        let query = crate::grain_space::embed::embed_query(case.said.clone())
+        let query = crate::grain_embed::embed_query(case.said.clone())
             .map_err(|error| format!("embed recommendation query: {error:#}"))?;
         query_embedding_millis.push(elapsed_millis(query_started));
 
@@ -760,10 +759,10 @@ fn output<'a>(
         corpus,
         extension_count,
         model: ModelInfo {
-            repository: crate::grain_space::embed::MODEL_REPO,
-            revision: crate::grain_space::embed::MODEL_REVISION,
-            dimensions: crate::grain_space::embed::EMBED_DIM,
-            query_instruction: crate::grain_space::embed::QUERY_INSTRUCTION,
+            repository: crate::grain_embed::MODEL_REPO,
+            revision: crate::grain_embed::MODEL_REVISION,
+            dimensions: crate::grain_embed::EMBED_DIM,
+            query_instruction: crate::grain_embed::QUERY_INSTRUCTION,
             semantic_mode,
             semantic_ran: semantic.scores.is_some(),
         },

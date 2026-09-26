@@ -22,9 +22,7 @@ use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use grain_sdk::{
-    AgentInputKind, DaemonEvent, OverlayPosition, PillAction, PillSkin, SessionMode, PILL_ICON_PX,
-};
+use grain_sdk::{DaemonEvent, OverlayPosition, PillAction, PillSkin, SessionMode, PILL_ICON_PX};
 
 use tiny_skia::{
     Color, FillRule, FilterQuality, Paint, PathBuilder, Pixmap, PixmapPaint, Rect, Stroke,
@@ -479,17 +477,6 @@ const AIN_WAVE_ROWS: usize = 4;
 const AIN_WAVE_DOT: f32 = 3.5;
 const AIN_WAVE_GAP: f32 = 3.0;
 
-// [GRAIN] Grain Space note card (Capture): a two-field title + body layout that
-// grows with the body up to a max, matching the prototype. The body caps at
-// CAP_MAX_BODY_LINES visible lines (older lines scroll off the top) so the card
-// always fits inside the fixed AgentInput canvas (no window resize, no RAM
-// growth). CAP_FIXED_OVERHEAD is everything but the body (pads + title + footer).
-const CAP_TITLE_PX: f32 = 18.0;
-const CAP_BODY_PX: f32 = 14.0;
-const CAP_BODY_LINE_H: f32 = 19.0;
-const CAP_MAX_BODY_LINES: usize = 4;
-const CAP_FIXED_OVERHEAD: f32 = 84.0;
-
 // ── Studio Window geometry ──────────────────────────────────────────────────
 //
 // [GRAIN] Modeled on Handy's live-transcription overlay (upstream
@@ -737,81 +724,6 @@ fn wrap_runs(
         lines.push(LaidLine { words: cur });
     }
     lines
-}
-
-/// [GRAIN] Greedy word-wrap of PLAIN text into display lines no wider than
-/// `max_w` at `px`, honoring explicit `\n` breaks. Over-long single words are
-/// hard-split by character so a pasted URL can't overflow. Used by the Grain
-/// Space note card's multi-line body.
-fn wrap_plain(font: &fontdue::Font, text: &str, px: f32, max_w: f32) -> Vec<String> {
-    let mut lines: Vec<String> = Vec::new();
-    for paragraph in text.split('\n') {
-        if paragraph.is_empty() {
-            lines.push(String::new());
-            continue;
-        }
-        let mut cur = String::new();
-        let mut cur_w = 0.0f32;
-        let space_w = font.metrics(' ', px).advance_width;
-        for word in paragraph.split(' ') {
-            let word_w: f32 = word
-                .chars()
-                .map(|c| font.metrics(c, px).advance_width)
-                .sum();
-            let add = if cur.is_empty() {
-                word_w
-            } else {
-                word_w + space_w
-            };
-            if !cur.is_empty() && cur_w + add > max_w {
-                lines.push(std::mem::take(&mut cur));
-                cur_w = 0.0;
-            }
-            // Hard-split a word that alone exceeds the width.
-            if word_w > max_w && cur.is_empty() {
-                let mut piece = String::new();
-                let mut piece_w = 0.0f32;
-                for ch in word.chars() {
-                    let cw = font.metrics(ch, px).advance_width;
-                    if piece_w + cw > max_w && !piece.is_empty() {
-                        lines.push(std::mem::take(&mut piece));
-                        piece_w = 0.0;
-                    }
-                    piece.push(ch);
-                    piece_w += cw;
-                }
-                cur = piece;
-                cur_w = piece_w;
-                continue;
-            }
-            if !cur.is_empty() {
-                cur.push(' ');
-                cur_w += space_w;
-            }
-            cur.push_str(word);
-            cur_w += word_w;
-        }
-        lines.push(cur);
-    }
-    if lines.is_empty() {
-        lines.push(String::new());
-    }
-    lines
-}
-
-/// [GRAIN] Draw the agent input's blinking orange caret, centered vertically on
-/// `cy`. Shared by the single-field query card and the two-field note card.
-fn draw_caret(pixmap: &mut Pixmap, paint: &mut Paint, x: f32, cy: f32, alpha: f32) {
-    paint.set_color(Color::from_rgba8(0xff, 0x55, 0x00, (alpha * 255.0) as u8));
-    if let Some(rect) = Rect::from_xywh(x, cy - 9.0, 1.6, 18.0) {
-        pixmap.fill_path(
-            &PathBuilder::from_rect(rect),
-            paint,
-            FillRule::Winding,
-            Transform::identity(),
-            None,
-        );
-    }
 }
 
 /// Separable box blur applied in place to a single-channel coverage bitmap (a
@@ -3143,19 +3055,13 @@ struct Remote {
     session_owner: Option<String>,
     /// Bumped when ownership starts or clears so the App updates the riser.
     session_owner_seq: u64,
-    /// [GRAIN] Native agent input: `Some((selection_chars, type_to_expand,
-    /// kind))` while the summon card should be on screen. `kind` picks the card
-    /// variant (Assist vs the top-anchored Grain Space Capture/Recall).
-    /// Overrides every other surface.
-    agent_input: Option<(u32, bool, AgentInputKind)>,
+    /// Native summon card context; overrides other surfaces while shown.
+    agent_input: Option<(u32, bool)>,
     /// Bumped on every show/hide so the App detects the transition.
     agent_input_seq: u64,
     /// Bumped when the core's global Enter asks the pill to submit (the pill
     /// answers with SubmitText or SubmitVoice depending on its state).
     agent_submit_req_seq: u64,
-    /// [GRAIN] Bumped when a Grain Space capture saved — the card plays a brief
-    /// in-place "Saved" confirmation before the core hides it.
-    agent_input_saved_seq: u64,
     /// [GRAIN] Live Studio Window transcript. Frozen the instant `state` leaves
     /// `Recording` (see `apply_event`) so the preview never changes once the
     /// user releases the shortcut, even though the worker's drain can still
@@ -3196,7 +3102,6 @@ impl Default for Remote {
             agent_input: None,
             agent_input_seq: 0,
             agent_submit_req_seq: 0,
-            agent_input_saved_seq: 0,
             asr: AsrDisplay::default(),
             skin: PillSkin::default(),
             icon: None,
@@ -3348,13 +3253,10 @@ fn apply_event(remote: &Mutex<Remote>, ev: DaemonEvent) {
         DaemonEvent::AgentInputShow {
             selection_chars,
             type_to_expand,
-            kind,
         } => {
-            r.agent_input = Some((selection_chars, type_to_expand, kind));
+            r.agent_input = Some((selection_chars, type_to_expand));
             r.agent_input_seq = r.agent_input_seq.wrapping_add(1);
-            eprintln!(
-                "event: AgentInputShow ({selection_chars} sel chars, tte {type_to_expand}, kind {kind:?})"
-            );
+            eprintln!("event: AgentInputShow ({selection_chars} sel chars, tte {type_to_expand})");
         }
         DaemonEvent::AgentInputHide => {
             if r.agent_input.take().is_some() {
@@ -3362,10 +3264,7 @@ fn apply_event(remote: &Mutex<Remote>, ev: DaemonEvent) {
             }
             eprintln!("event: AgentInputHide");
         }
-        DaemonEvent::AgentInputSaved => {
-            r.agent_input_saved_seq = r.agent_input_saved_seq.wrapping_add(1);
-            eprintln!("event: AgentInputSaved");
-        }
+
         DaemonEvent::AgentInputSubmitRequest => {
             r.agent_submit_req_seq = r.agent_submit_req_seq.wrapping_add(1);
             eprintln!("event: AgentInputSubmitRequest");
@@ -3539,7 +3438,6 @@ fn spawn_event_client(
                                             | DaemonEvent::PromptChanged { .. }
                                             | DaemonEvent::AgentInputShow { .. }
                                             | DaemonEvent::AgentInputHide
-                                            | DaemonEvent::AgentInputSaved
                                             | DaemonEvent::AgentInputSubmitRequest
                                             | DaemonEvent::ExtensionRecommend { .. }
                                             | DaemonEvent::ExtensionRecommendClear
@@ -3595,92 +3493,45 @@ struct AgentInputUi {
     /// Mirrors the setting: when false, printable keystrokes while listening are
     /// ignored (the user must Tab / click to reach the typing card).
     type_to_expand: bool,
-    /// [GRAIN] Which brain this card serves — drives anchor + labels/placeholder
-    /// ("Noting…"/"Save Note" for Capture, "Listening…"/"Confirm" otherwise).
-    kind: AgentInputKind,
     /// Typing (expanded) vs recording (compact).
     expanded: bool,
     /// Eased 0..1 expansion progress (drives width/height/content cross-fade).
     expand_t: f32,
-    /// The single-field query (Recall/Assist) OR the note BODY (Capture).
+    /// The typed instruction.
     text: String,
-    /// [GRAIN] Capture only: the note TITLE (the two-field note card). Empty →
-    /// the backend auto-generates one.
-    title: String,
-    /// [GRAIN] Capture only: cursor is in the title field (else the body). The
-    /// note card opens focused on the BODY, matching the prototype.
-    focus_title: bool,
     /// Free-running clock: wave animation + caret blink.
     phase: f32,
-    /// [GRAIN] Grain Space capture confirmation: once set, the card paints a
-    /// green "Saved" state (in place, no new surface) until the core hides it.
-    saved: bool,
     /// Confirm-button hit rect from the last rendered frame (x0, y0, x1, y1).
     confirm_rect: (f32, f32, f32, f32),
     /// Card hit rect from the last rendered frame.
     card_rect: (f32, f32, f32, f32),
-    /// [GRAIN] Capture: title / body field hit rects (click to focus a field).
-    title_rect: (f32, f32, f32, f32),
-    body_rect: (f32, f32, f32, f32),
     hover_confirm: bool,
 }
 
 impl AgentInputUi {
-    fn new(selection_chars: u32, type_to_expand: bool, kind: AgentInputKind) -> Self {
+    fn submit_action(&self, quick: bool) -> PillAction {
+        if self.expanded && !self.text.trim().is_empty() {
+            PillAction::AgentInputSubmitText {
+                text: self.text.trim().to_string(),
+                quick,
+            }
+        } else {
+            PillAction::AgentInputSubmitVoice { quick }
+        }
+    }
+
+    fn new(selection_chars: u32, type_to_expand: bool) -> Self {
         AgentInputUi {
             selection_chars,
             type_to_expand,
-            kind,
             expanded: false,
             expand_t: 0.0,
             text: String::new(),
-            title: String::new(),
-            focus_title: false,
             phase: 0.0,
-            saved: false,
             confirm_rect: (0.0, 0.0, 0.0, 0.0),
             card_rect: (0.0, 0.0, 0.0, 0.0),
-            title_rect: (0.0, 0.0, 0.0, 0.0),
-            body_rect: (0.0, 0.0, 0.0, 0.0),
             hover_confirm: false,
         }
-    }
-
-    /// True for the Grain Space memory surfaces (top-anchored variants).
-    fn is_grain_space(&self) -> bool {
-        matches!(self.kind, AgentInputKind::Capture | AgentInputKind::Recall)
-    }
-
-    /// True for the Grain Space note card (two-field title + body).
-    fn is_capture(&self) -> bool {
-        matches!(self.kind, AgentInputKind::Capture)
-    }
-
-    /// The PillAction for submitting the current card. Capture → a typed note
-    /// (body + optional title); Recall/Assist expanded with text → typed submit;
-    /// otherwise the in-progress voice capture. `quick` (Shift held) only
-    /// affects Assist downstream.
-    fn submit_action(&self, quick: bool) -> PillAction {
-        if self.expanded {
-            let body = self.text.trim().to_string();
-            if self.is_capture() {
-                let title = self.title.trim().to_string();
-                if !body.is_empty() || !title.is_empty() {
-                    return PillAction::AgentInputSubmitText {
-                        text: body,
-                        title,
-                        quick,
-                    };
-                }
-            } else if !body.is_empty() {
-                return PillAction::AgentInputSubmitText {
-                    text: body,
-                    title: String::new(),
-                    quick,
-                };
-            }
-        }
-        PillAction::AgentInputSubmitVoice { quick }
     }
 }
 
@@ -3749,7 +3600,6 @@ struct App {
     agent_input: Option<AgentInputUi>,
     last_agent_input_seq: u64,
     last_agent_submit_req_seq: u64,
-    last_agent_input_saved_seq: u64,
     /// Last cursor position (physical px) for card/button hit-testing.
     cursor_pos: (f32, f32),
     /// Prompt Record is never attached to a click on the pill body. Hovering the
@@ -3780,8 +3630,7 @@ struct App {
     cursor_inside: bool,
     /// Live keyboard modifiers (Ctrl+Backspace word delete, Ctrl+V paste).
     ctrl_down: bool,
-    /// [GRAIN] Shift held — Capture submits the note on Shift/Ctrl+Enter (plain
-    /// Enter is a newline), and Assist uses Shift+Enter for Quick Agent.
+    /// Shift+Enter submits through Quick Agent.
     shift_down: bool,
     /// [GRAIN] Broad-coverage fallback face for glyphs the bundled subset lacks
     /// (Cyrillic/Greek/CJK/…). Lazily loaded only when non-Latin text needs
@@ -3887,7 +3736,6 @@ impl App {
             agent_input: None,
             last_agent_input_seq: 0,
             last_agent_submit_req_seq: 0,
-            last_agent_input_saved_seq: 0,
             cursor_pos: (0.0, 0.0),
             prompt_record_hover: false,
             prompt_record_requested: false,
@@ -4121,21 +3969,11 @@ impl App {
         window.set_outer_position(PhysicalPosition::new(x, y));
     }
 
-    /// The EFFECTIVE anchor for the current agent-input card: the Grain Space
-    /// memory kinds (Capture/Recall) always hug the TOP (the prototype's
-    /// placement), while Assist follows the user's overlay setting (`base`).
-    fn agent_input_anchor(&self, base: OverlayPosition) -> OverlayPosition {
-        match self.agent_input.as_ref() {
-            Some(ui) if ui.is_grain_space() => OverlayPosition::Top,
-            _ => base,
-        }
-    }
-
     /// True when the agent input card should hug the TOP of its canvas (top
     /// anchor → expands downward). Mirrors `position_agent_input`.
     fn agent_input_anchored_top(&self) -> bool {
         let base = self.remote.lock().unwrap().anchor;
-        self.agent_input_anchor(base) == OverlayPosition::Top
+        base == OverlayPosition::Top
     }
 
     /// [GRAIN] Keystroke routing for the agent input card (the window has real
@@ -4145,30 +3983,13 @@ impl App {
         let Some(ui) = &mut self.agent_input else {
             return;
         };
-        let capture = ui.is_capture();
         let (ctrl, shift) = (self.ctrl_down, self.shift_down);
         match ev.logical_key.as_ref() {
             Key::Named(NamedKey::Escape) => {
                 let _ = self.action_tx.send(PillAction::AgentInputCancel);
             }
             Key::Named(NamedKey::Enter) => {
-                // A note being TYPED formats with plain Enter (newline); it
-                // submits only on Shift/Ctrl+Enter. Everywhere else (voice
-                // capture, Recall, Assist) plain Enter submits.
-                let is_newline = capture && ui.expanded && !(shift || ctrl);
-                if is_newline {
-                    if ui.focus_title {
-                        // Enter in the title jumps to the body (titles are one line).
-                        ui.focus_title = false;
-                    } else if ui.text.chars().count() < 4000 {
-                        ui.text.push('\n');
-                    }
-                } else {
-                    // Shift → Quick Agent (Assist only); harmless elsewhere.
-                    let quick = shift && matches!(ui.kind, AgentInputKind::Assist);
-                    let action = ui.submit_action(quick);
-                    let _ = self.action_tx.send(action);
-                }
+                let _ = self.action_tx.send(ui.submit_action(shift));
             }
             // Tab shrinks back to the recording state (the reference behavior);
             // the core restarts dictation on `active: false`.
@@ -4176,8 +3997,6 @@ impl App {
                 if ui.expanded {
                     ui.expanded = false;
                     ui.text.clear();
-                    ui.title.clear();
-                    ui.focus_title = false;
                     let _ = self
                         .action_tx
                         .send(PillAction::AgentInputTyping { active: false });
@@ -4185,11 +4004,7 @@ impl App {
             }
             Key::Named(NamedKey::Backspace) => {
                 if ui.expanded {
-                    let field = if capture && ui.focus_title {
-                        &mut ui.title
-                    } else {
-                        &mut ui.text
-                    };
+                    let field = &mut ui.text;
                     if ctrl {
                         // Ctrl+Backspace: drop the trailing word.
                         let trimmed = field.trim_end();
@@ -4214,11 +4029,7 @@ impl App {
                                     .action_tx
                                     .send(PillAction::AgentInputTyping { active: true });
                             }
-                            let field = if capture && ui.focus_title {
-                                &mut ui.title
-                            } else {
-                                &mut ui.text
-                            };
+                            let field = &mut ui.text;
                             field.push_str(&clean);
                             // Char-safe cap (byte-index truncate can split UTF-8).
                             if field.chars().count() > 4000 {
@@ -4251,11 +4062,7 @@ impl App {
                         .send(PillAction::AgentInputTyping { active: true });
                 }
                 // Route to the focused field; titles stay short, bodies long.
-                let (field, cap) = if capture && ui.focus_title {
-                    (&mut ui.title, 120usize)
-                } else {
-                    (&mut ui.text, 4000usize)
-                };
+                let (field, cap) = (&mut ui.text, 4000usize);
                 if field.chars().count() < cap {
                     field.push_str(&printable);
                 }
@@ -4398,21 +4205,9 @@ impl App {
         let t = ui.expand_t.clamp(0.0, 1.0);
         let phase = ui.phase;
 
-        // [GRAIN] Card variant. Capture (Grain Space note) relabels the surface —
-        // "Noting…"/"Write down your thoughts…"/"Save Note" — while Recall and
-        // Assist keep "Listening…"/"Ask anything…"/"Confirm". `saved` flips the
-        // whole card to the green in-place confirmation (Capture only). Same
-        // window/pixmap — purely string + colour differences, zero extra RAM.
-        let capture = matches!(ui.kind, AgentInputKind::Capture);
-        let saved = ui.saved;
-        let cue = if capture { "Noting..." } else { "Listening..." };
-        let placeholder = if capture {
-            "Write down your thoughts..."
-        } else {
-            "Ask anything..."
-        };
-        let btn_label = if capture { "Save Note" } else { "Confirm" };
-
+        let cue = "Listening...";
+        let placeholder = "Ask anything...";
+        let btn_label = "Confirm";
         // ── Card geometry (width/height lerp between the two states) ──────────
         // One shared font for the whole card's FIXED strings (the reference's
         // semibold header / button render in the same face — a separate bold
@@ -4431,25 +4226,7 @@ impl App {
         let compact_w = AIN_PAD_X + 2.0 + wave_w + 14.0 + listen_w + AIN_PAD_X;
         let compact_h = AIN_PAD_Y_COMPACT * 2.0 + wave_h.max(16.0) + 2.0;
 
-        // The Grain Space note card grows with its body (up to a capped number
-        // of visible lines), so its expanded height is dynamic; every other
-        // card uses the fixed expanded height.
-        let cap_inner_w = AIN_EXPANDED_W - (AIN_PAD_X + 8.0) * 2.0 - 6.0;
-        let cap_body_lines: usize = if capture {
-            self.font
-                .as_ref()
-                .map(|f| wrap_plain(f, &ui.text, CAP_BODY_PX, cap_inner_w).len())
-                .unwrap_or(1)
-                .clamp(1, CAP_MAX_BODY_LINES)
-        } else {
-            0
-        };
-        let expanded_h = if capture {
-            (CAP_FIXED_OVERHEAD + cap_body_lines as f32 * CAP_BODY_LINE_H)
-                .min(AIN_WIN_H as f32 - 2.0)
-        } else {
-            AIN_EXPANDED_H
-        };
+        let expanded_h = AIN_EXPANDED_H;
 
         let card_w = compact_w + (AIN_EXPANDED_W - compact_w) * t;
         let card_h = compact_h + (expanded_h - compact_h) * t;
@@ -4509,63 +4286,6 @@ impl App {
             AIN_RADIUS - 1.0,
         ) {
             pixmap.fill_path(&p, &paint, FillRule::Winding, Transform::identity(), None);
-        }
-
-        // ── Saved confirmation (Grain Space capture) ──────────────────────────
-        // The dot-matrix wave fills GREEN + "Saved" (mirrors the prototype's
-        // headless-save), centered — the SAME card confirms the save in place
-        // (no new surface). Held briefly by the core, then hidden. A progressive
-        // fill grows the lit dot count over the hold for a little life.
-        if saved {
-            let green = [0x10u8, 0xb9, 0x81];
-            let label = "Saved";
-            let label_w = ui_font.map(|f| text_width(f, label, 12.5)).unwrap_or(40.0);
-            let group_w = wave_w + 14.0 + label_w;
-            let gx = card_x + (card_w - group_w) / 2.0;
-            let cy = card_y + card_h / 2.0;
-            let wy = cy - wave_h / 2.0;
-            // Fraction of dots lit, ramping over the hold (phase is per-frame).
-            let lit = ((phase * 3.0).min(1.0) * (AIN_WAVE_ROWS * AIN_WAVE_COLS) as f32) as usize;
-            for i in 0..(AIN_WAVE_ROWS * AIN_WAVE_COLS) {
-                let r = i / AIN_WAVE_COLS;
-                let c = i % AIN_WAVE_COLS;
-                let corner =
-                    (r == 0 || r == AIN_WAVE_ROWS - 1) && (c == 0 || c == AIN_WAVE_COLS - 1);
-                if corner {
-                    continue;
-                }
-                let a = if i < lit { 255 } else { 40 };
-                let dx = gx + c as f32 * (AIN_WAVE_DOT + AIN_WAVE_GAP) + AIN_WAVE_DOT / 2.0;
-                let dy = wy + r as f32 * (AIN_WAVE_DOT + AIN_WAVE_GAP) + AIN_WAVE_DOT / 2.0;
-                if let Some(circle) = PathBuilder::from_circle(dx, dy, AIN_WAVE_DOT / 2.0) {
-                    paint.set_color(Color::from_rgba8(green[0], green[1], green[2], a));
-                    pixmap.fill_path(
-                        &circle,
-                        &paint,
-                        FillRule::Winding,
-                        Transform::identity(),
-                        None,
-                    );
-                }
-            }
-            if let Some(f) = ui_font {
-                draw_text_left(
-                    &mut pixmap,
-                    f,
-                    label,
-                    gx + wave_w + 14.0,
-                    cy,
-                    12.5,
-                    green,
-                    1.0,
-                );
-            }
-            ui.confirm_rect = (0.0, 0.0, 0.0, 0.0);
-            if let Some(presenter) = &self.presenter {
-                presenter.blit(&pixmap);
-            }
-            self.pixmap = Some(pixmap);
-            return;
         }
 
         // Content cross-fade: recording fades out quickly as the card expands,
@@ -4631,114 +4351,15 @@ impl App {
 
         // ── Typing state (expanded) ───────────────────────────────────────────
         let mut confirm_rect = (0.0_f32, 0.0_f32, 0.0_f32, 0.0_f32);
-        let mut title_rect = (0.0_f32, 0.0_f32, 0.0_f32, 0.0_f32);
-        let mut body_rect = (0.0_f32, 0.0_f32, 0.0_f32, 0.0_f32);
         if typ_alpha > 0.01 {
             let inner_x = card_x + AIN_PAD_X + 8.0; // content inset (reference keeps text off the rounding)
             let inner_w = card_w - (AIN_PAD_X + 8.0) * 2.0;
+            // Footer sits above the card's bottom edge.
             let caret_on = (phase % 1.0) < 0.6;
-            // Footer sits above the card's bottom edge — dynamic for the growing
-            // note card, the original fixed offset for the single-line query card.
-            let foot_cy = if capture {
-                card_y + card_h - 18.0
-            } else {
-                card_y + AIN_PAD_Y_EXPANDED + 9.0 + 9.0 + 16.0 + 12.0 + 12.0 + 16.0 + 15.0
-            };
+            let foot_cy =
+                card_y + AIN_PAD_Y_EXPANDED + 9.0 + 9.0 + 16.0 + 12.0 + 12.0 + 16.0 + 15.0;
 
-            if capture {
-                // ── Grain Space note card: TITLE (top) + BODY (multi-line) ──
-                let title_cy = card_y + AIN_PAD_Y_EXPANDED + 10.0;
-                title_rect = (inner_x, title_cy - 13.0, inner_x + inner_w, title_cy + 13.0);
-                if let Some(f) = sb_font {
-                    let empty = ui.title.is_empty();
-                    let tf = text_font.unwrap_or(f);
-                    let max_tw = inner_w - 6.0;
-                    // Show the tail if the title overflows one line.
-                    let mut shown: &str = if empty { "Note Title" } else { &ui.title };
-                    if !empty {
-                        while text_width(tf, shown, CAP_TITLE_PX) > max_tw && !shown.is_empty() {
-                            let mut it = shown.char_indices();
-                            it.next();
-                            shown = &shown[it.next().map(|(i, _)| i).unwrap_or(shown.len())..];
-                        }
-                    }
-                    let color = if empty {
-                        [0x66, 0x66, 0x66]
-                    } else {
-                        [0xff, 0xff, 0xff]
-                    };
-                    let tw = draw_text_left(
-                        &mut pixmap,
-                        tf,
-                        shown,
-                        inner_x,
-                        title_cy,
-                        CAP_TITLE_PX,
-                        color,
-                        typ_alpha,
-                    );
-                    if ui.focus_title && caret_on {
-                        let cx = if empty { inner_x } else { inner_x + tw + 1.0 };
-                        draw_caret(&mut pixmap, &mut paint, cx, title_cy, typ_alpha);
-                    }
-                }
-
-                // Body: wrapped, growing, tail-scrolled at the visible cap.
-                let body_first_cy = title_cy + 22.0;
-                body_rect = (
-                    inner_x,
-                    body_first_cy - 12.0,
-                    inner_x + inner_w,
-                    foot_cy - 12.0,
-                );
-                if let Some(f) = ui_font {
-                    let bf = text_font.unwrap_or(f);
-                    if ui.text.is_empty() {
-                        draw_text_left(
-                            &mut pixmap,
-                            bf,
-                            placeholder,
-                            inner_x,
-                            body_first_cy,
-                            CAP_BODY_PX,
-                            [0x66, 0x66, 0x66],
-                            typ_alpha,
-                        );
-                        if !ui.focus_title && caret_on {
-                            draw_caret(&mut pixmap, &mut paint, inner_x, body_first_cy, typ_alpha);
-                        }
-                    } else {
-                        let wrapped = wrap_plain(bf, &ui.text, CAP_BODY_PX, inner_w - 6.0);
-                        let start = wrapped.len().saturating_sub(CAP_MAX_BODY_LINES);
-                        let visible = &wrapped[start..];
-                        let mut last_tw = 0.0;
-                        for (i, line) in visible.iter().enumerate() {
-                            let ly = body_first_cy + i as f32 * CAP_BODY_LINE_H;
-                            last_tw = draw_text_left(
-                                &mut pixmap,
-                                bf,
-                                line,
-                                inner_x,
-                                ly,
-                                CAP_BODY_PX,
-                                [0xff, 0xff, 0xff],
-                                typ_alpha,
-                            );
-                        }
-                        if !ui.focus_title && caret_on {
-                            let ly = body_first_cy
-                                + visible.len().saturating_sub(1) as f32 * CAP_BODY_LINE_H;
-                            draw_caret(
-                                &mut pixmap,
-                                &mut paint,
-                                inner_x + last_tw + 1.0,
-                                ly,
-                                typ_alpha,
-                            );
-                        }
-                    }
-                }
-            } else {
+            {
                 let head_cy = card_y + AIN_PAD_Y_EXPANDED + 9.0;
                 let input_cy = head_cy + 9.0 + 16.0 + 12.0;
 
@@ -4759,9 +4380,7 @@ impl App {
                         ) + 0.5;
                     }
                 }
-                // Selection chip (top-right). Shown ONLY when there is actually a
-                // selection; an empty state shows nothing (Recall never selects;
-                // Capture/Assist with nothing highlighted stay clean).
+                // Selection chip (top-right), shown only for highlighted text.
                 if let (Some(f), true) = (ui_font, ui.selection_chars > 0) {
                     let chip_text = format!("{} chars", ui.selection_chars);
                     let tw = text_width(f, &chip_text, 11.0);
@@ -4816,7 +4435,6 @@ impl App {
                 // Input line: typed text (18px white) or the placeholder; caret.
                 if let Some(f) = ui_font {
                     let max_text_w = inner_w - 6.0;
-                    let caret_on = (phase % 1.0) < 0.6;
                     if ui.text.is_empty() {
                         draw_text_left(
                             &mut pixmap,
@@ -4904,7 +4522,7 @@ impl App {
                 );
             }
             if let (Some(f), Some(fb)) = (ui_font, sb_font) {
-                // Label ("Confirm" / "Save Note") + a hand-drawn return arrow
+                // Confirm label and a hand-drawn return arrow
                 // (the subset font has no U+21B5, and drawing it keeps the glyph
                 // crisp and font-agnostic).
                 let btn_tw = text_width(fb, btn_label, 13.0);
@@ -4953,8 +4571,6 @@ impl App {
             }
         }
         ui.confirm_rect = confirm_rect;
-        ui.title_rect = title_rect;
-        ui.body_rect = body_rect;
 
         if let Some(presenter) = &self.presenter {
             presenter.blit(&pixmap);
@@ -5900,10 +5516,6 @@ impl ApplicationHandler<UserEvent> for App {
                         // Confirm / Save button — a mouse click is a normal
                         // submit (never Quick Agent).
                         let _ = self.action_tx.send(ui.submit_action(false));
-                    } else if ui.expanded && ui.is_capture() && hit(ui.title_rect) {
-                        ui.focus_title = true; // click the title field
-                    } else if ui.expanded && ui.is_capture() && hit(ui.body_rect) {
-                        ui.focus_title = false; // click the body field
                     } else if !ui.expanded && hit(ui.card_rect) {
                         ui.expanded = true;
                         let _ = self
@@ -6021,7 +5633,7 @@ impl ApplicationHandler<UserEvent> for App {
                     if r.agent_input.take().is_some() {
                         r.agent_input_seq = r.agent_input_seq.wrapping_add(1);
                     } else {
-                        r.agent_input = Some((128, true, AgentInputKind::Assist));
+                        r.agent_input = Some((128, true));
                         r.agent_input_seq = r.agent_input_seq.wrapping_add(1);
                     }
                 }
@@ -6107,16 +5719,15 @@ impl ApplicationHandler<UserEvent> for App {
             if r.agent_input_seq != self.last_agent_input_seq {
                 self.last_agent_input_seq = r.agent_input_seq;
                 match r.agent_input {
-                    Some((chars, tte, kind)) => {
+                    Some((chars, tte)) => {
                         // A re-show while already up just refreshes the chip and
                         // re-grabs focus (the core re-emits on a double summon).
                         let already = self.agent_input.is_some();
                         if let Some(ui) = &mut self.agent_input {
                             ui.selection_chars = chars;
                             ui.type_to_expand = tte;
-                            ui.kind = kind;
                         } else {
-                            self.agent_input = Some(AgentInputUi::new(chars, tte, kind));
+                            self.agent_input = Some(AgentInputUi::new(chars, tte));
                         }
                         if let Some(window) = &self.window {
                             present::set_focusable(window, true);
@@ -6134,32 +5745,13 @@ impl ApplicationHandler<UserEvent> for App {
                 }
             }
 
-            // [GRAIN] Grain Space capture confirmed — flip the still-open card to
-            // its green "Saved" state (the core hides it after a brief hold).
-            if r.agent_input_saved_seq != self.last_agent_input_saved_seq {
-                self.last_agent_input_saved_seq = r.agent_input_saved_seq;
-                if let Some(ui) = &mut self.agent_input {
-                    ui.saved = true;
-                    ui.phase = 0.0; // restart the clock so the green fill animates in
-                }
-            }
-
             // [GRAIN] The core's global Enter fired — answer with the submit
             // matching our state (typed text wins; otherwise submit the voice
             // capture). The core clears the input on receipt.
             if r.agent_submit_req_seq != self.last_agent_submit_req_seq {
                 self.last_agent_submit_req_seq = r.agent_submit_req_seq;
                 if let Some(ui) = &self.agent_input {
-                    // A note being typed treats plain Enter as a newline, so the
-                    // core's global-Enter fallback must NOT submit it (the pill's
-                    // own focused key handler inserts the newline). Submit only
-                    // via Shift/Ctrl+Enter there.
-                    let capture_newline =
-                        ui.is_capture() && ui.expanded && !self.shift_down && !self.ctrl_down;
-                    if !capture_newline {
-                        let quick = self.shift_down && matches!(ui.kind, AgentInputKind::Assist);
-                        let _ = self.action_tx.send(ui.submit_action(quick));
-                    }
+                    let _ = self.action_tx.send(ui.submit_action(self.shift_down));
                 }
             }
 
@@ -6223,7 +5815,7 @@ impl ApplicationHandler<UserEvent> for App {
                     // the swap. The agent input has its own placement (centered on
                     // the work-area edge, expanding away from it).
                     if self.mode == PillMode::AgentInput {
-                        let ain_anchor = self.agent_input_anchor(r.anchor);
+                        let ain_anchor = r.anchor;
                         Self::position_agent_input(window, ain_anchor);
                     } else {
                         Self::position_window(
@@ -6584,7 +6176,7 @@ impl ApplicationHandler<UserEvent> for App {
                         // Re-anchor each show so a changed setting / active monitor
                         // takes effect immediately.
                         if self.mode == PillMode::AgentInput {
-                            let ain_anchor = self.agent_input_anchor(r.anchor);
+                            let ain_anchor = r.anchor;
                             Self::position_agent_input(window, ain_anchor);
                             eprintln!("window: show agent input (focused)");
                             present::show_window(window);

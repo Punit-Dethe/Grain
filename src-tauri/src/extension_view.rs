@@ -744,7 +744,7 @@ pub async fn extension_view_download_model(
         current.busy = true;
         request_id
     };
-    if let Err(error) = crate::grain_space::embed::download_model(app.clone()).await {
+    if let Err(error) = crate::grain_embed::download_model(app.clone()).await {
         if let Some(current) = active().lock().unwrap().as_mut().filter(|active| {
             active.session_id == session_id
                 && matches!(&active.content, ExtensionViewContent::Choose { .. })

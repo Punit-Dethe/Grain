@@ -87,7 +87,6 @@ export const ANCHORS = [
   "dictation.pipeline.after",
   "context.after",
   "agent.after",
-  "grainspace.after",
   "models.after",
 ] as const;
 
@@ -104,7 +103,6 @@ const ANCHOR_LABELS: Record<Anchor, string> = {
   "dictation.pipeline.after": "Dictation",
   "context.after": "Context awareness",
   "agent.after": "Agent",
-  "grainspace.after": "Grain Space",
   "models.after": "Speech models",
 };
 const ANCHOR_SURFACES: Record<Anchor, readonly string[]> = {
@@ -112,7 +110,6 @@ const ANCHOR_SURFACES: Record<Anchor, readonly string[]> = {
   "dictation.pipeline.after": ["dictation.pipeline.after", "dictation.prompts"],
   "context.after": ["context.after"],
   "agent.after": ["agent.after"],
-  "grainspace.after": ["grainspace.after"],
   "models.after": ["models.after"],
 };
 const CONFIGURE_DONE_LABEL = "Done";

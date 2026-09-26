@@ -1,7 +1,7 @@
 //! [GRAIN] Grain's own shortcut actions, out of the Handy-derived `actions.rs`
 //! (Handy Isolation phase 6). Everything here has no upstream counterpart:
 //! rolling real-time dictation, Native ASR streaming, the prompt switcher,
-//! master chords, the Agent, and Grain Space bindings. `actions.rs` keeps
+//! master chords and the Agent bindings. `actions.rs` keeps
 //! upstream's actions and calls [`register`] once from its `ACTION_MAP`.
 
 use crate::actions::{
@@ -459,57 +459,7 @@ impl ShortcutAction for PasteCatchDeliverAction {
     fn stop(&self, _app: &AppHandle, _binding_id: &str, _shortcut_str: &str) {}
 }
 
-// Grain Space quick add (Input C) — a tap shortcut that silently saves
-// the current selection as a raw note. All work happens off the input thread
-// inside `grain_space::capture::quick_add` (selection grab polls the clipboard).
-struct GrainSpaceQuickAddAction;
-
-impl ShortcutAction for GrainSpaceQuickAddAction {
-    fn start(&self, app: &AppHandle, _binding_id: &str, _shortcut_str: &str) {
-        crate::grain_space::capture::quick_add(app);
-    }
-
-    fn stop(&self, _app: &AppHandle, _binding_id: &str, _shortcut_str: &str) {}
-}
-
-// [GRAIN] There is no `grain_space_open` action any more. It toggled a second
-// frameless notes window; the notebook is the Notes tab of the main window now,
-// so "open my notes" is opening Grain. Removing a global chord that duplicated
-// the app's own front door is part of the shortcut-bloat cleanup
-// (NOTES-TAB-PLAN.md Phase E).
-
-// Grain Recall — a dedicated entry surface that captures no selection or paste
-// target. The submitted request still enters the unified Agent tool loop; this
-// action never performs transcript-driven retrieval itself.
-struct GrainSpaceRecallAction;
-
-impl ShortcutAction for GrainSpaceRecallAction {
-    fn start(&self, app: &AppHandle, _binding_id: &str, _shortcut_str: &str) {
-        crate::agent::summon_memory(app);
-    }
-
-    fn stop(&self, _app: &AppHandle, _binding_id: &str, _shortcut_str: &str) {}
-}
-
-// Grain Space note capture — summons the Agent surfaces in Capture mode:
-// speak OR type a note (and any selected text comes along as the body), then it
-// is structured and saved. Its OWN binding; mode fixed here.
-//
-// [GRAIN] Also reachable from the Agent's `save_note` tool now. The difference is
-// real, which is why this stayed: Capture confirms the save IN the pill card and
-// never opens a panel, where the tool path answers in the reply panel. Collapsing
-// the two is a UX decision, not a refactor.
-struct GrainSpaceCaptureAction;
-
-impl ShortcutAction for GrainSpaceCaptureAction {
-    fn start(&self, app: &AppHandle, _binding_id: &str, _shortcut_str: &str) {
-        crate::agent::summon_capture(app);
-    }
-
-    fn stop(&self, _app: &AppHandle, _binding_id: &str, _shortcut_str: &str) {}
-}
-
-// Parakeet TDT Flow action. Journals exact capture audio while one serial worker
+// Parakeet TDT Flow journals exact capture audio while a serial worker
 // finalizes stable windows and refreshes the mutable tail.
 struct RealtimeTranscribeAction {
     post_process_override: AtomicBool,
@@ -1117,21 +1067,5 @@ pub(crate) fn register(map: &mut HashMap<String, Arc<dyn ShortcutAction>>) {
     map.insert(
         "paste_catch_deliver".to_string(),
         Arc::new(PasteCatchDeliverAction) as Arc<dyn ShortcutAction>,
-    );
-    // Grain Space bindings. Quick add is the one the Agent's note tools cannot
-    // replace: no UI, no model, no wait — and it now ships unbound, because a
-    // global chord is scarce and a feature that is off by default should not hold
-    // one before the user asks. All register only while `grain_space_enabled` is on.
-    map.insert(
-        "grain_space_quick_add".to_string(),
-        Arc::new(GrainSpaceQuickAddAction) as Arc<dyn ShortcutAction>,
-    );
-    map.insert(
-        "grain_space_capture".to_string(),
-        Arc::new(GrainSpaceCaptureAction) as Arc<dyn ShortcutAction>,
-    );
-    map.insert(
-        "grain_space_recall".to_string(),
-        Arc::new(GrainSpaceRecallAction) as Arc<dyn ShortcutAction>,
     );
 }

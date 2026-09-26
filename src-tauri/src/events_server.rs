@@ -117,24 +117,6 @@ pub fn mint_worker_token(ext_id: &str, caps: std::collections::HashSet<String>) 
     mint_extension_token(ext_id, caps, crate::events_auth::ClientRole::Worker)
 }
 
-/// [GRAIN] Mint the identity the Grain Space MCP proxy authenticates with, and
-/// hand the token to it through a file only this user can read.
-///
-/// A file rather than an argument or an environment variable because the proxy
-/// is spawned by the CLIENT, not by us — Claude Code, an IDE, a chat app — and
-/// we never see that command line. It carries exactly one capability, `space`,
-/// which is not in `KNOWN_CAPABILITIES` and therefore cannot be requested by a
-/// manifest or granted by a permission sheet.
-pub fn mint_mcp_token() -> String {
-    // Rotate by server-side identity as well as by the on-disk token. If the
-    // token file was deleted or corrupted, no undiscoverable old credential may
-    // become valid again when Grain Space is re-enabled.
-    registry().revoke_identity("grain.mcp", crate::events_auth::ClientRole::Mcp);
-    let mut caps = std::collections::HashSet::new();
-    caps.insert("space".to_string());
-    mint_extension_token("grain.mcp", caps, crate::events_auth::ClientRole::Mcp)
-}
-
 fn mint_extension_token(
     ext_id: &str,
     caps: std::collections::HashSet<String>,
@@ -486,9 +468,6 @@ async fn handle(stream: TcpStream, ctx: Arc<AppContext>, app: AppHandle) {
     // The authenticated role, not its capability set, decides which protocol
     // this socket speaks and whether the worker host tracks it for reaping.
     let is_worker = identity.role == crate::events_auth::ClientRole::Worker;
-    // The MCP proxy is a request/response client and nothing else: it never
-    // subscribes to events and never receives a host call.
-    let is_mcp = identity.role == crate::events_auth::ClientRole::Mcp;
     let last_activity = if is_worker {
         let Some(activity) =
             crate::extension_host::attach_connection(&identity.id, &session.token, out_tx.clone())
@@ -549,7 +528,7 @@ async fn handle(stream: TcpStream, ctx: Arc<AppContext>, app: AppHandle) {
                             .unwrap_or(0);
                         la.store(now, Ordering::Relaxed);
                     }
-                    if is_worker || is_mcp {
+                    if is_worker {
                         match serde_json::from_str::<grain_sdk::HostFrame>(&txt) {
                             Ok(grain_sdk::HostFrame::Request(req)) => {
                                 // Capability-checked host API. Dispatch off the
@@ -694,8 +673,8 @@ fn handle_pill_action(ctx: &Arc<AppContext>, app: &AppHandle, action: grain_core
             crate::grain_actions::cancel_session(app);
         }
         // [GRAIN] Native agent input: the pill's summon card talking back.
-        grain_core::PillAction::AgentInputSubmitText { text, title, quick } => {
-            crate::agent::input_submit_text(app, text, title, quick);
+        grain_core::PillAction::AgentInputSubmitText { text, quick } => {
+            crate::agent::input_submit_text(app, text, quick);
         }
         grain_core::PillAction::AgentInputSubmitVoice { quick } => {
             crate::agent::input_submit_voice(app, quick);
@@ -723,7 +702,7 @@ fn handle_pill_action(ctx: &Arc<AppContext>, app: &AppHandle, action: grain_core
         grain_core::PillAction::ExtensionDownloadModel => {
             let app = app.clone();
             tauri::async_runtime::spawn(async move {
-                if let Err(error) = crate::grain_space::embed::download_model(app).await {
+                if let Err(error) = crate::grain_embed::download_model(app).await {
                     log::warn!("[GRAIN] extension mode model download failed: {error}");
                 }
             });

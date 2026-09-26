@@ -743,7 +743,7 @@ pub static ACTION_MAP: Lazy<HashMap<String, Arc<dyn ShortcutAction>>> = Lazy::ne
         Arc::new(TestAction) as Arc<dyn ShortcutAction>,
     );
     // [GRAIN] Grain's own actions (rolling, Native ASR, prompt switcher, master
-    // chords, Agent, Grain Space) register here — see grain_actions.rs.
+    // chords, Agent) register here — see grain_actions.rs.
     crate::grain_actions::register(&mut map);
     map
 });

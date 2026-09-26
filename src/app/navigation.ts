@@ -32,7 +32,6 @@ export type ExtensionViewId = (typeof EXTENSION_VIEW_IDS)[number];
 
 export type AppRoute =
   | { page: "overview" }
-  | { page: "notes" }
   | { page: "history" }
   | { page: "settings"; section: SettingsSectionId }
   | { page: "tools"; section: ToolSectionId }
@@ -56,7 +55,6 @@ export function routeFromHash(hash: string): AppRoute {
   const path = hash.replace(/^#/, "").split(/[?#]/, 1)[0].replace(/\/+$/, "");
 
   if (path === "/history") return { page: "history" };
-  if (path === "/notes") return { page: "notes" };
   // Legacy destination from the brief period About was its own tab.
   if (path === "/about") return { page: "settings", section: "about" };
   // Legacy destinations from before settings were split by subject.
@@ -113,7 +111,6 @@ export function hashForRoute(route: AppRoute): string {
 
 export function routeUsesCompactGlobalRail(route: AppRoute): boolean {
   return (
-    route.page === "notes" ||
     route.page === "settings" ||
     route.page === "tools" ||
     route.page === "extension-settings"

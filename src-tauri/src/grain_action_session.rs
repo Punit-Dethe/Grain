@@ -115,7 +115,7 @@ pub fn start(app: &AppHandle) -> Result<(), StartError> {
     if !crate::stt_router::will_route_to_cloud(app) {
         transcription.initiate_model_load();
     }
-    crate::grain_space::embed::touch_extension_mode(app);
+    crate::grain_embed::touch_extension_mode(app);
 
     // Bias the recogniser with what the installed extensions actually say.
     // Publish only after the recorder is successfully reserved so a failed
@@ -397,7 +397,7 @@ async fn present(
 ) {
     // Each ranking is a semantic use — refresh the warmth so an accept or a
     // decline-and-reopen right after does not race the reaper (§6).
-    crate::grain_space::embed::touch_extension_mode(app);
+    crate::grain_embed::touch_extension_mode(app);
     // `recommend` embeds the query and is blocking; keep it off the async
     // runtime's poll threads.
     let ranked = {

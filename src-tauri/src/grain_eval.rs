@@ -90,17 +90,9 @@ pub fn run(_app: &AppHandle, golden_path: &Path) -> i32 {
                     2
                 }
             };
-        } else if mode.as_str() == Some("memory") {
-            return match crate::grain_space::eval::run(golden_path, &raw, json_requested()) {
-                Ok(()) => 0,
-                Err(error) => {
-                    eprintln!("eval: {error}");
-                    2
-                }
-            };
         } else {
             eprintln!(
-                "eval: unsupported eval mode {}; expected 'recommendation' or 'memory'",
+                "eval: unsupported eval mode {}; expected 'recommendation'",
                 mode
             );
             return 2;
@@ -218,7 +210,7 @@ fn load_commands(path: &Path) -> Result<Vec<(String, Vec<String>)>, String> {
 /// query is embedded in the loop. Any embed failure downgrades the whole run to
 /// lexical-only rather than reporting half a picture.
 fn semantic_scores(commands: &[(String, Vec<String>)], cases: &[Case]) -> Option<Vec<Vec<Match>>> {
-    if !crate::grain_space::embed::model_on_disk() {
+    if !crate::grain_embed::model_on_disk() {
         return None;
     }
     let mut command_vectors: Vec<(String, Vec<Vec<f32>>)> = Vec::with_capacity(commands.len());
@@ -231,7 +223,7 @@ fn semantic_scores(commands: &[(String, Vec<String>)], cases: &[Case]) -> Option
         if phrases.is_empty() {
             continue;
         }
-        match crate::grain_space::embed::embed(phrases) {
+        match crate::grain_embed::embed(phrases) {
             Ok(vectors) => command_vectors.push((id.clone(), vectors)),
             Err(error) => {
                 eprintln!(
@@ -243,7 +235,7 @@ fn semantic_scores(commands: &[(String, Vec<String>)], cases: &[Case]) -> Option
     }
     let mut per_case = Vec::with_capacity(cases.len());
     for case in cases {
-        let query = match crate::grain_space::embed::embed_query(case.said.clone()) {
+        let query = match crate::grain_embed::embed_query(case.said.clone()) {
             Ok(q) => q,
             Err(error) => {
                 eprintln!(

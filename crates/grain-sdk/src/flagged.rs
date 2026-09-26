@@ -77,9 +77,6 @@ pub fn flagged_combinations(permissions: &[String], tier: Tier) -> Vec<FlaggedCo
         return Vec::new();
     }
     let mut flags = Vec::new();
-    if permissions.iter().any(|p| p == "notes") {
-        flags.push(FlaggedCombination::NotesAndNetwork);
-    }
     // [GRAIN] These check the capability names that actually exist. They used to
     // check `screen:capture`, which was never in KNOWN_CAPABILITIES and so could
     // never appear in an importable manifest — the flag was written ahead of the
@@ -182,7 +179,6 @@ mod tests {
     fn every_watched_capability_is_a_real_one() {
         use crate::manifest::KNOWN_CAPABILITIES;
         for watched in [
-            "notes",
             "capture:screen-image",
             "capture:screen-text",
             "events:transcripts",

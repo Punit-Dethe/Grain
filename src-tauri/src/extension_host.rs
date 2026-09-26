@@ -629,12 +629,6 @@ pub fn refresh_index(app: &AppHandle) {
     let action_index = grain_core::action_router::ActionIndex::build(actions);
     HAS_ACTIONS.store(action_count > 0, Ordering::Relaxed);
     HAS_RECOMMENDATIONS.store(!recommendations.is_empty(), Ordering::Relaxed);
-    // [GRAIN] Grain Space is a built-in provider: its actions flow through the
-    // same capability index and executor as any extension (Phase 3). Registered
-    // only when the feature is on, so a user without Grain Space pays nothing.
-    if crate::grain_space::is_enabled(app) {
-        capability_inputs.extend(crate::action_exec::grain_space_actions());
-    }
     let capability = grain_core::capability_index::CapabilityIndex::build(capability_inputs);
 
     HAS_ACTIVATIONS.store(!by_event.is_empty(), Ordering::Relaxed);
@@ -670,7 +664,7 @@ pub fn refresh_index(app: &AppHandle) {
     // Embed the pool's examples off this path, generation-guarded, so a slow
     // rebuild never blocks a switch and a stale embed never lands on a newer
     // pool. Until it completes the pool ranks name-only, which is honest.
-    reembed_recommendations(recommend_examples);
+    reembed_recommendations(app.clone(), recommend_examples);
     // "The extension set changed" is exactly the trigger for reconciling
     // contributed shortcuts, so every caller of `refresh_index` gets it for
     // free rather than having to remember a second call. `sync` defers onto
@@ -880,9 +874,9 @@ pub fn auto_send_eligible() -> std::collections::HashSet<String> {
 /// mode** (§5), not a failure: the pool still ranks on names, and first use of
 /// Extension Mode is where the download is offered. An extension whose examples
 /// fail to embed simply has no topical vectors and is reachable by name only.
-fn reembed_recommendations(examples: Vec<(String, Vec<String>)>) {
+fn reembed_recommendations(app: AppHandle, examples: Vec<(String, Vec<String>)>) {
     let generation = RECOMMEND_GENERATION.fetch_add(1, Ordering::SeqCst) + 1;
-    if examples.is_empty() || !crate::grain_space::embed::model_on_disk() {
+    if examples.is_empty() || !crate::grain_embed::model_on_disk() {
         // Clear any vectors from a previous pool so a now-absent model or empty
         // pool cannot leave stale topical scores behind.
         let mut cache = recommend_vectors().write().unwrap();
@@ -904,7 +898,9 @@ fn reembed_recommendations(examples: Vec<(String, Vec<String>)>) {
             if phrases.is_empty() {
                 continue;
             }
-            match crate::grain_space::embed::embed(phrases) {
+            // Indexing uses the same bounded residency as interactive retrieval.
+            crate::grain_embed::touch_extension_mode(&app);
+            match crate::grain_embed::embed(phrases) {
                 Ok(embedded) => {
                     vectors.insert(id, embedded);
                 }
@@ -964,21 +960,15 @@ pub fn recommend(
 }
 
 /// [GRAIN] Level-1 Agent extension directory (Extensions 2.0 Amendment D).
-/// Only installed third-party providers appear here; Grain Space remains a core
-/// host tool surface. The projection is in-memory and cannot wake a worker or
+/// The projection is in-memory and cannot wake a worker or
 /// resolve credentials.
-pub fn capability_extension_directory(
-) -> Vec<grain_core::capability_index::ExtensionDirectoryEntry> {
+pub fn capability_extension_directory() -> Vec<grain_core::capability_index::ExtensionDirectoryEntry>
+{
     let Some(host) = HOST.get() else {
         return Vec::new();
     };
     let index = host.index.read().unwrap();
-    index
-        .capability
-        .extension_directory()
-        .into_iter()
-        .filter(|entry| entry.extension_id != crate::action_exec::GRAIN_SPACE_EXT_ID)
-        .collect()
+    index.capability.extension_directory().into_iter().collect()
 }
 
 pub struct ExtensionActionSet {
@@ -992,9 +982,6 @@ pub fn capability_actions_for_extension(
     app: &AppHandle,
     extension_id: &str,
 ) -> Result<ExtensionActionSet, String> {
-    if extension_id == crate::action_exec::GRAIN_SPACE_EXT_ID {
-        return Err("core providers are not loaded as extensions".to_string());
-    }
     let registry = app
         .try_state::<Arc<grain_core::extensions::ExtensionsRegistry>>()
         .ok_or_else(|| "extension registry is unavailable".to_string())?;
@@ -1139,14 +1126,14 @@ pub fn searchable_ids() -> Vec<String> {
 /// an extension that has embedded is in the map, one that has not simply has no
 /// topical score, and the ranker treats that as "reachable by name only".
 fn semantic_scores(spoken: &str) -> Option<HashMap<String, f32>> {
-    if !crate::grain_space::embed::model_on_disk() {
+    if !crate::grain_embed::model_on_disk() {
         return None;
     }
     let cache = recommend_vectors().read().unwrap();
     if cache.generation != RECOMMEND_GENERATION.load(Ordering::SeqCst) || cache.vectors.is_empty() {
         return None;
     }
-    let query = crate::grain_space::embed::embed_query(spoken.to_string()).ok()?;
+    let query = crate::grain_embed::embed_query(spoken.to_string()).ok()?;
     let mut scores = HashMap::new();
     for (id, vectors) in &cache.vectors {
         if let Some(best) = vectors.iter().map(|v| cosine(&query, v)).reduce(f32::max) {
@@ -2257,7 +2244,9 @@ pub async fn run_action(
     idempotency_key: Option<&str>,
 ) -> Result<Value, ActionCallError> {
     let Some(host) = HOST.get() else {
-        return Err(ActionCallError::Unavailable("extension host unavailable".into()));
+        return Err(ActionCallError::Unavailable(
+            "extension host unavailable".into(),
+        ));
     };
     let enabled = app
         .try_state::<Arc<grain_core::extensions::ExtensionsRegistry>>()
@@ -2693,8 +2682,7 @@ pub fn reload_dev_extension(
 /// to end — worker spawn on an event, `llm` + `storage` host calls, capability
 /// enforcement, the idle reaper. It did its job, but it was seeded on every
 /// launch, so it sat under "Installed · not active" in everyone's list forever,
-/// as a demo nobody asked for. (Unrelated to Grain Space's auto-filing, which is
-/// a real feature and stays.)
+/// as a demo nobody asked for.
 const RETIRED_BUILTINS: &[&str] = &["grain.auto-categorize", "grain.agent-center-layout"];
 
 /// Take retired built-ins off an existing install: the record, the pack file on

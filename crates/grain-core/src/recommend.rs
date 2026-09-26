@@ -108,7 +108,7 @@ pub struct Recommendation {
 
 /// The floor a Topical score must clear to be offered at all.
 ///
-/// Matches the Grain Space recall floor for the same BGE model: below this the
+/// For the shared BGE model, below this floor the
 /// asymmetric query geometry no longer separates related from unrelated, so an
 /// entry here would be noise dressed as a recommendation. A Named hit ignores
 /// this — being named is not a similarity claim.

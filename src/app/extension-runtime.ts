@@ -228,7 +228,7 @@ export const GRAIN_RUNTIME_JS = `(function () {
       connect: function () { return req("auth.connect", {}); },
       disconnect: function () { return req("auth.disconnect", {}); }
     },
-    // On-device embeddings (the same BGE model Grain Space uses). Resolves to an
+    // On-device embeddings (the shared BGE model). Resolves to an
     // array of vectors, one per input text.
     embed: function (texts) {
       return req("embed", { texts: texts }).then(function (r) {

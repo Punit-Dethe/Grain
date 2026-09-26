@@ -89,15 +89,7 @@ whatlang = "0.16"
 isolang = "2"
 chrono = "0.4"
 rusqlite = { version = "0.37", features = ["bundled"] }
-# [GRAIN] Grain Space: vector index for opt-in semantic note search. The
-# extension is registered once at store init; the vec0 table itself is only
-# created when the user enables semantic search (model is opt-in, not shipped).
-sqlite-vec = "0.1"
-uuid = { version = "1", features = ["v4"] } # [GRAIN] Grain Space note ids
-# [GRAIN] Grain Space semantic search (Phase 4): CPU-only Candle running the
-# opt-in BGE-small embedding model, plus zerocopy to hand &[f32] to sqlite-vec
-# without copies. The model itself is downloaded on consent, never bundled.
-zerocopy = "0.8"
+uuid = { version = "1", features = ["v4"] } # [GRAIN] Session, extension and action identities
 # [GRAIN] Screen-image capability (extension platform only — core never captures
 # an image). `image` downscales and encodes the grab; `base64` builds the data URI
 # the OpenAI-compatible vision wire format takes. Both are already in the tree as
@@ -119,10 +111,6 @@ tokenizers = { version = "0.21", default-features = false, features = ["onig"] }
 tar = "0.4.44"
 flate2 = "1.0"
 sha2 = "0.10"
-# [GRAIN] Line-based 3-way merge for the Obsidian vault write path
-# (OBSIDIAN-PLAN.md): a Grain save merges into a concurrent Obsidian edit
-# instead of clobbering it (diff-match-patch equivalent).
-diffy = "0.4"
 # [GRAIN] transcribe-cpp — the ONLY inference engine (batch + streaming).
 # transcribe-rs (ONNX) was removed entirely: every legacy ONNX family ships as
 # GGUF in the bundled catalog, so keeping the ONNX runtime linked was dead
@@ -141,9 +129,6 @@ specta = { version = "=2.0.0-rc.22", features = ["serde_json"] }
 specta-typescript = "0.0.9"
 tauri-specta = { version = "=2.0.0-rc.21", features = ["derive", "typescript"] }
 tauri-plugin-dialog = "2.6"
-# [GRAIN] Grain Space reminders fire as OS notifications (backend-triggered only).
-tauri-plugin-notification = "2"
-
 [target.'cfg(unix)'.dependencies]
 signal-hook = "0.3"
 
@@ -154,10 +139,6 @@ tauri-plugin-single-instance = "2.3.2"
 tauri-plugin-updater = "2.10.0"
 
 [target.'cfg(windows)'.dependencies]
-# [GRAIN] Grain Space workspace: suspend the hidden window's WebView2 renderer
-# (TrySuspend + MemoryUsageTargetLevel) so the sleeping overlay holds almost no
-# RAM. Version must track the one wry already pulls in (see Cargo.lock).
-webview2-com = "0.38"
 windows = { version = "0.61.3", features = [
   "Win32_Media_Audio_Endpoints",
   "Win32_System_Com_StructuredStorage",

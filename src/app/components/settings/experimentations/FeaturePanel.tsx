@@ -4,10 +4,7 @@ import { SettingsGroup } from "../../ui/SettingsGroup";
 import { ToggleSwitch } from "../../ui/ToggleSwitch";
 
 export type FeatureKey =
-  | "snippets_enabled"
-  | "context_awareness_enabled"
-  | "agent_enabled"
-  | "grain_space_enabled";
+  "snippets_enabled" | "context_awareness_enabled" | "agent_enabled";
 
 /**
  * [GRAIN] One of Grain's OWN always-present features (Snippets, Context

@@ -98,7 +98,6 @@ describe("extension destination routing", () => {
       { kind: "settings", section: "post-processing" },
     ],
     ["models.after", { kind: "settings", section: "speech-to-text" }],
-    ["grainspace.after", { kind: "notes-settings" }],
   ])("routes %s contributions", (anchor, expected) => {
     expect(extensionDestination(card(), sections(anchor))).toEqual(expected);
   });

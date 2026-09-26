@@ -146,7 +146,7 @@ mod tests {
         use tauri_plugin_global_shortcut::Shortcut;
         for (id, binding) in get_default_settings().bindings {
             if binding.default_binding.is_empty() {
-                continue; // deliberately unbound (e.g. grain_space_quick_add)
+                continue; // deliberately unbound
             }
             assert!(
                 binding.default_binding.parse::<Shortcut>().is_ok(),

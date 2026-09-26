@@ -48,20 +48,18 @@ The planned version of Flow will become a **curated, model-specific dictation en
 
 The first planned Flow-supported models are:
 
-* **Parakeet TDT v2** — the primary English-only Flow model.
-* **Parakeet TDT v3** — the multilingual Flow model.
+- **Parakeet TDT v2** — the primary English-only Flow model.
+- **Parakeet TDT v3** — the multilingual Flow model.
 
 Once that architecture replaces the current generic backend, other speech models will no longer automatically receive Flow support. They can continue to be available through **Batch** or **ASR/live transcription** where supported.
 
 This deliberately gives the three modes different responsibilities:
 
-* **Batch** prioritizes model compatibility and maximum final accuracy.
-* **Flow** is Grain's curated, optimized default dictation experience.
-* **ASR** is for models and workflows designed around realtime transcription.
+- **Batch** prioritizes model compatibility and maximum final accuracy.
+- **Flow** is Grain's curated, optimized default dictation experience.
+- **ASR** is for models and workflows designed around realtime transcription.
 
 New models may be added to Flow later, but only when Grain has a dedicated implementation and has validated their accuracy, punctuation, latency, and long-session behaviour rather than relying on a generic fallback.
-
-
 
 ## Feature overview
 
@@ -87,7 +85,7 @@ Grain is designed to stay small at its core while letting extensions build much 
 
 Extensions can react to what you say, understand where you are working, inspect information you deliberately give them access to, use Grain's configured AI and local embedding systems, maintain their own persistent data, communicate with approved network services, and present their own Grain-managed interfaces.
 
-Grain's own features such as Snippets, Context Awareness, Agent, and Grain Space are built on this extension contract rather than relying on a separate private plugin system.
+Grain's own features such as Snippets, Context Awareness, and Agent are built on this extension contract rather than relying on a separate private plugin system.
 
 ### What extensions can access
 
@@ -95,19 +93,18 @@ Capabilities are granted individually. An extension only receives the parts of G
 
 A scripted extension can currently request access to:
 
-* **Speech and sessions** — listen for session/transcript events, transform completed transcripts, start Grain recording sessions, or contribute a custom recording mode.
-* **Selected text** — read text the user has explicitly highlighted.
-* **Application context** — identify the foreground application, executable, and browser host when available.
-* **Visible screen text** — read text exposed by the active window's accessibility tree. Password fields are skipped.
-* **Foreground-window images** — capture the active window as an image when the user explicitly grants screenshot access.
-* **AI** — use the AI provider already configured in Grain, including vision when supported by that model.
-* **Local embeddings** — use Grain's on-device embedding model for semantic matching, retrieval, classification, or an extension's own memory system.
-* **Persistent storage** — private key/value storage and a document store for larger collections such as records, notes, histories, or indexes.
-* **Settings** — expose configuration through Grain, including secret values.
-* **Network services** — make host-proxied HTTP requests only to network hosts declared by the extension.
-* **Grain UI** — open an extension workspace, show temporary overlays, contribute settings, and use supported Grain UI slots.
-* **Launching** — open safe web links or applications the user has explicitly selected and approved.
-* **Grain Space notes** — extensions that specifically request the high-privilege `notes` capability can read or modify Space notes.
+- **Speech and sessions** — listen for session/transcript events, transform completed transcripts, start Grain recording sessions, or contribute a custom recording mode.
+- **Selected text** — read text the user has explicitly highlighted.
+- **Application context** — identify the foreground application, executable, and browser host when available.
+- **Visible screen text** — read text exposed by the active window's accessibility tree. Password fields are skipped.
+- **Foreground-window images** — capture the active window as an image when the user explicitly grants screenshot access.
+- **AI** — use the AI provider already configured in Grain, including vision when supported by that model.
+- **Local embeddings** — use Grain's on-device embedding model for semantic matching, retrieval, classification, or an extension's own memory system.
+- **Persistent storage** — private key/value storage and a document store for larger collections such as records, notes, histories, or indexes.
+- **Settings** — expose configuration through Grain, including secret values.
+- **Network services** — make host-proxied HTTP requests only to network hosts declared by the extension.
+- **Grain UI** — open an extension workspace, show temporary overlays, contribute settings, and use supported Grain UI slots.
+- **Launching** — open safe web links or applications the user has explicitly selected and approved.
 
 This means an extension can be anything from a tiny voice utility to a persistent application with its own interface, semantic memory, AI processing, and external API integration.
 
@@ -208,10 +205,10 @@ Grain tries to keep extension development closer to building the useful part of 
 
 The extension tooling handles the surrounding workflow:
 
-* `grain-ext init` scaffolds a new extension.
-* `grain-ext dev` runs the development workflow with fast iteration and reloads.
-* `grain-ext doctor` validates the extension using the same kinds of checks expected before submission.
-* `grain-ext submit` prepares the extension for the registry submission workflow.
+- `grain-ext init` scaffolds a new extension.
+- `grain-ext dev` runs the development workflow with fast iteration and reloads.
+- `grain-ext doctor` validates the extension using the same kinds of checks expected before submission.
+- `grain-ext submit` prepares the extension for the registry submission workflow.
 
 Developers describe required permissions, settings, surfaces, and capabilities through the extension manifest, while Grain handles execution, isolation, lifecycle, storage boundaries, permissions, UI hosting, and resource cleanup.
 
@@ -233,30 +230,10 @@ The public store is still being opened up. Today, data packs and local scripted 
 
 Read the [extension platform overview](docs/Extension%20Platform/README.md), the [authoring guide](docs/Extension%20Platform/AUTHORING.md), or the [full specification](docs/Extension%20Platform/SPEC.md).
 
-## An extension you might love: Grain Space
-
-Grain Space is a built-in **extension** — built on the exact same platform described above, with no private access Grain didn't also give a third-party author — for the things you'd otherwise forget, bookmark, or message to yourself. It isn't a notes app you manage. It's memory you talk to.
-
-- **Capture in seconds.** Highlight text and hit Quick Add, or speak a note and let Grain structure it with a title, summary, and any reminders or to-dos it finds. _You read a good answer in a browser, highlight it, and save it before moving on — no notes app to open first._
-- **It runs on your Obsidian vault, as your own files — not inside a separate Grain ecosystem.** Point Space at an Obsidian vault and every note it captures is written straight into that vault as a plain `.md` file with YAML frontmatter — the same format Obsidian itself uses. There's no Grain account, no login, and no plugin to install on the Obsidian side; Grain reads and writes the files directly, and Obsidian doesn't even need to be open. Capturing and retrieving by voice — Quick Add, Recall, the overlay — work in full whether or not you ever open Obsidian; none of that depends on it.
-- **Two ways to actually read and edit a note, your choice.** If you already use Obsidian, keep using it — that's where you'd naturally open and edit a captured note. If you don't want to install a separate app just to look at your notes, use the **Grain Note UI** instead: a lightweight built-in viewer and editor that's purely for browsing and editing notes as text. Either way you're opening the same file on disk, not two separate copies — picking one doesn't lock you out of the other.
-- **Ask, don't search.** Recall answers in plain language first, then lists the notes it used underneath. _Ask "what was that app from Product Hunt?" and get "You're probably thinking of Superlist — you saved it after a launch about lightweight project management," with the source note one click away._
-- **A knowledge graph that doesn't need an extra AI model.** Retrieval borrows from two proven designs: the distil-then-embed and multi-signal ranking approach behind Cerebras's internal knowledge search, and [LightRAG](https://arxiv.org/abs/2410.05779)'s entity graph with dual-level (specific-entity and broad-theme) retrieval — combined on Grain's terms. The graph itself isn't a model: it's plain SQLite tables walked with ordinary SQL, so it costs zero idle RAM on its own. For the AI parts — extracting entities, answering Recall — Space simply reuses whichever model you've already picked for AI post-processing, edge/on-device or cloud; there's no second, dedicated model to pick, download, or pay for. New notes merge into the graph instead of triggering a full rebuild, which is also why Grain deliberately avoided the Microsoft GraphRAG-style approach, where a single query can cost hundreds of thousands of tokens and hundreds of API calls. With no post-processing model configured at all, Recall still works over lexical and vector search.
-- **Nothing runs when you're not using it.** No file watcher, no background daemon — search and AI models load only for the moment you need them.
-
-Because Space is just an extension, you can disable it entirely and it disappears — no residual process, no orphaned settings — or use it as a working example of what the platform can do before building your own.
-
-* **MCP connection** — open a host-mediated MCP (Model Control Protocol) connection for realtime model control, streaming telemetry, or bidirectional model I/O when explicitly requested and approved by the user. The host enforces permissions, proxies network access, and requires explicit allowlisting of remote hosts; extensions cannot bypass these controls.
- * **Grain UI** — open an extension workspace, show temporary overlays, contribute settings, and use supported Grain UI slots.
- * **Launching** — open safe web links or applications the user has explicitly selected and approved.
-
-Details: [product vision](docs/Grain%20Space%202.0/Grain%20space%20files/PRODUCT-VISION.md) · [knowledge architecture](docs/Grain%20Space%202.0/KNOWLEDGE-ARCHITECTURE-PLAN.md) · [Obsidian vault backend](docs/Grain%20Space%202.0/OBSIDIAN-PLAN.md)
-
 ## Local first, by default
 
-- Local transcription and note search run entirely on your machine.
+- Local transcription and semantic retrieval run entirely on your machine.
 - Cloud speech-to-text and AI processing are opt-in and only ever use providers you configure.
-- Grain Space sends note text to a provider only for the action you requested (e.g. summarizing a note, answering a Recall question).
 - Disabled features and extensions unregister their shortcuts, close their windows, and release their memory — nothing idles in the background.
 
 ## Quick start

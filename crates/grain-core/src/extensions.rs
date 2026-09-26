@@ -45,7 +45,6 @@ pub const CORE_DEFAULT: &str = "grain.core";
 pub const BUILTIN_SNIPPETS: &str = "grain.snippets";
 pub const BUILTIN_CONTEXT: &str = "grain.context-awareness";
 pub const BUILTIN_AGENT: &str = "grain.agent";
-pub const BUILTIN_GRAIN_SPACE: &str = "grain.grain-space";
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ExtensionRecord {

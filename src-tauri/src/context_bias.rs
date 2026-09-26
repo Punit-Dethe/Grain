@@ -276,9 +276,9 @@ mod tests {
     fn whitespace_is_collapsed() {
         // Irregular whitespace in the prefix makes the multilingual tokenizer
         // drift, so it must never reach the decoder.
-        let set = from_custom_words(&["Grain\n\tSpace".into(), "  useGrain   Store ".into()]);
+        let set = from_custom_words(&["Grain\n\tStore".into(), "  useGrain   Store ".into()]);
         let rendered = set.render().unwrap();
-        assert_eq!(rendered, "Grain Space, useGrain Store");
+        assert_eq!(rendered, "Grain Store, useGrain Store");
         assert!(!rendered.contains('\n'));
         assert!(!rendered.contains('\t'));
     }

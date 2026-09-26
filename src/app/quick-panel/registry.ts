@@ -13,7 +13,6 @@ import { SETTINGS_SECTIONS } from "../settings/sections";
 
 export type QuickIconName =
   | "home"
-  | "note"
   | "clock"
   | "zap"
   | "sliders"
@@ -58,13 +57,6 @@ const NAV_DEFS: NavDef[] = [
     icon: "home",
     route: { page: "overview" },
     keywords: ["dashboard", "home", "start", "recent"],
-  },
-  {
-    id: "notes",
-    title: "Notes",
-    icon: "note",
-    route: { page: "notes" },
-    keywords: ["grain space", "documents", "writing", "vault"],
   },
   {
     id: "history",

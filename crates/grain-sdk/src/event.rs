@@ -39,7 +39,6 @@ pub const DAEMON_EVENT_VARIANTS: &[&str] = &[
     "AgentFollowupClear",
     "AgentInputShow",
     "AgentInputHide",
-    "AgentInputSaved",
     "AgentInputSubmitRequest",
     "ExtensionRecommend",
     "ExtensionRecommendClear",
@@ -84,24 +83,6 @@ pub fn daemon_event_capability(variant: &str) -> Option<&'static str> {
         known if DAEMON_EVENT_VARIANTS.contains(&known) => Some("events:sessions"),
         _ => None,
     }
-}
-
-/// [GRAIN] Which brain the NATIVE agent input card serves — purely
-/// presentational (the core routes submits by its own `AgentState.mode`). It
-/// lets the ONE pill surface render the right variant without a second window:
-/// `Assist` keeps the original card; the Grain Space kinds (`Capture`,
-/// `Recall`) anchor to the TOP and relabel the card ("Noting…"/"Save Note" vs
-/// "Listening…"/"Confirm"). No extra RAM — same window, same pixmap, just
-/// different strings/anchor.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default, specta::Type)]
-pub enum AgentInputKind {
-    /// The generic assistant (operates on selection/field). Original card.
-    #[default]
-    Assist,
-    /// Grain Space capture (note authoring) — "Noting…", title+body, "Save Note".
-    Capture,
-    /// Grain Space recall (memory question) — "Listening…", single ask field.
-    Recall,
 }
 
 /// Where the single pill anchors on screen (`None` = never show). Lives in the
@@ -310,17 +291,9 @@ pub enum DaemonEvent {
         selection_chars: u32,
         #[serde(default)]
         type_to_expand: bool,
-        /// Which brain this summon serves — drives the card variant (anchor +
-        /// labels). Defaults to `Assist` for back-compat with older cores.
-        #[serde(default)]
-        kind: AgentInputKind,
     },
     /// [GRAIN] Hide the native agent input (submitted / cancelled / superseded).
     AgentInputHide,
-    /// [GRAIN] Grain Space capture succeeded HEADLESSLY: tell the card to play a
-    /// brief in-place "Saved" confirmation (green dot sweep + "Saved") before the
-    /// core hides it. No new pill/surface — the same summon card confirms itself.
-    AgentInputSaved,
     /// [GRAIN] The core's transient global Enter fired while the agent input is
     /// up. The pill owns the typed text, so it answers with
     /// `AgentInputSubmitText` (typing) or `AgentInputSubmitVoice` (recording).
@@ -503,7 +476,6 @@ impl DaemonEvent {
             AgentFollowupClear => "AgentFollowupClear",
             AgentInputShow { .. } => "AgentInputShow",
             AgentInputHide => "AgentInputHide",
-            AgentInputSaved => "AgentInputSaved",
             AgentInputSubmitRequest => "AgentInputSubmitRequest",
             ExtensionRecommend { .. } => "ExtensionRecommend",
             ExtensionRecommendClear => "ExtensionRecommendClear",
@@ -627,13 +599,9 @@ pub enum PillAction {
     /// the transcript, and every session surface, then hides the pill.
     CancelSession,
     /// [GRAIN] Agent input: the user submitted TYPED text (expanded card).
-    /// `title` is the optional Grain Space note title (Capture only; empty
-    /// otherwise). `quick` = the user held Shift → Quick Agent (paste in place)
-    /// instead of opening the panel (Assist only).
+    /// `quick` selects paste in place instead of opening the panel.
     AgentInputSubmitText {
         text: String,
-        #[serde(default)]
-        title: String,
         #[serde(default)]
         quick: bool,
     },

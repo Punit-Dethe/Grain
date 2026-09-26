@@ -7,7 +7,6 @@ import type {
   AgentPanelPosition,
   AppSettings as Settings,
   AudioDevice,
-  GrainSpaceBackend,
   ModelUnloadTimeout,
   Snippet,
   TranscribeAcceleratorSetting,
@@ -279,29 +278,6 @@ const settingUpdaters: {
     commands.changeAudioConditioningSetting(value as boolean),
   // [GRAIN] Native ASR model selection — separate registry from `selected_model`.
   selected_asr_model: (value) => commands.selectAsrModel(value as string),
-  // [GRAIN] Grain Space (zero-idle-RAM notes). The master toggle also
-  // registers/unregisters the feature's shortcuts backend-side.
-  grain_space_enabled: (value) =>
-    commands.changeGrainSpaceEnabledSetting(value as boolean),
-  grain_space_semantic: (value) =>
-    commands.changeGrainSpaceSemanticSetting(value as boolean),
-  // [GRAIN] The MCP bridge. Turning it on mints the proxy's token; off
-  // revokes it, so a client that was connected stops being able to return.
-  grain_space_mcp: (value) =>
-    commands.changeGrainSpaceMcpSetting(value as boolean),
-  // [GRAIN] Where the Grain store keeps notes. Empty = the app's data folder.
-  grain_space_store_path: (value) =>
-    commands.changeGrainSpaceStorePathSetting(value as string),
-  grain_space_auto_reminders: (value) =>
-    commands.changeGrainSpaceAutoRemindersSetting(value as boolean),
-  // [GRAIN] Obsidian vault backend (OBSIDIAN-PLAN.md): a hard switch between
-  // the grain store and a vault, plus where the vault lives.
-  grain_space_backend: (value) =>
-    commands.changeGrainSpaceBackendSetting(value as GrainSpaceBackend),
-  grain_space_vault_path: (value) =>
-    commands.changeGrainSpaceVaultPathSetting(value as string),
-  grain_space_vault_folder: (value) =>
-    commands.changeGrainSpaceVaultFolderSetting(value as string),
 };
 
 export const useSettingsStore = create<SettingsStore>()(

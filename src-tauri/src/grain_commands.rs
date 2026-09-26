@@ -2,7 +2,7 @@
 //! `shortcut/mod.rs` (Handy Isolation phase 6). Upstream owns the shortcut
 //! registration/dispatch machinery in that module; these are the setting
 //! mutators for Grain's own features — context awareness,
-//! "scrap that", snippets, voice actions, app modes, the Agent, Grain Space,
+//! "scrap that", snippets, voice actions, app modes, the Agent,
 //! rolling preview, audio conditioning.
 //!
 //! Each is still a `#[tauri::command]`, so the command NAME (and therefore the
@@ -120,8 +120,11 @@ mod capture_shortcut_conflict_tests {
                 "prompt_next",
                 &settings.bindings["transcribe"].current_binding
             ));
-            settings.bindings.get_mut("prompt_next").unwrap().current_binding =
-                "alt+ctrl+f9".into();
+            settings
+                .bindings
+                .get_mut("prompt_next")
+                .unwrap()
+                .current_binding = "alt+ctrl+f9".into();
             assert!(!capture_shortcut_conflicts(
                 &settings,
                 "summon_agent",
@@ -651,176 +654,6 @@ pub fn change_pill_show_app_icon_setting(app: AppHandle, enabled: bool) -> Resul
     Ok(())
 }
 
-/// [GRAIN] Master toggle for Grain Space. Registers/unregisters the feature's
-/// global shortcuts immediately so OFF is zero-overhead without a restart.
-/// Never touches on-disk note data.
-#[tauri::command]
-#[specta::specta]
-pub fn change_grain_space_enabled_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
-    let mut settings = settings::get_settings(&app);
-    settings.grain_space_enabled = enabled;
-    settings::write_settings(&app, settings);
-    crate::grain_space::apply_enabled(&app, enabled);
-    Ok(())
-}
-/// [GRAIN] Where the Grain store keeps its notes. Empty restores the default.
-#[tauri::command]
-#[specta::specta]
-pub fn change_grain_space_store_path_setting(app: AppHandle, path: String) -> Result<(), String> {
-    let trimmed = path.trim().to_string();
-    let mut settings = settings::get_settings(&app);
-    if settings.grain_space_store_path == trimmed {
-        return Ok(());
-    }
-    settings.grain_space_store_path = trimmed;
-    settings::write_settings(&app, settings);
-    // A different notes folder is a different corpus.
-    crate::grain_space::emit_corpus_changed(&app);
-    crate::grain_space::embed::shutdown_engine();
-    crate::grain_space::reminders::sync(&app);
-    Ok(())
-}
-
-/// [GRAIN] Where `grain-mcp` is on this machine, for the config snippet the
-/// Grain Space tab shows.
-///
-/// Resolved rather than assumed: the proxy sits beside the app binary in an
-/// install and beside it in the cargo target dir in development, and an MCP
-/// client is given an absolute path — it does not search a PATH we control.
-/// Falls back to the bare name so the snippet is still copyable (and the
-/// mistake obvious) if the binary has not been built yet.
-#[tauri::command]
-#[specta::specta]
-pub fn grain_space_mcp_path() -> String {
-    let name = if cfg!(windows) {
-        "grain-mcp.exe"
-    } else {
-        "grain-mcp"
-    };
-    std::env::current_exe()
-        .ok()
-        .and_then(|exe| exe.parent().map(|dir| dir.join(name)))
-        .filter(|path| path.exists())
-        .map(|path| path.display().to_string())
-        .unwrap_or_else(|| name.to_string())
-}
-
-/// [GRAIN] The Grain Space MCP bridge. Switching it ON mints the proxy's token
-/// and writes it where `grain-mcp` looks; switching it OFF revokes the token and
-/// deletes the file, so a client that is already connected stops being able to
-/// reconnect and a client that starts later finds nothing to authenticate with.
-#[tauri::command]
-#[specta::specta]
-pub fn change_grain_space_mcp_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
-    let mut settings = settings::get_settings(&app);
-    settings.grain_space_mcp = enabled;
-    settings::write_settings(&app, settings);
-    crate::grain_space::apply_mcp(&app, enabled);
-    Ok(())
-}
-
-/// [GRAIN] Grain Space semantic-search toggle. Flips the setting; the model
-/// download (opt-in consent flow) is driven by the frontend before it turns
-/// this on. OFF must guarantee the embedding model never loads — any resident
-/// engine is dropped immediately.
-#[tauri::command]
-#[specta::specta]
-pub fn change_grain_space_semantic_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
-    let mut settings = settings::get_settings(&app);
-    settings.grain_space_semantic = enabled;
-    settings::write_settings(&app, settings);
-    if !enabled {
-        crate::grain_space::embed::shutdown_engine();
-    }
-    Ok(())
-}
-
-/// [GRAIN] Grain Space backend hard switch (OBSIDIAN-PLAN.md §1). Swapping the
-/// backend changes which corpus every surface sees; the overlay is closed and
-/// the embedding engine dropped so nothing keeps serving the old corpus.
-#[tauri::command]
-#[specta::specta]
-pub fn change_grain_space_backend_setting(
-    app: AppHandle,
-    backend: settings::GrainSpaceBackend,
-) -> Result<(), String> {
-    let mut settings = settings::get_settings(&app);
-    if settings.grain_space_backend == backend {
-        return Ok(());
-    }
-    settings.grain_space_backend = backend;
-    settings::write_settings(&app, settings);
-    // The corpus changes wholesale — tell the Notes tab to drop everything it is
-    // showing and re-list, and drop the embedding engine so nothing keeps serving
-    // the old backend's vectors.
-    crate::grain_space::emit_corpus_changed(&app);
-    crate::grain_space::embed::shutdown_engine();
-    crate::grain_space::reminders::sync(&app);
-    Ok(())
-}
-
-/// [GRAIN] Set the Obsidian vault path (an existing folder). Validated here so
-/// the vault backend never runs against a bogus path.
-#[tauri::command]
-#[specta::specta]
-pub fn change_grain_space_vault_path_setting(app: AppHandle, path: String) -> Result<(), String> {
-    let trimmed = path.trim().to_string();
-    if !trimmed.is_empty() && !std::path::Path::new(&trimmed).is_dir() {
-        return Err("That folder does not exist.".to_string());
-    }
-    let mut settings = settings::get_settings(&app);
-    settings.grain_space_vault_path = trimmed;
-    settings::write_settings(&app, settings);
-    // Different vault ⇒ different corpus: re-list from scratch, drop the vectors.
-    crate::grain_space::emit_corpus_changed(&app);
-    crate::grain_space::embed::shutdown_engine();
-    crate::grain_space::reminders::sync(&app);
-    Ok(())
-}
-
-/// [GRAIN] Subfolder of the vault where Grain writes captures ("Grain" by
-/// default). Kept a simple relative name — path separators and dot-segments
-/// are rejected so it can never escape the vault.
-#[tauri::command]
-#[specta::specta]
-pub fn change_grain_space_vault_folder_setting(
-    app: AppHandle,
-    folder: String,
-) -> Result<(), String> {
-    let trimmed = folder
-        .trim()
-        .trim_matches('/')
-        .trim_matches('\\')
-        .to_string();
-    if trimmed.is_empty() || trimmed.contains(['/', '\\', ':']) || trimmed.starts_with('.') {
-        return Err("Folder must be a plain name like \"Grain\".".to_string());
-    }
-    let mut settings = settings::get_settings(&app);
-    if settings.grain_space_vault_folder == trimmed {
-        return Ok(());
-    }
-    settings.grain_space_vault_folder = trimmed;
-    settings::write_settings(&app, settings);
-    // Which subfolder is "Grain's" decides which of the vault's notes are ours
-    // and which are foreign, so this changes the corpus as surely as swapping the
-    // vault does.
-    crate::grain_space::emit_corpus_changed(&app);
-    Ok(())
-}
-
-/// [GRAIN] Auto-arm reminders extracted from captured notes (vs. manual arm).
-#[tauri::command]
-#[specta::specta]
-pub fn change_grain_space_auto_reminders_setting(
-    app: AppHandle,
-    enabled: bool,
-) -> Result<(), String> {
-    let mut settings = settings::get_settings(&app);
-    settings.grain_space_auto_reminders = enabled;
-    settings::write_settings(&app, settings);
-    Ok(())
-}
-
 /// [GRAIN] Toggle voice conditioning (85 Hz high-pass + boost-only AGC for quiet
 /// mics). Persists the setting and live-updates the open recorder so it applies
 /// to the next captured frame without a restart. (Rolling re-reads it per session.)
@@ -1017,10 +850,8 @@ pub fn grain_action_listen(app: AppHandle, phase: String) -> Result<bool, String
 /// (`docs/Extensions V1/PLAN.md` §5).
 ///
 /// The one query a surface needs to decide what to offer: is there anything to
-/// rank (`searchable`), and can the topical leg run or is it name-only until the
-/// model is downloaded. The model is the same ~130 MB BGE weights Grain Space
-/// uses, so a copy downloaded for either serves both — this reports its presence
-/// without requiring Grain Space to be enabled.
+/// rank (`searchable`), and whether semantic retrieval is available or name-only
+/// until the shared embedding model is downloaded.
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone, specta::Type)]
 pub struct ExtensionModeStatus {
     /// Searchable, approved extensions installed. Zero means Extension Mode has
@@ -1036,7 +867,7 @@ pub struct ExtensionModeStatus {
 #[tauri::command]
 #[specta::specta]
 pub fn grain_extension_mode_status() -> ExtensionModeStatus {
-    use crate::grain_space::embed;
+    use crate::grain_embed as embed;
     let model = if embed::is_downloading() {
         "downloading"
     } else if embed::model_on_disk() {
@@ -1054,10 +885,6 @@ pub fn grain_extension_mode_status() -> ExtensionModeStatus {
 /// (`docs/Extensions V1/PLAN.md` §5). The first-use offer calls this after the
 /// user consents; progress and completion arrive on the shared model events.
 ///
-/// Deliberately NOT gated on Grain Space being enabled — the model belongs to
-/// neither feature, it is a shared resource, and either feature may be the one
-/// that first needs it. Reuses the same download so a second copy is never
-/// fetched.
 #[tauri::command]
 #[specta::specta]
 pub async fn grain_extension_mode_download_model(
@@ -1065,7 +892,7 @@ pub async fn grain_extension_mode_download_model(
     window: tauri::WebviewWindow,
 ) -> Result<(), String> {
     require_main_window(&window)?;
-    crate::grain_space::embed::download_model(app).await
+    crate::grain_embed::download_model(app).await
 }
 
 /// [GRAIN] Flip the global Auto-send toggle (`docs/Extensions V1/PLAN.md` §5).
@@ -1461,7 +1288,7 @@ pub fn extension_set_enabled(
             let mut settings = settings::get_settings(&app);
             settings.agent_enabled = enabled;
             settings::write_settings(&app, settings.clone());
-            // Mirror the Grain Space pattern: the summon binding registers/
+            // The summon binding registers/
             // unregisters live so disabled truly means no global hook.
             if let Some(binding) = settings.bindings.get("summon_agent") {
                 if enabled {
@@ -1763,14 +1590,15 @@ fn imported_update_can_stay_enabled(
     let actions_match = manifest.contributes.actions.is_empty()
         || prior.actions_approved.as_deref()
             == Some(ext::actions_fingerprint(&manifest.contributes.actions).as_str());
-    let authentication_match = manifest
-        .contributes
-        .authentication
-        .as_ref()
-        .is_none_or(|declaration| {
-            prior.authentication_approved.as_deref()
-                == Some(ext::authentication_fingerprint(declaration).as_str())
-        });
+    let authentication_match =
+        manifest
+            .contributes
+            .authentication
+            .as_ref()
+            .is_none_or(|declaration| {
+                prior.authentication_approved.as_deref()
+                    == Some(ext::authentication_fingerprint(declaration).as_str())
+            });
     let recommendation_match = !manifest.kind.is_searchable()
         || prior.recommend_approved.as_deref()
             == Some(ext::recommendation_fingerprint(manifest).as_str());
@@ -2896,11 +2724,7 @@ pub async fn extension_uninstall(
     // Grain's own features have no record to remove: they are turned off in
     // their own tab, never uninstalled. Everything else is a real installed pack
     // with a store to reinstall from.
-    if id == ext::BUILTIN_SNIPPETS
-        || id == ext::BUILTIN_CONTEXT
-        || id == ext::BUILTIN_AGENT
-        || id == ext::BUILTIN_GRAIN_SPACE
-    {
+    if id == ext::BUILTIN_SNIPPETS || id == ext::BUILTIN_CONTEXT || id == ext::BUILTIN_AGENT {
         return Err("built-in features can be turned off, not uninstalled".into());
     }
     crate::grain_auth::cancel_extension(&id);

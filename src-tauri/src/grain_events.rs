@@ -43,12 +43,7 @@
 //! mirror, so if upstream adds or renames a field, the test fails instead of
 //! the TypeScript quietly lying about the payload.
 //!
-//! Deliberately NOT typed here: `log://log`, `grain-space://*` and
-//! `ext-host://*`. Their names cannot be expressed as Rust type names, and they
-//! are internal plumbing for the log viewer, the notes workspace and the hidden
-//! extension supervisor rather than part of the app's UI surface. The
-//! `grain-space://` ones already have named constants in
-//! `grain_space::{mod,embed}`, which is the same protection by other means.
+//! Internal log and extension-supervisor channels retain their private names.
 
 use serde::{Deserialize, Serialize};
 use specta::Type;

@@ -868,8 +868,6 @@ function routeToDestination(
       page: "settings",
       section: destination.section,
     }).slice(1);
-  } else if (destination.kind === "notes-settings") {
-    window.location.hash = "/notes?settings=1";
   } else if (destination.kind === "extension-settings") {
     window.location.hash = hashForRoute({
       page: "extension-settings",

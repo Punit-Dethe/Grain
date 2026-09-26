@@ -20,7 +20,6 @@ const CAPABILITY_LABELS: Record<string, string> = {
   settings: "Save its own settings",
   llm: "Send text and images to your configured AI provider",
   embed: "Turn text into embeddings",
-  notes: "Read all your Grain Space notes",
   "capture:selection": "Read your currently selected text",
   "capture:app": "See which app you're currently using",
   "capture:screen-text": "Read all the text on the window you're using",
@@ -46,7 +45,6 @@ export type ExtensionDestination =
       kind: "settings";
       section: "post-processing" | "speech-to-text";
     }
-  | { kind: "notes-settings" }
   | { kind: "extension-settings"; extensionId: string }
   | { kind: "preview" };
 
@@ -220,7 +218,6 @@ const SURFACE_DESTINATIONS: Record<string, ExtensionDestination> = {
   "dictation.pipeline.after": { kind: "settings", section: "post-processing" },
   "dictation.prompts": { kind: "settings", section: "post-processing" },
   "models.after": { kind: "settings", section: "speech-to-text" },
-  "grainspace.after": { kind: "notes-settings" },
 };
 
 const ANCHOR_SURFACES = new Set(

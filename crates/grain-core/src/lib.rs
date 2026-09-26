@@ -80,7 +80,7 @@ pub mod matching;
 pub mod eval;
 
 pub use context::{settings_file_exists, AppContext};
-pub use grain_sdk::{AgentInputKind, DaemonEvent, PillAction, RecommendCandidate, SessionMode};
+pub use grain_sdk::{DaemonEvent, PillAction, RecommendCandidate, SessionMode};
 pub use settings::{
     AppSettings, PostProcessProvider, SecretMap, SttProvider, SttProviderKind,
     STT_LOCAL_PROVIDER_ID,

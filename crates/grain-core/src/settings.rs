@@ -962,77 +962,10 @@ pub struct AppSettings {
     /// and grows downward. Default `side`; the center panel is in development.
     #[serde(default)]
     pub agent_panel_position: AgentPanelPosition,
-    /// [GRAIN] Grain Space master gate. OFF by default and OFF is truly
-    /// zero-overhead: no shortcuts register, no directories are created, no
-    /// DB opens, no models load. Disabling never deletes on-disk data.
-    #[serde(default)]
-    pub grain_space_enabled: bool,
-    /// [GRAIN] Grain Space semantic search. OFF = fuzzy/FTS matching only and
-    /// the Candle embedding model must NEVER load into RAM. Turning it ON is
-    /// what triggers the opt-in BGE-small model download (the model is not
-    /// shipped with the app).
-    #[serde(default)]
-    pub grain_space_semantic: bool,
-    /// [GRAIN] Where the Grain store keeps its notes. Empty = the app's own
-    /// data folder, which is the default and what most people want.
-    ///
-    /// Choosable because notes are the user's files, not the app's: they may
-    /// already have a synced folder, an encrypted volume, or a drive with room.
-    /// Only the notes move — the derived index stays beside the app, since it is
-    /// rebuildable and does not belong in a folder the user syncs.
-    #[serde(default)]
-    pub grain_space_store_path: String,
-    /// [GRAIN] The MCP bridge: when ON, Grain writes a token file that lets the
-    /// `grain-mcp` proxy authenticate, so an MCP client can search and read this
-    /// notebook. OFF by default — sharing the user's notes with another
-    /// application is not something to arrive switched on.
-    #[serde(default)]
-    pub grain_space_mcp: bool,
-    /// [GRAIN] When ON (default), reminders extracted from a captured note are
-    /// armed automatically; when OFF the note pane shows a manual "arm" button.
-    #[serde(default = "default_true")]
-    pub grain_space_auto_reminders: bool,
-    /// [GRAIN] Half-life (days) for time-decayed semantic ranking:
-    /// `S_final = S_semantic * exp(-ln2/half_life * age_days)`. Pinned notes
-    /// rank as if brand new (age 0).
-    #[serde(default = "default_grain_space_decay_half_life_days")]
-    pub grain_space_decay_half_life_days: u32,
-    /// [GRAIN] Which store backs Grain Space (OBSIDIAN-PLAN.md). A hard switch:
-    /// flipping it swaps the corpus every surface sees; nothing is migrated.
-    #[serde(default)]
-    pub grain_space_backend: GrainSpaceBackend,
-    /// [GRAIN] Absolute path of the Obsidian vault (a plain folder of .md
-    /// files). Empty = not configured; the vault backend refuses to run.
-    #[serde(default)]
-    pub grain_space_vault_path: String,
-    /// [GRAIN] Subfolder inside the vault where Grain writes its captures.
-    /// Grain only ever creates/edits files under this folder; the rest of the
-    /// vault is read-only (searchable, never written).
-    #[serde(default = "default_grain_space_vault_folder")]
-    pub grain_space_vault_folder: String,
-}
-
-/// [GRAIN] Grain Space storage backend (OBSIDIAN-PLAN.md §1).
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Default, Type)]
-#[serde(rename_all = "snake_case")]
-pub enum GrainSpaceBackend {
-    /// Flat JSON notes under `{app_data}/grain_space/notes/` (the original store).
-    #[default]
-    Grain,
-    /// Markdown + YAML frontmatter files in a user-chosen Obsidian vault.
-    Obsidian,
 }
 
 fn default_true() -> bool {
     true
-}
-
-fn default_grain_space_decay_half_life_days() -> u32 {
-    30
-}
-
-fn default_grain_space_vault_folder() -> String {
-    "Grain".to_string()
 }
 
 fn default_model() -> String {
@@ -1501,9 +1434,6 @@ pub fn ensure_post_process_defaults(settings: &mut AppSettings) -> bool {
         "agent_followup",
         "transcribe_send_to_ai",
         "transcribe_native_asr",
-        "grain_space_quick_add",
-        "grain_space_capture",
-        "grain_space_recall",
     ] {
         if !settings.bindings.contains_key(id) {
             if let Some(binding) = defaults.bindings.get(id) {
@@ -1519,9 +1449,6 @@ pub fn ensure_post_process_defaults(settings: &mut AppSettings) -> bool {
     // key the user can never use and can never see to rebind. Add ids here when
     // an action is deleted; never reuse one for something else.
     for id in [
-        // The notes workspace is the Notes tab of the main window, not a second
-        // window to toggle (NOTES-TAB-PLAN.md).
-        "grain_space_open",
         // Upstream's AI key. `transcribe_send_to_ai` starts an AI dictation AND
         // ends a running one; this could only do the first, so it held a global
         // chord for a subset of another key's behaviour. The ACTION id lives on
@@ -1792,65 +1719,6 @@ pub fn get_default_settings() -> AppSettings {
         },
     );
 
-    // [GRAIN] The notebook's bindings. It had FOUR, which was the biggest single
-    // source of Grain's shortcut bloat; `grain_space_open` is gone (the notebook is
-    // a tab of the main window, so opening Grain opens it) and the Agent can now
-    // reach captures and recall through its own door, since it carries the notebook
-    // as tools. Retiring these last two entirely is a UX decision about the pill's
-    // in-place "Saved" card — see NOTES-TAB-PLAN.md Phase E.
-    //
-    // Quick add ships UNBOUND. A global chord is scarce, and a feature that is off
-    // by default should not hold one before the user has asked for it; anyone who
-    // wants it assigns a key in the notebook's settings. All of these register only
-    // while `grain_space_enabled` is on.
-    bindings.insert(
-        "grain_space_quick_add".to_string(),
-        ShortcutBinding {
-            id: "grain_space_quick_add".to_string(),
-            name: "Quick Add to Notes".to_string(),
-            description: "Silently save the highlighted text as a note — no window, no AI."
-                .to_string(),
-            default_binding: String::new(),
-            current_binding: String::new(),
-        },
-    );
-
-    #[cfg(target_os = "macos")]
-    let default_space_capture_shortcut = "option+shift+n";
-    #[cfg(not(target_os = "macos"))]
-    let default_space_capture_shortcut = "ctrl+alt+n";
-    bindings.insert(
-        "grain_space_capture".to_string(),
-        ShortcutBinding {
-            id: "grain_space_capture".to_string(),
-            name: "Create Note".to_string(),
-            description: "Open the Grain pill to speak or type a note; any selected text becomes the note (AI title/summary when available)."
-                .to_string(),
-            default_binding: default_space_capture_shortcut.to_string(),
-            current_binding: default_space_capture_shortcut.to_string(),
-        },
-    );
-
-    #[cfg(target_os = "macos")]
-    let default_space_recall_shortcut = "option+shift+m";
-    #[cfg(not(target_os = "macos"))]
-    let default_space_recall_shortcut = "ctrl+shift+m";
-    bindings.insert(
-        "grain_space_recall".to_string(),
-        ShortcutBinding {
-            id: "grain_space_recall".to_string(),
-            name: "Recall Memory".to_string(),
-            description: "Ask Grain about your saved notes and get a spoken-style answer."
-                .to_string(),
-            default_binding: default_space_recall_shortcut.to_string(),
-            current_binding: default_space_recall_shortcut.to_string(),
-        },
-    );
-
-    // [GRAIN] No `grain_space_open` binding: the notebook is a tab now. Retired ids
-    // are pruned from existing settings files in `migrate` above, so an upgrade
-    // releases the chord instead of leaving it registered against a missing action.
-
     AppSettings {
         settings_schema_version: CURRENT_SETTINGS_SCHEMA_VERSION,
         bindings,
@@ -1945,15 +1813,6 @@ pub fn get_default_settings() -> AppSettings {
         scrap_that_enabled: false,
         agent_input_type_to_expand: true,
         agent_panel_position: AgentPanelPosition::default(),
-        grain_space_enabled: false,
-        grain_space_semantic: false,
-        grain_space_store_path: String::new(),
-        grain_space_mcp: false,
-        grain_space_auto_reminders: true,
-        grain_space_decay_half_life_days: default_grain_space_decay_half_life_days(),
-        grain_space_backend: GrainSpaceBackend::default(),
-        grain_space_vault_path: String::new(),
-        grain_space_vault_folder: default_grain_space_vault_folder(),
     }
 }
 

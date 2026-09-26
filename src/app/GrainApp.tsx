@@ -27,7 +27,6 @@ import {
   type AppRoute,
 } from "./navigation";
 import { SettingsPage } from "./pages/SettingsPage";
-import { NotesPage } from "./pages/NotesPage";
 import { ToolsPage } from "./pages/ToolsPage";
 import { ExtensionsPage, ExtensionSettingsPage } from "./pages/ExtensionsPage";
 import { HistoryCard, type HistoryViewMode } from "./history/HistoryCard";
@@ -115,7 +114,6 @@ function useHashRoute(): AppRoute {
 
 type IconName =
   | "home"
-  | "note"
   | "clock"
   | "sliders"
   | "box"
@@ -151,11 +149,6 @@ function IconSprite() {
         <path d="M3 10.5 12 3l9 7.5" />
         <path d="M5.5 9.5V21h13V9.5" />
         <path d="M9.5 21v-6h5v6" />
-      </symbol>
-      <symbol id="i-note" viewBox="0 0 24 24">
-        <path d="M6 3.5h9l3 3V20.5H6z" />
-        <path d="M15 3.5v4h4" />
-        <path d="M9 12h6M9 16h5" />
       </symbol>
       <symbol id="i-sliders" viewBox="0 0 24 24">
         <path d="M4 7h10M18 7h2M4 17h3M11 17h9M14 4v6M8 14v6" />
@@ -349,7 +342,6 @@ const NAV_GROUPS = [
         icon: "zap",
         href: "#/tools/dictionary",
       },
-      { page: "notes", label: "Notes", icon: "note", href: "#/notes" },
     ],
   },
   {
@@ -834,8 +826,6 @@ function NextShell() {
       <main className="main">
         {route.page === "history" ? (
           <HistorySettings variant="next" controller={history} />
-        ) : route.page === "notes" ? (
-          <NotesPage />
         ) : route.page === "settings" ? (
           <SettingsPage section={route.section} />
         ) : route.page === "tools" ? (

@@ -23,7 +23,6 @@ import {
   type AgentConfirm,
   type AgentPanelPosition,
   type AgentReply,
-  type AgentSource,
 } from "@/bindings";
 import { AgentMarkdown } from "../markdown/Markdown";
 import "./agent.css";
@@ -48,11 +47,6 @@ interface ChatMessage {
   id: string;
   role: Role;
   content: string;
-  // Grain Recall evidence footer (RECALL-PLAN §6): empty/false for Assist.
-  sources?: AgentSource[];
-  notFound?: boolean;
-  // A `forget` turn hands us the memory to confirm before deletion (§7.2).
-  confirmDelete?: AgentSource | null;
   // A host-held extension/MCP call. Only the token displayed here can resume it.
   confirmAction?: AgentConfirm | null;
 }
@@ -64,21 +58,6 @@ const ENTER_GLYPH = "⏎";
 
 /** Compact relative age for a source chip ("3d ago", "yesterday"). Symbols
  * only, so no i18n copy — matches the hardcoded keycap glyphs above. */
-function relDate(ms: number): string {
-  const diff = Math.max(0, Date.now() - ms);
-  const mins = Math.floor(diff / 60_000);
-  const hours = Math.floor(diff / 3_600_000);
-  const days = Math.floor(diff / 86_400_000);
-  if (mins < 1) return "just now";
-  if (mins < 60) return `${mins}m ago`;
-  if (hours < 24) return `${hours}h ago`;
-  if (days === 1) return "yesterday";
-  if (days < 7) return `${days}d ago`;
-  if (days < 30) return `${Math.floor(days / 7)}w ago`;
-  if (days < 365) return `${Math.floor(days / 30)}mo ago`;
-  return `${Math.floor(days / 365)}y ago`;
-}
-
 /** Pretty-print one part of a shortcut binding for the keycap chips. */
 function keycapLabel(part: string): string {
   const p = part.trim().toLowerCase();
@@ -136,8 +115,6 @@ export function AgentPanel() {
   // first user turn; the assistant replies live in `versions`.
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   // Retry versions of the FIRST reply (compact stage), and which one is shown.
-  // Each version carries its Recall evidence (sources / not-found) alongside
-  // the text; Assist versions have empty sources so no footer renders.
   const [versions, setVersions] = useState<AgentReply[]>([]);
   const [versionIdx, setVersionIdx] = useState(0);
   const [expanded, setExpanded] = useState(false);
@@ -213,11 +190,6 @@ export function AgentPanel() {
   const displayedReply = expanded
     ? lastReplyOf(messages)
     : (versions[versionIdx]?.text ?? "");
-  /** Evidence footer for the compact card's paged version (empty for Assist).
-   * Expanded renders a footer per assistant turn instead. */
-  const compactSources = versions[versionIdx]?.sources ?? [];
-  const compactNotFound = versions[versionIdx]?.not_found ?? false;
-  const compactConfirmDelete = versions[versionIdx]?.confirm_delete ?? null;
   const compactConfirmAction = versions[versionIdx]?.confirm_action ?? null;
   const expandedConfirmAction = [...messages]
     .reverse()
@@ -318,9 +290,6 @@ export function AgentPanel() {
               id: rid(),
               role: "assistant",
               content: reply.text,
-              sources: reply.sources,
-              notFound: reply.not_found,
-              confirmDelete: reply.confirm_delete,
               confirmAction: reply.confirm_action,
             },
           ]);
@@ -366,9 +335,6 @@ export function AgentPanel() {
         id: rid(),
         role: "assistant",
         content: reply.text,
-        sources: reply.sources,
-        notFound: reply.not_found,
-        confirmDelete: reply.confirm_delete,
         confirmAction: reply.confirm_action,
       });
     }
@@ -782,9 +748,6 @@ export function AgentPanel() {
             id: rid(),
             role: "assistant",
             content: reply.text,
-            sources: reply.sources,
-            notFound: reply.not_found,
-            confirmDelete: reply.confirm_delete,
             confirmAction: reply.confirm_action,
           });
         }
@@ -926,28 +889,6 @@ export function AgentPanel() {
     return () => window.removeEventListener("keydown", onKey);
   }, [position, startCompose]);
 
-  /** Open the notebook — on a specific note (source chip) or unfocused (the
-   * not-found escape hatch). Brings Grain forward with the Notes tab selected;
-   * there is no separate notes window to summon any more. */
-  const openNote = useCallback((noteId: string | null) => {
-    void commands.grainSpaceRevealNote(noteId).catch(() => {});
-  }, []);
-
-  // Resolution of each `forget` confirmation, keyed by note id — a forget for a
-  // given memory surfaces at most once per conversation.
-  const [deleteResolved, setDeleteResolved] = useState<
-    Record<string, "deleted" | "cancelled">
-  >({});
-  const confirmForget = useCallback((noteId: string) => {
-    void commands
-      .grainSpaceDeleteNote(noteId)
-      .then(() => setDeleteResolved((p) => ({ ...p, [noteId]: "deleted" })))
-      .catch(() => {});
-  }, []);
-  const cancelForget = useCallback((noteId: string) => {
-    setDeleteResolved((p) => ({ ...p, [noteId]: "cancelled" }));
-  }, []);
-
   /** Resume exactly the host-held action shown in this reply. The model is not
    * called again and cannot substitute a provider, tool, or argument. */
   const resolveAction = useCallback(
@@ -975,9 +916,6 @@ export function AgentPanel() {
               ? {
                   ...message,
                   content: reply.text,
-                  sources: reply.sources,
-                  notFound: reply.not_found,
-                  confirmDelete: reply.confirm_delete,
                   confirmAction: reply.confirm_action,
                 }
               : message,
@@ -1017,83 +955,6 @@ export function AgentPanel() {
     </div>
   );
 
-  /** The in-panel delete confirmation for a `forget` turn (RECALL-PLAN §7.2):
-   * an explicit Delete / Keep choice — deletion never happens without a click. */
-  const renderConfirmDelete = (src: AgentSource) => {
-    const title = src.title.trim() || t("agent.untitledNote");
-    const state = deleteResolved[src.note_id];
-    if (state === "cancelled") return null;
-    if (state === "deleted") {
-      return (
-        <div className="agc-evidence">
-          <span className="agc-forget-done">
-            {t("agent.forgetDone", { title })}
-          </span>
-        </div>
-      );
-    }
-    return (
-      <div className="agc-evidence agc-confirm-delete">
-        <span className="agc-confirm-q">
-          {t("agent.forgetConfirm", { title })}
-        </span>
-        <div className="agc-confirm-actions">
-          <button
-            type="button"
-            className="agc-forget-btn"
-            onClick={() => confirmForget(src.note_id)}
-          >
-            {t("agent.forgetDelete")}
-          </button>
-          <button
-            type="button"
-            className="agc-cancel-btn"
-            onClick={() => cancelForget(src.note_id)}
-          >
-            {t("agent.forgetCancel")}
-          </button>
-        </div>
-      </div>
-    );
-  };
-
-  /** The Grain Recall evidence strip under an answer: source chips (click →
-   * overlay focus) or the not-found escape-hatch button. Renders nothing for
-   * Assist replies (empty sources, not_found = false). RECALL-PLAN §6. */
-  const renderEvidence = (sources: AgentSource[], notFound: boolean) => {
-    if (notFound) {
-      return (
-        <div className="agc-evidence">
-          <button
-            type="button"
-            className="agc-notfound-btn"
-            onClick={() => openNote(null)}
-          >
-            {t("agent.notFoundOpen")}
-          </button>
-        </div>
-      );
-    }
-    if (sources.length === 0) return null;
-    return (
-      <div className="agc-evidence">
-        <div className="agc-sources">
-          {sources.map((s) => (
-            <button
-              key={s.note_id}
-              type="button"
-              className="agc-source"
-              title={`${s.title.trim() || t("agent.untitledNote")} · ${relDate(s.saved_at)}`}
-              onClick={() => openNote(s.note_id)}
-            >
-              {s.title.trim() || t("agent.untitledNote")}
-            </button>
-          ))}
-        </div>
-      </div>
-    );
-  };
-
   const quoteText = contextRef.current?.trim() || instructionRef.current;
   const shortcutParts = followupShortcut
     ? followupShortcut.split("+").map(keycapLabel)
@@ -1116,9 +977,6 @@ export function AgentPanel() {
               id: "a0",
               role: "assistant",
               content: displayedReply,
-              sources: compactSources,
-              notFound: compactNotFound,
-              confirmDelete: compactConfirmDelete,
               confirmAction: compactConfirmAction,
             },
           ]
@@ -1181,8 +1039,6 @@ export function AgentPanel() {
                       <div className="agc-c-answer">
                         <AgentMarkdown markdown={m.content} />
                       </div>
-                      {renderEvidence(m.sources ?? [], m.notFound ?? false)}
-                      {m.confirmDelete && renderConfirmDelete(m.confirmDelete)}
                       {m.confirmAction && renderConfirmAction(m.confirmAction)}
                       {expanded && (
                         <div className="agc-c-tools">
@@ -1374,9 +1230,6 @@ export function AgentPanel() {
                 <div className="agc-reply">
                   <AgentMarkdown markdown={displayedReply} />
                 </div>
-                {renderEvidence(compactSources, compactNotFound)}
-                {compactConfirmDelete &&
-                  renderConfirmDelete(compactConfirmDelete)}
                 {compactConfirmAction &&
                   renderConfirmAction(compactConfirmAction)}
               </>
@@ -1465,11 +1318,6 @@ export function AgentPanel() {
                   m.content
                 )}
               </div>
-              {m.role === "assistant" &&
-                renderEvidence(m.sources ?? [], m.notFound ?? false)}
-              {m.role === "assistant" &&
-                m.confirmDelete &&
-                renderConfirmDelete(m.confirmDelete)}
               {m.role === "assistant" &&
                 m.confirmAction &&
                 renderConfirmAction(m.confirmAction)}

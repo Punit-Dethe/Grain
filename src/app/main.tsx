@@ -34,10 +34,6 @@ if (winLabel === "agent-panel") {
     </React.StrictMode>,
   );
 } else {
-  // [GRAIN] There is no `grain-space` branch any more. The notes workspace was a
-  // second frameless window with a sleep/revive handshake to reclaim its idle
-  // RAM; it is now the Notes tab of this window, where leaving the tab unmounts
-  // the tree and reclaims the same memory without a second webview.
   // [GRAIN] The main window is opaque + OS-rounded (DWM corner preference in
   // lib.rs). Unlike the Agent branch it is NOT transparent, so the page keeps
   // its background to fill client area outside the rounded React card.

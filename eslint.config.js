@@ -13,7 +13,6 @@ const LEGACY_RAW_INVOKE = [
   "src/app/components/settings/experimentations/ExtensionSettings.tsx",
   "src/app/components/settings/experimentations/DeveloperSection.tsx",
   "src/app/components/settings/experimentations/AgentSection.tsx",
-  "src/app/components/settings/grain-space/McpBridge.tsx",
   "src/app/components/settings/post-processing/PostProcessingSettings.tsx",
 ];
 
@@ -24,15 +23,12 @@ const LEGACY_RAW_INVOKE = [
 //
 // Shrink-only, and mostly retired by deletion rather than conversion. Not all
 // of these are legacy: `LiveLogViewer` listens to `log://log`, and the
-// grain-space pair to `grain-space://*` — names no Rust type can spell, so they
-// are staying on the raw API until those channels get a typed home. Exact paths
+// extension plumbing uses private channels. Exact paths
 // only, no directory globs: a glob would silently re-exempt files added later.
 const LEGACY_RAW_LISTEN = [
   "src/App.tsx",
-  "src/app/components/grain-space/GrainSpaceOverlay.tsx",
   "src/app/components/settings/HandyKeysShortcutInput.tsx",
   "src/app/components/settings/debug/LiveLogViewer.tsx",
-  "src/app/components/settings/grain-space/GrainSpaceSettings.tsx",
   "src/app/stores/modelStore.ts",
   "src/app/stores/settingsStore.ts",
 ];

@@ -2,7 +2,7 @@
 //! (`docs/Extensions 2.0/PLAN.md` Amendment D).
 //!
 //! The bridge between the pure directory/exposure layer in `grain-core` and the
-//! Agent's live tool loop (`agent::run_with_note_tools`). It:
+//! Agent's live tool loop (`agent::run_with_tools`). It:
 //!
 //! - injects a compact, inert directory of enabled extensions;
 //! - exposes only `load_extension` initially, then atomically adds every approved
@@ -10,10 +10,6 @@
 //! - dispatches action calls through an authoritative task-local name map and the
 //!   existing prepared-call, confirmation, and worker boundary.
 //!
-//! Grain Space (built-in) actions keep executing through their own tools; a turn
-//! on a machine with no installed action extensions exposes nothing here and is
-//! byte-for-byte the old behaviour.
-
 use std::collections::{BTreeMap, HashSet};
 
 use crate::llm_client::{ToolCallOut, ToolSpec};
@@ -112,7 +108,7 @@ pub fn specs(session: &CapabilitySession) -> Vec<ToolSpec> {
 
 /// Dispatch one tool call if it belongs to the capability surface. Returns
 /// `Some(result_text)` when handled, `None` when the call is not ours (the caller
-/// routes it elsewhere — e.g. the Grain Space note tools).
+/// reports an unavailable tool).
 pub async fn dispatch(
     app: &AppHandle,
     call: &ToolCallOut,
@@ -400,33 +396,17 @@ async fn execute_action(
     // The host floor classifies the action; the axis retry/parallelism reads
     // follows it (a Confirm write, a Safe read). User policy could only tighten
     // this — never loosen it — and is applied here once wired.
-    let builtin = action.extension_id == crate::action_exec::GRAIN_SPACE_EXT_ID;
-    let risk = if builtin {
-        RiskClass::floor(action.risk)
-    } else {
-        RiskClass::Confirm
-    };
-    let side_effect = if builtin
-        && matches!(
-            action.action_id.as_str(),
-            "search_notes" | "get_note" | "list_collections"
-        ) {
-        SideEffect::Read
-    } else {
-        SideEffect::Write
-    };
-    let digest = if builtin {
-        Some("builtin".to_string())
-    } else {
-        crate::extension_host::approved_action_digest(app, &action.extension_id, &action.action_id)
-    };
+    let risk = RiskClass::Confirm;
+    let side_effect = SideEffect::Write;
+    let digest =
+        crate::extension_host::approved_action_digest(app, &action.extension_id, &action.action_id);
     let Some(digest) = digest else {
         return ToolResult::Text(
             "The action is no longer approved or available. Ask again after reviewing the extension."
                 .to_string(),
         );
     };
-    if !builtin && !loaded_digest_is_current(loaded_manifest_digest, &digest) {
+    if !loaded_digest_is_current(loaded_manifest_digest, &digest) {
         return ToolResult::Text(
             "The extension changed after its tools were loaded. Start the request again so Grain can expose the current schemas."
                 .to_string(),

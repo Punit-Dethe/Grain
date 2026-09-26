@@ -5,7 +5,6 @@ import {
   Boxes,
   Code2,
   Cpu,
-  FileText,
   Sparkles,
   Trash2,
   WandSparkles,
@@ -23,11 +22,9 @@ function SurfaceIcon({ surface }: { surface: string }) {
         ? Bot
         : surface.startsWith("dictation")
           ? WandSparkles
-          : surface.startsWith("grainspace")
-            ? FileText
-            : surface.startsWith("models")
-              ? Cpu
-              : Boxes;
+          : surface.startsWith("models")
+            ? Cpu
+            : Boxes;
 
   return <Icon size={20} strokeWidth={1.75} aria-hidden="true" />;
 }

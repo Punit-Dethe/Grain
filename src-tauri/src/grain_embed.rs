@@ -1,15 +1,9 @@
-//! [GRAIN] Grain Space semantic embedding engine (Phase 4).
-//!
-//! Opt-in, never shipped: BGE-small-en-v1.5 (f32 `model.safetensors` ≈ 130 MB,
-//! MIT) is downloaded into the shared HF cache only after explicit user consent.
-//! The engine is one dedicated OS thread that owns the tokenizer + Candle BERT
-//! weights behind an mpsc channel — 100% independent from the audio/ASR threads.
-//!
-//! Lifecycle (strict directive 7, overrides modelinfo.md's "never unload"):
-//! spawned lazily by the FIRST semantic search while the overlay window is
-//! open, kept warm while it stays open, dropped the instant the window is
-//! destroyed (`window.rs` Destroyed hook → [`shutdown_engine`]). No idle
-//! timers, nothing resident otherwise.
+//! [GRAIN] Shared on-device embeddings for Agent and extension retrieval.
+
+//! Opt-in BGE-small-en-v1.5 weights live in the shared Hugging Face cache.
+//! The tokenizer and Candle BERT model load on demand on a dedicated thread.
+//! Agent panels and a bounded retrieval TTL govern residency; idle teardown
+//! joins the thread and releases its weights.
 
 use std::path::PathBuf;
 use std::sync::mpsc;
@@ -32,9 +26,10 @@ const MODEL_FILES: [&str; 3] = ["config.json", "tokenizer.json", "model.safetens
 pub const EMBED_DIM: usize = 384;
 const MAX_TOKENS: usize = 512;
 
-pub const MODEL_PROGRESS_EVENT: &str = "grain-space://embed-model-progress";
-pub const MODEL_COMPLETE_EVENT: &str = "grain-space://embed-model-complete";
-pub const MODEL_ERROR_EVENT: &str = "grain-space://embed-model-error";
+pub const MODEL_PROGRESS_EVENT: &str = "grain-embed-model-progress";
+pub const MODEL_COMPLETE_EVENT: &str = "grain-embed-model-complete";
+pub const MODEL_CANCELLED_EVENT: &str = "grain-embed-model-cancelled";
+pub const MODEL_ERROR_EVENT: &str = "grain-embed-model-error";
 
 // -- model files on disk --------------------------------------------------------
 
@@ -64,19 +59,81 @@ pub fn is_downloading() -> bool {
 }
 
 pub fn cancel_download() {
-    if let Some(token) = DOWNLOAD.lock().unwrap().take() {
+    if let Some(token) = DOWNLOAD.lock().unwrap().as_ref() {
         token.cancel();
     }
 }
 
-#[derive(Clone, Serialize)]
-struct EmbedModelProgress {
-    downloaded: u64,
-    total: u64,
-    percentage: f64,
+#[derive(Clone, Serialize, serde::Deserialize, specta::Type, tauri_specta::Event)]
+pub struct GrainEmbedModelProgress {
+    pub downloaded: u64,
+    pub total: u64,
+    pub percentage: f64,
 }
 
-/// Bridges hf-hub progress to the overlay/settings UI. Only the big
+#[derive(Clone, Serialize, serde::Deserialize, specta::Type, tauri_specta::Event)]
+pub struct GrainEmbedModelComplete;
+
+#[derive(Clone, Serialize, serde::Deserialize, specta::Type, tauri_specta::Event)]
+pub struct GrainEmbedModelCancelled;
+
+#[derive(Clone, Serialize, serde::Deserialize, specta::Type, tauri_specta::Event)]
+pub struct GrainEmbedModelError(pub String);
+
+#[derive(Serialize, specta::Type)]
+#[serde(rename_all = "snake_case")]
+pub enum EmbedModelStatus {
+    Ready,
+    Downloading,
+    Absent,
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn grain_embed_model_status() -> EmbedModelStatus {
+    if is_downloading() {
+        EmbedModelStatus::Downloading
+    } else if model_on_disk() {
+        EmbedModelStatus::Ready
+    } else {
+        EmbedModelStatus::Absent
+    }
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn grain_embed_download_model(
+    app: AppHandle,
+    window: tauri::WebviewWindow,
+) -> Result<(), String> {
+    crate::grain_commands::require_main_window(&window)?;
+    download_model(app).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn grain_embed_cancel_download(window: tauri::WebviewWindow) -> Result<(), String> {
+    crate::grain_commands::require_main_window(&window)?;
+    cancel_download();
+    Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn grain_embed_uninstall_model(
+    app: AppHandle,
+    window: tauri::WebviewWindow,
+) -> Result<(), String> {
+    crate::grain_commands::require_main_window(&window)?;
+    tauri::async_runtime::spawn_blocking(uninstall_model)
+        .await
+        .map_err(|error| error.to_string())?
+        .map_err(|error| format!("{error:#}"))?;
+    crate::extension_host::refresh_index(&app);
+    Ok(())
+}
+
+/// Bridges hf-hub progress to the settings UI. Only the big
 /// `model.safetensors` transfer reports (config + tokenizer are ~1 KB / ~700 KB
 /// — invisible next to the weights).
 #[derive(Clone)]
@@ -94,7 +151,7 @@ impl EmbedDownloadProgress {
         };
         let _ = self.app.emit(
             MODEL_PROGRESS_EVENT,
-            &EmbedModelProgress {
+            &GrainEmbedModelProgress {
                 downloaded,
                 total,
                 percentage,
@@ -135,10 +192,10 @@ impl Progress for EmbedDownloadProgress {
 
 /// Download the model files into the shared HF cache with progress + cancel.
 /// Resumable: hf-hub keeps `.part` files, and files already cached are skipped.
-/// Emits `MODEL_COMPLETE_EVENT` / `MODEL_ERROR_EVENT`; the semantic toggle
-/// must stay OFF until [`model_on_disk`] verifies (edge-case rule).
+/// Emits `MODEL_COMPLETE_EVENT` / `MODEL_ERROR_EVENT` after cache verification.
 pub async fn download_model(app: AppHandle) -> Result<(), String> {
     if model_on_disk() {
+        crate::extension_host::refresh_index(&app);
         let _ = app.emit(MODEL_COMPLETE_EVENT, ());
         return Ok(());
     }
@@ -154,15 +211,19 @@ pub async fn download_model(app: AppHandle) -> Result<(), String> {
 
     let result = download_files(&app, token).await;
 
-    // Clear the slot on every exit path (a cancel may already have taken it).
+    // Release the reservation only after transfer cleanup has finished.
     DOWNLOAD.lock().unwrap().take();
 
     match result {
         Ok(true) => {
+            crate::extension_host::refresh_index(&app);
             let _ = app.emit(MODEL_COMPLETE_EVENT, ());
             Ok(())
         }
-        Ok(false) => Ok(()), // cancelled: partial files stay for resume, no event
+        Ok(false) => {
+            let _ = app.emit(MODEL_CANCELLED_EVENT, ());
+            Ok(())
+        }
         Err(e) => {
             let msg = format!("{e:#}");
             let _ = app.emit(MODEL_ERROR_EVENT, &msg);
@@ -236,8 +297,7 @@ impl Drop for Engine {
 
 static ENGINE: Mutex<Option<Engine>> = Mutex::new(None);
 
-/// Drop the engine (thread joined, weights freed). Called on feature disable
-/// and semantic-toggle off. No-op when not running.
+/// Drop the engine (thread joined, weights freed). No-op when not running.
 pub fn shutdown_engine() {
     *ENGINE.lock().unwrap() = None;
 }
@@ -247,7 +307,14 @@ pub fn shutdown_engine() {
 /// can't be deleted on Windows. Removes the whole `models--…` repo dir
 /// (snapshots + blobs). A no-op when the files are already gone.
 pub fn uninstall_model() -> Result<()> {
-    shutdown_engine();
+    // Serialize cache removal with download admission, including cancellation
+    // cleanup, so a second transfer cannot race a removal.
+    let downloading = DOWNLOAD.lock().unwrap();
+    if downloading.is_some() {
+        return Err(anyhow!("A model download is in progress."));
+    }
+    let mut engine = ENGINE.lock().unwrap();
+    *engine = None;
     // Derive the cache repo dir from any present file:
     // `<cache>/models--BAAI--bge-small-en-v1.5/snapshots/<rev>/<file>` → up 3.
     let repo_dir = MODEL_FILES
@@ -263,31 +330,15 @@ pub fn uninstall_model() -> Result<()> {
     Ok(())
 }
 
-/// Drop the engine only if NO witness that may use it is still alive — the Notes
-/// tab, the Recall agent panel (RECALL-PLAN §3.4), or Extension Mode holding it
-/// warm ([`extension_mode_warm`]). A no-op when the engine isn't resident, so
-/// Assist-only agent sessions (which never spawn it) pay nothing.
-///
-/// [GRAIN] The notes side used to be "is the workspace window visible". The
-/// workspace is a tab now, so it reports its own mount instead — see
-/// `grain_space::set_workspace_mounted`. Same invariant, different witness: the
-/// model lives only while something that can use it is on screen — or, for
-/// Extension Mode, within its TTL.
 pub fn shutdown_engine_if_idle(app: &AppHandle) {
     use tauri::Manager;
     let panel_open = app.get_webview_window(crate::agent::PANEL_LABEL).is_some();
-    if !super::workspace_mounted() && !panel_open && !extension_mode_warm() {
+    if !panel_open && !extension_mode_warm() {
         shutdown_engine();
     }
 }
 
 // ── Extension Mode witness (`docs/Extensions V1/PLAN.md` §6) ─────────────────
-//
-// [GRAIN] The embedder is a shared service: Grain Space (notes + recall) and
-// Extension Mode (recommendation ranking, and later `match.semantic`) draw on
-// ONE engine. Grain Space witnesses by "is a surface on screen"; Extension Mode
-// has no surface of its own to witness with, so it witnesses by a TTL — the
-// model lives for a short while after it was last used, then is reclaimed.
 //
 // This is the whole of §6's "Grain owns the embedder lifecycle": an extension
 // may declare `needs: ["semantic"]`, but it can never pin the model, set the
@@ -363,7 +414,7 @@ fn ensure_spawned() {
 /// Ensure a single background task is watching the TTL, and reclaims the engine
 /// when it lapses. Re-reads the deadline each wake, so a `touch` that extends the
 /// warmth mid-sleep is honoured rather than fought. The reclaim goes through
-/// [`shutdown_engine_if_idle`], so a Notes tab or agent panel still using the
+/// [`shutdown_engine_if_idle`], so an Agent panel still using the
 /// engine keeps it — Extension Mode only ever withdraws its own witness.
 fn spawn_reaper(app: AppHandle) {
     if REAPER_RUNNING.swap(true, Ordering::SeqCst) {
@@ -390,11 +441,11 @@ fn spawn_reaper(app: AppHandle) {
 /// BGE v1.5's retrieval instruction. ASYMMETRIC by design: the model card
 /// recommends prefixing short QUERIES with this when retrieving passages —
 /// documents are embedded bare. Applying it only at query time means stored
-/// note vectors never need re-embedding to benefit.
+/// document vectors never need re-embedding to benefit.
 pub const QUERY_INSTRUCTION: &str = "Represent this sentence for searching relevant passages: ";
 
 /// Embed one QUERY (instruction-prefixed; see [`QUERY_INSTRUCTION`]). Every
-/// query-side embedding must come through here so query and note vectors stay
+/// query-side embedding must come through here so query and document vectors stay
 /// in the model's intended asymmetric geometry. Blocking, like [`embed`].
 pub fn embed_query(text: String) -> Result<Vec<f32>> {
     let mut prefixed = String::with_capacity(QUERY_INSTRUCTION.len() + text.len());
@@ -444,7 +495,7 @@ fn spawn_engine() -> Result<Engine> {
 
     let (tx, rx) = mpsc::channel::<Request>();
     let join = std::thread::Builder::new()
-        .name("grain-space-embed".to_string())
+        .name("grain-embed".to_string())
         .spawn(move || worker(config, tokenizer, weights, rx))
         .context("spawn embed engine thread")?;
     log::info!("[GRAIN] embed engine spawned");
@@ -521,9 +572,9 @@ fn load_model(
     Ok((tokenizer, model, device))
 }
 
-/// One text at a time (no padding logic needed; note counts are small and each
+/// One text at a time (no padding logic needed; batches are capped and each
 /// forward is a few ms on CPU). Mean-pool over the sequence, L2-normalize so
-/// L2 distance in the vec index is monotonic with cosine similarity.
+/// L2 distance is monotonic with cosine similarity.
 fn embed_batch(
     tokenizer: &tokenizers::Tokenizer,
     model: &candle_transformers::models::bert::BertModel,
@@ -556,9 +607,7 @@ fn embed_batch(
         let vec = normalized.squeeze(0)?.to_vec1::<f32>()?;
         // Reject poison at the source: a non-finite (NaN/Inf) or all-zero
         // embedding means the forward pass was corrupt (e.g. a half-loaded /
-        // mmap-raced model). Returning Err keeps the caller from storing it,
-        // which would otherwise make every later KNN return NULL distance and
-        // crash recall. The note stays embed_stale=1 and retries next time.
+        // mmap-raced model). Reject it before it can poison retrieval scores.
         if !vec.iter().all(|x| x.is_finite()) || vec.iter().all(|&x| x == 0.0) {
             return Err(anyhow!(
                 "embed produced non-finite/zero vector (model forward corrupt?)"
@@ -569,77 +618,25 @@ fn embed_batch(
     Ok(out)
 }
 
-/// The exact text a note embeds as (blank fields omitted; the tokenizer
-/// truncates to `MAX_TOKENS` — the distilled fields come FIRST precisely so they
-/// survive that truncation on a long note).
-///
-/// [`DistilledDoc`] carries the searchable question and the note's entities
-/// (KNOWLEDGE-ARCHITECTURE-PLAN.md D3). Embedding the distilled document rather
-/// than raw text is the one measured accuracy win Cerebras reports, and the
-/// reason is mechanical: the question is phrased the way the user will later ask,
-/// so it sits far closer in vector space to the real query than the note's own
-/// prose does.
-pub fn note_embed_text(title: &str, tldr: &str, body: &str) -> String {
-    note_embed_text_distilled(&DistilledDoc::default(), title, tldr, body)
-}
-
-/// The distilled half of a note's search document. Empty for raw captures and
-/// foreign notes, in which case embedding is byte-identical to before.
-#[derive(Default)]
-pub struct DistilledDoc<'a> {
-    pub question: &'a str,
-    pub entities: &'a [String],
-}
-
-impl DistilledDoc<'_> {
-    fn is_empty(&self) -> bool {
-        self.question.trim().is_empty() && self.entities.is_empty()
-    }
-}
-
-pub fn note_embed_text_distilled(
-    distilled: &DistilledDoc<'_>,
-    title: &str,
-    tldr: &str,
-    body: &str,
-) -> String {
-    let mut parts = Vec::new();
-    // Question first: it is the closest thing in the record to the query that
-    // will come looking, and first means it survives token truncation.
-    if !distilled.question.trim().is_empty() {
-        parts.push(format!("Question: {}", distilled.question.trim()));
-    }
-    if !title.trim().is_empty() {
-        parts.push(format!("Title: {}", title.trim()));
-    }
-    if !tldr.trim().is_empty() {
-        parts.push(format!("Summary: {}", tldr.trim()));
-    }
-    if !distilled.entities.is_empty() {
-        parts.push(format!("About: {}", distilled.entities.join(", ")));
-    }
-    if !body.trim().is_empty() {
-        parts.push(format!("Body: {}", body.trim()));
-    }
-    parts.join("\n\n")
-}
-
-impl<'a> DistilledDoc<'a> {
-    /// The distilled view of a note, or the empty one when it has no distillation
-    /// (so callers never branch).
-    pub fn of(question: &'a str, entities: &'a [String]) -> Self {
-        let doc = DistilledDoc { question, entities };
-        if doc.is_empty() {
-            DistilledDoc::default()
-        } else {
-            doc
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::sync::atomic::Ordering;
+
+    #[test]
+    fn cancellation_reserves_download_until_transfer_cleanup() {
+        let token = super::CancellationToken::new();
+        {
+            let mut slot = super::DOWNLOAD.lock().unwrap();
+            assert!(slot.is_none());
+            *slot = Some(token.clone());
+        }
+        super::cancel_download();
+        assert!(token.is_cancelled());
+        assert!(super::is_downloading());
+        assert!(super::uninstall_model().is_err());
+        super::DOWNLOAD.lock().unwrap().take();
+        assert!(!super::is_downloading());
+    }
 
     /// The Extension-Mode witness `shutdown_engine_if_idle` consults (§6): a past
     /// or zero deadline reads as not-warm, a future one as warm. This is the
@@ -656,21 +653,8 @@ mod tests {
         EXTENSION_MODE_WARM_UNTIL_MS.store(0, Ordering::Relaxed);
     }
 
-    #[test]
-    fn note_embed_text_omits_blank_fields() {
-        assert_eq!(
-            super::note_embed_text("Shopping", "Groceries.", "Milk and eggs"),
-            "Title: Shopping\n\nSummary: Groceries.\n\nBody: Milk and eggs"
-        );
-        assert_eq!(
-            super::note_embed_text("", "  ", "raw capture"),
-            "Body: raw capture"
-        );
-        assert_eq!(super::note_embed_text("", "", ""), "");
-    }
-
-    /// Calibration probe for `SEMANTIC_MIN_SIMILARITY` (recall.rs): prints the
-    /// prefixed-query cosine against related and unrelated notes so the floor
+    /// Verify asymmetric query embeddings rank relevant documents first. Prints the
+    /// prefixed-query cosine against related and unrelated documents so the floor
     /// can be tuned against real model output, and asserts the asymmetric
     /// geometry actually separates them. Skips itself if the model isn't on
     /// disk. Run with `--nocapture` to read the values.
@@ -681,21 +665,9 @@ mod tests {
             return;
         }
         let docs = vec![
-            super::note_embed_text(
-                "Wifi password",
-                "The home network details.",
-                "the wifi password is interstellar, router is in the hallway",
-            ),
-            super::note_embed_text(
-                "Dentist",
-                "Appointment note.",
-                "dentist appointment moved to the 14th at 3pm",
-            ),
-            super::note_embed_text(
-                "Pasta recipe",
-                "Dinner idea.",
-                "carbonara: guanciale, pecorino, eggs, no cream ever",
-            ),
+            "Wifi password. The home network details. the wifi password is interstellar, router is in the hallway".to_string(),
+            "Dentist. Appointment note. dentist appointment moved to the 14th at 3pm".to_string(),
+            "Pasta recipe. Dinner idea. carbonara: guanciale, pecorino, eggs, no cream ever".to_string(),
         ];
         let doc_vecs = super::embed(docs).expect("doc embed");
         let q =
@@ -712,7 +684,7 @@ mod tests {
         println!("related={related:.4} unrelated=[{unrelated_1:.4}, {unrelated_2:.4}]");
         assert!(
             related > unrelated_1 && related > unrelated_2,
-            "prefixed query must rank the related note first"
+            "prefixed query must rank the related document first"
         );
     }
 }

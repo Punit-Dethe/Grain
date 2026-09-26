@@ -25,13 +25,7 @@
     "test:unit:watch": "vitest"
   },
   "dependencies": {
-    "@codemirror/commands": "^6.11.0",
-    "@codemirror/lang-markdown": "^6.5.2",
-    "@codemirror/language": "^6.12.4",
-    "@codemirror/state": "^6.7.1",
-    "@codemirror/view": "^6.43.9",
     "@fontsource-variable/ibm-plex-sans": "5.3.0",
-    "@lezer/highlight": "^1.2.3",
     "@tailwindcss/vite": "^4.3.3",
     "@tauri-apps/api": "^2.11.1",
     "@tauri-apps/plugin-autostart": "~2.5.1",

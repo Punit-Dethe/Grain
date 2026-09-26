@@ -100,8 +100,7 @@ pub fn is_transcribe_binding(id: &str) -> bool {
         || id == "transcribe_native_asr"
     // ^ [GRAIN] real-time + Native ASR bindings share the serialized
     // record/transcribe lifecycle, so they can never overlap each other or
-    // Batch. (Grain Space note capture is no longer here — it summons the Agent
-    // pill in Capture mode and uses the agent dictation lease instead.)
+    // Batch. Agent input uses a separate dictation lease.
 }
 
 impl TranscriptionCoordinator {

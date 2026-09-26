@@ -65,9 +65,11 @@ pub fn register_cancel_shortcut(app: &AppHandle) {
     // [GRAIN] Agent and normal dictation intentionally share Escape while the
     // Agent panel is open. Keep one OS registration (Agent Close); its action
     // delegates to the normal cancel pipeline whenever recording is live.
-    if settings.bindings.get("cancel").is_some_and(|binding| {
-        crate::agent::owns_close_binding(app, &binding.current_binding)
-    }) {
+    if settings
+        .bindings
+        .get("cancel")
+        .is_some_and(|binding| crate::agent::owns_close_binding(app, &binding.current_binding))
+    {
         debug!("Agent owns the cancel accelerator; sharing its Escape registration");
         return;
     }
@@ -85,9 +87,11 @@ pub fn unregister_cancel_shortcut(app: &AppHandle) {
     // [GRAIN] On Tauri, unregistering is accelerator-based rather than id-based.
     // Do not accidentally remove Agent Close when dictation shared the same key;
     // the next Escape must still close the idle Agent panel.
-    if settings.bindings.get("cancel").is_some_and(|binding| {
-        crate::agent::owns_close_binding(app, &binding.current_binding)
-    }) {
+    if settings
+        .bindings
+        .get("cancel")
+        .is_some_and(|binding| crate::agent::owns_close_binding(app, &binding.current_binding))
+    {
         debug!("Agent still owns the cancel accelerator; preserving its registration");
         return;
     }
@@ -527,7 +531,7 @@ fn register_all_shortcuts_for_implementation(
         // [GRAIN] Apply the SAME registration gate as the two init paths. This
         // path (re-register on a keyboard-implementation switch) previously
         // skipped only the post-processing key, so switching Tauri↔HandyKeys
-        // silently gave disabled features (Agent, Grain Space) global hotkeys
+        // silently gave disabled features (Agent) global hotkeys
         // and re-armed every capture mode. One shared predicate closes that gap.
         if !crate::grain_flow_availability::shortcut_should_hold(app, &current_settings, id) {
             continue;

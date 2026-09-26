@@ -320,7 +320,7 @@ fn result_heading(source: Option<&str>, title: Option<&str>) -> String {
     }
 }
 
-// Grain Space mutation inputs are host-bounded to this same size. Keeping the
+// Action inputs are host-bounded to this same size. Keeping the
 // confirmation value at the full bound means approval always covers the exact
 // body/addition that will be persisted, rather than an indistinguishable prefix.
 const LONG_VALUE_MAX: usize = 64 * 1024;

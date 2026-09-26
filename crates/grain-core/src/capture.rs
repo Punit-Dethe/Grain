@@ -86,9 +86,6 @@ pub fn shortcut_holds_hotkey(settings: &AppSettings, id: &str) -> bool {
     if id == "summon_agent" && !settings.agent_enabled {
         return false;
     }
-    if id.starts_with("grain_space_") && !settings.grain_space_enabled {
-        return false;
-    }
     if id == "transcribe_realtime" && !flow_is_eligible(settings) {
         return false;
     }
@@ -255,7 +252,6 @@ mod tests {
         let mut s = with_reviewed_flow_model(get_default_settings());
         s.post_process_enabled = false;
         s.agent_enabled = false;
-        s.grain_space_enabled = false;
 
         // Feature toggles do not affect the three eligible capture modes.
         for id in CAPTURE_MODE_IDS {
@@ -266,7 +262,6 @@ mod tests {
         assert!(!shortcut_holds_hotkey(&s, "transcribe_with_post_process"));
         // Feature-gated keys vanish with their feature.
         assert!(!shortcut_holds_hotkey(&s, "summon_agent"));
-        assert!(!shortcut_holds_hotkey(&s, "grain_space_capture"));
         // Dynamic keys are never held at registration time.
         assert!(!shortcut_holds_hotkey(&s, "cancel"));
         assert!(!shortcut_holds_hotkey(&s, "agent_followup"));
@@ -296,13 +291,11 @@ mod tests {
         let mut s = with_reviewed_flow_model(get_default_settings());
         s.post_process_enabled = true;
         s.agent_enabled = true;
-        s.grain_space_enabled = true;
 
         for id in CAPTURE_MODE_IDS {
             assert!(shortcut_holds_hotkey(&s, id));
         }
         assert!(shortcut_holds_hotkey(&s, "transcribe_send_to_ai"));
         assert!(shortcut_holds_hotkey(&s, "summon_agent"));
-        assert!(shortcut_holds_hotkey(&s, "grain_space_capture"));
     }
 }

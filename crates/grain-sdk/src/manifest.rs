@@ -1568,7 +1568,6 @@ pub const ANCHORS: &[&str] = &[
     "dictation.pipeline.after",
     "context.after",
     "agent.after",
-    "grainspace.after",
     "models.after",
 ];
 
@@ -1689,22 +1688,11 @@ pub const KNOWN_CAPABILITIES: &[&str] = &[
     // One host-owned account connection for this extension. An extension is a
     // single service/capability provider; cross-service work belongs to Agent.
     "auth",
-    // Phase 3 (Grain Space Test): read the user's current selection — the
+    // The host can read the user's current selection — the
     // quick-add path a note-capture extension needs. Sensitive (it reads
     // whatever is selected in any app), so it is its own grant, meant to be
     // paired with a user-initiated trigger like a shortcut.
     "capture:selection",
-    // [GRAIN] Read the user's Grain Space notes. This remains highly sensitive
-    // (especially when combined with network access) and is flagged accordingly.
-    //
-    // It exists because a note VIEWER is a legitimate extension: Grain's own is
-    // Write methods stay unavailable until a request can be placed on a
-    // user-owned, out-of-band confirmation surface.
-    //
-    // Distinct from the MCP bridge's `space`, which is absent from this list on
-    // purpose: that one is minted by Grain for its own proxy and can never be
-    // requested by a manifest.
-    "notes",
     // Phase 5C: observe the foreground application (name, executable, and the
     // browser URL host when it is a browser). Privacy-marked — it reveals which
     // app the user is in — and the foundation any context-aware extension needs
@@ -3349,7 +3337,7 @@ mod tests {
         .is_err());
     }
 
-    /// The builtin tier (Grain Space's mechanism): first-party identity is
+    /// The retired builtin tier: first-party identity is
     /// mandatory, there is nothing to launch, and it may contribute settings a
     /// data pack cannot.
     /// A `grain://` panel renders a HOST component with Grain's own privileges,
@@ -3438,7 +3426,6 @@ mod tests {
                 "dictation.pipeline.after",
                 "context.after",
                 "agent.after",
-                "grainspace.after",
                 "models.after",
             ]
         );

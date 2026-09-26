@@ -6,10 +6,8 @@ import {
 } from "./navigation";
 
 describe("UI 2.0 hash navigation", () => {
-  it("round-trips the Notes workspace", () => {
-    const route = { page: "notes" } as const;
-    expect(hashForRoute(route)).toBe("#/notes");
-    expect(routeFromHash("#/notes")).toEqual(route);
+  it("falls back to overview for the removed Notes route", () => {
+    expect(routeFromHash("#/notes")).toEqual({ page: "overview" });
   });
 
   it("sends the retired About tab to its settings section", () => {

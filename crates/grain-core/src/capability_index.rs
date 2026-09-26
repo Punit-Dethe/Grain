@@ -129,7 +129,7 @@ fn is_stopword(token: &str) -> bool {
 const NEG_PENALTY: f32 = 0.5;
 
 /// The similarity a dense (cosine) score must clear to be a topical signal at
-/// all. Shared with [`crate::recommend::TOPICAL_FLOOR`] and Grain Space recall:
+/// all. Shared with [`crate::recommend::TOPICAL_FLOOR`] for shared embeddings:
 /// below this the asymmetric BGE geometry no longer separates related from
 /// unrelated, so the score is noise dressed as a match.
 pub const DENSE_FLOOR: f32 = 0.50;

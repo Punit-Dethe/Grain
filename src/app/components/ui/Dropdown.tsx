@@ -41,7 +41,7 @@ const EDGE = 8;
  *
  * The nearest themed ancestor rather than `document.body`: the app's base rules
  * are scoped (`.grain-root button { font: inherit }`, `box-sizing`, the theme's
- * `--color-*` set, and the Grain Space overlay's own `data-theme` frame), so a
+ * `--color-*` set), so a
  * menu parked on `<body>` renders in the UA's default font with a default
  * border, and in the wrong theme inside the overlay. Any themed root is high
  * enough in the tree to escape the card that was clipping the menu, and none of

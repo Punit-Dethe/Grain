@@ -240,8 +240,7 @@ struct WireToolCallFn {
     arguments: String,
 }
 
-/// One function the model may call, as handed in by a caller (Grain Recall's
-/// `search_memory`). `parameters` is a JSON-Schema object.
+/// One function the model may call, as handed in by the Agent. `parameters` is a JSON-Schema object.
 pub struct ToolSpec {
     pub name: String,
     pub description: String,
@@ -322,7 +321,7 @@ struct ChatCompletionRequest {
     reasoning_effort: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     reasoning: Option<ReasoningConfig>,
-    /// Native tool-calling: present only for the tool-enabled Recall path, so
+    /// Native tool-calling: present only for tool-enabled Agent requests, so
     /// every existing caller serializes exactly as before.
     #[serde(skip_serializing_if = "Option::is_none")]
     tools: Option<Vec<WireTool>>,
@@ -576,11 +575,10 @@ pub async fn send_chat_with_image(
     send_request(client, &url, headers, &request_body).await
 }
 
-/// [GRAIN] Send a tool-enabled multi-turn chat completion (Grain Recall's
-/// native `search_memory`). Same OpenAI-compatible endpoint as [`send_chat`],
+/// [GRAIN] Send a tool-enabled multi-turn chat completion. Same OpenAI-compatible endpoint as [`send_chat`],
 /// but the request advertises `tools` and the response may come back as one or
 /// more `tool_calls` instead of prose. The agentic loop (bounded hops) lives in
-/// the caller (`recall.rs`); this function is a single stateless round-trip.
+/// the caller; this function is a single stateless round-trip.
 ///
 /// `image`, when present, rides the last USER entry, and a provider that cannot
 /// take it is handled one layer down exactly as in [`send_chat_with_image`].
