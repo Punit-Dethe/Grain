@@ -1,0 +1,422 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-09-26T15:43:26.368Z",
+  "title": "Design System: Grain onboarding",
+  "extensions": {
+    "colorMeta": {
+      "light-paper": {
+        "role": "neutral",
+        "displayName": "light paper",
+        "tonalRamp": [
+          "oklch(15% 0.0013 106.42)",
+          "oklch(26.4% 0.0013 106.42)",
+          "oklch(37.9% 0.0013 106.42)",
+          "oklch(49.3% 0.0013 106.42)",
+          "oklch(60.7% 0.0013 106.42)",
+          "oklch(72.1% 0.0013 106.42)",
+          "oklch(83.6% 0.0013 106.42)",
+          "oklch(95% 0.0013 106.42)"
+        ]
+      },
+      "light-bg-1": {
+        "role": "neutral",
+        "displayName": "light bg 1",
+        "tonalRamp": [
+          "oklch(15% 0.0054 95.10)",
+          "oklch(26.4% 0.0054 95.10)",
+          "oklch(37.9% 0.0054 95.10)",
+          "oklch(49.3% 0.0054 95.10)",
+          "oklch(60.7% 0.0054 95.10)",
+          "oklch(72.1% 0.0054 95.10)",
+          "oklch(83.6% 0.0054 95.10)",
+          "oklch(95% 0.0054 95.10)"
+        ]
+      },
+      "light-bg-3": {
+        "role": "neutral",
+        "displayName": "light bg 3",
+        "tonalRamp": [
+          "oklch(15% 0.0112 89.72)",
+          "oklch(26.4% 0.0112 89.72)",
+          "oklch(37.9% 0.0112 89.72)",
+          "oklch(49.3% 0.0112 89.72)",
+          "oklch(60.7% 0.0112 89.72)",
+          "oklch(72.1% 0.0112 89.72)",
+          "oklch(83.6% 0.0112 89.72)",
+          "oklch(95% 0.0112 89.72)"
+        ]
+      },
+      "light-text-1": {
+        "role": "primary",
+        "displayName": "light text 1",
+        "tonalRamp": [
+          "oklch(15% 0.0000 89.88)",
+          "oklch(26.4% 0.0000 89.88)",
+          "oklch(37.9% 0.0000 89.88)",
+          "oklch(49.3% 0.0000 89.88)",
+          "oklch(60.7% 0.0000 89.88)",
+          "oklch(72.1% 0.0000 89.88)",
+          "oklch(83.6% 0.0000 89.88)",
+          "oklch(95% 0.0000 89.88)"
+        ]
+      },
+      "light-text-2": {
+        "role": "neutral",
+        "displayName": "light text 2",
+        "tonalRamp": [
+          "oklch(15% 0.0072 84.59)",
+          "oklch(26.4% 0.0072 84.59)",
+          "oklch(37.9% 0.0072 84.59)",
+          "oklch(49.3% 0.0072 84.59)",
+          "oklch(60.7% 0.0072 84.59)",
+          "oklch(72.1% 0.0072 84.59)",
+          "oklch(83.6% 0.0072 84.59)",
+          "oklch(95% 0.0072 84.59)"
+        ]
+      },
+      "light-text-3": {
+        "role": "neutral",
+        "displayName": "light text 3",
+        "tonalRamp": [
+          "oklch(15% 0.0102 84.59)",
+          "oklch(26.4% 0.0102 84.59)",
+          "oklch(37.9% 0.0102 84.59)",
+          "oklch(49.3% 0.0102 84.59)",
+          "oklch(60.7% 0.0102 84.59)",
+          "oklch(72.1% 0.0102 84.59)",
+          "oklch(83.6% 0.0102 84.59)",
+          "oklch(95% 0.0102 84.59)"
+        ]
+      },
+      "light-hairline": {
+        "role": "neutral",
+        "displayName": "light hairline",
+        "tonalRamp": [
+          "oklch(15% 0.0000 89.88)",
+          "oklch(26.4% 0.0000 89.88)",
+          "oklch(37.9% 0.0000 89.88)",
+          "oklch(49.3% 0.0000 89.88)",
+          "oklch(60.7% 0.0000 89.88)",
+          "oklch(72.1% 0.0000 89.88)",
+          "oklch(83.6% 0.0000 89.88)",
+          "oklch(95% 0.0000 89.88)"
+        ]
+      },
+      "light-sage": {
+        "role": "status",
+        "displayName": "light sage",
+        "tonalRamp": [
+          "oklch(15% 0.0737 156.69)",
+          "oklch(26.4% 0.0737 156.69)",
+          "oklch(37.9% 0.0737 156.69)",
+          "oklch(49.3% 0.0737 156.69)",
+          "oklch(60.7% 0.0737 156.69)",
+          "oklch(72.1% 0.0737 156.69)",
+          "oklch(83.6% 0.0737 156.69)",
+          "oklch(95% 0.0737 156.69)"
+        ]
+      },
+      "light-danger": {
+        "role": "status",
+        "displayName": "light danger",
+        "tonalRamp": [
+          "oklch(15% 0.1291 30.54)",
+          "oklch(26.4% 0.1291 30.54)",
+          "oklch(37.9% 0.1291 30.54)",
+          "oklch(49.3% 0.1291 30.54)",
+          "oklch(60.7% 0.1291 30.54)",
+          "oklch(72.1% 0.1291 30.54)",
+          "oklch(83.6% 0.1291 30.54)",
+          "oklch(95% 0.1291 30.54)"
+        ]
+      },
+      "dark-paper": {
+        "role": "neutral",
+        "displayName": "dark paper",
+        "tonalRamp": [
+          "oklch(15% 0.0070 258.37)",
+          "oklch(26.4% 0.0070 258.37)",
+          "oklch(37.9% 0.0070 258.37)",
+          "oklch(49.3% 0.0070 258.37)",
+          "oklch(60.7% 0.0070 258.37)",
+          "oklch(72.1% 0.0070 258.37)",
+          "oklch(83.6% 0.0070 258.37)",
+          "oklch(95% 0.0070 258.37)"
+        ]
+      },
+      "dark-bg-0": {
+        "role": "neutral",
+        "displayName": "dark bg 0",
+        "tonalRamp": [
+          "oklch(15% 0.0047 263.79)",
+          "oklch(26.4% 0.0047 263.79)",
+          "oklch(37.9% 0.0047 263.79)",
+          "oklch(49.3% 0.0047 263.79)",
+          "oklch(60.7% 0.0047 263.79)",
+          "oklch(72.1% 0.0047 263.79)",
+          "oklch(83.6% 0.0047 263.79)",
+          "oklch(95% 0.0047 263.79)"
+        ]
+      },
+      "dark-bg-1": {
+        "role": "neutral",
+        "displayName": "dark bg 1",
+        "tonalRamp": [
+          "oklch(15% 0.0070 258.37)",
+          "oklch(26.4% 0.0070 258.37)",
+          "oklch(37.9% 0.0070 258.37)",
+          "oklch(49.3% 0.0070 258.37)",
+          "oklch(60.7% 0.0070 258.37)",
+          "oklch(72.1% 0.0070 258.37)",
+          "oklch(83.6% 0.0070 258.37)",
+          "oklch(95% 0.0070 258.37)"
+        ]
+      },
+      "dark-bg-3": {
+        "role": "neutral",
+        "displayName": "dark bg 3",
+        "tonalRamp": [
+          "oklch(15% 0.0115 254.07)",
+          "oklch(26.4% 0.0115 254.07)",
+          "oklch(37.9% 0.0115 254.07)",
+          "oklch(49.3% 0.0115 254.07)",
+          "oklch(60.7% 0.0115 254.07)",
+          "oklch(72.1% 0.0115 254.07)",
+          "oklch(83.6% 0.0115 254.07)",
+          "oklch(95% 0.0115 254.07)"
+        ]
+      },
+      "dark-text-1": {
+        "role": "primary",
+        "displayName": "dark text 1",
+        "tonalRamp": [
+          "oklch(15% 0.0028 128.49)",
+          "oklch(26.4% 0.0028 128.49)",
+          "oklch(37.9% 0.0028 128.49)",
+          "oklch(49.3% 0.0028 128.49)",
+          "oklch(60.7% 0.0028 128.49)",
+          "oklch(72.1% 0.0028 128.49)",
+          "oklch(83.6% 0.0028 128.49)",
+          "oklch(95% 0.0028 128.49)"
+        ]
+      },
+      "dark-text-2": {
+        "role": "neutral",
+        "displayName": "dark text 2",
+        "tonalRamp": [
+          "oklch(15% 0.0045 197.06)",
+          "oklch(26.4% 0.0045 197.06)",
+          "oklch(37.9% 0.0045 197.06)",
+          "oklch(49.3% 0.0045 197.06)",
+          "oklch(60.7% 0.0045 197.06)",
+          "oklch(72.1% 0.0045 197.06)",
+          "oklch(83.6% 0.0045 197.06)",
+          "oklch(95% 0.0045 197.06)"
+        ]
+      },
+      "dark-text-3": {
+        "role": "neutral",
+        "displayName": "dark text 3",
+        "tonalRamp": [
+          "oklch(15% 0.0078 219.61)",
+          "oklch(26.4% 0.0078 219.61)",
+          "oklch(37.9% 0.0078 219.61)",
+          "oklch(49.3% 0.0078 219.61)",
+          "oklch(60.7% 0.0078 219.61)",
+          "oklch(72.1% 0.0078 219.61)",
+          "oklch(83.6% 0.0078 219.61)",
+          "oklch(95% 0.0078 219.61)"
+        ]
+      },
+      "dark-hairline": {
+        "role": "neutral",
+        "displayName": "dark hairline",
+        "tonalRamp": [
+          "oklch(15% 0.0000 89.88)",
+          "oklch(26.4% 0.0000 89.88)",
+          "oklch(37.9% 0.0000 89.88)",
+          "oklch(49.3% 0.0000 89.88)",
+          "oklch(60.7% 0.0000 89.88)",
+          "oklch(72.1% 0.0000 89.88)",
+          "oklch(83.6% 0.0000 89.88)",
+          "oklch(95% 0.0000 89.88)"
+        ]
+      },
+      "dark-sage": {
+        "role": "status",
+        "displayName": "dark sage",
+        "tonalRamp": [
+          "oklch(15% 0.0580 145.01)",
+          "oklch(26.4% 0.0580 145.01)",
+          "oklch(37.9% 0.0580 145.01)",
+          "oklch(49.3% 0.0580 145.01)",
+          "oklch(60.7% 0.0580 145.01)",
+          "oklch(72.1% 0.0580 145.01)",
+          "oklch(83.6% 0.0580 145.01)",
+          "oklch(95% 0.0580 145.01)"
+        ]
+      },
+      "dark-danger": {
+        "role": "status",
+        "displayName": "dark danger",
+        "tonalRamp": [
+          "oklch(15% 0.1316 25.58)",
+          "oklch(26.4% 0.1316 25.58)",
+          "oklch(37.9% 0.1316 25.58)",
+          "oklch(49.3% 0.1316 25.58)",
+          "oklch(60.7% 0.1316 25.58)",
+          "oklch(72.1% 0.1316 25.58)",
+          "oklch(83.6% 0.1316 25.58)",
+          "oklch(95% 0.1316 25.58)"
+        ]
+      }
+    },
+    "typographyMeta": {
+      "headline": {
+        "displayName": "Task headline",
+        "purpose": "Current onboarding task; compact overrides follow the source breakpoints."
+      },
+      "title": {
+        "displayName": "Panel title",
+        "purpose": "Model-family and microphone headings."
+      },
+      "body": {
+        "displayName": "Introductory body",
+        "purpose": "Task explanation; supporting copy uses the smaller source styles."
+      },
+      "label": {
+        "displayName": "Control label",
+        "purpose": "Native field labels."
+      }
+    },
+    "shadows": [],
+    "motion": [
+      {
+        "name": "control-feedback",
+        "value": "180ms ease",
+        "purpose": "Existing button and model-family feedback; removed for reduced motion."
+      },
+      {
+        "name": "mode-feedback",
+        "value": "160ms ease",
+        "purpose": "Existing mode selector background change."
+      },
+      {
+        "name": "content-change",
+        "value": "180ms ease-out",
+        "purpose": "Existing mode-explainer opacity change."
+      },
+      {
+        "name": "input-meter",
+        "value": "120ms linear",
+        "purpose": "Existing real microphone-level transform feedback."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "rail-narrow",
+        "value": "1050px"
+      },
+      {
+        "name": "rail-collapse",
+        "value": "860px"
+      },
+      {
+        "name": "controls-stack",
+        "value": "580px"
+      },
+      {
+        "name": "compact-wide-height",
+        "value": "720px"
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary action",
+      "kind": "button",
+      "refersTo": "button-primary-light",
+      "description": "Inert excerpt of the existing footer action; inherited tokens follow the active Grain theme.",
+      "html": "<button type=\"button\" class=\"ds-primary\">Continue</button>",
+      "css": ".ds-primary{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:40px;min-width:144px;border:0;border-radius:8px;padding:0 16px;font-family:var(--font-sans,\"IBM Plex Sans Variable\",\"Segoe UI\",sans-serif);font-size:13px;font-weight:550;cursor:pointer;background:var(--text-1,#1a1a1a);color:var(--bg-0,#fcfcfb);transition:background 180ms ease,color 180ms ease}.ds-primary:hover:not(:disabled){background:var(--text-2,#45433f)}.ds-primary:disabled{opacity:.5;cursor:not-allowed}.ds-primary:focus-visible,.ds-back:focus-visible,.ds-select:focus-visible,.ds-mode button:focus-visible,.ds-family input:focus-visible{outline:2px solid var(--text-2,#45433f);outline-offset:3px;box-shadow:none}@media(prefers-reduced-motion:reduce){.ds-primary{transition:none}}"
+    },
+    {
+      "name": "Back action",
+      "kind": "button",
+      "description": "Inert excerpt of the existing secondary footer action.",
+      "html": "<button type=\"button\" class=\"ds-back\">Back</button>",
+      "css": ".ds-back{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:40px;border:0;border-radius:8px;padding:0 8px;font-family:var(--font-sans,\"IBM Plex Sans Variable\",\"Segoe UI\",sans-serif);font-size:13px;font-weight:550;cursor:pointer;background:transparent;color:var(--text-2,#45433f);transition:background 180ms ease,color 180ms ease}.ds-back:hover:not(:disabled){background:var(--bg-2,#f5f4f0);color:var(--text-1,#1a1a1a)}.ds-back:disabled{opacity:.5;cursor:not-allowed}.ds-primary:focus-visible,.ds-back:focus-visible,.ds-select:focus-visible,.ds-mode button:focus-visible,.ds-family input:focus-visible{outline:2px solid var(--text-2,#45433f);outline-offset:3px;box-shadow:none}@media(prefers-reduced-motion:reduce){.ds-back{transition:none}}"
+    },
+    {
+      "name": "Native model field",
+      "kind": "input",
+      "refersTo": "select-light",
+      "description": "Inert native-select excerpt with its associated label; choices remain application-owned.",
+      "html": "<label class=\"ds-label\" for=\"ds-model\">Model</label><select class=\"ds-select\" id=\"ds-model\"><option>Model</option></select>",
+      "css": ".ds-label{display:block;color:var(--text-2,#45433f);font-family:var(--font-sans,\"IBM Plex Sans Variable\",\"Segoe UI\",sans-serif);font-size:13px;font-weight:500;margin-bottom:7px}.ds-select{width:100%;min-width:0;min-height:42px;padding:9px 32px 9px 12px;border:1px solid var(--hairline,rgba(26,26,26,.1));border-radius:8px;background:var(--color-paper,#fcfcfb);color:var(--text-1,#1a1a1a);font-family:var(--font-sans,\"IBM Plex Sans Variable\",\"Segoe UI\",sans-serif);font-size:13px;text-overflow:ellipsis}.ds-select:disabled{color:var(--text-3,#625f59);opacity:.65}.ds-select option{color:var(--text-1,#1a1a1a);background:var(--color-paper,#fcfcfb)}.ds-primary:focus-visible,.ds-back:focus-visible,.ds-select:focus-visible,.ds-mode button:focus-visible,.ds-family input:focus-visible{outline:2px solid var(--text-2,#45433f);outline-offset:3px;box-shadow:none}"
+    },
+    {
+      "name": "Mode selection",
+      "kind": "nav",
+      "description": "Inert excerpt of existing pressed-button navigation, with a selected state supplied in markup.",
+      "html": "<div class=\"ds-mode\" role=\"group\" aria-label=\"Mode\"><button class=\"ds-active\" type=\"button\" aria-pressed=\"true\">Standard</button><button type=\"button\" aria-pressed=\"false\">Streaming</button></div>",
+      "css": ".ds-mode{display:flex;gap:4px;padding:4px;border-radius:10px;background:var(--bg-1,#f5f4f0)}.ds-mode button{display:flex;flex:1;align-items:center;justify-content:center;gap:8px;min-width:0;min-height:40px;padding:8px 12px;border:0;border-radius:7px;background:transparent;color:var(--text-2,#45433f);font-family:var(--font-sans,\"IBM Plex Sans Variable\",\"Segoe UI\",sans-serif);font-size:14px;cursor:pointer;transition:background 160ms ease}.ds-mode button.ds-active{background:var(--text-1,#1a1a1a);color:var(--bg-0,#fcfcfb)}.ds-mode button:hover:not(.ds-active){background:var(--bg-3,#eeebe3)}.ds-primary:focus-visible,.ds-back:focus-visible,.ds-select:focus-visible,.ds-mode button:focus-visible,.ds-family input:focus-visible{outline:2px solid var(--text-2,#45433f);outline-offset:3px;box-shadow:none}@media(prefers-reduced-motion:reduce){.ds-mode button{transition:none}}"
+    },
+    {
+      "name": "Journey item",
+      "kind": "nav",
+      "description": "Inert excerpt of the current step in the existing ordered journey, not a complete shell.",
+      "html": "<ol class=\"ds-journey\"><li aria-current=\"step\"><span class=\"ds-number\" aria-hidden=\"true\">3</span><span>Models</span></li></ol>",
+      "css": ".ds-journey{list-style:none;margin:0;padding:0}.ds-journey li{display:flex;align-items:center;gap:12px;min-height:48px;color:var(--text-1,#1a1a1a);font-family:var(--font-sans,\"IBM Plex Sans Variable\",\"Segoe UI\",sans-serif);font-size:14px;font-weight:600}.ds-number{width:28px;height:28px;display:grid;place-items:center;flex-shrink:0;border:1px solid var(--text-1,#1a1a1a);border-radius:50%;font-size:12px;font-variant-numeric:tabular-nums;background:var(--text-1,#1a1a1a);color:var(--bg-0,#fcfcfb)}"
+    },
+    {
+      "name": "Selected model family",
+      "kind": "card",
+      "description": "Inert excerpt of the existing checkbox card. The real app owns draft changes and picker availability.",
+      "html": "<div class=\"ds-family\"><label><input type=\"checkbox\" checked><span><strong>Batch</strong></span></label></div>",
+      "css": ".ds-family{min-width:0;padding:18px 20px;border:1px solid var(--text-3,#625f59);border-radius:13px;background:var(--bg-1,#f5f4f0);color:var(--text-1,#1a1a1a);font-family:var(--font-sans,\"IBM Plex Sans Variable\",\"Segoe UI\",sans-serif);transition:border-color 180ms ease,background 180ms ease}.ds-family label{display:flex;align-items:flex-start;gap:13px;cursor:pointer}.ds-family input{width:19px;height:19px;flex-shrink:0;margin:3px 0 0;accent-color:var(--text-1,#1a1a1a);cursor:pointer}.ds-family strong{font-size:17px;font-weight:580;letter-spacing:-.01em}.ds-primary:focus-visible,.ds-back:focus-visible,.ds-select:focus-visible,.ds-mode button:focus-visible,.ds-family input:focus-visible{outline:2px solid var(--text-2,#45433f);outline-offset:3px;box-shadow:none}@media(prefers-reduced-motion:reduce){.ds-family{transition:none}}"
+    },
+    {
+      "name": "Practice output container",
+      "kind": "card",
+      "description": "Inert excerpt of the existing idle output container. It does not simulate capture or transcription.",
+      "html": "<div class=\"ds-practice\"><div class=\"ds-status\"><span>Ready</span></div><div class=\"ds-output\" aria-live=\"polite\">Try speaking</div></div>",
+      "css": ".ds-practice{padding:22px;border:1px solid var(--hairline,rgba(26,26,26,.1));border-radius:13px;background:var(--bg-1,#f5f4f0);display:grid;grid-template-rows:auto minmax(110px,auto) auto;gap:18px;font-family:var(--font-sans,\"IBM Plex Sans Variable\",\"Segoe UI\",sans-serif);}.ds-status{color:var(--text-2,#45433f);font-size:13px}.ds-output{align-self:center;color:var(--text-3,#625f59);font-size:20px;line-height:1.45;letter-spacing:-.02em;white-space:pre-wrap;overflow-wrap:anywhere}"
+    }
+  ],
+  "narrative": {
+    "northStar": "Grain's setup workbench",
+    "overview": "This record applies only to onboarding. It records the Operate-mode overhaul inside Grain's established visual identity; it does not establish a global visual world. A quiet journey rail frames one focused setup task. Existing Grain artwork and mark connect the setup to the main application.\n\nSource authority is `src/app/components/onboarding/`, shared `WindowChrome.tsx`, scoped `GrainApp.tsx` integration, and inherited `src/app/app.css` tokens. [PRODUCT.md](../../PRODUCT.md) supplies product constraints. The implemented source wins over the surface brief.",
+    "keyCharacteristics": [
+      "Warm paper and charcoal in light mode; existing Grain dark theme.",
+      "IBM Plex Sans, thin borders, rounded task panels, restrained scenic artwork.",
+      "Native window chrome, a scrollable stage, and an always-reachable footer."
+    ],
+    "rules": [
+      {
+        "name": "The State Color Rule",
+        "body": "Sage reports a successful input/result state; the onboarding danger color reports recording or an error. Pair color with status text or an icon.",
+        "section": "colors"
+      },
+      {
+        "name": "The Reachable Actions Rule",
+        "body": "Preserve the native chrome and footer outside the content scroller. Let task content scroll instead of imposing a tall minimum stage. Native window sizing uses the actual monitor work area; CSS must remain shrink-safe when the available area is smaller.",
+        "section": "layout"
+      }
+    ],
+    "dos": [
+      "**Do** inherit Grain's theme, font, artwork, icons, and native chrome.",
+      "**Do** preserve the scrollable stage, reachable footer, visible focus, and semantic labels.",
+      "**Do** keep family selection independent and derive Try/Shortcuts availability from the shared draft.",
+      "**Do** use brief functional transitions (160–180ms); honor reduced motion by removing animation and transitions.",
+      "**Do** verify visuals with `bun run dev:onboarding` in the real Tauri app. This debug replay does not reset installed models or saved settings."
+    ],
+    "donts": [
+      "**Don't** promote this rail/workbench composition into a global rule for other Grain surfaces.",
+      "**Don't** substitute simulated download, audio, transcription, or permission states for real APIs.",
+      "**Don't** present the Flow practice check as the rolling-capture experience.",
+      "**Don't** introduce external imagery, new runtime dependencies, autoplay decoration, or a tall fixed showcase.",
+      "**Don't** use browser/computer automation, screenshot replicas, mock Tauri, or alternate visual render paths."
+    ]
+  }
+}

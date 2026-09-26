@@ -5,8 +5,9 @@ import {
   useState,
   type CSSProperties,
 } from "react";
-import { getCurrentWindow } from "@tauri-apps/api/window";
+import { WindowChrome } from "./components/WindowChrome";
 import { platform } from "@tauri-apps/plugin-os";
+import { useTranslation } from "react-i18next";
 import { Toaster } from "sonner";
 import { HistorySettings } from "@/components/settings/history/HistorySettings";
 import { AudioPlayerGroup } from "@/components/ui/AudioPlayer";
@@ -20,6 +21,11 @@ import { commands, type OnboardingStep } from "@/bindings";
 import { ThemeProvider, useTheme } from "@/contexts/ThemeContext";
 import { useSettings } from "@/hooks/useSettings";
 import { useModelStore } from "@/stores/modelStore";
+import {
+  createOnboardingDraft,
+  onboardingModes,
+} from "./components/onboarding/onboardingState";
+import { OnboardingLayout } from "./components/onboarding/OnboardingLayout";
 import {
   hashForRoute,
   routeFromHash,
@@ -223,115 +229,6 @@ function IconSprite() {
         <path d="M20 15.2A8.4 8.4 0 0 1 8.8 4 8.4 8.4 0 1 0 20 15.2Z" />
       </symbol>
     </svg>
-  );
-}
-
-function WindowChrome() {
-  const { isDark, setMode } = useTheme();
-  const currentWindow = useMemo(() => getCurrentWindow(), []);
-  const [maximized, setMaximized] = useState(false);
-  const isMac = useMemo(() => {
-    try {
-      return platform() === "macos";
-    } catch {
-      return false;
-    }
-  }, []);
-
-  useEffect(() => {
-    let disposed = false;
-    let unlisten: (() => void) | undefined;
-
-    const refresh = () => {
-      void currentWindow
-        .isMaximized()
-        .then((value) => {
-          if (!disposed) setMaximized(value);
-        })
-        .catch(() => {});
-    };
-
-    refresh();
-    void currentWindow
-      .onResized(refresh)
-      .then((cleanup) => {
-        if (disposed) cleanup();
-        else unlisten = cleanup;
-      })
-      .catch(() => {});
-
-    return () => {
-      disposed = true;
-      unlisten?.();
-    };
-  }, [currentWindow]);
-
-  const startDrag = (event: React.MouseEvent<HTMLElement>) => {
-    if ((event.target as HTMLElement).closest("[data-no-drag]")) return;
-    void currentWindow.startDragging().catch(() => {});
-  };
-
-  return (
-    <header
-      className="titlebar"
-      data-tauri-drag-region
-      onMouseDown={startDrag}
-      style={{ WebkitAppRegion: "drag" } as CSSProperties}
-    >
-      {/* No page label here: the nav rail already says where you are, and the
-          strip reads as one surface with the sidebar without it. */}
-      <div
-        className="window-actions"
-        data-no-drag
-        style={{ WebkitAppRegion: "no-drag" } as CSSProperties}
-      >
-        <button
-          className="theme-toggle"
-          type="button"
-          aria-label={`Switch to ${isDark ? "light" : "dark"} mode`}
-          title={`Switch to ${isDark ? "light" : "dark"} mode`}
-          onClick={() => setMode(isDark ? "light" : "dark")}
-        >
-          <Icon name="sun" />
-          <svg className="icon moon-icon" aria-hidden="true">
-            <use href="#i-moon" />
-          </svg>
-        </button>
-        {!isMac && (
-          <>
-            <button
-              className="window-button"
-              type="button"
-              aria-label="Minimize"
-              title="Minimize"
-              onClick={() => void currentWindow.minimize().catch(() => {})}
-            >
-              <Icon name="min" small />
-            </button>
-            <button
-              className="window-button"
-              type="button"
-              aria-label={maximized ? "Restore" : "Maximize"}
-              title={maximized ? "Restore" : "Maximize"}
-              onClick={() =>
-                void currentWindow.toggleMaximize().catch(() => {})
-              }
-            >
-              <Icon name={maximized ? "copy" : "max"} small />
-            </button>
-            <button
-              className="window-button close"
-              type="button"
-              aria-label="Close"
-              title="Close"
-              onClick={() => void currentWindow.close().catch(() => {})}
-            >
-              <Icon name="close" small />
-            </button>
-          </>
-        )}
-      </div>
-    </header>
   );
 }
 
@@ -665,6 +562,7 @@ function OverviewPage({ history }: { history: HistoryController }) {
 }
 
 function NextShell() {
+  const { t } = useTranslation();
   const route = useHashRoute();
   const history = useHistoryController();
   const { isDark } = useTheme();
@@ -672,6 +570,7 @@ function NextShell() {
     null,
   );
   const [isReturningUser, setIsReturningUser] = useState(false);
+  const [modelDraft, setModelDraft] = useState(createOnboardingDraft);
   const { settings, updateSetting, refreshAudioDevices, refreshOutputDevices } =
     useSettings();
   const hasInitializedRuntime = useRef(false);
@@ -755,7 +654,29 @@ function NextShell() {
     );
   };
 
-  if (onboardingStep === null) return null;
+  const availableModes = onboardingModes(
+    {
+      ...modelDraft,
+      selectedModels: {
+        standard:
+          modelDraft.selectedModels.standard || settings?.selected_model || "",
+        streaming:
+          modelDraft.selectedModels.streaming ||
+          settings?.selected_asr_model ||
+          "",
+      },
+    },
+    settings?.translate_to_english,
+  );
+
+  if (onboardingStep === null)
+    return (
+      <OnboardingLayout step={0}>
+        <div className="onboarding-loading" role="status">
+          {t("onboarding.setup.loading")}
+        </div>
+      </OnboardingLayout>
+    );
   if (onboardingStep === "accessibility") {
     return (
       <>
@@ -779,6 +700,8 @@ function NextShell() {
     return (
       <>
         <Onboarding
+          draft={modelDraft}
+          onDraftChange={setModelDraft}
           onBack={() => setOnboardingStep("modes")}
           onModelSelected={() => setOnboardingStep("try")}
         />
@@ -790,6 +713,7 @@ function NextShell() {
     return (
       <>
         <TryOnboarding
+          availableModes={availableModes}
           onBack={() => setOnboardingStep("model")}
           onComplete={() => setOnboardingStep("shortcuts")}
         />
@@ -801,6 +725,7 @@ function NextShell() {
     return (
       <>
         <ShortcutsOnboarding
+          availableModes={availableModes}
           onBack={() => setOnboardingStep("try")}
           onComplete={() => setOnboardingStep("done")}
         />

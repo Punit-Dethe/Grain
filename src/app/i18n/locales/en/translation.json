@@ -49,7 +49,7 @@
   },
   "onboarding": {
     "setup": {
-      "brand": "GRAIN",
+      "brand": "Grain",
       "label": "SETUP",
       "progress": "Setup progress",
       "skipTest": "Skip test",
@@ -103,9 +103,9 @@
         }
       },
       "modes": {
-        "title": "Three ways to speak to Grain",
-        "description": "Watch each one once. The difference should be clear before you install anything.",
-        "skip": "Skip tour",
+        "title": "Find your speaking rhythm",
+        "description": "Choose how your words arrive. Each mode has its own shortcut, and you can switch whenever you like.",
+        "skip": "Skip overview",
         "back": "Back",
         "next": "Next mode",
         "chooseModels": "Choose models",
@@ -123,7 +123,15 @@
           "loadingTime": "15 seconds",
           "processing": "",
           "result": "This is how Grain returns a clean, accurate, and properly punctuated transcription.",
-          "footnote": "Standard takes a little longer after you stop to produce the cleanest result."
+          "footnote": "Processing time depends on your model, device and recording length.",
+          "explanation": "Transcribe the full recording after you finish speaking.",
+          "sequence1": "Start recording",
+          "sequence1Detail": "Use the button or your Standard shortcut.",
+          "sequence2": "Speak at your pace",
+          "sequence2Detail": "Grain records your complete thought.",
+          "sequence3": "Stop to transcribe",
+          "sequence3Detail": "Your batch model processes the recording.",
+          "exampleHint": "The complete transcript arrives after you stop."
         },
         "flow": {
           "title": "Flow",
@@ -135,7 +143,15 @@
           "processing": "",
           "confirmation": "Pasted in 1–2 seconds",
           "result": "this is how grain keeps long dictation fast and accurate without making you wait",
-          "footnote": "Flow skips the visible waiting stage—even after ten minutes of speaking."
+          "footnote": "Flow requires a supported Parakeet model and translation to English turned off.",
+          "explanation": "Process speech in rolling windows for a quicker finish.",
+          "sequence1": "Start Flow",
+          "sequence1Detail": "Use the button or your Flow shortcut.",
+          "sequence2": "Keep the thought going",
+          "sequence2Detail": "Your batch model processes speech as you go.",
+          "sequence3": "Stop and finish",
+          "sequence3Detail": "Grain completes the remaining speech.",
+          "exampleHint": "Flow works through the recording while you speak. It is different from native live ASR."
         },
         "streaming": {
           "title": "Streaming",
@@ -145,28 +161,39 @@
           "label": "Words appear live",
           "processing": "",
           "result": "",
-          "footnote": "Use it when immediate feedback matters."
-        }
+          "footnote": "Use it when immediate feedback matters.",
+          "explanation": "See words appear live through a native streaming ASR model.",
+          "sequence1": "Start Streaming",
+          "sequence1Detail": "Use the button or your Streaming shortcut.",
+          "sequence2": "Watch words arrive",
+          "sequence2Detail": "Your ASR model returns text as you speak.",
+          "sequence3": "Stop to finalize",
+          "sequence3Detail": "Grain finishes the live transcript.",
+          "exampleHint": "Words appear during recording, with the final text settled when you stop."
+        },
+        "exampleLabel": "Example transcript",
+        "exampleText": "Let’s move tomorrow’s meeting to eleven.",
+        "modelNote": "Standard and Flow use batch models. Streaming uses a separate ASR model. Next, choose either family or both."
       },
       "models": {
-        "title": "Choose what you want to install",
-        "description": "Flow and Standard share one model. Streaming uses another. Grain has selected a recommended local model for each.",
+        "title": "Make room for your voice",
+        "description": "Choose a batch model, a streaming ASR model, or both. Install only what you need today.",
         "local": "Runs locally",
         "standard": {
-          "title": "Flow + Standard",
-          "description": "One model unlocks both modes.",
-          "detail": "Flow returns quickly. Standard spends more time producing a polished result."
+          "title": "Batch model",
+          "description": "Standard transcription, plus Flow with a supported Parakeet model.",
+          "detail": "The recommended batch model supports both Standard and Flow."
         },
         "streaming": {
-          "title": "Streaming",
-          "description": "See words live.",
+          "title": "Streaming ASR model",
+          "description": "Native live transcription for Streaming mode.",
           "detail": "A streaming model is optimized to return speech as it arrives."
         },
         "toggle": "Toggle {{family}} model",
         "resolving": "Choosing recommended model…",
         "change": "Change",
-        "selected_one": "model selected",
-        "selected_other": "models selected",
+        "selected_one": "{{count}} model selected",
+        "selected_other": "{{count}} models selected",
         "downloadSize": "{{size}} download",
         "noDownload": "Already installed",
         "ready": "Ready to install",
@@ -183,11 +210,21 @@
         "errors": {
           "defaults": "Grain could not find its recommended models. Refresh the catalog and try again.",
           "download": "The selected models could not be installed. Please try again."
-        }
+        },
+        "familyLabel": "Models to install",
+        "modelLabel": "Model",
+        "noneSelected": "Select at least one model family to continue.",
+        "retryInstall": "Retry installation",
+        "laterNote": "You can add or change models later in Settings → Speech to Text.",
+        "defaultsFallback": "Recommendations could not load. You can still choose from the available models below.",
+        "unavailable": "No model available",
+        "chooseAlternative": "Choose another family or retry the recommendations.",
+        "standardOnly": "Standard only · Flow needs a supported Parakeet model",
+        "cancelling": "Cancelling…"
       },
       "try": {
-        "title": "Try what you installed",
-        "description": "Speak once and watch the selected model transcribe your real microphone input.",
+        "title": "Give your voice a first run",
+        "description": "Check your microphone and selected models. This test stays inside setup and does not paste into other apps.",
         "modeLabel": "Test capture mode",
         "placeholder": "Your test transcription will appear here.",
         "ready": "Ready",
@@ -205,29 +242,30 @@
         "modes": {
           "flow": {
             "title": "Flow",
-            "speed": "Fast response",
-            "hint": "Accurate everyday dictation with a quick finish."
+            "speed": "Batch model check",
+            "hint": "Check your batch model here. After setup, the Flow shortcut starts rolling capture."
           },
           "standard": {
             "title": "Standard",
-            "speed": "Cleanest result",
-            "hint": "Waits a little longer for the most polished text."
+            "speed": "After you stop",
+            "hint": "Record a complete thought, then stop to transcribe."
           },
           "streaming": {
             "title": "Streaming",
             "speed": "Live text",
             "hint": "Words appear live."
           }
-        }
+        },
+        "emptyResult": "No speech was recognized. Speak for a few seconds and try again."
       },
       "shortcuts": {
-        "title": "Choose your everyday shortcut",
-        "description": "Pick the capture mode you want available from any application, then set the keys that start and stop it.",
+        "title": "Your voice, one shortcut away",
+        "description": "These shortcuts match the models you chose. Keep the defaults or make them your own.",
         "modeLabel": "Default capture mode",
-        "shortcutLabel": "Your global shortcut",
+        "shortcutLabel": "Capture shortcuts",
         "editHint": "Click the keys, then press your new key combination.",
         "allModes": "All three capture modes are enabled. Set each global shortcut below.",
-        "settingsNote": "You can enable more capture shortcuts later in Settings → Capture.",
+        "settingsNote": "You can change shortcuts in Settings → Capture and add more models whenever you need them.",
         "back": "Back",
         "finish": "Open Grain",
         "modes": {
@@ -237,8 +275,14 @@
         },
         "errors": {
           "mode": "Grain could not change the default capture mode. Try again."
-        }
-      }
+        },
+        "readyTitle": "You’re ready to begin",
+        "readyDescription": "Open Grain, then try a capture shortcut in an app where you normally type."
+      },
+      "loading": "Preparing your workspace…",
+      "journeyTitle": "A little setup. A lot more flow.",
+      "localNote": "Speech models stay on this device.",
+      "stepCount": "Step {{current}} of {{total}}"
     },
     "subtitle": "To get started, choose a transcription model",
     "recommended": "Recommended",

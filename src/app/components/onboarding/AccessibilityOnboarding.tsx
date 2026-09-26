@@ -11,7 +11,7 @@ import { Check, Keyboard, Loader2, Mic, RotateCcw } from "lucide-react";
 import { toast } from "sonner";
 import { commands, events } from "@/bindings";
 import { useSettings } from "@/hooks/useSettings";
-import "./onboarding.css";
+import { OnboardingLayout } from "./OnboardingLayout";
 
 interface AccessibilityOnboardingProps {
   onComplete: () => void;
@@ -90,6 +90,8 @@ const AccessibilityOnboarding: React.FC<AccessibilityOnboardingProps> = ({
   const meterUnlistenRef = useRef<(() => void) | null>(null);
   const rmsSamplesRef = useRef<number[]>([]);
   const peakDbfsRef = useRef(-80);
+  const mountedRef = useRef(true);
+  const testGenerationRef = useRef(0);
 
   const isMacOS = permissionPlatform === "macos";
   const isWindows = permissionPlatform === "windows";
@@ -208,6 +210,7 @@ const AccessibilityOnboarding: React.FC<AccessibilityOnboardingProps> = ({
         try {
           if (isWindows) {
             const granted = await hasWindowsMicrophoneAccess();
+            if (!mountedRef.current) return;
             if (!granted) return;
             setPermissions((current) => ({
               ...current,
@@ -222,6 +225,7 @@ const AccessibilityOnboarding: React.FC<AccessibilityOnboardingProps> = ({
             checkAccessibilityPermission(),
             checkMicrophonePermission(),
           ]);
+          if (!mountedRef.current) return;
           setPermissions({
             accessibility: hasAccessibility ? "granted" : "needed",
             microphone: hasMicrophone ? "granted" : "needed",
@@ -233,6 +237,7 @@ const AccessibilityOnboarding: React.FC<AccessibilityOnboardingProps> = ({
           stopPermissionPolling();
           if (hasMicrophone) await refreshAudioDevices();
         } catch (error) {
+          if (!mountedRef.current) return;
           console.error("Failed while waiting for permission:", error);
           stopPermissionPolling();
           toast.error(t("onboarding.permissions.errors.checkFailed"));
@@ -249,13 +254,16 @@ const AccessibilityOnboarding: React.FC<AccessibilityOnboardingProps> = ({
   );
 
   useEffect(() => {
+    mountedRef.current = true;
     return () => {
+      mountedRef.current = false;
+      testGenerationRef.current += 1;
       stopPermissionPolling();
       if (testTimeoutRef.current) clearTimeout(testTimeoutRef.current);
       if (progressIntervalRef.current)
         clearInterval(progressIntervalRef.current);
       meterUnlistenRef.current?.();
-      void commands.stopOnboardingMicrophoneTest();
+      void commands.stopOnboardingMicrophoneTest().catch(() => undefined);
     };
   }, [stopPermissionPolling]);
 
@@ -266,6 +274,7 @@ const AccessibilityOnboarding: React.FC<AccessibilityOnboardingProps> = ({
       } else {
         await requestMicrophonePermission();
       }
+      if (!mountedRef.current) return;
       setPermissions((current) => ({
         ...current,
         microphone: "waiting",
@@ -280,6 +289,7 @@ const AccessibilityOnboarding: React.FC<AccessibilityOnboardingProps> = ({
   const handleGrantAccessibility = async () => {
     try {
       await requestAccessibilityPermission();
+      if (!mountedRef.current) return;
       setPermissions((current) => ({
         ...current,
         accessibility: "waiting",
@@ -302,16 +312,20 @@ const AccessibilityOnboarding: React.FC<AccessibilityOnboardingProps> = ({
 
   const runMicrophoneTest = useCallback(async () => {
     if (!microphoneGranted || testStatus === "starting") return;
+    const generation = ++testGenerationRef.current;
 
     await stopMicrophoneTest();
+    if (!mountedRef.current || generation !== testGenerationRef.current) return;
     setTestStatus("starting");
     setMeasuredLevel(null);
     setSecondsRemaining(5);
     setMeterLevels(EMPTY_LEVELS);
 
     try {
-      meterUnlistenRef.current = await events.onboardingMicrophoneLevel.listen(
+      const unlisten = await events.onboardingMicrophoneLevel.listen(
         (event) => {
+          if (!mountedRef.current || generation !== testGenerationRef.current)
+            return;
           const nextLevels = normalizeLevels(event.payload.levels);
           setMeterLevels(nextLevels);
           rmsSamplesRef.current.push(event.payload.rms_dbfs);
@@ -321,9 +335,18 @@ const AccessibilityOnboarding: React.FC<AccessibilityOnboardingProps> = ({
           );
         },
       );
+      if (!mountedRef.current || generation !== testGenerationRef.current) {
+        unlisten();
+        return;
+      }
+      meterUnlistenRef.current = unlisten;
 
       const result =
         await commands.startOnboardingMicrophoneTest(selectedMicrophone);
+      if (!mountedRef.current || generation !== testGenerationRef.current) {
+        await commands.stopOnboardingMicrophoneTest();
+        return;
+      }
       if (result.status === "error") throw new Error(result.error);
 
       setTestStatus("listening");
@@ -363,6 +386,8 @@ const AccessibilityOnboarding: React.FC<AccessibilityOnboardingProps> = ({
       }, TEST_DURATION_MS);
     } catch (error) {
       await stopMicrophoneTest();
+      if (!mountedRef.current || generation !== testGenerationRef.current)
+        return;
       console.error("Microphone test failed:", error);
       setTestStatus("error");
     }
@@ -480,34 +505,9 @@ const AccessibilityOnboarding: React.FC<AccessibilityOnboardingProps> = ({
       : Math.max(0, Math.min(100, ((measuredLevel + 48) / 45) * 100));
 
   return (
-    <div className="onboarding-shell">
-      <header className="onboarding-topbar">
-        <div
-          className="onboarding-brand"
-          aria-label={t("onboarding.setup.brand")}
-        >
-          <strong>{t("onboarding.setup.brand")}</strong>
-          <span>{t("onboarding.setup.label")}</span>
-        </div>
-
-        <ol
-          className="onboarding-stepper"
-          aria-label={t("onboarding.setup.progress")}
-        >
-          {(["microphone", "modes", "models", "try", "shortcuts"] as const).map(
-            (step, index) => (
-              <li
-                key={step}
-                className={index === 0 ? "active" : undefined}
-                aria-current={index === 0 ? "step" : undefined}
-              >
-                <span className="onboarding-stepper-line" aria-hidden="true" />
-                <span>{t(`onboarding.setup.steps.${step}`)}</span>
-              </li>
-            ),
-          )}
-        </ol>
-
+    <OnboardingLayout
+      step={0}
+      topAction={
         <button
           type="button"
           className="onboarding-skip"
@@ -522,193 +522,9 @@ const AccessibilityOnboarding: React.FC<AccessibilityOnboardingProps> = ({
         >
           {t("onboarding.setup.skipTest")}
         </button>
-      </header>
-
-      <main className="onboarding-stage">
-        {isChecking ? (
-          <div className="onboarding-loading" role="status">
-            <Loader2 aria-hidden="true" />
-            <span>{t("onboarding.setup.microphone.checking")}</span>
-          </div>
-        ) : (
-          <section className="onboarding-microphone-step">
-            <div className="onboarding-heading">
-              <h1>{t("onboarding.setup.microphone.title")}</h1>
-              <p>{t("onboarding.setup.microphone.description")}</p>
-            </div>
-
-            <label
-              className="onboarding-field-label"
-              htmlFor="onboarding-microphone"
-            >
-              {t("onboarding.setup.microphone.inputLabel")}
-            </label>
-            <select
-              id="onboarding-microphone"
-              className="onboarding-select"
-              value={selectedMicrophone}
-              disabled={
-                !microphoneGranted ||
-                isTesting ||
-                isUpdating("selected_microphone")
-              }
-              onChange={handleMicrophoneChange}
-            >
-              {audioDevices.map((device) => (
-                <option
-                  key={`${device.index}-${device.name}`}
-                  value={device.name}
-                >
-                  {device.name}
-                </option>
-              ))}
-            </select>
-
-            {!microphoneGranted ? (
-              <div className="onboarding-permission" role="status">
-                <span className="onboarding-permission-icon">
-                  <Mic aria-hidden="true" />
-                </span>
-                <span>
-                  <strong>
-                    {t("onboarding.permissions.microphone.title")}
-                  </strong>
-                  <small>
-                    {t("onboarding.permissions.microphone.description")}
-                  </small>
-                </span>
-                <button
-                  type="button"
-                  disabled={permissions.microphone === "waiting"}
-                  onClick={handleGrantMicrophone}
-                >
-                  {permissions.microphone === "waiting" ? (
-                    <Loader2 className="spin" aria-hidden="true" />
-                  ) : null}
-                  {primaryLabel}
-                </button>
-              </div>
-            ) : (
-              <div
-                className={`onboarding-mic-panel ${testStatus}`}
-                aria-live="polite"
-              >
-                <button
-                  type="button"
-                  className="onboarding-mic-button"
-                  disabled={isTesting}
-                  aria-label={
-                    testPassed
-                      ? t("onboarding.setup.microphone.retest")
-                      : t("onboarding.setup.microphone.testAction")
-                  }
-                  onClick={runMicrophoneTest}
-                >
-                  {testStatus === "success" ? (
-                    <Check aria-hidden="true" />
-                  ) : testStatus === "no-signal" ||
-                    testStatus === "too-quiet" ||
-                    testStatus === "too-loud" ||
-                    testStatus === "error" ? (
-                    <RotateCcw aria-hidden="true" />
-                  ) : isTesting ? (
-                    <span className="onboarding-mic-pulse">
-                      <Mic aria-hidden="true" />
-                    </span>
-                  ) : (
-                    <Mic aria-hidden="true" />
-                  )}
-                </button>
-
-                <div className="onboarding-mic-main">
-                  <div className="onboarding-mic-copy">
-                    <strong>{statusCopy.title}</strong>
-                    <span>{statusCopy.detail}</span>
-                  </div>
-                  {hasLevelResult ? (
-                    <div className="onboarding-level-result">
-                      <div
-                        className="onboarding-level-track"
-                        aria-hidden="true"
-                      >
-                        <span className="quiet" />
-                        <span className="balanced" />
-                        <span className="loud" />
-                        <i style={{ left: `${levelMarker}%` }} />
-                      </div>
-                      <div
-                        className="onboarding-level-labels"
-                        aria-hidden="true"
-                      >
-                        <span>{t("onboarding.setup.microphone.quiet")}</span>
-                        <span>{t("onboarding.setup.microphone.balanced")}</span>
-                        <span>{t("onboarding.setup.microphone.loud")}</span>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="onboarding-mic-meter" aria-hidden="true">
-                      {meterLevels.map((level, index) => (
-                        <i
-                          key={index}
-                          style={{ height: `${8 + level * 34}px` }}
-                        />
-                      ))}
-                    </div>
-                  )}
-                  <div className="onboarding-mic-result">
-                    {testStatus === "success" ? (
-                      <span className="onboarding-success-mark">
-                        <Check aria-hidden="true" />
-                      </span>
-                    ) : null}
-                    <span>
-                      {testStatus === "success"
-                        ? t("onboarding.setup.microphone.inputGood")
-                        : isTesting
-                          ? t("onboarding.setup.microphone.checkingInput", {
-                              count: secondsRemaining,
-                            })
-                          : testStatus === "too-quiet" ||
-                              testStatus === "too-loud"
-                            ? t("onboarding.setup.microphone.adjustAndRetry")
-                            : t("onboarding.setup.microphone.ready")}
-                    </span>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {testPassed && !accessibilityGranted ? (
-              <div className="onboarding-permission compact" role="status">
-                <span className="onboarding-permission-icon">
-                  <Keyboard aria-hidden="true" />
-                </span>
-                <span>
-                  <strong>
-                    {t("onboarding.setup.microphone.shortcutsTitle")}
-                  </strong>
-                  <small>
-                    {t("onboarding.setup.microphone.shortcutsDescription")}
-                  </small>
-                </span>
-                <button
-                  type="button"
-                  disabled={permissions.accessibility === "waiting"}
-                  onClick={handleGrantAccessibility}
-                >
-                  {permissions.accessibility === "waiting" ? (
-                    <Loader2 className="spin" aria-hidden="true" />
-                  ) : null}
-                  {primaryLabel}
-                </button>
-              </div>
-            ) : null}
-          </section>
-        )}
-      </main>
-
-      <footer className="onboarding-footer">
-        <div className="onboarding-footer-inner">
+      }
+      footer={
+        <>
           <span>{t("onboarding.setup.microphone.footerHint")}</span>
           <button
             type="button"
@@ -727,9 +543,189 @@ const AccessibilityOnboarding: React.FC<AccessibilityOnboardingProps> = ({
             ) : null}
             {primaryLabel}
           </button>
+        </>
+      }
+    >
+      {isChecking ? (
+        <div className="onboarding-loading" role="status">
+          <Loader2 aria-hidden="true" />
+          <span>{t("onboarding.setup.microphone.checking")}</span>
         </div>
-      </footer>
-    </div>
+      ) : (
+        <section className="onboarding-microphone-step">
+          <div className="onboarding-heading">
+            <h1>{t("onboarding.setup.microphone.title")}</h1>
+            <p>{t("onboarding.setup.microphone.description")}</p>
+          </div>
+
+          <label
+            className="onboarding-field-label"
+            htmlFor="onboarding-microphone"
+          >
+            {t("onboarding.setup.microphone.inputLabel")}
+          </label>
+          <select
+            id="onboarding-microphone"
+            className="onboarding-select"
+            value={selectedMicrophone}
+            disabled={
+              !microphoneGranted ||
+              isTesting ||
+              isUpdating("selected_microphone")
+            }
+            onChange={handleMicrophoneChange}
+          >
+            {!audioDevices.some(
+              (device) => device.name === selectedMicrophone,
+            ) && (
+              <option value={selectedMicrophone}>{selectedMicrophone}</option>
+            )}
+            {audioDevices.map((device) => (
+              <option
+                key={`${device.index}-${device.name}`}
+                value={device.name}
+              >
+                {device.name}
+              </option>
+            ))}
+          </select>
+
+          {!microphoneGranted ? (
+            <div className="onboarding-permission" role="status">
+              <span className="onboarding-permission-icon">
+                <Mic aria-hidden="true" />
+              </span>
+              <span>
+                <strong>{t("onboarding.permissions.microphone.title")}</strong>
+                <small>
+                  {t("onboarding.permissions.microphone.description")}
+                </small>
+              </span>
+              <button
+                type="button"
+                disabled={permissions.microphone === "waiting"}
+                onClick={handleGrantMicrophone}
+              >
+                {permissions.microphone === "waiting" ? (
+                  <Loader2 className="spin" aria-hidden="true" />
+                ) : null}
+                {primaryLabel}
+              </button>
+            </div>
+          ) : (
+            <div
+              className={`onboarding-mic-panel ${testStatus}`}
+              aria-live="polite"
+            >
+              <button
+                type="button"
+                className="onboarding-mic-button"
+                disabled={isTesting}
+                aria-label={
+                  testPassed
+                    ? t("onboarding.setup.microphone.retest")
+                    : t("onboarding.setup.microphone.testAction")
+                }
+                onClick={runMicrophoneTest}
+              >
+                {testStatus === "success" ? (
+                  <Check aria-hidden="true" />
+                ) : testStatus === "no-signal" ||
+                  testStatus === "too-quiet" ||
+                  testStatus === "too-loud" ||
+                  testStatus === "error" ? (
+                  <RotateCcw aria-hidden="true" />
+                ) : isTesting ? (
+                  <span className="onboarding-mic-pulse">
+                    <Mic aria-hidden="true" />
+                  </span>
+                ) : (
+                  <Mic aria-hidden="true" />
+                )}
+              </button>
+
+              <div className="onboarding-mic-main">
+                <div className="onboarding-mic-copy">
+                  <strong>{statusCopy.title}</strong>
+                  <span>{statusCopy.detail}</span>
+                </div>
+                {hasLevelResult ? (
+                  <div className="onboarding-level-result">
+                    <div className="onboarding-level-track" aria-hidden="true">
+                      <span className="quiet" />
+                      <span className="balanced" />
+                      <span className="loud" />
+                      <i style={{ left: `${levelMarker}%` }} />
+                    </div>
+                    <div className="onboarding-level-labels" aria-hidden="true">
+                      <span>{t("onboarding.setup.microphone.quiet")}</span>
+                      <span>{t("onboarding.setup.microphone.balanced")}</span>
+                      <span>{t("onboarding.setup.microphone.loud")}</span>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="onboarding-mic-meter" aria-hidden="true">
+                    {meterLevels.map((level, index) => (
+                      <i
+                        key={index}
+                        style={{
+                          transform: `scaleY(${(8 + level * 34) / 42})`,
+                        }}
+                      />
+                    ))}
+                  </div>
+                )}
+                <div className="onboarding-mic-result">
+                  {testStatus === "success" ? (
+                    <span className="onboarding-success-mark">
+                      <Check aria-hidden="true" />
+                    </span>
+                  ) : null}
+                  <span>
+                    {testStatus === "success"
+                      ? t("onboarding.setup.microphone.inputGood")
+                      : isTesting
+                        ? t("onboarding.setup.microphone.checkingInput", {
+                            count: secondsRemaining,
+                          })
+                        : testStatus === "too-quiet" ||
+                            testStatus === "too-loud"
+                          ? t("onboarding.setup.microphone.adjustAndRetry")
+                          : t("onboarding.setup.microphone.ready")}
+                  </span>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {testPassed && !accessibilityGranted ? (
+            <div className="onboarding-permission compact" role="status">
+              <span className="onboarding-permission-icon">
+                <Keyboard aria-hidden="true" />
+              </span>
+              <span>
+                <strong>
+                  {t("onboarding.setup.microphone.shortcutsTitle")}
+                </strong>
+                <small>
+                  {t("onboarding.setup.microphone.shortcutsDescription")}
+                </small>
+              </span>
+              <button
+                type="button"
+                disabled={permissions.accessibility === "waiting"}
+                onClick={handleGrantAccessibility}
+              >
+                {permissions.accessibility === "waiting" ? (
+                  <Loader2 className="spin" aria-hidden="true" />
+                ) : null}
+                {primaryLabel}
+              </button>
+            </div>
+          ) : null}
+        </section>
+      )}
+    </OnboardingLayout>
   );
 };
 

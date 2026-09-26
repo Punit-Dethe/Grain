@@ -115,6 +115,21 @@ bun run tauri build
 
 This compiles a release binary and generates platform-specific bundles (deb, rpm, AppImage on Linux; dmg on macOS; msi on Windows).
 
+### Reopen onboarding during development
+
+Quit any running Grain instance, then run from the repository root:
+
+```powershell
+bun run dev:onboarding
+```
+
+This opens the real Tauri application at the first onboarding step, even if
+models are already installed or the app normally starts hidden. It applies only
+to this debug launch; it does not reset settings or delete models. Choices you
+make during setup use the normal model and shortcut settings. Installed models
+can be reused without downloading them again. Launch normally with
+`bun run dev:asr` afterward. Release builds ignore the onboarding override.
+
 ## Linux Install (from source)
 
 The raw binary (`src-tauri/target/release/Grain`) cannot run standalone — it needs Tauri resource files (tray icons, sounds, VAD model) to be co-located at the expected path.

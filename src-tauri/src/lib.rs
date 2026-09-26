@@ -77,6 +77,7 @@ mod grain_settings;
 mod grain_store; // [GRAIN] Phase 5A: signed-catalogue store client (verify, install, revoke)
 mod grain_theme; // [GRAIN] one resolved colour scheme for every surface (was localStorage)
 mod grain_update; // [GRAIN] in-app update check/install over the signed release feed
+mod grain_window_geometry; // [GRAIN] scale-aware main-window sizing within the desktop work area
 #[path = "handy/helpers/mod.rs"]
 mod helpers;
 mod host_api; // [GRAIN] extension host API router (SPEC 1.3) — capability-checked worker calls
@@ -214,18 +215,34 @@ fn build_console_filter() -> env_filter::Filter {
 /// recreated on demand after the window is destroyed on close (freeing WebView2
 /// RAM). Sets the portable data_directory like the original setup did.
 fn build_main_window(app: &AppHandle) -> tauri::Result<tauri::WebviewWindow> {
+    let monitor = app
+        .primary_monitor()
+        .ok()
+        .flatten()
+        // Wayland compositors may expose monitors without designating a primary.
+        .or_else(|| app.available_monitors().ok()?.into_iter().next());
+    let size = monitor
+        .map(|monitor| {
+            let work_area = monitor.work_area();
+            grain_window_geometry::main_window_size(
+                work_area.size.width,
+                work_area.size.height,
+                monitor.scale_factor(),
+                cfg!(target_os = "macos"),
+            )
+        })
+        .unwrap_or_default();
     let mut win_builder =
         tauri::WebviewWindowBuilder::new(app, "main", tauri::WebviewUrl::App("/".into()))
             .title("Grain")
-            // [GRAIN] Opens at UI 2.0's canonical 1280×800 size — but only as an
-            // OPENING size. Tauri keeps the existing monitor work-area clamping,
-            // so shorter laptop displays fit above the taskbar. 1440×900 is a
-            // responsive layout target, not an automatic opening size. The
-            // window is fluid and resizes to any shape; the minimum is a real floor
-            // for the settings and notes layouts, not a scaled-down proportion of
-            // the old fixed canvas.
-            .inner_size(1280.0, 800.0)
-            .min_inner_size(1024.0, 680.0)
+            // [GRAIN] Keep the canonical size on larger displays, but clamp
+            // BOTH the opening size and minimum to the scaled work area. A
+            // minimum taller than the desktop defeats native overflow handling
+            // and can put onboarding's Continue button below the taskbar.
+            .inner_size(size.width, size.height)
+            .min_inner_size(size.min_width, size.min_height)
+            .prevent_overflow()
+            .center()
             .resizable(true)
             // [GRAIN] Custom themed title bar: drop the native OS frame and let
             // the webview own the top strip (drag region + minimize/maximize/
@@ -1188,7 +1205,8 @@ pub fn run(cli_args: CliArgs) {
             // CLI --start-hidden flag overrides the setting.
             // But if permission onboarding is required, always show the window.
             let should_hide = settings.start_hidden || cli_args.start_hidden;
-            let should_force_show = should_force_show_permissions_window(&app_handle);
+            let should_force_show = should_force_show_permissions_window(&app_handle)
+                || grain_onboarding::force_onboarding_for_development();
             let should_show_after_update = grain_update::take_show_after_update(&app_handle);
 
             // If start_hidden but tray is disabled, we must show the window
@@ -1213,6 +1231,9 @@ pub fn run(cli_args: CliArgs) {
         })
         .on_window_event(|window, event| match event {
             tauri::WindowEvent::CloseRequested { .. } => {
+                if window.label() == "main" {
+                    grain_onboarding::close_onboarding_tests(window.app_handle());
+                }
                 // [GRAIN] The Agent panel is the only Agent webview (the summon
                 // input is native, in the pill process). On its close, release
                 // the transient Enter/Escape shortcuts — unless the native input

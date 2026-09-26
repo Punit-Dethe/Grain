@@ -31,8 +31,9 @@
 
 use serde::{Deserialize, Serialize};
 use specta::Type;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Manager, State};
 
 use crate::audio_toolkit::{list_input_devices, AudioRecorder, VadPolicy};
 use crate::managers::audio::AudioRecordingManager;
@@ -147,6 +148,7 @@ fn microphone_measurement(frame: &[f32]) -> OnboardingMicrophoneLevel {
 #[derive(Clone, Default)]
 pub struct OnboardingMicrophoneTest {
     recorder: Arc<Mutex<Option<AudioRecorder>>>,
+    close_generation: Arc<AtomicU64>,
 }
 
 const ONBOARDING_TRANSCRIPTION_BINDING: &str = "grain_onboarding_transcription_test";
@@ -165,6 +167,7 @@ pub enum OnboardingTestMode {
 #[derive(Clone, Default)]
 pub struct OnboardingTranscriptionTest {
     active_mode: Arc<Mutex<Option<OnboardingTestMode>>>,
+    close_generation: Arc<AtomicU64>,
 }
 
 #[tauri::command]
@@ -178,6 +181,8 @@ pub async fn start_onboarding_transcription_test(
     mode: OnboardingTestMode,
 ) -> Result<(), String> {
     let active_mode = Arc::clone(&state.active_mode);
+    let close_generation = Arc::clone(&state.close_generation);
+    let generation = close_generation.load(Ordering::Acquire);
     let recording_manager = Arc::clone(&recording_manager);
     let transcription_manager = Arc::clone(&transcription_manager);
     let model_manager = Arc::clone(&model_manager);
@@ -186,6 +191,11 @@ pub async fn start_onboarding_transcription_test(
         let mut active = active_mode
             .lock()
             .map_err(|_| "Transcription test state is unavailable".to_string())?;
+        if close_generation.load(Ordering::Acquire) != generation
+            || app.get_webview_window("main").is_none()
+        {
+            return Err("Onboarding was closed".to_string());
+        }
         if active.is_some() {
             return Err("A transcription test is already running".to_string());
         }
@@ -224,6 +234,13 @@ pub async fn start_onboarding_transcription_test(
             return Err(format!("Failed to start the transcription test: {error}"));
         }
 
+        if close_generation.load(Ordering::Acquire) != generation {
+            recording_manager.cancel_recording();
+            if matches!(mode, OnboardingTestMode::Streaming) {
+                transcription_manager.cancel_stream();
+            }
+            return Err("Onboarding was closed".to_string());
+        }
         *active = Some(mode);
         Ok(())
     })
@@ -330,6 +347,8 @@ pub async fn start_onboarding_microphone_test(
     device_name: String,
 ) -> Result<(), String> {
     let recorder_state = Arc::clone(&state.recorder);
+    let close_generation = Arc::clone(&state.close_generation);
+    let generation = close_generation.load(Ordering::Acquire);
     tauri::async_runtime::spawn_blocking(move || {
         // Hold the slot through open/start. A concurrent stop then waits for the
         // recorder to become visible and closes it, instead of observing an
@@ -337,6 +356,11 @@ pub async fn start_onboarding_microphone_test(
         let mut slot = recorder_state
             .lock()
             .map_err(|_| "Microphone test state is unavailable".to_string())?;
+        if close_generation.load(Ordering::Acquire) != generation
+            || app.get_webview_window("main").is_none()
+        {
+            return Err("Onboarding was closed".to_string());
+        }
         close_microphone_test_slot(&mut slot)?;
 
         let device = if device_name.eq_ignore_ascii_case("default") {
@@ -372,6 +396,10 @@ pub async fn start_onboarding_microphone_test(
             return Err(format!("Failed to start microphone test: {error}"));
         }
 
+        if close_generation.load(Ordering::Acquire) != generation {
+            let _ = recorder.close();
+            return Err("Onboarding was closed".to_string());
+        }
         *slot = Some(recorder);
         Ok(())
     })
@@ -389,6 +417,35 @@ pub async fn stop_onboarding_microphone_test(
     tauri::async_runtime::spawn_blocking(move || close_microphone_test(&recorder_state))
         .await
         .map_err(|error| format!("Microphone test worker failed: {error}"))?
+}
+
+/// Closing the native window destroys its webview without React unmounting.
+/// Invalidate queued starts synchronously, then release audio off the UI thread.
+pub(crate) fn close_onboarding_tests(app: &AppHandle) {
+    let recorder = app.try_state::<OnboardingMicrophoneTest>().map(|state| {
+        state.close_generation.fetch_add(1, Ordering::AcqRel);
+        Arc::clone(&state.recorder)
+    });
+    if let Some(state) = app.try_state::<OnboardingTranscriptionTest>() {
+        state.close_generation.fetch_add(1, Ordering::AcqRel);
+    }
+    let app = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        if let Some(recorder) = recorder {
+            if let Err(error) = close_microphone_test(&recorder) {
+                log::warn!("Failed to release onboarding microphone on close: {error}");
+            }
+        }
+        if let (Some(test), Some(audio), Some(transcription)) = (
+            app.try_state::<OnboardingTranscriptionTest>(),
+            app.try_state::<Arc<AudioRecordingManager>>(),
+            app.try_state::<Arc<TranscriptionManager>>(),
+        ) {
+            if let Err(error) = cancel_onboarding_transcription_test(test, audio, transcription) {
+                log::warn!("Failed to cancel onboarding transcription on close: {error}");
+            }
+        }
+    });
 }
 
 fn belongs_to_repo(model_id: &str, repo_id: &str) -> bool {
@@ -426,13 +483,13 @@ pub fn get_onboarding_model_defaults(
 }
 
 #[cfg(debug_assertions)]
-fn force_onboarding_for_development() -> bool {
+pub(crate) fn force_onboarding_for_development() -> bool {
     std::env::var_os("GRAIN_FORCE_ONBOARDING")
         .is_some_and(|value| !value.is_empty() && value != "0")
 }
 
 #[cfg(not(debug_assertions))]
-fn force_onboarding_for_development() -> bool {
+pub(crate) fn force_onboarding_for_development() -> bool {
     false
 }
 
