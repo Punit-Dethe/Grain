@@ -7153,6 +7153,8 @@ html[data-theme="light"] .installed-extension-actions {
 
 .extension-confirm {
   width: min(390px, 100%);
+  max-height: min(85vh, 720px);
+  overflow-y: auto;
   padding: 18px;
   border-radius: 13px;
   background: var(--bg-2);
@@ -7183,6 +7185,20 @@ html[data-theme="light"] .installed-extension-actions {
 .extension-confirm ul {
   margin: 0 0 14px 18px;
   list-style: disc;
+}
+
+.extension-confirm-disclosure {
+  margin: 10px 0 14px;
+  padding: 1px 10px;
+  border: 1px solid var(--border-1);
+  border-radius: 8px;
+  background: var(--bg-1);
+}
+
+.extension-confirm-disclosure summary {
+  color: var(--text-2);
+  cursor: pointer;
+  font-size: 11.5px;
 }
 
 /* Contributed prompt text is quoted, not bulleted: the user is reading the
@@ -7220,9 +7236,7 @@ html[data-theme="light"] .installed-extension-actions {
   font-style: italic;
 }
 
-/* Declared actions on the approval sheet: one row per preference domain, so
-   "what can this do" reads as a short list rather than a scroll. Shares the
-   prompt-layer row shape — they are answering the same kind of question. */
+/* Keep consent visible per action; one action asking first does not mean all do. */
 .extension-confirm ul.extension-actions {
   margin-left: 0;
   list-style: none;
@@ -7238,16 +7252,6 @@ html[data-theme="light"] .installed-extension-actions {
   border-radius: 8px;
   background: var(--bg-1);
   border: 1px solid var(--border-1);
-}
-
-.extension-action-domain {
-  display: block;
-  margin-bottom: 3px;
-  color: var(--text-4, var(--text-3));
-  font-size: 10.5px;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-  text-transform: capitalize;
 }
 
 .extension-action-titles {

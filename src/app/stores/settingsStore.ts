@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { subscribeWithSelector } from "zustand/middleware";
-import { listen } from "@tauri-apps/api/event";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
   AgentAutocopy,
   AgentContextMode,
@@ -67,6 +67,58 @@ interface SettingsStore {
   setAudioDevices: (devices: AudioDevice[]) => void;
   setOutputDevices: (devices: AudioDevice[]) => void;
   setCustomSounds: (sounds: { start: boolean; stop: boolean }) => void;
+}
+
+let settingsEventsPromise: Promise<void> | null = null;
+let settingsUnlisteners: UnlistenFn[] = [];
+let settingsEventsDisposed = false;
+
+function disposeSettingsEvents() {
+  settingsEventsDisposed = true;
+  settingsUnlisteners.forEach((unlisten) => unlisten());
+  settingsUnlisteners = [];
+  if (typeof window !== "undefined") {
+    window.removeEventListener("pagehide", disposeSettingsEvents);
+  }
+}
+
+import.meta.hot?.dispose(disposeSettingsEvents);
+
+function ensureSettingsEvents(get: () => SettingsStore): Promise<void> {
+  settingsEventsPromise ??= (async () => {
+    const results = await Promise.allSettled([
+      listen("model-state-changed", () => {
+        void get().refreshSettings();
+      }),
+      listen<{ setting?: string }>("settings-changed", (event) => {
+        void get().refreshSettings();
+        if (event.payload.setting === "selected_microphone") {
+          void get().refreshAudioDevices();
+        }
+      }),
+    ]);
+    const unlisteners = results.flatMap((result) =>
+      result.status === "fulfilled" ? [result.value] : [],
+    );
+    const failed = results.find(
+      (result): result is PromiseRejectedResult => result.status === "rejected",
+    );
+    if (failed || settingsEventsDisposed) {
+      unlisteners.forEach((unlisten) => unlisten());
+      if (failed) throw failed.reason;
+      return;
+    }
+    settingsUnlisteners = unlisteners;
+    if (typeof window !== "undefined") {
+      window.addEventListener("pagehide", disposeSettingsEvents, {
+        once: true,
+      });
+    }
+  })().catch((error) => {
+    settingsEventsPromise = null;
+    throw error;
+  });
+  return settingsEventsPromise;
 }
 
 // Note: Default settings are now fetched from Rust via commands.getDefaultSettings()
@@ -690,11 +742,9 @@ export const useSettingsStore = create<SettingsStore>()(
         checkCustomSounds(),
       ]);
 
-      // Re-fetch settings when the backend changes them (e.g. language
-      // reset during model switch). The backend is the source of truth.
-      listen("model-state-changed", () => {
-        get().refreshSettings();
-      });
+      // The backend can change settings during model switches or device
+      // recovery. Register once even if several surfaces initialize the store.
+      await ensureSettingsEvents(get);
     },
   })),
 );

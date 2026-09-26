@@ -46,15 +46,14 @@ import {
 } from "@/components/settings/experimentations/ExtensionSettings";
 import { useSettings } from "@/hooks/useSettings";
 import { hashForRoute, type ExtensionViewId } from "../navigation";
+import { ExtensionApprovalDetails } from "../extensions/ExtensionApprovalDetails";
 import {
-  actionsByDomain,
   capabilityLabel,
   extensionDestination,
   filterExtensions,
   nextMediaIndex,
   parseApprovalRequest,
   parseSlotConflict,
-  promptLayerScope,
   slotLabel,
   sortExtensionCards,
   unwrapResult,
@@ -279,70 +278,7 @@ function useInstalledExtensions(): InstalledController {
           <ShieldCheck size={17} />
           <h2 id="permission-title">Allow “{pending.card.name}”?</h2>
         </div>
-        {pending.permissions.length > 0 && (
-          <>
-            <p>This extension runs code on your device and is asking to:</p>
-            <ul>
-              {pending.permissions.map((permission) => (
-                <li key={permission}>{capabilityLabel(permission)}</li>
-              ))}
-            </ul>
-          </>
-        )}
-        {pending.promptLayers.length > 0 && (
-          <>
-            {/*
-              The exact wording, verbatim, never a summary. This text goes to
-              the model in front of what the user dictates, so paraphrasing it
-              here would mean approving something other than what was read —
-              and the reason it is asked at all is that a later update can
-              change it, which is how approved extensions have turned hostile
-              elsewhere.
-            */}
-            <p>
-              It adds these instructions to what Grain sends the AI when you
-              dictate. They rank below your own prompt.
-            </p>
-            <ul className="extension-prompt-layers">
-              {pending.promptLayers.map((layer) => (
-                <li key={layer.id}>
-                  <span className="extension-prompt-layer-scope">
-                    {promptLayerScope(layer)}
-                  </span>
-                  <q>{layer.text}</q>
-                </li>
-              ))}
-            </ul>
-          </>
-        )}
-        {pending.actions.length > 0 && (
-          <>
-            {/*
-              Listed compactly by title — never by the phrases the extension
-              listens for. What the user is deciding is what this can do, and a
-              wall of utterances is the fastest way to train someone to scroll
-              past the part that matters.
-            */}
-            <p>It can do these things when you ask out loud:</p>
-            <ul className="extension-actions">
-              {actionsByDomain(pending.actions).map((group) => (
-                <li key={group.domain}>
-                  <span className="extension-action-domain">
-                    {group.domain}
-                  </span>
-                  <span className="extension-action-titles">
-                    {group.titles.join(", ")}
-                  </span>
-                  {group.confirms && (
-                    <span className="extension-action-confirms">
-                      asks you first
-                    </span>
-                  )}
-                </li>
-              ))}
-            </ul>
-          </>
-        )}
+        <ExtensionApprovalDetails card={pending.card} approval={pending} />
         <div className="extension-confirm-actions">
           <button
             className="button"

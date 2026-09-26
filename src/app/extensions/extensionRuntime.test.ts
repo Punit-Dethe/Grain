@@ -6,7 +6,6 @@ import type {
   StoreEntry,
 } from "@/bindings";
 import {
-  actionsByDomain,
   extensionDestination,
   filterExtensions,
   matchToolRecommendations,
@@ -217,6 +216,8 @@ describe("extension collection helpers", () => {
       permissions: ["storage", "open:url"],
       promptLayers: [],
       actions: [],
+      authentication: null,
+      recommendation: false,
     });
     expect(
       parseSlotConflict(
@@ -231,13 +232,14 @@ describe("extension collection helpers", () => {
     // would fail with a raw JSON string.
     expect(
       parseApprovalRequest(
-        '{"needsPermissions":[],"needsPromptLayers":[{"id":"jira","text":"Be terse.","everywhere":false,"app":[],"website":["jira."],"category":[]}]}',
+        '{"needsPermissions":[],"needsPromptLayers":[{"id":"jira","target":"additive","text":"Be terse.","everywhere":false,"app":[],"website":["jira."],"category":[]}]}',
       ),
     ).toEqual({
       permissions: [],
       promptLayers: [
         {
           id: "jira",
+          target: "additive",
           text: "Be terse.",
           everywhere: false,
           app: [],
@@ -246,6 +248,8 @@ describe("extension collection helpers", () => {
         },
       ],
       actions: [],
+      authentication: null,
+      recommendation: false,
     });
     expect(parseApprovalRequest('{"needsPermissions":[]}')).toBeNull();
     expect(parseApprovalRequest("not json")).toBeNull();
@@ -262,55 +266,57 @@ describe("extension collection helpers", () => {
     expect(parsed?.actions[0]?.title).toBe("Skip to the next track");
   });
 
-  it("keeps actions compact and asks first if any member does", () => {
-    const grouped = actionsByDomain([
-      {
-        id: "next",
-        title: "Skip",
-        confirms: false,
-        everywhere: true,
-        app: [],
-        website: [],
+  it("opens approval for recommendation or authentication alone", () => {
+    expect(parseApprovalRequest('{"needsRecommendation":true}')).toEqual({
+      permissions: [],
+      promptLayers: [],
+      actions: [],
+      authentication: null,
+      recommendation: true,
+    });
+    expect(
+      parseApprovalRequest(
+        '{"needsAuthentication":{"provider_name":"GitHub","scopes":["read:user"],"api_hosts":["api.github.com"],"authorization_host":"github.com","token_host":"github.com"}}',
+      ),
+    ).toEqual({
+      permissions: [],
+      promptLayers: [],
+      actions: [],
+      authentication: {
+        provider_name: "GitHub",
+        scopes: ["read:user"],
+        api_hosts: ["api.github.com"],
+        authorization_host: "github.com",
+        token_host: "github.com",
       },
-      {
-        id: "away",
-        title: "Set away",
-        confirms: false,
-        everywhere: true,
-        app: [],
-        website: [],
-      },
-      {
-        id: "dm",
-        title: "Send a message",
-        confirms: true,
-        everywhere: true,
-        app: [],
-        website: [],
-      },
-    ]);
-    expect(grouped).toEqual([
-      {
-        domain: "Actions",
-        titles: ["Skip", "Set away", "Send a message"],
-        confirms: true,
-      },
-    ]);
+      recommendation: false,
+    });
+    expect(
+      parseApprovalRequest(
+        '{"needsPermissions":["storage"],"needsAuthentication":{"provider_name":"GitHub","scopes":[42]}}',
+      ),
+    ).toBeNull();
   });
 
   it("describes when a contributed layer applies", () => {
     const layer = {
       id: "a",
-      target: "post-processing",
+      target: "additive",
       text: "Be terse.",
       everywhere: false,
       app: ["code"],
       website: [],
       category: [],
     };
-    expect(promptLayerScope(layer)).toBe("In code");
+    expect(promptLayerScope(layer)).toBe("Adds a rule · In code");
     expect(promptLayerScope({ ...layer, everywhere: true })).toBe(
-      "Every dictation",
+      "Adds a rule · Every dictation",
+    );
+    expect(promptLayerScope({ ...layer, target: "main" })).toBe(
+      "Replaces Main prompt · In code",
+    );
+    expect(promptLayerScope({ ...layer, target: "context" })).toBe(
+      "Replaces Context provider · In code",
     );
   });
 });

@@ -13,6 +13,7 @@ const CAPABILITY_LABELS: Record<string, string> = {
   "events:sessions": "See when recording starts and stops",
   "events:transcripts": "Read what you dictate",
   "events:audio-levels": "See live microphone levels",
+  resident: "Keep its worker running while Grain is open",
   "transform:transcript": "Rewrite your text before it is pasted",
   "session:start": "Start a recording session itself",
   storage: "Store its own data on this device",
@@ -70,6 +71,16 @@ export interface ApprovalRequest {
   permissions: string[];
   promptLayers: PromptLayerInfo[];
   actions: ActionInfo[];
+  authentication: AuthenticationApproval | null;
+  recommendation: boolean;
+}
+
+export interface AuthenticationApproval {
+  provider_name: string;
+  scopes: string[];
+  api_hosts: string[];
+  authorization_host: string;
+  token_host: string;
 }
 
 /**
@@ -85,6 +96,8 @@ export function parseApprovalRequest(error: unknown): ApprovalRequest | null {
       needsPermissions?: unknown;
       needsPromptLayers?: unknown;
       needsActions?: unknown;
+      needsAuthentication?: unknown;
+      needsRecommendation?: unknown;
     };
     const permissions = Array.isArray(parsed.needsPermissions)
       ? (parsed.needsPermissions as string[])
@@ -95,36 +108,64 @@ export function parseApprovalRequest(error: unknown): ApprovalRequest | null {
     const actions = Array.isArray(parsed.needsActions)
       ? (parsed.needsActions as ActionInfo[])
       : [];
-    if (!permissions.length && !promptLayers.length && !actions.length)
+    const rawAuthentication = parsed.needsAuthentication;
+    const authentication =
+      rawAuthentication &&
+      typeof rawAuthentication === "object" &&
+      "provider_name" in rawAuthentication &&
+      typeof rawAuthentication.provider_name === "string" &&
+      "authorization_host" in rawAuthentication &&
+      typeof rawAuthentication.authorization_host === "string" &&
+      "token_host" in rawAuthentication &&
+      typeof rawAuthentication.token_host === "string" &&
+      "scopes" in rawAuthentication &&
+      Array.isArray(rawAuthentication.scopes) &&
+      rawAuthentication.scopes.every((scope) => typeof scope === "string") &&
+      "api_hosts" in rawAuthentication &&
+      Array.isArray(rawAuthentication.api_hosts) &&
+      rawAuthentication.api_hosts.every((host) => typeof host === "string")
+        ? (rawAuthentication as AuthenticationApproval)
+        : null;
+    // A malformed account request must never be approved under a sheet that
+    // only happens to show its other permissions.
+    if (rawAuthentication != null && !authentication) return null;
+    const recommendation = parsed.needsRecommendation === true;
+    if (
+      !permissions.length &&
+      !promptLayers.length &&
+      !actions.length &&
+      !authentication &&
+      !recommendation
+    )
       return null;
-    return { permissions, promptLayers, actions };
+    return {
+      permissions,
+      promptLayers,
+      actions,
+      authentication,
+      recommendation,
+    };
   } catch {
     return null;
   }
 }
 
-/** Keep the approval sheet compact without recreating the retired domain model. */
-export function actionsByDomain(
-  actions: ActionInfo[],
-): { domain: string; titles: string[]; confirms: boolean }[] {
-  if (!actions.length) return [];
-  return [
-    {
-      domain: "Actions",
-      titles: actions.map((action) => action.title),
-      confirms: actions.some((action) => action.confirms),
-    },
-  ];
-}
-
 /** Plain-language description of when a contributed layer applies. */
 export function promptLayerScope(layer: PromptLayerInfo): string {
-  if (layer.everywhere) return "Every dictation";
+  const role =
+    layer.target === "main"
+      ? "Replaces Main prompt"
+      : layer.target === "context"
+        ? "Replaces Context provider"
+        : "Adds a rule";
+  if (layer.everywhere) return `${role} · Every dictation`;
   const parts: string[] = [];
   if (layer.website.length) parts.push(layer.website.join(", "));
   if (layer.app.length) parts.push(layer.app.join(", "));
   if (layer.category.length) parts.push(layer.category.join(", "));
-  return parts.length ? `In ${parts.join(" · ")}` : "Every dictation";
+  return parts.length
+    ? `${role} · In ${parts.join(" · ")}`
+    : `${role} · Every dictation`;
 }
 
 export function parseSlotConflict(error: unknown): SlotConflict | null {
@@ -257,9 +298,7 @@ export function matchToolRecommendations(
 }
 
 export type StudioShelfMode =
-  | "recommendations"
-  | "installed-with-more"
-  | "installed";
+  "recommendations" | "installed-with-more" | "installed";
 
 /** The Studio shelf has one deliberately small state table.
  *

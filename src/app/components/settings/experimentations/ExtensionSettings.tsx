@@ -13,12 +13,10 @@ import {
   StudioExtensionCard,
   StudioExtensionMoreCard,
 } from "@/extensions/StudioExtensionCard";
+import { ExtensionApprovalDetails } from "@/extensions/ExtensionApprovalDetails";
 import {
-  actionsByDomain,
-  capabilityLabel,
   parseApprovalRequest,
   parseSlotConflict,
-  promptLayerScope,
   slotLabel,
   studioShelfMode,
   type ApprovalRequest,
@@ -122,12 +120,6 @@ const CONFIGURE_SAVED_LABEL = "Changes are saved as you make them.";
 const INSTALLED_EXTENSIONS_LABEL = "Installed extensions";
 const LOADING_SETTINGS_LABEL = "Loading settings…";
 const NO_SETUP_LABEL = "No setup required";
-const ENABLE_PERMISSION_COPY =
-  "This extension runs code on your device and is asking to:";
-const ENABLE_PROMPT_COPY =
-  "It adds these instructions to what Grain sends the AI when you dictate. They rank below your own prompt.";
-const ENABLE_ACTIONS_COPY = "It can do these things when you ask out loud:";
-const ENABLE_ACTION_CONFIRM_LABEL = "asks you first";
 const ENABLE_CANCEL_LABEL = "Cancel";
 const ENABLE_APPROVE_LABEL = "Allow and enable";
 const ENABLE_KEEP_CURRENT_LABEL = "Keep current";
@@ -883,53 +875,7 @@ function ExtensionEnableDialogs({
             <ShieldCheck size={17} aria-hidden="true" />
             <h2 id={permissionTitleId}>{approvalTitle}</h2>
           </div>
-          {pending.permissions.length > 0 && (
-            <>
-              <p>{ENABLE_PERMISSION_COPY}</p>
-              <ul>
-                {pending.permissions.map((permission) => (
-                  <li key={permission}>{capabilityLabel(permission)}</li>
-                ))}
-              </ul>
-            </>
-          )}
-          {pending.promptLayers.length > 0 && (
-            <>
-              <p>{ENABLE_PROMPT_COPY}</p>
-              <ul className="extension-prompt-layers">
-                {pending.promptLayers.map((layer) => (
-                  <li key={layer.id}>
-                    <span className="extension-prompt-layer-scope">
-                      {promptLayerScope(layer)}
-                    </span>
-                    <q>{layer.text}</q>
-                  </li>
-                ))}
-              </ul>
-            </>
-          )}
-          {pending.actions.length > 0 && (
-            <>
-              <p>{ENABLE_ACTIONS_COPY}</p>
-              <ul className="extension-actions">
-                {actionsByDomain(pending.actions).map((group) => (
-                  <li key={group.domain}>
-                    <span className="extension-action-domain">
-                      {group.domain}
-                    </span>
-                    <span className="extension-action-titles">
-                      {group.titles.join(", ")}
-                    </span>
-                    {group.confirms && (
-                      <span className="extension-action-confirms">
-                        {ENABLE_ACTION_CONFIRM_LABEL}
-                      </span>
-                    )}
-                  </li>
-                ))}
-              </ul>
-            </>
-          )}
+          <ExtensionApprovalDetails card={pending.card} approval={pending} />
           <div className="extension-confirm-actions">
             <button className="button" type="button" onClick={onCancelApproval}>
               {ENABLE_CANCEL_LABEL}
