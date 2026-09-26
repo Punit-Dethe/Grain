@@ -13,7 +13,7 @@ pub struct Token {
 
 /// Append an adjacent window using Fluid's overlap policy. The accumulator is
 /// deliberately not sorted: Fluid folds windows in this order, then stable-sorts
-/// only the final/preview view by timestamp. Sorting here changes later merges.
+/// only the final view by timestamp. Sorting here changes later merges.
 pub fn merge_tokens(left: &mut Vec<Token>, right: &[Token]) {
     let (Some(last), Some(first)) = (left.last(), right.first()) else {
         left.extend_from_slice(right);

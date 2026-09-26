@@ -72,9 +72,8 @@ pub(crate) fn current_session_id() -> u64 {
     SESSION_ID.load(Ordering::Relaxed)
 }
 
-/// Claim the next session id. Split from [`session_started`] for the rolling
-/// path, which needs the id before the engine session opens so its live-preview
-/// events carry the same id as `RecordingStarted`.
+/// Claim the next session id. Flow needs it before its worker starts so the
+/// recording and transcription lifecycle use the same id.
 pub(crate) fn next_session_id() -> u64 {
     SESSION_ID.fetch_add(1, Ordering::Relaxed) + 1
 }
@@ -521,17 +520,12 @@ impl ShortcutAction for RealtimeTranscribeAction {
         let rt = Arc::clone(&app.state::<Arc<crate::rolling::RollingTranscriber>>());
         let rm = Arc::clone(&app.state::<Arc<AudioRecordingManager>>());
 
-        // Session id up front so the (optional) live-preview worker can
-        // tag its AsrStreamText events with the same id the RecordingStarted
-        // event below carries. Preview is opt-in; when off the worker takes the
-        // zero-overhead path and no preview events fire.
-        let preview = get_settings(app).rolling_live_preview;
         let sid = next_session_id();
         // start_session registers this generation and synchronously establishes
         // the manager's load predicate before it spawns the rolling worker. The
         // model itself still loads asynchronously, so recording startup does not
         // wait for weights or allocate a second engine.
-        let rolling_error = rt.start_session(app.clone(), sid, preview).err();
+        let rolling_error = rt.start_session(app.clone(), sid).err();
 
         // C1: no Handy webview overlay on the real-time path — the winit
         // pill is the only surface, driven by the DaemonEvents below.
@@ -553,17 +547,7 @@ impl ShortcutAction for RealtimeTranscribeAction {
 
         if recording_error.is_none() {
             change_tray_icon(app, TrayIconState::Recording);
-            // With the live preview on, use the Studio Window (NativeAsr) so the
-            // growing caption has room; otherwise the compact dictation pill.
-            emit_session_started(
-                app,
-                sid,
-                if preview {
-                    SessionMode::NativeAsr
-                } else {
-                    SessionMode::Dictation
-                },
-            );
+            emit_session_started(app, sid, SessionMode::Dictation);
             shortcut::register_cancel_shortcut(app);
             register_session_shortcuts(app);
         } else {

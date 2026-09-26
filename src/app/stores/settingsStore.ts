@@ -277,8 +277,6 @@ const settingUpdaters: {
     commands.changeExtraRecordingBufferSetting(value as number),
   audio_conditioning: (value) =>
     commands.changeAudioConditioningSetting(value as boolean),
-  rolling_live_preview: (value) =>
-    commands.changeRollingLivePreviewSetting(value as boolean),
   // [GRAIN] Native ASR model selection — separate registry from `selected_model`.
   selected_asr_model: (value) => commands.selectAsrModel(value as string),
   // [GRAIN] Grain Space (zero-idle-RAM notes). The master toggle also

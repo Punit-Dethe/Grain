@@ -663,10 +663,6 @@
         "routing": "Transcription routing",
         "providers": "Cloud providers"
       },
-      "rollingLivePreview": {
-        "label": "Flow live preview",
-        "description": "Show text as you speak while dictating in Flow. Off by default; turning it on adds extra transcription work, so it uses more CPU/GPU while you dictate. It has no effect on the other capture modes."
-      },
       "flowUnavailable": {
         "model": "Select and download Parakeet TDT v2 or v3 in Transcription settings to use Flow.",
         "translation": "Turn off Translate to English to use Flow.",

@@ -2,16 +2,15 @@
 //!
 //! Capture only appends exact Float32 samples to a temporary journal and sends
 //! a coalescing wake. One serial worker owns the shared transcribe.cpp lease,
-//! finalizes stable Fluid-style windows, and optionally revisits only the tail
-//! for live previews. Standard and Native ASR do not use this module.
+//! finalizes stable Fluid-style windows. Standard and Native ASR do not use
+//! this module.
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::mpsc::{self, Receiver, RecvTimeoutError, SyncSender, TrySendError};
+use std::sync::mpsc::{self, Receiver, SyncSender, TrySendError};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
-use grain_core::DaemonEvent;
 use tauri::{AppHandle, Manager};
 use transcribe_cpp::CancelToken;
 
@@ -23,46 +22,12 @@ use crate::tdt_flow::{
     validate_model_installation, TdtAccumulator, TdtRunConfig,
 };
 
-const PREVIEW_MIN_SAMPLES: u64 = grain_tdt::SAMPLE_RATE;
-const PREVIEW_INTERVAL: Duration = Duration::from_millis(600);
-
-#[derive(Clone)]
-struct PreviewSink {
-    app: AppHandle,
-    session_id: u64,
-    scrap_that: bool,
-    active_generation: Arc<AtomicU64>,
-}
-
-impl PreviewSink {
-    fn emit(&self, text: &str) {
-        if !generation_is_current(&self.active_generation, self.session_id) {
-            return;
-        }
-        let (committed, tentative) = if self.scrap_that {
-            crate::audio_toolkit::scrub_stream_preview("", text)
-        } else {
-            (String::new(), text.to_string())
-        };
-        crate::bridge::emit(
-            &self.app,
-            DaemonEvent::AsrStreamText {
-                session_id: self.session_id,
-                committed,
-                tentative,
-            },
-        );
-    }
-}
+const MIN_TRANSCRIBE_SAMPLES: u64 = grain_tdt::SAMPLE_RATE;
 
 pub struct RollingTranscriber {
     tm: Arc<TranscriptionManager>,
     active: Mutex<Option<Arc<RollingSession>>>,
-    active_generation: Arc<AtomicU64>,
-}
-
-fn generation_is_current(active_generation: &AtomicU64, session_id: u64) -> bool {
-    active_generation.load(Ordering::Acquire) == session_id
+    active_generation: AtomicU64,
 }
 
 #[derive(Clone)]
@@ -103,7 +68,7 @@ impl RollingTranscriber {
         Self {
             tm,
             active: Mutex::new(None),
-            active_generation: Arc::new(AtomicU64::new(0)),
+            active_generation: AtomicU64::new(0),
         }
     }
 
@@ -111,7 +76,6 @@ impl RollingTranscriber {
         self: &Arc<Self>,
         app: AppHandle,
         session_id: u64,
-        preview: bool,
     ) -> Result<(), String> {
         let settings = get_settings(&app);
         crate::tdt_flow::validate_model(&settings.selected_model, settings.translate_to_english)?;
@@ -143,18 +107,12 @@ impl RollingTranscriber {
                 .grain_transcribe_cpp_language_for_model(&settings.selected_language, &model_id),
             model_id,
         };
-        let sink = preview.then(|| PreviewSink {
-            app,
-            session_id,
-            scrap_that: settings.scrap_that_enabled,
-            active_generation: Arc::clone(&self.active_generation),
-        });
         let session = Arc::new(
-            RollingSession::start(Arc::clone(self), session_id, config, sink)
+            RollingSession::start(Arc::clone(self), session_id, config)
                 .map_err(|error| format!("Flow could not create its audio journal: {error}"))?,
         );
         *active = Some(session);
-        log::info!("[GRAIN] Flow session started (preview={preview})");
+        log::info!("[GRAIN] Flow session started");
         Ok(())
     }
 
@@ -226,7 +184,6 @@ impl RollingSession {
         transcriber: Arc<RollingTranscriber>,
         session_id: u64,
         config: TdtRunConfig,
-        sink: Option<PreviewSink>,
     ) -> std::io::Result<Self> {
         let journal = Arc::new(PcmJournal::create()?);
         let reader = journal.reader()?;
@@ -247,7 +204,6 @@ impl RollingSession {
                     &worker_cancelled,
                     &worker_token,
                     &config,
-                    sink.as_ref(),
                 )
             })?;
         Ok(Self {
@@ -337,7 +293,6 @@ impl WorkerOutput {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn run_worker(
     manager: &TranscriptionManager,
     journal: &PcmJournal,
@@ -346,11 +301,10 @@ fn run_worker(
     cancelled: &AtomicBool,
     cancel_token: &CancelToken,
     config: &TdtRunConfig,
-    sink: Option<&PreviewSink>,
 ) -> WorkerOutput {
     let result = manager.with_grain_flow_session(&config.model_id, |session| {
         session.set_cancel_token(cancel_token);
-        let result = run_session(session, journal, reader, rx, cancelled, config, sink);
+        let result = run_session(session, journal, reader, rx, cancelled, config);
         session.clear_cancel_token();
         Ok(result)
     });
@@ -369,15 +323,12 @@ fn run_session(
     rx: &Receiver<WorkerCommand>,
     cancelled: &AtomicBool,
     config: &TdtRunConfig,
-    sink: Option<&PreviewSink>,
 ) -> WorkerOutput {
     let mut accumulator = match TdtAccumulator::new(session, config) {
         Ok(value) => value,
         Err(error) => return WorkerOutput::failure(error),
     };
     let mut audio = Vec::with_capacity(grain_tdt::MAX_MODEL_SAMPLES as usize);
-    let mut pending_preview = false;
-    let mut preview_deadline = Instant::now();
     let mut first_error: Option<String> = None;
     let started = Instant::now();
 
@@ -386,32 +337,25 @@ fn run_session(
             return WorkerOutput::failure("Flow session cancelled");
         }
 
-        let command =
-            if sink.is_some() && pending_preview && journal.frame_count() >= PREVIEW_MIN_SAMPLES {
-                let now = Instant::now();
-                if now >= preview_deadline {
-                    None
-                } else {
-                    match rx.recv_timeout(preview_deadline - now) {
-                        Ok(command) => Some(command),
-                        Err(RecvTimeoutError::Timeout) => None,
-                        Err(RecvTimeoutError::Disconnected) => {
-                            return WorkerOutput::failure("Flow worker channel disconnected")
-                        }
+        match rx.recv() {
+            Ok(WorkerCommand::Wake) => {
+                if first_error.is_none() {
+                    let total = journal.frame_count();
+                    if let Err(error) = accumulator.process_stable(
+                        session,
+                        config,
+                        journal,
+                        &mut reader,
+                        &mut audio,
+                        total,
+                    ) {
+                        first_error = Some(error);
                     }
                 }
-            } else {
-                match rx.recv() {
-                    Ok(command) => Some(command),
-                    Err(_) => return WorkerOutput::failure("Flow worker channel disconnected"),
-                }
-            };
-
-        match command {
-            Some(WorkerCommand::Wake) => pending_preview = true,
-            Some(WorkerCommand::Finish) => {
+            }
+            Ok(WorkerCommand::Finish) => {
                 let total = journal.frame_count();
-                if total < PREVIEW_MIN_SAMPLES {
+                if total < MIN_TRANSCRIBE_SAMPLES {
                     return WorkerOutput::success(String::new());
                 }
                 let mut final_error = first_error.take();
@@ -462,42 +406,7 @@ fn run_session(
                     }
                 }
             }
-            None => {
-                if first_error.is_none() {
-                    let total = journal.frame_count();
-                    match accumulator.render(
-                        session,
-                        config,
-                        journal,
-                        &mut reader,
-                        &mut audio,
-                        total,
-                    ) {
-                        Ok(text) => {
-                            if !cancelled.load(Ordering::Acquire) {
-                                if let Some(sink) = sink {
-                                    sink.emit(&text);
-                                }
-                            }
-                        }
-                        Err(error) => first_error = Some(error),
-                    }
-                }
-                pending_preview = false;
-                preview_deadline = Instant::now() + PREVIEW_INTERVAL;
-            }
-        }
-
-        // With previews disabled, wakes still finalize stable windows. Tail
-        // inference remains exactly zero until Finish.
-        if sink.is_none() && first_error.is_none() && pending_preview {
-            let total = journal.frame_count();
-            if let Err(error) =
-                accumulator.process_stable(session, config, journal, &mut reader, &mut audio, total)
-            {
-                first_error = Some(error);
-            }
-            pending_preview = false;
+            Err(_) => return WorkerOutput::failure("Flow worker channel disconnected"),
         }
     }
 }
@@ -518,18 +427,4 @@ mod tests {
         assert_eq!(observed.load(Ordering::Relaxed), 42);
     }
 
-    #[test]
-    fn preview_contract_is_one_second_then_completion_plus_six_hundred_ms() {
-        assert_eq!(PREVIEW_MIN_SAMPLES, 16_000);
-        assert_eq!(PREVIEW_INTERVAL, Duration::from_millis(600));
-    }
-
-    #[test]
-    fn stale_preview_generation_is_rejected() {
-        let generation = AtomicU64::new(11);
-        assert!(generation_is_current(&generation, 11));
-        assert!(!generation_is_current(&generation, 10));
-        generation.store(12, Ordering::Release);
-        assert!(!generation_is_current(&generation, 11));
-    }
 }

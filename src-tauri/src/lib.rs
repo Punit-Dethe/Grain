@@ -373,7 +373,7 @@ fn initialize_core_logic(app_handle: &AppHandle) {
     // on macOS before the user is ready.
 
     // Initialize the managers. The audio recorder receives the streaming router
-    // explicitly, so always-on microphone startup can wire live-preview frames
+    // explicitly, so always-on microphone startup can wire Native ASR frames
     // even before Tauri state is populated.
     let model_manager =
         Arc::new(ModelManager::new(app_handle).expect("Failed to initialize model manager"));
@@ -1028,7 +1028,6 @@ pub fn run(cli_args: CliArgs) {
             shortcut::change_mute_while_recording_setting,
             grain_commands::change_audio_conditioning_setting,
             shortcut::change_append_trailing_space_setting,
-            grain_commands::change_rolling_live_preview_setting,
             grain_commands::extensions_overview,
             grain_store::store_browse,
             grain_store::store_close,
@@ -1175,7 +1174,7 @@ pub fn run(cli_args: CliArgs) {
             grain_update::UpdateAvailable,
             grain_update::UpdateDownloadProgress,
             managers::history::HistoryUpdatePayload,
-            // The live-preview events MUST be registered even though Grain's
+            // The Native ASR stream events MUST be registered even though Grain's
             // webview doesn't render them (the native pill does, via the WS
             // bridge): tauri-specta's Event::emit PANICS on an unregistered
             // event, which killed the stream worker mid-lease (no pill text,

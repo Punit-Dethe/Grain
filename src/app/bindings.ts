@@ -1157,7 +1157,7 @@ async changeAgentPanelPositionSetting(position: AgentPanelPosition) : Promise<Re
 },
 /**
  * [GRAIN] Toggle the "scrap that" voice reset. Off = zero overhead (the snippet
- * matcher is never invoked for it and the live preview takes its normal path).
+ * matcher is never invoked for it).
  */
 async changeScrapThatEnabledSetting(enabled: boolean) : Promise<Result<null, string>> {
     try {
@@ -1257,19 +1257,6 @@ async changeAudioConditioningSetting(enabled: boolean) : Promise<Result<null, st
 async changeAppendTrailingSpaceSetting(enabled: boolean) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("change_append_trailing_space_setting", { enabled }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * [GRAIN] Toggle the rolling live preview (Studio Window caption during
- * rolling dictation). Persisted only; each rolling session reads it at start,
- * so OFF sessions never spawn the preview machinery — zero compute overhead.
- */
-async changeRollingLivePreviewSetting(enabled: boolean) : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("change_rolling_live_preview_setting", { enabled }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2971,15 +2958,6 @@ transcribe_gpu_device?: string | null; extra_recording_buffer_ms?: number;
  * accuracy on low-volume input without touching already-loud audio.
  */
 audio_conditioning?: boolean; 
-/**
- * [GRAIN] Rolling live preview: show growing text in the Studio Window while
- * dictating in the rolling (real-time) mode. OFF by default and OFF is
- * truly zero-cost — the rolling worker takes exactly the same path it
- * always did (no events, no extra decode). ON adds a committed-text preview
- * after each chunk merge PLUS an efficient inter-chunk tail decode
- * (LocalAgreement-2) that costs extra compute, so it is strictly opt-in.
- */
-rolling_live_preview?: boolean; 
 /**
  * [GRAIN] Context awareness (post-processing only): when on, the backend
  * detects the foreground app/site right before LLM post-processing and layers

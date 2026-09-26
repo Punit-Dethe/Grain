@@ -339,12 +339,6 @@ const SETTING_DEFS: SettingDef[] = [
       "cloud provider",
     ],
   },
-  {
-    id: "rolling-live-preview",
-    titleKey: "settings.speechToText.rollingLivePreview.label",
-    section: "speech-to-text",
-    keywords: ["live preview", "streaming preview", "rolling"],
-  },
   // post-processing (gated) ----------------------------------------------
   {
     id: "post-processing-prompts",

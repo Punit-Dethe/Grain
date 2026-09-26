@@ -3124,8 +3124,8 @@ struct Remote {
     /// streaming session (see `streaming`) flips it to `Studio` only when the first
     /// transcript word arrives, so the pill visibly expands from the small capsule.
     mode: PillMode,
-    /// [GRAIN] True while this session is a live-streaming one (Native ASR / rolling
-    /// live preview). Only a streaming session is allowed to expand into `Studio`,
+    /// [GRAIN] True while this session is a live-streaming Native ASR one.
+    /// Only a streaming session is allowed to expand into `Studio`,
     /// and only once it has text.
     streaming: bool,
     /// [GRAIN] Prompt Record: the user armed the hover action mid-recording and is now
@@ -3245,7 +3245,7 @@ fn apply_event(remote: &Mutex<Remote>, ev: DaemonEvent) {
             r.amp = 0.0;
             r.visible = can_show(&r);
             // [GRAIN] Every session opens as the small collapsed capsule. A live
-            // STREAMING session (Native ASR / rolling live preview) is allowed to
+            // STREAMING Native ASR session is allowed to
             // expand into the Studio surface, but only once its first word lands
             // (handled after the match) — so the pill grows FROM the small pill.
             // Fresh `asr` buffer per session so prior text never bleeds in.

@@ -484,7 +484,7 @@ pub fn change_context_awareness_enabled_setting(
 }
 
 /// [GRAIN] Toggle the "scrap that" voice reset. Off = zero overhead (the snippet
-/// matcher is never invoked for it and the live preview takes its normal path).
+/// matcher is never invoked for it).
 #[tauri::command]
 #[specta::specta]
 pub fn change_scrap_that_enabled_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
@@ -836,18 +836,6 @@ pub fn change_audio_conditioning_setting(app: AppHandle, enabled: bool) -> Resul
     {
         rm.set_conditioning(enabled);
     }
-    Ok(())
-}
-
-/// [GRAIN] Toggle the rolling live preview (Studio Window caption during
-/// rolling dictation). Persisted only; each rolling session reads it at start,
-/// so OFF sessions never spawn the preview machinery — zero compute overhead.
-#[tauri::command]
-#[specta::specta]
-pub fn change_rolling_live_preview_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
-    let mut settings = settings::get_settings(&app);
-    settings.rolling_live_preview = enabled;
-    settings::write_settings(&app, settings);
     Ok(())
 }
 

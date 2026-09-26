@@ -850,14 +850,6 @@ pub struct AppSettings {
     ///     accuracy on low-volume input without touching already-loud audio.
     #[serde(default = "default_audio_conditioning")]
     pub audio_conditioning: bool,
-    /// [GRAIN] Rolling live preview: show growing text in the Studio Window while
-    /// dictating in the rolling (real-time) mode. OFF by default and OFF is
-    /// truly zero-cost — the rolling worker takes exactly the same path it
-    /// always did (no events, no extra decode). ON adds a committed-text preview
-    /// after each chunk merge PLUS an efficient inter-chunk tail decode
-    /// (LocalAgreement-2) that costs extra compute, so it is strictly opt-in.
-    #[serde(default = "default_rolling_live_preview")]
-    pub rolling_live_preview: bool,
     /// [GRAIN] Context awareness (post-processing only): when on, the backend
     /// detects the foreground app/site right before LLM post-processing and layers
     /// an automatic SOFT context line (tone/vocab, never restructuring) on top of
@@ -1051,11 +1043,6 @@ fn default_always_on_microphone() -> bool {
 }
 fn default_audio_conditioning() -> bool {
     true
-}
-/// Rolling live preview defaults OFF — it trades compute for a live caption, so
-/// users opt in explicitly (see `rolling_live_preview`).
-fn default_rolling_live_preview() -> bool {
-    false
 }
 /// Paste Catch defaults ON: without it a paste that misses the field destroys
 /// the transcript, and the detection only ever acts on positive evidence.
@@ -1938,7 +1925,6 @@ pub fn get_default_settings() -> AppSettings {
         transcribe_gpu_device: default_transcribe_gpu_device(),
         extra_recording_buffer_ms: 0,
         audio_conditioning: default_audio_conditioning(),
-        rolling_live_preview: default_rolling_live_preview(),
         context_awareness_enabled: false,
         context_profile_instructions: Vec::new(),
         context_custom_profiles: Vec::new(),

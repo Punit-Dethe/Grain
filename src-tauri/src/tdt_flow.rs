@@ -41,8 +41,6 @@ pub(crate) struct TdtRunConfig {
 pub(crate) struct TdtAccumulator {
     cursor: WindowCursor,
     stable_tokens: Vec<Token>,
-    cached_sample_count: Option<u64>,
-    cached_text: String,
     decoded_windows: usize,
 }
 
@@ -62,8 +60,6 @@ impl TdtAccumulator {
         Ok(Self {
             cursor: WindowCursor::default(),
             stable_tokens: Vec::new(),
-            cached_sample_count: None,
-            cached_text: String::new(),
             decoded_windows: 0,
         })
     }
@@ -90,14 +86,11 @@ impl TdtAccumulator {
                 return Err("Flow window cursor rejected its own stable window".into());
             }
             self.decoded_windows += 1;
-            self.cached_sample_count = None;
-            self.cached_text.clear();
         }
         Ok(())
     }
 
-    /// Render the exact accepted prefix. Reuses an equal-count preview at stop,
-    /// avoiding all native work when no samples arrived after the last preview.
+    /// Render the final transcript from stable windows and the remaining tail.
     pub(crate) fn render(
         &mut self,
         session: &mut Session,
@@ -107,10 +100,6 @@ impl TdtAccumulator {
         audio: &mut Vec<f32>,
         total_samples: u64,
     ) -> Result<String, String> {
-        if self.cached_sample_count == Some(total_samples) {
-            return Ok(self.cached_text.clone());
-        }
-
         self.process_stable(session, config, journal, reader, audio, total_samples)?;
         let mut merged = self.stable_tokens.clone();
         if let Some(window) = self.cursor.tail(total_samples) {
@@ -122,15 +111,12 @@ impl TdtAccumulator {
             merged.sort_by_key(|token| token.frame);
         }
         let ids: Vec<i32> = merged.iter().map(|token| token.id).collect();
-        let text = session
+        Ok(session
             .model()
             .detokenize(&ids)
             .map_err(|error| format!("Flow token detokenization failed: {error}"))?
             .trim()
-            .to_string();
-        self.cached_sample_count = Some(total_samples);
-        self.cached_text.clone_from(&text);
-        Ok(text)
+            .to_string())
     }
 }
 

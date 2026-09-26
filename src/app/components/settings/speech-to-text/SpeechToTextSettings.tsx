@@ -8,7 +8,6 @@ import { SttProviderRow } from "./SttProviderRow";
 import { SttProviderForm } from "./SttProviderForm";
 import { ModelPicker } from "./ModelPicker";
 import { ProviderPool } from "../ProviderPool";
-import { RollingLivePreview } from "../RollingLivePreview";
 import { ModelUnloadTimeoutSetting } from "../ModelUnloadTimeout";
 import { ExtensionAnchor } from "../experimentations/ExtensionSettings";
 
@@ -92,7 +91,6 @@ export const SpeechToTextSettings: React.FC = () => {
       {/* 2) On-device model behaviour. Flow geometry is fixed by the reviewed
           Parakeet TDT v2/v3 contract and is intentionally not configurable. */}
       <SettingsGroup title={t("settings.speechToText.groups.engine")}>
-        <RollingLivePreview descriptionMode="tooltip" grouped />
         <ModelUnloadTimeoutSetting descriptionMode="tooltip" grouped />
       </SettingsGroup>
 
