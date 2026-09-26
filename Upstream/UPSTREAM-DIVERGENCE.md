@@ -22,6 +22,13 @@ Never copy a static merge-base claim from this document. Query
 `git merge-base HEAD upstream/main` and `git describe --tags --always <sha>`.
 The rules here supersede repeated dated rows in the audit history below.
 
+The transcribe.cpp dependency now uses the maintained source fork recorded in
+`native/transcribe-fork.json` and `docs/TRANSCRIBE-CPP-FORK.md`. Preserve the
+paired full Git SHA patches in both app/audit workspaces and their lockfiles
+when adapting Handy dependency changes. The co-located native checkout is an
+ignored independent repository; old vendor trees are frozen rollback sources.
+Native version upgrades require the fork's semantic/backend/package gates.
+
 | Area | Current rule |
 | --- | --- |
 | `actions.rs` | Preserve Grain's compiled structure/hooks; port post-processing fixes to `grain_post_process.rs` and `grain_actions.rs`. Do not restore Handy web-overlay policy. |

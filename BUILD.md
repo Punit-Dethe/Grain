@@ -8,6 +8,8 @@ This guide covers how to set up the development environment and build Grain from
 
 - [Rust](https://rustup.rs/) (latest stable)
 - [Bun](https://bun.sh/) package manager
+- Python 3.11+ for the native dependency/upstream verification scripts (or use
+  `uv run --python 3.12` to run them with a managed interpreter).
 - [Tauri Prerequisites](https://tauri.app/start/prerequisites/)
 
 ### Platform-Specific Requirements

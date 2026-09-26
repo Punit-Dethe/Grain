@@ -1,8 +1,11 @@
 # Grain transcribe.cpp vendor patch
 
-Grain vendors the published `0.2.3` wrapper and sys crates to carry two small,
-additive APIs needed by Parakeet TDT Flow. Ordinary `run` and `stream` behavior
-remain upstream-owned and unchanged.
+These published `0.2.3` wrapper/sys trees are the frozen pre-fork rollback
+baseline. Grain's active dependencies now resolve to the paired immutable Git
+fork in `native/transcribe-fork.json`; see `docs/TRANSCRIBE-CPP-FORK.md`. Do not
+update both implementations. Retire these directories only after the remaining
+model/platform/package gates pass. This record retains their original additive
+Parakeet TDT Flow patch and pristine provenance.
 
 ## Pristine baseline
 

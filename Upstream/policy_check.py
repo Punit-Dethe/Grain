@@ -21,6 +21,7 @@ RELOCATIONS_PATH = os.path.join(HERE, "relocations.json")
 DIVERGENCE_PATH = os.path.join(HERE, "UPSTREAM-DIVERGENCE.md")
 LIB_PATH = os.path.join(ROOT, "src-tauri", "src", "lib.rs")
 TRANSCRIBE_CONTRACT_PATH = os.path.join(ROOT, "vendor", "TRANSCRIBE-CPP.md")
+TRANSCRIBE_PIN_PATH = os.path.join(ROOT, "native", "transcribe-fork.json")
 TAURI_MANIFEST_PATH = os.path.join(ROOT, "src-tauri", "Cargo.toml")
 BEGIN = "<!-- BEGIN GENERATED RELOCATION POLICY -->"
 END = "<!-- END GENERATED RELOCATION POLICY -->"
@@ -68,30 +69,41 @@ def main() -> int:
     relocations = load_relocations()
     failures: list[str] = []
 
-    # transcribe.cpp is upstream-owned at its pristine baseline but carries a
-    # narrowly-scoped Grain TDT patch. Its contract is therefore part of
-    # upstream management, not optional vendor prose.
-    if not os.path.exists(TRANSCRIBE_CONTRACT_PATH):
-        failures.append("missing vendor/TRANSCRIBE-CPP.md upstream contract")
-    else:
+    # Preserve the maintained fork when Handy changes its native dependency.
+    # The shared checker validates both workspaces/pins/locks without fetching.
+    with open(TAURI_MANIFEST_PATH, encoding="utf-8") as handle:
+        manifest = handle.read()
+    try:
+        with open(TRANSCRIBE_PIN_PATH, encoding="utf-8") as handle:
+            pin = json.load(handle)
+        if not re.fullmatch(r"[0-9a-f]{40}", pin["upstream_revision"]):
+            failures.append("native fork lacks an exact upstream commit")
+        declarations = re.findall(r'transcribe-cpp\s*=\s*\{[^\n]*version\s*=\s*"=([^\"]+)"', manifest)
+        if not declarations or any(value != pin["version"] for value in declarations):
+            failures.append("every transcribe-cpp dependency must exactly match the fork baseline")
+        native_check = subprocess.run(
+            [sys.executable, os.path.join(ROOT, "scripts", "transcribe_fork.py"), "--check"],
+            cwd=ROOT, capture_output=True, text=True, encoding="utf-8", errors="replace")
+        if native_check.returncode:
+            failures.append(native_check.stderr.strip() or "native fork source check failed")
+    except (OSError, ValueError, KeyError) as error:
+        failures.append(f"invalid native fork pin: {error}")
+    if not os.path.isfile(os.path.join(ROOT, "docs", "TRANSCRIBE-CPP-FORK.md")):
+        failures.append("missing docs/TRANSCRIBE-CPP-FORK.md integration contract")
+
+    # Optional frozen rollback trees retain their own original provenance.
+    # They must never dictate the active source pin or the next native upgrade.
+    if os.path.exists(TRANSCRIBE_CONTRACT_PATH):
         with open(TRANSCRIBE_CONTRACT_PATH, encoding="utf-8") as handle:
             contract = handle.read()
         baseline = re.search(r"Published crates: `transcribe-cpp ([^`]+)`", contract)
         commit = re.search(r"Upstream commit: `([0-9a-f]{40})`", contract)
-        with open(TAURI_MANIFEST_PATH, encoding="utf-8") as handle:
-            manifest = handle.read()
         if not baseline:
             failures.append("transcribe contract lacks a published-crate baseline")
         else:
-            declarations = re.findall(r'transcribe-cpp\s*=\s*\{[^\n]*version\s*=\s*"=([^\"]+)"', manifest)
-            if not declarations or any(value != baseline.group(1) for value in declarations):
-                failures.append(
-                    "every transcribe-cpp dependency must exactly match the contract baseline"
-                )
             for package in ("transcribe-cpp", "transcribe-cpp-sys"):
                 vendor_dir = os.path.join(ROOT, "vendor", f"{package}-{baseline.group(1)}")
                 if not os.path.isdir(vendor_dir):
-                    failures.append(f"missing vendored contract baseline: {package}-{baseline.group(1)}")
                     continue
                 vcs_path = os.path.join(vendor_dir, ".cargo_vcs_info.json")
                 try:
@@ -104,9 +116,6 @@ def main() -> int:
                     failures.append(
                         f"{package}: vendored commit {vendor_commit} differs from contract"
                     )
-                expected_path = f'../vendor/{package}-{baseline.group(1)}'
-                if expected_path not in manifest:
-                    failures.append(f"{package}: Cargo patch does not select {expected_path}")
         if not commit:
             failures.append("transcribe contract lacks its exact upstream commit")
     upstream_files = set(

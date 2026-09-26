@@ -104,6 +104,16 @@ jobs:
           key: ${{ inputs.platform }}-${{ inputs.target }}-no-bin-v1
           cache-bin: false
 
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Verify native fork source and backend features
+        shell: bash
+        run: |
+          python -m unittest discover -s scripts -p test_transcribe_fork.py
+          python scripts/transcribe_fork.py --check --metadata --official --target "${{ inputs.target }}"
+
       - name: install dependencies (ubuntu 24.04 x64)
         if: contains(inputs.platform, 'ubuntu-24.04') && !contains(inputs.platform, 'arm')
         run: |

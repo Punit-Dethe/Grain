@@ -13,6 +13,14 @@ This standalone tool is excluded from application builds. It loads one model, ru
 
 Requires a matching Grain-patched native 0.2.3 library with `PKFW` support, its backend modules, and a reviewed Parakeet TDT v2/v3 GGUF. Models and recordings are not downloaded or uploaded by this tool. The audit used v2 Q8_0, CPU, four native threads, and no language hint on any path.
 
+The audit and app now pin the same maintained native fork through independent
+Git patch pairs/lockfiles. `uv run --no-project scripts/transcribe_fork.py --check
+--metadata` verifies both. A normal Cargo build compiles that source; the
+prebuilt-prefix command below is an explicit development override. Validate its
+contract with `scripts/transcribe_fork.py --runtime-dir <native bin directory>`
+before use; official source builds reject this override. See
+`docs/TRANSCRIBE-CPP-FORK.md` for source, bootstrap and release gates.
+
 Windows, with an existing native install prefix:
 
 ```powershell

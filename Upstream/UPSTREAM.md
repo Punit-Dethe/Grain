@@ -26,8 +26,12 @@ path must be reviewed as a problem report: state the failure mode, decide
 whether Grain shares it, name the Grain paths adapted/already covering it, and
 record verification evidence. `frontend_freeze.py --review-audit` and
 `suppressed_review.py` enforce those records, including upstream merge commits.
-For transcribe.cpp changes, `vendor/TRANSCRIBE-CPP.md` is an additional binding
-contract for the pristine baseline and Grain's isolated rolling/TDT patch.
+For transcribe.cpp changes, `docs/TRANSCRIBE-CPP-FORK.md` and
+`native/transcribe-fork.json` are the binding contract and paired immutable
+source pin. Preserve both fork patches/locks and the current target features
+when adapting Handy dependency changes; a native upgrade is a separately
+tested fork release. `vendor/TRANSCRIBE-CPP.md` records the frozen rollback
+baseline, not an active second implementation.
 When closing out manually adapted commits, `closeout.py` defers the divergence
 ratchet until after its tree-preserving ancestry merge, because only then does
 the ratchet compare Grain against the newly assessed upstream baseline. Use

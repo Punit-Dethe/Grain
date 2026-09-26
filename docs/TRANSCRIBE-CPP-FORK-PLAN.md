@@ -1,6 +1,6 @@
 # transcribe.cpp fork and reproducible library migration
 
-Status: researched plan and local candidate extraction, 2026-09-26. `native/transcribe.cpp/` now holds an independent Git checkout of the verified 0.2.3 source with the audited existing Grain patch. Grain's runtime dependency has not switched. Compatibility/parity gates precede that switch; an upstream upgrade is a separate milestone.
+Status: integration implemented, 2026-09-26. The maintained fork is published under `Punit-Dethe/transcribe.cpp`, and Grain's implementation branch pins both packages and workspaces to it. Runtime identity, semantic/ABI tests, reproducible bootstrap and CI dependency checks are implemented. See [the implementation record](TRANSCRIBE-CPP-FORK.md) for actual evidence and outstanding release/retirement gates. No upstream version upgrade is included.
 
 ## Recommendation
 
@@ -25,7 +25,7 @@ Co-location is a development convenience. Production/CI still builds the full SH
 
 A fresh Grain clone will not contain the ignored native checkout. Before cutover, add a small tracked bootstrap command that clones the canonical fork and checks out the pinned SHA. It must verify an existing checkout's repository/revision, preserve dirty work, and fail with actionable guidance rather than resetting or pulling automatically. It must not be an application startup/download path. Builds themselves continue to work without this checkout because Cargo fetches the pinned dependency.
 
-The local candidate is committed at `f49dcda13a5a4c116ecaf31758aacea937480cea` on branch `codex/grain-0.2.3`, with remote `upstream` for the original project. Its production GitHub fork/`origin` remains to be established: GitHub CLI is not authenticated in this session. It is not yet a released dependency; runtime identity, expanded semantic tests, real-model/resource/backend/package parity, and bootstrap remain staged work.
+The initial local extraction was committed at `f49dcda13a5a4c116ecaf31758aacea937480cea` on branch `codex/grain-0.2.3`. The maintained GitHub fork is now published with `origin` under `Punit-Dethe/transcribe.cpp` and `upstream` for the original project. The active full source SHA is in `native/transcribe-fork.json`; implemented contract/tests/bootstrap and actual parity evidence are recorded in `TRANSCRIBE-CPP-FORK.md`. Production release/retirement gates remain explicit.
 
 ## Consensus: is this worth the effort?
 

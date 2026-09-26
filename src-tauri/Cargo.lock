@@ -8912,6 +8912,7 @@ dependencies = [
 [[package]]
 name = "transcribe-cpp"
 version = "0.2.3"
+source = "git+https://github.com/Punit-Dethe/transcribe.cpp.git?rev=7be200645db2e9296b08794c615a3e346f1b17f4#7be200645db2e9296b08794c615a3e346f1b17f4"
 dependencies = [
  "log",
  "thiserror 2.0.18",
@@ -8921,6 +8922,7 @@ dependencies = [
 [[package]]
 name = "transcribe-cpp-sys"
 version = "0.2.3"
+source = "git+https://github.com/Punit-Dethe/transcribe.cpp.git?rev=7be200645db2e9296b08794c615a3e346f1b17f4#7be200645db2e9296b08794c615a3e346f1b17f4"
 dependencies = [
  "cmake",
  "serde_json",
