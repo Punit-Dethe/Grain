@@ -1,5 +1,7 @@
 # Grain Extensions 2.0 — Agent, Launcher, and Dynamic UI Plan
 
+**MCP planning update (2026-09-26):** The researched [native and MCP extension delivery plan](MCP-EXTENSION-PLAN.md) defines the proposed next implementation sequence, phase gates, and one-to-five extension validation ladder. See its [research](MCP-EXTENSION-RESEARCH.md) and [source ledger](MCP-EXTENSION-SOURCES.json). It proposes promoting the 2026-08-31 remote-MCP development integration to a supported extension adapter while preserving the 2026-09-08 visual-ownership boundary. This is a plan, not a claim that those changes are implemented.
+
 **Status:** Approved architecture and implementation plan
 
 **Date:** 2026-09-08

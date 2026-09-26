@@ -1,0 +1,440 @@
+{
+  "researched_on": "2026-09-26",
+  "grain_head": "01b05a4564a01c926949e1ff0247ec867fa6c040",
+  "scope": "Focused source and test review; not a full audit of every downloaded file. Provider documentation reviewed; no live OAuth or provider writes performed.",
+  "popularity_note": "GitHub stars are snapshots, not a correctness ranking or exhaustive top-project list.",
+  "repositories": [
+    {
+      "repository": "aaif-goose/goose",
+      "github_stars": 54675,
+      "stars_observed_on": "2026-09-26",
+      "branch": "main",
+      "snapshot_commit": "04ed836c8cde23e540cc77d256992e00be99298b",
+      "snapshot_commit_date": "2026-09-25T17:09:27Z",
+      "reported_license": "Apache-2.0",
+      "review_scope": "Selected implementation/documentation/test paths; see source_files and research report",
+      "metadata_url": "https://api.github.com/repos/aaif-goose/goose"
+    },
+    {
+      "repository": "anomalyco/opencode",
+      "github_stars": 210194,
+      "stars_observed_on": "2026-09-26",
+      "branch": "dev",
+      "snapshot_commit": "a42f393c850bec0c0f395fb91bf19b1ee8b31666",
+      "snapshot_commit_date": "2026-09-26T15:55:17Z",
+      "reported_license": "MIT",
+      "review_scope": "Selected implementation/documentation/test paths; see source_files and research report",
+      "metadata_url": "https://api.github.com/repos/anomalyco/opencode"
+    },
+    {
+      "repository": "microsoft/vscode",
+      "github_stars": 193018,
+      "stars_observed_on": "2026-09-26",
+      "branch": "main",
+      "snapshot_commit": "a460613c57b4c1eb2bc8edc97be694e05ae286b2",
+      "snapshot_commit_date": "2026-09-26T16:58:58Z",
+      "reported_license": "MIT",
+      "review_scope": "Selected implementation/documentation/test paths; see source_files and research report",
+      "metadata_url": "https://api.github.com/repos/microsoft/vscode"
+    },
+    {
+      "repository": "openai/codex",
+      "github_stars": 126581,
+      "stars_observed_on": "2026-09-26",
+      "branch": "main",
+      "snapshot_commit": "6e1ab4d294cdf1d2606a91bf1acf6de0f0959c7a",
+      "snapshot_commit_date": "2026-09-26T17:26:07Z",
+      "reported_license": "Apache-2.0",
+      "review_scope": "Selected implementation/documentation/test paths; see source_files and research report",
+      "metadata_url": "https://api.github.com/repos/openai/codex"
+    },
+    {
+      "repository": "github/github-mcp-server",
+      "github_stars": 33218,
+      "stars_observed_on": "2026-09-26",
+      "branch": "main",
+      "snapshot_commit": "85598ba6e1256f7ebf4867b95d63b833c4549264",
+      "snapshot_commit_date": "2026-09-16T09:58:29Z",
+      "reported_license": "MIT",
+      "review_scope": "Selected implementation/documentation/test paths; see source_files and research report",
+      "metadata_url": "https://api.github.com/repos/github/github-mcp-server"
+    },
+    {
+      "repository": "modelcontextprotocol/rust-sdk",
+      "github_stars": 3955,
+      "stars_observed_on": "2026-09-26",
+      "branch": "main",
+      "snapshot_commit": "972af863f813ad97be8d9b7dc3207d3b5731adf9",
+      "snapshot_commit_date": "2026-09-26T12:57:50Z",
+      "reported_license": "NOASSERTION",
+      "review_scope": "Selected implementation/documentation/test paths; see source_files and research report",
+      "metadata_url": "https://api.github.com/repos/modelcontextprotocol/rust-sdk"
+    },
+    {
+      "repository": "modelcontextprotocol/inspector",
+      "github_stars": 10962,
+      "stars_observed_on": "2026-09-26",
+      "branch": "main",
+      "snapshot_commit": "1e31c78fbf81a989e8eb47021c6281d7876ad7fd",
+      "snapshot_commit_date": "2026-09-23T18:13:50Z",
+      "reported_license": "NOASSERTION",
+      "review_scope": "Repository metadata and debugging-tool role only; source not audited",
+      "metadata_url": "https://api.github.com/repos/modelcontextprotocol/inspector"
+    },
+    {
+      "repository": "LibreChat-AI/LibreChat",
+      "github_stars": 44975,
+      "stars_observed_on": "2026-09-26",
+      "branch": "main",
+      "snapshot_commit": "7b2362d7a7c6148b84850924dc7fa5fc43307923",
+      "snapshot_commit_date": "2026-09-25T14:08:28Z",
+      "reported_license": "MIT",
+      "review_scope": "Selected implementation/documentation/test paths; see source_files and research report",
+      "metadata_url": "https://api.github.com/repos/LibreChat-AI/LibreChat"
+    },
+    {
+      "repository": "cline/cline",
+      "github_stars": 69377,
+      "stars_observed_on": "2026-09-26",
+      "branch": "main",
+      "snapshot_commit": "29896ec7fa8e2dd98805b56c2dae987d59fc9baa",
+      "snapshot_commit_date": "2026-09-26T03:10:38Z",
+      "reported_license": "Apache-2.0",
+      "review_scope": "Selected implementation/documentation/test paths; see source_files and research report",
+      "metadata_url": "https://api.github.com/repos/cline/cline"
+    },
+    {
+      "repository": "continuedev/continue",
+      "github_stars": 36034,
+      "stars_observed_on": "2026-09-26",
+      "branch": "main",
+      "snapshot_commit": "5522c6f44ca0ac3528b37244818fbfa39b5af470",
+      "snapshot_commit_date": "2026-07-21T04:00:09Z",
+      "reported_license": "Apache-2.0",
+      "review_scope": "Selected implementation/documentation/test paths; see source_files and research report",
+      "metadata_url": "https://api.github.com/repos/continuedev/continue"
+    },
+    {
+      "repository": "langchain-ai/langchain-mcp-adapters",
+      "github_stars": 3654,
+      "stars_observed_on": "2026-09-26",
+      "branch": "main",
+      "snapshot_commit": "52a4535f3eb4b98f386836e4d9b8c4cadf99afca",
+      "snapshot_commit_date": "2026-09-11T05:21:45Z",
+      "reported_license": "MIT",
+      "review_scope": "Selected implementation/documentation/test paths; see source_files and research report",
+      "metadata_url": "https://api.github.com/repos/langchain-ai/langchain-mcp-adapters"
+    }
+  ],
+  "source_files": [
+    {
+      "repository": "aaif-goose/goose",
+      "path": "crates/goose/src/agents/extension.rs",
+      "commit": "04ed836c8cde23e540cc77d256992e00be99298b",
+      "bytes_downloaded": 40114,
+      "url": "https://github.com/aaif-goose/goose/blob/04ed836c8cde23e540cc77d256992e00be99298b/crates/goose/src/agents/extension.rs"
+    },
+    {
+      "repository": "aaif-goose/goose",
+      "path": "documentation/docs/mcp/extension-manager-mcp.md",
+      "commit": "04ed836c8cde23e540cc77d256992e00be99298b",
+      "bytes_downloaded": 3835,
+      "url": "https://github.com/aaif-goose/goose/blob/04ed836c8cde23e540cc77d256992e00be99298b/documentation/docs/mcp/extension-manager-mcp.md"
+    },
+    {
+      "repository": "anomalyco/opencode",
+      "path": "packages/opencode/src/mcp/index.ts",
+      "commit": "a42f393c850bec0c0f395fb91bf19b1ee8b31666",
+      "bytes_downloaded": 37745,
+      "url": "https://github.com/anomalyco/opencode/blob/a42f393c850bec0c0f395fb91bf19b1ee8b31666/packages/opencode/src/mcp/index.ts"
+    },
+    {
+      "repository": "anomalyco/opencode",
+      "path": "packages/opencode/src/mcp/auth.ts",
+      "commit": "a42f393c850bec0c0f395fb91bf19b1ee8b31666",
+      "bytes_downloaded": 6506,
+      "url": "https://github.com/anomalyco/opencode/blob/a42f393c850bec0c0f395fb91bf19b1ee8b31666/packages/opencode/src/mcp/auth.ts"
+    },
+    {
+      "repository": "anomalyco/opencode",
+      "path": "packages/opencode/src/mcp/oauth-provider.ts",
+      "commit": "a42f393c850bec0c0f395fb91bf19b1ee8b31666",
+      "bytes_downloaded": 8703,
+      "url": "https://github.com/anomalyco/opencode/blob/a42f393c850bec0c0f395fb91bf19b1ee8b31666/packages/opencode/src/mcp/oauth-provider.ts"
+    },
+    {
+      "repository": "microsoft/vscode",
+      "path": "src/vs/workbench/contrib/mcp/common/mcpServer.ts",
+      "commit": "a460613c57b4c1eb2bc8edc97be694e05ae286b2",
+      "bytes_downloaded": 63489,
+      "url": "https://github.com/microsoft/vscode/blob/a460613c57b4c1eb2bc8edc97be694e05ae286b2/src/vs/workbench/contrib/mcp/common/mcpServer.ts"
+    },
+    {
+      "repository": "microsoft/vscode",
+      "path": "src/vs/workbench/contrib/mcp/common/mcpServerConnection.ts",
+      "commit": "a460613c57b4c1eb2bc8edc97be694e05ae286b2",
+      "bytes_downloaded": 8244,
+      "url": "https://github.com/microsoft/vscode/blob/a460613c57b4c1eb2bc8edc97be694e05ae286b2/src/vs/workbench/contrib/mcp/common/mcpServerConnection.ts"
+    },
+    {
+      "repository": "microsoft/vscode",
+      "path": "src/vs/workbench/contrib/mcp/common/mcpLanguageModelToolContribution.ts",
+      "commit": "a460613c57b4c1eb2bc8edc97be694e05ae286b2",
+      "bytes_downloaded": 16310,
+      "url": "https://github.com/microsoft/vscode/blob/a460613c57b4c1eb2bc8edc97be694e05ae286b2/src/vs/workbench/contrib/mcp/common/mcpLanguageModelToolContribution.ts"
+    },
+    {
+      "repository": "openai/codex",
+      "path": "codex-rs/core/src/tools/handlers/tool_search.rs",
+      "commit": "6e1ab4d294cdf1d2606a91bf1acf6de0f0959c7a",
+      "bytes_downloaded": 19270,
+      "url": "https://github.com/openai/codex/blob/6e1ab4d294cdf1d2606a91bf1acf6de0f0959c7a/codex-rs/core/src/tools/handlers/tool_search.rs"
+    },
+    {
+      "repository": "openai/codex",
+      "path": "codex-rs/core/src/tools/handlers/tool_search_spec.rs",
+      "commit": "6e1ab4d294cdf1d2606a91bf1acf6de0f0959c7a",
+      "bytes_downloaded": 9540,
+      "url": "https://github.com/openai/codex/blob/6e1ab4d294cdf1d2606a91bf1acf6de0f0959c7a/codex-rs/core/src/tools/handlers/tool_search_spec.rs"
+    },
+    {
+      "repository": "github/github-mcp-server",
+      "path": "docs/remote-server.md",
+      "commit": "85598ba6e1256f7ebf4867b95d63b833c4549264",
+      "bytes_downloaded": 29854,
+      "url": "https://github.com/github/github-mcp-server/blob/85598ba6e1256f7ebf4867b95d63b833c4549264/docs/remote-server.md"
+    },
+    {
+      "repository": "modelcontextprotocol/rust-sdk",
+      "path": "README.md",
+      "commit": "972af863f813ad97be8d9b7dc3207d3b5731adf9",
+      "bytes_downloaded": 68130,
+      "url": "https://github.com/modelcontextprotocol/rust-sdk/blob/972af863f813ad97be8d9b7dc3207d3b5731adf9/README.md"
+    },
+    {
+      "repository": "modelcontextprotocol/rust-sdk",
+      "path": "crates/rmcp/src/transport/auth.rs",
+      "commit": "972af863f813ad97be8d9b7dc3207d3b5731adf9",
+      "bytes_downloaded": 366920,
+      "url": "https://github.com/modelcontextprotocol/rust-sdk/blob/972af863f813ad97be8d9b7dc3207d3b5731adf9/crates/rmcp/src/transport/auth.rs"
+    },
+    {
+      "repository": "aaif-goose/goose",
+      "path": "crates/goose/src/agents/extension_manager/mod.rs",
+      "commit": "04ed836c8cde23e540cc77d256992e00be99298b",
+      "bytes_downloaded": 98472,
+      "url": "https://github.com/aaif-goose/goose/blob/04ed836c8cde23e540cc77d256992e00be99298b/crates/goose/src/agents/extension_manager/mod.rs"
+    },
+    {
+      "repository": "aaif-goose/goose",
+      "path": "crates/goose/src/agents/extension_manager/streamable_http.rs",
+      "commit": "04ed836c8cde23e540cc77d256992e00be99298b",
+      "bytes_downloaded": 39740,
+      "url": "https://github.com/aaif-goose/goose/blob/04ed836c8cde23e540cc77d256992e00be99298b/crates/goose/src/agents/extension_manager/streamable_http.rs"
+    },
+    {
+      "repository": "aaif-goose/goose",
+      "path": "crates/goose/src/agents/platform_extensions/ext_manager.rs",
+      "commit": "04ed836c8cde23e540cc77d256992e00be99298b",
+      "bytes_downloaded": 26559,
+      "url": "https://github.com/aaif-goose/goose/blob/04ed836c8cde23e540cc77d256992e00be99298b/crates/goose/src/agents/platform_extensions/ext_manager.rs"
+    },
+    {
+      "repository": "openai/codex",
+      "path": "codex-rs/codex-mcp/src/tool_catalog_cache.rs",
+      "commit": "6e1ab4d294cdf1d2606a91bf1acf6de0f0959c7a",
+      "bytes_downloaded": 13947,
+      "url": "https://github.com/openai/codex/blob/6e1ab4d294cdf1d2606a91bf1acf6de0f0959c7a/codex-rs/codex-mcp/src/tool_catalog_cache.rs"
+    },
+    {
+      "repository": "openai/codex",
+      "path": "codex-rs/codex-mcp/src/connection_manager.rs",
+      "commit": "6e1ab4d294cdf1d2606a91bf1acf6de0f0959c7a",
+      "bytes_downloaded": 45601,
+      "url": "https://github.com/openai/codex/blob/6e1ab4d294cdf1d2606a91bf1acf6de0f0959c7a/codex-rs/codex-mcp/src/connection_manager.rs"
+    },
+    {
+      "repository": "github/github-mcp-server",
+      "path": "docs/host-integration.md",
+      "commit": "85598ba6e1256f7ebf4867b95d63b833c4549264",
+      "bytes_downloaded": 13083,
+      "url": "https://github.com/github/github-mcp-server/blob/85598ba6e1256f7ebf4867b95d63b833c4549264/docs/host-integration.md"
+    },
+    {
+      "repository": "github/github-mcp-server",
+      "path": "docs/oauth-login.md",
+      "commit": "85598ba6e1256f7ebf4867b95d63b833c4549264",
+      "bytes_downloaded": 11255,
+      "url": "https://github.com/github/github-mcp-server/blob/85598ba6e1256f7ebf4867b95d63b833c4549264/docs/oauth-login.md"
+    },
+    {
+      "repository": "github/github-mcp-server",
+      "path": "docs/toolsets-and-icons.md",
+      "commit": "85598ba6e1256f7ebf4867b95d63b833c4549264",
+      "bytes_downloaded": 6140,
+      "url": "https://github.com/github/github-mcp-server/blob/85598ba6e1256f7ebf4867b95d63b833c4549264/docs/toolsets-and-icons.md"
+    },
+    {
+      "repository": "LibreChat-AI/LibreChat",
+      "path": "packages/api/src/mcp/UserConnectionManager.ts",
+      "commit": "7b2362d7a7c6148b84850924dc7fa5fc43307923",
+      "bytes_downloaded": 57073,
+      "url": "https://github.com/LibreChat-AI/LibreChat/blob/7b2362d7a7c6148b84850924dc7fa5fc43307923/packages/api/src/mcp/UserConnectionManager.ts"
+    },
+    {
+      "repository": "LibreChat-AI/LibreChat",
+      "path": "packages/api/src/mcp/MCPConnectionFactory.ts",
+      "commit": "7b2362d7a7c6148b84850924dc7fa5fc43307923",
+      "bytes_downloaded": 96969,
+      "url": "https://github.com/LibreChat-AI/LibreChat/blob/7b2362d7a7c6148b84850924dc7fa5fc43307923/packages/api/src/mcp/MCPConnectionFactory.ts"
+    },
+    {
+      "repository": "LibreChat-AI/LibreChat",
+      "path": "packages/api/src/mcp/__tests__/MCPOAuthRaceCondition.test.ts",
+      "commit": "7b2362d7a7c6148b84850924dc7fa5fc43307923",
+      "bytes_downloaded": 41672,
+      "url": "https://github.com/LibreChat-AI/LibreChat/blob/7b2362d7a7c6148b84850924dc7fa5fc43307923/packages/api/src/mcp/__tests__/MCPOAuthRaceCondition.test.ts"
+    },
+    {
+      "repository": "LibreChat-AI/LibreChat",
+      "path": "packages/api/src/mcp/__tests__/MCPConnectionDisposeRace.test.ts",
+      "commit": "7b2362d7a7c6148b84850924dc7fa5fc43307923",
+      "bytes_downloaded": 4888,
+      "url": "https://github.com/LibreChat-AI/LibreChat/blob/7b2362d7a7c6148b84850924dc7fa5fc43307923/packages/api/src/mcp/__tests__/MCPConnectionDisposeRace.test.ts"
+    },
+    {
+      "repository": "LibreChat-AI/LibreChat",
+      "path": "e2e/specs/mock/mcp-oauth-resume.spec.ts",
+      "commit": "7b2362d7a7c6148b84850924dc7fa5fc43307923",
+      "bytes_downloaded": 4897,
+      "url": "https://github.com/LibreChat-AI/LibreChat/blob/7b2362d7a7c6148b84850924dc7fa5fc43307923/e2e/specs/mock/mcp-oauth-resume.spec.ts"
+    },
+    {
+      "repository": "cline/cline",
+      "path": "apps/vscode/src/services/mcp/McpHub.ts",
+      "commit": "29896ec7fa8e2dd98805b56c2dae987d59fc9baa",
+      "bytes_downloaded": 84156,
+      "url": "https://github.com/cline/cline/blob/29896ec7fa8e2dd98805b56c2dae987d59fc9baa/apps/vscode/src/services/mcp/McpHub.ts"
+    },
+    {
+      "repository": "cline/cline",
+      "path": "apps/vscode/src/services/mcp/StreamableHttpReconnectHandler.ts",
+      "commit": "29896ec7fa8e2dd98805b56c2dae987d59fc9baa",
+      "bytes_downloaded": 9662,
+      "url": "https://github.com/cline/cline/blob/29896ec7fa8e2dd98805b56c2dae987d59fc9baa/apps/vscode/src/services/mcp/StreamableHttpReconnectHandler.ts"
+    },
+    {
+      "repository": "cline/cline",
+      "path": "apps/vscode/src/services/mcp/__tests__/McpHub.callTool.test.ts",
+      "commit": "29896ec7fa8e2dd98805b56c2dae987d59fc9baa",
+      "bytes_downloaded": 15314,
+      "url": "https://github.com/cline/cline/blob/29896ec7fa8e2dd98805b56c2dae987d59fc9baa/apps/vscode/src/services/mcp/__tests__/McpHub.callTool.test.ts"
+    },
+    {
+      "repository": "cline/cline",
+      "path": "apps/vscode/src/services/mcp/__tests__/McpHub.timeoutReconnect.test.ts",
+      "commit": "29896ec7fa8e2dd98805b56c2dae987d59fc9baa",
+      "bytes_downloaded": 2835,
+      "url": "https://github.com/cline/cline/blob/29896ec7fa8e2dd98805b56c2dae987d59fc9baa/apps/vscode/src/services/mcp/__tests__/McpHub.timeoutReconnect.test.ts"
+    },
+    {
+      "repository": "continuedev/continue",
+      "path": "core/context/mcp/MCPConnection.ts",
+      "commit": "5522c6f44ca0ac3528b37244818fbfa39b5af470",
+      "bytes_downloaded": 20767,
+      "url": "https://github.com/continuedev/continue/blob/5522c6f44ca0ac3528b37244818fbfa39b5af470/core/context/mcp/MCPConnection.ts"
+    },
+    {
+      "repository": "continuedev/continue",
+      "path": "core/context/mcp/MCPManagerSingleton.ts",
+      "commit": "5522c6f44ca0ac3528b37244818fbfa39b5af470",
+      "bytes_downloaded": 5707,
+      "url": "https://github.com/continuedev/continue/blob/5522c6f44ca0ac3528b37244818fbfa39b5af470/core/context/mcp/MCPManagerSingleton.ts"
+    },
+    {
+      "repository": "continuedev/continue",
+      "path": "core/context/mcp/MCPConnection.vitest.ts",
+      "commit": "5522c6f44ca0ac3528b37244818fbfa39b5af470",
+      "bytes_downloaded": 14775,
+      "url": "https://github.com/continuedev/continue/blob/5522c6f44ca0ac3528b37244818fbfa39b5af470/core/context/mcp/MCPConnection.vitest.ts"
+    },
+    {
+      "repository": "langchain-ai/langchain-mcp-adapters",
+      "path": "langchain_mcp_adapters/client.py",
+      "commit": "52a4535f3eb4b98f386836e4d9b8c4cadf99afca",
+      "bytes_downloaded": 14765,
+      "url": "https://github.com/langchain-ai/langchain-mcp-adapters/blob/52a4535f3eb4b98f386836e4d9b8c4cadf99afca/langchain_mcp_adapters/client.py"
+    },
+    {
+      "repository": "langchain-ai/langchain-mcp-adapters",
+      "path": "langchain_mcp_adapters/tools.py",
+      "commit": "52a4535f3eb4b98f386836e4d9b8c4cadf99afca",
+      "bytes_downloaded": 26665,
+      "url": "https://github.com/langchain-ai/langchain-mcp-adapters/blob/52a4535f3eb4b98f386836e4d9b8c4cadf99afca/langchain_mcp_adapters/tools.py"
+    },
+    {
+      "repository": "langchain-ai/langchain-mcp-adapters",
+      "path": "langchain_mcp_adapters/interceptors.py",
+      "commit": "52a4535f3eb4b98f386836e4d9b8c4cadf99afca",
+      "bytes_downloaded": 4817,
+      "url": "https://github.com/langchain-ai/langchain-mcp-adapters/blob/52a4535f3eb4b98f386836e4d9b8c4cadf99afca/langchain_mcp_adapters/interceptors.py"
+    }
+  ],
+  "cited_primary_urls": [
+    "https://atlassian.github.io/atlassian-mcp-server/",
+    "https://developers.google.com/workspace/calendar/api/guides/configure-mcp-server",
+    "https://developers.notion.com/guides/mcp/get-started-with-mcp",
+    "https://docs.langchain.com/oss/python/langchain/human-in-the-loop",
+    "https://docs.langchain.com/oss/python/langgraph/interrupts",
+    "https://docs.slack.dev/ai/slack-mcp-server/",
+    "https://github.com/aaif-goose/goose/blob/04ed836c8cde23e540cc77d256992e00be99298b/crates/goose/src/agents/extension.rs",
+    "https://github.com/aaif-goose/goose/blob/04ed836c8cde23e540cc77d256992e00be99298b/documentation/docs/mcp/extension-manager-mcp.md",
+    "https://github.com/anomalyco/opencode/blob/a42f393c850bec0c0f395fb91bf19b1ee8b31666/packages/opencode/src/mcp/index.ts",
+    "https://github.com/anomalyco/opencode/blob/a42f393c850bec0c0f395fb91bf19b1ee8b31666/packages/opencode/src/mcp/oauth-provider.ts",
+    "https://github.com/cline/cline/blob/29896ec7fa8e2dd98805b56c2dae987d59fc9baa/apps/vscode/src/services/mcp/__tests__/McpHub.callTool.test.ts",
+    "https://github.com/cline/cline/blob/29896ec7fa8e2dd98805b56c2dae987d59fc9baa/apps/vscode/src/services/mcp/StreamableHttpReconnectHandler.ts",
+    "https://github.com/continuedev/continue/blob/5522c6f44ca0ac3528b37244818fbfa39b5af470/core/context/mcp/MCPManagerSingleton.ts",
+    "https://github.com/github/github-mcp-server/blob/85598ba6e1256f7ebf4867b95d63b833c4549264/docs/host-integration.md",
+    "https://github.com/langchain-ai/langchain-mcp-adapters/blob/52a4535f3eb4b98f386836e4d9b8c4cadf99afca/langchain_mcp_adapters/client.py",
+    "https://github.com/langchain-ai/langchain-mcp-adapters/blob/52a4535f3eb4b98f386836e4d9b8c4cadf99afca/langchain_mcp_adapters/tools.py",
+    "https://github.com/LibreChat-AI/LibreChat/blob/7b2362d7a7c6148b84850924dc7fa5fc43307923/e2e/specs/mock/mcp-oauth-resume.spec.ts",
+    "https://github.com/LibreChat-AI/LibreChat/blob/7b2362d7a7c6148b84850924dc7fa5fc43307923/packages/api/src/mcp/__tests__/MCPConnectionDisposeRace.test.ts",
+    "https://github.com/LibreChat-AI/LibreChat/blob/7b2362d7a7c6148b84850924dc7fa5fc43307923/packages/api/src/mcp/__tests__/MCPOAuthRaceCondition.test.ts",
+    "https://github.com/microsoft/vscode/blob/a460613c57b4c1eb2bc8edc97be694e05ae286b2/src/vs/workbench/contrib/mcp/common/mcpServer.ts",
+    "https://github.com/microsoft/vscode/blob/a460613c57b4c1eb2bc8edc97be694e05ae286b2/src/vs/workbench/contrib/mcp/common/mcpServerConnection.ts",
+    "https://github.com/modelcontextprotocol/conformance",
+    "https://github.com/modelcontextprotocol/modelcontextprotocol/blob/main/schema/2026-07-28/schema.json",
+    "https://github.com/modelcontextprotocol/rust-sdk/blob/972af863f813ad97be8d9b7dc3207d3b5731adf9/README.md",
+    "https://github.com/openai/codex/blob/6e1ab4d294cdf1d2606a91bf1acf6de0f0959c7a/codex-rs/codex-mcp/src/tool_catalog_cache.rs",
+    "https://github.com/openai/codex/blob/6e1ab4d294cdf1d2606a91bf1acf6de0f0959c7a/codex-rs/core/src/tools/handlers/tool_search_spec.rs",
+    "https://linear.app/docs/mcp",
+    "https://modelcontextprotocol.io/docs/2026-07-28/tutorials/security/security_best_practices",
+    "https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization",
+    "https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization/client-registration",
+    "https://modelcontextprotocol.io/specification/2026-07-28/basic/transports/streamable-http",
+    "https://modelcontextprotocol.io/specification/2026-07-28/basic/versioning",
+    "https://modelcontextprotocol.io/specification/2026-07-28/changelog",
+    "https://modelcontextprotocol.io/specification/2026-07-28/server/tools",
+    "https://www.anthropic.com/engineering/advanced-tool-use",
+    "https://www.rfc-editor.org/info/rfc8252/"
+  ],
+  "baseline_checks": [
+    {
+      "command": "cargo test -p grain-core --locked --offline capability_",
+      "passed": 36,
+      "failed": 0
+    },
+    {
+      "command": "cargo test -p grain-core --locked --offline --test capability_benchmark -- --nocapture",
+      "passed": 4,
+      "failed": 0
+    }
+  ],
+  "not_verified": [
+    "Full Tauri build",
+    "Live OAuth login and refresh",
+    "Live provider writes",
+    "Real LLM multi-extension scenarios",
+    "Proposed architecture implementation"
+  ]
+}
