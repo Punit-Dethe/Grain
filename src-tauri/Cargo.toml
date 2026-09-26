@@ -77,6 +77,8 @@ rmcp = { version = "3.0.0", default-features = false, features = ["client", "aut
 reqwest_mcp = { package = "reqwest", version = "0.13.2", default-features = false, features = ["json", "stream", "rustls"] }
 async-trait = "0.1"
 futures-util = "0.3"
+# Already used by rmcp; names its public SSE stream type for our cancellable HTTP adapter.
+sse-stream = "0.2.5"
 tokio-tungstenite = "0.24" # [GRAIN] local WS event transport to the pill
 rustfft = "6.4.0"
 strsim = "0.11.0"

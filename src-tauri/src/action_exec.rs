@@ -231,30 +231,47 @@ async fn execute(app: &AppHandle, prepared: &PreparedCall) -> ActionOutcome {
 }
 
 async fn mcp_execute(app: &AppHandle, provider_id: &str, prepared: &PreparedCall) -> ActionOutcome {
-    match crate::grain_mcp::call_tool(
-        app,
-        provider_id,
-        &prepared.action_id,
-        &prepared.arguments,
-        &prepared.manifest_digest,
+    mcp_outcome(
+        crate::grain_mcp::call_tool(
+            app,
+            provider_id,
+            &prepared.action_id,
+            &prepared.arguments,
+            &prepared.manifest_digest,
+        )
+        .await,
+        prepared,
     )
-    .await
-    {
-        Ok(output) if output.is_error => ActionOutcome::Failed {
-            class: FailureClass::Internal,
-            message: output.text,
+}
+
+/// Shared by the production executor and protocol regression tests. Outcome
+/// certainty comes from the dispatch boundary, never from an exception string.
+pub(crate) fn mcp_outcome(
+    result: Result<crate::grain_mcp::McpCallOutput, grain_core::execution::ExecutionFailure>,
+    prepared: &PreparedCall,
+) -> ActionOutcome {
+    match result {
+        Ok(output) if output.is_error => ActionOutcome::ToolReportedError {
+            message: format!("The MCP tool reported an error. Partial effects may have occurred; do not repeat automatically.\n{}", output.text),
         },
-        Ok(output) => ActionOutcome::Succeeded(SuccessData {
-            source: Some(prepared.provider_name.clone()),
-            title: Some(prepared.action_id.clone()),
-            body: Some(output.text),
-            details: Vec::new(),
-            receipt: true,
-        }),
-        Err(error) => ActionOutcome::Failed {
-            class: FailureClass::Network,
-            message: format!("The MCP action did not run: {error}"),
+        Ok(output) => {
+            let mut details = Vec::new();
+            if output.truncated {
+                details.push(Field { label: "Result".into(), value: "Some result data was omitted because of the size limit.".into() });
+            }
+            if !output.unsupported_content.is_empty() {
+                details.push(Field { label: "Omitted content".into(), value: output.unsupported_content.join(", ") });
+            }
+            ActionOutcome::Succeeded(SuccessData {
+                source: Some(prepared.provider_name.clone()),
+                title: Some(prepared.action_id.clone()),
+                body: Some(output.text),
+                structured_content: output.structured_content,
+                details,
+                receipt: prepared.side_effect == SideEffect::Write,
+            })
         },
+        Err(error) => error.into_outcome(),
     }
 }
 
@@ -384,6 +401,7 @@ fn parse_worker_outcome(value: Value, prepared: &PreparedCall) -> ActionOutcome 
         source: Some(prepared.provider_name.clone()),
         title,
         body,
+        structured_content: None,
         details,
         // A worker cannot hide a host-classified write by returning receipt:false.
         receipt: prepared.side_effect == SideEffect::Write,
