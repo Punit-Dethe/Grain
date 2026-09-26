@@ -119,9 +119,10 @@ pub fn mint_worker_token(ext_id: &str, caps: std::collections::HashSet<String>) 
 
 fn mint_extension_token(
     ext_id: &str,
-    caps: std::collections::HashSet<String>,
+    mut caps: std::collections::HashSet<String>,
     role: crate::events_auth::ClientRole,
 ) -> String {
+    caps.retain(|cap| grain_sdk::manifest::tool_permission_allowed(cap));
     let token = format!(
         "{}{}",
         uuid::Uuid::new_v4().simple(),
@@ -486,10 +487,12 @@ async fn handle(stream: TcpStream, ctx: Arc<AppContext>, app: AppHandle) {
         None
     };
 
-    let mut rx = ctx.subscribe();
+    // Tools have only explicit call/result traffic, never a daemon event feed.
+    // Do not even retain a broadcast receiver for idle extension workers.
+    let mut rx = (!is_worker).then(|| ctx.subscribe());
     loop {
         tokio::select! {
-            ev = rx.recv() => match ev {
+            ev = async { rx.as_mut().expect("pill event receiver").recv().await }, if !is_worker => match ev {
                 Ok(ev) => {
                     // Capability filter: an identity without the grant never
                     // receives the event at all (SPEC §1.3).

@@ -403,23 +403,6 @@ fn check_icon(root: &Path, project: &ExtensionProjectManifest, report: &mut Doct
 fn check_recommendation(project: &ExtensionProjectManifest, report: &mut DoctorReport) {
     let manifest = &project.manifest;
 
-    // The likeliest confusion after V1: commands declared by something Grain
-    // never ranks. They are not wasted — the extension matches against them
-    // itself — but nothing the user says out loud will reach them.
-    if !manifest.kind.is_searchable() && !manifest.contributes.actions.is_empty() {
-        report.findings.push(Finding::advice(
-            "W_KIND_UNRANKED",
-            "manifest.json",
-            format!(
-                "kind is '{}', so Grain never hands this extension a spoken request; its {} \
-                 declared action(s) are reachable only from its own shortcut or its own \
-                 matching. Declare kind 'searchable' to be recommended.",
-                manifest.kind.as_str(),
-                manifest.contributes.actions.len()
-            ),
-        ));
-    }
-
     let Some(recommend) = &manifest.recommend else {
         return;
     };
@@ -602,9 +585,7 @@ fn check_pack_contract(project: &ExtensionProjectManifest, report: &mut DoctorRe
         manifest,
         payloads: PackPayloads::default(),
     };
-    // `doctor` is a developer-project check. Native companions are permitted
-    // only through this unpacked/developer validation boundary; installation
-    // and import still use `validate()` and reject native code.
+    // Developer and install validation both enforce the tool-only boundary.
     let validation = if pack.manifest.tier == Tier::Native {
         pack.validate_dev()
     } else {
@@ -944,8 +925,8 @@ mod tests {
             r#"{
               "id":"com.example.clean","name":"Clean","version":"0.1.0",
               "grainApi":"^1.0","tier":"scripted","entry":"dist/main.js","icon":"icon.png",
-              "permissions":[],"activation":["onShortcut:open"],
-              "contributes":{"shortcuts":[{"id":"open","label":"Open"}]}
+              "permissions":[],"activation":[],
+              "contributes":{"actions":[{"id":"read","title":"Read","risk":"safe","utterances":["read data"]}]}
             }"#,
         )
         .unwrap();
@@ -1065,7 +1046,7 @@ mod tests {
     }
 
     #[test]
-    fn native_developer_project_has_no_javascript_entry_requirement() {
+    fn native_companions_are_rejected_in_developer_projects() {
         let directory = tempfile::tempdir().unwrap();
         fs::write(
             directory.path().join("manifest.json"),
@@ -1079,11 +1060,14 @@ mod tests {
         .unwrap();
         write_icon(directory.path());
 
-        assert!(doctor(directory.path()).is_clean());
+        assert!(doctor(directory.path())
+            .findings
+            .iter()
+            .any(|finding| finding.code == "E_MANIFEST" && finding.message.contains("Retired")));
     }
 
     #[test]
-    fn session_mode_is_a_valid_runtime_activation_path() {
+    fn retired_session_modes_are_rejected() {
         let directory = tempfile::tempdir().unwrap();
         fs::write(
             directory.path().join("manifest.json"),
@@ -1097,7 +1081,10 @@ mod tests {
         .unwrap();
         write_icon(directory.path());
 
-        assert!(doctor(directory.path()).is_clean());
+        assert!(doctor(directory.path())
+            .findings
+            .iter()
+            .any(|finding| finding.code == "E_MANIFEST" && finding.message.contains("Retired")));
     }
 
     #[test]
@@ -1120,7 +1107,7 @@ mod tests {
     const SEARCHABLE: &str = r#"{
       "id":"com.example.open","name":"Open","version":"1.1.0",
       "grainApi":"^1.0","tier":"scripted","entry":"dist/main.js","icon":"icon.png",
-      "permissions":["open:url","settings"],"activation":[],
+      "permissions":["storage"],"activation":[],
       "kind":"searchable",
       "recommend":{
         "purpose":"Open the apps and sites you set up",
@@ -1150,7 +1137,7 @@ mod tests {
     }
 
     #[test]
-    fn commands_on_an_unranked_extension_are_called_out() {
+    fn tools_do_not_require_whole_request_recommendation() {
         // The likeliest confusion after V1: an author declares actions, ships
         // `extending` by omission, and nothing they say out loud reaches it.
         let directory = variant(&[(
@@ -1163,7 +1150,7 @@ mod tests {
             "",
         )]);
         let report = doctor(directory.path());
-        assert!(codes(&report).contains(&"W_KIND_UNRANKED"), "{report}");
+        assert!(!codes(&report).contains(&"W_KIND_UNRANKED"), "{report}");
         assert!(
             report.is_clean(),
             "declaring commands without being searchable is legal, just useless: {report}"
@@ -1323,7 +1310,7 @@ mod tests {
         // phrasing, however the paths happen to sort.
         let directory = variant(&[
             (
-                r#""permissions":["open:url","settings"]"#,
+                r#""permissions":["storage"]"#,
                 r#""permissions":["not-real"]"#,
             ),
             (r#""aliases":["shortcuts"]"#, r#""aliases":["launch"]"#),

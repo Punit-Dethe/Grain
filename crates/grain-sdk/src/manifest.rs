@@ -1760,6 +1760,12 @@ pub fn network_capability_host(capability: &str) -> Option<&str> {
     valid.then_some(host)
 }
 
+/// Allowlist shared by pack validation and runtime token issuance. Old grants
+/// cannot restore retired host privileges, even after a package update.
+pub fn tool_permission_allowed(permission: &str) -> bool {
+    matches!(permission, "storage" | "auth") || network_capability_host(permission).is_some()
+}
+
 fn valid_https_endpoint(value: &str) -> bool {
     if value.len() > 2048
         || value.contains(['?', '#', '\\'])
@@ -1935,6 +1941,52 @@ pub struct GrainPack {
 }
 
 impl GrainPack {
+    /// The live extension profile: tools, scoped storage/network and auth only.
+    /// Legacy fields remain readable solely so installed packages get a precise
+    /// retirement error at every trust boundary instead of silently changing behavior.
+    pub fn validate_tool_only(&self) -> Result<(), String> {
+        let m = &self.manifest;
+        let c = &m.contributes;
+        let retired = if m.tier == Tier::Native || m.companion.is_some() {
+            Some("native companion executables")
+        } else if m.tier == Tier::Pack {
+            Some("data and prompt packs")
+        } else if !m.activation.is_empty() {
+            Some("startup, event, transform and shortcut activation")
+        } else if !m.slots.is_empty() || !m.variant_slots.is_empty() {
+            Some("Grain feature slots")
+        } else if !c.prompt_layers.is_empty() || !self.payloads.prompts.is_empty() {
+            Some("prompt contributions")
+        } else if c.actions.iter().any(|action| action.agent_rules.is_some()) {
+            Some("agent prompt rules")
+        } else if !c.settings.is_empty() {
+            Some("settings contributions")
+        } else if !c.shortcuts.is_empty() || c.session_mode.is_some() {
+            Some("shortcuts and recording sessions")
+        } else if !m.needs.is_empty() {
+            Some("host semantic resources")
+        } else if c
+            .actions
+            .iter()
+            .any(|action| !action.when.is_unconditional())
+        {
+            Some("application and context scoped actions")
+        } else {
+            None
+        };
+        if let Some(feature) = retired {
+            return Err(format!(
+                "Retired extension feature: {feature}. Grain extensions now provide tools only."
+            ));
+        }
+        for permission in &m.permissions {
+            if !tool_permission_allowed(permission) {
+                return Err(format!("Retired or unsupported extension permission '{permission}'. Grain extensions now provide tools only."));
+            }
+        }
+        Ok(())
+    }
+
     /// Enforce Grain's host-owned UI boundary without requiring the rest of the
     /// pack to be materialized. Registry tooling uses this for legacy ZIP
     /// artifacts before deriving any catalogue metadata.
@@ -2010,6 +2062,7 @@ impl GrainPack {
     }
 
     fn validate_inner(&self, allow_native: bool, allow_reserved_id: bool) -> Result<(), String> {
+        self.validate_tool_only()?;
         let m = &self.manifest;
         validate_extension_id(&m.id)?;
         validate_extension_version(&m.version)?;
@@ -2298,6 +2351,99 @@ fn validate_no_visual_customization(pack: &GrainPack) -> Result<(), String> {
 mod tests {
     use super::*;
 
+    #[test]
+    fn retired_features_fail_at_every_trust_boundary_including_mixed_tools() {
+        use serde_json::json;
+        let base = json!({"manifest": {"id":"com.example.tools","name":"Tools","version":"1",
+            "tier":"scripted","entry_source":"grain.on('action', () => ({}))",
+            "permissions":["storage","net:api.example.com"],
+            "contributes":{"actions":[{"id":"read","title":"Read","risk":"confirm","utterances":["read data"]}]}}, "payloads": {}});
+        let valid: GrainPack = serde_json::from_value(base.clone()).unwrap();
+        assert!(valid.validate().is_ok());
+        assert!(valid.validate_dev().is_ok());
+        assert!(valid.validate_trusted().is_ok());
+        for (pointer, value) in [
+            (
+                "/payloads/prompts",
+                json!([{"id":"p", "name":"P", "prompt":"Rewrite"}]),
+            ),
+            (
+                "/manifest/contributes/actions/0/agentRules",
+                json!("Change the agent prompt"),
+            ),
+            (
+                "/manifest/contributes/actions/0/agent_rules",
+                json!("Change the agent prompt"),
+            ),
+            ("/manifest/tier", json!("pack")),
+            ("/manifest/tier", json!("native")),
+            ("/manifest/activation", json!(["onStartup"])),
+            (
+                "/manifest/activation",
+                json!(["onEvent:TranscriptionComplete"]),
+            ),
+            ("/manifest/slots", json!(["prompt.main"])),
+            ("/manifest/needs", json!(["semantic"])),
+            (
+                "/manifest/contributes/promptLayers",
+                json!([{"id":"p","text":"Rewrite"}]),
+            ),
+            (
+                "/manifest/contributes/promptLayer",
+                json!([{"id":"p","text":"Rewrite"}]),
+            ),
+            (
+                "/manifest/contributes/settings",
+                json!([{"key":"k","label":"K","kind":"bool"}]),
+            ),
+            (
+                "/manifest/contributes/shortcuts",
+                json!([{"id":"s","label":"S"}]),
+            ),
+            (
+                "/manifest/contributes/sessionMode",
+                json!({"id":"s","label":"S"}),
+            ),
+            (
+                "/manifest/contributes/session_mode",
+                json!({"id":"s","label":"S"}),
+            ),
+            (
+                "/manifest/contributes/actions/0/when",
+                json!({"app":["code"]}),
+            ),
+        ] {
+            let mut candidate = base.clone();
+            let (parent, key) = pointer.rsplit_once('/').unwrap();
+            candidate
+                .pointer_mut(parent)
+                .unwrap()
+                .as_object_mut()
+                .unwrap()
+                .insert(key.to_string(), value);
+            let pack: GrainPack = serde_json::from_value(candidate).unwrap();
+            for result in [
+                pack.validate(),
+                pack.validate_dev(),
+                pack.validate_trusted(),
+            ] {
+                assert!(result.unwrap_err().contains("Retired"), "{pointer}");
+            }
+        }
+        for capability in KNOWN_CAPABILITIES
+            .iter()
+            .filter(|cap| !tool_permission_allowed(cap))
+        {
+            let mut candidate = base.clone();
+            candidate["manifest"]["permissions"] = json!([capability]);
+            let pack: GrainPack = serde_json::from_value(candidate).unwrap();
+            assert!(
+                pack.validate().unwrap_err().contains("Retired"),
+                "{capability}"
+            );
+        }
+    }
+
     fn pack(json: &str) -> Result<(), String> {
         serde_json::from_str::<GrainPack>(json)
             .map_err(|e| e.to_string())
@@ -2446,67 +2592,6 @@ mod tests {
     }
 
     #[test]
-    fn needs_names_a_known_resource() {
-        assert_eq!(
-            searchable(&format!(r#"{RECOMMEND},"needs":["semantic"]"#)),
-            Ok(())
-        );
-        // A typo here would otherwise be a silent no-op — the extension would
-        // install, declare a need nobody honours, and rank badly for reasons
-        // nothing explains.
-        assert!(searchable(&format!(r#"{RECOMMEND},"needs":["semantics"]"#)).is_err());
-    }
-
-    #[test]
-    fn an_inert_pack_may_contribute_a_prompt_layer() {
-        // Static text plus a host-evaluated match is exactly what a tier-A pack
-        // should be able to do. Requiring a runtime for it would push authors
-        // toward code they do not need, which is the more dangerous outcome.
-        assert_eq!(
-            pack_with_layers(
-                r#"[{"id":"jira","when":{"website":["jira."]},
-                     "text":"Write in imperative mood."}]"#
-            ),
-            Ok(())
-        );
-    }
-
-    #[test]
-    fn an_inert_pack_may_claim_the_context_slot() {
-        // Door 2: replacing Grain's guess about a surface needs no runtime —
-        // a pack that ships better wording for the same job is the point.
-        assert_eq!(
-            pack(&format!(
-                r#"{{"manifest":{{"id":"com.x.p","name":"P","version":"1.0","tier":"pack",
-                    "slots":["{PROMPT_CONTEXT_SLOT}"],
-                    "contributes":{{"promptLayers":[{{"id":"a","target":"context","text":"Be terse."}}]}}}}}}"#
-            )),
-            Ok(())
-        );
-    }
-
-    #[test]
-    fn main_and_context_replacements_require_their_exclusive_slots() {
-        assert_eq!(
-            pack(&format!(
-                r#"{{"manifest":{{"id":"com.x.p","name":"P","version":"1.0","tier":"pack",
-                    "slots":["{PROMPT_MAIN_SLOT}"],
-                    "contributes":{{"promptLayers":[{{"id":"main","target":"main","text":"Preserve wording."}}]}}}}}}"#
-            )),
-            Ok(())
-        );
-        assert!(
-            pack_with_layers(r#"[{"id":"main","target":"main","text":"Preserve wording."}]"#)
-                .is_err()
-        );
-        assert!(pack(&format!(
-            r#"{{"manifest":{{"id":"com.x.p","name":"P","version":"1.0","tier":"pack",
-                "slots":["{PROMPT_CONTEXT_SLOT}"]}}}}"#
-        ))
-        .is_err());
-    }
-
-    #[test]
     fn main_replacement_is_single_and_unconditional() {
         let conditional = format!(
             r#"{{"manifest":{{"id":"com.x.p","name":"P","version":"1.0","tier":"pack",
@@ -2514,24 +2599,6 @@ mod tests {
                 {{"id":"main","target":"main","when":{{"app":["code"]}},"text":"X"}}]}}}}}}"#
         );
         assert!(pack(&conditional).is_err());
-    }
-
-    #[test]
-    fn context_replacement_uses_first_match_with_fallback_last() {
-        let valid = format!(
-            r#"{{"manifest":{{"id":"com.x.p","name":"P","version":"1.0","tier":"pack",
-                "slots":["{PROMPT_CONTEXT_SLOT}"],"contributes":{{"promptLayers":[
-                {{"id":"code","target":"context","when":{{"app":["code"]}},"text":"Code."}},
-                {{"id":"fallback","target":"context","text":"General."}}]}}}}}}"#
-        );
-        assert_eq!(pack(&valid), Ok(()));
-        let unreachable = format!(
-            r#"{{"manifest":{{"id":"com.x.p","name":"P","version":"1.0","tier":"pack",
-                "slots":["{PROMPT_CONTEXT_SLOT}"],"contributes":{{"promptLayers":[
-                {{"id":"fallback","target":"context","text":"General."}},
-                {{"id":"code","target":"context","when":{{"app":["code"]}},"text":"Code."}}]}}}}}}"#
-        );
-        assert!(pack(&unreachable).is_err());
     }
 
     #[test]
@@ -2575,31 +2642,6 @@ mod tests {
     }
 
     #[test]
-    fn startup_is_an_explicit_residency_grant() {
-        assert!(pack(
-            r#"{"manifest":{"id":"com.x.p","name":"P","version":"1.0","tier":"scripted","entry_source":"x","activation":["onStartup"]}}"#
-        )
-        .is_err());
-        assert_eq!(
-            pack(
-                r#"{"manifest":{"id":"com.x.p","name":"P","version":"1.0","tier":"scripted","entry_source":"x","permissions":["resident"],"activation":["onStartup"]}}"#
-            ),
-            Ok(())
-        );
-    }
-
-    #[test]
-    fn the_singular_spelling_from_the_spec_still_parses() {
-        assert_eq!(
-            pack(
-                r#"{"manifest":{"id":"com.x.p","name":"P","version":"1.0","tier":"pack",
-                    "contributes":{"promptLayer":[{"id":"a","text":"Be terse."}]}}}"#
-            ),
-            Ok(())
-        );
-    }
-
-    #[test]
     fn prompt_layers_are_bounded_in_count_and_size() {
         let many: Vec<String> = (0..PROMPT_LAYERS_MAX_PER_EXTENSION + 1)
             .map(|i| format!(r#"{{"id":"l{i}","text":"Be terse."}}"#))
@@ -2608,23 +2650,6 @@ mod tests {
 
         let fat = "x".repeat(PROMPT_LAYER_MAX_BYTES + 1);
         assert!(pack_with_layers(&format!(r#"[{{"id":"a","text":"{fat}"}}]"#)).is_err());
-    }
-
-    #[test]
-    fn prompt_layer_text_may_not_hide_what_a_reviewer_read() {
-        // A right-to-left override can make approved text render as one thing
-        // and tokenize as another; no legitimate instruction needs one. Written
-        // as JSON escapes because rustc refuses the raw codepoints in a source
-        // literal — the same defence, one layer down.
-        let bidi = format!(r#"[{{"id":"a","text":"Be terse.{}evil"}}]"#, '\u{202E}');
-        assert!(pack_with_layers(&bidi).is_err());
-        let zero_width = format!(r#"[{{"id":"a","text":"Be{}terse."}}]"#, '\u{200B}');
-        assert!(pack_with_layers(&zero_width).is_err());
-        // Ordinary line breaks are fine — an instruction may be two sentences.
-        assert_eq!(
-            pack_with_layers(r#"[{"id":"a","text":"Be terse.\nUse British spelling."}]"#),
-            Ok(())
-        );
     }
 
     #[test]
@@ -2701,7 +2726,7 @@ mod tests {
 
         // The same declaration is fine once it reads the action back first.
         let confirmed = open_anything.replace(r#""risk":"safe""#, r#""risk":"confirm""#);
-        assert_eq!(pack_with_actions(r#"["open:url"]"#, &confirmed), Ok(()));
+        assert!(pack_with_actions(r#"["open:url"]"#, &confirmed).is_err());
 
         // And fine as `safe` when there is no sink to feed.
         assert_eq!(pack_with_actions("[]", open_anything), Ok(()));
@@ -2858,27 +2883,6 @@ mod tests {
     }
 
     #[test]
-    fn the_shipped_voice_actions_declaration_validates() {
-        // The first real consumer, pinned. It is also the case the risk rule was
-        // written for and the one easiest to get backwards: this extension holds
-        // `open:url` and `open:app`, so a free-text span would be "open whatever
-        // Grain mishears" — but `target` is a RESOLVED entity, matched against
-        // the user's own configured shortcuts before anything launches, so
-        // `safe` is correct here.
-        assert_eq!(
-            pack_with_actions(
-                r#"["transform:transcript","open:url","open:app","capture:app","settings"]"#,
-                r#"[{"id":"open","title":"Open an app or site you set up",
-                     "risk":"safe",
-                     "utterances":["open {target}","launch {target}","go to {target}",
-                                   "start up {target}","bring up {target}"],
-                     "params":[{"name":"target","kind":"entity","resolve":true}]}]"#
-            ),
-            Ok(())
-        );
-    }
-
-    #[test]
     fn an_extension_may_not_make_its_own_action_unreachable() {
         // Ranking is global and deterministic, so of two actions claiming one
         // phrase, the same one always wins and the other is dead. The author
@@ -2988,17 +2992,6 @@ mod tests {
     }
 
     #[test]
-    fn valid_prompt_pack_passes() {
-        assert_eq!(
-            pack(
-                r#"{"manifest":{"id":"com.x.zh","name":"Zh Prompts","version":"1.0","tier":"pack"},
-                    "payloads":{"prompts":[{"id":"formal","name":"Formal","prompt":"Rewrite formally."}]}}"#
-            ),
-            Ok(())
-        );
-    }
-
-    #[test]
     fn visual_customization_is_rejected_at_every_trust_boundary() {
         let json = r#"{"manifest":{"id":"com.x.neon","name":"Neon","version":"1","tier":"pack",
                 "slots":["pill.theme"]},
@@ -3026,7 +3019,7 @@ mod tests {
         assert_eq!(
             pack(
                 r#"{"manifest":{"id":"com.x.cat","name":"Cat","version":"1","tier":"scripted",
-                    "permissions":["storage","llm"],"activation":["onEvent:TranscriptionComplete"],
+                    "permissions":["storage","net:api.example.com"],
                     "entry_source":"grain.log.info('hi')"}}"#
             ),
             Ok(())
@@ -3087,7 +3080,7 @@ mod tests {
         // unknown fields from a newer contract are tolerated
         assert_eq!(
             pack(
-                r#"{"manifest":{"id":"com.x.y","name":"n","version":"1","tier":"pack","futureField":1}}"#
+                r#"{"manifest":{"id":"com.x.y","name":"n","version":"1","tier":"scripted","entry_source":"x","futureField":1}}"#
             ),
             Ok(())
         );
@@ -3096,7 +3089,7 @@ mod tests {
     #[test]
     fn only_trusted_catalogue_artifacts_may_claim_reserved_ids() {
         let pack: GrainPack = serde_json::from_str(
-            r#"{"manifest":{"id":"grain.first-party","name":"First party","version":"1","tier":"pack"}}"#,
+            r#"{"manifest":{"id":"grain.first-party","name":"First party","version":"1","tier":"scripted","entry_source":"x"}}"#,
         )
         .unwrap();
 
@@ -3106,126 +3099,6 @@ mod tests {
     }
 
     /// Native declarative controls remain available after authored UI removal.
-    #[test]
-    fn declarative_settings_and_shortcuts_parse_and_validate() {
-        let json = r#"{"manifest":{
-            "id":"com.x.spaces","name":"Spaces","version":"1","tier":"scripted",
-            "permissions":["storage","resident"],
-            "activation":["onStartup"],
-            "entry_source":"grain.log.info('hi')",
-            "contributes":{
-                "settings":[
-                    {"key":"tone","label":"Tone","kind":"select",
-                     "options":[{"value":"warm","label":"Warm"}],
-                     "anchor":"space.after","order":2},
-                    {"key":"auto","label":"Auto","kind":"bool","default":true}
-                ],
-                "shortcuts":[{"id":"open","label":"Open Spaces","default_binding":"Alt+S"}]
-            }}}"#;
-        let p: GrainPack = serde_json::from_str(json).unwrap();
-        assert_eq!(p.validate(), Ok(()));
-        assert!(matches!(
-            p.manifest.contributes.settings[0].kind,
-            SettingKind::Select { .. }
-        ));
-        assert_eq!(p.manifest.contributes.shortcuts[0].id, "open");
-    }
-
-    #[test]
-    fn phase3_guards_hold() {
-        let scripted = |extra: &str| {
-            pack(&format!(
-                r#"{{"manifest":{{"id":"com.x.y","name":"n","version":"1","tier":"scripted",
-                    "entry_source":"x"{extra}}}}}"#
-            ))
-        };
-        // Visual declarations and visual capabilities are retired regardless of
-        // whether an old manifest supplies both halves of the old contract.
-        assert!(scripted(r#","surfaces":{"workspace":{"title":"T","ui_source":"<p>x"}}"#).is_err());
-        assert!(scripted(
-            r#","permissions":["surface:workspace"],
-               "surfaces":{"workspace":{"title":"T","ui_source":"<p>x"}}"#
-        )
-        .is_err());
-        assert!(scripted(
-            r#","permissions":["surface:overlay"],
-               "surfaces":{"overlay":{"ui_source":"<p>x"}}"#
-        )
-        .is_err());
-        assert!(scripted(r#","surfaces":{"overlay":{"ui_source":"<p>x"}}"#).is_err());
-        assert!(scripted(
-            r#","permissions":["surface:overlay"],"surfaces":{"overlay":{"timeout_ms":2000}}"#
-        )
-        .is_err());
-        // …and a workspace with no UI would open a blank window nobody can
-        // explain, so it is refused at import rather than at open.
-        assert!(scripted(
-            r#","permissions":["surface:workspace"],"surfaces":{"workspace":{"title":"T"}}"#
-        )
-        .is_err());
-        // Unknown slot / anchor, duplicate keys, empty select.
-        assert!(scripted(r#","slots":["not.a.slot"]"#).is_err());
-        assert!(scripted(r#","slots":["pill.theme"]"#).is_err());
-        assert!(scripted(
-            r#","contributes":{"settings":[{"key":"a","label":"A","kind":"bool"},{"key":"a","label":"B","kind":"bool"}]}"#
-        )
-        .is_err());
-        assert!(scripted(
-            r#","contributes":{"settings":[{"key":"a","label":"A","kind":"select","options":[]}]}"#
-        )
-        .is_err());
-        // A colon in either id would make `ext:<extension-id>:<shortcut-id>`
-        // ambiguous, so a press could route to the wrong extension.
-        assert!(
-            scripted(r#","contributes":{"shortcuts":[{"id":"go:now","label":"Go"}]}"#).is_err()
-        );
-        assert!(scripted(r#","contributes":{"shortcuts":[{"id":"go","label":"Go"}]}"#).is_ok());
-        assert!(pack(
-            r#"{"manifest":{"id":"com.x:y","name":"n","version":"1","tier":"scripted",
-                "entry_source":"x","contributes":{"shortcuts":[{"id":"go","label":"Go"}]}}}"#
-        )
-        .is_err());
-        // Data packs have no code, so they cannot declare contributions, and
-        // retired visual slots are rejected for every tier.
-        assert!(pack(
-            r#"{"manifest":{"id":"com.x.t","name":"T","version":"1","tier":"pack",
-                "contributes":{"shortcuts":[{"id":"a","label":"A"}]}}}"#
-        )
-        .is_err());
-        assert!(pack(
-            r#"{"manifest":{"id":"com.x.t","name":"T","version":"1","tier":"pack","slots":["pill.theme"]}}"#
-        )
-        .is_err());
-    }
-
-    #[test]
-    fn session_mode_requires_its_grant_and_a_unique_safe_id() {
-        let base = |permissions: &str, contribution: &str| {
-            pack(&format!(
-                r#"{{"manifest":{{"id":"com.x.notes","name":"Notes","version":"1","tier":"scripted","entry_source":"x","permissions":{permissions},"contributes":{contribution}}}}}"#
-            ))
-        };
-        assert!(base(
-            r#"["session:start"]"#,
-            r#"{"sessionMode":{"id":"note","label":"Dictate a note","default_binding":"Ctrl+Shift+N"}}"#,
-        )
-        .is_ok());
-        assert!(base(
-            "[]",
-            r#"{"sessionMode":{"id":"note","label":"Dictate a note"}}"#,
-        )
-        .is_err());
-        assert!(base(
-            r#"["session:start"]"#,
-            r#"{"sessionMode":{"id":"bad:id","label":"Bad"}}"#,
-        )
-        .is_err());
-        assert!(base(
-            r#"["session:start"]"#,
-            r#"{"shortcuts":[{"id":"note","label":"Other"}],"sessionMode":{"id":"note","label":"Mode"}}"#,
-        )
-        .is_err());
-    }
 
     #[test]
     fn network_grants_accept_one_canonical_host_and_reject_wildcards_or_urls() {
@@ -3320,68 +3193,15 @@ mod tests {
         assert!(parsed.validate().is_err());
     }
 
-    #[test]
-    fn secret_settings_cannot_smuggle_credentials_in_manifest_defaults() {
-        let valid: GrainPack = serde_json::from_str(
-            r#"{"manifest":{"id":"com.x.secret","name":"n","version":"1","tier":"scripted","entry_source":"x","contributes":{"settings":[{"key":"api_key","label":"API key","kind":"secret"}]}}}"#,
-        )
-        .unwrap();
-        valid.validate().unwrap();
-        assert!(matches!(
-            valid.manifest.contributes.settings[0].kind,
-            SettingKind::Secret
-        ));
-        assert!(pack(
-            r#"{"manifest":{"id":"com.x.secret","name":"n","version":"1","tier":"scripted","entry_source":"x","contributes":{"settings":[{"key":"api_key","label":"API key","kind":"secret","default":"shipped-key"}]}}}"#
-        )
-        .is_err());
-    }
-
     /// The retired builtin tier: first-party identity is
     /// mandatory, there is nothing to launch, and it may contribute settings a
     /// data pack cannot.
     /// A `grain://` panel renders a HOST component with Grain's own privileges,
     /// so the tier gate is a security boundary, not a convenience.
-    #[test]
-    fn native_companions_validate_only_through_the_developer_boundary() {
-        let native: GrainPack = serde_json::from_str(
-            r#"{"manifest":{"id":"com.x.native","name":"Native","version":"1","tier":"native","permissions":["storage","resident"],"activation":["onStartup"],"companion":{"windows":"bin/native.exe","macos":"bin/native","linux":"bin/native"}}}"#,
-        )
-        .unwrap();
-        assert!(native.validate().is_err());
-        native.validate_dev().unwrap();
-
-        let missing: GrainPack = serde_json::from_str(
-            r#"{"manifest":{"id":"com.x.native","name":"Native","version":"1","tier":"native"}}"#,
-        )
-        .unwrap();
-        assert!(missing.validate_dev().is_err());
-    }
 
     /// Forward-compatibility (SPEC §4.1/§4.3): a pack written against a NEWER
     /// contract must still install with its known subset — never be rejected
     /// and never lose settings.
-    #[test]
-    fn newer_contract_settings_degrade_instead_of_failing() {
-        let json = r#"{"manifest":{"id":"com.x.y","name":"n","version":"1","tier":"scripted",
-            "entry_source":"x","contributes":{"settings":[
-                {"key":"hue","label":"Hue","kind":"color"},
-                {"key":"mix","label":"Mix","kind":"slider","min":0,"max":1,"step":0.1},
-                {"key":"cols","label":"Cols","kind":"rows"},
-                {"key":"far","label":"Far","kind":"bool","anchor":"some.future.anchor"}
-            ]}}}"#;
-        let p: GrainPack = serde_json::from_str(json).expect("unknown kinds must still parse");
-        // An unknown kind degrades to Unsupported rather than killing the pack.
-        assert_eq!(
-            p.manifest.contributes.settings[2].kind,
-            SettingKind::Unsupported
-        );
-        assert_eq!(p.manifest.contributes.settings[0].kind, SettingKind::Color);
-        // An unknown anchor is accepted; the host falls back to the extension's
-        // own section (SPEC §4.3 — settings are never lost).
-        assert_eq!(p.validate(), Ok(()));
-        assert!(!ANCHORS.contains(&"some.future.anchor"));
-    }
 
     /// The v1 anchor list is contract surface copied from SPEC §4.3 — a typo or
     /// an invented anchor here is a promise we cannot take back.

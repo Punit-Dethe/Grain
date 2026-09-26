@@ -110,7 +110,7 @@ fn required_capability(ev: &DaemonEvent) -> &'static str {
 
 /// May this identity receive this event? (Filtered = never sent, not blanked.)
 pub fn allows_event(identity: &ClientIdentity, ev: &DaemonEvent) -> bool {
-    if identity.role == ClientRole::DevControl {
+    if identity.role != ClientRole::Pill {
         return false;
     }
     // Recommendation ranking and the searchable pool are host UI state before
@@ -201,7 +201,10 @@ mod tests {
 
         assert!(!allows_event(&ext, &transcript), "no transcript cap");
         assert!(!allows_event(&ext, &levels), "no audio-levels cap");
-        assert!(allows_event(&ext, &session), "sessions granted");
+        assert!(
+            !allows_event(&ext, &session),
+            "legacy grants cannot restore event feeds"
+        );
         assert!(allows_event(&pill, &transcript) && allows_event(&pill, &levels));
 
         assert!(!allows_reverse(&ext));
@@ -227,6 +230,26 @@ mod tests {
         };
         assert!(!allows_event(&worker, &event));
         assert!(allows_event(&pill, &event));
+    }
+
+    #[test]
+    fn even_all_capabilities_cannot_give_workers_an_event_feed() {
+        let worker = ClientIdentity {
+            id: "legacy".into(),
+            role: ClientRole::Worker,
+            caps: CapabilitySet::All,
+        };
+        for event in [
+            DaemonEvent::RecordingStopped { session_id: 1 },
+            DaemonEvent::TranscriptionComplete {
+                session_id: 1,
+                text: "private".into(),
+            },
+            DaemonEvent::AudioLevel { levels: vec![0.5] },
+        ] {
+            assert!(!allows_event(&worker, &event));
+        }
+        assert!(!allows_reverse(&worker));
     }
 
     #[test]

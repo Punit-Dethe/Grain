@@ -114,28 +114,9 @@ pub fn required_capability(method: &str) -> Option<&'static str> {
     match method {
         "log.info" | "log.warn" => None,
         "storage.get" | "storage.set" | "storage.delete" => Some("storage"),
-        "doc.get" | "doc.put" | "doc.delete" | "doc.list" => Some("storage"),
-        "settings.get" | "settings.set" => Some("settings"),
-        "llm.complete" => Some("llm"),
-        // The real grant is derived from the parsed URL (`net:<exact-host>`).
         "net.fetch" => Some("__dynamic_net__"),
         "auth.status" | "auth.connect" | "auth.disconnect" => Some("auth"),
-        "embed" => Some("embed"),
-        // [GRAIN] The `match.*` primitives (docs/Extensions V1/PLAN.md §4, §12)
-        // take NO capability. A capability governs *reach*, and these reach
-        // nothing beyond the extension's own supplied phrases — unlike `embed`,
-        // which returns raw vectors over arbitrary text and stays gated.
-        // `match.semantic`'s ~130 MB resource is governed by the card-visible
-        // `needs: ["semantic"]` declaration and the §6 lifecycle, not a grant.
-        "match.lexical" | "match.semantic" | "match.decide" => None,
-        "session.start" => Some("session:start"),
-        "capture.selection" => Some("capture:selection"),
-        "capture.app" => Some("capture:app"),
-        "capture.screenText" => Some("capture:screen-text"),
-        "capture.screenImage" => Some("capture:screen-image"),
-        "open.url" => Some("open:url"),
-        "open.app" | "open.pickApp" => Some("open:app"),
-        _ => Some("__unknown__"), // unknown methods map to an ungrantable cap
+        _ => Some("__unknown__"),
     }
 }
 
@@ -699,6 +680,22 @@ fn semantic_match(text: &str, candidates: &[(String, Vec<String>)]) -> anyhow::R
 }
 
 fn authorize(identity: &ClientIdentity, method: &str, params: &Value) -> HostResult<()> {
+    // The reduced profile applies before capability checks. Even a stale token
+    // containing a retired grant (or All) cannot restore Grain internals.
+    if !matches!(
+        method,
+        "log.info"
+            | "log.warn"
+            | "storage.get"
+            | "storage.set"
+            | "storage.delete"
+            | "net.fetch"
+            | "auth.status"
+            | "auth.connect"
+            | "auth.disconnect"
+    ) {
+        return Err(unknown_method(method));
+    }
     if method == "net.fetch" {
         authorize_net_url(identity, &param_nonempty_str(params, "url")?)?;
         return Ok(());
@@ -1631,6 +1628,67 @@ pub(crate) fn approve_app(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn retired_host_methods_are_unreachable_even_with_old_or_all_grants() {
+        let identities = [
+            named(grain_sdk::KNOWN_CAPABILITIES),
+            ClientIdentity {
+                id: "com.example.old".into(),
+                role: crate::events_auth::ClientRole::Worker,
+                caps: CapabilitySet::All,
+            },
+        ];
+        for method in [
+            "doc.get",
+            "doc.put",
+            "doc.delete",
+            "doc.list",
+            "settings.get",
+            "settings.set",
+            "llm.complete",
+            "embed",
+            "match.lexical",
+            "match.semantic",
+            "match.decide",
+            "session.start",
+            "capture.selection",
+            "capture.app",
+            "capture.screenText",
+            "capture.screenImage",
+            "open.url",
+            "open.app",
+            "open.pickApp",
+            "os.exec",
+            "space.get",
+            "workspace.open",
+        ] {
+            for identity in &identities {
+                let error = preflight(identity, method, &json!({})).unwrap_err();
+                assert_eq!(error.code, HostErrorCode::UnknownMethod, "{method}");
+                assert_typed(&error);
+            }
+        }
+    }
+
+    #[test]
+    fn tool_support_methods_still_enforce_grants_and_validate_inputs() {
+        let identity = named(&["storage", "auth", "net:api.example.com"]);
+        for (method, params) in [
+            ("log.info", json!({"msg":"ready"})),
+            ("storage.get", json!({"key":"k"})),
+            ("storage.set", json!({"key":"k","value":null})),
+            ("storage.delete", json!({"key":"k"})),
+            ("auth.status", json!({})),
+            ("net.fetch", json!({"url":"https://api.example.com/v1"})),
+        ] {
+            assert!(preflight(&identity, method, &params).is_ok(), "{method}");
+        }
+        let denied = preflight(&named(&[]), "storage.get", &json!({"key":"k"})).unwrap_err();
+        assert_eq!(denied.code, HostErrorCode::CapabilityDenied);
+        let invalid = preflight(&identity, "storage.set", &json!({"key":"k"})).unwrap_err();
+        assert_eq!(invalid.code, HostErrorCode::InvalidArgument);
+    }
     use std::collections::HashSet;
 
     fn named(caps: &[&str]) -> ClientIdentity {
@@ -1701,64 +1759,6 @@ mod tests {
     }
 
     #[test]
-    fn capability_gate_is_pure_and_correct() {
-        let ext = named(&["storage"]);
-        assert!(has_capability(&ext, "storage"));
-        assert!(!has_capability(&ext, "llm"));
-
-        // Method → capability mapping.
-        assert_eq!(required_capability("storage.set"), Some("storage"));
-        assert_eq!(required_capability("llm.complete"), Some("llm"));
-        assert_eq!(required_capability("net.fetch"), Some("__dynamic_net__"));
-        assert_eq!(required_capability("auth.connect"), Some("auth"));
-        assert_eq!(required_capability("session.start"), Some("session:start"));
-        assert_eq!(
-            required_capability("capture.selection"),
-            Some("capture:selection")
-        );
-        assert_eq!(required_capability("embed"), Some("embed"));
-        // The document store shares the storage grant.
-        assert_eq!(required_capability("doc.put"), Some("storage"));
-        assert_eq!(required_capability("doc.list"), Some("storage"));
-        assert_eq!(required_capability("log.info"), None);
-
-        // [GRAIN] The match.* primitives (Extensions V1 §4, §12) take NO
-        // capability: they reach nothing beyond the extension's own supplied
-        // phrases. `match.semantic` uses the ~130 MB model but that is a
-        // `needs`-declared resource, not a granted reach — gating it would put a
-        // permission on every searchable extension's sheet and teach people to
-        // click through the ones that matter.
-        assert_eq!(required_capability("match.lexical"), None);
-        assert_eq!(required_capability("match.semantic"), None);
-        assert_eq!(required_capability("match.decide"), None);
-
-        // Removed notes/MCP methods cannot be granted by any extension.
-        for method in [
-            "space.collections",
-            "space.search",
-            "space.get",
-            "notes.cards",
-            "notes.search",
-            "notes.get",
-        ] {
-            assert_eq!(required_capability(method), Some("__unknown__"));
-            assert!(preflight(&named(&[]), method, &json!({})).is_err());
-        }
-        assert!(!grain_sdk::KNOWN_CAPABILITIES.contains(&"notes"));
-
-        // Unknown methods require an ungrantable capability → always denied.
-        assert_eq!(required_capability("os.exec"), Some("__unknown__"));
-        assert!(!has_capability(
-            &ClientIdentity {
-                id: "x".into(),
-                role: crate::events_auth::ClientRole::Worker,
-                caps: CapabilitySet::Named(HashSet::new())
-            },
-            "__unknown__"
-        ));
-    }
-
-    #[test]
     fn auth_gate_is_extension_scoped_and_fetch_credentials_do_not_mix() {
         let github = named(&["auth", "net:api.github.com"]);
         assert!(preflight(&github, "auth.status", &json!({})).is_ok());
@@ -1782,393 +1782,6 @@ mod tests {
         assert!(!error.message.trim().is_empty());
         assert!(!error.hint.trim().is_empty());
         assert!(error.docs.starts_with("https://"));
-    }
-
-    #[test]
-    fn match_methods_pass_preflight_and_real_lexical_controls_rank() {
-        let identity = named(&[]);
-        let candidates = json!([
-            {"id": "play-track", "phrases": ["play", "play song", "play track", "start song"]},
-            {"id": "pause-playback", "phrases": ["pause", "pause song", "pause music", "stop playback"]},
-            {"id": "resume-playback", "phrases": ["resume", "resume song", "resume music", "continue playback"]},
-            {"id": "next-track", "phrases": ["next", "next song", "next track", "skip song", "skip track"]},
-            {"id": "previous-track", "phrases": ["previous", "previous song", "previous track", "go back one song"]}
-        ]);
-        for (text, expected) in [
-            ("play", "play-track"),
-            ("pause song", "pause-playback"),
-            ("resume song", "resume-playback"),
-            ("next song", "next-track"),
-            ("previous song", "previous-track"),
-        ] {
-            let params = json!({"text": text, "candidates": candidates.clone()});
-            assert!(preflight(&identity, "match.lexical", &params).is_ok());
-            let parsed = param_named_phrase_lists(&params, "phrases").unwrap();
-            let ranked = grain_core::matching::lexical_rank(text, &parsed);
-            assert_eq!(ranked.first().map(|item| item.id.as_str()), Some(expected));
-            assert_eq!(ranked[0].score, 1.0, "'{text}' should be an exact hit");
-        }
-
-        assert!(preflight(
-            &identity,
-            "match.semantic",
-            &json!({
-                "text": "move on to the following track",
-                "candidates": [{"id": "next-track", "examples": ["play the next song"]}]
-            }),
-        )
-        .is_ok());
-        assert!(preflight(
-            &identity,
-            "match.decide",
-            &json!({
-                "candidates": [
-                    {"id": "next-track", "score": 0.9},
-                    {"id": "unrelated", "score": -0.2}
-                ],
-                "policy": {"minConfidence": 0.5, "margin": 0.15}
-            }),
-        )
-        .is_ok());
-    }
-
-    #[test]
-    fn semantic_music_commands_rank_natural_utterances() {
-        if !crate::grain_embed::model_on_disk() {
-            println!("model not on disk; skipped");
-            return;
-        }
-
-        let candidates = vec![
-            (
-                "play-track".to_string(),
-                vec![
-                    "put on Midnight City".to_string(),
-                    "play me a song on Spotify".to_string(),
-                    "start playing the specific track I named".to_string(),
-                    "can you play this song for me".to_string(),
-                    "put on the track I asked for".to_string(),
-                    "play some music from the streaming service".to_string(),
-                ],
-            ),
-            (
-                "pause-playback".to_string(),
-                vec![
-                    "pause the song that is playing right now".to_string(),
-                    "can you pause the music for a minute".to_string(),
-                    "temporarily stop playback without changing tracks".to_string(),
-                    "hold this song until I resume it".to_string(),
-                    "pause Spotify without losing my place".to_string(),
-                    "take a short break from the current track".to_string(),
-                ],
-            ),
-            (
-                "play-playlist".to_string(),
-                vec![
-                    "put on my focus mix".to_string(),
-                    "start the road trip collection".to_string(),
-                    "play the list I made for dinner".to_string(),
-                    "play one of my Spotify playlists".to_string(),
-                    "start playing my saved workout playlist".to_string(),
-                ],
-            ),
-            (
-                "queue-track".to_string(),
-                vec![
-                    "make Midnight City come on after this".to_string(),
-                    "line up that song without interrupting the current one".to_string(),
-                    "add this track as the next thing to hear".to_string(),
-                    "add the song I named to the queue for later".to_string(),
-                    "keep this playing and queue the other track".to_string(),
-                    "do not switch songs yet, put this in the queue".to_string(),
-                ],
-            ),
-            (
-                "start-artist-radio".to_string(),
-                vec![
-                    "keep playing things that sound like Daft Punk".to_string(),
-                    "make me a station based on this artist".to_string(),
-                    "continue with similar musicians".to_string(),
-                    "start an artist radio station on Spotify".to_string(),
-                    "play an endless mix based on this band".to_string(),
-                ],
-            ),
-            (
-                "resume-playback".to_string(),
-                vec![
-                    "resume the song that I paused".to_string(),
-                    "continue playing after the pause".to_string(),
-                    "start the music again from where it stopped".to_string(),
-                    "can you resume Spotify playback".to_string(),
-                    "unpause the current track".to_string(),
-                    "carry on with the same song without changing tracks".to_string(),
-                ],
-            ),
-            (
-                "next-track".to_string(),
-                vec![
-                    "skip to the next song".to_string(),
-                    "play the next track instead of this one".to_string(),
-                    "could you move on to the following song".to_string(),
-                    "I am done with this one, play whatever comes next".to_string(),
-                    "advance playback by one track".to_string(),
-                    "skip whatever is currently playing".to_string(),
-                    "go to the next song on Spotify".to_string(),
-                ],
-            ),
-            (
-                "previous-track".to_string(),
-                vec![
-                    "go back to the song that played before this".to_string(),
-                    "return to the last track".to_string(),
-                    "I want to hear the previous song again".to_string(),
-                    "play the track before this one on Spotify".to_string(),
-                    "move playback back by one song".to_string(),
-                    "go to what was playing just before this".to_string(),
-                ],
-            ),
-            (
-                "search-catalog".to_string(),
-                vec![
-                    "see whether the service has this recording".to_string(),
-                    "look for songs by this musician without playing them".to_string(),
-                    "find the album but do not start it".to_string(),
-                    "search Spotify for this artist without playing anything".to_string(),
-                    "show me matching tracks in the catalogue".to_string(),
-                ],
-            ),
-        ];
-        let cases = [
-            ("can you play the next song from Spotify?", "next-track"),
-            ("hey man, could you skip whatever is playing?", "next-track"),
-            ("can you resume the song from Spotify?", "resume-playback"),
-            ("please pause this for a minute", "pause-playback"),
-            ("go back to the track we just heard", "previous-track"),
-            ("put Midnight City on Spotify", "play-track"),
-            ("can you play some song on Spotify?", "play-track"),
-        ];
-
-        let mut failures = Vec::new();
-        for (utterance, expected) in cases {
-            let ranked = semantic_match(utterance, &candidates).expect("semantic match");
-            let scores = ranked
-                .iter()
-                .take(3)
-                .map(|entry| {
-                    format!(
-                        "{}={:.4}",
-                        entry["id"].as_str().unwrap_or("?"),
-                        entry["score"].as_f64().unwrap_or_default()
-                    )
-                })
-                .collect::<Vec<_>>()
-                .join(", ");
-            println!("{utterance:?}: {scores}");
-            if ranked.first().and_then(|entry| entry["id"].as_str()) != Some(expected) {
-                failures.push(format!("{utterance:?} expected {expected}, got {scores}"));
-                continue;
-            }
-            let margin = ranked
-                .first()
-                .and_then(|entry| entry["margin"].as_f64())
-                .unwrap_or_default();
-            if margin < 0.05 {
-                failures.push(format!(
-                    "{utterance:?} ranked {expected} first but margin {margin:.4} is below 0.05: {scores}"
-                ));
-            }
-        }
-        assert!(failures.is_empty(), "{}", failures.join("\n"));
-    }
-
-    #[test]
-    fn capability_free_match_methods_are_strictly_bounded() {
-        let identity = named(&[]);
-        let too_many: Vec<Value> = (0..=MATCH_MAX_CANDIDATES)
-            .map(|index| json!({"id": format!("command-{index}"), "phrases": ["run"]}))
-            .collect();
-        let too_many_scores: Vec<Value> = (0..=MATCH_MAX_CANDIDATES)
-            .map(|index| json!({"id": format!("command-{index}"), "score": 0.5}))
-            .collect();
-        let too_many_phrases = vec!["example"; MATCH_MAX_PHRASES_PER_CANDIDATE + 1];
-        let too_many_total_phrases: Vec<Value> = (0..17)
-            .map(|index| {
-                json!({
-                    "id": format!("command-{index}"),
-                    "examples": vec!["example"; MATCH_MAX_PHRASES_PER_CANDIDATE]
-                })
-            })
-            .collect();
-        let too_many_total_bytes: Vec<Value> = (0..9)
-            .map(|index| {
-                json!({
-                    "id": format!("command-{index}"),
-                    "examples": vec!["x".repeat(1024); MATCH_MAX_PHRASES_PER_CANDIDATE]
-                })
-            })
-            .collect();
-        for (method, params) in [
-            (
-                "match.lexical",
-                json!({"text": "x".repeat(MATCH_MAX_QUERY_BYTES + 1), "candidates": []}),
-            ),
-            (
-                "match.lexical",
-                json!({"text": "run", "candidates": too_many}),
-            ),
-            (
-                "match.semantic",
-                json!({"text": "run", "candidates": [{"id": "run", "examples": too_many_phrases}]}),
-            ),
-            (
-                "match.semantic",
-                json!({"text": "run", "candidates": too_many_total_phrases}),
-            ),
-            (
-                "match.semantic",
-                json!({"text": "run", "candidates": too_many_total_bytes}),
-            ),
-            (
-                "match.semantic",
-                json!({"text": "run", "candidates": [{"id": "run", "examples": ["x".repeat(MATCH_MAX_PHRASE_BYTES + 1)]}]}),
-            ),
-            (
-                "match.lexical",
-                json!({"text": "run", "candidates": [{"id": "x".repeat(MATCH_MAX_ID_BYTES + 1), "phrases": ["run"]}]}),
-            ),
-            (
-                "match.lexical",
-                json!({"text": "run", "candidates": [{"id": "run", "phrases": [4]}]}),
-            ),
-            (
-                "match.lexical",
-                json!({"text": "run", "candidates": [{"id": "same", "phrases": ["run"]}, {"id": "same", "phrases": ["start"]}]}),
-            ),
-            ("match.decide", json!({"candidates": too_many_scores})),
-            (
-                "match.decide",
-                json!({"candidates": [{"id": "same", "score": 0.9}, {"id": "same", "score": 0.8}]}),
-            ),
-            (
-                "match.decide",
-                json!({"candidates": [{"id": "run", "score": 1.1}]}),
-            ),
-            (
-                "match.decide",
-                json!({"candidates": [], "policy": {"margin": "wide"}}),
-            ),
-            (
-                "match.decide",
-                json!({"candidates": [], "policy": {"margin": 1.1}}),
-            ),
-        ] {
-            let error = preflight(&identity, method, &params).unwrap_err();
-            assert_eq!(error.code, HostErrorCode::InvalidArgument, "{method}");
-            assert_typed(&error);
-        }
-    }
-
-    #[test]
-    fn every_preflight_refusal_is_typed_and_never_an_empty_success() {
-        let no_caps = named(&[]);
-        for (method, capability) in [
-            ("storage.get", "storage"),
-            ("doc.list", "storage"),
-            ("settings.get", "settings"),
-            ("llm.complete", "llm"),
-            ("embed", "embed"),
-            ("session.start", "session:start"),
-            ("capture.selection", "capture:selection"),
-        ] {
-            let error = preflight(&no_caps, method, &json!({})).unwrap_err();
-            assert_eq!(error.code, HostErrorCode::CapabilityDenied, "{method}");
-            assert_eq!(error.capability.as_deref(), Some(capability));
-            assert_typed(&error);
-        }
-
-        let all_caps = named(&[
-            "storage",
-            "settings",
-            "llm",
-            "embed",
-            "session:start",
-            "capture:selection",
-            "net:api.example.com",
-        ]);
-        for (method, params) in [
-            ("log.info", json!({})),
-            ("storage.get", json!({})),
-            ("storage.set", json!({"key": "k"})),
-            ("doc.put", json!({"key": "k"})),
-            ("settings.set", json!({"key": "k"})),
-            ("llm.complete", json!({"prompt": 4})),
-            ("embed", json!({"texts": ["ok", 4]})),
-            ("match.lexical", json!({})),
-            (
-                "match.semantic",
-                json!({"text": "play", "candidates": [{}]}),
-            ),
-            (
-                "match.decide",
-                json!({"candidates": [{"id": "play", "score": 2}]}),
-            ),
-            ("session.start", json!({})),
-            ("net.fetch", json!({})),
-        ] {
-            let error = preflight(&all_caps, method, &params).unwrap_err();
-            assert_eq!(error.code, HostErrorCode::InvalidArgument, "{method}");
-            assert_typed(&error);
-        }
-
-        for (method, params) in [
-            ("log.info", json!({"msg": "ready"})),
-            ("log.warn", json!({"msg": "careful"})),
-            ("storage.get", json!({"key": "k"})),
-            ("storage.set", json!({"key": "k", "value": null})),
-            ("storage.delete", json!({"key": "k"})),
-            ("doc.get", json!({"key": "k"})),
-            ("doc.put", json!({"key": "k", "value": null})),
-            ("doc.delete", json!({"key": "k"})),
-            ("doc.list", json!({})),
-            ("settings.get", json!({"key": "k"})),
-            ("settings.set", json!({"key": "k", "value": null})),
-            ("llm.complete", json!({"prompt": "hello"})),
-            ("embed", json!({"texts": ["hello"]})),
-            (
-                "match.lexical",
-                json!({"text": "play song", "candidates": [{"id": "play", "phrases": ["play song"]}]}),
-            ),
-            (
-                "match.semantic",
-                json!({"text": "put on some music", "candidates": [{"id": "play", "examples": ["start a song"]}]}),
-            ),
-            (
-                "match.decide",
-                json!({"candidates": [{"id": "play", "score": 0.9}], "policy": {"minConfidence": 0.5, "margin": 0.1}}),
-            ),
-            ("session.start", json!({"mode": "note"})),
-            ("capture.selection", json!({})),
-            (
-                "net.fetch",
-                json!({"url": "https://api.example.com/v1", "method": "GET"}),
-            ),
-        ] {
-            assert!(preflight(&all_caps, method, &params).is_ok(), "{method}");
-        }
-
-        let unknown = preflight(&all_caps, "os.exec", &json!({})).unwrap_err();
-        assert_eq!(unknown.code, HostErrorCode::UnknownMethod);
-        assert_typed(&unknown);
-
-        for retired in [
-            "workspace.open",
-            "workspace.close",
-            "overlay.show",
-            "overlay.dismiss",
-        ] {
-            let error = preflight(&all_caps, retired, &json!({})).unwrap_err();
-            assert_eq!(error.code, HostErrorCode::UnknownMethod, "{retired}");
-        }
     }
 
     #[test]

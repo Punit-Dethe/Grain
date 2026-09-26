@@ -31,11 +31,6 @@ pub const GRAIN_API_TYPESCRIPT: &str = r#"export type JsonValue =
   | JsonValue[]
   | { [key: string]: JsonValue };
 
-export type GrainActivation =
-  | DaemonEvent
-  | { Shortcut: { id: string } }
-  | { Session: { mode: string } };
-
 export type GrainErrorCode =
   | "E_CAPABILITY_DENIED"
   | "E_TIMEOUT"
@@ -50,7 +45,6 @@ export type GrainErrorCode =
   | "E_INTERNAL";
 
 export interface GrainApi {
-  readonly activation: GrainActivation | null;
   readonly caps: readonly GrainCapability[];
   readonly extId: string;
 
@@ -62,45 +56,6 @@ export interface GrainApi {
     get<T extends JsonValue = JsonValue>(key: string): Promise<T | null>;
     set(key: string, value: JsonValue): Promise<unknown>;
     delete(key: string): Promise<unknown>;
-  };
-  readonly doc: {
-    get<T extends JsonValue = JsonValue>(key: string): Promise<T | null>;
-    put(key: string, value: JsonValue): Promise<unknown>;
-    delete(key: string): Promise<unknown>;
-    list(): Promise<string[]>;
-  };
-  captureSelection(): Promise<string | null>;
-  /** The foreground window's visible text from its accessibility tree — never a
-   * screenshot (needs capture:screen-text). Null when nothing is readable. */
-  screenText(): Promise<string | null>;
-  /** A PNG of the foreground window (needs capture:screen-image), or null.
-   * Grain's own features never capture one — this exists so an extension the
-   * user installed deliberately can. Feed it straight to `llm.complete`. */
-  screenImage(): Promise<{
-    mime: string;
-    width: number;
-    height: number;
-    base64: string;
-  } | null>;
-  /** The foreground app right now (needs capture:app), or null. */
-  focusedApp(): Promise<{
-    name: string;
-    exe: string | null;
-    exePath: string | null;
-    urlHost: string | null;
-  } | null>;
-  readonly settings: {
-    get<T extends JsonValue = JsonValue>(key: string): Promise<T | null>;
-    set(key: string, value: JsonValue): Promise<unknown>;
-  };
-  readonly llm: {
-    /** Complete a prompt. Pass `image` (from `screenImage()`) to ask about a
-     * picture; a model that cannot read images is retried without it by the
-     * host, so this still resolves to an answer. */
-    complete(
-      prompt: string,
-      image?: { base64: string; mime?: string },
-    ): Promise<string>;
   };
   readonly net: {
     fetch(
@@ -128,91 +83,9 @@ export interface GrainApi {
     connect(): Promise<GrainAuthConnection>;
     disconnect(): Promise<unknown>;
   };
-  embed(texts: string[]): Promise<number[][]>;
-  /** Rank this extension's OWN commands against a request (Extensions V1 §4).
-   * Conveniences over the same machinery Grain uses to rank extensions — call
-   * them in any order, or none: an extension may instead pass the request
-   * straight to `llm.complete` with its own tool schema. `match.semantic` needs
-   * the on-device model (declare `needs: ["semantic"]`) but no capability. */
-  readonly match: {
-    /** Fast lexical rank over declared phrasings. Strong for names/verbs, weak
-     * for paraphrase — reach for `semantic` when wording varies. One call accepts
-     * at most 64 candidates, 16 phrases each, and 256 phrases total. */
-    lexical(
-      text: string,
-      candidates: readonly { id: string; phrases: readonly string[] }[],
-    ): Promise<{ id: string; score: number }[]>;
-    /** Semantic rank over declared examples. Understands paraphrase; loads the
-     * embedding model on demand. `margin` is the gap to the next candidate.
-     * Uses the same 64-candidate / 16-example / 256-total bounds as lexical. */
-    semantic(
-      text: string,
-      candidates: readonly { id: string; examples: readonly string[] }[],
-    ): Promise<{ id: string; score: number; margin: number }[]>;
-    /** Turn a ranking into a decision. `minConfidence` is the floor to act at
-     * all; `margin` is how far the best must lead to be picked outright — within
-     * it, the top candidates are `ambiguous`. There is no universal threshold;
-     * measure with `grain-ext eval` and set these. Accepts at most 64 unique ids;
-     * scores are -1..1 (semantic cosine), policy values are 0..1. */
-    decide(
-      candidates: readonly { id: string; score: number }[],
-      policy?: { minConfidence?: number; margin?: number },
-    ): Promise<{ pick: string } | { ambiguous: string[] } | { none: true }>;
-  };
-  readonly open: {
-    /** Open a link in the user's browser. Host allows only http/https/mailto/tel. */
-    url(url: string): Promise<unknown>;
-    /** Launch a user-approved application by path (see pickApp). */
-    app(path: string): Promise<unknown>;
-    /** Ask the user to choose an application; resolves to its path (approved for
-     * this extension) or null if cancelled. The only way to make a path launchable. */
-    pickApp(): Promise<string | null>;
-  };
-  readonly session: {
-    start(options: { mode: string }): Promise<unknown>;
-  };
-
-  onTransform(handler: (text: string) => string | Promise<string>): void;
-  onSessionStage(
-    handler: (
-      text: string,
-      context: { readonly mode: string; readonly signal: AbortSignal },
-    ) =>
-      | string
-      | { text?: string; handled?: boolean }
-      | Promise<string | { text?: string; handled?: boolean }>,
-  ): void;
-  /** @deprecated Use onSessionStage. */
-  onSessionResult(
-    handler: (text: string) =>
-      | string
-      | { text?: string; handled?: boolean }
-      | Promise<string | { text?: string; handled?: boolean }>,
-  ): void;
-  onShortcut(handler: (id: string) => void | Promise<void>): void;
-  onEvent(handler: (event: DaemonEvent) => void): void;
-  /** The user accepted this extension in Extension Mode (Extensions V1 §3): the
-   * WHOLE request is handed over, verbatim. The extension owns what happens next
-   * — interpret it with `match.*` or `llm.complete` and its own tool schema, ask
-   * or confirm as needed, and return an optional short result. Return
-   * `{ decline }` when this extension is not the right owner so Grain can reopen
-   * the chooser without making the user repeat the request; reserve `{ error }`
-   * for a request this extension owned but failed to complete. */
-  onRequest(
-    handler: (
-      request: string,
-    ) =>
-      | void
-      | { message?: string }
-      | { decline: string }
-      | { error: string }
-      | Promise<
-          | void
-          | { message?: string }
-          | { decline: string }
-          | { error: string }
-        >,
-  ): void;
+  /** Register exact declared tools. Only explicit validated arguments arrive. */
+  actions(handlers: Record<string, (args: { [key: string]: JsonValue }) =>
+    { title?: string; body?: string } | Promise<{ title?: string; body?: string }>>): void;
 }
 
 export interface GrainAuthConnection {

@@ -175,8 +175,8 @@ mod tests {
             r#"{
               "id":"com.example.test","name":"Test","version":"0.1.0",
               "grainApi":"^1.0","tier":"scripted","entry":"src/main.ts",
-              "permissions":[],"activation":["onShortcut:open"],
-              "contributes":{"shortcuts":[{"id":"open","label":"Open"}]}
+              "permissions":[],"activation":[],
+              "contributes":{"actions":[{"id":"read","title":"Read","utterances":["read data"],"risk":"safe"}]}
             }"#,
         )
         .unwrap();
@@ -225,7 +225,7 @@ mod tests {
     }
 
     #[test]
-    fn native_companion_is_dev_only_and_resolves_inside_the_chosen_folder() {
+    fn native_companions_are_refused_even_in_developer_mode() {
         let dir = tempfile::tempdir().unwrap();
         let binary = if cfg!(windows) {
             "companion.exe"
@@ -248,14 +248,8 @@ mod tests {
         )
         .unwrap();
 
-        let loaded = load_project(dir.path()).unwrap();
-        assert!(loaded.entry_path.is_none());
-        assert_eq!(
-            loaded.companion_path,
-            Some(dir.path().join(binary).canonicalize().unwrap())
-        );
-        // The regular import validator remains a hard distribution boundary.
-        assert!(loaded.pack.validate().is_err());
-        loaded.pack.validate_dev().unwrap();
+        assert!(load_project(dir.path())
+            .unwrap_err()
+            .contains("native companion executables"));
     }
 }

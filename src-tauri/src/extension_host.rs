@@ -31,7 +31,7 @@ use std::sync::{Arc, Mutex, OnceLock, RwLock};
 use std::time::{Duration, Instant};
 
 use grain_core::{AppContext, DaemonEvent};
-use grain_sdk::{daemon_event_capability, GrainPack, HostCall, HostFrame};
+use grain_sdk::{GrainPack, HostCall, HostFrame};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tauri::{AppHandle, Emitter, Listener, Manager, WebviewUrl, WebviewWindowBuilder};
@@ -51,11 +51,11 @@ const REAP_INTERVAL_SECS: u64 = 30;
 
 /// Transform budget (SPEC §3.1): a cold worker cannot fit this, which is why
 /// `onTransform` extensions warm on `RecordingStarted`.
-const TRANSFORM_DEADLINE: Duration = Duration::from_millis(150);
+
 /// A session mode owns the deliberately slow stage, but never indefinitely.
 /// Thirty seconds is generous for a routed model call and still guarantees a
 /// hung worker cannot eat the user's transcript.
-const SESSION_STAGE_DEADLINE: Duration = Duration::from_secs(30);
+
 /// Consecutive transform failures before auto-disable (SPEC §3.3).
 const MAX_STRIKES: u32 = 3;
 /// Generous pathology guard, not accounting: Chromium's reported JS heap is
@@ -370,30 +370,9 @@ impl Workers {
         true
     }
 
-    /// Send a host notification that intentionally has no response waiter.
-    /// Call id zero is reserved for these one-way lifecycle messages.
-    fn notify(&self, ext_id: &str, method: &str, params: Value) -> Result<(), String> {
-        let out_tx = self
-            .map
-            .lock()
-            .unwrap()
-            .get(ext_id)
-            .and_then(|worker| worker.conn.as_ref())
-            .map(|conn| conn.out_tx.clone())
-            .ok_or("worker not connected")?;
-        let frame = HostFrame::Call(HostCall {
-            call_id: 0,
-            method: method.to_string(),
-            params,
-        });
-        let json = serde_json::to_string(&frame).map_err(|error| error.to_string())?;
-        out_tx
-            .send(Message::Text(json.into()))
-            .map_err(|_| "worker channel closed".to_string())
-    }
-
     /// Stop waiting for every host-initiated call to this worker. Session
     /// cancellation uses this to return immediately; late replies are ignored.
+    #[cfg(test)]
     fn cancel_pending(&self, ext_id: &str, reason: &str) {
         let pending = self
             .map
@@ -425,16 +404,6 @@ struct Supervisor {
 /// manifests live). Rebuilt only when the extension set changes.
 #[derive(Default)]
 struct Index {
-    /// Event variant name → extension ids that wake on it.
-    by_event: HashMap<String, Vec<String>>,
-    /// `onTransform` extensions, already sorted into toggle order.
-    transforms: Vec<String>,
-    /// Contributed prompt layers, already sorted into toggle order and already
-    /// screened. Held here rather than read from the manifest at dictation time
-    /// for the usual reason — the post-process path must not touch the disk —
-    /// and screened here rather than at render time so a pack whose text was
-    /// edited on disk after import never reaches the prompt at all.
-    prompt_layers: Vec<CompiledPromptLayer>,
     /// Declared actions, compiled (`docs/Extensions V1/PLAN.md`). Same reasoning
     /// as the layers above: built here so nothing on a felt path reads a
     /// manifest, and gated by the approval digest on every rebuild rather than
@@ -457,15 +426,6 @@ struct Index {
     /// hot path (§11.2). Pure metadata memory; no worker. Consumed by the Agent
     /// tool loop in a later Phase 2B pass.
     capability: grain_core::capability_index::CapabilityIndex,
-}
-
-/// An enabled extension's prompt layer, compiled for matching.
-struct CompiledPromptLayer {
-    ext_id: String,
-    layer_id: String,
-    target: grain_sdk::manifest::PromptTarget,
-    when: grain_sdk::manifest::LayerWhen,
-    text: String,
 }
 
 /// Guards so the common case — no scripted extension enabled — costs exactly
@@ -526,157 +486,43 @@ static HOST: OnceLock<HostState> = OnceLock::new();
 /// startup and whenever the extension set changes (enable/disable/grant/import/
 /// uninstall/auto-disable) — **never** from a hot path.
 pub fn refresh_index(app: &AppHandle) {
-    let host = match HOST.get() {
-        Some(h) => h,
-        None => return,
+    let Some(host) = HOST.get() else {
+        return;
     };
-    let mut by_event: HashMap<String, Vec<String>> = HashMap::new();
-    let mut transforms: Vec<(String, u64)> = Vec::new();
-    let mut prompt_layers: Vec<(CompiledPromptLayer, u64)> = Vec::new();
-    let mut actions: Vec<grain_core::action_router::IndexedAction> = Vec::new();
-    let mut capability_inputs: Vec<grain_core::capability_index::ActionInput> = Vec::new();
-    let mut recommendations: Vec<grain_core::recommend::IndexedRecommendation> = Vec::new();
-    let mut recommend_examples: Vec<(String, Vec<String>)> = Vec::new();
-    let mut auto_send_eligible: std::collections::HashSet<String> =
-        std::collections::HashSet::new();
-    let mut startup_workers: Vec<(String, GrainPack, Vec<String>)> = Vec::new();
-
+    let mut actions = Vec::new();
+    let mut capability_inputs = Vec::new();
     if let Some(reg) = app.try_state::<Arc<grain_core::extensions::ExtensionsRegistry>>() {
-        for rec in reg.records() {
-            if !rec.enabled {
-                continue;
-            }
-            let Some(pack) = load_manifest(app, &rec.id) else {
-                continue;
-            };
-            // Prompt layers are collected BEFORE the runtime filter: an inert
-            // tier-A pack contributing static text is the shape this feature
-            // exists for, and requiring a runtime for it would push authors
-            // toward code they do not need.
-            collect_prompt_layers(&rec, &pack, &mut prompt_layers);
-            if !pack.has_runtime() {
-                continue;
-            }
-            // Actions ARE gated on a runtime, unlike prompt layers: a pack with
-            // nothing to call would win a route and then dead-end.
-            collect_actions(&rec, &pack, &mut actions);
-            // [GRAIN] Capability Index V2 draws from the same declared actions,
-            // projected for the schema-aware retriever (docs/Extensions 2.0 §6).
-            // Repeat the approval-digest gate for V2: an edited on-disk pack
-            // cannot smuggle a new Agent tool into an already-enabled record.
-            collect_capability_actions(&rec, &pack, &mut capability_inputs);
-            // The Extension Mode pool. Gated on searchable + recommendation
-            // approval, NOT on declaring any action — a translator is a real
-            // searchable extension with no command catalogue at all (§3.1).
-            collect_recommendation(
-                &rec,
-                &pack,
-                &mut recommendations,
-                &mut recommend_examples,
-                &mut auto_send_eligible,
-            );
-            let mut granted_variants = Vec::new();
-            for variant in declared_event_variants(&pack.manifest.activation) {
-                let Some(capability) = daemon_event_capability(&variant) else {
-                    continue;
-                };
-                if has_grant(&rec.granted, capability) {
-                    granted_variants.push(variant);
-                } else {
-                    log::warn!(
-                        "[ext:{}] deny activation onEvent:{variant} missing capability {capability}",
-                        rec.id
-                    );
+        for rec in reg.records().into_iter().filter(|record| record.enabled) {
+            match load_manifest_result(app, &rec.id) {
+                Ok(pack) => {
+                    collect_actions(&rec, &pack, &mut actions);
+                    collect_capability_actions(&rec, &pack, &mut capability_inputs);
+                }
+                Err(reason) => {
+                    if let Err(error) = reg.quarantine(&rec.id, &reason) {
+                        log::error!("[ext:{}] could not persist quarantine: {error}", rec.id);
+                    }
+                    stop_extension(&rec.id, "incompatible tool-only extension");
+                    crate::grain_auth::cancel_extension(&rec.id);
                 }
             }
-            if declares_transform(&pack.manifest.activation)
-                && has_grant(&rec.granted, "transform:transcript")
-            {
-                transforms.push((rec.id.clone(), rec.toggle_seq));
-                granted_variants.push("RecordingStarted".to_string());
-            } else if declares_transform(&pack.manifest.activation) {
-                log::warn!(
-                    "[ext:{}] deny activation onTransform missing capability transform:transcript",
-                    rec.id
-                );
-            }
-            granted_variants.sort();
-            granted_variants.dedup();
-            for variant in granted_variants {
-                by_event.entry(variant).or_default().push(rec.id.clone());
-            }
-            if has_resident_grant(&pack.manifest.activation, &rec.granted) && !is_running(&rec.id) {
-                startup_workers.push((rec.id.clone(), pack, rec.granted.clone()));
-            } else if declares_startup(&pack.manifest.activation)
-                && !has_grant(&rec.granted, "resident")
-            {
-                log::warn!(
-                    "[ext:{}] deny onStartup missing capability resident",
-                    rec.id
-                );
-            }
         }
     }
-    transforms.sort_by_key(|(_, seq)| *seq);
-    let transforms: Vec<String> = transforms.into_iter().map(|(id, _)| id).collect();
-    // Toggle order (SPEC §4.4) is the ordering everywhere else contributions
-    // compete, and it is the only one the user can actually change.
-    prompt_layers.sort_by_key(|(_, seq)| *seq);
-    let prompt_layers: Vec<CompiledPromptLayer> =
-        prompt_layers.into_iter().map(|(l, _)| l).collect();
-
-    let action_count = actions.len();
-    let action_index = grain_core::action_router::ActionIndex::build(actions);
-    HAS_ACTIONS.store(action_count > 0, Ordering::Relaxed);
-    HAS_RECOMMENDATIONS.store(!recommendations.is_empty(), Ordering::Relaxed);
-    let capability = grain_core::capability_index::CapabilityIndex::build(capability_inputs);
-
-    HAS_ACTIVATIONS.store(!by_event.is_empty(), Ordering::Relaxed);
-    HAS_TRANSFORMS.store(!transforms.is_empty(), Ordering::Relaxed);
-    HAS_PROMPT_LAYERS.store(!prompt_layers.is_empty(), Ordering::Relaxed);
-    HAS_CONTEXT_SLOT.store(
-        app.try_state::<Arc<grain_core::extensions::ExtensionsRegistry>>()
-            .and_then(|reg| reg.slot_occupant(grain_sdk::manifest::PROMPT_CONTEXT_SLOT))
-            .is_some_and(|occupant| occupant != grain_core::extensions::CORE_DEFAULT),
-        Ordering::Relaxed,
-    );
-    HAS_MAIN_SLOT.store(
-        app.try_state::<Arc<grain_core::extensions::ExtensionsRegistry>>()
-            .and_then(|reg| reg.slot_occupant(grain_sdk::manifest::PROMPT_MAIN_SLOT))
-            .is_some_and(|occupant| occupant != grain_core::extensions::CORE_DEFAULT),
-        Ordering::Relaxed,
-    );
-    log::debug!(
-        "[GRAIN] ext-host: index rebuilt — {} activation variant(s), {} transform(s), {} prompt layer(s)",
-        by_event.len(),
-        transforms.len(),
-        prompt_layers.len()
-    );
+    HAS_ACTIONS.store(!actions.is_empty(), Ordering::Relaxed);
+    HAS_RECOMMENDATIONS.store(false, Ordering::Relaxed);
+    HAS_ACTIVATIONS.store(false, Ordering::Relaxed);
+    HAS_TRANSFORMS.store(false, Ordering::Relaxed);
+    HAS_PROMPT_LAYERS.store(false, Ordering::Relaxed);
+    HAS_CONTEXT_SLOT.store(false, Ordering::Relaxed);
+    HAS_MAIN_SLOT.store(false, Ordering::Relaxed);
     *host.index.write().unwrap() = Index {
-        by_event,
-        transforms,
-        prompt_layers,
-        actions: action_index,
-        recommendations,
-        auto_send_eligible,
-        capability,
+        actions: grain_core::action_router::ActionIndex::build(actions),
+        capability: grain_core::capability_index::CapabilityIndex::build(capability_inputs),
+        ..Index::default()
     };
-    // Embed the pool's examples off this path, generation-guarded, so a slow
-    // rebuild never blocks a switch and a stale embed never lands on a newer
-    // pool. Until it completes the pool ranks name-only, which is honest.
-    reembed_recommendations(app.clone(), recommend_examples);
-    // "The extension set changed" is exactly the trigger for reconciling
-    // contributed shortcuts, so every caller of `refresh_index` gets it for
-    // free rather than having to remember a second call. `sync` defers onto
-    // the async runtime, so this stays safe even when the change was caused by
-    // a shortcut press.
+    // Reconcile old registrations to an empty set; enabling tools creates no
+    // event subscription, resident worker, prompt layer or shortcut.
     crate::extension_shortcuts::sync(app);
-    for (id, pack, granted) in startup_workers {
-        if !is_running(&id) {
-            log::info!("[ext:{id}] life activation startup");
-            spawn_worker(app, &id, &pack, granted, None);
-        }
-    }
 }
 
 /// Compile one enabled extension's declared prompt layers into the index.
@@ -695,46 +541,6 @@ pub fn refresh_index(app: &AppHandle) {
 ///
 /// Both failures are logged and skipped, never repaired: text that has drifted
 /// from what the user agreed to is not something to sanitise and use anyway.
-fn collect_prompt_layers(
-    rec: &grain_core::extensions::ExtensionRecord,
-    pack: &GrainPack,
-    out: &mut Vec<(CompiledPromptLayer, u64)>,
-) {
-    let declared = &pack.manifest.contributes.prompt_layers;
-    if declared.is_empty() {
-        return;
-    }
-    let approved = grain_core::extensions::prompt_layers_fingerprint(declared);
-    if rec.prompt_layers_approved.as_deref() != Some(approved.as_str()) {
-        log::warn!(
-            "[ext:{}] prompt layers not applied — the declared text differs from what was \
-             approved; the user must review it again",
-            rec.id
-        );
-        return;
-    }
-    for layer in declared {
-        let text = layer.text.trim();
-        if let Err(why) = crate::context_detect::prompt_stack::screen_contributed_text(text) {
-            log::warn!(
-                "[ext:{}] prompt layer '{}' refused: {why}",
-                rec.id,
-                layer.id
-            );
-            continue;
-        }
-        out.push((
-            CompiledPromptLayer {
-                ext_id: rec.id.clone(),
-                layer_id: layer.id.clone(),
-                target: layer.target,
-                when: layer.when.clone(),
-                text: text.to_string(),
-            },
-            rec.toggle_seq,
-        ));
-    }
-}
 
 /// Compile one enabled extension's declared actions into the index.
 ///
@@ -824,6 +630,7 @@ fn collect_capability_actions(
 /// extension with no command catalogue at all (§3.1), and gating it out here
 /// would make the one example the plan uses for "recommend exists even with zero
 /// commands" unrankable.
+#[cfg(test)]
 fn collect_recommendation(
     rec: &grain_core::extensions::ExtensionRecord,
     pack: &GrainPack,
@@ -874,58 +681,6 @@ pub fn auto_send_eligible() -> std::collections::HashSet<String> {
 /// mode** (§5), not a failure: the pool still ranks on names, and first use of
 /// Extension Mode is where the download is offered. An extension whose examples
 /// fail to embed simply has no topical vectors and is reachable by name only.
-fn reembed_recommendations(app: AppHandle, examples: Vec<(String, Vec<String>)>) {
-    let generation = RECOMMEND_GENERATION.fetch_add(1, Ordering::SeqCst) + 1;
-    if examples.is_empty() || !crate::grain_embed::model_on_disk() {
-        // Clear any vectors from a previous pool so a now-absent model or empty
-        // pool cannot leave stale topical scores behind.
-        let mut cache = recommend_vectors().write().unwrap();
-        if cache.generation < generation {
-            *cache = RecommendVectors {
-                generation,
-                vectors: HashMap::new(),
-            };
-        }
-        return;
-    }
-    tauri::async_runtime::spawn_blocking(move || {
-        let mut vectors: HashMap<String, Vec<Vec<f32>>> = HashMap::new();
-        for (id, phrases) in examples {
-            let phrases: Vec<String> = phrases
-                .into_iter()
-                .filter(|p| !p.trim().is_empty())
-                .collect();
-            if phrases.is_empty() {
-                continue;
-            }
-            // Indexing uses the same bounded residency as interactive retrieval.
-            crate::grain_embed::touch_extension_mode(&app);
-            match crate::grain_embed::embed(phrases) {
-                Ok(embedded) => {
-                    vectors.insert(id, embedded);
-                }
-                Err(error) => {
-                    log::warn!("[GRAIN] ext-host: embedding examples for '{id}' failed: {error:#}");
-                }
-            }
-        }
-        // A rebuild that started after this one owns the answer.
-        if RECOMMEND_GENERATION.load(Ordering::SeqCst) != generation {
-            log::debug!(
-                "[GRAIN] ext-host: discarding stale recommendation vectors (gen {generation})"
-            );
-            return;
-        }
-        log::debug!(
-            "[GRAIN] ext-host: recommendation vectors ready — {} extension(s) embedded",
-            vectors.len()
-        );
-        *recommend_vectors().write().unwrap() = RecommendVectors {
-            generation,
-            vectors,
-        };
-    });
-}
 
 /// Rank the installed searchable extensions for one spoken request
 /// (`docs/Extensions V1/PLAN.md` §3.1). The whole recommendation, minus the
@@ -1189,82 +944,13 @@ pub fn action_vocabulary() -> Vec<String> {
 /// Called once per finalized transcript, off the paste path. With nothing
 /// installed — the overwhelmingly common case — this is one relaxed atomic load
 /// and an empty struct: no lock, no disk, no clone of the registry.
+/// Migration compatibility shim. Context belongs to the agent/core, and
+/// extension metadata can never replace or augment a Grain prompt.
 pub fn prompt_contributions(
-    app: &AppHandle,
-    ctx: Option<&crate::context_detect::ActiveContext>,
+    _app: &AppHandle,
+    _ctx: Option<&crate::context_detect::ActiveContext>,
 ) -> crate::context_detect::prompt_stack::Contributions {
-    use crate::context_detect::prompt_stack::{ContributedLayer, Contributions};
-
-    // Slot changes rebuild this index, and invalid/missing replacement text
-    // falls back to Grain rather than erasing a host prompt position.
-    if !HAS_PROMPT_LAYERS.load(Ordering::Relaxed)
-        && !HAS_CONTEXT_SLOT.load(Ordering::Relaxed)
-        && !HAS_MAIN_SLOT.load(Ordering::Relaxed)
-    {
-        return Contributions::default();
-    }
-    let Some(host) = HOST.get() else {
-        return Contributions::default();
-    };
-    let context_owner = app
-        .try_state::<Arc<grain_core::extensions::ExtensionsRegistry>>()
-        .and_then(|reg| reg.slot_occupant(grain_sdk::manifest::PROMPT_CONTEXT_SLOT))
-        .filter(|occupant| occupant != grain_core::extensions::CORE_DEFAULT);
-    let main_owner = app
-        .try_state::<Arc<grain_core::extensions::ExtensionsRegistry>>()
-        .and_then(|reg| reg.slot_occupant(grain_sdk::manifest::PROMPT_MAIN_SLOT))
-        .filter(|occupant| occupant != grain_core::extensions::CORE_DEFAULT);
-    let index = host.index.read().unwrap();
-    let layers = index
-        .prompt_layers
-        .iter()
-        .filter(|layer| layer.target == grain_sdk::manifest::PromptTarget::Additive)
-        .filter(|l| crate::context_detect::layer_matches(&l.when, ctx))
-        .map(|l| {
-            log::info!("[ext:{}] prompt layer '{}' applies", l.ext_id, l.layer_id);
-            ContributedLayer {
-                ext_id: l.ext_id.clone(),
-                text: l.text.clone(),
-            }
-        })
-        .collect();
-    let main = main_owner.as_ref().and_then(|owner| {
-        index
-            .prompt_layers
-            .iter()
-            .find(|layer| {
-                layer.ext_id == *owner && layer.target == grain_sdk::manifest::PromptTarget::Main
-            })
-            .map(|layer| ContributedLayer {
-                ext_id: layer.ext_id.clone(),
-                text: layer.text.clone(),
-            })
-    });
-    let context = context_owner.as_ref().and_then(|owner| {
-        index
-            .prompt_layers
-            .iter()
-            .find(|layer| {
-                layer.ext_id == *owner
-                    && layer.target == grain_sdk::manifest::PromptTarget::Context
-                    && crate::context_detect::layer_matches(&layer.when, ctx)
-            })
-            .map(|layer| ContributedLayer {
-                ext_id: layer.ext_id.clone(),
-                text: layer.text.clone(),
-            })
-    });
-    if let Some(layer) = &main {
-        log::info!("[ext:{}] prompt.main replacement applies", layer.ext_id);
-    }
-    if let Some(layer) = &context {
-        log::info!("[ext:{}] prompt.context replacement applies", layer.ext_id);
-    }
-    Contributions {
-        layers,
-        main,
-        context,
-    }
+    crate::context_detect::prompt_stack::Contributions::default()
 }
 
 /// Supervisor → worker: create a Web Worker for this extension.
@@ -1403,9 +1089,9 @@ fn map_worker_error(source: &DevSource, payload: &DiedPayload) -> Option<String>
     Some(format!("{}\n    at {location}", payload.reason))
 }
 
-/// Start the host: register the supervisor↔host event bridge, the activation
-/// dispatcher, and the reaper. Idempotent (a second call is a no-op).
-pub fn start(app: AppHandle, ctx: Arc<AppContext>) {
+/// Start explicit tool execution support and idle cleanup. No activation or
+/// daemon event subscriber is installed. Idempotent.
+pub fn start(app: AppHandle, _ctx: Arc<AppContext>) {
     if HOST
         .set(HostState {
             app: app.clone(),
@@ -1444,20 +1130,6 @@ pub fn start(app: AppHandle, ctx: Arc<AppContext>) {
     // spawns queued while it was starting.
     app.listen("ext-host://ready", move |_| on_supervisor_ready());
 
-    // Activation dispatch: wake workers on their declared events. A dedicated
-    // subscriber so the wake path is independent of any connected worker.
-    let app_act = app.clone();
-    tauri::async_runtime::spawn(async move {
-        let mut rx = ctx.subscribe();
-        loop {
-            match rx.recv().await {
-                Ok(ev) => on_event(&app_act, &ev),
-                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
-                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
-            }
-        }
-    });
-
     // Reaper: return RAM when a worker goes idle.
     tauri::async_runtime::spawn(async move {
         let mut tick = tokio::time::interval(Duration::from_secs(REAP_INTERVAL_SECS));
@@ -1473,6 +1145,7 @@ pub fn start(app: AppHandle, ctx: Arc<AppContext>) {
 
 /// Explicit daemon-event variants an activation list wakes on. `onTransform`
 /// warming is added separately only after its own capability grant is checked.
+#[cfg(test)]
 fn declared_event_variants(activation: &[String]) -> Vec<String> {
     let mut out: Vec<String> = activation
         .iter()
@@ -1489,61 +1162,24 @@ fn declared_event_variants(activation: &[String]) -> Vec<String> {
     out
 }
 
+#[cfg(test)]
 fn declares_transform(activation: &[String]) -> bool {
     activation.iter().any(|a| a == "onTransform")
 }
 
+#[cfg(test)]
 fn declares_startup(activation: &[String]) -> bool {
     activation.iter().any(|a| a == "onStartup")
 }
 
+#[cfg(test)]
 fn has_resident_grant(activation: &[String], granted: &[String]) -> bool {
     declares_startup(activation) && has_grant(granted, "resident")
 }
 
+#[cfg(test)]
 fn has_grant(granted: &[String], capability: &str) -> bool {
     granted.iter().any(|grant| grant == capability)
-}
-
-fn on_event(app: &AppHandle, ev: &DaemonEvent) {
-    // Zero-cost when no extension declares an event activation: one relaxed
-    // load. This runs for EVERY broadcast, including AudioLevel while
-    // recording, so nothing above this line may allocate or touch the disk.
-    if !HAS_ACTIVATIONS.load(Ordering::Relaxed) {
-        return;
-    }
-    let host = match HOST.get() {
-        Some(h) => h,
-        None => return,
-    };
-    // Allocation-free tag read, then an index lookup — no registry, no disk.
-    let waking: Vec<String> = {
-        let index = host.index.read().unwrap();
-        match index.by_event.get(ev.variant_name()) {
-            Some(ids) => ids.clone(),
-            None => return,
-        }
-    };
-    let cold: Vec<String> = waking.into_iter().filter(|id| !is_running(id)).collect();
-    if cold.is_empty() {
-        return; // already awake — it gets this event over its own connection
-    }
-    // Only now, on the rare spawn path, is it worth serializing the event to
-    // carry as the activation payload.
-    let activation = serde_json::to_value(ev).ok();
-    let reg = match app.try_state::<Arc<grain_core::extensions::ExtensionsRegistry>>() {
-        Some(r) => r,
-        None => return,
-    };
-    for id in cold {
-        log::info!("[ext:{id}] life activation {}", ev.variant_name());
-        let pack = match load_manifest(app, &id) {
-            Some(p) => p,
-            None => continue,
-        };
-        let granted = reg.record(&id).map(|r| r.granted).unwrap_or_default();
-        spawn_worker(app, &id, &pack, granted, activation.clone());
-    }
 }
 
 // ── Worker lifecycle ────────────────────────────────────────────────────────
@@ -1561,6 +1197,10 @@ fn spawn_worker(
     caps: Vec<String>,
     activation: Option<Value>,
 ) {
+    if pack.validate_tool_only().is_err() || activation.is_some() {
+        log::warn!("[ext:{ext_id}] refused retired extension runtime or activation");
+        return;
+    }
     let host = match HOST.get() {
         Some(h) => h,
         None => return,
@@ -1592,7 +1232,7 @@ fn spawn_worker(
     // The declaration alone is not authority. Every spawn path (including a
     // shortcut/event that happens to wake this worker) re-checks the grant so a
     // stale/tampered registry cannot turn a denied worker into an immortal one.
-    let resident = has_resident_grant(&pack.manifest.activation, &caps);
+    let resident = false;
     let dev_source = dev_project.and_then(|project| {
         project.entry_path.map(|entry| DevSource {
             root: project.root,
@@ -1921,71 +1561,18 @@ pub fn resolve_call_result(ext_id: &str, call_id: u64, result: Result<Value, Str
 /// (3 → auto-disable). An empty-string reply suppresses the paste (the
 /// documented output-suppression behavior). Never blocks the paste path on a
 /// cold spawn.
-pub async fn run_transforms(app: &AppHandle, text: String) -> String {
-    // THE paste path. With no transform extension enabled this is one relaxed
-    // atomic load and a return — no registry clone, no disk, no allocation.
-    // Dictation must be exactly as fast as it was before the platform existed.
-    if !HAS_TRANSFORMS.load(Ordering::Relaxed) {
-        return text;
-    }
-    let host = match HOST.get() {
-        Some(h) => h,
-        None => return text,
-    };
-    // Pre-sorted into toggle order at index-build time.
-    let transforms: Vec<String> = host.index.read().unwrap().transforms.clone();
-    if transforms.is_empty() {
-        return text;
-    }
-
-    let mut current = text;
-    for id in transforms {
-        // A cold worker cannot fit the budget; skip rather than block the paste.
-        if !is_running(&id) {
-            continue;
-        }
-        let started = Instant::now();
-        match host
-            .workers
-            .call(
-                &id,
-                "transform",
-                json!({ "text": current }),
-                TRANSFORM_DEADLINE,
-            )
-            .await
-        {
-            Ok(v) => {
-                // Accept either `{ "text": "…" }` or a bare string.
-                if let Some(s) = v.get("text").and_then(|t| t.as_str()) {
-                    current = s.to_string();
-                } else if let Some(s) = v.as_str() {
-                    current = s.to_string();
-                }
-                clear_strikes(&id);
-            }
-            Err(e) => {
-                log::warn!("[GRAIN] transform '{id}' failed ({e}) — text unchanged");
-                let strikes = record_strike(app, &id);
-                if e == "deadline exceeded" {
-                    log::warn!(
-                        "[ext:{id}] slow transform took {} ms (budget {} ms) — strike {strikes} of {MAX_STRIKES}",
-                        started.elapsed().as_millis(),
-                        TRANSFORM_DEADLINE.as_millis(),
-                    );
-                }
-            }
-        }
-    }
-    current
+pub async fn run_transforms(_app: &AppHandle, text: String) -> String {
+    text
 }
 
+#[allow(dead_code)] // Retired command compatibility until surface cleanup.
 #[derive(Debug, PartialEq, Eq)]
 pub enum SessionStageOutput {
     Text(String),
     Handled,
 }
 
+#[cfg(test)]
 fn parse_session_stage_output(value: Value) -> Result<SessionStageOutput, String> {
     if let Some(text) = value.as_str() {
         return Ok(SessionStageOutput::Text(text.to_string()));
@@ -2005,53 +1592,16 @@ fn parse_session_stage_output(value: Value) -> Result<SessionStageOutput, String
 
 /// Keep the owning worker warm for the recording. The activation payload is
 /// data only; the session's identity still comes from its minted token.
-pub fn wake_for_session(app: &AppHandle, ext_id: &str, mode: &str) {
-    if is_running(ext_id) {
-        return;
-    }
-    let Some(pack) = load_manifest(app, ext_id) else {
-        return;
-    };
-    let granted = app
-        .try_state::<Arc<grain_core::extensions::ExtensionsRegistry>>()
-        .and_then(|registry| registry.record(ext_id))
-        .map(|record| record.granted)
-        .unwrap_or_default();
-    spawn_worker(
-        app,
-        ext_id,
-        &pack,
-        granted,
-        Some(json!({ "Session": { "mode": mode } })),
-    );
-}
+pub fn wake_for_session(_app: &AppHandle, _ext_id: &str, _mode: &str) {}
 
 /// Run the owner-controlled slow stage. Failure is deliberately returned to
 /// the caller, which falls back to the exact input text.
 pub async fn run_session_stage(
-    ext_id: &str,
-    mode: &str,
-    text: &str,
+    _ext_id: &str,
+    _mode: &str,
+    _text: &str,
 ) -> Result<SessionStageOutput, String> {
-    let host = HOST.get().ok_or("extension host unavailable")?;
-    let result = host
-        .workers
-        .call(
-            ext_id,
-            "sessionStage",
-            json!({ "mode": mode, "text": text }),
-            SESSION_STAGE_DEADLINE,
-        )
-        .await;
-    if result
-        .as_ref()
-        .is_err_and(|error| error == "deadline exceeded")
-    {
-        let _ = host
-            .workers
-            .notify(ext_id, "session.cancel", json!({ "reason": "timeout" }));
-    }
-    parse_session_stage_output(result?)
+    Err("Extension recording sessions are retired.".into())
 }
 
 // ── Hand-off (`docs/Extensions V1/PLAN.md` §3) ──────────────────────────────
@@ -2082,6 +1632,7 @@ const HANDOFF_WAKE_DEADLINE: Duration = Duration::from_secs(3);
 
 /// What a handed-off request produced.
 #[derive(Debug, PartialEq)]
+#[allow(dead_code)] // Legacy wire shape; whole-request execution is retired.
 pub enum HandOffOutcome {
     /// The extension handled it. The optional line is a short result to show.
     Done(Option<String>),
@@ -2100,6 +1651,7 @@ pub enum HandOffOutcome {
     Unknown,
 }
 
+#[cfg(test)]
 fn validate_request_reply_shape(value: &Value) -> Result<(), String> {
     let object = value
         .as_object()
@@ -2119,6 +1671,7 @@ fn validate_request_reply_shape(value: &Value) -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(test)]
 fn parse_handoff_outcome(value: Value) -> HandOffOutcome {
     if let Err(reason) = validate_request_reply_shape(&value) {
         return HandOffOutcome::Failed(reason);
@@ -2165,56 +1718,10 @@ fn wake_for_request(app: &AppHandle, ext_id: &str) {
 /// next — interpretation, any `match.*` ranking, clarification, the result. Grain
 /// does not resolve anything first; that was the old routing model. What it does
 /// guarantee is that the extension is still enabled and awake.
-pub async fn hand_off(app: &AppHandle, ext_id: &str, request: &str) -> HandOffOutcome {
-    let Some(host) = HOST.get() else {
-        return HandOffOutcome::Failed("extension host unavailable".into());
-    };
-    // Re-check enablement at hand-off, not only at ranking. A user can disable an
-    // extension between speaking and accepting, and the request would then run
-    // against something they just turned off.
-    let enabled = app
-        .try_state::<Arc<grain_core::extensions::ExtensionsRegistry>>()
-        .and_then(|registry| registry.record(ext_id))
-        .is_some_and(|record| record.enabled);
-    if !enabled {
-        return HandOffOutcome::Failed("that extension is no longer enabled".into());
-    }
-    // The chosen extension was almost certainly cold — being handed a request is
-    // usually the only reason to wake it. Give the spawn a bounded moment to
-    // connect rather than failing instantly.
-    wake_for_request(app, ext_id);
-    if !host
-        .workers
-        .wait_connected(ext_id, HANDOFF_WAKE_DEADLINE)
-        .await
-    {
-        log::warn!("[ext:{ext_id}] request — worker did not start in time");
-        return HandOffOutcome::Failed("that extension did not start in time".into());
-    }
-    match host
-        .workers
-        .call(
-            ext_id,
-            "request",
-            json!({ "request": request }),
-            HANDOFF_DEADLINE,
-        )
-        .await
-    {
-        Ok(value) => {
-            clear_strikes(ext_id);
-            parse_handoff_outcome(value)
-        }
-        Err(error) if error == "deadline exceeded" => {
-            record_strike(app, ext_id);
-            log::warn!("[ext:{ext_id}] request timed out after {HANDOFF_DEADLINE:?}");
-            HandOffOutcome::Unknown
-        }
-        Err(error) => {
-            record_strike(app, ext_id);
-            HandOffOutcome::Failed(error)
-        }
-    }
+pub async fn hand_off(_app: &AppHandle, _ext_id: &str, _request: &str) -> HandOffOutcome {
+    HandOffOutcome::Failed(
+        "Whole-request extension hand-off is retired. Use a declared tool call.".into(),
+    )
 }
 
 /// [GRAIN] Why a third-party action call could not produce a result. A timeout is
@@ -2243,6 +1750,20 @@ pub async fn run_action(
     arguments: &Value,
     idempotency_key: Option<&str>,
 ) -> Result<Value, ActionCallError> {
+    let pack = load_manifest_result(app, ext_id).map_err(ActionCallError::Unavailable)?;
+    pack.validate_tool_only()
+        .map_err(ActionCallError::Unavailable)?;
+    if !pack
+        .manifest
+        .contributes
+        .actions
+        .iter()
+        .any(|action| action.id == action_id)
+    {
+        return Err(ActionCallError::Unavailable(
+            "that tool is no longer declared".into(),
+        ));
+    }
     let Some(host) = HOST.get() else {
         return Err(ActionCallError::Unavailable(
             "extension host unavailable".into(),
@@ -2300,71 +1821,18 @@ pub async fn run_action(
 
 /// User cancellation is immediate: notify the handler's AbortSignal and drop
 /// the Rust waiter. The worker may finish later; its response has no recipient.
-pub fn cancel_session_stage(ext_id: &str, reason: &str) {
-    let Some(host) = HOST.get() else {
-        return;
-    };
-    let _ = host
-        .workers
-        .notify(ext_id, "session.cancel", json!({ "reason": reason }));
-    host.workers.cancel_pending(ext_id, reason);
-}
+pub fn cancel_session_stage(_ext_id: &str, _reason: &str) {}
 
 /// How long the host waits for a worker to *acknowledge* a shortcut. The
 /// runtime acknowledges on receipt and runs the handler detached, so this
 /// covers delivery only — a shortcut that opens an LLM call is not "slow".
-const SHORTCUT_DEADLINE: Duration = Duration::from_secs(2);
 
 /// A contributed shortcut fired (SPEC §3.3). Wakes the extension if it is cold,
 /// otherwise hands the press to the running worker.
 ///
 /// Everything happens on the async runtime: the caller is the global-shortcut
 /// dispatch path, where blocking hangs every hotkey in the app.
-pub fn wake_for_shortcut(app: &AppHandle, ext_id: &str, shortcut_id: &str) {
-    let app = app.clone();
-    let ext_id = ext_id.to_string();
-    let shortcut_id = shortcut_id.to_string();
-    tauri::async_runtime::spawn(async move {
-        log::info!("[ext:{ext_id}] life activation shortcut:{shortcut_id}");
-        if is_running(&ext_id) {
-            let host = match HOST.get() {
-                Some(h) => h,
-                None => return,
-            };
-            if let Err(e) = host
-                .workers
-                .call(
-                    &ext_id,
-                    "shortcut",
-                    json!({ "id": shortcut_id }),
-                    SHORTCUT_DEADLINE,
-                )
-                .await
-            {
-                log::warn!("[GRAIN] shortcut '{shortcut_id}' → '{ext_id}' failed: {e}");
-            }
-            return;
-        }
-        // Cold: the press IS the activation, and travels as the payload — the
-        // same device `on_event` uses, since there is no ready handshake to
-        // wait on and a dropped keypress would be indistinguishable from a bug.
-        let Some(pack) = load_manifest(&app, &ext_id) else {
-            return;
-        };
-        let granted = app
-            .try_state::<Arc<grain_core::extensions::ExtensionsRegistry>>()
-            .and_then(|reg| reg.record(&ext_id))
-            .map(|r| r.granted)
-            .unwrap_or_default();
-        spawn_worker(
-            &app,
-            &ext_id,
-            &pack,
-            granted,
-            Some(json!({ "Shortcut": { "id": shortcut_id } })),
-        );
-    });
-}
+pub fn wake_for_shortcut(_app: &AppHandle, _ext_id: &str, _shortcut_id: &str) {}
 
 fn clear_strikes(ext_id: &str) {
     if let Some(host) = HOST.get() {
@@ -2685,28 +2153,19 @@ pub fn reload_dev_extension(
 /// as a demo nobody asked for.
 const RETIRED_BUILTINS: &[&str] = &["grain.auto-categorize", "grain.agent-center-layout"];
 
-/// Take retired built-ins off an existing install: the record, the pack file on
-/// disk, and anything the pack stored. Idempotent — after the first boot there
-/// is nothing left to find, and a fresh install never had them.
-fn retire_builtin_packs(app: &AppHandle) {
+/// Disable legacy bundled integrations while preserving artifacts and user data.
+/// A fresh install never receives these packages.
+fn retire_builtin_packs(app: &AppHandle) -> Result<(), String> {
     let Some(reg) = app.try_state::<Arc<grain_core::extensions::ExtensionsRegistry>>() else {
-        return;
+        return Ok(());
     };
     for id in RETIRED_BUILTINS {
-        if reg.dev_path(id).is_some() {
-            continue; // a live dev project owns the id — leave it alone
-        }
-        let known = reg.is_installed(id);
-        let _ = reg.uninstall(id);
-        if let Some(ctx) = app.try_state::<Arc<AppContext>>() {
-            let dir = ctx.data_dir.join("extensions");
-            let _ = std::fs::remove_file(dir.join(format!("{id}.grainpack.json")));
-            let _ = crate::host_api::ExtStorage::new(&ctx.data_dir, id).purge();
-        }
-        if known {
-            log::info!("[GRAIN] retired built-in '{id}' removed");
+        if reg.dev_path(id).is_none() && reg.is_installed(id) {
+            reg.quarantine(id, "Retired bundled extension; tools only are supported.")
+                .map_err(|error| error.to_string())?;
         }
     }
+    Ok(())
 }
 
 /// Bring the installed set in line with what this build actually ships. Called
@@ -2716,8 +2175,25 @@ fn retire_builtin_packs(app: &AppHandle) {
 /// does: first-party extensions are real packs in the catalogue, installed the
 /// same way anyone else's are, so this only has to clean up after the ones that
 /// were seeded into existing installs.
-pub fn reconcile_builtin_packs(app: &AppHandle) {
-    retire_builtin_packs(app);
+pub fn reconcile_builtin_packs(app: &AppHandle) -> Result<(), String> {
+    // Runs before HOST starts. Validate disabled records too so legacy artifacts
+    // retain a persistent refusal reason and old grants cannot survive restart.
+    if let Some(reg) = app.try_state::<Arc<grain_core::extensions::ExtensionsRegistry>>() {
+        for record in reg.records() {
+            if let Err(reason) = load_manifest_result(app, &record.id) {
+                reg.quarantine(&record.id, &reason)
+                    .map_err(|error| error.to_string())?;
+            }
+        }
+    }
+    if let Some(ctx) = app.try_state::<Arc<AppContext>>() {
+        grain_core::extensions::archive_retired_prompts(&ctx.data_dir, &ctx.settings())
+            .map_err(|error| format!("preserve retired extension prompts: {error}"))?;
+        ctx.update_settings(grain_core::extensions::retire_extension_prompts)
+            .map_err(|error| error.to_string())?;
+    }
+    retire_builtin_packs(app)?;
+    Ok(())
 }
 
 #[cfg(test)]

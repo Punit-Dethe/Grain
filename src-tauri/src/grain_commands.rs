@@ -1301,6 +1301,13 @@ pub fn extension_set_enabled(
                     }
                 }
             }
+            if !enabled {
+                reg.set_enabled(pack_id, false)
+                    .map_err(|error| error.to_string())?;
+                stop_extension_runtime(&app, pack_id, "extension disabled");
+                crate::extension_host::refresh_index(&app);
+                return Ok(());
+            }
             let pack = load_pack(&app, pack_id)?;
             // [GRAIN] SPEC §6 (the Chrome model): a scripted extension is HELD
             // at first enable until the user approves the capabilities its
@@ -2659,20 +2666,9 @@ pub fn extension_take_slot(
     id: String,
     slot: String,
 ) -> Result<(), String> {
-    use grain_core::extensions as ext;
+    let _ = (app, id, slot);
     require_main_window(&window)?;
-    let reg = app
-        .try_state::<std::sync::Arc<ext::ExtensionsRegistry>>()
-        .ok_or("extensions registry unavailable")?;
-    let displaced = reg.take_slot(&id, &slot).map_err(|e| e.to_string())?;
-
-    if let Some(prev) = &displaced {
-        // The loser is disabled by `take_slot`; its payloads must come off too.
-        stop_extension_runtime(&app, prev, "extension lost an exclusive slot");
-        log::info!("[GRAIN] slot '{slot}' taken by '{id}' (was '{prev}')");
-    }
-    crate::extension_host::refresh_index(&app);
-    Ok(())
+    Err("Extension feature slots are retired. Extensions provide tools only.".into())
 }
 
 /// Export an installed pack to `dest` (SPEC §5.1 "shareable data packs").

@@ -1,10 +1,42 @@
 # Tool-only native and MCP extensions: revised execution plan
 
-**Revised:** 27 September 2026. **Status:** planning only; implementation paused.
+**Revised:** 27 September 2026. **Status:** execution resumed; retirement enforcement and migration foundation implemented on `extensions/tool-only-retirement`. Release gates remain open.
 
 This document replaces the execution plan dated 26 September in this same file. The user's scope correction is authoritative: extensions supply tools/functions through either a native Grain adapter or an MCP adapter. They no longer extend Grain's internal features. Retirement is a settled product decision, not a backlog for restoration.
 
-Only this planning document changes in this revision. Previously started implementation changes remain uncommitted and require reassessment before implementation resumes. Their existence and earlier test results do not complete any gate below.
+The 27 September implementation closes retired host access first. Previously paused MCP outcome/discovery/cleanup changes were reviewed against this reduced scope, retained and re-tested. The evidence below describes this implementation slice; it does not certify the full extension release.
+
+## Current execution evidence — 27 September 2026
+
+Branch: `extensions/tool-only-retirement`. No implementation commits go to `main`.
+
+| Area | Implemented | Remaining gate |
+|---|---|---|
+| R0 contract | Native means a tool adapter; SDK grants restricted to exact-host network, namespaced storage and scoped auth. Agent prompt rules also refused. | New versioned adapter contract, identity/account generations, baseline RAM/latency measurements |
+| R1 enforcement | All public SDK trust validators reject mixed retired features; host dispatch rejects retired RPC even with historical or `All` grants; event feed is pill-only. Runtime load, spawn and exact action invocation revalidate. Signed installs validate bounded JSON and signed id/version/tier/permissions before staging. | Full production-path restart/late-completion fixtures; remaining obsolete controls/consumers and old worker JS surface removal |
+| R1 migration | Persistent quarantine disables packages, clears obsolete grants/slot ownership and parked dev enablement. Before host startup, edited extension prompt entries are archived atomically, then removed from active selection. Repeating/interrupted archive migration is safe. Artifacts and user storage survive. | Explicit migration version/diagnostic presentation, stale approval/catalog generation audit and rollback verification |
+| R1 hooks | No daemon activation subscriber, startup workers, active extension prompt contributions, transcript transforms, session stages, shortcuts or whole-request hand-off. Recommendation Lab generator refuses creation; existing lab data retains cleanup support. | Remove remaining unreachable implementations and first-party-as-extension registrations after ownership review |
+| Authoring | New CLI projects declare one exact tool through `grain.actions`, with no activation/shortcut. Generated SDK API/types omit retired host services. Developer/checker fixtures certify refusal of companions and sessions. | Update historical examples/docs and runtime JavaScript API shape together; no promise of arbitrary executable containment |
+| Retained R2 foundation | One whole-operation MCP deadline, bounded pages/tools/metadata/cursors, typed text/JSON results, dispatch-aware outcomes and owned HTTP cancellation/cleanup. | Raw JSON transport-body bounds, account/config generation races, full native parity, complete cancellation/disable policy and R2 gate |
+
+**Paused-diff disposition:** retain/adapt `execution.rs`, `action_exec.rs`, MCP implementation, cancellable SDK HTTP wrapper and actual-SDK protocol tests; retain the Windows test runner and Common Controls manifest as test infrastructure. The direct SSE crate uses the version already in the lockfile. Drop any interpretation that these changes preserve broad extension privileges. No agent capture expansion, provider expansion or broad extension engine was added.
+
+**Deterministic verification (Windows/MSVC):** core 209 unit + 4 integration tests; SDK 72; extension CLI 9; extension checker 23; backend host API 16, event auth 8, extension-related 48, developer loader 4, MCP 19 and action executor 4. Filtered backend groups overlap and are not a unique-test total. Registry tools compile and their zero-test target is reported as such. Frontend TypeScript/production build and backend library check pass. The MCP tests use the production dispatch conversion and actual pinned SDK over local protocol fixtures, including a lost write response (one call, no replay), hanging HTTP/SSE cleanup, pagination loops, changed schema/disable before dispatch, unsupported results and 100 sequential connection closures. Live provider/account certification and manual real-app UX are **not** performed.
+
+Reproduce from repository root (PowerShell; `rtk` was unavailable on this machine):
+
+```powershell
+cargo test -p grain-core -p grain-sdk -p grain-extension-checks -p grain-ext-cli -p grain-registry-tools --locked --offline
+$env:CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUNNER = "powershell.exe -NoProfile -File $PWD/scripts/run-rust-test.ps1"
+# Repeat with host_api::, events_auth::, extension_, dev_extensions::, action_exec::
+cargo test --manifest-path src-tauri/Cargo.toml --lib --locked --offline grain_mcp::
+cargo check --manifest-path src-tauri/Cargo.toml --lib --locked --offline
+bun run build
+```
+
+The runner embeds Common Controls v6 only in the generated Tauri lib-test executable using installed Windows SDK `mt.exe`. It does not change registry settings or application binaries. Backend checks retain existing context/upstream warnings; no Handy source is modified. The unrelated pre-existing `src/app/bindings.ts` changes are excluded from these commits.
+
+**Next:** finish R1 consumers/obsolete controls and migration/late-completion evidence before provider expansion. R2–R6 stay incomplete; authentication certification, selective schema hydration, approval continuation and the one/two/three/five-extension ladder still need execution. The checklists below remain release criteria, not claims inferred from this slice.
 
 ## 1. Product boundary
 
@@ -53,7 +85,7 @@ Task-relevant text may be an explicit argument when the user-authorized task req
 | Preserve older amendments except selected MCP changes | Supersede every conflicting capability, prompt, context, activation and Space decision |
 | Rich resources/client interactions are natural extension growth | Evaluate optional tool-protocol features separately; never restore retired host privileges |
 
-The prior [research](MCP-EXTENSION-RESEARCH.md) and [source ledger](MCP-EXTENSION-SOURCES.json) remain evidence for discovery, auth, lifecycle, outcomes and continuation. Recommendations to preserve broad native capabilities are superseded. Older `PLAN.md`, Extension Platform, Extensions V1 and prompt integration documents cannot authorize retired features. They remain unchanged in this documentation-only revision.
+The prior [research](MCP-EXTENSION-RESEARCH.md) and [source ledger](MCP-EXTENSION-SOURCES.json) remain evidence for discovery, auth, lifecycle, outcomes and continuation. Recommendations to preserve broad native capabilities are superseded. Older `PLAN.md`, Extension Platform, Extensions V1 and prompt integration documents cannot authorize retired features. Their broader platform recommendations remain superseded.
 
 ## 3. Research basis
 
@@ -166,11 +198,11 @@ All checkboxes remain pending. Each phase includes a vertical test through produ
 
 **Purpose:** make old capabilities unreachable, including for already enabled packages.
 
-- [ ] Deny retired APIs at host dispatch before relying on UI/SDK removal. Old capability tokens and direct RPC must fail too.
+- [x] Deny retired APIs at host dispatch before relying on UI/SDK removal. Old capability tokens and direct RPC must fail too.
 - [ ] Reject retired fields and aliases at import/update/enable/reload/startup. Keep parsing tombstones for precise errors; never silently discard a required feature and run the package with different semantics.
 - [ ] Quarantine incompatible legacy packages as disabled with a migration reason. Mixed tool/retired-capability packages require explicit migration and review; no automatic partial activation.
 - [ ] Unregister startup/event/session/shortcut handlers, revoke obsolete tokens, stop owned workers/listeners and invalidate pending approvals/catalogs. Disablement must defeat late asynchronous completion.
-- [ ] Stop prompt layers, priorities, replacements and packs. Remove extension-owned entries from active selection using provenance, restoring a valid first-party/user selection. Preserve ambiguous or edited content in inert recoverable storage rather than deleting or activating it automatically.
+- [x] Stop prompt layers, priorities, replacements and packs. Remove extension-owned entries from active selection using provenance, restoring a valid first-party/user selection. Preserve ambiguous or edited content in inert recoverable storage rather than deleting or activating it automatically.
 - [ ] Release Space/other slots without legacy fallback re-enabling a retired built-in extension. Detach contributions from rendering/routing; preserve user-created content independently.
 - [ ] Use a versioned, idempotent migration: snapshot recoverable metadata, disable execution first, then clean up. Interrupted migration restarts before any legacy activation.
 - [ ] Remove old extension permission/configuration controls and first-party-as-extension catalog registrations. Core/agent controls remain independent. Frontend overhaul follows repository branch/manual review rules.
@@ -287,4 +319,4 @@ During implementation run relevant SDK/core/backend tests, Rust checks and affec
 
 **Separate future decisions:** arbitrary local executables/stdio, custom endpoints, optional multi-round tool interactions, long jobs, rich result rendering and durable restart-resume. None may weaken the boundary above. Agent context improvements belong to a separate workstream and are not extension prerequisites.
 
-When implementation is explicitly resumed, begin with **R0.1 and R1.1: inventory and block retired host access**, including regression fixtures for every retired path. Then migrate installed state, establish minimal native/MCP execution and reuse only paused changes that pass review. Do not resume broad extension-platform development or provider expansion from the previous plan.
+Implementation has resumed with **R0.1 and R1.1/R1.2 enforcement and migration foundation**. Continue with R1.3 consumer cleanup and complete the remaining R1 evidence before minimal native/MCP execution certification. Reuse only paused changes that pass scope review and fresh tests. Do not resume broad extension-platform development or provider expansion from the previous plan.

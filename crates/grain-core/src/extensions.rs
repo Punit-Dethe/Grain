@@ -605,6 +605,10 @@ pub struct SlotConflict {
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 struct RegistryFile {
+    /// Persistent refusal reasons. A restart or old grant must not reactivate
+    /// an incompatible package; a validated replacement clears quarantine.
+    #[serde(default)]
+    quarantined: HashMap<String, String>,
     /// Installed pack records, keyed by extension id.
     #[serde(default)]
     records: HashMap<String, ExtensionRecord>,
@@ -626,6 +630,38 @@ pub struct ExtensionsRegistry {
 }
 
 impl ExtensionsRegistry {
+    pub fn quarantine_reason(&self, id: &str) -> Option<String> {
+        self.state.read().unwrap().quarantined.get(id).cloned()
+    }
+
+    /// Disable before any cleanup, preserve the artifact/user data, and make
+    /// old grants and parked developer records inert. Safe to repeat on boot.
+    pub fn quarantine(&self, id: &str, reason: &str) -> Result<()> {
+        fn retire(record: &mut ExtensionRecord) {
+            record.enabled = false;
+            record.granted.clear();
+            record.slots.clear();
+            record.prompt_layers_approved = None;
+            record.actions_approved = None;
+            if let Some(parked) = record.dev.as_mut().and_then(|dev| dev.replaced.as_mut()) {
+                retire(parked);
+            }
+        }
+        {
+            let mut state = self.state.write().unwrap();
+            if let Some(record) = state.records.get_mut(id) {
+                retire(record);
+                state.quarantined.insert(id.to_string(), reason.to_string());
+                for occupant in state.slot_claims.values_mut() {
+                    if occupant == id {
+                        *occupant = CORE_DEFAULT.to_string();
+                    }
+                }
+            }
+        }
+        self.save()
+    }
+
     /// Load (or initialize) the registry.
     ///
     /// `settings_file_preexisted` is retained for call compatibility. Visual
@@ -677,7 +713,7 @@ impl ExtensionsRegistry {
     fn save(&self) -> Result<()> {
         let state = self.state.read().unwrap();
         let json = serde_json::to_string_pretty(&*state)?;
-        fs::write(&self.path, json).with_context(|| format!("write {}", self.path.display()))
+        atomic_write(&self.path, json.as_bytes())
     }
 
     /// All installed pack records (unordered; callers sort by toggle_seq).
@@ -870,12 +906,20 @@ impl ExtensionsRegistry {
     /// layer, so a caller that forgets to check cannot steal a slot by accident.
     pub fn set_enabled(&self, id: &str, enabled: bool) -> Result<bool> {
         if enabled {
+            if let Some(reason) = self.quarantine_reason(id) {
+                anyhow::bail!("extension is quarantined: {reason}");
+            }
             if let Some(c) = self.slot_conflict(id) {
                 anyhow::bail!("slot '{}' is occupied by '{}'", c.slot, c.current_occupant);
             }
         }
         let changed = {
             let mut state = self.state.write().unwrap();
+            if enabled {
+                if let Some(reason) = state.quarantined.get(id) {
+                    anyhow::bail!("extension is quarantined: {reason}");
+                }
+            }
             let next = state.next_toggle_seq;
             let declared = match state.records.get_mut(id) {
                 Some(rec) if rec.enabled != enabled => {
@@ -938,6 +982,7 @@ impl ExtensionsRegistry {
         {
             let mut state = self.state.write().unwrap();
             let id = record.id.clone();
+            state.quarantined.remove(&id);
             // A store/manual install arriving while this id is overridden
             // updates the parked installed record, never the effective dev
             // record. The author can keep testing without losing the update.
@@ -1087,6 +1132,31 @@ impl ExtensionsRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn quarantine_survives_restart_and_disables_parked_dev_state() {
+        let dir = tmp();
+        let reg = ExtensionsRegistry::load(dir.path(), false).unwrap();
+        let mut legacy = pack("com.x.old", &["prompt.main"]);
+        legacy.enabled = true;
+        legacy.granted = vec!["capture:screen-image".into(), "resident".into()];
+        legacy.prompt_layers_approved = Some("old approval".into());
+        reg.install(legacy.clone()).unwrap();
+        reg.load_dev(legacy, dir.path().join("project")).unwrap();
+        reg.quarantine("com.x.old", "retired context access")
+            .unwrap();
+        reg.quarantine("com.x.old", "retired context access")
+            .unwrap();
+        drop(reg);
+        let reg = ExtensionsRegistry::load(dir.path(), true).unwrap();
+        assert!(!reg.is_enabled("com.x.old"));
+        assert!(reg.record("com.x.old").unwrap().granted.is_empty());
+        assert!(reg.slots_held("com.x.old").is_empty());
+        assert!(reg.set_enabled("com.x.old", true).is_err());
+        reg.unload_dev("com.x.old").unwrap();
+        assert!(!reg.is_enabled("com.x.old"));
+        assert!(reg.set_enabled("com.x.old", true).is_err());
+    }
 
     fn tmp() -> tempfile::TempDir {
         tempfile::tempdir().unwrap()
@@ -1437,20 +1507,89 @@ mod tests {
 /// prompts or other packs are unrepresentable). Idempotent: re-applying the
 /// same pack replaces its own entries.
 pub fn apply_prompt_pack(
-    settings: &mut crate::settings::AppSettings,
-    ext_id: &str,
-    entries: &[grain_sdk::PromptPackEntry],
+    _settings: &mut crate::settings::AppSettings,
+    _ext_id: &str,
+    _entries: &[grain_sdk::PromptPackEntry],
 ) {
-    remove_prompt_pack(settings, ext_id);
-    for e in entries {
-        settings
+    // Deserialization/migration compatibility only. No caller, including an
+    // old import/restore command, may activate a retired prompt payload.
+}
+
+/// Detach legacy extension-owned prompt state after the host archives it.
+/// First-party and user-authored entries without the reserved prefix survive.
+pub fn retire_extension_prompts(settings: &mut crate::settings::AppSettings) {
+    settings
+        .post_process_prompts
+        .retain(|prompt| !prompt.id.starts_with("ext:"));
+    if settings
+        .post_process_selected_prompt_id
+        .as_ref()
+        .is_some_and(|id| id.starts_with("ext:"))
+    {
+        settings.post_process_selected_prompt_id = settings
             .post_process_prompts
-            .push(crate::settings::LLMPrompt {
-                id: format!("ext:{ext_id}:{}", e.id),
-                name: e.name.clone(),
-                prompt: e.prompt.clone(),
-            });
+            .first()
+            .map(|prompt| prompt.id.clone());
     }
+}
+
+/// Archive before detaching prompt state. Existing edited entries are never
+/// overwritten; rerunning after interruption deduplicates exact records.
+pub fn archive_retired_prompts(
+    data_dir: &Path,
+    settings: &crate::settings::AppSettings,
+) -> Result<()> {
+    let prompts: Vec<_> = settings
+        .post_process_prompts
+        .iter()
+        .filter(|p| p.id.starts_with("ext:"))
+        .collect();
+    if prompts.is_empty() {
+        return Ok(());
+    }
+    let path = data_dir.join("retired-extension-prompts.json");
+    let mut preserved: Vec<crate::settings::LLMPrompt> = if path.exists() {
+        if fs::metadata(&path)?.len() > 8 * 1024 * 1024 {
+            anyhow::bail!("retired prompt archive exceeds 8 MiB");
+        }
+        serde_json::from_slice(&fs::read(&path)?)?
+    } else {
+        Vec::new()
+    };
+    for prompt in prompts {
+        if !preserved.iter().any(|old| {
+            old.id == prompt.id && old.name == prompt.name && old.prompt == prompt.prompt
+        }) {
+            preserved.push(prompt.clone());
+        }
+    }
+    let bytes = serde_json::to_vec_pretty(&preserved)?;
+    if bytes.len() > 8 * 1024 * 1024 {
+        anyhow::bail!("retired prompt archive exceeds 8 MiB");
+    }
+    atomic_write(&path, &bytes)
+}
+
+fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {
+    use std::io::Write;
+    static NEXT_WRITE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let sequence = NEXT_WRITE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let temp = path.with_extension(format!("{}.{sequence}.pending", std::process::id()));
+    let result: std::io::Result<()> = (|| {
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temp)?;
+        file.write_all(bytes)?;
+        file.sync_all()?;
+        drop(file);
+        fs::rename(&temp, path)?;
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&temp);
+    }
+    result.with_context(|| format!("persist {}", path.display()))
 }
 
 /// Remove a pack's prompts (disable/uninstall). If the removed pack's prompt
@@ -1475,6 +1614,47 @@ mod pack_tests {
     use crate::settings::AppSettings;
     use grain_sdk::PromptPackEntry;
 
+    #[test]
+    fn retirement_archives_edited_prompts_once_and_heals_active_selection() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut settings = AppSettings::default();
+        let user = crate::settings::LLMPrompt {
+            id: "user".into(),
+            name: "User".into(),
+            prompt: "My words".into(),
+        };
+        settings.post_process_prompts.push(user);
+        settings
+            .post_process_prompts
+            .push(crate::settings::LLMPrompt {
+                id: "ext:com.x.old:formal".into(),
+                name: "Edited".into(),
+                prompt: "User edited pack text".into(),
+            });
+        settings.post_process_selected_prompt_id = Some("ext:com.x.old:formal".into());
+        archive_retired_prompts(dir.path(), &settings).unwrap();
+        archive_retired_prompts(dir.path(), &settings).unwrap(); // restart before settings commit
+        retire_extension_prompts(&mut settings);
+        retire_extension_prompts(&mut settings);
+        assert!(settings.post_process_prompts.iter().any(|p| p.id == "user"));
+        assert!(!settings
+            .post_process_prompts
+            .iter()
+            .any(|p| p.id.starts_with("ext:")));
+        assert!(!settings
+            .post_process_selected_prompt_id
+            .as_deref()
+            .unwrap_or("")
+            .starts_with("ext:"));
+        let archived: Vec<crate::settings::LLMPrompt> = serde_json::from_slice(
+            &fs::read(dir.path().join("retired-extension-prompts.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(archived.len(), 1);
+        assert_eq!(archived[0].prompt, "User edited pack text");
+        assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 1);
+    }
+
     fn entries() -> Vec<PromptPackEntry> {
         vec![PromptPackEntry {
             id: "formal".into(),
@@ -1484,16 +1664,12 @@ mod pack_tests {
     }
 
     #[test]
-    fn apply_is_namespaced_and_idempotent() {
-        let mut s = AppSettings::default();
-        let before = s.post_process_prompts.len();
-        apply_prompt_pack(&mut s, "com.x.zh", &entries());
-        apply_prompt_pack(&mut s, "com.x.zh", &entries()); // no duplicates
-        assert_eq!(s.post_process_prompts.len(), before + 1);
-        assert!(s
-            .post_process_prompts
-            .iter()
-            .any(|p| p.id == "ext:com.x.zh:formal"));
+    fn retired_apply_cannot_change_user_prompts() {
+        let mut settings = AppSettings::default();
+        let before = serde_json::to_value(&settings).unwrap();
+        apply_prompt_pack(&mut settings, "com.x.zh", &entries());
+        apply_prompt_pack(&mut settings, "com.x.zh", &entries());
+        assert_eq!(serde_json::to_value(settings).unwrap(), before);
     }
 
     #[test]

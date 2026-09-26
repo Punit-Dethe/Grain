@@ -1146,7 +1146,8 @@ pub fn run(cli_args: CliArgs) {
                 )));
                 // [GRAIN] Reconcile built-ins with what this build ships,
                 // now that AppContext + the registry are managed. Default off.
-                extension_host::reconcile_builtin_packs(&app.handle());
+                extension_host::reconcile_builtin_packs(&app.handle())
+                    .map_err(std::io::Error::other)?;
             }
 
             let mut settings = get_settings(&app.handle());

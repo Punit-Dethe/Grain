@@ -7,7 +7,7 @@ use anyhow::{bail, Context, Result};
 use grain_sdk::manifest::Surfaces;
 use grain_sdk::{
     Contributes, DaemonEvent, ExtensionManifest, ExtensionProjectManifest, GrainPack, PackPayloads,
-    ShortcutDecl, Tier, GRAIN_API_TYPESCRIPT, GRAIN_API_VERSION, KNOWN_CAPABILITIES,
+    Tier, GRAIN_API_TYPESCRIPT, GRAIN_API_VERSION, KNOWN_CAPABILITIES,
 };
 use specta::TypeCollection;
 use specta_typescript::{BigIntExportBehavior, Typescript};
@@ -351,11 +351,7 @@ fn scaffold_manifest(name: &str, id: &str) -> ExtensionProjectManifest {
             version: "0.1.0".into(),
             grain_api: format!("^{GRAIN_API_VERSION}"),
             tier: Tier::Scripted,
-            // [GRAIN] The scaffold is `extending` (the default) for the same
-            // reason it declares no prompt layer: `searchable` means Grain may
-            // hand this extension everything the user said, and a starter
-            // template must not opt an author into that before they have
-            // written the `recommend` block that says what it is for.
+            // Tool discovery uses declared actions; no whole-request opt-in.
             kind: Default::default(),
             recommend: None,
             auto_send: None,
@@ -369,18 +365,17 @@ fn scaffold_manifest(name: &str, id: &str) -> ExtensionProjectManifest {
             icon: "icon.png".into(),
             repository: None,
             permissions: Vec::new(),
-            activation: vec!["onShortcut:open".into()],
+            activation: Vec::new(),
             entry_source: String::new(),
             surfaces: Surfaces::default(),
             slots: Vec::new(),
             variant_slots: Vec::new(),
             contributes: Contributes {
                 settings: Vec::new(),
-                shortcuts: vec![ShortcutDecl {
-                    id: "open".into(),
-                    label: format!("Open {name}"),
-                    default_binding: Some("Ctrl+Alt+Shift+G".into()),
-                }],
+                actions: vec![serde_json::from_value(serde_json::json!({
+                    "id": "hello", "title": "Say hello", "risk": "safe", "utterances": ["say hello"]
+                }))
+                .expect("static tool declaration")],
                 session_mode: None,
                 // The scaffold declares neither authentication nor session
                 // mode; both require an explicit author decision and consent.
@@ -679,18 +674,19 @@ fn typescript_declarations() -> Result<String> {
         .context("generate Grain event types")?;
     let capabilities = KNOWN_CAPABILITIES
         .iter()
+        .filter(|cap| grain_sdk::manifest::tool_permission_allowed(cap))
         .map(|cap| format!("  | {cap:?}"))
         .collect::<Vec<_>>()
         .join("\n");
     Ok(format!(
-        "{reflected}\nexport type GrainCapability =\n{capabilities};\n\n{GRAIN_API_TYPESCRIPT}\n"
+        "{reflected}\nexport type GrainCapability =\n{capabilities}\n  | `net:${{string}}`;\n\n{GRAIN_API_TYPESCRIPT}\n"
     ))
 }
 
 fn entry_source(name: &str) -> Result<String> {
     let name = serde_json::to_string(name)?;
     Ok(format!(
-        "const extensionName = {name};\n\ngrain.log.info(`${{extensionName}} loaded`);\n\ngrain.onShortcut(async (id) => {{\n  if (id === \"open\") {{\n    await grain.log.info(`${{extensionName}} shortcut pressed`);\n  }}\n}});\n"
+        "const extensionName = {name};\n\ngrain.actions({{\n  hello: async () => ({{ title: extensionName, body: \"Hello from this tool.\" }})\n}});\n"
     ))
 }
 
@@ -789,12 +785,9 @@ mod tests {
         assert_eq!(project.manifest.id, "com.example.focus-notes");
         assert_eq!(project.manifest.grain_api, "^1.0");
         assert_eq!(project.entry, "dist/main.js");
-        assert_eq!(
-            project.manifest.contributes.shortcuts[0]
-                .default_binding
-                .as_deref(),
-            Some("Ctrl+Alt+Shift+G")
-        );
+        assert!(project.manifest.activation.is_empty());
+        assert!(project.manifest.contributes.shortcuts.is_empty());
+        assert_eq!(project.manifest.contributes.actions[0].id, "hello");
         validate_scaffold(&project).unwrap();
 
         let declarations = fs::read_to_string(result.root.join("grain.d.ts")).unwrap();
@@ -805,7 +798,10 @@ mod tests {
             .is_some_and(|(_, global)| global.contains("interface GrainError extends Error")));
         assert!(declarations.contains("E_CAPABILITY_DENIED"));
         assert!(declarations.contains("const grain: GrainApi"));
-        for capability in KNOWN_CAPABILITIES {
+        for capability in KNOWN_CAPABILITIES
+            .iter()
+            .filter(|cap| grain_sdk::manifest::tool_permission_allowed(cap))
+        {
             assert!(declarations.contains(capability), "missing {capability}");
         }
     }

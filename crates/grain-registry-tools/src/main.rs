@@ -598,23 +598,7 @@ fn manifest_of(bytes: &[u8]) -> Result<(grain_sdk::ExtensionManifest, Vec<String
             Ok((pack.manifest, extends))
         }
         PackShape::Zip => {
-            let tmp = std::env::temp_dir().join(format!("grain-pub-{}", std::process::id()));
-            let _ = fs::remove_dir_all(&tmp);
-            fs::create_dir_all(&tmp)?;
-            grain_core::pack::extract_zip(bytes, &tmp, Default::default())
-                .map_err(|e| anyhow::anyhow!("extract: {e}"))?;
-            let m = fs::read(tmp.join("manifest.json")).context("zip missing manifest.json")?;
-            let manifest: grain_sdk::ExtensionManifest =
-                serde_json::from_slice(&m).context("parse manifest.json")?;
-            let _ = fs::remove_dir_all(&tmp);
-            grain_sdk::GrainPack {
-                manifest: manifest.clone(),
-                payloads: grain_sdk::PackPayloads::default(),
-            }
-            .validate_host_owned_ui()
-            .map_err(|error| anyhow::anyhow!("validate host-owned UI boundary: {error}"))?;
-            let extends = manifest.extends();
-            Ok((manifest, extends))
+            anyhow::bail!("Directory/native ZIP bundles are unsupported by the tool-only runtime; publish an embedded tool package")
         }
         PackShape::Unknown => {
             anyhow::bail!("not a recognised .grainpack (first byte is not {{ or PK)")
