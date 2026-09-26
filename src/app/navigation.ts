@@ -17,12 +17,7 @@ export const SETTINGS_SECTION_IDS = [
 
 export type SettingsSectionId = (typeof SETTINGS_SECTION_IDS)[number];
 
-export const TOOL_SECTION_IDS = [
-  "dictionary",
-  "snippets",
-  "context",
-  "agent",
-] as const;
+export const TOOL_SECTION_IDS = ["dictionary", "snippets", "context"] as const;
 
 export type ToolSectionId = (typeof TOOL_SECTION_IDS)[number];
 
@@ -33,6 +28,7 @@ export type ExtensionViewId = (typeof EXTENSION_VIEW_IDS)[number];
 export type AppRoute =
   | { page: "overview" }
   | { page: "history" }
+  | { page: "agent" }
   | { page: "settings"; section: SettingsSectionId }
   | { page: "tools"; section: ToolSectionId }
   | { page: "extensions"; view: ExtensionViewId }
@@ -55,6 +51,7 @@ export function routeFromHash(hash: string): AppRoute {
   const path = hash.replace(/^#/, "").split(/[?#]/, 1)[0].replace(/\/+$/, "");
 
   if (path === "/history") return { page: "history" };
+  if (path === "/agent" || path === "/tools/agent") return { page: "agent" };
   // Legacy destination from the brief period About was its own tab.
   if (path === "/about") return { page: "settings", section: "about" };
   // Legacy destinations from before settings were split by subject.

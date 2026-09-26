@@ -858,7 +858,9 @@ function ExtensionDetail({
 function routeToDestination(
   destination: ReturnType<typeof extensionDestination>,
 ) {
-  if (destination.kind === "tools") {
+  if (destination.kind === "agent") {
+    window.location.hash = hashForRoute({ page: "agent" }).slice(1);
+  } else if (destination.kind === "tools") {
     window.location.hash = hashForRoute({
       page: "tools",
       section: destination.section,

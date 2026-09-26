@@ -31,7 +31,11 @@ import {
 } from "@/extensions/StudioExtensionCard";
 import { useSettings } from "@/hooks/useSettings";
 import { MAX_CUSTOM_WORD_LENGTH, normalizeCustomWord } from "@/lib/customWords";
-import { hashForRoute, type ToolSectionId } from "../navigation";
+import {
+  hashForRoute,
+  TOOL_SECTION_IDS,
+  type ToolSectionId,
+} from "../navigation";
 import studioFeatureAgentBg from "../overview/studio-feature-agent.webp";
 import studioFeatureBg from "../overview/studio-feature-bg.webp";
 import studioFeatureContextBg from "../overview/studio-feature-context.webp";
@@ -43,7 +47,7 @@ import {
   type ToolSection,
 } from "../extensions/extensionRuntime";
 
-const STUDIO_FEATURE_IMAGES: Record<ToolSectionId, string> = {
+const STUDIO_FEATURE_IMAGES: Record<ToolSection, string> = {
   dictionary: studioFeatureBg,
   snippets: studioFeatureSnippetsBg,
   context: studioFeatureContextBg,
@@ -51,7 +55,7 @@ const STUDIO_FEATURE_IMAGES: Record<ToolSectionId, string> = {
 };
 
 const TOOL_COPY: Record<
-  ToolSectionId,
+  ToolSection,
   { title: string; description: string; icon: typeof BookOpen }
 > = {
   dictionary: {
@@ -931,8 +935,57 @@ function AgentTool() {
   );
 }
 
-export function ToolsPage({ section }: { section: ToolSectionId }) {
+export function ToolCanvas({ section }: { section: ToolSection }) {
   const copy = TOOL_COPY[section];
+  return (
+    <section className="tools-canvas" aria-labelledby="next-tool-title">
+      <div className="tools-scroll">
+        <div className="tools-content next-settings-content">
+          <header
+            className={`studio-feature-hero${section === "dictionary" ? "" : " has-toggle"}`}
+          >
+            <img
+              className="studio-feature-image"
+              src={STUDIO_FEATURE_IMAGES[section]}
+              alt=""
+            />
+            <div className="studio-feature-copy">
+              <h1 id="next-tool-title">
+                {section === "dictionary"
+                  ? "Personal Dictionary"
+                  : section === "agent"
+                    ? "Grain Agent"
+                    : copy.title}
+              </h1>
+              <p>{copy.description}</p>
+            </div>
+            {section !== "dictionary" && (
+              <div className="studio-feature-toggle">
+                {section === "snippets" && <SnippetsMasterToggle />}
+                {section === "context" && <ContextMasterToggle />}
+                {section === "agent" && <AgentMasterToggle />}
+              </div>
+            )}
+            <button type="button" className="studio-feature-learn" disabled>
+              Learn more
+            </button>
+          </header>
+          {section === "dictionary" ? (
+            <DictionaryTool />
+          ) : section === "snippets" ? (
+            <SnippetsTool />
+          ) : section === "context" ? (
+            <ContextTool />
+          ) : (
+            <AgentTool />
+          )}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+export function ToolsPage({ section }: { section: ToolSectionId }) {
   return (
     <section
       className="page active tools-workspace-page"
@@ -943,12 +996,12 @@ export function ToolsPage({ section }: { section: ToolSectionId }) {
           <aside className="tools-sidebar-pane">
             <div className="tools-pane-header">
               <div>
-                <strong>Studio</strong>
+                <strong>Personalize</strong>
                 <span>Make Grain work your way</span>
               </div>
             </div>
-            <nav className="tools-nav" aria-label="Grain Studio">
-              {(Object.keys(TOOL_COPY) as ToolSectionId[]).map((id) => {
+            <nav className="tools-nav" aria-label="Grain Personalize">
+              {TOOL_SECTION_IDS.map((id) => {
                 const ItemIcon = TOOL_COPY[id].icon;
                 return (
                   <button
@@ -970,54 +1023,7 @@ export function ToolsPage({ section }: { section: ToolSectionId }) {
               })}
             </nav>
           </aside>
-          <section className="tools-canvas" aria-labelledby="next-tool-title">
-            <div className="tools-scroll">
-              <div className="tools-content next-settings-content">
-                <header
-                  className={`studio-feature-hero${section === "dictionary" ? "" : " has-toggle"}`}
-                >
-                  <img
-                    className="studio-feature-image"
-                    src={STUDIO_FEATURE_IMAGES[section]}
-                    alt=""
-                  />
-                  <div className="studio-feature-copy">
-                    <h1 id="next-tool-title">
-                      {section === "dictionary"
-                        ? "Personal Dictionary"
-                        : section === "agent"
-                          ? "Grain Agent"
-                          : copy.title}
-                    </h1>
-                    <p>{copy.description}</p>
-                  </div>
-                  {section !== "dictionary" && (
-                    <div className="studio-feature-toggle">
-                      {section === "snippets" && <SnippetsMasterToggle />}
-                      {section === "context" && <ContextMasterToggle />}
-                      {section === "agent" && <AgentMasterToggle />}
-                    </div>
-                  )}
-                  <button
-                    type="button"
-                    className="studio-feature-learn"
-                    disabled
-                  >
-                    Learn more
-                  </button>
-                </header>
-                {section === "dictionary" ? (
-                  <DictionaryTool />
-                ) : section === "snippets" ? (
-                  <SnippetsTool />
-                ) : section === "context" ? (
-                  <ContextTool />
-                ) : (
-                  <AgentTool />
-                )}
-              </div>
-            </div>
-          </section>
+          <ToolCanvas section={section} />
         </div>
       </div>
     </section>

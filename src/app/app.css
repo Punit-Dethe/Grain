@@ -3201,6 +3201,10 @@ html[data-theme="light"] .next-settings-content .app-select__control {
   grid-template-columns: 236px minmax(0, 1fr);
 }
 
+.tools-shell.agent-page-shell {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .tools-sidebar-pane {
   min-width: 0;
   padding: 0 9px 16px;

@@ -40,7 +40,8 @@ export interface SlotConflict {
 }
 
 export type ExtensionDestination =
-  | { kind: "tools"; section: "snippets" | "context" | "agent" }
+  | { kind: "tools"; section: "snippets" | "context" }
+  | { kind: "agent" }
   | {
       kind: "settings";
       section: "post-processing" | "speech-to-text";
@@ -212,7 +213,7 @@ export function sortExtensionCards<
  * a normal Grain-rendered settings page of their own.
  */
 const SURFACE_DESTINATIONS: Record<string, ExtensionDestination> = {
-  "agent.after": { kind: "tools", section: "agent" },
+  "agent.after": { kind: "agent" },
   "snippets.after": { kind: "tools", section: "snippets" },
   "context.after": { kind: "tools", section: "context" },
   "dictation.pipeline.after": { kind: "settings", section: "post-processing" },
@@ -269,7 +270,7 @@ export function extensionDestination(
 }
 
 /**
- * Store entries to recommend beside a Studio tool.
+ * Store entries to recommend beside a Personalize tool or Agent.
  *
  * An entry qualifies when a surface it declares resolves to this tool — never
  * because its text happens to contain a matching word. Already-installed ids
@@ -285,7 +286,9 @@ export function matchToolRecommendations(
     .filter((entry) => {
       if (installedIds.has(entry.id)) return false;
       const destination = destinationForSurfaces(entry.extends);
-      return destination?.kind === "tools" && destination.section === tool;
+      return tool === "agent"
+        ? destination?.kind === "agent"
+        : destination?.kind === "tools" && destination.section === tool;
     })
     .sort(
       (left, right) =>

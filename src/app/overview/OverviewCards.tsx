@@ -29,7 +29,7 @@ const COPY = {
   agent: {
     title: "Agent",
     shortcutLabel: "Shortcut",
-    enable: "Turn on in Studio",
+    enable: "Turn on Agent",
   },
 };
 
@@ -188,7 +188,7 @@ function AgentCard() {
     <button
       className="overview-card overview-card--interactive"
       type="button"
-      onClick={() => go(hashForRoute({ page: "tools", section: "agent" }))}
+      onClick={() => go(hashForRoute({ page: "agent" }))}
     >
       <div className="overview-card-header">
         <AgentGlyph />

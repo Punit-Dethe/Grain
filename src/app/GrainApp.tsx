@@ -28,6 +28,7 @@ import {
 } from "./navigation";
 import { SettingsPage } from "./pages/SettingsPage";
 import { ToolsPage } from "./pages/ToolsPage";
+import { AgentPage } from "./pages/AgentPage";
 import { ExtensionsPage, ExtensionSettingsPage } from "./pages/ExtensionsPage";
 import { HistoryCard, type HistoryViewMode } from "./history/HistoryCard";
 import {
@@ -64,7 +65,7 @@ const PROTOTYPE_COPY = {
   original: "Original",
   processed: "AI processed",
   heroTitle: "Speak before the thought disappears.",
-  studio: "Studio",
+  personalize: "Personalize",
   quickActions: "Start here",
   quickActionsBody:
     "Your keys, your words, and what Grain can be taught to do.",
@@ -117,6 +118,7 @@ type IconName =
   | "sliders"
   | "box"
   | "zap"
+  | "agent"
   | "command"
   | "sun"
   | "moon"
@@ -158,6 +160,10 @@ function IconSprite() {
       </symbol>
       <symbol id="i-zap" viewBox="0 0 24 24">
         <path d="m13 2-9 12h8l-1 8 9-12h-8z" />
+      </symbol>
+      <symbol id="i-agent" viewBox="0 0 24 24">
+        <rect x="4" y="8" width="16" height="12" rx="3" />
+        <path d="M12 8V4H9M2 12v4M22 12v4M9 13v2M15 13v2" />
       </symbol>
       <symbol id="i-clock" viewBox="0 0 24 24">
         <circle cx="12" cy="12" r="9" />
@@ -337,10 +343,11 @@ const NAV_GROUPS = [
       { page: "history", label: "History", icon: "clock", href: "#/history" },
       {
         page: "tools",
-        label: "Studio",
+        label: "Personalize",
         icon: "zap",
         href: "#/tools/dictionary",
       },
+      { page: "agent", label: "Agent", icon: "agent", href: "#/agent" },
     ],
   },
   {
@@ -583,7 +590,7 @@ function OverviewPage({ history }: { history: HistoryController }) {
                   });
                 }}
               >
-                {PROTOTYPE_COPY.studio}
+                {PROTOTYPE_COPY.personalize}
               </button>
             </div>
           </div>
@@ -820,6 +827,8 @@ function NextShell() {
           <SettingsPage section={route.section} />
         ) : route.page === "tools" ? (
           <ToolsPage section={route.section} />
+        ) : route.page === "agent" ? (
+          <AgentPage />
         ) : route.page === "extensions" ? (
           <ExtensionsPage view={route.view} />
         ) : route.page === "extension-settings" ? (

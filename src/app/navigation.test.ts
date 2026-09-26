@@ -31,13 +31,21 @@ describe("UI 2.0 hash navigation", () => {
     expect(routeFromHash(hashForRoute(route))).toEqual(route);
   });
 
-  it.each(["dictionary", "snippets", "context", "agent"] as const)(
+  it.each(["dictionary", "snippets", "context"] as const)(
     "round-trips the %s tool section",
     (section) => {
       const route = { page: "tools", section } as const;
       expect(routeFromHash(hashForRoute(route))).toEqual(route);
     },
   );
+
+  it("opens Agent as a standalone page, including the former Studio link", () => {
+    const route = { page: "agent" } as const;
+    expect(hashForRoute(route)).toBe("#/agent");
+    expect(routeFromHash(hashForRoute(route))).toEqual(route);
+    expect(routeFromHash("#/tools/agent")).toEqual(route);
+    expect(routeFromHash("#/agent/?focus=shortcut")).toEqual(route);
+  });
 
   it.each(["installed", "store"] as const)(
     "round-trips the %s extension view",
@@ -122,5 +130,6 @@ describe("UI 2.0 hash navigation", () => {
       routeUsesCompactGlobalRail({ page: "extensions", view: "installed" }),
     ).toBe(false);
     expect(routeUsesCompactGlobalRail({ page: "overview" })).toBe(false);
+    expect(routeUsesCompactGlobalRail({ page: "agent" })).toBe(false);
   });
 });

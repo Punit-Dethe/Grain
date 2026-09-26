@@ -15,6 +15,7 @@ export type QuickIconName =
   | "home"
   | "clock"
   | "zap"
+  | "agent"
   | "sliders"
   | "box"
   | "command"
@@ -66,11 +67,24 @@ const NAV_DEFS: NavDef[] = [
     keywords: ["transcripts", "past recordings", "log"],
   },
   {
-    id: "studio",
-    title: "Studio",
+    id: "personalize",
+    title: "Personalize",
     icon: "zap",
     route: { page: "tools", section: "dictionary" },
-    keywords: ["tools", "dictionary", "snippets", "agent", "context awareness"],
+    keywords: [
+      "tools",
+      "studio",
+      "dictionary",
+      "snippets",
+      "context awareness",
+    ],
+  },
+  {
+    id: "agent",
+    title: "Agent",
+    icon: "agent",
+    route: { page: "agent" },
+    keywords: ["assistant", "writing assistant", "selected text", "actions"],
   },
   {
     id: "settings",

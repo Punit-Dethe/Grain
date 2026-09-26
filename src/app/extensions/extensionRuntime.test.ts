@@ -92,7 +92,7 @@ describe("extension destination routing", () => {
   it.each([
     ["snippets.after", { kind: "tools", section: "snippets" }],
     ["context.after", { kind: "tools", section: "context" }],
-    ["agent.after", { kind: "tools", section: "agent" }],
+    ["agent.after", { kind: "agent" }],
     [
       "dictation.pipeline.after",
       { kind: "settings", section: "post-processing" },
@@ -115,6 +115,22 @@ describe("extension destination routing", () => {
 });
 
 describe("tool recommendations", () => {
+  it("keeps Agent recommendations attached to its standalone destination", () => {
+    const agentExtension = entry({
+      id: "agent.tools",
+      extends: ["agent.after"],
+    });
+    const contextExtension = entry({
+      id: "context.tools",
+      extends: ["context.after"],
+    });
+    expect(
+      matchToolRecommendations([agentExtension, contextExtension], "agent"),
+    ).toEqual([agentExtension]);
+    expect(
+      matchToolRecommendations([agentExtension, contextExtension], "context"),
+    ).toEqual([contextExtension]);
+  });
   it.each([
     [0, "recommendations"],
     [1, "installed-with-more"],
