@@ -613,7 +613,7 @@ async fn handle(stream: TcpStream, ctx: Arc<AppContext>, app: AppHandle) {
                                     None => Ok(r.ok.unwrap_or(serde_json::Value::Null)),
                                 };
                                 crate::extension_host::resolve_call_result(
-                                    &identity.id, r.call_id, result,
+                                    &identity.id, &session.token, r.call_id, result,
                                 );
                             }
                             // Response/Call are server→worker; a worker echoing

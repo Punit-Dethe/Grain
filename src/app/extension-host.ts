@@ -4,15 +4,15 @@
 // hosts one Web Worker per extension; NO extension code ever runs in this global
 // (each extension's source runs only inside its own Worker). The Rust
 // `extension_host` module drives it over Tauri events:
-//   Rust → here:  ext-host://spawn { ext_id, token, entry_source, caps, activation }
-//                 ext-host://kill  { ext_id }
-//   here → Rust:  ext-host://ready (once, when listeners are live)
-//                 ext-host://died  { ext_id, reason }
+//   Rust → here:  ext-host://spawn { ext_id, token, entry_source, caps }
+//                 ext-host://kill  { ext_id, token }
+//   here → Rust:  ext-host://ready / failed { generation, reason? }
+//                 ext-host://died  { ext_id, token, reason }
 //
 // The security wall is the Rust WebSocket boundary — this supervisor only
 // assembles and terminates workers; it holds no capability of its own.
 
-import { listen, emit } from "@tauri-apps/api/event";
+import { listen, emit, type UnlistenFn } from "@tauri-apps/api/event";
 import { GRAIN_RUNTIME_JS } from "./extension-runtime";
 
 interface SpawnPayload {
@@ -29,6 +29,11 @@ interface WorkerHandle {
 }
 
 const workers = new Map<string, WorkerHandle>();
+const generation = (
+  window as Window & { __GRAIN_SUPERVISOR_GENERATION__?: number }
+).__GRAIN_SUPERVISOR_GENERATION__;
+const unlisteners: UnlistenFn[] = [];
+let stopped = false;
 const MAX_WORKER_ERROR_CHARS = 64 * 1024;
 
 interface WorkerErrorDetail {
@@ -57,6 +62,7 @@ function died(
 }
 
 function spawnWorker(p: SpawnPayload) {
+  if (stopped) return;
   const current = workers.get(p.ext_id);
   if (current?.token === p.token) return;
   if (current) killWorker(p.ext_id, current.token);
@@ -125,6 +131,8 @@ function killWorker(ext_id: string, token: string) {
   const h = workers.get(ext_id);
   if (!h || h.token !== token) return;
   workers.delete(ext_id);
+  h.worker.onerror = null;
+  h.worker.onmessage = null;
   try {
     h.worker.terminate();
   } catch {
@@ -133,14 +141,44 @@ function killWorker(ext_id: string, token: string) {
   URL.revokeObjectURL(h.url); // free the blob source — "destroy if not in use"
 }
 
+function dispose() {
+  if (stopped) return;
+  stopped = true;
+  window.removeEventListener("pagehide", dispose);
+  for (const unlisten of unlisteners.splice(0)) unlisten();
+  for (const [id, handle] of workers) killWorker(id, handle.token);
+}
+
+async function register<T>(name: string, callback: (payload: T) => void) {
+  const unlisten = await listen<T>(name, (event) => {
+    if (!stopped) callback(event.payload);
+  });
+  // A listener can finish registration after the page has started closing.
+  if (stopped) unlisten();
+  else unlisteners.push(unlisten);
+}
+
 async function main() {
-  await listen<SpawnPayload>("ext-host://spawn", (e) => spawnWorker(e.payload));
-  await listen<{ ext_id: string; token: string }>("ext-host://kill", (e) =>
-    killWorker(e.payload.ext_id, e.payload.token),
-  );
-  // Signal the host that our listeners are live so it can flush queued spawns
-  // (Tauri events aren't buffered — a spawn emitted before this would be lost).
-  await emit("ext-host://ready", {});
+  window.addEventListener("pagehide", dispose, { once: true });
+  try {
+    if (!Number.isSafeInteger(generation) || !generation || generation < 1) {
+      throw new Error("Missing supervisor generation");
+    }
+    await register<SpawnPayload>("ext-host://spawn", spawnWorker);
+    if (stopped) return;
+    await register<{ ext_id: string; token: string }>(
+      "ext-host://kill",
+      (payload) => killWorker(payload.ext_id, payload.token),
+    );
+    if (stopped) return;
+    await emit("ext-host://ready", { generation });
+  } catch (error) {
+    dispose();
+    await emit("ext-host://failed", {
+      generation,
+      reason: String(error).slice(0, MAX_WORKER_ERROR_CHARS),
+    }).catch(() => undefined);
+  }
 }
 
 void main();

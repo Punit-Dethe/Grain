@@ -5,24 +5,9 @@
 //! extension; each worker opens its **own** WebSocket with its **own** token
 //! (SPEC §7.1 — never a shared realm, which would make identity forgeable).
 //!
-//! Responsibilities:
-//! - **Activation dispatch**: subscribe to the event bus; wake a worker when a
-//!   broadcast matches its manifest `activation` (`onEvent:<Variant>`,
-//!   `onTransform` → warm on `RecordingStarted`), carrying the triggering event
-//!   as the injected `activation` payload (the broadcast is already past when
-//!   the worker connects, so the wake reason must travel with the spawn).
-//! - **Worker registry**: per-extension token, strikes, last-activity, and the
-//!   connection channel (set when its WS attaches in `events_server`).
-//! - **Host calls**: [`call_worker`] issues a `HostCall` and awaits the worker's
-//!   `HostCallResult` under a deadline; [`run_transforms`] is the transform
-//!   pipeline built on it (150 ms hard deadline, 3-strike auto-disable).
-//! - **Reaper**: idle (> 120 s, no pending calls, not resident) workers are
-//!   killed and their tokens revoked — "destroy if not in use".
-//!
-//! The security wall is the Rust WS boundary ([`crate::events_auth`] +
-//! [`crate::host_api`]). This lifecycle index also requires the corresponding
-//! grant before a declared activation can wake a worker, so the carried wake
-//! payload cannot bypass the connection's live-event filter.
+//! Explicit tool calls wake workers; no event, transcript or session activation
+//! is installed. Rust owns tokens, bounded calls, idle cleanup and generation-
+//! scoped supervisor windows. The host API/WS boundary enforces tool-only grants.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -40,7 +25,7 @@ use tokio_tungstenite::tungstenite::Message;
 
 /// The hidden supervisor webview: Grain's code, one per app run, created on the
 /// first worker need and torn down when the last worker dies.
-const SUPERVISOR_LABEL: &str = "extension-host";
+const SUPERVISOR_LABEL_PREFIX: &str = "extension-host-";
 /// A dedicated frontend route (Step 5) — NOT the SPA root, so no extension code
 /// ever shares Grain's main global.
 const SUPERVISOR_URL: &str = "extension-host.html";
@@ -82,8 +67,21 @@ struct WorkerConn {
     /// In-flight host calls: `call_id` → the awaiter's oneshot. `Arc` so
     /// [`call_worker`]/[`resolve_call_result`] can operate on it without holding
     /// the `workers` lock across an await.
-    pending: Arc<Mutex<HashMap<u64, oneshot::Sender<Result<Value, String>>>>>,
+    pending: PendingCalls,
     next_call_id: Arc<AtomicU64>,
+}
+
+type PendingCalls = Arc<Mutex<HashMap<u64, oneshot::Sender<Result<Value, String>>>>>;
+
+struct PendingCall {
+    calls: PendingCalls,
+    id: u64,
+}
+
+impl Drop for PendingCall {
+    fn drop(&mut self) {
+        self.calls.lock().unwrap().remove(&self.id);
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -192,36 +190,28 @@ impl Workers {
         Some(w.last_activity.clone())
     }
 
-    /// Whether a worker has a live connection, which is what [`call`] needs —
-    /// stricter than "spawned", because a spawned webview takes a moment to
-    /// connect back.
-    ///
-    fn is_connected(&self, ext_id: &str) -> bool {
+    fn token(&self, ext_id: &str) -> Option<String> {
         self.map
             .lock()
             .unwrap()
             .get(ext_id)
-            .is_some_and(|w| w.conn.is_some())
+            .map(|worker| worker.token.clone())
     }
 
-    /// Wait, bounded, for a just-spawned worker to connect.
-    ///
-    /// Without this an action on a cold extension fails instantly with "worker
-    /// not connected" — and cold is the **normal** case, because a routed
-    /// action is usually the only reason to wake that extension at all. The
-    /// transform path can skip a cold worker (it has a 150 ms budget and text
-    /// to pass through unchanged); an action has neither.
-    ///
-    /// Polling rather than a notify: this runs once per cold action, the
-    /// interval is short enough to be invisible next to the spawn it is waiting
-    /// on, and a condvar threaded through the connection path would be more
-    /// machinery than the problem deserves.
-    async fn wait_connected(&self, ext_id: &str, deadline: Duration) -> bool {
+    /// Wait only for the generation that this call woke. Removal/replacement
+    /// fails promptly instead of migrating the request to a different worker.
+    async fn wait_connected(&self, ext_id: &str, token: &str, deadline: Duration) -> bool {
         const POLL: Duration = Duration::from_millis(20);
         let started = Instant::now();
         loop {
-            if self.is_connected(ext_id) {
-                return true;
+            {
+                let map = self.map.lock().unwrap();
+                let Some(worker) = map.get(ext_id).filter(|worker| worker.token == token) else {
+                    return false;
+                };
+                if worker.conn.is_some() {
+                    return true;
+                }
             }
             if started.elapsed() >= deadline {
                 return false;
@@ -239,49 +229,63 @@ impl Workers {
         params: Value,
         deadline: Duration,
     ) -> Result<Value, String> {
-        let (out_tx, pending, next_call_id) = {
+        self.call_owned(ext_id, None, method, params, deadline)
+            .await
+    }
+
+    async fn call_owned(
+        &self,
+        ext_id: &str,
+        token: Option<&str>,
+        method: &str,
+        params: Value,
+        deadline: Duration,
+    ) -> Result<Value, String> {
+        let (guard, rx) = {
             let map = self.map.lock().unwrap();
-            let conn = map
-                .get(ext_id)
-                .and_then(|w| w.conn.as_ref())
-                .ok_or("worker not connected")?;
-            (
-                conn.out_tx.clone(),
-                conn.pending.clone(),
-                conn.next_call_id.clone(),
-            )
-        };
-        let call_id = next_call_id.fetch_add(1, Ordering::Relaxed);
-        let (tx, rx) = oneshot::channel();
-        pending.lock().unwrap().insert(call_id, tx);
-        let frame = HostFrame::Call(HostCall {
-            call_id,
-            method: method.to_string(),
-            params,
-        });
-        let json = serde_json::to_string(&frame).map_err(|e| e.to_string())?;
-        if out_tx.send(Message::Text(json.into())).is_err() {
-            pending.lock().unwrap().remove(&call_id);
-            return Err("worker channel closed".into());
-        }
-        match tokio::time::timeout(deadline, rx).await {
-            Ok(Ok(res)) => res,
-            Ok(Err(_)) => Err("worker dropped the call".into()),
-            Err(_) => {
-                pending.lock().unwrap().remove(&call_id);
-                Err("deadline exceeded".into())
+            let worker = map.get(ext_id).ok_or("worker not connected")?;
+            if token.is_some_and(|token| worker.token != token) {
+                return Err("worker generation changed".into());
             }
-        }
+            let conn = worker.conn.as_ref().ok_or("worker not connected")?;
+            let call_id = conn.next_call_id.fetch_add(1, Ordering::Relaxed);
+            let frame = HostFrame::Call(HostCall {
+                call_id,
+                method: method.to_string(),
+                params,
+            });
+            let json = serde_json::to_string(&frame).map_err(|error| error.to_string())?;
+            let (tx, rx) = oneshot::channel();
+            conn.pending.lock().unwrap().insert(call_id, tx);
+            let guard = PendingCall {
+                calls: conn.pending.clone(),
+                id: call_id,
+            };
+            // Queue under the registry lock so removal cannot overtake dispatch
+            // or drain before the pending entry is installed.
+            if conn.out_tx.send(Message::Text(json.into())).is_err() {
+                return Err("worker channel closed".into());
+            }
+            (guard, rx)
+        };
+        let result = match tokio::time::timeout(deadline, rx).await {
+            Ok(Ok(result)) => result,
+            Ok(Err(_)) => Err("worker dropped the call".into()),
+            Err(_) => Err("deadline exceeded".into()),
+        };
+        drop(guard);
+        result
     }
 
     /// Route a `HostCallResult` back to the awaiter of its `call_id` (no-op if
     /// the worker/call is unknown or already timed out).
-    fn resolve(&self, ext_id: &str, call_id: u64, result: Result<Value, String>) {
+    fn resolve(&self, ext_id: &str, token: &str, call_id: u64, result: Result<Value, String>) {
         let pending = self
             .map
             .lock()
             .unwrap()
             .get(ext_id)
+            .filter(|worker| worker.token == token)
             .and_then(|w| w.conn.as_ref())
             .map(|c| c.pending.clone());
         if let Some(pending) = pending {
@@ -293,7 +297,7 @@ impl Workers {
 
     /// Ids of workers idle longer than `idle_secs` with no pending calls and not
     /// resident — the reaper's kill list.
-    fn idle_victims(&self, now: u64, idle_secs: u64) -> Vec<String> {
+    fn idle_victims(&self, now: u64, idle_secs: u64) -> Vec<(String, String)> {
         self.map
             .lock()
             .unwrap()
@@ -308,7 +312,7 @@ impl Workers {
                     .as_ref()
                     .map(|c| !c.pending.lock().unwrap().is_empty())
                     .unwrap_or(false);
-                (idle > idle_secs && !busy).then(|| id.clone())
+                (idle > idle_secs && !busy).then(|| (id.clone(), w.token.clone()))
             })
             .collect()
     }
@@ -341,6 +345,16 @@ impl Workers {
             worker.memory_strikes += 1;
             worker.memory_strikes
         })
+    }
+
+    fn scripted_tokens(&self) -> Vec<(String, String)> {
+        self.map
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(_, worker)| worker.kind == RuntimeKind::Scripted)
+            .map(|(id, worker)| (id.clone(), worker.token.clone()))
+            .collect()
     }
 
     fn scripted_connected_ids(&self) -> Vec<String> {
@@ -400,10 +414,60 @@ impl Workers {
 /// Supervisor readiness gate: Tauri events are not buffered, so a `spawn` emit
 /// before the page's `listen` is registered would be lost. Spawns issued before
 /// the page reports `ext-host://ready` are queued and flushed on ready.
+#[derive(Default)]
 struct Supervisor {
+    generation: u64,
     exists: bool,
     ready: bool,
     queue: Vec<SpawnPayload>,
+}
+
+impl Supervisor {
+    fn begin(&mut self) -> Option<u64> {
+        if self.exists {
+            return None;
+        }
+        self.generation = self
+            .generation
+            .checked_add(1)
+            .expect("supervisor generation exhausted");
+        self.exists = true;
+        self.ready = false;
+        Some(self.generation)
+    }
+
+    fn owns(&self, generation: u64) -> bool {
+        self.exists && self.generation == generation
+    }
+
+    fn accept_ready(&mut self, generation: u64) -> bool {
+        if !self.owns(generation) || self.ready {
+            return false;
+        }
+        self.ready = true;
+        true
+    }
+
+    fn retire(&mut self) -> Option<u64> {
+        if !self.exists {
+            return None;
+        }
+        self.exists = false;
+        self.ready = false;
+        self.queue.clear();
+        Some(self.generation)
+    }
+}
+
+fn supervisor_label(generation: u64) -> String {
+    format!("{SUPERVISOR_LABEL_PREFIX}{generation}")
+}
+
+#[derive(Deserialize)]
+struct SupervisorStatus {
+    generation: u64,
+    #[serde(default)]
+    reason: String,
 }
 
 /// The hot-path index. **An installed-but-idle extension must cost the native
@@ -972,10 +1036,6 @@ struct SpawnPayload {
     /// The granted capability names, injected so the shim can expose only the
     /// matching `grain.*` surface (the wall is still Rust-side).
     caps: Vec<String>,
-    /// The event that woke this worker (`{"Variant": {...}}`), or absent for a
-    /// non-event spawn.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    activation: Option<Value>,
 }
 
 #[derive(Clone, Serialize)]
@@ -1106,11 +1166,7 @@ pub fn start(app: AppHandle, _ctx: Arc<AppContext>) {
         .set(HostState {
             app: app.clone(),
             workers: Workers::new(),
-            supervisor: Mutex::new(Supervisor {
-                exists: false,
-                ready: false,
-                queue: Vec::new(),
-            }),
+            supervisor: Mutex::new(Supervisor::default()),
             index: RwLock::new(Index::default()),
         })
         .is_err()
@@ -1144,7 +1200,16 @@ pub fn start(app: AppHandle, _ctx: Arc<AppContext>) {
 
     // Supervisor → host: the page loaded and its listeners are live → flush any
     // spawns queued while it was starting.
-    app.listen("ext-host://ready", move |_| on_supervisor_ready());
+    app.listen("ext-host://ready", move |event| {
+        if let Ok(status) = serde_json::from_str::<SupervisorStatus>(event.payload()) {
+            on_supervisor_ready(status.generation);
+        }
+    });
+    app.listen("ext-host://failed", move |event| {
+        if let Ok(status) = serde_json::from_str::<SupervisorStatus>(event.payload()) {
+            fail_supervisor(status.generation, &status.reason);
+        }
+    });
 
     // Reaper: return RAM when a worker goes idle.
     tauri::async_runtime::spawn(async move {
@@ -1202,8 +1267,7 @@ fn has_grant(granted: &[String], capability: &str) -> bool {
 
 fn is_running(ext_id: &str) -> bool {
     HOST.get()
-        .map(|h| h.workers.is_running(ext_id))
-        .unwrap_or(false)
+        .is_some_and(|host| host.workers.is_running(ext_id))
 }
 
 fn spawn_worker(
@@ -1212,14 +1276,14 @@ fn spawn_worker(
     pack: &GrainPack,
     caps: Vec<String>,
     activation: Option<Value>,
-) {
+) -> Option<String> {
     if pack.validate_tool_only().is_err() || activation.is_some() {
         log::warn!("[ext:{ext_id}] refused retired extension runtime or activation");
-        return;
+        return None;
     }
     let host = match HOST.get() {
         Some(h) => h,
-        None => return,
+        None => return None,
     };
     let dev_project = app
         .try_state::<Arc<grain_core::extensions::ExtensionsRegistry>>()
@@ -1228,15 +1292,15 @@ fn spawn_worker(
     let companion_launch = if pack.manifest.tier == grain_sdk::Tier::Native {
         if !crate::settings::get_settings(app).extension_developer_mode {
             log::error!("[ext:{ext_id}] deny native companion outside developer mode");
-            return;
+            return None;
         }
         let Some(project) = dev_project.as_ref() else {
             log::error!("[ext:{ext_id}] deny native companion outside load-unpacked project");
-            return;
+            return None;
         };
         let Some(binary) = project.companion_path.clone() else {
             log::error!("[ext:{ext_id}] native project has no current-platform companion");
-            return;
+            return None;
         };
         Some((project.root.clone(), binary))
     } else {
@@ -1255,6 +1319,12 @@ fn spawn_worker(
             entry,
         })
     });
+    let mut sup = host.supervisor.lock().unwrap();
+    // A second cold request must not replace a live worker or leak its token.
+    if let Some(current) = host.workers.token(ext_id) {
+        crate::events_server::revoke_token(&token);
+        return Some(current);
+    }
     host.workers.insert(
         ext_id,
         Worker {
@@ -1273,6 +1343,7 @@ fn spawn_worker(
         },
     );
     if let Some((root, binary)) = companion_launch {
+        drop(sup);
         log::info!("[ext:{ext_id}] life native companion activation");
         if let Err(error) =
             crate::extension_companion::start(ext_id, &token, root, binary, activation)
@@ -1283,82 +1354,107 @@ fn spawn_worker(
                 format!("Native companion could not start: {error}"),
             );
         }
-        return;
+        return Some(token);
     }
     let payload = SpawnPayload {
         ext_id: ext_id.to_string(),
-        token,
+        token: token.clone(),
         entry_source: pack.manifest.entry_source.clone(),
         caps,
-        activation,
     };
     log::info!("[ext:{ext_id}] life worker spawned (resident={resident})");
-    ensure_supervisor(app);
-    let mut sup = host.supervisor.lock().unwrap();
+    let creation = sup.begin();
     if sup.ready {
-        let _ = app.emit_to(SUPERVISOR_LABEL, "ext-host://spawn", payload);
+        let _ = app.emit_to(
+            supervisor_label(sup.generation),
+            "ext-host://spawn",
+            payload,
+        );
     } else {
-        sup.queue.push(payload); // flushed by on_supervisor_ready
+        sup.queue.push(payload);
     }
+    drop(sup);
+    if let Some(generation) = creation {
+        ensure_supervisor(app, generation);
+    }
+    Some(token)
 }
 
-/// Create the supervisor webview if it isn't up yet. Window creation is posted
-/// to the main thread (tauri#3990: never build a window on a shortcut/event
-/// thread) and returns immediately.
-fn ensure_supervisor(app: &AppHandle) {
-    let host = match HOST.get() {
-        Some(h) => h,
-        None => return,
-    };
-    {
-        let mut sup = host.supervisor.lock().unwrap();
-        if sup.exists {
-            return;
-        }
-        sup.exists = true;
-    }
+/// Main-thread closures and readiness are scoped to one supervisor generation.
+/// Each generation has its own label, so delayed close cannot close a replacement.
+fn ensure_supervisor(app: &AppHandle, generation: u64) {
     let app2 = app.clone();
-    let _ = app.run_on_main_thread(move || {
-        if app2.get_webview_window(SUPERVISOR_LABEL).is_some() {
+    if let Err(error) = app.run_on_main_thread(move || {
+        let Some(host) = HOST.get() else { return };
+        let sup = host.supervisor.lock().unwrap();
+        if !sup.owns(generation) {
             return;
         }
-        let mut builder = WebviewWindowBuilder::new(
-            &app2,
-            SUPERVISOR_LABEL,
-            WebviewUrl::App(SUPERVISOR_URL.into()),
-        )
-        .title("Grain Extension Host")
-        .inner_size(1.0, 1.0)
-        .visible(false)
-        .skip_taskbar(true);
+        let label = supervisor_label(generation);
+        let mut builder =
+            WebviewWindowBuilder::new(&app2, &label, WebviewUrl::App(SUPERVISOR_URL.into()))
+                .initialization_script(format!(
+                    "window.__GRAIN_SUPERVISOR_GENERATION__ = {generation};"
+                ))
+                .title("Grain Extension Host")
+                .inner_size(1.0, 1.0)
+                .visible(false)
+                .skip_taskbar(true);
         if let Some(data_dir) = crate::portable::data_dir() {
             builder = builder.data_directory(data_dir.join("webview"));
         }
-        if let Err(e) = builder.build() {
-            log::error!("[GRAIN] ext-host: supervisor window failed: {e}");
-            if let Some(h) = HOST.get() {
-                h.supervisor.lock().unwrap().exists = false; // allow a retry
-            }
+        let result = builder.build();
+        if let Ok(window) = &result {
+            window.on_window_event(move |event| {
+                if matches!(event, tauri::WindowEvent::Destroyed) {
+                    fail_supervisor(generation, "supervisor window destroyed");
+                }
+            });
         }
-    });
+        drop(sup);
+        if let Err(error) = result {
+            fail_supervisor(generation, &format!("supervisor creation failed: {error}"));
+        }
+    }) {
+        fail_supervisor(
+            generation,
+            &format!("supervisor scheduling failed: {error}"),
+        );
+    }
 }
 
-fn on_supervisor_ready() {
-    let host = match HOST.get() {
-        Some(h) => h,
-        None => return,
-    };
-    let (app, queued) = {
-        let mut sup = host.supervisor.lock().unwrap();
-        sup.ready = true;
-        (host.app.clone(), std::mem::take(&mut sup.queue))
-    };
-    for payload in queued {
-        if !host.workers.owns_token(&payload.ext_id, &payload.token) {
-            continue;
-        }
-        let _ = app.emit_to(SUPERVISOR_LABEL, "ext-host://spawn", payload);
+fn on_supervisor_ready(generation: u64) {
+    let Some(host) = HOST.get() else { return };
+    let mut sup = host.supervisor.lock().unwrap();
+    if !sup.accept_ready(generation) {
+        return;
     }
+    // Keep the gate locked through emission: stop cannot overtake a queued spawn.
+    for payload in std::mem::take(&mut sup.queue) {
+        if host.workers.owns_token(&payload.ext_id, &payload.token) {
+            let _ = host
+                .app
+                .emit_to(supervisor_label(generation), "ext-host://spawn", payload);
+        }
+    }
+}
+
+fn fail_supervisor(generation: u64, reason: &str) {
+    let Some(host) = HOST.get() else { return };
+    let victims = {
+        let mut sup = host.supervisor.lock().unwrap();
+        if !sup.owns(generation) {
+            return;
+        }
+        let victims = host.workers.scripted_tokens();
+        sup.retire();
+        victims
+    };
+    log::error!("[GRAIN] ext-host generation {generation}: {reason}");
+    for (id, token) in victims {
+        kill_worker_inner(&id, "supervisor unavailable", Some(&token), true);
+    }
+    close_supervisor(generation);
 }
 
 /// Terminate a worker: drop its registry entry, revoke its token, tell the
@@ -1369,6 +1465,7 @@ fn kill_worker_inner(ext_id: &str, reason: &str, token: Option<&str>, preserve_s
         Some(h) => h,
         None => return,
     };
+    let mut sup = host.supervisor.lock().unwrap();
     let worker = match token {
         Some(token) => host.workers.remove_if_token(ext_id, token),
         None => host.workers.remove(ext_id),
@@ -1377,29 +1474,38 @@ fn kill_worker_inner(ext_id: &str, reason: &str, token: Option<&str>, preserve_s
         Some(w) => w,
         None => return,
     };
-    let empty = host.workers.is_empty();
+    sup.queue
+        .retain(|payload| payload.ext_id != ext_id || payload.token != worker.token);
     log::info!("[ext:{ext_id}] life worker reaped ({reason})");
+    if sup.exists {
+        let _ = host.app.emit_to(
+            supervisor_label(sup.generation),
+            "ext-host://kill",
+            KillPayload {
+                ext_id: ext_id.to_string(),
+                token: worker.token.clone(),
+            },
+        );
+    }
+    let closing = if host.workers.is_empty() && !preserve_supervisor {
+        sup.retire()
+    } else {
+        None
+    };
+    drop(sup);
     if worker.kind == RuntimeKind::Companion {
         crate::extension_companion::stop(ext_id, reason);
     }
     crate::extension_view::fail_interactive_for_extension(&host.app, ext_id, reason);
     crate::events_server::revoke_token(&worker.token);
-    let _ = host.app.emit_to(
-        SUPERVISOR_LABEL,
-        "ext-host://kill",
-        KillPayload {
-            ext_id: ext_id.to_string(),
-            token: worker.token.clone(),
-        },
-    );
     if let Some(conn) = &worker.conn {
         let _ = conn.out_tx.send(Message::Close(None));
         for (_, tx) in conn.pending.lock().unwrap().drain() {
             let _ = tx.send(Err("worker terminated".into()));
         }
     }
-    if empty && !preserve_supervisor {
-        teardown_supervisor();
+    if let Some(generation) = closing {
+        close_supervisor(generation);
     }
 }
 
@@ -1416,26 +1522,17 @@ pub fn stop_extension(ext_id: &str, reason: &str) {
     kill_worker(ext_id, reason);
 }
 
-fn teardown_supervisor() {
-    let host = match HOST.get() {
-        Some(h) => h,
-        None => return,
-    };
-    {
-        let mut sup = host.supervisor.lock().unwrap();
-        if !sup.exists {
-            return;
-        }
-        sup.exists = false;
-        sup.ready = false;
-        sup.queue.clear();
-    }
+fn close_supervisor(generation: u64) {
+    let Some(host) = HOST.get() else { return };
     let app = host.app.clone();
-    let _ = app.clone().run_on_main_thread(move || {
-        if let Some(w) = app.get_webview_window(SUPERVISOR_LABEL) {
-            let _ = w.close();
+    let label = supervisor_label(generation);
+    if let Err(error) = app.clone().run_on_main_thread(move || {
+        if let Some(window) = app.get_webview_window(&label) {
+            let _ = window.close();
         }
-    });
+    }) {
+        log::error!("[GRAIN] ext-host generation {generation}: close scheduling failed: {error}");
+    }
 }
 
 fn reap_idle() {
@@ -1443,11 +1540,11 @@ fn reap_idle() {
         Some(h) => h,
         None => return,
     };
-    for id in host.workers.idle_victims(now_secs(), IDLE_REAP_SECS) {
+    for (id, token) in host.workers.idle_victims(now_secs(), IDLE_REAP_SECS) {
         if crate::extension_session::is_owned_by(&id) {
             continue;
         }
-        kill_worker(&id, "idle timeout");
+        kill_worker_inner(&id, "idle timeout", Some(&token), false);
     }
 }
 
@@ -1552,9 +1649,9 @@ pub fn detach_connection(ext_id: &str, token: &str) {
 }
 
 /// Route a `HostCallResult` back to its awaiter (the transform/session caller).
-pub fn resolve_call_result(ext_id: &str, call_id: u64, result: Result<Value, String>) {
+pub fn resolve_call_result(ext_id: &str, token: &str, call_id: u64, result: Result<Value, String>) {
     if let Some(host) = HOST.get() {
-        host.workers.resolve(ext_id, call_id, result);
+        host.workers.resolve(ext_id, token, call_id, result);
     }
 }
 
@@ -1702,19 +1799,17 @@ fn parse_handoff_outcome(value: Value) -> HandOffOutcome {
 /// scale this feature is built for — twenty installed extensions would mean
 /// twenty worker spawns per press. Spawned with no activation payload: the
 /// request arrives as an explicit host call, not as a wake event.
-fn wake_for_request(app: &AppHandle, ext_id: &str) {
-    if is_running(ext_id) {
-        return;
+fn wake_for_request(app: &AppHandle, ext_id: &str) -> Option<String> {
+    if let Some(token) = HOST.get().and_then(|host| host.workers.token(ext_id)) {
+        return Some(token);
     }
-    let Some(pack) = load_manifest(app, ext_id) else {
-        return;
-    };
+    let pack = load_manifest(app, ext_id)?;
     let granted = app
         .try_state::<Arc<grain_core::extensions::ExtensionsRegistry>>()
         .and_then(|registry| registry.record(ext_id))
         .map(|record| record.granted)
         .unwrap_or_default();
-    spawn_worker(app, ext_id, &pack, granted, None);
+    spawn_worker(app, ext_id, &pack, granted, None)
 }
 
 /// Hand the full request to the extension the user accepted (§3).
@@ -1783,21 +1878,37 @@ pub async fn run_action(
             "that extension is no longer enabled".into(),
         ));
     }
-    wake_for_request(app, ext_id);
+    let approval = approved_action_digest(app, ext_id, action_id)
+        .ok_or_else(|| ActionCallError::Unavailable("that tool is no longer approved".into()))?;
+    let token = wake_for_request(app, ext_id)
+        .ok_or_else(|| ActionCallError::Unavailable("extension worker unavailable".into()))?;
     if !host
         .workers
-        .wait_connected(ext_id, HANDOFF_WAKE_DEADLINE)
+        .wait_connected(ext_id, &token, HANDOFF_WAKE_DEADLINE)
         .await
     {
         log::warn!("[ext:{ext_id}] action — worker did not start in time");
+        kill_worker_inner(ext_id, "worker startup failed", Some(&token), false);
         return Err(ActionCallError::Unavailable(
             "that extension did not start in time".into(),
         ));
     }
+    if approved_action_digest(app, ext_id, action_id).as_deref() != Some(approval.as_str()) {
+        kill_worker_inner(
+            ext_id,
+            "tool approval changed during startup",
+            Some(&token),
+            false,
+        );
+        return Err(ActionCallError::Unavailable(
+            "tool approval changed while starting".into(),
+        ));
+    }
     match host
         .workers
-        .call(
+        .call_owned(
             ext_id,
+            Some(&token),
             "action",
             json!({
                 "action": action_id,
@@ -2136,7 +2247,7 @@ pub fn reload_dev_extension(
     }
     refresh_index(app);
     if had_worker && enabled && !is_running(id) {
-        spawn_worker(app, id, &loaded.pack, granted, None);
+        let _ = spawn_worker(app, id, &loaded.pack, granted, None);
     }
     let worker_count = HOST.get().map(|host| host.workers.len()).unwrap_or(0);
     Ok(grain_sdk::DevReloadResult {
@@ -2530,7 +2641,7 @@ mod tests {
                     }
                     _ => panic!("expected a Call frame"),
                 };
-                workers.resolve("com.x.a", call_id, Ok(json!({ "text": "HI" })));
+                workers.resolve("com.x.a", "tok", call_id, Ok(json!({ "text": "HI" })));
             };
 
             let (res, _) = tokio::join!(
@@ -2617,7 +2728,7 @@ mod tests {
     #[test]
     fn resolve_unknown_call_is_a_noop() {
         let workers = Workers::new();
-        workers.resolve("nobody", 7, Ok(Value::Null)); // must not panic
+        workers.resolve("nobody", "tok", 7, Ok(Value::Null)); // must not panic
     }
 
     #[test]
@@ -2627,7 +2738,7 @@ mod tests {
         workers.insert("fresh", worker(now_secs(), false)); // just active
         workers.insert("resident", worker(0, true)); // never reaped
         let victims = workers.idle_victims(now_secs(), IDLE_REAP_SECS);
-        assert_eq!(victims, vec!["stale".to_string()]);
+        assert_eq!(victims, vec![("stale".to_string(), "tok".to_string())]);
     }
 
     #[test]
@@ -2709,6 +2820,206 @@ mod tests {
         assert!(workers.owns_token("tools", "new"));
         assert!(workers.remove_if_token("tools", "old").is_none());
         assert_eq!(workers.len(), 1);
+    }
+
+    #[test]
+    fn replaced_worker_cannot_receive_a_waiting_or_prepared_call() {
+        rt().block_on(async {
+            let workers = Workers::new();
+            let mut replacement = worker(now_secs(), false);
+            replacement.token = "new".into();
+            workers.insert("tools", replacement);
+            let (out_tx, mut out_rx) = mpsc::unbounded_channel();
+            workers.attach("tools", "new", out_tx).unwrap();
+            assert!(
+                !workers
+                    .wait_connected("tools", "old", Duration::from_secs(5))
+                    .await
+            );
+            assert_eq!(
+                workers
+                    .call_owned(
+                        "tools",
+                        Some("old"),
+                        "action",
+                        json!({}),
+                        Duration::from_secs(5)
+                    )
+                    .await
+                    .unwrap_err(),
+                "worker generation changed"
+            );
+            assert!(out_rx.try_recv().is_err());
+            assert!(workers.map.lock().unwrap()["tools"]
+                .conn
+                .as_ref()
+                .unwrap()
+                .pending
+                .lock()
+                .unwrap()
+                .is_empty());
+        });
+    }
+
+    #[test]
+    fn stale_socket_reply_cannot_resolve_same_call_id_in_replacement() {
+        rt().block_on(async {
+            let workers = Workers::new();
+            let mut replacement = worker(now_secs(), false);
+            replacement.token = "new".into();
+            workers.insert("tools", replacement);
+            let (out_tx, mut out_rx) = mpsc::unbounded_channel();
+            workers.attach("tools", "new", out_tx).unwrap();
+            let responder = async {
+                let Message::Text(frame) = out_rx.recv().await.unwrap() else {
+                    panic!("call frame")
+                };
+                let HostFrame::Call(call) = serde_json::from_str(&frame).unwrap() else {
+                    panic!("call frame")
+                };
+                workers.resolve("tools", "old", call.call_id, Ok(json!("forged")));
+                assert_eq!(
+                    workers.map.lock().unwrap()["tools"]
+                        .conn
+                        .as_ref()
+                        .unwrap()
+                        .pending
+                        .lock()
+                        .unwrap()
+                        .len(),
+                    1
+                );
+                workers.resolve("tools", "new", call.call_id, Ok(json!("correct")));
+            };
+            let (result, _) = tokio::join!(
+                workers.call_owned(
+                    "tools",
+                    Some("new"),
+                    "action",
+                    json!({}),
+                    Duration::from_secs(2)
+                ),
+                responder
+            );
+            assert_eq!(result.unwrap(), json!("correct"));
+        });
+    }
+
+    #[test]
+    fn dropping_call_future_releases_pending_entry_without_waiting_for_deadline() {
+        rt().block_on(async {
+            let workers = Workers::new();
+            workers.insert("tools", worker(now_secs(), false));
+            let (out_tx, mut out_rx) = mpsc::unbounded_channel();
+            workers.attach("tools", "tok", out_tx).unwrap();
+            let mut call = Box::pin(workers.call_owned(
+                "tools",
+                Some("tok"),
+                "action",
+                json!({}),
+                Duration::from_secs(60),
+            ));
+            tokio::select! {
+                frame = out_rx.recv() => { assert!(frame.is_some()); }
+                result = &mut call => { panic!("call returned prematurely: {result:?}"); }
+            }
+            let pending = workers.map.lock().unwrap()["tools"]
+                .conn
+                .as_ref()
+                .unwrap()
+                .pending
+                .clone();
+            assert_eq!(pending.lock().unwrap().len(), 1);
+            drop(call);
+            assert!(pending.lock().unwrap().is_empty());
+        });
+    }
+
+    #[test]
+    fn closed_worker_channel_releases_pending_entry() {
+        rt().block_on(async {
+            let workers = Workers::new();
+            workers.insert("tools", worker(now_secs(), false));
+            let (out_tx, out_rx) = mpsc::unbounded_channel();
+            workers.attach("tools", "tok", out_tx).unwrap();
+            drop(out_rx);
+            assert_eq!(
+                workers
+                    .call_owned(
+                        "tools",
+                        Some("tok"),
+                        "action",
+                        json!({}),
+                        Duration::from_secs(60)
+                    )
+                    .await
+                    .unwrap_err(),
+                "worker channel closed"
+            );
+            assert!(workers.map.lock().unwrap()["tools"]
+                .conn
+                .as_ref()
+                .unwrap()
+                .pending
+                .lock()
+                .unwrap()
+                .is_empty());
+        });
+    }
+
+    #[test]
+    fn supervisor_restart_refuses_late_ready_and_keeps_new_queue() {
+        let mut supervisor = Supervisor::default();
+        assert!(!supervisor.accept_ready(0));
+        let old = supervisor.begin().unwrap();
+        assert!(supervisor.begin().is_none());
+        supervisor.queue.push(SpawnPayload {
+            ext_id: "tools".into(),
+            token: "old".into(),
+            entry_source: "old source".into(),
+            caps: vec![],
+        });
+        assert_eq!(supervisor.retire(), Some(old));
+        assert!(supervisor.queue.is_empty());
+        let new = supervisor.begin().unwrap();
+        supervisor.queue.push(SpawnPayload {
+            ext_id: "tools".into(),
+            token: "new".into(),
+            entry_source: "new source".into(),
+            caps: vec![],
+        });
+        assert_ne!(supervisor_label(old), supervisor_label(new));
+        assert!(!supervisor.owns(old)); // delayed creation/failure cannot own new window
+        assert!(!supervisor.accept_ready(old));
+        assert!(!supervisor.ready);
+        assert_eq!(supervisor.queue[0].token, "new");
+        assert!(supervisor.accept_ready(new));
+        assert!(!supervisor.accept_ready(new)); // duplicate ready cannot reflush
+        assert_eq!(supervisor.retire(), Some(new));
+        assert!(!supervisor.accept_ready(new));
+        assert!(supervisor.retire().is_none());
+    }
+
+    #[test]
+    fn supervisor_failure_snapshot_excludes_companions_and_cannot_remove_replacement() {
+        let workers = Workers::new();
+        let mut scripted = worker(now_secs(), false);
+        scripted.token = "old".into();
+        workers.insert("tools", scripted);
+        let mut companion = worker(now_secs(), false);
+        companion.kind = RuntimeKind::Companion;
+        workers.insert("native", companion);
+        let victims = workers.scripted_tokens();
+        assert_eq!(victims, vec![("tools".into(), "old".into())]);
+        workers.remove("tools");
+        let mut replacement = worker(now_secs(), false);
+        replacement.token = "new".into();
+        workers.insert("tools", replacement);
+        for (id, token) in victims {
+            assert!(workers.remove_if_token(&id, &token).is_none());
+        }
+        assert!(workers.owns_token("tools", "new"));
+        assert!(workers.is_running("native"));
     }
 
     #[test]

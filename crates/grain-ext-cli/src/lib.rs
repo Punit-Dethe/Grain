@@ -686,7 +686,7 @@ fn typescript_declarations() -> Result<String> {
 fn entry_source(name: &str) -> Result<String> {
     let name = serde_json::to_string(name)?;
     Ok(format!(
-        "const extensionName = {name};\n\ngrain.actions({{\n  hello: async () => ({{ title: extensionName, body: \"Hello from this tool.\" }})\n}});\n"
+        "const extensionName = {name};\n\ngrain.actions({{\n  hello: async () => ({{ ok: {{ title: extensionName, body: \"Hello from this tool.\" }} }})\n}});\n"
     ))
 }
 

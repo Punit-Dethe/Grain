@@ -54,6 +54,69 @@ Startup also archives exact custom extension binding records in `retired-extensi
 
 **Still open in R1:** full real-app restart/upgrade/rollback evidence, external catalogue compatibility filtering, stale approval/catalog generation audit, every supervisor teardown race, and remaining broad-platform implementation/tombstone cleanup after ownership checks. R2 transport-body limits/native parity, R3 account certification, R4 selective hydration/continuation and the R5 integration ladder remain open. No gate is completed merely by deleting old positive tests.
 
+### R1 lifecycle follow-up: supervisor and request ownership
+
+Each scripted supervisor now gets a monotonic generation and a distinct `extension-host-<generation>` window label. Rust injects the generation before page scripts run; readiness and initialization failure identify it. Late/duplicate readiness cannot flush replacement queues, a cancelled creation closure cannot create an obsolete window, and delayed close targets only its original label. The existing capability file matches that label namespace with the same permission set. No background service or general extension engine is added.
+
+Spawn/queue/stop bookkeeping uses the existing supervisor gate. Concurrent cold requests reuse the current worker token instead of replacing it and leaking credentials. Stop removes queued source immediately. Creation/scheduling failure and unexpected window destruction retire the generation and remove scripted workers by exact token; companion identities are excluded. Listener registration handles page closure during an await. Shutdown unregisters listeners, clears callbacks, terminates workers and revokes Blob URLs. Partial initialization failure reports its generation after cleanup.
+
+Tool calls retain the token returned by the wake operation, wait only for that generation, recheck action approval after the cold-start await and refuse replacement dispatch. Startup failure releases the owning worker promptly. Pending registration and frame enqueue occur under the worker registry lock. A drop guard removes pending entries on future cancellation, deadline, channel failure and completion. Incoming results carry the authenticated socket token into correlation: an old socket cannot resolve the same call number in a replacement. Idle victim snapshots also carry tokens. Separate same-generation idle/busy races, heap-observer/strike attribution, account/config generations and all manifest/approval interleavings are not yet certified.
+
+The CLI's generated hello handler now returns the executor's documented `{ok: {title, body}}` envelope. Its previous bare result was incompatible with the parser. This is Grain's native-adapter contract, not an MCP result-schema requirement.
+
+**Verification:** frontend 106 tests in 14 files (six production supervisor tests), extension host 32, event auth eight, host API 16, action executor four, MCP 19 and CLI nine pass. Changed frontend lint, TypeScript/production build and backend library check pass; four existing context/upstream warnings remain. Focused coverage includes stale readiness, generation-scoped failure snapshots, stale socket replies, refused replacement dispatch and dropped-future cleanup. A disposable CLI project was generated, bundled with the repository's esbuild and called through the production worker shim to verify its executor result envelope. Prior retirement/migration evidence remains applicable. Protocol unit tests do not certify real-window lifecycle, live providers/accounts or visual behavior.
+
+**Reference recheck:** [VS Code connection ownership](https://raw.githubusercontent.com/microsoft/vscode/a460613c57b4c1eb2bc8edc97be694e05ae286b2/src/vs/workbench/contrib/mcp/common/mcpServerConnection.ts) disposes a handler whose asynchronous creation finishes after its owner is disposed. [MCP lifecycle guidance](https://modelcontextprotocol.io/specification/2025-11-25/basic/lifecycle) specifies initialization, operation, shutdown and bounded waiting; [Goose's extension model](https://raw.githubusercontent.com/aaif-goose/goose/04ed836c8cde23e540cc77d256992e00be99298b/crates/goose/src/agents/extension.rs) supplies native/MCP separation and typed setup errors. Grain's labels, tokens and queue locking are implementation choices informed by these sources. The historical lifecycle URL is intentional: the 2026-07-28 lifecycle URL currently redirects to versioning.
+
+### Combined real-app test checklist: retirement and lifecycle phases
+
+These checks cover the preceding retirement commit and this follow-up. Run the real Tauri app using your existing ASR/model configuration. Agent tool-selection checks require a configured Agent model; record them as blocked if that prerequisite is absent. A greeting written by the model without calling the tool is not an execution success.
+
+```powershell
+cd C:\Projects\Grain\grain
+bun run dev:asr
+```
+
+1. **Core features:** record and paste normal dictation. Open Snippets, Context and Agent; change a core toggle and restart. Expect core behavior/settings to work and persist. The extension recommendation shelves, contributed settings and extension shortcut controls removed in the previous phase must not appear on those core pages. User-authored prompts remain available.
+2. **Legacy quarantine/restart:** if your profile contains an old capture/prompt/Space/session/shortcut extension, try enabling it. Expect refusal/unavailable status, no worker activation and no altered core prompt/shortcut. Restart twice; expect it to remain disabled. In the active data directory, `extensions.json` retains `tool_only_migration_version: 1`. If retired entries existed, inspect `retired-extension-prompts.json` and `retired-extension-bindings.json`: exact edited content/custom chords survive, without duplicate archive rows after restart. Fresh profiles need not have archives. Standard Windows data is under `%APPDATA%\com.grain.app`; portable mode uses `Data` beside the executable. Use the actual active profile path. Interrupted upgrade/rollback certification remains separate.
+3. **Tool-only consent:** load the disposable project below through Extensions > developer tools > Load unpacked > Choose folder. Approve/enable if prompted. Expect its `Say hello` tool; this fixture requests no network, storage or account permissions. Consent must not request screen/OCR/selection, prompt layers, whole transcripts or semantic model installation. Load-unpacked does not require a submission icon.
+4. **Cold/warm/idle calls:** ask Agent `Use Tool Smoke's Say hello tool.` Expect an actual tool call/result containing `Hello from this tool.` Repeat immediately, then wait 150–180 seconds without other tool activity and repeat. Expect warm reuse, an idle worker reap in developer logs and a successful fresh wake. This smoke test does not certify selective schema hydration or the complete continuation gate.
+5. **Repeated teardown:** unload Tool Smoke from developer tools, immediately reload its folder, approve if prompted and call it again. Repeat ten times. Expect bounded completion, no obsolete error killing the replacement, no duplicate reply and a responsive app. Use developer debug logs for lifecycle lines. Process/RAM observations are not a certified budget in this phase.
+6. **Stop during a call:** replace the fixture handler with the slow version below, rebuild and reload the folder. Start its call, then unload before five seconds pass. Expect pending work to stop/fail, no late success from the unloaded worker and a usable app. Restore the original handler, rebuild/reload and call again; expect success. Repeating during a cold start exercises the readiness/close boundary. User-cancellation UX and write-outcome certainty remain later gates.
+7. **Retired package refusal:** in a separate copy of the disposable fixture, add `"activation": ["onStartup"]` or a retired permission such as `"capture"` to `manifest.json`, then choose that folder. Expect explicit rejection before execution. Historical grants do not create a compatibility exception; no extension screen/clipboard inspection should occur.
+8. **Existing MCP smoke, if configured:** use the developer provider's Test button, execute one read-only query through Agent, disconnect/disable the provider and retry. Expect discovery/tool names when connected, an unavailable result after disable and no replay. OAuth/account-switch certification remains pending; native checks need no new live-service credentials.
+
+Create the disposable project in another PowerShell terminal. This uses the real CLI and the repository's installed esbuild, without installing an additional runtime or alternate UI:
+
+```powershell
+$grainRepo = 'C:\Projects\Grain\grain'
+Set-Location $grainRepo
+cargo build -p grain-ext-cli --locked --offline
+$grainMetadata = cargo metadata --format-version 1 --no-deps --locked --offline | ConvertFrom-Json
+$grainExtExe = Join-Path $grainMetadata.target_directory 'debug\grain-ext.exe'
+$grainSmokeRoot = Join-Path $env:TMP ('grain-tool-smoke-' + [guid]::NewGuid())
+New-Item -ItemType Directory -Path $grainSmokeRoot | Out-Null
+Push-Location $grainSmokeRoot
+& $grainExtExe init 'Tool Smoke' --id com.example.tool-smoke
+Set-Location .\tool-smoke
+& "$grainRepo\node_modules\.bin\esbuild.cmd" src/main.ts --bundle --format=iife --platform=browser --target=es2020 --outfile=dist/main.js --sourcemap
+Pop-Location
+Write-Output (Join-Path $grainSmokeRoot 'tool-smoke')
+```
+
+For check 6, edit only that project's `src/main.ts`, rerun the esbuild command from its folder and reload through Grain:
+
+```typescript
+grain.actions({
+  hello: async () => {
+    await new Promise((resolve) => setTimeout(resolve, 5000));
+    return { ok: { title: "Tool Smoke", body: "Slow hello completed." } };
+  },
+});
+```
+
+Report pass/fail by checklist number, with the exact error, visible result and developer-log timestamps for failures. Repository policy requires user visual confirmation of the real app. External catalogue filtering, remaining legacy developer/store controls, observer/approval races, interrupted migration/rollback, authentication certification, selective schema hydration and the one/two/three/five-extension ladder remain open.
+
 ## 1. Product boundary
 
 **The agent understands the task and owns context. Extensions execute tools. Grain owns orchestration, authorization, execution policy and lifecycle.**
