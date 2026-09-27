@@ -74,6 +74,7 @@ pub fn stage_artifact(
 ) -> Result<PathBuf, InstallError> {
     grain_sdk::validate_extension_id(&entry.id).map_err(InstallError::Io)?;
     grain_sdk::validate_extension_version(&entry.version).map_err(InstallError::Io)?;
+    entry.validate_tool_only().map_err(InstallError::Manifest)?;
     trust::verify_artifact(bytes, &entry.sha256).map_err(InstallError::Hash)?;
 
     // Validate before filesystem mutation. Unsupported directory/native bundles
@@ -494,6 +495,25 @@ mod tests {
         let e = entry("com.example.x", "1.0.0", Trust::Verified, &[], &bytes);
         assert!(stage_artifact(dir.path(), &e, &bytes, ExtractLimits::default()).is_err());
         assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn retired_catalogue_metadata_cannot_stage_an_otherwise_valid_tool() {
+        let bytes = tool_pack("com.example.x", "1.0.0", &[]);
+        for surface in [false, true] {
+            let dir = tmp();
+            let mut e = entry("com.example.x", "1.0.0", Trust::Verified, &[], &bytes);
+            if surface {
+                e.extends.push("future.host-surface".into());
+            } else {
+                e.categories.push("prompts".into());
+            }
+            assert!(matches!(
+                stage_artifact(dir.path(), &e, &bytes, ExtractLimits::default()),
+                Err(InstallError::Manifest(_))
+            ));
+            assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
+        }
     }
 
     #[test]

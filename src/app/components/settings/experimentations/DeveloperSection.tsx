@@ -7,14 +7,7 @@ import React, {
   useState,
 } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import {
-  ExternalLink,
-  FlaskConical,
-  FolderOpen,
-  Network,
-  Trash2,
-  X,
-} from "lucide-react";
+import { ExternalLink, FolderOpen, Network, X } from "lucide-react";
 import { LiveLogViewer, type LiveLogFilterChip } from "../debug/LiveLogViewer";
 
 interface DeveloperExtension {
@@ -25,7 +18,6 @@ interface DeveloperExtension {
 interface ExtensionDeveloperStatus {
   enabled: boolean;
   loaded: DeveloperExtension[];
-  lab_count: number;
 }
 
 interface McpProviderStatus {
@@ -58,14 +50,6 @@ const LOAD_UNPACKED_DESCRIPTION =
   "Local code has the same permission checks as installed extensions.";
 const CHOOSE_FOLDER_LABEL = "Choose folder\u2026";
 const DEV_LABEL = "dev";
-const LAB_LABEL = "Recommendation Lab";
-const LAB_CORE_LABEL = "Core 6";
-const LAB_STRESS_LABEL = "Stress 24";
-const LAB_REMOVE_LABEL = "Remove lab";
-const LAB_DESCRIPTION =
-  "Installs local, zero-permission fixtures through Grain's real unpacked-extension runtime. Core covers six representative cases; Stress expands the same test to 24 extensions.";
-const labLoadedLabel = (count: number) => `${count} loaded`;
-
 const MCP_TEST_PROMPTS: Record<string, string> = {
   linear: "Show my five most recently updated Linear issues.",
   notion: "Find the three most recently edited pages in my Notion workspace.",
@@ -386,7 +370,6 @@ export const DeveloperSection: React.FC<{
 }> = ({ onExtensionsChanged }) => {
   const [loaded, setLoaded] = useState<DeveloperExtension[]>([]);
   const [mcpProviders, setMcpProviders] = useState<McpProviderStatus[]>([]);
-  const [labCount, setLabCount] = useState(0);
   const [selectedId, setSelectedId] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -398,7 +381,6 @@ export const DeveloperSection: React.FC<{
     ]);
     setLoaded(status.loaded);
     setMcpProviders(providers);
-    setLabCount(status.lab_count);
     setSelectedId((current) =>
       status.loaded.some((extension) => extension.id === current)
         ? current
@@ -429,31 +411,6 @@ export const DeveloperSection: React.FC<{
     [loaded, selectedId],
   );
 
-  const installLab = (size: "core" | "stress") => {
-    const count = size === "core" ? 6 : 24;
-    if (
-      !window.confirm(
-        `Install and enable ${count} local Recommendation Lab extensions? Selecting one hands it the full captured request. The fixtures request no permissions and call no external services.`,
-      )
-    ) {
-      return;
-    }
-    void run(() =>
-      invoke<number>("extension_recommendation_lab_install", { size }),
-    );
-  };
-
-  const removeLab = () => {
-    if (
-      !window.confirm(
-        "Remove every Recommendation Lab extension and clear its synthetic ranking feedback?",
-      )
-    ) {
-      return;
-    }
-    void run(() => invoke("extension_recommendation_lab_remove"));
-  };
-
   const loader = (
     <div className="rounded-xl border border-line bg-paper-raised">
       <div className="flex items-center justify-between gap-3 px-4 py-3">
@@ -477,63 +434,6 @@ export const DeveloperSection: React.FC<{
           {CHOOSE_FOLDER_LABEL}
         </button>
       </div>
-
-      {import.meta.env.DEV && (
-        <div className="border-t border-line px-4 py-3">
-          <div className="flex items-start gap-2.5">
-            <FlaskConical
-              className="mt-0.5 shrink-0 text-accent"
-              width={15}
-              height={15}
-              aria-hidden="true"
-            />
-            <div className="min-w-0 flex-1">
-              <div className="flex flex-wrap items-center gap-2">
-                <div className="text-sm font-medium text-ink">{LAB_LABEL}</div>
-                {labCount > 0 && (
-                  <span className="rounded-full bg-accent/10 px-2 py-0.5 text-[10px] font-medium tabular-nums text-accent">
-                    {labLoadedLabel(labCount)}
-                  </span>
-                )}
-              </div>
-              <p className="mt-1 max-w-xl text-xs leading-relaxed text-ink-faint">
-                {LAB_DESCRIPTION}
-              </p>
-              <div className="mt-3 flex flex-wrap gap-2">
-                <button
-                  type="button"
-                  className="button"
-                  disabled={busy}
-                  aria-pressed={labCount === 6}
-                  onClick={() => installLab("core")}
-                >
-                  {LAB_CORE_LABEL}
-                </button>
-                <button
-                  type="button"
-                  className="button"
-                  disabled={busy}
-                  aria-pressed={labCount === 24}
-                  onClick={() => installLab("stress")}
-                >
-                  {LAB_STRESS_LABEL}
-                </button>
-                {labCount > 0 && (
-                  <button
-                    type="button"
-                    className="button danger"
-                    disabled={busy}
-                    onClick={removeLab}
-                  >
-                    <Trash2 width={13} height={13} aria-hidden="true" />
-                    {LAB_REMOVE_LABEL}
-                  </button>
-                )}
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
 
       {loaded.length > 0 && (
         <div className="border-t border-line px-4 py-3 space-y-1.5">

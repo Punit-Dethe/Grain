@@ -19,6 +19,7 @@ enum Behavior {
     ProtocolError,
     RepeatedCursor,
     EmptyPages,
+    DuplicateToolsAcrossPages,
 }
 
 struct Fixture {
@@ -31,6 +32,10 @@ struct Fixture {
 
 impl Fixture {
     async fn start(behavior: Behavior) -> Self {
+        Self::start_with_tool(behavior, tool_json()).await
+    }
+
+    async fn start_with_tool(behavior: Behavior, tool: Value) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let endpoint = format!("http://{}/mcp", listener.local_addr().unwrap());
         let calls = Arc::new(AtomicUsize::new(0));
@@ -55,12 +60,20 @@ impl Fixture {
                                 "resultType": "complete", "tools": [], "nextCursor": "same",
                                 "ttlMs": 0, "cacheScope": "private"
                             }),
+                            Behavior::DuplicateToolsAcrossPages => {
+                                let mut response = json!({"resultType": "complete", "tools": [tool.clone()],
+                                    "ttlMs": 0, "cacheScope": "private"});
+                                if page == 0 {
+                                    response["nextCursor"] = json!("second-page");
+                                }
+                                response
+                            }
                             Behavior::EmptyPages => json!({
                                 "resultType": "complete", "tools": [], "nextCursor": format!("page-{page}"),
                                 "ttlMs": 0, "cacheScope": "private"
                             }),
                             _ => {
-                                json!({ "resultType": "complete", "tools": [tool_json()], "ttlMs": 0, "cacheScope": "private" })
+                                json!({ "resultType": "complete", "tools": [tool.clone()], "ttlMs": 0, "cacheScope": "private" })
                             }
                         }
                     }
@@ -454,4 +467,91 @@ fn structured_scalars_and_escaped_invisible_data_round_trip() {
         let encoded = output.text.split_once('\n').unwrap().1;
         assert_eq!(serde_json::from_str::<Value>(encoded).unwrap(), value);
     }
+}
+
+#[tokio::test]
+async fn nested_invalid_arguments_never_reach_tools_call() {
+    let mut tool = tool_json();
+    tool["inputSchema"] = json!({"type": "object", "required": ["request"],
+        "properties": {"request": {"type": "object", "required": ["count"],
+            "properties": {"count": {"type": "integer", "minimum": 1}},
+            "additionalProperties": false}}, "additionalProperties": false});
+    let digest = tool_set_digest(
+        provider("linear").unwrap(),
+        &[serde_json::from_value(tool.clone()).unwrap()],
+    )
+    .unwrap();
+    let fixture = Fixture::start_with_tool(
+        Behavior::Complete(json!({"resultType": "complete",
+        "content": [{"type": "text", "text": "OK"}]})),
+        tool,
+    )
+    .await;
+    let service = fixture.service(McpHttpClient::build().unwrap().0).await;
+    for arguments in [
+        json!({"request": {"count": "private-token"}}),
+        json!({"request": {"count": 0}}),
+        json!({"request": {"count": 1, "extra": true}}),
+    ] {
+        let failure = call_on_service(
+            &service,
+            provider("linear").unwrap(),
+            "write",
+            arguments.as_object().unwrap().clone(),
+            &digest,
+            tokio::time::Instant::now() + Duration::from_secs(3),
+            || true,
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(failure.phase, DispatchPhase::NotDispatched);
+        assert_eq!(failure.class, FailureClass::InvalidArgument);
+        assert!(!failure.message.contains("private-token"));
+        assert_eq!(fixture.calls.load(Ordering::SeqCst), 0);
+        assert!(!service.dispatched.load(Ordering::SeqCst));
+    }
+    call_on_service(
+        &service,
+        provider("linear").unwrap(),
+        "write",
+        json!({"request": {"count": 1}})
+            .as_object()
+            .unwrap()
+            .clone(),
+        &digest,
+        tokio::time::Instant::now() + Duration::from_secs(3),
+        || true,
+    )
+    .await
+    .unwrap();
+    assert_eq!(fixture.calls.load(Ordering::SeqCst), 1);
+    assert!(close_service(service).await);
+    fixture.stop().await;
+}
+
+#[tokio::test]
+async fn malformed_schema_stops_discovery_without_a_tool_call() {
+    let mut tool = tool_json();
+    tool["inputSchema"]["required"] = json!([7]);
+    let fixture = Fixture::start_with_tool(Behavior::Complete(json!({})), tool).await;
+    let service = fixture.service(McpHttpClient::build().unwrap().0).await;
+    let failure = execute(&service, Duration::from_secs(3)).await.unwrap_err();
+    assert_eq!(failure.phase, DispatchPhase::NotDispatched);
+    assert!(failure.message.contains("schema"));
+    assert_eq!(fixture.calls.load(Ordering::SeqCst), 0);
+    assert!(close_service(service).await);
+    fixture.stop().await;
+}
+
+#[tokio::test]
+async fn duplicate_tool_names_across_pages_never_dispatch() {
+    let fixture = Fixture::start(Behavior::DuplicateToolsAcrossPages).await;
+    let service = fixture.service(McpHttpClient::build().unwrap().0).await;
+    let failure = execute(&service, Duration::from_secs(3)).await.unwrap_err();
+    assert_eq!(failure.phase, DispatchPhase::NotDispatched);
+    assert!(failure.message.contains("duplicate tool names"));
+    assert_eq!(fixture.calls.load(Ordering::SeqCst), 0);
+    assert_eq!(fixture.lists.load(Ordering::SeqCst), 2);
+    assert!(close_service(service).await);
+    fixture.stop().await;
 }

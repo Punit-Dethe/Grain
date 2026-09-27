@@ -12,6 +12,8 @@ description = "Headless, Tauri-free core for Grain: AppContext (owned settings +
 grain-sdk = { path = "../grain-sdk" }
 serde = { workspace = true }
 serde_json = { workspace = true }
+# Tool schemas are untrusted: no HTTP/file resolver or additional TLS runtime.
+jsonschema = { version = "=0.58.1", default-features = false }
 anyhow = { workspace = true }
 log = "0.4"
 # broadcast channel for the DaemonEvent bus (no Tauri).

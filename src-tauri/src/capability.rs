@@ -435,40 +435,7 @@ async fn execute_action(
 }
 
 fn parse_mcp_arguments(raw: &str, schema: &serde_json::Value) -> Result<serde_json::Value, String> {
-    const MAX_ARGUMENT_BYTES: usize = 64 * 1024;
-    if raw.len() > MAX_ARGUMENT_BYTES {
-        return Err("arguments exceed the 64 KiB limit".into());
-    }
-    let value: serde_json::Value =
-        serde_json::from_str(raw).map_err(|_| "arguments are not valid JSON")?;
-    let object = value.as_object().ok_or("arguments must be a JSON object")?;
-    let schema_object = schema.as_object().ok_or("the provider schema is invalid")?;
-    if let Some(required) = schema_object
-        .get("required")
-        .and_then(serde_json::Value::as_array)
-    {
-        for name in required.iter().filter_map(serde_json::Value::as_str) {
-            if !object.contains_key(name) {
-                return Err(format!("missing required argument '{name}'"));
-            }
-        }
-    }
-    if schema_object
-        .get("additionalProperties")
-        .and_then(serde_json::Value::as_bool)
-        == Some(false)
-    {
-        let properties = schema_object
-            .get("properties")
-            .and_then(serde_json::Value::as_object);
-        if let Some(name) = object
-            .keys()
-            .find(|name| !properties.is_some_and(|properties| properties.contains_key(*name)))
-        {
-            return Err(format!("unknown argument '{name}'"));
-        }
-    }
-    Ok(value)
+    grain_core::tool_schema::parse_arguments(raw, schema)
 }
 
 fn loaded_digest_is_current(loaded: &str, current: &str) -> bool {

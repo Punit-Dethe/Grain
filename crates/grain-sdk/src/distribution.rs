@@ -153,6 +153,40 @@ pub struct IndexEntry {
     pub extends: Vec<String>,
 }
 
+impl IndexEntry {
+    /// Cheap catalogue eligibility check, before any artifact or media fetch.
+    /// Signed metadata does not replace validation of the downloaded manifest.
+    pub fn validate_tool_only(&self) -> Result<(), String> {
+        // Match the retired built-ins at the host boundary, including old
+        // catalogues that omitted capabilities or host-surface metadata.
+        if matches!(
+            self.id.as_str(),
+            "grain.auto-categorize" | "grain.agent-center-layout"
+        ) {
+            return Err("This built-in extension is retired.".into());
+        }
+        if self.tier != Tier::Scripted {
+            return Err("Only embedded tool-only extensions are supported.".into());
+        }
+        if let Some(permission) = self
+            .capabilities
+            .iter()
+            .find(|permission| !crate::manifest::tool_permission_allowed(permission))
+        {
+            return Err(format!(
+                "Retired or unsupported extension permission: {permission}"
+            ));
+        }
+        if !self.extends.is_empty() {
+            return Err("Extension contributions to Grain host surfaces are retired.".into());
+        }
+        if self.categories.iter().any(|category| category != "tools") {
+            return Err("Only the tools extension category is supported.".into());
+        }
+        Ok(())
+    }
+}
+
 /// The category vocabulary a submission may declare. Deliberately short: these
 /// answer "what kind of thing is this", which is the only question a filter row
 /// can usefully ask before you have opened anything. A longer taxonomy would
@@ -260,5 +294,69 @@ impl Revocations {
             });
         }
         result
+    }
+}
+
+#[cfg(test)]
+mod tool_catalogue_tests {
+    use super::*;
+
+    fn tool_entry() -> IndexEntry {
+        serde_json::from_value(serde_json::json!({
+            "id": "com.example.tools", "name": "Tools", "version": "1.0.0",
+            "tier": "scripted", "trust": "verified", "sha256": "00",
+            "capabilities": ["storage", "auth", "net:api.example.com"],
+            "categories": ["tools"]
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn tool_catalogue_accepts_only_supported_runtime_metadata() {
+        let entry = tool_entry();
+        entry.validate_tool_only().unwrap();
+        let mut uncategorized = entry.clone();
+        uncategorized.categories.clear();
+        uncategorized.validate_tool_only().unwrap();
+        for id in ["grain.auto-categorize", "grain.agent-center-layout"] {
+            let mut retired = entry.clone();
+            retired.id = id.into();
+            retired.capabilities.clear();
+            retired.categories.clear();
+            assert!(retired.validate_tool_only().is_err(), "{id}");
+        }
+        for permission in [
+            "capture",
+            "transform:transcript",
+            "surface:workspace",
+            "context:selection",
+            "prompt:layers",
+            "net:*",
+            "future:unknown",
+        ] {
+            let mut retired = entry.clone();
+            retired.capabilities.push(permission.into());
+            assert!(retired.validate_tool_only().is_err(), "{permission}");
+        }
+        for tier in [Tier::Native, Tier::Pack] {
+            let mut retired = entry.clone();
+            retired.tier = tier;
+            assert!(retired.validate_tool_only().is_err());
+        }
+        for category in ["prompts", "dictation", "future-category"] {
+            let mut retired = entry.clone();
+            retired.categories.push(category.into());
+            assert!(retired.validate_tool_only().is_err(), "{category}");
+        }
+        for surface in [
+            "pill.theme",
+            "agent.reply-surface",
+            "overrides:settings",
+            "future-surface",
+        ] {
+            let mut retired = entry.clone();
+            retired.extends.push(surface.into());
+            assert!(retired.validate_tool_only().is_err(), "{surface}");
+        }
     }
 }

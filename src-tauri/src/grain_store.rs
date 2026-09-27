@@ -236,24 +236,7 @@ impl StoreState {
 fn project_entries(entries: &[IndexEntry], revocations: &Revocations) -> Vec<StoreEntry> {
     entries
         .iter()
-        .filter(|entry| {
-            entry.id != "grain.agent-center-layout"
-                && !entry.capabilities.iter().any(|capability| {
-                    matches!(
-                        capability.as_str(),
-                        "surface:workspace" | "surface:overlay" | "pill:slots"
-                    )
-                })
-                && !entry.extends.iter().any(|surface| {
-                    matches!(
-                        surface.as_str(),
-                        "pill.theme"
-                            | "agent.reply-surface"
-                            | "overlay.recording"
-                            | "overlay.pointer"
-                    ) || surface.starts_with("overrides:")
-                })
-        })
+        .filter(|entry| entry.validate_tool_only().is_ok())
         .map(|e| StoreEntry {
             id: e.id.clone(),
             name: e.name.clone(),
@@ -517,6 +500,7 @@ pub async fn install_entry(
             .cloned()
             .ok_or_else(|| format!("no entry {id} {version} in the verified index"))?
     };
+    entry.validate_tool_only()?;
     if entry.size > grain_sdk::PACK_MAX_BYTES {
         return Err(format!(
             "catalogue artifact exceeds the {} MiB pack limit",
@@ -739,6 +723,9 @@ pub fn store_covers(app: AppHandle, ids: Vec<String>) -> Result<Vec<StoreCover>,
     for id in ids {
         // Newest published entry wins, matching `store_entry`.
         if let Some(entry) = index.entries.iter().filter(|e| e.id == id).next_back() {
+            if entry.validate_tool_only().is_err() {
+                continue;
+            }
             if let Some(m) = entry.media.first() {
                 covers.push(StoreCover {
                     id,
@@ -887,7 +874,7 @@ mod tests {
     // fixture produced by `grain-registry publish`): cache load → verify roots
     // against the PINNED keys → verify index against the publishing key →
     // project entries. Proves the producer (5B) and verifier (5A) agree, and
-    // that a verified entry surfaces with its real trust.
+    // that signature verification does not grant retired runtime capabilities.
     #[test]
     fn verified_fixture_catalogue_loads_from_cache() {
         let data = tmp_data("fixture");
@@ -908,12 +895,16 @@ mod tests {
         }
         let state = StoreState::init(&data);
         let view = state.view_from_resident();
-        assert_eq!(view.entries.len(), 1, "the fixture catalogue has one entry");
-        let e = &view.entries[0];
-        assert_eq!(e.id, "com.example.hello");
-        assert_eq!(e.trust, "verified", "trust comes from the signed index");
-        assert_eq!(e.tier, "scripted");
-        assert!(e.revocation.is_none());
+        assert!(
+            view.entries.is_empty(),
+            "signed retired entries stay hidden"
+        );
+        let index = state.index.read().unwrap();
+        let entry = &index.as_ref().expect("verified cached index").entries[0];
+        assert_eq!(entry.id, "com.example.hello");
+        assert_eq!(entry.trust, grain_sdk::Trust::Verified);
+        assert_eq!(entry.capabilities, vec!["transform:transcript"]);
+        drop(index);
         let _ = std::fs::remove_dir_all(&data);
     }
 
@@ -924,102 +915,46 @@ mod tests {
             .join("store")
     }
 
-    /// A dead-simple blocking file server for the fixture `v1/` tree. Serves any
-    /// existing file by request path; 404 otherwise. One request per connection.
-    fn serve_v1(root: PathBuf) -> Option<std::net::SocketAddr> {
-        use std::io::{Read, Write};
-        use std::net::TcpListener;
-        // The signed fixture roots.json names 127.0.0.1:8787, so bind exactly it.
-        let listener = TcpListener::bind("127.0.0.1:8787").ok()?;
-        let addr = listener.local_addr().ok()?;
-        std::thread::spawn(move || {
-            for stream in listener.incoming() {
-                let Ok(mut stream) = stream else { continue };
-                let mut buf = [0u8; 2048];
-                let n = stream.read(&mut buf).unwrap_or(0);
-                let req = String::from_utf8_lossy(&buf[..n]);
-                let path = req
-                    .lines()
-                    .next()
-                    .and_then(|l| l.split_whitespace().nth(1))
-                    .unwrap_or("/")
-                    .trim_start_matches('/')
-                    .to_string();
-                let file = root.join(&path);
-                let body = std::fs::read(&file).ok();
-                let resp = match body {
-                    Some(bytes) => {
-                        let mut head = format!(
-                            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-                            bytes.len()
-                        )
-                        .into_bytes();
-                        head.extend_from_slice(&bytes);
-                        head
-                    }
-                    None => {
-                        b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
-                            .to_vec()
-                    }
-                };
-                let _ = stream.write_all(&resp);
-                let _ = stream.flush();
-            }
-        });
-        Some(addr)
-    }
-
-    // FULL client end-to-end over real HTTP against the signed catalogue:
-    // serve v1/ on localhost → StoreState refresh (verify roots+index) → install
-    // the artifact (fetch blob → verify sha256 → unpack → registry record with
-    // trust) → confirm the pack loads from its versioned dir. This is the honest
-    // synthetic equivalent of the in-app store click, minus the GUI and worker
-    // execution.
+    // Verify the immutable signed legacy catalogue, then use an ephemeral
+    // listener as a tripwire. No server thread or fixed-port skip is needed:
+    // retirement must refuse the install before even opening a connection.
     #[test]
-    fn http_end_to_end_install_from_signed_catalogue() {
-        // Build the served tree = fixture (roots/index/sigs + blob).
-        let data = tmp_data("e2e");
-        let served = data.join("served_v1");
-        std::fs::create_dir_all(served.join("blob")).unwrap();
-        let fx = fixture_dir();
-        for f in [
-            "roots.json",
-            "roots.json.minisig",
-            "index.json",
-            "index.json.minisig",
-        ] {
-            std::fs::copy(fx.join(f), served.join(f)).unwrap();
-        }
-        for e in std::fs::read_dir(fx.join("blob")).unwrap().flatten() {
-            std::fs::copy(e.path(), served.join("blob").join(e.file_name())).unwrap();
-        }
-
-        let Some(_addr) = serve_v1(served) else {
-            eprintln!("SKIP: could not bind 127.0.0.1:8787 (port busy)");
-            return;
-        };
-
-        // Seed the store cache with the fixture roots so init picks up the
-        // localhost base URL, then refresh + install over HTTP.
-        let store_cache = data.join("store");
-        std::fs::create_dir_all(&store_cache).unwrap();
-        for f in ["roots.json", "roots.json.minisig"] {
-            std::fs::copy(fx.join(f), store_cache.join(f)).unwrap();
-        }
+    fn signed_legacy_install_is_refused_before_download() {
+        let data = tmp_data("retired-install");
         let state = StoreState::init(&data);
+        let fx = fixture_dir();
+        let roots = trust::verify_roots(
+            &std::fs::read(fx.join("roots.json")).unwrap(),
+            &std::fs::read_to_string(fx.join("roots.json.minisig")).unwrap(),
+        )
+        .unwrap();
+        let (index, status) = trust::verify_index(
+            &roots,
+            &std::fs::read(fx.join("index.json")).unwrap(),
+            &std::fs::read_to_string(fx.join("index.json.minisig")).unwrap(),
+            None,
+            1_787_270_400,
+            false,
+        )
+        .unwrap();
+        assert!(matches!(status, IndexStatus::Fresh));
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        // Change only the test transport destination after signature verification.
+        // The index, permissions, artifact identity and signatures stay untouched.
+        let mut transport_roots = roots;
+        transport_roots.base_urls = vec![format!("http://{}/", listener.local_addr().unwrap())];
+        transport_roots.mirrors.clear();
+        *state.roots.write().unwrap() = transport_roots;
+        *state.index.write().unwrap() = Some(index);
         let reg = grain_core::extensions::ExtensionsRegistry::load(&data, false).unwrap();
         let ext_root = data.join("extensions");
-        let client = reqwest::Client::new();
-
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_millis(300))
+            .build()
+            .unwrap();
         let rt = tokio::runtime::Runtime::new().unwrap();
-        // Verify the immutable signed fixture at a time inside its validity
-        // window. Production refreshes always pass the real wall clock.
-        let view = rt.block_on(refresh_at(&state, &client, 1_787_270_400));
-        assert_eq!(view.status, "fresh", "index verified + fresh over HTTP");
-        assert_eq!(view.entries.len(), 1);
-        assert!(view.can_install);
-
-        let dir = rt
+        let error = rt
             .block_on(install_entry(
                 &state,
                 &reg,
@@ -1028,77 +963,118 @@ mod tests {
                 "com.example.hello",
                 "1.0.0",
             ))
-            .expect("install over HTTP");
-        assert!(
-            dir.join("pack.grainpack.json").exists(),
-            "artifact unpacked"
-        );
-
-        let rec = reg.record("com.example.hello").expect("registry record");
+            .unwrap_err();
+        assert!(error.contains("transform:transcript"), "{error}");
         assert_eq!(
-            rec.trust,
-            grain_sdk::Trust::Verified,
-            "trust from signed index"
+            listener.accept().unwrap_err().kind(),
+            std::io::ErrorKind::WouldBlock
         );
-        assert_eq!(rec.installed_version, "1.0.0");
-        assert!(
-            !rec.enabled,
-            "fresh install lands disabled (enable is explicit)"
-        );
-
+        assert!(reg.record("com.example.hello").is_none());
+        assert!(!ext_root.join("com.example.hello").exists());
+        state.close();
+        drop(listener);
         let _ = std::fs::remove_dir_all(&data);
     }
 
-    // The REAL end-to-end against the live GitHub-hosted catalogue: a fresh
-    // StoreState (embedded seed roots → raw.githubusercontent base URL) →
-    // refresh over the network → verify against pinned keys → install a scripted
-    // extension from its content-addressed blob. Network-dependent, so it is
-    // #[ignore]d in normal runs; run with `cargo test -- --ignored live_github`.
+    // Exercise the real download/hash/install path with an embedded tool pack.
+    // Metadata is synthetic here; the separate legacy fixture verifies signatures.
+    #[test]
+    fn tool_download_installs_disabled_and_rejects_wrong_hash() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            for corrupt in [false, true] {
+                let data = tmp_data(if corrupt { "hash" } else { "tool" });
+                let state = StoreState::init(&data);
+                let bytes = serde_json::to_vec(&serde_json::json!({
+                    "manifest": {"id": "com.example.tools", "name": "Test tools",
+                        "version": "1.0.0", "grainApi": "^1.0", "tier": "scripted",
+                        "entry_source": "grain.actions({});", "permissions": []},
+                    "payloads": {}
+                })).unwrap();
+                let hash = trust::sha256_hex(&bytes);
+                let entry: IndexEntry = serde_json::from_value(serde_json::json!({
+                    "id": "com.example.tools", "name": "Test tools", "version": "1.0.0",
+                    "tier": "scripted", "trust": "verified", "sha256": hash,
+                    "size": bytes.len(), "categories": ["tools"]
+                })).unwrap();
+                assert_eq!(project_entries(std::slice::from_ref(&entry),
+                    &state.revocations.read().unwrap()).len(), 1);
+                *state.index.write().unwrap() = Some(grain_sdk::Index {
+                    spec: 1, version: 1, expires: "2099-01-01T00:00:00Z".into(),
+                    entries: vec![entry],
+                });
+                let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+                {
+                    let mut roots = state.roots.write().unwrap();
+                    roots.base_urls = vec![format!("http://{}/", listener.local_addr().unwrap())];
+                    roots.mirrors.clear();
+                }
+                let server = async {
+                    let (mut socket, _) = listener.accept().await.unwrap();
+                    let mut request = [0u8; 2048];
+                    let mut count = 0;
+                    while !request[..count].windows(4).any(|part| part == b"\r\n\r\n") {
+                        assert!(count < request.len(), "oversized request header");
+                        let read = socket.read(&mut request[count..]).await.unwrap();
+                        assert_ne!(read, 0, "truncated request header");
+                        count += read;
+                    }
+                    assert!(String::from_utf8_lossy(&request[..count])
+                        .starts_with(&format!("GET /blob/{hash}.grainpack HTTP/1.1")));
+                    let mut body = bytes.clone();
+                    if corrupt { body[0] = b'!'; }
+                    socket.write_all(format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len()).as_bytes()).await.unwrap();
+                    socket.write_all(&body).await.unwrap();
+                };
+                let reg = grain_core::extensions::ExtensionsRegistry::load(&data, false).unwrap();
+                let ext_root = data.join("extensions");
+                let client = reqwest::Client::builder()
+                    .timeout(std::time::Duration::from_secs(2)).build().unwrap();
+                let install = install_entry(&state, &reg, &ext_root, &client,
+                    "com.example.tools", "1.0.0");
+                // Both futures and all sockets are owned by this bounded scope.
+                let (_, result) = tokio::time::timeout(std::time::Duration::from_secs(3),
+                    async { tokio::join!(server, install) }).await.unwrap();
+                if corrupt {
+                    assert!(result.unwrap_err().contains("artifact verification failed"));
+                    assert!(reg.record("com.example.tools").is_none());
+                    assert!(!ext_root.join("com.example.tools").exists());
+                } else {
+                    assert!(result.unwrap().join("pack.grainpack.json").exists());
+                    let record = reg.record("com.example.tools").unwrap();
+                    assert_eq!(record.trust, grain_sdk::Trust::Verified);
+                    assert!(!record.enabled);
+                }
+                state.close();
+                drop(listener);
+                let _ = std::fs::remove_dir_all(&data);
+            }
+        });
+    }
+
+    // Read-only live catalogue compatibility check; no legacy artifact install.
     #[test]
     #[ignore = "network: fetches the live GitHub-hosted catalogue"]
-    fn live_github_end_to_end_install() {
+    fn live_github_catalogue_exposes_only_tools() {
         let data = tmp_data("live");
         let state = StoreState::init(&data);
-        let reg = grain_core::extensions::ExtensionsRegistry::load(&data, false).unwrap();
-        let ext_root = data.join("extensions");
         let client = reqwest::Client::new();
         let rt = tokio::runtime::Runtime::new().unwrap();
-
         let view = rt.block_on(refresh(&state, &client));
         assert_eq!(view.status, "fresh", "live index verified + fresh");
-        assert!(
-            view.entries
+        let index = state.index.read().unwrap();
+        let raw = index.as_ref().expect("verified live index");
+        for entry in &view.entries {
+            raw.entries
                 .iter()
-                .all(|entry| entry.id != "grain.agent-center-layout"),
-            "visual-only packs are hidden even if a stale catalogue publishes them"
-        );
-
-        // Voice Actions — the scripted extension exercising the new
-        // open:url/open:app capabilities — installs the same way.
-        assert!(
-            view.entries.iter().any(|e| e.id == "grain.voice-actions"),
-            "voice actions is published"
-        );
-        rt.block_on(install_entry(
-            &state,
-            &reg,
-            &ext_root,
-            &client,
-            "grain.voice-actions",
-            "1.0.0",
-        ))
-        .expect("install voice actions from the live blob");
-        let va = reg
-            .record("grain.voice-actions")
-            .expect("voice actions installed");
-        assert_eq!(va.trust, grain_sdk::Trust::Core);
-        // Its single-file pack unpacked into the versioned dir.
-        assert!(
-            grain_core::install::version_dir(&ext_root, "grain.voice-actions", "1.0.0")
-                .join("pack.grainpack.json")
-                .exists(),
-            "voice actions artifact unpacked"
-        );
+                .find(|candidate| candidate.id == entry.id && candidate.version == entry.version)
+                .unwrap()
+                .validate_tool_only()
+                .unwrap();
+        }
+        drop(index);
+        state.close();
         let _ = std::fs::remove_dir_all(&data);
     }
 

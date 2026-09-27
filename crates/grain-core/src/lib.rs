@@ -62,6 +62,8 @@ pub mod interaction;
 // outcome — mapped to `interaction` for rendering. Pure; the host executor is
 // built on it.
 pub mod execution;
+// Bounded, offline JSON Schema validation shared by MCP discovery and execution.
+pub mod tool_schema;
 // [GRAIN] Recommendation ranking (docs/Extensions V1/PLAN.md §3.1). Which
 // searchable extension should be offered a request. Pure and model-free: the
 // host injects semantic scores, so grain-core carries no embedder.

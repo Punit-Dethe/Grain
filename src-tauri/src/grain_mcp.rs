@@ -1251,7 +1251,12 @@ async fn discover_on_service(
         tools.extend(page.tools);
         cursor = page.next_cursor;
         let Some(next) = cursor.as_ref() else {
-            validate_tools(&tools)?;
+            // Pages already passed schema compilation. Only cross-page name
+            // collisions need a final check; don't compile every schema twice.
+            let names: HashSet<_> = tools.iter().map(|tool| tool.name.as_ref()).collect();
+            if names.len() != tools.len() {
+                return Err("the MCP server exposed duplicate tool names".into());
+            }
             return Ok(tools);
         };
         if next.len() > MAX_CURSOR_BYTES {
@@ -1390,12 +1395,22 @@ async fn call_on_service(
             "MCP definitions changed after confirmation. Ask again.",
         ));
     }
-    if !tools.iter().any(|tool| tool.name.as_ref() == tool_name) {
-        return Err(before_dispatch(
-            FailureClass::NotFound,
-            "The confirmed MCP tool is no longer available.",
-        ));
-    }
+    let tool = tools
+        .iter()
+        .find(|tool| tool.name.as_ref() == tool_name)
+        .ok_or_else(|| {
+            before_dispatch(
+                FailureClass::NotFound,
+                "The confirmed MCP tool is no longer available.",
+            )
+        })?;
+    let schema = serde_json::Value::Object(tool.input_schema.as_ref().clone());
+    let arguments = serde_json::Value::Object(arguments);
+    grain_core::tool_schema::validate_arguments(&schema, &arguments)
+        .map_err(|message| before_dispatch(FailureClass::InvalidArgument, message))?;
+    let serde_json::Value::Object(arguments) = arguments else {
+        unreachable!("constructed object")
+    };
     if !is_enabled() {
         return Err(before_dispatch(
             FailureClass::Cancelled,
@@ -1578,64 +1593,9 @@ fn validate_tools(tools: &[Tool]) -> Result<(), String> {
             return Err("the MCP server exposed duplicate tool names".into());
         }
         let schema = serde_json::Value::Object(tool.input_schema.as_ref().clone());
-        let bytes = serde_json::to_vec(&schema).map_err(|error| error.to_string())?;
-        if bytes.len() > 64 * 1024 {
-            return Err(format!("MCP tool '{name}' has an oversized input schema"));
-        }
-        if schema.get("type").and_then(serde_json::Value::as_str) != Some("object") {
-            return Err(format!("MCP tool '{name}' must use an object input schema"));
-        }
-        let mut node_count = 0;
-        validate_schema_value(&schema, 0, &mut node_count)
-            .map_err(|error| format!("MCP tool '{name}' has an unsafe input schema: {error}"))?;
-    }
-    Ok(())
-}
-
-fn validate_schema_value(
-    value: &serde_json::Value,
-    depth: usize,
-    node_count: &mut usize,
-) -> Result<(), String> {
-    if depth > 32 {
-        return Err("nesting exceeds 32 levels".into());
-    }
-    *node_count = node_count.saturating_add(1);
-    if *node_count > 4_096 {
-        return Err("schema exceeds 4096 nodes".into());
-    }
-    match value {
-        serde_json::Value::String(value) => {
-            if value.len() > 4_096 {
-                return Err("a schema string exceeds 4 KiB".into());
-            }
-            if value.chars().any(|character| {
-                (character.is_control() && !matches!(character, '\n' | '\r' | '\t'))
-                    || matches!(
-                        character,
-                        '\u{202A}'..='\u{202E}'
-                            | '\u{2066}'..='\u{2069}'
-                            | '\u{200B}'..='\u{200F}'
-                            | '\u{FEFF}'
-                    )
-            }) {
-                return Err("a schema string contains hidden control characters".into());
-            }
-        }
-        serde_json::Value::Array(values) => {
-            for value in values {
-                validate_schema_value(value, depth + 1, node_count)?;
-            }
-        }
-        serde_json::Value::Object(values) => {
-            for (key, value) in values {
-                if key.len() > 512 || key.chars().any(char::is_control) {
-                    return Err("a schema property name is invalid".into());
-                }
-                validate_schema_value(value, depth + 1, node_count)?;
-            }
-        }
-        _ => {}
+        grain_core::tool_schema::validate_definition(&schema).map_err(|error| {
+            format!("MCP tool '{name}' has an unsupported input schema: {error}")
+        })?;
     }
     Ok(())
 }
