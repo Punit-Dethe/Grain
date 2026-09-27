@@ -850,7 +850,10 @@ pub fn capability_actions_for_extension(
     }
     Ok(ExtensionActionSet {
         actions,
-        manifest_digest: digest,
+        manifest_digest: grain_core::extensions::native_call_fingerprint(&record, &pack.manifest)
+            .map_err(|_| {
+            "that extension's call identity could not be verified".to_string()
+        })?,
     })
 }
 
@@ -884,7 +887,10 @@ pub fn approved_action_digest(
         return None;
     }
     let digest = grain_core::extensions::actions_fingerprint(declared);
-    (record.actions_approved.as_deref() == Some(digest.as_str())).then_some(digest)
+    if record.actions_approved.as_deref() != Some(digest.as_str()) {
+        return None;
+    }
+    grain_core::extensions::native_call_fingerprint(&record, &pack.manifest).ok()
 }
 
 /// The display name and one-line purpose for a pooled extension, for the

@@ -176,15 +176,26 @@ pub fn verify_index(
     let status = if is_seed {
         IndexStatus::Fresh
     } else {
-        let expires = parse_rfc3339(&index.expires)?;
-        if now_unix > expires + EXPIRY_CLOCK_SKEW_SECS {
-            IndexStatus::Expired
-        } else {
-            IndexStatus::Fresh
-        }
+        index_status(&index, now_unix)?
     };
 
     Ok((index, status))
+}
+
+/// Recheck an already verified catalog at use time, without a seed exemption.
+/// Signature verification remains the caller's responsibility.
+pub fn index_status(index: &Index, now_unix: i64) -> Result<IndexStatus, TrustError> {
+    if index.spec > DISTRIBUTION_SPEC {
+        return Ok(IndexStatus::NeedsNewerClient);
+    }
+    let expires = parse_rfc3339(&index.expires)?;
+    Ok(
+        if now_unix > expires.saturating_add(EXPIRY_CLOCK_SKEW_SECS) {
+            IndexStatus::Expired
+        } else {
+            IndexStatus::Fresh
+        },
+    )
 }
 
 /// Verify and parse `revocations.json` against the publishing key. Revocations
@@ -325,6 +336,39 @@ mod tests {
         )
         .expect("expiry is a status, not an error");
         assert_eq!(status, IndexStatus::Expired);
+    }
+
+    #[test]
+    fn verified_catalog_is_rechecked_at_use_time_with_the_same_clock_skew() {
+        let roots = verify_roots(SEED_ROOTS.as_bytes(), SEED_ROOTS_SIG).unwrap();
+        let (mut index, _) = verify_index(
+            &roots,
+            SEED_INDEX.as_bytes(),
+            SEED_INDEX_SIG,
+            None,
+            0,
+            false,
+        )
+        .unwrap();
+        let expiry = parse_rfc3339(&index.expires).unwrap();
+        assert_eq!(
+            index_status(&index, expiry + EXPIRY_CLOCK_SKEW_SECS).unwrap(),
+            IndexStatus::Fresh
+        );
+        assert_eq!(
+            index_status(&index, expiry + EXPIRY_CLOCK_SKEW_SECS + 1).unwrap(),
+            IndexStatus::Expired
+        );
+        index.expires = "invalid".into();
+        assert!(matches!(
+            index_status(&index, 0),
+            Err(TrustError::BadExpiry(_))
+        ));
+        index.spec = u32::MAX;
+        assert_eq!(
+            index_status(&index, 0).unwrap(),
+            IndexStatus::NeedsNewerClient
+        );
     }
 
     #[test]

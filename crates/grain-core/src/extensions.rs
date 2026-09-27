@@ -280,6 +280,39 @@ mod authentication_fingerprint_tests {
     }
 }
 
+/// Identity of an exact native call, distinct from persistent declaration approval.
+/// Stream the manifest/source into the hash instead of retaining another source copy.
+pub fn native_call_fingerprint(
+    record: &ExtensionRecord,
+    manifest: &grain_sdk::ExtensionManifest,
+) -> Result<String, serde_json::Error> {
+    use sha2::{Digest, Sha256};
+    struct HashWriter(Sha256);
+    impl std::io::Write for HashWriter {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0.update(bytes);
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let mut writer = HashWriter(Sha256::new());
+    serde_json::to_writer(
+        &mut writer,
+        &(
+            "grain.native.call.v1",
+            manifest,
+            record.toggle_seq,
+            &record.granted,
+            &record.installed_version,
+            &record.artifact_sha256,
+            &record.authentication_approved,
+        ),
+    )?;
+    Ok(format!("{:x}", writer.0.finalize()))
+}
+
 /// Fingerprint the declared actions, for the approval check on
 /// [`ExtensionRecord::actions_approved`].
 ///
@@ -1339,6 +1372,81 @@ mod tests {
             dev: None,
             trust: Trust::UNTRUSTED_DEFAULT,
         }
+    }
+
+    #[test]
+    fn native_confirmation_expires_across_enablement_source_and_grant_changes() {
+        use crate::execution::{PreparedCall, RiskClass, SideEffect, Stale};
+        let dir = tmp();
+        let reg = ExtensionsRegistry::load(dir.path(), false).unwrap();
+        let manifest: grain_sdk::ExtensionManifest = serde_json::from_value(serde_json::json!({
+            "id": "com.example.tools", "name": "Tools", "version": "1.0.0",
+            "tier": "scripted", "entry_source": "grain.actions({write: () => 'hello'});",
+            "contributes": {"actions": [{"id": "write", "title": "Test write", "risk": "confirm"}]}
+        }))
+        .unwrap();
+        let mut installed = pack("com.example.tools", &[]);
+        installed.actions_approved = Some(actions_fingerprint(&manifest.contributes.actions));
+        reg.install(installed).unwrap();
+        reg.set_enabled("com.example.tools", true).unwrap();
+        let record = reg.record("com.example.tools").unwrap();
+        let digest = native_call_fingerprint(&record, &manifest).unwrap();
+        let call = PreparedCall {
+            token: "confirmation".into(),
+            canonical_id: "com.example.tools:write".into(),
+            extension_id: record.id.clone(),
+            action_id: "write".into(),
+            provider_name: "Tools".into(),
+            arguments: serde_json::json!({}),
+            risk: RiskClass::Confirm,
+            side_effect: SideEffect::Write,
+            manifest_digest: digest.clone(),
+            idempotency_key: None,
+            prepared_at_ms: 0,
+            expires_at_ms: 1000,
+        };
+        let reloaded = serde_json::from_slice(&serde_json::to_vec(&manifest).unwrap()).unwrap();
+        assert_eq!(
+            call.still_valid(&native_call_fingerprint(&record, &reloaded).unwrap(), 1),
+            Ok(())
+        );
+        reg.set_enabled("com.example.tools", false).unwrap();
+        reg.set_enabled("com.example.tools", true).unwrap();
+        assert_eq!(
+            call.still_valid(
+                &native_call_fingerprint(&reg.record(&record.id).unwrap(), &manifest).unwrap(),
+                1
+            ),
+            Err(Stale::ManifestChanged)
+        );
+        let mut edited = manifest.clone();
+        edited.entry_source.push_str("\n// changed implementation");
+        assert_eq!(
+            actions_fingerprint(&edited.contributes.actions),
+            actions_fingerprint(&manifest.contributes.actions)
+        );
+        assert_eq!(
+            call.still_valid(&native_call_fingerprint(&record, &edited).unwrap(), 1),
+            Err(Stale::ManifestChanged)
+        );
+        let mut changed = record.clone();
+        changed.granted.push("storage".into());
+        assert_eq!(
+            call.still_valid(&native_call_fingerprint(&changed, &manifest).unwrap(), 1),
+            Err(Stale::ManifestChanged)
+        );
+        changed = record.clone();
+        changed.authentication_approved = Some("different-account-contract".into());
+        assert_ne!(
+            digest,
+            native_call_fingerprint(&changed, &manifest).unwrap()
+        );
+        changed = record;
+        changed.artifact_sha256 = Some("replacement-artifact".into());
+        assert_ne!(
+            digest,
+            native_call_fingerprint(&changed, &manifest).unwrap()
+        );
     }
 
     #[test]

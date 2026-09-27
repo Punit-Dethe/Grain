@@ -111,6 +111,34 @@ These are multiple independent implementations plus the standard, not a claim th
 
 **Remaining:** R1 observer/approval/catalog-generation, store freshness and interrupted-migration/rollback audits; R2 raw transport-body bounds, per-tool isolation, authoritative execution-policy/native parity and cancellation certainty; R3 live OAuth/vault/account certification; R4 selective hydration/continuation; R5 one/two/three/five-provider ladder; R6 real-app/release acceptance. The catalog consumer and nested-schema slices do not mark these complete. Next executable work starts with the remaining R1 lifecycle/approval races before expanding the provider ladder.
 
+### R1 store ownership and native approval follow-up — 27 September
+
+**Implemented:** backend installs require a current successfully refreshed catalog, with the existing signed-expiry/clock-skew policy checked before HTTP and again immediately before the bounded synchronous install. Offline/cache/seed views never authorize installation. A small ownership mutex serializes synchronous commits; a watch revision cancels obsolete HTTP futures on close or replacement. Refresh/download operations have one 30-second network deadline, with no new background worker. A late refresh cannot reload the closed catalog, write caches or lower the current index floor. Cached/seed fallback observes that floor. Signed revocation responses cannot lower the resident revocation version. Clock expiry during revocation retrieval also prevents a refresh becoming installable.
+
+Native declaration consent remains its existing persistent action fingerprint. The separate prepared-call identity now streams the manifest (including source) plus enablement sequence, grants, installed version/artifact and auth-declaration approval into SHA-256. Both discovery and execution revalidation use that identity. A pending call predating disable/re-enable, a different source/manifest or changed grants fails the existing exact-call check. This does not yet certify developer override restoration, account ownership, every index/dispatch interleaving or native write cancellation certainty. Conservative whole-manifest invalidation remains until R4 selected-tool identity work.
+
+**Primary-source research:** [TUF specification](https://theupdateframework.github.io/specification/latest/) separates signed metadata from freshness and rollback protections. [python-tuf's updater](https://raw.githubusercontent.com/theupdateframework/python-tuf/develop/tuf/ngclient/updater.py) owns refresh state and verifies downloaded target data; [AWS tough](https://raw.githubusercontent.com/awslabs/tough/develop/tough/src/lib.rs) checks trusted metadata expiry when a target is read. [VS Code's MCP types](https://raw.githubusercontent.com/microsoft/vscode/main/src/vs/workbench/contrib/mcp/common/mcpTypes.ts) use launch identity and catalog nonces to invalidate stale definitions. The [MCP tools contract](https://modelcontextprotocol.io/specification/2026-07-28/server/tools) distinguishes credential-dependent catalogs. Grain adopts use-time checks and operation ownership; its minisign catalog is **not a complete TUF implementation**. Crash-atomic metadata pairs, durable root/revocation floors across key rotation, root-spec transitions and interrupted-cache-write tests remain explicit follow-up work.
+
+**Verification:** core 223 unit + 4 integration tests; backend store 8 passing + 1 intentionally ignored live-network test; action executor 4, capability 3 and extension host 32 passing. Store tests use actual scoped HTTP sockets: valid/corrupted artifacts; offline/expired/unsupported/closed rejection before HTTP; expiry/revocation before installation; close/replacement during downloads and refresh; actual 30-second hanging-refresh timeout and socket release; signed refresh eligibility, expiry during refresh, and index/revocation floor preservation. Core fixtures exercise the real registry disable/re-enable and prepared-call revalidation. Core library Clippy with warnings denied, backend library check, scoped formatting and diff checks pass. Existing backend warnings remain. No frontend changes, real-app approval, new signed tool publication or live provider certification is claimed. Graph review lacks several source edges, so source inspection and production-boundary fixtures supplement it. The pre-existing `src/app/bindings.ts` diff remains excluded.
+
+**Next implementation:** finish R1 generation/observer and interrupted-migration audits, then R2 raw MCP response bounds and native execution-policy/outcome parity. R3 identity/vault and live authentication certification remains open. Continue into R4 selective schemas and approval/auth continuation, R5 the native/MCP one-to-five ladder and R6 release cleanup/real-app acceptance.
+
+### Phase count and completion status
+
+There are **7 planned phases (R0–R6), and all 7 still have open acceptance gates**. This counts incomplete phases; seven phases are not untouched. Six delivery phases R1–R6 remain open; R0 also retains contract/baseline acceptance work.
+
+| Phase | Status | Work preventing completion |
+|---|---|---|
+| R0 | Foundation implemented; gate open | Versioned contract, complete identity mapping and measured baselines |
+| R1 | Substantially implemented; gate open | Remaining generation/observer audits, interrupted migration/cache persistence and real-app retirement verification |
+| R2 | Partially implemented | Raw transport bounds, per-tool schema isolation, native parity/policy and complete outcome certification |
+| R3 | Partially implemented | Identity/vault migration and fault cases, account ownership and live OAuth certification |
+| R4 | Pending gate implementation | Bounded selective hydration and a complete approval/auth continuation loop |
+| R5 | Pending | Certified one-native/one-MCP/two/three/five-extension workflows |
+| R6 | Pending | Final cleanup, compatibility/CI matrix and real-app release acceptance |
+
+Do not infer whole-phase completion from a passing implementation slice. Manual tests may stay pending while independent deterministic work continues.
+
 ### Combined real-app test checklist: retirement, lifecycle and authentication phases
 
 These checks cover the preceding retirement commit and this follow-up. Run the real Tauri app using your existing ASR/model configuration. Agent tool-selection checks require a configured Agent model; record them as blocked if that prerequisite is absent. A greeting written by the model without calling the tool is not an execution success.
@@ -139,7 +167,10 @@ bun run dev:asr
 16. **Tool-only store and developer controls:** open Extensions > Developer. Expect Load unpacked, MCP providers and live diagnostics, with no Recommendation Lab/Core 6/Stress 24 controls. Browse the store and open available tool details; expect no prompt packs, transcript transforms, OS/Space integrations or host-surface extensions. An empty store is valid if the signed published catalog only contains retired entries. Existing quarantined user artifacts remain preserved; this check does not require removing them.
 17. **Nested MCP inputs, when a configured provider exposes them:** discover its tools, run a harmless read-only request with valid nested arguments and verify one real result. If a nested-input tool is unavailable or its schema falls outside the documented profile, record this check as blocked with the schema compatibility error. Do not ask the model to perform a production write or regard a refusal as a successful call. Invalid-input refusal with zero requests is covered by deterministic protocol tests; a natural-language request cannot reliably force a model to emit an invalid argument.
 
-**Manual status:** all 17 checks are awaiting the user's real-app verification. The original eight remain numbered unchanged. The user is away from the computer; implementation and non-visual verification continue without waiting for these checks. Add subsequent phase checks here rather than scattering them across chat messages.
+18. **Store close/reopen and offline installs:** open the store, close it immediately while loading, and repeat ten times. Reopen and expect the current attempt to determine the displayed catalog; a closed attempt must not resurrect it or leave a request running indefinitely. After a successful refresh, disconnect the network and reopen; cached cards may display offline, but installation must be unavailable. Restore networking and refresh. Test an actual tool installation only if an eligible published tool is available; otherwise record that part as blocked. Deterministic tests cover backend bypass attempts and expiry/revocation during download.
+19. **Native stale confirmation:** in disposable Tool Smoke, change the `hello` action's declared risk to `confirm`, rebuild using the commands below and reload. Leave its confirmation pending, disable/re-enable the extension, then approve the old call. Expect refusal and no tool result; ask again and approve the new call to verify recovery. Repeat with a pending call while changing the handler's return text, rebuilding and reloading. The old call must fail even if action names/parameters stayed identical. Restore the fixture afterward. Use this harmless greeting rather than a live write.
+
+**Manual status:** all 19 checks are awaiting the user's real-app verification. The original eight remain numbered unchanged. The user is away from the computer; implementation and non-visual verification continue without waiting for these checks. Add subsequent phase checks here rather than scattering them across chat messages.
 
 Create the disposable project in another PowerShell terminal. This uses the real CLI and the repository's installed esbuild, without installing an additional runtime or alternate UI:
 
@@ -310,7 +341,7 @@ flowchart LR
     R5 --> R6[R6 release and cleanup]
 ```
 
-All checkboxes remain pending. Each phase includes a vertical test through production boundaries. Negative access tests begin with retirement, not final release. Provider registration research can start during R0 but cannot bypass R1.
+Checked items record completed implementation slices; all whole-phase acceptance gates remain open. Each phase includes a vertical test through production boundaries. Negative access tests begin with retirement, not final release. Provider registration research can start during R0 but cannot bypass R1.
 
 ### R0 — Inventory and freeze the contract
 
