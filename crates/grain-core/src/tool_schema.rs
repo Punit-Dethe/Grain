@@ -22,10 +22,7 @@ pub fn parse_arguments(raw: &str, schema: &Value) -> Result<Value, String> {
 }
 
 pub fn validate_arguments(schema: &Value, arguments: &Value) -> Result<(), String> {
-    if !arguments.is_object() {
-        return Err("arguments must be a JSON object".into());
-    }
-    bounded_json(arguments, false)?;
+    validate_argument_shape(arguments)?;
     let validator = compile(schema)?;
     validator.validate(arguments).map_err(|error| {
         // Display includes the rejected value; the instance path can include
@@ -39,6 +36,14 @@ pub fn validate_arguments(schema: &Value, arguments: &Value) -> Result<(), Strin
             .collect();
         format!("arguments do not match the provider schema rule at '{path}'")
     })
+}
+
+/// Shared native/MCP value boundary, including encoded bytes, nodes and depth.
+pub(crate) fn validate_argument_shape(arguments: &Value) -> Result<(), String> {
+    if !arguments.is_object() {
+        return Err("arguments must be a JSON object".into());
+    }
+    bounded_json(arguments, false)
 }
 
 fn compile(schema: &Value) -> Result<jsonschema::Validator, String> {

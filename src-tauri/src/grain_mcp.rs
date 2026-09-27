@@ -1226,6 +1226,8 @@ async fn discover_on_service(
     let mut cursor = None;
     let mut seen_cursors = HashSet::new();
     let mut catalog_bytes = 0usize;
+    let mut catalog_count = 0usize;
+    let mut seen_names = HashSet::new();
     for _ in 0..MAX_DISCOVERY_PAGES {
         let page = tokio::time::timeout_at(
             deadline,
@@ -1238,13 +1240,18 @@ async fn discover_on_service(
         .await
         .map_err(|_| "MCP discovery timed out; the catalog is incomplete.")?
         .map_err(|_| "MCP catalog request failed; the catalog is incomplete.")?;
-        if tools.len().saturating_add(page.tools.len()) > MAX_TOOL_COUNT {
+        catalog_count = catalog_count.saturating_add(page.tools.len());
+        if catalog_count > MAX_TOOL_COUNT {
             return Err(format!(
                 "MCP catalog exceeds the {MAX_TOOL_COUNT}-tool limit; discovery is incomplete."
             ));
         }
-        validate_tools(&page.tools)?;
         for tool in &page.tools {
+            // Identity and resource checks cover rejected definitions too.
+            validate_tool_name(tool.name.as_ref())?;
+            if !seen_names.insert(tool.name.to_string()) {
+                return Err("the MCP server exposed duplicate tool names".into());
+            }
             catalog_bytes = catalog_bytes.saturating_add(
                 serde_json::to_vec(tool)
                     .map_err(|_| "Could not inspect MCP metadata.")?
@@ -1256,15 +1263,17 @@ async fn discover_on_service(
                 );
             }
         }
-        tools.extend(page.tools);
+        for tool in page.tools {
+            match validate_tools(std::slice::from_ref(&tool)) {
+                Ok(()) => tools.push(tool),
+                Err(error) => log::warn!(
+                    "[GRAIN] MCP tool '{}' excluded from the supported catalog: {error}",
+                    tool.name
+                ),
+            }
+        }
         cursor = page.next_cursor;
         let Some(next) = cursor.as_ref() else {
-            // Pages already passed schema compilation. Only cross-page name
-            // collisions need a final check; don't compile every schema twice.
-            let names: HashSet<_> = tools.iter().map(|tool| tool.name.as_ref()).collect();
-            if names.len() != tools.len() {
-                return Err("the MCP server exposed duplicate tool names".into());
-            }
             return Ok(tools);
         };
         if next.len() > MAX_CURSOR_BYTES {
@@ -1589,14 +1598,7 @@ fn validate_tools(tools: &[Tool]) -> Result<(), String> {
     let mut names = HashSet::with_capacity(tools.len());
     for tool in tools {
         let name = tool.name.as_ref();
-        if name.is_empty()
-            || name.len() > 128
-            || !name
-                .bytes()
-                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.'))
-        {
-            return Err("the MCP server exposed an invalid tool name".into());
-        }
+        validate_tool_name(name)?;
         if !names.insert(name) {
             return Err("the MCP server exposed duplicate tool names".into());
         }
@@ -1604,6 +1606,18 @@ fn validate_tools(tools: &[Tool]) -> Result<(), String> {
         grain_core::tool_schema::validate_definition(&schema).map_err(|error| {
             format!("MCP tool '{name}' has an unsupported input schema: {error}")
         })?;
+    }
+    Ok(())
+}
+
+fn validate_tool_name(name: &str) -> Result<(), String> {
+    if name.is_empty()
+        || name.len() > 128
+        || !name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.'))
+    {
+        return Err("the MCP server exposed an invalid tool name".into());
     }
     Ok(())
 }

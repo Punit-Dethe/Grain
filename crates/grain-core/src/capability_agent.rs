@@ -22,7 +22,7 @@ use serde::Serialize;
 use serde_json::{json, Value};
 
 use crate::capability_index::{ActionInput, ExtensionDirectoryEntry};
-use grain_sdk::manifest::ActionParamKind;
+use grain_sdk::manifest::{ActionDecl, ActionParamKind};
 
 /// Prefix on every provider-facing tool name, so an action tool can never
 /// collide with a host meta-tool like [`LOAD_EXTENSION`] and the host can tell
@@ -148,41 +148,65 @@ pub fn parse_and_validate_arguments(action: &ActionInput, raw: &str) -> Result<V
     }
     let value: Value =
         serde_json::from_str(raw).map_err(|_| "action arguments are not valid JSON".to_string())?;
+    crate::tool_schema::validate_argument_shape(&value)?;
+    validate_parameter_values(
+        value,
+        action
+            .params
+            .iter()
+            .map(|param| (param.name.as_str(), param.kind, param.required)),
+    )
+}
+
+/// Revalidate against the installed native declaration, independently of the
+/// model parser and index. Optional nulls retain the existing omission policy.
+pub fn validate_native_arguments(action: &ActionDecl, value: &Value) -> Result<Value, String> {
+    crate::tool_schema::validate_argument_shape(value)?;
+    validate_parameter_values(
+        value.clone(),
+        action
+            .params
+            .iter()
+            .map(|param| (param.name.trim(), param.kind, param.required)),
+    )
+}
+
+fn validate_parameter_values<'a>(
+    value: Value,
+    params: impl Iterator<Item = (&'a str, ActionParamKind, bool)> + Clone,
+) -> Result<Value, String> {
     let Value::Object(mut object) = value else {
-        return Err("action arguments must be a JSON object".to_string());
+        unreachable!("validated object")
     };
 
     for key in object.keys() {
-        if !action.params.iter().any(|param| param.name == *key) {
-            return Err(format!("action argument '{key}' is not declared"));
+        if !params.clone().any(|(name, _, _)| name == key) {
+            return Err("action arguments contain an undeclared parameter".into());
         }
     }
-    for param in &action.params {
-        let Some(value) = object.get(&param.name) else {
-            if param.required {
-                return Err(format!("action argument '{}' is required", param.name));
+    for (name, kind, required) in params {
+        let Some(value) = object.get(name) else {
+            if required {
+                return Err(format!("action argument '{name}' is required"));
             }
             continue;
         };
-        if value.is_null() && !param.required {
-            object.remove(&param.name);
+        if value.is_null() && !required {
+            object.remove(name);
             continue;
         }
-        let valid = match param.kind {
+        let valid = match kind {
             ActionParamKind::Entity | ActionParamKind::Text => value
                 .as_str()
-                .is_some_and(|text| !param.required || !text.trim().is_empty()),
+                .is_some_and(|text| !required || !text.trim().is_empty()),
             ActionParamKind::Number => value.is_number(),
         };
         if !valid {
-            let expected = match param.kind {
+            let expected = match kind {
                 ActionParamKind::Entity | ActionParamKind::Text => "text",
                 ActionParamKind::Number => "a number",
             };
-            return Err(format!(
-                "action argument '{}' must be {expected}",
-                param.name
-            ));
+            return Err(format!("action argument '{name}' must be {expected}"));
         }
     }
     Ok(Value::Object(object))
@@ -769,5 +793,58 @@ mod tests {
         assert!(parse_and_validate_arguments(&a, r#"{"title":"Bug","priority":"high"}"#).is_err());
         assert!(parse_and_validate_arguments(&a, r#"{"title":"Bug","secret":"x"}"#).is_err());
         assert!(parse_and_validate_arguments(&a, "null").is_err());
+    }
+
+    #[test]
+    fn native_value_validation_matches_model_projection_and_bounds_encoded_data() {
+        let native: ActionDecl = serde_json::from_value(json!({
+            "id": "write", "title": "Write", "risk": "confirm",
+            "params": [{"name": "title", "kind": "text"},
+                {"name": "priority", "kind": "number", "required": false}]
+        }))
+        .unwrap();
+        let mut projected = action("native.write");
+        projected.params = native
+            .params
+            .iter()
+            .map(|param| crate::capability_index::ActionParamInput {
+                name: param.name.clone(),
+                kind: param.kind,
+                required: param.required,
+            })
+            .collect();
+        for value in [
+            json!({"title": "Bug", "priority": 2}),
+            json!({"title": "Bug", "priority": null}),
+            json!({}),
+            json!({"title": "  "}),
+            json!({"title": null}),
+            json!({"title": 3}),
+            json!({"title": "Bug", "priority": "high"}),
+            json!({"title": "Bug", "secret-key-payload": true}),
+            json!([]),
+        ] {
+            let raw = serde_json::to_string(&value).unwrap();
+            assert_eq!(
+                validate_native_arguments(&native, &value),
+                parse_and_validate_arguments(&projected, &raw)
+            );
+        }
+        assert_eq!(
+            validate_native_arguments(&native, &json!({"title": "Bug", "priority": null})).unwrap(),
+            json!({"title": "Bug"})
+        );
+        assert!(
+            !validate_native_arguments(&native, &json!({"secret-key-payload": true}))
+                .unwrap_err()
+                .contains("secret-key-payload")
+        );
+        // Encoded length, rather than Unicode character count or raw value size.
+        for value in [
+            json!({"title": "x".repeat(ARGUMENTS_MAX_BYTES)}),
+            json!({"title": "\u{0000}".repeat(ARGUMENTS_MAX_BYTES / 5)}),
+        ] {
+            assert!(validate_native_arguments(&native, &value).is_err());
+        }
     }
 }

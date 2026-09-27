@@ -1861,6 +1861,73 @@ pub enum ActionCallError {
     Unavailable(String),
 }
 
+fn native_arguments_for_snapshot(
+    manifest: &grain_sdk::ExtensionManifest,
+    record: &grain_core::extensions::ExtensionRecord,
+    action_id: &str,
+    arguments: &Value,
+    expected_digest: &str,
+) -> Result<Value, ActionCallError> {
+    if !record.enabled || record.id != manifest.id {
+        return Err(ActionCallError::Unavailable(
+            "that extension is no longer enabled".into(),
+        ));
+    }
+    let action = manifest
+        .contributes
+        .actions
+        .iter()
+        .find(|action| action.id.trim() == action_id)
+        .ok_or_else(|| ActionCallError::Unavailable("that tool is no longer declared".into()))?;
+    let approved = grain_core::extensions::actions_fingerprint(&manifest.contributes.actions);
+    if record.actions_approved.as_deref() != Some(approved.as_str()) {
+        return Err(ActionCallError::Unavailable(
+            "that tool is no longer approved".into(),
+        ));
+    }
+    let current =
+        grain_core::extensions::native_call_fingerprint(record, manifest).map_err(|_| {
+            ActionCallError::Unavailable("that tool identity could not be verified".into())
+        })?;
+    if current != expected_digest {
+        return Err(ActionCallError::Unavailable(
+            "that tool changed before dispatch".into(),
+        ));
+    }
+    grain_core::capability_agent::validate_native_arguments(action, arguments).map_err(|message| {
+        ActionCallError::Execution(grain_core::execution::ExecutionFailure::new(
+            grain_core::execution::DispatchPhase::NotDispatched,
+            grain_core::execution::FailureClass::InvalidArgument,
+            message,
+        ))
+    })
+}
+
+fn approved_native_arguments(
+    app: &AppHandle,
+    ext_id: &str,
+    action_id: &str,
+    arguments: &Value,
+    expected_digest: &str,
+) -> Result<Value, ActionCallError> {
+    let pack = load_manifest_result(app, ext_id).map_err(ActionCallError::Unavailable)?;
+    pack.validate_tool_only()
+        .map_err(ActionCallError::Unavailable)?;
+    let record = app
+        .try_state::<Arc<grain_core::extensions::ExtensionsRegistry>>()
+        .and_then(|registry| registry.record(ext_id))
+        .ok_or_else(|| {
+            ActionCallError::Unavailable("that extension is no longer installed".into())
+        })?;
+    native_arguments_for_snapshot(
+        &pack.manifest,
+        &record,
+        action_id,
+        arguments,
+        expected_digest,
+    )
+}
+
 /// [GRAIN] Invoke one exact declared action on an extension worker (Extensions 2.0
 /// Phase 3b). Unlike [`hand_off`], which gives the worker the whole transcript,
 /// this sends the *chosen action id and validated arguments* — the V2 model. The
@@ -1877,41 +1944,12 @@ pub async fn run_action(
     idempotency_key: Option<&str>,
     expected_digest: &str,
 ) -> Result<Value, ActionCallError> {
-    let pack = load_manifest_result(app, ext_id).map_err(ActionCallError::Unavailable)?;
-    pack.validate_tool_only()
-        .map_err(ActionCallError::Unavailable)?;
-    if !pack
-        .manifest
-        .contributes
-        .actions
-        .iter()
-        .any(|action| action.id == action_id)
-    {
-        return Err(ActionCallError::Unavailable(
-            "that tool is no longer declared".into(),
-        ));
-    }
+    let arguments = approved_native_arguments(app, ext_id, action_id, arguments, expected_digest)?;
     let Some(host) = HOST.get() else {
         return Err(ActionCallError::Unavailable(
             "extension host unavailable".into(),
         ));
     };
-    let enabled = app
-        .try_state::<Arc<grain_core::extensions::ExtensionsRegistry>>()
-        .and_then(|registry| registry.record(ext_id))
-        .is_some_and(|record| record.enabled);
-    if !enabled {
-        return Err(ActionCallError::Unavailable(
-            "that extension is no longer enabled".into(),
-        ));
-    }
-    let approval = approved_action_digest(app, ext_id, action_id)
-        .ok_or_else(|| ActionCallError::Unavailable("that tool is no longer approved".into()))?;
-    if approval != expected_digest {
-        return Err(ActionCallError::Unavailable(
-            "that tool changed before startup".into(),
-        ));
-    }
     let token = wake_for_request(app, ext_id)
         .ok_or_else(|| ActionCallError::Unavailable("extension worker unavailable".into()))?;
     if !host
@@ -1925,17 +1963,19 @@ pub async fn run_action(
             "that extension did not start in time".into(),
         ));
     }
-    if approved_action_digest(app, ext_id, action_id).as_deref() != Some(approval.as_str()) {
-        kill_worker_inner(
-            ext_id,
-            "tool approval changed during startup",
-            Some(&token),
-            false,
-        );
-        return Err(ActionCallError::Unavailable(
-            "tool approval changed while starting".into(),
-        ));
-    }
+    let arguments =
+        match approved_native_arguments(app, ext_id, action_id, &arguments, expected_digest) {
+            Ok(arguments) => arguments,
+            Err(error) => {
+                kill_worker_inner(
+                    ext_id,
+                    "tool approval changed during startup",
+                    Some(&token),
+                    false,
+                );
+                return Err(error);
+            }
+        };
     let dispatched = AtomicBool::new(false);
     match host
         .workers
@@ -2888,6 +2928,109 @@ mod tests {
                         .is_empty());
                 };
             }
+        });
+    }
+
+    #[test]
+    fn native_snapshot_rejects_invalid_arguments_and_changed_approval_before_queue() {
+        rt().block_on(async {
+            let mut pack = pack_of("");
+            pack.manifest.contributes.actions[0].params = serde_json::from_value(json!([
+                {"name": "title", "kind": "text"},
+                {"name": "priority", "kind": "number", "required": false}
+            ]))
+            .unwrap();
+            let record = record_for(&pack);
+            let digest =
+                grain_core::extensions::native_call_fingerprint(&record, &pack.manifest).unwrap();
+            let workers = Workers::new();
+            workers.insert(&record.id, worker(now_secs(), false));
+            let (out_tx, mut out_rx) = mpsc::unbounded_channel();
+            workers.attach(&record.id, "tok", out_tx).unwrap();
+            for arguments in [
+                json!({}),
+                json!([]),
+                json!({"title": 7}),
+                json!({"title": " "}),
+                json!({"title": "Hi", "priority": "3"}),
+                json!({"title": "Hi", "fixture-private-key": true}),
+                json!({"title": "x".repeat(64 * 1024)}),
+            ] {
+                let error = native_arguments_for_snapshot(
+                    &pack.manifest,
+                    &record,
+                    "next",
+                    &arguments,
+                    &digest,
+                )
+                .unwrap_err();
+                let ActionCallError::Execution(failure) = error else {
+                    panic!("invalid input expected")
+                };
+                assert_eq!(
+                    failure.phase,
+                    grain_core::execution::DispatchPhase::NotDispatched
+                );
+                assert_eq!(
+                    failure.class,
+                    grain_core::execution::FailureClass::InvalidArgument
+                );
+                assert!(!failure.message.contains("fixture-private-key"));
+                assert!(out_rx.try_recv().is_err());
+            }
+            let arguments = json!({"title": "Hello", "priority": null});
+            let normalized =
+                native_arguments_for_snapshot(&pack.manifest, &record, "next", &arguments, &digest)
+                    .unwrap();
+            assert_eq!(normalized, json!({"title": "Hello"}));
+            for mode in [
+                "disabled",
+                "reenabled",
+                "unapproved",
+                "source",
+                "params",
+                "missing",
+            ] {
+                let mut record = record.clone();
+                let mut changed = pack.manifest.clone();
+                match mode {
+                    "disabled" => record.enabled = false,
+                    "reenabled" => record.toggle_seq += 1,
+                    "unapproved" => record.actions_approved = None,
+                    "source" => changed.entry_source.push_str("// changed"),
+                    "params" => changed.contributes.actions[0].params.clear(),
+                    "missing" => changed.contributes.actions.clear(),
+                    _ => unreachable!(),
+                }
+                assert!(
+                    native_arguments_for_snapshot(&changed, &record, "next", &normalized, &digest)
+                        .is_err(),
+                    "{mode}"
+                );
+                assert!(out_rx.try_recv().is_err());
+            }
+            let dispatched = AtomicBool::new(false);
+            let call = workers.call_tracked(
+                &record.id,
+                Some("tok"),
+                "action",
+                normalized.clone(),
+                Duration::from_secs(1),
+                &dispatched,
+            );
+            let handler = async {
+                let Message::Text(frame) = out_rx.recv().await.unwrap() else {
+                    panic!("call expected")
+                };
+                let HostFrame::Call(call) = serde_json::from_str(&frame).unwrap() else {
+                    panic!("call expected")
+                };
+                assert_eq!(call.params, normalized);
+                workers.resolve(&record.id, "tok", call.call_id, Ok(json!({"ok": "hello"})));
+            };
+            assert!(tokio::join!(call, handler).0.is_ok());
+            assert!(dispatched.load(Ordering::Acquire));
+            assert!(out_rx.try_recv().is_err());
         });
     }
 

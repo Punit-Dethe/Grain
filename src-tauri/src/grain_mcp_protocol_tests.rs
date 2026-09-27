@@ -12,6 +12,7 @@ use std::sync::{
 
 #[derive(Clone)]
 enum Behavior {
+    CatalogPages(Vec<Vec<Value>>),
     Complete(Value),
     CompleteSse(Value),
     CompleteLegacy(Value),
@@ -102,6 +103,20 @@ impl Fixture {
                     Some("tools/list") => {
                         let page = counters.1.fetch_add(1, Ordering::SeqCst);
                         match &behavior {
+                            Behavior::CatalogPages(pages) => {
+                                let page = request["params"]["cursor"]
+                                    .as_str()
+                                    .and_then(|cursor| cursor.strip_prefix("page-"))
+                                    .and_then(|page| page.parse::<usize>().ok())
+                                    .unwrap_or(0);
+                                let mut response = json!({"resultType": "complete",
+                                    "tools": pages.get(page).cloned().unwrap_or_default(),
+                                    "ttlMs": 0, "cacheScope": "private"});
+                                if page + 1 < pages.len() {
+                                    response["nextCursor"] = json!(format!("page-{}", page + 1));
+                                }
+                                response
+                            }
                             Behavior::RepeatedCursor => json!({
                                 "resultType": "complete", "tools": [], "nextCursor": "same",
                                 "ttlMs": 0, "cacheScope": "private"
@@ -152,6 +167,8 @@ impl Fixture {
                             Behavior::Complete(result)
                             | Behavior::CompleteSse(result)
                             | Behavior::CompleteLegacy(result) => result.clone(),
+                            Behavior::CatalogPages(_) => json!({"resultType": "complete",
+                                "content": [{"type": "text", "text": "one supported call"}]}),
                             _ => panic!("pagination failures must never dispatch a tool"),
                         }
                     }
@@ -881,7 +898,7 @@ async fn malformed_schema_stops_discovery_without_a_tool_call() {
     let service = fixture.service(McpHttpClient::build().unwrap().0).await;
     let failure = execute(&service, Duration::from_secs(3)).await.unwrap_err();
     assert_eq!(failure.phase, DispatchPhase::NotDispatched);
-    assert!(failure.message.contains("schema"));
+    assert!(failure.message.contains("changed after confirmation"));
     assert_eq!(fixture.calls.load(Ordering::SeqCst), 0);
     assert!(close_service(service).await);
     fixture.stop().await;
@@ -896,6 +913,113 @@ async fn duplicate_tool_names_across_pages_never_dispatch() {
     assert!(failure.message.contains("duplicate tool names"));
     assert_eq!(fixture.calls.load(Ordering::SeqCst), 0);
     assert_eq!(fixture.lists.load(Ordering::SeqCst), 2);
+    assert!(close_service(service).await);
+    fixture.stop().await;
+}
+
+#[tokio::test]
+async fn unsupported_tools_are_isolated_across_pages_and_cannot_dispatch() {
+    let mut bad = tool_json();
+    bad["name"] = json!("unsupported");
+    bad["inputSchema"]["properties"] = json!({"x": {"$ref": "https://invalid.example/schema"}});
+    let valid = tool_json();
+    let fixture =
+        Fixture::start(Behavior::CatalogPages(vec![vec![bad], vec![valid.clone()]])).await;
+    let service = fixture.service(McpHttpClient::build().unwrap().0).await;
+    let tools = discover_on_service(
+        &service,
+        tokio::time::Instant::now() + Duration::from_secs(3),
+    )
+    .await
+    .unwrap();
+    assert_eq!(tools.len(), 1);
+    assert_eq!(tools[0].name.as_ref(), "write");
+    let item = provider("linear").unwrap();
+    let digest = tool_set_digest(item, &tools).unwrap();
+    let rejected = call_on_service(
+        &service,
+        item,
+        "unsupported",
+        serde_json::Map::new(),
+        &digest,
+        tokio::time::Instant::now() + Duration::from_secs(3),
+        || true,
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(rejected.phase, DispatchPhase::NotDispatched);
+    assert_eq!(fixture.calls.load(Ordering::SeqCst), 0);
+    call_on_service(
+        &service,
+        item,
+        "write",
+        serde_json::Map::new(),
+        &digest,
+        tokio::time::Instant::now() + Duration::from_secs(3),
+        || true,
+    )
+    .await
+    .unwrap();
+    assert_eq!(fixture.calls.load(Ordering::SeqCst), 1);
+    assert!(close_service(service).await);
+    fixture.stop().await;
+}
+
+#[tokio::test]
+async fn rejected_definitions_cannot_hide_duplicates_or_tool_budget() {
+    for over_budget in [false, true] {
+        let mut bad = tool_json();
+        bad["inputSchema"]["required"] = json!([7]);
+        let pages = if over_budget {
+            vec![(0..=MAX_TOOL_COUNT)
+                .map(|index| {
+                    let mut bad = bad.clone();
+                    bad["name"] = json!(format!("unsupported{index}"));
+                    bad
+                })
+                .collect()]
+        } else {
+            vec![vec![bad], vec![tool_json()]]
+        };
+        let fixture = Fixture::start(Behavior::CatalogPages(pages)).await;
+        let service = fixture.service(McpHttpClient::build().unwrap().0).await;
+        let error = discover_on_service(
+            &service,
+            tokio::time::Instant::now() + Duration::from_secs(3),
+        )
+        .await
+        .unwrap_err();
+        assert!(
+            error.contains(if over_budget {
+                "tool limit"
+            } else {
+                "duplicate tool names"
+            }),
+            "{error}"
+        );
+        assert_eq!(fixture.calls.load(Ordering::SeqCst), 0);
+        assert!(close_service(service).await);
+        fixture.stop().await;
+    }
+}
+
+#[tokio::test]
+async fn entirely_unsupported_catalog_is_empty_and_digest_still_revalidates() {
+    let mut bad = tool_json();
+    bad["inputSchema"]["required"] = json!([7]);
+    let fixture = Fixture::start(Behavior::CatalogPages(vec![vec![bad]])).await;
+    let service = fixture.service(McpHttpClient::build().unwrap().0).await;
+    let tools = discover_on_service(
+        &service,
+        tokio::time::Instant::now() + Duration::from_secs(3),
+    )
+    .await
+    .unwrap();
+    assert!(tools.is_empty());
+    let failure = execute(&service, Duration::from_secs(3)).await.unwrap_err();
+    assert_eq!(failure.phase, DispatchPhase::NotDispatched);
+    assert!(failure.message.contains("changed after confirmation"));
+    assert_eq!(fixture.calls.load(Ordering::SeqCst), 0);
     assert!(close_service(service).await);
     fixture.stop().await;
 }
