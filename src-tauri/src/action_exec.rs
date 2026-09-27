@@ -276,37 +276,37 @@ pub(crate) fn mcp_outcome(
 }
 
 /// Execute a third-party action through the extension worker's `"action"` handler
-/// (Phase 3b, Rust half). The worker returns a structured result mapped to an
-/// [`ActionOutcome`]; a side-effecting timeout is `UnknownOutcome` (it may have
-/// run), a read timeout is a plain failure. The worker-side handler is the
-/// extension-runtime handler; malformed or unavailable results fail closed.
+/// (Phase 3b, Rust half). Queue dispatch and received results determine certainty,
+/// just as for MCP; failure text cannot establish that a write never happened.
 async fn third_party_execute(app: &AppHandle, prepared: &PreparedCall) -> ActionOutcome {
-    use crate::extension_host::ActionCallError;
-    match crate::extension_host::run_action(
-        app,
-        &prepared.extension_id,
-        &prepared.action_id,
-        &prepared.arguments,
-        prepared.idempotency_key.as_deref(),
+    native_outcome(
+        crate::extension_host::run_action(
+            app,
+            &prepared.extension_id,
+            &prepared.action_id,
+            &prepared.arguments,
+            prepared.idempotency_key.as_deref(),
+            &prepared.manifest_digest,
+        )
+        .await,
+        prepared,
     )
-    .await
-    {
+}
+
+pub(crate) fn native_outcome(
+    result: Result<Value, crate::extension_host::ActionCallError>,
+    prepared: &PreparedCall,
+) -> ActionOutcome {
+    use crate::extension_host::ActionCallError;
+    match result {
         Ok(value) => parse_worker_outcome(value, prepared),
-        Err(ActionCallError::Timeout) => {
-            if prepared.side_effect == SideEffect::Write {
-                ActionOutcome::UnknownOutcome {
-                    message: "The extension did not respond in time — it may or may not have \
-                              completed. Do not claim it is done."
-                        .to_string(),
-                }
-            } else {
-                failed(
-                    FailureClass::Network,
-                    "The extension did not respond in time.",
-                )
-            }
-        }
-        Err(ActionCallError::Unavailable(message)) => failed(FailureClass::Internal, &message),
+        Err(ActionCallError::Execution(failure)) => failure.into_outcome(),
+        Err(ActionCallError::Unavailable(message)) => grain_core::execution::ExecutionFailure::new(
+            grain_core::execution::DispatchPhase::NotDispatched,
+            FailureClass::Internal,
+            message,
+        )
+        .into_outcome(),
     }
 }
 
@@ -317,20 +317,14 @@ async fn third_party_execute(app: &AppHandle, prepared: &PreparedCall) -> Action
 /// trust boundary.
 fn parse_worker_outcome(value: Value, prepared: &PreparedCall) -> ActionOutcome {
     let Some(root) = value.as_object() else {
-        return failed(
-            FailureClass::Internal,
-            "The extension returned an invalid action result.",
-        );
+        return native_result_unavailable("The extension returned an invalid action result.");
     };
     let recognized = ["error", "needsInteraction", "ok"]
         .into_iter()
         .filter(|key| root.contains_key(*key))
         .count();
     if recognized != 1 || root.len() != 1 {
-        return failed(
-            FailureClass::Internal,
-            "The extension returned an invalid action result.",
-        );
+        return native_result_unavailable("The extension returned an invalid action result.");
     }
 
     if let Some(error) = root.get("error") {
@@ -341,14 +335,18 @@ fn parse_worker_outcome(value: Value, prepared: &PreparedCall) -> ActionOutcome 
             .unwrap_or(FailureClass::Internal);
         // A worker exception may contain credentials, request bodies, or prompt
         // injection. The host maps only its coarse class to user/model text.
-        return failed(class, worker_failure_message(class));
+        return ActionOutcome::ToolReportedError {
+            message: format!(
+                "{} Partial effects may have occurred; do not repeat automatically.",
+                worker_failure_message(class)
+            ),
+        };
     }
     if root.contains_key("needsInteraction") {
         // Initial V2 has no continuation token for extension-authored follow-up.
         // Failing honestly is safer than rendering an interaction that cannot be
         // resumed or accepting a worker-minted confirmation token.
-        return failed(
-            FailureClass::Internal,
+        return native_result_unavailable(
             "This action needs more input, but extension follow-up is not available yet.",
         );
     }
@@ -390,10 +388,7 @@ fn parse_worker_outcome(value: Value, prepared: &PreparedCall) -> ActionOutcome 
         }
         (title, body, details)
     } else {
-        return failed(
-            FailureClass::Internal,
-            "The extension returned an invalid action result.",
-        );
+        return native_result_unavailable("The extension returned an invalid action result.");
     };
 
     ActionOutcome::Succeeded(SuccessData {
@@ -406,6 +401,15 @@ fn parse_worker_outcome(value: Value, prepared: &PreparedCall) -> ActionOutcome 
         // A worker cannot hide a host-classified write by returning receipt:false.
         receipt: prepared.side_effect == SideEffect::Write,
     })
+}
+
+fn native_result_unavailable(message: &str) -> ActionOutcome {
+    grain_core::execution::ExecutionFailure::new(
+        grain_core::execution::DispatchPhase::ResponseReceived,
+        FailureClass::Internal,
+        message,
+    )
+    .into_outcome()
 }
 
 fn bounded_text(text: &str, max_bytes: usize) -> Option<String> {
@@ -592,10 +596,11 @@ mod tests {
             json!({ "error": { "class": "auth", "message": "token=super-secret" } }),
             &third_party_call(),
         );
-        let ActionOutcome::Failed { class, message } = outcome else {
-            panic!("expected failure");
+        let ActionOutcome::ToolReportedError { message } = outcome else {
+            panic!("expected a reported tool error");
         };
-        assert_eq!(class, FailureClass::Auth);
+        assert!(message.contains(worker_failure_message(FailureClass::Auth)));
+        assert!(message.contains("Partial effects"));
         assert!(!message.contains("super-secret"));
     }
 
@@ -603,20 +608,14 @@ mod tests {
     fn worker_outcomes_are_strict_and_interactions_fail_honestly() {
         assert!(matches!(
             parse_worker_outcome(json!({ "result": "done" }), &third_party_call()),
-            ActionOutcome::Failed {
-                class: FailureClass::Internal,
-                ..
-            }
+            ActionOutcome::ResultUnavailable { .. }
         ));
         assert!(matches!(
             parse_worker_outcome(
                 json!({ "needsInteraction": { "kind": "confirm" } }),
                 &third_party_call()
             ),
-            ActionOutcome::Failed {
-                class: FailureClass::Internal,
-                ..
-            }
+            ActionOutcome::ResultUnavailable { .. }
         ));
     }
 

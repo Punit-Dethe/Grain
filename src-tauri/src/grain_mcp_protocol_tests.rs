@@ -13,6 +13,8 @@ use std::sync::{
 #[derive(Clone)]
 enum Behavior {
     Complete(Value),
+    CompleteSse(Value),
+    CompleteLegacy(Value),
     DropAfterWrite,
     HangAfterWrite,
     HangSseAfterWrite,
@@ -20,6 +22,17 @@ enum Behavior {
     RepeatedCursor,
     EmptyPages,
     DuplicateToolsAcrossPages,
+    Oversized { discovery: bool, framing: WireLimit },
+    PaddedPages,
+}
+
+#[derive(Clone, Copy)]
+enum WireLimit {
+    Declared,
+    Chunked,
+    SseData,
+    SseComments,
+    HttpError,
 }
 
 struct Fixture {
@@ -48,7 +61,40 @@ impl Fixture {
                     tokio::time::timeout(Duration::from_secs(3), read_request(&mut stream))
                         .await
                         .unwrap();
+                if let Behavior::Oversized { discovery, framing } = &behavior {
+                    let method = if *discovery {
+                        "tools/list"
+                    } else {
+                        "tools/call"
+                    };
+                    if request["method"] == method {
+                        if *discovery {
+                            counters.1.fetch_add(1, Ordering::SeqCst);
+                        } else {
+                            counters.0.fetch_add(1, Ordering::SeqCst);
+                        }
+                        send_oversized(&mut stream, *framing).await;
+                        continue;
+                    }
+                }
                 let response = match request["method"].as_str() {
+                    Some("server/discover") if matches!(behavior, Behavior::CompleteLegacy(_)) => {
+                        json!({
+                            "fixtureError": {"code": -32601, "message": "modern discovery unavailable"}
+                        })
+                    }
+                    Some("initialize") if matches!(behavior, Behavior::CompleteLegacy(_)) => {
+                        json!({
+                            "protocolVersion": "2025-11-25", "capabilities": {"tools": {}},
+                            "serverInfo": {"name": "Legacy fixture", "version": "1"}
+                        })
+                    }
+                    Some("notifications/initialized")
+                        if matches!(behavior, Behavior::CompleteLegacy(_)) =>
+                    {
+                        let _ = stream.write_all(b"HTTP/1.1 202 Accepted\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").await;
+                        continue;
+                    }
                     Some("server/discover") => json!({
                         "resultType": "complete", "supportedVersions": ["2026-07-28"],
                         "capabilities": { "tools": {} }, "ttlMs": 0, "cacheScope": "private"
@@ -71,6 +117,10 @@ impl Fixture {
                             Behavior::EmptyPages => json!({
                                 "resultType": "complete", "tools": [], "nextCursor": format!("page-{page}"),
                                 "ttlMs": 0, "cacheScope": "private"
+                            }),
+                            Behavior::PaddedPages => json!({
+                                "resultType": "complete", "tools": [], "nextCursor": format!("page-{page}"),
+                                "padding": "x".repeat(1024 * 1024), "ttlMs": 0, "cacheScope": "private"
                             }),
                             _ => {
                                 json!({ "resultType": "complete", "tools": [tool.clone()], "ttlMs": 0, "cacheScope": "private" })
@@ -99,7 +149,9 @@ impl Fixture {
                             Behavior::ProtocolError => json!({ "fixtureError": {
                                 "code": -32603, "message": "token=secret-provider-payload"
                             } }),
-                            Behavior::Complete(result) => result.clone(),
+                            Behavior::Complete(result)
+                            | Behavior::CompleteSse(result)
+                            | Behavior::CompleteLegacy(result) => result.clone(),
                             _ => panic!("pagination failures must never dispatch a tool"),
                         }
                     }
@@ -114,7 +166,15 @@ impl Fixture {
                     json!({ "jsonrpc": "2.0", "id": request["id"], "result": response })
                 }
                 .to_string();
-                let header = format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len());
+                let (kind, body) = if matches!(behavior, Behavior::CompleteSse(_)) {
+                    (
+                        "text/event-stream",
+                        format!("event: message\ndata: {body}\n\n"),
+                    )
+                } else {
+                    ("application/json", body)
+                };
+                let header = format!("HTTP/1.1 200 OK\r\nContent-Type: {kind}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len());
                 if stream.write_all(header.as_bytes()).await.is_ok() {
                     let _ = stream.write_all(body.as_bytes()).await;
                     let _ = stream.shutdown().await;
@@ -132,7 +192,7 @@ impl Fixture {
 
     async fn service(&self, http: reqwest_mcp::Client) -> McpService {
         serve_http(
-            http,
+            bounded_http::BoundedClient::new(http),
             &self.endpoint,
             tokio::time::Instant::now() + Duration::from_secs(3),
         )
@@ -144,6 +204,67 @@ impl Fixture {
         self.task.abort();
         let _ = (&mut self.task).await;
     }
+}
+
+async fn send_oversized(stream: &mut TcpStream, framing: WireLimit) {
+    let sse = matches!(framing, WireLimit::SseData | WireLimit::SseComments);
+    let limit = if sse {
+        MAX_SSE_EVENT_BYTES
+    } else {
+        bounded_http::MAX_JSON_BYTES
+    };
+    let (status, kind) = if matches!(framing, WireLimit::HttpError) {
+        (500, "application/json")
+    } else if sse {
+        (200, "text/event-stream")
+    } else {
+        (200, "application/json")
+    };
+    let length = if matches!(framing, WireLimit::Declared) {
+        format!("Content-Length: {}\r\n", limit + 1)
+    } else {
+        "Transfer-Encoding: chunked\r\n".into()
+    };
+    let header = format!(
+        "HTTP/1.1 {status} Fixture\r\nContent-Type: {kind}\r\n{length}Connection: close\r\n\r\n"
+    );
+    if stream.write_all(header.as_bytes()).await.is_err() {
+        return;
+    }
+    if matches!(framing, WireLimit::Declared) {
+        // Header rejection must close without waiting for a single body byte.
+        let mut byte = [0];
+        assert_eq!(
+            tokio::time::timeout(Duration::from_secs(2), stream.read(&mut byte))
+                .await
+                .unwrap()
+                .unwrap(),
+            0
+        );
+        return;
+    }
+    let data = if matches!(framing, WireLimit::SseComments) {
+        format!(":{}\n", "x".repeat(4094))
+    } else {
+        "x".repeat(4096)
+    };
+    if matches!(framing, WireLimit::SseData) {
+        if stream.write_all(b"6\r\ndata: \r\n").await.is_err() {
+            return;
+        }
+    }
+    for _ in 0..(limit / data.len() + 8) {
+        if stream
+            .write_all(format!("{:x}\r\n", data.len()).as_bytes())
+            .await
+            .is_err()
+            || stream.write_all(data.as_bytes()).await.is_err()
+            || stream.write_all(b"\r\n").await.is_err()
+        {
+            return;
+        }
+    }
+    let _ = stream.write_all(b"0\r\n\r\n").await;
 }
 
 impl Drop for Fixture {
@@ -211,6 +332,229 @@ fn prepared(side_effect: SideEffect) -> grain_core::execution::PreparedCall {
         side_effect,
         &digest(),
     )
+}
+
+#[tokio::test]
+async fn oversized_raw_responses_stop_discovery_and_never_replay_writes() {
+    for discovery in [true, false] {
+        for framing in [
+            WireLimit::Declared,
+            WireLimit::Chunked,
+            WireLimit::SseData,
+            WireLimit::SseComments,
+            WireLimit::HttpError,
+        ] {
+            let fixture = Fixture::start(Behavior::Oversized { discovery, framing }).await;
+            let service = fixture.service(McpHttpClient::build().unwrap().0).await;
+            if discovery {
+                assert!(discover_on_service(
+                    &service,
+                    tokio::time::Instant::now() + Duration::from_secs(2)
+                )
+                .await
+                .is_err());
+                assert_eq!(fixture.calls.load(Ordering::SeqCst), 0);
+            } else {
+                let outcome = crate::action_exec::mcp_outcome(
+                    execute(&service, Duration::from_secs(2)).await,
+                    &prepared(SideEffect::Write),
+                );
+                assert!(
+                    matches!(outcome, ActionOutcome::UnknownOutcome { .. }),
+                    "{outcome:?}"
+                );
+                assert_eq!(fixture.calls.load(Ordering::SeqCst), 1);
+                assert!(!outcome.model_summary().contains("xxxx"));
+            }
+            assert!(close_service(service).await);
+            assert_eq!(fixture.unexpected.load(Ordering::SeqCst), 0);
+            fixture.stop().await;
+        }
+    }
+}
+
+#[tokio::test]
+async fn aggregate_wire_bytes_stop_empty_catalog_padding_before_page_limit() {
+    let fixture = Fixture::start(Behavior::PaddedPages).await;
+    let service = fixture.service(McpHttpClient::build().unwrap().0).await;
+    assert!(discover_on_service(
+        &service,
+        tokio::time::Instant::now() + Duration::from_secs(3)
+    )
+    .await
+    .is_err());
+    assert!(fixture.lists.load(Ordering::SeqCst) <= 9);
+    assert_eq!(fixture.calls.load(Ordering::SeqCst), 0);
+    assert!(close_service(service).await);
+    fixture.stop().await;
+}
+
+#[tokio::test]
+async fn ordinary_sse_discovery_and_tool_result_still_complete_once() {
+    let fixture = Fixture::start(Behavior::CompleteSse(json!({"resultType": "complete", "content": [{"type": "text", "text": "recorded"}], "isError": false}))).await;
+    let service = fixture.service(McpHttpClient::build().unwrap().0).await;
+    let output = execute(&service, Duration::from_secs(2)).await.unwrap();
+    assert!(output.text.contains("recorded"));
+    assert_eq!(fixture.calls.load(Ordering::SeqCst), 1);
+    assert!(close_service(service).await);
+    fixture.stop().await;
+}
+
+#[tokio::test]
+async fn legacy_handshake_keeps_bounded_transport_and_one_tool_call() {
+    let fixture = Fixture::start(Behavior::CompleteLegacy(
+        json!({"content": [{"type": "text", "text": "legacy result"}], "isError": false}),
+    ))
+    .await;
+    let service = fixture.service(McpHttpClient::build().unwrap().0).await;
+    let output = execute(&service, Duration::from_secs(2)).await.unwrap();
+    assert!(output.text.contains("legacy result"));
+    assert_eq!(fixture.calls.load(Ordering::SeqCst), 1);
+    assert_eq!(fixture.unexpected.load(Ordering::SeqCst), 0);
+    assert!(close_service(service).await);
+    fixture.stop().await;
+}
+
+#[tokio::test]
+async fn resumed_get_stream_preserves_identity_and_bounds_raw_sse() {
+    use futures_util::StreamExt;
+    use rmcp::transport::streamable_http_client::StreamableHttpClient;
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let endpoint: Arc<str> = format!("http://{}/mcp", listener.local_addr().unwrap()).into();
+    let server = async {
+        let (mut socket, _) = listener.accept().await.unwrap();
+        let mut request = Vec::new();
+        while !request.windows(4).any(|bytes| bytes == b"\r\n\r\n") {
+            let mut bytes = [0; 1024];
+            let size = socket.read(&mut bytes).await.unwrap();
+            assert!(size > 0 && request.len() + size <= 16 * 1024);
+            request.extend_from_slice(&bytes[..size]);
+        }
+        let headers = std::str::from_utf8(&request).unwrap().to_ascii_lowercase();
+        for expected in [
+            "get /mcp",
+            "mcp-session-id: session",
+            "last-event-id: cursor",
+            "authorization: bearer fixture-token",
+        ] {
+            assert!(headers.contains(expected));
+        }
+        send_oversized(&mut socket, WireLimit::SseComments).await;
+    };
+    let http = bounded_http::BoundedClient::new(McpHttpClient::build().unwrap().0);
+    let get = async {
+        let mut stream = http
+            .get_stream(
+                endpoint,
+                Some(Arc::from("session")),
+                Some("cursor".into()),
+                Some("fixture-token".into()),
+                Default::default(),
+            )
+            .await
+            .unwrap();
+        loop {
+            match stream.next().await {
+                Some(Err(_)) => break,
+                Some(Ok(_)) => {}
+                None => panic!("unbounded comments were accepted"),
+            }
+        }
+    };
+    tokio::time::timeout(Duration::from_secs(3), async { tokio::join!(server, get) })
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn bounded_binding_preserves_auth_protocol_headers_and_http_outcomes() {
+    use rmcp::transport::streamable_http_client::{
+        StreamableHttpClient, StreamableHttpError, StreamableHttpPostResponse,
+    };
+    for status in [200, 202, 204, 400, 401, 403, 404] {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let endpoint: Arc<str> = format!("http://{}/mcp", listener.local_addr().unwrap()).into();
+        let server = async {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut request = Vec::new();
+            let header_end = loop {
+                let mut bytes = [0; 1024];
+                let size = socket.read(&mut bytes).await.unwrap();
+                assert!(size > 0 && request.len() + size <= 16 * 1024);
+                request.extend_from_slice(&bytes[..size]);
+                if let Some(end) = request.windows(4).position(|bytes| bytes == b"\r\n\r\n") {
+                    break end + 4;
+                }
+            };
+            let headers = std::str::from_utf8(&request[..header_end])
+                .unwrap()
+                .to_ascii_lowercase();
+            for expected in [
+                "authorization: bearer fixture-token",
+                "mcp-session-id: fixture-session",
+                "mcp-protocol-version: 2026-07-28",
+                "mcp-method: tools/list",
+                "mcp-param-example: projected",
+            ] {
+                assert!(headers.contains(expected), "missing {expected}");
+            }
+            let body = json!({"jsonrpc": "2.0", "id": 1, "error": {"code": -32603, "message": "token=secret"}}).to_string();
+            let challenge = "Bearer error=\"insufficient_scope\", scope=\"read write\"";
+            let reply = format!("HTTP/1.1 {status} Fixture\r\nContent-Type: application/json; charset=utf-8\r\nWWW-Authenticate: {challenge}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len());
+            let _ = socket.write_all(reply.as_bytes()).await;
+        };
+        let message = serde_json::from_value(
+            json!({"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}}),
+        )
+        .unwrap();
+        let mut headers = std::collections::HashMap::new();
+        for (name, value) in [
+            ("mcp-protocol-version", "2026-07-28"),
+            ("mcp-method", "tools/list"),
+            ("mcp-param-example", "projected"),
+        ] {
+            headers.insert(
+                reqwest_mcp::header::HeaderName::from_static(name),
+                reqwest_mcp::header::HeaderValue::from_static(value),
+            );
+        }
+        let http = bounded_http::BoundedClient::new(McpHttpClient::build().unwrap().0);
+        let call = http.post_message(
+            endpoint,
+            message,
+            Some(Arc::from("fixture-session")),
+            Some("fixture-token".into()),
+            headers,
+        );
+        let (_, response) =
+            tokio::time::timeout(Duration::from_secs(3), async { tokio::join!(server, call) })
+                .await
+                .unwrap();
+        match status {
+            200 | 400 => assert!(matches!(
+                response,
+                Ok(StreamableHttpPostResponse::Json(_, _))
+            )),
+            202 | 204 => assert!(matches!(response, Ok(StreamableHttpPostResponse::Accepted))),
+            401 => {
+                let Err(StreamableHttpError::AuthRequired(challenge)) = response else {
+                    panic!("lost 401 challenge")
+                };
+                assert_eq!(
+                    challenge.www_authenticate_header,
+                    "Bearer error=\"insufficient_scope\", scope=\"read write\""
+                );
+            }
+            403 => {
+                let Err(StreamableHttpError::InsufficientScope(challenge)) = response else {
+                    panic!("lost 403 challenge")
+                };
+                assert_eq!(challenge.required_scope.as_deref(), Some("read write"));
+            }
+            404 => assert!(matches!(response, Err(StreamableHttpError::SessionExpired))),
+            _ => unreachable!(),
+        }
+    }
 }
 
 async fn execute(

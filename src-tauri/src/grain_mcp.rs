@@ -70,6 +70,9 @@ impl Drop for McpService {
 #[path = "grain_mcp_http.rs"]
 mod cancellable_http;
 
+#[path = "grain_mcp_bounded_http.rs"]
+mod bounded_http;
+
 #[path = "grain_mcp_session.rs"]
 mod session;
 
@@ -1163,7 +1166,12 @@ async fn open_service(
             "The MCP account is unavailable. Reconnect in Grain Settings.",
         )
     })?;
-    serve_http(AuthClient::new(http, manager), item.endpoint, deadline).await
+    serve_http(
+        AuthClient::new(bounded_http::BoundedClient::new(http), manager),
+        item.endpoint,
+        deadline,
+    )
+    .await
 }
 
 async fn serve_http<C: rmcp::transport::streamable_http_client::StreamableHttpClient + Sync>(

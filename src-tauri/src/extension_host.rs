@@ -241,6 +241,28 @@ impl Workers {
         params: Value,
         deadline: Duration,
     ) -> Result<Value, String> {
+        self.call_tracked(
+            ext_id,
+            token,
+            method,
+            params,
+            deadline,
+            &AtomicBool::new(false),
+        )
+        .await
+    }
+
+    /// A successful queue send is the conservative dispatch boundary. Closing
+    /// the worker afterward cannot prove that its handler never ran.
+    async fn call_tracked(
+        &self,
+        ext_id: &str,
+        token: Option<&str>,
+        method: &str,
+        params: Value,
+        deadline: Duration,
+        dispatched: &AtomicBool,
+    ) -> Result<Value, String> {
         let (guard, rx) = {
             let map = self.map.lock().unwrap();
             let worker = map.get(ext_id).ok_or("worker not connected")?;
@@ -266,6 +288,7 @@ impl Workers {
             if conn.out_tx.send(Message::Text(json.into())).is_err() {
                 return Err("worker channel closed".into());
             }
+            dispatched.store(true, Ordering::Release);
             (guard, rx)
         };
         let result = match tokio::time::timeout(deadline, rx).await {
@@ -1830,12 +1853,10 @@ pub async fn hand_off(_app: &AppHandle, _ext_id: &str, _request: &str) -> HandOf
     )
 }
 
-/// [GRAIN] Why a third-party action call could not produce a result. A timeout is
-/// kept distinct from an unavailability because a *side-effecting* timeout is an
-/// unknown outcome (the action may have run), not a plain failure (§8.5).
+/// Availability failures precede dispatch; transport failures carry certainty.
+#[derive(Debug)]
 pub enum ActionCallError {
-    /// The worker did not answer within the deadline.
-    Timeout,
+    Execution(grain_core::execution::ExecutionFailure),
     /// The worker could not be reached or the extension is gone.
     Unavailable(String),
 }
@@ -1847,14 +1868,14 @@ pub enum ActionCallError {
 /// structured result; the executor maps it to an `ActionOutcome`.
 ///
 /// Enablement is re-checked here (time-of-use, §12.7), the cold worker is woken,
-/// and a deadline overrun is reported as [`ActionCallError::Timeout`] so the
-/// executor can decide unknown-vs-failed by side effect.
+/// and queued calls retain dispatch certainty even when their reply is lost.
 pub async fn run_action(
     app: &AppHandle,
     ext_id: &str,
     action_id: &str,
     arguments: &Value,
     idempotency_key: Option<&str>,
+    expected_digest: &str,
 ) -> Result<Value, ActionCallError> {
     let pack = load_manifest_result(app, ext_id).map_err(ActionCallError::Unavailable)?;
     pack.validate_tool_only()
@@ -1886,6 +1907,11 @@ pub async fn run_action(
     }
     let approval = approved_action_digest(app, ext_id, action_id)
         .ok_or_else(|| ActionCallError::Unavailable("that tool is no longer approved".into()))?;
+    if approval != expected_digest {
+        return Err(ActionCallError::Unavailable(
+            "that tool changed before startup".into(),
+        ));
+    }
     let token = wake_for_request(app, ext_id)
         .ok_or_else(|| ActionCallError::Unavailable("extension worker unavailable".into()))?;
     if !host
@@ -1910,9 +1936,10 @@ pub async fn run_action(
             "tool approval changed while starting".into(),
         ));
     }
+    let dispatched = AtomicBool::new(false);
     match host
         .workers
-        .call_owned(
+        .call_tracked(
             ext_id,
             Some(&token),
             "action",
@@ -1922,6 +1949,7 @@ pub async fn run_action(
                 "idempotencyKey": idempotency_key,
             }),
             HANDOFF_DEADLINE,
+            &dispatched,
         )
         .await
     {
@@ -1929,16 +1957,31 @@ pub async fn run_action(
             clear_strikes(ext_id);
             Ok(value)
         }
-        Err(error) if error == "deadline exceeded" => {
-            record_strike(app, ext_id);
-            log::warn!("[ext:{ext_id}] action '{action_id}' timed out after {HANDOFF_DEADLINE:?}");
-            Err(ActionCallError::Timeout)
-        }
         Err(error) => {
             record_strike(app, ext_id);
-            Err(ActionCallError::Unavailable(error))
+            Err(ActionCallError::Execution(native_call_failure(
+                &error,
+                dispatched.load(Ordering::Acquire),
+            )))
         }
     }
+}
+
+fn native_call_failure(error: &str, dispatched: bool) -> grain_core::execution::ExecutionFailure {
+    use grain_core::execution::{DispatchPhase, ExecutionFailure, FailureClass};
+    ExecutionFailure::new(
+        if dispatched {
+            DispatchPhase::Dispatched
+        } else {
+            DispatchPhase::NotDispatched
+        },
+        if error == "deadline exceeded" {
+            FailureClass::Network
+        } else {
+            FailureClass::Internal
+        },
+        "The native tool did not produce a usable result.",
+    )
 }
 
 /// User cancellation is immediate: notify the handler's AbortSignal and drop
@@ -2728,6 +2771,123 @@ mod tests {
                 cancel,
             );
             assert_eq!(result.unwrap_err(), "session cancelled");
+        });
+    }
+
+    #[test]
+    fn native_queue_failures_preserve_dispatch_certainty_without_replay() {
+        use grain_core::execution::{ActionOutcome, RiskClass, SideEffect};
+        rt().block_on(async {
+            for mode in [
+                "absent", "stale", "closed", "cancel", "error", "timeout", "invalid", "ok",
+            ] {
+                let workers = Workers::new();
+                let (out_tx, mut out_rx) = mpsc::unbounded_channel();
+                if mode != "absent" {
+                    workers.insert("tools", worker(now_secs(), false));
+                    workers.attach("tools", "tok", out_tx).unwrap();
+                }
+                if mode == "closed" {
+                    out_rx.close();
+                }
+                let prepared = crate::action_exec::prepare(
+                    "tools:write",
+                    "tools",
+                    "write",
+                    "Tools",
+                    json!({}),
+                    RiskClass::Confirm,
+                    SideEffect::Write,
+                    "current",
+                );
+                let dispatched = AtomicBool::new(false);
+                let token = if mode == "stale" { "old" } else { "tok" };
+                let call = workers.call_tracked(
+                    "tools",
+                    Some(token),
+                    "action",
+                    json!({}),
+                    Duration::from_millis(20),
+                    &dispatched,
+                );
+                let before = matches!(mode, "absent" | "stale" | "closed");
+                let mut count = 0;
+                let result = if before {
+                    call.await
+                } else {
+                    let handler = async {
+                        let Message::Text(frame) = out_rx.recv().await.expect("one queued call")
+                        else {
+                            panic!("not a call")
+                        };
+                        let frame: HostFrame = serde_json::from_str(&frame).unwrap();
+                        let HostFrame::Call(call) = frame else {
+                            panic!("not a call")
+                        };
+                        count += 1; // Simulated effect, before teardown or a lost reply.
+                        match mode {
+                            "cancel" => workers.cancel_pending("tools", "disabled after queue"),
+                            "error" => workers.resolve(
+                                "tools",
+                                "tok",
+                                call.call_id,
+                                Err("token=secret-provider-payload".into()),
+                            ),
+                            "invalid" => workers.resolve(
+                                "tools",
+                                "tok",
+                                call.call_id,
+                                Ok(json!(["invalid"])),
+                            ),
+                            "ok" => workers.resolve(
+                                "tools",
+                                "tok",
+                                call.call_id,
+                                Ok(json!({"ok": "recorded"})),
+                            ),
+                            "timeout" => {}
+                            _ => unreachable!(),
+                        }
+                    };
+                    tokio::join!(call, handler).0
+                };
+                assert_eq!(dispatched.load(Ordering::Acquire), !before, "{mode}");
+                let outcome = crate::action_exec::native_outcome(
+                    result.map_err(|error| {
+                        ActionCallError::Execution(native_call_failure(
+                            &error,
+                            dispatched.load(Ordering::Acquire),
+                        ))
+                    }),
+                    &prepared,
+                );
+                match mode {
+                    "absent" | "stale" | "closed" => {
+                        assert!(matches!(outcome, ActionOutcome::Failed { .. }))
+                    }
+                    "cancel" | "error" | "timeout" => {
+                        assert!(matches!(outcome, ActionOutcome::UnknownOutcome { .. }))
+                    }
+                    "invalid" => {
+                        assert!(matches!(outcome, ActionOutcome::ResultUnavailable { .. }))
+                    }
+                    "ok" => assert!(matches!(outcome, ActionOutcome::Succeeded(_))),
+                    _ => unreachable!(),
+                }
+                assert_eq!(count, if before { 0 } else { 1 });
+                assert!(out_rx.try_recv().is_err(), "no replay");
+                assert!(!outcome.model_summary().contains("secret-provider"));
+                if let Some(worker) = workers.map.lock().unwrap().get("tools") {
+                    assert!(worker
+                        .conn
+                        .as_ref()
+                        .unwrap()
+                        .pending
+                        .lock()
+                        .unwrap()
+                        .is_empty());
+                };
+            }
         });
     }
 
