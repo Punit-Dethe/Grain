@@ -3504,6 +3504,63 @@ mod tests {
     }
 
     #[test]
+    fn agent_session_close_retires_its_native_call_without_touching_a_replacement() {
+        rt().block_on(async {
+            for replace in [false, true] {
+                let workers = Workers::new();
+                workers.insert("tools", worker(now_secs(), false));
+                let (out_tx, mut out_rx) = mpsc::unbounded_channel();
+                workers.attach("tools", "tok", out_tx).unwrap();
+                let pending = workers
+                    .map
+                    .lock()
+                    .unwrap()
+                    .get("tools")
+                    .unwrap()
+                    .conn
+                    .as_ref()
+                    .unwrap()
+                    .pending
+                    .clone();
+                let control = crate::agent::AgentRunControl::default();
+                let (run, registration) = control.begin().unwrap();
+                let operation = run.wait(registration, async {
+                    let _owner = NativeCallOwner::new(|| {
+                        if let Some(worker) = workers.remove_if_token("tools", "tok") {
+                            worker.close_pending();
+                        }
+                    });
+                    let dispatched = AtomicBool::new(false);
+                    workers
+                        .enqueue("tools", Some("tok"), "action", json!({}), &dispatched, None)
+                        .unwrap()
+                        .wait(Duration::from_secs(20))
+                        .await
+                });
+                let close = async {
+                    assert!(matches!(out_rx.recv().await, Some(Message::Text(_))));
+                    if replace {
+                        let mut replacement = worker(now_secs(), false);
+                        replacement.token = "new".into();
+                        workers.insert("tools", replacement);
+                    }
+                    control.cancel();
+                };
+                let (result, _) = tokio::join!(operation, close);
+                assert!(result.unwrap_err().contains("may have had effects"));
+                assert!(pending.lock().unwrap().is_empty());
+                if replace {
+                    assert!(workers.owns_token("tools", "new"));
+                } else {
+                    assert_eq!(workers.len(), 0);
+                    assert!(matches!(out_rx.try_recv(), Ok(Message::Close(_))));
+                }
+                assert!(out_rx.try_recv().is_err(), "one dispatch, no replay");
+            }
+        });
+    }
+
+    #[test]
     fn resolve_unknown_call_is_a_noop() {
         let workers = Workers::new();
         workers.resolve("nobody", "tok", 7, Ok(Value::Null)); // must not panic

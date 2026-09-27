@@ -33,6 +33,7 @@ use std::{
     time::Duration,
 };
 
+use futures_util::future::{AbortHandle, AbortRegistration, Abortable};
 use grain_core::{DaemonEvent, PostProcessProvider};
 use log::{error, info, warn};
 use serde::{Deserialize, Serialize};
@@ -119,6 +120,142 @@ pub struct FieldContext {
     pub text: String,
 }
 
+const RUN_CANCELLED: &str = "Agent run cancelled. A tool already executing may have had effects; do not repeat automatically.";
+
+#[derive(Default)]
+struct AgentRunState {
+    generation: u64,
+    active: Option<AbortHandle>,
+    pending_action: Option<String>,
+}
+
+/// One inline owner for the Agent run and its pending confirmation. No task or
+/// service is retained after the run; cancellation drops adapter-owned futures.
+#[derive(Default)]
+pub(crate) struct AgentRunControl {
+    state: Mutex<AgentRunState>,
+}
+
+pub(crate) struct AgentRun<'a> {
+    control: &'a AgentRunControl,
+    generation: u64,
+    completed: AtomicBool,
+}
+
+impl AgentRunControl {
+    pub(crate) fn begin(&self) -> Result<(AgentRun<'_>, AbortRegistration), String> {
+        let mut state = self.state.lock().unwrap();
+        if state.active.is_some() {
+            return Err("An Agent request is already running.".into());
+        }
+        state.generation = state
+            .generation
+            .checked_add(1)
+            .ok_or("Agent run identity exhausted")?;
+        let (handle, registration) = AbortHandle::new_pair();
+        state.active = Some(handle);
+        Ok((
+            AgentRun {
+                control: self,
+                generation: state.generation,
+                completed: AtomicBool::new(false),
+            },
+            registration,
+        ))
+    }
+
+    /// End the session atomically with pending-token removal. The caller drops
+    /// the prepared call after releasing this lock (lock order stays one-way).
+    pub(crate) fn cancel(&self) -> Option<String> {
+        let mut state = self.state.lock().unwrap();
+        if let Some(handle) = state.active.as_ref() {
+            handle.abort();
+        }
+        state.pending_action.take()
+    }
+}
+
+impl AgentRun<'_> {
+    pub(crate) async fn wait<T>(
+        &self,
+        registration: AbortRegistration,
+        future: impl std::future::Future<Output = T>,
+    ) -> Result<T, String> {
+        let result = Abortable::new(future, registration).await;
+        let mut state = self.control.state.lock().unwrap();
+        if state.generation != self.generation {
+            return Err(RUN_CANCELLED.into());
+        }
+        if state
+            .active
+            .as_ref()
+            .is_none_or(|handle| handle.is_aborted())
+        {
+            // Abortable has dropped the inner future before releasing admission
+            // for another run, so native cleanup cannot kill its warm reuse.
+            state.active.take();
+            return Err(RUN_CANCELLED.into());
+        }
+        let value = result.map_err(|_| RUN_CANCELLED.to_string())?;
+        self.completed.store(true, Ordering::Relaxed);
+        Ok(value)
+    }
+
+    fn publish_pending(&self, token: String) -> Result<(), String> {
+        let previous = {
+            let mut state = self.control.state.lock().unwrap();
+            if state.generation != self.generation
+                || state
+                    .active
+                    .as_ref()
+                    .is_none_or(|handle| handle.is_aborted())
+            {
+                drop(state);
+                crate::action_exec::discard(&token);
+                return Err(RUN_CANCELLED.into());
+            }
+            state.pending_action.replace(token.clone())
+        };
+        if let Some(previous) = previous.filter(|previous| previous != &token) {
+            crate::action_exec::discard(&previous);
+        }
+        Ok(())
+    }
+
+    fn take_pending(&self, expected: &str) -> bool {
+        let mut state = self.control.state.lock().unwrap();
+        if state.generation != self.generation
+            || state
+                .active
+                .as_ref()
+                .is_none_or(|handle| handle.is_aborted())
+            || state.pending_action.as_deref() != Some(expected)
+        {
+            return false;
+        }
+        state.pending_action.take();
+        true
+    }
+}
+
+impl Drop for AgentRun<'_> {
+    fn drop(&mut self) {
+        let mut state = self.control.state.lock().unwrap();
+        if state.generation == self.generation {
+            if let Some(handle) = state.active.take() {
+                handle.abort();
+            }
+            if !self.completed.load(Ordering::Relaxed) {
+                let pending = state.pending_action.take();
+                drop(state);
+                if let Some(token) = pending {
+                    crate::action_exec::discard(&token);
+                }
+            }
+        }
+    }
+}
+
 /// Cross-window state, set at summon and handed off palette → panel.
 #[derive(Default)]
 pub struct AgentState {
@@ -128,10 +265,8 @@ pub struct AgentState {
     pub context: Mutex<Option<String>>,
     /// First instruction handed from the palette to the panel on submit.
     pub pending_instruction: Mutex<Option<String>>,
-    /// Exact host-held action confirmation for this Agent session. Keeping the
-    /// token here (rather than asking a process-global store for its newest
-    /// entry) prevents a later session from approving an unseen earlier call.
-    pub pending_action_token: Mutex<Option<String>>,
+    /// Run cancellation and exact host-held confirmation belong to this session.
+    execution: AgentRunControl,
     /// Foreground window at summon — the paste target for Confirm / Quick Agent.
     /// Raw HWND as isize on Windows; unused elsewhere.
     pub target_hwnd: Mutex<Option<isize>>,
@@ -1191,51 +1326,29 @@ fn clear_screen_image(app: &AppHandle) {
     }
 }
 
-/// Replace this session's pending action and discard any superseded prepared
-/// call. There is intentionally at most one confirmation per Agent session.
-fn set_pending_action(app: &AppHandle, token: Option<String>) {
-    let Some(state) = app.try_state::<AgentState>() else {
-        return;
-    };
-    let previous = state
-        .pending_action_token
-        .lock()
-        .ok()
-        .and_then(|mut guard| std::mem::replace(&mut *guard, token.clone()));
-    if previous.as_deref() != token.as_deref() {
-        if let Some(previous) = previous {
-            crate::action_exec::discard(&previous);
-        }
-    }
-}
-
+/// The token this session displayed, never a process-global newest call.
 fn active_pending_action(app: &AppHandle) -> Option<String> {
     app.try_state::<AgentState>().and_then(|state| {
         state
-            .pending_action_token
+            .execution
+            .state
             .lock()
             .ok()
-            .and_then(|guard| guard.clone())
+            .and_then(|guard| guard.pending_action.clone())
     })
 }
 
 /// Consume only the token this Agent session actually displayed.
-fn take_pending_action(app: &AppHandle, expected: &str) -> bool {
-    let Some(state) = app.try_state::<AgentState>() else {
-        return false;
-    };
-    let Ok(mut guard) = state.pending_action_token.lock() else {
-        return false;
-    };
-    if guard.as_deref() != Some(expected) {
-        return false;
-    }
-    guard.take();
-    true
+fn take_pending_action(run: &AgentRun<'_>, expected: &str) -> bool {
+    run.take_pending(expected)
 }
 
 fn clear_pending_action(app: &AppHandle) {
-    set_pending_action(app, None);
+    if let Some(state) = app.try_state::<AgentState>() {
+        if let Some(token) = state.execution.cancel() {
+            crate::action_exec::discard(&token);
+        }
+    }
 }
 
 // ============================================================================
@@ -2049,8 +2162,20 @@ pub fn global_close(app: &AppHandle) {
         EscapeTarget::AgentPanel => {}
     }
 
+    // Cancel immediately; closing the window on the main thread may be delayed.
+    let closing_session = app
+        .try_state::<AgentState>()
+        .map(|state| state.summon_gen.load(Ordering::SeqCst));
+    clear_pending_action(app);
     let app_for_main = app.clone();
     let _ = app.run_on_main_thread(move || {
+        if app_for_main
+            .try_state::<AgentState>()
+            .map(|state| state.summon_gen.load(Ordering::SeqCst))
+            != closing_session
+        {
+            return;
+        }
         // Withdrawing the offer FIRST means the window teardown below sees it
         // inactive and releases the transient follow-up shortcut too.
         clear_followup_offer(&app_for_main);
@@ -2079,6 +2204,160 @@ mod escape_priority_tests {
     fn normal_dictation_precedes_agent_panel_close() {
         assert_eq!(escape_target(false, true), EscapeTarget::Dictation);
         assert_eq!(escape_target(false, false), EscapeTarget::AgentPanel);
+    }
+}
+
+#[cfg(test)]
+mod run_ownership_tests {
+    use super::*;
+    use std::sync::atomic::AtomicUsize;
+
+    #[tokio::test]
+    async fn cancellation_before_poll_never_starts_work_and_completion_releases_owner() {
+        let control = AgentRunControl::default();
+        let (run, registration) = control.begin().unwrap();
+        assert!(control.begin().is_err(), "concurrent commands refused");
+        control.cancel();
+        assert!(
+            control.begin().is_err(),
+            "cleanup retains admission until the old future is dropped"
+        );
+        let calls = AtomicUsize::new(0);
+        assert!(run
+            .wait(registration, async {
+                calls.fetch_add(1, Ordering::SeqCst);
+            })
+            .await
+            .is_err());
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+        drop(run);
+        let (run, registration) = control.begin().unwrap();
+        assert_eq!(
+            run.wait(registration, async { "reply" }).await.unwrap(),
+            "reply"
+        );
+        drop(run);
+        assert!(control.state.lock().unwrap().active.is_none());
+        let (run, registration) = control.begin().unwrap();
+        assert!(
+            run.wait(registration, async {
+                control.cancel();
+                "late reply"
+            })
+            .await
+            .is_err(),
+            "close wins over a ready late reply"
+        );
+    }
+
+    #[tokio::test]
+    async fn close_drops_waiting_work_and_old_owner_cannot_clear_a_new_run() {
+        struct Cleanup<'a>(&'a AtomicUsize);
+        impl Drop for Cleanup<'_> {
+            fn drop(&mut self) {
+                self.0.fetch_add(1, Ordering::SeqCst);
+            }
+        }
+        let control = AgentRunControl::default();
+        let cleanup = AtomicUsize::new(0);
+        let (run, registration) = control.begin().unwrap();
+        let (started, ready) = tokio::sync::oneshot::channel();
+        let operation = run.wait(registration, async {
+            let _cleanup = Cleanup(&cleanup);
+            started.send(()).unwrap();
+            std::future::pending::<()>().await;
+        });
+        let close = async {
+            ready.await.unwrap();
+            control.cancel();
+        };
+        let (result, _) = tokio::join!(operation, close);
+        assert!(result.unwrap_err().contains("may have had effects"));
+        assert_eq!(cleanup.load(Ordering::SeqCst), 1);
+        let (replacement, registration) = control.begin().unwrap();
+        drop(run);
+        assert!(control.begin().is_err(), "replacement remains owned");
+        assert_eq!(
+            replacement
+                .wait(registration, async { "fresh" })
+                .await
+                .unwrap(),
+            "fresh"
+        );
+    }
+
+    async fn held_call() -> String {
+        let call = crate::action_exec::prepare(
+            "test:write",
+            "test",
+            "write",
+            "Test",
+            serde_json::json!({}),
+            grain_core::execution::RiskClass::Confirm,
+            grain_core::execution::SideEffect::Write,
+            "digest",
+        );
+        let token = call.token.clone();
+        assert!(matches!(
+            crate::action_exec::run_or_confirm_opt(None, call, "Test").await,
+            crate::action_exec::Dispatch::AwaitConfirm(_)
+        ));
+        token
+    }
+
+    #[tokio::test]
+    async fn completed_confirmation_survives_its_turn_but_is_consumed_once_or_discarded_on_close() {
+        let control = AgentRunControl::default();
+        let token = held_call().await;
+        let (run, registration) = control.begin().unwrap();
+        run.wait(registration, async {
+            run.publish_pending(token.clone()).unwrap();
+        })
+        .await
+        .unwrap();
+        drop(run);
+        assert_eq!(
+            control.state.lock().unwrap().pending_action.as_deref(),
+            Some(token.as_str())
+        );
+        let (approval, registration) = control.begin().unwrap();
+        assert!(!approval.take_pending("wrong"));
+        assert!(approval.take_pending(&token));
+        assert!(!approval.take_pending(&token));
+        approval.wait(registration, async {}).await.unwrap();
+        drop(approval);
+        assert!(crate::action_exec::discard(&token));
+
+        let token = held_call().await;
+        let (run, registration) = control.begin().unwrap();
+        run.wait(registration, async {
+            run.publish_pending(token.clone()).unwrap();
+        })
+        .await
+        .unwrap();
+        drop(run);
+        let cancelled = control.cancel().unwrap();
+        assert_eq!(cancelled, token);
+        assert!(crate::action_exec::discard(&cancelled));
+        assert!(!crate::action_exec::discard(&cancelled));
+    }
+
+    #[tokio::test]
+    async fn cancelled_or_dropped_run_cannot_leave_a_late_confirmation() {
+        let control = AgentRunControl::default();
+        let (run, _) = control.begin().unwrap();
+        control.cancel();
+        let token = held_call().await;
+        assert!(run.publish_pending(token.clone()).is_err());
+        assert!(!crate::action_exec::discard(&token));
+        drop(run);
+
+        let token = held_call().await;
+        let (run, _) = control.begin().unwrap();
+        run.publish_pending(token.clone()).unwrap();
+        drop(run);
+        assert!(control.state.lock().unwrap().pending_action.is_none());
+        assert!(!crate::action_exec::discard(&token));
     }
 }
 
@@ -2191,13 +2470,27 @@ pub async fn agent_run(
     messages: Vec<AgentMessage>,
     context: Option<String>,
 ) -> Result<AgentReply, String> {
+    let state = app
+        .try_state::<AgentState>()
+        .ok_or("Agent state unavailable")?;
+    let (run, registration) = state.execution.begin()?;
+    run.wait(registration, agent_run_owned(&app, messages, context, &run))
+        .await?
+}
+
+async fn agent_run_owned(
+    app: &AppHandle,
+    messages: Vec<AgentMessage>,
+    context: Option<String>,
+    run: &AgentRun<'_>,
+) -> Result<AgentReply, String> {
     // [GRAIN] A risky action from a prior turn is waiting on the user. The interim
     // chat surface has no approve/deny button — the agent asked in prose, so the
     // user's reply IS the answer (Amendment A). The HOST reads it and resumes the
     // exact prepared call, so confirmation stays host-gated (the model never
     // decides to run). A clear "yes" runs it, a clear "no" cancels, anything else
     // is a new request that drops the stale confirmation and proceeds.
-    if let Some(token) = active_pending_action(&app) {
+    if let Some(token) = active_pending_action(app) {
         use grain_core::execution::Confirmation;
         let said = messages
             .iter()
@@ -2207,23 +2500,27 @@ pub async fn agent_run(
             .unwrap_or("");
         match grain_core::execution::classify_confirmation(said) {
             Confirmation::Yes => {
-                if !take_pending_action(&app, &token) {
+                if !take_pending_action(run, &token) {
                     return Ok(AgentReply::plain(
                         "That confirmation is no longer active.".to_string(),
                     ));
                 }
-                let outcome = crate::action_exec::resume(&app, &token, true).await;
+                let outcome = crate::action_exec::resume(app, &token, true).await;
                 return Ok(outcome_to_reply(outcome));
             }
             Confirmation::No => {
-                let _ = take_pending_action(&app, &token);
-                let _ = crate::action_exec::resume(&app, &token, false).await;
+                if !take_pending_action(run, &token) {
+                    return Err(RUN_CANCELLED.into());
+                }
+                let _ = crate::action_exec::resume(app, &token, false).await;
                 return Ok(AgentReply::plain("Okay — I won't do that.".to_string()));
             }
             Confirmation::Unclear => {
                 // Drop the stale confirmation and answer the new request.
-                let _ = take_pending_action(&app, &token);
-                let _ = crate::action_exec::resume(&app, &token, false).await;
+                if !take_pending_action(run, &token) {
+                    return Err(RUN_CANCELLED.into());
+                }
+                let _ = crate::action_exec::resume(app, &token, false).await;
             }
         }
     }
@@ -2231,8 +2528,8 @@ pub async fn agent_run(
         .try_state::<AgentState>()
         .and_then(|s| s.field_context.lock().ok().and_then(|g| g.clone()));
     let full = build_messages(&messages, context.as_deref(), field.as_ref());
-    let image = screen_attachment(&app);
-    run_with_tools(&app, full, image.as_ref()).await
+    let image = screen_attachment(app);
+    run_with_tools(app, full, image.as_ref(), run).await
 }
 
 /// [GRAIN] Resume a host-gated action confirmation (PLAN Amendment A, §2.5). The
@@ -2247,13 +2544,20 @@ pub async fn agent_confirm_action(
     token: String,
     approve: bool,
 ) -> Result<AgentReply, String> {
-    if !take_pending_action(&app, &token) {
-        return Ok(AgentReply::plain(
-            "That confirmation has expired or belongs to another Agent session.".to_string(),
-        ));
-    }
-    let outcome = crate::action_exec::resume(&app, &token, approve).await;
-    Ok(outcome_to_reply(outcome))
+    let state = app
+        .try_state::<AgentState>()
+        .ok_or("Agent state unavailable")?;
+    let (run, registration) = state.execution.begin()?;
+    run.wait(registration, async {
+        if !take_pending_action(&run, &token) {
+            return Ok(AgentReply::plain(
+                "That confirmation has expired or belongs to another Agent session.".to_string(),
+            ));
+        }
+        let outcome = crate::action_exec::resume(&app, &token, approve).await;
+        Ok(outcome_to_reply(outcome))
+    })
+    .await?
 }
 
 /// Render an execution outcome as a plain chat reply (the receipt/result/notice).
@@ -2280,6 +2584,7 @@ async fn run_with_tools(
     app: &AppHandle,
     full: Vec<(String, String)>,
     image: Option<&ImageAttachment>,
+    run: &AgentRun<'_>,
 ) -> Result<AgentReply, String> {
     use crate::llm_client::ChatEntry;
 
@@ -2356,7 +2661,7 @@ async fn run_with_tools(
                     // A risky action was withheld. Close this tool call honestly
                     // and end the turn to surface the confirmation; the model never
                     // sees it as done.
-                    set_pending_action(app, Some(confirm.token.clone()));
+                    run.publish_pending(confirm.token.clone())?;
                     pending_confirm = Some(confirm);
                     "Awaiting the user's approval before this runs — do not claim it is done."
                         .to_string()

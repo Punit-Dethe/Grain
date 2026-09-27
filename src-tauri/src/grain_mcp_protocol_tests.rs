@@ -605,6 +605,47 @@ async fn a_recorded_write_with_a_lost_response_is_unknown_and_never_replayed() {
 }
 
 #[tokio::test]
+async fn agent_session_close_drops_the_mcp_service_after_one_recorded_write() {
+    for behavior in [Behavior::HangAfterWrite, Behavior::HangSseAfterWrite] {
+        let fixture = Fixture::start(behavior).await;
+        let service = fixture.service(McpHttpClient::build().unwrap().0).await;
+        let cancelled = service.cancel.subscribe();
+        let control = crate::agent::AgentRunControl::default();
+        let (run, registration) = control.begin().unwrap();
+        let operation = run.wait(registration, async move {
+            let result = execute(&service, Duration::from_secs(30)).await;
+            close_service(service).await;
+            result
+        });
+        let close = async {
+            tokio::time::timeout(Duration::from_secs(2), async {
+                while fixture.calls.load(Ordering::SeqCst) == 0 {
+                    tokio::task::yield_now().await;
+                }
+            })
+            .await
+            .unwrap();
+            control.cancel();
+        };
+        let (result, _) = tokio::time::timeout(Duration::from_secs(3), async {
+            tokio::join!(operation, close)
+        })
+        .await
+        .unwrap();
+        let message = result.unwrap_err();
+        assert!(message.contains("may have had effects"));
+        assert!(!message.contains("did not run"));
+        assert!(
+            *cancelled.borrow(),
+            "actual service Drop signals HTTP teardown"
+        );
+        assert_eq!(fixture.calls.load(Ordering::SeqCst), 1);
+        assert_eq!(fixture.unexpected.load(Ordering::SeqCst), 0);
+        fixture.stop().await;
+    }
+}
+
+#[tokio::test]
 async fn account_cancellation_after_a_recorded_write_remains_unknown() {
     let fixture = Fixture::start(Behavior::HangAfterWrite).await;
     let service = fixture.service(McpHttpClient::build().unwrap().0).await;
