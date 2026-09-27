@@ -20,6 +20,7 @@
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::RwLock;
 
 use anyhow::{Context, Result};
@@ -27,6 +28,18 @@ use grain_sdk::Trust;
 use serde::{Deserialize, Serialize};
 
 pub const EXTENSIONS_FILE: &str = "extensions.json";
+
+// Prepared calls and workers live only in this process. A checked process-wide
+// sequence also prevents a registry reload from recreating an old live identity.
+static NEXT_EXECUTION_GENERATION: AtomicU64 = AtomicU64::new(1);
+
+fn next_execution_generation() -> Result<u64> {
+    NEXT_EXECUTION_GENERATION
+        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |next| {
+            next.checked_add(1)
+        })
+        .map_err(|_| anyhow::anyhow!("extension execution generation exhausted"))
+}
 
 /// Retired visual-only pack. Kept only long enough to remove stale local
 /// registry state; both Agent layouts now belong to native settings.
@@ -50,6 +63,10 @@ pub const BUILTIN_AGENT: &str = "grain.agent";
 pub struct ExtensionRecord {
     pub id: String,
     pub enabled: bool,
+    /// Host-owned identity for live calls/workers, independent of toggle order.
+    /// Never read from disk or caller input; assigned at registry boundaries.
+    #[serde(skip)]
+    pub execution_generation: u64,
     /// Position in toggle order (SPEC §4.4): set from `next_toggle_seq` every
     /// time the extension is enabled, so re-enabling moves it to the end.
     #[serde(default)]
@@ -129,7 +146,7 @@ pub struct ExtensionRecord {
     /// A load-unpacked project currently overriding this id. The effective
     /// record stays at the normal map key, so every capability/slot/lifecycle
     /// path sees exactly one extension. Any installed version is parked here
-    /// verbatim and restored on unload.
+    /// with its settings preserved; unload assigns a fresh execution identity.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dev: Option<DevOverride>,
     /// [GRAIN] Phase 5A trust rung (SPEC §7.4, DISTRIBUTION-PLAN §3.2). **The
@@ -301,8 +318,9 @@ pub fn native_call_fingerprint(
     serde_json::to_writer(
         &mut writer,
         &(
-            "grain.native.call.v1",
+            "grain.native.call.v2",
             manifest,
+            record.execution_generation,
             record.toggle_seq,
             &record.granted,
             &record.installed_version,
@@ -725,7 +743,7 @@ impl ExtensionsRegistry {
     /// extension records are retired during load; Grain now owns its appearance.
     pub fn load(data_dir: &Path, _settings_file_preexisted: bool) -> Result<Self> {
         let path = data_dir.join(EXTENSIONS_FILE);
-        let state = if path.exists() {
+        let mut state: RegistryFile = if path.exists() {
             let raw =
                 fs::read_to_string(&path).with_context(|| format!("read {}", path.display()))?;
             serde_json::from_str(&raw).unwrap_or_else(|e| {
@@ -737,6 +755,9 @@ impl ExtensionsRegistry {
         } else {
             RegistryFile::default()
         };
+        for record in state.records.values_mut() {
+            record.execution_generation = next_execution_generation()?;
+        }
         let reg = Self {
             path,
             state: RwLock::new(state),
@@ -992,6 +1013,7 @@ impl ExtensionsRegistry {
             let next = state.next_toggle_seq;
             let declared = match state.records.get_mut(id) {
                 Some(rec) if rec.enabled != enabled => {
+                    rec.execution_generation = next_execution_generation()?;
                     rec.enabled = enabled;
                     if enabled {
                         rec.toggle_seq = next;
@@ -1047,9 +1069,10 @@ impl ExtensionsRegistry {
 
     /// Install a pack record (import path lands in the next chunk; the
     /// centre-variant import uses this today via `load`).
-    pub fn install(&self, record: ExtensionRecord) -> Result<()> {
+    pub fn install(&self, mut record: ExtensionRecord) -> Result<()> {
         {
             let mut state = self.state.write().unwrap();
+            record.execution_generation = next_execution_generation()?;
             let id = record.id.clone();
             state.quarantined.remove(&id);
             // A store/manual install arriving while this id is overridden
@@ -1106,6 +1129,7 @@ impl ExtensionsRegistry {
     pub fn load_dev(&self, mut record: ExtensionRecord, path: PathBuf) -> Result<()> {
         {
             let mut state = self.state.write().unwrap();
+            record.execution_generation = next_execution_generation()?;
             let id = record.id.clone();
             let replaced =
                 state
@@ -1129,6 +1153,16 @@ impl ExtensionsRegistry {
     pub fn unload_dev(&self, id: &str) -> Result<bool> {
         let changed = {
             let mut state = self.state.write().unwrap();
+            if state
+                .records
+                .get(id)
+                .is_none_or(|record| record.dev.is_none())
+            {
+                return Ok(false);
+            }
+            // Reserve before removing the active record, so exhaustion cannot
+            // partially unload an override or resurrect its parked identity.
+            let generation = next_execution_generation()?;
             let Some(mut active) = state.records.remove(id) else {
                 return Ok(false);
             };
@@ -1139,6 +1173,7 @@ impl ExtensionsRegistry {
             Self::release_slots_locked(&mut state, id);
 
             if let Some(mut replaced) = dev.replaced.map(|record| *record) {
+                replaced.execution_generation = generation;
                 if replaced.enabled {
                     let contested = replaced.slots.iter().any(|slot| {
                         state
@@ -1395,6 +1430,7 @@ mod tests {
         ExtensionRecord {
             id: id.into(),
             enabled: false,
+            execution_generation: 0,
             toggle_seq: 0,
             installed_version: "1".into(),
             artifact_sha256: None,
@@ -1502,7 +1538,7 @@ mod tests {
     }
 
     #[test]
-    fn dev_override_restores_the_installed_record_verbatim() {
+    fn dev_override_restores_settings_with_a_fresh_execution_identity() {
         let dir = tmp();
         let reg = ExtensionsRegistry::load(dir.path(), false).unwrap();
         let mut installed = pack("com.x.dev", &[]);
@@ -1510,6 +1546,7 @@ mod tests {
         installed.toggle_seq = 7;
         installed.granted = vec!["storage".into()];
         reg.install(installed).unwrap();
+        let original = reg.record("com.x.dev").unwrap();
 
         let mut dev = pack("com.x.dev", &[]);
         dev.installed_version = "dev-2".into();
@@ -1523,6 +1560,120 @@ mod tests {
         assert_eq!(restored.toggle_seq, 7);
         assert_eq!(restored.granted, vec!["storage"]);
         assert!(restored.dev.is_none());
+        assert_ne!(restored.execution_generation, original.execution_generation);
+        assert_eq!(
+            serde_json::to_value(&restored).unwrap(),
+            serde_json::to_value(&original).unwrap(),
+            "persistent settings and toggle order survive restoration"
+        );
+    }
+
+    #[test]
+    fn identical_replacements_and_restoration_never_resurrect_a_native_confirmation() {
+        let dir = tmp();
+        let reg = ExtensionsRegistry::load(dir.path(), false).unwrap();
+        let manifest: grain_sdk::ExtensionManifest = serde_json::from_value(serde_json::json!({
+            "id": "com.x.dev", "name": "Tools", "version": "1", "tier": "scripted",
+            "entry_source": "grain.actions({hello: () => 'hello'});"
+        }))
+        .unwrap();
+        let mut installed = pack("com.x.dev", &[]);
+        installed.enabled = true;
+        installed.toggle_seq = 7;
+        reg.install(installed).unwrap();
+        let original = reg.record("com.x.dev").unwrap();
+        let mut identities = std::collections::HashSet::new();
+        let mut observe = || {
+            let record = reg.record("com.x.dev").unwrap();
+            assert_eq!(record.toggle_seq, 7, "identity does not reorder settings");
+            let digest = native_call_fingerprint(&record, &manifest).unwrap();
+            assert!(
+                identities.insert(digest),
+                "a prior confirmation cannot become current again"
+            );
+        };
+        observe();
+        reg.install(original.clone()).unwrap();
+        observe();
+        reg.load_dev(original.clone(), dir.path().join("one"))
+            .unwrap();
+        observe();
+        let active_generation = reg.record("com.x.dev").unwrap().execution_generation;
+        reg.install(original.clone()).unwrap();
+        assert_eq!(
+            active_generation,
+            reg.record("com.x.dev").unwrap().execution_generation,
+            "updating only the parked installed copy leaves the dev instance current"
+        );
+        let active = reg.record("com.x.dev").unwrap();
+        reg.install(active).unwrap();
+        observe();
+        reg.load_dev(original.clone(), dir.path().join("one"))
+            .unwrap();
+        observe();
+        reg.unload_dev("com.x.dev").unwrap();
+        observe();
+        reg.uninstall("com.x.dev").unwrap();
+        reg.install(original).unwrap();
+        observe();
+    }
+
+    #[test]
+    fn execution_generation_is_host_owned_and_registry_reload_renews_it() {
+        let dir = tmp();
+        let reg = ExtensionsRegistry::load(dir.path(), false).unwrap();
+        let mut input = serde_json::to_value(pack("tools", &[])).unwrap();
+        input["execution_generation"] = serde_json::json!(u64::MAX);
+        let input: ExtensionRecord = serde_json::from_value(input).unwrap();
+        assert_eq!(
+            input.execution_generation, 0,
+            "disk input cannot supply authority"
+        );
+        reg.install(input).unwrap();
+        let first = reg.record("tools").unwrap();
+        assert_ne!(first.execution_generation, 0);
+        assert_ne!(first.execution_generation, u64::MAX);
+        let mut forged = first.clone();
+        forged.execution_generation = first.execution_generation;
+        reg.install(forged).unwrap();
+        let second = reg.record("tools").unwrap();
+        assert_ne!(first.execution_generation, second.execution_generation);
+        assert!(!fs::read_to_string(dir.path().join(EXTENSIONS_FILE))
+            .unwrap()
+            .contains("execution_generation"));
+        let reloaded = ExtensionsRegistry::load(dir.path(), false).unwrap();
+        let third = reloaded.record("tools").unwrap();
+        assert_ne!(second.execution_generation, third.execution_generation);
+        assert_eq!(
+            serde_json::to_value(first).unwrap(),
+            serde_json::to_value(third).unwrap()
+        );
+    }
+
+    #[test]
+    fn failed_persistence_does_not_roll_back_live_execution_identity() {
+        let dir = tmp();
+        let reg = ExtensionsRegistry::load(dir.path(), false).unwrap();
+        reg.install(pack("tools", &[])).unwrap();
+        reg.set_enabled("tools", true).unwrap();
+        let before = reg.record("tools").unwrap();
+        // Make atomic rename fail without touching anything outside this fixture.
+        let path = dir.path().join(EXTENSIONS_FILE);
+        fs::remove_file(&path).unwrap();
+        fs::create_dir(&path).unwrap();
+        assert!(reg.install(before.clone()).is_err());
+        let replacement = reg.record("tools").unwrap();
+        assert_ne!(
+            before.execution_generation,
+            replacement.execution_generation
+        );
+        assert!(reg.set_enabled("tools", false).is_err());
+        let disabled = reg.record("tools").unwrap();
+        assert!(!disabled.enabled);
+        assert_ne!(
+            replacement.execution_generation,
+            disabled.execution_generation
+        );
     }
 
     #[test]

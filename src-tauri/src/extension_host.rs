@@ -2367,6 +2367,7 @@ pub fn reload_dev_extension(
     reg.install(grain_core::extensions::ExtensionRecord {
         id: id.to_string(),
         enabled,
+        execution_generation: 0,
         toggle_seq: prior.toggle_seq,
         installed_version: loaded.pack.manifest.version.clone(),
         artifact_sha256: None,
@@ -2579,6 +2580,7 @@ mod tests {
         grain_core::extensions::ExtensionRecord {
             id: "com.x.p".into(),
             enabled: true,
+            execution_generation: 0,
             toggle_seq: 1,
             installed_version: "1.0".into(),
             artifact_sha256: None,
@@ -3121,6 +3123,9 @@ mod tests {
                 "reenabled",
                 "replaced",
                 "source_worker",
+                "restored",
+                "same_source_reload",
+                "same_source_install",
                 "missing",
                 "invalid",
                 "after_queue",
@@ -3136,6 +3141,14 @@ mod tests {
                 record.enabled = false;
                 registry.install(record).unwrap();
                 registry.set_enabled(&pack.manifest.id, true).unwrap();
+                if mode == "same_source_reload" {
+                    registry
+                        .load_dev(
+                            registry.record(&pack.manifest.id).unwrap(),
+                            directory.path().join("project"),
+                        )
+                        .unwrap();
+                }
                 let digest = grain_core::extensions::native_call_fingerprint(
                     &registry.record(&pack.manifest.id).unwrap(),
                     &pack.manifest,
@@ -3167,6 +3180,28 @@ mod tests {
                     "missing" => {
                         registry.uninstall(&pack.manifest.id).unwrap();
                     }
+                    "restored" => {
+                        registry
+                            .load_dev(
+                                registry.record(&pack.manifest.id).unwrap(),
+                                directory.path().join("project"),
+                            )
+                            .unwrap();
+                        registry.unload_dev(&pack.manifest.id).unwrap();
+                    }
+                    "same_source_reload" => {
+                        registry
+                            .load_dev(
+                                registry.record(&pack.manifest.id).unwrap(),
+                                directory.path().join("project"),
+                            )
+                            .unwrap();
+                    }
+                    "same_source_install" => {
+                        registry
+                            .install(registry.record(&pack.manifest.id).unwrap())
+                            .unwrap();
+                    }
                     _ => {}
                 }
                 let arguments = if mode == "invalid" {
@@ -3194,6 +3229,71 @@ mod tests {
                     assert!(queued.is_err(), "{mode}");
                     assert!(!dispatched.load(Ordering::Acquire));
                     assert!(out_rx.try_recv().is_err(), "zero frames: {mode}");
+                    if matches!(
+                        mode,
+                        "restored" | "same_source_reload" | "same_source_install"
+                    ) {
+                        let current_digest = grain_core::extensions::native_call_fingerprint(
+                            &registry.record(&pack.manifest.id).unwrap(),
+                            &pack.manifest,
+                        )
+                        .unwrap();
+                        let current = NativeAdmission {
+                            expected_digest: &current_digest,
+                            ..admission
+                        };
+                        assert!(
+                            enqueue_native_call(
+                                &registry,
+                                &workers,
+                                &pack.manifest,
+                                &current,
+                                &dispatched,
+                            )
+                            .is_err(),
+                            "fresh approval cannot use the old warm worker"
+                        );
+                        assert!(!dispatched.load(Ordering::Acquire));
+                        assert!(out_rx.try_recv().is_err());
+                        let mut replacement = worker(now_secs(), false);
+                        replacement.token = "fresh".into();
+                        replacement.call_digest = Some(current_digest.clone());
+                        workers.insert(&pack.manifest.id, replacement);
+                        let (fresh_tx, mut fresh_rx) = mpsc::unbounded_channel();
+                        workers
+                            .attach(&pack.manifest.id, "fresh", fresh_tx)
+                            .unwrap();
+                        let current = NativeAdmission {
+                            token: "fresh",
+                            ..current
+                        };
+                        let queued = enqueue_native_call(
+                            &registry,
+                            &workers,
+                            &pack.manifest,
+                            &current,
+                            &dispatched,
+                        )
+                        .unwrap();
+                        let Message::Text(frame) = fresh_rx.try_recv().unwrap() else {
+                            panic!("one fresh call")
+                        };
+                        let HostFrame::Call(call) = serde_json::from_str(&frame).unwrap() else {
+                            panic!("call")
+                        };
+                        workers.resolve(
+                            &pack.manifest.id,
+                            "fresh",
+                            call.call_id,
+                            Ok(json!({"ok": "fresh"})),
+                        );
+                        assert_eq!(
+                            queued.wait(Duration::from_secs(1)).await.unwrap(),
+                            json!({"ok": "fresh"})
+                        );
+                        assert!(dispatched.load(Ordering::Acquire));
+                        assert!(fresh_rx.try_recv().is_err(), "fresh call is not replayed");
+                    }
                     continue;
                 }
                 let queued = queued.unwrap();

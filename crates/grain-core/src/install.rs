@@ -207,6 +207,7 @@ pub fn plan_record(
     ExtensionRecord {
         id: entry.id.clone(),
         enabled,
+        execution_generation: 0,
         toggle_seq: prior.map(|r| r.toggle_seq).unwrap_or(0),
         installed_version: entry.version.clone(),
         artifact_sha256: Some(entry.sha256.clone()),
@@ -390,6 +391,7 @@ mod tests {
         let rec = ExtensionRecord {
             id: "com.evil.fake".into(),
             enabled: false,
+            execution_generation: 0,
             toggle_seq: 0,
             installed_version: "1.0.0".into(),
             artifact_sha256: None,
@@ -571,6 +573,7 @@ mod tests {
         let approved = ExtensionRecord {
             id: "com.example.x".into(),
             enabled: true,
+            execution_generation: 0,
             toggle_seq: 1,
             installed_version: "1.0.0".into(),
             artifact_sha256: None,
@@ -629,6 +632,7 @@ mod tests {
         let approved = ExtensionRecord {
             id: "com.example.x".into(),
             enabled: true,
+            execution_generation: 0,
             toggle_seq: 1,
             installed_version: "1.0.0".into(),
             artifact_sha256: None,
@@ -688,6 +692,7 @@ mod tests {
         let approved = ExtensionRecord {
             id: "com.example.x".into(),
             enabled: true,
+            execution_generation: 0,
             toggle_seq: 1,
             installed_version: "1.0.0".into(),
             artifact_sha256: None,
@@ -746,6 +751,7 @@ mod tests {
         let approved = ExtensionRecord {
             id: "com.example.x".into(),
             enabled: true,
+            execution_generation: 0,
             toggle_seq: 1,
             installed_version: "1.0.0".into(),
             artifact_sha256: None,

@@ -1479,6 +1479,7 @@ mod imported_update_security_tests {
         grain_core::extensions::ExtensionRecord {
             id: pack.manifest.id.clone(),
             enabled: true,
+            execution_generation: 0,
             toggle_seq: 1,
             installed_version: pack.manifest.version.clone(),
             artifact_sha256: None,
@@ -1714,6 +1715,7 @@ fn register_unpacked_project(
     let record = ext::ExtensionRecord {
         id: id.clone(),
         enabled: false,
+        execution_generation: 0,
         toggle_seq: prior.as_ref().map(|record| record.toggle_seq).unwrap_or(0),
         installed_version: loaded.pack.manifest.version.clone(),
         artifact_sha256: None,
@@ -2129,6 +2131,7 @@ pub fn extension_import_pack(
         // changed prompt/action/auth/recommendation digest holds the pack off
         // until the settings sheet has shown the new contract.
         enabled: stays_enabled,
+        execution_generation: 0,
         toggle_seq: prior.as_ref().map(|r| r.toggle_seq).unwrap_or(0),
         installed_version: pack.manifest.version.clone(),
         artifact_sha256: Some(grain_core::trust::sha256_hex(&stored)),
