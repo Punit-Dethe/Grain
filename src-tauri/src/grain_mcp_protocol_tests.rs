@@ -231,6 +231,36 @@ async fn a_recorded_write_with_a_lost_response_is_unknown_and_never_replayed() {
 }
 
 #[tokio::test]
+async fn account_cancellation_after_a_recorded_write_remains_unknown() {
+    let fixture = Fixture::start(Behavior::HangAfterWrite).await;
+    let service = fixture.service(McpHttpClient::build().unwrap().0).await;
+    let control = session::Control::new();
+    let ticket = control.ticket();
+    let operation = async {
+        ticket
+            .run(execute(&service, Duration::from_secs(3)))
+            .await
+            .unwrap_or_else(|message| Err(session_cancelled(&service, message)))
+    };
+    let logout = async {
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while fixture.calls.load(Ordering::SeqCst) == 0 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        control.invalidate();
+    };
+    let (result, _) = tokio::join!(operation, logout);
+    let outcome = crate::action_exec::mcp_outcome(result, &prepared(SideEffect::Write));
+    assert!(matches!(outcome, ActionOutcome::UnknownOutcome { .. }));
+    assert_eq!(fixture.calls.load(Ordering::SeqCst), 1);
+    assert!(close_service(service).await);
+    fixture.stop().await;
+}
+
+#[tokio::test]
 async fn a_write_response_deadline_is_unknown_and_cleanup_is_bounded() {
     let fixture = Fixture::start(Behavior::HangAfterWrite).await;
     let service = fixture.service(McpHttpClient::build().unwrap().0).await;

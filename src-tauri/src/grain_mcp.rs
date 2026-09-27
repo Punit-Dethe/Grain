@@ -17,8 +17,8 @@ use rmcp::model::{
     Implementation, PaginatedRequestParams, ProtocolVersion, Tool,
 };
 use rmcp::transport::auth::{
-    AuthClient, AuthError, AuthorizationManager, AuthorizationRequest, CredentialStore, OAuthState,
-    StoredCredentials,
+    AuthClient, AuthError, AuthorizationManager, AuthorizationMetadata, AuthorizationRequest,
+    AuthorizationSession, CredentialStore, OAuthClientConfig, StoredCredentials,
 };
 use rmcp::transport::streamable_http_client::StreamableHttpClientTransportConfig;
 use rmcp::transport::StreamableHttpClientTransport;
@@ -51,6 +51,7 @@ type SdkService = rmcp::service::RunningService<rmcp::service::RoleClient, Clien
 struct McpService {
     inner: SdkService,
     cancel: tokio::sync::watch::Sender<bool>,
+    dispatched: std::sync::atomic::AtomicBool,
 }
 
 impl std::ops::Deref for McpService {
@@ -68,6 +69,27 @@ impl Drop for McpService {
 
 #[path = "grain_mcp_http.rs"]
 mod cancellable_http;
+
+#[path = "grain_mcp_session.rs"]
+mod session;
+
+fn provider_control(id: &str) -> std::sync::Arc<session::Control> {
+    static CONTROLS: OnceLock<BTreeMap<&'static str, std::sync::Arc<session::Control>>> =
+        OnceLock::new();
+    CONTROLS.get_or_init(|| {
+        CATALOG
+            .iter()
+            .map(|item| (item.id, session::Control::new()))
+            .collect()
+    })[id]
+        .clone()
+}
+
+pub(crate) fn invalidate_all_sessions() {
+    for item in CATALOG {
+        provider_control(item.id).invalidate();
+    }
+}
 
 #[derive(Clone, Copy)]
 struct CatalogProvider {
@@ -169,7 +191,8 @@ pub struct McpProviderStatus {
     pub client_id_configured: bool,
     pub connected: bool,
     pub enabled: bool,
-    /// `ready` | `needs_client_credentials` | `disconnected` | `unavailable`
+    /// Stored credentials are not a live health check.
+    /// `stored` | `needs_client_credentials` | `disconnected` | `unavailable`
     pub state: String,
 }
 
@@ -198,15 +221,31 @@ pub(crate) struct McpCallOutput {
     pub unsupported_content: Vec<&'static str>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 struct VaultCredentialStore {
     account: String,
+    ticket: session::Ticket,
+    operation: Option<session::Lease>,
 }
 
 impl VaultCredentialStore {
     fn new(provider_id: &str) -> Self {
         Self {
             account: provider_id.to_string(),
+            ticket: provider_control(provider_id).ticket(),
+            operation: None,
+        }
+    }
+
+    fn with_ticket(
+        provider_id: &str,
+        ticket: &session::Ticket,
+        operation: &session::Lease,
+    ) -> Self {
+        Self {
+            account: provider_id.into(),
+            ticket: ticket.clone(),
+            operation: Some(operation.clone()),
         }
     }
 }
@@ -215,23 +254,44 @@ impl VaultCredentialStore {
 impl CredentialStore for VaultCredentialStore {
     async fn load(&self) -> Result<Option<StoredCredentials>, AuthError> {
         let account = self.account.clone();
-        tokio::task::spawn_blocking(move || read_credentials_sync(&account))
-            .await
-            .map_err(|error| AuthError::InternalError(format!("credential task failed: {error}")))?
+        let ticket = self.ticket.clone();
+        let operation = self.operation.clone();
+        tokio::task::spawn_blocking(move || {
+            let _operation = operation;
+            ticket
+                .commit(|| read_credentials_sync(&account))
+                .map_err(AuthError::InternalError)?
+        })
+        .await
+        .map_err(|error| AuthError::InternalError(format!("credential task failed: {error}")))?
     }
 
     async fn save(&self, credentials: StoredCredentials) -> Result<(), AuthError> {
         let account = self.account.clone();
-        tokio::task::spawn_blocking(move || write_credentials_sync(&account, &credentials))
-            .await
-            .map_err(|error| AuthError::InternalError(format!("credential task failed: {error}")))?
+        let ticket = self.ticket.clone();
+        let operation = self.operation.clone();
+        tokio::task::spawn_blocking(move || {
+            let _operation = operation;
+            ticket
+                .commit(|| write_credentials_sync(&account, &credentials))
+                .map_err(AuthError::InternalError)?
+        })
+        .await
+        .map_err(|error| AuthError::InternalError(format!("credential task failed: {error}")))?
     }
 
     async fn clear(&self) -> Result<(), AuthError> {
         let account = self.account.clone();
-        tokio::task::spawn_blocking(move || delete_vault_entry(VAULT_SERVICE, &account))
-            .await
-            .map_err(|error| AuthError::InternalError(format!("credential task failed: {error}")))?
+        let ticket = self.ticket.clone();
+        let operation = self.operation.clone();
+        tokio::task::spawn_blocking(move || {
+            let _operation = operation;
+            ticket
+                .commit(|| delete_vault_entry(VAULT_SERVICE, &account))
+                .map_err(AuthError::InternalError)?
+        })
+        .await
+        .map_err(|error| AuthError::InternalError(format!("credential task failed: {error}")))?
     }
 }
 
@@ -263,9 +323,15 @@ fn write_credentials_sync(account: &str, credentials: &StoredCredentials) -> Res
     let entry = keyring::Entry::new(VAULT_SERVICE, account).map_err(|e| vault_error("open", e))?;
     let mut bytes = serde_json::to_vec(credentials)
         .map_err(|error| AuthError::InternalError(error.to_string()))?;
-    let result = entry
-        .set_secret(&bytes)
-        .map_err(|error| vault_error("write", error));
+    let result = if bytes.len() > 128 * 1024 {
+        Err(AuthError::InternalError(
+            "MCP credential is too large".into(),
+        ))
+    } else {
+        entry
+            .set_secret(&bytes)
+            .map_err(|error| vault_error("write", error))
+    };
     bytes.zeroize();
     result
 }
@@ -283,6 +349,46 @@ fn provider(id: &str) -> Result<&'static CatalogProvider, String> {
         .iter()
         .find(|provider| provider.id == id)
         .ok_or_else(|| "unknown MCP provider".to_string())
+}
+
+fn validate_hosted_oauth_metadata(metadata: &AuthorizationMetadata) -> Result<(), String> {
+    // The SDK intentionally tolerates absent PKCE metadata for older servers.
+    // Grain's hosted catalog follows the current MCP requirements instead.
+    if !metadata
+        .code_challenge_methods_supported
+        .as_ref()
+        .is_some_and(|methods| methods.iter().any(|method| method == "S256"))
+    {
+        return Err("OAuth metadata must explicitly advertise S256 PKCE support.".into());
+    }
+    let issuer = metadata
+        .issuer
+        .as_deref()
+        .ok_or("OAuth metadata must identify its issuer.")?;
+    for endpoint in std::iter::once(metadata.authorization_endpoint.as_str())
+        .chain(std::iter::once(metadata.token_endpoint.as_str()))
+        .chain(metadata.registration_endpoint.as_deref())
+        .chain(std::iter::once(issuer))
+    {
+        let valid = reqwest_mcp::Url::parse(endpoint).ok().is_some_and(|url| {
+            url.scheme() == "https"
+                && url.host_str().is_some()
+                && url.username().is_empty()
+                && url.password().is_none()
+                && url.fragment().is_none()
+        });
+        if !valid {
+            return Err("Hosted OAuth metadata must use HTTPS endpoints without embedded credentials or fragments.".into());
+        }
+    }
+    if metadata
+        .additional_fields
+        .get("authorization_response_iss_parameter_supported")
+        .is_some_and(|value| !value.is_boolean())
+    {
+        return Err("OAuth issuer-response metadata must be a boolean.".into());
+    }
+    Ok(())
 }
 
 fn require_developer_mode(app: &AppHandle) -> Result<(), String> {
@@ -344,9 +450,12 @@ pub async fn mcp_provider_status(
             .mcp_oauth_client_ids
             .get(item.id)
             .is_some_and(|value| !value.trim().is_empty());
-        let connected = stored_connected(item.id).await.unwrap_or(false);
-        let state = if connected {
-            "ready"
+        let stored = stored_connected(item.id).await;
+        let connected = stored.as_ref().is_ok_and(|value| *value);
+        let state = if stored.is_err() {
+            "unavailable"
+        } else if connected {
+            "stored"
         } else if item.registration == Registration::PreRegistered && !client_id_configured {
             "needs_client_credentials"
         } else {
@@ -387,20 +496,52 @@ pub async fn mcp_set_client_credentials(
     if client_id.is_empty() || client_id.len() > 512 || client_id.chars().any(char::is_control) {
         return Err("client ID must be 1-512 printable characters".into());
     }
-    if client_secret.is_empty() || client_secret.len() > 4096 {
-        return Err("client secret must be 1-4096 characters".into());
+    if client_secret.len() > 4096 {
+        return Err(
+            "client secret must be at most 4096 characters (optional for public clients)".into(),
+        );
     }
 
+    let ticket = provider_control(item.id).invalidate();
+    let _operation = tokio::time::timeout(OPERATION_TIMEOUT, ticket.acquire())
+        .await
+        .map_err(|_| "MCP credential update timed out")??;
+    let ctx = app
+        .try_state::<std::sync::Arc<grain_core::AppContext>>()
+        .ok_or("application context unavailable")?;
+    ticket
+        .commit(|| {
+            ctx.update_settings(|settings| {
+                settings
+                    .mcp_enabled_providers
+                    .retain(|current| current != &id);
+            })
+        })?
+        .map_err(|error| error.to_string())?;
     let account = id.clone();
+    let write_ticket = ticket.clone();
+    let write_operation = _operation.clone();
     tokio::task::spawn_blocking(move || {
+        let _operation = write_operation;
         let mut secret = client_secret;
-        let result = keyring::Entry::new(CLIENT_SECRET_SERVICE, &account)
-            .map_err(|error| format!("OS credential vault unavailable: {error}"))
-            .and_then(|entry| {
-                entry
-                    .set_password(&secret)
-                    .map_err(|error| format!("OS credential vault write failed: {error}"))
-            });
+        let result = write_ticket
+            .commit(|| {
+                // Clear the grant first: a partially failed client update must not
+                // leave old tokens paired with a different secret.
+                delete_vault_entry(VAULT_SERVICE, &account).map_err(|e| e.to_string())?;
+                if secret.is_empty() {
+                    return delete_vault_entry(CLIENT_SECRET_SERVICE, &account)
+                        .map_err(|e| e.to_string());
+                }
+                keyring::Entry::new(CLIENT_SECRET_SERVICE, &account)
+                    .map_err(|error| format!("OS credential vault unavailable: {error}"))
+                    .and_then(|entry| {
+                        entry
+                            .set_password(&secret)
+                            .map_err(|error| format!("OS credential vault write failed: {error}"))
+                    })
+            })
+            .and_then(|result| result);
         secret.zeroize();
         result
     })
@@ -409,20 +550,16 @@ pub async fn mcp_set_client_credentials(
 
     // A pre-registered client change invalidates the issuer-bound token. Never
     // let an old grant ride under newly configured client credentials.
-    VaultCredentialStore::new(&id)
-        .clear()
-        .await
+    ticket
+        .commit(|| {
+            ctx.update_settings(|settings| {
+                settings
+                    .mcp_enabled_providers
+                    .retain(|current| current != &id);
+                settings.mcp_oauth_client_ids.insert(id.clone(), client_id);
+            })
+        })?
         .map_err(|error| error.to_string())?;
-    let ctx = app
-        .try_state::<std::sync::Arc<grain_core::AppContext>>()
-        .ok_or("application context unavailable")?;
-    ctx.update_settings(|settings| {
-        settings
-            .mcp_enabled_providers
-            .retain(|current| current != &id);
-        settings.mcp_oauth_client_ids.insert(id.clone(), client_id);
-    })
-    .map_err(|error| error.to_string())?;
     Ok(())
 }
 
@@ -437,23 +574,30 @@ pub async fn mcp_set_provider_enabled(
     crate::grain_commands::require_main_window(&window)?;
     require_developer_mode(&app)?;
     provider(&id)?;
+    let ticket = provider_control(&id).invalidate();
+    let _operation = tokio::time::timeout(OPERATION_TIMEOUT, ticket.acquire())
+        .await
+        .map_err(|_| "MCP enable/disable timed out")??;
     if enabled && !stored_connected(&id).await? {
         return Err("connect this MCP provider before enabling it".into());
     }
     let ctx = app
         .try_state::<std::sync::Arc<grain_core::AppContext>>()
         .ok_or("application context unavailable")?;
-    ctx.update_settings(|settings| {
-        settings
-            .mcp_enabled_providers
-            .retain(|current| current != &id);
-        if enabled {
-            settings.mcp_enabled_providers.push(id);
-            settings.mcp_enabled_providers.sort();
-            settings.mcp_enabled_providers.dedup();
-        }
-    })
-    .map_err(|error| error.to_string())?;
+    ticket
+        .commit(|| {
+            ctx.update_settings(|settings| {
+                settings
+                    .mcp_enabled_providers
+                    .retain(|current| current != &id);
+                if enabled {
+                    settings.mcp_enabled_providers.push(id);
+                    settings.mcp_enabled_providers.sort();
+                    settings.mcp_enabled_providers.dedup();
+                }
+            })
+        })?
+        .map_err(|error| error.to_string())?;
     Ok(())
 }
 
@@ -462,6 +606,95 @@ struct CallbackValues {
     code: String,
     state: String,
     issuer: Option<String>,
+}
+
+enum CallbackDecision {
+    Invalid,
+    Denied,
+    Accepted(CallbackValues),
+}
+
+fn parse_callback(
+    request: &str,
+    expected_host: &str,
+    expected_state: &str,
+    expected_issuer: Option<&str>,
+    require_issuer: bool,
+) -> CallbackDecision {
+    if !request.contains("\r\n\r\n") {
+        return CallbackDecision::Invalid;
+    }
+    let mut lines = request.split("\r\n");
+    let mut first = lines.next().unwrap_or_default().split_whitespace();
+    let method = first.next();
+    let target = first.next().unwrap_or_default();
+    let version = first.next();
+    if method != Some("GET")
+        || version != Some("HTTP/1.1")
+        || first.next().is_some()
+        || target.split('?').next() != Some(CALLBACK_PATH)
+    {
+        return CallbackDecision::Invalid;
+    }
+    let hosts: Vec<_> = lines
+        .take_while(|line| !line.is_empty())
+        .filter_map(|line| {
+            let (name, value) = line.split_once(':')?;
+            name.eq_ignore_ascii_case("host").then(|| value.trim())
+        })
+        .collect();
+    if hosts.as_slice() != [expected_host] {
+        return CallbackDecision::Invalid;
+    }
+    let Ok(url) = reqwest_mcp::Url::parse(&format!("http://{expected_host}{target}")) else {
+        return CallbackDecision::Invalid;
+    };
+    if url.path() != CALLBACK_PATH || url.fragment().is_some() {
+        return CallbackDecision::Invalid;
+    }
+    let mut params = BTreeMap::new();
+    for (key, value) in url.query_pairs().into_owned() {
+        if params.insert(key, value).is_some() {
+            return CallbackDecision::Invalid;
+        }
+    }
+    if !params
+        .get("state")
+        .is_some_and(|value| value == expected_state && value.len() <= 4096)
+    {
+        return CallbackDecision::Invalid;
+    }
+    // Apply RFC 9207 to error responses as well as successful callbacks. Never
+    // silently drop a malformed issuer and turn it into an optional field.
+    let issuer = params.remove("iss");
+    if issuer
+        .as_ref()
+        .is_some_and(|value| value.len() > 2048 || value.is_empty())
+        || issuer
+            .as_deref()
+            .is_some_and(|value| Some(value) != expected_issuer)
+        || (require_issuer && (issuer.is_none() || expected_issuer.is_none()))
+    {
+        return CallbackDecision::Invalid;
+    }
+    if params.contains_key("error") {
+        return if params.contains_key("code") {
+            CallbackDecision::Invalid
+        } else {
+            CallbackDecision::Denied
+        };
+    }
+    let Some(code) = params
+        .remove("code")
+        .filter(|value| !value.is_empty() && value.len() <= 4096)
+    else {
+        return CallbackDecision::Invalid;
+    };
+    CallbackDecision::Accepted(CallbackValues {
+        code,
+        state: expected_state.into(),
+        issuer,
+    })
 }
 
 async fn read_callback_request(stream: &mut TcpStream) -> Result<Vec<u8>, String> {
@@ -500,7 +733,13 @@ async fn send_callback_response(stream: &mut TcpStream, status: &str, body: &str
 async fn await_callback(
     listener: TcpListener,
     expected_state: &str,
+    expected_issuer: Option<&str>,
+    require_issuer: bool,
 ) -> Result<CallbackValues, String> {
+    let expected_host = listener
+        .local_addr()
+        .map_err(|e| e.to_string())?
+        .to_string();
     loop {
         let (mut stream, peer) = listener.accept().await.map_err(|e| e.to_string())?;
         if !peer.ip().is_loopback() {
@@ -513,87 +752,57 @@ async fn await_callback(
         let Ok(request) = std::str::from_utf8(&request) else {
             continue;
         };
-        let mut lines = request.lines();
-        let first = lines.next().unwrap_or_default();
-        let mut first = first.split_whitespace();
-        let method = first.next().unwrap_or_default();
-        let target = first.next().unwrap_or_default();
-        let host = lines.find_map(|line| {
-            let (name, value) = line.split_once(':')?;
-            name.eq_ignore_ascii_case("host").then(|| value.trim())
-        });
-        let url = reqwest_mcp::Url::parse(&format!("http://127.0.0.1{target}")).ok();
-        let mut params = BTreeMap::new();
-        let mut duplicate = false;
-        if let Some(url) = &url {
-            for (key, value) in url.query_pairs().into_owned() {
-                if params.insert(key.clone(), value).is_some()
-                    && matches!(key.as_str(), "state" | "code" | "error" | "iss")
-                {
-                    duplicate = true;
-                }
+        let callback = match parse_callback(
+            request,
+            &expected_host,
+            expected_state,
+            expected_issuer,
+            require_issuer,
+        ) {
+            CallbackDecision::Invalid => {
+                send_callback_response(
+                    &mut stream,
+                    "400 Bad Request",
+                    "Authentication failed. Return to Grain and try again.",
+                )
+                .await;
+                continue;
             }
-        }
-        let valid = method == "GET"
-            && host == Some(CALLBACK_ADDR)
-            && url.as_ref().is_some_and(|url| url.path() == CALLBACK_PATH)
-            && !duplicate
-            && params
-                .get("state")
-                .is_some_and(|state| state == expected_state);
-        if !valid {
-            send_callback_response(
-                &mut stream,
-                "400 Bad Request",
-                "Authentication failed. Return to Grain and try again.",
-            )
-            .await;
-            continue;
-        }
-        if params.contains_key("error") {
-            send_callback_response(
-                &mut stream,
-                "400 Bad Request",
-                "Authentication was not approved. You can close this tab and return to Grain.",
-            )
-            .await;
-            return Err("provider denied authentication".into());
-        }
-        let Some(code) = params
-            .remove("code")
-            .filter(|value| !value.is_empty() && value.len() <= 4096)
-        else {
-            continue;
+            CallbackDecision::Denied => {
+                send_callback_response(
+                    &mut stream,
+                    "400 Bad Request",
+                    "Authentication was not approved. You can close this tab and return to Grain.",
+                )
+                .await;
+                return Err("provider denied authentication".into());
+            }
+            CallbackDecision::Accepted(callback) => callback,
         };
-        let Some(state) = params
-            .remove("state")
-            .filter(|value| !value.is_empty() && value.len() <= 4096)
-        else {
-            continue;
-        };
-        let issuer = params.remove("iss").filter(|value| value.len() <= 2048);
         send_callback_response(
             &mut stream,
             "200 OK",
-            "Authentication complete. You can close this tab and return to Grain.",
+            "Sign-in response received. Return to Grain to check whether authentication completed.",
         )
         .await;
-        return Ok(CallbackValues {
-            code,
-            state,
-            issuer,
-        });
+        return Ok(callback);
     }
 }
 
 static CONNECTING: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
 
-struct ConnectGuard(String);
+struct ConnectGuard {
+    id: String,
+    ticket: Option<session::Ticket>,
+}
 
 impl Drop for ConnectGuard {
     fn drop(&mut self) {
+        if let Some(ticket) = &self.ticket {
+            ticket.invalidate_if_current();
+        }
         if let Ok(mut active) = CONNECTING.get_or_init(|| Mutex::new(HashSet::new())).lock() {
-            active.remove(&self.0);
+            active.remove(&self.id);
         }
     }
 }
@@ -617,11 +826,54 @@ pub async fn mcp_connect_provider(
             return Err("this provider already has an authentication flow open".into());
         }
     }
-    let _guard = ConnectGuard(id.clone());
-    let listener = TcpListener::bind(CALLBACK_ADDR)
-        .await
-        .map_err(|_| "another authentication flow is already using Grain's callback port")?;
-    let redirect_uri = format!("http://{CALLBACK_ADDR}{CALLBACK_PATH}");
+    let mut guard = ConnectGuard {
+        id: id.clone(),
+        ticket: None,
+    };
+    let ticket = provider_control(item.id).invalidate();
+    guard.ticket = Some(ticket.clone());
+    let window_label = window.label().to_string();
+    let window_closed = async {
+        loop {
+            tokio::time::sleep(Duration::from_millis(250)).await;
+            if app.get_webview_window(&window_label).is_none() {
+                break;
+            }
+        }
+    };
+    let result = tokio::select! {
+        result = tokio::time::timeout(
+        CONNECT_TIMEOUT,
+        ticket.run(connect_oauth(&app, &id, item, &ticket)),
+        ) => result.map_err(|_| "authentication timed out after 5 minutes".to_string())
+            .and_then(|result| result).and_then(|result| result),
+        _ = window_closed => Err("authentication was cancelled because the app window closed".into()),
+    };
+    if result.is_ok() {
+        guard.ticket = None;
+    }
+    result
+}
+
+async fn connect_oauth(
+    app: &AppHandle,
+    id: &str,
+    item: &CatalogProvider,
+    ticket: &session::Ticket,
+) -> Result<(), String> {
+    let _operation = ticket.acquire().await?;
+    require_developer_mode(app)?;
+    let listener = TcpListener::bind(if item.registration == Registration::PreRegistered {
+        CALLBACK_ADDR
+    } else {
+        "127.0.0.1:0"
+    })
+    .await
+    .map_err(|_| "another authentication flow is already using Grain's callback port")?;
+    let redirect_uri = format!(
+        "http://{}{CALLBACK_PATH}",
+        listener.local_addr().map_err(|e| e.to_string())?
+    );
     let http = app
         .try_state::<McpHttpClient>()
         .ok_or("MCP HTTP client unavailable")?
@@ -633,30 +885,45 @@ pub async fn mcp_connect_provider(
     manager
         .with_client(http)
         .map_err(|error| format!("OAuth setup failed: {error}"))?;
-    manager.set_credential_store(VaultCredentialStore::new(item.id));
-    let mut oauth = OAuthState::Unauthorized(manager);
+    manager.set_credential_store(VaultCredentialStore::with_ticket(
+        item.id,
+        ticket,
+        &_operation,
+    ));
+    let resolution = manager
+        .resolve_metadata()
+        .await
+        .map_err(|_| "OAuth metadata discovery failed")?;
+    if !resolution.source.is_discovered() {
+        return Err("This provider does not publish usable OAuth metadata; derived legacy endpoints are disabled.".into());
+    }
+    validate_hosted_oauth_metadata(&resolution.metadata)?;
+    let expected_issuer = resolution.metadata.issuer.clone();
+    let require_issuer = resolution
+        .metadata
+        .additional_fields
+        .get("authorization_response_iss_parameter_supported")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false);
+    manager.set_metadata(resolution.metadata);
     let mut request = AuthorizationRequest::new(&redirect_uri)
         .with_client_name("Grain")
         .with_application_type("native");
     if item.registration == Registration::PreRegistered {
-        let configured_id = client_id(&app, item.id)
+        let configured_id = client_id(app, item.id)
             .ok_or("configure this provider's OAuth client ID in Settings first")?;
-        let configured_secret = client_secret(item.id)
-            .await?
-            .ok_or("configure this provider's OAuth client secret in Settings first")?;
-        request = request
-            .with_preregistered_client(configured_id)
-            .with_client_secret(configured_secret);
+        request = request.with_preregistered_client(configured_id);
+        if let Some(configured_secret) = client_secret(item.id).await? {
+            request = request.with_client_secret(configured_secret);
+        }
     }
-    oauth
-        .start_authorization(request)
+    // Session::new keeps the exact discovered metadata snapshot;
+    // OAuthState::start_authorization would discover it again.
+    let oauth = AuthorizationSession::new(manager, request)
         .await
-        .map_err(|error| format!("OAuth discovery/registration failed: {error}"))?;
-    let authorization_url = oauth
-        .get_authorization_url()
-        .await
-        .map_err(|error| format!("OAuth authorization failed: {error}"))?;
-    let expected_state = reqwest_mcp::Url::parse(&authorization_url)
+        .map_err(|(_, error)| format!("OAuth registration failed: {error}"))?;
+    let authorization_url = oauth.get_authorization_url();
+    let expected_state = reqwest_mcp::Url::parse(authorization_url)
         .ok()
         .and_then(|url| {
             url.query_pairs()
@@ -666,26 +933,15 @@ pub async fn mcp_connect_provider(
         .filter(|value| !value.is_empty() && value.len() <= 4096)
         .ok_or("OAuth provider did not return a valid state value")?;
     app.opener()
-        .open_url(&authorization_url, None::<&str>)
+        .open_url(authorization_url, None::<&str>)
         .map_err(|error| format!("could not open the sign-in page: {error}"))?;
-    let window_label = window.label().to_string();
-    let app_for_close = app.clone();
-    let window_closed = async move {
-        loop {
-            tokio::time::sleep(Duration::from_millis(250)).await;
-            if app_for_close.get_webview_window(&window_label).is_none() {
-                break;
-            }
-        }
-    };
-    let callback = tokio::select! {
-        result = tokio::time::timeout(
-            CONNECT_TIMEOUT,
-            await_callback(listener, &expected_state),
-        ) => result
-            .map_err(|_| "authentication timed out after 5 minutes".to_string())??,
-        _ = window_closed => return Err("authentication was cancelled because Settings closed".into()),
-    };
+    let callback = await_callback(
+        listener,
+        &expected_state,
+        expected_issuer.as_deref(),
+        require_issuer,
+    )
+    .await?;
     oauth
         .handle_callback_with_issuer(&callback.code, &callback.state, callback.issuer.as_deref())
         .await
@@ -696,15 +952,21 @@ pub async fn mcp_connect_provider(
     let ctx = app
         .try_state::<std::sync::Arc<grain_core::AppContext>>()
         .ok_or("application context unavailable")?;
-    ctx.update_settings(|settings| {
-        settings
-            .mcp_enabled_providers
-            .retain(|current| current != &id);
-        settings.mcp_enabled_providers.push(id.clone());
-        settings.mcp_enabled_providers.sort();
-        settings.mcp_enabled_providers.dedup();
-    })
-    .map_err(|error| error.to_string())?;
+    ticket
+        .commit(|| {
+            ctx.update_settings(|settings| {
+                if !settings.extension_developer_mode {
+                    return;
+                }
+                settings
+                    .mcp_enabled_providers
+                    .retain(|current| current != id);
+                settings.mcp_enabled_providers.push(id.to_string());
+                settings.mcp_enabled_providers.sort();
+                settings.mcp_enabled_providers.dedup();
+            })
+        })?
+        .map_err(|error| error.to_string())?;
     Ok(())
 }
 
@@ -718,19 +980,26 @@ pub async fn mcp_disconnect_provider(
     crate::grain_commands::require_main_window(&window)?;
     require_developer_mode(&app)?;
     provider(&id)?;
-    VaultCredentialStore::new(&id)
-        .clear()
+    let ticket = provider_control(&id).invalidate();
+    let _operation = tokio::time::timeout(OPERATION_TIMEOUT, ticket.acquire())
         .await
-        .map_err(|error| error.to_string())?;
+        .map_err(|_| "MCP disconnect timed out")??;
     let ctx = app
         .try_state::<std::sync::Arc<grain_core::AppContext>>()
         .ok_or("application context unavailable")?;
-    ctx.update_settings(|settings| {
-        settings
-            .mcp_enabled_providers
-            .retain(|current| current != &id);
-    })
-    .map_err(|error| error.to_string())?;
+    ticket
+        .commit(|| {
+            ctx.update_settings(|settings| {
+                settings
+                    .mcp_enabled_providers
+                    .retain(|current| current != &id);
+            })
+        })?
+        .map_err(|error| error.to_string())?;
+    VaultCredentialStore::with_ticket(&id, &ticket, &_operation)
+        .clear()
+        .await
+        .map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -761,6 +1030,9 @@ fn hosted_lifecycle() -> ClientLifecycleMode {
 async fn authorization_manager(
     http: reqwest_mcp::Client,
     item: &CatalogProvider,
+    app: &AppHandle,
+    ticket: &session::Ticket,
+    operation: &session::Lease,
 ) -> Result<AuthorizationManager, String> {
     let mut manager = AuthorizationManager::new(item.endpoint)
         .await
@@ -768,13 +1040,49 @@ async fn authorization_manager(
     manager
         .with_client(http)
         .map_err(|error| format!("OAuth setup failed: {error}"))?;
-    manager.set_credential_store(VaultCredentialStore::new(item.id));
+    let store = VaultCredentialStore::with_ticket(item.id, ticket, operation);
+    let configured_id = client_id(app, item.id);
+    if item.registration == Registration::PreRegistered {
+        let stored = store
+            .load()
+            .await
+            .map_err(|e| e.to_string())?
+            .ok_or("MCP account is disconnected")?;
+        if Some(stored.client_id.as_str()) != configured_id.as_deref() {
+            return Err(
+                "Stored OAuth client differs from configuration. Reconnect in Grain Settings."
+                    .into(),
+            );
+        }
+    }
+    manager.set_credential_store(store);
+    let resolution = manager
+        .resolve_metadata()
+        .await
+        .map_err(|_| "OAuth metadata discovery failed")?;
+    if !resolution.source.is_discovered() {
+        return Err("OAuth metadata unavailable".into());
+    }
+    validate_hosted_oauth_metadata(&resolution.metadata)?;
+    manager.set_metadata(resolution.metadata);
     if !manager
         .initialize_from_store()
         .await
         .map_err(|error| format!("stored OAuth credential is unusable: {error}"))?
     {
         return Err(format!("{} is not connected in Grain Settings", item.name));
+    }
+    if item.registration == Registration::PreRegistered {
+        let mut config = OAuthClientConfig::new(
+            configured_id.ok_or("OAuth client ID unavailable")?,
+            format!("http://{CALLBACK_ADDR}{CALLBACK_PATH}"),
+        );
+        if let Some(secret) = client_secret(item.id).await? {
+            config = config.with_client_secret(secret);
+        }
+        manager
+            .configure_client(config)
+            .map_err(|_| "OAuth client configuration failed")?;
     }
     Ok(manager)
 }
@@ -792,6 +1100,10 @@ pub(crate) async fn list_tools(app: &AppHandle, provider_id: &str) -> Result<Mcp
     let deadline = tokio::time::Instant::now() + OPERATION_TIMEOUT;
     require_developer_mode(app)?;
     let item = provider(provider_id)?;
+    let ticket = provider_control(item.id).ticket();
+    let _operation = tokio::time::timeout_at(deadline, ticket.acquire())
+        .await
+        .map_err(|_| "MCP operation queue timed out")??;
     let enabled = crate::settings::get_settings(app)
         .mcp_enabled_providers
         .iter()
@@ -804,16 +1116,25 @@ pub(crate) async fn list_tools(app: &AppHandle, provider_id: &str) -> Result<Mcp
         .ok_or("MCP HTTP client unavailable")?
         .0
         .clone();
-    let service = open_service(http, item, deadline)
-        .await
+    let service = ticket
+        .run(open_service(
+            http,
+            item,
+            app,
+            &ticket,
+            &_operation,
+            deadline,
+        ))
+        .await?
         .map_err(|failure| failure.message)?;
-    let result = discover_on_service(&service, deadline).await;
+    let result = ticket.run(discover_on_service(&service, deadline)).await;
     close_service(service).await;
-    let tools = result?;
+    let tools = result??;
     if !is_enabled_extension(app, &format!("mcp.{provider_id}")) {
         return Err("The MCP extension was disabled during discovery.".into());
     }
-    let digest = tool_set_digest(item, &tools)?;
+    let raw_digest = tool_set_digest(item, &tools)?;
+    let digest = ticket.commit(|| ticket.bind_digest(&raw_digest))?;
     Ok(McpToolSet {
         provider_id: item.id.into(),
         provider_name: item.name.into(),
@@ -825,17 +1146,23 @@ pub(crate) async fn list_tools(app: &AppHandle, provider_id: &str) -> Result<Mcp
 async fn open_service(
     http: reqwest_mcp::Client,
     item: &CatalogProvider,
+    app: &AppHandle,
+    ticket: &session::Ticket,
+    operation: &session::Lease,
     deadline: tokio::time::Instant,
 ) -> Result<McpService, ExecutionFailure> {
-    let manager = tokio::time::timeout_at(deadline, authorization_manager(http.clone(), item))
-        .await
-        .map_err(|_| before_dispatch(FailureClass::Network, "MCP account setup timed out."))?
-        .map_err(|_| {
-            before_dispatch(
-                FailureClass::Auth,
-                "The MCP account is unavailable. Reconnect in Grain Settings.",
-            )
-        })?;
+    let manager = tokio::time::timeout_at(
+        deadline,
+        authorization_manager(http.clone(), item, app, ticket, operation),
+    )
+    .await
+    .map_err(|_| before_dispatch(FailureClass::Network, "MCP account setup timed out."))?
+    .map_err(|_| {
+        before_dispatch(
+            FailureClass::Auth,
+            "The MCP account is unavailable. Reconnect in Grain Settings.",
+        )
+    })?;
     serve_http(AuthClient::new(http, manager), item.endpoint, deadline).await
 }
 
@@ -861,7 +1188,11 @@ async fn serve_http<C: rmcp::transport::streamable_http_client::StreamableHttpCl
             "MCP protocol negotiation failed. Check the account and provider availability.",
         )
     })
-    .map(|inner| McpService { inner, cancel })
+    .map(|inner| McpService {
+        inner,
+        cancel,
+        dispatched: std::sync::atomic::AtomicBool::new(false),
+    })
 }
 
 async fn close_service(mut service: McpService) -> bool {
@@ -964,6 +1295,14 @@ pub(crate) async fn call_tool(
     })?;
     let item = provider(provider_id)
         .map_err(|_| before_dispatch(FailureClass::NotFound, "Unknown MCP provider."))?;
+    let ticket = provider_control(item.id).ticket();
+    let expected_digest = ticket
+        .unbind_digest(expected_digest)
+        .map_err(|message| before_dispatch(FailureClass::Cancelled, message))?;
+    let _operation = tokio::time::timeout_at(deadline, ticket.acquire())
+        .await
+        .map_err(|_| before_dispatch(FailureClass::Network, "MCP operation queue timed out."))?
+        .map_err(|message| before_dispatch(FailureClass::Cancelled, message))?;
     if !is_enabled_extension(app, &format!("mcp.{provider_id}")) {
         return Err(before_dispatch(
             FailureClass::Cancelled,
@@ -981,19 +1320,50 @@ pub(crate) async fn call_tool(
         .ok_or_else(|| before_dispatch(FailureClass::Internal, "MCP HTTP client unavailable."))?
         .0
         .clone();
-    let service = open_service(http, item, deadline).await?;
-    let result = call_on_service(
-        &service,
-        item,
-        tool_name,
-        arguments,
-        expected_digest,
-        deadline,
-        || is_enabled_extension(app, &format!("mcp.{provider_id}")),
-    )
-    .await;
+    let service = ticket
+        .run(open_service(
+            http,
+            item,
+            app,
+            &ticket,
+            &_operation,
+            deadline,
+        ))
+        .await
+        .map_err(|message| before_dispatch(FailureClass::Cancelled, message))??;
+    let result = ticket
+        .run(call_on_service(
+            &service,
+            item,
+            tool_name,
+            arguments,
+            expected_digest,
+            deadline,
+            || {
+                ticket
+                    .commit(|| is_enabled_extension(app, &format!("mcp.{provider_id}")))
+                    .unwrap_or(false)
+            },
+        ))
+        .await
+        .unwrap_or_else(|message| Err(session_cancelled(&service, message)));
     close_service(service).await;
     result
+}
+
+fn session_cancelled(service: &McpService, message: String) -> ExecutionFailure {
+    ExecutionFailure::new(
+        if service
+            .dispatched
+            .load(std::sync::atomic::Ordering::Acquire)
+        {
+            DispatchPhase::Dispatched
+        } else {
+            DispatchPhase::NotDispatched
+        },
+        FailureClass::Cancelled,
+        message,
+    )
 }
 
 async fn call_on_service(
@@ -1040,6 +1410,9 @@ async fn call_on_service(
     }
     // From this point the SDK may have sent the request. Transport errors are
     // ambiguous even when their wording suggests a local send failure.
+    service
+        .dispatched
+        .store(true, std::sync::atomic::Ordering::Release);
     let response = tokio::time::timeout_at(
         deadline,
         service.call_tool_once(
@@ -1466,3 +1839,7 @@ mod tests {
 #[cfg(test)]
 #[path = "grain_mcp_protocol_tests.rs"]
 mod protocol_tests;
+
+#[cfg(test)]
+#[path = "grain_mcp_auth_tests.rs"]
+mod auth_tests;

@@ -1,5 +1,11 @@
 /* eslint-disable i18next/no-literal-string -- developer-only validation UI copy is intentionally not part of the shipped localization surface. */
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { invoke } from "@tauri-apps/api/core";
 import {
   ExternalLink,
@@ -70,7 +76,10 @@ const McpProviders: React.FC<{
   providers: McpProviderStatus[];
   refresh: () => Promise<void>;
 }> = ({ providers, refresh }) => {
-  const [busy, setBusy] = useState("");
+  const active = useRef(new Set<string>());
+  const [busy, setBusy] = useState<Set<string>>(new Set());
+  const [signingIn, setSigningIn] = useState<Set<string>>(new Set());
+  const [cancelling, setCancelling] = useState<Set<string>>(new Set());
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<string | null>(null);
   const [credentials, setCredentials] = useState<
@@ -78,7 +87,9 @@ const McpProviders: React.FC<{
   >({});
 
   const run = async (id: string, action: () => Promise<unknown>) => {
-    setBusy(id);
+    if (active.current.has(id)) return;
+    active.current.add(id);
+    setBusy(new Set(active.current));
     setError(null);
     setResult(null);
     try {
@@ -87,7 +98,39 @@ const McpProviders: React.FC<{
     } catch (reason) {
       setError(String(reason));
     } finally {
-      setBusy("");
+      active.current.delete(id);
+      setBusy(new Set(active.current));
+    }
+  };
+
+  const connect = (id: string) => {
+    void run(id, async () => {
+      setSigningIn((current) => new Set(current).add(id));
+      try {
+        await invoke("mcp_connect_provider", { id });
+      } finally {
+        setSigningIn((current) => {
+          const next = new Set(current);
+          next.delete(id);
+          return next;
+        });
+      }
+    });
+  };
+
+  const cancelSignIn = async (id: string) => {
+    setCancelling((current) => new Set(current).add(id));
+    try {
+      await invoke("mcp_disconnect_provider", { id });
+      await refresh();
+    } catch (reason) {
+      setError(String(reason));
+    } finally {
+      setCancelling((current) => {
+        const next = new Set(current);
+        next.delete(id);
+        return next;
+      });
     }
   };
 
@@ -116,7 +159,7 @@ const McpProviders: React.FC<{
         id: provider.id,
       });
       setResult(
-        `${discovered.provider_name} is Agent-ready: ${discovered.tool_count} tools — ${discovered.tools.slice(0, 8).join(", ")}${discovered.tools.length > 8 ? "…" : ""}`,
+        `${discovered.provider_name} discovery passed: ${discovered.tool_count} tools — ${discovered.tools.slice(0, 8).join(", ")}${discovered.tools.length > 8 ? "…" : ""}`,
       );
     });
   };
@@ -158,6 +201,7 @@ const McpProviders: React.FC<{
 
       <div className="divide-y divide-line border-t border-line">
         {providers.map((provider) => {
+          const isBusy = busy.has(provider.id) || cancelling.has(provider.id);
           const values = credentials[provider.id] ?? {
             clientId: "",
             clientSecret: "",
@@ -171,11 +215,13 @@ const McpProviders: React.FC<{
                       {provider.name}
                     </span>
                     <span className="rounded-full border border-line px-1.5 py-0.5 text-[10px] text-ink-faint">
-                      {provider.connected ? "connected" : provider.state}
+                      {provider.connected
+                        ? "credentials stored"
+                        : provider.state}
                     </span>
                     {!provider.requires_client_credentials && (
                       <span className="rounded-full border border-accent/30 px-1.5 py-0.5 text-[10px] text-accent">
-                        one-click login
+                        browser sign-in
                       </span>
                     )}
                   </div>
@@ -196,7 +242,7 @@ const McpProviders: React.FC<{
                     <button
                       type="button"
                       className="button"
-                      disabled={busy === provider.id}
+                      disabled={isBusy}
                       onClick={() =>
                         void run(provider.id, () =>
                           invoke("mcp_set_provider_enabled", {
@@ -211,7 +257,7 @@ const McpProviders: React.FC<{
                     <button
                       type="button"
                       className="button"
-                      disabled={busy === provider.id || !provider.enabled}
+                      disabled={isBusy || !provider.enabled}
                       onClick={() => test(provider)}
                     >
                       Test
@@ -219,7 +265,7 @@ const McpProviders: React.FC<{
                     <button
                       type="button"
                       className="button danger"
-                      disabled={busy === provider.id}
+                      disabled={isBusy}
                       onClick={() =>
                         void run(provider.id, () =>
                           invoke("mcp_disconnect_provider", {
@@ -236,17 +282,23 @@ const McpProviders: React.FC<{
                     type="button"
                     className="button"
                     disabled={
-                      busy === provider.id ||
+                      isBusy ||
                       (provider.requires_client_credentials &&
                         !provider.client_id_configured)
                     }
-                    onClick={() =>
-                      void run(provider.id, () =>
-                        invoke("mcp_connect_provider", { id: provider.id }),
-                      )
-                    }
+                    onClick={() => connect(provider.id)}
                   >
                     Connect &amp; enable
+                  </button>
+                )}
+                {signingIn.has(provider.id) && (
+                  <button
+                    type="button"
+                    className="button"
+                    disabled={cancelling.has(provider.id)}
+                    onClick={() => void cancelSignIn(provider.id)}
+                  >
+                    Cancel sign-in
                   </button>
                 )}
               </div>
@@ -286,8 +338,8 @@ const McpProviders: React.FC<{
                       value={values.clientSecret}
                       maxLength={4096}
                       autoComplete="new-password"
-                      placeholder="OAuth client secret"
-                      aria-label={`${provider.name} OAuth client secret`}
+                      placeholder="Client secret (optional for public clients)"
+                      aria-label={`${provider.name} OAuth client secret (optional for public clients)`}
                       onChange={(event) =>
                         setCredentials((current) => ({
                           ...current,
@@ -302,11 +354,7 @@ const McpProviders: React.FC<{
                     <button
                       type="button"
                       className="button"
-                      disabled={
-                        busy === provider.id ||
-                        !values.clientId.trim() ||
-                        !values.clientSecret
-                      }
+                      disabled={isBusy || !values.clientId.trim()}
                       onClick={() => saveCredentials(provider)}
                     >
                       Save to vault
