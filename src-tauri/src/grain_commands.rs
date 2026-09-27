@@ -1227,10 +1227,14 @@ pub fn extension_set_enabled(
                 }
             }
             if !enabled {
-                reg.set_enabled(pack_id, false)
-                    .map_err(|error| error.to_string())?;
+                let persisted = reg
+                    .set_enabled(pack_id, false)
+                    .map_err(|error| error.to_string());
                 stop_extension_runtime(&app, pack_id, "extension disabled");
                 crate::extension_host::refresh_index(&app);
+                // The in-memory disable already took effect. Disk failure must
+                // still retire its worker/account before reporting persistence.
+                persisted?;
                 return Ok(());
             }
             let pack = load_pack(&app, pack_id)?;

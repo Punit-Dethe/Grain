@@ -34,14 +34,7 @@ const SUPERVISOR_URL: &str = "extension-host.html";
 const IDLE_REAP_SECS: u64 = 120;
 const REAP_INTERVAL_SECS: u64 = 30;
 
-/// Transform budget (SPEC §3.1): a cold worker cannot fit this, which is why
-/// `onTransform` extensions warm on `RecordingStarted`.
-
-/// A session mode owns the deliberately slow stage, but never indefinitely.
-/// Thirty seconds is generous for a routed model call and still guarantees a
-/// hung worker cannot eat the user's transcript.
-
-/// Consecutive transform failures before auto-disable (SPEC §3.3).
+/// Consecutive over-budget heap samples before resource-policy disable.
 const MAX_STRIKES: u32 = 3;
 /// Generous pathology guard, not accounting: Chromium's reported JS heap is
 /// not the worker process footprint. It is still the right signal for a runaway
@@ -84,6 +77,49 @@ impl Drop for PendingCall {
     }
 }
 
+struct QueuedCall {
+    pending: PendingCall,
+    reply: oneshot::Receiver<Result<Value, String>>,
+}
+
+impl QueuedCall {
+    async fn wait(self, deadline: Duration) -> Result<Value, String> {
+        let result = match tokio::time::timeout(deadline, self.reply).await {
+            Ok(Ok(result)) => result,
+            Ok(Err(_)) => Err("worker dropped the call".into()),
+            Err(_) => Err("deadline exceeded".into()),
+        };
+        drop(self.pending);
+        result
+    }
+}
+
+/// Own the exact native worker while startup or a queued call is unfinished.
+/// Dropping the request retires that generation; successful replies disarm it.
+struct NativeCallOwner<F: FnOnce()> {
+    retire: Option<F>,
+}
+
+impl<F: FnOnce()> NativeCallOwner<F> {
+    fn new(retire: F) -> Self {
+        Self {
+            retire: Some(retire),
+        }
+    }
+
+    fn completed(&mut self) {
+        self.retire = None;
+    }
+}
+
+impl<F: FnOnce()> Drop for NativeCallOwner<F> {
+    fn drop(&mut self) {
+        if let Some(retire) = self.retire.take() {
+            retire();
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum RuntimeKind {
     Scripted,
@@ -93,12 +129,11 @@ enum RuntimeKind {
 struct Worker {
     /// The token minted for this worker; revoked at reap (SPEC §7.1).
     token: String,
+    /// Manifest/source and registry identity actually used by this worker.
+    call_digest: Option<String>,
     /// `onStartup` workers are never reaped for idleness.
     resident: bool,
-    /// Consecutive transform-deadline failures (SPEC §3.3).
-    strikes: u32,
-    /// Consecutive over-budget samples. Separate from transform strikes so a
-    /// healthy heap sample cannot forgive a slow transform (or vice versa).
+    /// Consecutive over-budget heap samples for this worker generation.
     memory_strikes: u32,
     kind: RuntimeKind,
     /// Epoch seconds of the last frame from this worker; the reaper's clock.
@@ -107,6 +142,17 @@ struct Worker {
     conn: Option<WorkerConn>,
     /// Paths only; the source map is loaded and parsed solely on failure.
     dev_source: Option<DevSource>,
+}
+
+impl Worker {
+    fn close_pending(&self) {
+        if let Some(conn) = &self.conn {
+            let _ = conn.out_tx.send(Message::Close(None));
+            for (_, sender) in conn.pending.lock().unwrap().drain() {
+                let _ = sender.send(Err("worker terminated".into()));
+            }
+        }
+    }
 }
 
 /// The worker registry: the map plus every operation over it. Deliberately free
@@ -263,11 +309,31 @@ impl Workers {
         deadline: Duration,
         dispatched: &AtomicBool,
     ) -> Result<Value, String> {
-        let (guard, rx) = {
+        self.enqueue(ext_id, token, method, params, dispatched, None)?
+            .wait(deadline)
+            .await
+    }
+
+    /// Synchronous queue boundary, usable inside a registry admission lock.
+    fn enqueue(
+        &self,
+        ext_id: &str,
+        token: Option<&str>,
+        method: &str,
+        params: Value,
+        dispatched: &AtomicBool,
+        expected_digest: Option<&str>,
+    ) -> Result<QueuedCall, String> {
+        let queued = {
             let map = self.map.lock().unwrap();
             let worker = map.get(ext_id).ok_or("worker not connected")?;
             if token.is_some_and(|token| worker.token != token) {
                 return Err("worker generation changed".into());
+            }
+            if expected_digest
+                .is_some_and(|expected| worker.call_digest.as_deref() != Some(expected))
+            {
+                return Err("worker tool identity changed".into());
             }
             let conn = worker.conn.as_ref().ok_or("worker not connected")?;
             let call_id = conn.next_call_id.fetch_add(1, Ordering::Relaxed);
@@ -289,15 +355,12 @@ impl Workers {
                 return Err("worker channel closed".into());
             }
             dispatched.store(true, Ordering::Release);
-            (guard, rx)
+            QueuedCall {
+                pending: guard,
+                reply: rx,
+            }
         };
-        let result = match tokio::time::timeout(deadline, rx).await {
-            Ok(Ok(result)) => result,
-            Ok(Err(_)) => Err("worker dropped the call".into()),
-            Err(_) => Err("deadline exceeded".into()),
-        };
-        drop(guard);
-        result
+        Ok(queued)
     }
 
     /// Route a `HostCallResult` back to the awaiter of its `call_id` (no-op if
@@ -338,23 +401,6 @@ impl Workers {
                 (idle > idle_secs && !busy).then(|| (id.clone(), w.token.clone()))
             })
             .collect()
-    }
-
-    fn clear_strikes(&self, ext_id: &str) {
-        if let Some(w) = self.map.lock().unwrap().get_mut(ext_id) {
-            w.strikes = 0;
-        }
-    }
-
-    /// Record a transform failure and return its new consecutive-strike count.
-    fn record_strike(&self, ext_id: &str) -> Option<u32> {
-        match self.map.lock().unwrap().get_mut(ext_id) {
-            Some(w) => {
-                w.strikes += 1;
-                Some(w.strikes)
-            }
-            None => None,
-        }
     }
 
     fn clear_memory_strikes(&self, ext_id: &str) {
@@ -1318,6 +1364,15 @@ fn spawn_worker(
         .try_state::<Arc<grain_core::extensions::ExtensionsRegistry>>()
         .and_then(|registry| registry.dev_path(ext_id))
         .and_then(|root| crate::dev_extensions::load_project(&root).ok());
+    let record = app
+        .try_state::<Arc<grain_core::extensions::ExtensionsRegistry>>()?
+        .record(ext_id)
+        .filter(|record| record.enabled)?;
+    if record.granted != caps {
+        return None;
+    }
+    let call_digest =
+        grain_core::extensions::native_call_fingerprint(&record, &pack.manifest).ok()?;
     let companion_launch = if pack.manifest.tier == grain_sdk::Tier::Native {
         if !crate::settings::get_settings(app).extension_developer_mode {
             log::error!("[ext:{ext_id}] deny native companion outside developer mode");
@@ -1358,8 +1413,8 @@ fn spawn_worker(
         ext_id,
         Worker {
             token: token.clone(),
+            call_digest: Some(call_digest),
             resident,
-            strikes: 0,
             memory_strikes: 0,
             kind: if pack.manifest.tier == grain_sdk::Tier::Native {
                 RuntimeKind::Companion
@@ -1527,12 +1582,7 @@ fn kill_worker_inner(ext_id: &str, reason: &str, token: Option<&str>, preserve_s
     }
     crate::extension_view::fail_interactive_for_extension(&host.app, ext_id, reason);
     crate::events_server::revoke_token(&worker.token);
-    if let Some(conn) = &worker.conn {
-        let _ = conn.out_tx.send(Message::Close(None));
-        for (_, tx) in conn.pending.lock().unwrap().drain() {
-            let _ = tx.send(Err("worker terminated".into()));
-        }
-    }
+    worker.close_pending();
     if let Some(generation) = closing {
         close_supervisor(generation);
     }
@@ -1743,12 +1793,7 @@ pub async fn run_session_stage(
 // *what* it is handed (the full transcript, not extracted spans). Waking a cold
 // worker, the deadline pair, and the call/outcome shape are unchanged.
 
-/// How long a handed-off request may take before the host gives up.
-///
-/// Generous compared with the transform budget, and deliberately so: the
-/// extension is expected to leave the machine (a Spotify call, a Slack post) and
-/// may call a model — the network grant already allows 15 s. The felt path is
-/// not this; the pill says what is happening while the extension works.
+/// Native tool reply deadline; expiry retires the exact worker generation.
 const HANDOFF_DEADLINE: Duration = Duration::from_secs(20);
 
 /// How long to wait for a cold worker to connect before giving up.
@@ -1928,6 +1973,60 @@ fn approved_native_arguments(
     )
 }
 
+struct NativeAdmission<'a> {
+    extension_id: &'a str,
+    token: &'a str,
+    action_id: &'a str,
+    arguments: &'a Value,
+    expected_digest: &'a str,
+    idempotency_key: Option<&'a str>,
+}
+
+fn enqueue_native_call(
+    registry: &grain_core::extensions::ExtensionsRegistry,
+    workers: &Workers,
+    manifest: &grain_sdk::ExtensionManifest,
+    admission: &NativeAdmission<'_>,
+    dispatched: &AtomicBool,
+) -> Result<QueuedCall, ActionCallError> {
+    registry.with_record_locked(admission.extension_id, |record| {
+        let record = record.ok_or_else(|| {
+            ActionCallError::Unavailable("that extension is no longer installed".into())
+        })?;
+        let arguments = native_arguments_for_snapshot(
+            manifest,
+            record,
+            admission.action_id,
+            admission.arguments,
+            admission.expected_digest,
+        )?;
+        workers
+            .enqueue(
+                admission.extension_id,
+                Some(admission.token),
+                "action",
+                json!({"action": admission.action_id, "arguments": arguments,
+                "idempotencyKey": admission.idempotency_key}),
+                dispatched,
+                Some(admission.expected_digest),
+            )
+            .map_err(|error| ActionCallError::Execution(native_call_failure(&error, false)))
+    })
+}
+
+fn native_reply_if_current(
+    value: Value,
+    current: Result<Value, ActionCallError>,
+) -> Result<Value, ActionCallError> {
+    current.map(|_| value).map_err(|_| {
+        ActionCallError::Execution(grain_core::execution::ExecutionFailure::new(
+            grain_core::execution::DispatchPhase::ResponseReceived,
+            grain_core::execution::FailureClass::Cancelled,
+            "The native result belongs to a tool that changed or was disabled. Effects may have occurred.",
+        ))
+    })
+}
+
 /// [GRAIN] Invoke one exact declared action on an extension worker (Extensions 2.0
 /// Phase 3b). Unlike [`hand_off`], which gives the worker the whole transcript,
 /// this sends the *chosen action id and validated arguments* — the V2 model. The
@@ -1952,6 +2051,14 @@ pub async fn run_action(
     };
     let token = wake_for_request(app, ext_id)
         .ok_or_else(|| ActionCallError::Unavailable("extension worker unavailable".into()))?;
+    let mut owner = NativeCallOwner::new(|| {
+        kill_worker_inner(
+            ext_id,
+            "native request abandoned or failed",
+            Some(&token),
+            false,
+        );
+    });
     if !host
         .workers
         .wait_connected(ext_id, &token, HANDOFF_WAKE_DEADLINE)
@@ -1963,47 +2070,42 @@ pub async fn run_action(
             "that extension did not start in time".into(),
         ));
     }
-    let arguments =
-        match approved_native_arguments(app, ext_id, action_id, &arguments, expected_digest) {
-            Ok(arguments) => arguments,
-            Err(error) => {
-                kill_worker_inner(
-                    ext_id,
-                    "tool approval changed during startup",
-                    Some(&token),
-                    false,
-                );
-                return Err(error);
-            }
-        };
+    // File validation happens outside the lock. The exact snapshot's identity,
+    // approval, arguments and queue admission are then checked under one read.
+    let pack = load_manifest_result(app, ext_id).map_err(ActionCallError::Unavailable)?;
+    pack.validate_tool_only()
+        .map_err(ActionCallError::Unavailable)?;
+    let registry = app
+        .try_state::<Arc<grain_core::extensions::ExtensionsRegistry>>()
+        .ok_or_else(|| ActionCallError::Unavailable("extension registry unavailable".into()))?;
     let dispatched = AtomicBool::new(false);
-    match host
-        .workers
-        .call_tracked(
-            ext_id,
-            Some(&token),
-            "action",
-            json!({
-                "action": action_id,
-                "arguments": arguments,
-                "idempotencyKey": idempotency_key,
-            }),
-            HANDOFF_DEADLINE,
-            &dispatched,
-        )
-        .await
-    {
+    let queued = enqueue_native_call(
+        &registry,
+        &host.workers,
+        &pack.manifest,
+        &NativeAdmission {
+            extension_id: ext_id,
+            token: &token,
+            action_id,
+            arguments: &arguments,
+            expected_digest,
+            idempotency_key,
+        },
+        &dispatched,
+    )?;
+    match queued.wait(HANDOFF_DEADLINE).await {
         Ok(value) => {
-            clear_strikes(ext_id);
+            let value = native_reply_if_current(
+                value,
+                approved_native_arguments(app, ext_id, action_id, &arguments, expected_digest),
+            )?;
+            owner.completed();
             Ok(value)
         }
-        Err(error) => {
-            record_strike(app, ext_id);
-            Err(ActionCallError::Execution(native_call_failure(
-                &error,
-                dispatched.load(Ordering::Acquire),
-            )))
-        }
+        Err(error) => Err(ActionCallError::Execution(native_call_failure(
+            &error,
+            dispatched.load(Ordering::Acquire),
+        ))),
     }
 }
 
@@ -2039,28 +2141,6 @@ pub fn cancel_session_stage(_ext_id: &str, _reason: &str) {}
 /// dispatch path, where blocking hangs every hotkey in the app.
 pub fn wake_for_shortcut(_app: &AppHandle, _ext_id: &str, _shortcut_id: &str) {}
 
-fn clear_strikes(ext_id: &str) {
-    if let Some(host) = HOST.get() {
-        host.workers.clear_strikes(ext_id);
-    }
-}
-
-fn record_strike(app: &AppHandle, ext_id: &str) -> u32 {
-    let host = match HOST.get() {
-        Some(h) => h,
-        None => return 0,
-    };
-    let strikes = host.workers.record_strike(ext_id).unwrap_or(0);
-    if strikes >= MAX_STRIKES {
-        auto_disable(
-            app,
-            ext_id,
-            "It repeatedly missed the 150 ms transform deadline.".to_string(),
-        );
-    }
-    strikes
-}
-
 /// Whether `id` is an explicitly loaded-unpacked project. Diagnostic call
 /// logging uses this cheap registry lookup so installed extensions add no log
 /// traffic or formatting work to the host-API path.
@@ -2070,8 +2150,7 @@ pub fn is_dev_extension(app: &AppHandle, id: &str) -> bool {
         .is_some()
 }
 
-/// SPEC §3.3: a persistently failing transform is disabled (not left slowing
-/// every paste). The user re-enables explicitly from Overview.
+/// Resource-policy disable. Ordinary tool errors/cancellation never use this.
 fn auto_disable(app: &AppHandle, ext_id: &str, reason: String) {
     log::warn!("[ext:{ext_id}] life auto-disabled: {reason}");
     if let Some(reg) = app.try_state::<Arc<grain_core::extensions::ExtensionsRegistry>>() {
@@ -2686,8 +2765,8 @@ mod tests {
     fn worker(last_activity: u64, resident: bool) -> Worker {
         Worker {
             token: "tok".into(),
+            call_digest: None,
             resident,
-            strikes: 0,
             memory_strikes: 0,
             kind: RuntimeKind::Scripted,
             last_activity: Arc::new(AtomicU64::new(last_activity)),
@@ -3035,6 +3114,296 @@ mod tests {
     }
 
     #[test]
+    fn native_admission_orders_registry_disable_and_worker_replacement_with_queue() {
+        rt().block_on(async {
+            for mode in [
+                "disabled",
+                "reenabled",
+                "replaced",
+                "source_worker",
+                "missing",
+                "invalid",
+                "after_queue",
+                "after_reply",
+                "valid",
+            ] {
+                let directory = tempfile::tempdir().unwrap();
+                let registry =
+                    grain_core::extensions::ExtensionsRegistry::load(directory.path(), false)
+                        .unwrap();
+                let pack = pack_of("");
+                let mut record = record_for(&pack);
+                record.enabled = false;
+                registry.install(record).unwrap();
+                registry.set_enabled(&pack.manifest.id, true).unwrap();
+                let digest = grain_core::extensions::native_call_fingerprint(
+                    &registry.record(&pack.manifest.id).unwrap(),
+                    &pack.manifest,
+                )
+                .unwrap();
+                let workers = Workers::new();
+                let mut spawned = worker(now_secs(), false);
+                spawned.call_digest = Some(if mode == "source_worker" {
+                    "old-source".into()
+                } else {
+                    digest.clone()
+                });
+                workers.insert(&pack.manifest.id, spawned);
+                let (out_tx, mut out_rx) = mpsc::unbounded_channel();
+                workers.attach(&pack.manifest.id, "tok", out_tx).unwrap();
+                match mode {
+                    "disabled" => {
+                        registry.set_enabled(&pack.manifest.id, false).unwrap();
+                    }
+                    "reenabled" => {
+                        registry.set_enabled(&pack.manifest.id, false).unwrap();
+                        registry.set_enabled(&pack.manifest.id, true).unwrap();
+                    }
+                    "replaced" => {
+                        let mut replacement = worker(now_secs(), false);
+                        replacement.token = "replacement".into();
+                        workers.insert(&pack.manifest.id, replacement);
+                    }
+                    "missing" => {
+                        registry.uninstall(&pack.manifest.id).unwrap();
+                    }
+                    _ => {}
+                }
+                let arguments = if mode == "invalid" {
+                    json!({"undeclared": true})
+                } else {
+                    json!({})
+                };
+                let admission = NativeAdmission {
+                    extension_id: &pack.manifest.id,
+                    token: "tok",
+                    action_id: "next",
+                    arguments: &arguments,
+                    expected_digest: &digest,
+                    idempotency_key: None,
+                };
+                let dispatched = AtomicBool::new(false);
+                let queued = enqueue_native_call(
+                    &registry,
+                    &workers,
+                    &pack.manifest,
+                    &admission,
+                    &dispatched,
+                );
+                if !matches!(mode, "after_queue" | "after_reply" | "valid") {
+                    assert!(queued.is_err(), "{mode}");
+                    assert!(!dispatched.load(Ordering::Acquire));
+                    assert!(out_rx.try_recv().is_err(), "zero frames: {mode}");
+                    continue;
+                }
+                let queued = queued.unwrap();
+                assert!(dispatched.load(Ordering::Acquire));
+                let Message::Text(frame) = out_rx.try_recv().unwrap() else {
+                    panic!("one call")
+                };
+                let HostFrame::Call(call) = serde_json::from_str(&frame).unwrap() else {
+                    panic!("call")
+                };
+                assert_eq!(call.params["action"], "next");
+                if mode == "after_queue" {
+                    // Admission has released its lock; disable completes while
+                    // the reply waiter remains alive, then exact-token teardown.
+                    registry.set_enabled(&pack.manifest.id, false).unwrap();
+                    workers
+                        .remove_if_token(&pack.manifest.id, "tok")
+                        .unwrap()
+                        .close_pending();
+                    let error = queued.wait(Duration::from_secs(1)).await.unwrap_err();
+                    let failure = native_call_failure(&error, dispatched.load(Ordering::Acquire));
+                    assert!(matches!(
+                        failure.into_outcome(),
+                        grain_core::execution::ActionOutcome::UnknownOutcome { .. }
+                    ));
+                    assert!(matches!(out_rx.try_recv(), Ok(Message::Close(_))));
+                } else {
+                    workers.resolve(
+                        &pack.manifest.id,
+                        "tok",
+                        call.call_id,
+                        Ok(json!({"ok": "hello"})),
+                    );
+                    let reply = queued.wait(Duration::from_secs(1)).await.unwrap();
+                    if mode == "after_reply" {
+                        registry.set_enabled(&pack.manifest.id, false).unwrap();
+                        let current = registry.with_record_locked(&pack.manifest.id, |record| {
+                            native_arguments_for_snapshot(
+                                &pack.manifest,
+                                record.unwrap(),
+                                "next",
+                                &arguments,
+                                &digest,
+                            )
+                        });
+                        let failure = native_reply_if_current(reply, current).unwrap_err();
+                        let prepared = crate::action_exec::prepare(
+                            "com.x.p:next",
+                            "com.x.p",
+                            "next",
+                            "P",
+                            json!({}),
+                            grain_core::execution::RiskClass::Confirm,
+                            grain_core::execution::SideEffect::Write,
+                            &digest,
+                        );
+                        assert!(matches!(
+                            crate::action_exec::native_outcome(Err(failure), &prepared),
+                            grain_core::execution::ActionOutcome::ResultUnavailable { .. }
+                        ));
+                    } else {
+                        assert!(native_reply_if_current(reply, Ok(json!({}))).is_ok());
+                    }
+                }
+                assert!(out_rx.try_recv().is_err(), "no replay");
+            }
+        });
+    }
+
+    #[test]
+    fn native_request_owner_drop_retires_only_its_generation_and_releases_pending_calls() {
+        rt().block_on(async {
+            for mode in [
+                "startup",
+                "cancel",
+                "timeout",
+                "transport_error",
+                "replacement",
+                "success",
+            ] {
+                let workers = Workers::new();
+                workers.insert("tools", worker(now_secs(), false));
+                let (out_tx, mut out_rx) = mpsc::unbounded_channel();
+                workers.attach("tools", "tok", out_tx).unwrap();
+                let mut owner = NativeCallOwner::new(|| {
+                    if let Some(worker) = workers.remove_if_token("tools", "tok") {
+                        worker.close_pending();
+                    }
+                });
+                let dispatched = AtomicBool::new(false);
+                if mode == "startup" {
+                    drop(owner);
+                    assert_eq!(workers.len(), 0);
+                    assert!(matches!(out_rx.try_recv(), Ok(Message::Close(_))));
+                    continue;
+                }
+                let queued = workers
+                    .enqueue("tools", Some("tok"), "action", json!({}), &dispatched, None)
+                    .unwrap();
+                let pending = queued.pending.calls.clone();
+                let Message::Text(frame) = out_rx.try_recv().unwrap() else {
+                    panic!("one call")
+                };
+                let HostFrame::Call(call) = serde_json::from_str(&frame).unwrap() else {
+                    panic!("call")
+                };
+                match mode {
+                    "cancel" | "replacement" => {
+                        if mode == "replacement" {
+                            let mut replacement = worker(now_secs(), false);
+                            replacement.token = "new".into();
+                            workers.insert("tools", replacement);
+                        }
+                        drop(queued);
+                    }
+                    "timeout" | "transport_error" => {
+                        if mode == "transport_error" {
+                            workers.resolve(
+                                "tools",
+                                "tok",
+                                call.call_id,
+                                Err("private error".into()),
+                            );
+                        }
+                        let error = queued.wait(Duration::from_millis(10)).await.unwrap_err();
+                        assert!(matches!(
+                            native_call_failure(&error, true).into_outcome(),
+                            grain_core::execution::ActionOutcome::UnknownOutcome { .. }
+                        ));
+                    }
+                    "success" => {
+                        workers.resolve("tools", "tok", call.call_id, Ok(json!({"ok": "hello"})));
+                        assert!(queued.wait(Duration::from_secs(1)).await.is_ok());
+                        owner.completed();
+                    }
+                    _ => unreachable!(),
+                }
+                drop(owner);
+                assert!(pending.lock().unwrap().is_empty());
+                if mode == "replacement" {
+                    assert!(workers.owns_token("tools", "new"));
+                } else if mode == "success" {
+                    assert!(workers.owns_token("tools", "tok"));
+                } else {
+                    assert_eq!(workers.len(), 0);
+                    assert!(matches!(out_rx.try_recv(), Ok(Message::Close(_))));
+                }
+                assert!(out_rx.try_recv().is_err(), "no replay");
+            }
+        });
+    }
+
+    #[test]
+    fn aborting_native_waiter_runs_cleanup_without_retiring_a_replacement() {
+        rt().block_on(async {
+            for replace in [false, true] {
+                let workers = Arc::new(Workers::new());
+                workers.insert("tools", worker(now_secs(), false));
+                let (out_tx, mut out_rx) = mpsc::unbounded_channel();
+                workers.attach("tools", "tok", out_tx).unwrap();
+                let owned = workers.clone();
+                let task = tokio::spawn(async move {
+                    let mut owner = NativeCallOwner::new(|| {
+                        if let Some(worker) = owned.remove_if_token("tools", "tok") {
+                            worker.close_pending();
+                        }
+                    });
+                    let dispatched = AtomicBool::new(false);
+                    let queued = owned
+                        .enqueue("tools", Some("tok"), "action", json!({}), &dispatched, None)
+                        .unwrap();
+                    let result = queued.wait(Duration::from_secs(20)).await;
+                    if result.is_ok() {
+                        owner.completed();
+                    }
+                    result
+                });
+                assert!(matches!(out_rx.recv().await, Some(Message::Text(_))));
+                let pending = workers
+                    .map
+                    .lock()
+                    .unwrap()
+                    .get("tools")
+                    .unwrap()
+                    .conn
+                    .as_ref()
+                    .unwrap()
+                    .pending
+                    .clone();
+                assert_eq!(pending.lock().unwrap().len(), 1);
+                if replace {
+                    let mut replacement = worker(now_secs(), false);
+                    replacement.token = "replacement".into();
+                    workers.insert("tools", replacement);
+                }
+                task.abort();
+                assert!(task.await.unwrap_err().is_cancelled());
+                assert!(pending.lock().unwrap().is_empty());
+                if replace {
+                    assert!(workers.owns_token("tools", "replacement"));
+                } else {
+                    assert_eq!(workers.len(), 0);
+                    assert!(matches!(out_rx.try_recv(), Ok(Message::Close(_))));
+                }
+                assert!(out_rx.try_recv().is_err(), "no replay");
+            }
+        });
+    }
+
+    #[test]
     fn resolve_unknown_call_is_a_noop() {
         let workers = Workers::new();
         workers.resolve("nobody", "tok", 7, Ok(Value::Null)); // must not panic
@@ -3051,19 +3420,7 @@ mod tests {
     }
 
     #[test]
-    fn strikes_trip_at_the_limit_and_reset() {
-        let workers = Workers::new();
-        workers.insert("a", worker(0, false));
-        assert_eq!(workers.record_strike("a"), Some(1));
-        assert_eq!(workers.record_strike("a"), Some(2));
-        assert_eq!(workers.record_strike("a"), Some(3)); // 3rd strike → trip
-        workers.clear_strikes("a");
-        assert_eq!(workers.record_strike("a"), Some(1)); // counter reset
-        assert_eq!(workers.record_strike("missing"), None); // unknown never trips
-    }
-
-    #[test]
-    fn heap_samples_are_typed_and_memory_strikes_are_independent() {
+    fn heap_samples_are_typed_and_memory_strikes_reset() {
         assert_eq!(
             parse_heap_sample(json!({"supported": true, "usedBytes": 42})).unwrap(),
             HeapSample::Bytes(42)
@@ -3078,11 +3435,8 @@ mod tests {
         workers.insert("leak", worker(0, false));
         assert_eq!(workers.record_memory_strike("leak"), Some(1));
         assert_eq!(workers.record_memory_strike("leak"), Some(2));
-        assert_eq!(workers.record_strike("leak"), Some(1));
         workers.clear_memory_strikes("leak");
         assert_eq!(workers.record_memory_strike("leak"), Some(1));
-        // The transform counter was not forgiven by a healthy heap sample.
-        assert_eq!(workers.record_strike("leak"), Some(2));
     }
 
     #[test]

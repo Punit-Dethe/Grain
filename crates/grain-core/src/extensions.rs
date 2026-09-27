@@ -788,6 +788,18 @@ impl ExtensionsRegistry {
         self.state.read().unwrap().records.get(id).cloned()
     }
 
+    /// Run a synchronous admission check while registry mutations are excluded.
+    /// Keep this short: no await, filesystem I/O, or reentrant registry calls.
+    /// Native admission acquires this lock before the worker/pending locks.
+    pub fn with_record_locked<R>(
+        &self,
+        id: &str,
+        admit: impl FnOnce(Option<&ExtensionRecord>) -> R,
+    ) -> R {
+        let state = self.state.read().unwrap();
+        admit(state.records.get(id))
+    }
+
     /// The installed record beneath a dev override, or the normal record when
     /// no override is active. A dev-only project has no installed record.
     pub fn installed_record(&self, id: &str) -> Option<ExtensionRecord> {
@@ -1290,6 +1302,29 @@ mod tests {
 
     fn tmp() -> tempfile::TempDir {
         tempfile::tempdir().unwrap()
+    }
+
+    #[test]
+    fn synchronous_admission_holds_read_lock_only_until_callback_returns() {
+        let dir = tmp();
+        let registry = ExtensionsRegistry::load(dir.path(), false).unwrap();
+        registry.install(pack("tools", &[])).unwrap();
+        registry.set_enabled("tools", true).unwrap();
+        let admitted = registry.with_record_locked("tools", |record| {
+            assert!(
+                registry.state.try_write().is_err(),
+                "mutation excluded during admission"
+            );
+            record.unwrap().enabled
+        });
+        assert!(admitted);
+        assert!(
+            registry.state.try_write().is_ok(),
+            "no lock retained by the result"
+        );
+        registry.set_enabled("tools", false).unwrap();
+        assert!(!registry.with_record_locked("tools", |record| record.unwrap().enabled));
+        assert!(registry.with_record_locked("missing", |record| record.is_none()));
     }
 
     #[test]
