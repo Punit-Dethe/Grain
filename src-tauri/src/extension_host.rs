@@ -2661,6 +2661,7 @@ pub fn reload_dev_extension(
         .is_none_or(|current| current.execution_generation != prior.execution_generation)
     {
         stop_extension_generation(id, prior.execution_generation, "developer hot reload");
+        crate::grain_auth::cancel_extension_generation(id, prior.execution_generation);
     }
     let installed_generation = installed.map_err(|error| error.to_string())?;
 

@@ -1793,9 +1793,9 @@ fn register_unpacked_project(
             prior.execution_generation,
             "load-unpacked project replaced",
         );
+        crate::grain_auth::cancel_extension_generation(&id, prior.execution_generation);
     }
     installed.map_err(|error| error.to_string())?;
-    crate::grain_auth::cancel_extension(&id);
     Ok(id)
 }
 
@@ -2244,8 +2244,8 @@ pub fn extension_import_pack(
                 prior.execution_generation,
                 "extension update requires renewed approval",
             );
+            crate::grain_auth::cancel_extension_generation(&id, prior.execution_generation);
         }
-        crate::grain_auth::cancel_extension(&id);
     }
     // An enabled pack's payloads refresh in place (apply is idempotent).
     if stays_enabled && !dev_active {
@@ -2343,6 +2343,7 @@ pub fn extension_grant(
             prior_generation,
             "extension permissions changed",
         );
+        crate::grain_auth::cancel_extension_generation(&id, prior_generation);
     }
     crate::extension_host::refresh_index(&app);
     approved.map(|_| ()).map_err(|error| error.to_string())

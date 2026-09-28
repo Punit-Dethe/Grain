@@ -6,7 +6,7 @@
 //! while a connect flow is active and is dropped on every exit path.
 
 use std::collections::HashMap;
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
@@ -26,14 +26,146 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(300);
 const CALLBACK_MAX_BYTES: usize = 16 * 1024;
 const TOKEN_MAX_BYTES: usize = 64 * 1024;
 const EXPIRY_SKEW_SECS: u64 = 60;
+const MAX_PENDING_CONNECTS: usize = 8;
 struct PendingFlow {
     run_id: uuid::Uuid,
+    execution_generation: u64,
     cancel: tokio::sync::oneshot::Sender<()>,
 }
 
-static PENDING: OnceLock<Mutex<HashMap<String, PendingFlow>>> = OnceLock::new();
+type PendingFlows = Arc<Mutex<HashMap<String, PendingFlow>>>;
+static PENDING: OnceLock<PendingFlows> = OnceLock::new();
 static REFRESH_LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
 static VAULT_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+#[derive(Clone)]
+struct PendingOwner {
+    pending: PendingFlows,
+    id: String,
+    run_id: uuid::Uuid,
+}
+
+impl PendingOwner {
+    // Serialize cancellation/replacement against the actual vault write. The
+    // registry is checked separately: never hold its lock through OS vault I/O.
+    fn publish<T>(&self, write: impl FnOnce() -> Result<T, String>) -> Result<T, String> {
+        let pending = self
+            .pending
+            .lock()
+            .map_err(|_| "authentication cancellation state is unavailable")?;
+        if !pending
+            .get(&self.id)
+            .is_some_and(|flow| flow.run_id == self.run_id)
+        {
+            return Err("authentication was cancelled or replaced".into());
+        }
+        write()
+    }
+}
+
+struct PendingGuard(PendingOwner);
+
+impl PendingGuard {
+    fn begin(
+        pending: PendingFlows,
+        id: String,
+        execution_generation: u64,
+    ) -> Result<(Self, tokio::sync::oneshot::Receiver<()>), String> {
+        let run_id = uuid::Uuid::new_v4();
+        let (cancel, receiver) = tokio::sync::oneshot::channel();
+        {
+            let mut flows = pending
+                .lock()
+                .map_err(|_| "authentication cancellation state is unavailable")?;
+            if !flows.contains_key(&id) && flows.len() >= MAX_PENDING_CONNECTS {
+                return Err("too many extension sign-ins are pending".into());
+            }
+            if let Some(previous) = flows.insert(
+                id.clone(),
+                PendingFlow {
+                    run_id,
+                    execution_generation,
+                    cancel,
+                },
+            ) {
+                let _ = previous.cancel.send(());
+            }
+        }
+        Ok((
+            Self(PendingOwner {
+                pending,
+                id,
+                run_id,
+            }),
+            receiver,
+        ))
+    }
+}
+
+impl Drop for PendingGuard {
+    fn drop(&mut self) {
+        if let Ok(mut pending) = self.0.pending.lock() {
+            if pending
+                .get(&self.0.id)
+                .is_some_and(|flow| flow.run_id == self.0.run_id)
+            {
+                pending.remove(&self.0.id);
+            }
+        }
+    }
+}
+
+#[derive(Clone)]
+struct PreparedConnect {
+    registry: Arc<grain_core::extensions::ExtensionsRegistry>,
+    revision: grain_core::extensions::RecordRevision,
+    execution_generation: u64,
+    declaration: AuthenticationDecl,
+}
+
+impl PreparedConnect {
+    fn check(&self, id: &str) -> Result<(), String> {
+        self.registry
+            .with_current_record(id, self.revision, |_| ())
+            .map_err(|error| error.to_string())
+    }
+}
+
+fn prepare_connect(app: &AppHandle, id: &str) -> Result<PreparedConnect, String> {
+    let registry = app
+        .try_state::<Arc<grain_core::extensions::ExtensionsRegistry>>()
+        .ok_or("extensions registry unavailable")?
+        .inner()
+        .clone();
+    let revision = registry.record_revision(id);
+    let declaration = approved_declaration(app, id)?;
+    let execution_generation = registry
+        .with_current_record(id, revision, |record| {
+            record.map(|record| record.execution_generation)
+        })
+        .map_err(|error| error.to_string())?
+        .ok_or("extension is no longer installed")?;
+    Ok(PreparedConnect {
+        registry,
+        revision,
+        execution_generation,
+        declaration,
+    })
+}
+
+async fn await_connect<T>(
+    cancel: tokio::sync::oneshot::Receiver<()>,
+    budget: Duration,
+    work: impl std::future::Future<Output = Result<T, String>>,
+) -> Result<T, String> {
+    tokio::select! {
+        biased;
+        _ = cancel => Err("authentication was cancelled".into()),
+        result = tokio::time::timeout(budget, work) => {
+            result.map_err(|_| "authentication timed out after 5 minutes".to_string())?
+        }
+    }
+}
 
 #[derive(Clone, Serialize, specta::Type)]
 pub struct AuthConnection {
@@ -51,6 +183,8 @@ pub struct AuthConnection {
 
 #[derive(Clone, Serialize, Deserialize)]
 pub(crate) struct TokenSet {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    authentication_fingerprint: Option<String>,
     access_token: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     refresh_token: Option<String>,
@@ -129,18 +263,40 @@ fn read_token_sync(extension_id: &str) -> Result<Option<TokenSet>, String> {
     result
 }
 
-fn write_token_sync(extension_id: &str, token: &TokenSet) -> Result<(), String> {
+fn write_token_sync(
+    extension_id: &str,
+    token: &TokenSet,
+    connect_owner: Option<(&PreparedConnect, &PendingOwner)>,
+) -> Result<(), String> {
     let _guard = VAULT_LOCK
         .get_or_init(|| Mutex::new(()))
         .lock()
         .map_err(|_| "OS credential vault lock is unavailable")?;
-    let entry = vault_entry(extension_id)?;
-    let mut bytes = serde_json::to_vec(token).map_err(|error| error.to_string())?;
-    let result = entry
-        .set_secret(&bytes)
-        .map_err(|error| format!("OS credential vault write failed: {error}"));
-    bytes.zeroize();
-    result
+    let write = || {
+        let entry = vault_entry(extension_id)?;
+        let mut bytes = serde_json::to_vec(token).map_err(|error| error.to_string())?;
+        let result = entry
+            .set_secret(&bytes)
+            .map_err(|error| format!("OS credential vault write failed: {error}"));
+        bytes.zeroize();
+        result
+    };
+    if let Some((prepared, owner)) = connect_owner {
+        // Check after waiting for the vault lock, including blocking tasks that
+        // outlive their dropped async caller. No registry lock covers vault I/O.
+        publish_connect(prepared, owner, write)
+    } else {
+        write()
+    }
+}
+
+fn publish_connect<T>(
+    prepared: &PreparedConnect,
+    owner: &PendingOwner,
+    write: impl FnOnce() -> Result<T, String>,
+) -> Result<T, String> {
+    prepared.check(&owner.id)?;
+    owner.publish(write)
 }
 
 fn delete_token_sync(extension_id: &str) -> Result<(), String> {
@@ -165,7 +321,7 @@ async fn read_token(extension_id: &str) -> Result<Option<TokenSet>, String> {
 
 async fn write_token(extension_id: &str, token: TokenSet) -> Result<(), String> {
     let extension_id = extension_id.to_owned();
-    tokio::task::spawn_blocking(move || write_token_sync(&extension_id, &token))
+    tokio::task::spawn_blocking(move || write_token_sync(&extension_id, &token, None))
         .await
         .map_err(|error| format!("credential task failed: {error}"))?
 }
@@ -226,6 +382,14 @@ fn needs_refresh(token: &TokenSet) -> bool {
         .is_some_and(|expiry| expiry <= now().saturating_add(EXPIRY_SKEW_SECS))
 }
 
+fn check_token_binding(token: &TokenSet, decl: &AuthenticationDecl) -> Result<(), String> {
+    let expected = grain_core::extensions::authentication_fingerprint(decl);
+    if token.authentication_fingerprint.as_deref() != Some(expected.as_str()) {
+        return Err("authentication needs reauthorization for its provider configuration".into());
+    }
+    Ok(())
+}
+
 async fn parse_token_response(
     response: reqwest::Response,
 ) -> Result<(reqwest::StatusCode, TokenResponse), String> {
@@ -269,7 +433,9 @@ fn provider_error(status: reqwest::StatusCode, code: Option<String>) -> String {
 async fn connection_for(extension_id: &str, decl: &AuthenticationDecl) -> AuthConnection {
     let (state, granted_scopes, expires_at) = match read_token(extension_id).await {
         Ok(Some(token)) => {
-            let state = if !decl.scopes.iter().all(|scope| token.scopes.contains(scope)) {
+            let state = if check_token_binding(&token, decl).is_err()
+                || !decl.scopes.iter().all(|scope| token.scopes.contains(scope))
+            {
                 "needs_reauthorization"
             } else if needs_refresh(&token) {
                 "expired"
@@ -508,6 +674,7 @@ async fn exchange(
         return Err("token endpoint returned an unsupported token type".into());
     }
     Ok(TokenSet {
+        authentication_fingerprint: Some(grain_core::extensions::authentication_fingerprint(decl)),
         access_token: token
             .access_token
             .take()
@@ -553,6 +720,7 @@ async fn refresh(decl: &AuthenticationDecl, refresh_token: &str) -> Result<Token
         return Err("token endpoint returned an unsupported token type".into());
     }
     Ok(TokenSet {
+        authentication_fingerprint: Some(grain_core::extensions::authentication_fingerprint(decl)),
         access_token: token
             .access_token
             .take()
@@ -586,7 +754,37 @@ pub async fn extension_auth_connect(
 }
 
 async fn connect(app: AppHandle, id: String) -> Result<AuthConnection, String> {
-    let decl = approved_declaration(&app, &id)?;
+    let prepared = prepare_connect(&app, &id)?;
+    connect_reviewed(app, id, prepared).await
+}
+
+async fn connect_reviewed(
+    app: AppHandle,
+    id: String,
+    prepared: PreparedConnect,
+) -> Result<AuthConnection, String> {
+    let pending = PENDING
+        .get_or_init(|| Arc::new(Mutex::new(HashMap::new())))
+        .clone();
+    let (guard, cancel) = prepared
+        .registry
+        .with_current_record(&id, prepared.revision, |_| {
+            PendingGuard::begin(pending, id.clone(), prepared.execution_generation)
+        })
+        .map_err(|error| error.to_string())??;
+    await_connect(cancel, CONNECT_TIMEOUT, async {
+        connect_attempt(&app, &id, &prepared, &guard.0).await
+    })
+    .await
+}
+
+async fn connect_attempt(
+    app: &AppHandle,
+    id: &str,
+    prepared: &PreparedConnect,
+    owner: &PendingOwner,
+) -> Result<AuthConnection, String> {
+    let decl = &prepared.declaration;
     let listener = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
         .await
         .map_err(|error| format!("could not start OAuth callback listener: {error}"))?;
@@ -607,61 +805,30 @@ async fn connect(app: AppHandle, id: String) -> Result<AuthConnection, String> {
         uuid::Uuid::new_v4().simple()
     ));
     let challenge = URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes()));
-    let url = authorize_url(&decl, &redirect, &state, &challenge)?;
-    let pending_key = id.clone();
-    let run_id = uuid::Uuid::new_v4();
-    let (cancel_tx, cancel_rx) = tokio::sync::oneshot::channel();
-    if let Some(previous) = PENDING
-        .get_or_init(|| Mutex::new(HashMap::new()))
-        .lock()
-        .map_err(|_| "authentication cancellation state is unavailable")?
-        .insert(
-            pending_key.clone(),
-            PendingFlow {
-                run_id,
-                cancel: cancel_tx,
-            },
-        )
-    {
-        let _ = previous.cancel.send(());
-    }
+    let url = authorize_url(decl, &redirect, &state, &challenge)?;
+    prepared.check(id)?;
+    owner.publish(|| Ok(()))?;
     if let Err(error) = app.opener().open_url(url, None::<String>) {
-        if let Ok(mut pending) = PENDING.get().unwrap().lock() {
-            if pending
-                .get(&pending_key)
-                .is_some_and(|flow| flow.run_id == run_id)
-            {
-                pending.remove(&pending_key);
-            }
-        }
         return Err(format!("could not open the sign-in page: {error}"));
     }
-    let outcome = tokio::select! {
-        result = tokio::time::timeout(CONNECT_TIMEOUT, callback(listener, path, state, format!("127.0.0.1:{port}"))) => {
-            result.map_err(|_| "authentication timed out after 5 minutes".to_string()).and_then(|result| result)
-        }
-        _ = cancel_rx => Err("authentication was cancelled".into()),
-    };
-    {
-        let mut pending = PENDING
-            .get()
-            .unwrap()
-            .lock()
-            .map_err(|_| "authentication cancellation state is unavailable")?;
-        if pending
-            .get(&pending_key)
-            .is_some_and(|flow| flow.run_id == run_id)
-        {
-            pending.remove(&pending_key);
-        }
-    }
-    let code = outcome?;
-    let token = exchange(&decl, &code, &redirect, verifier.as_str()).await?;
-    if approved_declaration(&app, &id)? != decl {
+    let code = callback(listener, path, state, format!("127.0.0.1:{port}")).await?;
+    prepared.check(id)?;
+    let token = exchange(decl, &code, &redirect, verifier.as_str()).await?;
+    prepared.check(id)?;
+    if approved_declaration(app, id)? != *decl {
         return Err("authentication declaration changed during sign-in".into());
     }
-    write_token(&id, token).await?;
-    Ok(connection_for(&id, &decl).await)
+    let write_owner = owner.clone();
+    let write_prepared = prepared.clone();
+    let id_copy = id.to_owned();
+    tokio::task::spawn_blocking(move || {
+        write_token_sync(&id_copy, &token, Some((&write_prepared, &write_owner)))
+    })
+    .await
+    .map_err(|error| format!("credential task failed: {error}"))??;
+    let connection = connection_for(id, decl).await;
+    prepared.check(id)?;
+    owner.publish(|| Ok(connection))
 }
 
 #[tauri::command]
@@ -677,6 +844,7 @@ pub async fn extension_auth_disconnect(
 
 async fn disconnect(app: &AppHandle, id: String) -> Result<(), String> {
     declaration(app, &id)?;
+    cancel_extension(&id);
     let id_copy = id.clone();
     tokio::task::spawn_blocking(move || delete_token_sync(&id_copy))
         .await
@@ -715,7 +883,8 @@ pub(crate) async fn connect_from_extension(
     app: AppHandle,
     extension_id: String,
 ) -> Result<AuthConnection, String> {
-    let decl = approved_declaration(&app, &extension_id)?;
+    let prepared = prepare_connect(&app, &extension_id)?;
+    let decl = &prepared.declaration;
     confirm(
         &app,
         format!("Connect {}?", decl.provider_name),
@@ -728,7 +897,7 @@ pub(crate) async fn connect_from_extension(
         "Connect",
     )
     .await?;
-    connect(app, extension_id).await
+    connect_reviewed(app, extension_id, prepared).await
 }
 
 pub(crate) async fn disconnect_from_extension(
@@ -761,6 +930,7 @@ pub(crate) async fn access_token(
     let mut token = read_token(extension_id)
         .await?
         .ok_or_else(|| "authentication is not connected".to_string())?;
+    check_token_binding(&token, &decl)?;
     if !decl.scopes.iter().all(|scope| token.scopes.contains(scope)) {
         return Err("authentication needs reauthorization for its declared scopes".into());
     }
@@ -772,6 +942,7 @@ pub(crate) async fn access_token(
         token = read_token(extension_id)
             .await?
             .ok_or_else(|| "authentication is not connected".to_string())?;
+        check_token_binding(&token, &decl)?;
         if needs_refresh(&token) {
             let refresh_token = token.refresh_token.as_deref().ok_or_else(|| {
                 "authentication has expired; reconnect it in extension settings".to_string()
@@ -789,6 +960,7 @@ pub(crate) async fn access_token(
     if !decl.scopes.iter().all(|scope| token.scopes.contains(scope)) {
         return Err("authentication needs reauthorization for its declared scopes".into());
     }
+    check_token_binding(&token, &decl)?;
     if !token.token_type.eq_ignore_ascii_case("bearer") {
         return Err("only Bearer OAuth tokens are supported".into());
     }
@@ -800,9 +972,25 @@ pub(crate) async fn access_token(
 
 pub(crate) fn cancel_extension(extension_id: &str) {
     let Some(pending) = PENDING.get() else { return };
+    cancel_flow(pending, extension_id, None);
+}
+
+pub(crate) fn cancel_extension_generation(extension_id: &str, generation: u64) {
+    let Some(pending) = PENDING.get() else { return };
+    cancel_flow(pending, extension_id, Some(generation));
+}
+
+fn cancel_flow(pending: &PendingFlows, extension_id: &str, generation: Option<u64>) {
     let Ok(mut pending) = pending.lock() else {
         return;
     };
+    if generation.is_some_and(|generation| {
+        pending
+            .get(extension_id)
+            .is_none_or(|flow| flow.execution_generation != generation)
+    }) {
+        return;
+    }
     if let Some(flow) = pending.remove(extension_id) {
         let _ = flow.cancel.send(());
     }
@@ -818,6 +1006,328 @@ pub(crate) async fn purge_extension(_app: &AppHandle, extension_id: &str) -> Res
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn test_declaration() -> AuthenticationDecl {
+        serde_json::from_value(serde_json::json!({
+            "type": "oauth2-pkce", "providerName": "Fixture", "clientId": "client",
+            "authorizationEndpoint": "https://login.example.com/authorize",
+            "tokenEndpoint": "https://login.example.com/token", "scopes": ["read"],
+            "redirectMethods": ["loopback"], "apiHosts": ["api.example.com"]
+        }))
+        .unwrap()
+    }
+
+    fn prepared_fixture() -> (tempfile::TempDir, PreparedConnect) {
+        let dir = tempfile::tempdir().unwrap();
+        let registry =
+            Arc::new(grain_core::extensions::ExtensionsRegistry::load(dir.path(), false).unwrap());
+        let record = serde_json::from_value(serde_json::json!({
+            "id": "com.example.tools", "enabled": true, "installed_version": "1",
+            "granted": ["auth"]
+        }))
+        .unwrap();
+        registry.install(record).unwrap();
+        let prepared = PreparedConnect {
+            revision: registry.record_revision("com.example.tools"),
+            execution_generation: registry
+                .record("com.example.tools")
+                .unwrap()
+                .execution_generation,
+            registry,
+            declaration: test_declaration(),
+        };
+        (dir, prepared)
+    }
+
+    #[tokio::test]
+    async fn replaced_sign_in_survives_old_guard_and_generation_cleanup() {
+        let flows = Arc::new(Mutex::new(HashMap::new()));
+        let (old, cancelled) = PendingGuard::begin(flows.clone(), "tools".into(), 1).unwrap();
+        let owner = old.0.clone();
+        let (new, mut receiver) = PendingGuard::begin(flows.clone(), "tools".into(), 2).unwrap();
+        assert!(cancelled.await.is_ok());
+        assert!(owner.publish(|| Ok(())).is_err());
+        drop(old);
+        cancel_flow(&flows, "tools", Some(1));
+        assert!(matches!(
+            receiver.try_recv(),
+            Err(tokio::sync::oneshot::error::TryRecvError::Empty)
+        ));
+        assert!(new.0.publish(|| Ok(())).is_ok());
+        cancel_flow(&flows, "tools", Some(2));
+        assert!(receiver.await.is_ok());
+        assert!(new.0.publish(|| Ok(())).is_err());
+        drop(new);
+        assert!(flows.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn sign_in_capacity_allows_replacement_and_releases_on_every_exit() {
+        let flows = Arc::new(Mutex::new(HashMap::new()));
+        let mut guards = Vec::new();
+        for index in 0..MAX_PENDING_CONNECTS {
+            let (guard, _) =
+                PendingGuard::begin(flows.clone(), format!("tools-{index}"), 1).unwrap();
+            guards.push(guard);
+        }
+        assert!(PendingGuard::begin(flows.clone(), "overflow".into(), 1).is_err());
+        let (replacement, _) = PendingGuard::begin(flows.clone(), "tools-0".into(), 2).unwrap();
+        drop(guards.remove(0));
+        assert_eq!(flows.lock().unwrap().len(), MAX_PENDING_CONNECTS);
+        drop(replacement);
+        assert!(PendingGuard::begin(flows.clone(), "available".into(), 1).is_ok());
+        drop(guards);
+        assert!(flows.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn cancel_timeout_and_future_drop_release_actual_callback_listener() {
+        for mode in ["cancel", "timeout", "drop"] {
+            let flows = Arc::new(Mutex::new(HashMap::new()));
+            let (guard, receiver) = PendingGuard::begin(flows.clone(), "tools".into(), 1).unwrap();
+            let owner = guard.0.clone();
+            let listener = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
+                .await
+                .unwrap();
+            let address = listener.local_addr().unwrap();
+            let (started, ready) = tokio::sync::oneshot::channel();
+            let budget = if mode == "timeout" {
+                Duration::from_millis(25)
+            } else {
+                CONNECT_TIMEOUT
+            };
+            let task = tokio::spawn(async move {
+                let _guard = guard;
+                let _ = started.send(());
+                await_connect(
+                    receiver,
+                    budget,
+                    callback(listener, "/cb".into(), "state".into(), address.to_string()),
+                )
+                .await
+            });
+            ready.await.unwrap();
+            match mode {
+                "cancel" => {
+                    cancel_flow(&flows, "tools", None);
+                    assert!(task.await.unwrap().is_err());
+                }
+                "timeout" => assert!(task.await.unwrap().is_err()),
+                _ => {
+                    task.abort();
+                    assert!(task.await.is_err());
+                }
+            }
+            assert!(flows.lock().unwrap().is_empty(), "{mode}");
+            assert!(owner.publish(|| Ok(())).is_err());
+            assert!(
+                TcpStream::connect(address).await.is_err(),
+                "listener leaked: {mode}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn cancellation_after_callback_stops_actual_token_response_and_never_publishes() {
+        let flows = Arc::new(Mutex::new(HashMap::new()));
+        let (guard, receiver) = PendingGuard::begin(flows.clone(), "tools".into(), 1).unwrap();
+        let owner = guard.0.clone();
+        let listener = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
+            .await
+            .unwrap();
+        let address = listener.local_addr().unwrap();
+        let (received, request) = tokio::sync::oneshot::channel();
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut bytes = Vec::new();
+            while !bytes.windows(4).any(|bytes| bytes == b"\r\n\r\n") {
+                let mut chunk = [0; 1024];
+                let read = stream.read(&mut chunk).await.unwrap();
+                assert!(read > 0);
+                bytes.extend_from_slice(&chunk[..read]);
+                assert!(bytes.len() <= CALLBACK_MAX_BYTES);
+            }
+            assert!(bytes.starts_with(b"POST /token HTTP/1.1"));
+            stream
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\nConnection: close\r\n\r\n")
+                .await
+                .unwrap();
+            let _ = received.send(());
+            // Drain any remaining request body and observe real transport release.
+            tokio::time::timeout(Duration::from_secs(2), async {
+                let mut bytes = [0; 1024];
+                while stream.read(&mut bytes).await.unwrap() != 0 {}
+            })
+            .await
+            .unwrap();
+        });
+        let task = tokio::spawn(async move {
+            let _guard = guard;
+            let mut decl = test_declaration();
+            decl.token_endpoint = format!("http://{address}/token");
+            // The browser callback has already supplied the code. Exercise the
+            // production exchange/stream parser without opening a browser.
+            await_connect(
+                receiver,
+                CONNECT_TIMEOUT,
+                exchange(&decl, "code", "http://127.0.0.1/cb", "verifier"),
+            )
+            .await
+        });
+        tokio::time::timeout(Duration::from_secs(2), request)
+            .await
+            .unwrap()
+            .unwrap();
+        cancel_flow(&flows, "tools", None);
+        assert!(task.await.unwrap().is_err());
+        server.await.unwrap();
+        let writes = std::cell::Cell::new(0);
+        assert!(owner
+            .publish(|| {
+                writes.set(writes.get() + 1);
+                Ok(())
+            })
+            .is_err());
+        assert_eq!(writes.get(), 0);
+        assert!(flows.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn dropped_caller_refuses_already_queued_blocking_publication() {
+        let (_dir, prepared) = prepared_fixture();
+        let flows = Arc::new(Mutex::new(HashMap::new()));
+        let (guard, _) = PendingGuard::begin(
+            flows.clone(),
+            "com.example.tools".into(),
+            prepared.execution_generation,
+        )
+        .unwrap();
+        let owner = guard.0.clone();
+        let (release, wait) = std::sync::mpsc::channel();
+        let writes = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let count = writes.clone();
+        let task = tokio::task::spawn_blocking(move || {
+            wait.recv().unwrap();
+            publish_connect(&prepared, &owner, || {
+                count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                Ok(())
+            })
+        });
+        drop(guard);
+        release.send(()).unwrap();
+        assert!(task.await.unwrap().is_err());
+        assert_eq!(writes.load(std::sync::atomic::Ordering::SeqCst), 0);
+        assert!(flows.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn changed_registry_owner_refuses_sign_in_publication() {
+        for mode in ["disable", "reenable", "replace", "uninstall"] {
+            let (_dir, prepared) = prepared_fixture();
+            let flows = Arc::new(Mutex::new(HashMap::new()));
+            let (guard, _) = PendingGuard::begin(
+                flows,
+                "com.example.tools".into(),
+                prepared.execution_generation,
+            )
+            .unwrap();
+            match mode {
+                "disable" => {
+                    prepared
+                        .registry
+                        .set_enabled("com.example.tools", false)
+                        .unwrap();
+                }
+                "reenable" => {
+                    prepared
+                        .registry
+                        .set_enabled("com.example.tools", false)
+                        .unwrap();
+                    prepared
+                        .registry
+                        .set_enabled("com.example.tools", true)
+                        .unwrap();
+                }
+                "replace" => {
+                    prepared
+                        .registry
+                        .install(prepared.registry.record("com.example.tools").unwrap())
+                        .unwrap();
+                }
+                _ => {
+                    prepared.registry.uninstall("com.example.tools").unwrap();
+                }
+            }
+            let writes = std::cell::Cell::new(0);
+            assert!(
+                publish_connect(&prepared, &guard.0, || {
+                    writes.set(1);
+                    Ok(())
+                })
+                .is_err(),
+                "{mode}"
+            );
+            assert_eq!(writes.get(), 0);
+        }
+    }
+
+    #[test]
+    fn token_binding_rejects_legacy_and_changed_provider_client_scopes_or_hosts() {
+        let declaration = test_declaration();
+        let mut token: TokenSet = serde_json::from_value(serde_json::json!({
+            "access_token": "fixture-secret", "refresh_token": "fixture-refresh", "scopes": ["read"]
+        }))
+        .unwrap();
+        assert!(check_token_binding(&token, &declaration).is_err());
+        assert!(token.refresh_token.is_some()); // Preserve, never silently bless/delete.
+        token.authentication_fingerprint = Some(
+            grain_core::extensions::authentication_fingerprint(&declaration),
+        );
+        let stored = serde_json::to_vec(&token).unwrap();
+        let token: TokenSet = serde_json::from_slice(&stored).unwrap();
+        assert!(check_token_binding(&token, &declaration).is_ok());
+        for mode in ["issuer", "client", "scope", "host"] {
+            let mut changed = declaration.clone();
+            match mode {
+                "issuer" => changed.token_endpoint = "https://other.example.com/token".into(),
+                "client" => changed.client_id = "replacement".into(),
+                "scope" => changed.scopes.push("write".into()),
+                _ => changed.api_hosts.push("other.example.com".into()),
+            }
+            assert!(check_token_binding(&token, &changed).is_err(), "{mode}");
+        }
+    }
+
+    #[tokio::test]
+    async fn actual_exchange_and_refresh_store_the_reviewed_declaration_binding() {
+        let listener = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
+            .await
+            .unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            for _ in 0..2 {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let request = read_callback_request(&mut stream).await.unwrap();
+                assert!(request.starts_with(b"POST /token HTTP/1.1"));
+                let body = r#"{"access_token":"fixture-access","token_type":"Bearer","expires_in":3600,"scope":"read"}"#;
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                stream.write_all(response.as_bytes()).await.unwrap();
+            }
+        });
+        let mut declaration = test_declaration();
+        declaration.token_endpoint = format!("http://{address}/token");
+        let token = exchange(&declaration, "code", "http://127.0.0.1/cb", "verifier")
+            .await
+            .unwrap();
+        assert!(check_token_binding(&token, &declaration).is_ok());
+        let token = refresh(&declaration, "fixture-refresh").await.unwrap();
+        assert!(check_token_binding(&token, &declaration).is_ok());
+        assert_eq!(token.refresh_token.as_deref(), Some("fixture-refresh"));
+        server.await.unwrap();
+    }
 
     #[test]
     fn authorization_url_forces_pkce_and_reserved_fields() {
