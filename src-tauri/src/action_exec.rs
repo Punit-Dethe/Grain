@@ -31,7 +31,7 @@ use serde_json::Value;
 use tauri::AppHandle;
 
 /// How long a confirmation stays valid before the user must ask again (§8.3).
-const CONFIRM_TTL_MS: i64 = 120_000;
+pub(crate) const CONFIRM_TTL_MS: i64 = 120_000;
 /// The most confirmations we hold at once — a bound so a user who never answers
 /// cannot grow this without limit. Oldest are dropped first.
 const MAX_PENDING: usize = 16;
@@ -55,7 +55,7 @@ impl PendingCalls {
     fn insert(call: PreparedCall) {
         let mut guard = PENDING.lock().unwrap();
         let list = guard.get_or_insert_with(Vec::new);
-        list.retain(|existing| existing.token != call.token);
+        list.retain(|existing| existing.token != call.token && !existing.is_expired(now_ms()));
         if list.len() >= MAX_PENDING {
             list.remove(0);
         }
@@ -66,7 +66,11 @@ impl PendingCalls {
         let mut guard = PENDING.lock().unwrap();
         let list = guard.as_mut()?;
         let index = list.iter().position(|call| call.token == token)?;
-        Some(list.remove(index))
+        let call = list.remove(index);
+        if list.is_empty() {
+            *guard = None;
+        }
+        Some(call)
     }
 }
 

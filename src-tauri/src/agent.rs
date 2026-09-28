@@ -30,7 +30,7 @@ use std::{
         atomic::{AtomicBool, AtomicU64, Ordering},
         Arc, Mutex,
     },
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use futures_util::future::{AbortHandle, AbortRegistration, Abortable};
@@ -127,10 +127,13 @@ struct AgentRunState {
     generation: u64,
     active: Option<AbortHandle>,
     pending_action: Option<String>,
+    continuation: Option<PendingToolTurn>,
+    pending_deadline: Option<Instant>,
+    pending_expiry: Option<tokio::task::AbortHandle>,
 }
 
-/// One inline owner for the Agent run and its pending confirmation. No task or
-/// service is retained after the run; cancellation drops adapter-owned futures.
+/// One inline owner for the Agent run and its pending confirmation. Cancellation
+/// drops adapter futures; paused state expires through one owned short timer.
 #[derive(Default)]
 pub(crate) struct AgentRunControl {
     state: Mutex<AgentRunState>,
@@ -148,20 +151,34 @@ impl AgentRunControl {
         if state.active.is_some() {
             return Err("An Agent request is already running.".into());
         }
+        let expired = if state
+            .pending_deadline
+            .is_some_and(|deadline| Instant::now() >= deadline)
+        {
+            clear_pending_state(&mut state);
+            state.pending_action.take()
+        } else {
+            None
+        };
         state.generation = state
             .generation
             .checked_add(1)
             .ok_or("Agent run identity exhausted")?;
         let (handle, registration) = AbortHandle::new_pair();
         state.active = Some(handle);
-        Ok((
+        let owned = (
             AgentRun {
                 control: self,
                 generation: state.generation,
                 completed: AtomicBool::new(false),
             },
             registration,
-        ))
+        );
+        drop(state);
+        if let Some(token) = expired {
+            crate::action_exec::discard(&token);
+        }
+        Ok(owned)
     }
 
     /// End the session atomically with pending-token removal. The caller drops
@@ -171,7 +188,30 @@ impl AgentRunControl {
         if let Some(handle) = state.active.as_ref() {
             handle.abort();
         }
+        clear_pending_state(&mut state);
         state.pending_action.take()
+    }
+
+    fn expire_pending(&self, expected: &str) -> bool {
+        let mut state = self.state.lock().unwrap();
+        if state.pending_action.as_deref() != Some(expected)
+            || state
+                .pending_deadline
+                .is_none_or(|deadline| Instant::now() < deadline)
+        {
+            return false;
+        }
+        clear_pending_state(&mut state);
+        state.pending_action.take();
+        true
+    }
+}
+
+fn clear_pending_state(state: &mut AgentRunState) {
+    state.continuation.take();
+    state.pending_deadline.take();
+    if let Some(expiry) = state.pending_expiry.take() {
+        expiry.abort();
     }
 }
 
@@ -201,7 +241,16 @@ impl AgentRun<'_> {
         Ok(value)
     }
 
+    #[cfg(test)]
     fn publish_pending(&self, token: String) -> Result<(), String> {
+        self.publish_continuation(token, None)
+    }
+
+    fn publish_continuation(
+        &self,
+        token: String,
+        continuation: Option<PendingToolTurn>,
+    ) -> Result<(), String> {
         let previous = {
             let mut state = self.control.state.lock().unwrap();
             if state.generation != self.generation
@@ -214,6 +263,11 @@ impl AgentRun<'_> {
                 crate::action_exec::discard(&token);
                 return Err(RUN_CANCELLED.into());
             }
+            clear_pending_state(&mut state);
+            state.continuation = continuation;
+            state.pending_deadline = Some(
+                Instant::now() + Duration::from_millis(crate::action_exec::CONFIRM_TTL_MS as u64),
+            );
             state.pending_action.replace(token.clone())
         };
         if let Some(previous) = previous.filter(|previous| previous != &token) {
@@ -223,6 +277,10 @@ impl AgentRun<'_> {
     }
 
     fn take_pending(&self, expected: &str) -> bool {
+        self.consume_pending(expected).is_some()
+    }
+
+    fn consume_pending(&self, expected: &str) -> Option<Option<PendingToolTurn>> {
         let mut state = self.control.state.lock().unwrap();
         if state.generation != self.generation
             || state
@@ -231,10 +289,12 @@ impl AgentRun<'_> {
                 .is_none_or(|handle| handle.is_aborted())
             || state.pending_action.as_deref() != Some(expected)
         {
-            return false;
+            return None;
         }
         state.pending_action.take();
-        true
+        let continuation = state.continuation.take();
+        clear_pending_state(&mut state);
+        Some(continuation)
     }
 }
 
@@ -247,6 +307,7 @@ impl Drop for AgentRun<'_> {
             }
             if !self.completed.load(Ordering::Relaxed) {
                 let pending = state.pending_action.take();
+                clear_pending_state(&mut state);
                 drop(state);
                 if let Some(token) = pending {
                     crate::action_exec::discard(&token);
@@ -2500,20 +2561,10 @@ async fn agent_run_owned(
             .unwrap_or("");
         match grain_core::execution::classify_confirmation(said) {
             Confirmation::Yes => {
-                if !take_pending_action(run, &token) {
-                    return Ok(AgentReply::plain(
-                        "That confirmation is no longer active.".to_string(),
-                    ));
-                }
-                let outcome = crate::action_exec::resume(app, &token, true).await;
-                return Ok(outcome_to_reply(outcome));
+                return resume_pending_turn(app, run, &token, true).await;
             }
             Confirmation::No => {
-                if !take_pending_action(run, &token) {
-                    return Err(RUN_CANCELLED.into());
-                }
-                let _ = crate::action_exec::resume(app, &token, false).await;
-                return Ok(AgentReply::plain("Okay — I won't do that.".to_string()));
+                return resume_pending_turn(app, run, &token, false).await;
             }
             Confirmation::Unclear => {
                 // Drop the stale confirmation and answer the new request.
@@ -2549,13 +2600,7 @@ pub async fn agent_confirm_action(
         .ok_or("Agent state unavailable")?;
     let (run, registration) = state.execution.begin()?;
     run.wait(registration, async {
-        if !take_pending_action(&run, &token) {
-            return Ok(AgentReply::plain(
-                "That confirmation has expired or belongs to another Agent session.".to_string(),
-            ));
-        }
-        let outcome = crate::action_exec::resume(&app, &token, approve).await;
-        Ok(outcome_to_reply(outcome))
+        resume_pending_turn(&app, &run, &token, approve).await
     })
     .await?
 }
@@ -2579,6 +2624,190 @@ fn outcome_to_reply(outcome: grain_core::execution::ActionOutcome) -> AgentReply
 const MAX_AGENT_TOOL_HOPS: usize = 8;
 const MAX_AGENT_TOOL_CALLS: usize = 24;
 
+const MAX_TOOL_TRANSCRIPT_BYTES: usize = 256 * 1024;
+const MAX_TOOL_RESULT_BYTES: usize = 16 * 1024;
+const MAX_CALLS_PER_FRAME: usize = 8;
+
+/// Task-local transcript and budgets. No runtime, listener or credential is
+/// retained across approval; only the already-selected schema snapshots remain.
+struct ToolTurn {
+    entries: Vec<crate::llm_client::ChatEntry>,
+    session: crate::capability::CapabilitySession,
+    hops: usize,
+    calls: usize,
+    seen_ids: HashSet<String>,
+    blocked_tools: HashSet<String>,
+}
+
+struct PendingToolTurn {
+    turn: ToolTurn,
+    call_id: String,
+    tool_name: String,
+}
+
+impl PendingToolTurn {
+    fn finish(mut self, outcome: grain_core::execution::ActionOutcome, approve: bool) -> ToolTurn {
+        use grain_core::execution::ActionOutcome;
+        if !approve || !matches!(outcome, ActionOutcome::Succeeded(_)) {
+            // Do not let new arguments/call ids turn uncertainty or refusal
+            // into an automatic retry. A fresh explicit user request is needed.
+            self.turn.blocked_tools.insert(self.tool_name);
+        }
+        let summary = if approve {
+            outcome.model_summary()
+        } else {
+            "The user declined this exact call. It was not executed. Do not repeat this request for approval; continue only the remaining permitted task.".into()
+        };
+        self.turn.result(self.call_id, summary);
+        self.turn
+    }
+}
+
+fn transcript_bytes(entries: &[crate::llm_client::ChatEntry]) -> usize {
+    use crate::llm_client::ChatEntry;
+    entries
+        .iter()
+        .map(|entry| match entry {
+            ChatEntry::System(text) | ChatEntry::User(text) | ChatEntry::Assistant(text) => {
+                text.len().saturating_add(64)
+            }
+            ChatEntry::ToolResult { call_id, content } => call_id
+                .len()
+                .saturating_add(content.len())
+                .saturating_add(64),
+            ChatEntry::AssistantToolCalls(calls) => calls
+                .iter()
+                .map(|call| {
+                    call.id
+                        .len()
+                        .saturating_add(call.name.len())
+                        .saturating_add(call.arguments.len())
+                        .saturating_add(64)
+                })
+                .sum(),
+        })
+        .sum()
+}
+
+impl ToolTurn {
+    fn admit_frame(&mut self, calls: &[crate::llm_client::ToolCallOut]) -> Result<(), String> {
+        let mut seen = HashSet::new();
+        if calls.is_empty() || calls.len() > MAX_CALLS_PER_FRAME {
+            return Err(
+                "Invalid or oversized model tool batch; no additional calls were dispatched."
+                    .into(),
+            );
+        }
+        for call in calls {
+            if call.id.is_empty()
+                || call.id.len() > 128
+                || call.id.chars().any(char::is_control)
+                || call.name.len() > 64
+                || call.arguments.len() > grain_core::capability_agent::ARGUMENTS_MAX_BYTES
+                || self.seen_ids.contains(&call.id)
+                || !seen.insert(call.id.clone())
+            {
+                return Err("Invalid or repeated model tool-call identity; no additional calls were dispatched. Earlier actions may have had effects.".into());
+            }
+        }
+        let frame = crate::llm_client::ChatEntry::AssistantToolCalls(calls.to_vec());
+        // Reserve a bounded result for EVERY id, including deferred/denied ids.
+        let reserved = calls.len().saturating_mul(MAX_TOOL_RESULT_BYTES + 256);
+        if transcript_bytes(&self.entries)
+            .saturating_add(transcript_bytes(std::slice::from_ref(&frame)))
+            .saturating_add(reserved)
+            > MAX_TOOL_TRANSCRIPT_BYTES
+        {
+            return Err("Tool transcript budget reached; no additional calls were dispatched. Earlier actions may have had effects.".into());
+        }
+        self.seen_ids.extend(seen);
+        self.hops += 1;
+        self.entries.push(frame);
+        Ok(())
+    }
+
+    fn result(&mut self, call_id: String, mut content: String) {
+        if content.len() > MAX_TOOL_RESULT_BYTES {
+            let mut boundary = MAX_TOOL_RESULT_BYTES - 128;
+            while !content.is_char_boundary(boundary) {
+                boundary -= 1;
+            }
+            content.truncate(boundary);
+            content.push_str("\n[Tool result truncated by Grain's model-context limit. Execution status above still applies.]");
+        }
+        self.entries
+            .push(crate::llm_client::ChatEntry::ToolResult { call_id, content });
+    }
+}
+
+fn arm_pending_expiry(app: &AppHandle, token: String) {
+    let app_copy = app.clone();
+    let expected = token.clone();
+    let task = tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(
+            crate::action_exec::CONFIRM_TTL_MS as u64,
+        ))
+        .await;
+        if let Some(state) = app_copy.try_state::<AgentState>() {
+            if state.execution.expire_pending(&expected) {
+                crate::action_exec::discard(&expected);
+            }
+        }
+    });
+    if let Some(state) = app.try_state::<AgentState>() {
+        let mut guard = state.execution.state.lock().unwrap();
+        if guard.pending_action.as_deref() == Some(token.as_str()) {
+            if let Some(old) = guard.pending_expiry.replace(task.abort_handle()) {
+                old.abort();
+            }
+            return;
+        }
+    }
+    task.abort();
+}
+
+async fn resume_pending_turn(
+    app: &AppHandle,
+    run: &AgentRun<'_>,
+    token: &str,
+    approve: bool,
+) -> Result<AgentReply, String> {
+    let Some(continuation) = run.consume_pending(token) else {
+        return Ok(AgentReply::plain(
+            "That confirmation has expired or belongs to another Agent session.".into(),
+        ));
+    };
+    let outcome = crate::action_exec::resume(app, token, approve).await;
+    let Some(continuation) = continuation else {
+        return Ok(outcome_to_reply(outcome));
+    };
+    let receipt = outcome_to_reply(outcome.clone()).text;
+    let image = screen_attachment(app);
+    let result = drive_tool_turn(
+        app,
+        continuation.finish(outcome, approve),
+        image.as_ref(),
+        run,
+    )
+    .await;
+    continuation_reply(receipt, result)
+}
+
+fn continuation_reply(
+    receipt: String,
+    result: Result<AgentReply, String>,
+) -> Result<AgentReply, String> {
+    match result {
+        Ok(mut reply) => {
+            reply.text = format!("{receipt}\n\n{}", reply.text);
+            Ok(reply)
+        }
+        Err(error) => Ok(AgentReply::plain(format!(
+            "{receipt}\n\nI couldn't finish the remaining steps: {error}"
+        ))),
+    }
+}
+
 /// Run an Agent turn through the installed capability tools.
 async fn run_with_tools(
     app: &AppHandle,
@@ -2587,16 +2816,11 @@ async fn run_with_tools(
     run: &AgentRun<'_>,
 ) -> Result<AgentReply, String> {
     use crate::llm_client::ChatEntry;
-
     let opened = crate::capability::open(app, &[]);
-    let mut capability_session = opened.session;
-    let mut cap_tools = opened.specs;
-
-    if cap_tools.is_empty() {
+    if opened.specs.is_empty() {
         return Ok(AgentReply::plain(run_messages(app, full, image).await?));
     }
-
-    let mut entries: Vec<ChatEntry> = full
+    let mut entries: Vec<_> = full
         .into_iter()
         .map(|(role, content)| match role.as_str() {
             "system" => ChatEntry::System(content),
@@ -2611,115 +2835,494 @@ async fn run_with_tools(
             .count();
         entries.insert(position, ChatEntry::System(directory));
     }
+    if transcript_bytes(&entries) > MAX_TOOL_TRANSCRIPT_BYTES {
+        return Err(
+            "The tool request exceeds the context budget; shorten the supplied text.".into(),
+        );
+    }
+    drive_tool_turn(
+        app,
+        ToolTurn {
+            entries,
+            session: opened.session,
+            hops: 0,
+            calls: 0,
+            seen_ids: HashSet::new(),
+            blocked_tools: HashSet::new(),
+        },
+        image,
+        run,
+    )
+    .await
+}
 
-    // Set when a risky action was withheld; it ends the turn and rides out on
-    // `AgentReply.confirm_action` for the user to approve.
-    let mut pending_confirm: Option<AgentConfirm> = None;
-    let mut reply =
-        run_messages_with_tools(app, entries.clone(), tools_cloned(&cap_tools), image).await?;
+type ModelStep<'a> =
+    std::pin::Pin<Box<dyn std::future::Future<Output = Result<LlmToolReply, String>> + Send + 'a>>;
+type DispatchStep<'a> = std::pin::Pin<
+    Box<dyn std::future::Future<Output = Option<crate::capability::ToolResult>> + Send + 'a>,
+>;
 
-    let mut hops = 0usize;
-    let mut tool_calls_used = 0usize;
-    while !reply.tool_calls.is_empty() && hops < MAX_AGENT_TOOL_HOPS {
-        hops += 1;
-        let offered_capability_names: HashSet<String> =
-            cap_tools.iter().map(|tool| tool.name.clone()).collect();
-        entries.push(ChatEntry::AssistantToolCalls(reply.tool_calls.clone()));
-        for call in &reply.tool_calls {
-            if tool_calls_used >= MAX_AGENT_TOOL_CALLS {
-                entries.push(ChatEntry::ToolResult {
-                    call_id: call.id.clone(),
-                    content: "Not run because this Agent request reached its tool-call limit."
-                        .to_string(),
-                });
-                continue;
+#[cfg(test)]
+mod tool_continuation_tests {
+    use super::*;
+    use crate::llm_client::{ChatEntry, ToolCallOut};
+    use grain_core::execution::{ActionOutcome, RiskClass, SideEffect, SuccessData};
+    use std::collections::VecDeque;
+
+    fn call(id: &str, action: &str) -> ToolCallOut {
+        ToolCallOut {
+            id: id.into(),
+            name: grain_core::capability_agent::tool_name(&format!("com.example.github:{action}")),
+            arguments: "{}".into(),
+        }
+    }
+
+    fn turn() -> ToolTurn {
+        ToolTurn {
+            entries: vec![ChatEntry::User("Read, write, then verify".into())],
+            session: crate::capability::fixture_session(),
+            hops: 0,
+            calls: 0,
+            seen_ids: HashSet::new(),
+            blocked_tools: HashSet::new(),
+        }
+    }
+
+    fn frame(calls: Vec<ToolCallOut>) -> LlmToolReply {
+        LlmToolReply {
+            content: String::new(),
+            tool_calls: calls,
+        }
+    }
+
+    fn success() -> ActionOutcome {
+        ActionOutcome::Succeeded(SuccessData {
+            source: Some("Fixture".into()),
+            title: Some("Created".into()),
+            body: Some("Created issue 42".into()),
+            structured_content: None,
+            details: vec![],
+            receipt: true,
+        })
+    }
+
+    async fn confirmation() -> AgentConfirm {
+        let prepared = crate::action_exec::prepare(
+            "com.example.github:write",
+            "com.example.github",
+            "write",
+            "Fixture",
+            serde_json::json!({}),
+            RiskClass::Confirm,
+            SideEffect::Write,
+            "digest",
+        );
+        match crate::action_exec::run_or_confirm_opt(None, prepared, "Write").await {
+            crate::action_exec::Dispatch::AwaitConfirm(interaction) => {
+                crate::action_exec::to_agent_confirm(interaction)
             }
-            tool_calls_used += 1;
-            // Stop after the first withheld call. A provider may emit several
-            // calls in one turn, but later calls must not run before the user
-            // answers the one confirmation that was actually displayed.
-            if pending_confirm.is_some() {
-                entries.push(ChatEntry::ToolResult {
-                    call_id: call.id.clone(),
-                    content: "Not run because another action is awaiting the user's approval."
-                        .to_string(),
-                });
-                continue;
-            }
-            // An extension capability tool (load_extension / act__…) is handled by the
-            // registry; unoffered tools return an unavailable result.
-            let content = match crate::capability::dispatch(
-                app,
-                call,
-                &mut capability_session,
-                &offered_capability_names,
+            _ => panic!("write must be withheld"),
+        }
+    }
+
+    #[tokio::test]
+    async fn production_loop_retains_ids_schemas_and_budgets_through_approval() {
+        let control = AgentRunControl::default();
+        let (run, registration) = control.begin().unwrap();
+        let dispatched = Arc::new(Mutex::new(Vec::new()));
+        let dispatch_log = dispatched.clone();
+        let mut model = VecDeque::from([frame(vec![
+            call("read-before", "read"),
+            call("write-original", "write"),
+            call("skipped", "read"),
+        ])]);
+        let reply = run
+            .wait(
+                registration,
+                drive_tool_turn_with(
+                    turn(),
+                    &run,
+                    move |_, tools| {
+                        assert_eq!(tools.len(), 4);
+                        let reply = model.pop_front().unwrap();
+                        Box::pin(async move { Ok(reply) })
+                    },
+                    move |call, _, offered| {
+                        assert!(offered.contains(&call.name));
+                        dispatch_log.lock().unwrap().push(call.id.clone());
+                        let write = call.id == "write-original";
+                        Box::pin(async move {
+                            Some(if write {
+                                crate::capability::ToolResult::Confirm(confirmation().await)
+                            } else {
+                                crate::capability::ToolResult::Text("Issue found".into())
+                            })
+                        })
+                    },
+                    |_| {},
+                ),
             )
             .await
-            {
-                Some(crate::capability::ToolResult::Text(text)) => text,
-                Some(crate::capability::ToolResult::Confirm(confirm)) => {
-                    // A risky action was withheld. Close this tool call honestly
-                    // and end the turn to surface the confirmation; the model never
-                    // sees it as done.
-                    run.publish_pending(confirm.token.clone())?;
-                    pending_confirm = Some(confirm);
-                    "Awaiting the user's approval before this runs — do not claim it is done."
-                        .to_string()
-                }
-                None => "That tool is unavailable or was not offered for this turn.".to_string(),
-            };
-            entries.push(ChatEntry::ToolResult {
-                call_id: call.id.clone(),
-                content,
-            });
-        }
-        // A withheld action ends the turn — nothing more runs until the user
-        // approves the exact prepared call.
-        if pending_confirm.is_some() {
-            break;
-        }
-        // load_extension may have widened the exposed set; rebuild before the hop.
-        cap_tools = crate::capability::specs(&capability_session);
-        // The frame rides every hop, not just the first. The hop that produces
-        // the ANSWER is the one that needs to see the screen, and an OpenAI-shaped
-        // request is stateless — dropping the image after hop 1 would leave the
-        // model answering a screen question from a tool result alone.
-        reply =
-            run_messages_with_tools(app, entries.clone(), tools_cloned(&cap_tools), image).await?;
+            .unwrap()
+            .unwrap();
+        let token = reply.confirm_action.unwrap().token;
+        drop(run);
+        assert_eq!(
+            *dispatched.lock().unwrap(),
+            ["read-before", "write-original"]
+        );
+        let (run, registration) = control.begin().unwrap();
+        assert!(run.consume_pending("foreign-token").is_none());
+        let pending = run.consume_pending(&token).unwrap().unwrap();
+        assert!(run.consume_pending(&token).is_none());
+        assert_eq!(pending.call_id, "write-original");
+        assert_eq!(pending.turn.hops, 1);
+        assert_eq!(pending.turn.calls, 2);
+        assert_eq!(crate::capability::specs(&pending.turn.session).len(), 4);
+        // Executor/SDK execution is tested separately; this fixture supplies its
+        // truthful completed outcome at the production continuation boundary.
+        assert!(crate::action_exec::discard(&token));
+        let mut model = VecDeque::from([
+            frame(vec![call("verify", "read")]),
+            LlmToolReply {
+                content: "Verified issue 42".into(),
+                tool_calls: vec![],
+            },
+        ]);
+        let dispatch_log = dispatched.clone();
+        let mut round = 0;
+        let reply = run
+            .wait(
+                registration,
+                drive_tool_turn_with(
+                    pending.finish(success(), true),
+                    &run,
+                    move |entries, tools| {
+                        assert_eq!(tools.len(), 4);
+                        let results: Vec<_> = entries
+                            .iter()
+                            .filter_map(|entry| match entry {
+                                ChatEntry::ToolResult { call_id, content } => {
+                                    Some((call_id.as_str(), content.as_str()))
+                                }
+                                _ => None,
+                            })
+                            .collect();
+                        assert!(results.iter().any(|(id, text)| *id == "write-original"
+                            && text.contains("Created issue 42")));
+                        assert!(results
+                            .iter()
+                            .any(|(id, text)| *id == "skipped" && text.contains("Not executed")));
+                        assert_eq!(results.len(), 3 + round);
+                        round += 1;
+                        let reply = model.pop_front().unwrap();
+                        Box::pin(async move { Ok(reply) })
+                    },
+                    move |call, _, _| {
+                        dispatch_log.lock().unwrap().push(call.id.clone());
+                        Box::pin(async {
+                            Some(crate::capability::ToolResult::Text("Verified".into()))
+                        })
+                    },
+                    |_| {},
+                ),
+            )
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(reply.text, "Verified issue 42");
+        assert_eq!(
+            *dispatched.lock().unwrap(),
+            ["read-before", "write-original", "verify"]
+        );
     }
 
-    // A risky action is waiting on the user: end here with the confirmation, not a
-    // forced answer. Approval resumes the exact call via `agent_confirm_action`.
-    if let Some(confirm) = pending_confirm {
-        return Ok(AgentReply {
-            // No approve/deny button in the interim surface — ask in prose; the
-            // user's next reply (yes/no) is read host-side and resumes the exact
-            // call. `confirm_action` still rides out for a future native panel.
-            text: format!(
+    #[tokio::test]
+    async fn refusal_and_uncertain_outcomes_block_changed_argument_retries_but_allow_verification()
+    {
+        for (approve, outcome) in [
+            (false, ActionOutcome::Cancelled),
+            (
+                true,
+                ActionOutcome::UnknownOutcome {
+                    message: "Provider may have written".into(),
+                },
+            ),
+            (
+                true,
+                ActionOutcome::ResultUnavailable {
+                    message: "Reply unsupported".into(),
+                },
+            ),
+            (
+                true,
+                ActionOutcome::ToolReportedError {
+                    message: "Partial effects possible".into(),
+                },
+            ),
+        ] {
+            let mut original = turn();
+            original.admit_frame(&[call("original", "write")]).unwrap();
+            original.calls = 1;
+            let turn = PendingToolTurn {
+                turn: original,
+                call_id: "original".into(),
+                tool_name: call("original", "write").name,
+            }
+            .finish(outcome, approve);
+            let control = AgentRunControl::default();
+            let (run, registration) = control.begin().unwrap();
+            let mut retry = call("new-identity", "write");
+            retry.arguments = r#"{"changed":true}"#.into();
+            let mut model = VecDeque::from([
+                frame(vec![retry, call("verify", "read")]),
+                LlmToolReply {
+                    content: "Remaining work only".into(),
+                    tool_calls: vec![],
+                },
+            ]);
+            run.wait(registration, drive_tool_turn_with(turn, &run,
+                move |entries, _| {
+                    if entries.len() > 3 { assert!(entries.iter().any(|entry| matches!(entry, ChatEntry::ToolResult {call_id,content} if call_id == "new-identity" && content.contains("cannot run again")))); }
+                    let reply = model.pop_front().unwrap(); Box::pin(async move { Ok(reply) })
+                }, |call, _, _| { assert_eq!(call.id, "verify"); Box::pin(async {Some(crate::capability::ToolResult::Text("Read current state".into()))}) }, |_| {})).await.unwrap().unwrap();
+        }
+    }
+
+    #[test]
+    fn invalid_frames_are_rejected_atomically_and_results_are_utf8_bounded() {
+        let mut turn = turn();
+        for calls in [
+            vec![call("same", "read"), call("same", "write")],
+            vec![call("", "read")],
+            vec![call("x", "read"); 9],
+        ] {
+            assert!(turn.admit_frame(&calls).is_err());
+            assert!(turn.seen_ids.is_empty());
+            assert_eq!(turn.hops, 0);
+            assert_eq!(turn.entries.len(), 1);
+        }
+        let mut large = call("large", "write");
+        large.arguments = "x".repeat(grain_core::capability_agent::ARGUMENTS_MAX_BYTES + 1);
+        assert!(turn.admit_frame(&[large]).is_err());
+        turn.admit_frame(&[call("one", "read")]).unwrap();
+        assert!(turn.admit_frame(&[call("one", "write")]).is_err());
+        turn.result("one".into(), "é\n".repeat(MAX_TOOL_RESULT_BYTES));
+        match turn.entries.last().unwrap() {
+            ChatEntry::ToolResult { content, .. } => {
+                assert!(content.len() <= MAX_TOOL_RESULT_BYTES);
+                assert!(content.contains("\n"));
+                assert!(content.contains("truncated"));
+            }
+            _ => panic!(),
+        }
+        turn.entries
+            .push(ChatEntry::User("x".repeat(MAX_TOOL_TRANSCRIPT_BYTES)));
+        assert!(turn.admit_frame(&[call("more", "read")]).is_err());
+        assert!(!turn.seen_ids.contains("more"));
+    }
+
+    #[tokio::test]
+    async fn exhausted_task_budget_offers_no_tools_and_dispatches_none() {
+        for hops in [false, true] {
+            let mut turn = turn();
+            if hops {
+                turn.hops = MAX_AGENT_TOOL_HOPS;
+            } else {
+                turn.calls = MAX_AGENT_TOOL_CALLS;
+            }
+            let control = AgentRunControl::default();
+            let (run, registration) = control.begin().unwrap();
+            assert!(run
+                .wait(
+                    registration,
+                    drive_tool_turn_with(
+                        turn,
+                        &run,
+                        |_, tools| {
+                            assert!(tools.is_empty());
+                            Box::pin(async { Ok(frame(vec![call("extra", "write")])) })
+                        },
+                        |_, _, _| { panic!("exhausted task cannot dispatch") },
+                        |_| {}
+                    )
+                )
+                .await
+                .unwrap()
+                .is_err());
+        }
+    }
+
+    #[tokio::test]
+    async fn pending_expiry_cancel_and_drop_release_continuation_and_owned_timer() {
+        for mode in [0, 1, 2] {
+            let control = AgentRunControl::default();
+            let (run, registration) = control.begin().unwrap();
+            let confirm = confirmation().await;
+            let token = confirm.token;
+            run.publish_continuation(
+                token.clone(),
+                Some(PendingToolTurn {
+                    turn: turn(),
+                    call_id: "pending".into(),
+                    tool_name: call("pending", "write").name,
+                }),
+            )
+            .unwrap();
+            let task = tokio::spawn(std::future::pending::<()>());
+            {
+                let mut state = control.state.lock().unwrap();
+                state.pending_expiry = Some(task.abort_handle());
+            }
+            if mode != 2 {
+                run.wait(registration, async {}).await.unwrap();
+            }
+            drop(run);
+            if mode == 0 {
+                assert!(!control.expire_pending("foreign"));
+                control.state.lock().unwrap().pending_deadline =
+                    Some(Instant::now() - Duration::from_secs(1));
+                assert!(control.expire_pending(&token));
+                assert!(crate::action_exec::discard(&token));
+            } else if mode == 1 {
+                let token = control.cancel().unwrap();
+                assert!(crate::action_exec::discard(&token));
+            }
+            assert!(task.await.unwrap_err().is_cancelled());
+            let state = control.state.lock().unwrap();
+            assert!(
+                state.continuation.is_none()
+                    && state.pending_action.is_none()
+                    && state.pending_expiry.is_none()
+            );
+            assert!(!crate::action_exec::discard(&token));
+        }
+    }
+
+    #[tokio::test]
+    async fn completed_receipt_survives_model_failure_or_a_later_confirmation() {
+        let failed =
+            continuation_reply("Created issue 42".into(), Err("Model unavailable".into())).unwrap();
+        assert!(failed.text.starts_with("Created issue 42"));
+        assert!(failed.text.contains("remaining steps"));
+        let confirm = confirmation().await;
+        let token = confirm.token.clone();
+        let next = continuation_reply(
+            "Created issue 42".into(),
+            Ok(AgentReply {
+                text: "Approve second operation".into(),
+                confirm_action: Some(confirm),
+            }),
+        )
+        .unwrap();
+        assert!(next.text.starts_with("Created issue 42"));
+        assert_eq!(next.confirm_action.unwrap().token, token);
+        assert!(crate::action_exec::discard(&token));
+    }
+}
+
+async fn drive_tool_turn(
+    app: &AppHandle,
+    turn: ToolTurn,
+    image: Option<&ImageAttachment>,
+    run: &AgentRun<'_>,
+) -> Result<AgentReply, String> {
+    let dispatch_app = app.clone();
+    drive_tool_turn_with(
+        turn,
+        run,
+        |entries, tools| Box::pin(run_messages_with_tools(app, entries, tools, image)),
+        move |call, session, offered| {
+            let app = dispatch_app.clone();
+            Box::pin(async move { crate::capability::dispatch(&app, call, session, offered).await })
+        },
+        |token| arm_pending_expiry(app, token),
+    )
+    .await
+}
+
+/// The production loop with model/adapter boundaries injected for deterministic
+/// protocol fixtures. Cancellation remains owned by AgentRun, not these seams.
+async fn drive_tool_turn_with<'a>(
+    mut turn: ToolTurn,
+    run: &AgentRun<'_>,
+    mut request: impl FnMut(Vec<crate::llm_client::ChatEntry>, Vec<crate::llm_client::ToolSpec>) -> ModelStep<'a>
+        + Send,
+    mut dispatch: impl for<'b> FnMut(
+            &'b crate::llm_client::ToolCallOut,
+            &'b mut crate::capability::CapabilitySession,
+            &'b HashSet<String>,
+        ) -> DispatchStep<'b>
+        + Send,
+    arm_expiry: impl Fn(String) + Send,
+) -> Result<AgentReply, String> {
+    loop {
+        let exhausted = turn.hops >= MAX_AGENT_TOOL_HOPS || turn.calls >= MAX_AGENT_TOOL_CALLS;
+        let tools = if exhausted {
+            Vec::new()
+        } else {
+            crate::capability::specs(&turn.session)
+        };
+        let offered: HashSet<_> = tools.iter().map(|tool| tool.name.clone()).collect();
+        let reply = request(turn.entries.clone(), tools).await?;
+        if reply.tool_calls.is_empty() {
+            return Ok(AgentReply::plain(reply.content));
+        }
+        if exhausted {
+            return Err("The model requested more tools after the task budget ended. Completed actions must not be repeated automatically.".into());
+        }
+        turn.admit_frame(&reply.tool_calls)?;
+        let mut withheld = None;
+        for call in &reply.tool_calls {
+            if withheld.is_some() {
+                turn.result(call.id.clone(), "Not executed because another call is awaiting approval. Ask for remaining work only after its result.".into());
+                continue;
+            }
+            if turn.calls >= MAX_AGENT_TOOL_CALLS {
+                turn.result(
+                    call.id.clone(),
+                    "Not executed because the task's tool-call budget is exhausted.".into(),
+                );
+                continue;
+            }
+            turn.calls += 1;
+            if turn.blocked_tools.contains(&call.name) {
+                turn.result(call.id.clone(), "This tool was declined or did not return a confirmed success. It cannot run again in this task; use a different verification tool or make a fresh explicit request.".into());
+                continue;
+            }
+            match dispatch(call, &mut turn.session, &offered).await {
+                Some(crate::capability::ToolResult::Confirm(confirm)) => {
+                    withheld = Some((confirm, call.id.clone(), call.name.clone()));
+                }
+                Some(crate::capability::ToolResult::Text(text)) => {
+                    turn.result(call.id.clone(), text)
+                }
+                None => turn.result(
+                    call.id.clone(),
+                    "That tool is unavailable or was not offered for this round.".into(),
+                ),
+            }
+        }
+        if let Some((confirm, call_id, tool_name)) = withheld {
+            let text = format!(
                 "{}\n\nWould you like me to go ahead? (yes / no)",
                 confirm.markdown
-            ),
-            confirm_action: Some(confirm),
-        });
+            );
+            run.publish_continuation(
+                confirm.token.clone(),
+                Some(PendingToolTurn {
+                    turn,
+                    call_id,
+                    tool_name,
+                }),
+            )?;
+            arm_expiry(confirm.token.clone());
+            return Ok(AgentReply {
+                text,
+                confirm_action: Some(confirm),
+            });
+        }
     }
-
-    // Still asking for tools at the cap. `entries` ends on a tool result, so this
-    // nudge is safe — advertising NO tools is what makes it terminate, and leaving
-    // a dangling assistant tool-call would be rejected by the API.
-    if !reply.tool_calls.is_empty() {
-        info!("[GRAIN] agent: tool hop cap ({MAX_AGENT_TOOL_HOPS}) reached; forcing an answer");
-        entries.push(ChatEntry::User(
-            "Answer now, using what you already have.".to_string(),
-        ));
-        // No image on the forcing turn: it appends a new last USER entry, so the
-        // frame would move onto "Answer now" and away from the actual question.
-        reply = run_messages_with_tools(app, entries, Vec::new(), None).await?;
-    }
-
-    Ok(AgentReply {
-        text: reply.content,
-        confirm_action: None,
-    })
 }
 
 /// The Agent's LLM driver, shared by the panel (`agent_run`) and Quick Agent.

@@ -5,8 +5,8 @@
 //! Agent's live tool loop (`agent::run_with_tools`). It:
 //!
 //! - injects a compact, inert directory of enabled extensions;
-//! - exposes only `load_extension` initially, then atomically adds every approved
-//!   action schema for each extension loaded in a prior model round;
+//! - exposes metadata search and selected schema loading, then atomically adds
+//!   only the selected schemas under a task byte budget;
 //! - dispatches action calls through an authoritative task-local name map and the
 //!   existing prepared-call, confirmation, and worker boundary.
 //!
@@ -14,8 +14,8 @@ use std::collections::{BTreeMap, HashSet};
 
 use crate::llm_client::{ToolCallOut, ToolSpec};
 use grain_core::capability_agent::{
-    self, load_extension_tool_def, ExtensionExposure, ExtensionLoadStatus, LOAD_EXTENSION,
-    MAX_DIRECTORY_EXTENSIONS, TOOL_NAME_PREFIX,
+    self, load_extension_tool_def, search_tools_tool_def, ExtensionExposure, ExtensionLoadStatus,
+    LOAD_EXTENSION, SEARCH_TOOLS, TOOL_NAME_PREFIX,
 };
 use grain_core::execution::{RiskClass, SideEffect};
 use tauri::AppHandle;
@@ -61,7 +61,6 @@ enum ActionOrigin {
         provider_name: String,
         tool_name: String,
         title: String,
-        input_schema: serde_json::Value,
     },
 }
 
@@ -70,7 +69,6 @@ pub fn open(app: &AppHandle, reserved_names: &[String]) -> Opened {
     directory.extend(crate::grain_mcp::directory(app));
     directory.sort_by(|a, b| a.extension_id.cmp(&b.extension_id));
     directory.dedup_by(|a, b| a.extension_id == b.extension_id);
-    directory.truncate(MAX_DIRECTORY_EXTENSIONS);
     let exposure = ExtensionExposure::new(&directory, reserved_names);
     if !exposure.has_directory_entries() {
         return Opened {
@@ -87,15 +85,19 @@ pub fn open(app: &AppHandle, reserved_names: &[String]) -> Opened {
             exposure,
             actions: BTreeMap::new(),
         },
-        specs: vec![to_spec(load_extension_tool_def())],
+        specs: vec![
+            to_spec(search_tools_tool_def()),
+            to_spec(load_extension_tool_def()),
+        ],
         directory_context: Some(capability_agent::extension_directory_context(&directory)),
     }
 }
 
-/// The loader plus every action schema published by successful prior loads.
+/// Host discovery affordances and the selected schemas published by prior loads.
 pub fn specs(session: &CapabilitySession) -> Vec<ToolSpec> {
-    let mut specs = Vec::with_capacity(session.actions.len() + 1);
+    let mut specs = Vec::with_capacity(session.actions.len() + 2);
     if session.exposure.has_directory_entries() {
+        specs.push(to_spec(search_tools_tool_def()));
         specs.push(to_spec(load_extension_tool_def()));
     }
     specs.extend(session.actions.values().map(|action| ToolSpec {
@@ -115,13 +117,13 @@ pub async fn dispatch(
     session: &mut CapabilitySession,
     offered_names: &HashSet<String>,
 ) -> Option<ToolResult> {
-    if call.name == LOAD_EXTENSION {
-        if !offered_names.contains(LOAD_EXTENSION) {
+    if call.name == LOAD_EXTENSION || call.name == SEARCH_TOOLS {
+        if !offered_names.contains(&call.name) {
             return Some(ToolResult::Text(
                 "load_extension was not available in this model round.".to_string(),
             ));
         }
-        return Some(ToolResult::Text(handle_load(app, call, session).await));
+        return Some(ToolResult::Text(handle_catalog(app, call, session).await));
     }
     // An action tool resolves through the session's exposure map — the
     // authoritative reverse of `tool_name`. An undisclosed or invented name
@@ -157,142 +159,147 @@ fn resolve_offered_action(
     Ok(exposure.resolve(provider_name).cloned())
 }
 
-async fn handle_load(
+async fn handle_catalog(
     app: &AppHandle,
     call: &ToolCallOut,
     session: &mut CapabilitySession,
 ) -> String {
-    let extension_id = match capability_agent::parse_load_extension_arguments(&call.arguments) {
-        Ok(id) => id,
-        Err(error) => return format!("Could not load extension: {error}."),
+    let (extension_id, selection, query, offset) = if call.name == SEARCH_TOOLS {
+        match capability_agent::parse_search_request(&call.arguments) {
+            Ok(request) => (request.extension_id, None, request.query, request.offset),
+            Err(error) => return format!("Could not search tools: {error}"),
+        }
+    } else {
+        match capability_agent::parse_load_request(&call.arguments) {
+            Ok(request) => (request.extension_id, request.tool_ids, String::new(), 0),
+            Err(error) => return format!("Could not load tools: {error}"),
+        }
     };
-    if let Some(provider_id) = extension_id.strip_prefix("mcp.") {
-        return handle_mcp_load(app, &extension_id, provider_id, session).await;
+    if !session.exposure.contains_extension(&extension_id) {
+        return "That extension is not present in this request's enabled directory.".into();
     }
-    let action_set =
-        match crate::extension_host::capability_actions_for_extension(app, &extension_id) {
-            Ok(action_set) => action_set,
-            Err(error) => return format!("Could not load extension '{extension_id}': {error}."),
+    let (actions, digest, mcp) = if let Some(provider_id) = extension_id.strip_prefix("mcp.") {
+        let catalog = match crate::grain_mcp::list_tools(app, provider_id).await {
+            Ok(catalog) => catalog,
+            Err(error) => return format!("Could not discover MCP tools: {error}"),
         };
-
-    match crate::grain_auth::connection(app, &extension_id).await {
-        Ok(Some(connection)) if !matches!(connection.state.as_str(), "connected" | "expired") => {
-            return format!(
-                "Could not load extension '{extension_id}': its {} account is {}. Connect it in Grain Settings first.",
-                capability_agent::sanitize(&connection.provider_name, 96),
-                capability_agent::sanitize(&connection.state, 32)
-            );
+        let actions = catalog
+            .tools
+            .iter()
+            .map(|tool| mcp_action_input(&extension_id, &catalog.provider_name, tool))
+            .collect::<Vec<_>>();
+        (actions, catalog.digest.clone(), Some(catalog))
+    } else {
+        let catalog =
+            match crate::extension_host::capability_actions_for_extension(app, &extension_id) {
+                Ok(catalog) => catalog,
+                Err(error) => return format!("Could not discover native tools: {error}"),
+            };
+        match crate::grain_auth::connection(app, &extension_id).await {
+            Ok(Some(connection))
+                if !matches!(connection.state.as_str(), "connected" | "expired") =>
+            {
+                return format!(
+                    "The native account is {}. Connect it in Grain Settings first.",
+                    capability_agent::sanitize(&connection.state, 32)
+                );
+            }
+            Err(_) => return "Could not verify the native account state.".into(),
+            _ => {}
         }
-        Err(_) => {
-            return format!(
-                "Could not load extension '{extension_id}': Grain could not verify its account state."
-            );
-        }
-        _ => {}
-    }
-
-    let status = match session.exposure.load(
-        &extension_id,
-        &action_set.actions,
-        &action_set.manifest_digest,
-    ) {
-        Ok(status) => status,
-        Err(error) => return format!("Could not load extension '{extension_id}': {error}."),
+        (catalog.actions, catalog.manifest_digest, None)
     };
-    if status == ExtensionLoadStatus::AlreadyLoaded {
-        return format!(
-            "Extension '{extension_id}' is already loaded; its tools remain available."
-        );
-    }
-
-    for action in &action_set.actions {
-        session.actions.insert(
-            action.canonical_id.clone(),
+    let Some(ids) = selection else {
+        let mut page = capability_agent::search_metadata(&actions, &query, offset);
+        page["extension_id"] = serde_json::json!(extension_id);
+        return page.to_string();
+    };
+    let mut candidates = Vec::with_capacity(ids.len());
+    for id in ids {
+        let Some(action) = actions.iter().find(|action| action.action_id == id) else {
+            return "A selected tool is absent from the current catalog. Search again; no schemas were loaded.".into();
+        };
+        let candidate = if let Some(catalog) = &mcp {
+            let Some(tool) = catalog.tools.iter().find(|tool| tool.name.as_ref() == id) else {
+                return "Tool catalog changed.".into();
+            };
+            SessionAction {
+                spec: ToolSpec {
+                    name: capability_agent::tool_name(&action.canonical_id),
+                    description: capability_agent::sanitize(
+                        tool.description.as_deref().unwrap_or(&action.title),
+                        1200,
+                    ),
+                    parameters: serde_json::Value::Object(tool.input_schema.as_ref().clone()),
+                },
+                origin: ActionOrigin::Mcp {
+                    provider_id: catalog.provider_id.clone(),
+                    provider_name: catalog.provider_name.clone(),
+                    tool_name: tool.name.to_string(),
+                    title: action.title.clone(),
+                },
+            }
+        } else {
             SessionAction {
                 spec: to_spec(capability_agent::action_tool_def(action)),
                 origin: ActionOrigin::Native,
-            },
-        );
+            }
+        };
+        candidates.push((action.clone(), candidate));
     }
-
-    let mut lines = Vec::with_capacity(action_set.actions.len());
-    for action in &action_set.actions {
-        lines.push(format!(
-            "- {} — {}",
-            capability_agent::tool_name(&action.canonical_id),
-            capability_agent::sanitize(&action.title, 160)
-        ));
+    match publish_selected(session, &extension_id, &digest, candidates) {
+        Ok(status) => format!("Selected schemas {status:?}. Tools become callable on the next model round. Search can find additional tools; nothing was executed."),
+        Err(error) => format!("Could not load selected schemas: {error}"),
     }
-    format!(
-        "Loaded extension '{}' for this request. Its tools will be available on the next model round:\n{}",
-        capability_agent::sanitize(&extension_id, 255),
-        lines.join("\n")
-    )
 }
 
-async fn handle_mcp_load(
-    app: &AppHandle,
-    extension_id: &str,
-    provider_id: &str,
-    session: &mut CapabilitySession,
-) -> String {
-    let tool_set = match crate::grain_mcp::list_tools(app, provider_id).await {
-        Ok(tool_set) => tool_set,
-        Err(error) => return format!("Could not load MCP provider '{extension_id}': {error}."),
-    };
-    let actions: Vec<_> = tool_set
-        .tools
-        .iter()
-        .map(|tool| mcp_action_input(extension_id, &tool_set.provider_name, tool))
-        .collect();
-    let status = match session
-        .exposure
-        .load(extension_id, &actions, &tool_set.digest)
-    {
-        Ok(status) => status,
-        Err(error) => return format!("Could not load MCP provider '{extension_id}': {error}."),
-    };
-    if status == ExtensionLoadStatus::AlreadyLoaded {
-        return format!(
-            "MCP provider '{extension_id}' is already loaded; its tools remain available."
-        );
+fn schema_bytes(spec: &ToolSpec) -> usize {
+    #[derive(serde::Serialize)]
+    struct Definition<'a> {
+        name: &'a str,
+        description: &'a str,
+        parameters: &'a serde_json::Value,
     }
+    serde_json::to_vec(&Definition {
+        name: &spec.name,
+        description: &spec.description,
+        parameters: &spec.parameters,
+    })
+    .map(|bytes| bytes.len())
+    .unwrap_or(usize::MAX)
+}
 
-    let mut lines = Vec::with_capacity(actions.len());
-    for (action, tool) in actions.iter().zip(&tool_set.tools) {
-        let parameters = serde_json::Value::Object(tool.input_schema.as_ref().clone());
-        let spec = ToolSpec {
-            name: capability_agent::tool_name(&action.canonical_id),
-            description: capability_agent::sanitize(
-                tool.description.as_deref().unwrap_or(&action.title),
-                1_200,
-            ),
-            parameters: parameters.clone(),
-        };
-        session.actions.insert(
-            action.canonical_id.clone(),
-            SessionAction {
-                spec,
-                origin: ActionOrigin::Mcp {
-                    provider_id: tool_set.provider_id.clone(),
-                    provider_name: tool_set.provider_name.clone(),
-                    tool_name: tool.name.to_string(),
-                    title: action.title.clone(),
-                    input_schema: parameters,
-                },
-            },
-        );
-        lines.push(format!(
-            "- {} — {}",
-            capability_agent::tool_name(&action.canonical_id),
-            capability_agent::sanitize(&action.title, 160)
-        ));
+fn publish_selected(
+    session: &mut CapabilitySession,
+    id: &str,
+    digest: &str,
+    candidates: Vec<(grain_core::capability_index::ActionInput, SessionAction)>,
+) -> Result<ExtensionLoadStatus, String> {
+    let mut bytes = schema_bytes(&to_spec(load_extension_tool_def()))
+        .saturating_add(schema_bytes(&to_spec(search_tools_tool_def())));
+    for (canonical, current) in &session.actions {
+        if !candidates
+            .iter()
+            .any(|(action, _)| &action.canonical_id == canonical)
+        {
+            bytes = bytes.saturating_add(schema_bytes(&current.spec));
+        }
     }
-    format!(
-        "Loaded MCP provider '{}' for this request. Its tools will be available on the next model round:\n{}",
-        capability_agent::sanitize(extension_id, 255),
-        lines.join("\n")
-    )
+    for (_, candidate) in &candidates {
+        bytes = bytes.saturating_add(schema_bytes(&candidate.spec));
+    }
+    if bytes > capability_agent::MAX_SCHEMA_BYTES {
+        return Err("selected schemas exceed the 32 KiB task budget; select fewer tools".into());
+    }
+    let actions: Vec<_> = candidates
+        .iter()
+        .map(|(action, _)| action.clone())
+        .collect();
+    let status = session.exposure.load(id, &actions, digest)?;
+    for (action, candidate) in candidates {
+        session.actions.insert(action.canonical_id, candidate);
+    }
+    Ok(status)
 }
 
 fn mcp_action_input(
@@ -337,9 +344,8 @@ fn mcp_action_input(
     }
 }
 
-/// Prepare and route one resolved action through the host executor: a `Safe`
-/// action runs in process now; a `Confirm` action is withheld and surfaced for
-/// the user's approval (never fed to the model as if it ran).
+/// Prepare one resolved action for exact host approval. Both adapters use the
+/// conservative Confirm floor; declarations/annotations cannot authorize reads.
 async fn execute_action(
     app: &AppHandle,
     session: &CapabilitySession,
@@ -355,10 +361,9 @@ async fn execute_action(
         provider_name,
         tool_name,
         title,
-        input_schema,
     } = &session_action.origin
     {
-        let arguments = match parse_mcp_arguments(arguments_json, input_schema) {
+        let arguments = match parse_mcp_arguments(arguments_json, &session_action.spec.parameters) {
             Ok(arguments) => arguments,
             Err(error) => {
                 return ToolResult::Text(format!("The action arguments are invalid: {error}."))
@@ -393,9 +398,8 @@ async fn execute_action(
         }
     };
 
-    // The host floor classifies the action; the axis retry/parallelism reads
-    // follows it (a Confirm write, a Safe read). User policy could only tighten
-    // this — never loosen it — and is applied here once wired.
+    // Native declarations cannot grant automatic execution. A host-reviewed
+    // read policy remains separate work; the current floor treats all as writes.
     let risk = RiskClass::Confirm;
     let side_effect = SideEffect::Write;
     let digest =
@@ -442,7 +446,21 @@ fn loaded_digest_is_current(loaded: &str, current: &str) -> bool {
     !loaded.is_empty() && loaded == current
 }
 
-/// Project a host `Interaction::Confirm` into the frontend confirmation type,
+/// Backend-only catalog fixture: uses the production publication boundary and
+/// owns no Tauri windows, transports, accounts or runtimes.
+#[cfg(test)]
+pub(crate) fn fixture_session() -> CapabilitySession {
+    let mut session = tests::session();
+    publish_selected(
+        &mut session,
+        "com.example.github",
+        "digest",
+        vec![tests::candidate("read", 0), tests::candidate("write", 0)],
+    )
+    .unwrap();
+    session
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -502,6 +520,94 @@ mod tests {
                 .map(|loaded| (loaded.canonical_id, loaded.manifest_digest)),
             Some((action.canonical_id, "approved-digest".to_string()))
         );
+    }
+
+    pub(super) fn session() -> CapabilitySession {
+        let entry = ExtensionDirectoryEntry {
+            extension_id: "com.example.github".into(),
+            name: "GitHub".into(),
+            description: "Issues".into(),
+            action_count: 200,
+        };
+        CapabilitySession {
+            exposure: ExtensionExposure::new(&[entry], &[]),
+            actions: BTreeMap::new(),
+        }
+    }
+
+    pub(super) fn candidate(id: &str, padding: usize) -> (ActionInput, SessionAction) {
+        let mut input = action();
+        input.action_id = id.into();
+        input.canonical_id = format!("{}:{id}", input.extension_id);
+        let mut spec = to_spec(capability_agent::action_tool_def(&input));
+        spec.parameters["description"] = serde_json::json!("x".repeat(padding));
+        (
+            input,
+            SessionAction {
+                spec,
+                origin: ActionOrigin::Native,
+            },
+        )
+    }
+
+    #[test]
+    fn selected_publication_is_incremental_and_budget_failure_is_atomic() {
+        let mut session = session();
+        let id = "com.example.github";
+        publish_selected(&mut session, id, "digest", vec![candidate("read", 0)]).unwrap();
+        assert_eq!(specs(&session).len(), 3);
+        assert!(publish_selected(
+            &mut session,
+            id,
+            "digest",
+            vec![
+                candidate("write", 0),
+                candidate("large", capability_agent::MAX_SCHEMA_BYTES)
+            ]
+        )
+        .is_err());
+        assert_eq!(session.actions.len(), 1);
+        assert_eq!(session.exposure.loaded_canonical_ids().len(), 1);
+        assert!(
+            publish_selected(&mut session, id, "changed", vec![candidate("write", 0)]).is_err()
+        );
+        assert_eq!(session.actions.len(), 1);
+        publish_selected(&mut session, id, "digest", vec![candidate("write", 0)]).unwrap();
+        assert_eq!(specs(&session).len(), 4);
+        assert_eq!(
+            publish_selected(&mut session, id, "digest", vec![candidate("write", 0)]).unwrap(),
+            ExtensionLoadStatus::AlreadyLoaded
+        );
+        assert!(
+            specs(&session).iter().map(schema_bytes).sum::<usize>()
+                <= capability_agent::MAX_SCHEMA_BYTES
+        );
+    }
+
+    #[test]
+    fn selected_mcp_schema_keeps_nested_constraints_without_metadata_schema_leaks() {
+        let mut session = session();
+        let (input, mut selected) = candidate("nested", 0);
+        let schema = serde_json::json!({"type":"object","properties":{"data":{"type":"object","properties":{"mode":{"enum":["read"]}},"required":["mode"],"additionalProperties":false}},"required":["data"],"additionalProperties":false});
+        selected.spec.parameters = schema.clone();
+        selected.origin = ActionOrigin::Mcp {
+            provider_id: "fixture".into(),
+            provider_name: "Fixture".into(),
+            tool_name: "nested".into(),
+            title: "Nested".into(),
+        };
+        let metadata = capability_agent::search_metadata(std::slice::from_ref(&input), "", 0);
+        assert!(!metadata.to_string().contains("properties"));
+        publish_selected(
+            &mut session,
+            "com.example.github",
+            "digest",
+            vec![(input, selected)],
+        )
+        .unwrap();
+        assert_eq!(specs(&session)[2].parameters, schema);
+        assert!(parse_mcp_arguments(r#"{"data":{"mode":"read"}}"#, &schema).is_ok());
+        assert!(parse_mcp_arguments(r#"{"data":{"mode":"write"}}"#, &schema).is_err());
     }
 
     #[test]
