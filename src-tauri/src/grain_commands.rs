@@ -1699,6 +1699,7 @@ fn register_unpacked_project(
         .try_state::<std::sync::Arc<ext::ExtensionsRegistry>>()
         .ok_or("extensions registry unavailable")?;
     let id = loaded.pack.manifest.id.clone();
+    let revision = reg.record_revision(&id);
     let prior = reg.record(&id);
     let requested = &loaded.pack.manifest.permissions;
     let granted = prior
@@ -1748,9 +1749,19 @@ fn register_unpacked_project(
         // Load-unpacked is the `dev` rung: never promotable, never verified.
         trust: grain_sdk::Trust::Dev,
     };
-    reg.load_dev(record, loaded.root)
-        .map_err(|error| error.to_string())?;
-    stop_extension_runtime(app, &id, "load-unpacked project replaced");
+    let installed = reg.load_dev_if_current(record, loaded.root, revision);
+    if let Some(prior) = prior.filter(|prior| {
+        reg.record(&id)
+            .is_none_or(|current| current.execution_generation != prior.execution_generation)
+    }) {
+        crate::extension_host::stop_extension_generation(
+            &id,
+            prior.execution_generation,
+            "load-unpacked project replaced",
+        );
+    }
+    installed.map_err(|error| error.to_string())?;
+    crate::grain_auth::cancel_extension(&id);
     Ok(id)
 }
 
@@ -2117,6 +2128,7 @@ pub fn extension_import_pack(
         .try_state::<std::sync::Arc<ext::ExtensionsRegistry>>()
         .ok_or("extensions registry unavailable")?;
     let id = pack.manifest.id.clone();
+    let revision = reg.record_revision(&id);
     let replacement = PendingPackReplacement::begin(pack_path(&app, &id)?, &stored)?;
     // Re-import/update of an installed pack must PRESERVE the user's state
     // (SPEC §6 update row) — resetting enabled/toggle order on update would
@@ -2125,59 +2137,69 @@ pub fn extension_import_pack(
     let prior = reg.installed_record(&id);
     let was_enabled = prior.as_ref().map(|r| r.enabled).unwrap_or(false);
     let stays_enabled = imported_update_can_stay_enabled(prior.as_ref(), &pack);
-    reg.install(ext::ExtensionRecord {
-        id: id.clone(),
-        // Re-import is an update, not an approval. Any newly requested grant or
-        // changed prompt/action/auth/recommendation digest holds the pack off
-        // until the settings sheet has shown the new contract.
-        enabled: stays_enabled,
-        execution_generation: 0,
-        toggle_seq: prior.as_ref().map(|r| r.toggle_seq).unwrap_or(0),
-        installed_version: pack.manifest.version.clone(),
-        artifact_sha256: Some(grain_core::trust::sha256_hex(&stored)),
-        granted: prior
-            .as_ref()
-            .map(|record| {
-                record
-                    .granted
-                    .iter()
-                    .filter(|permission| pack.manifest.permissions.contains(permission))
-                    .cloned()
-                    .collect()
-            })
-            .unwrap_or_default(),
-        slots: pack.manifest.slots.clone(),
-        // A manually imported pack is a third-party file, so its prompt text is
-        // NOT approved by importing it: the prior approval is carried forward
-        // and a re-import with changed wording therefore stops matching, holds
-        // the enable, and shows the user what changed. This is the update path
-        // the rug-pull incidents of 2025 walked through.
-        prompt_layers_approved: prior
-            .as_ref()
-            .and_then(|r| r.prompt_layers_approved.clone()),
-        // Carried, never recomputed. Importing is not approving: if the
-        // declaration changed, this stops matching, the actions go inert, and
-        // the enable path shows the user what is different.
-        actions_approved: prior.as_ref().and_then(|r| r.actions_approved.clone()),
-        authentication_approved: prior
-            .as_ref()
-            .and_then(|r| r.authentication_approved.clone()),
-        // Carried for the same reason, and the stake is higher: what this one
-        // gates is whether the extension is eligible to be handed the user's
-        // words at all. `None` means never approved, so an import that has not
-        // been reviewed under this contract simply is not ranked.
-        recommend_approved: prior.as_ref().and_then(|r| r.recommend_approved.clone()),
-        dev: None,
-        // A manually imported local file is UNTRUSTED, always — even if a
-        // store-verified record for this id existed. Trust comes only from the
-        // signed index (DISTRIBUTION-PLAN §3.2); inheriting it here would let a
-        // local pack impersonate a verified one.
-        trust: grain_sdk::Trust::UNTRUSTED_DEFAULT,
-    })
+    reg.install_if_current(
+        ext::ExtensionRecord {
+            id: id.clone(),
+            // Re-import is an update, not an approval. Any newly requested grant or
+            // changed prompt/action/auth/recommendation digest holds the pack off
+            // until the settings sheet has shown the new contract.
+            enabled: stays_enabled,
+            execution_generation: 0,
+            toggle_seq: prior.as_ref().map(|r| r.toggle_seq).unwrap_or(0),
+            installed_version: pack.manifest.version.clone(),
+            artifact_sha256: Some(grain_core::trust::sha256_hex(&stored)),
+            granted: prior
+                .as_ref()
+                .map(|record| {
+                    record
+                        .granted
+                        .iter()
+                        .filter(|permission| pack.manifest.permissions.contains(permission))
+                        .cloned()
+                        .collect()
+                })
+                .unwrap_or_default(),
+            slots: pack.manifest.slots.clone(),
+            // A manually imported pack is a third-party file, so its prompt text is
+            // NOT approved by importing it: the prior approval is carried forward
+            // and a re-import with changed wording therefore stops matching, holds
+            // the enable, and shows the user what changed. This is the update path
+            // the rug-pull incidents of 2025 walked through.
+            prompt_layers_approved: prior
+                .as_ref()
+                .and_then(|r| r.prompt_layers_approved.clone()),
+            // Carried, never recomputed. Importing is not approving: if the
+            // declaration changed, this stops matching, the actions go inert, and
+            // the enable path shows the user what is different.
+            actions_approved: prior.as_ref().and_then(|r| r.actions_approved.clone()),
+            authentication_approved: prior
+                .as_ref()
+                .and_then(|r| r.authentication_approved.clone()),
+            // Carried for the same reason, and the stake is higher: what this one
+            // gates is whether the extension is eligible to be handed the user's
+            // words at all. `None` means never approved, so an import that has not
+            // been reviewed under this contract simply is not ranked.
+            recommend_approved: prior.as_ref().and_then(|r| r.recommend_approved.clone()),
+            dev: None,
+            // A manually imported local file is UNTRUSTED, always — even if a
+            // store-verified record for this id existed. Trust comes only from the
+            // signed index (DISTRIBUTION-PLAN §3.2); inheriting it here would let a
+            // local pack impersonate a verified one.
+            trust: grain_sdk::Trust::UNTRUSTED_DEFAULT,
+        },
+        revision,
+    )
     .map_err(|e| e.to_string())?;
     replacement.commit();
     if was_enabled && !stays_enabled && !dev_active {
-        stop_extension_runtime(&app, &id, "extension update requires renewed approval");
+        if let Some(prior) = &prior {
+            crate::extension_host::stop_extension_generation(
+                &id,
+                prior.execution_generation,
+                "extension update requires renewed approval",
+            );
+        }
+        crate::grain_auth::cancel_extension(&id);
     }
     // An enabled pack's payloads refresh in place (apply is idempotent).
     if stays_enabled && !dev_active {
@@ -2255,6 +2277,7 @@ pub fn extension_grant(
     let reg = app
         .try_state::<std::sync::Arc<ext::ExtensionsRegistry>>()
         .ok_or("extensions registry unavailable")?;
+    let revision = reg.record_revision(&id);
     let mut rec = reg
         .record(&id)
         .ok_or_else(|| format!("'{id}' is not installed"))?;
@@ -2282,7 +2305,9 @@ pub fn extension_grant(
         .as_ref()
         .map(ext::authentication_fingerprint);
     rec.recommend_approved = None;
-    reg.install(rec).map_err(|e| e.to_string())
+    reg.install_if_current(rec, revision)
+        .map(|_| ())
+        .map_err(|e| e.to_string())
 }
 
 /// Record the user's answer to a slot takeover prompt (SPEC §3.2). Hands `slot`

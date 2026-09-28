@@ -656,6 +656,10 @@ pub struct SlotConflict {
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 struct RegistryFile {
+    /// Runtime-only removal epoch. Vacant-id writes conservatively fail after
+    /// any removal, without retaining a tombstone for every historical id.
+    #[serde(skip)]
+    removal_epoch: u64,
     #[serde(default)]
     tool_only_migration_version: u32,
     /// Persistent refusal reasons. A restart or old grant must not reactivate
@@ -680,12 +684,51 @@ struct RegistryFile {
 pub struct ExtensionsRegistry {
     path: PathBuf,
     state: RwLock<RegistryFile>,
+    save_gate: std::sync::Mutex<()>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RecordRevision {
+    active: Option<u64>,
+    parked: Option<u64>,
+    vacant_epoch: Option<u64>,
+}
+
+impl RecordRevision {
+    fn capture(state: &RegistryFile, id: &str) -> Self {
+        let record = state.records.get(id);
+        Self {
+            active: record.map(|record| record.execution_generation),
+            parked: record
+                .and_then(|record| record.dev.as_ref())
+                .and_then(|dev| dev.replaced.as_ref())
+                .map(|record| record.execution_generation),
+            vacant_epoch: (record.is_none()
+                || record.is_some_and(|record| {
+                    record
+                        .dev
+                        .as_ref()
+                        .is_some_and(|dev| dev.replaced.is_none())
+                }))
+            .then_some(state.removal_epoch),
+        }
+    }
+
+    fn check(self, state: &RegistryFile, id: &str) -> Result<()> {
+        if self != Self::capture(state, id) {
+            anyhow::bail!(
+                "Extension changed while this operation was pending; start a fresh request."
+            );
+        }
+        Ok(())
+    }
 }
 
 impl ExtensionsRegistry {
     /// Checkpoint only after archival and settings persistence succeed. Validation
     /// still runs on every startup; this version never bypasses the live profile.
     pub fn finish_tool_only_migration(&self) -> Result<()> {
+        let _save = self.save_gate.lock().unwrap();
         let mut state = self.state.write().unwrap();
         if state.tool_only_migration_version == 1 {
             return Ok(());
@@ -725,6 +768,7 @@ impl ExtensionsRegistry {
         {
             let mut state = self.state.write().unwrap();
             if let Some(record) = state.records.get_mut(id) {
+                record.execution_generation = next_execution_generation()?;
                 retire(record);
                 state.quarantined.insert(id.to_string(), reason.to_string());
                 for occupant in state.slot_claims.values_mut() {
@@ -761,6 +805,7 @@ impl ExtensionsRegistry {
         let reg = Self {
             path,
             state: RwLock::new(state),
+            save_gate: std::sync::Mutex::new(()),
         };
         reg.heal_slots();
         reg.save()?;
@@ -789,6 +834,7 @@ impl ExtensionsRegistry {
     }
 
     fn save(&self) -> Result<()> {
+        let _save = self.save_gate.lock().unwrap();
         let state = self.state.read().unwrap();
         let json = serde_json::to_string_pretty(&*state)?;
         atomic_write(&self.path, json.as_bytes())
@@ -819,6 +865,23 @@ impl ExtensionsRegistry {
     ) -> R {
         let state = self.state.read().unwrap();
         admit(state.records.get(id))
+    }
+
+    pub fn record_revision(&self, id: &str) -> RecordRevision {
+        RecordRevision::capture(&self.state.read().unwrap(), id)
+    }
+
+    /// Short synchronous publication boundary, ordered registry -> runtime.
+    /// No filesystem work, awaits, or registry reentry inside `publish`.
+    pub fn with_current_record<R>(
+        &self,
+        id: &str,
+        revision: RecordRevision,
+        publish: impl FnOnce(Option<&ExtensionRecord>) -> R,
+    ) -> Result<R> {
+        let state = self.state.read().unwrap();
+        revision.check(&state, id)?;
+        Ok(publish(state.records.get(id)))
     }
 
     /// The installed record beneath a dev override, or the normal record when
@@ -936,12 +999,14 @@ impl ExtensionsRegistry {
             if !declares {
                 anyhow::bail!("'{challenger}' does not declare slot '{slot}'");
             }
+            let displaced_generation = next_execution_generation()?;
             let previous = state
                 .slot_claims
                 .insert(slot.to_string(), challenger.to_string());
             match previous {
                 Some(prev) if prev != CORE_DEFAULT && prev != challenger => {
                     if let Some(rec) = state.records.get_mut(&prev) {
+                        rec.execution_generation = displaced_generation;
                         rec.enabled = false;
                     }
                     Some(prev)
@@ -1107,10 +1172,31 @@ impl ExtensionsRegistry {
 
     /// Install a pack record (import path lands in the next chunk; the
     /// centre-variant import uses this today via `load`).
-    pub fn install(&self, mut record: ExtensionRecord) -> Result<()> {
+    pub fn install(&self, record: ExtensionRecord) -> Result<()> {
+        self.install_owned(record, None).map(|_| ())
+    }
+
+    pub fn install_if_current(
+        &self,
+        record: ExtensionRecord,
+        revision: RecordRevision,
+    ) -> Result<u64> {
+        self.install_owned(record, Some(revision))
+    }
+
+    fn install_owned(
+        &self,
+        mut record: ExtensionRecord,
+        revision: Option<RecordRevision>,
+    ) -> Result<u64> {
+        let generation;
         {
             let mut state = self.state.write().unwrap();
+            if let Some(revision) = revision {
+                revision.check(&state, &record.id)?;
+            }
             record.execution_generation = next_execution_generation()?;
+            generation = record.execution_generation;
             let id = record.id.clone();
             state.quarantined.remove(&id);
             // A store/manual install arriving while this id is overridden
@@ -1122,6 +1208,9 @@ impl ExtensionsRegistry {
                 .is_some_and(|active| active.dev.is_some())
             {
                 if record.dev.is_some() {
+                    if !record.enabled {
+                        Self::release_slots_locked(&mut state, &id);
+                    }
                     // Mutating the effective dev record (for example after a
                     // capability grant) must not turn it into its own parked
                     // installed version.
@@ -1135,9 +1224,12 @@ impl ExtensionsRegistry {
                         .replaced = Some(Box::new(record));
                 }
                 drop(state);
-                return self.save();
+                return self.save().map(|_| generation);
             }
             let declared = record.slots.clone();
+            if !record.enabled {
+                Self::release_slots_locked(&mut state, &id);
+            }
             state.records.insert(id.clone(), record);
             // An update may drop a slot it used to declare; holding a claim on
             // a slot you no longer declare would block everyone else forever.
@@ -1158,16 +1250,39 @@ impl ExtensionsRegistry {
             // enabled pack must not gain a position the user never granted it.
             // It stays a pending conflict until the user takes the slot.
         }
-        self.save()
+        self.save().map(|_| generation)
     }
 
     /// Make `record` the effective load-unpacked extension for its id. Any
     /// installed record is parked verbatim; replacing one dev path preserves
     /// that original backup rather than nesting overrides.
-    pub fn load_dev(&self, mut record: ExtensionRecord, path: PathBuf) -> Result<()> {
+    pub fn load_dev(&self, record: ExtensionRecord, path: PathBuf) -> Result<()> {
+        self.load_dev_owned(record, path, None).map(|_| ())
+    }
+
+    pub fn load_dev_if_current(
+        &self,
+        record: ExtensionRecord,
+        path: PathBuf,
+        revision: RecordRevision,
+    ) -> Result<u64> {
+        self.load_dev_owned(record, path, Some(revision))
+    }
+
+    fn load_dev_owned(
+        &self,
+        mut record: ExtensionRecord,
+        path: PathBuf,
+        revision: Option<RecordRevision>,
+    ) -> Result<u64> {
+        let generation;
         {
             let mut state = self.state.write().unwrap();
+            if let Some(revision) = revision {
+                revision.check(&state, &record.id)?;
+            }
             record.execution_generation = next_execution_generation()?;
+            generation = record.execution_generation;
             let id = record.id.clone();
             let replaced =
                 state
@@ -1181,7 +1296,7 @@ impl ExtensionsRegistry {
             record.dev = Some(DevOverride { path, replaced });
             state.records.insert(id, record);
         }
-        self.save()
+        self.save().map(|_| generation)
     }
 
     /// Remove a load-unpacked override and restore its parked installed record,
@@ -1201,6 +1316,7 @@ impl ExtensionsRegistry {
             // Reserve before removing the active record, so exhaustion cannot
             // partially unload an override or resurrect its parked identity.
             let generation = next_execution_generation()?;
+            state.removal_epoch = generation;
             let Some(mut active) = state.records.remove(id) else {
                 return Ok(false);
             };
@@ -1240,6 +1356,7 @@ impl ExtensionsRegistry {
     pub fn uninstall(&self, id: &str) -> Result<bool> {
         let removed = {
             let mut state = self.state.write().unwrap();
+            state.removal_epoch = next_execution_generation()?;
             let dev_active = state
                 .records
                 .get(id)
@@ -1274,6 +1391,216 @@ impl ExtensionsRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn revision_refuses_stale_writers_and_late_runtime_publication() {
+        for mode in [
+            "disable",
+            "reenable",
+            "remove",
+            "reinstall",
+            "quarantine",
+            "restore",
+            "dev_replace",
+        ] {
+            let dir = tmp();
+            let reg = ExtensionsRegistry::load(dir.path(), false).unwrap();
+            reg.install(pack("tools", &[])).unwrap();
+            reg.set_enabled("tools", true).unwrap();
+            if mode == "restore" || mode == "dev_replace" {
+                reg.load_dev(reg.record("tools").unwrap(), dir.path().join("project"))
+                    .unwrap();
+            }
+            let revision = reg.record_revision("tools");
+            let stale = reg.record("tools").unwrap();
+            match mode {
+                "disable" => {
+                    reg.set_enabled("tools", false).unwrap();
+                }
+                "reenable" => {
+                    reg.set_enabled("tools", false).unwrap();
+                    reg.set_enabled("tools", true).unwrap();
+                }
+                "remove" => {
+                    reg.uninstall("tools").unwrap();
+                }
+                "reinstall" => {
+                    reg.uninstall("tools").unwrap();
+                    reg.install(stale.clone()).unwrap();
+                }
+                "quarantine" => {
+                    reg.quarantine("tools", "retired").unwrap();
+                }
+                "restore" => {
+                    reg.unload_dev("tools").unwrap();
+                }
+                "dev_replace" => {
+                    reg.load_dev(stale.clone(), dir.path().join("replacement"))
+                        .unwrap();
+                }
+                _ => unreachable!(),
+            }
+            let before = serde_json::to_value(reg.record("tools")).unwrap();
+            assert!(
+                reg.install_if_current(stale.clone(), revision).is_err(),
+                "{mode}"
+            );
+            assert!(
+                reg.load_dev_if_current(stale, dir.path().join("late"), revision)
+                    .is_err(),
+                "{mode}"
+            );
+            let mut published = false;
+            assert!(
+                reg.with_current_record("tools", revision, |_| published = true)
+                    .is_err(),
+                "{mode}"
+            );
+            assert!(!published, "{mode}: no token/worker publication callback");
+            assert_eq!(serde_json::to_value(reg.record("tools")).unwrap(), before);
+        }
+    }
+
+    #[test]
+    fn vacant_revision_remembers_removal_without_retaining_tombstones() {
+        let dir = tmp();
+        let reg = ExtensionsRegistry::load(dir.path(), false).unwrap();
+        let before = reg.record_revision("tools");
+        reg.install(pack("tools", &[])).unwrap();
+        reg.uninstall("tools").unwrap();
+        assert!(reg.install_if_current(pack("tools", &[]), before).is_err());
+        let before = reg.record_revision("tools");
+        reg.uninstall("tools").unwrap(); // removal intent also defeats a late first install
+        assert!(reg.install_if_current(pack("tools", &[]), before).is_err());
+        let fresh = reg.record_revision("tools");
+        reg.install_if_current(pack("tools", &[]), fresh).unwrap();
+        let unrelated = reg.record_revision("tools");
+        reg.uninstall("other").unwrap();
+        reg.with_current_record("tools", unrelated, |_| ()).unwrap();
+        let persisted = fs::read_to_string(&reg.path).unwrap();
+        assert!(!persisted.contains("removal_epoch"));
+        assert!(!persisted.contains("execution_generation"));
+        reg.load_dev(pack("dev_only", &[]), dir.path().join("project"))
+            .unwrap();
+        let vacant_parked = reg.record_revision("dev_only");
+        reg.uninstall("dev_only").unwrap();
+        assert!(reg
+            .install_if_current(pack("dev_only", &[]), vacant_parked)
+            .is_err());
+        assert!(reg.record("dev_only").unwrap().dev.is_some());
+        assert!(reg.installed_record("dev_only").is_none());
+    }
+
+    #[test]
+    fn revision_includes_parked_updates_and_removal() {
+        for remove in [false, true] {
+            let dir = tmp();
+            let reg = ExtensionsRegistry::load(dir.path(), false).unwrap();
+            reg.install(pack("tools", &[])).unwrap();
+            reg.load_dev(pack("tools", &[]), dir.path().join("project"))
+                .unwrap();
+            let before = reg.record_revision("tools");
+            let active = reg.record("tools").unwrap();
+            if remove {
+                reg.uninstall("tools").unwrap();
+            } else {
+                reg.install(pack("tools", &[])).unwrap();
+            }
+            assert_eq!(
+                reg.record("tools").unwrap().execution_generation,
+                active.execution_generation
+            );
+            assert!(reg.install_if_current(active, before).is_err());
+            reg.unload_dev("tools").unwrap();
+            assert_eq!(reg.record("tools").is_none(), remove);
+        }
+    }
+
+    #[test]
+    fn concurrent_revision_writers_have_one_winner_and_save_safely() {
+        let dir = tmp();
+        let reg = std::sync::Arc::new(ExtensionsRegistry::load(dir.path(), false).unwrap());
+        reg.install(pack("tools", &[])).unwrap();
+        let revision = reg.record_revision("tools");
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(3));
+        let threads: Vec<_> = (0..2)
+            .map(|index| {
+                let reg = reg.clone();
+                let barrier = barrier.clone();
+                std::thread::spawn(move || {
+                    let mut record = pack("tools", &[]);
+                    record.installed_version = index.to_string();
+                    barrier.wait();
+                    reg.install_if_current(record, revision).is_ok()
+                })
+            })
+            .collect();
+        barrier.wait();
+        let wins = threads
+            .into_iter()
+            .map(|thread| usize::from(thread.join().unwrap()))
+            .sum::<usize>();
+        assert_eq!(wins, 1);
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(5));
+        let threads: Vec<_> = (0..4)
+            .map(|_| {
+                let reg = reg.clone();
+                let barrier = barrier.clone();
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    for _ in 0..25 {
+                        reg.save().unwrap();
+                    }
+                })
+            })
+            .collect();
+        barrier.wait();
+        for thread in threads {
+            thread.join().unwrap();
+        }
+        let loaded = ExtensionsRegistry::load(dir.path(), false).unwrap();
+        assert_eq!(
+            loaded.record("tools").unwrap().installed_version,
+            reg.record("tools").unwrap().installed_version
+        );
+    }
+
+    #[test]
+    fn publication_holds_registry_ownership_until_worker_is_visible() {
+        let dir = tmp();
+        let reg = ExtensionsRegistry::load(dir.path(), false).unwrap();
+        reg.install(pack("tools", &[])).unwrap();
+        let revision = reg.record_revision("tools");
+        let generation = reg
+            .with_current_record("tools", revision, |record| {
+                assert!(reg.state.try_write().is_err());
+                record.unwrap().execution_generation
+            })
+            .unwrap();
+        assert_eq!(
+            generation,
+            reg.record("tools").unwrap().execution_generation
+        );
+        assert!(reg.state.try_write().is_ok());
+    }
+
+    #[test]
+    fn failed_save_keeps_new_revision_and_disabled_slot_release() {
+        let dir = tmp();
+        let reg = ExtensionsRegistry::load(dir.path(), false).unwrap();
+        reg.install(pack("tools", &["output.destination"])).unwrap();
+        reg.take_slot("tools", "output.destination").unwrap();
+        reg.set_enabled("tools", true).unwrap();
+        let revision = reg.record_revision("tools");
+        let mut record = reg.record("tools").unwrap();
+        record.enabled = false;
+        fs::remove_file(&reg.path).unwrap();
+        fs::create_dir(&reg.path).unwrap();
+        assert!(reg.install_if_current(record, revision).is_err());
+        assert!(!reg.is_enabled("tools"));
+        assert!(reg.slots_held("tools").is_empty());
+        assert!(reg.with_current_record("tools", revision, |_| ()).is_err());
+    }
 
     #[test]
     fn quarantine_survives_restart_and_disables_parked_dev_state() {

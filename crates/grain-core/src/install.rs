@@ -241,6 +241,20 @@ pub fn install_from_verified_entry(
     bytes: &[u8],
     limits: ExtractLimits,
 ) -> Result<PathBuf, InstallError> {
+    let revision = reg.record_revision(&entry.id);
+    install_from_verified_entry_if_current(reg, root, entry, bytes, limits, revision)
+}
+
+pub fn install_from_verified_entry_if_current(
+    reg: &ExtensionsRegistry,
+    root: &Path,
+    entry: &IndexEntry,
+    bytes: &[u8],
+    limits: ExtractLimits,
+    revision: crate::extensions::RecordRevision,
+) -> Result<PathBuf, InstallError> {
+    reg.with_current_record(&entry.id, revision, |_| ())
+        .map_err(|error| InstallError::Io(error.to_string()))?;
     let dir = stage_artifact(root, entry, bytes, limits)?;
     let prior = reg.installed_record(&entry.id);
     let granted = prior
@@ -254,7 +268,7 @@ pub fn install_from_verified_entry(
         .unwrap_or_default();
     let digests = manifest.as_ref().map(declared_digests).unwrap_or_default();
     let record = plan_record(entry, granted, prior.as_ref(), slots, digests);
-    reg.install(record)
+    reg.install_if_current(record, revision)
         .map_err(|e| InstallError::Io(e.to_string()))?;
     Ok(dir)
 }
@@ -336,6 +350,36 @@ mod tests {
     use super::*;
     use grain_sdk::distribution::Trust;
     use grain_sdk::manifest::Tier;
+
+    #[test]
+    fn stale_verified_install_cannot_stage_or_restore_disabled_record() {
+        let dir = tmp();
+        let reg = ExtensionsRegistry::load(dir.path(), false).unwrap();
+        let bytes = tool_pack("com.example.tools", "1", &[]);
+        let entry = entry("com.example.tools", "1", Trust::Verified, &[], &bytes);
+        let root = dir.path().join("extensions");
+        install_from_verified_entry(&reg, &root, &entry, &bytes, ExtractLimits::default()).unwrap();
+        reg.set_enabled(&entry.id, true).unwrap();
+        let revision = reg.record_revision(&entry.id);
+        reg.set_enabled(&entry.id, false).unwrap();
+        let replacement = tool_pack(&entry.id, "2", &[]);
+        let mut update = entry.clone();
+        update.version = "2".into();
+        update.sha256 = trust::sha256_hex(&replacement);
+        update.size = replacement.len() as u64;
+        let result = install_from_verified_entry_if_current(
+            &reg,
+            &root,
+            &update,
+            &replacement,
+            ExtractLimits::default(),
+            revision,
+        );
+        assert!(result.unwrap_err().to_string().contains("changed"));
+        assert!(!root.join(&entry.id).join("2").exists());
+        assert!(!reg.is_enabled(&entry.id));
+        assert_eq!(reg.record(&entry.id).unwrap().installed_version, "1");
+    }
 
     fn entry(id: &str, version: &str, trust: Trust, caps: &[&str], bytes: &[u8]) -> IndexEntry {
         IndexEntry {

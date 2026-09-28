@@ -659,6 +659,7 @@ async fn install_entry_with_clock(
         (entry, owner.revision, owner.changed.subscribe())
     };
 
+    let record_revision = reg.record_revision(id);
     let download = async {
         let bases: Vec<String> = {
             let roots = state.roots.read().unwrap();
@@ -702,8 +703,15 @@ async fn install_entry_with_clock(
     if state.revocation_state(id, version) == Some(RevocationState::Revoked) {
         return Err(format!("{id} {version} has been revoked"));
     }
-    install::install_from_verified_entry(reg, ext_root, &entry, &bytes, ExtractLimits::default())
-        .map_err(|e: InstallError| e.to_string())
+    install::install_from_verified_entry_if_current(
+        reg,
+        ext_root,
+        &entry,
+        &bytes,
+        ExtractLimits::default(),
+        record_revision,
+    )
+    .map_err(|e: InstallError| e.to_string())
 }
 
 // ── Tauri commands ─────────────────────────────────────────────────────────
@@ -1155,7 +1163,7 @@ mod tests {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async {
-            for mode in ["tool", "hash", "expiry", "close", "replace", "revoke"] {
+            for mode in ["tool", "hash", "expiry", "close", "replace", "revoke", "disable_record", "remove_record", "replace_record"] {
                 let corrupt = mode == "hash";
                 let data = tmp_data(mode);
                 let state = StoreState::init(&data);
@@ -1185,6 +1193,15 @@ mod tests {
                     roots.base_urls = vec![format!("http://{}/", listener.local_addr().unwrap())];
                     roots.mirrors.clear();
                 }
+                let reg = grain_core::extensions::ExtensionsRegistry::load(&data, false).unwrap();
+                if mode == "disable_record" || mode == "replace_record" {
+                    let record = install::plan_record(
+                        &state.index.read().unwrap().as_ref().unwrap().entries[0],
+                        vec![], None, vec![], install::ApprovalDigests::default(),
+                    );
+                    reg.install(record).unwrap();
+                    reg.set_enabled("com.example.tools", true).unwrap();
+                }
                 let server = async {
                     let (mut socket, _) = listener.accept().await.unwrap();
                     let mut request = [0u8; 2048];
@@ -1208,6 +1225,13 @@ mod tests {
                                 "entries": [{"id": "com.example.tools", "version": "1.0.0", "state": "revoked", "reason": "fixture"}]
                             })).unwrap();
                         }
+                        "disable_record" => { reg.set_enabled("com.example.tools", false).unwrap(); }
+                        "remove_record" => { reg.uninstall("com.example.tools").unwrap(); }
+                        "replace_record" => {
+                            let mut record = reg.record("com.example.tools").unwrap();
+                            record.installed_version = "local replacement".into();
+                            reg.install(record).unwrap();
+                        }
                         _ => {}
                     }
                     let mut body = bytes.clone();
@@ -1215,7 +1239,6 @@ mod tests {
                     socket.write_all(format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len()).as_bytes()).await.unwrap();
                     socket.write_all(&body).await.unwrap();
                 };
-                let reg = grain_core::extensions::ExtensionsRegistry::load(&data, false).unwrap();
                 let ext_root = data.join("extensions");
                 let client = reqwest::Client::builder()
                     .timeout(std::time::Duration::from_secs(2)).build().unwrap();
@@ -1229,11 +1252,16 @@ mod tests {
                         "hash" => "artifact verification failed",
                         "expiry" => "expired",
                         "revoke" => "revoked",
+                        "disable_record" | "remove_record" | "replace_record" => "changed",
                         _ => "superseded",
                     };
                     let error = result.unwrap_err();
                     assert!(error.contains(expected), "{mode}: {error}");
-                    assert!(reg.record("com.example.tools").is_none());
+                    match mode {
+                        "disable_record" => assert!(!reg.is_enabled("com.example.tools")),
+                        "replace_record" => assert_eq!(reg.record("com.example.tools").unwrap().installed_version, "local replacement"),
+                        _ => assert!(reg.record("com.example.tools").is_none()),
+                    }
                     assert!(!ext_root.join("com.example.tools").exists());
                 } else {
                     assert!(result.unwrap().join("pack.grainpack.json").exists());

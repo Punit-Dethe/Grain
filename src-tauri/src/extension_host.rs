@@ -33,6 +33,11 @@ const SUPERVISOR_URL: &str = "extension-host.html";
 /// Reaper policy (SPEC §3: workers are ephemeral).
 const IDLE_REAP_SECS: u64 = 120;
 const REAP_INTERVAL_SECS: u64 = 30;
+const MAX_NATIVE_WORKERS: usize = 8;
+const MAX_ACTIVE_NATIVE_CALLS: usize = 8;
+const MAX_PENDING_WORKER_CALLS: usize = 4;
+pub(crate) const WORKER_OUTBOUND_CAPACITY: usize = 8;
+const WORKER_BUSY: &str = "worker call capacity reached";
 
 /// Consecutive over-budget heap samples before resource-policy disable.
 const MAX_STRIKES: u32 = 3;
@@ -56,7 +61,8 @@ struct DevSource {
 struct WorkerConn {
     /// The single-writer funnel to this worker's socket (owned by its `handle`
     /// task; every frame the host sends goes through here).
-    out_tx: mpsc::UnboundedSender<Message>,
+    out_tx: mpsc::Sender<Message>,
+    closed: tokio::sync::watch::Sender<bool>,
     /// In-flight host calls: `call_id` → the awaiter's oneshot. `Arc` so
     /// [`call_worker`]/[`resolve_call_result`] can operate on it without holding
     /// the `workers` lock across an await.
@@ -148,7 +154,8 @@ struct Worker {
 impl Worker {
     fn close_pending(&self) {
         if let Some(conn) = &self.conn {
-            let _ = conn.out_tx.send(Message::Close(None));
+            conn.closed.send_replace(true);
+            let _ = conn.out_tx.try_send(Message::Close(None));
             for (_, sender) in conn.pending.lock().unwrap().drain() {
                 let _ = sender.send(Err("worker terminated".into()));
             }
@@ -246,16 +253,20 @@ impl Workers {
         &self,
         ext_id: &str,
         token: &str,
-        out_tx: mpsc::UnboundedSender<Message>,
+        out_tx: mpsc::Sender<Message>,
     ) -> Option<Arc<AtomicU64>> {
         let mut map = self.map.lock().unwrap();
         let w = map.get_mut(ext_id)?;
         if w.token != token {
             return None;
         }
+        if w.conn.is_some() {
+            return None;
+        }
         w.last_activity.store(now_secs(), Ordering::Relaxed);
         w.conn = Some(WorkerConn {
             out_tx,
+            closed: tokio::sync::watch::channel(false).0,
             pending: Arc::new(Mutex::new(HashMap::new())),
             next_call_id: Arc::new(AtomicU64::new(1)),
         });
@@ -268,6 +279,20 @@ impl Workers {
             .unwrap()
             .get(ext_id)
             .map(|worker| worker.token.clone())
+    }
+
+    fn connection_closed(
+        &self,
+        ext_id: &str,
+        token: &str,
+    ) -> Option<tokio::sync::watch::Receiver<bool>> {
+        self.map
+            .lock()
+            .unwrap()
+            .get(ext_id)
+            .filter(|worker| worker.token == token)
+            .and_then(|worker| worker.conn.as_ref())
+            .map(|conn| conn.closed.subscribe())
     }
 
     /// Wait only for the generation that this call woke. Removal/replacement
@@ -363,6 +388,9 @@ impl Workers {
                 return Err("worker tool identity changed".into());
             }
             let conn = worker.conn.as_ref().ok_or("worker not connected")?;
+            if conn.pending.lock().unwrap().len() >= MAX_PENDING_WORKER_CALLS {
+                return Err(WORKER_BUSY.into());
+            }
             let call_id = conn.next_call_id.fetch_add(1, Ordering::Relaxed);
             let frame = HostFrame::Call(HostCall {
                 call_id,
@@ -381,9 +409,12 @@ impl Workers {
             }
             // Queue under the registry lock so removal cannot overtake dispatch
             // or drain before the pending entry is installed.
-            if conn.out_tx.send(Message::Text(json.into())).is_err() {
-                return Err("worker channel closed".into());
-            }
+            conn.out_tx
+                .try_send(Message::Text(json.into()))
+                .map_err(|error| match error {
+                    mpsc::error::TrySendError::Full(_) => WORKER_BUSY.to_string(),
+                    mpsc::error::TrySendError::Closed(_) => "worker channel closed".to_string(),
+                })?;
             dispatched.store(true, Ordering::Release);
             if method != "memory.sample" {
                 worker.last_activity.store(now_secs(), Ordering::Relaxed);
@@ -658,6 +689,7 @@ fn recommend_vectors() -> &'static RwLock<RecommendVectors> {
 struct HostState {
     app: AppHandle,
     workers: Workers,
+    native_calls: tokio::sync::Semaphore,
     supervisor: Mutex<Supervisor>,
     index: RwLock<Index>,
 }
@@ -1282,6 +1314,7 @@ pub fn start(app: AppHandle, _ctx: Arc<AppContext>) {
         .set(HostState {
             app: app.clone(),
             workers: Workers::new(),
+            native_calls: tokio::sync::Semaphore::new(MAX_ACTIVE_NATIVE_CALLS),
             supervisor: Mutex::new(Supervisor::default()),
             index: RwLock::new(Index::default()),
         })
@@ -1392,6 +1425,7 @@ fn spawn_worker(
     pack: &GrainPack,
     caps: Vec<String>,
     activation: Option<Value>,
+    revision: grain_core::extensions::RecordRevision,
 ) -> Option<String> {
     if pack.validate_tool_only().is_err() || activation.is_some() {
         log::warn!("[ext:{ext_id}] refused retired extension runtime or activation");
@@ -1431,46 +1465,83 @@ fn spawn_worker(
     } else {
         None
     };
-    // Mint a per-worker token bound to exactly the granted caps (SPEC §7.1): the
-    // same server-side filter that gates the pill now gates this worker.
-    let token = crate::events_server::mint_worker_token(ext_id, caps.iter().cloned().collect());
-    // The declaration alone is not authority. Every spawn path (including a
-    // shortcut/event that happens to wake this worker) re-checks the grant so a
-    // stale/tampered registry cannot turn a denied worker into an immortal one.
-    let resident = false;
-    let dev_source = dev_project.and_then(|project| {
-        project.entry_path.map(|entry| DevSource {
-            root: project.root,
-            entry,
-        })
-    });
-    let mut sup = host.supervisor.lock().unwrap();
-    // A second cold request must not replace a live worker or leak its token.
-    if let Some(current) = host.workers.token(ext_id) {
-        crate::events_server::revoke_token(&token);
-        return Some(current);
-    }
-    host.workers.insert(
-        ext_id,
-        Worker {
-            token: token.clone(),
-            call_digest: Some(call_digest),
-            execution_generation: record.execution_generation,
-            resident,
-            memory_strikes: 0,
-            kind: if pack.manifest.tier == grain_sdk::Tier::Native {
-                RuntimeKind::Companion
+    let registry = app.try_state::<Arc<grain_core::extensions::ExtensionsRegistry>>()?;
+    let (token, creation) = registry
+        .with_current_record(ext_id, revision, |current| {
+            let current = current.filter(|current| {
+                current.enabled && current.execution_generation == record.execution_generation
+            })?;
+            if current.granted != caps {
+                return None;
+            }
+            // Mint a per-worker token bound to exactly the granted caps (SPEC §7.1): the
+            // same server-side filter that gates the pill now gates this worker.
+            let token =
+                crate::events_server::mint_worker_token(ext_id, caps.iter().cloned().collect());
+            // The declaration alone is not authority. Every spawn path (including a
+            // shortcut/event that happens to wake this worker) re-checks the grant so a
+            // stale/tampered registry cannot turn a denied worker into an immortal one.
+            let resident = false;
+            let dev_source = dev_project.and_then(|project| {
+                project.entry_path.map(|entry| DevSource {
+                    root: project.root,
+                    entry,
+                })
+            });
+            let mut sup = host.supervisor.lock().unwrap();
+            // A second cold request must not replace a live worker or leak its token.
+            if let Some(current) = host.workers.token(ext_id) {
+                crate::events_server::revoke_token(&token);
+                return Some((current, None));
+            }
+            if host.workers.len() >= MAX_NATIVE_WORKERS {
+                crate::events_server::revoke_token(&token);
+                return None;
+            }
+            host.workers.insert(
+                ext_id,
+                Worker {
+                    token: token.clone(),
+                    call_digest: Some(call_digest),
+                    execution_generation: record.execution_generation,
+                    resident,
+                    memory_strikes: 0,
+                    kind: if pack.manifest.tier == grain_sdk::Tier::Native {
+                        RuntimeKind::Companion
+                    } else {
+                        RuntimeKind::Scripted
+                    },
+                    last_activity: Arc::new(AtomicU64::new(now_secs())),
+                    conn: None,
+                    dev_source,
+                },
+            );
+            if companion_launch.is_some() {
+                drop(sup);
+                return Some((token, None));
+            }
+            let payload = SpawnPayload {
+                ext_id: ext_id.to_string(),
+                token: token.clone(),
+                entry_source: pack.manifest.entry_source.clone(),
+                caps,
+            };
+            log::info!("[ext:{ext_id}] life worker spawned (resident={resident})");
+            let creation = sup.begin();
+            if sup.ready {
+                let _ = app.emit_to(
+                    supervisor_label(sup.generation),
+                    "ext-host://spawn",
+                    payload,
+                );
             } else {
-                RuntimeKind::Scripted
-            },
-            last_activity: Arc::new(AtomicU64::new(now_secs())),
-            conn: None,
-            dev_source,
-        },
-    );
+                sup.queue.push(payload);
+            }
+            drop(sup);
+            Some((token, creation))
+        })
+        .ok()??;
     if let Some((root, binary)) = companion_launch {
-        drop(sup);
-        log::info!("[ext:{ext_id}] life native companion activation");
         if let Err(error) =
             crate::extension_companion::start(ext_id, &token, root, binary, activation)
         {
@@ -1480,26 +1551,7 @@ fn spawn_worker(
                 format!("Native companion could not start: {error}"),
             );
         }
-        return Some(token);
     }
-    let payload = SpawnPayload {
-        ext_id: ext_id.to_string(),
-        token: token.clone(),
-        entry_source: pack.manifest.entry_source.clone(),
-        caps,
-    };
-    log::info!("[ext:{ext_id}] life worker spawned (resident={resident})");
-    let creation = sup.begin();
-    if sup.ready {
-        let _ = app.emit_to(
-            supervisor_label(sup.generation),
-            "ext-host://spawn",
-            payload,
-        );
-    } else {
-        sup.queue.push(payload);
-    }
-    drop(sup);
     if let Some(generation) = creation {
         ensure_supervisor(app, generation);
     }
@@ -1656,6 +1708,21 @@ pub fn stop_extension(ext_id: &str, reason: &str) {
     kill_worker(ext_id, reason);
 }
 
+pub fn stop_extension_generation(ext_id: &str, generation: u64, reason: &str) {
+    let Some(host) = HOST.get() else { return };
+    let token = host
+        .workers
+        .map
+        .lock()
+        .unwrap()
+        .get(ext_id)
+        .filter(|worker| worker.execution_generation == generation)
+        .map(|worker| worker.token.clone());
+    if let Some(token) = token {
+        kill_worker_inner(ext_id, reason, Some(&token), false);
+    }
+}
+
 fn close_supervisor(generation: u64) {
     let Some(host) = HOST.get() else { return };
     let app = host.app.clone();
@@ -1773,11 +1840,14 @@ async fn sample_worker_heaps() {
 pub fn attach_connection(
     ext_id: &str,
     token: &str,
-    out_tx: mpsc::UnboundedSender<Message>,
-) -> bool {
+    out_tx: mpsc::Sender<Message>,
+) -> Option<tokio::sync::watch::Receiver<bool>> {
     match HOST.get() {
-        Some(h) => h.workers.attach(ext_id, token, out_tx).is_some(),
-        None => false,
+        Some(h) => {
+            h.workers.attach(ext_id, token, out_tx)?;
+            h.workers.connection_closed(ext_id, token)
+        }
+        None => None,
     }
 }
 
@@ -1960,13 +2030,15 @@ fn wake_for_request(app: &AppHandle, ext_id: &str) -> Option<String> {
     if let Some(token) = HOST.get().and_then(|host| host.workers.token(ext_id)) {
         return Some(token);
     }
+    let registry = app.try_state::<Arc<grain_core::extensions::ExtensionsRegistry>>()?;
+    let revision = registry.record_revision(ext_id);
     let pack = load_manifest(app, ext_id)?;
     let granted = app
         .try_state::<Arc<grain_core::extensions::ExtensionsRegistry>>()
         .and_then(|registry| registry.record(ext_id))
         .map(|record| record.granted)
         .unwrap_or_default();
-    spawn_worker(app, ext_id, &pack, granted, None)
+    spawn_worker(app, ext_id, &pack, granted, None, revision)
 }
 
 /// Hand the full request to the extension the user accepted (§3).
@@ -2129,12 +2201,13 @@ pub async fn run_action(
 ) -> Result<Value, ActionCallError> {
     use grain_core::execution::DispatchPhase;
     let expires = Instant::now() + NATIVE_OPERATION_DEADLINE;
-    let arguments = approved_native_arguments(app, ext_id, action_id, arguments, expected_digest)?;
     let Some(host) = HOST.get() else {
         return Err(ActionCallError::Unavailable(
             "extension host unavailable".into(),
         ));
     };
+    let _permit = acquire_native_call(&host.native_calls)?;
+    let arguments = approved_native_arguments(app, ext_id, action_id, arguments, expected_digest)?;
     native_time_remaining(expires, DispatchPhase::NotDispatched)?;
     let token = wake_for_request(app, ext_id)
         .ok_or_else(|| ActionCallError::Unavailable("extension worker unavailable".into()))?;
@@ -2185,7 +2258,17 @@ pub async fn run_action(
             expires,
         },
         &dispatched,
-    )?;
+    );
+    let queued = match queued {
+        Ok(queued) => queued,
+        Err(error) => {
+            if matches!(&error, ActionCallError::Execution(failure) if failure.class == grain_core::execution::FailureClass::RateLimited)
+            {
+                owner.completed();
+            }
+            return Err(error);
+        }
+    };
     match queued
         .wait(native_time_remaining(expires, DispatchPhase::Dispatched)?)
         .await
@@ -2217,6 +2300,14 @@ fn validate_native_reply_budget(value: &Value) -> Result<(), ActionCallError> {
     })
 }
 
+fn acquire_native_call(
+    calls: &tokio::sync::Semaphore,
+) -> Result<tokio::sync::SemaphorePermit<'_>, ActionCallError> {
+    calls
+        .try_acquire()
+        .map_err(|_| ActionCallError::Execution(native_call_failure(WORKER_BUSY, false)))
+}
+
 fn native_call_failure(error: &str, dispatched: bool) -> grain_core::execution::ExecutionFailure {
     use grain_core::execution::{DispatchPhase, ExecutionFailure, FailureClass};
     ExecutionFailure::new(
@@ -2225,12 +2316,18 @@ fn native_call_failure(error: &str, dispatched: bool) -> grain_core::execution::
         } else {
             DispatchPhase::NotDispatched
         },
-        if error == "deadline exceeded" {
+        if error == WORKER_BUSY {
+            FailureClass::RateLimited
+        } else if error == "deadline exceeded" {
             FailureClass::Network
         } else {
             FailureClass::Internal
         },
-        "The native tool did not produce a usable result.",
+        if error == WORKER_BUSY {
+            "The native extension is busy. Start a fresh request after current work finishes."
+        } else {
+            "The native tool did not produce a usable result."
+        },
     )
 }
 
@@ -2318,7 +2415,7 @@ pub fn companion_gave_up(ext_id: &str, token: &str, reason: String) {
     };
     crate::events_server::revoke_token(&worker.token);
     if let Some(conn) = worker.conn {
-        let _ = conn.out_tx.send(Message::Close(None));
+        let _ = conn.out_tx.try_send(Message::Close(None));
         for (_, sender) in conn.pending.lock().unwrap().drain() {
             let _ = sender.send(Err(reason.clone()));
         }
@@ -2479,9 +2576,16 @@ pub fn reload_dev_extension(
     let reg = app
         .try_state::<Arc<grain_core::extensions::ExtensionsRegistry>>()
         .ok_or("extensions registry unavailable")?;
-    let path = reg.dev_path(id).ok_or_else(|| {
-        format!("'{id}' is not loaded unpacked; add it from Grain settings first")
-    })?;
+    let revision = reg.record_revision(id);
+    let prior = reg.record(id).ok_or("developer extension record missing")?;
+    let had_worker = is_running(id);
+    let path = prior
+        .dev
+        .as_ref()
+        .map(|dev| dev.path.clone())
+        .ok_or_else(|| {
+            format!("'{id}' is not loaded unpacked; add it from Grain settings first")
+        })?;
     let loaded = crate::dev_extensions::load_project(&path)?;
     if loaded.pack.manifest.id != id {
         return Err(format!(
@@ -2490,12 +2594,7 @@ pub fn reload_dev_extension(
         ));
     }
 
-    let prior = reg.record(id).ok_or("developer extension record missing")?;
     let slots_changed = prior.slots != loaded.pack.manifest.slots;
-    if slots_changed && prior.enabled {
-        reg.set_enabled(id, false)
-            .map_err(|error| error.to_string())?;
-    }
     let enabled = prior.enabled && !slots_changed;
     let requested = &loaded.pack.manifest.permissions;
     let granted = prior
@@ -2504,63 +2603,77 @@ pub fn reload_dev_extension(
         .filter(|permission| requested.contains(permission))
         .cloned()
         .collect::<Vec<_>>();
-    reg.install(grain_core::extensions::ExtensionRecord {
-        id: id.to_string(),
-        enabled,
-        execution_generation: 0,
-        toggle_seq: prior.toggle_seq,
-        installed_version: loaded.pack.manifest.version.clone(),
-        artifact_sha256: None,
-        granted: granted.clone(),
-        slots: loaded.pack.manifest.slots.clone(),
-        // A hot reload re-approves, for the same reason the initial dev load
-        // does: this is the author's own project on their own disk, and the
-        // prompt text is the thing they are iterating on.
-        prompt_layers_approved: (!loaded.pack.manifest.contributes.prompt_layers.is_empty()).then(
-            || {
-                grain_core::extensions::prompt_layers_fingerprint(
-                    &loaded.pack.manifest.contributes.prompt_layers,
+    let installed = reg.install_if_current(
+        grain_core::extensions::ExtensionRecord {
+            id: id.to_string(),
+            enabled,
+            execution_generation: 0,
+            toggle_seq: prior.toggle_seq,
+            installed_version: loaded.pack.manifest.version.clone(),
+            artifact_sha256: None,
+            granted: granted.clone(),
+            slots: loaded.pack.manifest.slots.clone(),
+            // A hot reload re-approves, for the same reason the initial dev load
+            // does: this is the author's own project on their own disk, and the
+            // prompt text is the thing they are iterating on.
+            prompt_layers_approved: (!loaded.pack.manifest.contributes.prompt_layers.is_empty())
+                .then(|| {
+                    grain_core::extensions::prompt_layers_fingerprint(
+                        &loaded.pack.manifest.contributes.prompt_layers,
+                    )
+                }),
+            // Same reasoning for actions, and the same limit: this shortcut exists
+            // only for a load-unpacked project on the author's own disk.
+            actions_approved: (!loaded.pack.manifest.contributes.actions.is_empty()).then(|| {
+                grain_core::extensions::actions_fingerprint(
+                    &loaded.pack.manifest.contributes.actions,
                 )
-            },
-        ),
-        // Same reasoning for actions, and the same limit: this shortcut exists
-        // only for a load-unpacked project on the author's own disk.
-        actions_approved: (!loaded.pack.manifest.contributes.actions.is_empty()).then(|| {
-            grain_core::extensions::actions_fingerprint(&loaded.pack.manifest.contributes.actions)
-        }),
-        authentication_approved: loaded
-            .pack
-            .manifest
-            .contributes
-            .authentication
-            .as_ref()
-            .map(grain_core::extensions::authentication_fingerprint),
-        // And for what the extension is ranked by. Same shortcut, same limit.
-        recommend_approved: loaded
-            .pack
-            .manifest
-            .kind
-            .is_searchable()
-            .then(|| grain_core::extensions::recommendation_fingerprint(&loaded.pack.manifest)),
-        dev: prior.dev,
-        // A dev hot-reload preserves the record's rung (a load-unpacked project
-        // is `dev`); trust is never changed by a reload.
-        trust: prior.trust,
-    })
-    .map_err(|error| error.to_string())?;
-
-    let had_worker = is_running(id);
-    log::info!("[ext:{id}] life developer reload");
-    if had_worker {
-        kill_worker_inner(id, "developer hot reload", None, true);
+            }),
+            authentication_approved: loaded
+                .pack
+                .manifest
+                .contributes
+                .authentication
+                .as_ref()
+                .map(grain_core::extensions::authentication_fingerprint),
+            // And for what the extension is ranked by. Same shortcut, same limit.
+            recommend_approved: loaded
+                .pack
+                .manifest
+                .kind
+                .is_searchable()
+                .then(|| grain_core::extensions::recommendation_fingerprint(&loaded.pack.manifest)),
+            dev: prior.dev,
+            // A dev hot-reload preserves the record's rung (a load-unpacked project
+            // is `dev`); trust is never changed by a reload.
+            trust: prior.trust,
+        },
+        revision,
+    );
+    if reg
+        .record(id)
+        .is_none_or(|current| current.execution_generation != prior.execution_generation)
+    {
+        stop_extension_generation(id, prior.execution_generation, "developer hot reload");
     }
+    let installed_generation = installed.map_err(|error| error.to_string())?;
+
+    log::info!("[ext:{id}] life developer reload");
     refresh_index(app);
+    let mut restarted_worker = false;
     if had_worker && enabled && !is_running(id) {
-        let _ = spawn_worker(app, id, &loaded.pack, granted, None);
+        let current_revision = reg.record_revision(id);
+        if reg
+            .record(id)
+            .is_some_and(|current| current.execution_generation == installed_generation)
+        {
+            restarted_worker =
+                spawn_worker(app, id, &loaded.pack, granted, None, current_revision).is_some();
+        }
     }
     let worker_count = HOST.get().map(|host| host.workers.len()).unwrap_or(0);
     Ok(grain_sdk::DevReloadResult {
-        restarted_worker: had_worker && enabled,
+        restarted_worker,
         enabled,
         worker_count,
         token_count: crate::events_server::token_count(),
@@ -2633,6 +2746,154 @@ pub fn reconcile_builtin_packs(app: &AppHandle) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn native_operation_capacity_refuses_before_dispatch_and_releases_on_drop() {
+        let calls = tokio::sync::Semaphore::new(MAX_ACTIVE_NATIVE_CALLS);
+        let mut permits: Vec<_> = (0..MAX_ACTIVE_NATIVE_CALLS)
+            .map(|_| acquire_native_call(&calls).unwrap())
+            .collect();
+        let ActionCallError::Execution(error) = acquire_native_call(&calls).unwrap_err() else {
+            panic!("structured capacity refusal expected")
+        };
+        assert_eq!(
+            error.phase,
+            grain_core::execution::DispatchPhase::NotDispatched
+        );
+        assert_eq!(
+            error.class,
+            grain_core::execution::FailureClass::RateLimited
+        );
+        permits.pop();
+        assert!(acquire_native_call(&calls).is_ok());
+        drop(permits);
+        assert_eq!(calls.available_permits(), MAX_ACTIVE_NATIVE_CALLS);
+    }
+
+    #[test]
+    fn pending_capacity_preserves_existing_calls_and_never_queues_fifth() {
+        rt().block_on(async {
+            let workers = Workers::new();
+            workers.insert("tools", worker(now_secs(), false));
+            let (tx, mut rx) = mpsc::channel(WORKER_OUTBOUND_CAPACITY);
+            workers.attach("tools", "tok", tx).unwrap();
+            let mut queued = Vec::new();
+            for _ in 0..MAX_PENDING_WORKER_CALLS {
+                queued.push(
+                    workers
+                        .enqueue(
+                            "tools",
+                            Some("tok"),
+                            "action",
+                            json!({}),
+                            &AtomicBool::new(false),
+                            None,
+                        )
+                        .unwrap(),
+                );
+            }
+            let dispatched = AtomicBool::new(false);
+            assert_eq!(
+                workers
+                    .enqueue("tools", Some("tok"), "action", json!({}), &dispatched, None)
+                    .err()
+                    .unwrap(),
+                WORKER_BUSY
+            );
+            assert!(!dispatched.load(Ordering::Acquire));
+            for _ in 0..MAX_PENDING_WORKER_CALLS {
+                let Message::Text(frame) = rx.recv().await.unwrap() else {
+                    panic!("call")
+                };
+                let HostFrame::Call(call) = serde_json::from_str(&frame).unwrap() else {
+                    panic!("call")
+                };
+                workers.resolve("tools", "tok", call.call_id, Ok(json!({"ok":true})));
+            }
+            assert!(rx.try_recv().is_err());
+            for call in queued {
+                assert!(call.wait(Duration::from_secs(1)).await.is_ok());
+            }
+            let next = workers
+                .enqueue("tools", Some("tok"), "action", json!({}), &dispatched, None)
+                .unwrap();
+            assert!(dispatched.load(Ordering::Acquire));
+            drop(next);
+        });
+    }
+
+    #[test]
+    fn full_outbound_queue_refuses_without_pending_leak_and_closes_reliably() {
+        rt().block_on(async {
+            let workers = Workers::new();
+            workers.insert("tools", worker(now_secs(), false));
+            let (tx, mut rx) = mpsc::channel(WORKER_OUTBOUND_CAPACITY);
+            workers.attach("tools", "tok", tx.clone()).unwrap();
+            let mut closed = workers.connection_closed("tools", "tok").unwrap();
+            let first = workers
+                .enqueue(
+                    "tools",
+                    Some("tok"),
+                    "action",
+                    json!({}),
+                    &AtomicBool::new(false),
+                    None,
+                )
+                .unwrap();
+            let pending = first.pending.calls.clone();
+            for _ in 1..WORKER_OUTBOUND_CAPACITY {
+                tx.try_send(Message::Text("queued".into())).unwrap();
+            }
+            let dispatched = AtomicBool::new(false);
+            assert_eq!(
+                workers
+                    .enqueue("tools", Some("tok"), "action", json!({}), &dispatched, None)
+                    .err()
+                    .unwrap(),
+                WORKER_BUSY
+            );
+            assert!(!dispatched.load(Ordering::Acquire));
+            assert_eq!(pending.lock().unwrap().len(), 1);
+            workers
+                .remove_if_token("tools", "tok")
+                .unwrap()
+                .close_pending();
+            assert!(*closed.wait_for(|value| *value).await.unwrap());
+            assert!(first.wait(Duration::from_secs(1)).await.is_err());
+            assert!(pending.lock().unwrap().is_empty());
+            let mut frames = 0;
+            while rx.try_recv().is_ok() {
+                frames += 1;
+            }
+            assert_eq!(frames, WORKER_OUTBOUND_CAPACITY); // no extra close or replay frame
+        });
+    }
+
+    #[test]
+    fn duplicate_socket_cannot_replace_current_worker_connection() {
+        rt().block_on(async {
+            let workers = Workers::new();
+            workers.insert("tools", worker(now_secs(), false));
+            let (tx, mut rx) = mpsc::channel(WORKER_OUTBOUND_CAPACITY);
+            workers.attach("tools", "tok", tx).unwrap();
+            let (duplicate, mut duplicate_rx) = mpsc::channel(WORKER_OUTBOUND_CAPACITY);
+            assert!(workers.attach("tools", "tok", duplicate).is_none());
+            let call = workers
+                .enqueue(
+                    "tools",
+                    Some("tok"),
+                    "action",
+                    json!({}),
+                    &AtomicBool::new(false),
+                    None,
+                )
+                .unwrap();
+            assert!(rx.try_recv().is_ok());
+            assert!(duplicate_rx.try_recv().is_err());
+            drop(call);
+            workers.remove("tools").unwrap().close_pending();
+        });
+    }
 
     /// The index is keyed by `DaemonEvent::variant_name`, so the variants an
     /// activation expands to must be spelled exactly the way events report
@@ -2933,7 +3194,7 @@ mod tests {
     fn call_roundtrips_through_a_fake_worker() {
         rt().block_on(async {
             let workers = Workers::new();
-            let (out_tx, mut out_rx) = mpsc::unbounded_channel::<Message>();
+            let (out_tx, mut out_rx) = mpsc::channel::<Message>(WORKER_OUTBOUND_CAPACITY);
             workers.insert("com.x.a", worker(now_secs(), false));
             workers.attach("com.x.a", "tok", out_tx).unwrap();
 
@@ -2981,7 +3242,7 @@ mod tests {
                 "worker not connected"
             );
             // Connected but silent → the deadline fires (never blocks the paste).
-            let (out_tx, _keep) = mpsc::unbounded_channel::<Message>();
+            let (out_tx, _keep) = mpsc::channel::<Message>(WORKER_OUTBOUND_CAPACITY);
             workers.insert("com.x.a", worker(now_secs(), false));
             workers.attach("com.x.a", "tok", out_tx).unwrap();
             assert_eq!(
@@ -3015,7 +3276,7 @@ mod tests {
     fn cancelling_pending_calls_releases_the_waiter_immediately() {
         rt().block_on(async {
             let workers = Workers::new();
-            let (out_tx, mut out_rx) = mpsc::unbounded_channel::<Message>();
+            let (out_tx, mut out_rx) = mpsc::channel::<Message>(WORKER_OUTBOUND_CAPACITY);
             workers.insert("com.x.a", worker(now_secs(), false));
             workers.attach("com.x.a", "tok", out_tx).unwrap();
 
@@ -3044,7 +3305,7 @@ mod tests {
                 "absent", "stale", "closed", "cancel", "error", "timeout", "invalid", "ok",
             ] {
                 let workers = Workers::new();
-                let (out_tx, mut out_rx) = mpsc::unbounded_channel();
+                let (out_tx, mut out_rx) = mpsc::channel(WORKER_OUTBOUND_CAPACITY);
                 if mode != "absent" {
                     workers.insert("tools", worker(now_secs(), false));
                     workers.attach("tools", "tok", out_tx).unwrap();
@@ -3167,7 +3428,7 @@ mod tests {
                 grain_core::extensions::native_call_fingerprint(&record, &pack.manifest).unwrap();
             let workers = Workers::new();
             workers.insert(&record.id, worker(now_secs(), false));
-            let (out_tx, mut out_rx) = mpsc::unbounded_channel();
+            let (out_tx, mut out_rx) = mpsc::channel(WORKER_OUTBOUND_CAPACITY);
             workers.attach(&record.id, "tok", out_tx).unwrap();
             for arguments in [
                 json!({}),
@@ -3304,7 +3565,7 @@ mod tests {
                     digest.clone()
                 });
                 workers.insert(&pack.manifest.id, spawned);
-                let (out_tx, mut out_rx) = mpsc::unbounded_channel();
+                let (out_tx, mut out_rx) = mpsc::channel(WORKER_OUTBOUND_CAPACITY);
                 workers.attach(&pack.manifest.id, "tok", out_tx).unwrap();
                 match mode {
                     "disabled" => {
@@ -3416,7 +3677,7 @@ mod tests {
                         replacement.token = "fresh".into();
                         replacement.call_digest = Some(current_digest.clone());
                         workers.insert(&pack.manifest.id, replacement);
-                        let (fresh_tx, mut fresh_rx) = mpsc::unbounded_channel();
+                        let (fresh_tx, mut fresh_rx) = mpsc::channel(WORKER_OUTBOUND_CAPACITY);
                         workers
                             .attach(&pack.manifest.id, "fresh", fresh_tx)
                             .unwrap();
@@ -3533,7 +3794,7 @@ mod tests {
             ] {
                 let workers = Workers::new();
                 workers.insert("tools", worker(now_secs(), false));
-                let (out_tx, mut out_rx) = mpsc::unbounded_channel();
+                let (out_tx, mut out_rx) = mpsc::channel(WORKER_OUTBOUND_CAPACITY);
                 workers.attach("tools", "tok", out_tx).unwrap();
                 let mut owner = NativeCallOwner::new(|| {
                     if let Some(worker) = workers.remove_if_token("tools", "tok") {
@@ -3609,7 +3870,7 @@ mod tests {
             for replace in [false, true] {
                 let workers = Arc::new(Workers::new());
                 workers.insert("tools", worker(now_secs(), false));
-                let (out_tx, mut out_rx) = mpsc::unbounded_channel();
+                let (out_tx, mut out_rx) = mpsc::channel(WORKER_OUTBOUND_CAPACITY);
                 workers.attach("tools", "tok", out_tx).unwrap();
                 let owned = workers.clone();
                 let task = tokio::spawn(async move {
@@ -3666,7 +3927,7 @@ mod tests {
             for replace in [false, true] {
                 let workers = Workers::new();
                 workers.insert("tools", worker(now_secs(), false));
-                let (out_tx, mut out_rx) = mpsc::unbounded_channel();
+                let (out_tx, mut out_rx) = mpsc::channel(WORKER_OUTBOUND_CAPACITY);
                 workers.attach("tools", "tok", out_tx).unwrap();
                 let pending = workers
                     .map
@@ -3738,7 +3999,7 @@ mod tests {
         rt().block_on(async {
             let workers = Workers::new();
             workers.insert("tools", worker(0, false));
-            let (tx, mut rx) = mpsc::unbounded_channel();
+            let (tx, mut rx) = mpsc::channel(WORKER_OUTBOUND_CAPACITY);
             let activity = workers.attach("tools", "tok", tx).unwrap();
             activity.store(0, Ordering::Relaxed);
             assert_eq!(workers.idle_victims(now_secs(), IDLE_REAP_SECS).len(), 1);
@@ -3820,7 +4081,7 @@ mod tests {
             }
             let workers = Workers::new();
             workers.insert("tools", worker(now_secs(), false));
-            let (tx, mut rx) = mpsc::unbounded_channel();
+            let (tx, mut rx) = mpsc::channel(WORKER_OUTBOUND_CAPACITY);
             workers.attach("tools", "tok", tx).unwrap();
             let dispatched = AtomicBool::new(false);
             let queued = workers
@@ -3862,7 +4123,7 @@ mod tests {
         rt().block_on(async {
             let workers = Workers::new();
             workers.insert("tools", worker(0, false));
-            let (tx, mut rx) = mpsc::unbounded_channel();
+            let (tx, mut rx) = mpsc::channel(WORKER_OUTBOUND_CAPACITY);
             let activity = workers.attach("tools", "tok", tx).unwrap();
             activity.store(0, Ordering::Relaxed);
             for _ in 0..4 {
@@ -3997,7 +4258,7 @@ mod tests {
         let mut replacement = worker(now_secs(), false);
         replacement.token = "new-token".into();
         workers.insert("a", replacement);
-        let (out_tx, _out_rx) = mpsc::unbounded_channel::<Message>();
+        let (out_tx, _out_rx) = mpsc::channel::<Message>(WORKER_OUTBOUND_CAPACITY);
         assert!(workers.attach("a", "old-token", out_tx).is_none());
         assert!(workers.remove_if_token("a", "old-token").is_none());
         assert_eq!(workers.len(), 1);
@@ -4011,13 +4272,13 @@ mod tests {
         let mut companion = worker(now_secs(), false);
         companion.kind = RuntimeKind::Companion;
         workers.insert("native", companion);
-        let (out_tx, _out_rx) = mpsc::unbounded_channel::<Message>();
+        let (out_tx, _out_rx) = mpsc::channel::<Message>(WORKER_OUTBOUND_CAPACITY);
         workers.attach("native", "tok", out_tx).unwrap();
         assert!(workers.scripted_connected_tokens().is_empty());
         assert!(workers.detach_companion("native", "tok"));
         assert_eq!(workers.len(), 1);
 
-        let (replacement_tx, _replacement_rx) = mpsc::unbounded_channel::<Message>();
+        let (replacement_tx, _replacement_rx) = mpsc::channel::<Message>(WORKER_OUTBOUND_CAPACITY);
         assert!(workers.attach("native", "tok", replacement_tx).is_some());
     }
 
@@ -4044,7 +4305,7 @@ mod tests {
             let mut replacement = worker(now_secs(), false);
             replacement.token = "new".into();
             workers.insert("tools", replacement);
-            let (out_tx, mut out_rx) = mpsc::unbounded_channel();
+            let (out_tx, mut out_rx) = mpsc::channel(WORKER_OUTBOUND_CAPACITY);
             workers.attach("tools", "new", out_tx).unwrap();
             assert!(
                 !workers
@@ -4083,7 +4344,7 @@ mod tests {
             let mut replacement = worker(now_secs(), false);
             replacement.token = "new".into();
             workers.insert("tools", replacement);
-            let (out_tx, mut out_rx) = mpsc::unbounded_channel();
+            let (out_tx, mut out_rx) = mpsc::channel(WORKER_OUTBOUND_CAPACITY);
             workers.attach("tools", "new", out_tx).unwrap();
             let responder = async {
                 let Message::Text(frame) = out_rx.recv().await.unwrap() else {
@@ -4125,7 +4386,7 @@ mod tests {
         rt().block_on(async {
             let workers = Workers::new();
             workers.insert("tools", worker(now_secs(), false));
-            let (out_tx, mut out_rx) = mpsc::unbounded_channel();
+            let (out_tx, mut out_rx) = mpsc::channel(WORKER_OUTBOUND_CAPACITY);
             workers.attach("tools", "tok", out_tx).unwrap();
             let mut call = Box::pin(workers.call_owned(
                 "tools",
@@ -4155,7 +4416,7 @@ mod tests {
         rt().block_on(async {
             let workers = Workers::new();
             workers.insert("tools", worker(now_secs(), false));
-            let (out_tx, out_rx) = mpsc::unbounded_channel();
+            let (out_tx, out_rx) = mpsc::channel(WORKER_OUTBOUND_CAPACITY);
             workers.attach("tools", "tok", out_tx).unwrap();
             drop(out_rx);
             assert_eq!(

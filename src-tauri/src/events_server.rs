@@ -32,6 +32,63 @@ const MAX_UNAUTHENTICATED_CONNECTIONS: usize = 64;
 // Applies before authentication to every client on this shared listener.
 // Bound fragmented messages as well as individual frames before JSON decoding.
 const MAX_INBOUND_WS_BYTES: usize = 512 * 1024;
+const MAX_WORKER_RPC_TASKS: usize = 4;
+const SOCKET_WRITE_DEADLINE: Duration = Duration::from_secs(2);
+
+// A slow peer must not trap the socket owner inside the writer arm. Cancelling
+// a partially written frame closes this connection; it is never replayed.
+async fn socket_write<F, E>(
+    send: F,
+    closed: Option<&mut tokio::sync::watch::Receiver<bool>>,
+    deadline: Duration,
+) -> bool
+where
+    F: std::future::Future<Output = Result<(), E>>,
+{
+    tokio::select! {
+        biased;
+        _ = async {
+            match closed {
+                Some(closed) => { let _ = closed.wait_for(|value| *value).await; }
+                None => std::future::pending::<()>().await,
+            }
+        } => false,
+        result = tokio::time::timeout(deadline, send) => matches!(result, Ok(Ok(()))),
+    }
+}
+
+fn spawn_worker_rpc<F>(requests: &mut tokio::task::JoinSet<()>, request: F) -> bool
+where
+    F: std::future::Future<Output = ()> + Send + 'static,
+{
+    while requests.try_join_next().is_some() {}
+    if requests.len() >= MAX_WORKER_RPC_TASKS {
+        return false;
+    }
+    requests.spawn(request);
+    true
+}
+
+// Stop serialization before retaining more than one permitted wire frame.
+// Parsed host-API results have separate per-API limits; this bounds encoding.
+fn worker_response_json(response: &grain_sdk::HostFrame) -> Result<String, serde_json::Error> {
+    struct Limited(Vec<u8>);
+    impl std::io::Write for Limited {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            if bytes.len() > MAX_INBOUND_WS_BYTES.saturating_sub(self.0.len()) {
+                return Err(std::io::Error::other("worker response exceeds wire budget"));
+            }
+            self.0.extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let mut buffer = Limited(Vec::new());
+    serde_json::to_writer(&mut buffer, response)?;
+    Ok(String::from_utf8(buffer.0).expect("JSON serialization is UTF-8"))
+}
 
 fn events_websocket_config() -> WebSocketConfig {
     WebSocketConfig {
@@ -426,7 +483,13 @@ async fn handle(stream: TcpStream, ctx: Arc<AppContext>, app: AppHandle) {
     if let Ok(json) = serde_json::to_string(&grain_sdk::ServerWelcome {
         grain_api: grain_sdk::GRAIN_API_VERSION.into(),
     }) {
-        if write.send(Message::Text(json.into())).await.is_err() {
+        if !socket_write(
+            write.send(Message::Text(json.into())),
+            None,
+            SOCKET_WRITE_DEADLINE,
+        )
+        .await
+        {
             return;
         }
     }
@@ -465,7 +528,13 @@ async fn handle(stream: TcpStream, ctx: Arc<AppContext>, app: AppHandle) {
             let Ok(json) = serde_json::to_string(&frame) else {
                 continue;
             };
-            if write.send(Message::Text(json.into())).await.is_err() {
+            if !socket_write(
+                write.send(Message::Text(json.into())),
+                None,
+                SOCKET_WRITE_DEADLINE,
+            )
+            .await
+            {
                 break;
             }
         }
@@ -481,28 +550,36 @@ async fn handle(stream: TcpStream, ctx: Arc<AppContext>, app: AppHandle) {
     // responses, and host-initiated calls all funnel through this mpsc so `write`
     // is touched from exactly one place (the `outgoing` arm) — no interleaved
     // partial frames, no borrow fight. `write` is only used here from now on.
-    let (out_tx, mut out_rx) = tokio::sync::mpsc::unbounded_channel::<Message>();
+    let (out_tx, mut out_rx) =
+        tokio::sync::mpsc::channel::<Message>(crate::extension_host::WORKER_OUTBOUND_CAPACITY);
 
     // The authenticated role, not its capability set, decides which protocol
     // this socket speaks and whether the worker host tracks it for reaping.
     let is_worker = identity.role == crate::events_auth::ClientRole::Worker;
+    let mut worker_closed = None;
     if is_worker {
-        if !crate::extension_host::attach_connection(&identity.id, &session.token, out_tx.clone()) {
+        worker_closed =
+            crate::extension_host::attach_connection(&identity.id, &session.token, out_tx.clone());
+        if worker_closed.is_none() {
             return;
         }
     } else if identity.role == crate::events_auth::ClientRole::Pill {
         // [GRAIN] Greet the pill with the built-in SKIN it should wear. This
         // also decides the window's size, so it must land before the first show.
         if let Some(frame) = crate::pill_skin::welcome_frame(&app) {
-            let _ = out_tx.send(Message::Text(frame.into()));
+            let _ = out_tx.try_send(Message::Text(frame.into()));
         }
     }
 
     // Tools have only explicit call/result traffic, never a daemon event feed.
     // Do not even retain a broadcast receiver for idle extension workers.
     let mut rx = (!is_worker).then(|| ctx.subscribe());
+    // Own and bound host-API work to this socket. Drop aborts unfinished tasks.
+    let mut requests = tokio::task::JoinSet::new();
     loop {
         tokio::select! {
+            _ = async { let _ = worker_closed.as_mut().expect("worker close signal").wait_for(|closed| *closed).await; }, if is_worker => break,
+            _ = requests.join_next(), if !requests.is_empty() => {},
             ev = async { rx.as_mut().expect("pill event receiver").recv().await }, if !is_worker => match ev {
                 Ok(ev) => {
                     // Capability filter: an identity without the grant never
@@ -511,7 +588,7 @@ async fn handle(stream: TcpStream, ctx: Arc<AppContext>, app: AppHandle) {
                         continue;
                     }
                     if let Ok(json) = serde_json::to_string(&ev) {
-                        if out_tx.send(Message::Text(json.into())).is_err() {
+                        if out_tx.try_send(Message::Text(json.into())).is_err() {
                             break; // writer arm gone
                         }
                     }
@@ -522,7 +599,7 @@ async fn handle(stream: TcpStream, ctx: Arc<AppContext>, app: AppHandle) {
             // The single writer: everything bound for this socket passes here.
             outgoing = out_rx.recv() => match outgoing {
                 Some(m) => {
-                    if write.send(m).await.is_err() {
+                    if !socket_write(write.send(m), worker_closed.as_mut(), SOCKET_WRITE_DEADLINE).await {
                         break; // client gone
                     }
                 }
@@ -542,7 +619,8 @@ async fn handle(stream: TcpStream, ctx: Arc<AppContext>, app: AppHandle) {
                                 let app = app.clone();
                                 let identity = identity.clone();
                                 let out_tx = out_tx.clone();
-                                tokio::spawn(async move {
+                                let worker_token = session.token.clone();
+                                if !spawn_worker_rpc(&mut requests, async move {
                                     let developer_logging =
                                         crate::extension_host::is_dev_extension(
                                             &app,
@@ -603,12 +681,12 @@ async fn handle(stream: TcpStream, ctx: Arc<AppContext>, app: AppHandle) {
                                             }
                                         }
                                     };
-                                    if let Ok(json) =
-                                        serde_json::to_string(&grain_sdk::HostFrame::Response(resp))
-                                    {
-                                        let _ = out_tx.send(Message::Text(json.into()));
+                                    let sent = worker_response_json(&grain_sdk::HostFrame::Response(resp))
+                                        .is_ok_and(|json| out_tx.try_send(Message::Text(json.into())).is_ok());
+                                    if !sent {
+                                        crate::extension_host::detach_connection(&identity.id, &worker_token);
                                     }
-                                });
+                                }) { break; }
                             }
                             Ok(grain_sdk::HostFrame::CallResult(r)) => {
                                 let result = match r.err {
@@ -637,6 +715,7 @@ async fn handle(stream: TcpStream, ctx: Arc<AppContext>, app: AppHandle) {
     if is_worker {
         crate::extension_host::detach_connection(&identity.id, &session.token);
     }
+    requests.abort_all();
 }
 
 /// Apply a reverse-channel action from the pill. Mostly headless (operates on the
@@ -1018,6 +1097,93 @@ fn kill_stray_pills() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn socket_write_deadline_and_close_signal_drop_stalled_writer() {
+        struct Dropped(Arc<AtomicUsize>);
+        impl Drop for Dropped {
+            fn drop(&mut self) {
+                self.0.fetch_add(1, Ordering::SeqCst);
+            }
+        }
+        for close in [false, true] {
+            let dropped = Arc::new(AtomicUsize::new(0));
+            let guard = Dropped(dropped.clone());
+            let (tx, mut rx) = tokio::sync::watch::channel(false);
+            let write = async move {
+                let _guard = guard;
+                std::future::pending::<Result<(), ()>>().await
+            };
+            let shutdown = async {
+                if close {
+                    tokio::task::yield_now().await;
+                    tx.send_replace(true);
+                }
+            };
+            let (sent, _) = tokio::join!(
+                socket_write(write, Some(&mut rx), Duration::from_millis(20)),
+                shutdown
+            );
+            assert!(!sent);
+            assert_eq!(dropped.load(Ordering::SeqCst), 1);
+        }
+        assert!(socket_write(async { Ok::<_, ()>(()) }, None, Duration::from_secs(1)).await);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn worker_rpc_tasks_are_bounded_and_socket_drop_releases_owners() {
+        struct Owner(Arc<AtomicUsize>);
+        impl Drop for Owner {
+            fn drop(&mut self) {
+                self.0.fetch_add(1, Ordering::SeqCst);
+            }
+        }
+        let started = Arc::new(AtomicUsize::new(0));
+        let released = Arc::new(AtomicUsize::new(0));
+        let mut requests = tokio::task::JoinSet::new();
+        for index in 0..=MAX_WORKER_RPC_TASKS {
+            let started = started.clone();
+            let released = released.clone();
+            assert_eq!(
+                spawn_worker_rpc(&mut requests, async move {
+                    started.fetch_add(1, Ordering::SeqCst);
+                    let _owner = Owner(released);
+                    std::future::pending::<()>().await;
+                }),
+                index < MAX_WORKER_RPC_TASKS
+            );
+        }
+        tokio::task::yield_now().await;
+        assert_eq!(started.load(Ordering::SeqCst), MAX_WORKER_RPC_TASKS);
+        drop(requests);
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while released.load(Ordering::SeqCst) != MAX_WORKER_RPC_TASKS {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+    }
+
+    #[test]
+    fn worker_rpc_encoding_stops_at_wire_budget_and_preserves_small_replies() {
+        for size in [100, MAX_INBOUND_WS_BYTES, MAX_INBOUND_WS_BYTES * 2] {
+            let frame = grain_sdk::HostFrame::Response(grain_sdk::ServerResponse {
+                id: 1,
+                ok: Some(serde_json::json!({"body": "x".repeat(size)})),
+                err: None,
+            });
+            let result = worker_response_json(&frame);
+            if size == 100 {
+                assert_eq!(
+                    serde_json::from_str::<serde_json::Value>(&result.unwrap()).unwrap(),
+                    serde_json::to_value(&frame).unwrap()
+                );
+            } else {
+                assert!(result.is_err());
+            }
+        }
+    }
 
     #[tokio::test(flavor = "current_thread")]
     async fn socket_limits_reject_large_frames_and_fragmented_messages() {
