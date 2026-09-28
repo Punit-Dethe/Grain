@@ -723,6 +723,71 @@ pub struct ExtensionsRegistry {
     save_gate: std::sync::Mutex<()>,
 }
 
+/// Only the edited identity and affected claims are copied for rollback; other
+/// records and artifact contents are never duplicated. Readers are excluded
+/// until persistence succeeds or this snapshot has been restored.
+struct RecordEditSnapshot {
+    record: Option<ExtensionRecord>,
+    quarantine: Option<String>,
+    slots: Vec<(String, Option<String>)>,
+    next_toggle_seq: u64,
+    removal_epoch: u64,
+}
+
+impl RecordEditSnapshot {
+    fn capture(state: &RegistryFile, id: &str, additional_slots: &[String]) -> Self {
+        let mut slots: Vec<_> = state
+            .slot_claims
+            .iter()
+            .filter(|(slot, occupant)| occupant.as_str() == id || additional_slots.contains(slot))
+            .map(|(slot, occupant)| (slot.clone(), Some(occupant.clone())))
+            .collect();
+        for slot in additional_slots {
+            if !slots.iter().any(|(captured, _)| captured == slot) {
+                slots.push((slot.clone(), None));
+            }
+        }
+        Self {
+            record: state.records.get(id).cloned(),
+            quarantine: state.quarantined.get(id).cloned(),
+            slots,
+            next_toggle_seq: state.next_toggle_seq,
+            removal_epoch: state.removal_epoch,
+        }
+    }
+
+    fn restore(self, state: &mut RegistryFile, id: &str) {
+        match self.record {
+            Some(record) => {
+                state.records.insert(id.to_owned(), record);
+            }
+            None => {
+                state.records.remove(id);
+            }
+        }
+        match self.quarantine {
+            Some(reason) => {
+                state.quarantined.insert(id.to_owned(), reason);
+            }
+            None => {
+                state.quarantined.remove(id);
+            }
+        }
+        for (slot, occupant) in self.slots {
+            match occupant {
+                Some(occupant) => {
+                    state.slot_claims.insert(slot, occupant);
+                }
+                None => {
+                    state.slot_claims.remove(&slot);
+                }
+            }
+        }
+        state.next_toggle_seq = self.next_toggle_seq;
+        state.removal_epoch = self.removal_epoch;
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct RecordRevision {
     active: Option<u64>,
@@ -772,11 +837,13 @@ impl ExtensionsRegistry {
         if state.tool_only_migration_version > 1 {
             anyhow::bail!("unsupported extension migration version");
         }
-        let mut completed = state.clone();
-        completed.tool_only_migration_version = 1;
-        persist_registry(&self.path, &completed)?;
-        *state = completed;
-        Ok(())
+        let previous = state.tool_only_migration_version;
+        state.tool_only_migration_version = 1;
+        let saved = persist_registry(&self.path, &state);
+        if saved.is_err() {
+            state.tool_only_migration_version = previous;
+        }
+        saved
     }
 
     pub fn tool_only_migration_version(&self) -> u32 {
@@ -869,6 +936,23 @@ impl ExtensionsRegistry {
         persist_registry(&self.path, &state)
     }
 
+    /// Caller holds save_gate -> state write. Enabling/replacement is tentative
+    /// until the file commits; refusal-only mutations may remain memory-first.
+    fn persist_record_edit(
+        &self,
+        state: &mut RegistryFile,
+        id: &str,
+        rollback: Option<RecordEditSnapshot>,
+    ) -> Result<()> {
+        let saved = persist_registry(&self.path, state);
+        if saved.is_err() {
+            if let Some(snapshot) = rollback {
+                snapshot.restore(state, id);
+            }
+        }
+        saved
+    }
+
     /// All installed pack records (unordered; callers sort by toggle_seq).
     pub fn records(&self) -> Vec<ExtensionRecord> {
         self.state
@@ -901,7 +985,8 @@ impl ExtensionsRegistry {
     }
 
     /// Change the effective account without changing enablement, grants or
-    /// toggle order. A failed save retains the new in-memory identity.
+    /// toggle order. Failed login publication restores the old identity;
+    /// failed logout persistence still invalidates the live identity.
     pub fn set_authentication_session_if_current<G>(
         &self,
         id: &str,
@@ -1189,8 +1274,9 @@ impl ExtensionsRegistry {
                 anyhow::bail!("slot '{}' is occupied by '{}'", c.slot, c.current_occupant);
             }
         }
+        let _save = self.save_gate.lock().unwrap();
+        let mut state = self.state.write().unwrap();
         let changed = {
-            let mut state = self.state.write().unwrap();
             if let Some(revision) = expected_revision {
                 revision.check(&state, id)?;
             }
@@ -1219,6 +1305,23 @@ impl ExtensionsRegistry {
                 }
             }
             let next = state.next_toggle_seq;
+            let activating = enabled && state.records.get(id).is_some_and(|record| !record.enabled);
+            let following = if activating {
+                Some(next.checked_add(1).context("toggle sequence exhausted")?)
+            } else {
+                None
+            };
+            let rollback = activating.then(|| {
+                RecordEditSnapshot::capture(
+                    &state,
+                    id,
+                    state
+                        .records
+                        .get(id)
+                        .map(|record| record.slots.as_slice())
+                        .unwrap_or_default(),
+                )
+            });
             let Some(_owner) = owner() else {
                 return Ok(false);
             };
@@ -1236,22 +1339,23 @@ impl ExtensionsRegistry {
             match declared {
                 Some(slots) => {
                     if enabled {
-                        state.next_toggle_seq += 1;
+                        state.next_toggle_seq = following.expect("checked toggle sequence");
                         for slot in slots {
                             state.slot_claims.insert(slot, id.to_string());
                         }
                     } else {
                         Self::release_slots_locked(&mut state, id);
                     }
-                    true
+                    Some(rollback)
                 }
-                None => false,
+                None => None,
             }
         };
-        if changed {
-            self.save()?;
+        if let Some(rollback) = changed {
+            self.persist_record_edit(&mut state, id, rollback)?;
+            return Ok(true);
         }
-        Ok(changed)
+        Ok(false)
     }
 
     /// Record a built-in's enable moment so it participates in toggle order
@@ -1308,13 +1412,20 @@ impl ExtensionsRegistry {
         revision: Option<RecordRevision>,
         approve: bool,
     ) -> Result<u64> {
+        let _save = self.save_gate.lock().unwrap();
+        let mut state = self.state.write().unwrap();
+        let record_id = record.id.clone();
+        let rollback;
         let generation;
         {
-            let mut state = self.state.write().unwrap();
             if let Some(revision) = revision {
                 revision.check(&state, &record.id)?;
             }
             let reserved_generation = next_execution_generation()?;
+            // A disabled update keeps its refusal live even if persistence
+            // fails. Enabled/approved replacements must roll back instead.
+            rollback = (approve || record.enabled)
+                .then(|| RecordEditSnapshot::capture(&state, &record.id, &[]));
             if approve {
                 if !state.records.contains_key(&record.id) {
                     anyhow::bail!("Extension is not installed.");
@@ -1363,8 +1474,9 @@ impl ExtensionsRegistry {
                         .expect("dev record exists")
                         .replaced = Some(Box::new(record));
                 }
-                drop(state);
-                return self.save().map(|_| generation);
+                return self
+                    .persist_record_edit(&mut state, &record_id, rollback)
+                    .map(|_| generation);
             }
             let declared = record.slots.clone();
             if !record.enabled {
@@ -1390,7 +1502,8 @@ impl ExtensionsRegistry {
             // enabled pack must not gain a position the user never granted it.
             // It stays a pending conflict until the user takes the slot.
         }
-        self.save().map(|_| generation)
+        self.persist_record_edit(&mut state, &record_id, rollback)
+            .map(|_| generation)
     }
 
     /// Make `record` the effective load-unpacked extension for its id. Any
@@ -1415,12 +1528,16 @@ impl ExtensionsRegistry {
         path: PathBuf,
         revision: Option<RecordRevision>,
     ) -> Result<u64> {
+        let _save = self.save_gate.lock().unwrap();
+        let mut state = self.state.write().unwrap();
+        let record_id = record.id.clone();
+        let rollback;
         let generation;
         {
-            let mut state = self.state.write().unwrap();
             if let Some(revision) = revision {
                 revision.check(&state, &record.id)?;
             }
+            rollback = RecordEditSnapshot::capture(&state, &record.id, &[]);
             record.execution_generation = next_execution_generation()?;
             generation = record.execution_generation;
             let id = record.id.clone();
@@ -1445,7 +1562,8 @@ impl ExtensionsRegistry {
             record.dev = Some(DevOverride { path, replaced });
             state.records.insert(id, record);
         }
-        self.save().map(|_| generation)
+        self.persist_record_edit(&mut state, &record_id, Some(rollback))
+            .map(|_| generation)
     }
 
     /// Remove a load-unpacked override and restore its parked installed record,
@@ -1453,8 +1571,10 @@ impl ExtensionsRegistry {
     /// different extension took one meanwhile, it is restored disabled so no
     /// takeover happens silently.
     pub fn unload_dev(&self, id: &str) -> Result<bool> {
+        let _save = self.save_gate.lock().unwrap();
+        let mut state = self.state.write().unwrap();
+        let rollback;
         let changed = {
-            let mut state = self.state.write().unwrap();
             if state
                 .records
                 .get(id)
@@ -1462,6 +1582,14 @@ impl ExtensionsRegistry {
             {
                 return Ok(false);
             }
+            let restored_slots = state
+                .records
+                .get(id)
+                .and_then(|record| record.dev.as_ref())
+                .and_then(|dev| dev.replaced.as_ref())
+                .map(|record| record.slots.as_slice())
+                .unwrap_or_default();
+            rollback = RecordEditSnapshot::capture(&state, id, restored_slots);
             // Reserve before removing the active record, so exhaustion cannot
             // partially unload an override or resurrect its parked identity.
             let generation = next_execution_generation()?;
@@ -1497,7 +1625,7 @@ impl ExtensionsRegistry {
             true
         };
         if changed {
-            self.save()?;
+            self.persist_record_edit(&mut state, id, Some(rollback))?;
         }
         Ok(changed)
     }
@@ -2430,7 +2558,7 @@ mod tests {
     }
 
     #[test]
-    fn failed_persistence_does_not_roll_back_live_execution_identity() {
+    fn failed_enabled_replacement_preserves_owner_but_failed_disable_invalidates_it() {
         let dir = tmp();
         let reg = ExtensionsRegistry::load(dir.path(), false).unwrap();
         reg.install(pack("tools", &[])).unwrap();
@@ -2442,13 +2570,10 @@ mod tests {
         fs::create_dir(&path).unwrap();
         assert!(reg.install(before.clone()).is_err());
         let replacement = reg.record("tools").unwrap();
-        assert_ne!(
+        assert_eq!(
             before.execution_generation,
             replacement.execution_generation
         );
-        assert!(!reg
-            .disable_if_generation("tools", before.execution_generation)
-            .unwrap());
         assert!(reg
             .disable_if_generation("tools", replacement.execution_generation)
             .is_err());
@@ -2800,6 +2925,267 @@ mod tests {
                 .authentication_session,
             Some("b".repeat(32))
         );
+    }
+
+    fn block_registry_save(reg: &ExtensionsRegistry) -> Vec<u8> {
+        let saved = fs::read(&reg.path).unwrap();
+        fs::remove_file(&reg.path).unwrap();
+        fs::create_dir(&reg.path).unwrap();
+        saved
+    }
+
+    fn restore_registry_file(reg: &ExtensionsRegistry, saved: &[u8]) {
+        fs::remove_dir(&reg.path).unwrap();
+        fs::write(&reg.path, saved).unwrap();
+    }
+
+    #[test]
+    fn failed_enable_and_grant_restore_record_and_toggle_order_before_retry() {
+        for grant in [false, true] {
+            let dir = tmp();
+            let reg = ExtensionsRegistry::load(dir.path(), false).unwrap();
+            reg.install(pack("other", &[])).unwrap();
+            reg.set_enabled("other", true).unwrap();
+            let record = pack("tools", &[]);
+            reg.install(record).unwrap();
+            let revision = reg.record_revision("tools");
+            let before = serde_json::to_value(reg.record("tools")).unwrap();
+            let other = serde_json::to_value(reg.record("other")).unwrap();
+            let next = reg.state.read().unwrap().next_toggle_seq;
+            let saved = block_registry_save(&reg);
+            let activate = || {
+                if grant {
+                    let mut approved = reg.record("tools").unwrap();
+                    approved.granted = vec!["auth".into()];
+                    approved.authentication_approved = Some("reviewed-declaration".into());
+                    reg.approve_and_enable_if_current(approved, revision)
+                        .map(|_| true)
+                } else {
+                    reg.set_enabled_at_revision("tools", true, revision)
+                }
+            };
+            assert!(activate().is_err());
+            assert_eq!(reg.record_revision("tools"), revision);
+            assert_eq!(serde_json::to_value(reg.record("tools")).unwrap(), before);
+            assert_eq!(serde_json::to_value(reg.record("other")).unwrap(), other);
+            assert_eq!(reg.state.read().unwrap().next_toggle_seq, next);
+            assert_eq!(
+                reg.slot_occupant("output.destination").as_deref(),
+                Some(CORE_DEFAULT)
+            );
+            restore_registry_file(&reg, &saved);
+            let restarted = ExtensionsRegistry::load(dir.path(), false).unwrap();
+            assert!(!restarted.is_enabled("tools"));
+            assert!(restarted.record("tools").unwrap().granted.is_empty());
+            assert!(activate().unwrap());
+            assert!(reg.is_enabled("tools"));
+            assert_ne!(reg.record_revision("tools"), revision);
+            let restarted = ExtensionsRegistry::load(dir.path(), false).unwrap();
+            assert!(restarted.is_enabled("tools"));
+            if grant {
+                assert_eq!(restarted.record("tools").unwrap().granted, vec!["auth"]);
+            }
+        }
+    }
+
+    #[test]
+    fn failed_enabled_install_restores_absence_parked_owner_and_quarantine() {
+        for mode in ["new", "installed", "parked", "quarantined", "oversized"] {
+            let dir = tmp();
+            let reg = ExtensionsRegistry::load(dir.path(), false).unwrap();
+            if mode != "new" {
+                let mut installed = pack("tools", &[]);
+                installed.enabled = true;
+                installed.installed_version = "committed".into();
+                installed.authentication_session = Some("a".repeat(32));
+                reg.install(installed).unwrap();
+            }
+            if mode == "parked" {
+                reg.load_dev(pack("tools", &[]), dir.path().join("project"))
+                    .unwrap();
+            }
+            if mode == "quarantined" {
+                reg.quarantine("tools", "retired capabilities").unwrap();
+            }
+            let revision = reg.record_revision("tools");
+            let before = serde_json::to_value(reg.record("tools")).unwrap();
+            let quarantine = reg.quarantine_reason("tools");
+            let saved = fs::read(&reg.path).unwrap();
+            if mode != "oversized" {
+                block_registry_save(&reg);
+            }
+            let mut candidate = pack("tools", &[]);
+            candidate.enabled = true;
+            candidate.installed_version = if mode == "oversized" {
+                "x".repeat(REGISTRY_MAX_BYTES)
+            } else {
+                "candidate".into()
+            };
+            candidate.granted = vec!["auth".into()];
+            candidate.authentication_session = Some("b".repeat(32));
+            assert!(
+                reg.install_if_current(candidate, revision).is_err(),
+                "{mode}"
+            );
+            assert_eq!(reg.record_revision("tools"), revision, "{mode}");
+            assert_eq!(
+                serde_json::to_value(reg.record("tools")).unwrap(),
+                before,
+                "{mode}"
+            );
+            assert_eq!(reg.quarantine_reason("tools"), quarantine, "{mode}");
+            if mode == "oversized" {
+                assert_eq!(fs::read(&reg.path).unwrap(), saved);
+                assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 1);
+            } else {
+                restore_registry_file(&reg, &saved);
+            }
+            let restarted = ExtensionsRegistry::load(dir.path(), false).unwrap();
+            assert_eq!(
+                serde_json::to_value(restarted.record("tools")).unwrap(),
+                before,
+                "{mode}"
+            );
+            assert_eq!(restarted.quarantine_reason("tools"), quarantine);
+        }
+    }
+
+    #[test]
+    fn failed_dev_switch_and_restore_keep_separate_account_owners_and_restart_state() {
+        for unload in [false, true] {
+            let dir = tmp();
+            let reg = ExtensionsRegistry::load(dir.path(), false).unwrap();
+            let mut installed = pack("tools", &["output.destination"]);
+            installed.enabled = true;
+            installed.granted = vec!["auth".into()];
+            installed.authentication_session = Some("a".repeat(32));
+            reg.install(installed).unwrap();
+            reg.take_slot("tools", "output.destination").unwrap();
+            let mut dev = pack("tools", &[]);
+            dev.enabled = true;
+            dev.granted = vec!["auth".into()];
+            reg.load_dev(dev.clone(), dir.path().join("project-a"))
+                .unwrap();
+            reg.set_authentication_session_if_current(
+                "tools",
+                reg.record_revision("tools"),
+                Some("b".repeat(32)),
+                || Some(()),
+            )
+            .unwrap();
+            reg.set_slot_claim("legacy-dev-claim", "tools").unwrap();
+            let before = serde_json::to_value(reg.record("tools")).unwrap();
+            let revision = reg.record_revision("tools");
+            let epoch = reg.state.read().unwrap().removal_epoch;
+            let saved = block_registry_save(&reg);
+            if unload {
+                assert!(reg.unload_dev("tools").is_err());
+            } else {
+                assert!(reg
+                    .load_dev_if_current(dev.clone(), dir.path().join("project-b"), revision)
+                    .is_err());
+            }
+            assert_eq!(reg.record_revision("tools"), revision);
+            assert_eq!(reg.state.read().unwrap().removal_epoch, epoch);
+            assert_eq!(serde_json::to_value(reg.record("tools")).unwrap(), before);
+            assert_eq!(
+                reg.slot_occupant("legacy-dev-claim").as_deref(),
+                Some("tools")
+            );
+            assert_eq!(
+                reg.slot_occupant("output.destination").as_deref(),
+                Some(CORE_DEFAULT)
+            );
+            restore_registry_file(&reg, &saved);
+            let restarted = ExtensionsRegistry::load(dir.path(), false).unwrap();
+            assert_eq!(
+                serde_json::to_value(restarted.record("tools")).unwrap(),
+                before
+            );
+            if unload {
+                assert!(reg.unload_dev("tools").unwrap());
+                assert_eq!(
+                    reg.record("tools").unwrap().authentication_session,
+                    Some("a".repeat(32))
+                );
+                assert_eq!(
+                    reg.slot_occupant("output.destination").as_deref(),
+                    Some("tools")
+                );
+            } else {
+                reg.load_dev_if_current(dev, dir.path().join("project-b"), revision)
+                    .unwrap();
+                assert!(reg
+                    .record("tools")
+                    .unwrap()
+                    .authentication_session
+                    .is_none());
+                assert_eq!(
+                    reg.installed_record("tools")
+                        .unwrap()
+                        .authentication_session,
+                    Some("a".repeat(32))
+                );
+            }
+            assert!(reg.slot_occupant("legacy-dev-claim").is_none());
+            assert_ne!(reg.record_revision("tools"), revision);
+        }
+    }
+
+    #[test]
+    fn concurrent_approval_and_disable_finish_disabled_without_stale_publication() {
+        for _ in 0..32 {
+            let dir = tmp();
+            let reg = std::sync::Arc::new(ExtensionsRegistry::load(dir.path(), false).unwrap());
+            reg.install(pack("tools", &[])).unwrap();
+            let revision = reg.record_revision("tools");
+            let mut approved = reg.record("tools").unwrap();
+            approved.granted = vec!["auth".into()];
+            let barrier = std::sync::Arc::new(std::sync::Barrier::new(3));
+            let approving = {
+                let reg = reg.clone();
+                let barrier = barrier.clone();
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    reg.approve_and_enable_if_current(approved, revision)
+                })
+            };
+            let disabling = {
+                let reg = reg.clone();
+                let barrier = barrier.clone();
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    reg.set_enabled("tools", false)
+                })
+            };
+            barrier.wait();
+            let _ = approving.join().unwrap();
+            assert!(disabling.join().unwrap().unwrap());
+            assert!(!reg.is_enabled("tools"));
+            assert!(reg
+                .set_enabled_at_revision("tools", true, revision)
+                .is_err());
+            assert!(!ExtensionsRegistry::load(dir.path(), false)
+                .unwrap()
+                .is_enabled("tools"));
+        }
+    }
+
+    #[test]
+    fn enable_counter_exhaustion_changes_no_identity_or_claim() {
+        let dir = tmp();
+        let reg = ExtensionsRegistry::load(dir.path(), false).unwrap();
+        reg.install(pack("tools", &[])).unwrap();
+        reg.state.write().unwrap().next_toggle_seq = u64::MAX;
+        let revision = reg.record_revision("tools");
+        assert!(reg
+            .set_enabled("tools", true)
+            .unwrap_err()
+            .to_string()
+            .contains("toggle sequence exhausted"));
+        assert_eq!(reg.record_revision("tools"), revision);
+        assert!(!reg.is_enabled("tools"));
+        assert!(reg.slots_held("tools").is_empty());
     }
 }
 
