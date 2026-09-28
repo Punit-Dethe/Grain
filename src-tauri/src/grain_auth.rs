@@ -25,6 +25,7 @@ const VAULT_SERVICE: &str = "com.grain.extension.oauth";
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(300);
 const CALLBACK_MAX_BYTES: usize = 16 * 1024;
 const TOKEN_MAX_BYTES: usize = 64 * 1024;
+const MAX_GRANTED_SCOPES: usize = 256;
 const EXPIRY_SKEW_SECS: u64 = 60;
 const MAX_PENDING_CONNECTS: usize = 8;
 struct PendingFlow {
@@ -271,8 +272,8 @@ struct TokenResponse {
     access_token: Option<String>,
     #[serde(default)]
     refresh_token: Option<String>,
-    #[serde(default = "bearer")]
-    token_type: String,
+    #[serde(default)]
+    token_type: Option<String>,
     #[serde(default)]
     expires_in: Option<u64>,
     #[serde(default)]
@@ -312,15 +313,40 @@ fn read_token_unlocked(extension_id: &str) -> Result<Option<TokenSet>, String> {
         Err(keyring::Error::NoEntry) => return Ok(None),
         Err(error) => return Err(format!("OS credential vault read failed: {error}")),
     };
-    let result = if bytes.len() > TOKEN_MAX_BYTES {
-        Err("stored OAuth credential is too large".into())
-    } else {
-        serde_json::from_slice(&bytes)
-            .map(Some)
-            .map_err(|error| format!("stored OAuth credential is invalid: {error}"))
-    };
+    let result = decode_token(&bytes).map(Some);
     bytes.zeroize();
     result
+}
+
+fn decode_token(bytes: &[u8]) -> Result<TokenSet, String> {
+    if bytes.len() > TOKEN_MAX_BYTES {
+        return Err("stored OAuth credential is too large".into());
+    }
+    // Serde errors may include an unexpected string value from the secret.
+    serde_json::from_slice(bytes).map_err(|_| "stored OAuth credential is invalid".into())
+}
+
+struct CredentialBuffer(Zeroizing<Vec<u8>>);
+
+impl std::io::Write for CredentialBuffer {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        if bytes.len() > TOKEN_MAX_BYTES.saturating_sub(self.0.len()) {
+            return Err(std::io::Error::other("OAuth credential exceeds 64 KiB"));
+        }
+        self.0.extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+fn encode_token(token: &TokenSet) -> Result<Zeroizing<Vec<u8>>, String> {
+    let mut buffer = CredentialBuffer(Zeroizing::new(Vec::new()));
+    serde_json::to_writer(&mut buffer, token)
+        .map_err(|_| "stored OAuth credential exceeds 64 KiB".to_owned())?;
+    Ok(buffer.0)
 }
 
 fn write_token_sync(
@@ -333,13 +359,11 @@ fn write_token_sync(
         .lock()
         .map_err(|_| "OS credential vault lock is unavailable")?;
     let write = || {
+        let bytes = encode_token(token)?;
         let entry = vault_entry(extension_id)?;
-        let mut bytes = serde_json::to_vec(token).map_err(|error| error.to_string())?;
-        let result = entry
+        entry
             .set_secret(&bytes)
-            .map_err(|error| format!("OS credential vault write failed: {error}"));
-        bytes.zeroize();
-        result
+            .map_err(|error| format!("OS credential vault write failed: {error}"))
     };
     if let Some((prepared, owner)) = connect_owner {
         // Check after waiting for the vault lock, including blocking tasks that
@@ -376,8 +400,7 @@ fn write_refreshed_sync(
     prepared.check(id)?;
     let current = read_token_unlocked(key)?;
     publish_refresh(prepared, id, previous, current.as_ref(), || {
-        let bytes =
-            Zeroizing::new(serde_json::to_vec(refreshed).map_err(|error| error.to_string())?);
+        let bytes = encode_token(refreshed)?;
         vault_entry(key)?
             .set_secret(&bytes)
             .map_err(|error| format!("OS credential vault write failed: {error}"))
@@ -457,6 +480,7 @@ fn check_account_token(
     decl: &AuthenticationDecl,
 ) -> Result<(), String> {
     check_token_binding(token, decl)?;
+    check_bearer_credential(&token.access_token, &token.token_type)?;
     if token.account_session.as_deref() != Some(session) || token.credential_revision.is_none() {
         return Err("authentication needs reauthorization for its account session".into());
     }
@@ -522,6 +546,114 @@ fn needs_refresh(token: &TokenSet) -> bool {
         .is_some_and(|expiry| expiry <= now().saturating_add(EXPIRY_SKEW_SECS))
 }
 
+fn check_bearer_credential(access_token: &str, token_type: &str) -> Result<(), String> {
+    if !token_type.eq_ignore_ascii_case("bearer") {
+        return Err("token endpoint returned an unsupported token type".into());
+    }
+    // RFC 6750 section 2.1: padding may occur only at the end. Never echo
+    // rejected credentials, including when they contain header delimiters.
+    let unpadded = access_token.trim_end_matches('=');
+    if unpadded.is_empty()
+        || !unpadded.bytes().all(|byte| {
+            byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~' | b'+' | b'/')
+        })
+    {
+        return Err("token endpoint returned an invalid Bearer credential".into());
+    }
+    Ok(())
+}
+
+fn validated_grant(
+    token: &TokenResponse,
+    decl: &AuthenticationDecl,
+    fallback_scopes: &[String],
+) -> Result<(Vec<String>, Option<u64>), String> {
+    check_bearer_credential(
+        token
+            .access_token
+            .as_deref()
+            .ok_or("token response omitted access_token")?,
+        token
+            .token_type
+            .as_deref()
+            .ok_or("token response omitted token_type")?,
+    )?;
+    if token.refresh_token.as_deref().is_some_and(|value| {
+        value.is_empty() || !value.bytes().all(|byte| (0x20..=0x7e).contains(&byte))
+    }) {
+        return Err("token endpoint returned an invalid refresh credential".into());
+    }
+    let scopes = if let Some(scope) = &token.scope {
+        // OAuth scopes are ASCII space separated, not arbitrary whitespace.
+        let mut scopes = Vec::new();
+        for value in scope.split(' ') {
+            if value.is_empty()
+                || !value
+                    .bytes()
+                    .all(|byte| matches!(byte, 0x21 | 0x23..=0x5b | 0x5d..=0x7e))
+            {
+                return Err("token endpoint returned invalid scopes".into());
+            }
+            if !scopes.iter().any(|prior| prior == value) {
+                if scopes.len() >= MAX_GRANTED_SCOPES {
+                    return Err("token endpoint returned too many scopes".into());
+                }
+                scopes.push(value.to_owned());
+            }
+        }
+        scopes
+    } else {
+        fallback_scopes.to_vec()
+    };
+    if !decl.scopes.iter().all(|scope| scopes.contains(scope)) {
+        return Err("authentication needs reauthorization for its declared scopes".into());
+    }
+    let expires_at = token
+        .expires_in
+        .map(|seconds| {
+            if seconds == 0 {
+                return Err("token endpoint returned an expired credential".to_owned());
+            }
+            now()
+                .checked_add(seconds)
+                .ok_or_else(|| "token endpoint returned an invalid expiry".to_owned())
+        })
+        .transpose()?;
+    Ok((scopes, expires_at))
+}
+
+fn connection_state(
+    token: &TokenSet,
+    session: Option<&str>,
+    decl: &AuthenticationDecl,
+) -> &'static str {
+    if session.is_none_or(|session| check_account_token(token, session, decl).is_err()) {
+        "needs_reauthorization"
+    } else if needs_refresh(token) {
+        if token.refresh_token.as_deref().is_none_or(|value| {
+            value.is_empty() || !value.bytes().all(|byte| (0x20..=0x7e).contains(&byte))
+        }) {
+            "needs_reauthorization"
+        } else {
+            "expired"
+        }
+    } else {
+        "connected"
+    }
+}
+
+fn check_access_token(
+    token: &TokenSet,
+    session: &str,
+    decl: &AuthenticationDecl,
+) -> Result<(), String> {
+    check_account_token(token, session, decl)?;
+    if token.expires_at.is_some_and(|expiry| expiry <= now()) {
+        return Err("authentication has expired; reconnect it in extension settings".into());
+    }
+    Ok(())
+}
+
 fn check_token_binding(token: &TokenSet, decl: &AuthenticationDecl) -> Result<(), String> {
     let expected = grain_core::extensions::authentication_fingerprint(decl);
     if token.authentication_fingerprint.as_deref() != Some(expected.as_str()) {
@@ -540,7 +672,7 @@ async fn parse_token_response(
         return Err("token response exceeded 64 KiB".into());
     }
     let status = response.status();
-    let mut bytes = Vec::new();
+    let mut bytes = Zeroizing::new(Vec::new());
     let mut stream = response.bytes_stream();
     while let Some(chunk) = stream.next().await {
         let chunk = chunk.map_err(|_| "token response could not be read".to_string())?;
@@ -587,15 +719,7 @@ async fn connection_for(
     };
     let (state, granted_scopes, expires_at) = match credential {
         Ok(Some(token)) => {
-            let state = if session
-                .is_none_or(|session| check_account_token(&token, session, decl).is_err())
-            {
-                "needs_reauthorization"
-            } else if needs_refresh(&token) {
-                "expired"
-            } else {
-                "connected"
-            };
+            let state = connection_state(&token, session, decl);
             (
                 state.into(),
                 token.scopes.clone(),
@@ -839,9 +963,7 @@ async fn exchange(
     if !status.is_success() || token.error.is_some() {
         return Err(provider_error(status, token.error.take()));
     }
-    if !token.token_type.eq_ignore_ascii_case("bearer") {
-        return Err("token endpoint returned an unsupported token type".into());
-    }
+    let (scopes, expires_at) = validated_grant(&token, decl, &decl.scopes)?;
     Ok(TokenSet {
         authentication_fingerprint: Some(grain_core::extensions::authentication_fingerprint(decl)),
         account_session: Some(uuid::Uuid::new_v4().simple().to_string()),
@@ -852,22 +974,22 @@ async fn exchange(
             .filter(|token| !token.is_empty())
             .ok_or_else(|| "token response omitted access_token".to_string())?,
         refresh_token: token.refresh_token.take(),
-        token_type: std::mem::take(&mut token.token_type),
-        expires_at: token
-            .expires_in
-            .map(|seconds| now().saturating_add(seconds)),
-        scopes: token
-            .scope
-            .take()
-            .map(|scope| scope.split_whitespace().map(str::to_owned).collect())
-            .unwrap_or_else(|| decl.scopes.clone()),
+        token_type: token.token_type.take().expect("validated token type"),
+        expires_at,
+        scopes,
     })
 }
 
 async fn refresh(decl: &AuthenticationDecl, previous: &TokenSet) -> Result<TokenSet, String> {
-    let refresh_token = previous.refresh_token.as_deref().ok_or_else(|| {
-        "authentication has expired; reconnect it in extension settings".to_string()
-    })?;
+    let refresh_token = previous
+        .refresh_token
+        .as_deref()
+        .filter(|value| {
+            !value.is_empty() && value.bytes().all(|byte| (0x20..=0x7e).contains(&byte))
+        })
+        .ok_or_else(|| {
+            "authentication has expired; reconnect it in extension settings".to_string()
+        })?;
     let response = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
         .timeout(Duration::from_secs(20))
@@ -890,9 +1012,7 @@ async fn refresh(decl: &AuthenticationDecl, previous: &TokenSet) -> Result<Token
     if !status.is_success() || token.error.is_some() {
         return Err(provider_error(status, token.error.take()));
     }
-    if !token.token_type.eq_ignore_ascii_case("bearer") {
-        return Err("token endpoint returned an unsupported token type".into());
-    }
+    let (scopes, expires_at) = validated_grant(&token, decl, &previous.scopes)?;
     Ok(TokenSet {
         authentication_fingerprint: Some(grain_core::extensions::authentication_fingerprint(decl)),
         account_session: previous.account_session.clone(),
@@ -906,15 +1026,9 @@ async fn refresh(decl: &AuthenticationDecl, previous: &TokenSet) -> Result<Token
             .refresh_token
             .take()
             .or_else(|| Some(refresh_token.to_owned())),
-        token_type: std::mem::take(&mut token.token_type),
-        expires_at: token
-            .expires_in
-            .map(|seconds| now().saturating_add(seconds)),
-        scopes: token
-            .scope
-            .take()
-            .map(|scope| scope.split_whitespace().map(str::to_owned).collect())
-            .unwrap_or_else(|| previous.scopes.clone()),
+        token_type: token.token_type.take().expect("validated token type"),
+        expires_at,
+        scopes,
     })
 }
 
@@ -1265,14 +1379,11 @@ pub(crate) async fn access_token(
                 .ok_or_else(|| "refreshed credential was not stored".to_string())?;
         }
     }
-    check_account_token(&token, &session, decl)?;
-    if !token.token_type.eq_ignore_ascii_case("bearer") {
-        return Err("only Bearer OAuth tokens are supported".into());
-    }
     prepared.check(extension_id)?;
     if approved_declaration(app, extension_id)? != *decl {
         return Err("authentication declaration changed during token access".into());
     }
+    check_access_token(&token, &session, decl)?;
     Ok(Zeroizing::new(token.access_token.clone()))
 }
 
@@ -1809,6 +1920,201 @@ mod tests {
             "account_session": "a".repeat(32), "credential_revision": "b".repeat(32),
             "access_token": "fixture-access", "refresh_token": "fixture-refresh", "scopes": ["read"]
         })).unwrap()
+    }
+
+    #[tokio::test]
+    async fn actual_token_endpoints_refuse_invalid_grants_before_publication() {
+        let valid = serde_json::json!({
+            "access_token": "fixture-access", "token_type": "Bearer",
+            "refresh_token": "fixture-refresh", "expires_in": 3600, "scope": "read"
+        });
+        let mut invalid = Vec::new();
+        for key in ["access_token", "token_type"] {
+            let mut body = valid.clone();
+            body.as_object_mut().unwrap().remove(key);
+            invalid.push(body);
+        }
+        for (key, values) in [
+            (
+                "access_token",
+                vec![
+                    "",
+                    "=",
+                    "abc=def",
+                    "secret\r\nInjected: value",
+                    "secret value",
+                    "sécret",
+                ],
+            ),
+            ("token_type", vec!["", "MAC"]),
+            ("refresh_token", vec!["", "secret\nvalue", "sécret"]),
+            (
+                "scope",
+                vec![
+                    "",
+                    "other",
+                    "read\textra",
+                    "read\nextra",
+                    "read  extra",
+                    "read \\",
+                    "read \"",
+                    "read é",
+                ],
+            ),
+        ] {
+            for value in values {
+                let mut body = valid.clone();
+                body[key] = value.into();
+                invalid.push(body);
+            }
+        }
+        for value in [0, u64::MAX] {
+            let mut body = valid.clone();
+            body["expires_in"] = value.into();
+            invalid.push(body);
+        }
+        let mut body = valid.clone();
+        body["scope"] = format!(
+            "read {}",
+            (0..MAX_GRANTED_SCOPES)
+                .map(|n| format!("extra{n}"))
+                .collect::<Vec<_>>()
+                .join(" ")
+        )
+        .into();
+        invalid.push(body);
+        // Standard OAuth errors need not carry successful-response fields.
+        invalid.push(serde_json::json!({"error": "invalid_grant"}));
+        let listener = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
+            .await
+            .unwrap();
+        let address = listener.local_addr().unwrap();
+        let bodies: Vec<_> = invalid.iter().map(ToString::to_string).collect();
+        let server = tokio::spawn(async move {
+            for body in bodies.iter().cycle().take(bodies.len() * 2) {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let request = read_callback_request(&mut stream).await.unwrap();
+                assert!(request.starts_with(b"POST /token HTTP/1.1"));
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                stream.write_all(response.as_bytes()).await.unwrap();
+            }
+        });
+        let mut declaration = test_declaration();
+        declaration.token_endpoint = format!("http://{address}/token");
+        let mut previous = account_token();
+        previous.authentication_fingerprint = Some(
+            grain_core::extensions::authentication_fingerprint(&declaration),
+        );
+        let before = serde_json::to_vec(&previous).unwrap();
+        for refresh_flow in [false, true] {
+            for (index, _) in invalid.iter().enumerate() {
+                let result = if refresh_flow {
+                    refresh(&declaration, &previous).await
+                } else {
+                    exchange(&declaration, "code", "http://127.0.0.1/cb", "verifier").await
+                };
+                let error = result.err().unwrap_or_else(|| {
+                    panic!("invalid grant accepted: {index}, refresh={refresh_flow}")
+                });
+                assert!(!error.contains("secret"));
+                assert!(!error.contains("Injected"));
+                assert_eq!(serde_json::to_vec(&previous).unwrap(), before);
+            }
+        }
+        server.await.unwrap();
+    }
+
+    #[test]
+    fn native_connection_reports_reconnect_and_refuses_expired_or_malformed_access() {
+        let declaration = test_declaration();
+        let mut token = account_token();
+        let session = token.account_session.clone().unwrap();
+        assert_eq!(
+            connection_state(&token, Some(&session), &declaration),
+            "connected"
+        );
+        assert!(check_access_token(&token, &session, &declaration).is_ok());
+        token.expires_at = Some(0);
+        assert_eq!(
+            connection_state(&token, Some(&session), &declaration),
+            "expired"
+        );
+        assert!(check_access_token(&token, &session, &declaration).is_err());
+        token.refresh_token = None;
+        assert_eq!(
+            connection_state(&token, Some(&session), &declaration),
+            "needs_reauthorization"
+        );
+        token.expires_at = None;
+        token.access_token = "credential\r\nInjected: value".into();
+        assert_eq!(
+            connection_state(&token, Some(&session), &declaration),
+            "needs_reauthorization"
+        );
+        let error = check_access_token(&token, &session, &declaration).unwrap_err();
+        assert!(!error.contains("credential\r"));
+        token.access_token = "valid._-~+/==".into();
+        assert!(check_access_token(&token, &session, &declaration).is_ok());
+        token.scopes.clear();
+        assert_eq!(
+            connection_state(&token, Some(&session), &declaration),
+            "needs_reauthorization"
+        );
+        assert!(check_access_token(&token, &session, &declaration).is_err());
+    }
+
+    #[test]
+    fn validated_grants_preserve_omitted_scopes_and_normalize_duplicates() {
+        let declaration = test_declaration();
+        let mut response: TokenResponse = serde_json::from_value(serde_json::json!({
+            "access_token": "fixture-access", "token_type": "bEaReR"
+        }))
+        .unwrap();
+        let fallback = vec!["read".into(), "extra".into()];
+        let (scopes, expiry) = validated_grant(&response, &declaration, &fallback).unwrap();
+        assert_eq!(scopes, fallback);
+        assert_eq!(expiry, None);
+        response.scope = Some("read extra read".into());
+        assert_eq!(
+            validated_grant(&response, &declaration, &[]).unwrap().0,
+            fallback
+        );
+        // A refresh may omit scopes, expiry and the prior refresh token.
+        assert!(response.refresh_token.is_none());
+    }
+
+    #[test]
+    fn encoded_credentials_obey_read_limit_and_redact_parse_errors() {
+        let mut token = account_token();
+        let bytes = encode_token(&token).unwrap();
+        assert_eq!(
+            decode_token(&bytes).unwrap().account_session,
+            token.account_session
+        );
+        let overhead = bytes.len() - token.access_token.len();
+        token.access_token = "a".repeat(TOKEN_MAX_BYTES - overhead);
+        assert_eq!(encode_token(&token).unwrap().len(), TOKEN_MAX_BYTES);
+        token.access_token.push('b');
+        assert!(encode_token(&token).is_err());
+        // Both escaped JSON and host metadata count toward the stored limit.
+        token.access_token = "a".repeat(TOKEN_MAX_BYTES - 100);
+        let wire = serde_json::json!({"access_token": token.access_token, "token_type": "Bearer"})
+            .to_string();
+        assert!(wire.len() <= TOKEN_MAX_BYTES);
+        assert!(encode_token(&token).is_err());
+        token.access_token = "fixture-access".into();
+        token.refresh_token = Some("\\".repeat(TOKEN_MAX_BYTES / 2));
+        assert!(encode_token(&token).is_err());
+        let error =
+            decode_token(br#"{"access_token":"fixture-access","expires_at":"private-credential"}"#)
+                .err()
+                .unwrap();
+        assert_eq!(error, "stored OAuth credential is invalid");
+        assert!(!error.contains("private-credential"));
+        assert!(decode_token(&vec![b' '; TOKEN_MAX_BYTES + 1]).is_err());
     }
 
     #[test]
