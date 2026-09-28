@@ -1014,37 +1014,14 @@ async fn connect_attempt(
             cleanup_retired_credential(&key);
             return Err(error);
         }
-        // Publish only after the unique candidate is stored. Registry -> pending
-        // lock ordering matches cancellation/launch; no vault I/O under either.
-        let mut published = false;
-        let publication = write_prepared
-            .registry
-            .set_authentication_session_if_current(
-                &id_copy,
-                write_prepared.revision,
-                Some(write_session),
-                || {
-                    let guard = write_owner.current_guard()?;
-                    published = true;
-                    Some(guard)
-                },
-            )
-            .map_err(|error| error.to_string());
-        if publication.is_err() {
-            // A persistence failure may have made this the active in-memory
-            // account. Preserve that credential for recovery in that case.
-            if !published {
-                cleanup_retired_credential(&key);
-            }
-        } else {
-            if let Some(prior) =
-                prior_session.and_then(|session| session_key(&id_copy, &session).ok())
-            {
-                cleanup_retired_credential(&prior);
-            }
-            cleanup_retired_credential(&id_copy);
-        }
-        publication
+        publish_native_account(
+            &write_prepared,
+            &write_owner,
+            &id_copy,
+            &write_session,
+            prior_session.as_deref(),
+            cleanup_retired_credential,
+        )
     })
     .await
     .map_err(|error| format!("credential task failed: {error}"))??;
@@ -1059,6 +1036,37 @@ async fn connect_attempt(
         return Err("authentication changed after sign-in".into());
     }
     owner.publish(|| Ok(connection))
+}
+
+/// Commit the pointer only after candidate storage; retire old grants only after
+/// that commit. Cleanup runs after registry/pending locks are released. The
+/// injected cleanup seam tests file/owner failures without touching the OS vault.
+fn publish_native_account(
+    prepared: &PreparedConnect,
+    owner: &PendingOwner,
+    id: &str,
+    session: &str,
+    prior_session: Option<&str>,
+    mut retire: impl FnMut(&str),
+) -> Result<u64, String> {
+    let key = session_key(id, session)?;
+    let publication = prepared
+        .registry
+        .set_authentication_session_if_current(id, prepared.revision, Some(session.into()), || {
+            owner.current_guard()
+        })
+        .map_err(|error| error.to_string());
+    if publication.is_err() {
+        // Error leaves the previous pointer/generation intact. A unique
+        // uncommitted candidate is unreachable and safe to retire.
+        retire(&key);
+    } else {
+        if let Some(prior) = prior_session.and_then(|prior| session_key(id, prior).ok()) {
+            retire(&prior);
+        }
+        retire(id); // legacy id-only credential, never automatically adopted
+    }
+    publication
 }
 
 #[tauri::command]
@@ -1323,6 +1331,156 @@ mod tests {
             "redirectMethods": ["loopback"], "apiHosts": ["api.example.com"]
         }))
         .unwrap()
+    }
+
+    fn pointer_fixture() -> (
+        tempfile::TempDir,
+        PreparedConnect,
+        PendingGuard,
+        PendingOwner,
+        HashMap<String, &'static str>,
+    ) {
+        let (directory, mut prepared) = prepared_fixture();
+        let id = "com.example.tools";
+        prepared
+            .registry
+            .set_authentication_session_if_current(
+                id,
+                prepared.revision,
+                Some("a".repeat(32)),
+                || Some(()),
+            )
+            .unwrap();
+        prepared.revision = prepared.registry.record_revision(id);
+        prepared.execution_generation = prepared.registry.record(id).unwrap().execution_generation;
+        let pending = Arc::new(Mutex::new(HashMap::new()));
+        let (guard, _receiver) =
+            PendingGuard::begin(pending, id.into(), prepared.execution_generation).unwrap();
+        let owner = guard.0.clone();
+        let credentials = HashMap::from([
+            (session_key(id, &"a".repeat(32)).unwrap(), "prior grant"),
+            (session_key(id, &"b".repeat(32)).unwrap(), "candidate grant"),
+            (id.into(), "legacy grant"),
+            ("unrelated".into(), "other grant"),
+        ]);
+        (directory, prepared, guard, owner, credentials)
+    }
+
+    #[test]
+    fn native_pointer_save_failure_retires_only_candidate_and_preserves_prior_grant() {
+        let (directory, prepared, _guard, owner, mut credentials) = pointer_fixture();
+        let id = "com.example.tools";
+        let path = directory
+            .path()
+            .join(grain_core::extensions::EXTENSIONS_FILE);
+        let original = std::fs::read(&path).unwrap();
+        std::fs::remove_file(&path).unwrap();
+        std::fs::create_dir(&path).unwrap();
+        assert!(publish_native_account(
+            &prepared,
+            &owner,
+            id,
+            &"b".repeat(32),
+            Some(&"a".repeat(32)),
+            |key| {
+                credentials.remove(key);
+            }
+        )
+        .is_err());
+        assert_eq!(prepared.registry.record_revision(id), prepared.revision);
+        assert_eq!(
+            credentials.get(&session_key(id, &"a".repeat(32)).unwrap()),
+            Some(&"prior grant")
+        );
+        assert!(!credentials.contains_key(&session_key(id, &"b".repeat(32)).unwrap()));
+        assert!(credentials.contains_key(id) && credentials.contains_key("unrelated"));
+        std::fs::remove_dir(&path).unwrap();
+        std::fs::write(&path, original).unwrap();
+        let restarted =
+            grain_core::extensions::ExtensionsRegistry::load(directory.path(), false).unwrap();
+        assert_eq!(
+            restarted.record(id).unwrap().authentication_session,
+            Some("a".repeat(32))
+        );
+    }
+
+    #[test]
+    fn native_pointer_success_cleans_old_grants_only_after_commit_and_lock_release() {
+        let (directory, prepared, _guard, owner, mut credentials) = pointer_fixture();
+        let id = "com.example.tools";
+        let generation = publish_native_account(
+            &prepared,
+            &owner,
+            id,
+            &"b".repeat(32),
+            Some(&"a".repeat(32)),
+            |key| {
+                assert!(owner.pending.try_lock().is_ok());
+                assert_eq!(
+                    prepared.registry.with_record_locked(id, |record| record
+                        .unwrap()
+                        .authentication_session
+                        .clone()),
+                    Some("b".repeat(32))
+                );
+                credentials.remove(key);
+            },
+        )
+        .unwrap();
+        assert_ne!(generation, prepared.execution_generation);
+        assert_eq!(credentials.len(), 2);
+        assert!(credentials.contains_key("unrelated"));
+        assert_eq!(
+            credentials.get(&session_key(id, &"b".repeat(32)).unwrap()),
+            Some(&"candidate grant")
+        );
+        let restarted =
+            grain_core::extensions::ExtensionsRegistry::load(directory.path(), false).unwrap();
+        assert_eq!(
+            restarted.record(id).unwrap().authentication_session,
+            Some("b".repeat(32))
+        );
+    }
+
+    #[test]
+    fn cancelled_or_superseded_pointer_publication_cannot_retire_winning_credentials() {
+        for cancelled in [true, false] {
+            let (_directory, prepared, guard, owner, mut credentials) = pointer_fixture();
+            let id = "com.example.tools";
+            if cancelled {
+                drop(guard);
+            } else {
+                prepared
+                    .registry
+                    .set_authentication_session_if_current(
+                        id,
+                        prepared.revision,
+                        Some("c".repeat(32)),
+                        || Some(()),
+                    )
+                    .unwrap();
+                credentials.insert(session_key(id, &"c".repeat(32)).unwrap(), "winning grant");
+            }
+            assert!(publish_native_account(
+                &prepared,
+                &owner,
+                id,
+                &"b".repeat(32),
+                Some(&"a".repeat(32)),
+                |key| {
+                    credentials.remove(key);
+                }
+            )
+            .is_err());
+            assert!(credentials.contains_key(&session_key(id, &"a".repeat(32)).unwrap()));
+            assert!(!credentials.contains_key(&session_key(id, &"b".repeat(32)).unwrap()));
+            if !cancelled {
+                assert_eq!(
+                    credentials.get(&session_key(id, &"c".repeat(32)).unwrap()),
+                    Some(&"winning grant")
+                );
+            }
+        }
     }
 
     fn prepared_fixture() -> (tempfile::TempDir, PreparedConnect) {

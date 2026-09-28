@@ -28,6 +28,7 @@ use grain_sdk::Trust;
 use serde::{Deserialize, Serialize};
 
 pub const EXTENSIONS_FILE: &str = "extensions.json";
+const REGISTRY_MAX_BYTES: usize = 8 * 1024 * 1024;
 
 // Prepared calls and workers live only in this process. A checked process-wide
 // sequence also prevents a registry reload from recreating an old live identity.
@@ -773,8 +774,7 @@ impl ExtensionsRegistry {
         }
         let mut completed = state.clone();
         completed.tool_only_migration_version = 1;
-        let bytes = serde_json::to_vec_pretty(&completed)?;
-        atomic_write(&self.path, &bytes)?;
+        persist_registry(&self.path, &completed)?;
         *state = completed;
         Ok(())
     }
@@ -822,18 +822,13 @@ impl ExtensionsRegistry {
     /// extension records are retired during load; Grain now owns its appearance.
     pub fn load(data_dir: &Path, _settings_file_preexisted: bool) -> Result<Self> {
         let path = data_dir.join(EXTENSIONS_FILE);
-        let mut state: RegistryFile = if path.exists() {
-            let raw =
-                fs::read_to_string(&path).with_context(|| format!("read {}", path.display()))?;
-            serde_json::from_str(&raw).unwrap_or_else(|e| {
-                // A corrupt registry must not brick startup; extensions revert
-                // to "fresh" state, settings-backed built-ins are unaffected.
-                log::warn!("extensions.json unreadable ({e}); reinitializing registry");
-                RegistryFile::default()
-            })
-        } else {
-            RegistryFile::default()
-        };
+        let mut state = read_registry(&path)?;
+        if state.tool_only_migration_version > 1 {
+            anyhow::bail!("unsupported extension migration version; registry preserved, extensions unavailable");
+        }
+        if state.records.iter().any(|(id, record)| id != &record.id) {
+            anyhow::bail!("inconsistent extension registry identity; registry preserved, extensions unavailable");
+        }
         for record in state.records.values_mut() {
             record.execution_generation = next_execution_generation()?;
         }
@@ -871,8 +866,7 @@ impl ExtensionsRegistry {
     fn save(&self) -> Result<()> {
         let _save = self.save_gate.lock().unwrap();
         let state = self.state.read().unwrap();
-        let json = serde_json::to_string_pretty(&*state)?;
-        atomic_write(&self.path, json.as_bytes())
+        persist_registry(&self.path, &state)
     }
 
     /// All installed pack records (unordered; callers sort by toggle_seq).
@@ -920,30 +914,45 @@ impl ExtensionsRegistry {
         }) {
             anyhow::bail!("invalid native authentication session");
         }
-        let generation;
+        // Saves already acquire save_gate -> state. Keep the same ordering and
+        // exclude readers during tentative login publication; no whole-state
+        // clone or credential/vault I/O is needed.
+        let _save = self.save_gate.lock().unwrap();
+        let connecting = session.is_some();
+        let mut state = self.state.write().unwrap();
+        revision.check(&state, id)?;
+        if session.is_some() && state.quarantined.contains_key(id) {
+            anyhow::bail!("extension is quarantined");
+        }
+        let record = state
+            .records
+            .get_mut(id)
+            .context("extension is not installed")?;
+        if session.is_some()
+            && (!record.enabled || !record.granted.iter().any(|grant| grant == "auth"))
         {
-            let mut state = self.state.write().unwrap();
-            revision.check(&state, id)?;
-            if session.is_some() && state.quarantined.contains_key(id) {
-                anyhow::bail!("extension is quarantined");
-            }
+            anyhow::bail!("native authentication is not enabled/granted");
+        }
+        let generation = next_execution_generation()?;
+        let Some(_owner) = owner() else {
+            anyhow::bail!("authentication was cancelled or replaced");
+        };
+        let prior_session = std::mem::replace(&mut record.authentication_session, session);
+        let prior_generation = record.execution_generation;
+        record.execution_generation = generation;
+        let saved = persist_registry(&self.path, &state);
+        if connecting && saved.is_err() {
+            // The unique candidate grant must never become usable when its
+            // pointer was not committed. Logout remains memory-first even
+            // on save failure, invalidating live calls before vault cleanup.
             let record = state
                 .records
                 .get_mut(id)
-                .context("extension is not installed")?;
-            if session.is_some()
-                && (!record.enabled || !record.granted.iter().any(|grant| grant == "auth"))
-            {
-                anyhow::bail!("native authentication is not enabled/granted");
-            }
-            generation = next_execution_generation()?;
-            let Some(_owner) = owner() else {
-                anyhow::bail!("authentication was cancelled or replaced");
-            };
-            record.authentication_session = session;
-            record.execution_generation = generation;
+                .expect("record held under write lock");
+            record.authentication_session = prior_session;
+            record.execution_generation = prior_generation;
         }
-        self.save().map(|_| generation)
+        saved.map(|_| generation)
     }
 
     /// Short synchronous publication boundary, ordered registry -> runtime.
@@ -2659,10 +2668,138 @@ mod tests {
         let reg = ExtensionsRegistry::load(dir.path(), false).unwrap();
         assert!(reg.is_enabled("x"));
         assert_eq!(reg.record("x").unwrap().installed_version, "2.0");
-        // Corrupt file → reinitialize, not crash.
-        fs::write(dir.path().join(EXTENSIONS_FILE), "{not json").unwrap();
+        // Damaged state remains recoverable and cannot silently initialize.
+        let path = dir.path().join(EXTENSIONS_FILE);
+        fs::write(&path, "{not json").unwrap();
+        assert!(ExtensionsRegistry::load(dir.path(), false).is_err());
+        assert_eq!(fs::read_to_string(&path).unwrap(), "{not json");
+    }
+
+    #[test]
+    fn registry_load_refuses_future_versions_and_inconsistent_identity_without_writes() {
+        let dir = tmp();
+        let path = dir.path().join(EXTENSIONS_FILE);
+        for value in [
+            serde_json::json!({"tool_only_migration_version":2}),
+            serde_json::json!({"records":{"one":{"id":"other","enabled":true}}}),
+            serde_json::json!({"records":[]}),
+        ] {
+            let bytes = serde_json::to_vec(&value).unwrap();
+            fs::write(&path, &bytes).unwrap();
+            assert!(ExtensionsRegistry::load(dir.path(), false).is_err());
+            assert_eq!(fs::read(&path).unwrap(), bytes);
+            assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 1);
+        }
+        fs::remove_file(&path).unwrap();
+        let fresh = ExtensionsRegistry::load(dir.path(), false).unwrap();
+        assert!(fresh.records().is_empty());
+    }
+
+    #[test]
+    fn oversized_registry_and_encoding_refuse_before_replacing_state() {
+        let dir = tmp();
+        let path = dir.path().join(EXTENSIONS_FILE);
+        let file = fs::File::create(&path).unwrap();
+        file.set_len(REGISTRY_MAX_BYTES as u64 + 1).unwrap();
+        drop(file);
+        assert!(ExtensionsRegistry::load(dir.path(), false).is_err());
+        assert_eq!(
+            fs::metadata(&path).unwrap().len(),
+            REGISTRY_MAX_BYTES as u64 + 1
+        );
+        fs::remove_file(&path).unwrap();
         let reg = ExtensionsRegistry::load(dir.path(), false).unwrap();
-        assert!(!reg.is_installed("x"));
+        let original = fs::read(&path).unwrap();
+        let mut oversized = RegistryFile::default();
+        oversized
+            .quarantined
+            .insert("large".into(), "x".repeat(REGISTRY_MAX_BYTES));
+        assert!(persist_registry(&path, &oversized).is_err());
+        assert_eq!(fs::read(&path).unwrap(), original);
+        assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 1);
+        assert!(reg.records().is_empty());
+    }
+
+    #[test]
+    fn failed_owned_atomic_writer_preserves_destination_and_unowned_pending_files() {
+        use std::io::Write;
+        let dir = tmp();
+        let path = dir.path().join(EXTENSIONS_FILE);
+        fs::write(&path, b"original").unwrap();
+        let orphan = path.with_extension(format!("{}.0.pending", std::process::id()));
+        fs::write(&orphan, b"recoverable previous process bytes").unwrap();
+        assert!(atomic_write_with(&path, |file| {
+            file.write_all(b"partial new state")?;
+            anyhow::bail!("injected write failure")
+        })
+        .is_err());
+        assert_eq!(fs::read(&path).unwrap(), b"original");
+        assert_eq!(
+            fs::read(&orphan).unwrap(),
+            b"recoverable previous process bytes"
+        );
+        assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 2);
+        atomic_write(&path, b"complete new state").unwrap();
+        assert_eq!(fs::read(&path).unwrap(), b"complete new state");
+        assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 2);
+    }
+
+    #[test]
+    fn failed_native_account_switch_preserves_old_pointer_generation_and_restart() {
+        let dir = tmp();
+        let reg = ExtensionsRegistry::load(dir.path(), false).unwrap();
+        let mut record = pack("account", &[]);
+        record.enabled = true;
+        record.granted = vec!["auth".into()];
+        record.authentication_session = Some("a".repeat(32));
+        reg.install(record).unwrap();
+        let revision = reg.record_revision("account");
+        let before = reg.record("account").unwrap();
+        let original = fs::read(&reg.path).unwrap();
+        fs::remove_file(&reg.path).unwrap();
+        fs::create_dir(&reg.path).unwrap();
+        assert!(reg
+            .set_authentication_session_if_current(
+                "account",
+                revision,
+                Some("b".repeat(32)),
+                || Some(())
+            )
+            .is_err());
+        assert_eq!(reg.record_revision("account"), revision);
+        assert_eq!(
+            reg.record("account").unwrap().authentication_session,
+            before.authentication_session
+        );
+        assert_eq!(
+            reg.record("account").unwrap().execution_generation,
+            before.execution_generation
+        );
+        fs::remove_dir(&reg.path).unwrap();
+        fs::write(&reg.path, original).unwrap();
+        assert_eq!(
+            ExtensionsRegistry::load(dir.path(), false)
+                .unwrap()
+                .record("account")
+                .unwrap()
+                .authentication_session,
+            Some("a".repeat(32))
+        );
+        reg.set_authentication_session_if_current(
+            "account",
+            revision,
+            Some("b".repeat(32)),
+            || Some(()),
+        )
+        .unwrap();
+        assert_eq!(
+            ExtensionsRegistry::load(dir.path(), false)
+                .unwrap()
+                .record("account")
+                .unwrap()
+                .authentication_session,
+            Some("b".repeat(32))
+        );
     }
 }
 
@@ -2776,26 +2913,117 @@ pub fn retire_extension_bindings(settings: &mut crate::settings::AppSettings) {
     settings.bindings.retain(|id, _| !id.starts_with("ext:"));
 }
 
+/// Refuse damaged state rather than silently discarding installed metadata.
+/// The app's existing load-error path leaves extensions unavailable while core
+/// Grain continues. Only a genuinely absent file initializes a fresh registry.
+fn read_registry(path: &Path) -> Result<RegistryFile> {
+    use std::io::Read;
+    let file = match fs::File::open(path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            // A dangling link is existing, unresolved state, not a fresh install.
+            // Preserve it rather than replacing the link with default metadata.
+            return match fs::symlink_metadata(path) {
+                Err(missing) if missing.kind() == std::io::ErrorKind::NotFound => {
+                    Ok(RegistryFile::default())
+                }
+                _ => Err(error).with_context(|| {
+                    format!(
+                        "unresolved {}; registry preserved, extensions unavailable",
+                        path.display()
+                    )
+                }),
+            };
+        }
+        Err(error) => {
+            return Err(error).with_context(|| {
+                format!(
+                    "read {}; registry preserved, extensions unavailable",
+                    path.display()
+                )
+            })
+        }
+    };
+    if file.metadata()?.len() > REGISTRY_MAX_BYTES as u64 {
+        anyhow::bail!(
+            "extension registry exceeds 8 MiB; registry preserved, extensions unavailable"
+        );
+    }
+    let mut raw = Vec::new();
+    file.take(REGISTRY_MAX_BYTES as u64 + 1)
+        .read_to_end(&mut raw)?;
+    if raw.len() > REGISTRY_MAX_BYTES {
+        anyhow::bail!(
+            "extension registry exceeds 8 MiB; registry preserved, extensions unavailable"
+        );
+    }
+    serde_json::from_slice(&raw).with_context(|| {
+        format!(
+            "invalid {}; registry preserved, extensions unavailable",
+            path.display()
+        )
+    })
+}
+
+/// Stream JSON directly into the owned staging file, bounding encoded output
+/// without a second full serialized registry allocation.
+fn persist_registry(path: &Path, state: &RegistryFile) -> Result<()> {
+    use std::io::Write;
+    atomic_write_with(path, |file| {
+        let mut writer = RegistryWriter {
+            file: std::io::BufWriter::new(file),
+            remaining: REGISTRY_MAX_BYTES,
+        };
+        serde_json::to_writer_pretty(&mut writer, state)
+            .context("encode extension registry (8 MiB limit)")?;
+        writer.flush().context("flush extension registry")
+    })
+}
+
+struct RegistryWriter<'a> {
+    file: std::io::BufWriter<&'a mut fs::File>,
+    remaining: usize,
+}
+
+impl std::io::Write for RegistryWriter<'_> {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        if bytes.len() > self.remaining {
+            return Err(std::io::Error::other("extension registry exceeds 8 MiB"));
+        }
+        let written = std::io::Write::write(&mut self.file, bytes)?;
+        self.remaining -= written;
+        Ok(written)
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        std::io::Write::flush(&mut self.file)
+    }
+}
+
 fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {
     use std::io::Write;
-    static NEXT_WRITE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-    let sequence = NEXT_WRITE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    let temp = path.with_extension(format!("{}.{sequence}.pending", std::process::id()));
-    let result: std::io::Result<()> = (|| {
-        let mut file = fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&temp)?;
-        file.write_all(bytes)?;
-        file.sync_all()?;
-        drop(file);
-        fs::rename(&temp, path)?;
-        Ok(())
-    })();
-    if result.is_err() {
-        let _ = fs::remove_file(&temp);
-    }
-    result.with_context(|| format!("persist {}", path.display()))
+    atomic_write_with(path, |file| {
+        file.write_all(bytes).context("write extension state")
+    })
+}
+
+fn atomic_write_with(path: &Path, write: impl FnOnce(&mut fs::File) -> Result<()>) -> Result<()> {
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    let mut file = tempfile::Builder::new()
+        .prefix(".grain-extension-")
+        .suffix(".pending")
+        .tempfile_in(parent)
+        .with_context(|| format!("stage {}", path.display()))?;
+    write(file.as_file_mut())?;
+    file.as_file()
+        .sync_all()
+        .with_context(|| format!("sync {}", path.display()))?;
+    // Persist atomically replaces the destination. Failure drops only this
+    // owned temporary file; it never removes a pre-existing pending artifact.
+    // No operation after successful replacement can turn publication into Err.
+    file.persist(path)
+        .map_err(|error| error.error)
+        .with_context(|| format!("persist {}", path.display()))?;
+    Ok(())
 }
 
 /// Remove a pack's prompts (disable/uninstall). If the removed pack's prompt
