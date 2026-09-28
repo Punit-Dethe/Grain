@@ -120,6 +120,10 @@ pub struct ExtensionRecord {
     /// update until the user approves the new connection contract.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub authentication_approved: Option<String>,
+    /// Host-owned pointer to one native OAuth grant in the OS vault. No tokens
+    /// or provider account names are stored here. None means no active grant.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub authentication_session: Option<String>,
     /// [GRAIN] Fingerprint of the Extension Mode hand-off contract the user
     /// approved, from [`recommendation_fingerprint`].
     ///
@@ -318,7 +322,7 @@ pub fn native_call_fingerprint(
     serde_json::to_writer(
         &mut writer,
         &(
-            "grain.native.call.v2",
+            "grain.native.call.v3",
             manifest,
             record.execution_generation,
             record.toggle_seq,
@@ -326,6 +330,7 @@ pub fn native_call_fingerprint(
             &record.installed_version,
             &record.artifact_sha256,
             &record.authentication_approved,
+            &record.authentication_session,
         ),
     )?;
     Ok(format!("{:x}", writer.0.finalize()))
@@ -901,6 +906,46 @@ impl ExtensionsRegistry {
         RecordRevision::capture(&self.state.read().unwrap(), id)
     }
 
+    /// Change the effective account without changing enablement, grants or
+    /// toggle order. A failed save retains the new in-memory identity.
+    pub fn set_authentication_session_if_current<G>(
+        &self,
+        id: &str,
+        revision: RecordRevision,
+        session: Option<String>,
+        owner: impl FnOnce() -> Option<G>,
+    ) -> Result<u64> {
+        if session.as_ref().is_some_and(|session| {
+            session.len() != 32 || !session.bytes().all(|byte| byte.is_ascii_hexdigit())
+        }) {
+            anyhow::bail!("invalid native authentication session");
+        }
+        let generation;
+        {
+            let mut state = self.state.write().unwrap();
+            revision.check(&state, id)?;
+            if session.is_some() && state.quarantined.contains_key(id) {
+                anyhow::bail!("extension is quarantined");
+            }
+            let record = state
+                .records
+                .get_mut(id)
+                .context("extension is not installed")?;
+            if session.is_some()
+                && (!record.enabled || !record.granted.iter().any(|grant| grant == "auth"))
+            {
+                anyhow::bail!("native authentication is not enabled/granted");
+            }
+            generation = next_execution_generation()?;
+            let Some(_owner) = owner() else {
+                anyhow::bail!("authentication was cancelled or replaced");
+            };
+            record.authentication_session = session;
+            record.execution_generation = generation;
+        }
+        self.save().map(|_| generation)
+    }
+
     /// Short synchronous publication boundary, ordered registry -> runtime.
     /// No filesystem work, awaits, or registry reentry inside `publish`.
     pub fn with_current_record<R>(
@@ -1370,6 +1415,15 @@ impl ExtensionsRegistry {
             record.execution_generation = next_execution_generation()?;
             generation = record.execution_generation;
             let id = record.id.clone();
+            // A development override is a distinct account owner. Preserve a
+            // session only when reloading the same explicit project directory.
+            record.authentication_session = state.records.get(&id).and_then(|previous| {
+                previous
+                    .dev
+                    .as_ref()
+                    .filter(|dev| dev.path == path)
+                    .and_then(|_| previous.authentication_session.clone())
+            });
             let replaced =
                 state
                     .records
@@ -1440,6 +1494,13 @@ impl ExtensionsRegistry {
     }
 
     pub fn uninstall(&self, id: &str) -> Result<bool> {
+        self.uninstall_with_record(id)
+            .map(|removed| removed.is_some())
+    }
+
+    /// Return the removed installed owner under the same mutation lock. A dev
+    /// override's record/account is never returned for installed cleanup.
+    pub fn uninstall_with_record(&self, id: &str) -> Result<Option<ExtensionRecord>> {
         let removed = {
             let mut state = self.state.write().unwrap();
             state.removal_epoch = next_execution_generation()?;
@@ -1448,9 +1509,7 @@ impl ExtensionsRegistry {
                 .get(id)
                 .is_some_and(|record| record.dev.is_some());
             if dev_active {
-                // Uninstalling while a load-unpacked copy is effective removes
-                // only the parked installed version. The local project and its
-                // live slot state are a separate, explicit developer action.
+                // Keep the effective development project and its own account.
                 state
                     .records
                     .get_mut(id)
@@ -1458,16 +1517,16 @@ impl ExtensionsRegistry {
                     .expect("dev record exists")
                     .replaced
                     .take()
-                    .is_some()
+                    .map(|record| *record)
             } else {
-                let removed = state.records.remove(id).is_some();
-                if removed {
+                let removed = state.records.remove(id);
+                if removed.is_some() {
                     Self::release_slots_locked(&mut state, id);
                 }
                 removed
             }
         };
-        if removed {
+        if removed.is_some() {
             self.save()?;
         }
         Ok(removed)
@@ -1927,11 +1986,191 @@ mod tests {
             prompt_layers_approved: None,
             actions_approved: None,
             authentication_approved: None,
+            authentication_session: None,
             recommend_approved: None,
             slots: slots.iter().map(|s| s.to_string()).collect(),
             dev: None,
             trust: Trust::UNTRUSTED_DEFAULT,
         }
+    }
+
+    #[test]
+    fn native_account_publication_is_revision_checked_and_persistent() {
+        let dir = tmp();
+        let reg = ExtensionsRegistry::load(dir.path(), false).unwrap();
+        let mut record = pack("account", &[]);
+        record.enabled = true;
+        record.granted = vec!["auth".into()];
+        reg.install(record).unwrap();
+        let before = reg.record("account").unwrap();
+        let revision = reg.record_revision("account");
+        let session = "a".repeat(32);
+        assert!(reg
+            .set_authentication_session_if_current(
+                "account",
+                revision,
+                Some(session.clone()),
+                || None::<()>
+            )
+            .is_err());
+        assert_eq!(
+            reg.record("account").unwrap().execution_generation,
+            before.execution_generation
+        );
+        let generation = reg
+            .set_authentication_session_if_current(
+                "account",
+                revision,
+                Some(session.clone()),
+                || Some(()),
+            )
+            .unwrap();
+        let current = reg.record("account").unwrap();
+        assert_ne!(generation, before.execution_generation);
+        assert_eq!(current.granted, before.granted);
+        assert_eq!(current.toggle_seq, before.toggle_seq);
+        assert!(current.enabled);
+        assert!(reg
+            .set_authentication_session_if_current("account", revision, None, || Some(()))
+            .is_err());
+        let restarted = ExtensionsRegistry::load(dir.path(), false).unwrap();
+        assert_eq!(
+            restarted.record("account").unwrap().authentication_session,
+            Some(session)
+        );
+        let revision = restarted.record_revision("account");
+        restarted
+            .set_authentication_session_if_current("account", revision, None, || Some(()))
+            .unwrap();
+        assert!(ExtensionsRegistry::load(dir.path(), false)
+            .unwrap()
+            .record("account")
+            .unwrap()
+            .authentication_session
+            .is_none());
+    }
+
+    #[test]
+    fn native_login_refuses_disabled_ungranted_and_invalid_sessions() {
+        let dir = tmp();
+        let reg = ExtensionsRegistry::load(dir.path(), false).unwrap();
+        reg.install(pack("account", &[])).unwrap();
+        let revision = reg.record_revision("account");
+        assert!(reg
+            .set_authentication_session_if_current(
+                "account",
+                revision,
+                Some("a".repeat(32)),
+                || Some(())
+            )
+            .is_err());
+        reg.set_enabled("account", true).unwrap();
+        let revision = reg.record_revision("account");
+        assert!(reg
+            .set_authentication_session_if_current(
+                "account",
+                revision,
+                Some("a".repeat(32)),
+                || Some(())
+            )
+            .is_err());
+        assert!(reg
+            .set_authentication_session_if_current(
+                "account",
+                revision,
+                Some("../account".into()),
+                || Some(())
+            )
+            .is_err());
+        // Explicit disconnect remains possible without an auth grant.
+        reg.set_authentication_session_if_current("account", revision, None, || Some(()))
+            .unwrap();
+    }
+
+    #[test]
+    fn native_logout_save_failure_keeps_the_in_memory_account_disconnected() {
+        let dir = tmp();
+        let reg = ExtensionsRegistry::load(dir.path(), false).unwrap();
+        let mut record = pack("account", &[]);
+        record.authentication_session = Some("a".repeat(32));
+        reg.install(record).unwrap();
+        let revision = reg.record_revision("account");
+        fs::remove_file(&reg.path).unwrap();
+        fs::create_dir(&reg.path).unwrap();
+        assert!(reg
+            .set_authentication_session_if_current("account", revision, None, || Some(()))
+            .is_err());
+        assert!(reg
+            .record("account")
+            .unwrap()
+            .authentication_session
+            .is_none());
+        assert!(reg
+            .with_current_record("account", revision, |_| ())
+            .is_err());
+    }
+
+    #[test]
+    fn installed_and_development_accounts_are_separate_and_exactly_removed() {
+        let dir = tmp();
+        let reg = ExtensionsRegistry::load(dir.path(), false).unwrap();
+        let mut installed = pack("account", &[]);
+        installed.enabled = true;
+        installed.granted = vec!["auth".into()];
+        installed.authentication_session = Some("a".repeat(32));
+        reg.install(installed.clone()).unwrap();
+        let path = dir.path().join("dev");
+        reg.load_dev(installed.clone(), path.clone()).unwrap();
+        assert!(reg
+            .record("account")
+            .unwrap()
+            .authentication_session
+            .is_none());
+        let revision = reg.record_revision("account");
+        reg.set_authentication_session_if_current(
+            "account",
+            revision,
+            Some("b".repeat(32)),
+            || Some(()),
+        )
+        .unwrap();
+        reg.load_dev(installed.clone(), path.clone()).unwrap();
+        assert_eq!(
+            reg.record("account").unwrap().authentication_session,
+            Some("b".repeat(32))
+        );
+        reg.unload_dev("account").unwrap();
+        assert_eq!(
+            reg.record("account").unwrap().authentication_session,
+            Some("a".repeat(32))
+        );
+        reg.load_dev(installed.clone(), path).unwrap();
+        let revision = reg.record_revision("account");
+        reg.set_authentication_session_if_current(
+            "account",
+            revision,
+            Some("b".repeat(32)),
+            || Some(()),
+        )
+        .unwrap();
+        assert_eq!(
+            reg.uninstall_with_record("account")
+                .unwrap()
+                .unwrap()
+                .authentication_session,
+            Some("a".repeat(32))
+        );
+        assert_eq!(
+            reg.record("account").unwrap().authentication_session,
+            Some("b".repeat(32))
+        );
+        reg.load_dev(installed, dir.path().join("different-dev"))
+            .unwrap();
+        assert!(reg
+            .record("account")
+            .unwrap()
+            .authentication_session
+            .is_none());
     }
 
     #[test]
@@ -1991,6 +2230,12 @@ mod tests {
         );
         let mut changed = record.clone();
         changed.granted.push("storage".into());
+        assert_eq!(
+            call.still_valid(&native_call_fingerprint(&changed, &manifest).unwrap(), 1),
+            Err(Stale::ManifestChanged)
+        );
+        changed = record.clone();
+        changed.authentication_session = Some("a".repeat(32));
         assert_eq!(
             call.still_valid(&native_call_fingerprint(&changed, &manifest).unwrap(), 1),
             Err(Stale::ManifestChanged)

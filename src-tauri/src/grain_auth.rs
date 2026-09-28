@@ -6,7 +6,7 @@
 //! while a connect flow is active and is dropped on every exit path.
 
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock, Weak};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
@@ -35,8 +35,47 @@ struct PendingFlow {
 
 type PendingFlows = Arc<Mutex<HashMap<String, PendingFlow>>>;
 static PENDING: OnceLock<PendingFlows> = OnceLock::new();
-static REFRESH_LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
+type RefreshLocks = Arc<Mutex<HashMap<String, Weak<tokio::sync::Mutex<()>>>>>;
+static REFRESH_LOCKS: OnceLock<RefreshLocks> = OnceLock::new();
 static VAULT_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+// Only active refreshes retain a lock. Waiting for one account never blocks
+// another account's provider request, and the pool has a hard admission bound.
+struct RefreshOwner {
+    pool: RefreshLocks,
+    key: String,
+    lock: Arc<tokio::sync::Mutex<()>>,
+}
+
+impl RefreshOwner {
+    fn acquire(pool: RefreshLocks, key: String) -> Result<Self, String> {
+        let lock = {
+            let mut locks = pool.lock().map_err(|_| "refresh state is unavailable")?;
+            locks.retain(|_, lock| lock.strong_count() != 0);
+            if let Some(lock) = locks.get(&key).and_then(Weak::upgrade) {
+                lock
+            } else {
+                if locks.len() >= MAX_PENDING_CONNECTS {
+                    return Err("too many native account refreshes are pending".into());
+                }
+                let lock = Arc::new(tokio::sync::Mutex::new(()));
+                locks.insert(key.clone(), Arc::downgrade(&lock));
+                lock
+            }
+        };
+        Ok(Self { pool, key, lock })
+    }
+}
+
+impl Drop for RefreshOwner {
+    fn drop(&mut self) {
+        if let Ok(mut locks) = self.pool.lock() {
+            if Arc::strong_count(&self.lock) == 1 {
+                locks.remove(&self.key);
+            }
+        }
+    }
+}
 
 #[derive(Clone)]
 struct PendingOwner {
@@ -46,6 +85,13 @@ struct PendingOwner {
 }
 
 impl PendingOwner {
+    fn current_guard(&self) -> Option<MutexGuard<'_, HashMap<String, PendingFlow>>> {
+        let pending = self.pending.lock().ok()?;
+        pending
+            .get(&self.id)
+            .is_some_and(|flow| flow.run_id == self.run_id)
+            .then_some(pending)
+    }
     // Serialize cancellation/replacement against the actual vault write. The
     // registry is checked separately: never hold its lock through OS vault I/O.
     fn publish<T>(&self, write: impl FnOnce() -> Result<T, String>) -> Result<T, String> {
@@ -124,6 +170,12 @@ struct PreparedConnect {
 }
 
 impl PreparedConnect {
+    fn check_worker(&self, generation: u64) -> Result<(), String> {
+        if self.execution_generation != generation {
+            return Err("extension account or runtime changed; run a fresh tool call".into());
+        }
+        Ok(())
+    }
     fn check(&self, id: &str) -> Result<(), String> {
         self.registry
             .with_current_record(id, self.revision, |_| ())
@@ -185,6 +237,10 @@ pub struct AuthConnection {
 pub(crate) struct TokenSet {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     authentication_fingerprint: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    account_session: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    credential_revision: Option<String>,
     access_token: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     refresh_token: Option<String>,
@@ -246,6 +302,10 @@ fn read_token_sync(extension_id: &str) -> Result<Option<TokenSet>, String> {
         .get_or_init(|| Mutex::new(()))
         .lock()
         .map_err(|_| "OS credential vault lock is unavailable")?;
+    read_token_unlocked(extension_id)
+}
+
+fn read_token_unlocked(extension_id: &str) -> Result<Option<TokenSet>, String> {
     let entry = vault_entry(extension_id)?;
     let mut bytes = match entry.get_secret() {
         Ok(bytes) => bytes,
@@ -290,6 +350,54 @@ fn write_token_sync(
     }
 }
 
+fn check_refresh_owner(previous: &TokenSet, current: Option<&TokenSet>) -> Result<(), String> {
+    let current = current.ok_or("authentication was disconnected during refresh")?;
+    if previous.account_session.is_none()
+        || previous.credential_revision.is_none()
+        || previous.account_session != current.account_session
+        || previous.credential_revision != current.credential_revision
+    {
+        return Err("authentication was replaced during refresh".into());
+    }
+    Ok(())
+}
+
+fn write_refreshed_sync(
+    key: &str,
+    id: &str,
+    prepared: &PreparedConnect,
+    previous: &TokenSet,
+    refreshed: &TokenSet,
+) -> Result<(), String> {
+    let _guard = VAULT_LOCK
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .map_err(|_| "OS credential vault lock is unavailable")?;
+    prepared.check(id)?;
+    let current = read_token_unlocked(key)?;
+    publish_refresh(prepared, id, previous, current.as_ref(), || {
+        let bytes =
+            Zeroizing::new(serde_json::to_vec(refreshed).map_err(|error| error.to_string())?);
+        vault_entry(key)?
+            .set_secret(&bytes)
+            .map_err(|error| format!("OS credential vault write failed: {error}"))
+    })
+}
+
+fn publish_refresh<T>(
+    prepared: &PreparedConnect,
+    id: &str,
+    previous: &TokenSet,
+    current: Option<&TokenSet>,
+    write: impl FnOnce() -> Result<T, String>,
+) -> Result<T, String> {
+    check_refresh_owner(previous, current)?;
+    // Recheck after the potentially blocking read. The unique session key is
+    // never reused by a new login, even if logout starts during set_secret.
+    prepared.check(id)?;
+    write()
+}
+
 fn publish_connect<T>(
     prepared: &PreparedConnect,
     owner: &PendingOwner,
@@ -312,6 +420,13 @@ fn delete_token_sync(extension_id: &str) -> Result<(), String> {
     Ok(())
 }
 
+fn cleanup_retired_credential(key: &str) {
+    if delete_token_sync(key).is_err() {
+        // Never include a vault error's credential contents or key in logs.
+        log::warn!("retired native OAuth credential cleanup failed in the OS vault");
+    }
+}
+
 async fn read_token(extension_id: &str) -> Result<Option<TokenSet>, String> {
     let extension_id = extension_id.to_owned();
     tokio::task::spawn_blocking(move || read_token_sync(&extension_id))
@@ -319,11 +434,36 @@ async fn read_token(extension_id: &str) -> Result<Option<TokenSet>, String> {
         .map_err(|error| format!("credential task failed: {error}"))?
 }
 
-async fn write_token(extension_id: &str, token: TokenSet) -> Result<(), String> {
-    let extension_id = extension_id.to_owned();
-    tokio::task::spawn_blocking(move || write_token_sync(&extension_id, &token, None))
-        .await
-        .map_err(|error| format!("credential task failed: {error}"))?
+fn session_key(id: &str, session: &str) -> Result<String, String> {
+    if session.len() != 32 || !session.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err("invalid native authentication session".into());
+    }
+    Ok(format!("{id}/{session}"))
+}
+
+fn active_session(prepared: &PreparedConnect, id: &str) -> Result<String, String> {
+    prepared
+        .registry
+        .with_current_record(id, prepared.revision, |record| {
+            record.and_then(|record| record.authentication_session.clone())
+        })
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| "authentication is not connected; reconnect legacy credentials".into())
+}
+
+fn check_account_token(
+    token: &TokenSet,
+    session: &str,
+    decl: &AuthenticationDecl,
+) -> Result<(), String> {
+    check_token_binding(token, decl)?;
+    if token.account_session.as_deref() != Some(session) || token.credential_revision.is_none() {
+        return Err("authentication needs reauthorization for its account session".into());
+    }
+    if !decl.scopes.iter().all(|scope| token.scopes.contains(scope)) {
+        return Err("authentication needs reauthorization for its declared scopes".into());
+    }
+    Ok(())
 }
 
 fn declaration(app: &AppHandle, extension_id: &str) -> Result<AuthenticationDecl, String> {
@@ -430,11 +570,25 @@ fn provider_error(status: reqwest::StatusCode, code: Option<String>) -> String {
     }
 }
 
-async fn connection_for(extension_id: &str, decl: &AuthenticationDecl) -> AuthConnection {
-    let (state, granted_scopes, expires_at) = match read_token(extension_id).await {
+async fn connection_for(
+    extension_id: &str,
+    session: Option<&str>,
+    decl: &AuthenticationDecl,
+) -> AuthConnection {
+    let key = session
+        .map(|session| session_key(extension_id, session))
+        .transpose();
+    let credential = match key {
+        Ok(Some(key)) => read_token(&key).await,
+        // Legacy credentials remain available for explicit reconnection, but
+        // cannot silently become the current account after an upgrade.
+        Ok(None) => read_token(extension_id).await,
+        Err(error) => Err(error),
+    };
+    let (state, granted_scopes, expires_at) = match credential {
         Ok(Some(token)) => {
-            let state = if check_token_binding(&token, decl).is_err()
-                || !decl.scopes.iter().all(|scope| token.scopes.contains(scope))
+            let state = if session
+                .is_none_or(|session| check_account_token(&token, session, decl).is_err())
             {
                 "needs_reauthorization"
             } else if needs_refresh(&token) {
@@ -483,7 +637,22 @@ pub(crate) async fn connection(
         .contributes
         .authentication;
     match declaration {
-        Some(declaration) => Ok(Some(connection_for(id, &declaration).await)),
+        Some(declaration) => {
+            let registry = app
+                .try_state::<Arc<grain_core::extensions::ExtensionsRegistry>>()
+                .ok_or("extensions registry unavailable")?;
+            let revision = registry.record_revision(id);
+            let session = registry
+                .with_current_record(id, revision, |record| {
+                    record.and_then(|record| record.authentication_session.clone())
+                })
+                .map_err(|error| error.to_string())?;
+            let connection = connection_for(id, session.as_deref(), &declaration).await;
+            registry
+                .with_current_record(id, revision, |_| ())
+                .map_err(|error| error.to_string())?;
+            Ok(Some(connection))
+        }
         None => Ok(None),
     }
 }
@@ -675,6 +844,8 @@ async fn exchange(
     }
     Ok(TokenSet {
         authentication_fingerprint: Some(grain_core::extensions::authentication_fingerprint(decl)),
+        account_session: Some(uuid::Uuid::new_v4().simple().to_string()),
+        credential_revision: Some(uuid::Uuid::new_v4().simple().to_string()),
         access_token: token
             .access_token
             .take()
@@ -693,7 +864,10 @@ async fn exchange(
     })
 }
 
-async fn refresh(decl: &AuthenticationDecl, refresh_token: &str) -> Result<TokenSet, String> {
+async fn refresh(decl: &AuthenticationDecl, previous: &TokenSet) -> Result<TokenSet, String> {
+    let refresh_token = previous.refresh_token.as_deref().ok_or_else(|| {
+        "authentication has expired; reconnect it in extension settings".to_string()
+    })?;
     let response = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
         .timeout(Duration::from_secs(20))
@@ -721,6 +895,8 @@ async fn refresh(decl: &AuthenticationDecl, refresh_token: &str) -> Result<Token
     }
     Ok(TokenSet {
         authentication_fingerprint: Some(grain_core::extensions::authentication_fingerprint(decl)),
+        account_session: previous.account_session.clone(),
+        credential_revision: Some(uuid::Uuid::new_v4().simple().to_string()),
         access_token: token
             .access_token
             .take()
@@ -738,7 +914,7 @@ async fn refresh(decl: &AuthenticationDecl, refresh_token: &str) -> Result<Token
             .scope
             .take()
             .map(|scope| scope.split_whitespace().map(str::to_owned).collect())
-            .unwrap_or_else(|| decl.scopes.clone()),
+            .unwrap_or_else(|| previous.scopes.clone()),
     })
 }
 
@@ -821,13 +997,67 @@ async fn connect_attempt(
     let write_owner = owner.clone();
     let write_prepared = prepared.clone();
     let id_copy = id.to_owned();
-    tokio::task::spawn_blocking(move || {
-        write_token_sync(&id_copy, &token, Some((&write_prepared, &write_owner)))
+    let prior_session = prepared
+        .registry
+        .with_current_record(id, prepared.revision, |record| {
+            record.and_then(|record| record.authentication_session.clone())
+        })
+        .map_err(|error| error.to_string())?;
+    let session = token
+        .account_session
+        .clone()
+        .ok_or("token exchange omitted account session")?;
+    let write_session = session.clone();
+    let generation = tokio::task::spawn_blocking(move || {
+        let key = session_key(&id_copy, &write_session)?;
+        if let Err(error) = write_token_sync(&key, &token, Some((&write_prepared, &write_owner))) {
+            cleanup_retired_credential(&key);
+            return Err(error);
+        }
+        // Publish only after the unique candidate is stored. Registry -> pending
+        // lock ordering matches cancellation/launch; no vault I/O under either.
+        let mut published = false;
+        let publication = write_prepared
+            .registry
+            .set_authentication_session_if_current(
+                &id_copy,
+                write_prepared.revision,
+                Some(write_session),
+                || {
+                    let guard = write_owner.current_guard()?;
+                    published = true;
+                    Some(guard)
+                },
+            )
+            .map_err(|error| error.to_string());
+        if publication.is_err() {
+            // A persistence failure may have made this the active in-memory
+            // account. Preserve that credential for recovery in that case.
+            if !published {
+                cleanup_retired_credential(&key);
+            }
+        } else {
+            if let Some(prior) =
+                prior_session.and_then(|session| session_key(&id_copy, &session).ok())
+            {
+                cleanup_retired_credential(&prior);
+            }
+            cleanup_retired_credential(&id_copy);
+        }
+        publication
     })
     .await
     .map_err(|error| format!("credential task failed: {error}"))??;
-    let connection = connection_for(id, decl).await;
-    prepared.check(id)?;
+    let connection = connection_for(id, Some(&session), decl).await;
+    let current = prepared.registry.with_record_locked(id, |record| {
+        record.is_some_and(|record| {
+            record.execution_generation == generation
+                && record.authentication_session.as_deref() == Some(session.as_str())
+        })
+    });
+    if !current {
+        return Err("authentication changed after sign-in".into());
+    }
     owner.publish(|| Ok(connection))
 }
 
@@ -844,11 +1074,51 @@ pub async fn extension_auth_disconnect(
 
 async fn disconnect(app: &AppHandle, id: String) -> Result<(), String> {
     declaration(app, &id)?;
-    cancel_extension(&id);
-    let id_copy = id.clone();
-    tokio::task::spawn_blocking(move || delete_token_sync(&id_copy))
+    let registry = app
+        .try_state::<Arc<grain_core::extensions::ExtensionsRegistry>>()
+        .ok_or("extensions registry unavailable")?
+        .inner()
+        .clone();
+    let revision = registry.record_revision(&id);
+    disconnect_reviewed(registry, id, revision).await
+}
+
+async fn disconnect_reviewed(
+    registry: Arc<grain_core::extensions::ExtensionsRegistry>,
+    id: String,
+    revision: grain_core::extensions::RecordRevision,
+) -> Result<(), String> {
+    let session = registry
+        .with_current_record(&id, revision, |record| {
+            record.and_then(|record| record.authentication_session.clone())
+        })
+        .map_err(|error| error.to_string())?;
+    // Clear the effective account before scheduling deletion. Only cancel the
+    // reviewed generation so a newly admitted login is not cancelled afterward.
+    let old_generation = registry
+        .with_current_record(&id, revision, |record| {
+            record.map(|record| record.execution_generation)
+        })
+        .map_err(|error| error.to_string())?
+        .ok_or("extension is not installed")?;
+    let mut published = false;
+    let publication = registry.set_authentication_session_if_current(&id, revision, None, || {
+        published = true;
+        Some(())
+    });
+    if !published {
+        return publication.map(|_| ()).map_err(|error| error.to_string());
+    }
+    cancel_extension_generation(&id, old_generation);
+    let key = session
+        .map(|session| session_key(&id, &session))
+        .transpose()?
+        .unwrap_or(id);
+    let deletion = tokio::task::spawn_blocking(move || delete_token_sync(&key))
         .await
-        .map_err(|error| format!("credential task failed: {error}"))?
+        .map_err(|error| format!("credential task failed: {error}"))?;
+    publication.map_err(|error| error.to_string())?;
+    deletion
 }
 
 async fn confirm(
@@ -882,8 +1152,10 @@ async fn confirm(
 pub(crate) async fn connect_from_extension(
     app: AppHandle,
     extension_id: String,
+    worker_generation: u64,
 ) -> Result<AuthConnection, String> {
     let prepared = prepare_connect(&app, &extension_id)?;
+    prepared.check_worker(worker_generation)?;
     let decl = &prepared.declaration;
     confirm(
         &app,
@@ -903,7 +1175,22 @@ pub(crate) async fn connect_from_extension(
 pub(crate) async fn disconnect_from_extension(
     app: AppHandle,
     extension_id: String,
+    worker_generation: u64,
 ) -> Result<(), String> {
+    let registry = app
+        .try_state::<Arc<grain_core::extensions::ExtensionsRegistry>>()
+        .ok_or("extensions registry unavailable")?
+        .inner()
+        .clone();
+    let revision = registry.record_revision(&extension_id);
+    let generation = registry
+        .with_current_record(&extension_id, revision, |record| {
+            record.map(|record| record.execution_generation)
+        })
+        .map_err(|error| error.to_string())?;
+    if generation != Some(worker_generation) {
+        return Err("extension account or runtime changed; run a fresh tool call".into());
+    }
     let decl = declaration(&app, &extension_id)?;
     confirm(
         &app,
@@ -915,56 +1202,67 @@ pub(crate) async fn disconnect_from_extension(
         "Disconnect",
     )
     .await?;
-    disconnect(&app, extension_id).await
+    disconnect_reviewed(registry, extension_id, revision).await
 }
 
 pub(crate) async fn access_token(
     app: &AppHandle,
     extension_id: &str,
     host: &str,
+    worker_generation: u64,
 ) -> Result<Zeroizing<String>, String> {
-    let decl = approved_declaration(app, extension_id)?;
+    let prepared = prepare_connect(app, extension_id)?;
+    prepared.check_worker(worker_generation)?;
+    let decl = &prepared.declaration;
+    let session = active_session(&prepared, extension_id)?;
+    let key = session_key(extension_id, &session)?;
     if !decl.api_hosts.iter().any(|allowed| allowed == host) {
         return Err(format!("authentication is not allowed for host '{host}'"));
     }
-    let mut token = read_token(extension_id)
+    let mut token = read_token(&key)
         .await?
         .ok_or_else(|| "authentication is not connected".to_string())?;
-    check_token_binding(&token, &decl)?;
-    if !decl.scopes.iter().all(|scope| token.scopes.contains(scope)) {
-        return Err("authentication needs reauthorization for its declared scopes".into());
-    }
+    prepared.check(extension_id)?;
+    check_account_token(&token, &session, decl)?;
     if needs_refresh(&token) {
-        let _guard = REFRESH_LOCK
-            .get_or_init(|| tokio::sync::Mutex::new(()))
-            .lock()
-            .await;
-        token = read_token(extension_id)
+        let owner = RefreshOwner::acquire(
+            REFRESH_LOCKS
+                .get_or_init(|| Arc::new(Mutex::new(HashMap::new())))
+                .clone(),
+            key.clone(),
+        )?;
+        let _guard = owner.lock.lock().await;
+        prepared.check(extension_id)?;
+        token = read_token(&key)
             .await?
             .ok_or_else(|| "authentication is not connected".to_string())?;
-        check_token_binding(&token, &decl)?;
+        prepared.check(extension_id)?;
+        check_account_token(&token, &session, decl)?;
         if needs_refresh(&token) {
-            let refresh_token = token.refresh_token.as_deref().ok_or_else(|| {
-                "authentication has expired; reconnect it in extension settings".to_string()
-            })?;
-            let refreshed = refresh(&decl, refresh_token).await?;
-            if approved_declaration(app, extension_id)? != decl {
+            let refreshed = refresh(decl, &token).await?;
+            prepared.check(extension_id)?;
+            if approved_declaration(app, extension_id)? != *decl {
                 return Err("authentication declaration changed during token refresh".into());
             }
-            write_token(extension_id, refreshed).await?;
-            token = read_token(extension_id)
+            let write_key = key.clone();
+            let write_id = extension_id.to_owned();
+            let write_prepared = prepared.clone();
+            tokio::task::spawn_blocking(move || {
+                write_refreshed_sync(&write_key, &write_id, &write_prepared, &token, &refreshed)
+            })
+            .await
+            .map_err(|error| format!("credential task failed: {error}"))??;
+            token = read_token(&key)
                 .await?
                 .ok_or_else(|| "refreshed credential was not stored".to_string())?;
         }
     }
-    if !decl.scopes.iter().all(|scope| token.scopes.contains(scope)) {
-        return Err("authentication needs reauthorization for its declared scopes".into());
-    }
-    check_token_binding(&token, &decl)?;
+    check_account_token(&token, &session, decl)?;
     if !token.token_type.eq_ignore_ascii_case("bearer") {
         return Err("only Bearer OAuth tokens are supported".into());
     }
-    if approved_declaration(app, extension_id)? != decl {
+    prepared.check(extension_id)?;
+    if approved_declaration(app, extension_id)? != *decl {
         return Err("authentication declaration changed during token access".into());
     }
     Ok(Zeroizing::new(token.access_token.clone()))
@@ -996,11 +1294,21 @@ fn cancel_flow(pending: &PendingFlows, extension_id: &str, generation: Option<u6
     }
 }
 
-pub(crate) async fn purge_extension(_app: &AppHandle, extension_id: &str) -> Result<(), String> {
+pub(crate) async fn purge_extension(
+    extension_id: &str,
+    session: Option<String>,
+) -> Result<(), String> {
     let extension_id = extension_id.to_owned();
-    tokio::task::spawn_blocking(move || delete_token_sync(&extension_id))
-        .await
-        .map_err(|error| format!("credential task failed: {error}"))?
+    tokio::task::spawn_blocking(move || {
+        if let Some(session) = session {
+            delete_token_sync(&session_key(&extension_id, &session)?)?;
+        }
+        // No login writes legacy id-only keys. Removing one cannot delete a
+        // concurrently connected replacement or the active development grant.
+        delete_token_sync(&extension_id)
+    })
+    .await
+    .map_err(|error| format!("credential task failed: {error}"))?
 }
 
 #[cfg(test)]
@@ -1305,11 +1613,15 @@ mod tests {
             .unwrap();
         let address = listener.local_addr().unwrap();
         let server = tokio::spawn(async move {
-            for _ in 0..2 {
+            for index in 0..2 {
                 let (mut stream, _) = listener.accept().await.unwrap();
                 let request = read_callback_request(&mut stream).await.unwrap();
                 assert!(request.starts_with(b"POST /token HTTP/1.1"));
-                let body = r#"{"access_token":"fixture-access","token_type":"Bearer","expires_in":3600,"scope":"read"}"#;
+                let body = if index == 0 {
+                    r#"{"access_token":"fixture-access","token_type":"Bearer","refresh_token":"fixture-refresh","expires_in":3600,"scope":"read extra"}"#
+                } else {
+                    r#"{"access_token":"fixture-refreshed","token_type":"Bearer","expires_in":3600}"#
+                };
                 let response = format!(
                     "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
                     body.len()
@@ -1323,10 +1635,221 @@ mod tests {
             .await
             .unwrap();
         assert!(check_token_binding(&token, &declaration).is_ok());
-        let token = refresh(&declaration, "fixture-refresh").await.unwrap();
+        let previous = token;
+        let token = refresh(&declaration, &previous).await.unwrap();
+        assert_eq!(token.account_session, previous.account_session);
+        assert_ne!(token.credential_revision, previous.credential_revision);
+        assert_eq!(token.scopes, vec!["read", "extra"]);
         assert!(check_token_binding(&token, &declaration).is_ok());
         assert_eq!(token.refresh_token.as_deref(), Some("fixture-refresh"));
         server.await.unwrap();
+    }
+
+    fn account_token() -> TokenSet {
+        serde_json::from_value(serde_json::json!({
+            "authentication_fingerprint": grain_core::extensions::authentication_fingerprint(&test_declaration()),
+            "account_session": "a".repeat(32), "credential_revision": "b".repeat(32),
+            "access_token": "fixture-access", "refresh_token": "fixture-refresh", "scopes": ["read"]
+        })).unwrap()
+    }
+
+    #[test]
+    fn refresh_publication_refuses_deleted_or_replaced_credentials() {
+        let (_dir, prepared) = prepared_fixture();
+        let previous = account_token();
+        let mut current = previous.clone();
+        let mut writes = 0;
+        assert!(
+            publish_refresh(&prepared, "com.example.tools", &previous, None, || {
+                writes += 1;
+                Ok(())
+            })
+            .is_err()
+        );
+        current.credential_revision = Some("c".repeat(32));
+        assert!(publish_refresh(
+            &prepared,
+            "com.example.tools",
+            &previous,
+            Some(&current),
+            || {
+                writes += 1;
+                Ok(())
+            }
+        )
+        .is_err());
+        current = previous.clone();
+        current.account_session = Some("c".repeat(32));
+        assert!(publish_refresh(
+            &prepared,
+            "com.example.tools",
+            &previous,
+            Some(&current),
+            || {
+                writes += 1;
+                Ok(())
+            }
+        )
+        .is_err());
+        assert_eq!(writes, 0);
+        publish_refresh(
+            &prepared,
+            "com.example.tools",
+            &previous,
+            Some(&previous),
+            || {
+                writes += 1;
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert_eq!(writes, 1);
+    }
+
+    #[tokio::test]
+    async fn actual_refresh_response_cannot_publish_after_logout_or_account_switch() {
+        for replacement in [None, Some("c".repeat(32))] {
+            let (_dir, mut prepared) = prepared_fixture();
+            let id = "com.example.tools";
+            prepared
+                .registry
+                .set_authentication_session_if_current(
+                    id,
+                    prepared.revision,
+                    Some("a".repeat(32)),
+                    || Some(()),
+                )
+                .unwrap();
+            prepared.revision = prepared.registry.record_revision(id);
+            prepared.execution_generation =
+                prepared.registry.record(id).unwrap().execution_generation;
+            let listener = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
+                .await
+                .unwrap();
+            prepared.declaration.token_endpoint =
+                format!("http://{}/token", listener.local_addr().unwrap());
+            let (received_tx, received_rx) = tokio::sync::oneshot::channel();
+            let (release_tx, release_rx) = tokio::sync::oneshot::channel();
+            let server = tokio::spawn(async move {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let request = read_callback_request(&mut stream).await.unwrap();
+                assert!(request.starts_with(b"POST /token HTTP/1.1"));
+                received_tx.send(()).unwrap();
+                release_rx.await.unwrap();
+                let body = r#"{"access_token":"late-response","token_type":"Bearer"}"#;
+                stream.write_all(format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).as_bytes()).await.unwrap();
+            });
+            let previous = account_token();
+            let declaration = prepared.declaration.clone();
+            let work_token = previous.clone();
+            let refresh_task =
+                tokio::spawn(async move { refresh(&declaration, &work_token).await });
+            received_rx.await.unwrap();
+            prepared
+                .registry
+                .set_authentication_session_if_current(
+                    id,
+                    prepared.revision,
+                    replacement.clone(),
+                    || Some(()),
+                )
+                .unwrap();
+            release_tx.send(()).unwrap();
+            let refreshed = refresh_task.await.unwrap().unwrap();
+            assert_eq!(refreshed.account_session, previous.account_session);
+            let mut writes = 0;
+            assert!(
+                publish_refresh(&prepared, id, &previous, Some(&previous), || {
+                    writes += 1;
+                    Ok(())
+                })
+                .is_err()
+            );
+            assert_eq!(writes, 0);
+            assert_eq!(
+                prepared.registry.record(id).unwrap().authentication_session,
+                replacement
+            );
+            server.await.unwrap();
+        }
+    }
+
+    #[test]
+    fn cancelled_candidate_never_becomes_the_active_account() {
+        let (_dir, prepared) = prepared_fixture();
+        let pending = Arc::new(Mutex::new(HashMap::new()));
+        let (guard, _cancel) = PendingGuard::begin(
+            pending.clone(),
+            "com.example.tools".into(),
+            prepared.execution_generation,
+        )
+        .unwrap();
+        let owner = guard.0.clone();
+        // Represents a candidate already saved to its own key before the async
+        // caller disappears. It is not the active credential until publication.
+        let key = session_key(&owner.id, &"a".repeat(32)).unwrap();
+        drop(guard);
+        assert!(prepared
+            .registry
+            .set_authentication_session_if_current(
+                &owner.id,
+                prepared.revision,
+                Some("a".repeat(32)),
+                || owner.current_guard()
+            )
+            .is_err());
+        assert!(prepared
+            .registry
+            .record(&owner.id)
+            .unwrap()
+            .authentication_session
+            .is_none());
+        assert_ne!(key, session_key(&owner.id, &"c".repeat(32)).unwrap());
+    }
+
+    #[test]
+    fn account_token_and_worker_must_match_the_prepared_session() {
+        let (_dir, prepared) = prepared_fixture();
+        assert!(prepared.check_worker(prepared.execution_generation).is_ok());
+        assert!(prepared
+            .check_worker(prepared.execution_generation + 1)
+            .is_err());
+        let token = account_token();
+        assert!(check_account_token(&token, &"a".repeat(32), &test_declaration()).is_ok());
+        assert!(check_account_token(&token, &"c".repeat(32), &test_declaration()).is_err());
+        assert!(session_key("com.example.tools", "../token").is_err());
+        let mut legacy = token;
+        legacy.credential_revision = None;
+        assert!(check_account_token(&legacy, &"a".repeat(32), &test_declaration()).is_err());
+    }
+
+    #[tokio::test]
+    async fn refresh_locks_coalesce_per_session_without_retaining_idle_state() {
+        let pool = Arc::new(Mutex::new(HashMap::new()));
+        let owner = RefreshOwner::acquire(pool.clone(), "account-a".into()).unwrap();
+        let same = RefreshOwner::acquire(pool.clone(), "account-a".into()).unwrap();
+        assert!(Arc::ptr_eq(&owner.lock, &same.lock));
+        let guard = owner.lock.lock().await;
+        assert!(same.lock.try_lock().is_err());
+        let independent = RefreshOwner::acquire(pool.clone(), "account-b".into()).unwrap();
+        assert!(independent.lock.try_lock().is_ok());
+        drop(independent);
+        drop(guard);
+        drop(owner);
+        assert_eq!(pool.lock().unwrap().len(), 1);
+        drop(same);
+        assert!(pool.lock().unwrap().is_empty());
+        for _ in 0..100 {
+            drop(RefreshOwner::acquire(pool.clone(), "account-a".into()).unwrap());
+            assert!(pool.lock().unwrap().is_empty());
+        }
+        let mut owners = Vec::new();
+        for index in 0..MAX_PENDING_CONNECTS {
+            owners.push(RefreshOwner::acquire(pool.clone(), index.to_string()).unwrap());
+        }
+        assert!(RefreshOwner::acquire(pool.clone(), "overflow".into()).is_err());
+        drop(owners);
+        assert!(pool.lock().unwrap().is_empty());
     }
 
     #[test]

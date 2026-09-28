@@ -182,6 +182,15 @@ impl Workers {
         self.map.lock().unwrap().contains_key(ext_id)
     }
 
+    fn generation_for_token(&self, ext_id: &str, token: &str) -> Option<u64> {
+        self.map
+            .lock()
+            .unwrap()
+            .get(ext_id)
+            .filter(|worker| worker.token == token)
+            .map(|worker| worker.execution_generation)
+    }
+
     fn is_empty(&self) -> bool {
         self.map.lock().unwrap().is_empty()
     }
@@ -1834,6 +1843,11 @@ async fn sample_worker_heaps() {
 
 // ── Connection surface (called from events_server on the worker's WS) ────────
 
+/// Source ownership for a host RPC; a socket token never borrows the next worker.
+pub fn rpc_execution_generation(ext_id: &str, token: &str) -> Option<u64> {
+    HOST.get()?.workers.generation_for_token(ext_id, token)
+}
+
 /// A worker's WS authenticated: register its outbound channel. Socket traffic
 /// must not renew idle ownership: maintenance replies would keep it alive forever.
 /// The token must match the current generation.
@@ -2027,10 +2041,29 @@ fn parse_handoff_outcome(value: Value) -> HandOffOutcome {
 /// twenty worker spawns per press. Spawned with no activation payload: the
 /// request arrives as an explicit host call, not as a wake event.
 fn wake_for_request(app: &AppHandle, ext_id: &str) -> Option<String> {
-    if let Some(token) = HOST.get().and_then(|host| host.workers.token(ext_id)) {
-        return Some(token);
-    }
     let registry = app.try_state::<Arc<grain_core::extensions::ExtensionsRegistry>>()?;
+    let existing = registry.with_record_locked(ext_id, |record| {
+        let host = HOST.get()?;
+        let workers = host.workers.map.lock().unwrap();
+        let worker = workers.get(ext_id)?;
+        Some((
+            worker.token.clone(),
+            record.is_some_and(|record| {
+                record.enabled && record.execution_generation == worker.execution_generation
+            }),
+        ))
+    });
+    if let Some((token, current)) = existing {
+        if current {
+            return Some(token);
+        }
+        kill_worker_inner(
+            ext_id,
+            "native account or runtime changed",
+            Some(&token),
+            false,
+        );
+    }
     let revision = registry.record_revision(ext_id);
     let pack = load_manifest(app, ext_id)?;
     let granted = app
@@ -2642,6 +2675,7 @@ pub fn reload_dev_extension(
                 .authentication
                 .as_ref()
                 .map(grain_core::extensions::authentication_fingerprint),
+            authentication_session: prior.authentication_session.clone(),
             // And for what the extension is ranked by. Same shortcut, same limit.
             recommend_approved: loaded
                 .pack
@@ -3059,6 +3093,7 @@ mod tests {
                 &pack.manifest.contributes.actions,
             )),
             authentication_approved: None,
+            authentication_session: None,
             recommend_approved: pack
                 .manifest
                 .kind
@@ -3245,6 +3280,26 @@ mod tests {
             conn: None,
             dev_source: None,
         }
+    }
+
+    #[test]
+    fn host_rpc_token_cannot_borrow_a_replacement_workers_generation() {
+        let workers = Workers::new();
+        let mut original = worker(0, false);
+        original.execution_generation = 10;
+        workers.insert("account", original);
+        assert_eq!(workers.generation_for_token("account", "tok"), Some(10));
+        let mut replacement = worker(0, false);
+        replacement.token = "new-token".into();
+        replacement.execution_generation = 20;
+        workers.insert("account", replacement);
+        assert_eq!(workers.generation_for_token("account", "tok"), None);
+        assert_eq!(
+            workers.generation_for_token("account", "new-token"),
+            Some(20)
+        );
+        workers.remove("account");
+        assert_eq!(workers.generation_for_token("account", "new-token"), None);
     }
 
     fn rt() -> tokio::runtime::Runtime {

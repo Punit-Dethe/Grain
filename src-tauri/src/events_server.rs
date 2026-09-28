@@ -642,6 +642,7 @@ async fn handle(stream: TcpStream, ctx: Arc<AppContext>, app: AppHandle) {
                                         });
                                     let resp = match crate::host_api::dispatch(
                                         &app, &identity, &req.method, req.params,
+                                        crate::extension_host::rpc_execution_generation(&identity.id, &worker_token),
                                     )
                                     .await
                                     {

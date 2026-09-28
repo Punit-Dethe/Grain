@@ -1096,8 +1096,25 @@ pub async fn dispatch(
     identity: &ClientIdentity,
     method: &str,
     params: Value,
+    worker_generation: Option<u64>,
 ) -> HostResult<Value> {
     preflight(identity, method, &params)?;
+    let worker_generation = worker_generation
+        .ok_or_else(|| unavailable("extension worker was replaced", "Run a fresh tool call."))?;
+    let registry = app
+        .try_state::<std::sync::Arc<grain_core::extensions::ExtensionsRegistry>>()
+        .ok_or_else(|| internal_error("extensions registry unavailable"))?;
+    let current = registry.with_record_locked(&identity.id, |record| {
+        record.is_some_and(|record| {
+            record.enabled && record.execution_generation == worker_generation
+        })
+    });
+    if !current {
+        return Err(unavailable(
+            "extension account or runtime changed",
+            "Run a fresh tool call.",
+        ));
+    }
 
     let ctx = app
         .try_state::<std::sync::Arc<grain_core::AppContext>>()
@@ -1251,14 +1268,15 @@ pub async fn dispatch(
                     .contributes
                     .authentication
                     .ok_or_else(|| invalid_argument("authentication is not declared"))?;
-                let token = crate::grain_auth::access_token(app, &identity.id, &host)
-                    .await
-                    .map_err(|error| {
-                        unavailable(
-                            error,
-                            "Connect the account in the extension's settings, then retry.",
-                        )
-                    })?;
+                let token =
+                    crate::grain_auth::access_token(app, &identity.id, &host, worker_generation)
+                        .await
+                        .map_err(|error| {
+                            unavailable(
+                                error,
+                                "Connect the account in the extension's settings, then retry.",
+                            )
+                        })?;
                 let value =
                     HeaderValue::from_str(&format!("Bearer {}", token.as_str())).map_err(|_| {
                         internal_error("stored OAuth token is not a valid header value")
@@ -1283,15 +1301,23 @@ pub async fn dispatch(
             serde_json::to_value(connection).map_err(|error| internal_error(error.to_string()))
         }
         "auth.connect" => {
-            let row = crate::grain_auth::connect_from_extension(app.clone(), identity.id.clone())
-                .await
-                .map_err(|error| unavailable(error, "Retry from the extension settings page."))?;
+            let row = crate::grain_auth::connect_from_extension(
+                app.clone(),
+                identity.id.clone(),
+                worker_generation,
+            )
+            .await
+            .map_err(|error| unavailable(error, "Retry from the extension settings page."))?;
             serde_json::to_value(row).map_err(|error| internal_error(error.to_string()))
         }
         "auth.disconnect" => {
-            crate::grain_auth::disconnect_from_extension(app.clone(), identity.id.clone())
-                .await
-                .map_err(internal_error)?;
+            crate::grain_auth::disconnect_from_extension(
+                app.clone(),
+                identity.id.clone(),
+                worker_generation,
+            )
+            .await
+            .map_err(internal_error)?;
             Ok(Value::Null)
         }
         "embed" => {

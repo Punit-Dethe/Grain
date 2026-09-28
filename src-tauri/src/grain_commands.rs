@@ -1513,6 +1513,7 @@ mod imported_update_security_tests {
             authentication_approved: Some(grain_core::extensions::authentication_fingerprint(
                 pack.manifest.contributes.authentication.as_ref().unwrap(),
             )),
+            authentication_session: None,
             recommend_approved: None,
             slots: Vec::new(),
             dev: None,
@@ -1773,6 +1774,8 @@ fn register_unpacked_project(
             .authentication
             .as_ref()
             .map(ext::authentication_fingerprint),
+        // The registry carries only the same dev project's account forward.
+        authentication_session: None,
         recommend_approved: loaded
             .pack
             .manifest
@@ -2222,6 +2225,9 @@ pub fn extension_import_pack(
             authentication_approved: prior
                 .as_ref()
                 .and_then(|r| r.authentication_approved.clone()),
+            authentication_session: prior
+                .as_ref()
+                .and_then(|r| r.authentication_session.clone()),
             // Carried for the same reason, and the stake is higher: what this one
             // gates is whether the extension is eligible to be handed the user's
             // words at all. `None` means never approved, so an import that has not
@@ -2452,17 +2458,22 @@ pub async fn extension_uninstall(
     if id == ext::BUILTIN_SNIPPETS || id == ext::BUILTIN_CONTEXT || id == ext::BUILTIN_AGENT {
         return Err("built-in features can be turned off, not uninstalled".into());
     }
-    crate::grain_auth::cancel_extension(&id);
-    // Credentials are never kept for an uninstalled identity, regardless of
-    // whether ordinary extension data is retained for a later reinstall.
-    crate::grain_auth::purge_extension(&app, &id).await?;
     let reg = app
         .try_state::<std::sync::Arc<ext::ExtensionsRegistry>>()
         .ok_or("extensions registry unavailable")?;
     let dev_active = reg.dev_path(&id).is_some();
-    if !reg.uninstall(&id).map_err(|e| e.to_string())? && !dev_active {
+    let removed = reg.uninstall_with_record(&id).map_err(|e| e.to_string())?;
+    let old_generation = removed.as_ref().map(|record| record.execution_generation);
+    let session = removed.and_then(|record| record.authentication_session);
+    if old_generation.is_none() && !dev_active {
         return Err("not installed".into());
     }
+    if let Some(generation) = old_generation {
+        crate::grain_auth::cancel_extension_generation(&id, generation);
+    }
+    // Invalidate publication before blocking on the vault. Cleanup addresses
+    // only the removed grant, never a replacement login or active dev account.
+    let credential_cleanup = crate::grain_auth::purge_extension(&id, session);
     crate::extension_host::refresh_index(&app);
     if purge {
         if let Some(ctx) = app.try_state::<std::sync::Arc<grain_core::AppContext>>() {
@@ -2479,7 +2490,7 @@ pub async fn extension_uninstall(
             crate::extension_icons::purge(&app, &id)?;
             crate::extension_misroutes::purge(&app, &id);
         }
-        return Ok(());
+        return credential_cleanup.await;
     }
     if let Some(ctx) = app.try_state::<std::sync::Arc<grain_core::AppContext>>() {
         let _ = ctx.update_settings(|s| ext::remove_prompt_pack(s, &id));
@@ -2498,7 +2509,9 @@ pub async fn extension_uninstall(
     }
     // Disable keeps a rebind; uninstall is the transaction that clears it
     // (SPEC §6: shortcuts unregistered, slots released, storage wiped).
-    crate::extension_host::stop_extension(&id, "extension uninstalled");
+    if let Some(generation) = old_generation {
+        crate::extension_host::stop_extension_generation(&id, generation, "extension uninstalled");
+    }
     crate::extension_shortcuts::forget(&app, &id);
     if purge {
         let _ = std::fs::remove_file(pack_path(&app, &id)?);
@@ -2506,5 +2519,5 @@ pub async fn extension_uninstall(
         crate::extension_misroutes::purge(&app, &id);
     }
     crate::extension_host::refresh_index(&app);
-    Ok(())
+    credential_cleanup.await
 }
