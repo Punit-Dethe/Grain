@@ -56,8 +56,84 @@ pub fn version_dir(root: &Path, id: &str, version: &str) -> PathBuf {
     root.join(id).join(version)
 }
 
-fn staging_dir(root: &Path, id: &str, version: &str) -> PathBuf {
-    root.join(".staging").join(format!("{id}-{version}"))
+/// New artifacts are addressed by content, so same-version replacements cannot
+/// overwrite another registry owner's bytes. Legacy version directories remain readable.
+pub fn artifact_dir(
+    root: &Path,
+    id: &str,
+    version: &str,
+    hash: &str,
+) -> Result<PathBuf, InstallError> {
+    grain_sdk::validate_extension_id(id).map_err(InstallError::Io)?;
+    grain_sdk::validate_extension_version(version).map_err(InstallError::Io)?;
+    if hash.len() != 64 || !hash.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err(InstallError::Manifest("Invalid artifact hash.".into()));
+    }
+    Ok(version_dir(root, id, version).join(hash.to_ascii_lowercase()))
+}
+
+/// Publish complete bytes once. Never replace/delete a published artifact,
+/// including on a lost registry race or failed registry persistence.
+pub fn publish_artifact(
+    root: &Path,
+    id: &str,
+    version: &str,
+    hash: &str,
+    bytes: &[u8],
+) -> Result<PathBuf, InstallError> {
+    use std::io::{Read, Write};
+    let destination = artifact_dir(root, id, version, hash)?;
+    if bytes.len() as u64 > grain_sdk::PACK_MAX_BYTES {
+        return Err(InstallError::Manifest(
+            "Tool package exceeds the import budget.".into(),
+        ));
+    }
+    trust::verify_artifact(bytes, hash).map_err(InstallError::Hash)?;
+    let verify_existing = || {
+        let file = std::fs::File::open(destination.join("pack.grainpack.json"))
+            .map_err(|error| InstallError::Io(error.to_string()))?;
+        let mut existing = Vec::new();
+        file.take(grain_sdk::PACK_MAX_BYTES + 1)
+            .read_to_end(&mut existing)
+            .map_err(|error| InstallError::Io(error.to_string()))?;
+        if existing.len() as u64 > grain_sdk::PACK_MAX_BYTES {
+            return Err(InstallError::Manifest(
+                "Existing artifact exceeds the import budget.".into(),
+            ));
+        }
+        trust::verify_artifact(&existing, hash).map_err(InstallError::Hash)
+    };
+    if destination.exists() {
+        verify_existing()?;
+        return Ok(destination);
+    }
+    let staging_root = root.join(".staging");
+    std::fs::create_dir_all(&staging_root).map_err(|error| InstallError::Io(error.to_string()))?;
+    let staging = tempfile::Builder::new()
+        .prefix("grainpack-")
+        .tempdir_in(&staging_root)
+        .map_err(|error| InstallError::Io(error.to_string()))?;
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(staging.path().join("pack.grainpack.json"))
+        .map_err(|error| InstallError::Io(error.to_string()))?;
+    file.write_all(bytes)
+        .and_then(|_| file.sync_all())
+        .map_err(|error| InstallError::Io(error.to_string()))?;
+    drop(file);
+    std::fs::create_dir_all(destination.parent().expect("artifact parent"))
+        .map_err(|error| InstallError::Io(error.to_string()))?;
+    if let Err(error) = std::fs::rename(staging.path(), &destination) {
+        // Another publisher may have won with the same bytes. Verify it, and
+        // let our private staging owner clean up only its own directory.
+        if destination.exists() {
+            verify_existing()?;
+        } else {
+            return Err(InstallError::Io(error.to_string()));
+        }
+    }
+    Ok(destination)
 }
 
 /// Verify the artifact hash, then unpack it into its versioned directory via a
@@ -110,23 +186,7 @@ pub fn stage_artifact(
         ));
     }
 
-    let staging = staging_dir(root, &entry.id, &entry.version);
-    // Clean any stale staging from an interrupted attempt.
-    let _ = std::fs::remove_dir_all(&staging);
-    std::fs::create_dir_all(&staging).map_err(|e| InstallError::Io(e.to_string()))?;
-
-    std::fs::write(staging.join("pack.grainpack.json"), bytes)
-        .map_err(|e| InstallError::Io(e.to_string()))?;
-
-    let final_dir = version_dir(root, &entry.id, &entry.version);
-    if let Some(parent) = final_dir.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| InstallError::Io(e.to_string()))?;
-    }
-    // The only non-atomic step is this rename; the previous version dir (a
-    // sibling under <id>/) is untouched until the caller enables the new one.
-    let _ = std::fs::remove_dir_all(&final_dir);
-    std::fs::rename(&staging, &final_dir).map_err(|e| InstallError::Io(e.to_string()))?;
-    Ok(final_dir)
+    publish_artifact(root, &entry.id, &entry.version, &entry.sha256, bytes)
 }
 
 /// Build the registry record for a verified index entry. **This is the sole
@@ -350,6 +410,143 @@ mod tests {
     use super::*;
     use grain_sdk::distribution::Trust;
     use grain_sdk::manifest::Tier;
+
+    #[test]
+    fn concurrent_same_version_publication_preserves_all_hash_owners() {
+        let dir = tmp();
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(9));
+        let threads: Vec<_> = (0..8)
+            .map(|index| {
+                let root = dir.path().to_path_buf();
+                let barrier = barrier.clone();
+                std::thread::spawn(move || {
+                    let bytes = tool_pack("com.example.tools", "1", &[]);
+                    let mut bytes = bytes;
+                    // Four callers publish the same bytes, four distinct siblings.
+                    if index >= 4 {
+                        bytes.extend(std::iter::repeat_n(b' ', index));
+                    }
+                    let hash = trust::sha256_hex(&bytes);
+                    barrier.wait();
+                    let path =
+                        publish_artifact(&root, "com.example.tools", "1", &hash, &bytes).unwrap();
+                    assert_eq!(
+                        std::fs::read(path.join("pack.grainpack.json")).unwrap(),
+                        bytes
+                    );
+                    path
+                })
+            })
+            .collect();
+        barrier.wait();
+        let paths: std::collections::HashSet<_> = threads
+            .into_iter()
+            .map(|thread| thread.join().unwrap())
+            .collect();
+        assert_eq!(paths.len(), 5);
+        assert_eq!(
+            std::fs::read_dir(dir.path().join(".staging"))
+                .unwrap()
+                .count(),
+            0
+        );
+    }
+
+    #[test]
+    fn corrupt_published_artifact_is_refused_without_overwriting_it() {
+        let dir = tmp();
+        let bytes = tool_pack("com.example.tools", "1", &[]);
+        let hash = trust::sha256_hex(&bytes);
+        let path = publish_artifact(dir.path(), "com.example.tools", "1", &hash, &bytes).unwrap();
+        std::fs::write(path.join("pack.grainpack.json"), b"corrupt-local").unwrap();
+        assert!(publish_artifact(dir.path(), "com.example.tools", "1", &hash, &bytes).is_err());
+        assert_eq!(
+            std::fs::read(path.join("pack.grainpack.json")).unwrap(),
+            b"corrupt-local"
+        );
+        for hash in ["../escape", &"g".repeat(64)] {
+            assert!(artifact_dir(dir.path(), "com.example.tools", "1", hash).is_err());
+        }
+    }
+
+    #[test]
+    fn publication_error_cleans_only_private_staging() {
+        let dir = tmp();
+        let bytes = tool_pack("com.example.tools", "1", &[]);
+        let hash = trust::sha256_hex(&bytes);
+        std::fs::write(dir.path().join("com.example.tools"), b"blocked-parent").unwrap();
+        assert!(publish_artifact(dir.path(), "com.example.tools", "1", &hash, &bytes).is_err());
+        assert_eq!(
+            std::fs::read(dir.path().join("com.example.tools")).unwrap(),
+            b"blocked-parent"
+        );
+        assert_eq!(
+            std::fs::read_dir(dir.path().join(".staging"))
+                .unwrap()
+                .count(),
+            0
+        );
+    }
+
+    #[test]
+    fn losing_registry_writer_and_failed_persistence_keep_complete_artifacts() {
+        let dir = tmp();
+        let reg = ExtensionsRegistry::load(dir.path(), false).unwrap();
+        let root = dir.path().join("extensions");
+        let first = tool_pack("com.example.tools", "1", &[]);
+        let first_entry = entry("com.example.tools", "1", Trust::Verified, &[], &first);
+        let old = install_from_verified_entry(
+            &reg,
+            &root,
+            &first_entry,
+            &first,
+            ExtractLimits::default(),
+        )
+        .unwrap();
+        let revision = reg.record_revision(&first_entry.id);
+        let mut changed = first.clone();
+        changed.push(b' ');
+        let update = entry(&first_entry.id, "1", Trust::Verified, &[], &changed);
+        let new = stage_artifact(&root, &update, &changed, ExtractLimits::default()).unwrap();
+        reg.set_enabled(&first_entry.id, false).unwrap();
+        let record = plan_record(&update, vec![], None, vec![], ApprovalDigests::default());
+        assert!(reg.install_if_current(record.clone(), revision).is_err());
+        assert_eq!(
+            std::fs::read(old.join("pack.grainpack.json")).unwrap(),
+            first
+        );
+        assert_eq!(
+            std::fs::read(new.join("pack.grainpack.json")).unwrap(),
+            changed
+        );
+        let fresh = reg.record_revision(&first_entry.id);
+        let registry_path = dir.path().join("extensions.json");
+        let persisted = std::fs::read(&registry_path).unwrap();
+        std::fs::remove_file(&registry_path).unwrap();
+        std::fs::create_dir(&registry_path).unwrap();
+        assert!(reg.install_if_current(record, fresh).is_err());
+        assert_eq!(
+            reg.record(&first_entry.id)
+                .unwrap()
+                .artifact_sha256
+                .as_deref(),
+            Some(update.sha256.as_str())
+        );
+        std::fs::remove_dir(&registry_path).unwrap();
+        std::fs::write(&registry_path, persisted).unwrap();
+        let restarted = ExtensionsRegistry::load(dir.path(), false).unwrap();
+        assert_eq!(
+            restarted
+                .record(&first_entry.id)
+                .unwrap()
+                .artifact_sha256
+                .as_deref(),
+            Some(first_entry.sha256.as_str())
+        );
+        // Both the in-memory owner and the last persisted owner have valid bytes.
+        assert!(old.join("pack.grainpack.json").exists());
+        assert!(new.join("pack.grainpack.json").exists());
+    }
 
     #[test]
     fn stale_verified_install_cannot_stage_or_restore_disabled_record() {

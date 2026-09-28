@@ -181,7 +181,11 @@ function useInstalledExtensions(): InstalledController {
           reason instanceof Error ? reason.message : String(reason);
         const approval = parseApprovalRequest(message);
         const conflict = parseSlotConflict(message);
-        if (approval) setPending({ card, ...approval });
+        if (approval)
+          setPending({
+            card: { ...card, name: approval.reviewedName },
+            ...approval,
+          });
         else if (conflict) setContested({ card, conflict });
         else setError(message);
       } finally {
@@ -224,12 +228,13 @@ function useInstalledExtensions(): InstalledController {
 
   const approve = useCallback(async () => {
     if (!pending) return;
-    const { card, permissions } = pending;
+    const { card, permissions, approvalDigest } = pending;
     setPending(null);
     setBusy(card.id);
     try {
-      unwrapResult(await commands.extensionGrant(card.id, permissions));
-      unwrapResult(await commands.extensionSetEnabled(card.id, true));
+      unwrapResult(
+        await commands.extensionGrant(card.id, permissions, approvalDigest),
+      );
       await refresh();
     } catch (reason) {
       const message = reason instanceof Error ? reason.message : String(reason);

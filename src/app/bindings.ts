@@ -979,24 +979,19 @@ async extensionRecommendationLabRemove() : Promise<Result<null, string>> {
 }
 },
 /**
- * Record the user's approval of what an extension asked for (SPEC §6) —
- * capabilities, and the prompt layers it contributes. Called by the permission
- * sheet on Approve; the caller then retries enable.
+ * Approve the reviewed tool permissions, declarations and account configuration,
+ * then enable the extension in the same checked registry mutation.
  *
  * Grants are clamped to what the manifest actually requests, so neither a
  * compromised frontend nor a stale sheet can widen an extension's reach beyond
  * what the user was shown.
  *
- * **Prompt layers are approved here too**, by the same act and with no
- * parameter of their own: the approved value is recomputed from the pack on
- * disk, so what gets recorded is necessarily the text the sheet just rendered
- * and never something the caller supplies. An inert pack whose only ask is a
- * prompt layer therefore approves through `extension_grant(id, [])` — one
- * approval act rather than a second command that could drift from this one.
+ * Approve the exact package/registry identity shown by the permission sheet
+ * and enable it in one checked mutation. A changed review needs a fresh sheet.
  */
-async extensionGrant(id: string, permissions: string[]) : Promise<Result<null, string>> {
+async extensionGrant(id: string, permissions: string[], approvalDigest: string) : Promise<Result<null, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("extension_grant", { id, permissions }) };
+    return { status: "ok", data: await TAURI_INVOKE("extension_grant", { id, permissions, approvalDigest }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };

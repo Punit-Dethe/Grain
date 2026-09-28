@@ -1207,6 +1207,10 @@ pub fn extension_set_enabled(
         }
         // Imported packs: registry bit + payload application.
         pack_id if reg.is_installed(pack_id) => {
+            let revision = reg.record_revision(pack_id);
+            let record = reg
+                .record(pack_id)
+                .ok_or("extension is no longer installed")?;
             // [GRAIN] Phase 5A (DISTRIBUTION-PLAN §3.1, §5.3): a revoked
             // extension cannot run again, enforced from the cached revocation
             // list BEFORE a worker is ever spawned — so it holds even if the
@@ -1215,10 +1219,7 @@ pub fn extension_set_enabled(
                 if let Some(store) =
                     app.try_state::<std::sync::Arc<crate::grain_store::StoreState>>()
                 {
-                    let version = reg
-                        .record(pack_id)
-                        .map(|r| r.installed_version)
-                        .unwrap_or_default();
+                    let version = &record.installed_version;
                     if let Some(grain_sdk::RevocationState::Revoked) =
                         store.revocation_state(pack_id, &version)
                     {
@@ -1247,7 +1248,7 @@ pub fn extension_set_enabled(
             //
             // Approve scoped permissions, exact tools and account configuration together.
             if enabled {
-                let granted = reg.record(pack_id).map(|r| r.granted).unwrap_or_default();
+                let granted = &record.granted;
                 let missing: Vec<String> = if pack.has_runtime() {
                     pack.manifest
                         .permissions
@@ -1260,24 +1261,19 @@ pub fn extension_set_enabled(
                 };
                 let declared_actions = &pack.manifest.contributes.actions;
                 let actions_unapproved = !declared_actions.is_empty() && {
-                    let approved = reg
-                        .record(pack_id)
-                        .and_then(|r| r.actions_approved)
-                        .unwrap_or_default();
-                    approved != ext::actions_fingerprint(declared_actions)
+                    record.actions_approved.as_deref()
+                        != Some(ext::actions_fingerprint(declared_actions).as_str())
                 };
                 let declared_authentication = pack.manifest.contributes.authentication.as_ref();
                 let authentication_unapproved = declared_authentication.is_some() && {
-                    let approved = reg
-                        .record(pack_id)
-                        .and_then(|record| record.authentication_approved)
-                        .unwrap_or_default();
-                    approved
-                        != declared_authentication
-                            .map(ext::authentication_fingerprint)
-                            .unwrap_or_default()
+                    record.authentication_approved
+                        != declared_authentication.map(ext::authentication_fingerprint)
                 };
                 if !missing.is_empty() || actions_unapproved || authentication_unapproved {
+                    reg.with_current_record(pack_id, revision, |_| ())
+                        .map_err(|error| error.to_string())?;
+                    let approval_digest = ext::approval_fingerprint(&record, &pack)
+                        .map_err(|error| error.to_string())?;
                     let actions: Vec<ActionInfo> = if actions_unapproved {
                         declared_actions.iter().map(ActionInfo::from_decl).collect()
                     } else {
@@ -1289,6 +1285,8 @@ pub fn extension_set_enabled(
                     // One sheet carrying all three. Two sheets in a row is how a
                     // user learns to click through without reading.
                     return Err(serde_json::json!({
+                        "approvalDigest": approval_digest,
+                        "reviewedName": pack.manifest.name,
                         "needsPermissions": missing,
                         "needsPromptLayers": [],
                         "needsActions": actions,
@@ -1298,7 +1296,7 @@ pub fn extension_set_enabled(
                     .to_string());
                 }
             }
-            reg.set_enabled(pack_id, true)
+            reg.set_enabled_at_revision(pack_id, true, revision)
                 .map_err(|error| error.to_string())?;
             // The activation/transform index is what the paste path and event
             // bus read; it must never lag the registry.
@@ -1342,78 +1340,6 @@ fn read_pack_input(path: &std::path::Path) -> Result<Vec<u8>, String> {
     Ok(bytes)
 }
 
-/// A pack file replacement that rolls itself back unless the registry update
-/// succeeds. The random, create-new temporary cannot be pre-planted as a
-/// symlink, and moving the old destination aside avoids following one.
-struct PendingPackReplacement {
-    output: std::path::PathBuf,
-    backup: Option<std::path::PathBuf>,
-    committed: bool,
-}
-
-impl PendingPackReplacement {
-    fn begin(output: std::path::PathBuf, bytes: &[u8]) -> Result<Self, String> {
-        use std::io::Write;
-
-        let parent = output.parent().ok_or("pack path has no parent")?;
-        std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
-        let nonce = uuid::Uuid::new_v4().simple();
-        let temp = parent.join(format!(".grainpack-{nonce}.tmp"));
-        let backup = parent.join(format!(".grainpack-{nonce}.previous"));
-        let mut file = std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&temp)
-            .map_err(|error| error.to_string())?;
-        if let Err(error) = file.write_all(bytes).and_then(|_| file.sync_all()) {
-            let _ = std::fs::remove_file(&temp);
-            return Err(error.to_string());
-        }
-        drop(file);
-
-        let backup = if output.exists() {
-            if let Err(error) = std::fs::rename(&output, &backup) {
-                let _ = std::fs::remove_file(&temp);
-                return Err(error.to_string());
-            }
-            Some(backup)
-        } else {
-            None
-        };
-        if let Err(error) = std::fs::rename(&temp, &output) {
-            let _ = std::fs::remove_file(&temp);
-            if let Some(backup) = &backup {
-                let _ = std::fs::rename(backup, &output);
-            }
-            return Err(error.to_string());
-        }
-        Ok(Self {
-            output,
-            backup,
-            committed: false,
-        })
-    }
-
-    fn commit(mut self) {
-        if let Some(backup) = self.backup.take() {
-            let _ = std::fs::remove_file(backup);
-        }
-        self.committed = true;
-    }
-}
-
-impl Drop for PendingPackReplacement {
-    fn drop(&mut self) {
-        if self.committed {
-            return;
-        }
-        let _ = std::fs::remove_file(&self.output);
-        if let Some(backup) = self.backup.take() {
-            let _ = std::fs::rename(backup, &self.output);
-        }
-    }
-}
-
 fn imported_update_can_stay_enabled(
     prior: Option<&grain_core::extensions::ExtensionRecord>,
     pack: &grain_sdk::GrainPack,
@@ -1449,6 +1375,104 @@ fn imported_update_can_stay_enabled(
 #[cfg(test)]
 mod imported_update_security_tests {
     use super::*;
+
+    #[test]
+    fn permission_review_binds_source_auth_grants_and_execution_identity() {
+        let pack = auth_pack("https://login.example.com/oauth/token");
+        let record = approved_record(&pack);
+        let digest = grain_core::extensions::approval_fingerprint(&record, &pack).unwrap();
+        for mode in ["source", "auth", "identity", "grant", "version", "wrong_id"] {
+            let mut record = record.clone();
+            let mut changed = pack.clone();
+            match mode {
+                "source" => changed.manifest.entry_source.push_str("// replacement"),
+                "auth" => changed
+                    .manifest
+                    .contributes
+                    .authentication
+                    .as_mut()
+                    .unwrap()
+                    .scopes
+                    .push("write".into()),
+                "identity" => record.execution_generation += 1,
+                "grant" => record.granted.clear(),
+                "version" => record.installed_version.push('2'),
+                "wrong_id" => changed.manifest.id = "com.example.other".into(),
+                _ => unreachable!(),
+            }
+            assert!(
+                reviewed_grant_record(record, &changed, vec![], &digest).is_err(),
+                "{mode}"
+            );
+        }
+        assert!(reviewed_grant_record(record, &pack, vec![], &digest).is_ok());
+    }
+
+    #[test]
+    fn reviewed_grants_and_activation_have_one_owner_and_reject_replay() {
+        let dir = tempfile::tempdir().unwrap();
+        let registry = grain_core::extensions::ExtensionsRegistry::load(dir.path(), false).unwrap();
+        let pack = auth_pack("https://login.example.com/oauth/token");
+        let mut record = approved_record(&pack);
+        record.enabled = false;
+        record.granted.clear();
+        record.authentication_approved = None;
+        registry.install(record).unwrap();
+        let record = registry.record(&pack.manifest.id).unwrap();
+        let revision = registry.record_revision(&record.id);
+        let digest = grain_core::extensions::approval_fingerprint(&record, &pack).unwrap();
+        assert!(
+            reviewed_grant_record(record.clone(), &pack, vec!["auth".into()], &digest).is_err()
+        );
+        assert!(
+            reviewed_grant_record(record.clone(), &pack, vec!["capture".into()], &digest).is_err()
+        );
+        let approved = reviewed_grant_record(
+            record.clone(),
+            &pack,
+            pack.manifest.permissions.clone(),
+            &digest,
+        )
+        .unwrap();
+        registry
+            .approve_and_enable_if_current(approved, revision)
+            .unwrap();
+        let current = registry.record(&record.id).unwrap();
+        assert!(current.enabled);
+        assert_eq!(current.granted, pack.manifest.permissions);
+        assert!(current.authentication_approved.is_some());
+        assert!(
+            reviewed_grant_record(current, &pack, pack.manifest.permissions.clone(), &digest)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn explicit_disable_and_late_replacement_defeat_review_before_commit() {
+        let dir = tempfile::tempdir().unwrap();
+        let registry = grain_core::extensions::ExtensionsRegistry::load(dir.path(), false).unwrap();
+        let pack = auth_pack("https://login.example.com/oauth/token");
+        let mut record = approved_record(&pack);
+        record.enabled = false;
+        record.granted.clear();
+        registry.install(record).unwrap();
+        let record = registry.record(&pack.manifest.id).unwrap();
+        let revision = registry.record_revision(&record.id);
+        let digest = grain_core::extensions::approval_fingerprint(&record, &pack).unwrap();
+        let approved =
+            reviewed_grant_record(record, &pack, pack.manifest.permissions.clone(), &digest)
+                .unwrap();
+        registry.set_enabled(&pack.manifest.id, false).unwrap();
+        assert!(registry
+            .approve_and_enable_if_current(approved, revision)
+            .is_err());
+        assert!(!registry.is_enabled(&pack.manifest.id));
+        assert!(registry
+            .record(&pack.manifest.id)
+            .unwrap()
+            .granted
+            .is_empty());
+    }
 
     fn auth_pack(token_endpoint: &str) -> grain_sdk::GrainPack {
         serde_json::from_value(serde_json::json!({
@@ -1524,21 +1548,31 @@ mod imported_update_security_tests {
     }
 
     #[test]
-    fn pack_file_replacement_rolls_back_until_committed() {
+    fn imported_artifact_publication_never_replaces_another_owner() {
         let directory = tempfile::tempdir().unwrap();
-        let output = directory.path().join("extension.grainpack.json");
-        std::fs::write(&output, b"approved-old").unwrap();
-        {
-            let _pending =
-                PendingPackReplacement::begin(output.clone(), b"uncommitted-new").unwrap();
-            assert_eq!(std::fs::read(&output).unwrap(), b"uncommitted-new");
-        }
-        assert_eq!(std::fs::read(&output).unwrap(), b"approved-old");
-
-        PendingPackReplacement::begin(output.clone(), b"committed-new")
+        let publish = |bytes: &[u8]| {
+            grain_core::install::publish_artifact(
+                directory.path(),
+                "com.example.tools",
+                "1",
+                &grain_core::trust::sha256_hex(bytes),
+                bytes,
+            )
             .unwrap()
-            .commit();
-        assert_eq!(std::fs::read(output).unwrap(), b"committed-new");
+        };
+        let old = publish(b"approved-old");
+        let abandoned = publish(b"uncommitted-new");
+        let current = publish(b"committed-new");
+        assert_ne!(old, abandoned);
+        assert_ne!(abandoned, current);
+        assert_eq!(
+            std::fs::read(old.join("pack.grainpack.json")).unwrap(),
+            b"approved-old"
+        );
+        assert_eq!(
+            std::fs::read(current.join("pack.grainpack.json")).unwrap(),
+            b"committed-new"
+        );
     }
 
     #[test]
@@ -2129,7 +2163,20 @@ pub fn extension_import_pack(
         .ok_or("extensions registry unavailable")?;
     let id = pack.manifest.id.clone();
     let revision = reg.record_revision(&id);
-    let replacement = PendingPackReplacement::begin(pack_path(&app, &id)?, &stored)?;
+    reg.with_current_record(&id, revision, |_| ())
+        .map_err(|error| error.to_string())?;
+    let ctx = app
+        .try_state::<std::sync::Arc<grain_core::AppContext>>()
+        .ok_or("app context unavailable")?;
+    let artifact_hash = grain_core::trust::sha256_hex(&stored);
+    grain_core::install::publish_artifact(
+        &ctx.data_dir.join("extensions"),
+        &id,
+        &pack.manifest.version,
+        &artifact_hash,
+        &stored,
+    )
+    .map_err(|error| error.to_string())?;
     // Re-import/update of an installed pack must PRESERVE the user's state
     // (SPEC §6 update row) — resetting enabled/toggle order on update would
     // silently disable a working pack.
@@ -2147,7 +2194,7 @@ pub fn extension_import_pack(
             execution_generation: 0,
             toggle_seq: prior.as_ref().map(|r| r.toggle_seq).unwrap_or(0),
             installed_version: pack.manifest.version.clone(),
-            artifact_sha256: Some(grain_core::trust::sha256_hex(&stored)),
+            artifact_sha256: Some(artifact_hash),
             granted: prior
                 .as_ref()
                 .map(|record| {
@@ -2190,7 +2237,6 @@ pub fn extension_import_pack(
         revision,
     )
     .map_err(|e| e.to_string())?;
-    replacement.commit();
     if was_enabled && !stays_enabled && !dev_active {
         if let Some(prior) = &prior {
             crate::extension_host::stop_extension_generation(
@@ -2250,20 +2296,15 @@ pub fn extension_capture_app(
     Err("Extension application access is retired. Context belongs to the agent.".into())
 }
 
-/// Record the user's approval of what an extension asked for (SPEC §6) —
-/// capabilities, and the prompt layers it contributes. Called by the permission
-/// sheet on Approve; the caller then retries enable.
+/// Approve the reviewed tool permissions, declarations and account configuration,
+/// then enable the extension in the same checked registry mutation.
 ///
 /// Grants are clamped to what the manifest actually requests, so neither a
 /// compromised frontend nor a stale sheet can widen an extension's reach beyond
 /// what the user was shown.
 ///
-/// **Prompt layers are approved here too**, by the same act and with no
-/// parameter of their own: the approved value is recomputed from the pack on
-/// disk, so what gets recorded is necessarily the text the sheet just rendered
-/// and never something the caller supplies. An inert pack whose only ask is a
-/// prompt layer therefore approves through `extension_grant(id, [])` — one
-/// approval act rather than a second command that could drift from this one.
+/// Approve the exact package/registry identity shown by the permission sheet
+/// and enable it in one checked mutation. A changed review needs a fresh sheet.
 #[tauri::command]
 #[specta::specta]
 pub fn extension_grant(
@@ -2271,6 +2312,7 @@ pub fn extension_grant(
     window: tauri::WebviewWindow,
     id: String,
     permissions: Vec<String>,
+    approval_digest: String,
 ) -> Result<(), String> {
     use grain_core::extensions as ext;
     require_main_window(&window)?;
@@ -2278,10 +2320,50 @@ pub fn extension_grant(
         .try_state::<std::sync::Arc<ext::ExtensionsRegistry>>()
         .ok_or("extensions registry unavailable")?;
     let revision = reg.record_revision(&id);
-    let mut rec = reg
+    let rec = reg
         .record(&id)
         .ok_or_else(|| format!("'{id}' is not installed"))?;
-    let manifest = load_pack(&app, &id)?.manifest;
+    let pack = load_pack(&app, &id)?;
+    let rec = reviewed_grant_record(rec, &pack, permissions, &approval_digest)?;
+    if let Some(store) = app.try_state::<std::sync::Arc<crate::grain_store::StoreState>>() {
+        if store.revocation_state(&id, &rec.installed_version)
+            == Some(grain_sdk::RevocationState::Revoked)
+        {
+            return Err(serde_json::json!({"revoked": id}).to_string());
+        }
+    }
+    let prior_generation = rec.execution_generation;
+    let approved = reg.approve_and_enable_if_current(rec, revision);
+    if reg
+        .record(&id)
+        .is_none_or(|current| current.execution_generation != prior_generation)
+    {
+        crate::extension_host::stop_extension_generation(
+            &id,
+            prior_generation,
+            "extension permissions changed",
+        );
+    }
+    crate::extension_host::refresh_index(&app);
+    approved.map(|_| ()).map_err(|error| error.to_string())
+}
+
+fn reviewed_grant_record(
+    mut rec: grain_core::extensions::ExtensionRecord,
+    pack: &grain_sdk::GrainPack,
+    permissions: Vec<String>,
+    approval_digest: &str,
+) -> Result<grain_core::extensions::ExtensionRecord, String> {
+    use grain_core::extensions as ext;
+    pack.validate_tool_only()?;
+    if pack.manifest.id != rec.id {
+        return Err("Reviewed package identity does not match the installed extension.".into());
+    }
+    if ext::approval_fingerprint(&rec, pack).map_err(|error| error.to_string())? != approval_digest
+    {
+        return Err("The extension changed after review. Open a fresh permission sheet.".into());
+    }
+    let manifest = &pack.manifest;
     if let Some(extra) = permissions
         .iter()
         .find(|p| !manifest.permissions.contains(p))
@@ -2305,9 +2387,14 @@ pub fn extension_grant(
         .as_ref()
         .map(ext::authentication_fingerprint);
     rec.recommend_approved = None;
-    reg.install_if_current(rec, revision)
-        .map(|_| ())
-        .map_err(|e| e.to_string())
+    if manifest
+        .permissions
+        .iter()
+        .any(|permission| !rec.granted.contains(permission))
+    {
+        return Err("Review all requested permissions before enabling this extension.".into());
+    }
+    Ok(rec)
 }
 
 /// Record the user's answer to a slot takeover prompt (SPEC §3.2). Hands `slot`

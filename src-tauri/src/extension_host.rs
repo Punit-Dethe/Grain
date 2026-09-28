@@ -2495,7 +2495,11 @@ pub fn load_manifest_result(app: &AppHandle, id: &str) -> Result<GrainPack, Stri
             if !crate::settings::get_settings(app).extension_developer_mode {
                 return Err("developer mode is disabled".into());
             }
-            return crate::dev_extensions::load_project(&path).map(|project| project.pack);
+            let project = crate::dev_extensions::load_project(&path)?;
+            if project.pack.manifest.id != id {
+                return Err("Development project id changed; unload and add it again.".into());
+            }
+            return Ok(project.pack);
         }
     }
     let ctx = app
@@ -2505,56 +2509,58 @@ pub fn load_manifest_result(app: &AppHandle, id: &str) -> Result<GrainPack, Stri
     let installed_record = app
         .try_state::<Arc<grain_core::extensions::ExtensionsRegistry>>()
         .and_then(|registry| registry.record(id));
-    // Legacy single-file location (manual import, seeded built-ins).
+    if let Some(record) = installed_record {
+        return read_installed_pack(&ext_dir, &record);
+    }
+    Err(format!("no installed pack for '{id}'"))
+}
+
+fn read_installed_pack(
+    ext_dir: &std::path::Path,
+    record: &grain_core::extensions::ExtensionRecord,
+) -> Result<GrainPack, String> {
+    let id = &record.id;
+    grain_sdk::validate_extension_id(id)?;
+    grain_sdk::validate_extension_version(&record.installed_version)?;
+    let hash = record.artifact_sha256.as_deref().ok_or_else(|| {
+        format!("extension '{id}' has no artifact hash; reimport/reinstall it before use")
+    })?;
+    let artifact = grain_core::install::artifact_dir(ext_dir, id, &record.installed_version, hash)
+        .map_err(|error| error.to_string())?
+        .join("pack.grainpack.json");
+    let trusted = record.trust != grain_sdk::Trust::Dev;
+    if artifact.exists() {
+        // A corrupt current artifact must fail, never fall back to stale bytes.
+        return read_pack_file(
+            &artifact,
+            trusted,
+            Some(hash),
+            id,
+            Some(&record.installed_version),
+        );
+    }
+    // Existing installations keep their old layout; every fallback is still
+    // checked against the recorded hash, id and version before use.
     let legacy = ext_dir.join(format!("{id}.grainpack.json"));
-    if legacy.exists()
-        && installed_record
-            .as_ref()
-            .is_none_or(|record| record.trust == grain_sdk::Trust::Dev)
-    {
-        let expected = installed_record
-            .as_ref()
-            .and_then(|record| record.artifact_sha256.as_deref());
-        if installed_record.is_some() && expected.is_none() {
-            return Err(format!(
-                "extension '{id}' has no artifact hash; reimport it before use"
-            ));
-        }
+    if !trusted && legacy.exists() {
         return read_pack_file(
             &legacy,
             false,
-            expected,
+            Some(hash),
             id,
-            installed_record
-                .as_ref()
-                .map(|record| record.installed_version.as_str()),
+            Some(&record.installed_version),
         );
     }
-    // [GRAIN] Phase 5B: a store-installed pack lives in its versioned directory
-    // `<id>/<version>/pack.grainpack.json` (SPEC §5.2 — atomic, previous-version
-    // retained). Resolve it from the record's installed version.
-    if let Some(rec) = installed_record {
-        if rec.trust == grain_sdk::Trust::Dev {
-            return Err(format!("no manually imported pack file for '{id}'"));
-        }
-        grain_sdk::validate_extension_version(&rec.installed_version)?;
-        let versioned = grain_core::install::version_dir(&ext_dir, id, &rec.installed_version)
-            .join("pack.grainpack.json");
-        if versioned.exists() {
-            let expected = rec.artifact_sha256.as_deref();
-            if expected.is_none() && rec.trust != grain_sdk::Trust::Dev {
-                return Err(format!(
-                    "verified extension '{id}' has no artifact hash; reinstall it before use"
-                ));
-            }
-            return read_pack_file(
-                &versioned,
-                true,
-                expected,
-                id,
-                Some(rec.installed_version.as_str()),
-            );
-        }
+    let versioned = grain_core::install::version_dir(ext_dir, id, &record.installed_version)
+        .join("pack.grainpack.json");
+    if versioned.exists() {
+        return read_pack_file(
+            &versioned,
+            trusted,
+            Some(hash),
+            id,
+            Some(&record.installed_version),
+        );
     }
     Err(format!("no pack file for '{id}'"))
 }
@@ -2746,6 +2752,67 @@ pub fn reconcile_builtin_packs(app: &AppHandle) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn installed_hash_owner_selects_immutable_bytes_before_legacy_layouts() {
+        let dir = tempfile::tempdir().unwrap();
+        let pack = pack_of("");
+        let mut record = record_for(&pack);
+        let bytes = serde_json::to_vec(&pack).unwrap();
+        let hash = grain_core::trust::sha256_hex(&bytes);
+        record.artifact_sha256 = Some(hash.clone());
+        std::fs::write(
+            dir.path().join(format!("{}.grainpack.json", record.id)),
+            b"stale shadow",
+        )
+        .unwrap();
+        let artifact = grain_core::install::publish_artifact(
+            dir.path(),
+            &record.id,
+            &record.installed_version,
+            &hash,
+            &bytes,
+        )
+        .unwrap();
+        assert!(read_installed_pack(dir.path(), &record).is_ok());
+        std::fs::write(artifact.join("pack.grainpack.json"), b"corrupt").unwrap();
+        // Even a matching legacy copy cannot hide a corrupt current owner.
+        std::fs::write(
+            dir.path().join(format!("{}.grainpack.json", record.id)),
+            &bytes,
+        )
+        .unwrap();
+        assert!(read_installed_pack(dir.path(), &record).is_err());
+    }
+
+    #[test]
+    fn legacy_flat_and_versioned_packages_require_recorded_hash_on_restart() {
+        for trusted in [false, true] {
+            let dir = tempfile::tempdir().unwrap();
+            let pack = pack_of("");
+            let mut record = record_for(&pack);
+            let bytes = serde_json::to_vec(&pack).unwrap();
+            record.artifact_sha256 = Some(grain_core::trust::sha256_hex(&bytes));
+            let path = if trusted {
+                record.trust = grain_sdk::Trust::Verified;
+                let version = grain_core::install::version_dir(
+                    dir.path(),
+                    &record.id,
+                    &record.installed_version,
+                );
+                std::fs::create_dir_all(&version).unwrap();
+                version.join("pack.grainpack.json")
+            } else {
+                dir.path().join(format!("{}.grainpack.json", record.id))
+            };
+            std::fs::write(&path, &bytes).unwrap();
+            assert!(read_installed_pack(dir.path(), &record).is_ok());
+            std::fs::write(&path, b"changed").unwrap();
+            assert!(read_installed_pack(dir.path(), &record).is_err());
+            record.artifact_sha256 = None;
+            assert!(read_installed_pack(dir.path(), &record).is_err());
+        }
+    }
 
     #[test]
     fn native_operation_capacity_refuses_before_dispatch_and_releases_on_drop() {

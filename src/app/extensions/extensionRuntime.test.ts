@@ -1,4 +1,11 @@
 import { describe, expect, it } from "vitest";
+
+const reviewError = (body: string): string =>
+  JSON.stringify({
+    ...JSON.parse(body),
+    approvalDigest: "a".repeat(64),
+    reviewedName: "Test tools",
+  });
 import type {
   ExtensionCard,
   ExtensionSettingRow,
@@ -226,8 +233,12 @@ describe("extension collection helpers", () => {
 
   it("parses permission and slot holds", () => {
     expect(
-      parseApprovalRequest('{"needsPermissions":["storage","open:url"]}'),
+      parseApprovalRequest(
+        reviewError('{"needsPermissions":["storage","open:url"]}'),
+      ),
     ).toEqual({
+      approvalDigest: "a".repeat(64),
+      reviewedName: "Test tools",
       permissions: ["storage", "open:url"],
       promptLayers: [],
       actions: [],
@@ -247,9 +258,13 @@ describe("extension collection helpers", () => {
     // would fail with a raw JSON string.
     expect(
       parseApprovalRequest(
-        '{"needsPermissions":[],"needsPromptLayers":[{"id":"jira","target":"additive","text":"Be terse.","everywhere":false,"app":[],"website":["jira."],"category":[]}]}',
+        reviewError(
+          '{"needsPermissions":[],"needsPromptLayers":[{"id":"jira","target":"additive","text":"Be terse.","everywhere":false,"app":[],"website":["jira."],"category":[]}]}',
+        ),
       ),
     ).toEqual({
+      approvalDigest: "a".repeat(64),
+      reviewedName: "Test tools",
       permissions: [],
       promptLayers: [
         {
@@ -275,14 +290,20 @@ describe("extension collection helpers", () => {
     // because an extension can declare one while asking for no capability the
     // sheet would otherwise mention.
     const parsed = parseApprovalRequest(
-      '{"needsPermissions":[],"needsActions":[{"id":"next","title":"Skip to the next track","confirms":false,"everywhere":true,"app":[],"website":[]}]}',
+      reviewError(
+        '{"needsPermissions":[],"needsActions":[{"id":"next","title":"Skip to the next track","confirms":false,"everywhere":true,"app":[],"website":[]}]}',
+      ),
     );
     expect(parsed?.actions).toHaveLength(1);
     expect(parsed?.actions[0]?.title).toBe("Skip to the next track");
   });
 
   it("opens approval for recommendation or authentication alone", () => {
-    expect(parseApprovalRequest('{"needsRecommendation":true}')).toEqual({
+    expect(
+      parseApprovalRequest(reviewError('{"needsRecommendation":true}')),
+    ).toEqual({
+      approvalDigest: "a".repeat(64),
+      reviewedName: "Test tools",
       permissions: [],
       promptLayers: [],
       actions: [],
@@ -291,9 +312,13 @@ describe("extension collection helpers", () => {
     });
     expect(
       parseApprovalRequest(
-        '{"needsAuthentication":{"provider_name":"GitHub","scopes":["read:user"],"api_hosts":["api.github.com"],"authorization_host":"github.com","token_host":"github.com"}}',
+        reviewError(
+          '{"needsAuthentication":{"provider_name":"GitHub","scopes":["read:user"],"api_hosts":["api.github.com"],"authorization_host":"github.com","token_host":"github.com"}}',
+        ),
       ),
     ).toEqual({
+      approvalDigest: "a".repeat(64),
+      reviewedName: "Test tools",
       permissions: [],
       promptLayers: [],
       actions: [],
@@ -308,9 +333,32 @@ describe("extension collection helpers", () => {
     });
     expect(
       parseApprovalRequest(
-        '{"needsPermissions":["storage"],"needsAuthentication":{"provider_name":"GitHub","scopes":[42]}}',
+        reviewError(
+          '{"needsPermissions":["storage"],"needsAuthentication":{"provider_name":"GitHub","scopes":[42]}}',
+        ),
       ),
     ).toBeNull();
+  });
+
+  it("refuses permission sheets without a valid package review identity", () => {
+    for (const approvalDigest of [
+      undefined,
+      null,
+      12,
+      "",
+      "a".repeat(63),
+      "g".repeat(64),
+    ]) {
+      expect(
+        parseApprovalRequest(
+          JSON.stringify({ needsPermissions: ["storage"], approvalDigest }),
+        ),
+      ).toBeNull();
+    }
+    expect(
+      parseApprovalRequest(reviewError('{"needsPermissions":["storage"]}'))
+        ?.approvalDigest,
+    ).toBe("a".repeat(64));
   });
 
   it("describes when a contributed layer applies", () => {

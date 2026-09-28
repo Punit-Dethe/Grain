@@ -67,6 +67,8 @@ export function slotLabel(slot: string): string {
 }
 
 export interface ApprovalRequest {
+  approvalDigest: string;
+  reviewedName: string;
   permissions: string[];
   promptLayers: PromptLayerInfo[];
   actions: ActionInfo[];
@@ -92,12 +94,21 @@ export interface AuthenticationApproval {
 export function parseApprovalRequest(error: unknown): ApprovalRequest | null {
   try {
     const parsed = JSON.parse(String(error)) as {
+      approvalDigest?: unknown;
+      reviewedName?: unknown;
       needsPermissions?: unknown;
       needsPromptLayers?: unknown;
       needsActions?: unknown;
       needsAuthentication?: unknown;
       needsRecommendation?: unknown;
     };
+    if (
+      typeof parsed.approvalDigest !== "string" ||
+      !/^[a-f0-9]{64}$/.test(parsed.approvalDigest)
+    )
+      return null;
+    if (typeof parsed.reviewedName !== "string" || !parsed.reviewedName.trim())
+      return null;
     const permissions = Array.isArray(parsed.needsPermissions)
       ? (parsed.needsPermissions as string[])
       : [];
@@ -138,6 +149,8 @@ export function parseApprovalRequest(error: unknown): ApprovalRequest | null {
     )
       return null;
     return {
+      approvalDigest: parsed.approvalDigest,
+      reviewedName: parsed.reviewedName,
       permissions,
       promptLayers,
       actions,

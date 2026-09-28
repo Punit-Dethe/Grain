@@ -331,6 +331,36 @@ pub fn native_call_fingerprint(
     Ok(format!("{:x}", writer.0.finalize()))
 }
 
+/// Consent refers to the complete reviewed package and this runtime registry
+/// identity. No pending-approval cache or secret is retained by the host.
+pub fn approval_fingerprint(
+    record: &ExtensionRecord,
+    pack: &grain_sdk::GrainPack,
+) -> Result<String, serde_json::Error> {
+    use sha2::{Digest, Sha256};
+    struct HashWriter(Sha256);
+    impl std::io::Write for HashWriter {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0.update(bytes);
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let mut writer = HashWriter(Sha256::new());
+    serde_json::to_writer(
+        &mut writer,
+        &(
+            "grain.extension.review.v1",
+            record.execution_generation,
+            record,
+            pack,
+        ),
+    )?;
+    Ok(format!("{:x}", writer.0.finalize()))
+}
+
 /// Fingerprint the declared actions, for the approval check on
 /// [`ExtensionRecord::actions_approved`].
 ///
@@ -1060,7 +1090,16 @@ impl ExtensionsRegistry {
     /// Enabling into an occupied slot is refused here as well as at the command
     /// layer, so a caller that forgets to check cannot steal a slot by accident.
     pub fn set_enabled(&self, id: &str, enabled: bool) -> Result<bool> {
-        self.set_enabled_if_current(id, enabled, None, || Some(()))
+        self.set_enabled_if_current(id, enabled, None, None, || Some(()))
+    }
+
+    pub fn set_enabled_at_revision(
+        &self,
+        id: &str,
+        enabled: bool,
+        revision: RecordRevision,
+    ) -> Result<bool> {
+        self.set_enabled_if_current(id, enabled, None, Some(revision), || Some(()))
     }
 
     /// A late resource observer may disable only the execution it sampled.
@@ -1077,7 +1116,7 @@ impl ExtensionsRegistry {
         generation: u64,
         owner: impl FnOnce() -> Option<G>,
     ) -> Result<bool> {
-        self.set_enabled_if_current(id, false, Some(generation), owner)
+        self.set_enabled_if_current(id, false, Some(generation), None, owner)
     }
 
     fn set_enabled_if_current<G>(
@@ -1085,6 +1124,7 @@ impl ExtensionsRegistry {
         id: &str,
         enabled: bool,
         expected_generation: Option<u64>,
+        expected_revision: Option<RecordRevision>,
         owner: impl FnOnce() -> Option<G>,
     ) -> Result<bool> {
         if enabled {
@@ -1097,6 +1137,9 @@ impl ExtensionsRegistry {
         }
         let changed = {
             let mut state = self.state.write().unwrap();
+            if let Some(revision) = expected_revision {
+                revision.check(&state, id)?;
+            }
             if expected_generation.is_some_and(|generation| {
                 state
                     .records
@@ -1109,13 +1152,24 @@ impl ExtensionsRegistry {
                 if let Some(reason) = state.quarantined.get(id) {
                     anyhow::bail!("extension is quarantined: {reason}");
                 }
+                if let Some(record) = state.records.get(id) {
+                    for slot in &record.slots {
+                        if let Some(occupant) = state
+                            .slot_claims
+                            .get(slot)
+                            .filter(|occupant| occupant.as_str() != id)
+                        {
+                            anyhow::bail!("slot '{slot}' is occupied by '{occupant}'");
+                        }
+                    }
+                }
             }
             let next = state.next_toggle_seq;
             let Some(_owner) = owner() else {
                 return Ok(false);
             };
             let declared = match state.records.get_mut(id) {
-                Some(rec) if rec.enabled != enabled => {
+                Some(rec) if rec.enabled != enabled || !enabled => {
                     rec.execution_generation = next_execution_generation()?;
                     rec.enabled = enabled;
                     if enabled {
@@ -1173,7 +1227,7 @@ impl ExtensionsRegistry {
     /// Install a pack record (import path lands in the next chunk; the
     /// centre-variant import uses this today via `load`).
     pub fn install(&self, record: ExtensionRecord) -> Result<()> {
-        self.install_owned(record, None).map(|_| ())
+        self.install_owned(record, None, false).map(|_| ())
     }
 
     pub fn install_if_current(
@@ -1181,13 +1235,24 @@ impl ExtensionsRegistry {
         record: ExtensionRecord,
         revision: RecordRevision,
     ) -> Result<u64> {
-        self.install_owned(record, Some(revision))
+        self.install_owned(record, Some(revision), false)
+    }
+
+    /// Grant and enable the reviewed tool-only record in one mutation. No caller
+    /// may use this to activate a quarantined or retired slot-bearing package.
+    pub fn approve_and_enable_if_current(
+        &self,
+        record: ExtensionRecord,
+        revision: RecordRevision,
+    ) -> Result<u64> {
+        self.install_owned(record, Some(revision), true)
     }
 
     fn install_owned(
         &self,
         mut record: ExtensionRecord,
         revision: Option<RecordRevision>,
+        approve: bool,
     ) -> Result<u64> {
         let generation;
         {
@@ -1195,7 +1260,28 @@ impl ExtensionsRegistry {
             if let Some(revision) = revision {
                 revision.check(&state, &record.id)?;
             }
-            record.execution_generation = next_execution_generation()?;
+            let reserved_generation = next_execution_generation()?;
+            if approve {
+                if !state.records.contains_key(&record.id) {
+                    anyhow::bail!("Extension is not installed.");
+                }
+                if let Some(reason) = state.quarantined.get(&record.id) {
+                    anyhow::bail!("extension is quarantined: {reason}");
+                }
+                if !record.slots.is_empty() {
+                    anyhow::bail!("Only tool-only packages can be approved.");
+                }
+                if !record.enabled {
+                    let next = state
+                        .next_toggle_seq
+                        .checked_add(1)
+                        .ok_or_else(|| anyhow::anyhow!("toggle sequence exhausted"))?;
+                    record.toggle_seq = state.next_toggle_seq;
+                    state.next_toggle_seq = next;
+                }
+                record.enabled = true;
+            }
+            record.execution_generation = reserved_generation;
             generation = record.execution_generation;
             let id = record.id.clone();
             state.quarantined.remove(&id);
@@ -1391,6 +1477,44 @@ impl ExtensionsRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reviewed_activation_and_normal_enable_refuse_stale_or_retired_owners() {
+        let dir = tmp();
+        let reg = ExtensionsRegistry::load(dir.path(), false).unwrap();
+        reg.install(pack("tools", &[])).unwrap();
+        let old = reg.record_revision("tools");
+        reg.set_enabled("tools", false).unwrap(); // explicit refusal while already off
+        assert!(reg.set_enabled_at_revision("tools", true, old).is_err());
+        assert!(reg
+            .approve_and_enable_if_current(reg.record("tools").unwrap(), old)
+            .is_err());
+        assert!(!reg.is_enabled("tools"));
+        let revision = reg.record_revision("tools");
+        let mut record = reg.record("tools").unwrap();
+        record.granted.push("storage".into());
+        reg.approve_and_enable_if_current(record, revision).unwrap();
+        let current = reg.record("tools").unwrap();
+        assert!(current.enabled);
+        assert_eq!(current.granted, vec!["storage"]);
+        assert!(reg
+            .approve_and_enable_if_current(current, revision)
+            .is_err());
+        reg.quarantine("tools", "retired").unwrap();
+        assert!(reg
+            .approve_and_enable_if_current(
+                reg.record("tools").unwrap(),
+                reg.record_revision("tools")
+            )
+            .is_err());
+        reg.install(pack("slots", &["output.destination"])).unwrap();
+        assert!(reg
+            .approve_and_enable_if_current(
+                reg.record("slots").unwrap(),
+                reg.record_revision("slots")
+            )
+            .is_err());
+    }
 
     #[test]
     fn revision_refuses_stale_writers_and_late_runtime_publication() {

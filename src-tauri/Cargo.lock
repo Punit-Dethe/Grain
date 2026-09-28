@@ -3020,6 +3020,7 @@ dependencies = [
  "sha2",
  "specta",
  "sys-locale",
+ "tempfile",
  "tokio",
  "zip 8.6.0",
 ]
