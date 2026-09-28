@@ -46,6 +46,33 @@ pub(crate) fn validate_argument_shape(arguments: &Value) -> Result<(), String> {
     bounded_json(arguments, false)
 }
 
+/// Bound native result JSON before retaining or interpreting its envelope.
+/// This is a value budget; the transport must independently bound raw bytes.
+pub fn validate_native_result(value: &Value) -> Result<(), String> {
+    bounded_json(value, false)
+}
+
+#[cfg(test)]
+#[test]
+fn native_result_budget_counts_encoded_bytes_nodes_and_depth() {
+    use serde_json::json;
+    assert!(validate_native_result(&json!({"ok": "hello"})).is_ok());
+    let at_limit = json!({"ok": "x".repeat(MAX_ARGUMENT_BYTES - 9)});
+    assert_eq!(
+        serde_json::to_vec(&at_limit).unwrap().len(),
+        MAX_ARGUMENT_BYTES
+    );
+    validate_native_result(&at_limit).unwrap();
+    assert!(validate_native_result(&json!({"ok": "x".repeat(MAX_ARGUMENT_BYTES - 8)})).is_err());
+    assert!(validate_native_result(&json!({"ok": "\n".repeat(MAX_ARGUMENT_BYTES / 2)})).is_err());
+    assert!(validate_native_result(&json!({"ok": vec![0; MAX_NODES]})).is_err());
+    let mut nested = Value::Null;
+    for _ in 0..MAX_DEPTH + 2 {
+        nested = json!([nested]);
+    }
+    assert!(validate_native_result(&nested).is_err());
+}
+
 fn compile(schema: &Value) -> Result<jsonschema::Validator, String> {
     if schema.get("type").and_then(Value::as_str) != Some("object") {
         return Err("the MCP input schema must declare an object".into());

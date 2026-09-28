@@ -15,10 +15,11 @@ use tauri::{AppHandle, Manager};
 use tokio::net::TcpStream;
 use tokio::sync::broadcast::error::RecvError;
 use tokio_tungstenite::{
-    accept_hdr_async,
+    accept_hdr_async_with_config,
     tungstenite::{
         handshake::server::{ErrorResponse, Request, Response},
         http::{header::ORIGIN, StatusCode, Uri},
+        protocol::WebSocketConfig,
         Message,
     },
 };
@@ -27,6 +28,18 @@ use tokio_tungstenite::{
 pub const EVENTS_PORT: u16 = 7124;
 static UNAUTHENTICATED_CONNECTIONS: AtomicUsize = AtomicUsize::new(0);
 const MAX_UNAUTHENTICATED_CONNECTIONS: usize = 64;
+
+// Applies before authentication to every client on this shared listener.
+// Bound fragmented messages as well as individual frames before JSON decoding.
+const MAX_INBOUND_WS_BYTES: usize = 512 * 1024;
+
+fn events_websocket_config() -> WebSocketConfig {
+    WebSocketConfig {
+        max_message_size: Some(MAX_INBOUND_WS_BYTES),
+        max_frame_size: Some(MAX_INBOUND_WS_BYTES),
+        ..WebSocketConfig::default()
+    }
+}
 
 /// [GRAIN] SPEC §7.1: the server-side token → identity table. Minted per app
 /// run; the pill's token is injected into its environment at spawn. A
@@ -349,26 +362,30 @@ async fn handle(stream: TcpStream, ctx: Arc<AppContext>, app: AppHandle) {
         }
     };
 
-    let ws = match accept_hdr_async(stream, |request: &Request, response: Response| {
-        let origin = request.headers().get(ORIGIN);
-        let allowed = match origin {
-            None => origin_allowed(None),
-            Some(value) => value
-                .to_str()
-                .is_ok_and(|value| origin_allowed(Some(value))),
-        };
-        if allowed {
-            return Ok(response);
-        }
+    let ws = match accept_hdr_async_with_config(
+        stream,
+        |request: &Request, response: Response| {
+            let origin = request.headers().get(ORIGIN);
+            let allowed = match origin {
+                None => origin_allowed(None),
+                Some(value) => value
+                    .to_str()
+                    .is_ok_and(|value| origin_allowed(Some(value))),
+            };
+            if allowed {
+                return Ok(response);
+            }
 
-        let offending = origin
-            .and_then(|value| value.to_str().ok())
-            .unwrap_or("<invalid Origin header>");
-        log::warn!("[GRAIN] events WS: rejected Origin '{offending}'");
-        let mut error = ErrorResponse::new(Some("WebSocket Origin not allowed".into()));
-        *error.status_mut() = StatusCode::FORBIDDEN;
-        Err(error)
-    })
+            let offending = origin
+                .and_then(|value| value.to_str().ok())
+                .unwrap_or("<invalid Origin header>");
+            log::warn!("[GRAIN] events WS: rejected Origin '{offending}'");
+            let mut error = ErrorResponse::new(Some("WebSocket Origin not allowed".into()));
+            *error.status_mut() = StatusCode::FORBIDDEN;
+            Err(error)
+        },
+        Some(events_websocket_config()),
+    )
     .await
     {
         Ok(ws) => ws,
@@ -469,23 +486,17 @@ async fn handle(stream: TcpStream, ctx: Arc<AppContext>, app: AppHandle) {
     // The authenticated role, not its capability set, decides which protocol
     // this socket speaks and whether the worker host tracks it for reaping.
     let is_worker = identity.role == crate::events_auth::ClientRole::Worker;
-    let last_activity = if is_worker {
-        let Some(activity) =
-            crate::extension_host::attach_connection(&identity.id, &session.token, out_tx.clone())
-        else {
+    if is_worker {
+        if !crate::extension_host::attach_connection(&identity.id, &session.token, out_tx.clone()) {
             return;
-        };
-        Some(activity)
+        }
     } else if identity.role == crate::events_auth::ClientRole::Pill {
         // [GRAIN] Greet the pill with the built-in SKIN it should wear. This
         // also decides the window's size, so it must land before the first show.
         if let Some(frame) = crate::pill_skin::welcome_frame(&app) {
             let _ = out_tx.send(Message::Text(frame.into()));
         }
-        None
-    } else {
-        None
-    };
+    }
 
     // Tools have only explicit call/result traffic, never a daemon event feed.
     // Do not even retain a broadcast receiver for idle extension workers.
@@ -523,14 +534,6 @@ async fn handle(stream: TcpStream, ctx: Arc<AppContext>, app: AppHandle) {
             // the pill never sends HostFrames.
             msg = read.next() => match msg {
                 Some(Ok(Message::Text(txt))) => {
-                    if let Some(la) = &last_activity {
-                        // Touch: feeds the extension host's idle reaper.
-                        let now = std::time::SystemTime::now()
-                            .duration_since(std::time::UNIX_EPOCH)
-                            .map(|d| d.as_secs())
-                            .unwrap_or(0);
-                        la.store(now, Ordering::Relaxed);
-                    }
                     if is_worker {
                         match serde_json::from_str::<grain_sdk::HostFrame>(&txt) {
                             Ok(grain_sdk::HostFrame::Request(req)) => {
@@ -1015,6 +1018,67 @@ fn kill_stray_pills() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn socket_limits_reject_large_frames_and_fragmented_messages() {
+        use tokio_tungstenite::tungstenite::protocol::frame::{
+            coding::{Data, OpCode},
+            Frame,
+        };
+        for fragmented in [false, true] {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let address = listener.local_addr().unwrap();
+            let server = tokio::spawn(async move {
+                let (socket, _) = listener.accept().await.unwrap();
+                let mut ws = tokio_tungstenite::accept_async_with_config(
+                    socket,
+                    Some(events_websocket_config()),
+                )
+                .await
+                .unwrap();
+                assert_eq!(
+                    ws.next().await.unwrap().unwrap(),
+                    Message::Text("normal".into())
+                );
+                let result = tokio::time::timeout(Duration::from_secs(2), ws.next())
+                    .await
+                    .unwrap()
+                    .unwrap();
+                assert!(matches!(
+                    result,
+                    Err(tokio_tungstenite::tungstenite::Error::Capacity(_))
+                ));
+            });
+            let (mut client, _) = tokio_tungstenite::connect_async(format!("ws://{address}"))
+                .await
+                .unwrap();
+            client.send(Message::Text("normal".into())).await.unwrap();
+            if fragmented {
+                let half = MAX_INBOUND_WS_BYTES / 2 + 1;
+                client
+                    .send(Message::Frame(Frame::message(
+                        vec![b'x'; half],
+                        OpCode::Data(Data::Text),
+                        false,
+                    )))
+                    .await
+                    .unwrap();
+                // Each fragment fits; their aggregate must still be rejected.
+                let _ = client
+                    .send(Message::Frame(Frame::message(
+                        vec![b'x'; half],
+                        OpCode::Data(Data::Continue),
+                        true,
+                    )))
+                    .await;
+            } else {
+                let _ = client
+                    .send(Message::Text("x".repeat(MAX_INBOUND_WS_BYTES + 1)))
+                    .await;
+            }
+            server.await.unwrap();
+        }
+    }
 
     #[tokio::test(flavor = "current_thread")]
     async fn event_listener_is_exclusive_and_rebinds_after_release() {

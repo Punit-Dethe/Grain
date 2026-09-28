@@ -131,13 +131,14 @@ struct Worker {
     token: String,
     /// Manifest/source and registry identity actually used by this worker.
     call_digest: Option<String>,
+    execution_generation: u64,
     /// `onStartup` workers are never reaped for idleness.
     resident: bool,
     /// Consecutive over-budget heap samples for this worker generation.
     memory_strikes: u32,
     kind: RuntimeKind,
-    /// Epoch seconds of the last frame from this worker; the reaper's clock.
-    /// `Arc` so the connection can bump it directly (no lock per frame).
+    /// Epoch seconds of the last user call/connection; maintenance never renews it.
+    /// User queue admission owns renewal; socket readers never bump it.
     last_activity: Arc<AtomicU64>,
     conn: Option<WorkerConn>,
     /// Paths only; the source map is loaded and parsed solely on failure.
@@ -192,6 +193,31 @@ impl Workers {
             return None;
         }
         map.remove(ext_id)
+    }
+
+    /// Recheck eligibility under the same lock used by queue admission.
+    fn remove_if_idle(
+        &self,
+        ext_id: &str,
+        token: &str,
+        now: u64,
+        idle_secs: u64,
+    ) -> Option<Worker> {
+        let mut map = self.map.lock().unwrap();
+        let worker = map.get(ext_id)?;
+        if worker.token != token || !Self::is_idle(worker, now, idle_secs) {
+            return None;
+        }
+        map.remove(ext_id)
+    }
+
+    fn is_idle(worker: &Worker, now: u64, idle_secs: u64) -> bool {
+        !worker.resident
+            && now.saturating_sub(worker.last_activity.load(Ordering::Relaxed)) > idle_secs
+            && worker
+                .conn
+                .as_ref()
+                .is_none_or(|conn| conn.pending.lock().unwrap().is_empty())
     }
 
     fn owns_token(&self, ext_id: &str, token: &str) -> bool {
@@ -268,6 +294,7 @@ impl Workers {
 
     /// Issue a `HostCall` to a connected worker and await its answer under
     /// `deadline`. Never holds the registry lock across the await.
+    #[cfg(test)]
     async fn call(
         &self,
         ext_id: &str,
@@ -322,7 +349,7 @@ impl Workers {
         method: &str,
         params: Value,
         dispatched: &AtomicBool,
-        expected_digest: Option<&str>,
+        expected_identity: Option<(&str, Instant)>,
     ) -> Result<QueuedCall, String> {
         let queued = {
             let map = self.map.lock().unwrap();
@@ -330,8 +357,8 @@ impl Workers {
             if token.is_some_and(|token| worker.token != token) {
                 return Err("worker generation changed".into());
             }
-            if expected_digest
-                .is_some_and(|expected| worker.call_digest.as_deref() != Some(expected))
+            if expected_identity
+                .is_some_and(|(expected, _)| worker.call_digest.as_deref() != Some(expected))
             {
                 return Err("worker tool identity changed".into());
             }
@@ -349,12 +376,18 @@ impl Workers {
                 calls: conn.pending.clone(),
                 id: call_id,
             };
+            if expected_identity.is_some_and(|(_, expires)| Instant::now() >= expires) {
+                return Err("deadline exceeded".into());
+            }
             // Queue under the registry lock so removal cannot overtake dispatch
             // or drain before the pending entry is installed.
             if conn.out_tx.send(Message::Text(json.into())).is_err() {
                 return Err("worker channel closed".into());
             }
             dispatched.store(true, Ordering::Release);
+            if method != "memory.sample" {
+                worker.last_activity.store(now_secs(), Ordering::Relaxed);
+            }
             QueuedCall {
                 pending: guard,
                 reply: rx,
@@ -389,31 +422,33 @@ impl Workers {
             .unwrap()
             .iter()
             .filter_map(|(id, w)| {
-                if w.resident {
-                    return None;
-                }
-                let idle = now.saturating_sub(w.last_activity.load(Ordering::Relaxed));
-                let busy = w
-                    .conn
-                    .as_ref()
-                    .map(|c| !c.pending.lock().unwrap().is_empty())
-                    .unwrap_or(false);
-                (idle > idle_secs && !busy).then(|| (id.clone(), w.token.clone()))
+                Self::is_idle(w, now, idle_secs).then(|| (id.clone(), w.token.clone()))
             })
             .collect()
     }
 
-    fn clear_memory_strikes(&self, ext_id: &str) {
-        if let Some(worker) = self.map.lock().unwrap().get_mut(ext_id) {
+    fn clear_memory_strikes(&self, ext_id: &str, token: &str) {
+        if let Some(worker) = self
+            .map
+            .lock()
+            .unwrap()
+            .get_mut(ext_id)
+            .filter(|worker| worker.token == token)
+        {
             worker.memory_strikes = 0;
         }
     }
 
-    fn record_memory_strike(&self, ext_id: &str) -> Option<u32> {
-        self.map.lock().unwrap().get_mut(ext_id).map(|worker| {
-            worker.memory_strikes += 1;
-            worker.memory_strikes
-        })
+    fn record_memory_strike(&self, ext_id: &str, token: &str) -> Option<u32> {
+        self.map
+            .lock()
+            .unwrap()
+            .get_mut(ext_id)
+            .filter(|worker| worker.token == token)
+            .map(|worker| {
+                worker.memory_strikes = worker.memory_strikes.saturating_add(1);
+                worker.memory_strikes
+            })
     }
 
     fn scripted_tokens(&self) -> Vec<(String, String)> {
@@ -426,13 +461,19 @@ impl Workers {
             .collect()
     }
 
-    fn scripted_connected_ids(&self) -> Vec<String> {
+    fn scripted_connected_tokens(&self) -> Vec<(String, String, u64)> {
         self.map
             .lock()
             .unwrap()
             .iter()
             .filter_map(|(id, worker)| {
-                (worker.kind == RuntimeKind::Scripted && worker.conn.is_some()).then(|| id.clone())
+                (worker.kind == RuntimeKind::Scripted && worker.conn.is_some()).then(|| {
+                    (
+                        id.clone(),
+                        worker.token.clone(),
+                        worker.execution_generation,
+                    )
+                })
             })
             .collect()
     }
@@ -1414,6 +1455,7 @@ fn spawn_worker(
         Worker {
             token: token.clone(),
             call_digest: Some(call_digest),
+            execution_generation: record.execution_generation,
             resident,
             memory_strikes: 0,
             kind: if pack.manifest.tier == grain_sdk::Tier::Native {
@@ -1545,13 +1587,26 @@ fn fail_supervisor(generation: u64, reason: &str) {
 /// supervisor to kill the Web Worker, and fail any in-flight host calls so their
 /// awaiters don't hang. Tears down the supervisor when the last worker dies.
 fn kill_worker_inner(ext_id: &str, reason: &str, token: Option<&str>, preserve_supervisor: bool) {
+    kill_worker_checked(ext_id, reason, token, preserve_supervisor, None);
+}
+
+fn kill_worker_checked(
+    ext_id: &str,
+    reason: &str,
+    token: Option<&str>,
+    preserve_supervisor: bool,
+    idle: Option<(u64, u64)>,
+) {
     let host = match HOST.get() {
         Some(h) => h,
         None => return,
     };
     let mut sup = host.supervisor.lock().unwrap();
     let worker = match token {
-        Some(token) => host.workers.remove_if_token(ext_id, token),
+        Some(token) => match idle {
+            Some((now, idle_secs)) => host.workers.remove_if_idle(ext_id, token, now, idle_secs),
+            None => host.workers.remove_if_token(ext_id, token),
+        },
         None => host.workers.remove(ext_id),
     };
     let worker = match worker {
@@ -1623,7 +1678,13 @@ fn reap_idle() {
         if crate::extension_session::is_owned_by(&id) {
             continue;
         }
-        kill_worker_inner(&id, "idle timeout", Some(&token), false);
+        kill_worker_checked(
+            &id,
+            "idle timeout",
+            Some(&token),
+            false,
+            Some((now_secs(), IDLE_REAP_SECS)),
+        );
     }
 }
 
@@ -1655,14 +1716,19 @@ async fn sample_worker_heaps() {
     let Some(host) = HOST.get() else {
         return;
     };
-    let ids = host.workers.scripted_connected_ids();
-    let samples = futures_util::future::join_all(ids.iter().map(|id| {
-        host.workers
-            .call(id, "memory.sample", Value::Null, MEMORY_SAMPLE_DEADLINE)
+    let ids = host.workers.scripted_connected_tokens();
+    let samples = futures_util::future::join_all(ids.iter().map(|(id, token, _)| {
+        host.workers.call_owned(
+            id,
+            Some(token),
+            "memory.sample",
+            Value::Null,
+            MEMORY_SAMPLE_DEADLINE,
+        )
     }))
     .await;
 
-    for (id, sample) in ids.into_iter().zip(samples) {
+    for ((id, token, generation), sample) in ids.into_iter().zip(samples) {
         let Ok(sample) = sample.and_then(parse_heap_sample) else {
             // Missing engine support or a transient worker failure is not an
             // over-budget reading and therefore never earns a strike.
@@ -1671,10 +1737,12 @@ async fn sample_worker_heaps() {
         match sample {
             HeapSample::Unsupported => {}
             HeapSample::Bytes(bytes) if bytes <= WORKER_HEAP_LIMIT_BYTES => {
-                host.workers.clear_memory_strikes(&id);
+                host.workers.clear_memory_strikes(&id, &token);
             }
             HeapSample::Bytes(bytes) => {
-                let strike = host.workers.record_memory_strike(&id).unwrap_or(0);
+                let Some(strike) = host.workers.record_memory_strike(&id, &token) else {
+                    continue;
+                };
                 log::warn!(
                     "[ext:{id}] life worker heap {} MiB exceeds {} MiB (strike {strike} of {MAX_STRIKES})",
                     bytes / (1024 * 1024),
@@ -1684,6 +1752,8 @@ async fn sample_worker_heaps() {
                     auto_disable(
                         &host.app,
                         &id,
+                        &token,
+                        generation,
                         format!(
                             "It repeatedly exceeded the {} MiB extension worker heap ceiling.",
                             WORKER_HEAP_LIMIT_BYTES / (1024 * 1024)
@@ -1697,17 +1767,17 @@ async fn sample_worker_heaps() {
 
 // ── Connection surface (called from events_server on the worker's WS) ────────
 
-/// A worker's WS authenticated: register its outbound channel and return the
-/// shared last-activity clock for the connection to bump on each frame. The
-/// token must match the current generation, so a stale socket cannot replace it.
+/// A worker's WS authenticated: register its outbound channel. Socket traffic
+/// must not renew idle ownership: maintenance replies would keep it alive forever.
+/// The token must match the current generation.
 pub fn attach_connection(
     ext_id: &str,
     token: &str,
     out_tx: mpsc::UnboundedSender<Message>,
-) -> Option<Arc<AtomicU64>> {
+) -> bool {
     match HOST.get() {
-        Some(h) => h.workers.attach(ext_id, token, out_tx),
-        None => None,
+        Some(h) => h.workers.attach(ext_id, token, out_tx).is_some(),
+        None => false,
     }
 }
 
@@ -1793,8 +1863,21 @@ pub async fn run_session_stage(
 // *what* it is handed (the full transcript, not extracted spans). Waking a cold
 // worker, the deadline pair, and the call/outcome shape are unchanged.
 
-/// Native tool reply deadline; expiry retires the exact worker generation.
-const HANDOFF_DEADLINE: Duration = Duration::from_secs(20);
+/// Absolute native operation budget, including validation, wake and reply.
+const NATIVE_OPERATION_DEADLINE: Duration = Duration::from_secs(20);
+
+fn native_time_remaining(
+    expires: Instant,
+    phase: grain_core::execution::DispatchPhase,
+) -> Result<Duration, ActionCallError> {
+    expires.checked_duration_since(Instant::now()).filter(|remaining| !remaining.is_zero()).ok_or_else(|| {
+        ActionCallError::Execution(grain_core::execution::ExecutionFailure::new(
+            phase,
+            grain_core::execution::FailureClass::Network,
+            "The native tool exceeded its operation deadline. Effects may have occurred if it was dispatched.",
+        ))
+    })
+}
 
 /// How long to wait for a cold worker to connect before giving up.
 ///
@@ -1980,6 +2063,7 @@ struct NativeAdmission<'a> {
     arguments: &'a Value,
     expected_digest: &'a str,
     idempotency_key: Option<&'a str>,
+    expires: Instant,
 }
 
 fn enqueue_native_call(
@@ -2008,7 +2092,7 @@ fn enqueue_native_call(
                 json!({"action": admission.action_id, "arguments": arguments,
                 "idempotencyKey": admission.idempotency_key}),
                 dispatched,
-                Some(admission.expected_digest),
+                Some((admission.expected_digest, admission.expires)),
             )
             .map_err(|error| ActionCallError::Execution(native_call_failure(&error, false)))
     })
@@ -2043,12 +2127,15 @@ pub async fn run_action(
     idempotency_key: Option<&str>,
     expected_digest: &str,
 ) -> Result<Value, ActionCallError> {
+    use grain_core::execution::DispatchPhase;
+    let expires = Instant::now() + NATIVE_OPERATION_DEADLINE;
     let arguments = approved_native_arguments(app, ext_id, action_id, arguments, expected_digest)?;
     let Some(host) = HOST.get() else {
         return Err(ActionCallError::Unavailable(
             "extension host unavailable".into(),
         ));
     };
+    native_time_remaining(expires, DispatchPhase::NotDispatched)?;
     let token = wake_for_request(app, ext_id)
         .ok_or_else(|| ActionCallError::Unavailable("extension worker unavailable".into()))?;
     let mut owner = NativeCallOwner::new(|| {
@@ -2061,7 +2148,12 @@ pub async fn run_action(
     });
     if !host
         .workers
-        .wait_connected(ext_id, &token, HANDOFF_WAKE_DEADLINE)
+        .wait_connected(
+            ext_id,
+            &token,
+            native_time_remaining(expires, DispatchPhase::NotDispatched)?
+                .min(HANDOFF_WAKE_DEADLINE),
+        )
         .await
     {
         log::warn!("[ext:{ext_id}] action — worker did not start in time");
@@ -2090,15 +2182,21 @@ pub async fn run_action(
             arguments: &arguments,
             expected_digest,
             idempotency_key,
+            expires,
         },
         &dispatched,
     )?;
-    match queued.wait(HANDOFF_DEADLINE).await {
+    match queued
+        .wait(native_time_remaining(expires, DispatchPhase::Dispatched)?)
+        .await
+    {
         Ok(value) => {
+            validate_native_reply_budget(&value)?;
             let value = native_reply_if_current(
                 value,
                 approved_native_arguments(app, ext_id, action_id, &arguments, expected_digest),
             )?;
+            native_time_remaining(expires, DispatchPhase::ResponseReceived)?;
             owner.completed();
             Ok(value)
         }
@@ -2107,6 +2205,16 @@ pub async fn run_action(
             dispatched.load(Ordering::Acquire),
         ))),
     }
+}
+
+fn validate_native_reply_budget(value: &Value) -> Result<(), ActionCallError> {
+    grain_core::tool_schema::validate_native_result(value).map_err(|_| {
+        ActionCallError::Execution(grain_core::execution::ExecutionFailure::new(
+            grain_core::execution::DispatchPhase::ResponseReceived,
+            grain_core::execution::FailureClass::Internal,
+            "The native tool returned a result exceeding its supported budget. Effects may have occurred.",
+        ))
+    })
 }
 
 fn native_call_failure(error: &str, dispatched: bool) -> grain_core::execution::ExecutionFailure {
@@ -2151,14 +2259,46 @@ pub fn is_dev_extension(app: &AppHandle, id: &str) -> bool {
 }
 
 /// Resource-policy disable. Ordinary tool errors/cancellation never use this.
-fn auto_disable(app: &AppHandle, ext_id: &str, reason: String) {
-    log::warn!("[ext:{ext_id}] life auto-disabled: {reason}");
-    if let Some(reg) = app.try_state::<Arc<grain_core::extensions::ExtensionsRegistry>>() {
-        let _ = reg.set_enabled(ext_id, false);
+fn disable_sampled_worker(
+    registry: &grain_core::extensions::ExtensionsRegistry,
+    workers: &Workers,
+    ext_id: &str,
+    token: &str,
+    generation: u64,
+) -> anyhow::Result<bool> {
+    registry.disable_if_generation_guarded(ext_id, generation, || {
+        let workers = workers.map.lock().unwrap();
+        if workers.get(ext_id).is_some_and(|worker| {
+            worker.token == token && worker.execution_generation == generation
+        }) {
+            Some(workers)
+        } else {
+            None
+        }
+    })
+}
+
+fn auto_disable(app: &AppHandle, ext_id: &str, token: &str, generation: u64, reason: String) {
+    let Some(host) = HOST.get() else { return };
+    let Some(reg) = app.try_state::<Arc<grain_core::extensions::ExtensionsRegistry>>() else {
+        return;
+    };
+    let changed = match disable_sampled_worker(&reg, &host.workers, ext_id, token, generation) {
+        Ok(changed) => changed,
+        Err(error) => {
+            // A persistence failure must not leave the sampled worker alive.
+            log::error!("[ext:{ext_id}] resource disable failed: {error}");
+            kill_worker_inner(ext_id, "resource disable failed", Some(token), false);
+            refresh_index(app);
+            return;
+        }
+    };
+    kill_worker_inner(ext_id, "repeated resource violations", Some(token), false);
+    if !changed {
+        return;
     }
+    log::warn!("[ext:{ext_id}] life auto-disabled: {reason}");
     refresh_index(app); // drop it from the hot-path index immediately
-    crate::extension_view::destroy_for_extension(app, ext_id);
-    kill_worker(ext_id, "auto-disabled after repeated resource violations");
     if let Some(ctx) = app.try_state::<Arc<AppContext>>() {
         ctx.emit(DaemonEvent::ExtensionDisabled {
             id: ext_id.to_string(),
@@ -2768,6 +2908,7 @@ mod tests {
         Worker {
             token: "tok".into(),
             call_digest: None,
+            execution_generation: 0,
             resident,
             memory_strikes: 0,
             kind: RuntimeKind::Scripted,
@@ -3128,6 +3269,7 @@ mod tests {
                 "same_source_install",
                 "missing",
                 "invalid",
+                "expired",
                 "after_queue",
                 "after_reply",
                 "valid",
@@ -3216,6 +3358,11 @@ mod tests {
                     arguments: &arguments,
                     expected_digest: &digest,
                     idempotency_key: None,
+                    expires: if mode == "expired" {
+                        Instant::now() - Duration::from_secs(1)
+                    } else {
+                        Instant::now() + NATIVE_OPERATION_DEADLINE
+                    },
                 };
                 let dispatched = AtomicBool::new(false);
                 let queued = enqueue_native_call(
@@ -3229,6 +3376,16 @@ mod tests {
                     assert!(queued.is_err(), "{mode}");
                     assert!(!dispatched.load(Ordering::Acquire));
                     assert!(out_rx.try_recv().is_err(), "zero frames: {mode}");
+                    if mode == "expired" {
+                        assert!(workers.map.lock().unwrap()[&pack.manifest.id]
+                            .conn
+                            .as_ref()
+                            .unwrap()
+                            .pending
+                            .lock()
+                            .unwrap()
+                            .is_empty());
+                    }
                     if matches!(
                         mode,
                         "restored" | "same_source_reload" | "same_source_install"
@@ -3577,6 +3734,237 @@ mod tests {
     }
 
     #[test]
+    fn idle_removal_rechecks_pending_activity_and_token_after_selection() {
+        rt().block_on(async {
+            let workers = Workers::new();
+            workers.insert("tools", worker(0, false));
+            let (tx, mut rx) = mpsc::unbounded_channel();
+            let activity = workers.attach("tools", "tok", tx).unwrap();
+            activity.store(0, Ordering::Relaxed);
+            assert_eq!(workers.idle_victims(now_secs(), IDLE_REAP_SECS).len(), 1);
+            let queued = workers
+                .enqueue(
+                    "tools",
+                    Some("tok"),
+                    "action",
+                    json!({}),
+                    &AtomicBool::new(false),
+                    None,
+                )
+                .unwrap();
+            let Message::Text(frame) = rx.try_recv().unwrap() else {
+                panic!("one call")
+            };
+            let HostFrame::Call(call) = serde_json::from_str(&frame).unwrap() else {
+                panic!("call")
+            };
+            activity.store(0, Ordering::Relaxed); // Busy protects even an old activity clock.
+            assert!(workers
+                .remove_if_idle("tools", "tok", now_secs(), IDLE_REAP_SECS)
+                .is_none());
+            workers.resolve("tools", "tok", call.call_id, Ok(Value::Null));
+            queued.wait(Duration::from_secs(1)).await.unwrap();
+            activity.store(now_secs(), Ordering::Relaxed);
+            assert!(workers
+                .remove_if_idle("tools", "tok", now_secs(), IDLE_REAP_SECS)
+                .is_none());
+            let mut replacement = worker(0, false);
+            replacement.token = "new".into();
+            workers.insert("tools", replacement);
+            assert!(workers
+                .remove_if_idle("tools", "tok", now_secs(), IDLE_REAP_SECS)
+                .is_none());
+            assert!(workers
+                .remove_if_idle("tools", "new", now_secs(), IDLE_REAP_SECS)
+                .is_some());
+            assert!(rx.try_recv().is_err(), "no replay");
+        });
+    }
+
+    #[test]
+    fn native_deadline_preserves_dispatch_certainty_and_reply_budget() {
+        use grain_core::execution::{ActionOutcome, DispatchPhase};
+        rt().block_on(async {
+            let expires = Instant::now() + Duration::from_millis(80);
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            let remaining = native_time_remaining(expires, DispatchPhase::NotDispatched).unwrap();
+            assert!(
+                remaining < Duration::from_millis(80),
+                "startup consumes the same budget"
+            );
+            let expired = Instant::now() - Duration::from_secs(1);
+            let prepared = crate::action_exec::prepare(
+                "tools:next",
+                "tools",
+                "next",
+                "Tools",
+                json!({}),
+                grain_core::execution::RiskClass::Confirm,
+                grain_core::execution::SideEffect::Write,
+                "digest",
+            );
+            for phase in [
+                DispatchPhase::NotDispatched,
+                DispatchPhase::Dispatched,
+                DispatchPhase::ResponseReceived,
+            ] {
+                let error = native_time_remaining(expired, phase).unwrap_err();
+                let outcome = crate::action_exec::native_outcome(Err(error), &prepared);
+                assert!(match phase {
+                    DispatchPhase::NotDispatched => matches!(outcome, ActionOutcome::Failed { .. }),
+                    DispatchPhase::Dispatched =>
+                        matches!(outcome, ActionOutcome::UnknownOutcome { .. }),
+                    DispatchPhase::ResponseReceived =>
+                        matches!(outcome, ActionOutcome::ResultUnavailable { .. }),
+                });
+            }
+            let workers = Workers::new();
+            workers.insert("tools", worker(now_secs(), false));
+            let (tx, mut rx) = mpsc::unbounded_channel();
+            workers.attach("tools", "tok", tx).unwrap();
+            let dispatched = AtomicBool::new(false);
+            let queued = workers
+                .enqueue("tools", Some("tok"), "action", json!({}), &dispatched, None)
+                .unwrap();
+            let Message::Text(frame) = rx.try_recv().unwrap() else {
+                panic!("call")
+            };
+            let HostFrame::Call(call) = serde_json::from_str(&frame).unwrap() else {
+                panic!("call")
+            };
+            workers.resolve(
+                "tools",
+                "tok",
+                call.call_id,
+                Ok(json!({"ok": "x".repeat(64 * 1024)})),
+            );
+            let reply = queued.wait(Duration::from_secs(1)).await.unwrap();
+            let error = validate_native_reply_budget(&reply).unwrap_err();
+            assert!(matches!(
+                crate::action_exec::native_outcome(Err(error), &prepared),
+                ActionOutcome::ResultUnavailable { .. }
+            ));
+            assert!(dispatched.load(Ordering::Acquire));
+            assert!(rx.try_recv().is_err(), "exactly one dispatch");
+            assert!(workers.map.lock().unwrap()["tools"]
+                .conn
+                .as_ref()
+                .unwrap()
+                .pending
+                .lock()
+                .unwrap()
+                .is_empty());
+        });
+    }
+
+    #[test]
+    fn maintenance_samples_do_not_keep_an_idle_worker_alive() {
+        rt().block_on(async {
+            let workers = Workers::new();
+            workers.insert("tools", worker(0, false));
+            let (tx, mut rx) = mpsc::unbounded_channel();
+            let activity = workers.attach("tools", "tok", tx).unwrap();
+            activity.store(0, Ordering::Relaxed);
+            for _ in 0..4 {
+                let queued = workers
+                    .enqueue(
+                        "tools",
+                        Some("tok"),
+                        "memory.sample",
+                        Value::Null,
+                        &AtomicBool::new(false),
+                        None,
+                    )
+                    .unwrap();
+                assert!(
+                    workers.idle_victims(now_secs(), IDLE_REAP_SECS).is_empty(),
+                    "a pending sample is protected until it finishes"
+                );
+                let Message::Text(frame) = rx.try_recv().unwrap() else {
+                    panic!("sample")
+                };
+                let HostFrame::Call(call) = serde_json::from_str(&frame).unwrap() else {
+                    panic!("sample")
+                };
+                workers.resolve(
+                    "tools",
+                    "tok",
+                    call.call_id,
+                    Ok(json!({"supported": false})),
+                );
+                queued.wait(Duration::from_secs(1)).await.unwrap();
+                assert_eq!(activity.load(Ordering::Relaxed), 0);
+                assert_eq!(workers.idle_victims(now_secs(), IDLE_REAP_SECS).len(), 1);
+            }
+            assert!(workers
+                .remove_if_idle("tools", "tok", now_secs(), IDLE_REAP_SECS)
+                .is_some());
+        });
+    }
+
+    #[test]
+    fn resource_disable_requires_both_registry_and_worker_ownership() {
+        let directory = tempfile::tempdir().unwrap();
+        let registry =
+            grain_core::extensions::ExtensionsRegistry::load(directory.path(), false).unwrap();
+        let pack = pack_of("");
+        registry.install(record_for(&pack)).unwrap();
+        registry.set_enabled(&pack.manifest.id, true).unwrap();
+        let generation = registry
+            .record(&pack.manifest.id)
+            .unwrap()
+            .execution_generation;
+        let workers = Workers::new();
+        let mut replacement = worker(now_secs(), false);
+        replacement.token = "new".into();
+        replacement.execution_generation = generation;
+        workers.insert(&pack.manifest.id, replacement);
+        assert!(
+            !disable_sampled_worker(&registry, &workers, &pack.manifest.id, "tok", generation)
+                .unwrap()
+        );
+        assert!(
+            registry.record(&pack.manifest.id).unwrap().enabled,
+            "same registry generation, different worker survives"
+        );
+        assert!(workers.owns_token(&pack.manifest.id, "new"));
+        let mut current = worker(now_secs(), false);
+        current.execution_generation = generation;
+        workers.insert(&pack.manifest.id, current);
+        registry
+            .install(registry.record(&pack.manifest.id).unwrap())
+            .unwrap();
+        assert!(
+            !disable_sampled_worker(&registry, &workers, &pack.manifest.id, "tok", generation)
+                .unwrap()
+        );
+        assert!(
+            registry.record(&pack.manifest.id).unwrap().enabled,
+            "same worker token, different registry generation survives"
+        );
+        let generation = registry
+            .record(&pack.manifest.id)
+            .unwrap()
+            .execution_generation;
+        workers
+            .map
+            .lock()
+            .unwrap()
+            .get_mut(&pack.manifest.id)
+            .unwrap()
+            .execution_generation = generation;
+        assert!(
+            disable_sampled_worker(&registry, &workers, &pack.manifest.id, "tok", generation)
+                .unwrap()
+        );
+        assert!(!registry.record(&pack.manifest.id).unwrap().enabled);
+        assert!(
+            workers.owns_token(&pack.manifest.id, "tok"),
+            "guard is released before separate runtime cleanup"
+        );
+    }
+
+    #[test]
     fn heap_samples_are_typed_and_memory_strikes_reset() {
         assert_eq!(
             parse_heap_sample(json!({"supported": true, "usedBytes": 42})).unwrap(),
@@ -3590,10 +3978,17 @@ mod tests {
 
         let workers = Workers::new();
         workers.insert("leak", worker(0, false));
-        assert_eq!(workers.record_memory_strike("leak"), Some(1));
-        assert_eq!(workers.record_memory_strike("leak"), Some(2));
-        workers.clear_memory_strikes("leak");
-        assert_eq!(workers.record_memory_strike("leak"), Some(1));
+        assert_eq!(workers.record_memory_strike("leak", "tok"), Some(1));
+        assert_eq!(workers.record_memory_strike("leak", "tok"), Some(2));
+        workers.clear_memory_strikes("leak", "tok");
+        assert_eq!(workers.record_memory_strike("leak", "tok"), Some(1));
+        let mut replacement = worker(0, false);
+        replacement.token = "replacement".into();
+        replacement.memory_strikes = 2;
+        workers.insert("leak", replacement);
+        assert_eq!(workers.record_memory_strike("leak", "tok"), None);
+        workers.clear_memory_strikes("leak", "tok");
+        assert_eq!(workers.record_memory_strike("leak", "replacement"), Some(3));
     }
 
     #[test]
@@ -3618,7 +4013,7 @@ mod tests {
         workers.insert("native", companion);
         let (out_tx, _out_rx) = mpsc::unbounded_channel::<Message>();
         workers.attach("native", "tok", out_tx).unwrap();
-        assert!(workers.scripted_connected_ids().is_empty());
+        assert!(workers.scripted_connected_tokens().is_empty());
         assert!(workers.detach_companion("native", "tok"));
         assert_eq!(workers.len(), 1);
 

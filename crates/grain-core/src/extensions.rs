@@ -995,6 +995,33 @@ impl ExtensionsRegistry {
     /// Enabling into an occupied slot is refused here as well as at the command
     /// layer, so a caller that forgets to check cannot steal a slot by accident.
     pub fn set_enabled(&self, id: &str, enabled: bool) -> Result<bool> {
+        self.set_enabled_if_current(id, enabled, None, || Some(()))
+    }
+
+    /// A late resource observer may disable only the execution it sampled.
+    pub fn disable_if_generation(&self, id: &str, generation: u64) -> Result<bool> {
+        self.disable_if_generation_guarded(id, generation, || Some(()))
+    }
+
+    /// Acquire an observer's runtime ownership guard while the registry write
+    /// lock is held. Drop it before persistence, never hold it across I/O/await.
+    /// Callers must follow registry -> runtime lock order and never reenter us.
+    pub fn disable_if_generation_guarded<G>(
+        &self,
+        id: &str,
+        generation: u64,
+        owner: impl FnOnce() -> Option<G>,
+    ) -> Result<bool> {
+        self.set_enabled_if_current(id, false, Some(generation), owner)
+    }
+
+    fn set_enabled_if_current<G>(
+        &self,
+        id: &str,
+        enabled: bool,
+        expected_generation: Option<u64>,
+        owner: impl FnOnce() -> Option<G>,
+    ) -> Result<bool> {
         if enabled {
             if let Some(reason) = self.quarantine_reason(id) {
                 anyhow::bail!("extension is quarantined: {reason}");
@@ -1005,12 +1032,23 @@ impl ExtensionsRegistry {
         }
         let changed = {
             let mut state = self.state.write().unwrap();
+            if expected_generation.is_some_and(|generation| {
+                state
+                    .records
+                    .get(id)
+                    .is_none_or(|record| record.execution_generation != generation)
+            }) {
+                return Ok(false);
+            }
             if enabled {
                 if let Some(reason) = state.quarantined.get(id) {
                     anyhow::bail!("extension is quarantined: {reason}");
                 }
             }
             let next = state.next_toggle_seq;
+            let Some(_owner) = owner() else {
+                return Ok(false);
+            };
             let declared = match state.records.get_mut(id) {
                 Some(rec) if rec.enabled != enabled => {
                     rec.execution_generation = next_execution_generation()?;
@@ -1651,6 +1689,42 @@ mod tests {
     }
 
     #[test]
+    fn resource_disable_refuses_stale_execution_generations() {
+        let dir = tmp();
+        let reg = ExtensionsRegistry::load(dir.path(), false).unwrap();
+        reg.install(pack("tools", &[])).unwrap();
+        reg.set_enabled("tools", true).unwrap();
+        let first = reg.record("tools").unwrap();
+        reg.install(first.clone()).unwrap();
+        assert!(!reg
+            .disable_if_generation("tools", first.execution_generation)
+            .unwrap());
+        assert!(reg.record("tools").unwrap().enabled);
+        let second = reg.record("tools").unwrap();
+        reg.set_enabled("tools", false).unwrap();
+        reg.set_enabled("tools", true).unwrap();
+        assert!(!reg
+            .disable_if_generation("tools", second.execution_generation)
+            .unwrap());
+        let third = reg.record("tools").unwrap();
+        reg.load_dev(third.clone(), dir.path().join("project"))
+            .unwrap();
+        reg.unload_dev("tools").unwrap();
+        assert!(!reg
+            .disable_if_generation("tools", third.execution_generation)
+            .unwrap());
+        let current = reg.record("tools").unwrap();
+        assert!(current.enabled);
+        assert!(reg
+            .disable_if_generation("tools", current.execution_generation)
+            .unwrap());
+        assert!(!reg.record("tools").unwrap().enabled);
+        assert!(!reg
+            .disable_if_generation("missing", current.execution_generation)
+            .unwrap());
+    }
+
+    #[test]
     fn failed_persistence_does_not_roll_back_live_execution_identity() {
         let dir = tmp();
         let reg = ExtensionsRegistry::load(dir.path(), false).unwrap();
@@ -1667,7 +1741,12 @@ mod tests {
             before.execution_generation,
             replacement.execution_generation
         );
-        assert!(reg.set_enabled("tools", false).is_err());
+        assert!(!reg
+            .disable_if_generation("tools", before.execution_generation)
+            .unwrap());
+        assert!(reg
+            .disable_if_generation("tools", replacement.execution_generation)
+            .is_err());
         let disabled = reg.record("tools").unwrap();
         assert!(!disabled.enabled);
         assert_ne!(
