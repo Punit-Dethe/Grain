@@ -165,9 +165,11 @@ The order deliberately puts **one working native tool before broad authenticatio
 
 ### One test at a time: current handoff
 
-**Step 1A — real application and reduced extension controls (part of check 16).** Run `bun run dev:asr` from `C:\Projects\Grain\grain`, open **Extensions → Developer**, and report exactly what appears. Expected: **Load unpacked**, MCP provider controls and diagnostics are available; **Recommendation Lab**, **Core 6** and **Stress 24** controls are absent. A store with no compatible tool cards is allowed. This observation alone does not complete check 16 or Block 1. Wait for the user's result before issuing Step 1B (the disposable Tool Smoke project and real Agent call).
+**Step 1A — observed, partial check 16.** The user's real-app screenshot shows **Load unpacked** and **Hosted MCP validation** with Linear, Notion, Atlassian, GitHub, Slack and Google Calendar rows. It does not show Recommendation Lab/Core 6/Stress 24 in the visible area. A red **“MCP protocol negotiation failed. Check the account and provider availability.”** banner is visible above Linear; its cause is unknown and is recorded for the later focused MCP block. No provider login, Test call, native tool execution or full-store review was performed. Check 16 therefore remains Pending rather than Pass.
 
-For each step, ask for **Pass / Fail / Blocked**, the visible result and any exact error. Do not require the user to run the whole 53-check list at once. Update the existing numbered ledger and the active block only after evidence arrives; if a failure appears, stop this block's acceptance, reproduce/audit/fix it and retest before moving to the next block.
+**Step 1B — current user handoff, partial check 3.** In **Extensions → Developer → Load unpacked**, click **Choose folder…** and select `C:\Users\watrm\AppData\Local\Temp\grain-tool-smoke-98ae7be6-73a8-4cfe-bcce-6b92ad142b1a\tool-smoke`. This disposable Tool Smoke project was generated using the real extension CLI and bundled with the repository's esbuild on 29 September 2026. Its manifest declares one `Say hello` tool, zero permissions and no activation, and its handler returns `Hello from this tool.` Expect the tool/project to appear and, if Grain requests approval, only tool-only consent—no capture, prompt, transcript, account or network request. Report Pass/Fail/Blocked, the visible name/consent text and any exact error. **Do not connect or test any hosted MCP provider for this step.** Wait for the user's result before Step 1C: a real Agent call to the loaded greeting tool.
+
+For each step, ask for **Pass / Fail / Blocked**, the visible result and any exact error. Do not require the user to run the whole 53-check list at once. Update the existing numbered ledger and the active block only after its full numbered procedure has evidence; if a failure appears, stop this block's acceptance, reproduce/audit/fix it and retest before moving to the next block.
 
 ## User testing: seven groups, all 53 checks
 
@@ -300,10 +302,11 @@ For subsequent implementation work:
 
 ### Manual result record
 
-No results received yet. For each report, record: **check number, date, tested commit, platform, provider/model when relevant, Pass/Fail/Blocked, observed result and next action**. For failures, include the exact visible error and redacted developer-log timestamps. Never include credentials or private prompt contents.
+One **partial** real-app observation received for check 16, recorded in Step 1A above. No full numbered check has a Pass/Fail/Blocked result yet. For each completed report, record: **check number, date, tested commit, platform, provider/model when relevant, Pass/Fail/Blocked, observed result and next action**. For failures, include the exact visible error and redacted developer-log timestamps. Never include credentials or private prompt contents.
 
 ### Progress log
 
 - **29 September 2026:** Created this consolidated report through `10d777b1`; reconciled all 53 pending manual checks into seven groups and documented scope changes, implementation differences and the seven open phase gates. This update changes documentation only.
 - **29 September 2026:** Verified the API-versus-implementation distinction against the production worker, generated authoring API and host preflight/dispatch: legacy backend branches remain unreachable behind refusal and still require physical removal. Recorded the next retirement unit and a minimum user acceptance checkpoint; no implementation or manual-test status changed.
 - **29 September 2026:** Added sequential acceptance blocks and a single active real-app handoff. Block 1 starts with reduced extension controls, then a real native tool call; all 53 manual checks remain Pending until the user reports results.
+- **29 September 2026:** Received the Developer-screen screenshot, recorded check 16 as partially observed and noted the MCP negotiation error without attributing a cause. Prepared disposable, bundled Tool Smoke locally; Step 1B is to load its folder. No provider connection or application-code change was made.
