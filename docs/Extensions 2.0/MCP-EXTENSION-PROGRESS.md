@@ -147,6 +147,28 @@ Native currently uses the existing embedded tool execution path. Arbitrary nativ
 
 Some of this can continue with deterministic tests without the user. Real account compatibility, application appearance, actual model selection, upgrade behavior and measured real-app resource usage need their corresponding live acceptance evidence.
 
+## Sequential acceptance track
+
+**Current focus: Block 1 only.** This track organizes the existing execution plan into reviewable product behaviors; it does not replace its R0–R6 requirements or mark any of the 53 checks complete. Complete each block's real-app checks, fix the failures, perform a focused source/security/lifecycle audit of that block, rerun its relevant automated checks and repeat the affected manual checks before calling it accepted. Do not spread implementation across later blocks merely because their unit tests already pass. A missing external account or provider is a recorded prerequisite, not a pass.
+
+| Block | Behavior to finish | Real-app acceptance to collect | Focused audit after user feedback | State |
+|---|---|---|---|---|
+| 1. Tool-only boundary and one native tool | Ordinary Grain features survive; retired extension capabilities are absent/unreachable; a newly authored tool loads and actually runs through Agent. | Checks 1, 3, 4, 7, 16; check 2 if a legacy installation exists. Confirm the real greeting tool result, not a model-written greeting. | Remove unreachable retired backend handlers/wiring while retaining first-party context and migration/refusal tombstones; inspect declaration, host preflight, Agent offering and core-feature independence. Fix/retest observed failures. | **Active; user tests pending** |
+| 2. Native execution, consent and persistence | The same native tool survives ordinary reload/restart, stops safely and cannot execute an old approval against a new owner. | Checks 5, 6, 18–19, 21, 24–30, 32–40, 49, 52–53 as applicable; use disposable packages for installation cases. | Audit worker/resource ownership, timeout/result certainty, package publication, approval identity, registry recovery and teardown. Fix/retest. | Queued |
+| 3. One MCP transport and tool contract | A controlled MCP provider is discovered, loaded, called and disconnected with honest results, independently of OAuth. | Checks 8, 17, 20, 23 and 31 with a safe read and a provider exposing the relevant shapes; mark unavailable scenarios Blocked rather than guessing. | Audit actual SDK transport, pagination/schema limits, dispatch/outcome classification and cleanup against deterministic fixtures and the selected provider. Fix/retest. | Queued |
+| 4. Authentication for one certified provider | One real MCP account connects, survives restart/expiry and disconnects; stale sessions cannot act for a replacement. Then certify native account behavior with a suitable fixture. | MCP checks 9–15, then native checks 41–45 and 50–51 when the native connection fixture/UI exists. Record registration mode, scopes and provider identity. | Audit callback, issuer/resource/client/scope mapping, vault publication/refresh/revocation, cancellation and orphan cleanup; fix/retest. A provider-specific compatibility matrix is required. | Queued |
+| 5. Agent tool selection and full task | Agent finds only relevant schemas, confirms a disposable write once, resumes the original task and verifies the result. | Checks 22, 46–48, plus stale/changed-definition outcomes from 19 and 23; use real model tool calls and test objects. | Audit selection freshness/cache, exact call IDs, account/schema revalidation, approval/auth continuation, denial and receipt preservation; fix/retest. | Queued |
+| 6. Two complete extensions together | One native and one MCP tool both work in the same task, including name collisions, disablement and partial failure. | Run the R5 one-native, one-MCP and two-extension ladder with recorded real calls, account routing and cleanup. | Audit cross-extension data boundaries, isolation, lifetime and result attribution; fix/retest. | Queued |
+| 7. Scale and release | Three- and five-extension workflows, compatibility, measured resources, upgrade and release behavior are documented and accepted. | Complete the remaining R5/R6 gates, including real Tauri visual review and any still-open numbered checks. | Final focused integration/security review, compatibility/CI matrix and resource measurements. | Queued |
+
+The order deliberately puts **one working native tool before broad authentication work**. MCP transport is checked with a controlled safe provider before auth is called complete; if that provider itself requires login, its credential setup is a prerequisite, while the auth module remains unaccepted until Block 4. One certified provider is an honest release milestone; it is not a claim that all MCP servers work. The R5 two-extension demonstration is the first cross-extension acceptance milestone, with three/five tested afterward.
+
+### One test at a time: current handoff
+
+**Step 1A — real application and reduced extension controls (part of check 16).** Run `bun run dev:asr` from `C:\Projects\Grain\grain`, open **Extensions → Developer**, and report exactly what appears. Expected: **Load unpacked**, MCP provider controls and diagnostics are available; **Recommendation Lab**, **Core 6** and **Stress 24** controls are absent. A store with no compatible tool cards is allowed. This observation alone does not complete check 16 or Block 1. Wait for the user's result before issuing Step 1B (the disposable Tool Smoke project and real Agent call).
+
+For each step, ask for **Pass / Fail / Blocked**, the visible result and any exact error. Do not require the user to run the whole 53-check list at once. Update the existing numbered ledger and the active block only after evidence arrives; if a failure appears, stop this block's acceptance, reproduce/audit/fix it and retest before moving to the next block.
+
 ## User testing: seven groups, all 53 checks
 
 The numbered checks below are the same checks in the execution plan; **1–8 have not been renumbered**. This is a short result ledger, not a replacement for the plan's [full procedures and disposable Tool Smoke setup](MCP-EXTENSION-PLAN.md#combined-real-app-test-checklist-retirement-lifecycle-and-authentication-phases).
@@ -252,13 +274,9 @@ Use disposable objects/packages for test writes. Do not damage the normal regist
 | 47 | Read → approve a disposable write → verify continues without re-dictation; duplicate/stale approvals do not execute. | Pending |
 | 48 | Denial/expiry/Stop prevents dispatch; a later model failure preserves completed receipts and unfinished-step information. | Pending |
 
-### Suggested first testing session
+### Testing order
 
-Start with **1, 3, 4, 7, 16 and 40**: ordinary Grain use, one actual greeting, retired-package refusal and consent. Then try **5, 6, 19, 29 and 30** for reload/Stop/stale approval, followed by **52** for ordinary restart persistence. These are a practical first pass, not a replacement for the remaining checks.
-
-If choosing just one first scenario, perform **3–4 together**: load a newly generated tool-only Tool Smoke project and verify that Agent actually executes its greeting. The minimum acceptance checkpoint for the upcoming retirement cleanup is **1, 3, 4, 7, 16, 6, 19 and 52**, plus **2** when an old installation is available. These cover core behavior, the replacement tool path, retired-package refusal, cleanup, stale approval and restart persistence. They do not close every R1 gate or certify authentication. The later first MCP checkpoint is **8**, followed by **12** for an authenticated provider; missing registration/provider prerequisites should be recorded separately.
-
-After that, use the installation/output groups and any already configured MCP. Native authentication can wait until its fixture/registration/connection prerequisites exist. Check 47 needs harmless test objects and a model that actually calls the tools; read confirmations are currently expected too. Some checks overlap intentionally to exercise different cancellation, deadline and ownership boundaries.
+Follow the [single active handoff](#one-test-at-a-time-current-handoff) and the sequential acceptance track. Do not run this ledger as a single 53-check assignment. After the current small observation, the next part of Block 1 is the disposable Tool Smoke installation and a verified Agent tool call. Block 2 then tests reload, cancellation and persistence with that same fixture. Later MCP/authentication steps need their actual provider/registration prerequisites; missing ones should be recorded as Blocked. Check 47 needs harmless test objects and a model that actually calls the tools; read confirmations are currently expected too. Some checks overlap intentionally to exercise different cancellation, deadline and ownership boundaries.
 
 ## Evidence and maintenance
 
@@ -288,3 +306,4 @@ No results received yet. For each report, record: **check number, date, tested c
 
 - **29 September 2026:** Created this consolidated report through `10d777b1`; reconciled all 53 pending manual checks into seven groups and documented scope changes, implementation differences and the seven open phase gates. This update changes documentation only.
 - **29 September 2026:** Verified the API-versus-implementation distinction against the production worker, generated authoring API and host preflight/dispatch: legacy backend branches remain unreachable behind refusal and still require physical removal. Recorded the next retirement unit and a minimum user acceptance checkpoint; no implementation or manual-test status changed.
+- **29 September 2026:** Added sequential acceptance blocks and a single active real-app handoff. Block 1 starts with reduced extension controls, then a real native tool call; all 53 manual checks remain Pending until the user reports results.
