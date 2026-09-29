@@ -22,6 +22,8 @@ Extensions can declare tools/functions and narrowly scoped supporting access: ap
 
 This is enforced at package validation and host dispatch, including attempts to use historical grants or call old APIs directly. Hiding a control in the interface is not the only protection. Mixed packages requesting a tool plus retired capabilities are refused rather than silently running with a different meaning.
 
+**Physical-removal clarification:** the production worker interface and generated authoring API no longer expose capture/context/prompt/session services. However, `src-tauri/src/host_api.rs` still contains legacy implementation branches such as `capture.selection`, `capture.app`, `capture.screenText`, `capture.screenImage`, LLM and semantic services behind the tool-only preflight allowlist. Requests to these methods are refused before those branches run, including with historical or `All` grants. Their presence means extension access is retired, but physical backend removal is unfinished. Retired manifest fields/types also remain for compatibility, refusal and migration; that does not authorize a new extension to use them.
+
 The agent's own context access remains a first-party responsibility. This work does not build new agent screen/OCR features. Ordinary dictation, user prompts, Snippets, Context and Agent settings must continue to work independently.
 
 ### 2. Existing installations have a preservation-oriented migration
@@ -126,6 +128,8 @@ The initial broad extension concept was deliberately replaced by the user's tool
 | Provider and schema support is a documented subset | Compatibility limitation | Curated remote HTTP and tested legacy paths, provider-supported registration modes and bounded offline schemas are the current scope. | Publish a dated tested matrix; complete needed registration/identity work. Do not claim universal MCP support. |
 | Targeted JSON/vault publication instead of a new database or journal | Implementation choice with remaining recovery work | Important activation/account changes commit before exposure, using existing low-overhead storage. Cross-store crash recovery is incomplete. | Reconcile orphan credentials/artifacts and finish interrupted-mutation evidence without overstating durability. |
 | Retired compatibility markers and historical examples remain | Unfinished planned cleanup | Some markers preserve migration/refusal explanations and user data; some unreachable implementations/examples still need review. | Remove truly dead code/examples after ownership checks, retaining only necessary migration tombstones. |
+
+The next retirement unit should remove obsolete extension dispatch implementations and their exclusive wiring/helpers, while preserving first-party context features and the minimal metadata needed to reject/migrate old packages. Keep the host's tool-only allowlist and negative access tests after deleting those implementations. Source inspection and automated production-path tests can proceed without user testing; real-app checks close acceptance rather than blocking all independent development.
 
 Native currently uses the existing embedded tool execution path. Arbitrary native executables, unrestricted local MCP commands and OS sandbox certification are outside the initial release; they are not completed capabilities. Agent context expansion is also outside this implementation effort.
 
@@ -252,6 +256,8 @@ Use disposable objects/packages for test writes. Do not damage the normal regist
 
 Start with **1, 3, 4, 7, 16 and 40**: ordinary Grain use, one actual greeting, retired-package refusal and consent. Then try **5, 6, 19, 29 and 30** for reload/Stop/stale approval, followed by **52** for ordinary restart persistence. These are a practical first pass, not a replacement for the remaining checks.
 
+If choosing just one first scenario, perform **3–4 together**: load a newly generated tool-only Tool Smoke project and verify that Agent actually executes its greeting. The minimum acceptance checkpoint for the upcoming retirement cleanup is **1, 3, 4, 7, 16, 6, 19 and 52**, plus **2** when an old installation is available. These cover core behavior, the replacement tool path, retired-package refusal, cleanup, stale approval and restart persistence. They do not close every R1 gate or certify authentication. The later first MCP checkpoint is **8**, followed by **12** for an authenticated provider; missing registration/provider prerequisites should be recorded separately.
+
 After that, use the installation/output groups and any already configured MCP. Native authentication can wait until its fixture/registration/connection prerequisites exist. Check 47 needs harmless test objects and a model that actually calls the tools; read confirmations are currently expected too. Some checks overlap intentionally to exercise different cancellation, deadline and ownership boundaries.
 
 ## Evidence and maintenance
@@ -281,3 +287,4 @@ No results received yet. For each report, record: **check number, date, tested c
 ### Progress log
 
 - **29 September 2026:** Created this consolidated report through `10d777b1`; reconciled all 53 pending manual checks into seven groups and documented scope changes, implementation differences and the seven open phase gates. This update changes documentation only.
+- **29 September 2026:** Verified the API-versus-implementation distinction against the production worker, generated authoring API and host preflight/dispatch: legacy backend branches remain unreachable behind refusal and still require physical removal. Recorded the next retirement unit and a minimum user acceptance checkpoint; no implementation or manual-test status changed.
