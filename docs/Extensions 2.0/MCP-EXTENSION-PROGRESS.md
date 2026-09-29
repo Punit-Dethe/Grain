@@ -1,0 +1,283 @@
+# Extension implementation: progress, changes and user testing
+
+**Updated:** 29 September 2026. **Implementation snapshot:** `10d777b1`, on `extensions/tool-only-retirement`.
+
+This is the maintained progress report beside the [execution plan](MCP-EXTENSION-PLAN.md). The plan owns the intended architecture, phase gates, research references and exact test procedures. This document explains the current implementation, records changes from that plan and keeps the user-facing test results together. It is not a second execution plan.
+
+## The current position in plain language
+
+Grain extensions now have one job: provide tools that the agent can call. A tool might be implemented directly as a native Grain extension, or supplied by an MCP server. Both go through Grain's checks before execution.
+
+Much of the foundation is implemented. Old extension privileges are refused, workers have clearer start/stop ownership, inputs and results have limits, sign-in has stronger account separation, and the agent can find selected tools and continue a task after approval. Installation and account changes also have stronger save-before-activation behavior.
+
+The complete product is still unfinished. We have not certified live providers, verified the real application's behavior with the user, measured its memory baseline, or completed the one-to-five-extension workflow ladder. **All seven phase acceptance gates remain open. All 53 manual checks are pending.** This means seven phases have unfinished requirements, not that seven phases are untouched.
+
+The latest recorded implementation verification passed **447 automated tests**, with one separate live-store test ignored. Those tests exercise substantial production logic and local protocol fixtures; they do not certify real accounts, the real OS credential vault or the complete real-model workflow.
+
+## What has been implemented
+
+### 1. Extensions have a much smaller permission boundary
+
+Extensions can declare tools/functions and narrowly scoped supporting access: approved network hosts, their own storage and scoped authentication. They cannot obtain Grain's screen, OCR, selection, cursor, whole transcript, Space, prompt replacement, prompt packs or priorities, shortcuts, resident activation or other retired internal capabilities.
+
+This is enforced at package validation and host dispatch, including attempts to use historical grants or call old APIs directly. Hiding a control in the interface is not the only protection. Mixed packages requesting a tool plus retired capabilities are refused rather than silently running with a different meaning.
+
+The agent's own context access remains a first-party responsibility. This work does not build new agent screen/OCR features. Ordinary dictation, user prompts, Snippets, Context and Agent settings must continue to work independently.
+
+### 2. Existing installations have a preservation-oriented migration
+
+Incompatible legacy extensions are quarantined and disabled. Obsolete grants and historical slot ownership are cleared, including parked installed copies underneath developer overrides.
+
+Edited extension-owned prompts and custom bindings are archived as inert JSON before removal from active use. Repeated migration avoids duplicate archive entries. Existing package artifacts and user storage are preserved. The migration checkpoint is saved only after the preceding migration work succeeds, and startup still revalidates packages.
+
+**Still needed:** broader interrupted-upgrade, cleanup, restart and rollback acceptance. Migration scaffolding is implemented; every failure boundary is not yet certified.
+
+### 3. Authoring and management have been reduced to tools
+
+New CLI projects expose an explicit action through `grain.actions`; their generated API no longer advertises the retired host services. Import, developer loading and signed store downloads validate the reduced contract. Store filtering excludes retired integrations, and direct installation has independent checks so bypassing the catalog does not bypass policy.
+
+Retired recommendation controls and extension contributions have been detached from the relevant management/core surfaces. An empty store is valid when its published catalog contains no eligible tool-only packages.
+
+**Still needed:** historical example/documentation cleanup, remaining unreachable code and catalog registrations, and real-app visual confirmation. Necessary parsing/migration tombstones are not working legacy APIs.
+
+### 4. Native workers have clearer ownership and cleanup
+
+A cold call starts the needed native worker; a warm worker can be reused and is later reaped when idle. Unique generations distinguish each supervisor and worker lifetime. Late callbacks, socket closure, idle cleanup or memory-observer results belonging to an old worker cannot legitimately destroy its replacement.
+
+Unload, disable and replacement invalidate queued or pending work. Cleanup rejects outstanding requests, removes listeners/callbacks and retires owned workers and resources. Calls are serialized per current worker with bounded admission. Changed source bytes cannot silently keep executing through an obsolete warm worker.
+
+Native calls have a single 20-second operation budget covering validation, wake and reply, with a shorter readiness ceiling. Blocking filesystem or vault operations can still delay some cleanup; no hard storage deadline is certified.
+
+**Still needed:** real-app cancellation/recovery evidence and measured memory/handle baselines. Enabling/listing an extension alone does not start its runtime; an ordinary recently used native worker can remain warm until idle cleanup.
+
+### 5. Both adapter paths check the exact call
+
+The host checks the enabled instance, current account/configuration identity, selected tool definition and arguments before execution. A confirmation prepared for an older account, package, developer project or schema is refused after that owner changes, even when the visible tool name stays the same.
+
+Native parameter contracts are validated. MCP input validation uses an offline schema evaluator with bounded complexity, nested constraints and a documented supported profile. It does not fetch arbitrary remote schema references. Unsupported individual schemas can be excluded while supported tools remain usable; malformed or incomplete provider discovery still fails.
+
+**Current policy:** native and MCP calls conservatively require confirmation, including reads. Automatic reads need a host-reviewed policy and restricted provider scopes; an extension's own claim that a tool is harmless is insufficient.
+
+### 6. Results describe what actually happened
+
+Execution distinguishes: nothing was sent, success, a tool-reported error, an unknown outcome after sending, and a received result that cannot be used. If the response disappears after a call was sent, Grain must not pretend the operation never happened or repeat it automatically.
+
+Text/JSON previews retain useful formatting with explicit truncation or omission. Raw responses, catalog discovery, argument structures, decoded results and retained model previews have separate limits. Private error details are redacted rather than copied blindly into the model-facing result.
+
+Actual SDK HTTP and legacy SSE fixtures cover lost responses, bounded discovery, pagination loops and cleanup. These are local protocol tests, not a universal transport/provider compatibility claim.
+
+### 7. Sign-in belongs to Grain and credentials stay out of model context
+
+Grain owns browser authorization, callback listeners, cancellation and credential storage. MCP uses the pinned official Rust SDK with additional bounded host checks. Public-client and confidential-client configuration are supported where the provider's registration permits them. Cancellation and the whole-flow timeout release the owned callback listener; an old browser completion must not reactivate a cancelled account.
+
+Refresh ownership is scoped so one slow provider's network request does not impose a global provider-network lock. Configuration changes, logout and account replacement invalidate late work. The OS vault itself may serialize access.
+
+**Still needed:** live provider/registration certification and complete verified issuer/resource/client/scope mapping. Authentication is not yet seamless across every MCP. Some registrations require a fixed callback port and cannot sign in concurrently on that port.
+
+### 8. Native accounts are separated and validated more carefully
+
+Native credentials are bound to the declared client, endpoints, scopes and allowed API hosts. Old unbound credentials require reconnect. Installed and development copies have separate account sessions; reloading the same developer directory preserves its session, while changing the project owner requires the appropriate separate grant.
+
+Exchange/refresh responses are checked before publication: supported token type, credential grammar, declared scope coverage, expiry and bounded encoded storage. An expired credential without a usable refresh token reports that reconnect is needed. Tokens are not added to tool descriptions, model context or ordinary diagnostics.
+
+A new native login stores its candidate credential first, then commits the selected account pointer. If pointer persistence fails, the prior selected account is retained and only the unreachable candidate is retired. Successful publication cleans up prior credentials afterward.
+
+**Still needed:** real native connection fixtures/UI prerequisites, provider-specific scope equivalence, vault crash/orphan reconciliation and live account tests. Native API credentials and MCP grants remain separate. Preserving an old local token cannot guarantee its issuer has kept it valid.
+
+### 9. The agent loads selected tools instead of every schema
+
+The initial agent context contains a bounded directory and host-owned search/load tools. Search returns small metadata pages; loading requests exact tool IDs. A later load can add another tool from the same unchanged extension without forgetting the first. Unrelated schemas are not automatically offered.
+
+The directory reports incomplete coverage beyond 100 extensions. Each explicit load selects one to eight tool IDs, and all offered definitions share a 32 KiB serialized budget. Fabricated tools and tools loaded too late for the current model response cannot bypass the offered-tool checks.
+
+**Still needed:** a bounded metadata cache, more precise freshness rules and measured search relevance. Current selected discovery is fresh on each search/load, and unrelated catalog changes can conservatively invalidate a selection. This is selective loading, not a finished caching system.
+
+### 10. Approval can continue the original task
+
+The agent retains the original call IDs, messages, selected definitions and remaining budgets while approval is pending. Approving consumes the exact prepared call once, appends its actual result to the original call and resumes the remaining task. The user should not need to dictate the whole request again.
+
+Calls after the first withheld call in a batch receive honest unexecuted results. Duplicate call IDs/approval tokens are refused. Declining or failing a tool blocks another attempt at that same tool within the task, while an independent verification tool may still run. Completed receipts survive a later model failure.
+
+Pending approval expires after two minutes and releases retained state. Close, Stop, replacement and cancellation own the run's cleanup. Transports are not kept open while waiting for the user. Restart ends pending runs; there is no durable restart-resume promise.
+
+**Still needed:** explicit continuation after an authentication interruption and combined real-model/native/MCP read → approved write → verification evidence. The existing continuation tests and adapter tests are separate evidence, not that complete live demonstration.
+
+### 11. Saving now precedes exposing important activation changes
+
+Registry loading refuses malformed, unreadable, oversized or future-version state while preserving the existing file. It does not silently overwrite damaged state with an empty installation list. Saves use bounded streamed JSON and an owned temporary file before replacement.
+
+Enablement, permission grant-and-enable, enabled package replacement and developer publication/restoration keep tentative changes hidden until the save succeeds. Failure restores the edited owner rather than exposing an unsaved enabled extension. Same-version package replacements use content-owned artifacts, and pending store downloads cannot undo a later disable/removal choice.
+
+Explicit disablement has different failure behavior: it still invalidates the live instance even if saving fails. That failed save must be reported; it cannot alone guarantee the disabled state survives restart. JSON registry state and OS-vault state do not form one complete crash-proof transaction.
+
+**Still needed:** remaining refusal/cleanup mutation recovery, artifact/orphan reconciliation and real-app damaged-state recovery acceptance. There is no automatic repair UI, power-loss certification or multiple-process writer guarantee.
+
+## Where execution changed from the plan
+
+The initial broad extension concept was deliberately replaced by the user's tool-only scope correction. That is an approved product change. Separately, some implementation choices differ from the target, and some promised pieces simply remain unfinished. The table keeps those cases distinct.
+
+| Change or difference | Classification | Current behavior and reason | Follow-up |
+|---|---|---|---|
+| Broad internal extension features removed | User-directed scope replacement | Screen/OCR/selection, Space, prompts, OS hooks and other retired integration features are refused. Context remains agent-owned. | Keep retirement enforced; do not put these capabilities back on the extension backlog. |
+| R1–R4 work interleaved instead of closing each whole phase in sequence | Delivery-order deviation | Worker identity, account ownership, persistence and continuation depend on one another. Deterministic work continued while real-app acceptance was unavailable. | Close the outstanding gates explicitly. Do not use implemented slices to declare R1 finished or expand uncertified providers. |
+| Every tool currently needs confirmation | Conservative interim policy | Host-reviewed automatic-read classification is unfinished. Provider annotations cannot self-authorize it. | Implement and certify the reviewed read policy before promising fewer approvals. |
+| Fresh selected discovery; no descriptor cache | Incomplete planned optimization | It avoids retaining stale runtimes/descriptors but repeats selected discovery. Whole-catalog identity can invalidate a selection after an unrelated change. | Add bounded generation-aware metadata reuse and finer selected-tool freshness. |
+| Approval resumes a task; authentication interruption does not yet have equivalent continuation | Unfinished planned capability | Original task/call identity survives approval. Explicit agent auth interruption handling remains open. | Add bounded auth continuation with the same account/replay guards. |
+| Provider and schema support is a documented subset | Compatibility limitation | Curated remote HTTP and tested legacy paths, provider-supported registration modes and bounded offline schemas are the current scope. | Publish a dated tested matrix; complete needed registration/identity work. Do not claim universal MCP support. |
+| Targeted JSON/vault publication instead of a new database or journal | Implementation choice with remaining recovery work | Important activation/account changes commit before exposure, using existing low-overhead storage. Cross-store crash recovery is incomplete. | Reconcile orphan credentials/artifacts and finish interrupted-mutation evidence without overstating durability. |
+| Retired compatibility markers and historical examples remain | Unfinished planned cleanup | Some markers preserve migration/refusal explanations and user data; some unreachable implementations/examples still need review. | Remove truly dead code/examples after ownership checks, retaining only necessary migration tombstones. |
+
+Native currently uses the existing embedded tool execution path. Arbitrary native executables, unrestricted local MCP commands and OS sandbox certification are outside the initial release; they are not completed capabilities. Agent context expansion is also outside this implementation effort.
+
+## Remaining phase gates
+
+| Phase | What the unfinished work means in ordinary language |
+|---|---|
+| R0 — Contract and baseline | Finish the versioned contract/inventory and measure resource/latency baselines. |
+| R1 — Retirement and migration | Finish interrupted cleanup/refusal recovery and confirm that upgrades preserve user data without restoring old access. |
+| R2 — Execution | Finish reviewed read policy and certify cancellation, outcomes and cleanup through both real adapter paths. |
+| R3 — Authentication | Finish provider identity/grant verification, vault recovery and live native/MCP login/refresh/disconnect certification. |
+| R4 — Agent workflow | Add metadata caching/freshness and auth continuation; measure retrieval and prove the complete real-model task flow. |
+| R5 — Multiple extensions | Certify one native, one MCP, then two, three and five mixed extensions, including failure/partial-completion cases. |
+| R6 — Release | Finish cleanup/examples/bindings, CI and compatibility reporting, upgrade acceptance and the user's real-app review. |
+
+Some of this can continue with deterministic tests without the user. Real account compatibility, application appearance, actual model selection, upgrade behavior and measured real-app resource usage need their corresponding live acceptance evidence.
+
+## User testing: seven groups, all 53 checks
+
+The numbered checks below are the same checks in the execution plan; **1–8 have not been renumbered**. This is a short result ledger, not a replacement for the plan's [full procedures and disposable Tool Smoke setup](MCP-EXTENSION-PLAN.md#combined-real-app-test-checklist-retirement-lifecycle-and-authentication-phases).
+
+**Status vocabulary:** Pending = not attempted; Pass = observed the expected real result; Fail = attempted and wrong; Blocked = an actual missing prerequisite prevented the check. Every entry currently remains Pending. Local automated coverage does not turn a manual row into Pass.
+
+Run the real app from the repository root:
+
+```powershell
+cd C:\Projects\Grain\grain
+bun run dev:asr
+```
+
+Use existing ASR configuration and a tool-capable Agent model. Tool Smoke requires no external account; its build/load instructions are in the plan. A model merely writing a greeting does not prove the tool ran. MCP checks need an eligible configured provider; native account checks need a separate authenticated disposable native fixture and supported registration, which may not yet be exposed by the reduced UI.
+
+Use disposable objects/packages for test writes. Do not damage the normal registry, change its permissions, edit vault contents or expose credentials to force failures. Deterministic fixtures cover those schedules. Where a catalog, provider, registration, isolated profile or observable timing is unavailable, record the specific prerequisite as Blocked.
+
+### A. Everyday behavior and removal of old privileges — 6 checks
+
+| Check | What to check / expected result | Status |
+|---|---|---|
+| 1 | Dictation, Snippets, Context and Agent still work; core settings and user prompts survive restart. | Pending |
+| 2 | Old privileged extensions stay disabled across restart; archived edited prompts/bindings survive without duplication. | Pending |
+| 3 | Load Tool Smoke with tool-only consent; no screen, OCR, prompt or transcript permissions requested. | Pending |
+| 7 | A disposable package requesting retired permissions/startup activation is explicitly refused. | Pending |
+| 16 | Store/developer controls offer tool-only capabilities; retired recommendation/lab/integration controls are absent. | Pending |
+| 40 | Cancel consent leaves the tool off; one fresh Allow enables it and a real greeting works, with usable controls. | Pending |
+
+### B. Native calls, stopping and recovery — 12 checks
+
+| Check | What to check / expected result | Status |
+|---|---|---|
+| 4 | The actual greeting works cold, warm and again after idle worker cleanup. | Pending |
+| 5 | Ten unload/reload cycles work without duplicate replies or an old error killing the replacement. | Pending |
+| 6 | Unload during a five-second greeting stops/invalidates it; reload restores normal calls. | Pending |
+| 24 | A 25-second greeting times out, does not replay or disable the tool, and a normal call recovers afterward. | Pending |
+| 25 | Disable/reload during execution invalidates the old call without destroying the new worker. | Pending |
+| 26 | Rebuild a warm tool without Reload; obsolete source is refused and a fresh request uses the changed source. | Pending |
+| 27 | Even an unchanged reload invalidates an earlier pending confirmation. | Pending |
+| 29 | Close Agent or use Escape during a native call; no late result/replay and a fresh session works. | Pending |
+| 30 | Close with approval/model response pending; no old reply or approval appears in the replacement session. | Pending |
+| 32 | Measure the native absolute timeout from invocation/approval; expect about 20 seconds under normal local I/O. | Pending |
+| 35 | Idle cleanup and requests near its boundary preserve an executing/current replacement worker. | Pending |
+| 37 | Repeated reloads preserve socket recovery, disabled state, recording and ordinary pill actions. | Pending |
+
+### C. Installations, permission reviews and saving — 8 checks
+
+| Check | What to check / expected result | Status |
+|---|---|---|
+| 18 | Repeated store close/reopen does not resurrect old requests; offline cached browsing cannot install. | Pending |
+| 28 | Installed → development override → installed restoration preserves the installed owner and rejects old approvals. | Pending |
+| 36 | A pending store download cannot reinstall/re-enable something subsequently removed or disabled. | Pending |
+| 38 | A permission review becomes invalid when its package/declaration changes; a fresh sheet matches the new tool. | Pending |
+| 39 | Reimporting changed bytes with the same id/version uses the new package after restart and override restoration. | Pending |
+| 49 | Ordinary restart preserves registry state; damaged-state refusal is tested only with an already isolated profile. | Pending |
+| 52 | Consent cancellation, enablement and disablement persist after ordinary successful saves/restarts. | Pending |
+| 53 | Developer folders A/B and the restored installation retain the correct owner, output and account after publication. | Pending |
+
+### D. Inputs, outputs and truthful failures — 7 checks
+
+| Check | What to check / expected result | Status |
+|---|---|---|
+| 17 | A supported nested MCP input produces a real harmless read result. | Pending |
+| 20 | Ordinary and safely large MCP reads complete or refuse within bounds; a fresh ordinary read recovers. | Pending |
+| 21 | Lost native replies, tool errors and malformed envelopes are classified honestly; private error markers stay hidden. | Pending |
+| 22 | Native declared parameters preserve types/optional values; a changed contract invalidates an old approval. | Pending |
+| 23 | Supported tools remain usable in a mixed MCP schema catalog; excluded schemas are not offered or executed. | Pending |
+| 33 | An oversized decoded native result is unusable rather than successful; a normal result still works afterward. | Pending |
+| 34 | An oversized raw native message rejects/cleans up correctly, with no blind replay or shared-listener regression. | Pending |
+
+### E. MCP connection and accounts — 9 checks
+
+| Check | What to check / expected result | Status |
+|---|---|---|
+| 8 | Test/discover a configured MCP, perform a real read, then disable it and verify refusal. | Pending |
+| 9 | Denied or cancelled login finishes cleanly; the callback listener becomes reusable. | Pending |
+| 10 | Completing an old browser login after cancellation cannot resurrect the account; fresh login works. | Pending |
+| 11 | Supported public/confidential registration works; changing client configuration invalidates the old grant. | Pending |
+| 12 | Real login survives restart and refresh after documented expiry; a stored-credentials badge alone is insufficient. | Pending |
+| 13 | An MCP approval from an old account/enablement/configuration cannot run under the replacement. | Pending |
+| 14 | Supported providers operate independently; fixed-port login conflicts are reported, not treated as success. | Pending |
+| 15 | Disable/provider-mode shutdown during MCP work cleans up and allows a fresh call after re-enable. | Pending |
+| 31 | Close Agent during a slow MCP read or pending approval; account remains intact and a fresh read works. | Pending |
+
+### F. Native sign-in and account isolation — 7 checks
+
+| Check | What to check / expected result | Status |
+|---|---|---|
+| 41 | Unbound or declaration-changed native credentials require reconnect; a supported fresh grant works across restart. | Pending |
+| 42 | Reload/disable/disconnect during native sign-in prevents old callbacks selecting an account. | Pending |
+| 43 | Switching native account A → B refuses A's pending approval; a new real read identifies B. | Pending |
+| 44 | Logout defeats an old refresh; unrelated native providers are not blocked by its network request. | Pending |
+| 45 | Installed/developer copies have separate accounts; same-directory reload preserves the appropriate session. | Pending |
+| 50 | Cancelled/failed account switching preserves the prior selected account; a successful switch selects the new one. | Pending |
+| 51 | Partial consent is refused; expiry without refresh requires reconnect, while supported refresh recovers. | Pending |
+
+### G. Tool selection and complete agent tasks — 4 checks
+
+| Check | What to check / expected result | Status |
+|---|---|---|
+| 19 | A native confirmation becomes invalid after disable/re-enable or source replacement; a fresh call works. | Pending |
+| 46 | Search/load offers only selected schemas; adding another tool preserves earlier selections and obeys limits. | Pending |
+| 47 | Read → approve a disposable write → verify continues without re-dictation; duplicate/stale approvals do not execute. | Pending |
+| 48 | Denial/expiry/Stop prevents dispatch; a later model failure preserves completed receipts and unfinished-step information. | Pending |
+
+### Suggested first testing session
+
+Start with **1, 3, 4, 7, 16 and 40**: ordinary Grain use, one actual greeting, retired-package refusal and consent. Then try **5, 6, 19, 29 and 30** for reload/Stop/stale approval, followed by **52** for ordinary restart persistence. These are a practical first pass, not a replacement for the remaining checks.
+
+After that, use the installation/output groups and any already configured MCP. Native authentication can wait until its fixture/registration/connection prerequisites exist. Check 47 needs harmless test objects and a model that actually calls the tools; read confirmations are currently expected too. Some checks overlap intentionally to exercise different cancellation, deadline and ownership boundaries.
+
+## Evidence and maintenance
+
+| Evidence | Recorded result | What it does not establish |
+|---|---|---|
+| Latest core suite | 258 unit + 4 integration tests passed. | Live app appearance, real accounts or a measured RAM baseline. |
+| Latest affected backend suites | 185 tests passed across auth, worker host, Agent, executor, capability, MCP, imported updates, developer projects, host RPC, event socket and store. Combined with core: 447. | A single complete live-model/native/MCP workflow or real OS-vault acceptance. |
+| Latest static checks | Core Clippy with warnings denied, backend check/Clippy and scoped formatting/diff checks passed; unrelated backend warnings remain. | Whole-release acceptance or unrelated warning cleanup. |
+| Earlier slices | SDK, CLI, checker and affected frontend type/build/test checks are recorded in the plan's dated evidence. | They were not all rerun in the latest backend slice; historical overlapping counts must not be added together. |
+| Manual/live checks | 53 Pending; no user results recorded here yet. | No live certification or achieved workflow-completion percentage is claimed. |
+
+Representative recent commits: `10d6990d` (native sign-in ownership/binding), `cbeccbb5` (native account isolation), `3232b53c` (selected tools/approval continuation), `4da6c745` (registry preservation/account publication), `ff015f94` (grant validation), and `10d777b1` (activation publication). Earlier implementation evidence and multi-source research remain in the execution plan.
+
+For subsequent implementation work:
+
+1. Update this document's date and implementation snapshot; revise the cumulative behavior/remaining limits instead of only appending a chat history.
+2. Add or resolve a divergence row when delivery differs from the authoritative plan. Distinguish user-approved scope changes, temporary choices and unfinished requirements.
+3. Keep full procedures and newly numbered checks in the plan. Add each new check exactly once to an appropriate group here, retaining existing numbers; update both totals.
+4. Record actual user results by changing the row status and adding evidence below. Do not infer Pass from automated tests, credential badges or a model's prose response.
+5. Close a phase only when its gate evidence is recorded. Record deterministic checks, live acceptance and measured resources separately.
+
+### Manual result record
+
+No results received yet. For each report, record: **check number, date, tested commit, platform, provider/model when relevant, Pass/Fail/Blocked, observed result and next action**. For failures, include the exact visible error and redacted developer-log timestamps. Never include credentials or private prompt contents.
+
+### Progress log
+
+- **29 September 2026:** Created this consolidated report through `10d777b1`; reconciled all 53 pending manual checks into seven groups and documented scope changes, implementation differences and the seven open phase gates. This update changes documentation only.

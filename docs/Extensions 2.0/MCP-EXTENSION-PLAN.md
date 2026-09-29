@@ -2,6 +2,8 @@
 
 **Revised:** 29 September 2026. **Status:** execution resumed; retirement enforcement and migration foundation implemented on `extensions/tool-only-retirement`. Release gates remain open.
 
+**Maintained progress companion:** [Implementation progress, deviations and grouped user tests](MCP-EXTENSION-PROGRESS.md). Update that report alongside this plan after each implementation slice and when user test results arrive. This plan remains authoritative for delivery gates and full numbered test procedures.
+
 This document replaces the execution plan dated 26 September in this same file. The user's scope correction is authoritative: extensions supply tools/functions through either a native Grain adapter or an MCP adapter. They no longer extend Grain's internal features. Retirement is a settled product decision, not a backlog for restoration.
 
 The 27 September implementation closes retired host access first. Previously paused MCP outcome/discovery/cleanup changes were reviewed against this reduced scope, retained and re-tested. The evidence below describes this implementation slice; it does not certify the full extension release.
@@ -453,6 +455,8 @@ try {
 53. **Developer publication and installed restoration:** with the disposable installed greeting and developer folders from checks 28/39, successfully load folder A, replace it with a second harmless folder B using the same extension id, then unload to restore the installed greeting. Give each handler distinct output, rebuild through the real CLI and verify actual results at each successful step; restart after replacement and restoration to confirm the selected owner persists. Old pending confirmations must be refused after each successful owner change. If the separate OAuth fixtures from check 45 exist, verify the corresponding development/installed accounts too; otherwise record that portion as blocked. Failed-save rollback of paths, parked accounts and historical claims is covered deterministically; do not provoke it in the normal profile. Restore/unload the disposable projects afterward.
 
 **Manual status:** all **53** checks are awaiting the user's real-app verification. The original eight remain numbered unchanged. The user is away from the computer; implementation and non-visual verification continue without waiting for these checks. Add subsequent phase checks here rather than scattering them across chat messages.
+
+The [progress companion's seven test groups and result ledger](MCP-EXTENSION-PROGRESS.md#user-testing-seven-groups-all-53-checks) retain these exact numbers. Add new checks to both documents; record observed Pass/Fail/Blocked results in that companion without treating automated coverage as manual acceptance.
 
 Create the disposable project in another PowerShell terminal. This uses the real CLI and the repository's installed esbuild, without installing an additional runtime or alternate UI:
 
