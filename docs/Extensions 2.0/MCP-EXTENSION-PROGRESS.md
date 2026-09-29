@@ -10,7 +10,7 @@ Grain extensions now have one job: provide tools that the agent can call. A tool
 
 Much of the foundation is implemented. Old extension privileges are refused, workers have clearer start/stop ownership, inputs and results have limits, sign-in has stronger account separation, and the agent can find selected tools and continue a task after approval. Installation and account changes also have stronger save-before-activation behavior.
 
-The complete product is still unfinished. We have not certified live providers, verified the real application's behavior with the user, measured its memory baseline, or completed the one-to-five-extension workflow ladder. **All seven phase acceptance gates remain open. All 53 manual checks are pending.** This means seven phases have unfinished requirements, not that seven phases are untouched.
+The complete product is still unfinished. We have not certified live providers, measured the real application's memory baseline, or completed the one-to-five-extension workflow ladder. The user has started real-app testing: **2 of 53 numbered manual checks have passed; 51 remain Pending.** Ordinary dictation was also reported working, while its broader numbered procedure remains open. **All seven phase acceptance gates remain open.** This means seven phases have unfinished requirements, not that seven phases are untouched.
 
 The latest recorded implementation verification passed **447 automated tests**, with one separate live-store test ignored. Those tests exercise substantial production logic and local protocol fixtures; they do not certify real accounts, the real OS credential vault or the complete real-model workflow.
 
@@ -149,7 +149,7 @@ Some of this can continue with deterministic tests without the user. Real accoun
 
 ## Sequential acceptance track
 
-**Current focus: Block 1 only.** This track organizes the existing execution plan into reviewable product behaviors; it does not replace its R0–R6 requirements or mark any of the 53 checks complete. Complete each block's real-app checks, fix the failures, perform a focused source/security/lifecycle audit of that block, rerun its relevant automated checks and repeat the affected manual checks before calling it accepted. Do not spread implementation across later blocks merely because their unit tests already pass. A missing external account or provider is a recorded prerequisite, not a pass.
+**Current focus: Block 1 only.** This track organizes the existing execution plan into reviewable product behaviors; it does not replace its R0–R6 requirements. Complete each block's real-app checks, fix the failures, perform a focused source/security/lifecycle audit of that block, rerun its relevant automated checks and repeat the affected manual checks before calling it accepted. Do not spread implementation across later blocks merely because their unit tests already pass. A missing external account or provider is a recorded prerequisite, not a pass.
 
 | Block | Behavior to finish | Real-app acceptance to collect | Focused audit after user feedback | State |
 |---|---|---|---|---|
@@ -167,9 +167,11 @@ The order deliberately puts **one working native tool before broad authenticatio
 
 **Step 1A — observed, partial check 16.** The user's real-app screenshot shows **Load unpacked** and **Hosted MCP validation** with Linear, Notion, Atlassian, GitHub, Slack and Google Calendar rows. It does not show Recommendation Lab/Core 6/Stress 24 in the visible area. A red **“MCP protocol negotiation failed. Check the account and provider availability.”** banner is visible above Linear; its cause is unknown and is recorded for the later focused MCP block. No provider login, Test call, native tool execution or full-store review was performed. Check 16 therefore remains Pending rather than Pass.
 
-**Step 1B — observed, partial check 3.** The user's 30 September real-app screenshot shows a developer row for `com.example.tool-smoke` pointing to the prepared disposable folder. The user reports turning it on. There is no separate `Say hello` button in that list; tool execution has not yet been observed. This is evidence of a loaded project, not a completed tool/consent check. The same MCP negotiation banner is still visible; its cause remains unverified and no provider action is requested.
+**Step 1B — check 3 Pass.** The user's 30 September real-app screenshot shows a developer row for `com.example.tool-smoke` pointing to the prepared disposable folder; the user reports enabling it and then confirms the tool works in Agent. The generated fixture's inspected manifest declares the `Say hello` action and zero permissions/activation. No unexpected permission request was reported. The Developer list shows the extension ID rather than a separate tool button. The MCP negotiation banner is a separate unresolved observation; no provider action was requested.
 
-**Step 1C — current user handoff, complete the simple native tool smoke.** Close Developer, open Grain's Agent using the configured Summon Agent shortcut (the Developer instructions show **Alt+A** as the Windows default), and ask exactly `Use Tool Smoke's Say hello tool.` If an approval appears, check it names Tool Smoke/Say hello before approving. Expect evidence of an actual tool call and a result containing `Hello from this tool.` A model-written greeting with no tool invocation is not a pass. Repeat the same request immediately, then leave tool activity idle for 150–180 seconds and request it again. Expect one real greeting result each time; the final request should recover after the idle worker is reaped. Report all three outcomes and any exact error or approval text together. Do not connect, test, disable or reconfigure any hosted MCP provider to make this pass; if the existing MCP error blocks the native call, record that as the observed failure for focused audit.
+**Step 1C — check 4 Pass; check 1 partial.** The user reports that Agent's Tool Smoke tool works and ordinary dictation works in the real app, then explicitly confirms the greeting also worked both immediately and after about three minutes without tool activity. This completes the user-facing cold/warm/idle greeting procedure. Worker-reap log and measured resource evidence remain independent Block 2/phase-gate work. Check 1 remains Pending because Snippets/Context/Agent settings and restart persistence were not reported. Do not connect, test, disable or reconfigure hosted MCP providers to make this native test pass.
+
+**Step 1D — next Block 1 batch, checks 1, 16 and 7.** (a) Open Snippets, Context and Agent, change one ordinary core setting, restart the real app and verify that setting plus dictation still work. (b) Look through Extensions/Developer and Store without signing in: retired Recommendation Lab/Core 6/Stress 24, prompt packs, screen/OS/Space integration controls should not be offered; an empty eligible store is acceptable. (c) Load the separate invalid folder `C:\Users\watrm\AppData\Local\Temp\grain-retired-tool-smoke-bbde33a1-c1da-4ecb-8ad1-094fc03995a4\tool-smoke-retired` through **Load unpacked → Choose folder…**. Its manifest requests the retired `capture` permission; expect an explicit refusal before activation, and the original valid Tool Smoke greeting should still work afterward. Do not approve a capture permission or edit the working fixture. The invalid fixture was independently checked with the real extension CLI: it reports exactly one manifest error for retired `capture`, without an unrelated icon error. Report the three results together, including exact refusal wording and any existing MCP banner changes; no hosted-provider action is required.
 
 For each step, ask for **Pass / Fail / Blocked**, the visible result and any exact error. Do not require the user to run the whole 53-check list at once. Update the existing numbered ledger and the active block only after its full numbered procedure has evidence; if a failure appears, stop this block's acceptance, reproduce/audit/fix it and retest before moving to the next block.
 
@@ -177,7 +179,7 @@ For each step, ask for **Pass / Fail / Blocked**, the visible result and any exa
 
 The numbered checks below are the same checks in the execution plan; **1–8 have not been renumbered**. This is a short result ledger, not a replacement for the plan's [full procedures and disposable Tool Smoke setup](MCP-EXTENSION-PLAN.md#combined-real-app-test-checklist-retirement-lifecycle-and-authentication-phases).
 
-**Status vocabulary:** Pending = not attempted; Pass = observed the expected real result; Fail = attempted and wrong; Blocked = an actual missing prerequisite prevented the check. Every entry currently remains Pending. Local automated coverage does not turn a manual row into Pass.
+**Status vocabulary:** Pending = full numbered procedure not yet verified; Pass = user observed the expected real result; Fail = attempted and wrong; Blocked = an actual missing prerequisite prevented the check. Two entries are now Pass and 51 remain Pending. Local automated coverage alone does not turn a manual row into Pass.
 
 Run the real app from the repository root:
 
@@ -196,7 +198,7 @@ Use disposable objects/packages for test writes. Do not damage the normal regist
 |---|---|---|
 | 1 | Dictation, Snippets, Context and Agent still work; core settings and user prompts survive restart. | Pending |
 | 2 | Old privileged extensions stay disabled across restart; archived edited prompts/bindings survive without duplication. | Pending |
-| 3 | Load Tool Smoke with tool-only consent; no screen, OCR, prompt or transcript permissions requested. | Pending |
+| 3 | Load Tool Smoke with tool-only consent; no screen, OCR, prompt or transcript permissions requested. | Pass |
 | 7 | A disposable package requesting retired permissions/startup activation is explicitly refused. | Pending |
 | 16 | Store/developer controls offer tool-only capabilities; retired recommendation/lab/integration controls are absent. | Pending |
 | 40 | Cancel consent leaves the tool off; one fresh Allow enables it and a real greeting works, with usable controls. | Pending |
@@ -205,7 +207,7 @@ Use disposable objects/packages for test writes. Do not damage the normal regist
 
 | Check | What to check / expected result | Status |
 |---|---|---|
-| 4 | The actual greeting works cold, warm and again after idle worker cleanup. | Pending |
+| 4 | The actual greeting works cold, warm and again after idle worker cleanup. | Pass |
 | 5 | Ten unload/reload cycles work without duplicate replies or an old error killing the replacement. | Pending |
 | 6 | Unload during a five-second greeting stops/invalidates it; reload restores normal calls. | Pending |
 | 24 | A 25-second greeting times out, does not replay or disable the tool, and a normal call recovers afterward. | Pending |
@@ -280,7 +282,7 @@ Use disposable objects/packages for test writes. Do not damage the normal regist
 
 ### Testing order
 
-Follow the [single active handoff](#one-test-at-a-time-current-handoff) and the sequential acceptance track. Do not run this ledger as a single 53-check assignment. After the current small observation, the next part of Block 1 is the disposable Tool Smoke installation and a verified Agent tool call. Block 2 then tests reload, cancellation and persistence with that same fixture. Later MCP/authentication steps need their actual provider/registration prerequisites; missing ones should be recorded as Blocked. Check 47 needs harmless test objects and a model that actually calls the tools; read confirmations are currently expected too. Some checks overlap intentionally to exercise different cancellation, deadline and ownership boundaries.
+Follow the [current handoff](#one-test-at-a-time-current-handoff) and the sequential acceptance track. Do not run this ledger as a single 53-check assignment. Tool Smoke loaded and worked cold, immediately again and after idle. Continue Block 1 retirement/core checks. Block 2 later tests reload, cancellation and persistence with that same fixture. MCP/authentication steps need their actual provider/registration prerequisites; missing ones should be recorded as Blocked. Check 47 needs harmless test objects and a model that actually calls the tools; read confirmations are currently expected too. Some checks overlap intentionally to exercise different cancellation, deadline and ownership boundaries.
 
 ## Evidence and maintenance
 
@@ -290,7 +292,7 @@ Follow the [single active handoff](#one-test-at-a-time-current-handoff) and the 
 | Latest affected backend suites | 185 tests passed across auth, worker host, Agent, executor, capability, MCP, imported updates, developer projects, host RPC, event socket and store. Combined with core: 447. | A single complete live-model/native/MCP workflow or real OS-vault acceptance. |
 | Latest static checks | Core Clippy with warnings denied, backend check/Clippy and scoped formatting/diff checks passed; unrelated backend warnings remain. | Whole-release acceptance or unrelated warning cleanup. |
 | Earlier slices | SDK, CLI, checker and affected frontend type/build/test checks are recorded in the plan's dated evidence. | They were not all rerun in the latest backend slice; historical overlapping counts must not be added together. |
-| Manual/live checks | 53 Pending; no user results recorded here yet. | No live certification or achieved workflow-completion percentage is claimed. |
+| Manual/live checks | Checks 3 and 4 Pass; 51 Pending. Dictation reported working as partial check 1. | No live provider certification or achieved workflow-completion percentage is claimed. |
 
 Representative recent commits: `10d6990d` (native sign-in ownership/binding), `cbeccbb5` (native account isolation), `3232b53c` (selected tools/approval continuation), `4da6c745` (registry preservation/account publication), `ff015f94` (grant validation), and `10d777b1` (activation publication). Earlier implementation evidence and multi-source research remain in the execution plan.
 
@@ -304,7 +306,7 @@ For subsequent implementation work:
 
 ### Manual result record
 
-Partial real-app observations received for checks 16 and 3, recorded in Steps 1A–1B above. No full numbered check has a Pass/Fail/Blocked result yet. For each completed report, record: **check number, date, tested commit, platform, provider/model when relevant, Pass/Fail/Blocked, observed result and next action**. For failures, include the exact visible error and redacted developer-log timestamps. Never include credentials or private prompt contents.
+**Check 3 — Pass, 30 September 2026, Windows real app:** the prepared tool-only native project was loaded/enabled, and the user reports its Agent tool works. Its manifest has zero permissions/activation; no unexpected consent was reported. **Check 4 — Pass:** the user explicitly confirms a working first call, immediate repeat and another after about three idle minutes; worker-reap logs were not supplied. **Check 1 — partial:** ordinary dictation works; restart/core settings were not reported. **Check 16 — partial:** Developer UI seen, full store/control review pending. The existing red MCP negotiation banner is recorded separately for later diagnosis. For each completed report, record: **check number, date, tested commit, platform, provider/model when relevant, Pass/Fail/Blocked, observed result and next action**. For failures, include the exact visible error and redacted developer-log timestamps. Never include credentials or private prompt contents.
 
 ### Progress log
 
@@ -313,3 +315,6 @@ Partial real-app observations received for checks 16 and 3, recorded in Steps 1A
 - **29 September 2026:** Added sequential acceptance blocks and a single active real-app handoff. Block 1 starts with reduced extension controls, then a real native tool call; all 53 manual checks remain Pending until the user reports results.
 - **29 September 2026:** Received the Developer-screen screenshot, recorded check 16 as partially observed and noted the MCP negotiation error without attributing a cause. Prepared disposable, bundled Tool Smoke locally; Step 1B is to load its folder. No provider connection or application-code change was made.
 - **30 September 2026:** The user showed Tool Smoke loaded in the real Developer view and reports turning it on. Individual tools are not shown as separate buttons there; Step 1C batches cold, immediate repeat and idle-recovery Agent calls. Checks 3, 4 and 16 remain Pending until their complete outcomes are reported.
+- **30 September 2026:** The user reports the tool and ordinary dictation work. Marked check 3 Pass (one completed manual check), recorded partial check 1 and 4 evidence, and requested clarification before closing the immediate/idle repeat procedure. No code, provider or credential change was made.
+- **30 September 2026:** The user confirms both immediate and three-minute repeat tool calls succeeded. Marked check 4 Pass; 2 of 53 numbered manual checks are complete and 51 remain Pending.
+- **30 September 2026:** Prepared a separate disposable negative package with a retired `capture` permission; the real CLI doctor reports only that intended error. The next user batch covers core settings/restart, retired management/store controls and refusal of this package while preserving the valid greeting. No app code or provider credentials changed.
