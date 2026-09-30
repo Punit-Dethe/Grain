@@ -1,7 +1,11 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "extension-host",
-  "description": "Capabilities for the hidden extension-host supervisor window (SPEC Â§3.1, Â§7.1). It runs ONLY Grain's own code: it listens for ext-host://spawn / ext-host://kill and emits ext-host://ready / ext-host://failed / ext-host://died. Extension workers reach Rust exclusively through their own WebSocket â€” never Tauri IPC â€” so this surface needs nothing beyond core events.",
+  "description": "The hidden Grain supervisor listens for worker lifecycle events and emits ready, failed, and died events. Extension code runs in Blob workers under the page CSP; the supervisor only needs event listen, unlisten, and emit permissions.",
   "windows": ["extension-host-*"],
-  "permissions": ["core:default"]
+  "permissions": [
+    "core:event:allow-listen",
+    "core:event:allow-unlisten",
+    "core:event:allow-emit"
+  ]
 }

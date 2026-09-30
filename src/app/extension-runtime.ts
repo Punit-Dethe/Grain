@@ -2,10 +2,10 @@
 //
 // This string is prepended to an extension's `entry_source` and run inside a
 // dedicated Web Worker (one per extension). It is the ONLY code between the
-// extension and the wire: it opens the extension's own WebSocket, authenticates
-// with the extension's own token, and exposes the `grain` global the extension
-// calls. The worker reaches Rust exclusively through this socket — never Tauri
-// IPC (which isn't available in worker scope anyway).
+// extension and the Grain tool wire: it opens the extension's own WebSocket,
+// authenticates with the extension's own token, and exposes the `grain` global.
+// The hidden host page's CSP restricts standard worker browser networking;
+// Rust still authorizes every tool RPC on the socket independently.
 //
 // The supervisor injects four consts ABOVE this shim before running it:
 //   const __GRAIN_EXT_ID__   = "com.example.ext";
@@ -140,8 +140,8 @@ export const GRAIN_RUNTIME_JS = `(function () {
       set: function (k, v) { return req("storage.set", { key: String(k), value: v }); },
       "delete": function (k) { return req("storage.delete", { key: String(k) }); }
     },
-    // Network access is always host-proxied and requires an exact net:<host>
-    // grant. The worker itself never receives a browser fetch capability.
+    // Grain API network access is host-proxied and requires an exact net:<host>
+    // grant. The hidden page's inherited CSP blocks direct browser fetches.
     net: {
       fetch: function (url, options) {
         options = options || {};

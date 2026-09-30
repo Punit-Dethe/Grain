@@ -9,8 +9,9 @@
 //   here → Rust:  ext-host://ready / failed { generation, reason? }
 //                 ext-host://died  { ext_id, token, reason }
 //
-// The security wall is the Rust WebSocket boundary — this supervisor only
-// assembles and terminates workers; it holds no capability of its own.
+// The worker network boundary is the hidden page's inherited CSP plus Rust's
+// authenticated WebSocket authorization. This supervisor only assembles and
+// terminates workers and has event-only Tauri permissions.
 
 import { listen, emit, type UnlistenFn } from "@tauri-apps/api/event";
 import { GRAIN_RUNTIME_JS } from "./extension-runtime";
