@@ -168,9 +168,8 @@ pub async fn resume(app: &AppHandle, token: &str, approve: bool) -> ActionOutcom
     let Some(current_digest) = current_manifest_digest(app, &prepared) else {
         return ActionOutcome::Failed {
             class: FailureClass::Cancelled,
-            message:
-                "The extension action is no longer approved or available â€” please ask again."
-                    .to_string(),
+            message: "The extension action is no longer approved or available. Please ask again."
+                .to_string(),
         };
     };
     match prepared.still_valid(&current_digest, now_ms()) {
