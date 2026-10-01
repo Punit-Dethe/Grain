@@ -4,6 +4,8 @@
 
 **Maintained progress companion:** [Implementation progress, deviations and grouped user tests](MCP-EXTENSION-PROGRESS.md). Update that report alongside this plan after each implementation slice and when user test results arrive. This plan remains authoritative for delivery gates and full numbered test procedures.
 
+**Acceptance automation direction (1 October):** [Persistent extension test harness](MCP-EXTENSION-TEST-HARNESS.md) defines a reproducible runner, real-runtime evidence, isolation and human-assisted account tests. Build its H0 foundation as the next engineering unit before expanding long manual batches; preserve the sequential block audits and existing acceptance gates. The harness is currently a design, not implemented automation. UI control requires the repository-rule exception described there; ordinary production-test orchestration does not.
+
 This document replaces the execution plan dated 26 September in this same file. The user's scope correction is authoritative: extensions supply tools/functions through either a native Grain adapter or an MCP adapter. They no longer extend Grain's internal features. Retirement is a settled product decision, not a backlog for restoration.
 
 The 27 September implementation closes retired host access first. Previously paused MCP outcome/discovery/cleanup changes were reviewed against this reduced scope, retained and re-tested. The evidence below describes this implementation slice; it does not certify the full extension release.

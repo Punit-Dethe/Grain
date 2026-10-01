@@ -1,6 +1,6 @@
 # Extension implementation: progress, changes and user testing
 
-**Updated:** 30 September 2026. **Implementation snapshot:** `extensions/tool-only-retirement` through the Block 2A audit.
+**Updated:** 1 October 2026. **Implementation snapshot:** `extensions/tool-only-retirement` through the partial Block 2B audit.
 
 This is the maintained progress report beside the [execution plan](MCP-EXTENSION-PLAN.md). The plan owns the intended architecture, phase gates, research references and exact test procedures. This document explains the current implementation, records changes from that plan and keeps the user-facing test results together. It is not a second execution plan.
 
@@ -149,6 +149,8 @@ Native currently uses the existing embedded tool execution path. Arbitrary nativ
 Some of this can continue with deterministic tests without the user. Real account compatibility, application appearance, actual model selection, upgrade behavior and measured real-app resource usage need their corresponding live acceptance evidence.
 
 ## Sequential acceptance track
+
+**Harness direction, 1 October:** the user requests repeatable automation with human assistance for account sign-in and tests that are easier to perform manually. The [persistent harness design](MCP-EXTENSION-TEST-HARNESS.md) records the next engineering unit: a checked-in runner and fixtures, accurate evidence reports, profile/vault isolation, then real native lifecycle and MCP/authentication suites. No harness is implemented yet and no test status changes in this update. Check 37 remains Pending; its chat handoff is available if the user chooses to complete it before the harness covers it. Existing backend/protocol suites can be orchestrated under current repository rules; real-window automation needs a narrow exception to those rules.
 
 **Current focus: Block 2B native close/repeat cleanup.** This track organizes the existing execution plan into reviewable product behaviors; it does not replace its R0–R6 requirements. Complete each block or explicitly named sub-block's real-app checks, fix the failures, perform a focused source/security/lifecycle audit, rerun relevant automated checks and repeat affected manual checks before calling it accepted. Do not spread implementation across later units merely because their unit tests already pass. A missing external account or provider is a recorded prerequisite, not a pass.
 
@@ -351,3 +353,4 @@ For subsequent implementation work:
 - **1 October 2026:** Investigated the Agent summon failure reported as `STATUS_CONTROL_C_EXIT`. The user confirmed it occurs after using the Agent shortcut in the terminal, rather than at app startup. Guarded the Windows selection-copy path against terminal foreground windows; real-app terminal and nonterminal retests remain before resuming Block 2B. No numbered check was marked Pass.
 - **1 October 2026:** The user confirms both terminal-fix retests and all four prior Block 2B close/reopen modes worked. Marked check 29 Pass (9 Pass / 44 Pending); check 30 has pending-approval evidence but still needs its slow-model-response case. Reviewed the X/Escape/window-destroy paths and reran all 16 Agent tests. Block 2B remains active; the next batch covers checks 30, 5 and 35.
 - **1 October 2026:** The user explicitly confirms the remaining model-response close case, all ten Tool Smoke unload/reload cycles and both idle timing cases worked. Marked checks 30, 5 and 35 Pass (12 Pass / 41 Pending). Reviewed token-scoped reload and reaper removal; all 48 extension-host tests passed. Verified the disposable Lifecycle Smoke build and CLI doctor before handing off final Block 2B check 37. No application code changed.
+- **1 October 2026:** Added the persistent acceptance-harness design and linked it to the execution plan. Verified that the developer socket offers reload only and that a temporary working directory/environment alone cannot establish application/vault isolation. Defined H0–H4 delivery, evidence classes and human sign-in handoffs; 12 Pass / 41 Pending remains unchanged. This update changes documentation only.
