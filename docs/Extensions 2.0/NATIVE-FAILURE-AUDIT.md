@@ -37,7 +37,7 @@ Graph change/review/impact tools were consulted, then the wake/admission/reply, 
 
 ## Evidence and acceptance state
 
-**Implementation, focused source audit and automated retests are complete. Check 34's ordinary-app observation remains before closing 2C.** Checks 21, 24, 26, 32 and 33 are explicitly recorded as automated Pass in the progress ledger after reviewing their complete numbered procedures. Their evidence class is real application with a scripted model; the original thirteen user-reported results retain their separate provenance. The ledger is now **18 Pass / 35 Pending**.
+**Block 2C accepted. Implementation, focused source audit, automated retests and the user's ordinary-app observations are complete.** Checks 21, 24, 26, 32 and 33 are explicitly recorded as automated Pass in the progress ledger after reviewing their complete numbered procedures. Their evidence class is real application with a scripted model; the original thirteen user-reported results retain their separate provenance. At 2C acceptance the ledger reached **19 Pass / 34 Pending** after the user's check 34 result; subsequent 2D evidence is recorded in the progress companion.
 
 | Evidence | Result |
 |---|---|
@@ -51,7 +51,7 @@ Graph change/review/impact tools were consulted, then the wake/admission/reply, 
 
 Both accepted runtime batches identify executable SHA-256 **`0a8d6c0129d27ce259f3a26e5f76ee6d1171bb80ca6247e2f58f6fa06cc83121`**, source fingerprint **`b8025e0c753fdeab041fb7c1b0cf639df15c5ed9b2a69a5b90dad1b5ac5c8275`**, and runner fingerprint **`6d737cb05b69db8d9d47589582ffbf366776cb9ff8ca5a113e64126c52959e60`**. They record the dirty precommit tree based on `5800818d`; this document does not relabel them as postcommit runs. Local reports live in ignored `tests/agent-harness/.runs/`, with versioned commands in the maintained README for reproduction.
 
-Earlier failures remain preserved. The remaining ordinary-app portion of check 34 is not inferred from isolated native recovery. No live provider, microphone, pill, companion, RAM/handle trend or whole-release acceptance follows from this batch.
+Earlier failures remain preserved. The ordinary-app portion of check 34 was separately reported Pass by the user after the `0884aca5` handoff: expected warning, dictation/pill recovery and actual fresh greeting. No live provider, microphone, pill, companion, RAM/handle trend or whole-release acceptance follows from this batch.
 
 Reproduce the current runtime coverage after the maintained build:
 
@@ -65,7 +65,7 @@ npm run test:agent:logic -- --group execution
 
 The third command must exit 1 with cleanup Pass; it is an intentional fault test. Do not count it as product acceptance.
 
-## Remaining ordinary-app check 34
+## Accepted ordinary-app check 34 (procedure retained)
 
 This is one numbered check with three observations. Use the ordinary Grain app and its existing microphone/model configuration. If rebuilding, run `bun run dev:asr` from the repository root; the isolated harness executable is not the ordinary app.
 
@@ -82,4 +82,4 @@ Developer → Load unpacked → select the printed folder → enable **Native Fa
 2. Close Agent and perform ordinary dictation into a scratch text field. Expect the recording pill, one pasted transcript and a clean stop. Start another recording, cancel it through the pill, then dictate once more. Expect no paste from the cancelled recording and normal recovery.
 3. Ask Agent: **“Use Native Failure Smoke's Say test hello tool.”** Approve it. Expect the actual tool result **`Harness hello (one)`** from Native Failure Smoke. Unload the disposable fixture afterward.
 
-Report Pass/Fail/Blocked for the three observations together, with any exact error. No provider login, source edit or repeated timeout/size suite is required. After this residual result passes, close 2C with its audit/retest evidence and proceed to **2D consent, installation and persistence**. Whole native and R0–R6 release gates remain separate.
+The user reports all three observations Pass, with the expected warning and actual greeting supplied. No provider login, source edit or repeated timeout/size suite is required. 2C is now closed with its audit/retest evidence; continue **2D consent, installation and persistence**. Whole native and R0–R6 release gates remain separate.

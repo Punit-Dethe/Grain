@@ -238,3 +238,19 @@ test("missing application binary exits nonzero and emits blocked evidence", asyn
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("installation suite retains distinct owners and declares no privileges", async () => {
+  const { fixturePackage } = await import("./installation.mjs");
+  const first = await fixturePackage(here, "installed-one");
+  const second = await fixturePackage(here, "installed-two", true);
+  assert.equal(selectScenarios("native-installation").length, 5);
+  assert.equal(first.manifest.version, second.manifest.version);
+  assert.deepEqual(first.manifest.permissions, []);
+  assert.equal(first.manifest.contributes.authentication, undefined);
+  assert.equal(first.manifest.contributes.actions.length, 1);
+  assert.equal(first.manifest.contributes.actions[0].risk, "confirm");
+  assert.notEqual(first.manifest.entry_source, second.manifest.entry_source);
+  assert.match(first.manifest.entry_source, /"installed-one"/);
+  assert.match(second.manifest.entry_source, /"installed-two"/);
+  assert.notEqual(first.manifest.name, second.manifest.name);
+});

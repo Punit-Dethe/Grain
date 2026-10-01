@@ -533,6 +533,16 @@ pub async fn resolve_onboarding_state(
     app: AppHandle,
     model_manager: State<'_, Arc<ModelManager>>,
 ) -> Result<OnboardingState, String> {
+    // The separately identified, isolated acceptance host exercises the real
+    // management UI without downloading an ASR model or using a microphone.
+    // Its startup guard rejects ordinary app IDs and release builds.
+    if cfg!(feature = "agent-harness") {
+        return Ok(OnboardingState {
+            step: OnboardingStep::Done,
+            is_returning_user: true,
+            blocked_on_permissions: false,
+        });
+    }
     if force_onboarding_for_development() {
         return Ok(OnboardingState {
             step: OnboardingStep::Accessibility,

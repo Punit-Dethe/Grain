@@ -14,6 +14,8 @@ const repo = resolve(here, "../..");
 const exec = promisify(execFile);
 const groups = {
   registry: "extensions::tests::",
+  imported: "imported_update_security_tests::",
+  developer: "dev_extensions::tests::",
   agent: "agent::",
   native: "extension_host::tests::",
   execution: "action_exec::tests::",

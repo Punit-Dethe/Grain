@@ -133,10 +133,54 @@ export const scenarios = [
     description:
       "Undeclared model arguments fail before approval or worker startup and private parameter keys remain hidden",
   },
+  {
+    id: "native.consent-persistence",
+    suite: "native-installation",
+    checks: [40, 52],
+    description:
+      "Real consent Cancel/Allow, disabled/enabled restarts, pending-call disable and committed state recovery",
+  },
+  {
+    id: "native.stale-review",
+    suite: "native-installation",
+    checks: [38],
+    description:
+      "Replacing a package invalidates the real open permission sheet; a fresh sheet shows current declarations",
+  },
+  {
+    id: "native.owner-restoration",
+    suite: "native-installation",
+    checks: [28, 39, 53],
+    description:
+      "Same-version import replacement and installed/developer A/B/restoration survive actual host restarts and refuse old approvals",
+  },
+  {
+    id: "native.enablement-approval",
+    suite: "native-installation",
+    checks: [19],
+    description:
+      "Disable/re-enable and source replacement refuse the previous call approval, then fresh greetings recover",
+  },
+  {
+    id: "native.registry-refusal",
+    suite: "native-installation",
+    checks: [49],
+    description:
+      "Malformed/future registry startup preserves the file, reports unavailable operations, then a restored isolated profile recovers",
+  },
 ];
 
 export function selectScenarios(suite) {
-  if (!["smoke", "lifecycle", "idle", "native-failures", "all"].includes(suite))
+  if (
+    ![
+      "smoke",
+      "lifecycle",
+      "idle",
+      "native-failures",
+      "native-installation",
+      "all",
+    ].includes(suite)
+  )
     throw new Error(`Unknown suite: ${suite}`);
   return scenarios.filter(
     (scenario) =>

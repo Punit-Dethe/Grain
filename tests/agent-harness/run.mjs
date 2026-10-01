@@ -19,6 +19,7 @@ import { fileURLToPath } from "node:url";
 import { performance } from "node:perf_hooks";
 import { chromium } from "@playwright/test";
 import { scenarios, selectScenarios } from "./scenarios.mjs";
+import { installationHandlers } from "./installation.mjs";
 import { startModel } from "./model.mjs";
 import { developerReload } from "./developer.mjs";
 import { verifyBuild, runnerFingerprint } from "./stamp.mjs";
@@ -48,7 +49,7 @@ for (let i = 2; i < process.argv.length; i++) {
 }
 if (options.help) {
   console.log(
-    "node tests/agent-harness/run.mjs [--list] [--suite smoke|lifecycle|idle|native-failures|all] [--scenario ID] [--binary path] [--output directory]\nWindows real Agent/WebView2 acceptance. Build first with tests/agent-harness/build.ps1. No live account or model key required.",
+    "node tests/agent-harness/run.mjs [--list] [--suite smoke|lifecycle|idle|native-failures|native-installation|all] [--scenario ID] [--binary path] [--output directory]\nWindows real Agent/WebView2 acceptance. Build first with tests/agent-harness/build.ps1. No live account or model key required.",
   );
   process.exit(0);
 }
@@ -63,9 +64,12 @@ const selected = options.scenario
 if (!selected.length) throw new Error(`Unknown scenario: ${options.scenario}`);
 if (
   options.fault &&
-  !["wrong-greeting", "missing-escape", "successful-error"].includes(
-    options.fault,
-  )
+  ![
+    "wrong-greeting",
+    "missing-escape",
+    "successful-error",
+    "skip-restart",
+  ].includes(options.fault)
 )
   throw new Error("Unknown oracle fault");
 if (
@@ -78,6 +82,13 @@ if (
   options.scenario !== "native.reply-failures"
 )
   throw new Error("successful-error requires --scenario native.reply-failures");
+if (
+  options.fault === "skip-restart" &&
+  options.scenario !== "native.consent-persistence"
+)
+  throw new Error(
+    "skip-restart requires --scenario native.consent-persistence",
+  );
 const runId = randomUUID();
 const output = resolve(options.output ?? join(here, ".runs"));
 await mkdir(output, { recursive: true });
@@ -179,7 +190,19 @@ async function invoke(command, args = {}) {
     clearTimeout(deadline);
   }
 }
-const status = () => invoke("agent_harness_status");
+const priorEvents = [];
+let hostSession = 0;
+const status = async () => {
+  const value = await invoke("agent_harness_status");
+  value.events = [
+    ...priorEvents,
+    ...value.events.map((event) => ({ ...event, session: hostSession })),
+  ];
+  assert.ok(value.events.length <= 4096, "Restart evidence buffer overflowed");
+  assert.ok(value.events.length <= 4096, "Restart evidence buffer overflowed");
+  value.hostSession = hostSession;
+  return value;
+};
 const fixture = (operation) => invoke("agent_harness_fixture", { operation });
 const events = (snapshot, phase, action) =>
   snapshot.events.filter(
@@ -897,6 +920,111 @@ const handlers = {
     );
   },
 };
+let hostBinary;
+async function launchHost() {
+  const binary = hostBinary;
+  child = spawn(binary, [], {
+    cwd: repo,
+    windowsHide: true,
+    env: {
+      ...process.env,
+      GRAIN_AGENT_HARNESS_ROOT: root,
+      WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-address=127.0.0.1 --remote-debugging-port=${cdpPort}`,
+      WEBVIEW2_USER_DATA_FOLDER: join(root, "data/webview"),
+      RUST_LOG:
+        "warn,handy_app_lib=info,handy_app_lib::shortcut::handy_keys=debug",
+    },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  child.stdout.on("data", appendLog);
+  child.stderr.on("data", appendLog);
+  child.once("error", (error) => {
+    logTail += String(error);
+  });
+  report.hostPid = child.pid;
+  browser = await waitFor(
+    "Owned WebView2 debugging endpoint",
+    async () => {
+      if (child.exitCode !== null)
+        throw new Blocked(
+          `Harness host exited (${child.exitCode}); ${logTail.slice(-1500)}`,
+        );
+      try {
+        return await chromium.connectOverCDP(`http://127.0.0.1:${cdpPort}`, {
+          timeout: 1000,
+        });
+      } catch {
+        return null;
+      }
+    },
+    { timeoutMs: 40000, intervalMs: 250 },
+  );
+  main = await waitFor("Real main WebView", () => findWindow("main"));
+  hostSession++;
+  (report.hostPids ??= []).push(child.pid);
+  const snapshot = await status();
+  assert.equal(snapshot.runId, runId);
+  assert.equal(snapshot.applicationId, "com.grain.agent-harness");
+  assert.equal(
+    resolve(snapshot.profile.replace(/^\\\\\?\\/, "")),
+    resolve(root, "data"),
+  );
+  assert.deepEqual(snapshot.shortcutBindings, []);
+}
+async function stopHost() {
+  const pid = child.pid;
+  try {
+    await invoke("agent_harness_shutdown");
+  } catch {
+    /* host exits before IPC reply */
+  }
+  await waitFor(
+    "Owned host exit",
+    () => child.exitCode !== null || child.signalCode !== null,
+    { timeoutMs: 10000 },
+  );
+  await browser.close();
+  browser = null;
+  main = null;
+  await waitFor(
+    "Old host endpoint release",
+    async () => !(await portOpen(cdpPort)) && !(await portOpen(17124)),
+    { timeoutMs: 10000 },
+  );
+  assert.equal(child.exitCode, 0, `Host ${pid} did not exit normally`);
+}
+async function restartHost(beforeLaunch) {
+  if (options.fault === "skip-restart") return;
+  const oldSession = hostSession;
+  const snapshot = await status();
+  priorEvents.splice(0, priorEvents.length, ...snapshot.events);
+  await stopHost();
+  if (beforeLaunch) await beforeLaunch();
+  cdpPort = await unusedPort();
+  await launchHost();
+  assert.equal(hostSession, oldSession + 1);
+  const after = await status();
+  assert.equal(after.worker.count, 0);
+  assert.equal(after.tokenCount, baselineTokens);
+  assert.equal(after.agent.pendingApproval, false);
+  assert.equal(after.agent.active, false);
+}
+const installation = installationHandlers({
+  root,
+  here,
+  status,
+  fixture,
+  request,
+  greeting,
+  closePanel,
+  activate,
+  waitFor,
+  events,
+  restartHost,
+  main: () => main,
+  log: () => logTail,
+});
+Object.assign(handlers, installation.handlers);
 let baselineTokens = 0;
 let cdpPort;
 try {
@@ -963,43 +1091,8 @@ try {
   );
   await changeRevision("one");
   cdpPort = await unusedPort();
-  child = spawn(binary, [], {
-    cwd: repo,
-    windowsHide: true,
-    env: {
-      ...process.env,
-      GRAIN_AGENT_HARNESS_ROOT: root,
-      WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-address=127.0.0.1 --remote-debugging-port=${cdpPort}`,
-      WEBVIEW2_USER_DATA_FOLDER: join(root, "data/webview"),
-      RUST_LOG:
-        "warn,handy_app_lib=info,handy_app_lib::shortcut::handy_keys=debug",
-    },
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  child.stdout.on("data", appendLog);
-  child.stderr.on("data", appendLog);
-  child.once("error", (error) => {
-    logTail += String(error);
-  });
-  report.hostPid = child.pid;
-  browser = await waitFor(
-    "Owned WebView2 debugging endpoint",
-    async () => {
-      if (child.exitCode !== null)
-        throw new Blocked(
-          `Harness host exited (${child.exitCode}); ${logTail.slice(-1500)}`,
-        );
-      try {
-        return await chromium.connectOverCDP(`http://127.0.0.1:${cdpPort}`, {
-          timeout: 1000,
-        });
-      } catch {
-        return null;
-      }
-    },
-    { timeoutMs: 40000, intervalMs: 250 },
-  );
-  main = await waitFor("Real main WebView", () => findWindow("main"));
+  hostBinary = binary;
+  await launchHost();
   report.adapter.webViewVersion = browser.version();
   const firstStatus = await status();
   assert.equal(firstStatus.runId, runId);
@@ -1035,13 +1128,21 @@ try {
       await fixture("unload").catch((error) => {
         if (!String(error).includes("not a load-unpacked")) throw error;
       });
+      if ((await status()).fixtureInstalled) await fixture("remove_installed");
       await changeRevision("one");
-      await fixture("load");
+      await copyFile(
+        join(here, "fixtures/lifecycle/manifest.json"),
+        join(root, "fixture/manifest.json"),
+      );
+      if (scenario.suite !== "native-installation") await fixture("load");
       const eventStart = (await status()).events.length;
       const modelStart = model.journal.length;
       await handlers[scenario.id]();
       await closePanel();
-      await fixture("unload");
+      await fixture("unload").catch((error) => {
+        if (!String(error).includes("not a load-unpacked")) throw error;
+      });
+      if ((await status()).fixtureInstalled) await fixture("remove_installed");
       await waitFor("Scenario cleanup baseline", async () => {
         const value = await status();
         return (
@@ -1055,6 +1156,7 @@ try {
       const end = await status();
       result.events = end.events.slice(eventStart);
       result.model = model.journal.slice(modelStart);
+      result.observations = installation.takeEvidence();
       assert.ok(
         !result.model.some((entry) => entry.state === "error"),
         "Scripted provider rejected the real Agent request",
@@ -1065,8 +1167,23 @@ try {
       result.error = String(error.message ?? error).slice(0, 2500);
       try {
         result.snapshot = await status();
+        result.observations = installation.takeEvidence();
       } catch {
         /* host might have exited */
+      }
+      if (main && !main.isClosed()) {
+        try {
+          result.mainText = (await main.locator("body").innerText()).slice(
+            0,
+            4000,
+          );
+          await mkdir(join(root, "evidence"), { recursive: true });
+          await main.screenshot({
+            path: join(root, "evidence", `${scenario.id}-main.png`),
+          });
+        } catch {
+          /* renderer diagnostic is best effort */
+        }
       }
       const page = await findWindow("agent-panel");
       if (page) {
@@ -1162,7 +1279,7 @@ try {
   report.cleanup = { status: errors.length ? "Fail" : "Pass", errors };
   report.completedAt = new Date().toISOString();
   // Keep reports/screenshots only. Delete only verified children of this unique run.
-  for (const name of ["data", "fixture"]) {
+  for (const name of ["data", "fixture", "fixture-b", "fixture.grainpack"]) {
     try {
       await rm(assertWithin(root, join(root, name)), {
         recursive: true,

@@ -244,6 +244,22 @@ pub fn agent_harness_status(app: AppHandle, window: WebviewWindow) -> Result<Val
     if OVERFLOW.load(std::sync::atomic::Ordering::Relaxed) {
         return Err("Harness evidence buffer overflowed".into());
     }
+    let registry = app.try_state::<std::sync::Arc<grain_core::extensions::ExtensionsRegistry>>();
+    let record = registry
+        .as_ref()
+        .and_then(|registry| registry.record(FIXTURE_ID));
+    let owner = record.as_ref().map(|record| {
+        record.dev.as_ref().map_or("installed", |dev| {
+            if Path::new(&dev.path)
+                .file_name()
+                .is_some_and(|name| name == "fixture-b")
+            {
+                "fixture-b"
+            } else {
+                "fixture"
+            }
+        })
+    });
     Ok(json!({
         "schema": 1, "runId": config().marker.run_id, "profile": config().data,
         "applicationId": app.config().identifier, "eventsPort": crate::events_server::EVENTS_PORT,
@@ -251,7 +267,11 @@ pub fn agent_harness_status(app: AppHandle, window: WebviewWindow) -> Result<Val
         "worker": crate::extension_host::harness_snapshot(FIXTURE_ID),
         "agent": crate::agent::harness_snapshot(&app),
         "tokenCount": crate::events_server::token_count(),
-        "fixtureEnabled": app.state::<std::sync::Arc<grain_core::extensions::ExtensionsRegistry>>().record(FIXTURE_ID).is_some_and(|record| record.enabled),
+        "registryAvailable": registry.is_some(),
+        "fixtureEnabled": record.as_ref().is_some_and(|record| record.enabled),
+        "fixtureOwner": owner,
+        "fixtureInstalled": registry.as_ref().is_some_and(|registry| registry.installed_record(FIXTURE_ID).is_some()),
+        "fixtureApproved": record.as_ref().is_some_and(|record| record.actions_approved.is_some()),
         "events": *EVENTS.lock().unwrap(),
     }))
 }
@@ -269,6 +289,10 @@ fn context_shortcut_bindings(app: &AppHandle) -> Vec<String> {
 #[serde(rename_all = "snake_case")]
 pub enum FixtureOperation {
     Load,
+    Register,
+    LoadSecond,
+    Import,
+    RemoveInstalled,
     Unload,
     Enable,
     Disable,
@@ -282,10 +306,14 @@ pub async fn agent_harness_fixture(
 ) -> Result<Value, String> {
     guard(&app, &window)?;
     match operation {
-        FixtureOperation::Load => {
+        FixtureOperation::Load | FixtureOperation::Register | FixtureOperation::LoadSecond => {
             let root = config()
                 .root
-                .join("fixture")
+                .join(if matches!(operation, FixtureOperation::LoadSecond) {
+                    "fixture-b"
+                } else {
+                    "fixture"
+                })
                 .canonicalize()
                 .map_err(|e| e.to_string())?;
             if !root.starts_with(&config().root) {
@@ -299,6 +327,9 @@ pub async fn agent_harness_fixture(
                 return Err("Harness only admits its permission-free native fixture".into());
             }
             crate::grain_commands::load_unpacked_project(&app, &root)?;
+            if !matches!(operation, FixtureOperation::Load) {
+                return agent_harness_status(app, window);
+            }
             let reg = app.state::<std::sync::Arc<grain_core::extensions::ExtensionsRegistry>>();
             let record = reg.record(FIXTURE_ID).ok_or("Fixture was not registered")?;
             let digest = grain_core::extensions::approval_fingerprint(&record, &loaded.pack)
@@ -310,6 +341,49 @@ pub async fn agent_harness_fixture(
                 vec![],
                 digest,
             )?;
+        }
+        FixtureOperation::Import => {
+            let path = config()
+                .root
+                .join("fixture.grainpack")
+                .canonicalize()
+                .map_err(|e| e.to_string())?;
+            if !path.starts_with(&config().root) {
+                return Err("Fixture package escaped harness root".into());
+            }
+            use std::io::Read;
+            let mut raw = Vec::new();
+            std::fs::File::open(&path)
+                .map_err(|e| e.to_string())?
+                .take(grain_sdk::PACK_MAX_BYTES + 1)
+                .read_to_end(&mut raw)
+                .map_err(|e| e.to_string())?;
+            if raw.len() as u64 > grain_sdk::PACK_MAX_BYTES {
+                return Err("Harness package exceeds the storage limit".into());
+            }
+            let pack: grain_sdk::GrainPack =
+                serde_json::from_slice(&raw).map_err(|e| e.to_string())?;
+            pack.validate()?;
+            if pack.manifest.id != FIXTURE_ID
+                || !pack.manifest.permissions.is_empty()
+                || pack.manifest.contributes.authentication.is_some()
+            {
+                return Err("Harness only imports its permission-free native fixture".into());
+            }
+            crate::grain_commands::extension_import_pack(
+                app.clone(),
+                window.clone(),
+                path.to_string_lossy().into_owned(),
+            )?;
+        }
+        FixtureOperation::RemoveInstalled => {
+            crate::grain_commands::extension_uninstall(
+                app.clone(),
+                window.clone(),
+                FIXTURE_ID.into(),
+                false,
+            )
+            .await?;
         }
         FixtureOperation::Unload => crate::grain_commands::extension_unload_dev(
             app.clone(),
@@ -379,6 +453,9 @@ pub async fn agent_harness_submit(
 #[tauri::command]
 pub fn agent_harness_shutdown(app: AppHandle, window: WebviewWindow) -> Result<(), String> {
     guard(&app, &window)?;
+    // Use the same intentional-quit ownership as the tray command; otherwise
+    // Grain's keep-alive policy can veto this explicit harness shutdown.
+    crate::INTENTIONAL_QUIT.store(true, std::sync::atomic::Ordering::Relaxed);
     app.exit(0);
     Ok(())
 }
