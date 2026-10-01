@@ -1191,12 +1191,115 @@ fn place_panel_center(window: &tauri::WebviewWindow, height: f64) {
     }
 }
 
+#[cfg(windows)]
+fn is_terminal_surface(class: &str, exe: &str) -> bool {
+    matches!(
+        class,
+        "ConsoleWindowClass" | "CASCADIA_HOSTING_WINDOW_CLASS"
+    ) || matches!(
+        exe,
+        "conhost"
+            | "openconsole"
+            | "windowsterminal"
+            | "windowsterminalpreview"
+            | "powershell"
+            | "pwsh"
+            | "cmd"
+            | "wezterm-gui"
+            | "alacritty"
+            | "mintty"
+            | "kitty"
+            | "tabby"
+            | "hyper"
+    )
+}
+
+#[cfg(windows)]
+fn foreground_is_terminal() -> bool {
+    use windows::Win32::Foundation::{CloseHandle, MAX_PATH};
+    use windows::Win32::System::Threading::{
+        OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32,
+        PROCESS_QUERY_LIMITED_INFORMATION,
+    };
+    use windows::Win32::UI::WindowsAndMessaging::{
+        GetClassNameW, GetForegroundWindow, GetWindowThreadProcessId,
+    };
+
+    let hwnd = unsafe { GetForegroundWindow() };
+    if hwnd.0.is_null() {
+        return false;
+    }
+    let mut class = [0u16; 64];
+    let len = unsafe { GetClassNameW(hwnd, &mut class) };
+    let class = String::from_utf16_lossy(&class[..len.max(0) as usize]);
+    if is_terminal_surface(&class, "") {
+        return true;
+    }
+    let mut pid = 0;
+    unsafe { GetWindowThreadProcessId(hwnd, Some(&mut pid)) };
+    if pid == 0 {
+        return false;
+    }
+    let Ok(process) = (unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) })
+    else {
+        return false;
+    };
+    let mut path = [0u16; MAX_PATH as usize];
+    let mut path_len = path.len() as u32;
+    let result = unsafe {
+        QueryFullProcessImageNameW(
+            process,
+            PROCESS_NAME_WIN32,
+            windows::core::PWSTR(path.as_mut_ptr()),
+            &mut path_len,
+        )
+    };
+    let _ = unsafe { CloseHandle(process) };
+    if result.is_err() {
+        return false;
+    }
+    let path = String::from_utf16_lossy(&path[..path_len as usize]);
+    let exe = std::path::Path::new(&path)
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    is_terminal_surface(&class, &exe)
+}
+
+#[cfg(not(windows))]
+fn foreground_is_terminal() -> bool {
+    false
+}
+
+#[cfg(all(test, windows))]
+mod terminal_capture_tests {
+    use super::is_terminal_surface;
+
+    #[test]
+    fn skips_console_hosts_and_terminal_apps_but_not_regular_editors() {
+        assert!(is_terminal_surface("ConsoleWindowClass", ""));
+        assert!(is_terminal_surface("CASCADIA_HOSTING_WINDOW_CLASS", ""));
+        assert!(is_terminal_surface("", "windowsterminal"));
+        assert!(is_terminal_surface("", "pwsh"));
+        assert!(!is_terminal_surface("Chrome_WidgetWin_1", "code"));
+    }
+}
+
 /// Synthesise a platform copy and read the resulting selection off the clipboard,
 /// restoring the user's original clipboard afterwards (the capture is invisible).
 /// Returns `None` if nothing usable was selected, input simulation is unavailable,
 /// or the clipboard didn't change.
 // Shared invisible selection capture for Agent and extension requests.
 pub(crate) fn capture_selection_result(app: &AppHandle) -> Result<Option<String>, String> {
+    // A synthetic Ctrl+C is an interrupt in a terminal. In development the
+    // terminal can also own this very process, so copying its selection would
+    // terminate Grain (and cargo) instead of opening the Agent.
+    if foreground_is_terminal() {
+        log::debug!("[GRAIN] agent: skipped selection copy in terminal");
+        return Ok(None);
+    }
+
     let enigo_state = app
         .try_state::<EnigoState>()
         .ok_or("input controller unavailable")?;
@@ -1210,6 +1313,10 @@ pub(crate) fn capture_selection_result(app: &AppHandle) -> Result<Option<String>
             .map_err(|_| "input controller lock failed".to_string())?;
         crate::input::release_modifiers(&mut enigo);
         std::thread::sleep(std::time::Duration::from_millis(40));
+        // The target can change while the shortcut modifiers are released.
+        if foreground_is_terminal() {
+            return Ok(None);
+        }
         if let Err(e) = crate::input::send_copy_ctrl_c(&mut enigo) {
             warn!("[GRAIN] agent: simulated copy failed: {e}");
             return Err(format!("simulated copy failed: {e}"));
