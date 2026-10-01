@@ -155,6 +155,8 @@ export function installationHandlers(ctx) {
     await note(stage);
   }
   return {
+    allow,
+    project,
     takeEvidence() {
       const result = evidence;
       evidence = [];

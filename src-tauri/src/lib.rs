@@ -1163,9 +1163,11 @@ pub fn run(cli_args: CliArgs) {
                 // [GRAIN] Phase 5A: the store client — loads verified roots +
                 // revocations from cache-or-seed (small, resident); the parsed
                 // index stays out of memory until the store is opened.
-                app.manage(std::sync::Arc::new(grain_store::StoreState::init(
-                    &data_dir,
-                )));
+                #[cfg(not(feature = "agent-harness"))]
+                let store = grain_store::StoreState::init(&data_dir);
+                #[cfg(feature = "agent-harness")]
+                let store = grain_store::StoreState::init_harness(&data_dir);
+                app.manage(std::sync::Arc::new(store));
                 // [GRAIN] Reconcile built-ins with what this build ships,
                 // now that AppContext + the registry are managed. Default off.
                 extension_host::reconcile_builtin_packs(&app.handle())

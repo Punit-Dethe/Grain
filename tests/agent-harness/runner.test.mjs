@@ -30,8 +30,81 @@ test("scenario IDs are unique and each suite is explicit", () => {
     scenarios.length,
   );
   assert.equal(selectScenarios("smoke").length, 2);
+  assert.equal(selectScenarios("store").length, 3);
   assert.equal(selectScenarios("all").length, scenarios.length);
   assert.throws(() => selectScenarios("made-up"), /Unknown suite/);
+});
+
+test("store fixture signs exact bytes with a distinct fixed test anchor", async () => {
+  const { STORE_PUBLIC_KEY, signStoreBytes } =
+    await import("./store-fixture.mjs");
+  const { createPublicKey, createHash, verify } = await import("node:crypto");
+  const decoded = Buffer.from(STORE_PUBLIC_KEY, "base64");
+  const key = createPublicKey({
+    key: Buffer.concat([
+      Buffer.from("302a300506032b6570032100", "hex"),
+      decoded.subarray(10),
+    ]),
+    format: "der",
+    type: "spki",
+  });
+  const data = Buffer.from('{"fixture":true}');
+  const sig = Buffer.from(
+    signStoreBytes(data).split("\n")[1],
+    "base64",
+  ).subarray(10);
+  assert.equal(
+    verify(null, createHash("blake2b512").update(data).digest(), key, sig),
+    true,
+  );
+  assert.equal(
+    verify(null, createHash("blake2b512").update("changed").digest(), key, sig),
+    false,
+  );
+  const backend = await readFile(
+    resolve(here, "../../src-tauri/src/grain_agent_harness.rs"),
+    "utf8",
+  );
+  assert.ok(
+    backend.includes(STORE_PUBLIC_KEY),
+    "Runner and host test anchors differ",
+  );
+  const production = await readFile(
+    resolve(here, "../../crates/grain-core/src/trust.rs"),
+    "utf8",
+  );
+  assert.ok(
+    !production.includes(STORE_PUBLIC_KEY),
+    "Test key leaked into production trust",
+  );
+});
+
+test("owned store transport preserves byte length and releases a held request", async () => {
+  const { startStore } = await import("./store-fixture.mjs");
+  const store = await startStore(here);
+  try {
+    await store.configure();
+    const base = `http://127.0.0.1:${store.port}`;
+    const index = await (await fetch(`${base}/index.json`)).json();
+    const blob = await (
+      await fetch(`${base}/blob/${store.hash}.grainpack`)
+    ).arrayBuffer();
+    assert.equal(blob.byteLength, index.entries[0].size);
+    store.corruptBlob();
+    const corrupt = await (
+      await fetch(`${base}/blob/${store.hash}.grainpack`)
+    ).arrayBuffer();
+    assert.equal(corrupt.byteLength, blob.byteLength);
+    assert.notDeepEqual(Buffer.from(corrupt), Buffer.from(blob));
+    store.hold("/index.json");
+    const pending = fetch(`${base}/index.json`);
+    await waitFor("Held fixture request", () => store.heldCount === 1);
+    store.release();
+    assert.equal((await pending).status, 200);
+    await waitFor("Released fixture request", () => store.heldCount === 0);
+  } finally {
+    await store.close();
+  }
 });
 
 test("scripted provider enforces search, selective load and offered-action discipline", () => {

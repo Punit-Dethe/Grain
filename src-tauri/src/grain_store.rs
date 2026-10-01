@@ -142,6 +142,46 @@ fn trust_str(t: grain_sdk::Trust) -> &'static str {
 }
 
 impl StoreState {
+    /// Fixed test trust anchor and loopback transport, compiled only into the
+    /// guarded isolated acceptance host. Root rotation is intentionally excluded.
+    #[cfg(feature = "agent-harness")]
+    pub(crate) fn init_harness(data_dir: &Path) -> Self {
+        let mut state = Self::init(data_dir);
+        if let Some(base) = crate::grain_agent_harness::store_base(data_dir) {
+            let roots = Roots {
+                spec: 1,
+                version: 1,
+                publishing_key: crate::grain_agent_harness::STORE_PUBLISHING_KEY.into(),
+                base_urls: vec![base],
+                mirrors: Vec::new(),
+                expires: None,
+            };
+            *state.stored_version.get_mut().unwrap() =
+                load_cached_index(&state.cache_dir, &roots, None, now_unix())
+                    .ok()
+                    .map(|(index, _)| index.version);
+            *state.revocations.get_mut().unwrap() =
+                load_cached_revocations(&state.cache_dir, &roots).unwrap_or(Revocations {
+                    spec: 1,
+                    version: 0,
+                    expires: String::new(),
+                    entries: Vec::new(),
+                });
+            *state.roots.get_mut().unwrap() = roots;
+        }
+        state
+    }
+
+    #[cfg(feature = "agent-harness")]
+    pub(crate) fn harness_snapshot(&self) -> serde_json::Value {
+        let owner = self.ownership.lock().unwrap();
+        serde_json::json!({
+            "indexResident": self.index.read().unwrap().is_some(),
+            "canInstall": owner.can_install,
+            "storedVersion": *self.stored_version.read().unwrap(),
+        })
+    }
+
     /// Load roots + revocations from the disk cache, falling back to the
     /// embedded seed. The index is intentionally **not** loaded here (only its
     /// version, for the rollback floor) so idle footprint stays minimal.

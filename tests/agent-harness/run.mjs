@@ -20,6 +20,8 @@ import { performance } from "node:perf_hooks";
 import { chromium } from "@playwright/test";
 import { scenarios, selectScenarios } from "./scenarios.mjs";
 import { installationHandlers } from "./installation.mjs";
+import { storeHandlers } from "./store.mjs";
+import { startStore, STORE_PUBLIC_KEY } from "./store-fixture.mjs";
 import { startModel } from "./model.mjs";
 import { developerReload } from "./developer.mjs";
 import { verifyBuild, verifyCli, runnerFingerprint } from "./stamp.mjs";
@@ -49,7 +51,7 @@ for (let i = 2; i < process.argv.length; i++) {
 }
 if (options.help) {
   console.log(
-    "node tests/agent-harness/run.mjs [--list] [--suite smoke|lifecycle|idle|native-failures|native-installation|all] [--scenario ID] [--binary path] [--output directory]\nWindows real Agent/WebView2 acceptance. Build first with tests/agent-harness/build.ps1. No live account or model key required.",
+    "node tests/agent-harness/run.mjs [--list] [--suite smoke|lifecycle|idle|native-failures|native-installation|store|all] [--scenario ID] [--binary path] [--output directory]\nWindows real Agent/WebView2 acceptance. Build first with tests/agent-harness/build.ps1. No live account or model key required.",
   );
   process.exit(0);
 }
@@ -70,6 +72,7 @@ if (
     "successful-error",
     "skip-restart",
     "stale-package",
+    "unclosed-store",
   ].includes(options.fault)
 )
   throw new Error("Unknown oracle fault");
@@ -98,6 +101,11 @@ if (
     "stale-package requires --scenario native.cli-package-ownership",
   );
 const runId = randomUUID();
+if (
+  options.fault === "unclosed-store" &&
+  options.scenario !== "store.close-offline"
+)
+  throw new Error("unclosed-store requires --scenario store.close-offline");
 const output = resolve(options.output ?? join(here, ".runs"));
 await mkdir(output, { recursive: true });
 const root = await mkdtemp(join(output, "run-"));
@@ -126,7 +134,7 @@ const report = {
     "Checks in scenario metadata are partial supporting coverage; manual ledger is unchanged.",
   ],
 };
-let child, browser, model, main;
+let child, browser, model, main, store;
 let interrupted = false;
 const cancellation = new AbortController();
 const waitFor = (description, operation, options = {}) =>
@@ -1036,6 +1044,22 @@ const installation = installationHandlers({
   log: () => logTail,
 });
 Object.assign(handlers, installation.handlers);
+const storeSuite = storeHandlers({
+  root,
+  invoke,
+  status,
+  waitFor,
+  fixture,
+  greeting,
+  restartHost,
+  store: () => store,
+  allow: installation.allow,
+  project: installation.project,
+  fault: options.fault,
+  main: () => main,
+  activate,
+});
+Object.assign(handlers, storeSuite.handlers);
 let baselineTokens = 0;
 let cdpPort;
 try {
@@ -1101,9 +1125,24 @@ try {
   }
   report.injectedFault = options.fault ?? null;
   model = await startModel();
+  if (selected.some((scenario) => scenario.suite === "store")) {
+    store = await startStore(here);
+    report.storeFixture = {
+      port: store.port,
+      publicKey: STORE_PUBLIC_KEY,
+      limitations: [
+        "Fixed test publishing anchor; production root signatures/rotation excluded.",
+      ],
+    };
+  }
   await writeFile(
     join(root, ".grain-agent-harness.json"),
-    JSON.stringify({ schema: 1, runId, modelPort: model.port }),
+    JSON.stringify({
+      schema: 1,
+      runId,
+      modelPort: model.port,
+      storePort: store?.port,
+    }),
   );
   await mkdir(join(root, "fixture/dist"), { recursive: true });
   await copyFile(
@@ -1155,10 +1194,12 @@ try {
         join(here, "fixtures/lifecycle/manifest.json"),
         join(root, "fixture/manifest.json"),
       );
-      if (scenario.suite !== "native-installation") await fixture("load");
+      if (!["native-installation", "store"].includes(scenario.suite))
+        await fixture("load");
       const eventStart = (await status()).events.length;
       const modelStart = model.journal.length;
       await handlers[scenario.id]();
+      if (scenario.suite === "store") await invoke("store_close");
       await closePanel();
       await fixture("unload").catch((error) => {
         if (!String(error).includes("not a load-unpacked")) throw error;
@@ -1177,7 +1218,10 @@ try {
       const end = await status();
       result.events = end.events.slice(eventStart);
       result.model = model.journal.slice(modelStart);
-      result.observations = installation.takeEvidence();
+      result.observations = [
+        ...installation.takeEvidence(),
+        ...storeSuite.takeEvidence(),
+      ];
       assert.ok(
         !result.model.some((entry) => entry.state === "error"),
         "Scripted provider rejected the real Agent request",
@@ -1188,7 +1232,10 @@ try {
       result.error = String(error.message ?? error).slice(0, 2500);
       try {
         result.snapshot = await status();
-        result.observations = installation.takeEvidence();
+        result.observations = [
+          ...installation.takeEvidence(),
+          ...storeSuite.takeEvidence(),
+        ];
       } catch {
         /* host might have exited */
       }
@@ -1273,6 +1320,23 @@ try {
       await model.close();
     } catch (error) {
       errors.push(`Model cleanup: ${error.message}`);
+    }
+  }
+  if (store) {
+    report.storeRequests = store.journal;
+    try {
+      await store.close();
+    } catch (error) {
+      errors.push(`Store cleanup: ${error.message}`);
+    }
+    try {
+      await poll(
+        "Store fixture listener release",
+        async () => !(await portOpen(store.port)),
+        { timeoutMs: 3000 },
+      );
+    } catch (error) {
+      errors.push(error.message);
     }
   }
   if (cdpPort) {

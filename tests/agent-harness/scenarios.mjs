@@ -175,6 +175,27 @@ export const scenarios = [
     description:
       "Real CLI build/doctor/pack, same-version replacement, old flat/version files, developer A/B and restored installed bytes across restart; accounts excluded",
   },
+  {
+    id: "store.close-offline",
+    suite: "store",
+    checks: [18],
+    description:
+      "Ten held-refresh close/reopen cycles, signed install/consent/Agent call, restart and cached offline installation refusal",
+  },
+  {
+    id: "store.pending-mutations",
+    suite: "store",
+    checks: [36],
+    description:
+      "Disable/removal supersede a held signed update; explicit fresh installation and actual Agent results recover across restart",
+  },
+  {
+    id: "store.integrity-close",
+    suite: "store",
+    checks: [],
+    description:
+      "Invalid catalog signature, corrupt artifact hash and store-close cancellation refuse publication, then actual tools recover",
+  },
 ];
 
 export function selectScenarios(suite) {
@@ -185,6 +206,7 @@ export function selectScenarios(suite) {
       "idle",
       "native-failures",
       "native-installation",
+      "store",
       "all",
     ].includes(suite)
   )

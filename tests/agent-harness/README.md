@@ -25,6 +25,9 @@ npm run test:agent -- --suite lifecycle
 npm run test:agent -- --suite native-failures
 npm run test:agent -- --suite native-installation
 
+# Signed local store, real Store page, offline and interrupted downloads.
+npm run test:agent -- --suite store
+
 # Real production idle timing; allow about five minutes.
 npm run test:agent -- --suite idle
 
@@ -75,7 +78,7 @@ Runtime reports also identify the Node/WebView adapter version and an independen
 | `native.result-budgets` | Replies exceeding the 64 KiB decoded budget and 512 KiB raw wire budget fail at distinct boundaries; workers/tokens/supervisors retire, then fresh native calls recover. |
 | `native.invalid-input` | Unknown keys, missing required values, wrong types, oversized arguments and malformed JSON fail before approval/startup; private rejected parameter keys stay hidden. |
 
-`smoke` contains the first two; `lifecycle` includes smoke and the original remaining non-idle lifecycle cases; `native-failures` contains the six Block 2C scenarios above. `native-installation` contains six native consent/package/restart cases. `all` includes all twenty-five. `idle` runs only the long timing case. Scenarios set up their own fixture baseline and clean it up. A failed scenario stops the batch; later scenarios are Not run rather than being assessed against contaminated state.
+`smoke` contains the first two; `lifecycle` includes smoke and the original remaining non-idle lifecycle cases; `native-failures` contains the six Block 2C scenarios above. `native-installation` contains six native consent/package/restart cases. `store` contains three signed-store cases below. `all` includes all twenty-eight. `idle` runs only the long timing case. Scenarios set up their own fixture baseline and clean it up. A failed scenario stops the batch; later scenarios are Not run rather than being assessed against contaminated state.
 
 Reports identify supporting numbered checks in the existing extension plan. These links do not certify the whole numbered procedure or rewrite its ledger automatically. After reviewing complete real-app procedure coverage and its focused audit, record an automated Pass explicitly with its evidence class. Human results remain separately identified. The harness still excludes microphone/native-pill observations, including the ordinary-app portion of check 34; the user has separately completed that [2C audit handoff](../../docs/Extensions%202.0/NATIVE-FAILURE-AUDIT.md). The current ordinary-app handoff is in the installation audit.
 
@@ -101,7 +104,26 @@ npm run test:agent -- --scenario native.cli-package-ownership --fault stale-pack
 
 This deliberately imports the original package instead of the compiled replacement. Expect the old greeting to fail the replacement-result assertion, exit 1 and cleanup Pass. The fault is accepted only for this fixed scenario; it adds no automatic product/tool retries.
 
-The production-logic runner filters the normal backend library tests into `agent`, `native`, `execution`, `mcp` and `auth` groups, plus the core registry tests in `registry`, imported-update boundaries in `imported` and developer-project validation in `developer`. `all` includes all eight. It requires a successful Cargo exit **and at least one actual passing test**; a zero-test filter fails. The registry group includes real Windows file-sharing locks: a short lock must recover without replaying serialization; a persistent lock must fail within the bounded retry policy, preserving saved state and unowned recovery files. These tests use production helpers/SDK and local fixtures, not complete real-application or live-account acceptance. The Windows manifest runner is configured as a Cargo argv array so repository paths containing spaces remain usable.
+The production-logic runner filters the normal backend library tests into `agent`, `native`, `execution`, `mcp` and `auth` groups, plus the core registry tests in `registry`, imported-update boundaries in `imported`, developer-project validation in `developer` and signed-store boundaries in `store`. `all` includes all nine. It requires a successful Cargo exit **and at least one actual passing test**; a zero-test filter fails. The registry group includes real Windows file-sharing locks: a short lock must recover without replaying serialization; a persistent lock must fail within the bounded retry policy, preserving saved state and unowned recovery files. These tests use production helpers/SDK and local fixtures, not complete real-application or live-account acceptance. The Windows manifest runner is configured as a Cargo argv array so repository paths containing spaces remain usable.
+
+### Signed-store scenarios
+
+| ID | What is asserted |
+|---|---|
+| `store.close-offline` | Ten actual Store loading/route-close/reopen cycles cancel held refresh HTTP responses and drop the resident index. The real Install button installs a verified package disabled, real consent and Agent greeting work across restart, cached offline browsing shows its notice and disables Update, and a direct backend install is also refused. The installed greeting remains usable. |
+| `store.pending-mutations` | During held real artifact downloads, production disable and remove operations supersede the pending update. Disabled/removed choices survive actual restart. Both schedules repeat under a developer override; the parked installed record is preserved on disable and removed without breaking the active developer. Explicit subsequent installation/consent returns the new greeting across restart. |
+| `store.integrity-close` | A same-length corrupt artifact fails its hash check; closing cancels a held artifact request; an invalid catalogue signature becomes offline and admits no artifact fetch. Corrected signed bytes install and produce the actual approved greeting. |
+
+The runner starts an owned ephemeral loopback HTTP fixture only when a store scenario is selected. Its fixed public test seed signs modern minisign `ED` messages using Blake2b-512 prehash and a signed trusted comment. The separate debug host uses the matching **test publishing anchor only inside its validated isolated profile**. Normal publishing roots, mirrors and release initialization are unchanged. Cached index loading still passes through the production signature verifier and rollback-floor logic. No arbitrary endpoint/key or ordinary account is admitted. Model/store fixture ports cannot target the ordinary event listener on 7124 or collide with owned event/model listeners.
+
+This certifies signed fixture installation and ownership through the production verifier/installer, not a published production extension or production root rotation. The fixture returns no roots-chain/revocation document. Accounts, OS vault recovery, root rotation, live publishing, power loss and physical file-picker/mouse behavior remain separate. The [focused store audit](../../docs/Extensions%202.0/NATIVE-STORE-AUDIT.md) records acceptance and exact build/run evidence.
+
+```powershell
+npm run test:agent:logic -- --group store
+npm run test:agent -- --scenario store.close-offline --fault unclosed-store
+```
+
+The deliberate fault withholds navigation away from the real loading Store page. Expect the cancelled-response assertion to fail, exit 1 and cleanup Pass, including release of the owned fixture listener and held socket. It is accepted only for this scenario and never counts as a passing product run. No ordinary-app microphone or external sign-in step is needed for these fixed permission-free store cases.
 
 ## Verify the harness detects a real failure
 
