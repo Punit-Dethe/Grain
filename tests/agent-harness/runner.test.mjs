@@ -32,6 +32,41 @@ const body = (results = [], actions = []) => ({
   })),
 });
 
+test("native account oracle verifies actual identity and refuses credential context", () => {
+  assert.equal(selectScenarios("native-auth").length, 1);
+  for (const account of ["A", "B"]) {
+    const frame = body([
+      "search",
+      "load",
+      `Harness account reply: ${JSON.stringify({ account })}`,
+    ]);
+    frame.messages[0].content = `Harness request: account_read_${account.toLowerCase()}`;
+    assert.equal(nextReply(frame).accountVerified, true);
+    frame.messages.at(-1).content =
+      `Harness account reply: ${JSON.stringify({ account: account === "A" ? "B" : "A" })}`;
+    assert.throws(() => nextReply(frame), /wrong account/);
+    frame.messages.at(-1).content = "HARNESS_OAUTH_PRIVATE_never-model-visible";
+    assert.throws(() => nextReply(frame), /credential leaked/);
+    frame.messages.at(-1).content = "Account connected";
+    assert.throws(() => nextReply(frame), /No real authenticated/);
+  }
+});
+
+test("native auth package retains fixed identity and exact TLS endpoints", async () => {
+  const { authPackage } = await import("./auth-fixture.mjs");
+  const pack = authPackage(32100);
+  assert.equal(pack.manifest.id, "com.grain.harness.auth");
+  assert.deepEqual(pack.manifest.permissions, ["auth", "net:127.0.0.1"]);
+  assert.equal(
+    pack.manifest.contributes.authentication.tokenEndpoint,
+    "https://127.0.0.1:32100/token",
+  );
+  assert.match(pack.manifest.entry_source, /auth: true/);
+  assert.equal(pack.manifest.contributes.actions.length, 1);
+  for (const port of [-1, 0, 65536, "32100"])
+    assert.throws(() => authPackage(port));
+});
+
 test("scenario IDs are unique and each suite is explicit", () => {
   assert.equal(
     new Set(scenarios.map((scenario) => scenario.id)).size,

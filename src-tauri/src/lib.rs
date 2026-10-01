@@ -89,6 +89,8 @@ pub(crate) use grain_overlay as overlay;
 pub(crate) use grain_settings as settings;
 #[cfg(feature = "agent-harness")]
 mod grain_agent_harness;
+#[cfg(feature = "agent-harness")]
+mod grain_agent_harness_auth;
 #[path = "handy/managers/mod.rs"]
 mod managers;
 mod master_key; // [GRAIN] transient Alt+2 prompt-switcher chord + A/D navigation
@@ -940,6 +942,7 @@ pub fn run(cli_args: CliArgs) {
             grain_agent_harness::agent_harness_fixture,
             grain_agent_harness::agent_harness_submit,
             grain_agent_harness::agent_harness_shutdown,
+            grain_agent_harness_auth::agent_harness_auth,
         ];
         move |invoke: tauri::ipc::Invoke| {
             if invoke.message.command().starts_with("agent_harness_") {

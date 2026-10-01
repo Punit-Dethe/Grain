@@ -982,7 +982,22 @@ async fn proxy_fetch(
         .map(str::to_owned);
 
     for redirect_count in 0..=NET_MAX_REDIRECTS {
-        let mut request = extension_http_client()
+        #[cfg(feature = "agent-harness")]
+        let scoped_client = if identity.id == crate::grain_agent_harness_auth::FIXTURE_ID {
+            Some(
+                crate::grain_agent_harness_auth::api_client(url.as_str())
+                    .map_err(internal_error)?,
+            )
+        } else {
+            None
+        };
+        #[cfg(feature = "agent-harness")]
+        let client = scoped_client
+            .as_ref()
+            .unwrap_or_else(|| extension_http_client());
+        #[cfg(not(feature = "agent-harness"))]
+        let client = extension_http_client();
+        let mut request = client
             .request(method.clone(), url.clone())
             .headers(headers.clone());
         if let Some(body) = &body {

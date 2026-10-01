@@ -28,6 +28,10 @@ npm run test:agent -- --suite native-installation
 # Legacy upgrade/restart preservation and typed native tool contracts.
 npm run test:agent -- --suite native-foundation
 
+# Native OAuth, scoped Windows vault, approved A/B reads and restart.
+# This suite additionally requires Python with cryptography installed.
+npm run test:agent -- --suite native-auth
+
 # Signed local store, real Store page, offline and interrupted downloads.
 npm run test:agent -- --suite store
 
@@ -84,7 +88,7 @@ Runtime reports also identify the Node/WebView adapter version and an independen
 | `native.result-budgets` | Replies exceeding the 64 KiB decoded budget and 512 KiB raw wire budget fail at distinct boundaries; workers/tokens/supervisors retire, then fresh native calls recover. |
 | `native.invalid-input` | Unknown keys, missing required values, wrong types, oversized arguments and malformed JSON fail before approval/startup; private rejected parameter keys stay hidden. |
 
-`smoke` contains the first two; `lifecycle` includes smoke and the original remaining non-idle lifecycle cases; `native-failures` contains the six Block 2C scenarios above. `native-installation` contains six native consent/package/restart cases. `native-foundation` contains the two B1a cases below. `store` contains three signed-store cases below. `registry-recovery` contains the existing `native.registry-refusal` plus two new cases below. `all` includes all thirty-two distinct cases; overlapping suite selections are not additive. `idle` runs only the long timing case. Scenarios set up their own fixture baseline and clean it up. A failed scenario stops the batch; later scenarios are Not run rather than being assessed against contaminated state.
+`smoke` contains the first two; `lifecycle` includes smoke and the original remaining non-idle lifecycle cases; `native-failures` contains the six Block 2C scenarios above. `native-installation` contains six native consent/package/restart cases. `native-foundation` contains the two B1a cases below. `native-auth` contains the separate guarded account fixture below. `store` contains three signed-store cases below. `registry-recovery` contains the existing `native.registry-refusal` plus two new cases below. `all` includes all thirty-three distinct cases; overlapping suite selections are not additive. `idle` runs only the long timing case. Scenarios set up their own fixture baseline and clean it up. A failed scenario stops the batch; later scenarios are Not run rather than being assessed against contaminated state.
 
 ### Native foundation (B1a)
 
@@ -93,7 +97,7 @@ Runtime reports also identify the Node/WebView adapter version and an independen
 | `native.typed-contract` | Seven text/number/entity and optional/null/zero cases round-trip through the actual worker and are verified by the scripted model. Each requires approval and one dispatch. Changing a valid declaration without reload refuses the old approval with zero dispatch; a fresh approved call works. Native declarations retain the four-parameter limit. |
 | `native.legacy-migration` | Legacy capture grants, edited prompts/bindings and an interrupted archive checkpoint migrate through actual startup. Six restart transitions preserve inert edits/artifacts/user data, refuse re-enable and start no worker. A real Windows registry lock preserves the owner after failed uninstall; terminal installed/developer removal and fresh valid tools recover. |
 
-The [focused audit](../../docs/Extensions%202.0/NATIVE-FOUNDATION-AUDIT.md) records checks 2/22, the reproduced stale-quarantine repair, review and repeated evidence. Legacy profile fixtures are changed only between owned host lifetimes; the changed-declaration test edits only its owned manifest. This is not power-loss, ordinary-profile upgrade or authenticated-account certification. The permission-free fixture gate remains intact; a separate guarded account fixture is still a prerequisite.
+The [focused audit](../../docs/Extensions%202.0/NATIVE-FOUNDATION-AUDIT.md) records checks 2/22, the reproduced stale-quarantine repair, review and repeated evidence. Legacy profile fixtures are changed only between owned host lifetimes; the changed-declaration test edits only its owned manifest. This is not power-loss, ordinary-profile upgrade or authenticated-account certification. The permission-free fixture gate remains intact; authentication uses the separate fixture below.
 
 ```powershell
 npm run test:agent -- --scenario native.typed-contract --fault stringified-number
@@ -101,6 +105,21 @@ npm run test:agent -- --scenario native.legacy-migration --fault lost-migration-
 ```
 
 Both deliberately corrupt actual disposable output/state and must give Fail, exit 1 and cleanup Pass. Each fault is accepted only with its named scenario. Typed verification is derived from real returned JSON; diagnostic journals retain a verification flag, not the argument/result payload.
+
+### Guarded native account fixture (B1b prerequisite)
+
+`native.auth-fixture` imports only `com.grain.harness.auth` from its owned package and uses the actual permission dialog. It runs production OAuth/PKCE, the loopback callback, token exchange, run-scoped Windows credential vault and host-authenticated network broker. The controlled HTTPS provider supplies accounts A/B. Actual returned JSON verifies an approved A read, stale approval refusal after switching to B, a fresh B read and B restoration after an owned restart. Disconnect must retire its worker; uninstall and end-of-run vault cleanup must return to baseline. The [focused audit](../../docs/Extensions%202.0/NATIVE-AUTH-FIXTURE-AUDIT.md) records the reproduced disconnect-worker repair and final evidence.
+
+This suite requires Python with `cryptography`; missing prerequisites report Blocked. The runner generates a short-lived certificate/key inside its disposable root. Trust is scoped to the fixture's exact localhost token/API endpoints; normal certificate/hostname validation stays enabled, and no OS trust store is changed. Only runs selecting this scenario set `authPort`. Other suites explicitly verify that the auth control refuses access. The original permission-free loader still refuses authentication and nonempty permissions.
+
+```powershell
+npm run test:agent -- --scenario native.auth-fixture --fault wrong-account
+npm run test:agent -- --scenario native.auth-fixture --fault abandoned-auth
+```
+
+Both commands must report Fail, exit 1 and cleanup Pass. The first corrupts the actual API reply so the account oracle fails. The second deliberately abandons one real test credential; independent cleanup must report `nativeVaultCleanup.deleted: 1` and `remaining: 0`. Cleanup enumerates only metadata in the exact run service and fixed fixture key family; it never reads/prints credential blobs. Provider journals contain bounded account/stage/counter information, not tokens, authorization URLs or private payloads. TLS files and owned scratch state are removed after every run, including failures.
+
+The prerequisite deliberately credits **no numbered checks**. Full 41/45/53 declaration/unbound-grant and installed/developer owner-isolation procedures remain pending, as do 42–44/50–51 callback/refresh/logout, failed-switch, scope and expiry schedules. Controlled consent does not certify browser UX, live-provider compatibility or other OS vaults.
 
 Reports identify supporting numbered checks in the existing extension plan. These links do not certify the whole numbered procedure or rewrite its ledger automatically. After reviewing complete real-app procedure coverage and its focused audit, record an automated Pass explicitly with its evidence class. Human results remain separately identified. The harness still excludes microphone/native-pill observations, including the ordinary-app portion of check 34; the user has separately completed that [2C audit handoff](../../docs/Extensions%202.0/NATIVE-FAILURE-AUDIT.md). The current ordinary-app handoff is in the installation audit.
 
@@ -195,9 +214,10 @@ Exit codes: **0** = every selected scenario and cleanup passed; **1** = assertio
 
 - Cargo feature `agent-harness` is off by default. The maintained builder opts into it only for the separately named `grain-agent-harness` target. The feature adds limited controls to the shared backend library; startup refuses the ordinary app identifier and requires `com.grain.agent-harness` plus the isolated marker/profile. Debug assertions are compulsory, so default release compilation rejects this feature.
 - Before Tauri starts, the host requires an absolute existing root containing a bounded versioned marker and valid run UUID. A Grain-owned portable-compatible module redirects application data, settings/secrets, model caches, history, logs and WebView caches into that run's `data/`. The Handy-derived portable module is unchanged.
-- Native/MCP credential service names receive a per-run harness suffix. No production credentials are copied. This first runtime suite creates no OAuth credentials; OS-vault write/recovery certification remains future work.
+- Native/MCP credential service names receive a per-run harness suffix. No production credentials are copied. Ordinary fixtures create no OAuth credentials. The explicit `native-auth` fixture writes only its run-scoped native credential and independently verifies vault cleanup; broader crash/recovery and live-account certification remain future work.
 - The harness skips the native pill supervisor, single-instance forwarding, autostart application and automatic updater checks. It clears default shortcut bindings and disables Agent context/screen capture/autocopy in its own profile. It uses no microphone, selection capture or external account. This bounds interference with the user's ordinary app and defines what the test excludes.
 - The test controls admit only fixed, permission-free harness fixture projects A/B and a fixed package under the run root. Installation cases register/import without granting; their actual permission sheets handle installed approval. They use production validation, registration, grant/enable/disable/unload operations. The fixture's installation approval is explicit test setup; **individual action approval still goes through the actual Agent UI and host executor**. There is no control to run an arbitrary action, provide an arbitrary path, read credentials, or approve a tool directly.
+- A separate debug-only auth control additionally requires the isolated main window/profile and explicit marker port. It fixes the package ID/path, one read tool, permissions, public client, scope and exact HTTPS endpoints. Authorization handoff belongs to one pending flow and clears on completion/cancellation/drop. Its connect/disconnect/remove operations delegate production paths; actual permission and action review are never bypassed.
 - Developer reload uses the existing role-bound DevControl token and protocol. That token remains reload-only; it was not given extra powers. It is read only from the owned profile and is never included in the report.
 - The WebView2 debugging endpoint is loopback-only and confined to the child process. Playwright activates the real enabled DOM buttons through their production handlers to avoid coordinate races during native resize/entrance animation. This verifies functional activation, not physical mouse targeting or accessibility quality.
 - Escape is a native shortcut, so `native-input.ps1` sends one Windows key down/up pair after verifying the visible foreground `Grain Assist` window belongs to the owned host PID. Test startup owns the production HandyKeys manager with no ordinary accelerators registered and keeps explicit blank binding entries to prevent default fallbacks. The normal initialization command is checked for idempotence. It refuses native input if ownership/focus cannot be established. Keep the ordinary app's Agent closed to avoid competing transient shortcuts.

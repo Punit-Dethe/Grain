@@ -226,6 +226,14 @@ export const scenarios = [
   },
 ];
 
+scenarios.push({
+  id: "native.auth-fixture",
+  suite: "native-auth",
+  checks: [],
+  description:
+    "Guarded native OAuth fixture: real consent, PKCE, scoped OS vault, approved A/B reads, stale approval refusal, restart and disconnect",
+});
+
 export function selectScenarios(suite) {
   if (
     ![
@@ -234,6 +242,7 @@ export function selectScenarios(suite) {
       "idle",
       "native-failures",
       "native-foundation",
+      "native-auth",
       "native-installation",
       "registry-recovery",
       "store",

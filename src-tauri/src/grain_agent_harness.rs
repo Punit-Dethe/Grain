@@ -24,6 +24,8 @@ struct Marker {
     model_port: u16,
     #[serde(default)]
     store_port: Option<u16>,
+    #[serde(default)]
+    auth_port: Option<u16>,
 }
 
 struct Config {
@@ -61,6 +63,10 @@ fn read_marker(root: &Path) -> Result<Marker, String> {
             port == 0 || port == marker.model_port || port == 7124
                 || port == crate::events_server::EVENTS_PORT
         })
+        || marker.auth_port.is_some_and(|port| {
+            port == 0 || port == marker.model_port || Some(port) == marker.store_port
+                || port == 7124 || port == crate::events_server::EVENTS_PORT
+        })
     {
         return Err("Invalid harness run identity or model port".into());
     }
@@ -93,6 +99,17 @@ pub fn init() {
 
 fn config() -> &'static Config {
     CONFIG.get().expect("harness initialized before Tauri")
+}
+
+pub(super) fn auth_fixture_config() -> Result<(PathBuf, u16), String> {
+    let value = CONFIG
+        .get()
+        .ok_or("Native auth fixture is not initialized")?;
+    let port = value
+        .marker
+        .auth_port
+        .ok_or("Native auth fixture is not enabled")?;
+    Ok((value.root.clone(), port))
 }
 
 /// Fixed, public test key only. No production root or signing key is replaced.
@@ -200,7 +217,7 @@ pub fn configure(app: &AppHandle) -> Result<(), String> {
     Ok(())
 }
 
-fn guard(app: &AppHandle, window: &WebviewWindow) -> Result<(), String> {
+pub(super) fn guard(app: &AppHandle, window: &WebviewWindow) -> Result<(), String> {
     if window.label() != "main"
         || app.config().identifier != APP_ID
         || app
@@ -214,7 +231,7 @@ fn guard(app: &AppHandle, window: &WebviewWindow) -> Result<(), String> {
 }
 
 pub fn observe(phase: &str, extension: &str, action: &str, token: &str) {
-    if extension != FIXTURE_ID {
+    if extension != FIXTURE_ID && extension != super::grain_agent_harness_auth::FIXTURE_ID {
         return;
     }
     let mut events = EVENTS.lock().unwrap();
@@ -241,7 +258,7 @@ pub fn observe_outcome(
     outcome: &grain_core::execution::ActionOutcome,
 ) {
     use grain_core::execution::ActionOutcome;
-    if extension != FIXTURE_ID {
+    if extension != FIXTURE_ID && extension != super::grain_agent_harness_auth::FIXTURE_ID {
         return;
     }
     let status = match outcome {
@@ -454,6 +471,8 @@ pub enum Instruction {
     TypedNumberNull,
     TypedNumberOmitted,
     TypedNumberZero,
+    AccountReadA,
+    AccountReadB,
 }
 
 #[tauri::command]
@@ -486,6 +505,8 @@ pub async fn agent_harness_submit(
         Instruction::TypedNumberNull => "Harness request: typed_number_null",
         Instruction::TypedNumberOmitted => "Harness request: typed_number_omitted",
         Instruction::TypedNumberZero => "Harness request: typed_number_zero",
+        Instruction::AccountReadA => "Harness request: account_read_a",
+        Instruction::AccountReadB => "Harness request: account_read_b",
     };
     crate::agent::harness_submit_instruction(&app, text.into());
     Ok(())
@@ -534,6 +555,13 @@ mod tests {
                 ),
             )
             .unwrap();
+            assert!(read_marker(root.path()).is_err());
+        }
+        for port in [0, 9000, 9001, 7124, crate::events_server::EVENTS_PORT] {
+            std::fs::write(&marker, format!(
+                r#"{{"schema":1,"runId":"{}","modelPort":9000,"storePort":9001,"authPort":{port}}}"#,
+                uuid::Uuid::new_v4(),
+            )).unwrap();
             assert!(read_marker(root.path()).is_err());
         }
     }

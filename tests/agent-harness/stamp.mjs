@@ -103,7 +103,7 @@ export async function runnerFingerprint() {
       if (entry.isSymbolicLink())
         throw new Error("Harness source cannot be a symlink");
       if (entry.isDirectory()) await visit(path);
-      else if (/\.(mjs|js|ps1|json)$/.test(entry.name)) {
+      else if (/\.(mjs|js|ps1|py|json)$/.test(entry.name)) {
         hash.update(relative(here, path).replaceAll("\\", "/"));
         hash.update("\0");
         hash.update(await hashFile(path));

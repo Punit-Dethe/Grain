@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import assert from "node:assert/strict";
 
 export const FIXTURE_ID = "com.grain.harness.lifecycle";
+const AUTH_FIXTURE_ID = "com.grain.harness.auth";
 const MAX_BODY = 1024 * 1024;
 
 // Nonsecret fixture inputs. The oracle checks what the real worker returned,
@@ -64,6 +65,15 @@ export function nextReply(body) {
   if (instruction.endsWith("model_wait"))
     return { content: "Harness delayed model reply", delayMs: 15000 };
   const requested = instruction.slice("Harness request: ".length);
+  const account =
+    requested === "account_read_a"
+      ? "A"
+      : requested === "account_read_b"
+        ? "B"
+        : null;
+  const extensionId = account ? AUTH_FIXTURE_ID : FIXTURE_ID;
+  if (JSON.stringify(body).includes("HARNESS_OAUTH_PRIVATE_"))
+    throw new Error("Native credential leaked into model context");
   const titles = {
     hello: "Harness fast hello",
     slow_hello: "Harness slow hello",
@@ -77,6 +87,7 @@ export function nextReply(body) {
     input_echo: "Harness input echo",
     typed_echo: "Harness typed echo",
     typed_optional_echo: "Harness optional number echo",
+    account_read: "Harness account read",
   };
   const invalidInputs = {
     invalid_arguments: { text: "safe", HARNESS_PRIVATE_ARGUMENT_MARKER: true },
@@ -85,13 +96,15 @@ export function nextReply(body) {
     oversized_arguments: { text: "x".repeat(65536) },
     malformed_arguments: {},
   };
-  const target = Object.hasOwn(TYPED_INPUTS, requested)
-    ? requested.startsWith("typed_number_")
-      ? "typed_optional_echo"
-      : "typed_echo"
-    : Object.hasOwn(invalidInputs, requested)
-      ? "input_echo"
-      : requested;
+  const target = account
+    ? "account_read"
+    : Object.hasOwn(TYPED_INPUTS, requested)
+      ? requested.startsWith("typed_number_")
+        ? "typed_optional_echo"
+        : "typed_echo"
+      : Object.hasOwn(invalidInputs, requested)
+        ? "input_echo"
+        : requested;
   if (!titles[target]) throw new Error("Unknown harness instruction");
   const results = body.messages.filter((message) => message.role === "tool");
   if (
@@ -117,11 +130,11 @@ export function nextReply(body) {
   if (results.length === 0) {
     if (offered.some((tool) => tool.name.startsWith("act__")))
       throw new Error("Initial Agent frame exposed action schemas");
-    return call("search_tools", { extension_id: FIXTURE_ID, query: target });
+    return call("search_tools", { extension_id: extensionId, query: target });
   }
   if (results.length === 1)
     return call("load_extension", {
-      extension_id: FIXTURE_ID,
+      extension_id: extensionId,
       tool_ids: [target],
     });
   if (results.length === 2) {
@@ -138,6 +151,24 @@ export function nextReply(body) {
     if (requested === "malformed_arguments")
       reply.tool_calls[0].function.arguments = "{";
     return reply;
+  }
+  if (account) {
+    const content = results.at(-1).content;
+    if (content.startsWith("Failed ("))
+      return { content: "Harness observed refused account call" };
+    assert.ok(
+      content.startsWith("Harness account reply: "),
+      "No real authenticated tool result",
+    );
+    assert.deepEqual(
+      JSON.parse(content.slice("Harness account reply: ".length)),
+      { account },
+      "Real tool returned the wrong account",
+    );
+    return {
+      content: "Harness verified authenticated account",
+      accountVerified: true,
+    };
   }
   if (Object.hasOwn(TYPED_INPUTS, requested)) {
     const content = results.at(-1).content;
@@ -194,6 +225,7 @@ export async function startModel() {
         returned: reply.tool_calls?.map((tool) => tool.function.name) ?? [],
         state: "received",
         ...(reply.typedVerified ? { typedVerified: true } : {}),
+        ...(reply.accountVerified ? { accountVerified: true } : {}),
       };
       journal.push(entry);
       if (journal.length > 4096) throw new Error("Model journal overflow");

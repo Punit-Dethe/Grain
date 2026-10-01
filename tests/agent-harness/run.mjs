@@ -23,6 +23,8 @@ import { installationHandlers } from "./installation.mjs";
 import { storeHandlers } from "./store.mjs";
 import { registryHandlers } from "./registry.mjs";
 import { foundationHandlers } from "./foundation.mjs";
+import { authenticationHandlers } from "./authentication.mjs";
+import { startAuthFixture } from "./auth-fixture.mjs";
 import { startStore, STORE_PUBLIC_KEY } from "./store-fixture.mjs";
 import { startModel } from "./model.mjs";
 import { developerReload } from "./developer.mjs";
@@ -54,7 +56,7 @@ for (let i = 2; i < process.argv.length; i++) {
 }
 if (options.help) {
   console.log(
-    "node tests/agent-harness/run.mjs [--list] [--suite smoke|lifecycle|idle|native-failures|native-foundation|native-installation|registry-recovery|store|all] [--scenario ID] [--binary path] [--output directory] [--focus-click]\nWindows real Agent/WebView2 acceptance. --focus-click exercises owned native header activation only for agent.reopen-escape. Build first with tests/agent-harness/build.ps1. No live account or model key required.",
+    "node tests/agent-harness/run.mjs [--list] [--suite smoke|lifecycle|idle|native-failures|native-foundation|native-auth|native-installation|registry-recovery|store|all] [--scenario ID] [--binary path] [--output directory] [--focus-click]\nWindows real Agent/WebView2 acceptance. --focus-click exercises owned native header activation only for agent.reopen-escape. Build first with tests/agent-harness/build.ps1. No live account or model key required. native-auth additionally requires Python cryptography for run-local TLS.",
   );
   process.exit(0);
 }
@@ -81,9 +83,21 @@ if (
     "lost-pointer",
     "stringified-number",
     "lost-migration-archive",
+    "wrong-account",
+    "abandoned-auth",
   ].includes(options.fault)
 )
   throw new Error("Unknown oracle fault");
+if (
+  options.fault === "wrong-account" &&
+  options.scenario !== "native.auth-fixture"
+)
+  throw new Error("wrong-account requires --scenario native.auth-fixture");
+if (
+  options.fault === "abandoned-auth" &&
+  options.scenario !== "native.auth-fixture"
+)
+  throw new Error("abandoned-auth requires --scenario native.auth-fixture");
 if (
   options.fault === "stringified-number" &&
   options.scenario !== "native.typed-contract"
@@ -164,7 +178,7 @@ const report = {
     "Checks in scenario metadata are partial supporting coverage; manual ledger is unchanged.",
   ],
 };
-let child, browser, model, main, store;
+let child, browser, model, main, store, authProvider;
 let interrupted = false;
 const cancellation = new AbortController();
 const waitFor = (description, operation, options = {}) =>
@@ -1172,6 +1186,21 @@ const foundationSuite = foundationHandlers({
   fault: options.fault,
 });
 Object.assign(handlers, foundationSuite.handlers);
+const authenticationSuite = authenticationHandlers({
+  fault: options.fault,
+  root,
+  invoke,
+  main: () => main,
+  provider: () => authProvider,
+  model: () => model,
+  status,
+  request,
+  activate,
+  waitFor,
+  events,
+  restartHost,
+});
+Object.assign(handlers, authenticationSuite.handlers);
 let baselineTokens = 0;
 let cdpPort;
 try {
@@ -1256,6 +1285,32 @@ try {
       storePort: store?.port,
     }),
   );
+  if (selected.some((scenario) => scenario.suite === "native-auth")) {
+    try {
+      await exec("python", [join(here, "auth-tls.py"), root], {
+        timeout: 10000,
+        windowsHide: true,
+        maxBuffer: 4096,
+      });
+    } catch {
+      throw new Blocked(
+        "Native auth fixture needs Python with cryptography for disposable TLS",
+      );
+    }
+    authProvider = await startAuthFixture(root, {
+      wrongAccount: options.fault === "wrong-account",
+    });
+    await writeFile(
+      join(root, ".grain-agent-harness.json"),
+      JSON.stringify({
+        schema: 1,
+        runId,
+        modelPort: model.port,
+        storePort: store?.port,
+        authPort: authProvider.port,
+      }),
+    );
+  }
   await mkdir(join(root, "fixture/dist"), { recursive: true });
   await copyFile(
     join(here, "fixtures/lifecycle/manifest.json"),
@@ -1267,6 +1322,11 @@ try {
   await launchHost();
   report.adapter.webViewVersion = browser.version();
   const firstStatus = await status();
+  if (!authProvider)
+    await assert.rejects(
+      invoke("agent_harness_auth", { operation: "status" }),
+      /Native auth fixture is not enabled/,
+    );
   assert.equal(firstStatus.runId, runId);
   assert.equal(firstStatus.applicationId, "com.grain.agent-harness");
   assert.equal(firstStatus.eventsPort, 17124);
@@ -1308,6 +1368,7 @@ try {
       );
       if (
         scenario.id !== "native.legacy-migration" &&
+        scenario.suite !== "native-auth" &&
         !["native-installation", "registry-recovery", "store"].includes(
           scenario.suite,
         )
@@ -1341,6 +1402,7 @@ try {
         ...storeSuite.takeEvidence(),
         ...registrySuite.takeEvidence(),
         ...foundationSuite.takeEvidence(),
+        ...authenticationSuite.takeEvidence(),
       ];
       assert.ok(
         !result.model.some((entry) => entry.state === "error"),
@@ -1356,6 +1418,7 @@ try {
         ...storeSuite.takeEvidence(),
         ...registrySuite.takeEvidence(),
         ...foundationSuite.takeEvidence(),
+        ...authenticationSuite.takeEvidence(),
       ];
       try {
         result.snapshot = await status();
@@ -1462,6 +1525,46 @@ try {
       errors.push(error.message);
     }
   }
+  if (authProvider) {
+    report.nativeAuthFixture = {
+      port: authProvider.port,
+      requests: authProvider.journal,
+      limitations: [
+        "Controlled consent replaces external browser handoff; live-provider acceptance remains pending.",
+      ],
+    };
+    try {
+      await authProvider.close();
+      await poll(
+        "Native auth fixture listener release",
+        async () => !(await portOpen(authProvider.port)),
+        { timeoutMs: 3000 },
+      );
+    } catch (error) {
+      errors.push(`Auth provider cleanup: ${error.message}`);
+    }
+    try {
+      const output = await exec(
+        "powershell.exe",
+        [
+          "-NoProfile",
+          "-File",
+          join(here, "auth-cleanup.ps1"),
+          "-Root",
+          root,
+          "-RunId",
+          runId,
+        ],
+        { timeout: 10000, windowsHide: true, maxBuffer: 4096 },
+      );
+      const result = JSON.parse(output.stdout.trim());
+      assert.equal(result.kind, "native-vault-cleanup");
+      assert.equal(result.remaining, 0);
+      report.nativeVaultCleanup = result;
+    } catch (error) {
+      errors.push(`Owned credential cleanup: ${error.message}`);
+    }
+  }
   if (cdpPort) {
     try {
       await poll(
@@ -1487,7 +1590,14 @@ try {
   report.cleanup = { status: errors.length ? "Fail" : "Pass", errors };
   report.completedAt = new Date().toISOString();
   // Keep reports/screenshots only. Delete only verified children of this unique run.
-  for (const name of ["data", "fixture", "fixture-b", "fixture.grainpack"]) {
+  for (const name of [
+    "data",
+    "fixture",
+    "fixture-b",
+    "fixture.grainpack",
+    "auth-tls",
+    "auth-fixture.grainpack",
+  ]) {
     try {
       await rm(assertWithin(root, join(root, name)), {
         recursive: true,

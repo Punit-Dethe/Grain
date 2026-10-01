@@ -151,6 +151,8 @@ impl PendingGuard {
 
 impl Drop for PendingGuard {
     fn drop(&mut self) {
+        #[cfg(feature = "agent-harness")]
+        crate::grain_agent_harness_auth::finish_authorization(&self.0.id, self.0.run_id);
         if let Ok(mut pending) = self.0.pending.lock() {
             if pending
                 .get(&self.0.id)
@@ -943,9 +945,12 @@ async fn exchange(
     redirect: &str,
     verifier: &str,
 ) -> Result<TokenSet, String> {
-    let response = reqwest::Client::builder()
+    let builder = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
-        .timeout(Duration::from_secs(20))
+        .timeout(Duration::from_secs(20));
+    #[cfg(feature = "agent-harness")]
+    let builder = crate::grain_agent_harness_auth::scoped_tls(builder, &decl.token_endpoint)?;
+    let response = builder
         .build()
         .map_err(|error| error.to_string())?
         .post(&decl.token_endpoint)
@@ -994,9 +999,12 @@ async fn refresh(decl: &AuthenticationDecl, previous: &TokenSet) -> Result<Token
         .ok_or_else(|| {
             "authentication has expired; reconnect it in extension settings".to_string()
         })?;
-    let response = reqwest::Client::builder()
+    let builder = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
-        .timeout(Duration::from_secs(20))
+        .timeout(Duration::from_secs(20));
+    #[cfg(feature = "agent-harness")]
+    let builder = crate::grain_agent_harness_auth::scoped_tls(builder, &decl.token_endpoint)?;
+    let response = builder
         .build()
         .map_err(|error| error.to_string())?
         .post(&decl.token_endpoint)
@@ -1102,8 +1110,16 @@ async fn connect_attempt(
     let url = authorize_url(decl, &redirect, &state, &challenge)?;
     prepared.check(id)?;
     owner.publish(|| Ok(()))?;
-    if let Err(error) = app.opener().open_url(url, None::<String>) {
-        return Err(format!("could not open the sign-in page: {error}"));
+    #[cfg(feature = "agent-harness")]
+    let harness_consent = owner.publish(|| {
+        crate::grain_agent_harness_auth::capture_authorization(id, owner.run_id, &url)
+    })?;
+    #[cfg(not(feature = "agent-harness"))]
+    let harness_consent = false;
+    if !harness_consent {
+        if let Err(error) = app.opener().open_url(url, None::<String>) {
+            return Err(format!("could not open the sign-in page: {error}"));
+        }
     }
     let code = callback(listener, path, state, format!("127.0.0.1:{port}")).await?;
     prepared.check(id)?;
@@ -1236,6 +1252,13 @@ async fn disconnect_reviewed(
         return publication.map(|_| ()).map_err(|error| error.to_string());
     }
     cancel_extension_generation(&id, old_generation);
+    // Account publication invalidates this worker's generation. Retire it now:
+    // a later uninstall targets the new record generation and cannot own it.
+    crate::extension_host::stop_extension_generation(
+        &id,
+        old_generation,
+        "native account disconnected",
+    );
     let key = session
         .map(|session| session_key(&id, &session))
         .transpose()?

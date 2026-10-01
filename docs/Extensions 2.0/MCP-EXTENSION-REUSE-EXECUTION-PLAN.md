@@ -1,6 +1,6 @@
 # Extension platform: audit, reuse and execution plan
 
-**Date:** 1 October 2026. **Branch:** `extensions/tool-only-retirement`. **Status:** testing-only execution resumed; B1a accepted, B1b account fixture next. The planning source/evidence snapshot below is at `b0afe340`; the current ledger is **30 Pass / 23 Pending** after reviewed checks 2/22.
+**Updated:** 2 October 2026. **Branch:** `extensions/tool-only-retirement`. **Status:** testing-only execution continues; B1a accepted and B1b's guarded account fixture prerequisite implemented/audited. Full B1b checks 41/45/53 are next. The planning source/evidence snapshot below remains at `b0afe340`; the current ledger is **30 Pass / 23 Pending** after reviewed checks 2/22. The fixture credits no additional numbered checks.
 
 This is the forward execution order for the existing [extension plan](MCP-EXTENSION-PLAN.md). That document retains the product contract, R0–R6 release gates and full numbered test procedures. The [progress report](MCP-EXTENSION-PROGRESS.md) retains verdicts and evidence. If older chronological handoffs disagree about what comes next, use this document. No existing acceptance requirement is waived.
 
@@ -168,7 +168,9 @@ Break into small units: **B1a migration/typed inputs (2, 22)**; **B1b account fi
 
 **B1a accepted:** [migration/typed-input audit](NATIVE-FOUNDATION-AUDIT.md) closes 2/22 after a reproduced terminal-owner quarantine fix, transactional uninstall preservation, repeated actual-app tests and negative oracles. No account prerequisite is certified by those results.
 
-**Next, B1b:** implement a separately guarded authenticated harness fixture. The current permission-free fixture remains unchanged in authority: do not simply remove its `permissions.is_empty()` or authentication checks. Admit only the owned fixture ID/root, exact declared test hosts and test credential namespace in an explicitly enabled harness build/profile. Support two distinguishable accounts, held callbacks/refreshes, partial scopes, expiry and token/read receipts. Reuse production OAuth, host HTTP, vault and account publication; simulate the external provider, not Grain's implementation. No general test command to read tokens or arbitrary profile files.
+**B1b prerequisite accepted:** the [guarded account fixture audit](NATIVE-AUTH-FIXTURE-AUDIT.md) records actual A/B reads, PKCE/vault publication, stale approval refusal, restart and independent cleanup. It reproduces and repairs a disconnected worker surviving its account generation. The permission-free fixture remains unchanged in authority. A separate explicitly enabled debug control fixes the owned ID/root, public client, scope, exact localhost HTTPS endpoints and run vault namespace. There is no general token/profile read or permission bypass. Two final clean runs and both negative oracles passed their expected assertions. The broader unit remains open.
+
+**Next, B1b full requirements (41/45/53):** add declaration-drift/unbound-grant and installed/developer A/B ownership/restoration scenarios using the retained production paths. Provider hold/denial/partial-scope/expiry/refresh controls are prepared; their complete B1c schedules are not yet certified. Preserve exact token/read receipts without storing secrets in evidence. Applicable live-provider portions retain explicit prerequisites.
 
 Use owned local TLS with scoped trust, or an equivalent isolated test transport boundary that cannot ship active. Do not weaken production HTTPS/redirect/endpoint validation to make fixtures convenient. Verify ordinary builds refuse harness controls. Extend migration snapshots in disposable directories; never damage the user's registry or vault.
 
@@ -249,6 +251,6 @@ Record commit/binary/source/runner identity, platform, model/provider, controlle
 
 ## 9. First implementation handoff and completion definition
 
-**B1a is accepted; next work is the B1b fixture prerequisite:** a separately guarded native OAuth fixture, followed by checks 41/45/53. Do not upgrade `rmcp`, introduce `oauth2` as a direct native dependency, delete legacy modules or start broader Agent features. Use the current implementation to obtain missing evidence, fix demonstrated failures and audit each module. Remaining baseline checks: **B1 8 + B2 5 + B3 7 + B4 3 = 23**. No extra B1a human batch is needed; controlled evidence does not waive later live-account requirements.
+**B1a and the B1b fixture prerequisite are accepted; next work is full B1b checks 41/45/53**, then B1c. Do not upgrade `rmcp`, introduce `oauth2` as a direct native dependency, delete legacy modules or start broader Agent features. Use the current implementation to obtain missing evidence, fix demonstrated failures and audit each module. Remaining baseline checks: **B1 8 + B2 5 + B3 7 + B4 3 = 23**. No extra human batch is needed for the fixture prerequisite; controlled evidence does not waive later live-account requirements.
 
 This planning audit is complete. Foundation testing, library replacement, physical retirement and release certification are not complete. All seven original whole-phase gates remain open. Continue on `extensions/tool-only-retirement`, commit/push scoped work, preserve unrelated user changes and never push these changes directly to `main`.
