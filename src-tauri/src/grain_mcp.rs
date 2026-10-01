@@ -33,6 +33,12 @@ use zeroize::Zeroize;
 
 const VAULT_SERVICE: &str = "com.grain.mcp.oauth";
 const CLIENT_SECRET_SERVICE: &str = "com.grain.mcp.client-secret";
+
+fn credential_entry(service: &str, account: &str) -> Result<keyring::Entry, keyring::Error> {
+    #[cfg(feature = "agent-harness")]
+    let service = crate::grain_agent_harness::vault_service(service);
+    keyring::Entry::new(&service, account)
+}
 const CALLBACK_ADDR: &str = "127.0.0.1:31938";
 const CALLBACK_PATH: &str = "/mcp/oauth/callback";
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(300);
@@ -303,7 +309,7 @@ fn vault_error(context: &str, error: keyring::Error) -> AuthError {
 }
 
 fn read_credentials_sync(account: &str) -> Result<Option<StoredCredentials>, AuthError> {
-    let entry = keyring::Entry::new(VAULT_SERVICE, account).map_err(|e| vault_error("open", e))?;
+    let entry = credential_entry(VAULT_SERVICE, account).map_err(|e| vault_error("open", e))?;
     let mut bytes = match entry.get_secret() {
         Ok(bytes) => bytes,
         Err(keyring::Error::NoEntry) => return Ok(None),
@@ -323,7 +329,7 @@ fn read_credentials_sync(account: &str) -> Result<Option<StoredCredentials>, Aut
 }
 
 fn write_credentials_sync(account: &str, credentials: &StoredCredentials) -> Result<(), AuthError> {
-    let entry = keyring::Entry::new(VAULT_SERVICE, account).map_err(|e| vault_error("open", e))?;
+    let entry = credential_entry(VAULT_SERVICE, account).map_err(|e| vault_error("open", e))?;
     let mut bytes = serde_json::to_vec(credentials)
         .map_err(|error| AuthError::InternalError(error.to_string()))?;
     let result = if bytes.len() > 128 * 1024 {
@@ -340,7 +346,7 @@ fn write_credentials_sync(account: &str, credentials: &StoredCredentials) -> Res
 }
 
 fn delete_vault_entry(service: &str, account: &str) -> Result<(), AuthError> {
-    let entry = keyring::Entry::new(service, account).map_err(|e| vault_error("open", e))?;
+    let entry = credential_entry(service, account).map_err(|e| vault_error("open", e))?;
     match entry.delete_credential() {
         Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
         Err(error) => Err(vault_error("delete", error)),
@@ -413,7 +419,7 @@ fn client_id(app: &AppHandle, provider_id: &str) -> Option<String> {
 async fn client_secret(provider_id: &str) -> Result<Option<String>, String> {
     let account = provider_id.to_string();
     tokio::task::spawn_blocking(move || {
-        let entry = keyring::Entry::new(CLIENT_SECRET_SERVICE, &account)
+        let entry = credential_entry(CLIENT_SECRET_SERVICE, &account)
             .map_err(|error| format!("OS credential vault unavailable: {error}"))?;
         match entry.get_password() {
             Ok(secret) if !secret.is_empty() => Ok(Some(secret)),
@@ -536,7 +542,7 @@ pub async fn mcp_set_client_credentials(
                     return delete_vault_entry(CLIENT_SECRET_SERVICE, &account)
                         .map_err(|e| e.to_string());
                 }
-                keyring::Entry::new(CLIENT_SECRET_SERVICE, &account)
+                credential_entry(CLIENT_SECRET_SERVICE, &account)
                     .map_err(|error| format!("OS credential vault unavailable: {error}"))
                     .and_then(|entry| {
                         entry

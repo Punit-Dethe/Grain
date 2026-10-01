@@ -294,7 +294,11 @@ impl Drop for TokenResponse {
 }
 
 fn vault_entry(extension_id: &str) -> Result<keyring::Entry, String> {
-    keyring::Entry::new(VAULT_SERVICE, extension_id)
+    #[cfg(feature = "agent-harness")]
+    let service = crate::grain_agent_harness::vault_service(VAULT_SERVICE);
+    #[cfg(not(feature = "agent-harness"))]
+    let service = VAULT_SERVICE;
+    keyring::Entry::new(&service, extension_id)
         .map_err(|error| format!("OS credential vault unavailable: {error}"))
 }
 

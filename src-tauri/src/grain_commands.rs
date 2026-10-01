@@ -1798,11 +1798,18 @@ fn register_unpacked_project(
         );
         crate::grain_auth::cancel_extension_generation(&id, prior.execution_generation);
     }
-    installed.map_err(|error| error.to_string())?;
+    installed.map_err(|error| {
+        #[cfg(feature = "agent-harness")]
+        log::warn!("[agent-harness] developer registration failed: {error:#}");
+        error.to_string()
+    })?;
     Ok(id)
 }
 
-fn load_unpacked_project(app: &AppHandle, root: &std::path::Path) -> Result<String, String> {
+pub(crate) fn load_unpacked_project(
+    app: &AppHandle,
+    root: &std::path::Path,
+) -> Result<String, String> {
     if !settings::get_settings(app).extension_developer_mode {
         return Err("Developer mode is disabled".into());
     }
@@ -1980,7 +1987,11 @@ pub fn extension_unload_dev(
         return Err(format!("'{id}' is not a load-unpacked extension"));
     }
     stop_extension_runtime(&app, &id, "load-unpacked project unloaded");
-    reg.unload_dev(&id).map_err(|error| error.to_string())?;
+    reg.unload_dev(&id).map_err(|error| {
+        #[cfg(feature = "agent-harness")]
+        log::warn!("[agent-harness] developer unload failed: {error:#}");
+        error.to_string()
+    })?;
     restore_enabled_extension(&app, &id)?;
     if let Err(error) = crate::extension_icons::purge_dev_cache(&app) {
         log::warn!("[GRAIN] developer icon-cache cleanup failed: {error}");
@@ -2352,7 +2363,11 @@ pub fn extension_grant(
         crate::grain_auth::cancel_extension_generation(&id, prior_generation);
     }
     crate::extension_host::refresh_index(&app);
-    approved.map(|_| ()).map_err(|error| error.to_string())
+    approved.map(|_| ()).map_err(|error| {
+        #[cfg(feature = "agent-harness")]
+        log::warn!("[agent-harness] developer approval failed: {error:#}");
+        error.to_string()
+    })
 }
 
 fn reviewed_grant_record(

@@ -25,7 +25,10 @@ use tokio_tungstenite::{
 };
 
 /// Fixed loopback port the pill connects to (`ws://127.0.0.1:EVENTS_PORT`).
+#[cfg(not(feature = "agent-harness"))]
 pub const EVENTS_PORT: u16 = 7124;
+#[cfg(feature = "agent-harness")]
+pub const EVENTS_PORT: u16 = 17124;
 static UNAUTHENTICATED_CONNECTIONS: AtomicUsize = AtomicUsize::new(0);
 const MAX_UNAUTHENTICATED_CONNECTIONS: usize = 64;
 
@@ -247,7 +250,7 @@ pub fn enable_dev_control(data_dir: &std::path::Path) -> Result<(), String> {
     std::fs::create_dir_all(data_dir).map_err(|error| error.to_string())?;
     let path = data_dir.join(DEV_TOKEN_FILE);
     let body = serde_json::to_vec_pretty(&DevTokenFile {
-        url: "ws://127.0.0.1:7124",
+        url: &format!("ws://127.0.0.1:{EVENTS_PORT}"),
         token: &token,
     })
     .map_err(|error| error.to_string())?;
@@ -390,6 +393,7 @@ pub fn start(ctx: Arc<AppContext>, app: AppHandle) {
                 }
             };
             log::info!("[GRAIN] events WS listening on ws://{addr}");
+            #[cfg(not(feature = "agent-harness"))]
             spawn_pill_supervisor();
             loop {
                 match listener.accept().await {

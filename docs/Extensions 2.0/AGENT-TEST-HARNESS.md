@@ -1,8 +1,8 @@
-# Persistent extension acceptance harness
+# Persistent Agent acceptance harness
 
-**Created:** 1 October 2026. **Status:** design; no harness runner or application automation has been implemented by this document.
+**Created:** 1 October 2026. **Status:** initial Agent harness implemented; current verification evidence is recorded in the progress companion. [Maintained runner instructions](../../tests/agent-harness/README.md) describe actual commands, coverage and limitations.
 
-Companion to [the execution plan](MCP-EXTENSION-PLAN.md) and [the progress ledger](MCP-EXTENSION-PROGRESS.md). The user requested reproducible automation of extension tests, with human participation where account sign-in or practical judgment is needed. This work supports the existing sequential acceptance blocks; it does not create another extension feature roadmap.
+Companion to [the execution plan](MCP-EXTENSION-PLAN.md) and [the progress ledger](MCP-EXTENSION-PROGRESS.md). The user requested reproducible **Agent** testing, initially covering native extension lifecycle/tool calling and later deeper Agent, MCP and authentication behavior. Human participation remains where account sign-in or practical judgment is needed. This work supports the existing sequential acceptance blocks; it does not create another extension feature roadmap.
 
 ## What the harness should do
 
@@ -12,13 +12,13 @@ The target is Grain's real implementation: actual extension validation, registry
 
 Opening the app and watching for an error is insufficient. For example, the reload test must prove which generation produced a result, whether the interrupted call dispatched, whether it was automatically repeated, whether the replacement stayed available and whether the old worker/token was retired.
 
-## Verified starting point
+## Verified starting point before implementation
 
 - `scripts/run-rust-test.ps1` supplies the Windows activation manifest needed by the real Tauri library test executable. `scripts/run-tauri.ts` handles this checkout's Windows native-build workaround. Reuse these rather than inventing conflicting launch behavior.
 - Existing extension-host, Agent, capability, action-executor and MCP tests already exercise important production helpers. Local MCP/OAuth fixtures provide deterministic failures without requiring external accounts.
 - `grain-sdk::DevControlFrame` and the developer branch in `events_server.rs` allow an authenticated developer client to reload an already approved project and return enabled/worker/token information. They do **not** let the client install fixtures, execute tools, approve calls or operate Agent. Do not expand this token into a general privileged test controller.
 - The current disposable native fixtures live in a user temporary directory. Their definitions need to become versioned, harmless harness fixtures before another developer can reproduce the same run.
-- Complete application-profile, vault-namespace and single-instance isolation has not been established for harness use. Setting `APPDATA` or a temporary working directory is not sufficient proof of isolation: the launcher explicitly notes that Tauri runtime paths use Windows known-folder APIs.
+- At design time, application-profile, vault-namespace and single-instance isolation had not been established. The initial implementation below now supplies explicit isolation. Setting `APPDATA` or a temporary working directory alone is insufficient: the launcher notes that Tauri runtime paths use Windows known-folder APIs.
 
 ## Test ownership and reports
 
@@ -49,13 +49,27 @@ Store machine-readable JSON plus a short Markdown summary. Retain bounded redact
 
 ## Application windows and repository rules
 
-`AGENTS.md` currently prohibits browser/computer control for Grain UI development or visual evaluation, and prohibits browser-only UI replicas and mock Tauri visual harnesses. This design complies: initial work covers deterministic production tests and non-visual runtime acceptance. It does not authorize controlling the user's windows.
+On 1 October the user explicitly superseded the obsolete automation prohibition and authorized a real-application Agent harness. `AGENTS.md` now records that authorization. Browser-only replicas and mock Tauri visual harnesses remain inappropriate; visual design approval remains the user's responsibility.
 
-If a later suite needs automatic clicks, Escape, dialog interaction or Agent text entry through the real windows, agree a narrow exception for real-application acceptance automation before implementing that adapter. Tauri documents real-application WebDriver testing; this is a possible technical route to evaluate after that exception, not an existing Grain integration. Visual approval remains the user's responsibility. Never substitute a rendered browser copy for the real application.
+The Windows adapter uses Playwright's documented CDP connection to the actual WebView2 processes created by the owned Tauri host. It activates production DOM button handlers and sends follow-up text through the real Agent WebView. For Escape it initializes the production shortcut manager and uses Windows `SendInput` only after verifying the foreground Agent window belongs to the owned host PID. This checks that specific transient Escape path; physical mouse targeting, ordinary summon shortcuts and microphone behavior remain outside the initial suite. Tauri WebDriver remains another potential platform adapter; this implementation does not require it. Never substitute a rendered browser copy for the real application.
 
-References: [Tauri test modes](https://v2.tauri.app/develop/tests/), [Tauri WebDriver implementation](https://github.com/tauri-apps/tauri/tree/dev/crates/tauri-driver), [official real-application examples](https://github.com/tauri-apps/webdriver-example). Tauri distinguishes its mock runtime, which does not execute native WebView libraries, from end-to-end WebDriver tests. Driver/platform and fork compatibility must be verified against Grain's pinned dependencies before selection.
+References: [Playwright WebView2](https://playwright.dev/docs/webview2), [Microsoft WebView2 environment options](https://learn.microsoft.com/en-us/microsoft-edge/webview2/reference/win32/webview2-idl), [Tauri test modes](https://v2.tauri.app/develop/tests/), [Tauri WebDriver implementation](https://github.com/tauri-apps/tauri/tree/dev/crates/tauri-driver). Tauri distinguishes its mock runtime, which does not execute native WebView libraries, from end-to-end testing. Other platform adapters still need compatibility verification against Grain's pinned dependencies.
+
+## Initial implementation and scope
+
+`tests/agent-harness/` owns the runner, stable scenario definitions, source/binary build stamp, permission-free native fixture, scripted HTTP model, authenticated developer-socket client and JSON/Markdown reporting. A separate debug-only `grain-agent-harness` executable compiles test controls under the opt-in `agent-harness` feature; release compilation with that feature is forbidden. Ordinary application builds do not include those controls or observations.
+
+The Grain-owned profile adapter requires a bounded marker/run UUID before startup and redirects filesystem state without editing `src-tauri/src/handy/`. The compiled application identifier, event port, WebView2 cache and per-run credential-service namespace are separate from normal Grain. Test startup skips the pill supervisor, autostart application, single-instance forwarding and automatic updater. Installation approval is fixture-scoped setup through production validation/grant operations; individual tool confirmation is still performed through the actual Agent UI and host executor.
+
+The runtime suite contains twelve scenarios, covering cold/warm calls, decline, typed approval, stale approval, native Escape, window close at three lifecycle stages, ten replacements, disable/re-enable, production developer reload and real idle timing. It starts with a typed-instruction seam, so summon-time capture and microphone/pill behavior are explicitly excluded. The separate production-logic runner covers normal-build Agent/native/MCP/native-auth tests; these remain a distinct evidence class. No real OAuth account or live model is certified by the local scripted provider.
+
+Build freshness is verified before acceptance: executable SHA-256 and a source fingerprint must match the build stamp. Inputs changing during a build refuse publication of a new stamp. The run also records commit/dirty state, an independent runner/fixture fingerprint and the actual WebView adapter version. Cleanup failures fail the batch. Missing prerequisites are Blocked; later cases after failure are Not run. Manual checks remain unchanged until their full acceptance procedures have corresponding evidence.
 
 ## Small implementation sequence
+
+**Delivery status:** H0's initial native inventory/runner/isolation is implemented; its coverage map is intentionally partial rather than a certification of all 53 checks. H1's native runtime scenarios are implemented, with repeatability and negative-oracle evidence recorded in the progress companion. The microphone/pill portion of check 37, measured resource trends and the final whole-block audit are still outstanding. H2 and H3 are future suites. H4 has an initial deterministic Agent subset only; its live-model and release matrix remain future work.
+
+**First sprint evidence:** twelve real-application scenarios passed in one batch, eleven short cases passed again from another clean profile, and the deliberately incorrect greeting produced the required failure with successful teardown. The nine harness self-tests, one isolation-marker test and 133 focused normal-build backend tests passed. Earlier registry-save failures and native Escape observations remain recorded for focused investigation; successful batches do not establish universal reliability. Read the progress companion's evidence table for run identities and exclusions.
 
 ### H0 — Isolation, inventory and reproducible runner
 

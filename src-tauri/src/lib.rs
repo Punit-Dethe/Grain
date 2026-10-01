@@ -87,6 +87,8 @@ mod paste_catch; // [GRAIN] safety net for a dictation paste that misses the tex
 pub(crate) use grain_llm_client as llm_client;
 pub(crate) use grain_overlay as overlay;
 pub(crate) use grain_settings as settings;
+#[cfg(feature = "agent-harness")]
+mod grain_agent_harness;
 #[path = "handy/managers/mod.rs"]
 mod managers;
 mod master_key; // [GRAIN] transient Alt+2 prompt-switcher chord + A/D navigation
@@ -98,7 +100,10 @@ mod paste_tx;
 mod pill_icon; // [GRAIN] pill identity — the foreground app's icon → pill
 mod pill_skin; // [GRAIN] pill skin delivery — the built-in look setting → pill
 #[path = "handy/portable.rs"]
+#[cfg(not(feature = "agent-harness"))]
 pub mod portable;
+#[cfg(feature = "agent-harness")]
+pub use grain_agent_harness::portable;
 mod post_process_router; // [GRAIN] post-process (LLM) dispatcher (single vs rotation)
 mod prompt_record; // [GRAIN] Prompt Record: split content vs spoken AI instruction at the pill-control mark
 mod rolling; // [GRAIN] Parakeet TDT Flow capture and scheduling service
@@ -617,6 +622,7 @@ fn initialize_core_logic(app_handle: &AppHandle) {
 
     // Apply the autostart preference (SMAppService login item on macOS 13+,
     // tauri-plugin-autostart elsewhere)
+    #[cfg(not(feature = "agent-harness"))]
     autostart::apply_autostart(app_handle, settings.autostart_enabled);
 
     // [GRAIN] The Handy webview recording overlay is retired — the winit
@@ -918,7 +924,7 @@ pub fn run(cli_args: CliArgs) {
 
     let specta_builder = command_bindings();
 
-    #[cfg(debug_assertions)] // <- Only export on non-release builds
+    #[cfg(all(debug_assertions, not(feature = "agent-harness")))]
     specta_builder
         .export(
             Typescript::default().bigint(BigIntExportBehavior::Number),
@@ -927,6 +933,22 @@ pub fn run(cli_args: CliArgs) {
         .expect("Failed to export typescript bindings");
 
     let invoke_handler = specta_builder.invoke_handler();
+    #[cfg(feature = "agent-harness")]
+    let invoke_handler = {
+        let harness_handler: fn(tauri::ipc::Invoke) -> bool = tauri::generate_handler![
+            grain_agent_harness::agent_harness_status,
+            grain_agent_harness::agent_harness_fixture,
+            grain_agent_harness::agent_harness_submit,
+            grain_agent_harness::agent_harness_shutdown,
+        ];
+        move |invoke: tauri::ipc::Invoke| {
+            if invoke.message.command().starts_with("agent_harness_") {
+                harness_handler(invoke)
+            } else {
+                invoke_handler(invoke)
+            }
+        }
+    };
 
     // The headless path must run as its own instance (see the single-instance
     // note below), not forward to an already-running app.
@@ -999,7 +1021,7 @@ pub fn run(cli_args: CliArgs) {
     // That would make the headless path (--transcribe-file/--list-devices) a
     // silent no-op whenever the app is already open, so skip it in headless mode
     // and run a standalone instance instead.
-    if !headless_mode {
+    if !headless_mode && !cfg!(feature = "agent-harness") {
         builder = builder.plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
             if args.iter().any(|a| a == "--toggle-transcription") {
                 signal_handle::send_transcription_input(app, "transcribe", "CLI");
@@ -1150,6 +1172,8 @@ pub fn run(cli_args: CliArgs) {
                     .map_err(std::io::Error::other)?;
             }
 
+            #[cfg(feature = "agent-harness")]
+            grain_agent_harness::configure(app.handle()).map_err(std::io::Error::other)?;
             let mut settings = get_settings(&app.handle());
 
             // CLI --debug flag overrides debug_mode and log level (runtime-only, not persisted)
@@ -1195,6 +1219,7 @@ pub fn run(cli_args: CliArgs) {
             // start-hidden skips the WebView, or after close destroyed it to
             // release WebView2 RAM. This is one delayed task, not a resident
             // polling engine.
+            #[cfg(not(feature = "agent-harness"))]
             grain_update::spawn_automatic_check(app_handle.clone());
 
             // Hide tray icon if --no-tray was passed

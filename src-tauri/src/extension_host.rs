@@ -1428,6 +1428,23 @@ fn is_running(ext_id: &str) -> bool {
         .is_some_and(|host| host.workers.is_running(ext_id))
 }
 
+/// Bounded non-secret diagnostics, compiled only in the acceptance executable.
+#[cfg(feature = "agent-harness")]
+pub(crate) fn harness_snapshot(ext_id: &str) -> Value {
+    let Some(host) = HOST.get() else {
+        return serde_json::json!({"count": 0, "current": null});
+    };
+    let workers = host.workers.map.lock().unwrap();
+    let current = workers.get(ext_id).map(|worker| serde_json::json!({
+        "identity": crate::grain_agent_harness::worker_identity(&worker.token),
+        "generation": worker.execution_generation,
+        "connected": worker.conn.is_some(),
+        "pending": worker.conn.as_ref().map(|conn| conn.pending.lock().unwrap().len()).unwrap_or(0),
+        "idleSeconds": now_secs().saturating_sub(worker.last_activity.load(Ordering::Relaxed)),
+    }));
+    serde_json::json!({"count": workers.len(), "current": current})
+}
+
 fn spawn_worker(
     app: &AppHandle,
     ext_id: &str,
@@ -1698,6 +1715,8 @@ fn kill_worker_checked(
     }
     crate::extension_view::fail_interactive_for_extension(&host.app, ext_id, reason);
     crate::events_server::revoke_token(&worker.token);
+    #[cfg(feature = "agent-harness")]
+    crate::grain_agent_harness::observe("retired", ext_id, "", &worker.token);
     worker.close_pending();
     if let Some(generation) = closing {
         close_supervisor(generation);
@@ -2302,6 +2321,8 @@ pub async fn run_action(
             return Err(error);
         }
     };
+    #[cfg(feature = "agent-harness")]
+    crate::grain_agent_harness::observe("dispatched", ext_id, action_id, &token);
     match queued
         .wait(native_time_remaining(expires, DispatchPhase::Dispatched)?)
         .await
@@ -2314,6 +2335,8 @@ pub async fn run_action(
             )?;
             native_time_remaining(expires, DispatchPhase::ResponseReceived)?;
             owner.completed();
+            #[cfg(feature = "agent-harness")]
+            crate::grain_agent_harness::observe("completed", ext_id, action_id, &token);
             Ok(value)
         }
         Err(error) => Err(ActionCallError::Execution(native_call_failure(

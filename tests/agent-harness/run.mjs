@@ -1,0 +1,865 @@
+#!/usr/bin/env node
+// Real WebView2 only. Never starts Chromium or installs mock Tauri APIs.
+import assert from "node:assert/strict";
+import { spawn, execFile } from "node:child_process";
+import { promisify } from "node:util";
+import {
+  access,
+  mkdir,
+  mkdtemp,
+  readFile,
+  writeFile,
+  copyFile,
+  rm,
+} from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { createServer, connect } from "node:net";
+import { dirname, join, resolve, basename } from "node:path";
+import { fileURLToPath } from "node:url";
+import { performance } from "node:perf_hooks";
+import { chromium } from "@playwright/test";
+import { scenarios, selectScenarios } from "./scenarios.mjs";
+import { startModel } from "./model.mjs";
+import { developerReload } from "./developer.mjs";
+import { verifyBuild, runnerFingerprint } from "./stamp.mjs";
+import {
+  waitFor as poll,
+  Blocked,
+  assertWithin,
+  writeReport,
+} from "./support.mjs";
+
+const exec = promisify(execFile);
+const here = dirname(fileURLToPath(import.meta.url));
+const repo = resolve(here, "../..");
+const options = { suite: "smoke" };
+for (let i = 2; i < process.argv.length; i++) {
+  const option = process.argv[i];
+  if (["--list", "--help"].includes(option)) options[option.slice(2)] = true;
+  else if (
+    ["--suite", "--scenario", "--binary", "--output", "--fault"].includes(
+      option,
+    )
+  ) {
+    if (!process.argv[i + 1] || process.argv[i + 1].startsWith("--"))
+      throw new Error(`${option} requires a value`);
+    options[option.slice(2)] = process.argv[++i];
+  } else throw new Error(`Unknown option: ${option}`);
+}
+if (options.help) {
+  console.log(
+    "node tests/agent-harness/run.mjs [--list] [--suite smoke|lifecycle|idle|all] [--scenario ID] [--binary path] [--output directory]\nWindows real Agent/WebView2 acceptance. Build first with tests/agent-harness/build.ps1. No live account or model key required.",
+  );
+  process.exit(0);
+}
+if (options.list) {
+  for (const scenario of scenarios)
+    console.log(`${scenario.id} [${scenario.suite}] ${scenario.description}`);
+  process.exit(0);
+}
+const selected = options.scenario
+  ? scenarios.filter((scenario) => scenario.id === options.scenario)
+  : selectScenarios(options.suite);
+if (!selected.length) throw new Error(`Unknown scenario: ${options.scenario}`);
+if (options.fault && options.fault !== "wrong-greeting")
+  throw new Error("Only the wrong-greeting oracle fault is supported");
+const runId = randomUUID();
+const output = resolve(options.output ?? join(here, ".runs"));
+await mkdir(output, { recursive: true });
+const root = await mkdtemp(join(output, "run-"));
+const report = {
+  schema: 1,
+  runId,
+  evidenceClass: "real-application/scripted-model",
+  startedAt: new Date().toISOString(),
+  platform: process.platform,
+  suite: options.scenario ? "single" : options.suite,
+  requestedScenario: options.scenario ?? null,
+  attempt: 1,
+  adapter: {
+    kind: "webview2-cdp",
+    node: process.version,
+    architecture: process.arch,
+  },
+  commit: "unknown",
+  dirtyFiles: [],
+  results: [],
+  cleanup: { status: "Not run" },
+  limitations: [
+    "Typed instruction seam skips summon shortcut/OS capture/microphone.",
+    "Native pill is not launched. Recording/pill/shared-input portion of check 37 is not covered.",
+    "Local scripted provider tests deterministic Agent mechanics, not live-model relevance or provider account compatibility.",
+    "Checks in scenario metadata are partial supporting coverage; manual ledger is unchanged.",
+  ],
+};
+let child, browser, model, main;
+let interrupted = false;
+const cancellation = new AbortController();
+const waitFor = (description, operation, options = {}) =>
+  poll(description, operation, { signal: cancellation.signal, ...options });
+let logTail = "";
+const redact = (text) =>
+  text
+    .replace(/\b[a-f0-9]{64}\b/gi, "[redacted]")
+    .replace(/Bearer\s+\S+/gi, "Bearer [redacted]");
+const appendLog = (chunk) => {
+  logTail = (logTail + redact(chunk.toString())).slice(-65536);
+};
+const shutdownSignal = () => {
+  interrupted = true;
+  cancellation.abort(new Error("Run interrupted"));
+};
+process.once("SIGINT", shutdownSignal);
+process.once("SIGTERM", shutdownSignal);
+
+async function portOpen(port) {
+  return new Promise((resolve) => {
+    const socket = connect({ host: "127.0.0.1", port });
+    socket.setTimeout(300);
+    socket.once("connect", () => {
+      socket.destroy();
+      resolve(true);
+    });
+    socket.once("error", () => {
+      socket.destroy();
+      resolve(false);
+    });
+    socket.once("timeout", () => {
+      socket.destroy();
+      resolve(false);
+    });
+  });
+}
+async function unusedPort() {
+  const listener = createServer();
+  await new Promise((resolve, reject) => {
+    listener.once("error", reject);
+    listener.listen(0, "127.0.0.1", resolve);
+  });
+  const port = listener.address().port;
+  await new Promise((resolve) => listener.close(resolve));
+  return port;
+}
+async function invoke(command, args = {}) {
+  if (interrupted && command !== "agent_harness_shutdown")
+    throw new Error("Run interrupted");
+  if (!main || child.exitCode !== null || child.signalCode !== null)
+    throw new Error("Harness host is not running");
+  let deadline;
+  try {
+    return await Promise.race([
+      main.evaluate(
+        ({ command, args }) => window.__TAURI_INTERNALS__.invoke(command, args),
+        { command, args },
+      ),
+      new Promise((_, reject) => {
+        deadline = setTimeout(
+          () =>
+            reject(new Error(`${command} exceeded its 10-second IPC deadline`)),
+          10000,
+        );
+      }),
+    ]);
+  } finally {
+    clearTimeout(deadline);
+  }
+}
+const status = () => invoke("agent_harness_status");
+const fixture = (operation) => invoke("agent_harness_fixture", { operation });
+const events = (snapshot, phase, action) =>
+  snapshot.events.filter(
+    (event) => event.phase === phase && (!action || event.action === action),
+  );
+async function findWindow(label) {
+  for (const context of browser.contexts()) {
+    for (const page of context.pages()) {
+      if (page.isClosed()) continue;
+      try {
+        if (
+          (await page.evaluate(
+            () => window.__TAURI_INTERNALS__?.metadata?.currentWindow?.label,
+          )) === label
+        )
+          return page;
+      } catch {
+        /* target still initializes */
+      }
+    }
+  }
+  return null;
+}
+async function panel() {
+  return waitFor("Agent panel", () => findWindow("agent-panel"));
+}
+async function activate(locator) {
+  await locator.waitFor({ state: "visible", timeout: 10000 });
+  await waitFor("Enabled Agent control", () => locator.isEnabled());
+  // WebView2 screen coordinates can race native resize/entrance animation.
+  // Activate the actual enabled DOM button and its production React handler.
+  await locator.evaluate((button) => button.click());
+}
+async function closePanel() {
+  const page = await findWindow("agent-panel");
+  if (!page) return;
+  await activate(page.locator("button.agc-c-x, button.agc-close"));
+  await waitFor(
+    "Agent window destruction",
+    async () => page.isClosed() || !(await findWindow("agent-panel")),
+  );
+  await waitFor(
+    "Agent run release",
+    async () =>
+      !(await status()).agent.active && !(await status()).agent.pendingApproval,
+  );
+}
+async function request(instruction = "hello") {
+  await closePanel();
+  await invoke("agent_harness_submit", { instruction });
+  const page = await panel();
+  await page
+    .locator(".agc-confirm-actions .agc-action-btn")
+    .waitFor({ state: "visible", timeout: 20000 });
+  assert.equal(
+    (await status()).agent.pendingApproval,
+    true,
+    "Host must own the approval before clicking it",
+  );
+  return page;
+}
+async function greeting(revision = "one") {
+  const before = await status();
+  const page = await request();
+  assert.equal(
+    events(await status(), "dispatched").length,
+    events(before, "dispatched").length,
+    "Tool dispatched before approval",
+  );
+  await activate(page.locator(".agc-confirm-actions .agc-action-btn"));
+  await waitFor("Approved greeting", async () => {
+    const snapshot = await status();
+    return (
+      events(snapshot, "completed", "hello").length ===
+        events(before, "completed", "hello").length + 1 &&
+      !snapshot.agent.active
+    );
+  });
+  await page
+    .getByText(`Harness hello (${revision})`, { exact: false })
+    .first()
+    .waitFor({ state: "visible", timeout: 15000 });
+  const after = await status();
+  assert.equal(
+    events(after, "dispatched", "hello").length,
+    events(before, "dispatched", "hello").length + 1,
+    "Approval must dispatch once",
+  );
+  assert.equal(
+    after.worker.current.pending,
+    0,
+    "Worker retained a pending reply after completion",
+  );
+  return after;
+}
+async function slowStart() {
+  const before = await status();
+  const page = await request("slow_hello");
+  await activate(page.locator(".agc-confirm-actions .agc-action-btn"));
+  const active = await waitFor("Slow native dispatch", async () => {
+    const snapshot = await status();
+    return (
+      events(snapshot, "dispatched", "slow_hello").length ===
+        events(before, "dispatched", "slow_hello").length + 1 &&
+      snapshot.worker.current?.pending === 1 &&
+      snapshot
+    );
+  });
+  return { before, active, page };
+}
+async function noLateSuccess(before, worker) {
+  // Wait beyond the fixture's real 15-second handler, not a shortened fake clock.
+  const started = performance.now();
+  await waitFor(
+    "Interrupted-call observation window",
+    () => performance.now() - started >= 16000,
+    { timeoutMs: 18000, intervalMs: 250 },
+  );
+  const snapshot = await status();
+  assert.equal(
+    events(snapshot, "completed", "slow_hello").length,
+    events(before, "completed", "slow_hello").length,
+    "Interrupted call reported a late success",
+  );
+  assert.equal(
+    events(snapshot, "dispatched", "slow_hello").length,
+    events(before, "dispatched", "slow_hello").length + 1,
+    "Interrupted call was automatically repeated",
+  );
+  assert.ok(
+    events(snapshot, "retired").some((event) => event.worker === worker),
+    "Interrupted generation did not retire",
+  );
+}
+async function changeRevision(revision) {
+  const source = await readFile(
+    join(here, "fixtures/lifecycle/main.js"),
+    "utf8",
+  );
+  const fixtureSource = source.replace('"one"', JSON.stringify(revision));
+  await writeFile(
+    assertWithin(root, join(root, "fixture/dist/main.js")),
+    options.fault
+      ? fixtureSource.replace(
+          "Harness hello (",
+          "Intentional incorrect greeting (",
+        )
+      : fixtureSource,
+  );
+}
+
+const handlers = {
+  async "native.cold-warm"() {
+    const cold = await status();
+    assert.equal(cold.worker.current, null);
+    const first = await greeting();
+    const second = await greeting();
+    assert.equal(
+      second.worker.current.identity,
+      first.worker.current.identity,
+      "Warm greeting restarted the worker",
+    );
+  },
+  async "agent.decline"() {
+    const before = await status();
+    const page = await request();
+    await activate(page.locator(".agc-confirm-actions .agc-cancel-btn"));
+    await waitFor("Decline release", async () => {
+      const value = await status();
+      return !value.agent.active && !value.agent.pendingApproval;
+    });
+    assert.equal(
+      events(await status(), "dispatched").length,
+      events(before, "dispatched").length,
+    );
+    await greeting();
+  },
+  async "agent.close-pending"() {
+    const before = await status();
+    await request();
+    await closePanel();
+    assert.equal(
+      events(await status(), "dispatched").length,
+      events(before, "dispatched").length,
+    );
+    await greeting();
+  },
+  async "agent.typed-approval"() {
+    const before = await status();
+    const page = await request();
+    await activate(page.locator("button.agc-c-followup"));
+    const input = page.locator("textarea").first();
+    await input.fill("yes");
+    // Like button activation, exercise the real React handler without a CDP
+    // native focus/resize race. Native Escape has its own OS input case.
+    await input.evaluate((element) =>
+      element.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "Enter",
+          code: "Enter",
+          bubbles: true,
+          cancelable: true,
+        }),
+      ),
+    );
+    await waitFor("Typed approval completion", async () => {
+      const value = await status();
+      return (
+        events(value, "completed", "hello").length ===
+          events(before, "completed", "hello").length + 1 && !value.agent.active
+      );
+    });
+    assert.equal(
+      events(await status(), "dispatched", "hello").length,
+      events(before, "dispatched", "hello").length + 1,
+    );
+  },
+  async "agent.stale-approval"() {
+    const before = await status();
+    const page = await request();
+    await changeRevision("two");
+    await developerReload(root);
+    await activate(page.locator(".agc-confirm-actions .agc-action-btn"));
+    await waitFor("Stale approval release", async () => {
+      const value = await status();
+      return !value.agent.active && !value.agent.pendingApproval;
+    });
+    assert.equal(
+      events(await status(), "dispatched").length,
+      events(before, "dispatched").length,
+      "Stale approval dispatched changed code",
+    );
+    await greeting("two");
+  },
+  async "agent.escape-slow"() {
+    const slow = await slowStart();
+    await exec(
+      "powershell.exe",
+      [
+        "-NoProfile",
+        "-File",
+        join(here, "native-input.ps1"),
+        "-OwnerPid",
+        String(child.pid),
+      ],
+      { timeout: 10000, windowsHide: true },
+    );
+    await waitFor("Escape window destruction", () => slow.page.isClosed());
+    await waitFor(
+      "Escape releases Agent",
+      async () => !(await status()).agent.active,
+    );
+    await greeting();
+    await noLateSuccess(slow.before, slow.active.worker.current.identity);
+  },
+  async "agent.close-model"() {
+    await invoke("agent_harness_submit", { instruction: "model_wait" });
+    const page = await panel();
+    await waitFor(
+      "Delayed provider request",
+      () => model.journal.at(-1)?.state === "received",
+    );
+    await closePanel();
+    await waitFor("Provider cancellation", () =>
+      model.journal.some((entry) => entry.state === "cancelled"),
+    );
+    assert.equal(page.isClosed(), true);
+    await greeting();
+  },
+  async "agent.close-slow"() {
+    const slow = await slowStart();
+    await closePanel();
+    const fresh = await greeting();
+    assert.notEqual(
+      fresh.worker.current.identity,
+      slow.active.worker.current.identity,
+    );
+    await noLateSuccess(slow.before, slow.active.worker.current.identity);
+  },
+  async "native.ten-replacements"() {
+    const generations = new Set();
+    for (let cycle = 0; cycle < 10; cycle++) {
+      const result = await greeting();
+      assert.ok(
+        !generations.has(result.worker.current.identity),
+        "Replacement reused an old worker token",
+      );
+      generations.add(result.worker.current.identity);
+      await closePanel();
+      await fixture("unload");
+      await waitFor("Unloaded worker/token cleanup", async () => {
+        const value = await status();
+        return value.worker.count === 0 && value.tokenCount === baselineTokens;
+      });
+      await fixture("load");
+    }
+    await greeting();
+  },
+  async "native.disable-slow"() {
+    const slow = await slowStart();
+    await fixture("disable");
+    await fixture("enable");
+    const fresh = await greeting();
+    assert.notEqual(
+      fresh.worker.current.identity,
+      slow.active.worker.current.identity,
+    );
+    await noLateSuccess(slow.before, slow.active.worker.current.identity);
+    assert.equal(
+      (await status()).worker.current.identity,
+      fresh.worker.current.identity,
+      "Old cleanup killed the replacement",
+    );
+  },
+  async "native.hot-reload"() {
+    let last = await greeting();
+    for (const revision of ["two", "three"]) {
+      await changeRevision(revision);
+      const reload = await developerReload(root);
+      assert.equal(reload.enabled, true);
+      const fresh = await greeting(revision);
+      assert.notEqual(
+        fresh.worker.current.identity,
+        last.worker.current.identity,
+      );
+      last = fresh;
+    }
+    const slow = await slowStart();
+    await changeRevision("four");
+    await developerReload(root);
+    await greeting("four");
+    await noLateSuccess(slow.before, slow.active.worker.current.identity);
+    await fixture("disable");
+    await changeRevision("five");
+    const disabled = await developerReload(root);
+    assert.equal(disabled.enabled, false);
+    assert.equal(disabled.restartedWorker, false);
+    assert.equal((await status()).worker.current, null);
+    await fixture("enable");
+    await greeting("five");
+  },
+  async "native.real-idle"() {
+    const warm = await greeting();
+    await closePanel();
+    const started = performance.now();
+    await waitFor(
+      "Production idle reaper",
+      async () => !(await status()).worker.current,
+      { timeoutMs: 170000, intervalMs: 1000 },
+    );
+    assert.ok(
+      performance.now() - started >= 115000,
+      "Worker retired substantially before the production idle threshold",
+    );
+    console.log(
+      `OBSERVED idle retirement after ${Math.round(performance.now() - started)}ms`,
+    );
+    const fresh = await greeting();
+    assert.notEqual(
+      fresh.worker.current.identity,
+      warm.worker.current.identity,
+    );
+    await closePanel();
+    const near = performance.now();
+    await waitFor(
+      "Near-idle-boundary wait",
+      () => performance.now() - near >= 110000,
+      { timeoutMs: 115000, intervalMs: 500 },
+    );
+    const slow = await slowStart();
+    console.log(
+      "OBSERVED near-boundary slow call dispatch; awaiting its result",
+    );
+    await waitFor(
+      "Near-boundary slow completion",
+      async () =>
+        events(await status(), "completed", "slow_hello").length ===
+        events(slow.before, "completed", "slow_hello").length + 1,
+      { timeoutMs: 20000 },
+    );
+    assert.equal(
+      (await status()).worker.current.identity,
+      fresh.worker.current.identity,
+      "Active call was reaped at the idle boundary",
+    );
+  },
+};
+let baselineTokens = 0;
+let cdpPort;
+try {
+  const version = await exec("git", ["rev-parse", "HEAD"], { cwd: repo });
+  report.commit = version.stdout.trim();
+  report.runnerFingerprint = await runnerFingerprint();
+  const dirty = await exec("git", ["status", "--porcelain"], { cwd: repo });
+  report.dirtyFiles = dirty.stdout.trim().split(/\r?\n/).filter(Boolean);
+  if (process.platform !== "win32")
+    throw new Blocked(
+      "This real-application adapter requires Windows WebView2; other platforms have no adapter yet",
+    );
+  let binary = options.binary;
+  if (!binary) {
+    const metadata = await exec(
+      "cargo",
+      ["metadata", "--format-version", "1", "--no-deps"],
+      { cwd: join(repo, "src-tauri"), maxBuffer: 4 * 1024 * 1024 },
+    );
+    binary = join(
+      JSON.parse(metadata.stdout).target_directory,
+      "debug/grain-agent-harness.exe",
+    );
+  }
+  binary = resolve(binary);
+  if (basename(binary).toLowerCase() !== "grain-agent-harness.exe")
+    throw new Blocked(
+      "Only the dedicated grain-agent-harness.exe may be launched",
+    );
+  try {
+    await access(binary);
+  } catch {
+    throw new Blocked(
+      "Harness executable is missing; run tests/agent-harness/build.ps1 first",
+    );
+  }
+  if (await portOpen(17124))
+    throw new Blocked(
+      "Harness events port 17124 is already in use; run this suite serially",
+    );
+  let build;
+  try {
+    build = await verifyBuild(binary);
+  } catch (error) {
+    throw new Blocked(`${error.message}. Run tests/agent-harness/build.ps1.`);
+  }
+  report.binary = {
+    path: binary,
+    sha256: build.binarySha256,
+    sourceFingerprint: build.sourceFingerprint,
+    buildCommit: build.commit,
+    builtAt: build.builtAt,
+  };
+  report.injectedFault = options.fault ?? null;
+  model = await startModel();
+  await writeFile(
+    join(root, ".grain-agent-harness.json"),
+    JSON.stringify({ schema: 1, runId, modelPort: model.port }),
+  );
+  await mkdir(join(root, "fixture/dist"), { recursive: true });
+  await copyFile(
+    join(here, "fixtures/lifecycle/manifest.json"),
+    join(root, "fixture/manifest.json"),
+  );
+  await changeRevision("one");
+  cdpPort = await unusedPort();
+  child = spawn(binary, [], {
+    cwd: repo,
+    windowsHide: true,
+    env: {
+      ...process.env,
+      GRAIN_AGENT_HARNESS_ROOT: root,
+      WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-address=127.0.0.1 --remote-debugging-port=${cdpPort}`,
+      WEBVIEW2_USER_DATA_FOLDER: join(root, "data/webview"),
+      RUST_LOG:
+        "warn,handy_app_lib=info,handy_app_lib::shortcut::handy_keys=debug",
+    },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  child.stdout.on("data", appendLog);
+  child.stderr.on("data", appendLog);
+  child.once("error", (error) => {
+    logTail += String(error);
+  });
+  report.hostPid = child.pid;
+  browser = await waitFor(
+    "Owned WebView2 debugging endpoint",
+    async () => {
+      if (child.exitCode !== null)
+        throw new Blocked(
+          `Harness host exited (${child.exitCode}); ${logTail.slice(-1500)}`,
+        );
+      try {
+        return await chromium.connectOverCDP(`http://127.0.0.1:${cdpPort}`, {
+          timeout: 1000,
+        });
+      } catch {
+        return null;
+      }
+    },
+    { timeoutMs: 40000, intervalMs: 250 },
+  );
+  main = await waitFor("Real main WebView", () => findWindow("main"));
+  report.adapter.webViewVersion = browser.version();
+  const firstStatus = await status();
+  assert.equal(firstStatus.runId, runId);
+  assert.equal(firstStatus.applicationId, "com.grain.agent-harness");
+  assert.equal(firstStatus.eventsPort, 17124);
+  assert.equal(
+    resolve(firstStatus.profile.replace(/^\\\\\?\\/, "")),
+    resolve(root, "data"),
+    "Host did not use the disposable profile",
+  );
+  baselineTokens = firstStatus.tokenCount;
+  assert.deepEqual(
+    firstStatus.shortcutBindings,
+    [],
+    "Harness retained ordinary accelerators",
+  );
+  // The harness already owns an empty production shortcut manager. This must
+  // be idempotent, including after the real main renderer completes onboarding.
+  await invoke("initialize_shortcuts");
+  assert.deepEqual((await status()).shortcutBindings, []);
+  for (const scenario of selected) {
+    if (interrupted) throw new Error("Run interrupted");
+    const started = performance.now();
+    console.log(`RUN ${scenario.id}`);
+    const result = {
+      id: scenario.id,
+      description: scenario.description,
+      supportingChecks: scenario.checks,
+      status: "Not run",
+    };
+    try {
+      await closePanel();
+      await fixture("unload").catch((error) => {
+        if (!String(error).includes("not a load-unpacked")) throw error;
+      });
+      await changeRevision("one");
+      await fixture("load");
+      const eventStart = (await status()).events.length;
+      const modelStart = model.journal.length;
+      await handlers[scenario.id]();
+      await closePanel();
+      await fixture("unload");
+      await waitFor("Scenario cleanup baseline", async () => {
+        const value = await status();
+        return (
+          value.worker.count === 0 &&
+          value.tokenCount === baselineTokens &&
+          !value.agent.active &&
+          !value.agent.pendingApproval
+        );
+      });
+      const end = await status();
+      result.events = end.events.slice(eventStart);
+      result.model = model.journal.slice(modelStart);
+      assert.ok(
+        !result.model.some((entry) => entry.state === "error"),
+        "Scripted provider rejected the real Agent request",
+      );
+      result.status = "Pass";
+    } catch (error) {
+      result.status = error instanceof Blocked ? "Blocked" : "Fail";
+      result.error = String(error.message ?? error).slice(0, 2500);
+      try {
+        result.snapshot = await status();
+      } catch {
+        /* host might have exited */
+      }
+      const page = await findWindow("agent-panel");
+      if (page) {
+        try {
+          await mkdir(join(root, "evidence"), { recursive: true });
+          await page.screenshot({
+            path: join(root, "evidence", `${scenario.id}.png`),
+          });
+        } catch {
+          /* bounded diagnostic best effort */
+        }
+      }
+    }
+    result.elapsedMs = Math.round(performance.now() - started);
+    report.results.push(result);
+    console.log(
+      `${result.status.toUpperCase()} ${result.id} (${result.elapsedMs}ms)${result.error ? `: ${result.error}` : ""}`,
+    );
+    // Stop after a failure rather than certify later scenarios on contaminated state.
+    if (result.status !== "Pass") break;
+  }
+} catch (error) {
+  report.results.push({
+    id: "harness.prerequisites",
+    status: error instanceof Blocked ? "Blocked" : "Fail",
+    error: String(error.message ?? error).slice(0, 2500),
+  });
+} finally {
+  const errors = [];
+  if (child && child.exitCode === null && child.signalCode === null) {
+    try {
+      await invoke("agent_harness_shutdown");
+    } catch {
+      /* reply may disappear on graceful exit */
+    }
+    try {
+      await poll(
+        "Host exit",
+        () => child.exitCode !== null || child.signalCode !== null,
+        { timeoutMs: 6000 },
+      );
+    } catch {
+      try {
+        await exec("taskkill.exe", ["/PID", String(child.pid), "/T", "/F"], {
+          timeout: 6000,
+        });
+        await poll(
+          "Forced host exit",
+          () => child.exitCode !== null || child.signalCode !== null,
+          { timeoutMs: 3000 },
+        );
+      } catch (error) {
+        errors.push(`Owned process cleanup failed: ${error.message}`);
+      }
+    }
+  }
+  if (browser) {
+    try {
+      await browser.close();
+    } catch (error) {
+      errors.push(`CDP cleanup: ${error.message}`);
+    }
+  }
+  if (model) {
+    try {
+      await model.close();
+    } catch (error) {
+      errors.push(`Model cleanup: ${error.message}`);
+    }
+  }
+  if (cdpPort) {
+    try {
+      await poll(
+        "WebView2 endpoint release",
+        async () => !(await portOpen(cdpPort)),
+        { timeoutMs: 6000, intervalMs: 300 },
+      );
+    } catch (error) {
+      errors.push(error.message);
+    }
+  }
+  if (child) {
+    try {
+      await poll(
+        "Harness event listener release",
+        async () => !(await portOpen(17124)),
+        { timeoutMs: 3000 },
+      );
+    } catch (error) {
+      errors.push(error.message);
+    }
+  }
+  report.cleanup = { status: errors.length ? "Fail" : "Pass", errors };
+  report.completedAt = new Date().toISOString();
+  // Keep reports/screenshots only. Delete only verified children of this unique run.
+  for (const name of ["data", "fixture"]) {
+    try {
+      await rm(assertWithin(root, join(root, name)), {
+        recursive: true,
+        force: true,
+        maxRetries: 3,
+        retryDelay: 200,
+      });
+    } catch (error) {
+      report.cleanup.status = "Fail";
+      report.cleanup.errors.push(`Scratch cleanup: ${error.message}`);
+    }
+  }
+  await mkdir(join(root, "evidence"), { recursive: true });
+  await writeFile(join(root, "evidence/host.log"), logTail);
+  for (const scenario of selected)
+    if (!report.results.some((result) => result.id === scenario.id))
+      report.results.push({ id: scenario.id, status: "Not run" });
+  try {
+    if (
+      report.runnerFingerprint &&
+      (await runnerFingerprint()) !== report.runnerFingerprint
+    )
+      throw new Error(
+        "Harness definitions changed during execution; repeat from stable inputs",
+      );
+  } catch (error) {
+    report.results.push({
+      id: "harness.identity",
+      status: "Fail",
+      error: error.message,
+    });
+  }
+  await writeReport(root, report);
+  process.removeListener("SIGINT", shutdownSignal);
+  process.removeListener("SIGTERM", shutdownSignal);
+  console.log(`Report: ${join(root, "evidence/report.md")}`);
+}
+process.exitCode =
+  report.cleanup.status !== "Pass" ||
+  report.results.some((result) => result.status === "Fail")
+    ? 1
+    : report.results.some((result) =>
+          ["Blocked", "Not run"].includes(result.status),
+        )
+      ? 2
+      : 0;

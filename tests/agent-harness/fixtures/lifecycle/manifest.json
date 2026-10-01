@@ -1,0 +1,33 @@
+{
+  "id": "com.grain.harness.lifecycle",
+  "name": "Harness Lifecycle",
+  "version": "0.1.0",
+  "grainApi": "^1.0",
+  "tier": "scripted",
+  "kind": "extending",
+  "description": "Permission-free Agent acceptance fixture",
+  "permissions": [],
+  "activation": [],
+  "surfaces": {},
+  "slots": [],
+  "variant_slots": [],
+  "contributes": {
+    "actions": [
+      {
+        "id": "hello",
+        "title": "Harness fast hello",
+        "risk": "confirm",
+        "when": {},
+        "utterances": ["harness hello"]
+      },
+      {
+        "id": "slow_hello",
+        "title": "Harness slow hello",
+        "risk": "confirm",
+        "when": {},
+        "utterances": ["harness slow hello"]
+      }
+    ]
+  },
+  "entry": "dist/main.js"
+}

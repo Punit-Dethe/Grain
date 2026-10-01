@@ -1792,6 +1792,25 @@ fn dispatch_instruction(app: AppHandle, text: String, quick: bool) {
     let _ = app.emit_to(PANEL_LABEL, "agent-instruction", ());
 }
 
+/// Acceptance input seam: real panel delivery/model/approval, without OS capture.
+#[cfg(feature = "agent-harness")]
+pub(crate) fn harness_submit_instruction(app: &AppHandle, text: String) {
+    clear_pending_action(app);
+    if let Some(state) = app.try_state::<AgentState>() {
+        state.summon_gen.fetch_add(1, Ordering::SeqCst);
+    }
+    dispatch_instruction(app.clone(), text, false);
+}
+
+#[cfg(feature = "agent-harness")]
+pub(crate) fn harness_snapshot(app: &AppHandle) -> serde_json::Value {
+    let Some(state) = app.try_state::<AgentState>() else {
+        return serde_json::json!(null);
+    };
+    let run = state.execution.state.lock().unwrap();
+    serde_json::json!({"active": run.active.is_some(), "pendingApproval": run.pending_action.is_some(), "generation": run.generation})
+}
+
 /// Show the (pre-created, warm) panel in its loading state and arm the
 /// panel-phase transients. Idempotent — safe to call when already visible.
 /// Builds the window on the spot if pre-creation failed.

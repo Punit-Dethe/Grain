@@ -7,6 +7,15 @@ edition = "2021"
 license = "MIT"
 default-run = "handy"
 
+[features]
+agent-harness = []
+custom-protocol = ["tauri/custom-protocol"]
+
+[[bin]]
+name = "grain-agent-harness"
+path = "src/grain_agent_harness_main.rs"
+required-features = ["agent-harness"]
+
 [profile.dev]
 incremental = true # Compile your binary in smaller steps.
 

@@ -22,7 +22,10 @@
     "check:translations": "bun scripts/check-translations.ts",
     "postinstall": "bun scripts/check-nix-deps.ts",
     "test:unit": "vitest run",
-    "test:unit:watch": "vitest"
+    "test:unit:watch": "vitest",
+    "test:agent": "node tests/agent-harness/run.mjs",
+    "test:agent:logic": "node tests/agent-harness/production-tests.mjs",
+    "test:agent:harness": "node --test tests/agent-harness/runner.test.mjs"
   },
   "dependencies": {
     "@fontsource-variable/ibm-plex-sans": "5.3.0",
