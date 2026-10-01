@@ -91,10 +91,52 @@ export const scenarios = [
     description:
       "Production idle reaper retires the worker; a new call recovers; near-boundary slow call survives",
   },
+  {
+    id: "native.reply-failures",
+    suite: "native-failures",
+    checks: [21],
+    description:
+      "Lost replies, declared/thrown errors and malformed envelopes have honest, private classifications and no replay",
+  },
+  {
+    id: "native.readiness-failure",
+    suite: "native-failures",
+    checks: [21],
+    description:
+      "A worker that never authenticates fails before dispatch, retires its token and permits a fresh request",
+  },
+  {
+    id: "native.source-drift",
+    suite: "native-failures",
+    checks: [26],
+    description:
+      "Warm source changed without reload invalidates the old approval; a fresh request executes the new source",
+  },
+  {
+    id: "native.absolute-deadline",
+    suite: "native-failures",
+    checks: [24, 32],
+    description:
+      "A real 25-second tool exceeds the production 20-second absolute deadline, retires once and recovers without replay",
+  },
+  {
+    id: "native.result-budgets",
+    suite: "native-failures",
+    checks: [33, 34],
+    description:
+      "Decoded and raw oversized replies fail at distinct boundaries, retire their workers and recover on the shared listener",
+  },
+  {
+    id: "native.invalid-input",
+    suite: "native-failures",
+    checks: [],
+    description:
+      "Undeclared model arguments fail before approval or worker startup and private parameter keys remain hidden",
+  },
 ];
 
 export function selectScenarios(suite) {
-  if (!["smoke", "lifecycle", "idle", "all"].includes(suite))
+  if (!["smoke", "lifecycle", "idle", "native-failures", "all"].includes(suite))
     throw new Error(`Unknown suite: ${suite}`);
   return scenarios.filter(
     (scenario) =>

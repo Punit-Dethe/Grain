@@ -20,8 +20,37 @@ export function nextReply(body) {
   if (!instruction) throw new Error("Missing harness instruction");
   if (instruction.endsWith("model_wait"))
     return { content: "Harness delayed model reply", delayMs: 15000 };
-  const target = instruction.endsWith("slow_hello") ? "slow_hello" : "hello";
+  const requested = instruction.slice("Harness request: ".length);
+  const titles = {
+    hello: "Harness fast hello",
+    slow_hello: "Harness slow hello",
+    deadline_hello: "Harness deadline hello",
+    lost_reply: "Harness lost reply",
+    tool_error: "Harness tool error",
+    thrown_error: "Harness thrown error",
+    malformed_result: "Harness malformed result",
+    oversized_result: "Harness oversized result",
+    oversized_raw: "Harness oversized raw",
+    input_echo: "Harness input echo",
+  };
+  const invalidInputs = {
+    invalid_arguments: { text: "safe", HARNESS_PRIVATE_ARGUMENT_MARKER: true },
+    missing_arguments: {},
+    wrong_arguments: { text: 42 },
+    oversized_arguments: { text: "x".repeat(65536) },
+    malformed_arguments: {},
+  };
+  const target = Object.hasOwn(invalidInputs, requested)
+    ? "input_echo"
+    : requested;
+  if (!titles[target]) throw new Error("Unknown harness instruction");
   const results = body.messages.filter((message) => message.role === "tool");
+  if (
+    results.some((result) =>
+      String(result.content).includes("HARNESS_PRIVATE_ERROR_MARKER"),
+    )
+  )
+    throw new Error("Private worker error reached the model");
   const offered = body.tools.map((tool) => tool.function);
   const call = (name, args) => {
     if (!offered.some((tool) => tool.name === name))
@@ -50,11 +79,13 @@ export function nextReply(body) {
     const actionTools = offered.filter((tool) => tool.name.startsWith("act__"));
     if (actionTools.length !== 1)
       throw new Error("Selected loading did not expose exactly one action");
-    const expectedTitle =
-      target === "hello" ? "Harness fast hello" : "Harness slow hello";
+    const expectedTitle = titles[target];
     if (!actionTools[0].description.includes(expectedTitle))
       throw new Error("Loaded the wrong native action schema");
-    return call(actionTools[0].name, {});
+    const reply = call(actionTools[0].name, invalidInputs[requested] ?? {});
+    if (requested === "malformed_arguments")
+      reply.tool_calls[0].function.arguments = "{";
+    return reply;
   }
   return { content: `Harness observed result: ${results.at(-1).content}` };
 }

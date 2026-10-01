@@ -152,6 +152,16 @@ struct Worker {
 }
 
 impl Worker {
+    fn matches_native_call(
+        &self,
+        record: &grain_core::extensions::ExtensionRecord,
+        expected_digest: &str,
+    ) -> bool {
+        record.enabled
+            && record.execution_generation == self.execution_generation
+            && self.call_digest.as_deref() == Some(expected_digest)
+    }
+
     fn close_pending(&self) {
         if let Some(conn) = &self.conn {
             conn.closed.send_replace(true);
@@ -1542,6 +1552,8 @@ fn spawn_worker(
                     dev_source,
                 },
             );
+            #[cfg(feature = "agent-harness")]
+            crate::grain_agent_harness::observe("spawned", ext_id, "", &token);
             if companion_launch.is_some() {
                 drop(sup);
                 return Some((token, None));
@@ -2059,37 +2071,43 @@ fn parse_handoff_outcome(value: Value) -> HandOffOutcome {
 /// scale this feature is built for — twenty installed extensions would mean
 /// twenty worker spawns per press. Spawned with no activation payload: the
 /// request arrives as an explicit host call, not as a wake event.
-fn wake_for_request(app: &AppHandle, ext_id: &str) -> Option<String> {
+fn wake_for_request(app: &AppHandle, ext_id: &str, expected_digest: &str) -> Option<String> {
     let registry = app.try_state::<Arc<grain_core::extensions::ExtensionsRegistry>>()?;
-    let existing = registry.with_record_locked(ext_id, |record| {
-        let host = HOST.get()?;
-        let workers = host.workers.map.lock().unwrap();
-        let worker = workers.get(ext_id)?;
-        Some((
-            worker.token.clone(),
-            record.is_some_and(|record| {
-                record.enabled && record.execution_generation == worker.execution_generation
-            }),
-        ))
-    });
+    let revision = registry.record_revision(ext_id);
+    // Source can drift without a registry mutation or developer reload. Verify
+    // the approved call first, then reuse only a worker with that source identity.
+    // An obsolete request must not retire a worker serving the newer source.
+    let pack = load_manifest(app, ext_id)?;
+    let (granted, existing) = registry
+        .with_current_record(ext_id, revision, |record| {
+            let record = record.filter(|record| record.enabled)?;
+            let current =
+                grain_core::extensions::native_call_fingerprint(record, &pack.manifest).ok()?;
+            if current != expected_digest {
+                return None;
+            }
+            let host = HOST.get()?;
+            let workers = host.workers.map.lock().unwrap();
+            let existing = workers.get(ext_id).map(|worker| {
+                (
+                    worker.token.clone(),
+                    worker.matches_native_call(record, expected_digest),
+                )
+            });
+            Some((record.granted.clone(), existing))
+        })
+        .ok()??;
     if let Some((token, current)) = existing {
         if current {
             return Some(token);
         }
         kill_worker_inner(
             ext_id,
-            "native account or runtime changed",
+            "native account, source or runtime changed",
             Some(&token),
             false,
         );
     }
-    let revision = registry.record_revision(ext_id);
-    let pack = load_manifest(app, ext_id)?;
-    let granted = app
-        .try_state::<Arc<grain_core::extensions::ExtensionsRegistry>>()
-        .and_then(|registry| registry.record(ext_id))
-        .map(|record| record.granted)
-        .unwrap_or_default();
     spawn_worker(app, ext_id, &pack, granted, None, revision)
 }
 
@@ -2252,6 +2270,8 @@ pub async fn run_action(
     expected_digest: &str,
 ) -> Result<Value, ActionCallError> {
     use grain_core::execution::DispatchPhase;
+    #[cfg(feature = "agent-harness")]
+    crate::grain_agent_harness::observe("invoked", ext_id, action_id, "");
     let expires = Instant::now() + NATIVE_OPERATION_DEADLINE;
     let Some(host) = HOST.get() else {
         return Err(ActionCallError::Unavailable(
@@ -2261,7 +2281,7 @@ pub async fn run_action(
     let _permit = acquire_native_call(&host.native_calls)?;
     let arguments = approved_native_arguments(app, ext_id, action_id, arguments, expected_digest)?;
     native_time_remaining(expires, DispatchPhase::NotDispatched)?;
-    let token = wake_for_request(app, ext_id)
+    let token = wake_for_request(app, ext_id, expected_digest)
         .ok_or_else(|| ActionCallError::Unavailable("extension worker unavailable".into()))?;
     let mut owner = NativeCallOwner::new(|| {
         kill_worker_inner(
@@ -3303,6 +3323,34 @@ mod tests {
             conn: None,
             dev_source: None,
         }
+    }
+
+    #[test]
+    fn warm_native_reuse_requires_source_identity_and_current_registry_generation() {
+        let pack = pack_of("");
+        let mut record = record_for(&pack);
+        let old_digest =
+            grain_core::extensions::native_call_fingerprint(&record, &pack.manifest).unwrap();
+        let mut warm = worker(0, false);
+        warm.execution_generation = record.execution_generation;
+        warm.call_digest = Some(old_digest.clone());
+        assert!(warm.matches_native_call(&record, &old_digest));
+        let mut changed = pack.manifest.clone();
+        changed.entry_source.push_str("// changed without reload");
+        let fresh_digest =
+            grain_core::extensions::native_call_fingerprint(&record, &changed).unwrap();
+        assert!(!warm.matches_native_call(&record, &fresh_digest));
+        warm.call_digest = Some(fresh_digest.clone());
+        assert!(warm.matches_native_call(&record, &fresh_digest));
+        assert!(!warm.matches_native_call(&record, &old_digest));
+        record.enabled = false;
+        assert!(!warm.matches_native_call(&record, &fresh_digest));
+        record.enabled = true;
+        record.execution_generation += 1;
+        assert!(!warm.matches_native_call(&record, &fresh_digest));
+        warm.execution_generation = record.execution_generation;
+        warm.call_digest = None;
+        assert!(!warm.matches_native_call(&record, &fresh_digest));
     }
 
     #[test]

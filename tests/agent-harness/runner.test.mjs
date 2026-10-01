@@ -67,6 +67,48 @@ test("declined/failed tool result produces no automatic tool replay", () => {
   assert.match(result.content, /Declined by user/);
 });
 
+test("failure suite is isolated and private error text is rejected by the model oracle", () => {
+  assert.equal(selectScenarios("native-failures").length, 6);
+  assert.ok(
+    selectScenarios("lifecycle").every(
+      (scenario) => scenario.suite !== "native-failures",
+    ),
+  );
+  assert.throws(
+    () => nextReply(body(["search", "loaded", "HARNESS_PRIVATE_ERROR_MARKER"])),
+    /Private worker error/,
+  );
+});
+
+test("invalid-input requests use real selected schema with distinct rejected payloads", () => {
+  for (const instruction of [
+    "invalid_arguments",
+    "missing_arguments",
+    "wrong_arguments",
+    "oversized_arguments",
+    "malformed_arguments",
+  ]) {
+    const request = body(["search", "loaded"], ["act__input_echo"]);
+    request.messages[0].content = `Harness request: ${instruction}`;
+    request.tools.at(-1).function.description = "Harness input echo";
+    const reply = nextReply(request);
+    assert.equal(reply.tool_calls[0].function.name, "act__input_echo");
+    const raw = reply.tool_calls[0].function.arguments;
+    if (instruction === "malformed_arguments")
+      assert.throws(() => JSON.parse(raw));
+    if (instruction === "oversized_arguments")
+      assert.ok(Buffer.byteLength(raw) > 65536);
+    if (instruction === "wrong_arguments")
+      assert.equal(JSON.parse(raw).text, 42);
+    if (instruction === "missing_arguments")
+      assert.deepEqual(JSON.parse(raw), {});
+    if (instruction === "invalid_arguments")
+      assert.ok(
+        Object.hasOwn(JSON.parse(raw), "HARNESS_PRIVATE_ARGUMENT_MARKER"),
+      );
+  }
+});
+
 test("actual local HTTP fixture records rejection and releases its listener", async () => {
   const model = await startModel();
   try {

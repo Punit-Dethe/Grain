@@ -16,6 +16,7 @@ const groups = {
   registry: "extensions::tests::",
   agent: "agent::",
   native: "extension_host::tests::",
+  execution: "action_exec::tests::",
   mcp: "grain_mcp::",
   auth: "grain_auth::",
 };

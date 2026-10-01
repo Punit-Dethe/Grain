@@ -211,6 +211,33 @@ pub fn worker_identity(token: &str) -> String {
         .collect()
 }
 
+/// Record host classification only: never retain tool arguments or result text.
+pub fn observe_outcome(
+    extension: &str,
+    action: &str,
+    outcome: &grain_core::execution::ActionOutcome,
+) {
+    use grain_core::execution::ActionOutcome;
+    if extension != FIXTURE_ID {
+        return;
+    }
+    let status = match outcome {
+        ActionOutcome::Succeeded(_) => "succeeded",
+        ActionOutcome::Failed { .. } => "failed",
+        ActionOutcome::Cancelled => "cancelled",
+        ActionOutcome::UnknownOutcome { .. } => "unknownOutcome",
+        ActionOutcome::ResultUnavailable { .. } => "resultUnavailable",
+        ActionOutcome::ToolReportedError { .. } => "toolReportedError",
+        ActionOutcome::NeedsInteraction(_) => "needsInteraction",
+    };
+    let mut events = EVENTS.lock().unwrap();
+    if events.len() >= MAX_EVENTS {
+        OVERFLOW.store(true, std::sync::atomic::Ordering::Relaxed);
+        return;
+    }
+    events.push(json!({"phase": "outcome", "action": action, "outcome": status, "elapsedMs": config().started.elapsed().as_millis() as u64}));
+}
+
 #[tauri::command]
 pub fn agent_harness_status(app: AppHandle, window: WebviewWindow) -> Result<Value, String> {
     guard(&app, &window)?;
@@ -224,6 +251,7 @@ pub fn agent_harness_status(app: AppHandle, window: WebviewWindow) -> Result<Val
         "worker": crate::extension_host::harness_snapshot(FIXTURE_ID),
         "agent": crate::agent::harness_snapshot(&app),
         "tokenCount": crate::events_server::token_count(),
+        "fixtureEnabled": app.state::<std::sync::Arc<grain_core::extensions::ExtensionsRegistry>>().record(FIXTURE_ID).is_some_and(|record| record.enabled),
         "events": *EVENTS.lock().unwrap(),
     }))
 }
@@ -306,6 +334,18 @@ pub enum Instruction {
     Hello,
     SlowHello,
     ModelWait,
+    DeadlineHello,
+    LostReply,
+    ToolError,
+    ThrownError,
+    MalformedResult,
+    OversizedResult,
+    OversizedRaw,
+    InvalidArguments,
+    MissingArguments,
+    WrongArguments,
+    OversizedArguments,
+    MalformedArguments,
 }
 
 #[tauri::command]
@@ -319,6 +359,18 @@ pub async fn agent_harness_submit(
         Instruction::Hello => "Harness request: hello",
         Instruction::SlowHello => "Harness request: slow_hello",
         Instruction::ModelWait => "Harness request: model_wait",
+        Instruction::DeadlineHello => "Harness request: deadline_hello",
+        Instruction::LostReply => "Harness request: lost_reply",
+        Instruction::ToolError => "Harness request: tool_error",
+        Instruction::ThrownError => "Harness request: thrown_error",
+        Instruction::MalformedResult => "Harness request: malformed_result",
+        Instruction::OversizedResult => "Harness request: oversized_result",
+        Instruction::OversizedRaw => "Harness request: oversized_raw",
+        Instruction::InvalidArguments => "Harness request: invalid_arguments",
+        Instruction::MissingArguments => "Harness request: missing_arguments",
+        Instruction::WrongArguments => "Harness request: wrong_arguments",
+        Instruction::OversizedArguments => "Harness request: oversized_arguments",
+        Instruction::MalformedArguments => "Harness request: malformed_arguments",
     };
     crate::agent::harness_submit_instruction(&app, text.into());
     Ok(())

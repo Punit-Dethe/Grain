@@ -301,7 +301,7 @@ pub(crate) fn native_outcome(
     prepared: &PreparedCall,
 ) -> ActionOutcome {
     use crate::extension_host::ActionCallError;
-    match result {
+    let outcome = match result {
         Ok(value) => parse_worker_outcome(value, prepared),
         Err(ActionCallError::Execution(failure)) => failure.into_outcome(),
         Err(ActionCallError::Unavailable(message)) => grain_core::execution::ExecutionFailure::new(
@@ -310,7 +310,14 @@ pub(crate) fn native_outcome(
             message,
         )
         .into_outcome(),
-    }
+    };
+    #[cfg(feature = "agent-harness")]
+    crate::grain_agent_harness::observe_outcome(
+        &prepared.extension_id,
+        &prepared.action_id,
+        &outcome,
+    );
+    outcome
 }
 
 /// Map the worker's structured `"action"` reply to an [`ActionOutcome`]. Shape:

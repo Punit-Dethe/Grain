@@ -48,7 +48,7 @@ for (let i = 2; i < process.argv.length; i++) {
 }
 if (options.help) {
   console.log(
-    "node tests/agent-harness/run.mjs [--list] [--suite smoke|lifecycle|idle|all] [--scenario ID] [--binary path] [--output directory]\nWindows real Agent/WebView2 acceptance. Build first with tests/agent-harness/build.ps1. No live account or model key required.",
+    "node tests/agent-harness/run.mjs [--list] [--suite smoke|lifecycle|idle|native-failures|all] [--scenario ID] [--binary path] [--output directory]\nWindows real Agent/WebView2 acceptance. Build first with tests/agent-harness/build.ps1. No live account or model key required.",
   );
   process.exit(0);
 }
@@ -63,7 +63,9 @@ const selected = options.scenario
 if (!selected.length) throw new Error(`Unknown scenario: ${options.scenario}`);
 if (
   options.fault &&
-  !["wrong-greeting", "missing-escape"].includes(options.fault)
+  !["wrong-greeting", "missing-escape", "successful-error"].includes(
+    options.fault,
+  )
 )
   throw new Error("Unknown oracle fault");
 if (
@@ -71,6 +73,11 @@ if (
   options.scenario !== "agent.reopen-escape"
 )
   throw new Error("missing-escape requires --scenario agent.reopen-escape");
+if (
+  options.fault === "successful-error" &&
+  options.scenario !== "native.reply-failures"
+)
+  throw new Error("successful-error requires --scenario native.reply-failures");
 const runId = randomUUID();
 const output = resolve(options.output ?? join(here, ".runs"));
 await mkdir(output, { recursive: true });
@@ -183,10 +190,13 @@ async function findWindow(label) {
     for (const page of context.pages()) {
       if (page.isClosed()) continue;
       try {
+        const currentLabel = await page.evaluate(
+          () => window.__TAURI_INTERNALS__?.metadata?.currentWindow?.label,
+        );
         if (
-          (await page.evaluate(
-            () => window.__TAURI_INTERNALS__?.metadata?.currentWindow?.label,
-          )) === label
+          typeof label === "string"
+            ? currentLabel === label
+            : label.test(currentLabel ?? "")
         )
           return page;
       } catch {
@@ -283,6 +293,107 @@ async function slowStart() {
   });
   return { before, active, page };
 }
+
+async function failureCall(
+  action,
+  expectedOutcome,
+  { retire = true, uiText } = {},
+) {
+  const before = await status();
+  const modelStart = model.journal.length;
+  const page = await request(action);
+  const approvedAt = performance.now();
+  await activate(page.locator(".agc-confirm-actions .agc-action-btn"));
+  const after = await waitFor(
+    `${action} classified and Agent released`,
+    async () => {
+      const snapshot = await status();
+      return (
+        events(snapshot, "outcome", action).length ===
+          events(before, "outcome", action).length + 1 &&
+        !snapshot.agent.active &&
+        !snapshot.agent.pendingApproval &&
+        snapshot
+      );
+    },
+    { timeoutMs: 30000 },
+  );
+  const outcome = events(after, "outcome", action).at(-1);
+  assert.equal(
+    outcome.outcome,
+    expectedOutcome,
+    `${action} reported the wrong certainty`,
+  );
+  const dispatches = events(after, "dispatched", action).slice(
+    events(before, "dispatched", action).length,
+  );
+  assert.equal(
+    dispatches.length,
+    1,
+    `${action} must dispatch once, with no automatic retry`,
+  );
+  const worker = dispatches[0].worker;
+  if (retire) {
+    assert.equal(
+      after.worker.current,
+      null,
+      `${action} retained the failed worker`,
+    );
+    assert.equal(
+      after.tokenCount,
+      baselineTokens,
+      `${action} leaked its token`,
+    );
+    assert.ok(
+      events(after, "retired").some((event) => event.worker === worker),
+      `${action} failed to retire its exact owner`,
+    );
+    await waitFor(
+      "Retired native supervisor destruction",
+      async () => !(await findWindow(/^extension-host-/)),
+    );
+  } else {
+    assert.equal(
+      after.worker.current.pending,
+      0,
+      `${action} retained a pending reply`,
+    );
+  }
+  assert.equal(
+    after.fixtureEnabled,
+    true,
+    "Ordinary failure disabled the extension",
+  );
+  assert.equal(
+    model.journal
+      .slice(modelStart)
+      .flatMap((entry) => entry.returned)
+      .filter((name) => name.startsWith("act__")).length,
+    1,
+    "Model action was silently replayed",
+  );
+  const text = await page.locator("body").innerText();
+  assert.ok(
+    !text.includes("HARNESS_PRIVATE_ERROR_MARKER"),
+    "Private worker error leaked into the UI",
+  );
+  if (uiText)
+    assert.ok(
+      text.includes(uiText),
+      `${action} omitted its truthful visible notice`,
+    );
+  const invoked = events(after, "invoked", action).at(-1);
+  return {
+    before,
+    after,
+    worker,
+    page,
+    outcome,
+    invoked,
+    approvedAt,
+    elapsedAfterApprovalMs: performance.now() - approvedAt,
+  };
+}
 async function escapePanel(page) {
   if (options.fault !== "missing-escape")
     await exec(
@@ -336,16 +447,220 @@ async function changeRevision(revision) {
   const fixtureSource = source.replace('"one"', JSON.stringify(revision));
   await writeFile(
     assertWithin(root, join(root, "fixture/dist/main.js")),
-    options.fault
+    options.fault === "wrong-greeting"
       ? fixtureSource.replace(
           "Harness hello (",
           "Intentional incorrect greeting (",
         )
       : fixtureSource,
   );
+  if (options.fault === "successful-error") {
+    const path = assertWithin(root, join(root, "fixture/dist/main.js"));
+    await writeFile(
+      path,
+      (await readFile(path, "utf8")).replace(
+        'error: { class: "network", message: "HARNESS_PRIVATE_ERROR_MARKER" }',
+        'ok: { body: "Intentional error-to-success oracle fault" }',
+      ),
+    );
+  }
 }
 
 const handlers = {
+  async "native.reply-failures"() {
+    for (const [action, classification, retire, uiText] of [
+      [
+        "tool_error",
+        "toolReportedError",
+        false,
+        "Partial effects may have occurred",
+      ],
+      [
+        "thrown_error",
+        "toolReportedError",
+        false,
+        "Partial effects may have occurred",
+      ],
+      ["malformed_result", "resultUnavailable", false, "invalid action result"],
+      ["lost_reply", "unknownOutcome", true, "could not confirm its result"],
+    ]) {
+      const call = await failureCall(action, classification, {
+        retire,
+        uiText,
+      });
+      const fresh = await greeting();
+      if (retire) assert.notEqual(fresh.worker.current.identity, call.worker);
+    }
+  },
+  async "native.readiness-failure"() {
+    await writeFile(
+      assertWithin(root, join(root, "fixture/dist/main.js")),
+      "self.close();\n",
+    );
+    const before = await status();
+    const page = await request();
+    await activate(page.locator(".agc-confirm-actions .agc-action-btn"));
+    const after = await waitFor(
+      "Unready worker failure",
+      async () => {
+        const value = await status();
+        return (
+          events(value, "outcome", "hello").length ===
+            events(before, "outcome", "hello").length + 1 &&
+          !value.agent.active &&
+          value
+        );
+      },
+      { timeoutMs: 10000 },
+    );
+    assert.equal(events(after, "outcome", "hello").at(-1).outcome, "failed");
+    assert.equal(
+      events(after, "dispatched").length,
+      events(before, "dispatched").length,
+      "Unready worker dispatched a tool",
+    );
+    const spawned = events(after, "spawned").slice(
+      events(before, "spawned").length,
+    );
+    assert.equal(spawned.length, 1, "Startup was retried or never attempted");
+    assert.ok(
+      events(after, "retired").some(
+        (event) => event.worker === spawned[0].worker,
+      ),
+    );
+    assert.equal(after.worker.current, null);
+    assert.equal(after.tokenCount, baselineTokens);
+    assert.equal(after.fixtureEnabled, true);
+    await waitFor(
+      "Unready supervisor destruction",
+      async () => !(await findWindow(/^extension-host-/)),
+    );
+    assert.match(await page.locator("body").innerText(), /not dispatched/);
+    await changeRevision("one");
+    await greeting();
+  },
+  async "native.source-drift"() {
+    const warm = await greeting();
+    const before = await status();
+    const page = await request();
+    await changeRevision("two"); // Deliberately no load or developer reload.
+    await activate(page.locator(".agc-confirm-actions .agc-action-btn"));
+    await waitFor(
+      "Source drift refusal",
+      async () => !(await status()).agent.active,
+    );
+    assert.equal(
+      events(await status(), "dispatched").length,
+      events(before, "dispatched").length,
+      "Old approval executed changed source",
+    );
+    assert.match(
+      await page.locator("body").innerText(),
+      /no longer approved or available|changed/,
+    );
+    const fresh = await greeting("two");
+    assert.notEqual(
+      fresh.worker.current.identity,
+      warm.worker.current.identity,
+      "New source used the obsolete warm worker",
+    );
+  },
+  async "native.absolute-deadline"() {
+    const call = await failureCall("deadline_hello", "unknownOutcome", {
+      uiText: "could not confirm its result",
+    });
+    const elapsed = call.outcome.elapsedMs - call.invoked.elapsedMs;
+    assert.ok(
+      elapsed >= 19500 && elapsed <= 23000,
+      `Native absolute deadline took ${elapsed}ms`,
+    );
+    assert.ok(
+      call.elapsedAfterApprovalMs <= 24000,
+      "Approval-to-failure exceeded its local acceptance tolerance",
+    );
+    console.log(
+      `OBSERVED native absolute deadline ${elapsed}ms from invocation`,
+    );
+    const fresh = await greeting();
+    assert.notEqual(fresh.worker.current.identity, call.worker);
+    // Observe beyond the original handler's 25s deadline, including recovery.
+    await waitFor(
+      "Late deadline observation",
+      () => performance.now() - call.approvedAt >= 27000,
+      { timeoutMs: 9000, intervalMs: 200 },
+    );
+    const after = await status();
+    assert.equal(
+      events(after, "dispatched", "deadline_hello").length,
+      events(call.before, "dispatched", "deadline_hello").length + 1,
+    );
+    assert.equal(
+      events(after, "completed", "deadline_hello").length,
+      events(call.before, "completed", "deadline_hello").length,
+    );
+    assert.equal(
+      after.worker.current.identity,
+      fresh.worker.current.identity,
+      "Old timeout cleanup killed the replacement",
+    );
+  },
+  async "native.result-budgets"() {
+    for (const [action, classification] of [
+      ["oversized_result", "resultUnavailable"],
+      ["oversized_raw", "unknownOutcome"],
+    ]) {
+      const call = await failureCall(action, classification, {
+        uiText:
+          action === "oversized_raw"
+            ? "could not confirm its result"
+            : "exceeding its supported budget",
+      });
+      const fresh = await greeting();
+      assert.notEqual(fresh.worker.current.identity, call.worker);
+    }
+  },
+  async "native.invalid-input"() {
+    for (const instruction of [
+      "invalid_arguments",
+      "missing_arguments",
+      "wrong_arguments",
+      "oversized_arguments",
+      "malformed_arguments",
+    ]) {
+      await closePanel();
+      const before = await status();
+      const modelStart = model.journal.length;
+      await invoke("agent_harness_submit", { instruction });
+      const page = await panel();
+      await waitFor(
+        "Invalid-input Agent completion",
+        async () =>
+          model.journal.length >= modelStart + 3 &&
+          !(await status()).agent.active,
+      );
+      const after = await status();
+      assert.equal(after.agent.pendingApproval, false);
+      assert.equal(
+        after.worker.current,
+        null,
+        "Invalid arguments woke a worker",
+      );
+      assert.equal(
+        events(after, "dispatched").length,
+        events(before, "dispatched").length,
+      );
+      const text = await page.locator("body").innerText();
+      assert.match(
+        text,
+        /undeclared parameter|arguments|Invalid or repeated model tool-call identity/,
+      );
+      assert.ok(
+        !text.includes("HARNESS_PRIVATE_ARGUMENT_MARKER"),
+        "Rejected parameter key leaked into the UI",
+      );
+    }
+    await greeting();
+  },
   async "native.cold-warm"() {
     const cold = await status();
     assert.equal(cold.worker.current, null);
@@ -733,7 +1048,8 @@ try {
           value.worker.count === 0 &&
           value.tokenCount === baselineTokens &&
           !value.agent.active &&
-          !value.agent.pendingApproval
+          !value.agent.pendingApproval &&
+          !(await findWindow(/^extension-host-/))
         );
       });
       const end = await status();

@@ -26,6 +26,63 @@
         "risk": "confirm",
         "when": {},
         "utterances": ["harness slow hello"]
+      },
+      {
+        "id": "deadline_hello",
+        "title": "Harness deadline hello",
+        "risk": "confirm",
+        "when": {},
+        "utterances": ["harness deadline hello"]
+      },
+      {
+        "id": "lost_reply",
+        "title": "Harness lost reply",
+        "risk": "confirm",
+        "when": {},
+        "utterances": ["harness lost reply"]
+      },
+      {
+        "id": "tool_error",
+        "title": "Harness tool error",
+        "risk": "confirm",
+        "when": {},
+        "utterances": ["harness tool error"]
+      },
+      {
+        "id": "thrown_error",
+        "title": "Harness thrown error",
+        "risk": "confirm",
+        "when": {},
+        "utterances": ["harness thrown error"]
+      },
+      {
+        "id": "malformed_result",
+        "title": "Harness malformed result",
+        "risk": "confirm",
+        "when": {},
+        "utterances": ["harness malformed result"]
+      },
+      {
+        "id": "oversized_result",
+        "title": "Harness oversized result",
+        "risk": "confirm",
+        "when": {},
+        "utterances": ["harness oversized result"]
+      },
+      {
+        "id": "oversized_raw",
+        "title": "Harness oversized raw",
+        "risk": "confirm",
+        "when": {},
+        "utterances": ["harness oversized raw"]
+      },
+      {
+        "id": "input_echo",
+        "title": "Harness input echo",
+        "risk": "confirm",
+        "when": {},
+        "params": [{ "name": "text", "kind": "text", "required": true }],
+        "utterances": ["harness input {text}"]
       }
     ]
   },

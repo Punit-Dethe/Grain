@@ -21,6 +21,9 @@ npm run test:agent -- --suite smoke
 # All native lifecycle/Agent cases, including smoke.
 npm run test:agent -- --suite lifecycle
 
+# Native deadlines, reply errors, input refusal and result/wire budgets.
+npm run test:agent -- --suite native-failures
+
 # Real production idle timing; allow about five minutes.
 npm run test:agent -- --suite idle
 
@@ -31,6 +34,7 @@ npm run test:agent -- --scenario native.hot-reload
 npm run test:agent:logic -- --group all
 npm run test:agent:logic -- --group mcp
 npm run test:agent:logic -- --group registry
+npm run test:agent:logic -- --group execution
 
 # Test the harness's own assertions/reporting.
 npm run test:agent:harness
@@ -63,12 +67,18 @@ Runtime reports also identify the Node/WebView adapter version and an independen
 | `native.disable-slow`     | Disable/re-enable interrupts the old slow call without later cleanup destroying its replacement.                                                                          |
 | `native.hot-reload`       | Two idle reloads, an in-flight reload, and a disabled reload use the actual authenticated developer WebSocket; new source results appear and disabled state is preserved. |
 | `native.real-idle`        | The production 120-second idle threshold and 30-second reaper retire the worker; a new call recovers; a slow call started around 110 seconds survives.                    |
+| `native.reply-failures` | Declared/thrown errors, conflicting result envelopes and an actual lost socket reply have distinct host classifications; private error text stays hidden, and fresh calls recover without replay. |
+| `native.readiness-failure` | A real worker closes before authenticating; startup fails without dispatch, worker/token/supervisor retire, and corrected source works on a fresh request. |
+| `native.source-drift` | Warm source changes with an unanswered approval, without reload; obsolete approval is refused and the first fresh approved call uses the new worker/source. |
+| `native.absolute-deadline` | A real 25-second handler fails around the production 20-second absolute budget, measured from host invocation and approval; late success/replay is suppressed and recovery survives old cleanup. |
+| `native.result-budgets` | Replies exceeding the 64 KiB decoded budget and 512 KiB raw wire budget fail at distinct boundaries; workers/tokens/supervisors retire, then fresh native calls recover. |
+| `native.invalid-input` | Unknown keys, missing required values, wrong types, oversized arguments and malformed JSON fail before approval/startup; private rejected parameter keys stay hidden. |
 
-`smoke` contains the first two; `lifecycle` includes smoke and the remaining non-idle cases; `all` includes all thirteen. `idle` runs only the long timing case. Scenarios set up their own fixture baseline and clean it up. A failed scenario stops the batch; later scenarios are Not run rather than being assessed against contaminated state.
+`smoke` contains the first two; `lifecycle` includes smoke and the original remaining non-idle lifecycle cases; `native-failures` contains the six Block 2C scenarios above. `all` includes all nineteen. `idle` runs only the long timing case. Scenarios set up their own fixture baseline and clean it up. A failed scenario stops the batch; later scenarios are Not run rather than being assessed against contaminated state.
 
-Reports identify supporting numbered checks in the existing extension plan. Those are **partial coverage links**, not claims that each full manual procedure passed. In particular, check 37's recording/pill behavior is outside this sprint. Manual results stay in the existing progress ledger and are never automatically rewritten.
+Reports identify supporting numbered checks in the existing extension plan. These links do not certify the whole numbered procedure or rewrite its ledger automatically. After reviewing complete real-app procedure coverage and its focused audit, record an automated Pass explicitly with its evidence class. Human results remain separately identified. The harness still excludes microphone/native-pill observations, including the ordinary-app portion of check 34; the [audit](../../docs/Extensions%202.0/NATIVE-FAILURE-AUDIT.md) defines that remaining handoff.
 
-The production-logic runner filters the normal backend library tests into `agent`, `native`, `mcp` and `auth` groups, plus the core registry tests in `registry`. `all` includes all five. It requires a successful Cargo exit **and at least one actual passing test**; a zero-test filter fails. The registry group includes real Windows file-sharing locks: a short lock must recover without replaying serialization; a persistent lock must fail within the bounded retry policy, preserving saved state and unowned recovery files. These tests use production helpers/SDK and local fixtures, not complete real-application or live-account acceptance. The Windows manifest runner is configured as a Cargo argv array so repository paths containing spaces remain usable.
+The production-logic runner filters the normal backend library tests into `agent`, `native`, `execution`, `mcp` and `auth` groups, plus the core registry tests in `registry`. `all` includes all six. It requires a successful Cargo exit **and at least one actual passing test**; a zero-test filter fails. The registry group includes real Windows file-sharing locks: a short lock must recover without replaying serialization; a persistent lock must fail within the bounded retry policy, preserving saved state and unowned recovery files. These tests use production helpers/SDK and local fixtures, not complete real-application or live-account acceptance. The Windows manifest runner is configured as a Cargo argv array so repository paths containing spaces remain usable.
 
 ## Verify the harness detects a real failure
 
@@ -86,6 +96,16 @@ npm run test:agent -- --scenario agent.reopen-escape --fault missing-escape
 
 This withholds the OS key event from the real app. Expect the eight-second window-destruction assertion to fail, exit 1 and cleanup Pass. The scenario does not approve any tool before that failure. This fault is accepted only for the named scenario. Ordinary runtime failures still stop the batch; the runner does not retry them.
 
+To check the outcome oracle:
+
+```powershell
+npm run test:agent -- --scenario native.reply-failures --fault successful-error
+```
+
+This deliberately turns the disposable error tool into a success. Expect the host-classification assertion to fail, exit 1 and cleanup Pass. Only that named scenario admits this fault; normal tool calls are never retried.
+
+For the residual ordinary-app check, run `powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/agent-harness/prepare-manual.ps1`. It prints a disposable, permission-free folder with only two declared tools. Load it through Developer in the ordinary app; the [Block 2C handoff](../../docs/Extensions%202.0/NATIVE-FAILURE-AUDIT.md) explains the three observations. The runner skips microphone/native pill, so a successful native recovery cannot certify that live input path.
+
 Exit codes: **0** = every selected scenario and cleanup passed; **1** = assertion, application or cleanup failed; **2** = a prerequisite blocked execution or selected scenarios were not run. Unsupported operating systems report Blocked rather than using a browser substitute.
 
 ## Isolation and security boundary
@@ -99,7 +119,7 @@ Exit codes: **0** = every selected scenario and cleanup passed; **1** = assertio
 - The WebView2 debugging endpoint is loopback-only and confined to the child process. Playwright activates the real enabled DOM buttons through their production handlers to avoid coordinate races during native resize/entrance animation. This verifies functional activation, not physical mouse targeting or accessibility quality.
 - Escape is a native shortcut, so `native-input.ps1` sends one Windows key down/up pair after verifying the visible foreground `Grain Assist` window belongs to the owned host PID. Test startup owns the production HandyKeys manager with no ordinary accelerators registered and keeps explicit blank binding entries to prevent default fallbacks. The normal initialization command is checked for idempotence. It refuses native input if ownership/focus cannot be established. Keep the ordinary app's Agent closed to avoid competing transient shortcuts.
 - Typed approval fills the real Follow up field and dispatches Enter to its production React key handler. Like button activation, this is a functional DOM test; it does not certify physical Enter delivery during native resize. Native Escape is tested separately at the OS boundary.
-- Test-only observations record queue admission (`dispatched`), accepted results (`completed`) and retirement. Worker identifiers are one-way token digests; raw tokens/arguments/results are absent. Queue admission is conservative dispatch evidence, not proof of the extension's external effects. The finite buffer must not overflow.
+- Test-only observations record invocation/startup, queue admission (`dispatched`), accepted replies (`completed`), host outcome classification (`outcome`) and retirement. A completed reply is not necessarily a successful action; the outcome assertion distinguishes errors and unusable envelopes. Worker identifiers are one-way token digests; raw tokens/arguments/results are absent. Queue admission is conservative dispatch evidence, not proof of the extension's external effects. The finite buffer must not overflow.
 - Each IPC operation and observation has a deadline. Cleanup requests app exit, falls back to the owned PID/tree if necessary, verifies listener/debug endpoint release, closes the model fixture and removes only owned scratch paths. Cleanup failures fail the run. Ctrl+C cancels the run and follows teardown; it must not be treated as a passing partial batch.
 
 ## Add another Agent scenario
