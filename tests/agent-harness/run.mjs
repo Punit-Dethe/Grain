@@ -61,8 +61,16 @@ const selected = options.scenario
   ? scenarios.filter((scenario) => scenario.id === options.scenario)
   : selectScenarios(options.suite);
 if (!selected.length) throw new Error(`Unknown scenario: ${options.scenario}`);
-if (options.fault && options.fault !== "wrong-greeting")
-  throw new Error("Only the wrong-greeting oracle fault is supported");
+if (
+  options.fault &&
+  !["wrong-greeting", "missing-escape"].includes(options.fault)
+)
+  throw new Error("Unknown oracle fault");
+if (
+  options.fault === "missing-escape" &&
+  options.scenario !== "agent.reopen-escape"
+)
+  throw new Error("missing-escape requires --scenario agent.reopen-escape");
 const runId = randomUUID();
 const output = resolve(options.output ?? join(here, ".runs"));
 await mkdir(output, { recursive: true });
@@ -275,6 +283,27 @@ async function slowStart() {
   });
   return { before, active, page };
 }
+async function escapePanel(page) {
+  if (options.fault !== "missing-escape")
+    await exec(
+      "powershell.exe",
+      [
+        "-NoProfile",
+        "-File",
+        join(here, "native-input.ps1"),
+        "-OwnerPid",
+        String(child.pid),
+      ],
+      { timeout: 10000, windowsHide: true },
+    );
+  await waitFor("Escape window destruction", () => page.isClosed(), {
+    timeoutMs: 8000,
+  });
+  await waitFor("Escape releases Agent", async () => {
+    const value = await status();
+    return !value.agent.active && !value.agent.pendingApproval;
+  });
+}
 async function noLateSuccess(before, worker) {
   // Wait beyond the fixture's real 15-second handler, not a shortened fake clock.
   const started = performance.now();
@@ -401,24 +430,25 @@ const handlers = {
   },
   async "agent.escape-slow"() {
     const slow = await slowStart();
-    await exec(
-      "powershell.exe",
-      [
-        "-NoProfile",
-        "-File",
-        join(here, "native-input.ps1"),
-        "-OwnerPid",
-        String(child.pid),
-      ],
-      { timeout: 10000, windowsHide: true },
-    );
-    await waitFor("Escape window destruction", () => slow.page.isClosed());
-    await waitFor(
-      "Escape releases Agent",
-      async () => !(await status()).agent.active,
-    );
+    await escapePanel(slow.page);
     await greeting();
     await noLateSuccess(slow.before, slow.active.worker.current.identity);
+  },
+  async "agent.reopen-escape"() {
+    const before = await status();
+    for (let cycle = 0; cycle < 10; cycle++) {
+      // No added handoff sleep: close/reopen exercises deferred OS cleanup.
+      await request();
+      await closePanel();
+      const replacement = await request();
+      await escapePanel(replacement);
+      assert.equal(
+        events(await status(), "dispatched").length,
+        events(before, "dispatched").length,
+        "Closing a replacement approval dispatched a tool",
+      );
+    }
+    await greeting();
   },
   async "agent.close-model"() {
     await invoke("agent_harness_submit", { instruction: "model_wait" });

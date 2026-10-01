@@ -30,6 +30,7 @@ npm run test:agent -- --scenario native.hot-reload
 # Production-logic tests, separately classified from real-app evidence.
 npm run test:agent:logic -- --group all
 npm run test:agent:logic -- --group mcp
+npm run test:agent:logic -- --group registry
 
 # Test the harness's own assertions/reporting.
 npm run test:agent:harness
@@ -54,6 +55,7 @@ Runtime reports also identify the Node/WebView adapter version and an independen
 | `agent.typed-approval`    | Typing `yes` into the actual follow-up field resumes the held call once.                                                                                                  |
 | `agent.stale-approval`    | Changed source reloaded through the production developer socket invalidates the old displayed approval; a fresh approval calls the new code.                              |
 | `agent.escape-slow`       | Native Windows Escape with the owned Agent focused closes it during a slow call, suppresses late success/replay and allows a fresh call.                                  |
+| `agent.reopen-escape`     | Ten close/reopen pairs preserve native Escape and discard pending approvals without dispatch; a final fresh greeting works.                                               |
 | `agent.close-pending`     | The real panel close button clears pending approval without execution.                                                                                                    |
 | `agent.close-model`       | Closing during a delayed HTTP model reply releases the Agent run and cancels that provider request.                                                                       |
 | `agent.close-slow`        | Closing during a dispatched slow tool retires its worker; no accepted late success or automatic second dispatch; fresh call recovers.                                     |
@@ -62,11 +64,11 @@ Runtime reports also identify the Node/WebView adapter version and an independen
 | `native.hot-reload`       | Two idle reloads, an in-flight reload, and a disabled reload use the actual authenticated developer WebSocket; new source results appear and disabled state is preserved. |
 | `native.real-idle`        | The production 120-second idle threshold and 30-second reaper retire the worker; a new call recovers; a slow call started around 110 seconds survives.                    |
 
-`smoke` contains the first two; `lifecycle` includes smoke and the remaining non-idle cases; `all` includes all twelve. `idle` runs only the long timing case. Scenarios set up their own fixture baseline and clean it up. A failed scenario stops the batch; later scenarios are Not run rather than being assessed against contaminated state.
+`smoke` contains the first two; `lifecycle` includes smoke and the remaining non-idle cases; `all` includes all thirteen. `idle` runs only the long timing case. Scenarios set up their own fixture baseline and clean it up. A failed scenario stops the batch; later scenarios are Not run rather than being assessed against contaminated state.
 
 Reports identify supporting numbered checks in the existing extension plan. Those are **partial coverage links**, not claims that each full manual procedure passed. In particular, check 37's recording/pill behavior is outside this sprint. Manual results stay in the existing progress ledger and are never automatically rewritten.
 
-The production-logic runner filters the normal backend library tests into `agent`, `native`, `mcp` and `auth` groups. It requires a successful Cargo exit **and at least one actual passing test**; a zero-test filter fails. These tests use production helpers/SDK and local fixtures, not complete real-application or live-account acceptance. The Windows manifest runner is configured as a Cargo argv array so repository paths containing spaces remain usable.
+The production-logic runner filters the normal backend library tests into `agent`, `native`, `mcp` and `auth` groups, plus the core registry tests in `registry`. `all` includes all five. It requires a successful Cargo exit **and at least one actual passing test**; a zero-test filter fails. The registry group includes real Windows file-sharing locks: a short lock must recover without replaying serialization; a persistent lock must fail within the bounded retry policy, preserving saved state and unowned recovery files. These tests use production helpers/SDK and local fixtures, not complete real-application or live-account acceptance. The Windows manifest runner is configured as a Cargo argv array so repository paths containing spaces remain usable.
 
 ## Verify the harness detects a real failure
 
@@ -75,6 +77,14 @@ npm run test:agent -- --scenario native.cold-warm --fault wrong-greeting
 ```
 
 This deliberately changes only the disposable greeting fixture to return the wrong text. Expect **Fail**, process exit **1**, no subsequent scenario execution, and cleanup Pass. The same scenario without `--fault` should pass. Never count this intentional negative run as a passing product test.
+
+To check the native Escape oracle itself:
+
+```powershell
+npm run test:agent -- --scenario agent.reopen-escape --fault missing-escape
+```
+
+This withholds the OS key event from the real app. Expect the eight-second window-destruction assertion to fail, exit 1 and cleanup Pass. The scenario does not approve any tool before that failure. This fault is accepted only for the named scenario. Ordinary runtime failures still stop the batch; the runner does not retry them.
 
 Exit codes: **0** = every selected scenario and cleanup passed; **1** = assertion, application or cleanup failed; **2** = a prerequisite blocked execution or selected scenarios were not run. Unsupported operating systems report Blocked rather than using a browser substitute.
 

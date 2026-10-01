@@ -317,9 +317,39 @@ impl Drop for AgentRun<'_> {
     }
 }
 
+/// Serialize OS shortcut replacement with delayed teardown. A newly registered
+/// surface invalidates every older cleanup, even before its window is created.
+#[derive(Default)]
+struct TransientShortcutOwnership {
+    epoch: AtomicU64,
+    gate: Mutex<()>,
+}
+
+impl TransientShortcutOwnership {
+    fn snapshot(&self) -> u64 {
+        // Scheduling cleanup can run on the shortcut manager's event thread.
+        // Never block it behind a registration waiting for that same manager.
+        self.epoch.load(Ordering::SeqCst)
+    }
+
+    fn claim(&self, register: impl FnOnce()) {
+        let _gate = self.gate.lock().unwrap();
+        self.epoch.fetch_add(1, Ordering::SeqCst);
+        register();
+    }
+
+    fn release_if_current(&self, expected: u64, release: impl FnOnce()) {
+        let _gate = self.gate.lock().unwrap();
+        if self.snapshot() == expected {
+            release();
+        }
+    }
+}
+
 /// Cross-window state, set at summon and handed off palette → panel.
 #[derive(Default)]
 pub struct AgentState {
+    transient_shortcuts: TransientShortcutOwnership,
     /// Selection captured at summon: the palette shows the text (truncated) and
     /// the panel uses it as the LLM context. Non-consuming; overwritten on each
     /// summon.
@@ -1513,6 +1543,9 @@ fn take_pending_action(run: &AgentRun<'_>, expected: &str) -> bool {
 
 fn clear_pending_action(app: &AppHandle) {
     if let Some(state) = app.try_state::<AgentState>() {
+        // Closing before the renderer consumes its first instruction must not
+        // leave a queued turn (and its transient-shortcut ownership) alive.
+        state.pending_instruction.lock().unwrap().take();
         if let Some(token) = state.execution.cancel() {
             crate::action_exec::discard(&token);
         }
@@ -1928,6 +1961,14 @@ fn followup_binding(app: &AppHandle) -> ShortcutBinding {
 /// — so the user can share one accelerator between a global action and the
 /// Agent, with the Agent winning while it is open.
 fn register_followup_shortcut(app: &AppHandle) {
+    if let Some(state) = app.try_state::<AgentState>() {
+        state
+            .transient_shortcuts
+            .claim(|| register_followup_shortcut_inner(app));
+    }
+}
+
+fn register_followup_shortcut_inner(app: &AppHandle) {
     let binding = followup_binding(app);
     let accel = binding.current_binding.trim().to_ascii_lowercase();
     if accel.is_empty() {
@@ -1953,7 +1994,7 @@ fn register_followup_shortcut(app: &AppHandle) {
             }
         }
     }
-    register_one_transient(app, binding);
+    register_one_transient_inner(app, binding);
 }
 
 /// Release the transient follow-up shortcut and restore any Grain bindings it
@@ -1984,6 +2025,14 @@ pub fn register_transient_shortcuts(app: &AppHandle) {
 }
 
 fn register_one_transient(app: &AppHandle, binding: ShortcutBinding) {
+    if let Some(state) = app.try_state::<AgentState>() {
+        state
+            .transient_shortcuts
+            .claim(|| register_one_transient_inner(app, binding));
+    }
+}
+
+fn register_one_transient_inner(app: &AppHandle, binding: ShortcutBinding) {
     let _ = crate::shortcut::unregister_shortcut(app, binding.clone());
     if let Err(e) = crate::shortcut::register_shortcut(app, binding.clone()) {
         warn!(
@@ -1993,53 +2042,53 @@ fn register_one_transient(app: &AppHandle, binding: ShortcutBinding) {
     }
 }
 
-pub fn unregister_transient_shortcuts(app: &AppHandle) {
+fn unregister_transient_shortcuts(app: &AppHandle) {
     for binding in transient_bindings() {
         let _ = crate::shortcut::unregister_shortcut(app, binding);
     }
 }
 
 pub fn unregister_transient_shortcuts_deferred(app: &AppHandle) {
+    let Some(state) = app.try_state::<AgentState>() else {
+        return;
+    };
+    let expected = state.transient_shortcuts.snapshot();
     let app = app.clone();
     std::thread::spawn(move || {
-        // Let an in-flight handoff settle (close-then-reopen happens within
-        // ~100ms). If a surface is back up by then, IT owns the transients —
-        // tearing down now would race its registration and leave Escape/Enter
-        // dangling (seen as "Hotkey already registered" warnings followed by a
-        // dead Escape).
+        // Preserve the handoff grace, but a delay alone is not synchronization:
+        // keep the ownership lock from the last check through OS unregistration.
         std::thread::sleep(Duration::from_millis(150));
-        if app.get_webview_window(PANEL_LABEL).is_some() {
+        let Some(state) = app.try_state::<AgentState>() else {
             return;
-        }
-        // The native input phase owns Enter/Escape too — never tear down under it.
-        let input_live = app
-            .try_state::<AgentState>()
-            .map(|s| s.input_active.load(Ordering::SeqCst))
-            .unwrap_or(false);
-        if input_live {
-            return;
-        }
-        unregister_transient_shortcuts(&app);
-        // [GRAIN] A normal dictation may have started while the Agent panel owned
-        // Escape. Its cancel registration is deliberately skipped in that case
-        // (one accelerator can have only one owner). If the panel was closed by
-        // its X while recording continues, hand Escape back to the ordinary
-        // dictation pipeline now that the Agent no longer owns it.
-        if app
-            .try_state::<Arc<AudioRecordingManager>>()
-            .is_some_and(|audio| audio.is_recording())
-        {
-            crate::shortcut::register_cancel_shortcut(&app);
-        }
-        // The follow-up shortcut outlives the windows ONLY while a Quick-Agent
-        // pill offer is live; otherwise release it (and restore suppressed keys).
-        let offer_live = app
-            .try_state::<AgentState>()
-            .map(|s| s.followup_offer_active.load(Ordering::SeqCst))
-            .unwrap_or(false);
-        if !offer_live {
-            unregister_followup_shortcut(&app);
-        }
+        };
+        state.transient_shortcuts.release_if_current(expected, || {
+            if app.get_webview_window(PANEL_LABEL).is_some()
+                || state.input_active.load(Ordering::SeqCst)
+                // A new instruction may already have registered Escape while
+                // its window creation is still queued on the main thread.
+                || state.pending_instruction.lock().unwrap().is_some()
+            {
+                return;
+            }
+            unregister_transient_shortcuts(&app);
+            // [GRAIN] A normal dictation may have started while the Agent panel owned
+            // Escape. Its cancel registration is deliberately skipped in that case
+            // (one accelerator can have only one owner). If the panel was closed by
+            // its X while recording continues, hand Escape back to the ordinary
+            // dictation pipeline now that the Agent no longer owns it.
+            if app
+                .try_state::<Arc<AudioRecordingManager>>()
+                .is_some_and(|audio| audio.is_recording())
+            {
+                crate::shortcut::register_cancel_shortcut(&app);
+            }
+            // The follow-up shortcut outlives the windows ONLY while a Quick-Agent
+            // pill offer is live; otherwise release it (and restore suppressed keys).
+            let offer_live = state.followup_offer_active.load(Ordering::SeqCst);
+            if !offer_live {
+                unregister_followup_shortcut(&app);
+            }
+        });
     });
 }
 
@@ -2376,6 +2425,79 @@ pub fn global_close(app: &AppHandle) {
             clear_pending_action(&app_for_main);
         }
     });
+}
+
+#[cfg(test)]
+mod transient_shortcut_tests {
+    use super::TransientShortcutOwnership;
+    use std::sync::{
+        atomic::{AtomicBool, Ordering},
+        mpsc, Arc,
+    };
+
+    #[test]
+    fn old_deferred_cleanup_cannot_release_a_new_registration() {
+        let owner = TransientShortcutOwnership::default();
+        let registered = AtomicBool::new(false);
+        owner.claim(|| registered.store(true, Ordering::SeqCst));
+        let old_cleanup = owner.snapshot();
+        owner.claim(|| registered.store(true, Ordering::SeqCst));
+        owner.release_if_current(old_cleanup, || registered.store(false, Ordering::SeqCst));
+        assert!(registered.load(Ordering::SeqCst));
+        owner.release_if_current(owner.snapshot(), || {
+            registered.store(false, Ordering::SeqCst)
+        });
+        assert!(!registered.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn new_registration_waits_for_an_already_started_cleanup() {
+        let owner = Arc::new(TransientShortcutOwnership::default());
+        let registered = Arc::new(AtomicBool::new(true));
+        let (entered_tx, entered_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let old = owner.snapshot();
+        let cleanup_owner = owner.clone();
+        let cleanup_registered = registered.clone();
+        let cleanup = std::thread::spawn(move || {
+            cleanup_owner.release_if_current(old, || {
+                entered_tx.send(()).unwrap();
+                release_rx
+                    .recv_timeout(std::time::Duration::from_secs(3))
+                    .unwrap();
+                cleanup_registered.store(false, Ordering::SeqCst);
+            });
+        });
+        entered_rx
+            .recv_timeout(std::time::Duration::from_secs(3))
+            .unwrap();
+        // Scheduling cleanup on the manager thread must remain nonblocking
+        // even while an OS registration/release owns the gate.
+        let observer_owner = owner.clone();
+        let (observed_tx, observed_rx) = mpsc::channel();
+        let observer = std::thread::spawn(move || {
+            observed_tx.send(observer_owner.snapshot()).unwrap();
+        });
+        assert_eq!(
+            observed_rx
+                .recv_timeout(std::time::Duration::from_secs(1))
+                .unwrap(),
+            old
+        );
+        observer.join().unwrap();
+        let new_owner = owner.clone();
+        let new_registered = registered.clone();
+        let replacement = std::thread::spawn(move || {
+            new_owner.claim(|| new_registered.store(true, Ordering::SeqCst));
+        });
+        release_tx.send(()).unwrap();
+        cleanup.join().unwrap();
+        replacement.join().unwrap();
+        assert!(
+            registered.load(Ordering::SeqCst),
+            "cleanup ran after replacement registration"
+        );
+    }
 }
 
 #[cfg(test)]

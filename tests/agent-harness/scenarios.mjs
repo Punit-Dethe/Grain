@@ -36,6 +36,13 @@ export const scenarios = [
       "Windows Escape with the owned Agent focused interrupts a slow call and permits a fresh session",
   },
   {
+    id: "agent.reopen-escape",
+    suite: "lifecycle",
+    checks: [29, 30],
+    description:
+      "Ten immediate close/reopen pairs preserve native Escape and never execute discarded approvals",
+  },
+  {
     id: "agent.close-pending",
     suite: "lifecycle",
     checks: [30],
