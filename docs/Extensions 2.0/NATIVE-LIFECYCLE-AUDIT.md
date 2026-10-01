@@ -36,9 +36,11 @@ Current real-app `run-f3Vfd2`: all thirteen scenarios and cleanup Pass. Worker i
 
 Negative oracle `run-w2P04k`: withholding Escape produced the expected window-destruction failure after about eight seconds, process exit 1 and cleanup Pass. Its host still held the unapproved confirmation at failure; no tool had dispatched. This is a passing harness failure-detection check, not a passing product scenario. The earlier `run-L8HNtp` product failure is retained separately.
 
-**Acceptance state:** the focused native close/reload source audit and current thirteen-case runtime batch are complete. All twelve short cases also passed from clean profile `run-zqk29A`, with cleanup Pass and the same executable/source/runner identities. The whole Block 2B acceptance remains open until the remaining human recording/pill check is reported; its post-audit ordinary-app retest matters because the harness skips that process. Automated reload/disabled/in-flight coverage supports check 37, but does not silently mark its full manual procedure Pass.
+**Acceptance state:** Block 2B is accepted on 1 October 2026. The focused native close/reload source audit and current thirteen-case runtime batch are complete. All twelve short cases also passed from clean profile `run-zqk29A`, with cleanup Pass and the same executable/source/runner identities. The user subsequently reports the remaining ordinary dictation/recording-pill observations and Agent greeting worked. Check 37 combines those human observations with recorded automated reload/disabled/in-flight coverage; it was not marked Pass from automation alone. The report is aggregate; the user's running build identity and ordinary-profile reload timing were not separately supplied. This closes 2B, not the whole native block or the release.
 
-## Remaining human portion of check 37
+## Human portion of check 37 — completed
+
+**User-reported Pass, 1 October:** the user clarified that the first two observations meant ordinary dictation, which they tested, and explicitly confirmed the third Agent observation worked. The completed procedure below remains as a reproduction reference; no repeat is requested now.
 
 Use the updated ordinary app with the existing harmless Lifecycle Smoke extension. After its developer watcher has rebuilt/reloaded it, perform these three observations:
 
@@ -62,7 +64,7 @@ Wait for the watcher to report rebuild/reload. If this old temporary fixture no 
 2. Start another recording and use the pill's Cancel control. It should stop without pasted text, a stuck recording state or a disconnected pill. Start and stop one more recording to confirm recovery.
 3. Summon Agent and request/approve `Say lifecycle hello`. Expect one `Lifecycle hello completed.` result. Close and reopen Agent once and confirm it remains usable.
 
-The harness has already automated repeated authenticated developer reload, in-flight replacement and disabled-state preservation. The remaining human observations cover the real microphone/native pill and ordinary profile shared listener. Do not connect hosted providers for this block. Report Pass/Fail/Blocked for all three; retain exact visible errors if any. After this acceptance closes, continue **Block 2C native deadlines/results/input**, then **2D consent/installation/persistence**, auditing each before the next. Controlled MCP connection/tool tests follow in Block 3; live-account authentication acceptance follows in Block 4.
+The harness automated repeated authenticated developer reload, in-flight replacement and disabled-state preservation. The user's completed human observations cover the real microphone/native pill and ordinary profile shared listener. No hosted provider connection is needed for this block. Continue **Block 2C native deadlines/results/input**, then **2D consent/installation/persistence**, auditing each before the next. Controlled MCP connection/tool tests follow in Block 3; live-account authentication acceptance follows in Block 4.
 
 Stop the fixture watcher with Ctrl+C in its own terminal after testing. Restore its harmless source with:
 

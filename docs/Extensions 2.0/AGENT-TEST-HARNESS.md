@@ -67,7 +67,7 @@ Build freshness is verified before acceptance: executable SHA-256 and a source f
 
 ## Small implementation sequence
 
-**Delivery status:** H0's initial native inventory/runner/isolation is implemented; its coverage map is intentionally partial rather than a certification of all 53 checks. H1's native runtime scenarios are implemented, with repeatability and negative-oracle evidence recorded in the progress companion. The focused Block 2B close/reload source audit and current automated retests are complete; its microphone/pill acceptance remains open. Native 2C/2D coverage, measured resource trends and whole-native-block acceptance remain ahead. H2 and H3 are future suites. H4 has an initial deterministic Agent subset only; its live-model and release matrix remain future work.
+**Delivery status:** H0's initial native inventory/runner/isolation is implemented; its coverage map is intentionally partial rather than a certification of all 53 checks. H1's native runtime scenarios are implemented, with repeatability and negative-oracle evidence recorded in the progress companion. Block 2B is accepted after its focused source audit, automated retests and the user's ordinary microphone/pill/Agent batch. Native 2C/2D coverage, measured resource trends and whole-native-block acceptance remain ahead. H2 and H3 are future suites. H4 has an initial deterministic Agent subset only; its live-model and release matrix remain future work.
 
 **First sprint evidence:** twelve real-application scenarios passed in one batch, eleven short cases passed again from another clean profile, and the deliberately incorrect greeting produced the required failure with successful teardown. The nine harness self-tests, one isolation-marker test and 133 focused normal-build backend tests passed. Earlier registry-save failures and native Escape observations remain recorded for focused investigation; successful batches do not establish universal reliability. Read the progress companion's evidence table for run identities and exclusions.
 
@@ -83,7 +83,7 @@ Launch an isolated real Grain host and load the versioned harmless native fixtur
 
 Map to checks 3–6, 25, 27, 35 and the runtime part of 37. Shared socket/recording/pill behavior in check 37 and window-close checks 29–30 remain partial until the actual corresponding paths are exercised. Explicitly distinguish a directly prepared executor call from a call discovered and requested by Agent.
 
-**Acceptance:** run twice from clean profiles, with reproducible results and no automatic repeat of an interrupted dispatched call. Inject a known fixture failure and verify the harness detects it. Finish the focused native block audit against this evidence. Check 37 remains Pending until its whole procedure is covered or the user completes it.
+**Acceptance:** run twice from clean profiles, with reproducible results and no automatic repeat of an interrupted dispatched call. Inject a known fixture failure and verify the harness detects it. Finish the focused native block audit against this evidence. Check 37 requires coverage of its whole procedure, including the human portion; that portion is now user-reported Pass and recorded in the progress companion. This accepts 2B without certifying the later native sub-blocks.
 
 ### H2 — One controlled MCP, then two extensions
 
@@ -105,7 +105,7 @@ Grow the matrix to upgrade/restart recovery, memory/handle trends and the existi
 
 ## What still needs a person
 
-The [Block 2B focused audit](NATIVE-LIFECYCLE-AUDIT.md) adds `agent.reopen-escape` (ten immediate close/reopen pairs with actual Windows Escape), a deliberate `missing-escape` failure oracle and the maintained `registry` logic group. There are now thirteen real-app scenarios; the logic runner covers five groups. Recording/pill acceptance remains a small human batch, with no need to repeat the already automated developer-reload procedures or sign in to hosted providers for this block.
+The [Block 2B focused audit](NATIVE-LIFECYCLE-AUDIT.md) adds `agent.reopen-escape` (ten immediate close/reopen pairs with actual Windows Escape), a deliberate `missing-escape` failure oracle and the maintained `registry` logic group. There are now thirteen real-app scenarios; the logic runner covers five groups. The user completed the remaining ordinary recording/pill/Agent batch and 2B is accepted. No repeat or hosted-provider sign-in is requested now; next extend the harness for native 2C coverage.
 
 Live provider browser consent/MFA, the usefulness of actual model responses, microphone/audio quality, final appearance/accessibility judgment and practical shortcut behavior in applications the harness cannot faithfully reproduce remain human checks. Some may become assisted tests later. The runner should present only the necessary human steps in a batch and collect their outcomes beside automatic evidence.
 
