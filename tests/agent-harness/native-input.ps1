@@ -1,5 +1,5 @@
 # Send one real Windows Escape only after confirming the owned Agent is focused.
-param([Parameter(Mandatory = $true)][int]$OwnerPid)
+param([Parameter(Mandatory = $true)][int]$OwnerPid, [switch]$ProbeOnly)
 $ErrorActionPreference = 'Stop'
 if ($OwnerPid -le 0) { throw 'An owned host PID is required' }
 Add-Type -TypeDefinition @'
@@ -15,10 +15,17 @@ public static class HarnessInput {
     [DllImport("user32.dll")] private static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint pid);
     [DllImport("user32.dll")] private static extern bool SetForegroundWindow(IntPtr hwnd);
     [DllImport("user32.dll")] private static extern IntPtr GetForegroundWindow();
+    [DllImport("user32.dll")] private static extern short GetAsyncKeyState(int key);
     [DllImport("user32.dll", SetLastError=true)] private static extern uint SendInput(uint count, Input[] inputs, int size);
     [StructLayout(LayoutKind.Sequential)] private struct Keyboard { public ushort vk, scan; public uint flags, time; public UIntPtr extra; }
     [StructLayout(LayoutKind.Explicit, Size=32)] private struct InputUnion { [FieldOffset(0)] public Keyboard keyboard; }
     [StructLayout(LayoutKind.Sequential)] private struct Input { public uint type; public InputUnion data; }
+    public static string ModifierProbe() {
+        var pressed = new System.Collections.Generic.List<int>();
+        foreach (int key in new[] {16,17,18,91,92})
+            if ((GetAsyncKeyState(key) & 0x8000) != 0) pressed.Add(key);
+        return string.Join(",", pressed);
+    }
     public static void Escape(uint owner) {
         if (IntPtr.Size != 8) throw new InvalidOperationException("Native input adapter requires 64-bit Windows PowerShell");
         IntPtr target = IntPtr.Zero;
@@ -36,6 +43,7 @@ public static class HarnessInput {
         for (int attempt=0; attempt<20 && GetForegroundWindow()!=target; attempt++) Thread.Sleep(25);
         uint focused; GetWindowThreadProcessId(GetForegroundWindow(), out focused);
         if (GetForegroundWindow()!=target || focused!=owner) throw new InvalidOperationException("Refusing input: owned Agent is not foreground");
+        if (ModifierProbe().Length != 0) throw new InvalidOperationException("Refusing input: modifier key held; plain Escape requires an idle keyboard");
         var inputs = new[] {
             new Input { type=1, data=new InputUnion { keyboard=new Keyboard { vk=0x1B } } },
             new Input { type=1, data=new InputUnion { keyboard=new Keyboard { vk=0x1B, flags=2 } } }
@@ -44,4 +52,8 @@ public static class HarnessInput {
     }
 }
 '@
-[HarnessInput]::Escape([uint32]$OwnerPid)
+if ($ProbeOnly) {
+    [Console]::WriteLine('Held modifier virtual keys: ' + [HarnessInput]::ModifierProbe())
+} else {
+    [HarnessInput]::Escape([uint32]$OwnerPid)
+}

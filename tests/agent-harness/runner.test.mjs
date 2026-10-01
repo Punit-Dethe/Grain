@@ -1,6 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import {
+  mkdtemp,
+  readFile,
+  rm,
+  mkdir,
+  writeFile,
+  rename,
+} from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join, resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -31,9 +39,56 @@ test("scenario IDs are unique and each suite is explicit", () => {
   );
   assert.equal(selectScenarios("smoke").length, 2);
   assert.equal(selectScenarios("store").length, 3);
+  assert.equal(selectScenarios("registry-recovery").length, 3);
   assert.equal(selectScenarios("all").length, scenarios.length);
   assert.throws(() => selectScenarios("made-up"), /Unknown suite/);
 });
+
+test(
+  "owned registry lock denies publication and releases after cancellation",
+  { skip: process.platform !== "win32" },
+  async () => {
+    const { withRegistryLock } = await import("./registry.mjs");
+    const root = await mkdtemp(join(tmpdir(), "grain-registry-lock-"));
+    const path = join(root, "data/extensions.json");
+    const moved = join(root, "data/released.json");
+    const cancellation = new AbortController();
+    try {
+      await mkdir(join(root, "data"));
+      await writeFile(
+        join(root, ".grain-agent-harness.json"),
+        JSON.stringify({ schema: 1, runId: randomUUID(), modelPort: 9000 }),
+      );
+      await writeFile(path, "{}");
+      await assert.rejects(
+        withRegistryLock(
+          {
+            root,
+            here,
+            waitFor: (name, operation, options) =>
+              waitFor(name, operation, {
+                ...options,
+                signal: cancellation.signal,
+              }),
+          },
+          async () => {
+            await assert.rejects(rename(path, moved), (error) =>
+              ["EPERM", "EACCES", "EBUSY"].includes(error.code),
+            );
+            cancellation.abort();
+            throw new Error("deliberate operation cancellation");
+          },
+        ),
+        /deliberate operation cancellation/,
+      );
+      // Cleanup must complete even though ordinary scenario observations abort.
+      await rename(path, moved);
+      assert.equal(await readFile(moved, "utf8"), "{}");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  },
+);
 
 test("store fixture signs exact bytes with a distinct fixed test anchor", async () => {
   const { STORE_PUBLIC_KEY, signStoreBytes } =

@@ -157,6 +157,7 @@ export function installationHandlers(ctx) {
   return {
     allow,
     project,
+    imported,
     takeEvidence() {
       const result = evidence;
       evidence = [];
@@ -295,6 +296,10 @@ export function installationHandlers(ctx) {
         for (const bytes of [
           Buffer.from("{broken registry"),
           Buffer.from('{"tool_only_migration_version":999,"records":{}}'),
+          Buffer.from(
+            '{"records":{"wrong":{"id":"different","enabled":true}}}',
+          ),
+          Buffer.alloc(8 * 1024 * 1024 + 1, 32),
         ]) {
           // Write only after the owned host exits, never into a live or ordinary profile.
           await restart("restart:invalid-registry", () =>

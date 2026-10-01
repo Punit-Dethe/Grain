@@ -21,6 +21,7 @@ import { chromium } from "@playwright/test";
 import { scenarios, selectScenarios } from "./scenarios.mjs";
 import { installationHandlers } from "./installation.mjs";
 import { storeHandlers } from "./store.mjs";
+import { registryHandlers } from "./registry.mjs";
 import { startStore, STORE_PUBLIC_KEY } from "./store-fixture.mjs";
 import { startModel } from "./model.mjs";
 import { developerReload } from "./developer.mjs";
@@ -51,7 +52,7 @@ for (let i = 2; i < process.argv.length; i++) {
 }
 if (options.help) {
   console.log(
-    "node tests/agent-harness/run.mjs [--list] [--suite smoke|lifecycle|idle|native-failures|native-installation|store|all] [--scenario ID] [--binary path] [--output directory]\nWindows real Agent/WebView2 acceptance. Build first with tests/agent-harness/build.ps1. No live account or model key required.",
+    "node tests/agent-harness/run.mjs [--list] [--suite smoke|lifecycle|idle|native-failures|native-installation|registry-recovery|store|all] [--scenario ID] [--binary path] [--output directory]\nWindows real Agent/WebView2 acceptance. Build first with tests/agent-harness/build.ps1. No live account or model key required.",
   );
   process.exit(0);
 }
@@ -73,6 +74,7 @@ if (
     "skip-restart",
     "stale-package",
     "unclosed-store",
+    "lost-pointer",
   ].includes(options.fault)
 )
   throw new Error("Unknown oracle fault");
@@ -101,6 +103,13 @@ if (
     "stale-package requires --scenario native.cli-package-ownership",
   );
 const runId = randomUUID();
+if (
+  options.fault === "lost-pointer" &&
+  options.scenario !== "native.registry-preservation"
+)
+  throw new Error(
+    "lost-pointer requires --scenario native.registry-preservation",
+  );
 if (
   options.fault === "unclosed-store" &&
   options.scenario !== "store.close-offline"
@@ -1060,6 +1069,19 @@ const storeSuite = storeHandlers({
   activate,
 });
 Object.assign(handlers, storeSuite.handlers);
+const registrySuite = registryHandlers({
+  root,
+  here,
+  status,
+  fixture,
+  greeting,
+  restartHost,
+  waitFor,
+  imported: installation.imported,
+  allow: installation.allow,
+  fault: options.fault,
+});
+Object.assign(handlers, registrySuite.handlers);
 let baselineTokens = 0;
 let cdpPort;
 try {
@@ -1194,7 +1216,11 @@ try {
         join(here, "fixtures/lifecycle/manifest.json"),
         join(root, "fixture/manifest.json"),
       );
-      if (!["native-installation", "store"].includes(scenario.suite))
+      if (
+        !["native-installation", "registry-recovery", "store"].includes(
+          scenario.suite,
+        )
+      )
         await fixture("load");
       const eventStart = (await status()).events.length;
       const modelStart = model.journal.length;
@@ -1221,6 +1247,7 @@ try {
       result.observations = [
         ...installation.takeEvidence(),
         ...storeSuite.takeEvidence(),
+        ...registrySuite.takeEvidence(),
       ];
       assert.ok(
         !result.model.some((entry) => entry.state === "error"),
@@ -1235,6 +1262,7 @@ try {
         result.observations = [
           ...installation.takeEvidence(),
           ...storeSuite.takeEvidence(),
+          ...registrySuite.takeEvidence(),
         ];
       } catch {
         /* host might have exited */

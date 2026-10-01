@@ -28,6 +28,9 @@ npm run test:agent -- --suite native-installation
 # Signed local store, real Store page, offline and interrupted downloads.
 npm run test:agent -- --suite store
 
+# Existing registry state, invalid startup and real failed saves.
+npm run test:agent -- --suite registry-recovery
+
 # Real production idle timing; allow about five minutes.
 npm run test:agent -- --suite idle
 
@@ -78,7 +81,7 @@ Runtime reports also identify the Node/WebView adapter version and an independen
 | `native.result-budgets` | Replies exceeding the 64 KiB decoded budget and 512 KiB raw wire budget fail at distinct boundaries; workers/tokens/supervisors retire, then fresh native calls recover. |
 | `native.invalid-input` | Unknown keys, missing required values, wrong types, oversized arguments and malformed JSON fail before approval/startup; private rejected parameter keys stay hidden. |
 
-`smoke` contains the first two; `lifecycle` includes smoke and the original remaining non-idle lifecycle cases; `native-failures` contains the six Block 2C scenarios above. `native-installation` contains six native consent/package/restart cases. `store` contains three signed-store cases below. `all` includes all twenty-eight. `idle` runs only the long timing case. Scenarios set up their own fixture baseline and clean it up. A failed scenario stops the batch; later scenarios are Not run rather than being assessed against contaminated state.
+`smoke` contains the first two; `lifecycle` includes smoke and the original remaining non-idle lifecycle cases; `native-failures` contains the six Block 2C scenarios above. `native-installation` contains six native consent/package/restart cases. `store` contains three signed-store cases below. `registry-recovery` contains the existing `native.registry-refusal` plus two new cases below. `all` includes all thirty distinct cases; overlapping suite selections are not additive. `idle` runs only the long timing case. Scenarios set up their own fixture baseline and clean it up. A failed scenario stops the batch; later scenarios are Not run rather than being assessed against contaminated state.
 
 Reports identify supporting numbered checks in the existing extension plan. These links do not certify the whole numbered procedure or rewrite its ledger automatically. After reviewing complete real-app procedure coverage and its focused audit, record an automated Pass explicitly with its evidence class. Human results remain separately identified. The harness still excludes microphone/native-pill observations, including the ordinary-app portion of check 34; the user has separately completed that [2C audit handoff](../../docs/Extensions%202.0/NATIVE-FAILURE-AUDIT.md). The current ordinary-app handoff is in the installation audit.
 
@@ -127,6 +130,22 @@ The deliberate fault withholds navigation away from the real loading Store page.
 
 ## Verify the harness detects a real failure
 
+### Registry recovery scenarios
+
+| ID | What is asserted |
+|---|---|
+| `native.registry-refusal` | Malformed, future-version, inconsistent-identity and oversized registry startup preserve the file, refuse extension operations, record a diagnostic and spawn no worker. Restored bytes recover actual greetings through real restarts. |
+| `native.registry-preservation` | Installed/disabled records and a synthetic opaque account pointer survive restart. A stopped-host corrupt artifact triggers actual startup quarantine; restored bytes do not silently clear it. Explicit validated import and real consent/greeting recover across restart. |
+| `native.registry-save-failure` | Real Windows publication-sharing locks fail enable/disable saves. Enable rolls back; disable takes effect live but honestly remains unsaved. Actual restarts distinguish those outcomes. A successful explicit disable/re-enable recovers. |
+
+The owned hidden `registry-lock.ps1` helper admits only the marked profile's fixed registry and refuses links. It permits read/write sharing and denies DELETE; it changes no file permissions/content. Its 30-second bound, parent-owned release/exit checks and cancellation cleanup are tested. The synthetic pointer has no vault entry and does not certify OAuth/account switching. This unit changes only test tooling; production application sources are unchanged. See the [focused registry audit](../../docs/Extensions%202.0/NATIVE-REGISTRY-AUDIT.md).
+
+```powershell
+npm run test:agent -- --scenario native.registry-preservation --fault lost-pointer
+```
+
+This deliberately removes the synthetic pointer only from the disposable stopped-host startup fixture. Expect pointer-preservation Fail, exit 1 and cleanup Pass. It is accepted only for this scenario and is not product Pass. `npm run test:agent:logic -- --group registry` separately covers production persistence helpers, including real Windows locks; it does not replace the real-application procedures above.
+
 ```powershell
 npm run test:agent -- --scenario native.cold-warm --fault wrong-greeting
 ```
@@ -163,6 +182,7 @@ Exit codes: **0** = every selected scenario and cleanup passed; **1** = assertio
 - Developer reload uses the existing role-bound DevControl token and protocol. That token remains reload-only; it was not given extra powers. It is read only from the owned profile and is never included in the report.
 - The WebView2 debugging endpoint is loopback-only and confined to the child process. Playwright activates the real enabled DOM buttons through their production handlers to avoid coordinate races during native resize/entrance animation. This verifies functional activation, not physical mouse targeting or accessibility quality.
 - Escape is a native shortcut, so `native-input.ps1` sends one Windows key down/up pair after verifying the visible foreground `Grain Assist` window belongs to the owned host PID. Test startup owns the production HandyKeys manager with no ordinary accelerators registered and keeps explicit blank binding entries to prevent default fallbacks. The normal initialization command is checked for idempotence. It refuses native input if ownership/focus cannot be established. Keep the ordinary app's Agent closed to avoid competing transient shortcuts.
+- The Escape adapter also refuses input if Shift/Ctrl/Alt/Windows is currently held; it never releases user keys to force a test. `-ProbeOnly` reads those modifier states without sending input. An idle/unlocked desktop is a prerequisite for OS key cases. Foreground/input failures remain recorded even if a later run passes; they are not automatically retried or erased.
 - Typed approval fills the real Follow up field and dispatches Enter to its production React key handler. Like button activation, this is a functional DOM test; it does not certify physical Enter delivery during native resize. Native Escape is tested separately at the OS boundary.
 - Test-only observations record invocation/startup, queue admission (`dispatched`), accepted replies (`completed`), host outcome classification (`outcome`) and retirement. A completed reply is not necessarily a successful action; the outcome assertion distinguishes errors and unusable envelopes. Worker identifiers are one-way token digests; raw tokens/arguments/results are absent. Queue admission is conservative dispatch evidence, not proof of the extension's external effects. The finite buffer must not overflow.
 - Each IPC operation and observation has a deadline. Cleanup requests app exit, falls back to the owned PID/tree if necessary, verifies listener/debug endpoint release, closes the model fixture and removes only owned scratch paths. Cleanup failures fail the run. Ctrl+C cancels the run and follows teardown; it must not be treated as a passing partial batch.

@@ -176,6 +176,20 @@ export const scenarios = [
       "Real CLI build/doctor/pack, same-version replacement, old flat/version files, developer A/B and restored installed bytes across restart; accounts excluded",
   },
   {
+    id: "native.registry-preservation",
+    suite: "registry-recovery",
+    checks: [49],
+    description:
+      "Opaque account pointer, disabled and quarantined records survive restart; explicit validated recovery restores actual tools",
+  },
+  {
+    id: "native.registry-save-failure",
+    suite: "registry-recovery",
+    checks: [49],
+    description:
+      "Real Windows publication locks refuse enable durably and disable live with honest save failure, then explicit recovery survives restart",
+  },
+  {
     id: "store.close-offline",
     suite: "store",
     checks: [18],
@@ -206,6 +220,7 @@ export function selectScenarios(suite) {
       "idle",
       "native-failures",
       "native-installation",
+      "registry-recovery",
       "store",
       "all",
     ].includes(suite)
@@ -214,6 +229,8 @@ export function selectScenarios(suite) {
   return scenarios.filter(
     (scenario) =>
       suite === "all" ||
+      (suite === "registry-recovery" &&
+        scenario.id === "native.registry-refusal") ||
       scenario.suite === suite ||
       (suite === "lifecycle" && scenario.suite === "smoke"),
   );
