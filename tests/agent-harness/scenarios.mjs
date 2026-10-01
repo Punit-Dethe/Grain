@@ -168,6 +168,13 @@ export const scenarios = [
     description:
       "Malformed/future registry startup preserves the file, reports unavailable operations, then a restored isolated profile recovers",
   },
+  {
+    id: "native.cli-package-ownership",
+    suite: "native-installation",
+    checks: [28, 39, 53],
+    description:
+      "Real CLI build/doctor/pack, same-version replacement, old flat/version files, developer A/B and restored installed bytes across restart; accounts excluded",
+  },
 ];
 
 export function selectScenarios(suite) {

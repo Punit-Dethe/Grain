@@ -9,6 +9,7 @@ import { promisify } from "node:util";
 const here = dirname(fileURLToPath(import.meta.url));
 const repo = resolve(here, "../..");
 export const stampPath = join(here, ".build/host.json");
+export const cliStampPath = join(here, ".build/cli.json");
 
 export async function hashFile(path) {
   const hash = createHash("sha256");
@@ -126,25 +127,43 @@ export async function verifyBuild(binary) {
   return stamp;
 }
 
+export async function verifyCli() {
+  const stamp = JSON.parse(await readFile(cliStampPath, "utf8"));
+  if (stamp.schema !== 1 || stamp.kind !== "grain-ext-cli")
+    throw new Error("Invalid CLI build stamp");
+  if ((await hashFile(stamp.binary)) !== stamp.binarySha256)
+    throw new Error("CLI executable does not match its build stamp");
+  if ((await sourceFingerprint()) !== stamp.sourceFingerprint)
+    throw new Error(
+      "Sources changed since the CLI build; rebuild before testing",
+    );
+  return stamp;
+}
+
 if (
   process.argv[1] &&
   resolve(process.argv[1]) === fileURLToPath(import.meta.url)
 ) {
-  if (!process.argv[2])
+  const cli = process.argv[2] === "--cli";
+  const binaryArg = process.argv[cli ? 3 : 2];
+  const expectedFingerprint = process.argv[cli ? 4 : 3];
+  if (!binaryArg)
     throw new Error("stamp.mjs requires the built executable path");
-  const binary = resolve(process.argv[2]);
+  const binary = resolve(binaryArg);
   const fingerprint = await sourceFingerprint();
-  if (!process.argv[3] || fingerprint !== process.argv[3])
+  if (!expectedFingerprint || fingerprint !== expectedFingerprint)
     throw new Error("Application inputs changed during the build; build again");
   const commit = (
     await promisify(execFile)("git", ["rev-parse", "HEAD"], { cwd: repo })
   ).stdout.trim();
   await writeFile(
-    stampPath,
+    cli ? cliStampPath : stampPath,
     JSON.stringify(
       {
         schema: 1,
-        applicationId: "com.grain.agent-harness",
+        ...(cli
+          ? { kind: "grain-ext-cli" }
+          : { applicationId: "com.grain.agent-harness" }),
         binary,
         binarySha256: await hashFile(binary),
         sourceFingerprint: fingerprint,
@@ -155,5 +174,5 @@ if (
       2,
     ),
   );
-  console.log(`Build identity: ${stampPath}`);
+  console.log(`Build identity: ${cli ? cliStampPath : stampPath}`);
 }

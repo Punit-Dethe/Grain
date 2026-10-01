@@ -22,7 +22,7 @@ import { scenarios, selectScenarios } from "./scenarios.mjs";
 import { installationHandlers } from "./installation.mjs";
 import { startModel } from "./model.mjs";
 import { developerReload } from "./developer.mjs";
-import { verifyBuild, runnerFingerprint } from "./stamp.mjs";
+import { verifyBuild, verifyCli, runnerFingerprint } from "./stamp.mjs";
 import {
   waitFor as poll,
   Blocked,
@@ -69,6 +69,7 @@ if (
     "missing-escape",
     "successful-error",
     "skip-restart",
+    "stale-package",
   ].includes(options.fault)
 )
   throw new Error("Unknown oracle fault");
@@ -88,6 +89,13 @@ if (
 )
   throw new Error(
     "skip-restart requires --scenario native.consent-persistence",
+  );
+if (
+  options.fault === "stale-package" &&
+  options.scenario !== "native.cli-package-ownership"
+)
+  throw new Error(
+    "stale-package requires --scenario native.cli-package-ownership",
   );
 const runId = randomUUID();
 const output = resolve(options.output ?? join(here, ".runs"));
@@ -920,7 +928,7 @@ const handlers = {
     );
   },
 };
-let hostBinary;
+let hostBinary, cliIdentity;
 async function launchHost() {
   const binary = hostBinary;
   child = spawn(binary, [], {
@@ -1011,7 +1019,10 @@ async function restartHost(beforeLaunch) {
 }
 const installation = installationHandlers({
   root,
+  repo,
   here,
+  cli: () => cliIdentity,
+  fault: options.fault,
   status,
   fixture,
   request,
@@ -1078,6 +1089,16 @@ try {
     buildCommit: build.commit,
     builtAt: build.builtAt,
   };
+  if (
+    selected.some((scenario) => scenario.id === "native.cli-package-ownership")
+  ) {
+    try {
+      cliIdentity = await verifyCli();
+    } catch (error) {
+      throw new Blocked(`${error.message}. Run tests/agent-harness/build.ps1.`);
+    }
+    report.cli = cliIdentity;
+  }
   report.injectedFault = options.fault ?? null;
   model = await startModel();
   await writeFile(

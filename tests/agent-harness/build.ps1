@@ -11,6 +11,13 @@ Push-Location $taskRepo
 try {
     $taskFingerprint = & node --input-type=module -e "import { sourceFingerprint } from './tests/agent-harness/stamp.mjs'; console.log(await sourceFingerprint());"
     if ($LASTEXITCODE -ne 0) { throw 'Cannot fingerprint application build inputs' }
+    & cargo build --locked -p grain-ext-cli --bin grain-ext
+    if ($LASTEXITCODE -ne 0) { throw 'Extension CLI build failed' }
+    $taskCliMetadata = (& cargo metadata --format-version 1 --no-deps | ConvertFrom-Json)
+    if ($LASTEXITCODE -ne 0) { throw 'CLI Cargo metadata failed' }
+    $taskCliBinary = Join-Path $taskCliMetadata.target_directory 'debug\grain-ext.exe'
+    & node (Join-Path $PSScriptRoot 'stamp.mjs') --cli $taskCliBinary $taskFingerprint
+    if ($LASTEXITCODE -ne 0) { throw 'CLI build identity could not be recorded' }
     & node node_modules/typescript/bin/tsc --noEmit
     if ($LASTEXITCODE -ne 0) { throw 'Frontend type check failed' }
     & node node_modules/vite/bin/vite.js build --mode agent-harness --outDir tests/agent-harness/.build/frontend

@@ -1,6 +1,6 @@
 # Native consent, ownership and restart — Block 2D first unit
 
-Date: 1 October 2026. Block 2C is accepted after the user's three ordinary-app observations. This first 2D unit covers native package consent, owner replacement and registry persistence in the maintained real-app harness. **It does not close all of 2D:** signed-store/offline/download schedules, native OAuth/account ownership, real file-picker/CLI packaging, ordinary microphone/pill and visual acceptance retain separate requirements.
+Date: 1 October 2026. Block 2C is accepted after the user's three ordinary-app observations. This first 2D unit covers native package consent, owner replacement and registry persistence in the maintained real-app harness. **It does not close all of 2D:** signed-store/offline/download schedules, native OAuth/account ownership and wider registry recovery retain separate requirements. First-unit automation excluded file-picker/CLI packaging and ordinary input; the user subsequently completed check 40, and the second packaging audit below closes CLI-specific gaps.
 
 ## Implemented coverage
 
@@ -44,7 +44,7 @@ Graph entry/change/review/impact tools were consulted, followed by direct source
 
 ## Verification and acceptance
 
-**Focused implementation, source audit and automated retests complete. The first 2D unit still needs the ordinary-app check 40 below; the whole 2D block remains open.** Checks **19, 38 and 52** have complete reviewed real-app procedure evidence and are explicitly recorded as automated Pass. Checks **28, 39, 40, 49 and 53** retain partial supporting coverage/Pending status: file-picker/CLI packaging, legacy artifact shadowing, visual/ordinary-input, disabled/quarantined/account preservation and conditional native-account observations are not all certified. Signed-store checks **18 and 36** have no real-app acceptance evidence in this unit. The ledger is **22 Pass / 31 Pending** (14 human, 8 reviewed automated).
+**Focused implementation, source audit and automated retests complete. The user confirms all three ordinary-app check 40 procedures passed after `8ffcb79c`; the first 2D unit is accepted. The whole 2D block remains open.** Checks **19, 38 and 52** have complete reviewed real-app procedure evidence and are explicitly recorded as automated Pass. Check **40** is now user-reported Pass. At this first-unit snapshot, checks **28, 39, 49 and 53** retained partial supporting coverage/Pending status: CLI packaging, legacy artifact shadowing, disabled/quarantined/account preservation and conditional native-account observations were not all certified. The user confirms ordinary file-picker/consent/control and input observations; these are distinct from packaging and account certification. Signed-store checks **18 and 36** have no real-app acceptance evidence in this unit. At automated completion the ledger was **22 Pass / 31 Pending**; after the user's check 40 result it is **23 Pass / 30 Pending** (15 human, 8 reviewed automated).
 
 | Evidence | Result |
 |---|---|
@@ -83,4 +83,8 @@ The command prints one disposable `.grainpack`; it requests no permissions or ex
 2. **One Allow survives restart:** Enable again → Allow and enable once. Ask Agent: **“Use Native Installation Smoke's Say installation hello tool.”** Approve the actual call; expect **`Harness hello (installed-one)`**. Fully quit/reopen and request/approve it again. Expect the same real result, without another installation-permission sheet.
 3. **Ordinary input and controls:** Close Agent, dictate into a scratch field, then start/cancel another recording through the pill. Expect one paste from the completed recording and none from cancellation. Confirm the permission sheet and enable/disable controls remain usable. Uninstall Native Installation Smoke afterward.
 
-Report these observations together. Do not edit registry files or change folder permissions in the ordinary profile. This batch closes the ordinary-app portion of check 40 and validates the real file picker; it does not unblock signed-store/account portions of 2D by implication.
+The user reports all three observations Pass; this procedure remains for reproduction. Do not edit registry files or change folder permissions in the ordinary profile. This batch closes the ordinary-app portion of check 40 and validates the real file picker; it does not unblock signed-store/account portions of 2D by implication.
+
+## Subsequent packaging unit
+
+The [second 2D audit](NATIVE-PACKAGING-AUDIT.md) closes CLI packaging, original installed-approval refusal through full override/restoration and legacy-file non-shadowing gaps. The suite now has six cases. Checks 28/39 are reviewed automated Pass; check 40 is user-reported Pass. Current ledger: **25 Pass / 28 Pending**. The historical first-unit run counts/identities above are preserved. Signed-store and wider registry/account requirements remain open.

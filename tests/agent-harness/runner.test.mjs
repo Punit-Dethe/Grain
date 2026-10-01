@@ -243,7 +243,7 @@ test("installation suite retains distinct owners and declares no privileges", as
   const { fixturePackage } = await import("./installation.mjs");
   const first = await fixturePackage(here, "installed-one");
   const second = await fixturePackage(here, "installed-two", true);
-  assert.equal(selectScenarios("native-installation").length, 5);
+  assert.equal(selectScenarios("native-installation").length, 6);
   assert.equal(first.manifest.version, second.manifest.version);
   assert.deepEqual(first.manifest.permissions, []);
   assert.equal(first.manifest.contributes.authentication, undefined);
@@ -253,4 +253,48 @@ test("installation suite retains distinct owners and declares no privileges", as
   assert.match(first.manifest.entry_source, /"installed-one"/);
   assert.match(second.manifest.entry_source, /"installed-two"/);
   assert.notEqual(first.manifest.name, second.manifest.name);
+});
+
+test("CLI fixture uses only the maintained local build and fixed owner paths", async () => {
+  const { prepareCliProject } = await import("./packaging.mjs");
+  const root = await mkdtemp(join(tmpdir(), "grain-cli-fixture-"));
+  try {
+    const project = await prepareCliProject({
+      root,
+      here,
+      repo: resolve(here, "../.."),
+      folder: "fixture-b",
+      revision: "cli-test",
+    });
+    const manifest = JSON.parse(
+      await readFile(join(project, "manifest.json"), "utf8"),
+    );
+    assert.equal(manifest.id, "com.grain.harness.lifecycle");
+    assert.equal(manifest.icon, "icon.png");
+    assert.equal(manifest.entry, "dist/main.js");
+    assert.deepEqual(manifest.permissions, []);
+    const pkg = JSON.parse(
+      await readFile(join(project, "package.json"), "utf8"),
+    );
+    assert.equal(pkg.scripts.build, "node build.mjs");
+    assert.equal(pkg.dependencies, undefined);
+    assert.match(
+      await readFile(join(project, "src/main.js"), "utf8"),
+      /"cli-test"/,
+    );
+    const png = await readFile(join(project, "icon.png"));
+    assert.equal(png.readUInt32BE(16), 512);
+    assert.equal(png.readUInt32BE(20), 512);
+    await assert.rejects(
+      prepareCliProject({
+        root,
+        here,
+        repo: resolve(here, "../.."),
+        folder: "../escape",
+        revision: "never",
+      }),
+    );
+  } finally {
+    await rm(assertWithin(tmpdir(), root), { recursive: true, force: true });
+  }
 });
