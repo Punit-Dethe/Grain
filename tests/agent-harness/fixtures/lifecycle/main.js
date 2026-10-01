@@ -41,4 +41,10 @@ grain.actions({
   oversized_result: async () => ({ ok: { body: "x".repeat(65536) } }),
   oversized_raw: async () => ({ ok: { body: "x".repeat(524288) } }),
   input_echo: async ({ text }) => ({ ok: { body: text } }),
+  typed_echo: async (args) => ({
+    ok: { body: `Harness typed reply: ${JSON.stringify(args)}` },
+  }),
+  typed_optional_echo: async (args) => ({
+    ok: { body: `Harness typed reply: ${JSON.stringify(args)}` },
+  }),
 });

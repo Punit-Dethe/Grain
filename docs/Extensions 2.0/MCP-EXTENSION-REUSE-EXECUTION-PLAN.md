@@ -1,6 +1,6 @@
 # Extension platform: audit, reuse and execution plan
 
-**Date:** 1 October 2026. **Branch:** `extensions/tool-only-retirement`. **Status:** planning complete; execution remains paused. This change contains documentation only.
+**Date:** 1 October 2026. **Branch:** `extensions/tool-only-retirement`. **Status:** testing-only execution resumed; B1a accepted, B1b account fixture next. The planning source/evidence snapshot below is at `b0afe340`; the current ledger is **30 Pass / 23 Pending** after reviewed checks 2/22.
 
 This is the forward execution order for the existing [extension plan](MCP-EXTENSION-PLAN.md). That document retains the product contract, R0–R6 release gates and full numbered test procedures. The [progress report](MCP-EXTENSION-PROGRESS.md) retains verdicts and evidence. If older chronological handoffs disagree about what comes next, use this document. No existing acceptance requirement is waived.
 
@@ -18,7 +18,7 @@ Extensions supply tools/functions only. Agent-owned application/screen/selection
 
 ## 2. What the audit establishes
 
-This is a source and evidence audit for planning, not a fresh security certification. The graph was queried first; its searches/impact output did not resolve the ownership questions, so relevant production code and maintained audit records were read directly. Absence of graph edges is not evidence that a module has no callers. No application or acceptance suite was run in this planning pass.
+This section preserves the source and evidence audit at planning commit `b0afe340`, not a fresh security certification. The graph was queried first; its searches/impact output did not resolve the ownership questions, so relevant production code and maintained audit records were read directly. Absence of graph edges is not evidence that a module has no callers. No application or acceptance suite was run in that planning pass. Subsequent B1a real-app runs/fixes are recorded in the [native foundation audit](NATIVE-FOUNDATION-AUDIT.md): checks 2/22 accepted, 32 distinct harness scenarios, eight B1 account checks still pending.
 
 | Area | Current state | Meaning for the next work |
 |---|---|---|
@@ -35,7 +35,7 @@ Retain the earlier accepted-input Escape timeout as an unresolved observation. T
 
 ## 3. Code disposition: keep, edit, replace and remove
 
-Counts below are physical source lines at the audited snapshot, including comments, blank lines and inline tests. They are an inventory, **not production LOC, savings estimates or a commitment to delete entire files**. Full paths are relative to the repository root; bare backend filenames are under `src-tauri/src/`. The application-wide ASR/UI/Handy tree is outside this refactor.
+Counts below are physical source lines at planning snapshot `b0afe340`, including comments, blank lines and inline tests; subsequent B1a edits are not included. They are an inventory, **not production LOC, savings estimates or a commitment to delete entire files**. Full paths are relative to the repository root; bare backend filenames are under `src-tauri/src/`. The application-wide ASR/UI/Handy tree is outside this refactor.
 
 | File or group | Lines | Disposition | Reason and acceptance condition |
 |---|---:|---|---|
@@ -120,7 +120,7 @@ Rig, Kit, `mcp-agent`, `mcp-use`, a Goose runtime and MCP gateways are not depen
 
 ## 6. Disposition of every pending acceptance check
 
-**Retain all 25 objectives. Remove zero acceptance requirements.** Delegation replaces some implementation and wire-fixture maintenance, not proof that Grain combines it correctly. Their full procedures stay in the original plan. The rows below state the intended evidence; they do not change any Pending verdict.
+**Retain all 25 objectives. Remove zero acceptance requirements.** Delegation replaces some implementation and wire-fixture maintenance, not proof that Grain combines it correctly. Their full procedures stay in the original plan. This table preserves the 25 objectives pending at planning snapshot `b0afe340`; subsequent B1a acceptance closes 2/22, leaving **23 Pending**. Current verdicts and evidence belong to the progress ledger, not this baseline mapping.
 
 `Harness` means actual isolated Grain through production commands/adapters with controlled services. `Live` means a real supported provider/account or tool-capable model. A fixture proves its tested contract, not compatibility with every provider. Unsupported live prerequisites are reported separately and remain blocked where the numbered procedure requires them.
 
@@ -160,13 +160,15 @@ Some conformance coverage can replace duplicated protocol fixtures after a cover
 
 ### B0 — This audit and plan
 
-Deliver this source disposition, selected ownership, all-25 mapping and synchronized plan/progress links. No dependency/app changes, provider launch or acceptance verdict. Implementation starts in a subsequent execution turn.
+Completed at `b0afe340`: source disposition, selected ownership, all-25 mapping and synchronized plan/progress links. That planning task included no dependency/app change, provider launch or acceptance verdict. Testing-only execution has now begun with B1a.
 
-### B1 — Finish the existing native foundation (10 pending checks)
+### B1 — Finish the existing native foundation (10 baseline checks; 8 now pending)
 
 Break into small units: **B1a migration/typed inputs (2, 22)**; **B1b account fixture/binding/owner (41, 45, 53)**; **B1c cancellation/switch/refresh (42–44, 50–51)**. Finish the retained input investigation alongside this block.
 
-First implement a separately guarded authenticated harness fixture. The current permission-free fixture remains unchanged in authority: do not simply remove its `permissions.is_empty()` or authentication checks. Admit only the owned fixture ID/root, exact declared test hosts and test credential namespace in an explicitly enabled harness build/profile. Support two distinguishable accounts, held callbacks/refreshes, partial scopes, expiry and token/read receipts. Reuse production OAuth, host HTTP, vault and account publication; simulate the external provider, not Grain's implementation. No general test command to read tokens or arbitrary profile files.
+**B1a accepted:** [migration/typed-input audit](NATIVE-FOUNDATION-AUDIT.md) closes 2/22 after a reproduced terminal-owner quarantine fix, transactional uninstall preservation, repeated actual-app tests and negative oracles. No account prerequisite is certified by those results.
+
+**Next, B1b:** implement a separately guarded authenticated harness fixture. The current permission-free fixture remains unchanged in authority: do not simply remove its `permissions.is_empty()` or authentication checks. Admit only the owned fixture ID/root, exact declared test hosts and test credential namespace in an explicitly enabled harness build/profile. Support two distinguishable accounts, held callbacks/refreshes, partial scopes, expiry and token/read receipts. Reuse production OAuth, host HTTP, vault and account publication; simulate the external provider, not Grain's implementation. No general test command to read tokens or arbitrary profile files.
 
 Use owned local TLS with scoped trust, or an equivalent isolated test transport boundary that cannot ship active. Do not weaken production HTTPS/redirect/endpoint validation to make fixtures convenient. Verify ordinary builds refuse harness controls. Extend migration snapshots in disposable directories; never damage the user's registry or vault.
 
@@ -247,6 +249,6 @@ Record commit/binary/source/runner identity, platform, model/provider, controlle
 
 ## 9. First implementation handoff and completion definition
 
-**Next work is B1a and the B1b fixture prerequisite:** migration/typed-native-input scenarios and a separately guarded native OAuth fixture. Do not upgrade `rmcp`, introduce `oauth2` as a direct native dependency, delete legacy modules or start broader Agent features in that first slice. Use the current implementation to obtain missing evidence, fix demonstrated failures and audit the resulting module.
+**B1a is accepted; next work is the B1b fixture prerequisite:** a separately guarded native OAuth fixture, followed by checks 41/45/53. Do not upgrade `rmcp`, introduce `oauth2` as a direct native dependency, delete legacy modules or start broader Agent features. Use the current implementation to obtain missing evidence, fix demonstrated failures and audit each module. Remaining baseline checks: **B1 8 + B2 5 + B3 7 + B4 3 = 23**. No extra B1a human batch is needed; controlled evidence does not waive later live-account requirements.
 
 This planning audit is complete. Foundation testing, library replacement, physical retirement and release certification are not complete. All seven original whole-phase gates remain open. Continue on `extensions/tool-only-retirement`, commit/push scoped work, preserve unrelated user changes and never push these changes directly to `main`.

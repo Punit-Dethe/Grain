@@ -2,6 +2,20 @@
 // not permission to change the manual acceptance ledger automatically.
 export const scenarios = [
   {
+    id: "native.typed-contract",
+    suite: "native-foundation",
+    checks: [22],
+    description:
+      "Real native typed/optional arguments round-trip; changed declaration without reload refuses the old approval",
+  },
+  {
+    id: "native.legacy-migration",
+    suite: "native-foundation",
+    checks: [2],
+    description:
+      "Real upgrade/restarts quarantine legacy privileges and preserve edited prompt/binding archives exactly once",
+  },
+  {
     id: "native.cold-warm",
     suite: "smoke",
     checks: [3, 4],
@@ -219,6 +233,7 @@ export function selectScenarios(suite) {
       "lifecycle",
       "idle",
       "native-failures",
+      "native-foundation",
       "native-installation",
       "registry-recovery",
       "store",

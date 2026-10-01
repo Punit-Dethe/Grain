@@ -14,7 +14,7 @@ import { join, resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { nextReply, startModel, FIXTURE_ID } from "./model.mjs";
+import { nextReply, startModel, FIXTURE_ID, TYPED_INPUTS } from "./model.mjs";
 import { scenarios, selectScenarios } from "./scenarios.mjs";
 import { assertWithin, waitFor, writeReport } from "./support.mjs";
 
@@ -227,6 +227,27 @@ test("declined/failed tool result produces no automatic tool replay", () => {
   const result = nextReply(body(["search", "loaded", "Declined by user"]));
   assert.equal(result.tool_calls, undefined);
   assert.match(result.content, /Declined by user/);
+});
+
+test("typed oracle detects numeric coercion and optional-value loss in real results", () => {
+  assert.equal(selectScenarios("native-foundation").length, 2);
+  for (const [instruction, values] of Object.entries(TYPED_INPUTS)) {
+    const expected = Object.fromEntries(
+      Object.entries(values).filter(([, value]) => value !== null),
+    );
+    const request = body([
+      "search",
+      "loaded",
+      `Harness typed reply: ${JSON.stringify(expected)}`,
+    ]);
+    request.messages[0].content = `Harness request: ${instruction}`;
+    assert.equal(nextReply(request).typedVerified, true);
+    request.messages.at(-1).content =
+      `Harness typed reply: ${JSON.stringify({ ...expected, count: String(expected.count) })}`;
+    assert.throws(() => nextReply(request), /Native argument types/);
+    request.messages.at(-1).content = "Done.";
+    assert.throws(() => nextReply(request), /No real typed tool result/);
+  }
 });
 
 test("failure suite is isolated and private error text is rejected by the model oracle", () => {

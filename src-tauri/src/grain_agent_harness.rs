@@ -447,6 +447,13 @@ pub enum Instruction {
     WrongArguments,
     OversizedArguments,
     MalformedArguments,
+    TypedValues,
+    TypedOmitted,
+    TypedNull,
+    TypedZero,
+    TypedNumberNull,
+    TypedNumberOmitted,
+    TypedNumberZero,
 }
 
 #[tauri::command]
@@ -472,6 +479,13 @@ pub async fn agent_harness_submit(
         Instruction::WrongArguments => "Harness request: wrong_arguments",
         Instruction::OversizedArguments => "Harness request: oversized_arguments",
         Instruction::MalformedArguments => "Harness request: malformed_arguments",
+        Instruction::TypedValues => "Harness request: typed_values",
+        Instruction::TypedOmitted => "Harness request: typed_omitted",
+        Instruction::TypedNull => "Harness request: typed_null",
+        Instruction::TypedZero => "Harness request: typed_zero",
+        Instruction::TypedNumberNull => "Harness request: typed_number_null",
+        Instruction::TypedNumberOmitted => "Harness request: typed_number_omitted",
+        Instruction::TypedNumberZero => "Harness request: typed_number_zero",
     };
     crate::agent::harness_submit_instruction(&app, text.into());
     Ok(())

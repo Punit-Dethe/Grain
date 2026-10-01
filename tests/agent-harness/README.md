@@ -25,6 +25,9 @@ npm run test:agent -- --suite lifecycle
 npm run test:agent -- --suite native-failures
 npm run test:agent -- --suite native-installation
 
+# Legacy upgrade/restart preservation and typed native tool contracts.
+npm run test:agent -- --suite native-foundation
+
 # Signed local store, real Store page, offline and interrupted downloads.
 npm run test:agent -- --suite store
 
@@ -81,7 +84,23 @@ Runtime reports also identify the Node/WebView adapter version and an independen
 | `native.result-budgets` | Replies exceeding the 64 KiB decoded budget and 512 KiB raw wire budget fail at distinct boundaries; workers/tokens/supervisors retire, then fresh native calls recover. |
 | `native.invalid-input` | Unknown keys, missing required values, wrong types, oversized arguments and malformed JSON fail before approval/startup; private rejected parameter keys stay hidden. |
 
-`smoke` contains the first two; `lifecycle` includes smoke and the original remaining non-idle lifecycle cases; `native-failures` contains the six Block 2C scenarios above. `native-installation` contains six native consent/package/restart cases. `store` contains three signed-store cases below. `registry-recovery` contains the existing `native.registry-refusal` plus two new cases below. `all` includes all thirty distinct cases; overlapping suite selections are not additive. `idle` runs only the long timing case. Scenarios set up their own fixture baseline and clean it up. A failed scenario stops the batch; later scenarios are Not run rather than being assessed against contaminated state.
+`smoke` contains the first two; `lifecycle` includes smoke and the original remaining non-idle lifecycle cases; `native-failures` contains the six Block 2C scenarios above. `native-installation` contains six native consent/package/restart cases. `native-foundation` contains the two B1a cases below. `store` contains three signed-store cases below. `registry-recovery` contains the existing `native.registry-refusal` plus two new cases below. `all` includes all thirty-two distinct cases; overlapping suite selections are not additive. `idle` runs only the long timing case. Scenarios set up their own fixture baseline and clean it up. A failed scenario stops the batch; later scenarios are Not run rather than being assessed against contaminated state.
+
+### Native foundation (B1a)
+
+| ID | Actual application assertions |
+|---|---|
+| `native.typed-contract` | Seven text/number/entity and optional/null/zero cases round-trip through the actual worker and are verified by the scripted model. Each requires approval and one dispatch. Changing a valid declaration without reload refuses the old approval with zero dispatch; a fresh approved call works. Native declarations retain the four-parameter limit. |
+| `native.legacy-migration` | Legacy capture grants, edited prompts/bindings and an interrupted archive checkpoint migrate through actual startup. Six restart transitions preserve inert edits/artifacts/user data, refuse re-enable and start no worker. A real Windows registry lock preserves the owner after failed uninstall; terminal installed/developer removal and fresh valid tools recover. |
+
+The [focused audit](../../docs/Extensions%202.0/NATIVE-FOUNDATION-AUDIT.md) records checks 2/22, the reproduced stale-quarantine repair, review and repeated evidence. Legacy profile fixtures are changed only between owned host lifetimes; the changed-declaration test edits only its owned manifest. This is not power-loss, ordinary-profile upgrade or authenticated-account certification. The permission-free fixture gate remains intact; a separate guarded account fixture is still a prerequisite.
+
+```powershell
+npm run test:agent -- --scenario native.typed-contract --fault stringified-number
+npm run test:agent -- --scenario native.legacy-migration --fault lost-migration-archive
+```
+
+Both deliberately corrupt actual disposable output/state and must give Fail, exit 1 and cleanup Pass. Each fault is accepted only with its named scenario. Typed verification is derived from real returned JSON; diagnostic journals retain a verification flag, not the argument/result payload.
 
 Reports identify supporting numbered checks in the existing extension plan. These links do not certify the whole numbered procedure or rewrite its ledger automatically. After reviewing complete real-app procedure coverage and its focused audit, record an automated Pass explicitly with its evidence class. Human results remain separately identified. The harness still excludes microphone/native-pill observations, including the ordinary-app portion of check 34; the user has separately completed that [2C audit handoff](../../docs/Extensions%202.0/NATIVE-FAILURE-AUDIT.md). The current ordinary-app handoff is in the installation audit.
 

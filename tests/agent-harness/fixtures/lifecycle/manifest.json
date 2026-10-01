@@ -77,6 +77,31 @@
         "utterances": ["harness oversized raw"]
       },
       {
+        "id": "typed_echo",
+        "title": "Harness typed echo",
+        "risk": "confirm",
+        "when": {},
+        "params": [
+          { "name": "text", "kind": "text", "required": true },
+          { "name": "count", "kind": "number", "required": true },
+          { "name": "entity", "kind": "entity", "required": true },
+          { "name": "note", "kind": "text", "required": false }
+        ],
+        "utterances": ["harness typed {text} {count} {entity}"]
+      },
+      {
+        "id": "typed_optional_echo",
+        "title": "Harness optional number echo",
+        "risk": "confirm",
+        "when": {},
+        "params": [
+          { "name": "text", "kind": "text", "required": true },
+          { "name": "entity", "kind": "entity", "required": true },
+          { "name": "count", "kind": "number", "required": false }
+        ],
+        "utterances": ["harness optional number {text} {entity}"]
+      },
+      {
         "id": "input_echo",
         "title": "Harness input echo",
         "risk": "confirm",

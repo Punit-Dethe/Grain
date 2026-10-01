@@ -1621,6 +1621,10 @@ impl ExtensionsRegistry {
                     }
                 }
                 state.records.insert(id.to_string(), replaced);
+            } else {
+                // No owner remains. Its refusal must not poison a later,
+                // independently validated installation/development project.
+                state.quarantined.remove(id);
             }
             true
         };
@@ -1638,8 +1642,10 @@ impl ExtensionsRegistry {
     /// Return the removed installed owner under the same mutation lock. A dev
     /// override's record/account is never returned for installed cleanup.
     pub fn uninstall_with_record(&self, id: &str) -> Result<Option<ExtensionRecord>> {
+        let _save = self.save_gate.lock().unwrap();
+        let mut state = self.state.write().unwrap();
+        let rollback = RecordEditSnapshot::capture(&state, id, &[]);
         let removed = {
-            let mut state = self.state.write().unwrap();
             state.removal_epoch = next_execution_generation()?;
             let dev_active = state
                 .records
@@ -1659,12 +1665,13 @@ impl ExtensionsRegistry {
                 let removed = state.records.remove(id);
                 if removed.is_some() {
                     Self::release_slots_locked(&mut state, id);
+                    state.quarantined.remove(id);
                 }
                 removed
             }
         };
         if removed.is_some() {
-            self.save()?;
+            self.persist_record_edit(&mut state, id, Some(rollback))?;
         }
         Ok(removed)
     }
@@ -2629,6 +2636,80 @@ mod tests {
         assert!(!reg.dev_overrides_installed("com.x.dev"));
         assert!(reg.unload_dev("com.x.dev").unwrap());
         assert!(!reg.is_installed("com.x.dev"));
+    }
+
+    #[test]
+    fn final_owner_removal_clears_only_its_quarantine_and_allows_fresh_dev() {
+        for parked in [false, true] {
+            let dir = tmp();
+            let reg = ExtensionsRegistry::load(dir.path(), false).unwrap();
+            reg.install(pack("tools", &[])).unwrap();
+            reg.install(pack("other", &[])).unwrap();
+            reg.quarantine("other", "other owner's refusal").unwrap();
+            if parked {
+                reg.load_dev(pack("tools", &[]), dir.path().join("old-project"))
+                    .unwrap();
+            }
+            reg.quarantine("tools", "old owner's retired capabilities")
+                .unwrap();
+            assert!(reg.uninstall("tools").unwrap());
+            if parked {
+                assert!(reg.dev_path("tools").is_some());
+                assert!(reg.quarantine_reason("tools").is_some());
+                assert!(reg.set_enabled("tools", true).is_err());
+                assert!(reg.unload_dev("tools").unwrap());
+            }
+            assert!(reg.record("tools").is_none());
+            assert!(reg.quarantine_reason("tools").is_none());
+            let restarted = ExtensionsRegistry::load(dir.path(), true).unwrap();
+            assert!(restarted.quarantine_reason("tools").is_none());
+            assert_eq!(
+                restarted.quarantine_reason("other").as_deref(),
+                Some("other owner's refusal")
+            );
+            restarted
+                .load_dev(pack("tools", &[]), dir.path().join("fresh-project"))
+                .unwrap();
+            assert!(restarted.set_enabled("tools", true).unwrap());
+        }
+    }
+
+    #[test]
+    fn failed_uninstall_restores_owner_quarantine_slots_and_revision() {
+        for mode in ["plain", "quarantined", "parked"] {
+            let dir = tmp();
+            let reg = ExtensionsRegistry::load(dir.path(), false).unwrap();
+            reg.install(pack("tools", &["output.destination"])).unwrap();
+            reg.take_slot("tools", "output.destination").unwrap();
+            reg.install(pack("other", &[])).unwrap();
+            if mode == "parked" {
+                reg.load_dev(pack("tools", &[]), dir.path().join("project"))
+                    .unwrap();
+            }
+            if mode != "plain" {
+                reg.quarantine("tools", "owned refusal").unwrap();
+            }
+            let before = serde_json::to_value(reg.record("tools")).unwrap();
+            let other = serde_json::to_value(reg.record("other")).unwrap();
+            let revision = reg.record_revision("tools");
+            let refusal = reg.quarantine_reason("tools");
+            let occupant = reg.slot_occupant("output.destination");
+            let saved = block_registry_save(&reg);
+            assert!(reg.uninstall_with_record("tools").is_err());
+            assert_eq!(serde_json::to_value(reg.record("tools")).unwrap(), before);
+            assert_eq!(serde_json::to_value(reg.record("other")).unwrap(), other);
+            assert_eq!(reg.record_revision("tools"), revision);
+            assert_eq!(reg.quarantine_reason("tools"), refusal);
+            assert_eq!(reg.slot_occupant("output.destination"), occupant);
+            restore_registry_file(&reg, &saved);
+            let restarted = ExtensionsRegistry::load(dir.path(), true).unwrap();
+            assert_eq!(
+                serde_json::to_value(restarted.record("tools")).unwrap(),
+                before
+            );
+            assert_eq!(restarted.quarantine_reason("tools"), refusal);
+            assert!(reg.uninstall_with_record("tools").unwrap().is_some());
+        }
     }
 
     #[test]

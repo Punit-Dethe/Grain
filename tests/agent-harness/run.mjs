@@ -22,6 +22,7 @@ import { scenarios, selectScenarios } from "./scenarios.mjs";
 import { installationHandlers } from "./installation.mjs";
 import { storeHandlers } from "./store.mjs";
 import { registryHandlers } from "./registry.mjs";
+import { foundationHandlers } from "./foundation.mjs";
 import { startStore, STORE_PUBLIC_KEY } from "./store-fixture.mjs";
 import { startModel } from "./model.mjs";
 import { developerReload } from "./developer.mjs";
@@ -53,7 +54,7 @@ for (let i = 2; i < process.argv.length; i++) {
 }
 if (options.help) {
   console.log(
-    "node tests/agent-harness/run.mjs [--list] [--suite smoke|lifecycle|idle|native-failures|native-installation|registry-recovery|store|all] [--scenario ID] [--binary path] [--output directory] [--focus-click]\nWindows real Agent/WebView2 acceptance. --focus-click exercises owned native header activation only for agent.reopen-escape. Build first with tests/agent-harness/build.ps1. No live account or model key required.",
+    "node tests/agent-harness/run.mjs [--list] [--suite smoke|lifecycle|idle|native-failures|native-foundation|native-installation|registry-recovery|store|all] [--scenario ID] [--binary path] [--output directory] [--focus-click]\nWindows real Agent/WebView2 acceptance. --focus-click exercises owned native header activation only for agent.reopen-escape. Build first with tests/agent-harness/build.ps1. No live account or model key required.",
   );
   process.exit(0);
 }
@@ -78,9 +79,25 @@ if (
     "stale-package",
     "unclosed-store",
     "lost-pointer",
+    "stringified-number",
+    "lost-migration-archive",
   ].includes(options.fault)
 )
   throw new Error("Unknown oracle fault");
+if (
+  options.fault === "stringified-number" &&
+  options.scenario !== "native.typed-contract"
+)
+  throw new Error(
+    "stringified-number requires --scenario native.typed-contract",
+  );
+if (
+  options.fault === "lost-migration-archive" &&
+  options.scenario !== "native.legacy-migration"
+)
+  throw new Error(
+    "lost-migration-archive requires --scenario native.legacy-migration",
+  );
 if (
   options.fault === "missing-escape" &&
   options.scenario !== "agent.reopen-escape"
@@ -555,6 +572,16 @@ async function changeRevision(revision) {
       (await readFile(path, "utf8")).replace(
         'error: { class: "network", message: "HARNESS_PRIVATE_ERROR_MARKER" }',
         'ok: { body: "Intentional error-to-success oracle fault" }',
+      ),
+    );
+  }
+  if (options.fault === "stringified-number") {
+    const path = assertWithin(root, join(root, "fixture/dist/main.js"));
+    await writeFile(
+      path,
+      (await readFile(path, "utf8")).replace(
+        "JSON.stringify(args)",
+        "JSON.stringify({ ...args, count: String(args.count) })",
       ),
     );
   }
@@ -1128,6 +1155,23 @@ const registrySuite = registryHandlers({
   fault: options.fault,
 });
 Object.assign(handlers, registrySuite.handlers);
+const foundationSuite = foundationHandlers({
+  root,
+  here,
+  status,
+  fixture,
+  request,
+  greeting,
+  activate,
+  waitFor,
+  events,
+  restartHost,
+  imported: installation.imported,
+  allow: installation.allow,
+  model: () => model,
+  fault: options.fault,
+});
+Object.assign(handlers, foundationSuite.handlers);
 let baselineTokens = 0;
 let cdpPort;
 try {
@@ -1263,6 +1307,7 @@ try {
         join(root, "fixture/manifest.json"),
       );
       if (
+        scenario.id !== "native.legacy-migration" &&
         !["native-installation", "registry-recovery", "store"].includes(
           scenario.suite,
         )
@@ -1295,6 +1340,7 @@ try {
         ...installation.takeEvidence(),
         ...storeSuite.takeEvidence(),
         ...registrySuite.takeEvidence(),
+        ...foundationSuite.takeEvidence(),
       ];
       assert.ok(
         !result.model.some((entry) => entry.state === "error"),
@@ -1309,6 +1355,7 @@ try {
         ...installation.takeEvidence(),
         ...storeSuite.takeEvidence(),
         ...registrySuite.takeEvidence(),
+        ...foundationSuite.takeEvidence(),
       ];
       try {
         result.snapshot = await status();

@@ -1,8 +1,51 @@
 import { createServer } from "node:http";
 import { randomUUID } from "node:crypto";
+import assert from "node:assert/strict";
 
 export const FIXTURE_ID = "com.grain.harness.lifecycle";
 const MAX_BODY = 1024 * 1024;
+
+// Nonsecret fixture inputs. The oracle checks what the real worker returned,
+// not a copy of the request retained by the harness.
+export const TYPED_INPUTS = {
+  typed_values: {
+    text: 'Grain café — "quoted"\nsecond line',
+    count: 42.75,
+    entity: "fixture:item-1",
+    note: "optional text",
+  },
+  typed_omitted: {
+    text: "omitted optionals",
+    count: -2,
+    entity: "fixture:item-2",
+  },
+  typed_null: {
+    text: "null optionals",
+    count: 3,
+    entity: "fixture:item-3",
+    note: null,
+  },
+  typed_zero: {
+    text: "zero and empty",
+    count: 0,
+    entity: "fixture:item-4",
+    note: "",
+  },
+  typed_number_null: {
+    text: "optional null number",
+    entity: "fixture:item-5",
+    count: null,
+  },
+  typed_number_omitted: {
+    text: "optional absent number",
+    entity: "fixture:item-6",
+  },
+  typed_number_zero: {
+    text: "optional zero number",
+    entity: "fixture:item-7",
+    count: 0,
+  },
+};
 
 export function nextReply(body) {
   if (
@@ -32,6 +75,8 @@ export function nextReply(body) {
     oversized_result: "Harness oversized result",
     oversized_raw: "Harness oversized raw",
     input_echo: "Harness input echo",
+    typed_echo: "Harness typed echo",
+    typed_optional_echo: "Harness optional number echo",
   };
   const invalidInputs = {
     invalid_arguments: { text: "safe", HARNESS_PRIVATE_ARGUMENT_MARKER: true },
@@ -40,9 +85,13 @@ export function nextReply(body) {
     oversized_arguments: { text: "x".repeat(65536) },
     malformed_arguments: {},
   };
-  const target = Object.hasOwn(invalidInputs, requested)
-    ? "input_echo"
-    : requested;
+  const target = Object.hasOwn(TYPED_INPUTS, requested)
+    ? requested.startsWith("typed_number_")
+      ? "typed_optional_echo"
+      : "typed_echo"
+    : Object.hasOwn(invalidInputs, requested)
+      ? "input_echo"
+      : requested;
   if (!titles[target]) throw new Error("Unknown harness instruction");
   const results = body.messages.filter((message) => message.role === "tool");
   if (
@@ -82,10 +131,39 @@ export function nextReply(body) {
     const expectedTitle = titles[target];
     if (!actionTools[0].description.includes(expectedTitle))
       throw new Error("Loaded the wrong native action schema");
-    const reply = call(actionTools[0].name, invalidInputs[requested] ?? {});
+    const reply = call(
+      actionTools[0].name,
+      TYPED_INPUTS[requested] ?? invalidInputs[requested] ?? {},
+    );
     if (requested === "malformed_arguments")
       reply.tool_calls[0].function.arguments = "{";
     return reply;
+  }
+  if (Object.hasOwn(TYPED_INPUTS, requested)) {
+    const content = results.at(-1).content;
+    // Changed-contract refusal is a legitimate negative outcome, never typed
+    // success. Runtime assertions still require typedVerified for every read.
+    if (content.startsWith("Failed ("))
+      return { content: `Harness observed refused typed call: ${content}` };
+    assert.ok(
+      content.startsWith("Harness typed reply: "),
+      "No real typed tool result",
+    );
+    const actual = JSON.parse(content.slice("Harness typed reply: ".length));
+    const expected = Object.fromEntries(
+      Object.entries(TYPED_INPUTS[requested]).filter(
+        ([, value]) => value !== null,
+      ),
+    );
+    assert.deepEqual(
+      actual,
+      expected,
+      "Native argument types/optional values changed",
+    );
+    return {
+      content: "Harness verified native typed result",
+      typedVerified: true,
+    };
   }
   return { content: `Harness observed result: ${results.at(-1).content}` };
 }
@@ -115,6 +193,7 @@ export async function startModel() {
         offered: body.tools.map((tool) => tool.function.name),
         returned: reply.tool_calls?.map((tool) => tool.function.name) ?? [],
         state: "received",
+        ...(reply.typedVerified ? { typedVerified: true } : {}),
       };
       journal.push(entry);
       if (journal.length > 4096) throw new Error("Model journal overflow");

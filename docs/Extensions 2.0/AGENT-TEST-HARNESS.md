@@ -2,6 +2,8 @@
 
 **Created:** 1 October 2026. **Status:** initial Agent harness implemented; current verification evidence is recorded in the progress companion. [Maintained runner instructions](../../tests/agent-harness/README.md) describe actual commands, coverage and limitations.
 
+**B1a accepted (1 October):** `native-foundation` adds actual legacy migration and typed native contract cases, bringing the maintained inventory to **32 distinct scenarios**. [Focused audit](NATIVE-FOUNDATION-AUDIT.md) records seven verified typed payloads, stale-declaration refusal without reload, six actual migration restart transitions, the reproduced terminal-owner quarantine repair, repeated acceptance and negative oracles. Checks 2/22 are reviewed automated Pass; current ledger **30 Pass / 23 Pending**. The permission-free fixture remains unchanged in authority; a separate guarded authenticated fixture is next. Historical inventories/results below retain their original counts.
+
 Companion to [the execution plan](MCP-EXTENSION-PLAN.md) and [the progress ledger](MCP-EXTENSION-PROGRESS.md). The user requested reproducible **Agent** testing, initially covering native extension lifecycle/tool calling and later deeper Agent, MCP and authentication behavior. Human participation remains where account sign-in or practical judgment is needed. This work supports the existing sequential acceptance blocks; it does not create another extension feature roadmap.
 
 ## What the harness should do
