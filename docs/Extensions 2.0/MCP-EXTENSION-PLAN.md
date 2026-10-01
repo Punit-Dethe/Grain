@@ -1,6 +1,6 @@
 # Tool-only native and MCP extensions: revised execution plan
 
-**Revised:** 29 September 2026. **Status:** execution resumed; retirement enforcement and migration foundation implemented on `extensions/tool-only-retirement`. Release gates remain open.
+**Revised:** 1 October 2026. **Status:** implementation and acceptance runs paused for the user's dependency/reuse decision. The minimal library stack is selected below; no dependency upgrade or application change has been applied. Retirement enforcement and migration foundation remain on `extensions/tool-only-retirement`. Release gates remain open.
 
 **Maintained progress companion:** [Implementation progress, deviations and grouped user tests](MCP-EXTENSION-PROGRESS.md). Update that report alongside this plan after each implementation slice and when user test results arrive. This plan remains authoritative for delivery gates and full numbered test procedures.
 
@@ -28,6 +28,48 @@ The 27 September implementation closes retired host access first. Previously pau
 ## Testing-first execution order — 1 October correction
 
 The user clarified that testing the existing implementation must finish before further platform improvements. Freeze new extension/Agent product features during this pass. Work through the existing acceptance matrix in focused modules, extend the maintained harness where needed, reproduce/fix actual failures, and audit/retest each module. Missing account/provider/desktop prerequisites remain Pending/Blocked, never Pass. Do not advance feature implementation because only the convenient automatic checks passed. After the foundation testing pass is complete, resume the remaining implementation plan one block at a time, with its own acceptance and audit. The original 53 checks keep their numbers; resource/upgrade and whole-phase gates remain separately explicit.
+
+## Library ownership decision — 1 October 2026
+
+The user paused execution to settle reuse before more testing or implementation. Keep Grain's existing Agent and tool-only native/MCP adapters. Select the official Rust MCP SDK as the protocol implementation, established libraries for standard OAuth/schema/storage operations, and official MCP conformance as additional test infrastructure. Do not introduce a second agent framework, gateway, runtime or orchestration engine for this release. This changes maintenance ownership and future delivery slices, not the extension product boundary or acceptance results.
+
+### Short source check: what comparable hosts actually use
+
+The following are branch snapshots checked on 1 October, not claims about every shipped binary or independently measured reliability. Reference links may advance; implementation dependencies and CI actions must use locked releases/commits.
+
+| Host | Verified implementation | Pattern applicable to Grain |
+|---|---|---|
+| Goose | Its [workspace manifest](https://github.com/aaif-goose/goose/blob/main/Cargo.toml) declares `rmcp` with a 3.4.1 minimum. The [core manifest](https://github.com/aaif-goose/goose/blob/main/crates/goose/Cargo.toml) enables SDK client/auth transports and uses `oauth2`. Its [HTTP adapter](https://github.com/aaif-goose/goose/blob/main/crates/goose/src/agents/extension_manager/streamable_http.rs) uses SDK authorization/transport, with a [host credential store](https://github.com/aaif-goose/goose/blob/main/crates/goose/src/oauth/persist.rs). | Use the official Rust protocol library plus an application-owned adapter. Borrow explicit tool ownership and cache invalidation from its [extension manager](https://github.com/aaif-goose/goose/blob/main/crates/goose/src/agents/extension_manager/mod.rs); do not import its wider platform capabilities. |
+| OpenCode | Its [manifest](https://github.com/anomalyco/opencode/blob/dev/packages/opencode/package.json) selects the official TypeScript MCP SDK and AI SDK provider packages. Its [MCP client](https://github.com/anomalyco/opencode/blob/dev/packages/opencode/src/mcp/index.ts) and [OAuth provider](https://github.com/anomalyco/opencode/blob/dev/packages/opencode/src/mcp/oauth-provider.ts) retain application connection/auth ownership. | Distinguish authorization required from missing client registration; close failed connection attempts and bind stored credentials to the configured server. Its file-based storage is not Grain's vault policy. |
+| Cline | Its [core manifest](https://github.com/cline/cline/blob/main/sdk/packages/core/package.json) depends on the official TypeScript MCP SDK; the [VS Code MCP hub](https://github.com/cline/cline/blob/main/apps/vscode/src/services/mcp/McpHub.ts) owns connections, refresh scheduling and disposal. | Reuse the SDK while testing configuration churn and stale catalog publication in the host. Its resident connection/watch infrastructure is not a requirement for Grain. |
+| Rig | Its [native MCP adapter](https://github.com/0xPlaygrounds/rig/blob/main/crates/rig-rmcp/src/native.rs) wraps an existing `rmcp` server sink and translates tool calls/results. | A Rust LLM adapter remains a possible later reuse opportunity; this wrapper does not replace Grain's credential, approval or native-package boundaries. No Rig dependency is selected now. |
+
+### Selected stack and responsibility split
+
+| Responsibility | Selected component | Grain still owns |
+|---|---|---|
+| MCP wire, negotiation and MCP OAuth | Official [`rmcp`](https://github.com/modelcontextprotocol/rust-sdk); current lockfile 3.1.4, selected upgrade candidate [3.5.0](https://github.com/modelcontextprotocol/rust-sdk/releases/tag/rmcp-v3.5.0) | Exact identity/approval, supported capability profile, connection lifetime and bounded network policy. Preserve client/auth/HTTP-only feature selection; no roots, sampling, prompts, apps or local-process support is added. |
+| Native API OAuth building blocks | [`oauth2` 5.0](https://docs.rs/oauth2/5.0.0/oauth2/), planned for R3 after the native baseline is accepted | Provider declarations, callback ownership, issuer/account/scopes, vault publication, cancellation and bounded/redacted responses. Use the library for authorization-code/PKCE/exchange/refresh building blocks, not a second MCP auth manager. Native API and MCP grants remain distinct. |
+| Authoritative JSON Schema validation | Existing `jsonschema = 0.58.1`, default features off | Complexity limits, offline reference policy, supported dialects and privacy of errors. Do not handwrite another schema evaluator. |
+| HTTPS and async execution | Existing `reqwest` and Tokio | Deadlines, byte limits, credential destination policy and cleanup. Keep the current app 0.12/MCP 0.13 HTTP boundary until separately verified; no unrelated HTTP migration is bundled. |
+| Secret persistence | Existing `keyring` OS-vault integration | Account/instance keys, disconnect generations, transactional activation and reconciliation. Do not replace it with a framework's default token file. |
+| Protocol acceptance | Official [MCP conformance](https://github.com/modelcontextprotocol/conformance), testing only | A guarded adapter exercising Grain's production MCP wrappers, frozen applicable requirements, required-check coverage and explicit unsupported/skip reports. SDK conformance alone does not certify Grain. |
+| Agent execution, tool discovery and native extensions | Existing Grain contracts and maintained `tests/agent-harness/` | Selective schema exposure, approvals, uncertain outcomes, worker/package ownership, real-app tests and live-account certification. No new search service or durable workflow engine is needed. |
+
+`rmcp` 3.5.0 offers an [optional credential refresh guard](https://github.com/modelcontextprotocol/rust-sdk/blob/rmcp-v3.5.0/crates/rmcp/src/transport/auth.rs). Its default provides no cross-client coordination. Connect that hook to Grain's credential identity if it replaces duplicated coordination safely; retain the existing per-provider serialization until overlapping refresh and logout tests prove equivalent ownership. Upgrading does not automatically fix account races.
+
+### Bounded delivery order
+
+1. **Decision/documentation now:** record this stack and pause status. No product changes, new test verdicts or completed phase gates are implied.
+2. **Resume existing foundation acceptance first:** finish the current native/account/input prerequisites and their focused audit. Preserve all 53 check numbers and prior evidence. Do not start a framework rewrite or provider expansion during this pass.
+3. **R2 SDK ownership slice:** map custom code in `grain_mcp.rs`, `grain_mcp_http.rs`, `grain_mcp_bounded_http.rs` and `grain_mcp_session.rs` to upstream behavior. Classify each piece as upstream-owned, required Grain policy, or removable duplication. Upgrade to the chosen SDK candidate in an isolated change, with compatibility review and a locked build; remove wrappers only when equivalent response bounds, cancellation and outcome behavior are demonstrated. Keep source ownership and uncertain-write protections.
+4. **R2 protocol acceptance slice:** integrate a pinned conformance release/commit against the real production MCP boundary. Test only claimed protocol versions/capabilities, record required pass/fail/unsupported/skipped totals, and keep adversarial memory/account/outcome tests. Controlled endpoints and OAuth fixtures must be test-scoped; do not weaken production endpoint or TLS policy. Replace duplicate protocol fixtures only after matching coverage exists.
+5. **R3 native OAuth simplification:** move standard OAuth operations to `oauth2` after recording baseline behavior. Preserve account-pointer/vault formats or explicitly test migration. Test refusal before dispatch, token rotation, logout/late completion, callback cleanup and no secret exposure. Then certify one real provider with the human-assisted login step.
+6. **R4–R6:** retain selective tool discovery, approval/auth continuation, the native-plus-MCP/two-provider workflows and existing release gates. Accept/audit each block before expanding the integration ladder. Report supported providers and memory/latency measurements rather than promising universal compatibility.
+
+Success is fewer generic behaviors maintained in Grain, unchanged tool-only boundaries and demonstrated behavior through the production adapters. Do not retain an old custom implementation beside its replacement as a second production path. Do not remove host guards on the strength of an upstream feature name or a green SDK benchmark. No migration-time or RAM saving is claimed without measurement.
+
+Kit, `mcp-agent`, `mcp-use`, ToolHive, Goose-as-a-runtime and `mcp-proxy` are not selected dependencies for this release. They remain targeted references. Reopen a gateway/runtime decision only for a concrete requirement such as managed local MCP execution or enterprise aggregation. Reopen Rig only when measured provider-adapter maintenance and a focused compatibility prototype justify replacing that layer. Generic retries, hedging, mirroring and caching cannot be applied to uncertain writes without a verified provider deduplication contract.
 
 ## Current execution evidence — 27 September 2026
 
@@ -791,4 +833,4 @@ During implementation run relevant SDK/core/backend tests, Rust checks and affec
 
 **Separate future decisions:** arbitrary local executables/stdio, custom endpoints, optional multi-round tool interactions, long jobs, rich result rendering and durable restart-resume. None may weaken the boundary above. Agent context improvements belong to a separate workstream and are not extension prerequisites.
 
-Implementation has resumed with **R0.1 and R1.1/R1.2 enforcement and migration foundation**. Continue with R1.3 consumer cleanup and complete the remaining R1 evidence before minimal native/MCP execution certification. Reuse only paused changes that pass scope review and fresh tests. Do not resume broad extension-platform development or provider expansion from the previous plan.
+**Current pause:** implementation and acceptance runs are stopped for the user's dependency/reuse decision; the selected stack and future order are recorded above. When execution resumes, complete the existing native foundation acceptance/audit before the R2 SDK/conformance and R3 OAuth reuse slices. R1 consumer/migration evidence and every whole-phase gate remain open where already recorded. Reuse only changes that pass scope review and fresh tests. Do not resume broad extension-platform development or provider expansion from the previous plan.
