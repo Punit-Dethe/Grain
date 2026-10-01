@@ -45,6 +45,40 @@ test("scenario IDs are unique and each suite is explicit", () => {
 });
 
 test(
+  "native Escape refusal records diagnostics without sending input",
+  { skip: process.platform !== "win32" },
+  async () => {
+    // The Node test process owns no Grain Assist window. Never borrow another
+    // application's PID or synthesize input for this refusal check.
+    await assert.rejects(
+      exec(
+        "powershell.exe",
+        [
+          "-NoProfile",
+          "-File",
+          join(here, "native-input.ps1"),
+          "-OwnerPid",
+          String(process.pid),
+        ],
+        { timeout: 10000, windowsHide: true, maxBuffer: 16384 },
+      ),
+      (error) => {
+        assert.match(error.stderr, /Owned visible Agent window missing/);
+        const observation = JSON.parse(error.stdout.trim());
+        assert.equal(observation.schema, 1);
+        assert.equal(observation.kind, "native-escape");
+        assert.equal(observation.accepted, 0);
+        assert.equal(observation.focusClickAccepted, 0);
+        assert.equal(observation.foregroundBefore, false);
+        assert.equal(observation.foregroundAfter, false);
+        assert.equal(observation.foregroundRequested, false);
+        return true;
+      },
+    );
+  },
+);
+
+test(
   "owned registry lock denies publication and releases after cancellation",
   { skip: process.platform !== "win32" },
   async () => {

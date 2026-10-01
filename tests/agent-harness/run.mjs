@@ -39,7 +39,8 @@ const repo = resolve(here, "../..");
 const options = { suite: "smoke" };
 for (let i = 2; i < process.argv.length; i++) {
   const option = process.argv[i];
-  if (["--list", "--help"].includes(option)) options[option.slice(2)] = true;
+  if (["--list", "--help", "--focus-click"].includes(option))
+    options[option.slice(2)] = true;
   else if (
     ["--suite", "--scenario", "--binary", "--output", "--fault"].includes(
       option,
@@ -52,7 +53,7 @@ for (let i = 2; i < process.argv.length; i++) {
 }
 if (options.help) {
   console.log(
-    "node tests/agent-harness/run.mjs [--list] [--suite smoke|lifecycle|idle|native-failures|native-installation|registry-recovery|store|all] [--scenario ID] [--binary path] [--output directory]\nWindows real Agent/WebView2 acceptance. Build first with tests/agent-harness/build.ps1. No live account or model key required.",
+    "node tests/agent-harness/run.mjs [--list] [--suite smoke|lifecycle|idle|native-failures|native-installation|registry-recovery|store|all] [--scenario ID] [--binary path] [--output directory] [--focus-click]\nWindows real Agent/WebView2 acceptance. --focus-click exercises owned native header activation only for agent.reopen-escape. Build first with tests/agent-harness/build.ps1. No live account or model key required.",
   );
   process.exit(0);
 }
@@ -65,6 +66,8 @@ const selected = options.scenario
   ? scenarios.filter((scenario) => scenario.id === options.scenario)
   : selectScenarios(options.suite);
 if (!selected.length) throw new Error(`Unknown scenario: ${options.scenario}`);
+if (options["focus-click"] && options.scenario !== "agent.reopen-escape")
+  throw new Error("--focus-click requires --scenario agent.reopen-escape");
 if (
   options.fault &&
   ![
@@ -131,6 +134,7 @@ const report = {
     kind: "webview2-cdp",
     node: process.version,
     architecture: process.arch,
+    focusClick: Boolean(options["focus-click"]),
   },
   commit: "unknown",
   dirtyFiles: [],
@@ -442,19 +446,61 @@ async function failureCall(
     elapsedAfterApprovalMs: performance.now() - approvedAt,
   };
 }
+const inputEvidence = [];
+function takeInputEvidence() {
+  return inputEvidence.splice(0);
+}
 async function escapePanel(page) {
-  if (options.fault !== "missing-escape")
-    await exec(
-      "powershell.exe",
-      [
-        "-NoProfile",
-        "-File",
-        join(here, "native-input.ps1"),
-        "-OwnerPid",
-        String(child.pid),
-      ],
-      { timeout: 10000, windowsHide: true },
-    );
+  if (options.fault !== "missing-escape") {
+    let output;
+    let failure;
+    try {
+      output = await exec(
+        "powershell.exe",
+        [
+          "-NoProfile",
+          "-File",
+          join(here, "native-input.ps1"),
+          "-OwnerPid",
+          String(child.pid),
+          ...(options["focus-click"] ? ["-FocusByClick"] : []),
+        ],
+        { timeout: 10000, windowsHide: true, maxBuffer: 16384 },
+      );
+    } catch (error) {
+      output = error;
+      failure = error;
+    }
+    // Preserve guarded refusals as well as accepted input. A successful SendInput
+    // call is not proof that the shortcut handler received the key.
+    let observation;
+    try {
+      observation = JSON.parse(String(output.stdout ?? "").trim());
+    } catch (error) {
+      inputEvidence.push({
+        schema: 1,
+        kind: "native-escape-diagnostic-missing",
+      });
+      // Compilation/startup failures may predate the adapter's finally block.
+      // Retain their original error rather than replacing it with a JSON error.
+      throw failure ?? error;
+    }
+    assert.equal(observation.schema, 1);
+    assert.equal(observation.kind, "native-escape");
+    assert.ok(inputEvidence.length < 64, "Native input evidence overflowed");
+    inputEvidence.push(observation);
+    if (failure) throw failure;
+    assert.equal(observation.accepted, 2);
+    assert.equal(observation.foregroundBefore, true);
+    assert.equal(observation.heldModifiers, "");
+    assert.equal(observation.escapeHeld, false);
+    if (options["focus-click"]) {
+      assert.equal(observation.focusClickAccepted, 2);
+      assert.equal(observation.physicalCoordinates, true);
+    }
+  } else {
+    inputEvidence.push({ kind: "native-escape-withheld", schema: 1 });
+  }
   await waitFor("Escape window destruction", () => page.isClosed(), {
     timeoutMs: 8000,
   });
@@ -1245,6 +1291,7 @@ try {
       result.events = end.events.slice(eventStart);
       result.model = model.journal.slice(modelStart);
       result.observations = [
+        ...takeInputEvidence(),
         ...installation.takeEvidence(),
         ...storeSuite.takeEvidence(),
         ...registrySuite.takeEvidence(),
@@ -1257,13 +1304,14 @@ try {
     } catch (error) {
       result.status = error instanceof Blocked ? "Blocked" : "Fail";
       result.error = String(error.message ?? error).slice(0, 2500);
+      result.observations = [
+        ...takeInputEvidence(),
+        ...installation.takeEvidence(),
+        ...storeSuite.takeEvidence(),
+        ...registrySuite.takeEvidence(),
+      ];
       try {
         result.snapshot = await status();
-        result.observations = [
-          ...installation.takeEvidence(),
-          ...storeSuite.takeEvidence(),
-          ...registrySuite.takeEvidence(),
-        ];
       } catch {
         /* host might have exited */
       }
