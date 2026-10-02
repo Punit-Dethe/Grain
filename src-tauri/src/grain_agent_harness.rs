@@ -33,6 +33,8 @@ struct Marker {
     #[serde(default)]
     mcp_live_deepwiki: bool,
     #[serde(default)]
+    mcp_live_linear: bool,
+    #[serde(default)]
     mcp_auth: bool,
 }
 
@@ -63,6 +65,10 @@ fn read_marker(root: &Path) -> Result<Marker, String> {
     }
     let marker: Marker = serde_json::from_slice(&bytes).map_err(|_| "Invalid harness marker")?;
     if marker.schema != 1
+        || (marker.mcp_live_linear
+            && (marker.mcp_live_deepwiki || marker.mcp_auth || marker.mcp_port.is_some()
+                || marker.mcp_peer_port.is_some() || marker.auth_port.is_some()
+                || marker.store_port.is_some()))
         || (marker.mcp_live_deepwiki && marker.mcp_port.is_some())
         || (marker.mcp_auth && (marker.mcp_port.is_none() || marker.mcp_live_deepwiki))
         || (marker.mcp_peer_port.is_some() && !marker.mcp_auth)
@@ -149,6 +155,12 @@ pub(super) fn mcp_auth_enabled() -> bool {
     CONFIG.get().is_some_and(|value| value.marker.mcp_auth)
 }
 
+pub(super) fn live_linear_enabled() -> bool {
+    CONFIG
+        .get()
+        .is_some_and(|value| value.marker.mcp_live_linear)
+}
+
 pub(super) fn mcp_peer_config() -> Result<(PathBuf, u16), String> {
     let value = CONFIG.get().ok_or("MCP peer fixture is not initialized")?;
     let port = value
@@ -232,8 +244,9 @@ pub fn configure(app: &AppHandle) -> Result<(), String> {
     // Preserve only this run's explicitly enabled peer across real restarts.
     // Ordinary provider entries remain excluded from the isolated host.
     settings.mcp_enabled_providers.retain(|id| {
-        ((config().marker.mcp_port.is_some() || live_deepwiki_enabled())
-            && id == crate::grain_agent_harness_mcp::PROVIDER_ID)
+        (live_linear_enabled() && id == crate::grain_agent_harness_mcp::LINEAR_PROVIDER_ID)
+            || ((config().marker.mcp_port.is_some() || live_deepwiki_enabled())
+                && id == crate::grain_agent_harness_mcp::PROVIDER_ID)
             || (mcp_auth_enabled()
                 && [
                     crate::grain_agent_harness_mcp::AUTH_PROVIDER_ID,
@@ -759,6 +772,35 @@ mod tests {
         ] {
             std::fs::write(root.path().join(".grain-agent-harness.json"), serde_json::to_vec(&serde_json::json!({"schema":1,"runId":uuid::Uuid::new_v4(),"modelPort":9000,"storePort":9001,"authPort":9002,"mcpPort":9003,"mcpAuth":auth,"mcpPeerPort":port})).unwrap()).unwrap();
             assert_eq!(read_marker(root.path()).is_ok(), valid);
+        }
+    }
+
+    #[test]
+    fn live_linear_marker_cannot_mix_account_or_fixture_sources() {
+        let root = tempfile::tempdir().unwrap();
+        let marker = serde_json::json!({"schema":1,"runId":uuid::Uuid::new_v4(),"modelPort":9000,"mcpLiveLinear":true});
+        std::fs::write(
+            root.path().join(".grain-agent-harness.json"),
+            serde_json::to_vec(&marker).unwrap(),
+        )
+        .unwrap();
+        assert!(read_marker(root.path()).is_ok());
+        for (key, value) in [
+            ("mcpLiveDeepwiki", serde_json::json!(true)),
+            ("mcpAuth", serde_json::json!(true)),
+            ("mcpPort", serde_json::json!(9001)),
+            ("mcpPeerPort", serde_json::json!(9002)),
+            ("authPort", serde_json::json!(9003)),
+            ("storePort", serde_json::json!(9004)),
+        ] {
+            let mut mixed = marker.clone();
+            mixed[key] = value;
+            std::fs::write(
+                root.path().join(".grain-agent-harness.json"),
+                serde_json::to_vec(&mixed).unwrap(),
+            )
+            .unwrap();
+            assert!(read_marker(root.path()).is_err());
         }
     }
 }

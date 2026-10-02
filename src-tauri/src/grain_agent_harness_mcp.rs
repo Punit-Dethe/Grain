@@ -15,7 +15,16 @@ pub(crate) const ACCOUNT_IDS: [&str; 4] = [
     PEER_CLIENT_PROVIDER_ID,
 ];
 pub(crate) const LIVE_ENDPOINT: &str = "https://mcp.deepwiki.com/mcp";
+pub(crate) const LINEAR_PROVIDER_ID: &str = "grain-harness-linear";
+pub(crate) const LINEAR_ENDPOINT: &str = "https://mcp.linear.app/mcp/readonly";
 const LIVE_REPOSITORY: &str = "modelcontextprotocol/rust-sdk";
+
+pub(crate) fn linear_endpoint() -> Result<&'static str, String> {
+    if !super::grain_agent_harness::live_linear_enabled() {
+        return Err("Live Linear preflight is not enabled".into());
+    }
+    Ok(LINEAR_ENDPOINT)
+}
 
 pub(crate) fn endpoint() -> Result<String, String> {
     if super::grain_agent_harness::live_deepwiki_enabled() {
@@ -86,6 +95,12 @@ pub(crate) fn validate_live_post(
     message: &rmcp::model::ClientJsonRpcMessage,
     has_auth: bool,
 ) -> Result<(), String> {
+    if uri == LINEAR_ENDPOINT {
+        linear_endpoint()?;
+        let value =
+            serde_json::to_value(message).map_err(|_| "Invalid Linear preflight message")?;
+        return validate_linear_method(&value);
+    }
     if uri != LIVE_ENDPOINT {
         return Ok(());
     }
@@ -97,6 +112,24 @@ pub(crate) fn validate_live_post(
         super::grain_agent_harness::observe("mcp-live-attempt", "mcp.grain-harness", action, "");
     }
     Ok(())
+}
+
+// This preflight has no account-read allowance. Even an unexpected successful
+// callback cannot make any tool executable through the real Agent adapter.
+fn validate_linear_method(value: &serde_json::Value) -> Result<(), String> {
+    if [
+        "initialize",
+        "notifications/initialized",
+        "server/discover",
+        "tools/list",
+        "ping",
+    ]
+    .contains(&value["method"].as_str().unwrap_or_default())
+    {
+        Ok(())
+    } else {
+        Err("Linear consent preflight does not permit tool execution".into())
+    }
 }
 
 fn validated_live_action(value: &serde_json::Value) -> Result<Option<&str>, String> {
@@ -167,6 +200,69 @@ mod tests {
     }
 
     #[test]
+    fn linear_preflight_refuses_writes_broader_scopes_and_unowned_callbacks() {
+        let mut good = reqwest_mcp::Url::parse("https://mcp.linear.app/authorize").unwrap();
+        good.query_pairs_mut().extend_pairs([
+            ("response_type", "code"),
+            ("client_id", "test-client"),
+            ("state", "test-state-owned-1234567890"),
+            ("scope", "read"),
+            ("resource", LINEAR_ENDPOINT),
+            ("code_challenge_method", "S256"),
+            (
+                "code_challenge",
+                "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+            ),
+            ("redirect_uri", "http://127.0.0.1:9100/mcp/oauth/callback"),
+        ]);
+        assert!(validate_linear_consent_url(good.as_str()).is_ok());
+        for (key, replacement) in [
+            ("scope", "read write"),
+            ("scope", "write"),
+            ("scope", "openid"),
+            ("resource", "https://mcp.linear.app/mcp"),
+            ("code_challenge_method", "plain"),
+            ("code_challenge", "short"),
+            ("state", "short"),
+            ("client_id", ""),
+            ("redirect_uri", "http://localhost:9100/mcp/oauth/callback"),
+            ("redirect_uri", "http://127.0.0.1:7124/mcp/oauth/callback"),
+            (
+                "redirect_uri",
+                "http://127.0.0.1:9100/mcp/oauth/callback?code=private",
+            ),
+        ] {
+            let pairs: Vec<_> = good
+                .query_pairs()
+                .map(|(k, v)| {
+                    let v = if k == key {
+                        replacement.to_string()
+                    } else {
+                        v.into_owned()
+                    };
+                    (k.into_owned(), v)
+                })
+                .collect();
+            let mut bad = good.clone();
+            bad.set_query(None);
+            bad.query_pairs_mut().extend_pairs(pairs);
+            assert!(validate_linear_consent_url(bad.as_str()).is_err());
+        }
+        let mut duplicate = good.clone();
+        duplicate.query_pairs_mut().append_pair("scope", "read");
+        assert!(validate_linear_consent_url(duplicate.as_str()).is_err());
+        for method in [
+            "tools/call",
+            "resources/read",
+            "prompts/get",
+            "notifications/message",
+        ] {
+            assert!(validate_linear_method(&serde_json::json!({"method":method})).is_err());
+        }
+        assert!(validate_linear_method(&serde_json::json!({"method":"initialize"})).is_ok());
+    }
+
+    #[test]
     fn fixed_consent_handoffs_keep_provider_and_generation_ownership() {
         let primary = account_slot(AUTH_PROVIDER_ID).unwrap();
         let peer = account_slot(PEER_PROVIDER_ID).unwrap();
@@ -219,6 +315,7 @@ pub enum Target {
     Client,
     Peer,
     PeerClient,
+    Linear,
 }
 
 #[tauri::command]
@@ -250,6 +347,10 @@ pub async fn agent_harness_mcp(
             auth_endpoint(PEER_CLIENT_PROVIDER_ID)?;
             PEER_CLIENT_PROVIDER_ID
         }
+        Target::Linear => {
+            linear_endpoint()?;
+            LINEAR_PROVIDER_ID
+        }
     };
     match operation {
         Operation::Enable | Operation::Disable => {
@@ -270,7 +371,7 @@ pub async fn agent_harness_mcp(
             Ok(serde_json::json!({"connected": false}))
         }
         Operation::Authorization => {
-            if !ACCOUNT_IDS.contains(&id) {
+            if !ACCOUNT_IDS.contains(&id) && id != LINEAR_PROVIDER_ID {
                 return Err("MCP account fixture is not enabled".into());
             }
             let mut slot = AUTHORIZATION
@@ -284,11 +385,14 @@ pub async fn agent_harness_mcp(
     }
 }
 
-// Four fixed handoffs; taking/cancelling one cannot consume another provider.
-static AUTHORIZATION: std::sync::Mutex<[Option<(uuid::Uuid, String)>; 4]> =
-    std::sync::Mutex::new([None, None, None, None]);
+// Five fixed handoffs; taking/cancelling one cannot consume another provider.
+static AUTHORIZATION: std::sync::Mutex<[Option<(uuid::Uuid, String)>; 5]> =
+    std::sync::Mutex::new([None, None, None, None, None]);
 
 fn account_slot(id: &str) -> Result<usize, String> {
+    if id == LINEAR_PROVIDER_ID {
+        return Ok(4);
+    }
     ACCOUNT_IDS
         .iter()
         .position(|candidate| *candidate == id)
@@ -315,20 +419,75 @@ impl Drop for ConsentGuard {
 /// Replace only the fixed fixture's browser handoff, never SDK state/PKCE/exchange.
 /// Consumed privately by the runner; the URL is not status or report evidence.
 pub(crate) fn capture_authorization(id: &str, raw: &str) -> Result<Option<ConsentGuard>, String> {
-    if !ACCOUNT_IDS.contains(&id) {
+    if id == LINEAR_PROVIDER_ID {
+        linear_endpoint()?;
+        validate_linear_consent_url(raw)?;
+    } else if !ACCOUNT_IDS.contains(&id) {
         return Ok(None);
+    } else {
+        if !super::grain_agent_harness::mcp_auth_enabled() {
+            return Err("MCP account fixture is not enabled".into());
+        }
+        let (_, port) = account_config(id)?;
+        validate_consent_url(raw, port)?;
     }
-    if !super::grain_agent_harness::mcp_auth_enabled() {
-        return Err("MCP account fixture is not enabled".into());
-    }
-    let (_, port) = account_config(id)?;
-    validate_consent_url(raw, port)?;
     let owner = uuid::Uuid::new_v4();
     let slot = account_slot(id)?;
     AUTHORIZATION
         .lock()
         .map_err(|_| "Consent handoff unavailable")?[slot] = Some((owner, raw.into()));
     Ok(Some(ConsentGuard { owner, slot }))
+}
+
+fn validate_linear_consent_url(raw: &str) -> Result<(), String> {
+    let rejected = || "Linear preflight requires exact read-only SDK consent".to_string();
+    let url = reqwest_mcp::Url::parse(raw).map_err(|_| rejected())?;
+    if raw.len() > 8192
+        || url.origin().ascii_serialization() != "https://mcp.linear.app"
+        || url.path() != "/authorize"
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.fragment().is_some()
+    {
+        return Err(rejected());
+    }
+    let pairs: std::collections::BTreeMap<_, _> = url.query_pairs().collect();
+    if pairs.len() != url.query_pairs().count()
+        || pairs.len() != 8
+        || pairs.get("scope").map(|s| s.as_ref()) != Some("read")
+        || pairs.get("resource").map(|s| s.as_ref()) != Some(LINEAR_ENDPOINT)
+        || pairs.get("response_type").map(|s| s.as_ref()) != Some("code")
+        || pairs.get("code_challenge_method").map(|s| s.as_ref()) != Some("S256")
+        || !pairs
+            .get("state")
+            .is_some_and(|s| s.len() >= 16 && s.len() <= 4096)
+        || !pairs
+            .get("client_id")
+            .is_some_and(|s| !s.is_empty() && s.len() <= 4096)
+        || !pairs.get("code_challenge").is_some_and(|s| {
+            s.len() == 43
+                && s.bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+        })
+    {
+        return Err(rejected());
+    }
+    let redirect = reqwest_mcp::Url::parse(pairs.get("redirect_uri").ok_or_else(rejected)?)
+        .map_err(|_| rejected())?;
+    if redirect.scheme() != "http"
+        || redirect.host_str() != Some("127.0.0.1")
+        || !redirect
+            .port()
+            .is_some_and(|p| p != 0 && p != 7124 && p != 17124)
+        || redirect.path() != "/mcp/oauth/callback"
+        || !redirect.username().is_empty()
+        || redirect.password().is_some()
+        || redirect.query().is_some()
+        || redirect.fragment().is_some()
+    {
+        return Err(rejected());
+    }
+    Ok(())
 }
 
 fn validate_consent_url(raw: &str, port: u16) -> Result<(), String> {

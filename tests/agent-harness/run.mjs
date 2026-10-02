@@ -39,6 +39,7 @@ import {
 import { workflowHandlers } from "./workflow.mjs";
 import { configuredModel } from "./live-model.mjs";
 import { liveHandlers, LIVE_ENDPOINT, LIVE_REPOSITORY } from "./mcp-live.mjs";
+import { linearHandlers, LINEAR_ENDPOINT } from "./mcp-linear.mjs";
 import {
   cases as conformanceCases,
   startConformanceRelay,
@@ -81,7 +82,7 @@ for (let i = 2; i < process.argv.length; i++) {
 }
 if (options.help) {
   console.log(
-    "node tests/agent-harness/run.mjs [--list] [--suite smoke|lifecycle|idle|agent-workflow|agent-live|agent-interruption|agent-interruption-live|native-failures|native-foundation|native-auth|native-auth-schedules|mcp|mcp-auth|mcp-independence|mcp-refresh|mcp-foundation|mcp-live|native-installation|registry-recovery|store|all] [--scenario ID] [--binary path] [--output directory] [--focus-click] [--live-configured]\nWindows real Agent/WebView2 acceptance. Build first with tests/agent-harness/build.ps1. Scripted suites need no model key. agent-live and agent-interruption-live require explicit --live-configured and uses only the selected ordinary Grain model with disposable tool objects; it is excluded from all. native-auth, Agent workflow/interruption suites and MCP fixtures require Python cryptography for owned TLS. mcp-foundation runs nineteen controlled transport/OAuth cases in one host; mcp-independence selects its two independent-provider cases; mcp-refresh selects its two actual-expiry/recovery cases. mcp-live is opt-in public DeepWiki acceptance and excluded from all. --focus-click is confined to agent.reopen-escape.",
+    "node tests/agent-harness/run.mjs [--list] [--suite smoke|lifecycle|idle|agent-workflow|agent-live|agent-interruption|agent-interruption-live|native-failures|native-foundation|native-auth|native-auth-schedules|mcp|mcp-auth|mcp-independence|mcp-refresh|mcp-foundation|mcp-live|mcp-linear-preflight|native-installation|registry-recovery|store|all] [--scenario ID] [--binary path] [--output directory] [--focus-click] [--live-configured]\nWindows real Agent/WebView2 acceptance. Build first with tests/agent-harness/build.ps1. Scripted suites need no model key. agent-live and agent-interruption-live require explicit --live-configured and uses only the selected ordinary Grain model with disposable tool objects; it is excluded from all. native-auth, Agent workflow/interruption suites and MCP fixtures require Python cryptography for owned TLS. mcp-foundation runs nineteen controlled transport/OAuth cases in one host; mcp-independence selects its two independent-provider cases; mcp-refresh selects its two actual-expiry/recovery cases. mcp-live is opt-in public DeepWiki acceptance and excluded from all. mcp-linear-preflight creates actual read-only Linear SDK consent and cancels without opening a browser; excluded from all. --focus-click is confined to agent.reopen-escape.",
   );
   process.exit(0);
 }
@@ -94,6 +95,9 @@ const selected = options.scenario
   ? scenarios.filter((scenario) => scenario.id === options.scenario)
   : selectScenarios(options.suite);
 if (!selected.length) throw new Error(`Unknown scenario: ${options.scenario}`);
+const linearPreflightSelected = selected.some(
+  (scenario) => scenario.suite === "mcp-linear-preflight",
+);
 if (
   selected.some((scenario) =>
     ["agent-live", "agent-interruption-live"].includes(scenario.suite),
@@ -148,6 +152,7 @@ if (
     "short-mcp-preview",
     "accepted-mcp-catalog",
     "missing-live-evidence",
+    "skip-linear-cancel",
     "wrong-mcp-account",
     "wrong-mcp-peer-account",
     "wrong-mcp-refresh-account",
@@ -164,6 +169,13 @@ if (
   ].includes(options.fault)
 )
   throw new Error("Unknown oracle fault");
+if (
+  options.fault === "skip-linear-cancel" &&
+  (!linearPreflightSelected || selected.length !== 1)
+)
+  throw new Error(
+    "skip-linear-cancel requires one isolated Linear preflight scenario",
+  );
 for (const [fault, ids] of [
   [
     "skip-workflow-denial",
@@ -1440,6 +1452,7 @@ const mcpAuthSuite = mcpAuthHandlers({
         "-Mcp",
         "-InventoryOnly",
         ...(clientSecret ? ["-McpClientSecret"] : []),
+        ...(linearPreflightSelected ? ["-McpLinear"] : []),
       ],
       { timeout: 10000, windowsHide: true, maxBuffer: 4096 },
     );
@@ -1452,6 +1465,14 @@ const mcpAuthSuite = mcpAuthHandlers({
   },
 });
 Object.assign(handlers, mcpAuthSuite.handlers);
+const linearSuite = linearHandlers({
+  invoke,
+  waitFor,
+  restartHost,
+  vaultCount: mcpAuthSuite.vaultCount,
+  fault: options.fault,
+});
+Object.assign(handlers, linearSuite.handlers);
 const mcpIndependenceSuite = mcpIndependenceHandlers({
   invoke,
   status,
@@ -1652,6 +1673,15 @@ try {
     report.cli = cliIdentity;
   }
   report.injectedFault = options.fault ?? null;
+  if (linearPreflightSelected) {
+    report.linearPreflight = {
+      endpoint: LINEAR_ENDPOINT,
+      evidenceClass: "real-application/live-issuer/SDK-consent-preflight",
+      limitations: [
+        "No browser sign-in, token exchange, account read or live refresh certification; checks 9/12/17 remain pending.",
+      ],
+    };
+  }
   if (selected.some((scenario) => scenario.suite === "mcp-live"))
     report.liveMcp = {
       endpoint: LIVE_ENDPOINT,
@@ -1700,6 +1730,7 @@ try {
         (scenario) => scenario.suite === "mcp-live",
       ),
       mcpAuth: selected.some((scenario) => scenario.suite === "mcp-auth"),
+      mcpLiveLinear: linearPreflightSelected,
     }),
   );
   const tlsPurposes = new Set();
@@ -1788,6 +1819,14 @@ try {
   await launchHost();
   report.adapter.webViewVersion = browser.version();
   const firstStatus = await status();
+  if (!linearPreflightSelected)
+    await assert.rejects(
+      invoke("agent_harness_mcp", {
+        operation: "authorization",
+        target: "linear",
+      }),
+      /Live Linear preflight is not enabled/,
+    );
   if (!mcpPeer)
     await assert.rejects(
       invoke("agent_harness_mcp", {
@@ -1861,6 +1900,7 @@ try {
         scenario.suite !== "mcp" &&
         scenario.suite !== "mcp-conformance" &&
         scenario.suite !== "mcp-live" &&
+        scenario.suite !== "mcp-linear-preflight" &&
         scenario.suite !== "mcp-auth" &&
         !["native-installation", "registry-recovery", "store"].includes(
           scenario.suite,
@@ -1900,6 +1940,7 @@ try {
         ...accountRefresh.takeEvidence(),
         ...mcpSuite.takeEvidence(),
         ...liveSuite.takeEvidence(),
+        ...linearSuite.takeEvidence(),
         ...mcpAuthSuite.takeEvidence(),
         ...mcpIndependenceSuite.takeEvidence(),
         ...workflowSuite.takeEvidence(),
@@ -1951,6 +1992,7 @@ try {
         ...accountRefresh.takeEvidence(),
         ...mcpSuite.takeEvidence(),
         ...liveSuite.takeEvidence(),
+        ...linearSuite.takeEvidence(),
         ...mcpAuthSuite.takeEvidence(),
         ...mcpIndependenceSuite.takeEvidence(),
         ...workflowSuite.takeEvidence(),
@@ -1961,6 +2003,7 @@ try {
           "mcp",
           "mcp-conformance",
           "mcp-live",
+          "mcp-linear-preflight",
           "mcp-auth",
           "agent-workflow",
           "agent-live",
@@ -2147,31 +2190,33 @@ try {
     } catch (error) {
       errors.push(`MCP provider cleanup: ${error.message}`);
     }
-    if (mcpProvider.oauth) {
+  }
+  if (mcpProvider?.oauth || linearPreflightSelected) {
+    if (mcpProvider?.oauth)
       report.mcpOAuthFixture = { requests: mcpProvider.oauth.journal };
-      try {
-        const output = await exec(
-          "powershell.exe",
-          [
-            "-NoProfile",
-            "-File",
-            join(here, "auth-cleanup.ps1"),
-            "-Root",
-            root,
-            "-RunId",
-            runId,
-            "-Mcp",
-          ],
-          { timeout: 10000, windowsHide: true, maxBuffer: 4096 },
-        );
-        const value = JSON.parse(output.stdout.trim());
-        assert.equal(value.kind, "mcp-vault-cleanup");
-        assert.equal(value.remaining, 0);
-        assert.equal(value.clientSecretsRemaining, 0);
-        report.mcpVaultCleanup = value;
-      } catch (error) {
-        errors.push(`Owned MCP credential cleanup: ${error.message}`);
-      }
+    try {
+      const output = await exec(
+        "powershell.exe",
+        [
+          "-NoProfile",
+          "-File",
+          join(here, "auth-cleanup.ps1"),
+          "-Root",
+          root,
+          "-RunId",
+          runId,
+          "-Mcp",
+          ...(linearPreflightSelected ? ["-McpLinear"] : []),
+        ],
+        { timeout: 10000, windowsHide: true, maxBuffer: 4096 },
+      );
+      const value = JSON.parse(output.stdout.trim());
+      assert.equal(value.kind, "mcp-vault-cleanup");
+      assert.equal(value.remaining, 0);
+      assert.equal(value.clientSecretsRemaining, 0);
+      report.mcpVaultCleanup = value;
+    } catch (error) {
+      errors.push(`Owned MCP credential cleanup: ${error.message}`);
     }
   }
   if (mcpPeer) {

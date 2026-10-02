@@ -129,6 +129,10 @@ fn requires_account(item: &CatalogProvider) -> bool {
 
 fn provider_endpoint(item: &CatalogProvider) -> Result<std::borrow::Cow<'static, str>, String> {
     #[cfg(feature = "agent-harness")]
+    if item.id == crate::grain_agent_harness_mcp::LINEAR_PROVIDER_ID {
+        return crate::grain_agent_harness_mcp::linear_endpoint().map(Into::into);
+    }
+    #[cfg(feature = "agent-harness")]
     if crate::grain_agent_harness_mcp::ACCOUNT_IDS.contains(&item.id) {
         if !crate::grain_agent_harness::mcp_auth_enabled() {
             return Err("MCP account fixture is not enabled".into());
@@ -143,6 +147,15 @@ fn provider_endpoint(item: &CatalogProvider) -> Result<std::borrow::Cow<'static,
 }
 
 const CATALOG: &[CatalogProvider] = &[
+    #[cfg(feature = "agent-harness")]
+    CatalogProvider {
+        id: "grain-harness-linear",
+        name: "Harness Linear Read-only",
+        description: "Isolated live SDK consent preflight; no tool execution.",
+        endpoint: "https://mcp.linear.app/mcp/readonly",
+        registration: Registration::Dynamic,
+        setup_url: "https://linear.app/docs/mcp",
+    },
     #[cfg(feature = "agent-harness")]
     CatalogProvider {
         id: "grain-harness-auth-peer",
@@ -1016,6 +1029,10 @@ async fn connect_oauth(
     let mut request = AuthorizationRequest::new(&redirect_uri)
         .with_client_name("Grain")
         .with_application_type("native");
+    #[cfg(feature = "agent-harness")]
+    if id == crate::grain_agent_harness_mcp::LINEAR_PROVIDER_ID {
+        request = request.with_scopes(["read"]);
+    }
     if item.registration == Registration::PreRegistered {
         let configured_id = client_id(app, item.id)
             .ok_or("configure this provider's OAuth client ID in Settings first")?;
@@ -1861,6 +1878,7 @@ mod tests {
         CATALOG.iter().filter(|item| {
             #[cfg(feature = "agent-harness")]
             if item.id == crate::grain_agent_harness_mcp::PROVIDER_ID
+                || item.id == crate::grain_agent_harness_mcp::LINEAR_PROVIDER_ID
                 || crate::grain_agent_harness_mcp::ACCOUNT_IDS.contains(&item.id)
             {
                 return false;
@@ -1880,7 +1898,10 @@ mod tests {
             .collect();
         let expected: HashSet<_> = crate::grain_agent_harness_mcp::ACCOUNT_IDS
             .into_iter()
-            .chain([crate::grain_agent_harness_mcp::PROVIDER_ID])
+            .chain([
+                crate::grain_agent_harness_mcp::PROVIDER_ID,
+                crate::grain_agent_harness_mcp::LINEAR_PROVIDER_ID,
+            ])
             .collect();
         assert_eq!(fixtures, expected);
         assert_eq!(CATALOG.len(), production_catalog().count() + expected.len());

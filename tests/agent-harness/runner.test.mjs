@@ -19,6 +19,11 @@ import { scenarios, selectScenarios } from "./scenarios.mjs";
 import { assertWithin, waitFor, writeReport } from "./support.mjs";
 import { LIVE_REPOSITORY, verifyLiveModel } from "./mcp-live.mjs";
 import {
+  LINEAR_ENDPOINT,
+  validateLinearConsent,
+  verifyLinearCancellation,
+} from "./mcp-linear.mjs";
+import {
   cases as conformanceCases,
   localServerUrl,
   verifyOfficialChecks,
@@ -38,6 +43,128 @@ const body = (results = [], actions = []) => ({
     type: "function",
     function: { name, description: "Harness fast hello" },
   })),
+});
+
+test("Linear preflight refuses broad scope, wrong resource, duplicate keys and non-owned callbacks without exposing private URL", () => {
+  const good = new URL("https://mcp.linear.app/authorize");
+  good.search = new URLSearchParams({
+    response_type: "code",
+    client_id: "private-client",
+    state: "private-test-state-123456789",
+    scope: "read",
+    resource: LINEAR_ENDPOINT,
+    code_challenge_method: "S256",
+    code_challenge: "A".repeat(43),
+    redirect_uri: "http://127.0.0.1:9100/mcp/oauth/callback",
+  }).toString();
+  assert.deepEqual(validateLinearConsent(good.href), {
+    callbackPort: 9100,
+    scope: "read",
+    resource: LINEAR_ENDPOINT,
+    pkce: "S256",
+  });
+  for (const [key, value] of [
+    ["scope", "read write"],
+    ["resource", "https://mcp.linear.app/mcp"],
+    ["state", "short"],
+    ["client_id", ""],
+    ["code_challenge_method", "plain"],
+    ["redirect_uri", "http://localhost:9100/mcp/oauth/callback"],
+    ["redirect_uri", "http://127.0.0.1:17124/mcp/oauth/callback"],
+    ["redirect_uri", "http://127.0.0.1:9100/mcp/oauth/callback?code=private"],
+  ]) {
+    const bad = new URL(good);
+    bad.searchParams.set(key, value);
+    assert.throws(
+      () => validateLinearConsent(bad.href),
+      (error) => error.message === "Invalid read-only Linear SDK consent",
+    );
+  }
+  const duplicate = new URL(good);
+  duplicate.searchParams.append("scope", "read");
+  assert.throws(() => validateLinearConsent(duplicate.href));
+  const evil = new URL(good);
+  evil.hostname = "other.invalid";
+  assert.throws(() => validateLinearConsent(evil.href));
+});
+
+test("Linear cancellation acceptance requires exact cancellation and remains opt-in", () => {
+  verifyLinearCancellation({
+    error: "MCP account or access changed. Ask again.",
+  });
+  for (const error of [
+    "OAuth registration failed",
+    "authentication timed out after 5 minutes",
+    "network error",
+    undefined,
+  ])
+    assert.throws(() => verifyLinearCancellation({ error }));
+  assert.equal(selectScenarios("mcp-linear-preflight").length, 2);
+  assert.ok(
+    selectScenarios("all").every((x) => x.suite !== "mcp-linear-preflight"),
+  );
+});
+
+test("Linear fault admission and vault inventory require the exact isolated mode", async () => {
+  for (const args of [
+    ["--suite", "smoke"],
+    ["--suite", "mcp-linear-preflight"],
+  ])
+    await assert.rejects(
+      exec(
+        process.execPath,
+        [join(here, "run.mjs"), ...args, "--fault", "skip-linear-cancel"],
+        { timeout: 10000 },
+      ),
+      /one isolated Linear preflight scenario/,
+    );
+  if (process.platform !== "win32") return;
+  const root = await mkdtemp(join(tmpdir(), "grain-linear-inventory-"));
+  const runId = randomUUID();
+  const marker = { schema: 1, runId, modelPort: 9000, mcpLiveLinear: true };
+  const command = [
+    "-NoProfile",
+    "-File",
+    join(here, "auth-cleanup.ps1"),
+    "-Root",
+    root,
+    "-RunId",
+    runId,
+    "-Mcp",
+    "-InventoryOnly",
+  ];
+  try {
+    await writeFile(
+      join(root, ".grain-agent-harness.json"),
+      JSON.stringify(marker),
+    );
+    const result = await exec("powershell.exe", [...command, "-McpLinear"], {
+      timeout: 10000,
+      windowsHide: true,
+    });
+    assert.deepEqual(JSON.parse(result.stdout), {
+      schema: 1,
+      kind: "mcp-vault-inventory",
+      count: 0,
+    });
+    await assert.rejects(
+      exec("powershell.exe", command, { timeout: 10000, windowsHide: true }),
+      /exact enabled account fixture marker/,
+    );
+    await writeFile(
+      join(root, ".grain-agent-harness.json"),
+      JSON.stringify({ ...marker, mcpAuth: true, mcpPort: 9001 }),
+    );
+    await assert.rejects(
+      exec("powershell.exe", [...command, "-McpLinear"], {
+        timeout: 10000,
+        windowsHide: true,
+      }),
+      /exact enabled account fixture marker/,
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test("official conformance acceptance rejects empty, skipped, missing and false-positive checks", () => {
@@ -1015,6 +1142,7 @@ test("scenario IDs are unique and each suite is explicit", () => {
     scenarios.length -
       conformanceCases.length -
       selectScenarios("mcp-live").length -
+      selectScenarios("mcp-linear-preflight").length -
       selectScenarios("agent-live").length -
       selectScenarios("agent-interruption-live").length,
   );

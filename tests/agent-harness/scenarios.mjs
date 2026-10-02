@@ -359,6 +359,15 @@ scenarios.push({
     "Generic HTTP 400 discovery rejection, one fresh legacy handshake per operation, actual approved JSON/SSE nested result and session cleanup",
 });
 
+scenarios.push(
+  ...["disable", "disconnect"].map((operation) => ({
+    id: `mcp.linear-cancel-${operation}`,
+    suite: "mcp-linear-preflight",
+    checks: [9],
+    description: `Opt-in actual Linear SDK read-only consent, ${operation} before sign-in, callback/grant cleanup and fresh retry after restart; browser consent excluded`,
+  })),
+);
+
 // Official runner owns the server prerequisite. Normal --suite all excludes
 // these entries; conformance.mjs invokes each finite case with its owned binding.
 scenarios.push(
@@ -426,6 +435,7 @@ export function selectScenarios(suite) {
       "native-auth",
       "mcp",
       "mcp-live",
+      "mcp-linear-preflight",
       "mcp-auth",
       "native-installation",
       "registry-recovery",
@@ -440,6 +450,7 @@ export function selectScenarios(suite) {
         ![
           "mcp-conformance",
           "mcp-live",
+          "mcp-linear-preflight",
           "agent-live",
           "agent-interruption-live",
         ].includes(scenario.suite)) ||
