@@ -1,6 +1,8 @@
 # Grain Agent acceptance harness
 
-**Current inventory, 3 October:** 88 distinct scenario IDs, 73 self-contained `all` cases, 69 harness self-tests. Baseline 52 Pass / 1 Pending (live expiry/refresh check 12). The [live nested-read audit](../../docs/Extensions%202.0/MCP-NESTED-LIVE-READ-AUDIT.md) records this unit; older dated inventory counts below retain historical evidence.
+**Current inventory, 3 October:** 88 distinct scenario IDs, 73 self-contained `all` cases, 69 harness self-tests. Baseline **52 Pass / 1 Deferred / 0 active Pending**: the user defers live expiry/refresh check 12 and authorizes SDK/native-OAuth work. It is not passed; obsolete-code removal stays on hold. The [authentication/lifecycle reuse audit](../../docs/Extensions%202.0/MCP-AUTH-LIFECYCLE-REUSE-AUDIT.md) records the current scope; older dated counts retain historical evidence.
+
+**SDK regression accepted:** exact `rmcp` 3.5.0 passes two complete `mcp-foundation` runs, affected shared workflows/smoke, public-provider/Linear no-consent checks and the existing fault oracle. Scenario definitions/IDs, clocks and retention rules are unchanged. Official tools pass; the existing standalone initialization fixture remains Blocked. [Final evidence and reproducible commands](../../docs/Extensions%202.0/MCP-AUTH-LIFECYCLE-REUSE-AUDIT.md#final-evidence-and-scoped-acceptance). Native OAuth/issuer recovery/metadata integration will extend this maintained harness only as their next focused units require.
 
 `mcp-linear-contracts` requires `--linear-sign-in`, an interactive terminal and one owner-approved READ-ONLY browser consent. It calls no account tool, inspects actual production-supported contracts, repeats discovery after restart, then disconnects and removes its scoped grant/profile. Unlike the counts-only sign-in suite, this report intentionally retains bounded tool/property names, primitive structural shapes, schema digests and nesting flags. Prose, defaults, enums, const/private literals and raw schemas remain omitted; the projection is explicitly **not an executable schema**. The inspected catalog had 38 supported reads and no nested object parameters.
 
@@ -12,7 +14,7 @@ node tests/agent-harness/run.mjs --suite mcp-hf-live
 node tests/agent-harness/run.mjs --scenario mcp.hf-nested-read --fault missing-live-evidence
 ```
 
-The next test implementation is a finite Linear expiry preparation/resume/abort interface; it does not exist yet. Completed Linear runs delete their grants, so their expiry timestamps cannot be reused as refresh evidence. No new manual batch is assigned for accepted check 17.
+The finite Linear expiry preparation/resume/abort interface is deferred and does not exist yet. Completed runs delete their grants, so their expiry timestamps cannot be reused as refresh evidence. B5a's exact SDK upgrade has passed its affected suites; next reuse/extend those suites for the separately implemented native OAuth and authentication ownership/recovery units. Keep existing identities, clocks and oracles unchanged. No new manual batch is assigned.
 
 This is a persistent **Agent** harness. Its first real-application suite covers native tools and lifecycle. It runs Grain's actual Rust/Tauri host, actual Agent React panel, real WebView2 extension workers, selective tool discovery, host confirmation and continuation. It connects Playwright to those owned WebViews; it never launches a browser replica or replaces Tauri APIs.
 

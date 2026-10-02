@@ -13,7 +13,7 @@ use std::time::Duration;
 use async_trait::async_trait;
 use grain_core::execution::{bounded_result_text, DispatchPhase, ExecutionFailure, FailureClass};
 use rmcp::model::{
-    CallToolRequestParams, CallToolResponse, ClientCapabilities, ClientInfo, ContentBlock,
+    CallToolRequestParams, CallToolResponse, ClientCapabilities, ClientConfig, ContentBlock,
     Implementation, PaginatedRequestParams, ProtocolVersion, Tool,
 };
 use rmcp::transport::auth::{
@@ -52,7 +52,7 @@ const MAX_CATALOG_BYTES: usize = 2 * 1024 * 1024;
 const MAX_CURSOR_BYTES: usize = 1024;
 const MAX_RESULT_BYTES: usize = 16 * 1024;
 
-type SdkService = rmcp::service::RunningService<rmcp::service::RoleClient, ClientInfo>;
+type SdkService = rmcp::service::RunningService<rmcp::service::RoleClient, ClientConfig>;
 
 struct McpService {
     inner: SdkService,
@@ -1207,8 +1207,8 @@ pub async fn mcp_disconnect_provider(
     Ok(())
 }
 
-fn client_info() -> ClientInfo {
-    ClientInfo::new(
+fn client_info() -> ClientConfig {
+    ClientConfig::new(
         ClientCapabilities::default(),
         Implementation::new("grain", env!("CARGO_PKG_VERSION")).with_title("Grain"),
     )
