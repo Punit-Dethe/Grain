@@ -79,160 +79,167 @@ New models may be added to Flow later, but only when Grain has a dedicated imple
 
 _See [docs/grain-features.md](docs/grain-features.md) for the full breakdown, including model routing and smart key rotation for cloud providers._
 
-## The extension platform: build far beyond dictation
+## Extensions: give the Agent tools
 
-Grain is designed to stay small at its core while letting extensions build much larger workflows around speech, context, AI, memory, and external services.
+Grain extensions are deliberately narrow.
 
-Extensions can react to what you say, understand where you are working, inspect information you deliberately give them access to, use Grain's configured AI and local embedding systems, maintain their own persistent data, communicate with approved network services, and present their own Grain-managed interfaces.
+**An extension gives the Grain Agent additional external tools.** Grain remains responsible for understanding the user's request, gathering local context, choosing the right tools, asking for approval when required, and deciding what to do with the result. An extension does not become a second Agent and does not receive broad access to Grain.
 
-Grain's own features such as Snippets, Context Awareness, and Agent are built on this extension contract rather than relying on a separate private plugin system.
+That means an extension can expose useful capabilities such as:
 
-### What extensions can access
+- searching repositories, issues, pull requests, or commits on GitHub;
+- reading or updating work in Linear, Notion, or another connected service;
+- checking calendars and creating events;
+- controlling a supported music service;
+- storing or retrieving information from an external memory service;
+- exposing any other well-scoped function that the Agent can call with explicit arguments.
 
-Capabilities are granted individually. An extension only receives the parts of Grain that it explicitly requests and the user approves.
+The same extension can expose several related tools, and the Agent can combine tools from multiple extensions in one task.
 
-A scripted extension can currently request access to:
+### One tool contract, two adapter types
 
-- **Speech and sessions** — listen for session/transcript events, transform completed transcripts, start Grain recording sessions, or contribute a custom recording mode.
-- **Selected text** — read text the user has explicitly highlighted.
-- **Application context** — identify the foreground application, executable, and browser host when available.
-- **Visible screen text** — read text exposed by the active window's accessibility tree. Password fields are skipped.
-- **Foreground-window images** — capture the active window as an image when the user explicitly grants screenshot access.
-- **AI** — use the AI provider already configured in Grain, including vision when supported by that model.
-- **Local embeddings** — use Grain's on-device embedding model for semantic matching, retrieval, classification, or an extension's own memory system.
-- **Persistent storage** — private key/value storage and a document store for larger collections such as records, notes, histories, or indexes.
-- **Settings** — expose configuration through Grain, including secret values.
-- **Network services** — make host-proxied HTTP requests only to network hosts declared by the extension.
-- **Grain UI** — open an extension workspace, show temporary overlays, contribute settings, and use supported Grain UI slots.
-- **Launching** — open safe web links or applications the user has explicitly selected and approved.
+Grain can reach tools through two implementation paths:
 
-This means an extension can be anything from a tiny voice utility to a persistent application with its own interface, semantic memory, AI processing, and external API integration.
+| Adapter | What it is | Intended use |
+| --- | --- | --- |
+| **MCP** | A remote HTTPS Model Context Protocol server discovered and called through the official MCP client stack. | External services and integrations that already expose MCP. |
+| **Native/direct** | A reviewed Grain-maintained provider implemented locally against the service or API. | First-party integrations where a direct implementation is simpler or gives a better desktop experience. |
 
-### Three levels of extensions
+Both adapters normalize into the same host-owned contract:
 
-Use the smallest tier that can do the job.
+```text
+Extension
+├── identity and metadata
+├── authentication / necessary configuration
+├── tool catalogue
+└── execute tool → result
+```
 
-| Tier                   | What it does                                                | Best for                                               |
-| ---------------------- | ----------------------------------------------------------- | ------------------------------------------------------ |
-| **Data pack**          | Ships data such as prompts or themes. No executable code.   | Prompt packs, themes and simple customisation          |
-| **Scripted extension** | Runs JavaScript inside its own isolated worker when needed. | Most integrations, tools, workflows and extension UIs  |
-| **Native companion**   | Runs a separate native program controlled by Grain.         | Functionality that genuinely requires native OS access |
+"Native" does **not** mean more privileged. It only describes how the provider is implemented.
 
-Scripted workers are created when required and destroyed when idle. Native companions are likewise started and stopped by Grain rather than becoming permanent background services.
+The initial reduced platform does not treat arbitrary third-party executables, unrestricted scripts, or local stdio processes as trusted extensions. Wider local-process support would require a separate containment and installation design.
 
-### Security is enforced by Grain, not trusted to the extension
+### The Agent owns context
 
-Giving extensions access to speech, screen content and external services makes the security boundary especially important.
+Extensions do not independently inspect the user's computer.
 
-Grain therefore treats permissions as an enforcement mechanism rather than a convention.
+Grain's Agent can understand the task using first-party context such as the selected text, textbox contents, foreground application, supported website context, OCR, or an image when that feature is enabled. The Agent then chooses what minimum information a tool actually needs and passes that information as ordinary tool arguments.
 
-**Every scripted extension gets its own isolated worker and authenticated connection.** It cannot access Grain through normal Tauri IPC, share JavaScript globals with another extension, or impersonate another extension.
+```text
+Speech / typed instruction
+          │
+          ▼
+      Grain Agent
+   ┌──────┼────────┐
+   │      │        │
+selection OCR   app/site context
+   └──────┼────────┘
+          │
+     search / load
+     relevant tools
+          │
+          ▼
+   policy + approval
+          │
+          ▼
+      Extension
+          │
+          ▼
+        result
+          │
+          └────────────→ Agent continues
+```
 
-**Permissions are checked by the Rust host.** If an extension does not have `capture:selection`, `llm`, `embed`, `capture:screen-image`, or another capability, the host rejects the operation. The extension cannot bypass the check from JavaScript.
+An extension cannot query Grain for extra context behind the Agent's back, and extensions do not call one another directly. Cross-service workflows are orchestrated by the Agent.
 
-**Network access is host-proxied.** Extension workers do not receive unrestricted `fetch`. A manifest must request individual hosts such as `net:api.example.com`; wildcards, arbitrary URLs and undeclared hosts are rejected.
+### What extensions can do
 
-**Extension data is isolated.** Storage and settings belong to the extension that created them. An extension cannot simply modify Grain's settings or another extension's private storage.
+A tool-only extension can:
 
-**Sensitive capture is separated into individual permissions.** Reading selected text, detecting the active application, reading visible screen text, and taking a screenshot are different grants rather than one broad "screen access" permission.
+- expose named tools with typed input schemas and descriptions;
+- receive the explicit arguments selected by the Agent;
+- authenticate to its external service through Grain's host-owned connection flow;
+- use narrowly scoped networking or private adapter storage when its implementation requires it;
+- return bounded text or structured JSON results;
+- be enabled, disabled, reconnected, cancelled, and reloaded without becoming a permanent background service.
 
-**Launching is restricted.** URLs are limited to safe supported schemes, and applications can only be launched after the user selects them through Grain's own application picker. Extensions cannot provide arbitrary executable paths and ask Grain to run them.
+Credentials remain host-owned. OAuth tokens are kept out of model context, tool arguments, ordinary results, and logs.
 
-**Powerful combinations are visible during review.** An extension requesting sensitive information together with network access can be treated differently from a simple local extension.
+### What extensions cannot do
 
-For published extensions, the distribution system adds another boundary: releases point to a specific source commit, Grain builds the package from that source, the exact code is reviewed before publication, installations come from Grain's signed catalogue, and extensions can be revoked if a serious problem is discovered later.
+The reduced extension contract intentionally does **not** expose Grain's internal feature surface. Extensions cannot independently:
 
-Developer Mode does not remove these runtime permission checks. Local development changes where the extension comes from, not what it is allowed to access.
+- read the screen, OCR, selected text, textbox contents, foreground application, transcript history, or Context Awareness stream;
+- start or control dictation/recording sessions;
+- add Context Awareness prompts, prompt layers, prompt packs, transcript transforms, or replacement rules;
+- register Grain shortcuts or recording modes;
+- open arbitrary overlays, workspaces, UI slots, or contributed settings pages;
+- call Grain's configured LLM or embedding model as a privileged host service;
+- access another extension's state, Grain's private application state, or unrestricted internal APIs;
+- launch arbitrary executables or gain unrestricted OS access.
 
-### What could you build?
+Features such as **Snippets, Context Awareness, Agent, dictation, overlays, and transcription history are Grain features**, not extension capabilities.
 
-The platform is intentionally general. A few examples:
+This separation is intentional: **Grain owns understanding and orchestration; extensions execute tools.**
 
-#### Spotify-style voice controller
+### Execution and safety
 
-A small scripted extension could expose a set of music actions such as:
+Discovering a tool does not authorize it to run.
 
-> "Next song."
-> "Play Daft Punk."
-> "Play my Focus playlist."
-> "Pause."
+Before dispatch, Grain binds the call to the exact extension instance, tool definition, account/configuration state, schema, and arguments that were selected. Stale approvals are refused if that identity changes.
 
-The extension could use Grain's local embeddings to semantically match speech against a small set of supported commands, call the permitted music-service API, remember user-defined aliases in private storage, and briefly show the result through an overlay.
+The host also owns lifecycle and outcome semantics:
 
-For simple commands, no LLM needs to run at all.
+- disabling, disconnecting, replacing, or reloading an extension invalidates stale work;
+- authentication state and credentials stay outside the model;
+- potentially completed writes are not automatically replayed when their outcome is uncertain;
+- tool descriptions and results are treated as untrusted data, not instructions that can override Grain's policy;
+- MCP connections and native workers are created when needed and released according to Grain's lifecycle rules.
 
-#### GitHub workflow assistant
+During the current hardening phase, extension calls are handled conservatively. Less intrusive automatic-read behavior can only be added through a host-reviewed policy; an extension cannot declare itself safe and bypass approval.
 
-A more capable extension could combine several Grain primitives.
+### Tool discovery instead of loading everything
 
-Select a stack trace or leave the error visible on screen and say:
+Grain does not need to place every schema from every connected service into the model's context.
 
-> "Turn this into a GitHub issue."
+The Agent starts from a bounded directory of enabled extensions, searches for relevant capabilities, and loads only the tool definitions needed for the current task. A GitHub request should not force unrelated Calendar, music, or other schemas into the prompt.
 
-With the appropriate permissions, the extension could read the selected or visible text, use the foreground application as additional context, ask the user's configured AI model to structure the information into a title and issue description, send it to the GitHub API, and show the created issue in a Grain overlay.
+This keeps model context smaller and lets Grain support larger tool catalogues without turning every connected service into permanent prompt overhead.
 
-A workspace could then provide a richer interface for the extension's saved repositories, recent actions, or settings.
+### Examples
 
-That entire workflow can live inside one scripted extension.
+**GitHub**
 
-#### Screen-aware research collector
+> "Find the open issue about the extension lifecycle and tell me whether the latest related commit addresses it."
 
-An extension could capture information while the user browses without becoming a general-purpose notes application.
+The Agent can search/load the GitHub tools it needs, inspect the issue and commit, and continue reasoning over the returned results. If the user asks to comment on or close the issue, the write goes through Grain's execution policy before dispatch.
 
-Highlight a product, paper, quote, movie, library, or other item and trigger the extension. It could combine the selection, visible window text, or an explicitly permitted screenshot with AI to extract structured information.
+**Calendar**
 
-The extension can store those records in its own document store and embed them locally.
+> "Do I have anything after 4 PM tomorrow? If not, create a 30-minute review block."
 
-Later:
+The Agent can first use a calendar read tool, reason over the result, and then prepare the appropriate write tool only if the requested condition is satisfied.
 
-> "What was that speech recognition paper I saved about rolling windows?"
+**External memory**
 
-The extension can semantically search its own collection using Grain's embedding system and display the result in an overlay or workspace.
+> "Save this decision to my connected memory service."
 
-No separate vector database, embedding service, AI daemon, or background process is required.
+A memory provider can expose ordinary store/search/retrieve tools. Grain does not need a built-in second-brain or Grain Space subsystem for the Agent to work with an external memory service.
 
----
+### Current development status
 
-The goal of Grain extensions is not to provide a predefined collection of plugins.
+The old broad extension platform is being retired in favor of this tool-only contract. Legacy declarations and privileged host APIs are being blocked, tested, and physically removed in stages while the new native/direct and MCP adapters are hardened against real lifecycle, authentication, permission, cancellation, and Agent-continuation cases.
 
-It is to provide reusable primitives — **speech, context, AI, embeddings, storage, networking and UI** — while Grain handles the expensive platform concerns such as lifecycle, permissions, isolation and resource cleanup.
+The current implementation plan and progress live in:
 
-What those primitives become is up to extension authors.
+- [Tool-only native and MCP extension plan](docs/Extensions%202.0/MCP-EXTENSION-PLAN.md)
+- [Extension progress and evidence](docs/Extensions%202.0/MCP-EXTENSION-PROGRESS.md)
 
-### Developer experience
-
-Grain tries to keep extension development closer to building the useful part of an integration than building an entire desktop application.
-
-The extension tooling handles the surrounding workflow:
-
-- `grain-ext init` scaffolds a new extension.
-- `grain-ext dev` runs the development workflow with fast iteration and reloads.
-- `grain-ext doctor` validates the extension using the same kinds of checks expected before submission.
-- `grain-ext submit` prepares the extension for the registry submission workflow.
-
-Developers describe required permissions, settings, surfaces, and capabilities through the extension manifest, while Grain handles execution, isolation, lifecycle, storage boundaries, permissions, UI hosting, and resource cleanup.
-
-For most extensions, there is no need to build a separate installer, windowing system, background service, embedding infrastructure, AI integration, or update mechanism.
-
-The intention is simple: **an extension author should spend most of their time building what their extension actually does.**
-
-### Publish it for others, with trust that can't be faked
-
-If you want to share an extension, publishing is deliberately different from a typical extension store:
-
-1. You point at one exact commit in your own public source repository — never a built binary.
-2. Grain's CI builds the package from that pinned commit and hashes it.
-3. A human reads that exact source before it's ever listed — every extension, every update, no auto-publish, no exceptions.
-4. The app installs the package from a signed catalogue that only Grain can produce, never from your repo or website directly — so nothing can change after it's been reviewed. An author who controls their own domain, repository, and build still cannot make their extension show up as trusted; that has to come from us reading it.
-5. If something goes wrong later, a signed revocation list can disable an extension on every installed copy, with the reason shown to the user — a real kill switch, not just a quiet delisting.
-
-The public store is still being opened up. Today, data packs and local scripted extensions are available through Developer Mode; publishing follows the process above once the store opens more broadly.
-
-Read the [extension platform overview](docs/Extension%20Platform/README.md), the [authoring guide](docs/Extension%20Platform/AUTHORING.md), or the [full specification](docs/Extension%20Platform/SPEC.md).
+The reduced public authoring contract is still being finalized. Older Extension Platform documentation describes the previous architecture and should not be treated as the current capability model.
 
 ## Local first, by default
 
-- Local transcription and semantic retrieval run entirely on your machine.
+- Local transcription runs entirely on your machine.
 - Cloud speech-to-text and AI processing are opt-in and only ever use providers you configure.
 - Disabled features and extensions unregister their shortcuts, close their windows, and release their memory — nothing idles in the background.
 
@@ -282,8 +289,8 @@ See [BUILD.md](BUILD.md) for system prerequisites, platform-specific notes, and 
 | Building and packaging  | [Build guide](BUILD.md)                                             |
 | Contributing to Grain   | [Contributing guide](CONTRIBUTING.md)                               |
 | Translations            | [Translation guide](CONTRIBUTING_TRANSLATIONS.md)                   |
-| Extension contract      | [Extension specification](docs/Extension%20Platform/SPEC.md)        |
-| Publishing an extension | [Distribution plan](docs/Extension%20Platform/DISTRIBUTION-PLAN.md) |
+| Extension architecture  | [Tool-only extension plan](docs/Extensions%202.0/MCP-EXTENSION-PLAN.md) |
+| Extension progress       | [Progress and evidence](docs/Extensions%202.0/MCP-EXTENSION-PROGRESS.md) |
 | Handy compatibility     | [Upstream tracking](Upstream/UPSTREAM.md)                           |
 
 ## License
