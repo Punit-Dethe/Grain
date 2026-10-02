@@ -371,6 +371,13 @@ scenarios.push(
       "Authenticated provider-disable/Developer Mode shutdown across JSON/SSE modern/legacy, bounded unknown result, stale approval refusal and fresh/restart recovery without reauthorization",
   },
   {
+    id: "mcp.auth-client-configuration",
+    suite: "mcp-auth",
+    checks: [11, 13],
+    description:
+      "Actual preregistered public/confidential SDK login, scoped secret persistence/removal, ID/secret rotation invalidates grants/approvals, unsupported empty secret refuses and fresh/restart reads recover",
+  },
+  {
     id: "mcp.live-response-recovery",
     suite: "mcp-live",
     checks: [20],

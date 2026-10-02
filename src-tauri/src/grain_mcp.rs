@@ -129,7 +129,12 @@ fn requires_account(item: &CatalogProvider) -> bool {
 
 fn provider_endpoint(item: &CatalogProvider) -> Result<std::borrow::Cow<'static, str>, String> {
     #[cfg(feature = "agent-harness")]
-    if item.id == crate::grain_agent_harness_mcp::AUTH_PROVIDER_ID {
+    if [
+        crate::grain_agent_harness_mcp::AUTH_PROVIDER_ID,
+        crate::grain_agent_harness_mcp::CLIENT_PROVIDER_ID,
+    ]
+    .contains(&item.id)
+    {
         if !crate::grain_agent_harness::mcp_auth_enabled() {
             return Err("MCP account fixture is not enabled".into());
         }
@@ -143,6 +148,15 @@ fn provider_endpoint(item: &CatalogProvider) -> Result<std::borrow::Cow<'static,
 }
 
 const CATALOG: &[CatalogProvider] = &[
+    #[cfg(feature = "agent-harness")]
+    CatalogProvider {
+        id: "grain-harness-auth-client",
+        name: "Harness MCP Client",
+        description: "Isolated public/confidential client registration acceptance fixture.",
+        endpoint: "https://grain-mcp-account-harness.invalid/mcp",
+        registration: Registration::PreRegistered,
+        setup_url: "https://modelcontextprotocol.io/",
+    },
     #[cfg(feature = "agent-harness")]
     CatalogProvider {
         id: "grain-harness-auth",
@@ -221,7 +235,12 @@ pub struct McpHttpClient(pub reqwest_mcp::Client);
 
 fn provider_http(app: &AppHandle, item: &CatalogProvider) -> Result<reqwest_mcp::Client, String> {
     #[cfg(feature = "agent-harness")]
-    if item.id == crate::grain_agent_harness_mcp::AUTH_PROVIDER_ID {
+    if [
+        crate::grain_agent_harness_mcp::AUTH_PROVIDER_ID,
+        crate::grain_agent_harness_mcp::CLIENT_PROVIDER_ID,
+    ]
+    .contains(&item.id)
+    {
         provider_endpoint(item)?;
         return crate::grain_agent_harness_mcp::client().map(|(_, client)| client);
     }

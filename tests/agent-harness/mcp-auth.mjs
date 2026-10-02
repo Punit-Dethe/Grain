@@ -3,9 +3,16 @@ import { createServer } from "node:net";
 import { randomUUID } from "node:crypto";
 import { performance } from "node:perf_hooks";
 import { MCP_INPUT } from "./mcp-fixture.mjs";
-import { MCP_AUTH_ID, MCP_PRIVATE_MARKER } from "./mcp-oauth-fixture.mjs";
+import {
+  MCP_AUTH_ID,
+  MCP_CLIENT_ID,
+  MCP_CLIENTS,
+  MCP_CLIENT_SECRETS,
+  MCP_PRIVATE_MARKER,
+} from "./mcp-oauth-fixture.mjs";
 
-export function mcpAccountReply(body, account) {
+export function mcpAccountReply(body, account, providerId = MCP_AUTH_ID) {
+  assert.ok([MCP_AUTH_ID, MCP_CLIENT_ID].includes(providerId));
   assert.ok(
     !JSON.stringify(body).includes(MCP_PRIVATE_MARKER),
     "MCP credential reached model context",
@@ -25,14 +32,14 @@ export function mcpAccountReply(body, account) {
   if (results.length === 0) {
     assert.equal(actions.length, 0);
     return call("search_tools", {
-      extension_id: "mcp." + MCP_AUTH_ID,
+      extension_id: "mcp." + providerId,
       query: "",
     });
   }
   if (results.length === 1) {
     assert.equal(actions.length, 0);
     const meta = JSON.parse(results[0].content);
-    assert.equal(meta.extension_id, "mcp." + MCP_AUTH_ID);
+    assert.equal(meta.extension_id, "mcp." + providerId);
     assert.ok(meta.tools.some((x) => x.tool_id === "fixture_read"));
     return call("load_extension", {
       extension_id: meta.extension_id,
@@ -98,20 +105,18 @@ async function reusableListener(callback) {
 
 export function mcpAuthHandlers(ctx) {
   let evidence = [];
-  const control = (operation) =>
-    ctx.invoke("agent_harness_mcp", { operation, target: "account" });
+  const control = (operation, target = "account") =>
+    ctx.invoke("agent_harness_mcp", { operation, target });
   const provider = () => ctx.provider(),
     oauth = () => provider().oauth;
   const count = (method) =>
     provider().journal.filter((x) => x.method === method).length;
   const tokenCount = () =>
     oauth().journal.filter((x) => x.phase === "token").length;
-  async function state() {
-    return (await ctx.invoke("mcp_provider_status")).find(
-      (x) => x.id === MCP_AUTH_ID,
-    );
+  async function state(id = MCP_AUTH_ID) {
+    return (await ctx.invoke("mcp_provider_status")).find((x) => x.id === id);
   }
-  async function begin(account, denied = false) {
+  async function begin(account, denied = false, target = "account") {
     provider().configure({
       lifecycle: "stateless",
       reply: "json",
@@ -120,19 +125,19 @@ export function mcpAuthHandlers(ctx) {
       probeRejection: false,
     });
     oauth().configure({ account, denied });
-    const pending = control("connect").then(
+    const pending = control("connect", target).then(
       (value) => ({ value }),
       (error) => ({ error: String(error) }),
     );
     try {
       const url = await ctx.waitFor(
         "SDK MCP authorization handoff",
-        async () => await control("authorization"),
+        async () => await control("authorization", target),
       );
       const callback = await oauth().authorize(url);
       return { pending, callback };
     } catch (error) {
-      await control("disable").catch(() => {});
+      await control("disable", target).catch(() => {});
       await pending;
       throw error;
     }
@@ -149,15 +154,15 @@ export function mcpAuthHandlers(ctx) {
     await reusableListener(flow.callback);
     assert.equal(await control("authorization"), null);
   }
-  async function login(account) {
+  async function login(account, target = "account") {
     const before = tokenCount();
-    await finish(await begin(account));
+    await finish(await begin(account, false, target));
     assert.equal(
       tokenCount(),
       before + 1,
       "Authorization code exchange missing or repeated",
     );
-    const s = await state();
+    const s = await state(target === "client" ? MCP_CLIENT_ID : MCP_AUTH_ID);
     assert.equal(s.connected, true);
     assert.equal(s.enabled, true);
     assert.equal(s.state, "stored");
@@ -175,11 +180,17 @@ export function mcpAuthHandlers(ctx) {
       scopedVaultEntries: 1,
     });
   }
-  async function read(account, stage = "account-read") {
+  async function read(account, stage = "account-read", target = "account") {
     const before = count("tools/call"),
       start = ctx.model().journal.length;
     const page = await ctx.request(
-      account === "A" ? "mcp_account_a" : "mcp_account_b",
+      target === "client"
+        ? account === "A"
+          ? "mcp_client_a"
+          : "mcp_client_b"
+        : account === "A"
+          ? "mcp_account_a"
+          : "mcp_account_b",
     );
     assert.equal(
       count("tools/call"),
@@ -229,6 +240,241 @@ export function mcpAuthHandlers(ctx) {
       return value;
     },
     handlers: {
+      async "mcp.auth-client-configuration"() {
+        assert.equal(await ctx.vaultCount(), 0);
+        assert.equal(await ctx.vaultCount(true), 0);
+        const registrations = oauth().journal.filter(
+          (x) => x.phase === "registered",
+        ).length;
+        const modelStart = ctx.model().journal.length,
+          calls = count("tools/call");
+        const setClient = async (
+          clientId,
+          clientSecret = "",
+          change = false,
+        ) => {
+          if (change && ctx.fault === "skip-mcp-client-change") return;
+          await ctx.invoke("mcp_set_client_credentials", {
+            id: MCP_CLIENT_ID,
+            clientId,
+            clientSecret,
+          });
+        };
+        const cleared = async (secretCount) => {
+          assert.equal(
+            await ctx.vaultCount(),
+            0,
+            "Client change did not remove the old grant",
+          );
+          assert.equal(await ctx.vaultCount(true), secretCount);
+          const s = await state(MCP_CLIENT_ID);
+          assert.equal(s.connected, false);
+          assert.equal(s.enabled, false);
+          assert.equal(s.client_id_configured, true);
+          const before = count("tools/call");
+          await assert.rejects(control("discover", "client"), /disabled/);
+          assert.equal(count("tools/call"), before);
+        };
+        const stale = async (page, stage) => {
+          const before = count("tools/call"),
+            start = ctx.model().journal.length;
+          await ctx.activate(
+            page.locator(".agc-confirm-actions .agc-action-btn"),
+          );
+          await ctx.waitFor(
+            stage + ": old client approval refused",
+            async () => !(await ctx.status()).agent.active,
+          );
+          assert.equal(count("tools/call"), before);
+          assert.equal(
+            ctx
+              .model()
+              .journal.slice(start)
+              .filter((x) => x.mcpAccountRefused).length,
+            1,
+          );
+        };
+        let failure;
+        try {
+          const initial = await state(MCP_CLIENT_ID);
+          assert.equal(initial.state, "needs_client_credentials");
+          await assert.rejects(
+            control("connect", "client"),
+            /configure.*client ID/i,
+          );
+          assert.equal(await ctx.vaultCount(), 0);
+          evidence.push({
+            stage: "missing-client-refused",
+            status: "Pass",
+            scopedVaultEntries: 0,
+          });
+          for (const clientId of ["", "x".repeat(513), "bad\nclient"]) {
+            await assert.rejects(setClient(clientId), /client ID/);
+          }
+          await assert.rejects(
+            setClient(MCP_CLIENTS.publicOne, "x".repeat(4097)),
+            /client secret/,
+          );
+          await setClient(MCP_CLIENTS.publicOne);
+          await cleared(0);
+          await login("A", "client");
+          await read("A", "public-client-read", "client");
+          const publicExchanges = tokenCount();
+          await ctx.restartHost();
+          assert.equal((await state(MCP_CLIENT_ID)).client_id_configured, true);
+          await read("A", "public-client-restart", "client");
+          assert.equal(
+            tokenCount(),
+            publicExchanges,
+            "Public client restart reauthorized",
+          );
+          let previousAccount = "A";
+          for (const item of [
+            {
+              stage: "public-id-change",
+              id: MCP_CLIENTS.publicTwo,
+              secret: "",
+              secrets: 0,
+              account: "B",
+            },
+            {
+              stage: "confidential-client",
+              id: MCP_CLIENTS.confidential,
+              secret: MCP_CLIENT_SECRETS[0],
+              secrets: 1,
+              account: "A",
+            },
+            {
+              stage: "same-id-secret-rotation",
+              id: MCP_CLIENTS.confidential,
+              secret: MCP_CLIENT_SECRETS[1],
+              secrets: 1,
+              account: "B",
+              version: 1,
+            },
+            {
+              stage: "secret-removal",
+              id: MCP_CLIENTS.confidential,
+              secret: "",
+              secrets: 0,
+              account: "A",
+              rejected: true,
+            },
+          ]) {
+            const observation = { stage: item.stage, status: "Running" };
+            evidence.push(observation);
+            const page = await ctx.request(
+              previousAccount === "A" ? "mcp_client_a" : "mcp_client_b",
+            );
+            await setClient(item.id, item.secret, true);
+            await cleared(item.secrets);
+            if (
+              ctx.fault === "abandoned-mcp-client-secret" &&
+              item.secrets === 1
+            )
+              throw new Error(
+                "Deliberately abandoned scoped MCP client secret",
+              );
+            if (item.version !== undefined)
+              oauth().configure({ secretVersion: item.version });
+            if (item.rejected) {
+              const before = tokenCount(),
+                refusals = oauth().journal.filter(
+                  (x) => x.phase === "client-auth-refused",
+                ).length;
+              const flow = await begin(item.account, false, "client");
+              const reply = await oauth().callback(flow.callback);
+              // The callback acknowledges a valid code before SDK exchange.
+              // Login acceptance comes from the awaited exchange/account state.
+              assert.equal(reply.status, 200);
+              const result = await flow.pending;
+              assert.match(result.error, /OAuth callback failed/);
+              await reusableListener(flow.callback);
+              assert.equal(await control("authorization", "client"), null);
+              assert.equal(tokenCount(), before);
+              assert.equal(
+                oauth().journal.filter((x) => x.phase === "client-auth-refused")
+                  .length,
+                refusals + 1,
+              );
+              await cleared(0);
+              // Only the actual issuer-supported public registration recovers.
+              await setClient(MCP_CLIENTS.publicOne);
+              await cleared(0);
+            }
+            await login(item.account, "client");
+            await stale(page, item.stage);
+            await read(item.account, item.stage + "-fresh-read", "client");
+            const exchanges = tokenCount();
+            await ctx.restartHost();
+            assert.equal(await ctx.vaultCount(true), item.secrets);
+            assert.equal(
+              (await state(MCP_CLIENT_ID)).client_id_configured,
+              true,
+            );
+            await read(item.account, item.stage + "-restart", "client");
+            assert.equal(
+              tokenCount(),
+              exchanges,
+              "Restart reauthorized the configured client",
+            );
+            const issued = oauth()
+              .journal.filter((x) => x.phase === "token")
+              .at(-1);
+            assert.equal(issued.configuredClient, true);
+            assert.equal(
+              issued.registration,
+              item.secrets ? "confidential" : "public",
+            );
+            if (item.secrets)
+              assert.equal(issued.secretVersion, item.version ?? 0);
+            Object.assign(observation, {
+              status: "Pass",
+              account: item.account,
+              staleWireCalls: 0,
+              freshWireCalls: 2,
+              scopedVaultEntries: 1,
+              scopedSecretEntries: item.secrets,
+              newAuthorizationAfterRestart: 0,
+              unsupportedRegistrationRefused: !!item.rejected,
+            });
+            previousAccount = item.account;
+          }
+          assert.equal(count("tools/call"), calls + 10);
+          const model = ctx.model().journal.slice(modelStart);
+          assert.equal(model.filter((x) => x.mcpAccountRefused).length, 4);
+          assert.equal(model.filter((x) => x.mcpAccountVerified).length, 10);
+          assert.equal(model.filter((x) => x.mcpAccountUnknown).length, 0);
+          assert.equal(
+            oauth().journal.filter((x) => x.phase === "registered").length,
+            registrations,
+            "Pre-registered client unexpectedly used DCR",
+          );
+        } catch (error) {
+          failure = error;
+          throw error;
+        } finally {
+          try {
+            await ctx.closePanel();
+            await control("disconnect", "client");
+            if (ctx.fault !== "abandoned-mcp-client-secret")
+              await setClient(MCP_CLIENTS.publicOne);
+            assert.equal(await ctx.vaultCount(), 0);
+            assert.equal(
+              await ctx.vaultCount(true),
+              ctx.fault === "abandoned-mcp-client-secret" ? 1 : 0,
+            );
+            assert.equal(provider().activeSessions, 0);
+          } catch (error) {
+            if (!failure) throw error;
+            evidence.push({
+              stage: "client-scenario-cleanup",
+              status: "Fail",
+              error: error.message,
+            });
+          }
+        }
+      },
       async "mcp.auth-fixture"() {
         assert.equal(await ctx.vaultCount(), 0);
         try {

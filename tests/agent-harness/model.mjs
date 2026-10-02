@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import { MCP_INPUT, MCP_EXTENSION_ID } from "./mcp-fixture.mjs";
 import { liveReply } from "./mcp-live.mjs";
 import { mcpAccountReply } from "./mcp-auth.mjs";
+import { MCP_CLIENT_ID } from "./mcp-oauth-fixture.mjs";
 
 export const FIXTURE_ID = "com.grain.harness.lifecycle";
 const AUTH_FIXTURE_ID = "com.grain.harness.auth";
@@ -70,6 +71,12 @@ export function nextReply(body) {
   const requested = instruction.slice("Harness request: ".length);
   if (["mcp_account_a", "mcp_account_b"].includes(requested))
     return mcpAccountReply(body, requested.endsWith("_a") ? "A" : "B");
+  if (["mcp_client_a", "mcp_client_b"].includes(requested))
+    return mcpAccountReply(
+      body,
+      requested.endsWith("_a") ? "A" : "B",
+      MCP_CLIENT_ID,
+    );
   if (["mcp_live_read", "mcp_live_large"].includes(requested))
     return liveReply(body, requested);
   if (requested === "mcp_conformance") return conformanceReply(body);

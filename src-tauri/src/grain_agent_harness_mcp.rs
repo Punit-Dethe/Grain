@@ -5,6 +5,7 @@ use tauri::{AppHandle, WebviewWindow};
 
 pub(crate) const PROVIDER_ID: &str = "grain-harness";
 pub(crate) const AUTH_PROVIDER_ID: &str = "grain-harness-auth";
+pub(crate) const CLIENT_PROVIDER_ID: &str = "grain-harness-auth-client";
 pub(crate) const LIVE_ENDPOINT: &str = "https://mcp.deepwiki.com/mcp";
 const LIVE_REPOSITORY: &str = "modelcontextprotocol/rust-sdk";
 
@@ -167,6 +168,7 @@ pub enum Target {
     #[default]
     Tools,
     Account,
+    Client,
 }
 
 #[tauri::command]
@@ -185,6 +187,10 @@ pub async fn agent_harness_mcp(
         Target::Account => {
             auth_endpoint()?;
             AUTH_PROVIDER_ID
+        }
+        Target::Client => {
+            auth_endpoint()?;
+            CLIENT_PROVIDER_ID
         }
     };
     match operation {
@@ -206,7 +212,7 @@ pub async fn agent_harness_mcp(
             Ok(serde_json::json!({"connected": false}))
         }
         Operation::Authorization => {
-            if id != AUTH_PROVIDER_ID {
+            if ![AUTH_PROVIDER_ID, CLIENT_PROVIDER_ID].contains(&id) {
                 return Err("MCP account fixture is not enabled".into());
             }
             let mut slot = AUTHORIZATION
@@ -236,7 +242,7 @@ impl Drop for ConsentGuard {
 /// Replace only the fixed fixture's browser handoff, never SDK state/PKCE/exchange.
 /// Consumed privately by the runner; the URL is not status or report evidence.
 pub(crate) fn capture_authorization(id: &str, raw: &str) -> Result<Option<ConsentGuard>, String> {
-    if id != AUTH_PROVIDER_ID {
+    if ![AUTH_PROVIDER_ID, CLIENT_PROVIDER_ID].contains(&id) {
         return Ok(None);
     }
     if !super::grain_agent_harness::mcp_auth_enabled() {

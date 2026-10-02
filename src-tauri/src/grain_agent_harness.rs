@@ -217,9 +217,16 @@ pub fn configure(app: &AppHandle) -> Result<(), String> {
     settings.mcp_enabled_providers.retain(|id| {
         ((config().marker.mcp_port.is_some() || live_deepwiki_enabled())
             && id == crate::grain_agent_harness_mcp::PROVIDER_ID)
-            || (mcp_auth_enabled() && id == crate::grain_agent_harness_mcp::AUTH_PROVIDER_ID)
+            || (mcp_auth_enabled()
+                && [
+                    crate::grain_agent_harness_mcp::AUTH_PROVIDER_ID,
+                    crate::grain_agent_harness_mcp::CLIENT_PROVIDER_ID,
+                ]
+                .contains(&id.as_str()))
     });
-    settings.mcp_oauth_client_ids.clear();
+    settings.mcp_oauth_client_ids.retain(|id, _| {
+        mcp_auth_enabled() && id == crate::grain_agent_harness_mcp::CLIENT_PROVIDER_ID
+    });
     settings.post_process_api_keys.0.clear();
     settings.stt_api_keys.0.clear();
     settings.post_process_smart_rotation = false;
@@ -507,6 +514,8 @@ pub enum Instruction {
     McpLiveLarge,
     McpAccountA,
     McpAccountB,
+    McpClientA,
+    McpClientB,
     Hello,
     SlowHello,
     ModelWait,
@@ -558,6 +567,8 @@ pub async fn agent_harness_submit(
         Instruction::McpLiveLarge => "Harness request: mcp_live_large",
         Instruction::McpAccountA => "Harness request: mcp_account_a",
         Instruction::McpAccountB => "Harness request: mcp_account_b",
+        Instruction::McpClientA => "Harness request: mcp_client_a",
+        Instruction::McpClientB => "Harness request: mcp_client_b",
         Instruction::Hello => "Harness request: hello",
         Instruction::SlowHello => "Harness request: slow_hello",
         Instruction::ModelWait => "Harness request: model_wait",

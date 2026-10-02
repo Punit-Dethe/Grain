@@ -311,7 +311,7 @@ test("MCP account shutdown oracle requires exact dispatched uncertainty without 
 
 test("authenticated MCP suite has independent IDs and remains in ordinary all", () => {
   const auth = selectScenarios("mcp-auth");
-  assert.equal(auth.length, 5);
+  assert.equal(auth.length, 6);
   assert.deepEqual(
     auth.map((x) => x.id),
     [
@@ -320,11 +320,12 @@ test("authenticated MCP suite has independent IDs and remains in ordinary all", 
       "mcp.auth-late-callback",
       "mcp.auth-close-cancellation",
       "mcp.auth-shutdown",
+      "mcp.auth-client-configuration",
     ],
   );
   for (const entry of auth) assert.ok(selectScenarios("all").includes(entry));
   const foundation = selectScenarios("mcp-foundation");
-  assert.equal(foundation.length, 14);
+  assert.equal(foundation.length, 15);
   assert.deepEqual(
     new Set(foundation),
     new Set([...auth, ...selectScenarios("mcp")]),
@@ -348,6 +349,109 @@ test("MCP journal exhaustion remains bounded, records failure and cannot copy pr
   assert.doesNotThrow(() => recordMcpFailure(journal));
   assert.equal(journal.length, MCP_JOURNAL_LIMIT);
   assert.ok(!JSON.stringify(journal).includes("HARNESS_MCP_PRIVATE_"));
+});
+
+test("client oracle selects the exact preregistered provider and refuses cross-provider metadata", async () => {
+  const { MCP_CLIENT_ID } = await import("./mcp-oauth-fixture.mjs");
+  const frame = body([]);
+  frame.messages[0].content = "Harness request: mcp_client_a";
+  const search = nextReply(frame);
+  assert.equal(
+    JSON.parse(search.tool_calls[0].function.arguments).extension_id,
+    "mcp." + MCP_CLIENT_ID,
+  );
+  frame.messages.push({
+    role: "tool",
+    content: JSON.stringify({
+      extension_id: "mcp.grain-harness-auth",
+      tools: [{ tool_id: "fixture_read" }],
+    }),
+  });
+  assert.throws(() => nextReply(frame));
+  frame.messages.at(-1).content = JSON.stringify({
+    extension_id: "mcp." + MCP_CLIENT_ID,
+    tools: [{ tool_id: "fixture_read" }],
+  });
+  const load = nextReply(frame);
+  assert.equal(
+    JSON.parse(load.tool_calls[0].function.arguments).extension_id,
+    "mcp." + MCP_CLIENT_ID,
+  );
+});
+
+test("owned issuer rejects mismatched client secrets without issuing a token or leaking evidence", async () => {
+  const {
+    createMcpOAuth,
+    MCP_CLIENTS,
+    MCP_CLIENT_SECRETS,
+    MCP_PRIVATE_MARKER,
+  } = await import("./mcp-oauth-fixture.mjs");
+  const { createHash } = await import("node:crypto");
+  const origin = "https://127.0.0.1:1",
+    peer = createMcpOAuth(() => origin, Buffer.alloc(0));
+  const verifier = "v".repeat(43);
+  async function request(method, url, data) {
+    let status, value, location;
+    await peer.handle(
+      {
+        method,
+        url,
+        async *[Symbol.asyncIterator]() {
+          if (data) yield Buffer.from(data);
+        },
+      },
+      {
+        headersSent: false,
+        writeHead(code, headers) {
+          status = code;
+          location = headers.location;
+          this.headersSent = true;
+        },
+        end(body) {
+          if (body) value = JSON.parse(body);
+        },
+      },
+    );
+    return { status, value, location };
+  }
+  async function exchange(secret) {
+    const q = new URLSearchParams({
+      client_id: MCP_CLIENTS.confidential,
+      redirect_uri: "http://127.0.0.1:31938/mcp/oauth/callback",
+      response_type: "code",
+      code_challenge_method: "S256",
+      code_challenge: createHash("sha256").update(verifier).digest("base64url"),
+      state: "s".repeat(24),
+      scope: "fixture.read",
+      resource: origin + "/account-mcp",
+    });
+    const consent = await request("GET", "/authorize?" + q);
+    assert.equal(consent.status, 302);
+    const params = new URLSearchParams({
+      grant_type: "authorization_code",
+      client_id: MCP_CLIENTS.confidential,
+      redirect_uri: q.get("redirect_uri"),
+      code: new URL(consent.location).searchParams.get("code"),
+      code_verifier: verifier,
+      resource: origin + "/account-mcp",
+      client_secret: secret,
+    });
+    return request("POST", "/token", params.toString());
+  }
+  try {
+    const bad = await exchange(MCP_PRIVATE_MARKER + "wrong-secret");
+    assert.equal(bad.status, 400);
+    assert.deepEqual(bad.value, { error: "invalid_client" });
+    assert.equal(peer.journal.filter((x) => x.phase === "token").length, 0);
+    const good = await exchange(MCP_CLIENT_SECRETS[0]);
+    assert.equal(good.status, 200);
+    assert.ok(good.value.access_token.startsWith(MCP_PRIVATE_MARKER));
+    assert.equal(peer.journal.filter((x) => x.phase === "token").length, 1);
+    assert.ok(!JSON.stringify(peer.journal).includes(MCP_PRIVATE_MARKER));
+    assert.ok(!peer.journal.some((x) => x.phase === "oauth-error"));
+  } finally {
+    peer.close();
+  }
 });
 
 test("OAuth evidence exhaustion refuses requests without throwing again or copying private data", async () => {

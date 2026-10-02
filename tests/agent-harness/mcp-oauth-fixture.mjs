@@ -5,7 +5,17 @@ import { request as httpsRequest } from "node:https";
 import { request as httpRequest } from "node:http";
 
 export const MCP_AUTH_ID = "grain-harness-auth";
+export const MCP_CLIENT_ID = "grain-harness-auth-client";
+export const MCP_CLIENTS = Object.freeze({
+  publicOne: "grain-mcp-public-one",
+  publicTwo: "grain-mcp-public-two",
+  confidential: "grain-mcp-confidential",
+});
 export const MCP_PRIVATE_MARKER = "HARNESS_MCP_PRIVATE_";
+export const MCP_CLIENT_SECRETS = Object.freeze([
+  MCP_PRIVATE_MARKER + "owned-client-secret-one",
+  MCP_PRIVATE_MARKER + "owned-client-secret-two",
+]);
 // Repeated real SDK discovery legitimately exceeded the old 256-entry log.
 // Keep combined-suite evidence bounded, with one reserved terminal error slot.
 export const MCP_OAUTH_JOURNAL_LIMIT = 1024;
@@ -22,13 +32,22 @@ async function boundedBody(req) {
 }
 
 export function createMcpOAuth(origin, ca, { wrongAccount = false } = {}) {
-  const clients = new Map(),
+  const fixedRedirect = "http://127.0.0.1:31938/mcp/oauth/callback";
+  const clients = new Map([
+      [MCP_CLIENTS.publicOne, { redirect: fixedRedirect }],
+      [MCP_CLIENTS.publicTwo, { redirect: fixedRedirect }],
+      [
+        MCP_CLIENTS.confidential,
+        { redirect: fixedRedirect, confidential: true },
+      ],
+    ]),
     codes = new Map(),
     tokens = new Map();
   const callbacks = new Set(),
     journal = [];
   let account = "A",
-    denied = false;
+    denied = false,
+    secretVersion = 0;
   const record = (item) => {
     assert.ok(
       journal.length < MCP_OAUTH_JOURNAL_LIMIT - 1,
@@ -50,7 +69,7 @@ export function createMcpOAuth(origin, ca, { wrongAccount = false } = {}) {
     registration_endpoint: origin() + "/register",
     response_types_supported: ["code"],
     grant_types_supported: ["authorization_code"],
-    token_endpoint_auth_methods_supported: ["none"],
+    token_endpoint_auth_methods_supported: ["none", "client_secret_post"],
     code_challenge_methods_supported: ["S256"],
     scopes_supported: ["fixture.read"],
     authorization_response_iss_parameter_supported: true,
@@ -93,9 +112,9 @@ export function createMcpOAuth(origin, ca, { wrongAccount = false } = {}) {
         );
         assert.equal(redirect.search, "");
         assert.equal(redirect.hash, "");
-        assert.ok(clients.size < 16, "Owned registration count exceeded bound");
+        assert.ok(clients.size < 32, "Owned registration count exceeded bound");
         const clientId = "grain-mcp-fixture-" + randomUUID();
-        clients.set(clientId, redirect.href);
+        clients.set(clientId, { redirect: redirect.href });
         record({ phase: "registered", publicClient: true });
         json(res, 201, {
           client_id: clientId,
@@ -106,8 +125,9 @@ export function createMcpOAuth(origin, ca, { wrongAccount = false } = {}) {
         });
       } else if (req.method === "GET" && path === "/authorize") {
         const q = new URL(req.url, origin()).searchParams;
-        const redirect = clients.get(q.get("client_id"));
-        assert.ok(redirect, "Unregistered fixture client");
+        const client = clients.get(q.get("client_id"));
+        assert.ok(client, "Unregistered fixture client");
+        const redirect = client.redirect;
         assert.equal(q.get("redirect_uri"), redirect);
         assert.equal(q.get("response_type"), "code");
         assert.equal(q.get("code_challenge_method"), "S256");
@@ -158,7 +178,20 @@ export function createMcpOAuth(origin, ca, { wrongAccount = false } = {}) {
         );
         assert.equal(q.get("resource"), origin() + "/account-mcp");
         codes.delete(q.get("code"));
-        assert.ok(tokens.size < 16, "Owned token count exceeded bound");
+        const client = clients.get(grant.clientId);
+        assert.ok(client, "Unknown grant client");
+        const expectedSecret = client.confidential
+          ? MCP_CLIENT_SECRETS[secretVersion]
+          : null;
+        if (q.get("client_secret") !== expectedSecret) {
+          record({
+            phase: "client-auth-refused",
+            confidential: !!client.confidential,
+          });
+          json(res, 400, { error: "invalid_client" });
+          return true;
+        }
+        assert.ok(tokens.size < 32, "Owned token count exceeded bound");
         const token = MCP_PRIVATE_MARKER + randomUUID();
         tokens.set(token, grant.account);
         record({
@@ -166,6 +199,9 @@ export function createMcpOAuth(origin, ca, { wrongAccount = false } = {}) {
           account: grant.account,
           pkceVerified: true,
           resourceVerified: true,
+          registration: client.confidential ? "confidential" : "public",
+          configuredClient: Object.values(MCP_CLIENTS).includes(grant.clientId),
+          ...(client.confidential ? { secretVersion } : {}),
         });
         json(res, 200, {
           access_token: token,
@@ -240,7 +276,9 @@ export function createMcpOAuth(origin, ca, { wrongAccount = false } = {}) {
     journal,
     configure(next) {
       assert.ok(
-        Object.keys(next).every((key) => ["account", "denied"].includes(key)),
+        Object.keys(next).every((key) =>
+          ["account", "denied", "secretVersion"].includes(key),
+        ),
       );
       if (next.account !== undefined) {
         assert.ok(["A", "B"].includes(next.account));
@@ -249,6 +287,10 @@ export function createMcpOAuth(origin, ca, { wrongAccount = false } = {}) {
       if (next.denied !== undefined) {
         assert.equal(typeof next.denied, "boolean");
         denied = next.denied;
+      }
+      if (next.secretVersion !== undefined) {
+        assert.ok([0, 1].includes(next.secretVersion));
+        secretVersion = next.secretVersion;
       }
     },
     async authorize(raw) {
@@ -265,7 +307,9 @@ export function createMcpOAuth(origin, ca, { wrongAccount = false } = {}) {
       return reply.location;
     },
     async callback(raw) {
-      assert.ok(callbacks.has(raw), "Unowned callback destination");
+      // Ownership is needed only for this one delivery, including a refused
+      // late callback. Keep its issuer code alive so Grain must reject it.
+      assert.ok(callbacks.delete(raw), "Unowned/consumed callback destination");
       return exchange(new URL(raw), false);
     },
     close() {

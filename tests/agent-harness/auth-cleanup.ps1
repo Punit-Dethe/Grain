@@ -1,10 +1,10 @@
 # Remove only the exact native or MCP account fixture entries for one owned run.
 # Never reads or prints a credential blob; no ordinary namespace is accepted.
-param([Parameter(Mandatory=$true)][string]$Root, [Parameter(Mandatory=$true)][Guid]$RunId, [switch]$InventoryOnly, [switch]$Mcp)
+param([Parameter(Mandatory=$true)][string]$Root, [Parameter(Mandatory=$true)][Guid]$RunId, [switch]$InventoryOnly, [switch]$Mcp, [switch]$McpClientSecret)
 $ErrorActionPreference = 'Stop'
 $taskRoot = (Resolve-Path -LiteralPath $Root).Path
 $taskMarker = Get-Content -Raw -LiteralPath (Join-Path $taskRoot '.grain-agent-harness.json') | ConvertFrom-Json
-if ($taskMarker.schema -ne 1 -or [Guid]$taskMarker.runId -ne $RunId -or
+if (($McpClientSecret -and -not $Mcp) -or $taskMarker.schema -ne 1 -or [Guid]$taskMarker.runId -ne $RunId -or
     ($Mcp -and (-not $taskMarker.mcpAuth -or -not $taskMarker.mcpPort -or $taskMarker.mcpLiveDeepwiki)) -or
     (-not $Mcp -and -not $taskMarker.authPort)) {
     throw 'Vault cleanup requires the exact enabled account fixture marker'
@@ -30,12 +30,12 @@ public static class GrainOwnedAuthCleanup {
     [DllImport("advapi32.dll", EntryPoint="CredDeleteW", CharSet=CharSet.Unicode, SetLastError=true)]
     private static extern bool Delete(string target, uint type, uint flags);
     [DllImport("advapi32.dll")] private static extern void CredFree(IntPtr pointer);
-    public static int Clean(string runId, bool delete, bool mcp) {
+    public static int Clean(string runId, bool delete, bool mcp, bool clientSecret = false) {
         Guid parsed;
         if (!Guid.TryParseExact(runId, "D", out parsed)) throw new Exception("Invalid run UUID");
-        string service = (mcp ? "com.grain.mcp.oauth" : "com.grain.extension.oauth") + ".agent-harness." + parsed.ToString("D");
+        string service = (mcp ? (clientSecret ? "com.grain.mcp.client-secret" : "com.grain.mcp.oauth") : "com.grain.extension.oauth") + ".agent-harness." + parsed.ToString("D");
         string suffix = "." + service;
-        string pattern = (mcp ? "^grain-harness-auth" : "^com\\.grain\\.harness\\.auth(?:-peer)?(?:/[a-fA-F0-9]{32})?") + Regex.Escape(suffix) + "$";
+        string pattern = (mcp ? "^grain-harness-auth(?:-client)?" : "^com\\.grain\\.harness\\.auth(?:-peer)?(?:/[a-fA-F0-9]{32})?") + Regex.Escape(suffix) + "$";
         uint count; IntPtr entries;
         if (!Enumerate(mcp ? "grain-harness-auth*" : "com.grain.harness.auth*", 0, out count, out entries)) {
             int error = Marshal.GetLastWin32Error();
@@ -59,10 +59,16 @@ public static class GrainOwnedAuthCleanup {
 }
 '@
 if ($InventoryOnly) {
-    @{schema=1; kind=$(if ($Mcp) {'mcp-vault-inventory'} else {'native-vault-inventory'}); count=[GrainOwnedAuthCleanup]::Clean($RunId.ToString('D'), $false, $Mcp.IsPresent)} | ConvertTo-Json -Compress
+    @{schema=1; kind=$(if ($McpClientSecret) {'mcp-client-secret-inventory'} elseif ($Mcp) {'mcp-vault-inventory'} else {'native-vault-inventory'}); count=[GrainOwnedAuthCleanup]::Clean($RunId.ToString('D'), $false, $Mcp.IsPresent, $McpClientSecret.IsPresent)} | ConvertTo-Json -Compress
     exit 0
 }
 $taskDeleted = [GrainOwnedAuthCleanup]::Clean($RunId.ToString('D'), $true, $Mcp.IsPresent)
 $taskRemaining = [GrainOwnedAuthCleanup]::Clean($RunId.ToString('D'), $false, $Mcp.IsPresent)
 if ($taskRemaining -ne 0) { throw 'Owned credentials remain after cleanup' }
-@{schema=1; kind=$(if ($Mcp) {'mcp-vault-cleanup'} else {'native-vault-cleanup'}); deleted=$taskDeleted; remaining=$taskRemaining} | ConvertTo-Json -Compress
+$taskResult = @{schema=1; kind=$(if ($Mcp) {'mcp-vault-cleanup'} else {'native-vault-cleanup'}); deleted=$taskDeleted; remaining=$taskRemaining}
+if ($Mcp) {
+    $taskResult.clientSecretsDeleted = [GrainOwnedAuthCleanup]::Clean($RunId.ToString('D'), $true, $true, $true)
+    $taskResult.clientSecretsRemaining = [GrainOwnedAuthCleanup]::Clean($RunId.ToString('D'), $false, $true, $true)
+    if ($taskResult.clientSecretsRemaining -ne 0) { throw 'Owned client secrets remain after cleanup' }
+}
+$taskResult | ConvertTo-Json -Compress

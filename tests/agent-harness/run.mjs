@@ -136,12 +136,16 @@ if (
     "abandoned-mcp-credential",
     "lost-mcp-account",
     "skip-mcp-disable",
+    "skip-mcp-client-change",
+    "abandoned-mcp-client-secret",
   ].includes(options.fault)
 )
   throw new Error("Unknown oracle fault");
 for (const [fault, scenario] of [
   ["lost-mcp-account", "mcp.auth-close-cancellation"],
   ["skip-mcp-disable", "mcp.auth-shutdown"],
+  ["skip-mcp-client-change", "mcp.auth-client-configuration"],
+  ["abandoned-mcp-client-secret", "mcp.auth-client-configuration"],
   ["wrong-mcp-account", "mcp.auth-fixture"],
   ["abandoned-mcp-credential", "mcp.auth-fixture"],
   ["missing-live-evidence", "mcp.live-read-disable"],
@@ -1372,7 +1376,7 @@ const mcpAuthSuite = mcpAuthHandlers({
   provider: () => mcpProvider,
   model: () => model,
   fault: options.fault,
-  vaultCount: async () => {
+  vaultCount: async (clientSecret = false) => {
     const output = await exec(
       "powershell.exe",
       [
@@ -1385,11 +1389,15 @@ const mcpAuthSuite = mcpAuthHandlers({
         runId,
         "-Mcp",
         "-InventoryOnly",
+        ...(clientSecret ? ["-McpClientSecret"] : []),
       ],
       { timeout: 10000, windowsHide: true, maxBuffer: 4096 },
     );
     const value = JSON.parse(output.stdout.trim());
-    assert.equal(value.kind, "mcp-vault-inventory");
+    assert.equal(
+      value.kind,
+      clientSecret ? "mcp-client-secret-inventory" : "mcp-vault-inventory",
+    );
     return value.count;
   },
 });
@@ -2011,6 +2019,7 @@ try {
         const value = JSON.parse(output.stdout.trim());
         assert.equal(value.kind, "mcp-vault-cleanup");
         assert.equal(value.remaining, 0);
+        assert.equal(value.clientSecretsRemaining, 0);
         report.mcpVaultCleanup = value;
       } catch (error) {
         errors.push(`Owned MCP credential cleanup: ${error.message}`);
