@@ -69,6 +69,7 @@ export async function startMcpFixture(
     wrongNestedType = false,
     supportedExcluded = false,
     shortPreview = false,
+    acceptedCatalog = false,
   } = {},
 ) {
   const [cert, key] = await Promise.all([
@@ -79,7 +80,8 @@ export async function startMcpFixture(
     sockets = new Set(),
     sessions = new Set(),
     held = new Set(),
-    closedReplies = [];
+    closedReplies = [],
+    delays = new Set();
   let configuredMode = {
     lifecycle: "stateless",
     reply: "json",
@@ -98,6 +100,24 @@ export async function startMcpFixture(
       ...headers,
     });
     res.end(JSON.stringify(value));
+  }
+  function delayReply(res, entry) {
+    assert.ok(delays.size < 4, "Too many delayed MCP replies");
+    return new Promise((resolve) => {
+      const pending = { finish: null, timer: null };
+      const finish = (completed = false) => {
+        clearTimeout(pending.timer);
+        delays.delete(pending);
+        res.off("close", pending.finish);
+        if (!completed)
+          record({ phase: "catalog-delay-closed", page: entry.page });
+        resolve(completed);
+      };
+      pending.finish = () => finish(false);
+      pending.timer = setTimeout(() => finish(true), 35000);
+      delays.add(pending);
+      res.once("close", pending.finish);
+    });
   }
   const server = createServer({ key, cert }, async (req, res) => {
     try {
@@ -140,6 +160,8 @@ export async function startMcpFixture(
         lifecycle: mode.lifecycle,
         reply: mode.reply,
         result: mode.result,
+        catalog: mode.catalog,
+        receivedAtMs: performance.now(),
       };
       record(entry);
       if (body.id === undefined) {
@@ -200,7 +222,63 @@ export async function startMcpFixture(
           const tools = catalog(mode.revision);
           if (supportedExcluded)
             tools[1].inputSchema = { type: "object", properties: {} };
-          if (mode.catalog === "unsupported")
+          if (
+            [
+              "tool_count",
+              "duplicate",
+              "cursor_size",
+              "empty_pages",
+              "catalog_bytes",
+              "operation_bytes",
+              "slow_pages",
+            ].includes(mode.catalog) &&
+            !acceptedCatalog
+          ) {
+            const cursor = body.params?.cursor;
+            assert.ok(
+              cursor === undefined || /^page-[1-9][0-9]*$/.test(cursor),
+              "Unexpected bounded-catalog cursor",
+            );
+            const page = cursor ? Number(cursor.slice(5)) : 1;
+            assert.ok(Number.isSafeInteger(page) && page <= 33);
+            entry.page = page;
+            const tool = structuredClone(tools[0]);
+            if (mode.catalog === "tool_count") {
+              result = {
+                tools: Array.from({ length: 129 }, (_, index) => ({
+                  ...tool,
+                  name: `unsupported_${index}`,
+                  inputSchema: { type: "object", required: [7] },
+                })),
+              };
+            } else if (mode.catalog === "duplicate") {
+              if (page === 1)
+                tool.inputSchema = { type: "object", required: [7] };
+              result = {
+                tools: [tool],
+                ...(page === 1 ? { nextCursor: "page-2" } : {}),
+              };
+            } else if (mode.catalog === "cursor_size") {
+              result = { tools: [tool], nextCursor: "x".repeat(1025) };
+            } else if (mode.catalog === "catalog_bytes") {
+              tool.name = `bounded_${page}`;
+              tool.description = "x".repeat(
+                mode.reply === "json" ? 1100 * 1024 : 320 * 1024,
+              );
+              result = { tools: [tool], nextCursor: `page-${page + 1}` };
+            } else {
+              result = { tools: [], nextCursor: `page-${page + 1}` };
+              if (mode.catalog === "operation_bytes")
+                result.padding = "x".repeat(
+                  mode.reply === "json" ? 1024 * 1024 : 350 * 1024,
+                );
+              if (mode.catalog === "slow_pages") {
+                entry.phase = "catalog-delay";
+                if (!(await delayReply(res, entry))) return;
+                entry.phase = "catalog-delivered";
+              }
+            }
+          } else if (mode.catalog === "unsupported")
             result = {
               tools: tools.filter((tool) => tool.name.startsWith("excluded_")),
             };
@@ -322,6 +400,9 @@ export async function startMcpFixture(
         } else throw new Error(`Unexpected MCP method: ${body.method}`);
       }
       const message = { jsonrpc: "2.0", id: body.id, result };
+      entry.responseBytes =
+        Buffer.byteLength(JSON.stringify(message)) +
+        (mode.reply === "sse" ? 23 : 0);
       if (mode.reply === "sse") {
         res.writeHead(200, {
           "content-type": "text/event-stream",
@@ -354,6 +435,9 @@ export async function startMcpFixture(
     get heldCalls() {
       return held.size;
     },
+    get delayedReplies() {
+      return delays.size;
+    },
     attemptLateReply() {
       // Deliberately misbehaving peer: try to finish a closed request. Never
       // retain a response handle beyond this operation.
@@ -383,11 +467,23 @@ export async function startMcpFixture(
         ),
       );
       assert.equal(held.size, 0, "Fixture reconfigured with a held call");
+      assert.equal(delays.size, 0, "Fixture reconfigured with a delayed reply");
       const candidate = { ...configuredMode, ...next };
       assert.ok(["stateless", "legacy"].includes(candidate.lifecycle));
       assert.ok(["json", "sse"].includes(candidate.reply));
       assert.ok(
-        ["mixed", "unsupported", "repeat_cursor"].includes(candidate.catalog),
+        [
+          "mixed",
+          "unsupported",
+          "repeat_cursor",
+          "tool_count",
+          "duplicate",
+          "cursor_size",
+          "empty_pages",
+          "catalog_bytes",
+          "operation_bytes",
+          "slow_pages",
+        ].includes(candidate.catalog),
       );
       assert.ok(["one", "two"].includes(candidate.revision));
       assert.ok(
@@ -407,12 +503,14 @@ export async function startMcpFixture(
     },
     async close() {
       const pending = new Promise((resolve) => server.close(resolve));
+      for (const delayed of [...delays]) delayed.finish();
       for (const socket of sockets) socket.destroy();
       await pending;
       closedReplies.length = 0;
       assert.equal(sockets.size, 0, "MCP fixture retained sockets");
       assert.equal(sessions.size, 0, "MCP fixture retained protocol sessions");
       assert.equal(held.size, 0, "MCP fixture retained held replies");
+      assert.equal(delays.size, 0, "MCP fixture retained delayed reply timers");
     },
   };
 }

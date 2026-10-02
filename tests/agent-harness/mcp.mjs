@@ -105,7 +105,13 @@ export function mcpHandlers(ctx) {
     );
     evidence.push({ stage: "stale-approval", wireCalls: 0 });
   }
-  async function outcome(stage, instruction, flag, visibleText) {
+  async function outcome(
+    stage,
+    instruction,
+    flag,
+    visibleText,
+    timeoutMs = 20000,
+  ) {
     const observation = { stage, status: "Running" };
     evidence.push(observation);
     const before = calls(),
@@ -116,6 +122,7 @@ export function mcpHandlers(ctx) {
     await ctx.waitFor(
       `${stage}: actual Agent completes`,
       async () => !(await ctx.status()).agent.active,
+      { timeoutMs },
     );
     assert.equal(
       calls(),
@@ -151,6 +158,65 @@ export function mcpHandlers(ctx) {
       activeSessions: 0,
     });
   }
+  async function refusedCatalog(stage, expected, timeoutMs = 20000) {
+    const before = calls(),
+      modelStart = ctx.model().journal.length;
+    await ctx.closePanel();
+    await ctx.invoke("agent_harness_submit", {
+      instruction: "mcp_catalog_refusal",
+    });
+    const page = await ctx.panel();
+    await ctx.waitFor(
+      `${stage}: actual Agent refuses catalog`,
+      async () =>
+        ctx
+          .model()
+          .journal.slice(modelStart)
+          .some(
+            (entry) => entry.mcpCatalogRefused || entry.state === "error",
+          ) && !(await ctx.status()).agent.active,
+      { timeoutMs },
+    );
+    const entries = ctx.model().journal.slice(modelStart);
+    const refusal = entries.filter((entry) => entry.mcpCatalogRefused);
+    assert.equal(
+      refusal.length,
+      1,
+      `${stage}: missing independent model refusal`,
+    );
+    assert.match(refusal[0].mcpCatalogRefused, expected);
+    assert.ok(
+      entries.every(
+        (entry) => !entry.offered?.some((name) => name.startsWith("act__")),
+      ),
+      `${stage}: failed catalog exposed actions`,
+    );
+    assert.equal(
+      calls(),
+      before,
+      `${stage}: rejected catalog dispatched a tool`,
+    );
+    assert.equal((await ctx.status()).agent.pendingApproval, false);
+    await page
+      .getByText("Harness verified MCP catalog refusal", { exact: false })
+      .first()
+      .waitFor({ state: "visible", timeout: 10000 });
+    assert.equal(
+      ctx.provider().activeSessions,
+      0,
+      `${stage}: failed discovery retained session`,
+    );
+    assert.equal(
+      ctx.provider().delayedReplies,
+      0,
+      `${stage}: delayed reply timer survived`,
+    );
+    assert.ok(
+      !ctx.provider().journal.some((entry) => entry.phase === "error"),
+      `${stage}: fixture rejected traffic`,
+    );
+    return refusal[0].mcpCatalogRefused;
+  }
   return {
     takeEvidence() {
       const value = evidence;
@@ -158,6 +224,225 @@ export function mcpHandlers(ctx) {
       return value;
     },
     handlers: {
+      async "mcp.catalog-budgets"() {
+        const provider = ctx.provider();
+        const variants = [
+          ["tool_count", /128-tool limit/, () => 1],
+          ["duplicate", /duplicate tool names/, () => 2],
+          ["cursor_size", /cursor exceeds the safety limit/, () => 1],
+          ["empty_pages", /catalog exceeds the page limit/, () => 32],
+          [
+            "catalog_bytes",
+            /catalog exceeds the metadata byte limit/,
+            (reply) => (reply === "json" ? 2 : 7),
+          ],
+          [
+            "operation_bytes",
+            /catalog request failed; the catalog is incomplete/,
+            (reply) => (reply === "json" ? 8 : 24),
+          ],
+        ];
+        await enabled();
+        try {
+          for (const lifecycle of ["stateless", "legacy"]) {
+            for (const reply of ["json", "sse"]) {
+              for (const [catalog, expected, pages] of variants) {
+                const stage = `${lifecycle}-${reply}-${catalog}`;
+                const observation = { stage, status: "Running" };
+                evidence.push(observation);
+                provider.configure({
+                  lifecycle,
+                  reply,
+                  catalog,
+                  revision: "one",
+                  result: "normal",
+                });
+                const before = calls();
+                const testStart = provider.journal.length;
+                await assert.rejects(
+                  control("discover"),
+                  expected,
+                  `${stage}: management Test accepted incomplete catalog`,
+                );
+                const testRequests = provider.journal.slice(testStart);
+                assert.equal(
+                  testRequests.filter((entry) => entry.method === "tools/list")
+                    .length,
+                  pages(reply),
+                  `${stage}: unexpected management page count`,
+                );
+                const agentStart = provider.journal.length;
+                const reason = await refusedCatalog(stage, expected);
+                const agentRequests = provider.journal.slice(agentStart);
+                assert.equal(
+                  agentRequests.filter((entry) => entry.method === "tools/list")
+                    .length,
+                  pages(reply),
+                  `${stage}: unexpected Agent page count`,
+                );
+                for (const requests of [testRequests, agentRequests]) {
+                  const lists = requests.filter(
+                    (entry) => entry.method === "tools/list",
+                  );
+                  assert.ok(
+                    lists.every(
+                      (entry) =>
+                        entry.responseBytes <
+                        (reply === "json" ? 2 * 1024 * 1024 : 512 * 1024),
+                    ),
+                    `${stage}: individual body limit masked catalog/operation limit`,
+                  );
+                  if (catalog === "operation_bytes")
+                    assert.ok(
+                      requests.reduce(
+                        (total, entry) => total + (entry.responseBytes ?? 0),
+                        0,
+                      ) >
+                        8 * 1024 * 1024,
+                      `${stage}: wire replies never crossed cumulative limit`,
+                    );
+                }
+                assert.equal(calls(), before);
+                Object.assign(observation, {
+                  status: "Pass",
+                  managementPages: pages(reply),
+                  agentPages: pages(reply),
+                  wireCalls: 0,
+                  refusal: reason,
+                  activeSessions: 0,
+                });
+                provider.configure({ catalog: "mixed" });
+                await read(`${stage}-fresh-recovery`);
+              }
+            }
+          }
+        } finally {
+          await ctx.closePanel();
+          await control("disable");
+        }
+      },
+      async "mcp.http-deadline"() {
+        const provider = ctx.provider();
+        await enabled();
+        try {
+          for (const lifecycle of ["stateless", "legacy"]) {
+            for (const reply of ["json", "sse"]) {
+              const stage = `${lifecycle}-${reply}-45s-http-deadline`;
+              provider.configure({
+                lifecycle,
+                reply,
+                catalog: "mixed",
+                revision: "one",
+                result: "held",
+              });
+              const start = provider.journal.length;
+              await outcome(
+                stage,
+                "mcp_unknown",
+                "mcpUnknownVerified",
+                "could not confirm",
+                60000,
+              );
+              const received = provider.journal
+                .slice(start)
+                .filter((entry) => entry.method === "tools/call");
+              assert.equal(received.length, 1);
+              const elapsedMs = Math.round(
+                performance.now() - received[0].receivedAtMs,
+              );
+              assert.ok(
+                elapsedMs >= 44000 && elapsedMs < 55000,
+                `${stage}: production HTTP deadline measured ${elapsedMs}ms`,
+              );
+              await ctx.waitFor(
+                `${stage}: transport actually closes`,
+                () => provider.heldCalls === 0,
+              );
+              provider.attemptLateReply();
+              evidence.push({
+                stage: `${stage}-measured`,
+                status: "Pass",
+                elapsedMs,
+                wireCalls: 1,
+                heldCalls: 0,
+                activeSessions: 0,
+              });
+              provider.configure({ result: "normal" });
+              await read(`${stage}-fresh-recovery`);
+            }
+          }
+        } finally {
+          await ctx.closePanel();
+          await control("disable");
+        }
+      },
+      async "mcp.discovery-deadline"() {
+        const provider = ctx.provider();
+        await enabled();
+        try {
+          for (const [lifecycle, reply] of [
+            ["stateless", "sse"],
+            ["legacy", "json"],
+          ]) {
+            const stage = `${lifecycle}-${reply}-90s-absolute-discovery`;
+            const observation = { stage, status: "Running" };
+            evidence.push(observation);
+            provider.configure({
+              lifecycle,
+              reply,
+              catalog: "slow_pages",
+              revision: "one",
+              result: "normal",
+            });
+            const start = provider.journal.length,
+              began = performance.now();
+            const refusal = await refusedCatalog(
+              stage,
+              /MCP discovery timed out; the catalog is incomplete/,
+              105000,
+            );
+            const elapsedMs = Math.round(performance.now() - began);
+            assert.ok(
+              elapsedMs >= 89000 && elapsedMs < 100000,
+              `${stage}: production absolute deadline measured ${elapsedMs}ms`,
+            );
+            const lists = provider.journal
+              .slice(start)
+              .filter((entry) => entry.method === "tools/list");
+            assert.equal(
+              lists.length,
+              3,
+              `${stage}: did not exercise successive sub-45s pages`,
+            );
+            assert.equal(
+              lists.filter((entry) => entry.phase === "catalog-delivered")
+                .length,
+              2,
+            );
+            assert.ok(
+              provider.journal
+                .slice(start)
+                .some((entry) => entry.phase === "catalog-delay-closed"),
+              `${stage}: final delayed request survived timeout`,
+            );
+            Object.assign(observation, {
+              status: "Pass",
+              elapsedMs,
+              completedPages: 2,
+              attemptedPages: 3,
+              wireCalls: 0,
+              delayedReplies: 0,
+              activeSessions: 0,
+              refusal,
+            });
+            provider.configure({ catalog: "mixed" });
+            await read(`${stage}-fresh-recovery`);
+          }
+        } finally {
+          await ctx.closePanel();
+          await control("disable");
+        }
+      },
       async "mcp.response-preview"() {
         const provider = ctx.provider();
         await enabled();

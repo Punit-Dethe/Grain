@@ -98,6 +98,7 @@ if (
     "wrong-mcp-type",
     "supported-mcp-excluded",
     "short-mcp-preview",
+    "accepted-mcp-catalog",
   ].includes(options.fault)
 )
   throw new Error("Unknown oracle fault");
@@ -105,6 +106,7 @@ for (const [fault, scenario] of [
   ["wrong-mcp-type", "mcp.transport-contract"],
   ["supported-mcp-excluded", "mcp.mixed-catalog"],
   ["short-mcp-preview", "mcp.response-preview"],
+  ["accepted-mcp-catalog", "mcp.catalog-budgets"],
   ["released-refresh", "native.auth-refresh-logout"],
   ["uncancelled-login", "native.auth-cancellation"],
   ["accepted-partial-consent", "native.auth-expiry"],
@@ -1297,6 +1299,7 @@ const mcpSuite = mcpHandlers({
   waitFor,
   closePanel,
   restartHost,
+  panel,
   provider: () => mcpProvider,
   model: () => model,
   log: () => logTail,
@@ -1419,6 +1422,7 @@ try {
       wrongNestedType: options.fault === "wrong-mcp-type",
       supportedExcluded: options.fault === "supported-mcp-excluded",
       shortPreview: options.fault === "short-mcp-preview",
+      acceptedCatalog: options.fault === "accepted-mcp-catalog",
     });
   }
   if (authProvider || mcpProvider) {
@@ -1477,6 +1481,10 @@ try {
     if (interrupted) throw new Error("Run interrupted");
     const started = performance.now();
     const modelStart = model.journal.length;
+    // A hard process/terminal loss cannot run finally. Persist partial evidence
+    // with an explicit unverified cleanup verdict, never an aggregate Pass.
+    report.activeScenario = scenario.id;
+    await writeReport(root, report);
     console.log(`RUN ${scenario.id}`);
     const result = {
       id: scenario.id,
@@ -1600,6 +1608,8 @@ try {
     }
     result.elapsedMs = Math.round(performance.now() - started);
     report.results.push(result);
+    delete report.activeScenario;
+    await writeReport(root, report);
     console.log(
       `${result.status.toUpperCase()} ${result.id} (${result.elapsedMs}ms)${result.error ? `: ${result.error}` : ""}`,
     );
@@ -1718,6 +1728,7 @@ try {
       requests: mcpProvider.journal,
       activeSessionsBeforeShutdown: mcpProvider.activeSessions,
       heldCallsBeforeShutdown: mcpProvider.heldCalls,
+      delayedRepliesBeforeShutdown: mcpProvider.delayedReplies,
       limitations: [
         "Unauthenticated controlled HTTPS peer; no live provider, OAuth, account persistence or official conformance certification.",
       ],

@@ -67,9 +67,13 @@ export function nextReply(body) {
     return { content: "Harness delayed model reply", delayMs: 15000 };
   const requested = instruction.slice("Harness request: ".length);
   if (
-    ["mcp_read", "mcp_excluded", "mcp_preview", "mcp_unknown"].includes(
-      requested,
-    )
+    [
+      "mcp_read",
+      "mcp_excluded",
+      "mcp_preview",
+      "mcp_unknown",
+      "mcp_catalog_refusal",
+    ].includes(requested)
   )
     return mcpReply(body, requested);
   const accountRequest =
@@ -253,6 +257,22 @@ function mcpReply(body, requested) {
     return call("search_tools", { extension_id: MCP_EXTENSION_ID, query: "" });
   }
   if (results.length === 1) {
+    if (requested === "mcp_catalog_refusal") {
+      assert.equal(actions.length, 0, "Failed catalog exposed an action");
+      const reason = results[0].content;
+      assert.ok(
+        reason.startsWith("Could not discover MCP tools: "),
+        "Failed discovery was published as a supported catalog",
+      );
+      assert.ok(
+        reason.length <= 512 && !reason.includes("xxxx"),
+        "Raw oversized catalog entered model context",
+      );
+      return {
+        content: "Harness verified MCP catalog refusal",
+        mcpCatalogRefused: reason,
+      };
+    }
     assert.ok(
       !results[0].content.includes("excluded_"),
       "Unsupported tools reached search metadata",
@@ -387,6 +407,9 @@ export async function startModel() {
         ...(reply.mcpRefused ? { mcpRefused: true } : {}),
         ...(reply.mcpUnknownVerified ? { mcpUnknownVerified: true } : {}),
         ...(reply.mcpPreviewVerified ? { mcpPreviewVerified: true } : {}),
+        ...(reply.mcpCatalogRefused
+          ? { mcpCatalogRefused: reply.mcpCatalogRefused }
+          : {}),
       };
       journal.push(entry);
       if (journal.length > 4096) throw new Error("Model journal overflow");

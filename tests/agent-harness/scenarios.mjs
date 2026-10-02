@@ -361,4 +361,25 @@ scenarios.push(
     description:
       "Modern/legacy JSON/SSE approved held calls and pending approvals close through real Agent UI; late replies cannot contaminate fresh sessions",
   },
+  {
+    id: "mcp.catalog-budgets",
+    suite: "mcp",
+    checks: [20, 23],
+    description:
+      "Management Test and actual Agent reject tool/duplicate/cursor/page/metadata/cumulative-wire limits independently, expose no actions and recover",
+  },
+  {
+    id: "mcp.http-deadline",
+    suite: "mcp",
+    checks: [20, 31],
+    description:
+      "Real 45-second JSON/SSE HTTP deadlines in modern/legacy approved reads remain unknown without replay, release replies and recover",
+  },
+  {
+    id: "mcp.discovery-deadline",
+    suite: "mcp",
+    checks: [20, 31],
+    description:
+      "Actual 90-second discovery deadline bounds successive sub-45s pages across modern/legacy, dispatches nothing, retires timers/sessions and recovers",
+  },
 );

@@ -34,7 +34,7 @@ const body = (results = [], actions = []) => ({
 
 test("MCP oracle verifies returned nested types and excluded schema refusal", async () => {
   const { MCP_INPUT } = await import("./mcp-fixture.mjs");
-  assert.equal(selectScenarios("mcp").length, 5);
+  assert.equal(selectScenarios("mcp").length, 8);
   const search = body([
     JSON.stringify({
       extension_id: "mcp.grain-harness",
@@ -106,6 +106,32 @@ test("MCP result oracle rejects vague success, missing notices and unbounded pre
     frame.messages.at(-1).content = wrong;
     assert.throws(() => nextReply(frame));
   }
+});
+
+test("MCP catalog refusal oracle rejects partial publication and offered actions", () => {
+  const frame = body([
+    "Could not discover MCP tools: MCP catalog exceeds the page limit; discovery is incomplete.",
+  ]);
+  frame.messages[0].content = "Harness request: mcp_catalog_refusal";
+  assert.equal(
+    nextReply(frame).mcpCatalogRefused,
+    frame.messages.at(-1).content,
+  );
+  assert.equal(nextReply(frame).tool_calls, undefined);
+  for (const bad of [
+    '{"tools":[],"total_matches":0}',
+    "Done",
+    "Could not discover MCP tools: " + "x".repeat(1024),
+  ]) {
+    frame.messages.at(-1).content = bad;
+    assert.throws(() => nextReply(frame));
+  }
+  frame.messages.at(-1).content =
+    "Could not discover MCP tools: discovery is incomplete.";
+  frame.tools.push({
+    function: { name: "act__partial", description: "partial" },
+  });
+  assert.throws(() => nextReply(frame), /Failed catalog exposed an action/);
 });
 
 test("native account oracle verifies actual identity and refuses credential context", () => {
