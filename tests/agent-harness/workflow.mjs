@@ -19,6 +19,23 @@ const PREFIX = "Harness workflow reply: ";
 export const workflowResult = (value, writes) =>
   PREFIX + JSON.stringify({ object: "owned-item", value, writes });
 
+export function verifyUnfinishedReceipt(text, dispatches) {
+  assert.equal(
+    dispatches,
+    2,
+    "Remaining workflow step dispatched or completed write replayed",
+  );
+  assert.ok(
+    text.includes(workflowResult(WORKFLOW_VALUE, 1)),
+    "Completed write receipt was lost",
+  );
+  assert.match(
+    text,
+    /I couldn't finish the remaining steps:/,
+    "Unfinished workflow was reported as complete",
+  );
+}
+
 export function workflowCatalog(large = false) {
   return ALL_IDS.map((name) => ({
     name,
@@ -46,7 +63,7 @@ export function workflowCatalog(large = false) {
   }));
 }
 
-export function workflowReply(body, instruction, fault) {
+export function workflowReply(body, instruction, fault, mode = "normal") {
   const mcp = instruction.startsWith("mcp_");
   const id = mcp ? MCP_ID : NATIVE_ID;
   const results = body.messages.filter((m) => m.role === "tool");
@@ -234,6 +251,63 @@ export function workflowReply(body, instruction, fault) {
     }
   }
   assert.ok(instruction.endsWith("_workflow"));
+  if (mode !== "normal" && results.length >= 3) {
+    selected(WORKFLOW_IDS);
+    result(2, null, 0);
+    if (results.length === 3)
+      return reply(call(action("wf_write"), { value: WORKFLOW_VALUE }));
+    if (mode === "denial" || mode === "unknown") {
+      if (mode === "denial")
+        assert.equal(
+          results[3].content,
+          "The user declined this exact call. It was not executed. Do not repeat this request for approval; continue only the remaining permitted task.",
+        );
+      else
+        assert.match(
+          results[3].content,
+          /^Outcome unknown — do not claim it succeeded:.*Do not repeat it automatically\./s,
+        );
+      if (results.length === 4)
+        return reply(
+          call(action("wf_write"), { value: WORKFLOW_VALUE, changed: true }),
+          call(action("wf_verify"), {}),
+        );
+      assert.equal(results.length, 6, "Interrupted workflow replayed a call");
+      assert.equal(
+        results[4].content,
+        "This tool was declined or did not return a confirmed success. It cannot run again in this task; use a different verification tool or make a fresh explicit request.",
+      );
+      result(
+        5,
+        mode === "denial" ? null : WORKFLOW_VALUE,
+        mode === "denial" ? 0 : 1,
+      );
+      return {
+        content: "Harness verified " + mode + " without write replay",
+        workflowVerified: mode,
+      };
+    }
+    assert.equal(results.length, 4);
+    result(3, WORKFLOW_VALUE, 1);
+    if (mode === "model-failure")
+      return {
+        httpStatus: 503,
+        workflowFailure: {
+          kind: "post-write-model-unavailable",
+          receiptVerified: true,
+        },
+      };
+    if (mode === "stop")
+      return {
+        content: "Harness delayed remaining workflow",
+        delayMs: 15000,
+        workflowFailure: {
+          kind: "post-write-model-held",
+          receiptVerified: true,
+        },
+      };
+    throw new Error("Expired workflow resumed an unapproved write");
+  }
   switch (results.length) {
     case 0:
       selected([]);
@@ -355,7 +429,7 @@ export function workflowHandlers(ctx) {
     );
     await ctx.fixture("load");
   }
-  async function setup(mcp, large = false) {
+  async function setup(mcp, large = false, mode = "normal") {
     await ctx.closePanel();
     await control("disable");
     if (mcp) {
@@ -364,11 +438,12 @@ export function workflowHandlers(ctx) {
         lifecycle: "stateless",
         reply: "json",
         catalog: large ? "workflow_budget" : "workflow",
-        result: "normal",
+        result: mode === "unknown" ? "drop" : "normal",
         revision: "one",
       });
       await control("enable");
     } else await native();
+    ctx.model().configureWorkflow(mode);
   }
   async function capture() {
     const value = await ctx.fixture("capture_confirmation");
@@ -619,6 +694,235 @@ export function workflowHandlers(ctx) {
       continuedSameTask: true,
     });
   }
+  async function interruptedStart(mcp, mode, live = false) {
+    await setup(mcp, false, mode);
+    const start = ctx.model().journal.length,
+      before = await count(mcp);
+    const page = await ctx.request(mcp ? "mcp_workflow" : "native_workflow", {
+      timeoutMs: live ? 120000 : 20000,
+    });
+    assert.equal(await count(mcp), before);
+    const read = await capture();
+    await approve(page);
+    const write = await nextApproval(read, live ? 120000 : 20000);
+    assert.equal(await count(mcp), before + 1, "Write escaped approval");
+    return { start, before, page, write };
+  }
+  async function release() {
+    await ctx.waitFor(
+      "Interrupted run release",
+      async () => {
+        const s = await ctx.status();
+        return !s.agent.active && !s.agent.pendingApproval;
+      },
+      { timeoutMs: 120000 },
+    );
+  }
+  async function lateFailure(mcp, live = false) {
+    const item = note(
+      (live ? "genuine-model-" : "") +
+        (mcp ? "mcp" : "native") +
+        "-post-write-model-failure",
+    );
+    const { start, before, page } = await interruptedStart(
+      mcp,
+      "model-failure",
+      live,
+    );
+    await approve(page);
+    await release();
+    const entries = ctx.model().journal.slice(start);
+    assert.equal(
+      entries.filter(
+        (e) => e.state === "unavailable" && e.workflowFailure?.receiptVerified,
+      ).length,
+      1,
+      "No actual post-write model outage",
+    );
+    assert.ok(
+      !entries.some((e) => e.state === "error"),
+      "Receipt oracle failed before model outage",
+    );
+    verifyUnfinishedReceipt(
+      await page.locator("body").innerText(),
+      (await count(mcp)) - before,
+    );
+    if (live)
+      assert.deepEqual(entries.at(-1).liveModel.receipts, [
+        "wf_read",
+        "wf_write",
+      ]);
+    Object.assign(item, {
+      status: "Pass",
+      actualDispatches: 2,
+      writes: 1,
+      verificationDispatches: 0,
+      receiptDisplayed: true,
+      unfinishedNotice: true,
+      liveModel: live,
+    });
+  }
+  async function denial(mcp, live = false, mode = "denial") {
+    const item = note(
+      (live ? "genuine-model-" : "") + (mcp ? "mcp" : "native") + "-" + mode,
+    );
+    const { start, before, page, write } = await interruptedStart(
+      mcp,
+      mode,
+      live,
+    );
+    if (mode === "denial" && ctx.fault !== "skip-workflow-denial")
+      await ctx.activate(page.locator(".agc-confirm-actions .agc-cancel-btn"));
+    else await approve(page);
+    await nextApproval(write, live ? 120000 : 20000);
+    assert.equal(
+      await count(mcp),
+      before + (mode === "denial" ? 1 : 2),
+      "Refused/uncertain write replayed",
+    );
+    await duplicate(write, mcp);
+    await approve(page);
+    await completed(start, live ? "live-complete" : mode, page);
+    const expected = mode === "denial" ? 2 : 3;
+    assert.equal(
+      await count(mcp),
+      before + expected,
+      "Interrupted write repeated or verification omitted",
+    );
+    if (mcp)
+      assert.deepEqual(
+        wireCalls()
+          .slice(before)
+          .map((e) => ({ tool: e.tool, writes: e.workflowWrites })),
+        mode === "denial"
+          ? [
+              { tool: "wf_read", writes: 0 },
+              { tool: "wf_verify", writes: 0 },
+            ]
+          : [
+              { tool: "wf_read", writes: 0 },
+              { tool: "wf_write", writes: 1 },
+              { tool: "wf_verify", writes: 1 },
+            ],
+      );
+    if (live) {
+      const trace = ctx
+        .model()
+        .journal.slice(start)
+        .filter((e) => e.liveModel)
+        .map((e) => e.liveModel);
+      assert.deepEqual(trace.at(-1).receipts, [
+        "wf_read",
+        "wf_write:declined",
+        "wf_verify",
+      ]);
+    }
+    Object.assign(item, {
+      status: "Pass",
+      actualDispatches: expected,
+      writes: mode === "denial" ? 0 : 1,
+      verificationDispatches: 1,
+      duplicateRefusals: 1,
+      sameTaskContinuation: true,
+      liveModel: live,
+      ...(live ? {} : { changedArgumentRetryRefused: true }),
+    });
+  }
+  async function expiry() {
+    const item = note("mcp-real-approval-expiry");
+    const { before, page, write } = await interruptedStart(true, "expiry");
+    const observed = performance.now();
+    if (ctx.fault !== "skip-workflow-expiry")
+      await ctx.waitFor(
+        "Real two-minute confirmation expiry",
+        async () =>
+          performance.now() - observed >= 120100 &&
+          !(await ctx.status()).agent.pendingApproval,
+        { timeoutMs: 130000, intervalMs: 150 },
+      );
+    assert.equal(
+      (await ctx.status()).agent.pendingApproval,
+      false,
+      "Real approval deadline did not expire",
+    );
+    const modelCount = ctx.model().journal.length;
+    await duplicate(write, true);
+    await approve(page);
+    await release();
+    assert.match(
+      await page.locator("body").innerText(),
+      /That confirmation has expired or belongs to another Agent session/,
+    );
+    assert.equal(await count(true), before + 1);
+    assert.equal(
+      ctx.model().journal.length,
+      modelCount,
+      "Expired task resumed the model",
+    );
+    Object.assign(item, {
+      status: "Pass",
+      elapsedMs: Math.round(performance.now() - observed),
+      writeDispatches: 0,
+      modelResumed: false,
+    });
+    const restart = note("mcp-restart-ends-pending-workflow");
+    const pending = await interruptedStart(true, "expiry");
+    await ctx.restartHost(async () => {});
+    assert.equal((await ctx.status()).agent.pendingApproval, false);
+    await duplicate(pending.write, true);
+    assert.equal(await count(true), pending.before + 1);
+    Object.assign(restart, {
+      status: "Pass",
+      writeDispatches: 0,
+      resumed: false,
+    });
+  }
+  async function stop(mcp) {
+    const pendingItem = note(
+      (mcp ? "mcp" : "native") + "-close-pending-workflow-write",
+    );
+    const pending = await interruptedStart(mcp, "stop");
+    await ctx.closePanel();
+    await duplicate(pending.write, mcp);
+    assert.equal(await count(mcp), pending.before + 1);
+    Object.assign(pendingItem, {
+      status: "Pass",
+      readDispatches: 1,
+      writeDispatches: 0,
+    });
+    const activeItem = note(
+      (mcp ? "mcp" : "native") + "-close-model-after-write",
+    );
+    const active = await interruptedStart(mcp, "stop");
+    await approve(active.page);
+    await ctx.waitFor("Actual model held after write receipt", () =>
+      ctx
+        .model()
+        .journal.slice(active.start)
+        .some(
+          (e) => e.state === "received" && e.workflowFailure?.receiptVerified,
+        ),
+    );
+    assert.equal(await count(mcp), active.before + 2);
+    await ctx.closePanel();
+    await ctx.waitFor("Held workflow model cancelled", () =>
+      ctx
+        .model()
+        .journal.slice(active.start)
+        .some(
+          (e) => e.state === "cancelled" && e.workflowFailure?.receiptVerified,
+        ),
+    );
+    await duplicate(active.write, mcp);
+    assert.equal(await count(mcp), active.before + 2);
+    Object.assign(activeItem, {
+      status: "Pass",
+      actualDispatches: 2,
+      writes: 1,
+      verificationDispatches: 0,
+      lateModelCancelled: true,
+    });
+  }
   return {
     takeEvidence() {
       const result = evidence;
@@ -626,6 +930,22 @@ export function workflowHandlers(ctx) {
       return result;
     },
     handlers: {
+      "agent.workflow-denial-native": () => denial(false),
+      "agent.workflow-denial-mcp": () => denial(true),
+      "agent.workflow-expiry": expiry,
+      "agent.workflow-stop-native": () => stop(false),
+      "agent.workflow-stop-mcp": () => stop(true),
+      "agent.workflow-failure-native": () => lateFailure(false),
+      "agent.workflow-failure-mcp": () => lateFailure(true),
+      "agent.workflow-unknown-mcp": () => denial(true, false, "unknown"),
+      async "agent.live-native-interruption"() {
+        await denial(false, true);
+        await lateFailure(false, true);
+      },
+      async "agent.live-mcp-interruption"() {
+        await denial(true, true);
+        await lateFailure(true, true);
+      },
       "agent.live-native-workflow": () => liveWorkflow(false),
       "agent.live-mcp-workflow": () => liveWorkflow(true),
       "agent.staged-native": () => staged(false),

@@ -367,6 +367,11 @@ export async function startMcpFixture(
             }
             entry.argumentsVerified = true;
             entry.workflowWrites = workflowWrites;
+            if (entry.tool === "wf_write" && mode.result === "drop") {
+              entry.phase = "dropped-after-workflow-write";
+              res.destroy();
+              return;
+            }
             result = {
               content: [
                 {

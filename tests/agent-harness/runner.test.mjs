@@ -693,6 +693,8 @@ test("live selected loading keeps unrelated schemas out and sends only the fixed
 test("scenario IDs are unique and each suite is explicit", () => {
   assert.equal(selectScenarios("agent-workflow").length, 6);
   assert.equal(selectScenarios("agent-live").length, 2);
+  assert.equal(selectScenarios("agent-interruption").length, 8);
+  assert.equal(selectScenarios("agent-interruption-live").length, 2);
   assert.equal(
     new Set(scenarios.map((scenario) => scenario.id)).size,
     scenarios.length,
@@ -705,7 +707,8 @@ test("scenario IDs are unique and each suite is explicit", () => {
     scenarios.length -
       conformanceCases.length -
       selectScenarios("mcp-live").length -
-      selectScenarios("agent-live").length,
+      selectScenarios("agent-live").length -
+      selectScenarios("agent-interruption-live").length,
   );
   assert.equal(
     scenarios.filter((item) => item.suite === "mcp-conformance").length,
@@ -798,6 +801,144 @@ test("workflow final budget round accepts genuinely omitted tool definitions", a
   assert.throws(() => nextReply(frame), /receipt/);
 });
 
+function interruptedFrame(contents) {
+  const frame = body(contents);
+  frame.messages[0].content = "Harness request: native_workflow";
+  frame.tools.push(
+    ...["wf_read", "wf_verify", "wf_write"].map((id) => ({
+      type: "function",
+      function: { name: "act__" + id, description: "Harness workflow " + id },
+    })),
+  );
+  return frame;
+}
+
+test("denied workflow refuses fabricated success and requires the exact blocked retry plus unchanged verification", async () => {
+  const { workflowReply, workflowResult } = await import("./workflow.mjs");
+  const declined =
+    "The user declined this exact call. It was not executed. Do not repeat this request for approval; continue only the remaining permitted task.";
+  const blocked =
+    "This tool was declined or did not return a confirmed success. It cannot run again in this task; use a different verification tool or make a fresh explicit request.";
+  const results = ["metadata", "loaded", workflowResult(null, 0), declined];
+  const frame = interruptedFrame(results);
+  const retry = workflowReply(
+    frame,
+    "native_workflow",
+    undefined,
+    "denial",
+  ).tool_calls;
+  assert.equal(retry.length, 2);
+  assert.equal(JSON.parse(retry[0].function.arguments).changed, true);
+  frame.messages.push(
+    { role: "tool", content: blocked },
+    { role: "tool", content: workflowResult(null, 0) },
+  );
+  assert.equal(
+    workflowReply(frame, "native_workflow", undefined, "denial")
+      .workflowVerified,
+    "denial",
+  );
+  frame.messages.at(-1).content = workflowResult("unexpected change", 1);
+  assert.throws(
+    () => workflowReply(frame, "native_workflow", undefined, "denial"),
+    /receipt/,
+  );
+  frame.messages.at(-1).content = workflowResult(null, 0);
+  frame.messages.at(-2).content = "The tool succeeded";
+  assert.throws(() =>
+    workflowReply(frame, "native_workflow", undefined, "denial"),
+  );
+});
+
+test("ambiguous workflow cannot certify generic failure or repeat the write", async () => {
+  const { workflowReply, workflowResult, WORKFLOW_VALUE } =
+    await import("./workflow.mjs");
+  const frame = interruptedFrame([
+    "metadata",
+    "loaded",
+    workflowResult(null, 0),
+    "Outcome unknown — do not claim it succeeded: The provider may have performed the action. Do not repeat it automatically.",
+  ]);
+  assert.equal(
+    workflowReply(frame, "native_workflow", undefined, "unknown").tool_calls
+      .length,
+    2,
+  );
+  frame.messages.push(
+    {
+      role: "tool",
+      content:
+        "This tool was declined or did not return a confirmed success. It cannot run again in this task; use a different verification tool or make a fresh explicit request.",
+    },
+    { role: "tool", content: workflowResult(WORKFLOW_VALUE, 1) },
+  );
+  assert.equal(
+    workflowReply(frame, "native_workflow", undefined, "unknown")
+      .workflowVerified,
+    "unknown",
+  );
+  frame.messages[4].content = "Failed: did not dispatch";
+  assert.throws(
+    () => workflowReply(frame, "native_workflow", undefined, "unknown"),
+    /match/,
+  );
+});
+
+test("post-write model outage requires a real exact receipt; an expired workflow cannot resume", async () => {
+  const { workflowReply, workflowResult, WORKFLOW_VALUE } =
+    await import("./workflow.mjs");
+  const frame = interruptedFrame([
+    "metadata",
+    "loaded",
+    workflowResult(null, 0),
+    workflowResult(WORKFLOW_VALUE, 1),
+  ]);
+  assert.equal(
+    workflowReply(frame, "native_workflow", undefined, "model-failure")
+      .httpStatus,
+    503,
+  );
+  assert.equal(
+    workflowReply(frame, "native_workflow", undefined, "stop").delayMs,
+    15000,
+  );
+  assert.throws(
+    () => workflowReply(frame, "native_workflow", undefined, "expiry"),
+    /Expired workflow/,
+  );
+  frame.messages.at(-1).content = "Done";
+  assert.throws(
+    () => workflowReply(frame, "native_workflow", undefined, "model-failure"),
+    /receipt/,
+  );
+});
+
+test("unfinished reply oracle detects a lost receipt, false completion and extra dispatch", async () => {
+  const { verifyUnfinishedReceipt, workflowResult, WORKFLOW_VALUE } =
+    await import("./workflow.mjs");
+  const text =
+    workflowResult(WORKFLOW_VALUE, 1) +
+    "\nI couldn't finish the remaining steps: unavailable";
+  verifyUnfinishedReceipt(text, 2);
+  assert.throws(
+    () =>
+      verifyUnfinishedReceipt(
+        "I couldn't finish the remaining steps: unavailable",
+        2,
+      ),
+    /receipt was lost/,
+  );
+  assert.throws(
+    () =>
+      verifyUnfinishedReceipt(
+        workflowResult(WORKFLOW_VALUE, 1) + " All done",
+        2,
+      ),
+    /reported as complete/,
+  );
+  assert.throws(() => verifyUnfinishedReceipt(text, 3), /replayed/);
+});
+
 test("workflow catalog has 24 supported definitions and a genuine over-budget subset", async () => {
   const { workflowCatalog, BULK_IDS } = await import("./workflow.mjs");
   const small = workflowCatalog(),
@@ -888,6 +1029,7 @@ test("live model adapter forwards only the selected key in headers and refuses e
 test("live model admission requires explicit opt-in and refuses the flag in ordinary suites", async () => {
   for (const args of [
     ["--suite", "agent-live"],
+    ["--suite", "agent-interruption-live"],
     ["--suite", "smoke", "--live-configured"],
   ]) {
     const result = await exec(process.execPath, [
@@ -899,6 +1041,150 @@ test("live model admission requires explicit opt-in and refuses the flag in ordi
     );
     assert.equal(result?.code, 1);
     assert.match(result.stderr, /Genuine model acceptance requires/);
+  }
+});
+
+test("genuine interruption permits one exact non-dispatched argument correction without inventing a receipt", async () => {
+  const { createServer } = await import("node:http");
+  const { liveModelAdapter } = await import("./live-model.mjs");
+  let calls = 0;
+  const server = createServer(async (req, res) => {
+    for await (const chunk of req) void chunk;
+    calls++;
+    res.end(
+      JSON.stringify({
+        choices: [
+          {
+            message: {
+              tool_calls: [
+                {
+                  id: "owned-search-" + calls,
+                  type: "function",
+                  function: { name: "search_tools", arguments: "{}" },
+                },
+              ],
+            },
+          },
+        ],
+      }),
+    );
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const sockets = new Set(),
+    timers = new Set(),
+    adapter = liveModelAdapter(
+      {
+        endpoint: `http://127.0.0.1:${server.address().port}/chat/completions`,
+        model: "owned-test",
+        key: "",
+      },
+      sockets,
+      timers,
+    );
+  const frame = {
+    model: "harness-scripted",
+    tools: [
+      {
+        function: {
+          name: "act__read",
+          description: "Harness workflow wf_read",
+          parameters: {},
+        },
+      },
+    ],
+    messages: [
+      { role: "user", content: "Harness request: native_workflow" },
+      {
+        role: "assistant",
+        tool_calls: [{ id: "search", function: { name: "search_tools" } }],
+      },
+      {
+        role: "tool",
+        tool_call_id: "search",
+        content: JSON.stringify({
+          extension_id: "com.grain.harness.lifecycle",
+          tools: [
+            { tool_id: "wf_read", title: "Read", description: "Owned read" },
+          ],
+        }),
+      },
+    ],
+  };
+  try {
+    adapter.configure("denial");
+    await adapter.reply({
+      ...frame,
+      tools: [],
+      messages: frame.messages.slice(0, 1),
+    });
+    await adapter.reply(frame);
+    frame.messages.push(
+      {
+        role: "assistant",
+        tool_calls: [{ id: "bad-read", function: { name: "act__read" } }],
+      },
+      {
+        role: "tool",
+        tool_call_id: "bad-read",
+        content:
+          "The action arguments are invalid: action arguments contain an undeclared parameter.",
+      },
+    );
+    const reply = await adapter.reply(frame);
+    assert.deepEqual(reply.liveModel.receipts, []);
+    assert.deepEqual(reply.liveModel.invalidArgumentRefusals, ["wf_read"]);
+    frame.messages.push(
+      {
+        role: "assistant",
+        tool_calls: [
+          { id: "another-bad-read", function: { name: "act__read" } },
+        ],
+      },
+      {
+        role: "tool",
+        tool_call_id: "another-bad-read",
+        content:
+          "The action arguments are invalid: another undeclared parameter.",
+      },
+    );
+    await assert.rejects(
+      adapter.reply(frame),
+      /one non-dispatched argument correction/,
+    );
+    assert.equal(calls, 3);
+    adapter.configure("model-failure");
+    frame.messages.splice(3);
+    await adapter.reply({
+      ...frame,
+      tools: [],
+      messages: frame.messages.slice(0, 1),
+    });
+    await adapter.reply(frame);
+    frame.messages.push(
+      {
+        role: "assistant",
+        tool_calls: [{ id: "failed-read", function: { name: "act__read" } }],
+      },
+      {
+        role: "tool",
+        tool_call_id: "failed-read",
+        content: "Failed: provider unavailable",
+      },
+    );
+    await assert.rejects(
+      adapter.reply(frame),
+      /actual verified object\/receipt/,
+    );
+    assert.equal(
+      calls,
+      5,
+      "Generic failure was silently accepted as a non-dispatched correction",
+    );
+  } finally {
+    adapter.close();
+    for (const socket of sockets) socket.destroy();
+    await new Promise((resolve) => server.close(resolve));
+    assert.equal(timers.size, 0);
   }
 });
 

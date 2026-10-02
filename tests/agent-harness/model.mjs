@@ -54,7 +54,7 @@ export const TYPED_INPUTS = {
   },
 };
 
-export function nextReply(body, fault) {
+export function nextReply(body, fault, workflowMode = "normal") {
   // OpenAI-compatible clients omit `tools` on the final, budget-exhausted
   // round. Preserve that real wire shape; no definitions are offered.
   if (body.tools === undefined) body = { ...body, tools: [] };
@@ -84,7 +84,7 @@ export function nextReply(body, fault) {
       "native_directory",
     ].includes(requested)
   )
-    return workflowReply(body, requested, fault);
+    return workflowReply(body, requested, fault, workflowMode);
   if (["mcp_account_a", "mcp_account_b"].includes(requested))
     return mcpAccountReply(body, requested.endsWith("_a") ? "A" : "B");
   if (["mcp_client_a", "mcp_client_b"].includes(requested))
@@ -459,6 +459,7 @@ function mcpReply(body, requested) {
 }
 
 export async function startModel({ fault, liveConfig } = {}) {
+  let workflowMode = "normal";
   const journal = [];
   const sockets = new Set();
   const timers = new Set();
@@ -482,12 +483,15 @@ export async function startModel({ fault, liveConfig } = {}) {
       const body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
       const reply = live
         ? await live.reply(body, response)
-        : nextReply(body, fault);
+        : nextReply(body, fault, workflowMode);
       const entry = {
         sequence: journal.length + 1,
         offered: (body.tools ?? []).map((tool) => tool.function.name),
         returned: reply.tool_calls?.map((tool) => tool.function.name) ?? [],
         state: "received",
+        ...(reply.workflowFailure
+          ? { workflowFailure: reply.workflowFailure }
+          : {}),
         ...(reply.workflowVerified
           ? { workflowVerified: reply.workflowVerified }
           : {}),
@@ -520,6 +524,17 @@ export async function startModel({ fault, liveConfig } = {}) {
       };
       journal.push(entry);
       if (journal.length > 4096) throw new Error("Model journal overflow");
+      if (reply.httpStatus) {
+        assert.equal(reply.httpStatus, 503);
+        response.writeHead(503, { "Content-Type": "application/json" });
+        response.end(
+          JSON.stringify({
+            error: { message: "Owned post-write model outage" },
+          }),
+        );
+        entry.state = "unavailable";
+        return;
+      }
       if (reply.delayMs) {
         await new Promise((resolve) => {
           const timer = setTimeout(done, reply.delayMs);
@@ -582,6 +597,25 @@ export async function startModel({ fault, liveConfig } = {}) {
   return {
     port: server.address().port,
     journal,
+    configureWorkflow(mode) {
+      assert.ok(
+        [
+          "normal",
+          "denial",
+          "unknown",
+          "expiry",
+          "stop",
+          "model-failure",
+        ].includes(mode),
+        "Unknown fixed workflow mode",
+      );
+      assert.ok(
+        !journal.some((entry) => entry.state === "received"),
+        "Workflow mode changed during a model request",
+      );
+      workflowMode = mode;
+      live?.configure(mode);
+    },
     async close() {
       live?.close();
       for (const timer of timers) clearTimeout(timer);

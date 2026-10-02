@@ -77,7 +77,7 @@ for (let i = 2; i < process.argv.length; i++) {
 }
 if (options.help) {
   console.log(
-    "node tests/agent-harness/run.mjs [--list] [--suite smoke|lifecycle|idle|agent-workflow|agent-live|native-failures|native-foundation|native-auth|native-auth-schedules|mcp|mcp-auth|mcp-foundation|mcp-live|native-installation|registry-recovery|store|all] [--scenario ID] [--binary path] [--output directory] [--focus-click] [--live-configured]\nWindows real Agent/WebView2 acceptance. Build first with tests/agent-harness/build.ps1. Scripted suites need no model key. agent-live requires explicit --live-configured and uses only the selected ordinary Grain model with disposable tool objects; it is excluded from all. native-auth, agent-workflow, agent-live and MCP fixtures require Python cryptography for owned TLS. mcp-foundation runs fifteen controlled transport/OAuth cases in one host. mcp-live is opt-in public DeepWiki acceptance and excluded from all. --focus-click is confined to agent.reopen-escape.",
+    "node tests/agent-harness/run.mjs [--list] [--suite smoke|lifecycle|idle|agent-workflow|agent-live|agent-interruption|agent-interruption-live|native-failures|native-foundation|native-auth|native-auth-schedules|mcp|mcp-auth|mcp-foundation|mcp-live|native-installation|registry-recovery|store|all] [--scenario ID] [--binary path] [--output directory] [--focus-click] [--live-configured]\nWindows real Agent/WebView2 acceptance. Build first with tests/agent-harness/build.ps1. Scripted suites need no model key. agent-live and agent-interruption-live require explicit --live-configured and uses only the selected ordinary Grain model with disposable tool objects; it is excluded from all. native-auth, Agent workflow/interruption suites and MCP fixtures require Python cryptography for owned TLS. mcp-foundation runs fifteen controlled transport/OAuth cases in one host. mcp-live is opt-in public DeepWiki acceptance and excluded from all. --focus-click is confined to agent.reopen-escape.",
   );
   process.exit(0);
 }
@@ -91,11 +91,12 @@ const selected = options.scenario
   : selectScenarios(options.suite);
 if (!selected.length) throw new Error(`Unknown scenario: ${options.scenario}`);
 if (
-  selected.some((scenario) => scenario.suite === "agent-live") !==
-  !!options["live-configured"]
+  selected.some((scenario) =>
+    ["agent-live", "agent-interruption-live"].includes(scenario.suite),
+  ) !== !!options["live-configured"]
 )
   throw new Error(
-    "Genuine model acceptance requires --suite agent-live --live-configured (or one agent.live-* scenario); the switch is refused in ordinary suites",
+    "Genuine model acceptance requires --suite agent-live or agent-interruption-live with --live-configured (or one agent.live-* scenario); the switch is refused in ordinary suites",
   );
 let conformanceBinding;
 if (selected.some((scenario) => scenario.suite === "mcp-conformance")) {
@@ -151,9 +152,21 @@ if (
     "abandoned-mcp-client-secret",
     "missing-staged-selection",
     "wrong-workflow-receipt",
+    "skip-workflow-denial",
+    "skip-workflow-expiry",
   ].includes(options.fault)
 )
   throw new Error("Unknown oracle fault");
+for (const [fault, ids] of [
+  [
+    "skip-workflow-denial",
+    ["agent.workflow-denial-native", "agent.workflow-denial-mcp"],
+  ],
+  ["skip-workflow-expiry", ["agent.workflow-expiry"]],
+]) {
+  if (options.fault === fault && !ids.includes(options.scenario))
+    throw new Error(`${fault} requires its isolated interruption scenario`);
+}
 if (
   options.fault === "missing-staged-selection" &&
   !["agent.staged-native", "agent.staged-mcp"].includes(options.scenario)
@@ -1673,6 +1686,8 @@ try {
     ["mcp-conformance", "mcp"],
     ["agent-workflow", "mcp"],
     ["agent-live", "mcp"],
+    ["agent-interruption", "mcp"],
+    ["agent-interruption-live", "mcp"],
   ]) {
     if (!selected.some((scenario) => scenario.suite === suite)) continue;
     if (tlsPurposes.has(purpose)) continue;
@@ -1698,9 +1713,14 @@ try {
     mcpProvider = await startConformanceRelay(root, conformanceBinding);
   else if (
     selected.some((scenario) =>
-      ["mcp", "mcp-auth", "agent-workflow", "agent-live"].includes(
-        scenario.suite,
-      ),
+      [
+        "mcp",
+        "mcp-auth",
+        "agent-workflow",
+        "agent-live",
+        "agent-interruption",
+        "agent-interruption-live",
+      ].includes(scenario.suite),
     )
   ) {
     mcpProvider = await startMcpFixture(root, {
@@ -1894,6 +1914,8 @@ try {
           "mcp-auth",
           "agent-workflow",
           "agent-live",
+          "agent-interruption",
+          "agent-interruption-live",
         ].includes(scenario.suite)
       ) {
         for (const observation of result.observations) {

@@ -1,6 +1,51 @@
 // Stable IDs are report contracts. Numbered checks below are supporting coverage,
 // not permission to change the manual acceptance ledger automatically.
 export const scenarios = [
+  ...[
+    [
+      "agent.workflow-denial-native",
+      "Native denied write cannot retry with changed arguments; independent verification continues",
+    ],
+    [
+      "agent.workflow-denial-mcp",
+      "MCP denied write cannot retry; external peer confirms unchanged object",
+    ],
+    [
+      "agent.workflow-expiry",
+      "Real two-minute MCP approval expiry and actual restart prevent stale workflow dispatch",
+    ],
+    [
+      "agent.workflow-stop-native",
+      "Close native pending write and held model after actual write; old confirmations and late responses cannot resume",
+    ],
+    [
+      "agent.workflow-stop-mcp",
+      "Close MCP pending write and held post-write model; exact wire counts prevent continuation/replay",
+    ],
+    [
+      "agent.workflow-failure-native",
+      "Actual native write receipt survives subsequent HTTP model outage with an unfinished notice",
+    ],
+    [
+      "agent.workflow-failure-mcp",
+      "Actual MCP write receipt survives model outage; verification never dispatches",
+    ],
+    [
+      "agent.workflow-unknown-mcp",
+      "Peer performs one write then drops its reply; uncertainty blocks changed-argument retry and independent read verifies effects",
+    ],
+  ].map(([id, description]) => ({
+    id,
+    description,
+    suite: "agent-interruption",
+    checks: [48],
+  })),
+  ...["native", "mcp"].map((kind) => ({
+    id: `agent.live-${kind}-interruption`,
+    suite: "agent-interruption-live",
+    checks: [48],
+    description: `Configured genuine model ${kind} denial/independent verification and post-write model outage preserve actual effects and unfinished receipt`,
+  })),
   {
     id: "agent.live-native-workflow",
     suite: "agent-live",
@@ -363,6 +408,8 @@ export function selectScenarios(suite) {
       "native-foundation",
       "agent-workflow",
       "agent-live",
+      "agent-interruption",
+      "agent-interruption-live",
       "native-auth",
       "mcp",
       "mcp-live",
@@ -377,9 +424,12 @@ export function selectScenarios(suite) {
   return scenarios.filter(
     (scenario) =>
       (suite === "all" &&
-        !["mcp-conformance", "mcp-live", "agent-live"].includes(
-          scenario.suite,
-        )) ||
+        ![
+          "mcp-conformance",
+          "mcp-live",
+          "agent-live",
+          "agent-interruption-live",
+        ].includes(scenario.suite)) ||
       (suite === "registry-recovery" &&
         scenario.id === "native.registry-refusal") ||
       scenario.suite === suite ||
