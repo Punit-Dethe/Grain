@@ -1,11 +1,13 @@
-# Remove only the exact native-auth fixture entries for one owned run.
+# Remove only the exact native or MCP account fixture entries for one owned run.
 # Never reads or prints a credential blob; no ordinary namespace is accepted.
-param([Parameter(Mandatory=$true)][string]$Root, [Parameter(Mandatory=$true)][Guid]$RunId, [switch]$InventoryOnly)
+param([Parameter(Mandatory=$true)][string]$Root, [Parameter(Mandatory=$true)][Guid]$RunId, [switch]$InventoryOnly, [switch]$Mcp)
 $ErrorActionPreference = 'Stop'
 $taskRoot = (Resolve-Path -LiteralPath $Root).Path
 $taskMarker = Get-Content -Raw -LiteralPath (Join-Path $taskRoot '.grain-agent-harness.json') | ConvertFrom-Json
-if ($taskMarker.schema -ne 1 -or [Guid]$taskMarker.runId -ne $RunId -or -not $taskMarker.authPort) {
-    throw 'Native vault cleanup requires the exact enabled run marker'
+if ($taskMarker.schema -ne 1 -or [Guid]$taskMarker.runId -ne $RunId -or
+    ($Mcp -and (-not $taskMarker.mcpAuth -or -not $taskMarker.mcpPort -or $taskMarker.mcpLiveDeepwiki)) -or
+    (-not $Mcp -and -not $taskMarker.authPort)) {
+    throw 'Vault cleanup requires the exact enabled account fixture marker'
 }
 Add-Type -TypeDefinition @'
 using System;
@@ -28,14 +30,14 @@ public static class GrainOwnedAuthCleanup {
     [DllImport("advapi32.dll", EntryPoint="CredDeleteW", CharSet=CharSet.Unicode, SetLastError=true)]
     private static extern bool Delete(string target, uint type, uint flags);
     [DllImport("advapi32.dll")] private static extern void CredFree(IntPtr pointer);
-    public static int Clean(string runId, bool delete) {
+    public static int Clean(string runId, bool delete, bool mcp) {
         Guid parsed;
         if (!Guid.TryParseExact(runId, "D", out parsed)) throw new Exception("Invalid run UUID");
-        string service = "com.grain.extension.oauth.agent-harness." + parsed.ToString("D");
+        string service = (mcp ? "com.grain.mcp.oauth" : "com.grain.extension.oauth") + ".agent-harness." + parsed.ToString("D");
         string suffix = "." + service;
-        string pattern = "^com\\.grain\\.harness\\.auth(?:-peer)?(?:/[a-fA-F0-9]{32})?" + Regex.Escape(suffix) + "$";
+        string pattern = (mcp ? "^grain-harness-auth" : "^com\\.grain\\.harness\\.auth(?:-peer)?(?:/[a-fA-F0-9]{32})?") + Regex.Escape(suffix) + "$";
         uint count; IntPtr entries;
-        if (!Enumerate("com.grain.harness.auth*", 0, out count, out entries)) {
+        if (!Enumerate(mcp ? "grain-harness-auth*" : "com.grain.harness.auth*", 0, out count, out entries)) {
             int error = Marshal.GetLastWin32Error();
             if (error == 1168) return 0;
             throw new Win32Exception(error);
@@ -57,10 +59,10 @@ public static class GrainOwnedAuthCleanup {
 }
 '@
 if ($InventoryOnly) {
-    @{schema=1; kind='native-vault-inventory'; count=[GrainOwnedAuthCleanup]::Clean($RunId.ToString('D'), $false)} | ConvertTo-Json -Compress
+    @{schema=1; kind=$(if ($Mcp) {'mcp-vault-inventory'} else {'native-vault-inventory'}); count=[GrainOwnedAuthCleanup]::Clean($RunId.ToString('D'), $false, $Mcp.IsPresent)} | ConvertTo-Json -Compress
     exit 0
 }
-$taskDeleted = [GrainOwnedAuthCleanup]::Clean($RunId.ToString('D'), $true)
-$taskRemaining = [GrainOwnedAuthCleanup]::Clean($RunId.ToString('D'), $false)
-if ($taskRemaining -ne 0) { throw 'Owned native credentials remain after cleanup' }
-@{schema=1; kind='native-vault-cleanup'; deleted=$taskDeleted; remaining=$taskRemaining} | ConvertTo-Json -Compress
+$taskDeleted = [GrainOwnedAuthCleanup]::Clean($RunId.ToString('D'), $true, $Mcp.IsPresent)
+$taskRemaining = [GrainOwnedAuthCleanup]::Clean($RunId.ToString('D'), $false, $Mcp.IsPresent)
+if ($taskRemaining -ne 0) { throw 'Owned credentials remain after cleanup' }
+@{schema=1; kind=$(if ($Mcp) {'mcp-vault-cleanup'} else {'native-vault-cleanup'}); deleted=$taskDeleted; remaining=$taskRemaining} | ConvertTo-Json -Compress

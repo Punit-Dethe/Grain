@@ -32,6 +32,12 @@ npm run test:agent -- --suite native-foundation
 # This suite additionally requires Python with cryptography installed.
 npm run test:agent -- --suite native-auth
 
+# Actual SDK MCP OAuth, scoped vault and callback/account ownership.
+npm run test:agent -- --suite mcp-auth
+
+# Both controlled MCP adapters in one real app; retain real 45/90s deadlines.
+npm run test:agent -- --suite mcp-foundation
+
 # Signed local store, real Store page, offline and interrupted downloads.
 npm run test:agent -- --suite store
 
@@ -88,7 +94,7 @@ Runtime reports also identify the Node/WebView adapter version and an independen
 | `native.result-budgets`    | Replies exceeding the 64 KiB decoded budget and 512 KiB raw wire budget fail at distinct boundaries; workers/tokens/supervisors retire, then fresh native calls recover.                          |
 | `native.invalid-input`     | Unknown keys, missing required values, wrong types, oversized arguments and malformed JSON fail before approval/startup; private rejected parameter keys stay hidden.                             |
 
-`smoke` contains the first two; `lifecycle` includes smoke and the original remaining non-idle lifecycle cases; `native-failures` contains the six Block 2C scenarios above. `native-installation` contains six native consent/package/restart cases. `native-foundation` contains the two B1a cases below. `native-auth` contains eight guarded native-account cases below; `native-auth-schedules` selects the four B1c cases. `store` contains three signed-store cases below. `registry-recovery` contains the existing `native.registry-refusal` plus two new cases below. `mcp` contains the eight controlled MCP cases below. `all` includes all forty-eight distinct cases; overlapping suite selections are not additive. `idle` runs only the long timing case. Scenarios set up their own fixture baseline and clean it up. A failed scenario stops the batch; later scenarios are Not run rather than being assessed against contaminated state.
+`smoke` contains the first two; `lifecycle` includes smoke and the original remaining non-idle lifecycle cases; `native-failures` contains the six Block 2C scenarios above. `native-installation` contains six native consent/package/restart cases. `native-foundation` contains the two B1a cases below. `native-auth` contains eight guarded native-account cases below; `native-auth-schedules` selects the four B1c cases. `store` contains three signed-store cases below. `registry-recovery` contains the existing `native.registry-refusal` plus two new cases below. `mcp` contains nine controlled MCP cases; `mcp-auth` contains three SDK OAuth cases; `mcp-foundation` selects those twelve in one host. `all` includes 52 distinct self-contained cases; overlapping suite selections are not additive. `idle` runs only the long timing case. Scenarios set up their own fixture baseline and clean it up. A failed scenario stops the batch; later scenarios are Not run rather than being assessed against contaminated state.
 
 ### Native foundation (B1a)
 
@@ -304,7 +310,7 @@ The tools subset expects **exit 0**: separate legacy 2025-11-25 and modern 2026-
 
 Each official case has its own actual server, isolated real application and owned-PID HTTPS relay. The relay preserves wire bodies/status/metadata and checks the upstream listener PID before every exchange; it accepts no user account, redirect or arbitrary endpoint. Grain performs production discovery, selected-tool loading and actual Agent UI approval. Exactly one `add_numbers` call with 5 and 3 must return the real result 8; both official numeric and wire-schema checks, application acceptance and independent cleanup must pass.
 
-Stable IDs are `mcp.conformance-tools-legacy`, `mcp.conformance-tools-modern` and `mcp.conformance-initialize`. These require the separately owned official binding; plain `run.mjs` cannot silently substitute a synthetic peer. Ordinary `--suite all` selects all 49 self-contained cases. Reports retain raw official checks, application children, identities, case verdicts and cleanup under `.runs/conformance-*/`. Keep init Blocked until a compatible fixture is audited; do not force a different production negotiation mode.
+Stable IDs are `mcp.conformance-tools-legacy`, `mcp.conformance-tools-modern` and `mcp.conformance-initialize`. These require the separately owned official binding; plain `run.mjs` cannot silently substitute a synthetic peer. Ordinary `--suite all` selects all 52 self-contained cases. Reports retain raw official checks, application children, identities, case verdicts and cleanup under `.runs/conformance-*/`. Keep init Blocked until a compatible fixture is audited; do not force a different production negotiation mode.
 
 The [focused conformance audit](../../docs/Extensions%202.0/MCP-CONFORMANCE-AUDIT.md) records the pin, evidence, blocked prerequisite and retirement conditions for the temporary relay. The [retention inventory](../../docs/Extensions%202.0/AGENT-TEST-HARNESS.md#harness-retention-and-cleanup-inventory) preserves the earlier interrupted-root cleanup exception. This named subset is not full SDK-tier, OAuth, live-provider or whole B2 acceptance.
 
@@ -331,7 +337,7 @@ node tests/agent-harness/run.mjs --scenario mcp.response-preview --fault short-m
 | `mcp.http-deadline` | Four real 45-second approved-call timeouts; unknown result, one call, measured duration, response/session release, discarded late reply and fresh recovery. |
 | `mcp.discovery-deadline` | Modern/SSE and legacy/JSON each finish two 35-second pages, then stop the third at the real 90-second absolute deadline; no tool dispatch, no retained delay timer/session and fresh recovery. |
 
-There are 54 maintained scenario IDs: 49 self-contained real-app cases (nine MCP), three explicitly external official cases (one Blocked), and two opt-in public live cases. There are 31 runner self-tests. Ordinary `all` selects only the 49 self-contained cases; official and live entries supply their explicit prerequisites separately. Run cases serially after native compilation finishes. The full MCP suite includes six minutes of genuine timeout waits plus setup/recovery; clocks are unchanged. Each failure records its exact stage and model observations, stops the batch and leaves later cases Not run. The preview fault must fail for a missing notice with one provider call and cleanup Pass. A nonzero prerequisite/reporting failure is not an accepted oracle check.
+There are 57 maintained scenario IDs: 52 self-contained real-app cases (nine MCP transport and three MCP OAuth), three explicitly external official cases (one Blocked), and two opt-in public live cases. There are 34 runner self-tests. Ordinary `all` selects only the 52 self-contained cases; official and live entries supply their explicit prerequisites separately. Run cases serially after native compilation finishes. The full MCP suite includes six minutes of genuine timeout waits plus setup/recovery; clocks are unchanged. Each failure records its exact stage and model observations, stops the batch and leaves later cases Not run. The preview fault must fail for a missing notice with one provider call and cleanup Pass. A nonzero prerequisite/reporting failure is not an accepted oracle check.
 
 ```powershell
 node tests/agent-harness/run.mjs --scenario mcp.catalog-budgets --fault accepted-mcp-catalog
@@ -362,3 +368,28 @@ The live suite expects exit 0; service or desktop failures retain their actual v
 | `mcp.live-response-recovery` | Actual ordinary read, large public documentation request, bounded preview or honest unusable/unknown result, then a fresh actual ordinary read. No blind replay. |
 
 Reports contain fixed endpoint/repository, per-stage result kind/byte count, model evidence and client-side attempt observations. Attempt counts are conservative backend observations, not independent remote receipts. No raw documentation is retained in the JSON evidence. These cases exclude OAuth, private accounts, nested live schemas, live-model judgment and universal provider certification. Controlled overflow fixtures supply exact byte-limit evidence; an unknown live response does not prove remote failure or exact received payload size. See the [focused live audit](../../docs/Extensions%202.0/MCP-LIVE-READ-AUDIT.md). Both cases are excluded from ordinary `all`.
+
+## Controlled SDK MCP OAuth acceptance
+
+`mcp-auth` uses the actual locked Rust SDK, production protected-resource/issuer discovery, public dynamic registration, S256 PKCE/resource-bound exchange, real callback listener and scoped Windows vault. The fixed debug-only Account target requires `mcpAuth` and its run-owned HTTPS peer. It never accepts an arbitrary provider, token, callback destination or certificate. The private handoff consumes the SDK's actual URL and the fixture's actual redirect; it replaces external browser consent only. No personal account or OS trust-store modification is required. Python `cryptography` supplies the existing disposable TLS setup.
+
+| ID | Independently asserted coverage |
+| --- | --- |
+| `mcp.auth-fixture` | Actual A/B grants, selected nested read, no call before approval, exact account/result, old A generation refusal with zero calls, actual A/B restarts and disconnect. |
+| `mcp.auth-denied-cancelled` | Denied callback and real Cancel sign-in command finish with zero exchange/grant, immediately reusable exact callback ports, then fresh approved A/B reads. |
+| `mcp.auth-late-callback` | Cancel sign-in, Disable and Developer Mode off each refuse the issued old redirect, with no exchange/grant/resurrection after actual restart; new B login/read/restart succeeds. |
+
+Build first; run serially on an idle desktop:
+
+```powershell
+node tests/agent-harness/run.mjs --suite mcp-auth
+node tests/agent-harness/run.mjs --suite mcp-foundation
+node tests/agent-harness/run.mjs --scenario mcp.auth-fixture --fault wrong-mcp-account
+node tests/agent-harness/run.mjs --scenario mcp.auth-fixture --fault abandoned-mcp-credential
+```
+
+Both faults must report Fail/exit 1 and cleanup Pass. Wrong-account changes the actual authenticated provider result; it must fail the account oracle. Abandoned-credential stops after one real grant; independent `mcpVaultCleanup` must report `deleted: 1`, `remaining: 0`. Inventory/cleanup reuses `auth-cleanup.ps1 -Mcp`, matching only the exact run service and fixed account key; it never reads blobs. Normal success requires zero remaining scoped grants/sessions/sockets and removed owned scratch material.
+
+`mcp-foundation` selects the nine existing transport cases and these three cases against the same owned peer, exercising their coexistence. It preserves genuine 45/90-second deadlines and independent scenario/stage assertions; it stops on first failure. This selection introduces no scenario, server or production engine beyond the existing fixture.
+
+Only actual bearer lookup and exact returned nested JSON establish account evidence. The model oracle refuses unrelated tool failures as stale-account evidence; the actual Cancelled/not-dispatched generation message and zero receipts are required. Evidence contains bounded account/stage/counter flags, never authorization URLs, codes, PKCE verifiers or tokens. External browser UX, live OAuth/refresh, confidential registration, failed-switch preservation, changed client, independent authenticated MCP providers and authenticated slow-close remain separate. See [the focused audit and precise numbered acceptance](../../docs/Extensions%202.0/MCP-AUTH-FIXTURE-AUDIT.md).

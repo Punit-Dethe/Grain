@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import assert from "node:assert/strict";
 import { MCP_INPUT, MCP_EXTENSION_ID } from "./mcp-fixture.mjs";
 import { liveReply } from "./mcp-live.mjs";
+import { mcpAccountReply } from "./mcp-auth.mjs";
 
 export const FIXTURE_ID = "com.grain.harness.lifecycle";
 const AUTH_FIXTURE_ID = "com.grain.harness.auth";
@@ -67,6 +68,8 @@ export function nextReply(body) {
   if (instruction.endsWith("model_wait"))
     return { content: "Harness delayed model reply", delayMs: 15000 };
   const requested = instruction.slice("Harness request: ".length);
+  if (["mcp_account_a", "mcp_account_b"].includes(requested))
+    return mcpAccountReply(body, requested.endsWith("_a") ? "A" : "B");
   if (["mcp_live_read", "mcp_live_large"].includes(requested))
     return liveReply(body, requested);
   if (requested === "mcp_conformance") return conformanceReply(body);
@@ -469,6 +472,10 @@ export async function startModel() {
           : {}),
         ...(reply.mcpLiveRefused ? { mcpLiveRefused: true } : {}),
         ...(reply.mcpLiveUnavailable ? { mcpLiveUnavailable: true } : {}),
+        ...(reply.mcpAccountVerified
+          ? { mcpAccountVerified: reply.mcpAccountVerified }
+          : {}),
+        ...(reply.mcpAccountRefused ? { mcpAccountRefused: true } : {}),
         ...(reply.mcpUnknownVerified ? { mcpUnknownVerified: true } : {}),
         ...(reply.mcpPreviewVerified ? { mcpPreviewVerified: true } : {}),
         ...(reply.mcpConformanceVerified

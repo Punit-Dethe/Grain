@@ -285,6 +285,10 @@ scenarios.push(
 );
 
 export function selectScenarios(suite) {
+  if (suite === "mcp-foundation")
+    return scenarios.filter((scenario) =>
+      ["mcp", "mcp-auth"].includes(scenario.suite),
+    );
   if (suite === "native-auth-schedules")
     return scenarios.filter((scenario) =>
       [
@@ -304,6 +308,7 @@ export function selectScenarios(suite) {
       "native-auth",
       "mcp",
       "mcp-live",
+      "mcp-auth",
       "native-installation",
       "registry-recovery",
       "store",
@@ -323,6 +328,27 @@ export function selectScenarios(suite) {
 }
 
 scenarios.push(
+  {
+    id: "mcp.auth-fixture",
+    suite: "mcp-auth",
+    checks: [12, 13, 17, 31],
+    description:
+      "Actual SDK discovery/DCR/PKCE/vault, approved A/B nested reads, old account refusal and restart; controlled provider prerequisite",
+  },
+  {
+    id: "mcp.auth-denied-cancelled",
+    suite: "mcp-auth",
+    checks: [9],
+    description:
+      "Denied/cancelled SDK login, actual reusable callback listener, zero token exchange and fresh authenticated reads",
+  },
+  {
+    id: "mcp.auth-late-callback",
+    suite: "mcp-auth",
+    checks: [10],
+    description:
+      "Cancel-sign-in, disable and Developer Mode off refuse issued old callbacks before/after restart; fresh B grant/read recovers",
+  },
   {
     id: "mcp.live-read-disable",
     suite: "mcp-live",

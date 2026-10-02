@@ -4,6 +4,22 @@ import { createServer } from "node:https";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
+import { createMcpOAuth } from "./mcp-oauth-fixture.mjs";
+
+// The former 2048 entries barely held transport-only runs (2017 observed).
+// Bound combined OAuth/transport evidence and reserve a terminal error entry.
+export const MCP_JOURNAL_LIMIT = 4096;
+export function recordMcpRequest(journal, entry) {
+  assert.ok(
+    journal.length < MCP_JOURNAL_LIMIT - 1,
+    "MCP fixture journal overflow",
+  );
+  journal.push(entry);
+}
+export function recordMcpFailure(journal) {
+  if (journal.length < MCP_JOURNAL_LIMIT)
+    journal.push({ phase: "error", error: "Controlled MCP request failed" });
+}
 
 export const MCP_EXTENSION_ID = "mcp.grain-harness";
 export const MCP_INPUT = {
@@ -69,6 +85,8 @@ export async function startMcpFixture(
     wrongNestedType = false,
     supportedExcluded = false,
     shortPreview = false,
+    authenticated = false,
+    wrongAccount = false,
     acceptedCatalog = false,
   } = {},
 ) {
@@ -91,8 +109,7 @@ export async function startMcpFixture(
     probeRejection: false,
   };
   function record(entry) {
-    assert.ok(journal.length < 2048, "MCP fixture journal overflow");
-    journal.push(entry);
+    recordMcpRequest(journal, entry);
   }
   function json(res, status, value, headers = {}) {
     res.writeHead(status, {
@@ -122,14 +139,24 @@ export async function startMcpFixture(
   }
   const server = createServer({ key, cert }, async (req, res) => {
     try {
+      if (oauth && (await oauth.handle(req, res))) return;
+      const accountRoute = oauth && req.url === "/account-mcp";
+      const account = accountRoute
+        ? oauth.authenticatedAccount(req, res)
+        : null;
+      if (accountRoute && !account) return;
       // A held reply must keep the mode of its own request.
       const mode = { ...configuredMode };
-      assert.equal(req.url, "/mcp");
-      assert.equal(
-        req.headers.authorization,
-        undefined,
-        "Credentials reached an unauthenticated fixture",
+      assert.ok(
+        req.url === "/mcp" || accountRoute,
+        "Unowned MCP fixture route",
       );
+      if (!accountRoute)
+        assert.equal(
+          req.headers.authorization,
+          undefined,
+          "Credentials reached an unauthenticated fixture",
+        );
       const session = req.headers["mcp-session-id"];
       if (req.method === "DELETE") {
         assert.ok(sessions.delete(session), "Unknown session cleanup");
@@ -163,6 +190,7 @@ export async function startMcpFixture(
         result: mode.result,
         catalog: mode.catalog,
         receivedAtMs: performance.now(),
+        ...(accountRoute ? { account } : {}),
       };
       record(entry);
       if (body.id === undefined) {
@@ -329,6 +357,9 @@ export async function startMcpFixture(
             ],
             isError: false,
           };
+          if (accountRoute) {
+            result.content[0].text = `Harness MCP account ${account}: ${JSON.stringify(actual)}`;
+          }
           if (mode.result === "preview") {
             result.content[0].text =
               "Harness MCP large: " + "\u00e9".repeat(32768);
@@ -422,8 +453,9 @@ export async function startMcpFixture(
         });
         res.end(`event: message\ndata: ${JSON.stringify(message)}\n\n`);
       } else json(res, 200, message, headers);
-    } catch (error) {
-      record({ phase: "error", error: String(error.message).slice(0, 300) });
+    } catch {
+      // Never throw again at capacity or copy rejected bearer/parameter data.
+      recordMcpFailure(journal);
       if (!res.headersSent)
         json(res, 500, { error: "Controlled MCP request failed" });
       else res.destroy();
@@ -433,6 +465,13 @@ export async function startMcpFixture(
     sockets.add(socket);
     socket.once("close", () => sockets.delete(socket));
   });
+  const oauth = authenticated
+    ? createMcpOAuth(
+        () => `https://127.0.0.1:${server.address().port}`,
+        await readFile(join(root, "mcp-tls/ca.pem")),
+        { wrongAccount },
+      )
+    : null;
   await new Promise((resolve, reject) => {
     server.once("error", reject);
     server.listen(0, "127.0.0.1", resolve);
@@ -440,6 +479,7 @@ export async function startMcpFixture(
   return {
     port: server.address().port,
     journal,
+    oauth,
     get activeSessions() {
       return sessions.size;
     },
@@ -527,6 +567,7 @@ export async function startMcpFixture(
       for (const delayed of [...delays]) delayed.finish();
       for (const socket of sockets) socket.destroy();
       await pending;
+      oauth?.close();
       closedReplies.length = 0;
       assert.equal(sockets.size, 0, "MCP fixture retained sockets");
       assert.equal(sessions.size, 0, "MCP fixture retained protocol sessions");

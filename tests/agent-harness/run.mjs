@@ -31,6 +31,7 @@ import { accountScheduleHandlers } from "./auth-schedules.mjs";
 import { startAuthFixture } from "./auth-fixture.mjs";
 import { startMcpFixture } from "./mcp-fixture.mjs";
 import { mcpHandlers } from "./mcp.mjs";
+import { mcpAuthHandlers } from "./mcp-auth.mjs";
 import { liveHandlers, LIVE_ENDPOINT, LIVE_REPOSITORY } from "./mcp-live.mjs";
 import {
   cases as conformanceCases,
@@ -72,7 +73,7 @@ for (let i = 2; i < process.argv.length; i++) {
 }
 if (options.help) {
   console.log(
-    "node tests/agent-harness/run.mjs [--list] [--suite smoke|lifecycle|idle|native-failures|native-foundation|native-auth|native-auth-schedules|mcp|mcp-live|native-installation|registry-recovery|store|all] [--scenario ID] [--binary path] [--output directory] [--focus-click]\nWindows real Agent/WebView2 acceptance. --focus-click exercises owned native header activation only for agent.reopen-escape. Build first with tests/agent-harness/build.ps1. No live account or model key required. native-auth and mcp additionally require Python cryptography for run-local TLS. mcp-live is opt-in, requires public DeepWiki availability, and is excluded from all.",
+    "node tests/agent-harness/run.mjs [--list] [--suite smoke|lifecycle|idle|native-failures|native-foundation|native-auth|native-auth-schedules|mcp|mcp-auth|mcp-foundation|mcp-live|native-installation|registry-recovery|store|all] [--scenario ID] [--binary path] [--output directory] [--focus-click]\nWindows real Agent/WebView2 acceptance. --focus-click exercises owned native header activation only for agent.reopen-escape. Build first with tests/agent-harness/build.ps1. No live account or model key required. native-auth and MCP fixtures additionally require Python cryptography for run-local TLS. mcp-foundation runs the controlled unauthenticated and SDK OAuth cases in one host. mcp-live is opt-in, requires public DeepWiki availability, and is excluded from all.",
   );
   process.exit(0);
 }
@@ -131,10 +132,14 @@ if (
     "short-mcp-preview",
     "accepted-mcp-catalog",
     "missing-live-evidence",
+    "wrong-mcp-account",
+    "abandoned-mcp-credential",
   ].includes(options.fault)
 )
   throw new Error("Unknown oracle fault");
 for (const [fault, scenario] of [
+  ["wrong-mcp-account", "mcp.auth-fixture"],
+  ["abandoned-mcp-credential", "mcp.auth-fixture"],
   ["missing-live-evidence", "mcp.live-read-disable"],
   ["wrong-mcp-type", "mcp.transport-contract"],
   ["supported-mcp-excluded", "mcp.mixed-catalog"],
@@ -1352,6 +1357,39 @@ const liveSuite = liveHandlers({
   fault: options.fault,
 });
 Object.assign(handlers, liveSuite.handlers);
+const mcpAuthSuite = mcpAuthHandlers({
+  invoke,
+  status,
+  request,
+  activate,
+  waitFor,
+  closePanel,
+  restartHost,
+  provider: () => mcpProvider,
+  model: () => model,
+  fault: options.fault,
+  vaultCount: async () => {
+    const output = await exec(
+      "powershell.exe",
+      [
+        "-NoProfile",
+        "-File",
+        join(here, "auth-cleanup.ps1"),
+        "-Root",
+        root,
+        "-RunId",
+        runId,
+        "-Mcp",
+        "-InventoryOnly",
+      ],
+      { timeout: 10000, windowsHide: true, maxBuffer: 4096 },
+    );
+    const value = JSON.parse(output.stdout.trim());
+    assert.equal(value.kind, "mcp-vault-inventory");
+    return value.count;
+  },
+});
+Object.assign(handlers, mcpAuthSuite.handlers);
 const conformanceEvidence = [];
 for (const testCase of conformanceCases) {
   handlers[testCase.id] = async () => {
@@ -1550,14 +1588,19 @@ try {
       mcpLiveDeepwiki: selected.some(
         (scenario) => scenario.suite === "mcp-live",
       ),
+      mcpAuth: selected.some((scenario) => scenario.suite === "mcp-auth"),
     }),
   );
+  const tlsPurposes = new Set();
   for (const [suite, purpose] of [
     ["native-auth", "native"],
     ["mcp", "mcp"],
+    ["mcp-auth", "mcp"],
     ["mcp-conformance", "mcp"],
   ]) {
     if (!selected.some((scenario) => scenario.suite === suite)) continue;
+    if (tlsPurposes.has(purpose)) continue;
+    tlsPurposes.add(purpose);
     try {
       await exec("python", [join(here, "auth-tls.py"), root, purpose], {
         timeout: 10000,
@@ -1577,8 +1620,12 @@ try {
   }
   if (conformanceBinding)
     mcpProvider = await startConformanceRelay(root, conformanceBinding);
-  else if (selected.some((scenario) => scenario.suite === "mcp")) {
+  else if (
+    selected.some((scenario) => ["mcp", "mcp-auth"].includes(scenario.suite))
+  ) {
     mcpProvider = await startMcpFixture(root, {
+      authenticated: selected.some((scenario) => scenario.suite === "mcp-auth"),
+      wrongAccount: options.fault === "wrong-mcp-account",
       wrongNestedType: options.fault === "wrong-mcp-type",
       supportedExcluded: options.fault === "supported-mcp-excluded",
       shortPreview: options.fault === "short-mcp-preview",
@@ -1595,6 +1642,7 @@ try {
         storePort: store?.port,
         authPort: authProvider?.port,
         mcpPort: mcpProvider?.port,
+        mcpAuth: selected.some((scenario) => scenario.suite === "mcp-auth"),
       }),
     );
   }
@@ -1674,6 +1722,7 @@ try {
         scenario.suite !== "mcp" &&
         scenario.suite !== "mcp-conformance" &&
         scenario.suite !== "mcp-live" &&
+        scenario.suite !== "mcp-auth" &&
         !["native-installation", "registry-recovery", "store"].includes(
           scenario.suite,
         )
@@ -1712,11 +1761,26 @@ try {
         ...accountRefresh.takeEvidence(),
         ...mcpSuite.takeEvidence(),
         ...liveSuite.takeEvidence(),
+        ...mcpAuthSuite.takeEvidence(),
         ...conformanceEvidence.splice(0),
       ];
       assert.ok(
         !result.model.some((entry) => entry.state === "error"),
         "Scripted provider rejected the real Agent request",
+      );
+      assert.ok(
+        !mcpProvider?.journal.some(
+          (entry) =>
+            entry.phase === "error" || entry.phase === "upstream-error",
+        ),
+        "Controlled MCP peer rejected a real request",
+      );
+      assert.ok(
+        !mcpProvider?.oauth?.journal.some(
+          (entry) =>
+            entry.phase === "oauth-error" || entry.phase === "unexpected-route",
+        ),
+        "Controlled MCP OAuth issuer rejected a real request",
       );
       result.status = "Pass";
     } catch (error) {
@@ -1736,9 +1800,14 @@ try {
         ...accountRefresh.takeEvidence(),
         ...mcpSuite.takeEvidence(),
         ...liveSuite.takeEvidence(),
+        ...mcpAuthSuite.takeEvidence(),
         ...conformanceEvidence.splice(0),
       ];
-      if (["mcp", "mcp-conformance", "mcp-live"].includes(scenario.suite)) {
+      if (
+        ["mcp", "mcp-conformance", "mcp-live", "mcp-auth"].includes(
+          scenario.suite,
+        )
+      ) {
         for (const observation of result.observations) {
           if (observation.status === "Running") {
             observation.status = result.status;
@@ -1903,7 +1972,9 @@ try {
       limitations: [
         conformanceBinding
           ? "Pinned official server via owned TLS relay; named tool-only subset, no live provider, OAuth, account persistence or full conformance/tier certification."
-          : "Unauthenticated controlled HTTPS peer; no live provider, OAuth, account persistence or official conformance certification.",
+          : mcpProvider.oauth
+            ? "Controlled SDK OAuth and real scoped vault/callbacks; external browser consent and live-provider certification remain separate."
+            : "Unauthenticated controlled HTTPS peer; no live provider, OAuth, account persistence or official conformance certification.",
       ],
     };
     try {
@@ -1915,6 +1986,31 @@ try {
       );
     } catch (error) {
       errors.push(`MCP provider cleanup: ${error.message}`);
+    }
+    if (mcpProvider.oauth) {
+      report.mcpOAuthFixture = { requests: mcpProvider.oauth.journal };
+      try {
+        const output = await exec(
+          "powershell.exe",
+          [
+            "-NoProfile",
+            "-File",
+            join(here, "auth-cleanup.ps1"),
+            "-Root",
+            root,
+            "-RunId",
+            runId,
+            "-Mcp",
+          ],
+          { timeout: 10000, windowsHide: true, maxBuffer: 4096 },
+        );
+        const value = JSON.parse(output.stdout.trim());
+        assert.equal(value.kind, "mcp-vault-cleanup");
+        assert.equal(value.remaining, 0);
+        report.mcpVaultCleanup = value;
+      } catch (error) {
+        errors.push(`Owned MCP credential cleanup: ${error.message}`);
+      }
     }
   }
   if (cdpPort) {

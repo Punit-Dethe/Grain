@@ -1,9 +1,10 @@
-//! Fixed unauthenticated MCP tests, absent from ordinary/release builds.
+//! Fixed MCP acceptance peers, absent from ordinary/release builds.
 //! Reuses production discovery, approvals, SDK, byte limits and cancellation.
 use serde::Deserialize;
 use tauri::{AppHandle, WebviewWindow};
 
 pub(crate) const PROVIDER_ID: &str = "grain-harness";
+pub(crate) const AUTH_PROVIDER_ID: &str = "grain-harness-auth";
 pub(crate) const LIVE_ENDPOINT: &str = "https://mcp.deepwiki.com/mcp";
 const LIVE_REPOSITORY: &str = "modelcontextprotocol/rust-sdk";
 
@@ -13,6 +14,14 @@ pub(crate) fn endpoint() -> Result<String, String> {
     }
     let (_, port) = super::grain_agent_harness::mcp_fixture_config()?;
     Ok(format!("https://127.0.0.1:{port}/mcp"))
+}
+
+pub(crate) fn auth_endpoint() -> Result<String, String> {
+    if !super::grain_agent_harness::mcp_auth_enabled() {
+        return Err("MCP account fixture is not enabled".into());
+    }
+    let (_, port) = super::grain_agent_harness::mcp_fixture_config()?;
+    Ok(format!("https://127.0.0.1:{port}/account-mcp"))
 }
 
 pub(crate) fn client() -> Result<(String, reqwest_mcp::Client), String> {
@@ -124,6 +133,21 @@ mod tests {
         assert!(validated_live_action(&serde_json::json!({"method":"tools/call","params":{"name":"ask_question","arguments":{"repoName":LIVE_REPOSITORY}}})).is_err());
         assert!(validated_live_action(&serde_json::json!({"method":"resources/read"})).is_err());
     }
+
+    #[test]
+    fn account_consent_requires_the_exact_owned_origin_and_path() {
+        assert!(validate_consent_url("https://127.0.0.1:9001/authorize?state=owned", 9001).is_ok());
+        for bad in [
+            "http://127.0.0.1:9001/authorize",
+            "https://127.0.0.1:9002/authorize",
+            "https://localhost:9001/authorize",
+            "https://127.0.0.1:9001/token",
+            "https://user@127.0.0.1:9001/authorize",
+            "https://127.0.0.1:9001/authorize#fragment",
+        ] {
+            assert!(validate_consent_url(bad, 9001).is_err());
+        }
+    }
 }
 
 #[derive(Deserialize)]
@@ -132,6 +156,17 @@ pub enum Operation {
     Enable,
     Disable,
     Discover,
+    Connect,
+    Disconnect,
+    Authorization,
+}
+
+#[derive(Default, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Target {
+    #[default]
+    Tools,
+    Account,
 }
 
 #[tauri::command]
@@ -139,19 +174,95 @@ pub async fn agent_harness_mcp(
     app: AppHandle,
     window: WebviewWindow,
     operation: Operation,
+    target: Option<Target>,
 ) -> Result<serde_json::Value, String> {
     super::grain_agent_harness::guard(&app, &window)?;
-    endpoint()?;
+    let id = match target.unwrap_or_default() {
+        Target::Tools => {
+            endpoint()?;
+            PROVIDER_ID
+        }
+        Target::Account => {
+            auth_endpoint()?;
+            AUTH_PROVIDER_ID
+        }
+    };
     match operation {
         Operation::Enable | Operation::Disable => {
             let enabled = matches!(operation, Operation::Enable);
-            super::grain_mcp::mcp_set_provider_enabled(app, window, PROVIDER_ID.into(), enabled)
-                .await?;
+            super::grain_mcp::mcp_set_provider_enabled(app, window, id.into(), enabled).await?;
             Ok(serde_json::json!({"enabled": enabled}))
         }
-        Operation::Discover => serde_json::to_value(
-            super::grain_mcp::mcp_test_provider(app, window, PROVIDER_ID.into()).await?,
-        )
-        .map_err(|_| "Cannot encode bounded discovery result".into()),
+        Operation::Discover => {
+            serde_json::to_value(super::grain_mcp::mcp_test_provider(app, window, id.into()).await?)
+                .map_err(|_| "Cannot encode bounded discovery result".into())
+        }
+        Operation::Connect => {
+            super::grain_mcp::mcp_connect_provider(app, window, id.into()).await?;
+            Ok(serde_json::json!({"connected": true}))
+        }
+        Operation::Disconnect => {
+            super::grain_mcp::mcp_disconnect_provider(app, window, id.into()).await?;
+            Ok(serde_json::json!({"connected": false}))
+        }
+        Operation::Authorization => {
+            if id != AUTH_PROVIDER_ID {
+                return Err("MCP account fixture is not enabled".into());
+            }
+            let mut slot = AUTHORIZATION
+                .lock()
+                .map_err(|_| "Consent handoff unavailable")?;
+            Ok(slot
+                .take()
+                .map(|(_, url)| serde_json::Value::String(url))
+                .unwrap_or(serde_json::Value::Null))
+        }
     }
+}
+
+static AUTHORIZATION: std::sync::Mutex<Option<(uuid::Uuid, String)>> = std::sync::Mutex::new(None);
+
+pub(crate) struct ConsentGuard(uuid::Uuid);
+impl Drop for ConsentGuard {
+    fn drop(&mut self) {
+        if let Ok(mut slot) = AUTHORIZATION.lock() {
+            if slot.as_ref().is_some_and(|(owner, _)| *owner == self.0) {
+                *slot = None;
+            }
+        }
+    }
+}
+
+/// Replace only the fixed fixture's browser handoff, never SDK state/PKCE/exchange.
+/// Consumed privately by the runner; the URL is not status or report evidence.
+pub(crate) fn capture_authorization(id: &str, raw: &str) -> Result<Option<ConsentGuard>, String> {
+    if id != AUTH_PROVIDER_ID {
+        return Ok(None);
+    }
+    if !super::grain_agent_harness::mcp_auth_enabled() {
+        return Err("MCP account fixture is not enabled".into());
+    }
+    let (_, port) = super::grain_agent_harness::mcp_fixture_config()?;
+    validate_consent_url(raw, port)?;
+    let owner = uuid::Uuid::new_v4();
+    *AUTHORIZATION
+        .lock()
+        .map_err(|_| "Consent handoff unavailable")? = Some((owner, raw.into()));
+    Ok(Some(ConsentGuard(owner)))
+}
+
+fn validate_consent_url(raw: &str, port: u16) -> Result<(), String> {
+    let url = reqwest_mcp::Url::parse(raw).map_err(|_| "Invalid fixture consent URL")?;
+    if raw.len() > 8192
+        || url.scheme() != "https"
+        || url.host_str() != Some("127.0.0.1")
+        || url.port() != Some(port)
+        || url.path() != "/authorize"
+        || url.fragment().is_some()
+        || !url.username().is_empty()
+        || url.password().is_some()
+    {
+        return Err("MCP consent requires its exact HTTPS fixture origin/path".into());
+    }
+    Ok(())
 }

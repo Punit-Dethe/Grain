@@ -129,6 +129,13 @@ fn requires_account(item: &CatalogProvider) -> bool {
 
 fn provider_endpoint(item: &CatalogProvider) -> Result<std::borrow::Cow<'static, str>, String> {
     #[cfg(feature = "agent-harness")]
+    if item.id == crate::grain_agent_harness_mcp::AUTH_PROVIDER_ID {
+        if !crate::grain_agent_harness::mcp_auth_enabled() {
+            return Err("MCP account fixture is not enabled".into());
+        }
+        return crate::grain_agent_harness_mcp::auth_endpoint().map(Into::into);
+    }
+    #[cfg(feature = "agent-harness")]
     if item.registration == Registration::NoAuthFixture {
         return crate::grain_agent_harness_mcp::endpoint().map(Into::into);
     }
@@ -136,6 +143,15 @@ fn provider_endpoint(item: &CatalogProvider) -> Result<std::borrow::Cow<'static,
 }
 
 const CATALOG: &[CatalogProvider] = &[
+    #[cfg(feature = "agent-harness")]
+    CatalogProvider {
+        id: "grain-harness-auth",
+        name: "Harness MCP Account",
+        description: "Isolated SDK OAuth account acceptance fixture.",
+        endpoint: "https://grain-mcp-account-harness.invalid/mcp",
+        registration: Registration::Dynamic,
+        setup_url: "https://modelcontextprotocol.io/",
+    },
     #[cfg(feature = "agent-harness")]
     CatalogProvider {
         id: "grain-harness",
@@ -202,6 +218,18 @@ const CATALOG: &[CatalogProvider] = &[
 
 #[derive(Clone)]
 pub struct McpHttpClient(pub reqwest_mcp::Client);
+
+fn provider_http(app: &AppHandle, item: &CatalogProvider) -> Result<reqwest_mcp::Client, String> {
+    #[cfg(feature = "agent-harness")]
+    if item.id == crate::grain_agent_harness_mcp::AUTH_PROVIDER_ID {
+        provider_endpoint(item)?;
+        return crate::grain_agent_harness_mcp::client().map(|(_, client)| client);
+    }
+    let _ = item;
+    app.try_state::<McpHttpClient>()
+        .map(|client| client.0.clone())
+        .ok_or_else(|| "MCP HTTP client unavailable".into())
+}
 
 impl McpHttpClient {
     pub(super) fn builder() -> reqwest_mcp::ClientBuilder {
@@ -930,12 +958,8 @@ async fn connect_oauth(
         "http://{}{CALLBACK_PATH}",
         listener.local_addr().map_err(|e| e.to_string())?
     );
-    let http = app
-        .try_state::<McpHttpClient>()
-        .ok_or("MCP HTTP client unavailable")?
-        .0
-        .clone();
-    let mut manager = AuthorizationManager::new(item.endpoint)
+    let http = provider_http(app, item)?;
+    let mut manager = AuthorizationManager::new(provider_endpoint(item)?.as_ref())
         .await
         .map_err(|error| format!("OAuth setup failed: {error}"))?;
     manager
@@ -988,9 +1012,17 @@ async fn connect_oauth(
         })
         .filter(|value| !value.is_empty() && value.len() <= 4096)
         .ok_or("OAuth provider did not return a valid state value")?;
-    app.opener()
-        .open_url(authorization_url, None::<&str>)
-        .map_err(|error| format!("could not open the sign-in page: {error}"))?;
+    #[cfg(feature = "agent-harness")]
+    let consent = crate::grain_agent_harness_mcp::capture_authorization(id, authorization_url)?;
+    #[cfg(not(feature = "agent-harness"))]
+    let captured = false;
+    #[cfg(feature = "agent-harness")]
+    let captured = consent.is_some();
+    if !captured {
+        app.opener()
+            .open_url(authorization_url, None::<&str>)
+            .map_err(|error| format!("could not open the sign-in page: {error}"))?;
+    }
     let callback = await_callback(
         listener,
         &expected_state,
@@ -1092,7 +1124,7 @@ async fn authorization_manager(
     ticket: &session::Ticket,
     operation: &session::Lease,
 ) -> Result<AuthorizationManager, String> {
-    let mut manager = AuthorizationManager::new(item.endpoint)
+    let mut manager = AuthorizationManager::new(provider_endpoint(item)?.as_ref())
         .await
         .map_err(|error| format!("OAuth setup failed: {error}"))?;
     manager
@@ -1169,11 +1201,7 @@ pub(crate) async fn list_tools(app: &AppHandle, provider_id: &str) -> Result<Mcp
     if !enabled {
         return Err(format!("{} MCP is disabled in Grain Settings", item.name));
     }
-    let http = app
-        .try_state::<McpHttpClient>()
-        .ok_or("MCP HTTP client unavailable")?
-        .0
-        .clone();
+    let http = provider_http(app, item)?;
     let service = ticket
         .run(open_service(
             http,
@@ -1233,7 +1261,9 @@ async fn open_service(
     let legacy_probe = client.legacy_probe();
     serve_http(
         AuthClient::new(client, manager),
-        item.endpoint,
+        provider_endpoint(item)
+            .map_err(|_| before_dispatch(FailureClass::Network, "MCP endpoint unavailable."))?
+            .as_ref(),
         deadline,
         legacy_probe,
     )
@@ -1428,11 +1458,8 @@ pub(crate) async fn call_tool(
             "MCP arguments must be an object.",
         )
     })?;
-    let http = app
-        .try_state::<McpHttpClient>()
-        .ok_or_else(|| before_dispatch(FailureClass::Internal, "MCP HTTP client unavailable."))?
-        .0
-        .clone();
+    let http = provider_http(app, item)
+        .map_err(|_| before_dispatch(FailureClass::Internal, "MCP HTTP client unavailable."))?;
     let service = ticket
         .run(open_service(
             http,
