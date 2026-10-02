@@ -224,6 +224,61 @@ export function mcpHandlers(ctx) {
       return value;
     },
     handlers: {
+      async "mcp.legacy-http-probe"() {
+        const provider = ctx.provider();
+        await enabled();
+        try {
+          for (const reply of ["json", "sse"]) {
+            provider.configure({
+              lifecycle: "legacy",
+              reply,
+              catalog: "mixed",
+              revision: "one",
+              result: "normal",
+              probeRejection: true,
+            });
+            const start = provider.journal.length;
+            const found = await control("discover");
+            assert.equal(found.tool_count, 2);
+            assert.equal(provider.activeSessions, 0);
+            await read("legacy-http-400-" + reply);
+            const entries = provider.journal.slice(start);
+            const probes = entries.filter(
+              (item) => item.method === "server/discover",
+            );
+            const initializations = entries.filter(
+              (item) => item.method === "initialize",
+            );
+            assert.ok(probes.length >= 2);
+            assert.equal(
+              initializations.length,
+              probes.length,
+              "Initial rejection repeated negotiation or skipped its handshake",
+            );
+            assert.ok(probes.every((item) => item.probeRejected));
+            assert.equal(
+              entries.filter((item) => item.method === "tools/call").length,
+              1,
+            );
+            assert.equal(
+              entries.filter((item) => item.method === "DELETE").length,
+              initializations.length,
+            );
+            evidence.push({
+              stage: "legacy-http-era-" + reply,
+              status: "Pass",
+              probes: probes.length,
+              freshInitializations: initializations.length,
+              unchangedErrorId: true,
+              activeSessions: provider.activeSessions,
+            });
+          }
+        } finally {
+          await ctx.closePanel();
+          await control("disable");
+          provider.configure({ probeRejection: false });
+        }
+      },
       async "mcp.catalog-budgets"() {
         const provider = ctx.provider();
         const variants = [

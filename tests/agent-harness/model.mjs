@@ -2,6 +2,7 @@ import { createServer } from "node:http";
 import { randomUUID } from "node:crypto";
 import assert from "node:assert/strict";
 import { MCP_INPUT, MCP_EXTENSION_ID } from "./mcp-fixture.mjs";
+import { liveReply } from "./mcp-live.mjs";
 
 export const FIXTURE_ID = "com.grain.harness.lifecycle";
 const AUTH_FIXTURE_ID = "com.grain.harness.auth";
@@ -66,6 +67,8 @@ export function nextReply(body) {
   if (instruction.endsWith("model_wait"))
     return { content: "Harness delayed model reply", delayMs: 15000 };
   const requested = instruction.slice("Harness request: ".length);
+  if (["mcp_live_read", "mcp_live_large"].includes(requested))
+    return liveReply(body, requested);
   if (requested === "mcp_conformance") return conformanceReply(body);
   if (
     [
@@ -461,6 +464,11 @@ export async function startModel() {
         ...(reply.mcpVerified ? { mcpVerified: true } : {}),
         ...(reply.mcpExcludedVerified ? { mcpExcludedVerified: true } : {}),
         ...(reply.mcpRefused ? { mcpRefused: true } : {}),
+        ...(reply.mcpLiveVerified
+          ? { mcpLiveVerified: reply.mcpLiveVerified }
+          : {}),
+        ...(reply.mcpLiveRefused ? { mcpLiveRefused: true } : {}),
+        ...(reply.mcpLiveUnavailable ? { mcpLiveUnavailable: true } : {}),
         ...(reply.mcpUnknownVerified ? { mcpUnknownVerified: true } : {}),
         ...(reply.mcpPreviewVerified ? { mcpPreviewVerified: true } : {}),
         ...(reply.mcpConformanceVerified

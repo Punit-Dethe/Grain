@@ -28,6 +28,8 @@ struct Marker {
     auth_port: Option<u16>,
     #[serde(default)]
     mcp_port: Option<u16>,
+    #[serde(default)]
+    mcp_live_deepwiki: bool,
 }
 
 struct Config {
@@ -57,6 +59,7 @@ fn read_marker(root: &Path) -> Result<Marker, String> {
     }
     let marker: Marker = serde_json::from_slice(&bytes).map_err(|_| "Invalid harness marker")?;
     if marker.schema != 1
+        || (marker.mcp_live_deepwiki && marker.mcp_port.is_some())
         || uuid::Uuid::parse_str(&marker.run_id).is_err()
         || marker.model_port == 0
         || marker.model_port == crate::events_server::EVENTS_PORT
@@ -123,6 +126,12 @@ pub(super) fn mcp_fixture_config() -> Result<(PathBuf, u16), String> {
     let value = CONFIG.get().ok_or("MCP fixture is not initialized")?;
     let port = value.marker.mcp_port.ok_or("MCP fixture is not enabled")?;
     Ok((value.root.clone(), port))
+}
+
+pub(super) fn live_deepwiki_enabled() -> bool {
+    CONFIG
+        .get()
+        .is_some_and(|value| value.marker.mcp_live_deepwiki)
 }
 
 /// Fixed, public test key only. No production root or signing key is replaced.
@@ -199,7 +208,8 @@ pub fn configure(app: &AppHandle) -> Result<(), String> {
     // Preserve only this run's explicitly enabled peer across real restarts.
     // Ordinary provider entries remain excluded from the isolated host.
     settings.mcp_enabled_providers.retain(|id| {
-        config().marker.mcp_port.is_some() && id == crate::grain_agent_harness_mcp::PROVIDER_ID
+        (config().marker.mcp_port.is_some() || live_deepwiki_enabled())
+            && id == crate::grain_agent_harness_mcp::PROVIDER_ID
     });
     settings.mcp_oauth_client_ids.clear();
     settings.post_process_api_keys.0.clear();
@@ -252,6 +262,7 @@ pub fn observe(phase: &str, extension: &str, action: &str, token: &str) {
         FIXTURE_ID,
         super::grain_agent_harness_auth::FIXTURE_ID,
         super::grain_agent_harness_auth::PEER_ID,
+        "mcp.grain-harness",
     ]
     .contains(&extension)
     {
@@ -484,6 +495,8 @@ pub enum Instruction {
     McpUnknown,
     McpCatalogRefusal,
     McpConformance,
+    McpLiveRead,
+    McpLiveLarge,
     Hello,
     SlowHello,
     ModelWait,
@@ -531,6 +544,8 @@ pub async fn agent_harness_submit(
         Instruction::McpUnknown => "Harness request: mcp_unknown",
         Instruction::McpCatalogRefusal => "Harness request: mcp_catalog_refusal",
         Instruction::McpConformance => "Harness request: mcp_conformance",
+        Instruction::McpLiveRead => "Harness request: mcp_live_read",
+        Instruction::McpLiveLarge => "Harness request: mcp_live_large",
         Instruction::Hello => "Harness request: hello",
         Instruction::SlowHello => "Harness request: slow_hello",
         Instruction::ModelWait => "Harness request: model_wait",
@@ -625,6 +640,20 @@ mod tests {
                 uuid::Uuid::new_v4(),
             )).unwrap();
             assert!(read_marker(root.path()).is_err());
+        }
+    }
+
+    #[test]
+    fn public_mcp_marker_is_explicit_and_excludes_a_local_peer() {
+        let root = tempfile::tempdir().unwrap();
+        let marker = root.path().join(".grain-agent-harness.json");
+        for (live, port, valid) in [
+            (true, None, true),
+            (true, Some(9001), false),
+            (false, Some(9001), true),
+        ] {
+            std::fs::write(&marker, serde_json::to_vec(&serde_json::json!({"schema":1,"runId":uuid::Uuid::new_v4(),"modelPort":9000,"mcpLiveDeepwiki":live,"mcpPort":port})).unwrap()).unwrap();
+            assert_eq!(read_marker(root.path()).is_ok(), valid);
         }
     }
 }

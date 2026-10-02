@@ -1213,12 +1213,9 @@ async fn open_service(
     if item.registration == Registration::NoAuthFixture {
         let (endpoint, client) = crate::grain_agent_harness_mcp::client()
             .map_err(|_| before_dispatch(FailureClass::Network, "MCP fixture is unavailable."))?;
-        return serve_http(
-            bounded_http::BoundedClient::new(client),
-            &endpoint,
-            deadline,
-        )
-        .await;
+        let client = bounded_http::BoundedClient::new(client);
+        let legacy_probe = client.legacy_probe();
+        return serve_http(client, &endpoint, deadline, legacy_probe).await;
     }
     let manager = tokio::time::timeout_at(
         deadline,
@@ -1232,10 +1229,13 @@ async fn open_service(
             "The MCP account is unavailable. Reconnect in Grain Settings.",
         )
     })?;
+    let client = bounded_http::BoundedClient::new(http);
+    let legacy_probe = client.legacy_probe();
     serve_http(
-        AuthClient::new(bounded_http::BoundedClient::new(http), manager),
+        AuthClient::new(client, manager),
         item.endpoint,
         deadline,
+        legacy_probe,
     )
     .await
 }
@@ -1244,29 +1244,54 @@ async fn serve_http<C: rmcp::transport::streamable_http_client::StreamableHttpCl
     client: C,
     endpoint: &str,
     deadline: tokio::time::Instant,
+    legacy_probe: std::sync::Arc<std::sync::atomic::AtomicBool>,
+) -> Result<McpService, ExecutionFailure> {
+    let first = serve_http_once(client.clone(), endpoint, deadline, hosted_lifecycle()).await;
+    if first.is_err()
+        && legacy_probe.swap(false, std::sync::atomic::Ordering::Relaxed)
+        && tokio::time::Instant::now() < deadline
+    {
+        // HTTP era rejection can use a generic/non-correlated error ID. The
+        // first SDK transport has been dropped; start one fresh legacy handshake
+        // under the SAME byte/absolute budgets. No tool has been dispatched.
+        // Ordinary JSON-RPC correlation is never relaxed or rewritten.
+        return serve_http_once(client, endpoint, deadline, ClientLifecycleMode::Initialize).await;
+    }
+    first
+}
+
+async fn serve_http_once<
+    C: rmcp::transport::streamable_http_client::StreamableHttpClient + Sync,
+>(
+    client: C,
+    endpoint: &str,
+    deadline: tokio::time::Instant,
+    lifecycle: ClientLifecycleMode,
 ) -> Result<McpService, ExecutionFailure> {
     let (cancel, receiver) = tokio::sync::watch::channel(false);
     let transport = StreamableHttpClientTransport::with_client(
         cancellable_http::CancellableClient::new(client, receiver),
         transport_config(endpoint),
     );
-    tokio::time::timeout_at(
-        deadline,
-        client_info().serve_with_lifecycle(transport, hosted_lifecycle()),
-    )
-    .await
-    .map_err(|_| before_dispatch(FailureClass::Network, "MCP protocol negotiation timed out."))?
-    .map_err(|_| {
-        before_dispatch(
-            FailureClass::Network,
-            "MCP protocol negotiation failed. Check the account and provider availability.",
-        )
-    })
-    .map(|inner| McpService {
-        inner,
-        cancel,
-        dispatched: std::sync::atomic::AtomicBool::new(false),
-    })
+    let info = if lifecycle == ClientLifecycleMode::Initialize {
+        client_info().with_protocol_version(ProtocolVersion::V_2025_11_25)
+    } else {
+        client_info()
+    };
+    tokio::time::timeout_at(deadline, info.serve_with_lifecycle(transport, lifecycle))
+        .await
+        .map_err(|_| before_dispatch(FailureClass::Network, "MCP protocol negotiation timed out."))?
+        .map_err(|_| {
+            before_dispatch(
+                FailureClass::Network,
+                "MCP protocol negotiation failed. Check the account and provider availability.",
+            )
+        })
+        .map(|inner| McpService {
+            inner,
+            cancel,
+            dispatched: std::sync::atomic::AtomicBool::new(false),
+        })
 }
 
 async fn close_service(mut service: McpService) -> bool {

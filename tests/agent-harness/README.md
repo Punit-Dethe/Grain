@@ -304,11 +304,13 @@ The tools subset expects **exit 0**: separate legacy 2025-11-25 and modern 2026-
 
 Each official case has its own actual server, isolated real application and owned-PID HTTPS relay. The relay preserves wire bodies/status/metadata and checks the upstream listener PID before every exchange; it accepts no user account, redirect or arbitrary endpoint. Grain performs production discovery, selected-tool loading and actual Agent UI approval. Exactly one `add_numbers` call with 5 and 3 must return the real result 8; both official numeric and wire-schema checks, application acceptance and independent cleanup must pass.
 
-Stable IDs are `mcp.conformance-tools-legacy`, `mcp.conformance-tools-modern` and `mcp.conformance-initialize`. These require the separately owned official binding; plain `run.mjs` cannot silently substitute a synthetic peer. Ordinary `--suite all` still selects all 48 self-contained cases. Reports retain raw official checks, application children, identities, case verdicts and cleanup under `.runs/conformance-*/`. Keep init Blocked until a compatible fixture is audited; do not force a different production negotiation mode.
+Stable IDs are `mcp.conformance-tools-legacy`, `mcp.conformance-tools-modern` and `mcp.conformance-initialize`. These require the separately owned official binding; plain `run.mjs` cannot silently substitute a synthetic peer. Ordinary `--suite all` selects all 49 self-contained cases. Reports retain raw official checks, application children, identities, case verdicts and cleanup under `.runs/conformance-*/`. Keep init Blocked until a compatible fixture is audited; do not force a different production negotiation mode.
 
 The [focused conformance audit](../../docs/Extensions%202.0/MCP-CONFORMANCE-AUDIT.md) records the pin, evidence, blocked prerequisite and retirement conditions for the temporary relay. The [retention inventory](../../docs/Extensions%202.0/AGENT-TEST-HARNESS.md#harness-retention-and-cleanup-inventory) preserves the earlier interrupted-root cleanup exception. This named subset is not full SDK-tier, OAuth, live-provider or whole B2 acceptance.
 
 ## Controlled real-app MCP suite
+
+The opt-in public live suite is documented separately below. Its external availability does not affect the self-contained suite.
 
 Requires the stamped real harness application and Python `cryptography` for owned TLS. No user account, model API key or production trust-store change is required. A fixed debug-only provider uses only its run's exact loopback endpoint and CA; it refuses account commands. The external peer supplies wire replies, not Agent/executor mocks.
 
@@ -319,6 +321,7 @@ node tests/agent-harness/run.mjs --scenario mcp.response-preview --fault short-m
 
 | ID | Separate assertions |
 | --- | --- |
+| `mcp.legacy-http-probe` | Generic-ID HTTP 400 discovery rejection, one fresh legacy handshake per operation, JSON/SSE management and approved nested reads, exact result, no call replay, session deletion and zero retained sessions. |
 | `mcp.transport-contract` | Modern/legacy JSON/SSE, two-page nested reads, one approved call, no idle negotiation, actual restart and stale disable refusal. |
 | `mcp.mixed-catalog` | Supported/excluded schemas, excluded selection with zero dispatch, empty supported catalog, repeated cursor and changed-approval refusal. |
 | `mcp.response-preview` | Multi-byte text/large structured data, bounded model preview, distinct model/UI omission notices and fresh recovery in JSON/SSE. |
@@ -328,7 +331,7 @@ node tests/agent-harness/run.mjs --scenario mcp.response-preview --fault short-m
 | `mcp.http-deadline` | Four real 45-second approved-call timeouts; unknown result, one call, measured duration, response/session release, discarded late reply and fresh recovery. |
 | `mcp.discovery-deadline` | Modern/SSE and legacy/JSON each finish two 35-second pages, then stop the third at the real 90-second absolute deadline; no tool dispatch, no retained delay timer/session and fresh recovery. |
 
-There are 51 maintained scenario IDs: all 48 self-contained real-app cases (eight MCP), plus three explicitly external official cases (one Blocked), and 28 runner self-tests. Ordinary `all` selects all 48 self-contained cases; the official entry below supplies the other prerequisites. Run cases serially after native compilation finishes. The full MCP suite includes six minutes of genuine timeout waits plus setup/recovery; clocks are unchanged. Each failure records its exact stage and model observations, stops the batch and leaves later cases Not run. The preview fault must fail for a missing notice with one provider call and cleanup Pass. A nonzero prerequisite/reporting failure is not an accepted oracle check.
+There are 54 maintained scenario IDs: 49 self-contained real-app cases (nine MCP), three explicitly external official cases (one Blocked), and two opt-in public live cases. There are 31 runner self-tests. Ordinary `all` selects only the 49 self-contained cases; official and live entries supply their explicit prerequisites separately. Run cases serially after native compilation finishes. The full MCP suite includes six minutes of genuine timeout waits plus setup/recovery; clocks are unchanged. Each failure records its exact stage and model observations, stops the batch and leaves later cases Not run. The preview fault must fail for a missing notice with one provider call and cleanup Pass. A nonzero prerequisite/reporting failure is not an accepted oracle check.
 
 ```powershell
 node tests/agent-harness/run.mjs --scenario mcp.catalog-budgets --fault accepted-mcp-catalog
@@ -341,3 +344,21 @@ Reports now checkpoint completed cases before/after each scenario, preserving `a
 [Catalog audit](../../docs/Extensions%202.0/MCP-CATALOG-TRANSPORT-AUDIT.md), [bounds/cancellation audit](../../docs/Extensions%202.0/MCP-BOUNDS-CANCELLATION-AUDIT.md), and [retention/cleanup inventory](../../docs/Extensions%202.0/AGENT-TEST-HARNESS.md#harness-retention-and-cleanup-inventory) give evidence identities and exclusions. Controlled partial coverage never certifies live MCP OAuth, account persistence or official conformance. Retain fixtures as regression tests; delete owned profiles, keys, credentials, processes and response handles each run. Feature-gated test seams have documented retirement conditions.
 
 Implementation/design references: [Playwright WebView2 automation](https://playwright.dev/docs/webview2), [Microsoft WebView2 environment options](https://learn.microsoft.com/en-us/microsoft-edge/webview2/reference/win32/webview2-idl), [Tauri's distinction between mock-runtime and real-application tests](https://v2.tauri.app/develop/tests/), [Windows SendInput](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-sendinput) and [foreground window restrictions](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setforegroundwindow). These support the adapter choice; Grain's isolation and evidence policies are local requirements.
+## Opt-in public live MCP acceptance
+
+Build first, leave the desktop idle and run serially after native compilation. This uses the real application and production MCP adapter with a scripted model, normal TLS trust, and no account. The debug provider is fixed to `https://mcp.deepwiki.com/mcp`; only `read_wiki_structure` and `read_wiki_contents` for public `modelcontextprotocol/rust-sdk` are admitted. Questions, private repositories, extra arguments, credentials and arbitrary endpoints are refused before dispatch. No DeepWiki provider is added to the ordinary product catalog.
+
+```powershell
+node tests/agent-harness/run.mjs --suite mcp-live
+node tests/agent-harness/run.mjs --scenario mcp.live-read-disable --fault missing-live-evidence
+node tests/agent-harness/run.mjs --scenario mcp.legacy-http-probe
+```
+
+The live suite expects exit 0; service or desktop failures retain their actual verdict. The fault expects exit 1 after a genuine approved read, because required result evidence is deliberately withheld from the verifier; cleanup must pass. No automatic retry masks a failure.
+
+| ID | Separate assertions |
+| --- | --- |
+| `mcp.live-read-disable` | Live discovery; actual approved result; disabled stale approval and fresh request both refuse with zero backend attempts; re-enable and actual restart restore reading. The fresh refusal retains an unrelated harmless native directory entry; empty-directory text-only fallback is outside this case. |
+| `mcp.live-response-recovery` | Actual ordinary read, large public documentation request, bounded preview or honest unusable/unknown result, then a fresh actual ordinary read. No blind replay. |
+
+Reports contain fixed endpoint/repository, per-stage result kind/byte count, model evidence and client-side attempt observations. Attempt counts are conservative backend observations, not independent remote receipts. No raw documentation is retained in the JSON evidence. These cases exclude OAuth, private accounts, nested live schemas, live-model judgment and universal provider certification. Controlled overflow fixtures supply exact byte-limit evidence; an unknown live response does not prove remote failure or exact received payload size. See the [focused live audit](../../docs/Extensions%202.0/MCP-LIVE-READ-AUDIT.md). Both cases are excluded from ordinary `all`.

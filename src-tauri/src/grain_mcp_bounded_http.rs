@@ -20,7 +20,7 @@ use std::{
     collections::HashMap,
     io,
     sync::{
-        atomic::{AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
         Arc,
     },
 };
@@ -35,6 +35,7 @@ type HttpError = StreamableHttpError<reqwest_mcp::Error>;
 pub(super) struct BoundedClient {
     http: Client,
     received: Arc<AtomicUsize>,
+    legacy_probe: Arc<AtomicBool>,
 }
 
 fn invalid(message: &'static str) -> HttpError {
@@ -46,7 +47,12 @@ impl BoundedClient {
         Self {
             http,
             received: Arc::new(AtomicUsize::new(0)),
+            legacy_probe: Arc::new(AtomicBool::new(false)),
         }
+    }
+
+    pub(super) fn legacy_probe(&self) -> Arc<AtomicBool> {
+        self.legacy_probe.clone()
     }
 
     fn request(
@@ -259,10 +265,13 @@ impl StreamableHttpClient for BoundedClient {
         if !status.is_success() {
             let bytes = self.body(response, MAX_ERROR_BYTES).await?;
             if kind.eq_ignore_ascii_case("application/json") {
-                if let Ok(message @ JsonRpcMessage::Error(_)) =
+                if let Ok(reply @ JsonRpcMessage::Error(_)) =
                     serde_json::from_slice::<ServerJsonRpcMessage>(&bytes)
                 {
-                    return Ok(StreamableHttpPostResponse::Json(message, session));
+                    if uncorrelated_legacy_probe(status, &message, &reply) {
+                        self.legacy_probe.store(true, Ordering::Relaxed);
+                    }
+                    return Ok(StreamableHttpPostResponse::Json(reply, session));
                 }
             }
             return Err(invalid("MCP server returned an HTTP error"));
@@ -352,5 +361,80 @@ impl StreamableHttpClient for BoundedClient {
             return Err(invalid("MCP SSE stream is unavailable"));
         }
         self.sse(response, max_bytes)
+    }
+}
+
+// Era detection from an initial HTTP rejection is distinct from accepting a
+// JSON-RPC response. Keep the reply unchanged; the SDK still refuses its ID.
+// Never arm this for a tool, a success, authorization, or a modern error.
+fn uncorrelated_legacy_probe(
+    status: StatusCode,
+    request: &ClientJsonRpcMessage,
+    reply: &ServerJsonRpcMessage,
+) -> bool {
+    let ClientJsonRpcMessage::Request(request) = request else {
+        return false;
+    };
+    let ServerJsonRpcMessage::Error(reply) = reply else {
+        return false;
+    };
+    status == StatusCode::BAD_REQUEST
+        && matches!(
+            request.request,
+            rmcp::model::ClientRequest::DiscoverRequest(_)
+        )
+        && reply.id.as_ref() != Some(&request.id)
+        && matches!(
+            reply.error.code,
+            rmcp::model::ErrorCode::INVALID_REQUEST | rmcp::model::ErrorCode::METHOD_NOT_FOUND
+        )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn http_era_detection_never_retries_actions_successes_auth_or_modern_errors() {
+        let probe: ClientJsonRpcMessage = serde_json::from_value(
+            serde_json::json!({"jsonrpc":"2.0","id":1,"method":"server/discover","params":{}}),
+        )
+        .unwrap();
+        let call: ClientJsonRpcMessage = serde_json::from_value(serde_json::json!({"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read","arguments":{}}})).unwrap();
+        let make = |id: serde_json::Value, code: i32| {
+            serde_json::from_value::<ServerJsonRpcMessage>(serde_json::json!({"jsonrpc":"2.0","id":id,"error":{"code":code,"message":"rejected"}})).unwrap()
+        };
+        for id in [serde_json::Value::Null, serde_json::json!("server-error")] {
+            let error = make(id.clone(), -32600);
+            assert!(uncorrelated_legacy_probe(
+                StatusCode::BAD_REQUEST,
+                &probe,
+                &error
+            ));
+            assert!(!uncorrelated_legacy_probe(
+                StatusCode::BAD_REQUEST,
+                &call,
+                &error
+            ));
+            for status in [
+                StatusCode::OK,
+                StatusCode::UNAUTHORIZED,
+                StatusCode::FORBIDDEN,
+                StatusCode::INTERNAL_SERVER_ERROR,
+            ] {
+                assert!(!uncorrelated_legacy_probe(status, &probe, &error));
+            }
+            for code in [-32022, -32021, -32020, -32603] {
+                assert!(!uncorrelated_legacy_probe(
+                    StatusCode::BAD_REQUEST,
+                    &probe,
+                    &make(id.clone(), code)
+                ));
+            }
+        }
+        assert!(!uncorrelated_legacy_probe(
+            StatusCode::BAD_REQUEST,
+            &probe,
+            &make(serde_json::json!(1), -32600)
+        ));
     }
 }

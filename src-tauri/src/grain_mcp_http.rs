@@ -60,6 +60,14 @@ impl<C: StreamableHttpClient + Sync> StreamableHttpClient for CancellableClient<
         auth_header: Option<String>,
         headers: HashMap<HeaderName, HeaderValue>,
     ) -> Result<StreamableHttpPostResponse, StreamableHttpError<Self::Error>> {
+        #[cfg(feature = "agent-harness")]
+        crate::grain_agent_harness_mcp::validate_live_post(&uri, &message, auth_header.is_some())
+            .map_err(|error| {
+            StreamableHttpError::Io(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                error,
+            ))
+        })?;
         cancellable(
             self.cancel.clone(),
             self.client
@@ -77,6 +85,14 @@ impl<C: StreamableHttpClient + Sync> StreamableHttpClient for CancellableClient<
         headers: HashMap<HeaderName, HeaderValue>,
         max_bytes: usize,
     ) -> Result<StreamableHttpPostResponse, StreamableHttpError<Self::Error>> {
+        #[cfg(feature = "agent-harness")]
+        crate::grain_agent_harness_mcp::validate_live_post(&uri, &message, auth_header.is_some())
+            .map_err(|error| {
+            StreamableHttpError::Io(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                error,
+            ))
+        })?;
         cancellable(
             self.cancel.clone(),
             self.client.post_message_with_max_sse_event_size(

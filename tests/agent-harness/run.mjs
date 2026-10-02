@@ -31,6 +31,7 @@ import { accountScheduleHandlers } from "./auth-schedules.mjs";
 import { startAuthFixture } from "./auth-fixture.mjs";
 import { startMcpFixture } from "./mcp-fixture.mjs";
 import { mcpHandlers } from "./mcp.mjs";
+import { liveHandlers, LIVE_ENDPOINT, LIVE_REPOSITORY } from "./mcp-live.mjs";
 import {
   cases as conformanceCases,
   startConformanceRelay,
@@ -71,7 +72,7 @@ for (let i = 2; i < process.argv.length; i++) {
 }
 if (options.help) {
   console.log(
-    "node tests/agent-harness/run.mjs [--list] [--suite smoke|lifecycle|idle|native-failures|native-foundation|native-auth|native-auth-schedules|mcp|native-installation|registry-recovery|store|all] [--scenario ID] [--binary path] [--output directory] [--focus-click]\nWindows real Agent/WebView2 acceptance. --focus-click exercises owned native header activation only for agent.reopen-escape. Build first with tests/agent-harness/build.ps1. No live account or model key required. native-auth and mcp additionally require Python cryptography for run-local TLS.",
+    "node tests/agent-harness/run.mjs [--list] [--suite smoke|lifecycle|idle|native-failures|native-foundation|native-auth|native-auth-schedules|mcp|mcp-live|native-installation|registry-recovery|store|all] [--scenario ID] [--binary path] [--output directory] [--focus-click]\nWindows real Agent/WebView2 acceptance. --focus-click exercises owned native header activation only for agent.reopen-escape. Build first with tests/agent-harness/build.ps1. No live account or model key required. native-auth and mcp additionally require Python cryptography for run-local TLS. mcp-live is opt-in, requires public DeepWiki availability, and is excluded from all.",
   );
   process.exit(0);
 }
@@ -129,10 +130,12 @@ if (
     "supported-mcp-excluded",
     "short-mcp-preview",
     "accepted-mcp-catalog",
+    "missing-live-evidence",
   ].includes(options.fault)
 )
   throw new Error("Unknown oracle fault");
 for (const [fault, scenario] of [
+  ["missing-live-evidence", "mcp.live-read-disable"],
   ["wrong-mcp-type", "mcp.transport-contract"],
   ["supported-mcp-excluded", "mcp.mixed-catalog"],
   ["short-mcp-preview", "mcp.response-preview"],
@@ -1335,6 +1338,20 @@ const mcpSuite = mcpHandlers({
   log: () => logTail,
 });
 Object.assign(handlers, mcpSuite.handlers);
+const liveSuite = liveHandlers({
+  invoke,
+  panel,
+  status,
+  request,
+  activate,
+  waitFor,
+  closePanel,
+  restartHost,
+  model: () => model,
+  log: () => logTail,
+  fault: options.fault,
+});
+Object.assign(handlers, liveSuite.handlers);
 const conformanceEvidence = [];
 for (const testCase of conformanceCases) {
   handlers[testCase.id] = async () => {
@@ -1502,6 +1519,16 @@ try {
     report.cli = cliIdentity;
   }
   report.injectedFault = options.fault ?? null;
+  if (selected.some((scenario) => scenario.suite === "mcp-live"))
+    report.liveMcp = {
+      endpoint: LIVE_ENDPOINT,
+      repository: LIVE_REPOSITORY,
+      evidenceClass: "real-application/live-provider/scripted-model",
+      limitations: [
+        "Public documentation reads only; no OAuth, account, private repository, live-model relevance or universal provider certification.",
+        "Backend attempt counts are conservative client dispatch observations, not independent remote-server receipts.",
+      ],
+    };
   model = await startModel();
   if (selected.some((scenario) => scenario.suite === "store")) {
     store = await startStore(here);
@@ -1520,6 +1547,9 @@ try {
       runId,
       modelPort: model.port,
       storePort: store?.port,
+      mcpLiveDeepwiki: selected.some(
+        (scenario) => scenario.suite === "mcp-live",
+      ),
     }),
   );
   for (const [suite, purpose] of [
@@ -1584,10 +1614,15 @@ try {
       invoke("agent_harness_auth", { operation: "status" }),
       /Native auth fixture is not enabled/,
     );
-  if (!mcpProvider)
+  if (!mcpProvider && !report.liveMcp)
     await assert.rejects(
       invoke("agent_harness_mcp", { operation: "discover" }),
       /MCP fixture is not enabled/,
+    );
+  if (report.liveMcp)
+    await assert.rejects(
+      invoke("agent_harness_mcp", { operation: "discover" }),
+      /disabled in Grain Settings/,
     );
   assert.equal(firstStatus.runId, runId);
   assert.equal(firstStatus.applicationId, "com.grain.agent-harness");
@@ -1638,6 +1673,7 @@ try {
         scenario.suite !== "native-auth" &&
         scenario.suite !== "mcp" &&
         scenario.suite !== "mcp-conformance" &&
+        scenario.suite !== "mcp-live" &&
         !["native-installation", "registry-recovery", "store"].includes(
           scenario.suite,
         )
@@ -1675,6 +1711,7 @@ try {
         ...accountSchedules.takeEvidence(),
         ...accountRefresh.takeEvidence(),
         ...mcpSuite.takeEvidence(),
+        ...liveSuite.takeEvidence(),
         ...conformanceEvidence.splice(0),
       ];
       assert.ok(
@@ -1698,9 +1735,10 @@ try {
         ...accountSchedules.takeEvidence(),
         ...accountRefresh.takeEvidence(),
         ...mcpSuite.takeEvidence(),
+        ...liveSuite.takeEvidence(),
         ...conformanceEvidence.splice(0),
       ];
-      if (["mcp", "mcp-conformance"].includes(scenario.suite)) {
+      if (["mcp", "mcp-conformance", "mcp-live"].includes(scenario.suite)) {
         for (const observation of result.observations) {
           if (observation.status === "Running") {
             observation.status = result.status;

@@ -16,6 +16,7 @@ enum Behavior {
     Complete(Value),
     CompleteSse(Value),
     CompleteLegacy(Value),
+    CompleteLegacyHttpRejection(Value),
     DropAfterWrite,
     HangAfterWrite,
     HangSseAfterWrite,
@@ -41,6 +42,8 @@ struct Fixture {
     calls: Arc<AtomicUsize>,
     lists: Arc<AtomicUsize>,
     unexpected: Arc<AtomicUsize>,
+    probes: Arc<AtomicUsize>,
+    initializations: Arc<AtomicUsize>,
     task: tokio::task::JoinHandle<()>,
 }
 
@@ -55,13 +58,27 @@ impl Fixture {
         let calls = Arc::new(AtomicUsize::new(0));
         let lists = Arc::new(AtomicUsize::new(0));
         let unexpected = Arc::new(AtomicUsize::new(0));
-        let counters = (calls.clone(), lists.clone(), unexpected.clone());
+        let probes = Arc::new(AtomicUsize::new(0));
+        let initializations = Arc::new(AtomicUsize::new(0));
+        let counters = (
+            calls.clone(),
+            lists.clone(),
+            unexpected.clone(),
+            probes.clone(),
+            initializations.clone(),
+        );
         let task = tokio::spawn(async move {
             while let Ok((mut stream, _)) = listener.accept().await {
                 let request =
                     tokio::time::timeout(Duration::from_secs(3), read_request(&mut stream))
                         .await
                         .unwrap();
+                if request["method"] == "server/discover" {
+                    counters.3.fetch_add(1, Ordering::SeqCst);
+                }
+                if request["method"] == "initialize" {
+                    counters.4.fetch_add(1, Ordering::SeqCst);
+                }
                 if let Behavior::Oversized { discovery, framing } = &behavior {
                     let method = if *discovery {
                         "tools/list"
@@ -79,19 +96,36 @@ impl Fixture {
                     }
                 }
                 let response = match request["method"].as_str() {
+                    Some("server/discover")
+                        if matches!(behavior, Behavior::CompleteLegacyHttpRejection(_)) =>
+                    {
+                        let body = json!({"jsonrpc":"2.0","id":"server-error","error":{"code":-32600,"message":"Unsupported protocol version"}}).to_string();
+                        let header = format!("HTTP/1.1 400 Bad Request\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len());
+                        stream.write_all(header.as_bytes()).await.unwrap();
+                        stream.write_all(body.as_bytes()).await.unwrap();
+                        continue;
+                    }
                     Some("server/discover") if matches!(behavior, Behavior::CompleteLegacy(_)) => {
                         json!({
                             "fixtureError": {"code": -32601, "message": "modern discovery unavailable"}
                         })
                     }
-                    Some("initialize") if matches!(behavior, Behavior::CompleteLegacy(_)) => {
+                    Some("initialize")
+                        if matches!(
+                            behavior,
+                            Behavior::CompleteLegacy(_) | Behavior::CompleteLegacyHttpRejection(_)
+                        ) =>
+                    {
                         json!({
                             "protocolVersion": "2025-11-25", "capabilities": {"tools": {}},
                             "serverInfo": {"name": "Legacy fixture", "version": "1"}
                         })
                     }
                     Some("notifications/initialized")
-                        if matches!(behavior, Behavior::CompleteLegacy(_)) =>
+                        if matches!(
+                            behavior,
+                            Behavior::CompleteLegacy(_) | Behavior::CompleteLegacyHttpRejection(_)
+                        ) =>
                     {
                         let _ = stream.write_all(b"HTTP/1.1 202 Accepted\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").await;
                         continue;
@@ -167,6 +201,7 @@ impl Fixture {
                             Behavior::Complete(result)
                             | Behavior::CompleteSse(result)
                             | Behavior::CompleteLegacy(result) => result.clone(),
+                            Behavior::CompleteLegacyHttpRejection(result) => result.clone(),
                             Behavior::CatalogPages(_) => json!({"resultType": "complete",
                                 "content": [{"type": "text", "text": "one supported call"}]}),
                             _ => panic!("pagination failures must never dispatch a tool"),
@@ -203,15 +238,20 @@ impl Fixture {
             calls,
             lists,
             unexpected,
+            probes,
+            initializations,
             task,
         }
     }
 
     async fn service(&self, http: reqwest_mcp::Client) -> McpService {
+        let client = bounded_http::BoundedClient::new(http);
+        let legacy_probe = client.legacy_probe();
         serve_http(
-            bounded_http::BoundedClient::new(http),
+            client,
             &self.endpoint,
             tokio::time::Instant::now() + Duration::from_secs(3),
+            legacy_probe,
         )
         .await
         .unwrap()
@@ -426,6 +466,23 @@ async fn legacy_handshake_keeps_bounded_transport_and_one_tool_call() {
     let service = fixture.service(McpHttpClient::build().unwrap().0).await;
     let output = execute(&service, Duration::from_secs(2)).await.unwrap();
     assert!(output.text.contains("legacy result"));
+    assert_eq!(fixture.calls.load(Ordering::SeqCst), 1);
+    assert_eq!(fixture.unexpected.load(Ordering::SeqCst), 0);
+    assert!(close_service(service).await);
+    fixture.stop().await;
+}
+
+#[tokio::test]
+async fn uncorrelated_http_probe_rejection_uses_one_fresh_legacy_handshake() {
+    let fixture = Fixture::start(Behavior::CompleteLegacyHttpRejection(
+        json!({"content":[{"type":"text","text":"HTTP legacy result"}],"isError":false}),
+    ))
+    .await;
+    let service = fixture.service(McpHttpClient::build().unwrap().0).await;
+    let output = execute(&service, Duration::from_secs(2)).await.unwrap();
+    assert!(output.text.contains("HTTP legacy result"));
+    assert_eq!(fixture.probes.load(Ordering::SeqCst), 1);
+    assert_eq!(fixture.initializations.load(Ordering::SeqCst), 1);
     assert_eq!(fixture.calls.load(Ordering::SeqCst), 1);
     assert_eq!(fixture.unexpected.load(Ordering::SeqCst), 0);
     assert!(close_service(service).await);

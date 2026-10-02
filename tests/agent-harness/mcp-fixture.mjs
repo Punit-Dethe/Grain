@@ -88,6 +88,7 @@ export async function startMcpFixture(
     catalog: "mixed",
     revision: "one",
     result: "normal",
+    probeRejection: false,
   };
   function record(entry) {
     assert.ok(journal.length < 2048, "MCP fixture journal overflow");
@@ -174,6 +175,16 @@ export async function startMcpFixture(
       const headers = {};
       let result;
       if (body.method === "server/discover") {
+        if (mode.probeRejection) {
+          assert.equal(mode.lifecycle, "legacy");
+          entry.probeRejected = true;
+          json(res, 400, {
+            jsonrpc: "2.0",
+            id: "server-error",
+            error: { code: -32600, message: "Unsupported protocol version" },
+          });
+          return;
+        }
         if (mode.lifecycle === "legacy") {
           json(res, 200, {
             jsonrpc: "2.0",
@@ -462,13 +473,23 @@ export async function startMcpFixture(
         "Fixture reconfigured with a live session",
       );
       assert.ok(
-        Object.keys(next).every((key) =>
-          ["lifecycle", "reply", "catalog", "revision", "result"].includes(key),
+        Object.keys(next).every(
+          (key) =>
+            [
+              "lifecycle",
+              "reply",
+              "catalog",
+              "revision",
+              "result",
+              "probeRejection",
+            ].includes(key),
+          // Fixed generic HTTP rejection used only by the legacy compatibility case.
         ),
       );
       assert.equal(held.size, 0, "Fixture reconfigured with a held call");
       assert.equal(delays.size, 0, "Fixture reconfigured with a delayed reply");
       const candidate = { ...configuredMode, ...next };
+      assert.equal(typeof candidate.probeRejection, "boolean");
       assert.ok(["stateless", "legacy"].includes(candidate.lifecycle));
       assert.ok(["json", "sse"].includes(candidate.reply));
       assert.ok(

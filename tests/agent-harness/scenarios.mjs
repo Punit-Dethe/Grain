@@ -250,6 +250,14 @@ scenarios.push(
   },
 );
 
+scenarios.push({
+  id: "mcp.legacy-http-probe",
+  suite: "mcp",
+  checks: [8, 17],
+  description:
+    "Generic HTTP 400 discovery rejection, one fresh legacy handshake per operation, actual approved JSON/SSE nested result and session cleanup",
+});
+
 // Official runner owns the server prerequisite. Normal --suite all excludes
 // these entries; conformance.mjs invokes each finite case with its owned binding.
 scenarios.push(
@@ -295,6 +303,7 @@ export function selectScenarios(suite) {
       "native-foundation",
       "native-auth",
       "mcp",
+      "mcp-live",
       "native-installation",
       "registry-recovery",
       "store",
@@ -304,7 +313,8 @@ export function selectScenarios(suite) {
     throw new Error(`Unknown suite: ${suite}`);
   return scenarios.filter(
     (scenario) =>
-      (suite === "all" && scenario.suite !== "mcp-conformance") ||
+      (suite === "all" &&
+        !["mcp-conformance", "mcp-live"].includes(scenario.suite)) ||
       (suite === "registry-recovery" &&
         scenario.id === "native.registry-refusal") ||
       scenario.suite === suite ||
@@ -313,6 +323,20 @@ export function selectScenarios(suite) {
 }
 
 scenarios.push(
+  {
+    id: "mcp.live-read-disable",
+    suite: "mcp-live",
+    checks: [8],
+    description:
+      "Live public DeepWiki discovery, approved fixed-repository read, disabled stale/fresh refusal and restart recovery",
+  },
+  {
+    id: "mcp.live-response-recovery",
+    suite: "mcp-live",
+    checks: [20],
+    description:
+      "Live public normal/large documentation reads through production bounds, actual Agent approval and fresh recovery",
+  },
   {
     id: "native.auth-cancellation",
     suite: "native-auth",
