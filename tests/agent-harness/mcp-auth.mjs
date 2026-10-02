@@ -6,13 +6,24 @@ import { MCP_INPUT } from "./mcp-fixture.mjs";
 import {
   MCP_AUTH_ID,
   MCP_CLIENT_ID,
+  MCP_PEER_ID,
+  MCP_PEER_CLIENT_ID,
   MCP_CLIENTS,
   MCP_CLIENT_SECRETS,
   MCP_PRIVATE_MARKER,
 } from "./mcp-oauth-fixture.mjs";
 
-export function mcpAccountReply(body, account, providerId = MCP_AUTH_ID) {
-  assert.ok([MCP_AUTH_ID, MCP_CLIENT_ID].includes(providerId));
+export function mcpAccountReply(
+  body,
+  account,
+  providerId = MCP_AUTH_ID,
+  disabledOwner = false,
+) {
+  assert.ok(
+    [MCP_AUTH_ID, MCP_CLIENT_ID, MCP_PEER_ID, MCP_PEER_CLIENT_ID].includes(
+      providerId,
+    ),
+  );
   assert.ok(
     !JSON.stringify(body).includes(MCP_PRIVATE_MARKER),
     "MCP credential reached model context",
@@ -67,7 +78,9 @@ export function mcpAccountReply(body, account, providerId = MCP_AUTH_ID) {
   if (content.startsWith("Failed (")) {
     assert.equal(
       content,
-      "Failed (Cancelled): The action was not dispatched. MCP account or access changed. Ask again.",
+      disabledOwner
+        ? "Failed (Cancelled): The extension action is no longer approved or available. Please ask again."
+        : "Failed (Cancelled): The action was not dispatched. MCP account or access changed. Ask again.",
       "Expected an actual stale account refusal, not an unrelated tool failure",
     );
     return {
@@ -88,6 +101,7 @@ export function mcpAccountReply(body, account, providerId = MCP_AUTH_ID) {
   return {
     content: `Harness verified actual MCP account ${account}`,
     mcpAccountVerified: account,
+    mcpAccountProvider: providerId,
   };
 }
 
@@ -239,6 +253,7 @@ export function mcpAuthHandlers(ctx) {
       evidence = [];
       return value;
     },
+    vaultCount: ctx.vaultCount,
     handlers: {
       async "mcp.auth-client-configuration"() {
         assert.equal(await ctx.vaultCount(), 0);

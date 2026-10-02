@@ -311,7 +311,7 @@ test("MCP account shutdown oracle requires exact dispatched uncertainty without 
 
 test("authenticated MCP suite has independent IDs and remains in ordinary all", () => {
   const auth = selectScenarios("mcp-auth");
-  assert.equal(auth.length, 6);
+  assert.equal(auth.length, 8);
   assert.deepEqual(
     auth.map((x) => x.id),
     [
@@ -321,15 +321,124 @@ test("authenticated MCP suite has independent IDs and remains in ordinary all", 
       "mcp.auth-close-cancellation",
       "mcp.auth-shutdown",
       "mcp.auth-client-configuration",
+      "mcp.auth-provider-independence",
+      "mcp.auth-fixed-port-conflict",
     ],
   );
   for (const entry of auth) assert.ok(selectScenarios("all").includes(entry));
   const foundation = selectScenarios("mcp-foundation");
-  assert.equal(foundation.length, 15);
+  assert.equal(foundation.length, 17);
   assert.deepEqual(
     new Set(foundation),
     new Set([...auth, ...selectScenarios("mcp")]),
   );
+});
+
+test("two-provider read oracle rejects cross-wire calls, wrong accounts and false receipts", async () => {
+  const { verifyProviderRead } = await import("./mcp-independence.mjs");
+  const { MCP_PEER_ID } = await import("./mcp-oauth-fixture.mjs");
+  const good = [{ account: "B" }],
+    receipt = [{ mcpAccountVerified: "B", mcpAccountProvider: MCP_PEER_ID }];
+  assert.doesNotThrow(() =>
+    verifyProviderRead(good, [], receipt, "B", MCP_PEER_ID),
+  );
+  for (const [wire, other, result] of [
+    [[], [], receipt],
+    [[...good, ...good], [], receipt],
+    [[{ account: "A" }], [], receipt],
+    [good, good, receipt],
+    [good, [], []],
+    [
+      good,
+      [],
+      [{ mcpAccountVerified: "B", mcpAccountProvider: "grain-harness-auth" }],
+    ],
+  ]) {
+    assert.throws(() =>
+      verifyProviderRead(wire, other, result, "B", MCP_PEER_ID),
+    );
+  }
+});
+
+test("fixed peer schema search cannot accept another provider's metadata", async () => {
+  const { MCP_PEER_ID, MCP_PEER_CLIENT_ID } =
+    await import("./mcp-oauth-fixture.mjs");
+  for (const [instruction, id] of [
+    ["mcp_peer_b", MCP_PEER_ID],
+    ["mcp_peer_client_b", MCP_PEER_CLIENT_ID],
+  ]) {
+    const frame = body([]);
+    frame.messages[0].content = "Harness request: " + instruction;
+    assert.equal(
+      JSON.parse(nextReply(frame).tool_calls[0].function.arguments)
+        .extension_id,
+      "mcp." + id,
+    );
+    frame.messages.push({
+      role: "tool",
+      content: JSON.stringify({
+        extension_id: "mcp.grain-harness-auth",
+        tools: [{ tool_id: "fixture_read" }],
+      }),
+    });
+    assert.throws(() => nextReply(frame));
+    frame.messages.at(-1).content = JSON.stringify({
+      extension_id: "mcp." + id,
+      tools: [{ tool_id: "fixture_read" }],
+    });
+    assert.equal(
+      JSON.parse(nextReply(frame).tool_calls[0].function.arguments)
+        .extension_id,
+      "mcp." + id,
+    );
+  }
+});
+
+test("disabled-owner oracle distinguishes host availability from account cancellation", () => {
+  const frame = body([
+    "search",
+    "load",
+    "Failed (Cancelled): The extension action is no longer approved or available. Please ask again.",
+  ]);
+  frame.messages[0].content = "Harness request: mcp_disabled_owner";
+  assert.equal(nextReply(frame).mcpAccountRefused, true);
+  frame.messages[0].content = "Harness request: mcp_account_a";
+  assert.throws(() => nextReply(frame));
+  frame.messages[0].content = "Harness request: mcp_disabled_owner";
+  for (const wrong of [
+    "Failed (Cancelled): The action was not dispatched. MCP account or access changed. Ask again.",
+    "Failed (Cancelled): unavailable",
+    "Outcome unknown: done",
+  ]) {
+    frame.messages.at(-1).content = wrong;
+    assert.throws(() => nextReply(frame));
+  }
+});
+
+test("MCP independence subset is explicit and faults cannot enter another unit", async () => {
+  const { MCP_INDEPENDENCE_IDS } = await import("./mcp-independence.mjs");
+  assert.deepEqual(
+    selectScenarios("mcp-independence").map((x) => x.id),
+    MCP_INDEPENDENCE_IDS,
+  );
+  for (const fault of ["wrong-mcp-peer-account", "skip-fixed-port-conflict"]) {
+    await assert.rejects(
+      exec(
+        process.execPath,
+        [
+          join(here, "run.mjs"),
+          "--scenario",
+          "native.cold-warm",
+          "--fault",
+          fault,
+        ],
+        { timeout: 10000, windowsHide: true },
+      ),
+      (error) =>
+        error.code === 1 &&
+        error.stderr.includes("requires --scenario mcp.auth-"),
+    );
+  }
 });
 
 test("MCP journal exhaustion remains bounded, records failure and cannot copy private rejected data", async () => {

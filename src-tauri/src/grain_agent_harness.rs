@@ -29,6 +29,8 @@ struct Marker {
     #[serde(default)]
     mcp_port: Option<u16>,
     #[serde(default)]
+    mcp_peer_port: Option<u16>,
+    #[serde(default)]
     mcp_live_deepwiki: bool,
     #[serde(default)]
     mcp_auth: bool,
@@ -63,6 +65,7 @@ fn read_marker(root: &Path) -> Result<Marker, String> {
     if marker.schema != 1
         || (marker.mcp_live_deepwiki && marker.mcp_port.is_some())
         || (marker.mcp_auth && (marker.mcp_port.is_none() || marker.mcp_live_deepwiki))
+        || (marker.mcp_peer_port.is_some() && !marker.mcp_auth)
         || uuid::Uuid::parse_str(&marker.run_id).is_err()
         || marker.model_port == 0
         || marker.model_port == crate::events_server::EVENTS_PORT
@@ -79,6 +82,11 @@ fn read_marker(root: &Path) -> Result<Marker, String> {
             port == 0 || port == marker.model_port || Some(port) == marker.store_port
                 || Some(port) == marker.auth_port || port == 7124
                 || port == crate::events_server::EVENTS_PORT
+        })
+        || marker.mcp_peer_port.is_some_and(|port| {
+            port == 0 || port == marker.model_port || Some(port) == marker.store_port
+                || Some(port) == marker.auth_port || Some(port) == marker.mcp_port
+                || port == 7124 || port == crate::events_server::EVENTS_PORT
         })
     {
         return Err("Invalid harness run identity or model port".into());
@@ -139,6 +147,15 @@ pub(super) fn live_deepwiki_enabled() -> bool {
 
 pub(super) fn mcp_auth_enabled() -> bool {
     CONFIG.get().is_some_and(|value| value.marker.mcp_auth)
+}
+
+pub(super) fn mcp_peer_config() -> Result<(PathBuf, u16), String> {
+    let value = CONFIG.get().ok_or("MCP peer fixture is not initialized")?;
+    let port = value
+        .marker
+        .mcp_peer_port
+        .ok_or("MCP peer fixture is not enabled")?;
+    Ok((value.root.clone(), port))
 }
 
 /// Fixed, public test key only. No production root or signing key is replaced.
@@ -223,9 +240,17 @@ pub fn configure(app: &AppHandle) -> Result<(), String> {
                     crate::grain_agent_harness_mcp::CLIENT_PROVIDER_ID,
                 ]
                 .contains(&id.as_str()))
+            || (mcp_peer_config().is_ok()
+                && [
+                    crate::grain_agent_harness_mcp::PEER_PROVIDER_ID,
+                    crate::grain_agent_harness_mcp::PEER_CLIENT_PROVIDER_ID,
+                ]
+                .contains(&id.as_str()))
     });
     settings.mcp_oauth_client_ids.retain(|id, _| {
-        mcp_auth_enabled() && id == crate::grain_agent_harness_mcp::CLIENT_PROVIDER_ID
+        (mcp_auth_enabled() && id == crate::grain_agent_harness_mcp::CLIENT_PROVIDER_ID)
+            || (mcp_peer_config().is_ok()
+                && id == crate::grain_agent_harness_mcp::PEER_CLIENT_PROVIDER_ID)
     });
     settings.post_process_api_keys.0.clear();
     settings.stt_api_keys.0.clear();
@@ -529,6 +554,9 @@ pub enum Instruction {
     McpAccountB,
     McpClientA,
     McpClientB,
+    McpPeerB,
+    McpPeerClientB,
+    McpDisabledOwner,
     Hello,
     SlowHello,
     ModelWait,
@@ -588,6 +616,9 @@ pub async fn agent_harness_submit(
         Instruction::McpAccountB => "Harness request: mcp_account_b",
         Instruction::McpClientA => "Harness request: mcp_client_a",
         Instruction::McpClientB => "Harness request: mcp_client_b",
+        Instruction::McpPeerB => "Harness request: mcp_peer_b",
+        Instruction::McpPeerClientB => "Harness request: mcp_peer_client_b",
+        Instruction::McpDisabledOwner => "Harness request: mcp_disabled_owner",
         Instruction::Hello => "Harness request: hello",
         Instruction::SlowHello => "Harness request: slow_hello",
         Instruction::ModelWait => "Harness request: model_wait",
@@ -708,6 +739,25 @@ mod tests {
             (Some(9001), true, false),
         ] {
             std::fs::write(root.path().join(".grain-agent-harness.json"), serde_json::to_vec(&serde_json::json!({"schema":1,"runId":uuid::Uuid::new_v4(),"modelPort":9000,"mcpPort":port,"mcpLiveDeepwiki":live,"mcpAuth":true})).unwrap()).unwrap();
+            assert_eq!(read_marker(root.path()).is_ok(), valid);
+        }
+    }
+
+    #[test]
+    fn second_mcp_origin_requires_auth_and_a_distinct_owned_port() {
+        let root = tempfile::tempdir().unwrap();
+        for (auth, port, valid) in [
+            (false, 9004, false),
+            (true, 9004, true),
+            (true, 0, false),
+            (true, 9000, false),
+            (true, 9001, false),
+            (true, 9002, false),
+            (true, 9003, false),
+            (true, 7124, false),
+            (true, crate::events_server::EVENTS_PORT, false),
+        ] {
+            std::fs::write(root.path().join(".grain-agent-harness.json"), serde_json::to_vec(&serde_json::json!({"schema":1,"runId":uuid::Uuid::new_v4(),"modelPort":9000,"storePort":9001,"authPort":9002,"mcpPort":9003,"mcpAuth":auth,"mcpPeerPort":port})).unwrap()).unwrap();
             assert_eq!(read_marker(root.path()).is_ok(), valid);
         }
     }

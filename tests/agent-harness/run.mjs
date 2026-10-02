@@ -32,6 +32,10 @@ import { startAuthFixture } from "./auth-fixture.mjs";
 import { startMcpFixture } from "./mcp-fixture.mjs";
 import { mcpHandlers } from "./mcp.mjs";
 import { mcpAuthHandlers } from "./mcp-auth.mjs";
+import {
+  mcpIndependenceHandlers,
+  MCP_INDEPENDENCE_IDS,
+} from "./mcp-independence.mjs";
 import { workflowHandlers } from "./workflow.mjs";
 import { configuredModel } from "./live-model.mjs";
 import { liveHandlers, LIVE_ENDPOINT, LIVE_REPOSITORY } from "./mcp-live.mjs";
@@ -77,7 +81,7 @@ for (let i = 2; i < process.argv.length; i++) {
 }
 if (options.help) {
   console.log(
-    "node tests/agent-harness/run.mjs [--list] [--suite smoke|lifecycle|idle|agent-workflow|agent-live|agent-interruption|agent-interruption-live|native-failures|native-foundation|native-auth|native-auth-schedules|mcp|mcp-auth|mcp-foundation|mcp-live|native-installation|registry-recovery|store|all] [--scenario ID] [--binary path] [--output directory] [--focus-click] [--live-configured]\nWindows real Agent/WebView2 acceptance. Build first with tests/agent-harness/build.ps1. Scripted suites need no model key. agent-live and agent-interruption-live require explicit --live-configured and uses only the selected ordinary Grain model with disposable tool objects; it is excluded from all. native-auth, Agent workflow/interruption suites and MCP fixtures require Python cryptography for owned TLS. mcp-foundation runs fifteen controlled transport/OAuth cases in one host. mcp-live is opt-in public DeepWiki acceptance and excluded from all. --focus-click is confined to agent.reopen-escape.",
+    "node tests/agent-harness/run.mjs [--list] [--suite smoke|lifecycle|idle|agent-workflow|agent-live|agent-interruption|agent-interruption-live|native-failures|native-foundation|native-auth|native-auth-schedules|mcp|mcp-auth|mcp-independence|mcp-foundation|mcp-live|native-installation|registry-recovery|store|all] [--scenario ID] [--binary path] [--output directory] [--focus-click] [--live-configured]\nWindows real Agent/WebView2 acceptance. Build first with tests/agent-harness/build.ps1. Scripted suites need no model key. agent-live and agent-interruption-live require explicit --live-configured and uses only the selected ordinary Grain model with disposable tool objects; it is excluded from all. native-auth, Agent workflow/interruption suites and MCP fixtures require Python cryptography for owned TLS. mcp-foundation runs seventeen controlled transport/OAuth cases in one host; mcp-independence selects its two independent-provider cases. mcp-live is opt-in public DeepWiki acceptance and excluded from all. --focus-click is confined to agent.reopen-escape.",
   );
   process.exit(0);
 }
@@ -145,6 +149,8 @@ if (
     "accepted-mcp-catalog",
     "missing-live-evidence",
     "wrong-mcp-account",
+    "wrong-mcp-peer-account",
+    "skip-fixed-port-conflict",
     "abandoned-mcp-credential",
     "lost-mcp-account",
     "skip-mcp-disable",
@@ -182,6 +188,8 @@ if (
     "wrong-workflow-receipt requires an isolated write workflow scenario",
   );
 for (const [fault, scenario] of [
+  ["wrong-mcp-peer-account", "mcp.auth-provider-independence"],
+  ["skip-fixed-port-conflict", "mcp.auth-fixed-port-conflict"],
   ["lost-mcp-account", "mcp.auth-close-cancellation"],
   ["skip-mcp-disable", "mcp.auth-shutdown"],
   ["skip-mcp-client-change", "mcp.auth-client-configuration"],
@@ -302,7 +310,7 @@ const report = {
     "Checks in scenario metadata are partial supporting coverage; manual ledger is unchanged.",
   ],
 };
-let child, browser, model, main, store, authProvider, mcpProvider;
+let child, browser, model, main, store, authProvider, mcpProvider, mcpPeer;
 let interrupted = false;
 const cancellation = new AbortController();
 const waitFor = (description, operation, options = {}) =>
@@ -1442,6 +1450,20 @@ const mcpAuthSuite = mcpAuthHandlers({
   },
 });
 Object.assign(handlers, mcpAuthSuite.handlers);
+const mcpIndependenceSuite = mcpIndependenceHandlers({
+  invoke,
+  status,
+  request,
+  activate,
+  waitFor,
+  closePanel,
+  restartHost,
+  provider: (peer) => (peer ? mcpPeer : mcpProvider),
+  model: () => model,
+  fault: options.fault,
+  vaultCount: mcpAuthSuite.vaultCount,
+});
+Object.assign(handlers, mcpIndependenceSuite.handlers);
 const workflowSuite = workflowHandlers({
   root,
   invoke,
@@ -1734,6 +1756,11 @@ try {
     });
   }
   if (authProvider || mcpProvider) {
+    if (selected.some((scenario) => MCP_INDEPENDENCE_IDS.includes(scenario.id)))
+      mcpPeer = await startMcpFixture(root, {
+        authenticated: true,
+        wrongAccount: options.fault === "wrong-mcp-peer-account",
+      });
     await writeFile(
       join(root, ".grain-agent-harness.json"),
       JSON.stringify({
@@ -1743,6 +1770,7 @@ try {
         storePort: store?.port,
         authPort: authProvider?.port,
         mcpPort: mcpProvider?.port,
+        mcpPeerPort: mcpPeer?.port,
         mcpAuth: selected.some((scenario) => scenario.suite === "mcp-auth"),
       }),
     );
@@ -1758,6 +1786,14 @@ try {
   await launchHost();
   report.adapter.webViewVersion = browser.version();
   const firstStatus = await status();
+  if (!mcpPeer)
+    await assert.rejects(
+      invoke("agent_harness_mcp", {
+        operation: "authorization",
+        target: "peer",
+      }),
+      /MCP (peer|account) fixture is not enabled/,
+    );
   if (!authProvider)
     await assert.rejects(
       invoke("agent_harness_auth", { operation: "status" }),
@@ -1863,6 +1899,7 @@ try {
         ...mcpSuite.takeEvidence(),
         ...liveSuite.takeEvidence(),
         ...mcpAuthSuite.takeEvidence(),
+        ...mcpIndependenceSuite.takeEvidence(),
         ...workflowSuite.takeEvidence(),
         ...conformanceEvidence.splice(0),
       ];
@@ -1884,6 +1921,16 @@ try {
         ),
         "Controlled MCP OAuth issuer rejected a real request",
       );
+      assert.ok(
+        !mcpPeer?.journal.some((entry) => entry.phase === "error"),
+        "Second MCP peer rejected real traffic",
+      );
+      assert.ok(
+        !mcpPeer?.oauth?.journal.some((entry) =>
+          ["oauth-error", "unexpected-route"].includes(entry.phase),
+        ),
+        "Second OAuth issuer rejected real traffic",
+      );
       result.status = "Pass";
     } catch (error) {
       result.status = error instanceof Blocked ? "Blocked" : "Fail";
@@ -1903,6 +1950,7 @@ try {
         ...mcpSuite.takeEvidence(),
         ...liveSuite.takeEvidence(),
         ...mcpAuthSuite.takeEvidence(),
+        ...mcpIndependenceSuite.takeEvidence(),
         ...workflowSuite.takeEvidence(),
         ...conformanceEvidence.splice(0),
       ];
@@ -2122,6 +2170,26 @@ try {
       } catch (error) {
         errors.push(`Owned MCP credential cleanup: ${error.message}`);
       }
+    }
+  }
+  if (mcpPeer) {
+    report.mcpPeerFixture = {
+      port: mcpPeer.port,
+      requests: mcpPeer.journal,
+      activeSessionsBeforeShutdown: mcpPeer.activeSessions,
+      heldCallsBeforeShutdown: mcpPeer.heldCalls,
+      delayedRepliesBeforeShutdown: mcpPeer.delayedReplies,
+    };
+    report.mcpPeerOAuthFixture = { requests: mcpPeer.oauth.journal };
+    try {
+      await mcpPeer.close();
+      await poll(
+        "Second MCP listener release",
+        async () => !(await portOpen(mcpPeer.port)),
+        { timeoutMs: 3000 },
+      );
+    } catch (error) {
+      errors.push(`Second MCP provider cleanup: ${error.message}`);
     }
   }
   if (cdpPort) {

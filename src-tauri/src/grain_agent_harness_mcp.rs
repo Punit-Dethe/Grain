@@ -6,6 +6,14 @@ use tauri::{AppHandle, WebviewWindow};
 pub(crate) const PROVIDER_ID: &str = "grain-harness";
 pub(crate) const AUTH_PROVIDER_ID: &str = "grain-harness-auth";
 pub(crate) const CLIENT_PROVIDER_ID: &str = "grain-harness-auth-client";
+pub(crate) const PEER_PROVIDER_ID: &str = "grain-harness-auth-peer";
+pub(crate) const PEER_CLIENT_PROVIDER_ID: &str = "grain-harness-auth-peer-client";
+pub(crate) const ACCOUNT_IDS: [&str; 4] = [
+    AUTH_PROVIDER_ID,
+    CLIENT_PROVIDER_ID,
+    PEER_PROVIDER_ID,
+    PEER_CLIENT_PROVIDER_ID,
+];
 pub(crate) const LIVE_ENDPOINT: &str = "https://mcp.deepwiki.com/mcp";
 const LIVE_REPOSITORY: &str = "modelcontextprotocol/rust-sdk";
 
@@ -17,12 +25,20 @@ pub(crate) fn endpoint() -> Result<String, String> {
     Ok(format!("https://127.0.0.1:{port}/mcp"))
 }
 
-pub(crate) fn auth_endpoint() -> Result<String, String> {
+pub(crate) fn auth_endpoint(id: &str) -> Result<String, String> {
     if !super::grain_agent_harness::mcp_auth_enabled() {
         return Err("MCP account fixture is not enabled".into());
     }
-    let (_, port) = super::grain_agent_harness::mcp_fixture_config()?;
+    let (_, port) = account_config(id)?;
     Ok(format!("https://127.0.0.1:{port}/account-mcp"))
+}
+
+fn account_config(id: &str) -> Result<(std::path::PathBuf, u16), String> {
+    match id {
+        AUTH_PROVIDER_ID | CLIENT_PROVIDER_ID => super::grain_agent_harness::mcp_fixture_config(),
+        PEER_PROVIDER_ID | PEER_CLIENT_PROVIDER_ID => super::grain_agent_harness::mcp_peer_config(),
+        _ => Err("Unknown MCP account fixture".into()),
+    }
 }
 
 pub(crate) fn client() -> Result<(String, reqwest_mcp::Client), String> {
@@ -149,6 +165,38 @@ mod tests {
             assert!(validate_consent_url(bad, 9001).is_err());
         }
     }
+
+    #[test]
+    fn fixed_consent_handoffs_keep_provider_and_generation_ownership() {
+        let primary = account_slot(AUTH_PROVIDER_ID).unwrap();
+        let peer = account_slot(PEER_PROVIDER_ID).unwrap();
+        assert_ne!(primary, peer);
+        assert!(account_slot("linear").is_err());
+        let old = uuid::Uuid::new_v4();
+        let current = uuid::Uuid::new_v4();
+        let peer_owner = uuid::Uuid::new_v4();
+        {
+            let mut slots = AUTHORIZATION.lock().unwrap();
+            slots[primary] = Some((current, "primary-owned".into()));
+            slots[peer] = Some((peer_owner, "peer-owned".into()));
+        }
+        drop(ConsentGuard {
+            owner: old,
+            slot: primary,
+        });
+        assert!(AUTHORIZATION.lock().unwrap()[primary].is_some());
+        drop(ConsentGuard {
+            owner: current,
+            slot: primary,
+        });
+        assert!(AUTHORIZATION.lock().unwrap()[primary].is_none());
+        assert!(AUTHORIZATION.lock().unwrap()[peer].is_some());
+        drop(ConsentGuard {
+            owner: peer_owner,
+            slot: peer,
+        });
+        assert!(AUTHORIZATION.lock().unwrap().iter().all(Option::is_none));
+    }
 }
 
 #[derive(Deserialize)]
@@ -169,6 +217,8 @@ pub enum Target {
     Tools,
     Account,
     Client,
+    Peer,
+    PeerClient,
 }
 
 #[tauri::command]
@@ -185,12 +235,20 @@ pub async fn agent_harness_mcp(
             PROVIDER_ID
         }
         Target::Account => {
-            auth_endpoint()?;
+            auth_endpoint(AUTH_PROVIDER_ID)?;
             AUTH_PROVIDER_ID
         }
         Target::Client => {
-            auth_endpoint()?;
+            auth_endpoint(CLIENT_PROVIDER_ID)?;
             CLIENT_PROVIDER_ID
+        }
+        Target::Peer => {
+            auth_endpoint(PEER_PROVIDER_ID)?;
+            PEER_PROVIDER_ID
+        }
+        Target::PeerClient => {
+            auth_endpoint(PEER_CLIENT_PROVIDER_ID)?;
+            PEER_CLIENT_PROVIDER_ID
         }
     };
     match operation {
@@ -212,13 +270,13 @@ pub async fn agent_harness_mcp(
             Ok(serde_json::json!({"connected": false}))
         }
         Operation::Authorization => {
-            if ![AUTH_PROVIDER_ID, CLIENT_PROVIDER_ID].contains(&id) {
+            if !ACCOUNT_IDS.contains(&id) {
                 return Err("MCP account fixture is not enabled".into());
             }
             let mut slot = AUTHORIZATION
                 .lock()
                 .map_err(|_| "Consent handoff unavailable")?;
-            Ok(slot
+            Ok(slot[account_slot(id)?]
                 .take()
                 .map(|(_, url)| serde_json::Value::String(url))
                 .unwrap_or(serde_json::Value::Null))
@@ -226,14 +284,29 @@ pub async fn agent_harness_mcp(
     }
 }
 
-static AUTHORIZATION: std::sync::Mutex<Option<(uuid::Uuid, String)>> = std::sync::Mutex::new(None);
+// Four fixed handoffs; taking/cancelling one cannot consume another provider.
+static AUTHORIZATION: std::sync::Mutex<[Option<(uuid::Uuid, String)>; 4]> =
+    std::sync::Mutex::new([None, None, None, None]);
 
-pub(crate) struct ConsentGuard(uuid::Uuid);
+fn account_slot(id: &str) -> Result<usize, String> {
+    ACCOUNT_IDS
+        .iter()
+        .position(|candidate| *candidate == id)
+        .ok_or_else(|| "Unknown MCP account fixture".into())
+}
+
+pub(crate) struct ConsentGuard {
+    owner: uuid::Uuid,
+    slot: usize,
+}
 impl Drop for ConsentGuard {
     fn drop(&mut self) {
         if let Ok(mut slot) = AUTHORIZATION.lock() {
-            if slot.as_ref().is_some_and(|(owner, _)| *owner == self.0) {
-                *slot = None;
+            if slot[self.slot]
+                .as_ref()
+                .is_some_and(|(owner, _)| *owner == self.owner)
+            {
+                slot[self.slot] = None;
             }
         }
     }
@@ -242,19 +315,20 @@ impl Drop for ConsentGuard {
 /// Replace only the fixed fixture's browser handoff, never SDK state/PKCE/exchange.
 /// Consumed privately by the runner; the URL is not status or report evidence.
 pub(crate) fn capture_authorization(id: &str, raw: &str) -> Result<Option<ConsentGuard>, String> {
-    if ![AUTH_PROVIDER_ID, CLIENT_PROVIDER_ID].contains(&id) {
+    if !ACCOUNT_IDS.contains(&id) {
         return Ok(None);
     }
     if !super::grain_agent_harness::mcp_auth_enabled() {
         return Err("MCP account fixture is not enabled".into());
     }
-    let (_, port) = super::grain_agent_harness::mcp_fixture_config()?;
+    let (_, port) = account_config(id)?;
     validate_consent_url(raw, port)?;
     let owner = uuid::Uuid::new_v4();
-    *AUTHORIZATION
+    let slot = account_slot(id)?;
+    AUTHORIZATION
         .lock()
-        .map_err(|_| "Consent handoff unavailable")? = Some((owner, raw.into()));
-    Ok(Some(ConsentGuard(owner)))
+        .map_err(|_| "Consent handoff unavailable")?[slot] = Some((owner, raw.into()));
+    Ok(Some(ConsentGuard { owner, slot }))
 }
 
 fn validate_consent_url(raw: &str, port: u16) -> Result<(), String> {

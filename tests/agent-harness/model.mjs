@@ -4,7 +4,11 @@ import assert from "node:assert/strict";
 import { MCP_INPUT, MCP_EXTENSION_ID } from "./mcp-fixture.mjs";
 import { liveReply } from "./mcp-live.mjs";
 import { mcpAccountReply } from "./mcp-auth.mjs";
-import { MCP_CLIENT_ID } from "./mcp-oauth-fixture.mjs";
+import {
+  MCP_CLIENT_ID,
+  MCP_PEER_ID,
+  MCP_PEER_CLIENT_ID,
+} from "./mcp-oauth-fixture.mjs";
 import { workflowReply } from "./workflow.mjs";
 import { liveModelAdapter } from "./live-model.mjs";
 
@@ -87,6 +91,14 @@ export function nextReply(body, fault, workflowMode = "normal") {
     return workflowReply(body, requested, fault, workflowMode);
   if (["mcp_account_a", "mcp_account_b"].includes(requested))
     return mcpAccountReply(body, requested.endsWith("_a") ? "A" : "B");
+  if (requested === "mcp_disabled_owner")
+    return mcpAccountReply(body, "A", undefined, true);
+  if (["mcp_peer_b", "mcp_peer_client_b"].includes(requested))
+    return mcpAccountReply(
+      body,
+      "B",
+      requested === "mcp_peer_b" ? MCP_PEER_ID : MCP_PEER_CLIENT_ID,
+    );
   if (["mcp_client_a", "mcp_client_b"].includes(requested))
     return mcpAccountReply(
       body,
@@ -509,7 +521,10 @@ export async function startModel({ fault, liveConfig } = {}) {
         ...(reply.mcpLiveRefused ? { mcpLiveRefused: true } : {}),
         ...(reply.mcpLiveUnavailable ? { mcpLiveUnavailable: true } : {}),
         ...(reply.mcpAccountVerified
-          ? { mcpAccountVerified: reply.mcpAccountVerified }
+          ? {
+              mcpAccountVerified: reply.mcpAccountVerified,
+              mcpAccountProvider: reply.mcpAccountProvider,
+            }
           : {}),
         ...(reply.mcpAccountRefused ? { mcpAccountRefused: true } : {}),
         ...(reply.mcpAccountUnknown ? { mcpAccountUnknown: true } : {}),

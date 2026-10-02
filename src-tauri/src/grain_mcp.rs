@@ -129,16 +129,11 @@ fn requires_account(item: &CatalogProvider) -> bool {
 
 fn provider_endpoint(item: &CatalogProvider) -> Result<std::borrow::Cow<'static, str>, String> {
     #[cfg(feature = "agent-harness")]
-    if [
-        crate::grain_agent_harness_mcp::AUTH_PROVIDER_ID,
-        crate::grain_agent_harness_mcp::CLIENT_PROVIDER_ID,
-    ]
-    .contains(&item.id)
-    {
+    if crate::grain_agent_harness_mcp::ACCOUNT_IDS.contains(&item.id) {
         if !crate::grain_agent_harness::mcp_auth_enabled() {
             return Err("MCP account fixture is not enabled".into());
         }
-        return crate::grain_agent_harness_mcp::auth_endpoint().map(Into::into);
+        return crate::grain_agent_harness_mcp::auth_endpoint(item.id).map(Into::into);
     }
     #[cfg(feature = "agent-harness")]
     if item.registration == Registration::NoAuthFixture {
@@ -148,6 +143,24 @@ fn provider_endpoint(item: &CatalogProvider) -> Result<std::borrow::Cow<'static,
 }
 
 const CATALOG: &[CatalogProvider] = &[
+    #[cfg(feature = "agent-harness")]
+    CatalogProvider {
+        id: "grain-harness-auth-peer",
+        name: "Harness MCP Peer Account",
+        description: "Second isolated SDK OAuth origin for provider independence.",
+        endpoint: "https://grain-mcp-peer-harness.invalid/mcp",
+        registration: Registration::Dynamic,
+        setup_url: "https://modelcontextprotocol.io/",
+    },
+    #[cfg(feature = "agent-harness")]
+    CatalogProvider {
+        id: "grain-harness-auth-peer-client",
+        name: "Harness MCP Peer Client",
+        description: "Second isolated preregistered origin for fixed-port conflict.",
+        endpoint: "https://grain-mcp-peer-harness.invalid/mcp",
+        registration: Registration::PreRegistered,
+        setup_url: "https://modelcontextprotocol.io/",
+    },
     #[cfg(feature = "agent-harness")]
     CatalogProvider {
         id: "grain-harness-auth-client",
@@ -235,12 +248,7 @@ pub struct McpHttpClient(pub reqwest_mcp::Client);
 
 fn provider_http(app: &AppHandle, item: &CatalogProvider) -> Result<reqwest_mcp::Client, String> {
     #[cfg(feature = "agent-harness")]
-    if [
-        crate::grain_agent_harness_mcp::AUTH_PROVIDER_ID,
-        crate::grain_agent_harness_mcp::CLIENT_PROVIDER_ID,
-    ]
-    .contains(&item.id)
-    {
+    if crate::grain_agent_harness_mcp::ACCOUNT_IDS.contains(&item.id) {
         provider_endpoint(item)?;
         return crate::grain_agent_harness_mcp::client().map(|(_, client)| client);
     }
@@ -1849,11 +1857,48 @@ pub(crate) fn directory(
 mod tests {
     use super::*;
 
+    fn production_catalog() -> impl Iterator<Item = &'static CatalogProvider> {
+        CATALOG.iter().filter(|item| {
+            #[cfg(feature = "agent-harness")]
+            if item.id == crate::grain_agent_harness_mcp::PROVIDER_ID
+                || crate::grain_agent_harness_mcp::ACCOUNT_IDS.contains(&item.id)
+            {
+                return false;
+            }
+            let _ = item;
+            true
+        })
+    }
+
+    #[cfg(feature = "agent-harness")]
+    #[test]
+    fn acceptance_catalog_contains_only_the_exact_fixed_fixture_identities() {
+        let fixtures: HashSet<_> = CATALOG
+            .iter()
+            .filter(|item| item.id.starts_with("grain-harness"))
+            .map(|item| item.id)
+            .collect();
+        let expected: HashSet<_> = crate::grain_agent_harness_mcp::ACCOUNT_IDS
+            .into_iter()
+            .chain([crate::grain_agent_harness_mcp::PROVIDER_ID])
+            .collect();
+        assert_eq!(fixtures, expected);
+        assert_eq!(CATALOG.len(), production_catalog().count() + expected.len());
+        for item in CATALOG {
+            if item.id == crate::grain_agent_harness_mcp::PEER_PROVIDER_ID {
+                assert!(item.registration == Registration::Dynamic);
+            }
+            if item.id == crate::grain_agent_harness_mcp::PEER_CLIENT_PROVIDER_ID {
+                assert!(item.registration == Registration::PreRegistered);
+            }
+        }
+    }
+
     #[test]
     fn catalog_is_https_unique_and_one_service_per_provider() {
         let mut ids = HashSet::new();
         let mut endpoints = HashSet::new();
-        for item in CATALOG {
+        for item in production_catalog() {
             assert!(ids.insert(item.id));
             assert!(endpoints.insert(item.endpoint));
             let url = reqwest_mcp::Url::parse(item.endpoint).unwrap();
@@ -1866,8 +1911,7 @@ mod tests {
 
     #[test]
     fn catalog_has_three_zero_setup_validation_providers() {
-        let dynamic: Vec<_> = CATALOG
-            .iter()
+        let dynamic: Vec<_> = production_catalog()
             .filter(|item| item.registration == Registration::Dynamic)
             .map(|item| item.id)
             .collect();

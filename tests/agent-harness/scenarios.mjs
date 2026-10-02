@@ -386,6 +386,13 @@ scenarios.push(
 );
 
 export function selectScenarios(suite) {
+  if (suite === "mcp-independence")
+    return scenarios.filter((scenario) =>
+      [
+        "mcp.auth-provider-independence",
+        "mcp.auth-fixed-port-conflict",
+      ].includes(scenario.id),
+    );
   if (suite === "mcp-foundation")
     return scenarios.filter((scenario) =>
       ["mcp", "mcp-auth"].includes(scenario.suite),
@@ -521,6 +528,20 @@ scenarios.push(
     checks: [51],
     description:
       "Partial consent refused, real short-lived grants expire without refresh and reconnect, real refresh recovers once without login",
+  },
+  {
+    id: "mcp.auth-provider-independence",
+    suite: "mcp-auth",
+    checks: [14],
+    description:
+      "Two independent owned DCR issuers/overlapping login listeners, Cancel versus completed account, approved A/B reads and isolated disable/disconnect/restarts",
+  },
+  {
+    id: "mcp.auth-fixed-port-conflict",
+    suite: "mcp-auth",
+    checks: [14],
+    description:
+      "Two preregistered issuers: exact simultaneous fixed-port refusal, zero second exchange/grant, retained first flow and serial A/B recovery/restart",
   },
 );
 

@@ -6,6 +6,8 @@ import { request as httpRequest } from "node:http";
 
 export const MCP_AUTH_ID = "grain-harness-auth";
 export const MCP_CLIENT_ID = "grain-harness-auth-client";
+export const MCP_PEER_ID = "grain-harness-auth-peer";
+export const MCP_PEER_CLIENT_ID = "grain-harness-auth-peer-client";
 export const MCP_CLIENTS = Object.freeze({
   publicOne: "grain-mcp-public-one",
   publicTwo: "grain-mcp-public-two",
