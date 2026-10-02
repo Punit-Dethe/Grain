@@ -311,7 +311,7 @@ test("MCP account shutdown oracle requires exact dispatched uncertainty without 
 
 test("authenticated MCP suite has independent IDs and remains in ordinary all", () => {
   const auth = selectScenarios("mcp-auth");
-  assert.equal(auth.length, 8);
+  assert.equal(auth.length, 10);
   assert.deepEqual(
     auth.map((x) => x.id),
     [
@@ -323,11 +323,13 @@ test("authenticated MCP suite has independent IDs and remains in ordinary all", 
       "mcp.auth-client-configuration",
       "mcp.auth-provider-independence",
       "mcp.auth-fixed-port-conflict",
+      "mcp.auth-refresh-recovery",
+      "mcp.auth-refresh-refusal",
     ],
   );
   for (const entry of auth) assert.ok(selectScenarios("all").includes(entry));
   const foundation = selectScenarios("mcp-foundation");
-  assert.equal(foundation.length, 17);
+  assert.equal(foundation.length, 19);
   assert.deepEqual(
     new Set(foundation),
     new Set([...auth, ...selectScenarios("mcp")]),
@@ -603,6 +605,203 @@ test("OAuth evidence exhaustion refuses requests without throwing again or copyi
       assert.deepEqual(peer.journal.at(-1), { phase: "oauth-error" });
       assert.ok(!JSON.stringify(peer.journal).includes(MCP_PRIVATE_MARKER));
     }
+  } finally {
+    peer.close();
+  }
+});
+
+test("MCP refresh acceptance rejects missing, premature, wrong-account and unrotated evidence", async () => {
+  const { verifyMcpRefresh } = await import("./mcp-auth.mjs");
+  const good = {
+    phase: "refresh",
+    account: "A",
+    generation: 2,
+    afterExpiry: true,
+    resourceVerified: true,
+    rotated: true,
+    issuedAt: 1000,
+    expiresAt: 41000,
+    expiresIn: 40,
+  };
+  verifyMcpRefresh(good, "A", 2);
+  assert.throws(() => verifyMcpRefresh(undefined, "A", 2), /exchange missing/);
+  for (const changed of [
+    { account: "B" },
+    { generation: 1 },
+    { afterExpiry: false },
+    { resourceVerified: false },
+    { rotated: false },
+    { expiresAt: 40000 },
+  ])
+    assert.throws(() => verifyMcpRefresh({ ...good, ...changed }, "A", 2));
+});
+
+test("expired-account refusal admits only the exact host failure through the Playwright transport wrapper", async () => {
+  const { verifyMcpRefreshRefusal } = await import("./mcp-auth.mjs");
+  const exact =
+    "MCP protocol negotiation failed. Check the account and provider availability.";
+  assert.equal(verifyMcpRefreshRefusal(exact), true);
+  assert.equal(
+    verifyMcpRefreshRefusal(new Error("page.evaluate: " + exact)),
+    true,
+  );
+  for (const unrelated of [
+    "MCP discovery timed out",
+    "Authorization required",
+    "page.evaluate: unrelated failure",
+  ])
+    assert.throws(() => verifyMcpRefreshRefusal(new Error(unrelated)));
+});
+
+test("refresh suite and wrong-account fault remain isolated and opt in to no personal account", async () => {
+  const refresh = selectScenarios("mcp-refresh");
+  assert.deepEqual(
+    refresh.map((x) => x.id),
+    ["mcp.auth-refresh-recovery", "mcp.auth-refresh-refusal"],
+  );
+  assert.ok(
+    refresh.every(
+      (x) => x.suite === "mcp-auth" && selectScenarios("all").includes(x),
+    ),
+  );
+  const result = await exec(process.execPath, [
+    join(here, "run.mjs"),
+    "--scenario",
+    "native.cold-warm",
+    "--fault",
+    "wrong-mcp-refresh-account",
+  ]).then(
+    () => ({ code: 0 }),
+    (error) => error,
+  );
+  assert.notEqual(result.code, 0);
+  assert.match(result.stderr, /requires --scenario mcp.auth-refresh-recovery/);
+});
+
+test("owned MCP issuer enforces expiry, resource and client binding, rotation and rejected refresh without private evidence", async () => {
+  const { createMcpOAuth, MCP_CLIENTS, MCP_PRIVATE_MARKER } =
+    await import("./mcp-oauth-fixture.mjs");
+  const { createHash } = await import("node:crypto");
+  const origin = "https://127.0.0.1:1",
+    peer = createMcpOAuth(() => origin, Buffer.alloc(0));
+  const verifier = "v".repeat(43);
+  async function request(method, url, data) {
+    let status, value, location;
+    await peer.handle(
+      {
+        method,
+        url,
+        async *[Symbol.asyncIterator]() {
+          if (data) yield Buffer.from(data);
+        },
+      },
+      {
+        headersSent: false,
+        writeHead(code, headers) {
+          status = code;
+          location = headers.location;
+          this.headersSent = true;
+        },
+        end(body) {
+          if (body) value = JSON.parse(body);
+        },
+      },
+    );
+    return { status, value, location };
+  }
+  const params = new URLSearchParams({
+    client_id: MCP_CLIENTS.publicOne,
+    redirect_uri: "http://127.0.0.1:31938/mcp/oauth/callback",
+    response_type: "code",
+    code_challenge_method: "S256",
+    code_challenge: createHash("sha256").update(verifier).digest("base64url"),
+    state: "s".repeat(24),
+    scope: "fixture.read",
+    resource: origin + "/account-mcp",
+  });
+  const refresh = (token, extra = {}) =>
+    request(
+      "POST",
+      "/token",
+      new URLSearchParams({
+        grant_type: "refresh_token",
+        client_id: MCP_CLIENTS.publicOne,
+        resource: origin + "/account-mcp",
+        refresh_token: token,
+        ...extra,
+      }).toString(),
+    );
+  try {
+    peer.configure({ expiresIn: 1, refreshable: true });
+    const consent = await request("GET", "/authorize?" + params);
+    const exchange = await request(
+      "POST",
+      "/token",
+      new URLSearchParams({
+        grant_type: "authorization_code",
+        client_id: MCP_CLIENTS.publicOne,
+        redirect_uri: params.get("redirect_uri"),
+        code_verifier: verifier,
+        code: new URL(consent.location).searchParams.get("code"),
+        resource: origin + "/account-mcp",
+      }).toString(),
+    );
+    assert.equal(exchange.status, 200);
+    const issued = peer.journal.find((x) => x.phase === "token");
+    await waitFor(
+      "Actual unit issuer expiry",
+      () => Date.now() >= issued.expiresAt,
+      { timeoutMs: 2000, intervalMs: 20 },
+    );
+    let challenged;
+    const response = {
+      writeHead(code) {
+        challenged = code;
+      },
+      end() {},
+    };
+    assert.equal(
+      peer.authenticatedAccount(
+        { headers: { authorization: "Bearer " + exchange.value.access_token } },
+        response,
+      ),
+      null,
+    );
+    assert.equal(challenged, 401);
+    for (const bad of [
+      { client_id: MCP_CLIENTS.publicTwo },
+      { resource: origin + "/other" },
+    ])
+      assert.equal(
+        (await refresh(exchange.value.refresh_token, bad)).status,
+        400,
+      );
+    const first = await refresh(exchange.value.refresh_token);
+    assert.equal(first.status, 200);
+    assert.ok(first.value.refresh_token !== exchange.value.refresh_token);
+    assert.equal(
+      (await refresh(exchange.value.refresh_token)).value.error,
+      "invalid_grant",
+    );
+    assert.equal(
+      peer.authenticatedAccount(
+        { headers: { authorization: "Bearer " + first.value.access_token } },
+        response,
+      ),
+      "A",
+    );
+    const second = await refresh(first.value.refresh_token);
+    assert.equal(second.status, 200);
+    assert.equal(
+      peer.journal.filter((x) => x.phase === "refresh").at(-1).generation,
+      2,
+    );
+    peer.configure({ rejectRefresh: true });
+    const rejected = await refresh(second.value.refresh_token);
+    assert.equal(rejected.status, 400);
+    assert.equal(rejected.value.error, "invalid_grant");
+    assert.equal(peer.journal.filter((x) => x.phase === "refresh").length, 2);
+    assert.ok(!JSON.stringify(peer.journal).includes(MCP_PRIVATE_MARKER));
   } finally {
     peer.close();
   }

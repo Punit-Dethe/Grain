@@ -117,6 +117,34 @@ async function reusableListener(callback) {
   );
 }
 
+export function verifyMcpRefresh(entry, account, generation) {
+  assert.ok(entry, "Actual MCP refresh exchange missing");
+  assert.equal(entry.phase, "refresh");
+  assert.equal(entry.account, account, "Refresh changed the selected account");
+  assert.equal(
+    entry.generation,
+    generation,
+    "Rotated refresh grant was not persisted",
+  );
+  assert.equal(
+    entry.afterExpiry,
+    true,
+    "Refresh did not follow actual issuer expiry",
+  );
+  assert.equal(entry.resourceVerified, true);
+  assert.equal(entry.rotated, true);
+  assert.equal(entry.expiresAt - entry.issuedAt, entry.expiresIn * 1000);
+}
+
+export function verifyMcpRefreshRefusal(error) {
+  const message = error instanceof Error ? error.message : String(error);
+  assert.equal(
+    message.replace(/^page\.evaluate: /, ""),
+    "MCP protocol negotiation failed. Check the account and provider availability.",
+  );
+  return true;
+}
+
 export function mcpAuthHandlers(ctx) {
   let evidence = [];
   const control = (operation, target = "account") =>
@@ -255,6 +283,167 @@ export function mcpAuthHandlers(ctx) {
     },
     vaultCount: ctx.vaultCount,
     handlers: {
+      async "mcp.auth-refresh-recovery"() {
+        const baseline = oauth().journal.length;
+        const entries = (phase) =>
+          oauth()
+            .journal.slice(baseline)
+            .filter((x) => x.phase === phase);
+        const expire = async (grant) => {
+          assert.ok(grant && Number.isSafeInteger(grant.expiresAt));
+          await ctx.waitFor(
+            "Real issuer access grant expires",
+            () => Date.now() >= grant.expiresAt,
+            { timeoutMs: 45000 },
+          );
+          evidence.push({
+            stage: "actual-mcp-expiry",
+            status: "Pass",
+            expiresIn: grant.expiresIn,
+            issuedAt: grant.issuedAt,
+            expiresAt: grant.expiresAt,
+            observedAt: Date.now(),
+          });
+        };
+        try {
+          oauth().configure({
+            expiresIn: 2,
+            refreshable: true,
+            refreshExpiresIn: 40,
+            rejectRefresh: false,
+            wrongRefreshAccount: ctx.fault === "wrong-mcp-refresh-account",
+          });
+          await login("A");
+          assert.equal(entries("refresh").length, 0);
+          await ctx.restartHost();
+          await expire(entries("token")[0]);
+          await read("A", "expired-restart-refreshed-read");
+          verifyMcpRefresh(entries("refresh")[0], "A", 1);
+          assert.equal(
+            entries("refresh").length,
+            1,
+            "Expired request refreshed more than once",
+          );
+          assert.equal(
+            entries("token").length,
+            1,
+            "Refresh unexpectedly launched a new login",
+          );
+          assert.equal(await control("authorization"), null);
+          await ctx.restartHost();
+          await expire(entries("refresh")[0]);
+          oauth().configure({ refreshExpiresIn: 1200 });
+          await read("A", "rotated-refresh-after-restart");
+          verifyMcpRefresh(entries("refresh")[1], "A", 2);
+          assert.equal(entries("refresh").length, 2);
+          assert.equal(entries("token").length, 1);
+          await ctx.restartHost();
+          await read("A", "persisted-refreshed-grant-read");
+          assert.equal(
+            entries("refresh").length,
+            2,
+            "Valid grant unexpectedly refreshed",
+          );
+          assert.equal(entries("token").length, 1);
+          evidence.push({
+            stage: "sdk-refresh-rotation",
+            status: "Pass",
+            realExpiries: 2,
+            refreshExchanges: 2,
+            approvedReads: 3,
+            newLogins: 1,
+            preservedAccount: "A",
+            rotatedGrantSurvivedRestart: true,
+            noBrowserReauthorization: true,
+          });
+        } finally {
+          await clean();
+          oauth().configure({
+            expiresIn: 1200,
+            refreshable: false,
+            refreshExpiresIn: 1200,
+            rejectRefresh: false,
+            wrongRefreshAccount: false,
+          });
+        }
+      },
+      async "mcp.auth-refresh-refusal"() {
+        try {
+          for (const refreshable of [false, true]) {
+            const baseline = oauth().journal.length;
+            const entries = (phase) =>
+              oauth()
+                .journal.slice(baseline)
+                .filter((x) => x.phase === phase);
+            oauth().configure({
+              expiresIn: 2,
+              refreshable,
+              rejectRefresh: refreshable,
+            });
+            await login("A");
+            await ctx.restartHost();
+            const issued = entries("token")[0];
+            await ctx.waitFor(
+              "Real unavailable-refresh grant expires",
+              () => Date.now() >= issued.expiresAt,
+            );
+            const before = count("tools/call");
+            await assert.rejects(control("discover"), verifyMcpRefreshRefusal);
+            assert.equal(
+              count("tools/call"),
+              before,
+              "Expired account dispatched a tool",
+            );
+            assert.equal(
+              entries("token").length,
+              1,
+              "Unavailable refresh triggered a new login",
+            );
+            assert.equal(entries("refresh").length, 0);
+            assert.equal(
+              entries("refresh-refused").length,
+              refreshable ? 1 : 0,
+            );
+            assert.equal(await control("authorization"), null);
+            assert.equal(
+              await ctx.vaultCount(),
+              1,
+              "Refusal unexpectedly replaced the scoped grant",
+            );
+            evidence.push({
+              stage: refreshable
+                ? "invalid-grant-refusal"
+                : "no-refresh-refusal",
+              status: "Pass",
+              actualExpiry: true,
+              toolCalls: 0,
+              browserReauthorization: false,
+            });
+            await control("disconnect");
+            assert.equal(await ctx.vaultCount(), 0);
+            oauth().configure({
+              expiresIn: 1200,
+              refreshable: false,
+              rejectRefresh: false,
+            });
+            await login("B");
+            await read("B", "explicit-reconnect-after-refresh-refusal");
+            await ctx.restartHost();
+            await read("B", "recovered-account-after-restart");
+            assert.equal(entries("token").length, 2);
+            await clean();
+          }
+        } finally {
+          await clean();
+          oauth().configure({
+            expiresIn: 1200,
+            refreshable: false,
+            refreshExpiresIn: 1200,
+            rejectRefresh: false,
+            wrongRefreshAccount: false,
+          });
+        }
+      },
       async "mcp.auth-client-configuration"() {
         assert.equal(await ctx.vaultCount(), 0);
         assert.equal(await ctx.vaultCount(true), 0);

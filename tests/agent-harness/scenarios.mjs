@@ -386,6 +386,12 @@ scenarios.push(
 );
 
 export function selectScenarios(suite) {
+  if (suite === "mcp-refresh")
+    return scenarios.filter((scenario) =>
+      ["mcp.auth-refresh-recovery", "mcp.auth-refresh-refusal"].includes(
+        scenario.id,
+      ),
+    );
   if (suite === "mcp-independence")
     return scenarios.filter((scenario) =>
       [
@@ -542,6 +548,23 @@ scenarios.push(
     checks: [14],
     description:
       "Two preregistered issuers: exact simultaneous fixed-port refusal, zero second exchange/grant, retained first flow and serial A/B recovery/restart",
+  },
+);
+
+scenarios.push(
+  {
+    id: "mcp.auth-refresh-recovery",
+    suite: "mcp-auth",
+    checks: [12],
+    description:
+      "Actual SDK expiry after restart, two account-preserving resource-bound rotating refresh exchanges, persisted refreshed grant and approved nested reads; controlled issuer only",
+  },
+  {
+    id: "mcp.auth-refresh-refusal",
+    suite: "mcp-auth",
+    checks: [12],
+    description:
+      "Real expiry without refresh and invalid_grant refusal dispatch no tool or new login; explicit reconnect and restart recover the actual account",
   },
 );
 

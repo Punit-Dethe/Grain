@@ -18,9 +18,9 @@ export const MCP_CLIENT_SECRETS = Object.freeze([
   MCP_PRIVATE_MARKER + "owned-client-secret-one",
   MCP_PRIVATE_MARKER + "owned-client-secret-two",
 ]);
-// Repeated real SDK discovery legitimately exceeded the old 256-entry log.
-// Keep combined-suite evidence bounded, with one reserved terminal error slot.
-export const MCP_OAUTH_JOURNAL_LIMIT = 1024;
+// Ten combined auth cases legitimately exhaust the former 1024-entry log.
+// Keep complete evidence bounded, with one reserved terminal error slot.
+export const MCP_OAUTH_JOURNAL_LIMIT = 2048;
 
 async function boundedBody(req) {
   const chunks = [];
@@ -44,12 +44,18 @@ export function createMcpOAuth(origin, ca, { wrongAccount = false } = {}) {
       ],
     ]),
     codes = new Map(),
-    tokens = new Map();
+    tokens = new Map(),
+    refreshTokens = new Map();
   const callbacks = new Set(),
     journal = [];
   let account = "A",
     denied = false,
-    secretVersion = 0;
+    secretVersion = 0,
+    expiresIn = 1200,
+    refreshable = false,
+    refreshExpiresIn = 1200,
+    rejectRefresh = false,
+    wrongRefreshAccount = false;
   const record = (item) => {
     assert.ok(
       journal.length < MCP_OAUTH_JOURNAL_LIMIT - 1,
@@ -70,7 +76,10 @@ export function createMcpOAuth(origin, ca, { wrongAccount = false } = {}) {
     token_endpoint: origin() + "/token",
     registration_endpoint: origin() + "/register",
     response_types_supported: ["code"],
-    grant_types_supported: ["authorization_code"],
+    grant_types_supported: [
+      "authorization_code",
+      ...(refreshable ? ["refresh_token"] : []),
+    ],
     token_endpoint_auth_methods_supported: ["none", "client_secret_post"],
     code_challenge_methods_supported: ["S256"],
     scopes_supported: ["fixture.read"],
@@ -165,6 +174,45 @@ export function createMcpOAuth(origin, ca, { wrongAccount = false } = {}) {
         res.end();
       } else if (req.method === "POST" && path === "/token") {
         const q = new URLSearchParams(await boundedBody(req));
+        if (q.get("grant_type") === "refresh_token") {
+          const old = refreshTokens.get(q.get("refresh_token"));
+          if (!old || rejectRefresh) {
+            record({ phase: "refresh-refused", reason: "invalid_grant" });
+            json(res, 400, { error: "invalid_grant" });
+            return true;
+          }
+          assert.equal(q.get("client_id"), old.clientId);
+          assert.equal(q.get("resource"), origin() + "/account-mcp");
+          assert.equal(q.get("client_secret"), old.secret);
+          refreshTokens.delete(q.get("refresh_token"));
+          const selected = wrongRefreshAccount
+            ? old.account === "A"
+              ? "B"
+              : "A"
+            : old.account;
+          const issued = issue(
+            selected,
+            old.clientId,
+            old.secret,
+            refreshExpiresIn,
+            true,
+          );
+          record({
+            phase: "refresh",
+            account: selected,
+            generation: old.generation + 1,
+            afterExpiry: Date.now() >= old.expiresAt,
+            resourceVerified: true,
+            rotated: true,
+            issuedAt: issued.issuedAt,
+            expiresAt: issued.expiresAt,
+            expiresIn: refreshExpiresIn,
+          });
+          refreshTokens.get(issued.reply.refresh_token).generation =
+            old.generation + 1;
+          json(res, 200, issued.reply);
+          return true;
+        }
         assert.equal(q.get("grant_type"), "authorization_code");
         const grant = codes.get(q.get("code"));
         assert.ok(grant, "Unissued/reused authorization code");
@@ -193,9 +241,13 @@ export function createMcpOAuth(origin, ca, { wrongAccount = false } = {}) {
           json(res, 400, { error: "invalid_client" });
           return true;
         }
-        assert.ok(tokens.size < 32, "Owned token count exceeded bound");
-        const token = MCP_PRIVATE_MARKER + randomUUID();
-        tokens.set(token, grant.account);
+        const issued = issue(
+          grant.account,
+          grant.clientId,
+          expectedSecret,
+          expiresIn,
+          refreshable,
+        );
         record({
           phase: "token",
           account: grant.account,
@@ -203,14 +255,13 @@ export function createMcpOAuth(origin, ca, { wrongAccount = false } = {}) {
           resourceVerified: true,
           registration: client.confidential ? "confidential" : "public",
           configuredClient: Object.values(MCP_CLIENTS).includes(grant.clientId),
+          issuedAt: issued.issuedAt,
+          expiresAt: issued.expiresAt,
+          expiresIn,
+          refreshable,
           ...(client.confidential ? { secretVersion } : {}),
         });
-        json(res, 200, {
-          access_token: token,
-          token_type: "Bearer",
-          expires_in: 1200,
-          scope: "fixture.read",
-        });
+        json(res, 200, issued.reply);
       } else {
         record({ phase: "unexpected-route" });
         json(res, 404, { error: "Unknown owned OAuth route" });
@@ -224,14 +275,39 @@ export function createMcpOAuth(origin, ca, { wrongAccount = false } = {}) {
     }
     return true;
   }
+  function issue(selected, clientId, secret, lifetime, withRefresh) {
+    assert.ok(tokens.size < 32, "Owned token count exceeded bound");
+    assert.ok(refreshTokens.size < 32, "Owned refresh count exceeded bound");
+    const token = MCP_PRIVATE_MARKER + randomUUID();
+    const issuedAt = Date.now(),
+      expiresAt = issuedAt + lifetime * 1000;
+    tokens.set(token, { account: selected, expiresAt });
+    const reply = {
+      access_token: token,
+      token_type: "Bearer",
+      expires_in: lifetime,
+      scope: "fixture.read",
+    };
+    if (withRefresh) {
+      reply.refresh_token = MCP_PRIVATE_MARKER + randomUUID();
+      refreshTokens.set(reply.refresh_token, {
+        account: selected,
+        clientId,
+        secret,
+        expiresAt,
+        generation: 0,
+      });
+    }
+    return { reply, issuedAt, expiresAt };
+  }
   function authenticatedAccount(req, res) {
     const header = req.headers.authorization;
     const selected =
       typeof header === "string" &&
       header.startsWith("Bearer ") &&
       tokens.get(header.slice(7));
-    if (!selected) {
-      record({ phase: "challenge" });
+    if (!selected || Date.now() >= selected.expiresAt) {
+      record({ phase: "challenge", ...(selected ? { expired: true } : {}) });
       res.writeHead(401, {
         "www-authenticate": `Bearer resource_metadata="${origin()}/.well-known/oauth-protected-resource/account-mcp", scope="fixture.read"`,
         "content-type": "application/json",
@@ -239,7 +315,11 @@ export function createMcpOAuth(origin, ca, { wrongAccount = false } = {}) {
       res.end(JSON.stringify({ error: "unauthorized" }));
       return null;
     }
-    return wrongAccount ? (selected === "A" ? "B" : "A") : selected;
+    return wrongAccount
+      ? selected.account === "A"
+        ? "B"
+        : "A"
+      : selected.account;
   }
   function exchange(url, secure) {
     return new Promise((resolve, reject) => {
@@ -279,7 +359,16 @@ export function createMcpOAuth(origin, ca, { wrongAccount = false } = {}) {
     configure(next) {
       assert.ok(
         Object.keys(next).every((key) =>
-          ["account", "denied", "secretVersion"].includes(key),
+          [
+            "account",
+            "denied",
+            "secretVersion",
+            "expiresIn",
+            "refreshable",
+            "refreshExpiresIn",
+            "rejectRefresh",
+            "wrongRefreshAccount",
+          ].includes(key),
         ),
       );
       if (next.account !== undefined) {
@@ -294,6 +383,26 @@ export function createMcpOAuth(origin, ca, { wrongAccount = false } = {}) {
         assert.ok([0, 1].includes(next.secretVersion));
         secretVersion = next.secretVersion;
       }
+      for (const key of ["expiresIn", "refreshExpiresIn"]) {
+        if (next[key] !== undefined)
+          assert.ok(
+            Number.isInteger(next[key]) && next[key] >= 1 && next[key] <= 1200,
+          );
+      }
+      for (const key of [
+        "refreshable",
+        "rejectRefresh",
+        "wrongRefreshAccount",
+      ]) {
+        if (next[key] !== undefined) assert.equal(typeof next[key], "boolean");
+      }
+      if (next.expiresIn !== undefined) expiresIn = next.expiresIn;
+      if (next.refreshExpiresIn !== undefined)
+        refreshExpiresIn = next.refreshExpiresIn;
+      if (next.refreshable !== undefined) refreshable = next.refreshable;
+      if (next.rejectRefresh !== undefined) rejectRefresh = next.rejectRefresh;
+      if (next.wrongRefreshAccount !== undefined)
+        wrongRefreshAccount = next.wrongRefreshAccount;
     },
     async authorize(raw) {
       const url = new URL(raw);
@@ -318,6 +427,7 @@ export function createMcpOAuth(origin, ca, { wrongAccount = false } = {}) {
       clients.clear();
       codes.clear();
       tokens.clear();
+      refreshTokens.clear();
       callbacks.clear();
     },
   };

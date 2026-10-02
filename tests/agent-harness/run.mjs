@@ -81,7 +81,7 @@ for (let i = 2; i < process.argv.length; i++) {
 }
 if (options.help) {
   console.log(
-    "node tests/agent-harness/run.mjs [--list] [--suite smoke|lifecycle|idle|agent-workflow|agent-live|agent-interruption|agent-interruption-live|native-failures|native-foundation|native-auth|native-auth-schedules|mcp|mcp-auth|mcp-independence|mcp-foundation|mcp-live|native-installation|registry-recovery|store|all] [--scenario ID] [--binary path] [--output directory] [--focus-click] [--live-configured]\nWindows real Agent/WebView2 acceptance. Build first with tests/agent-harness/build.ps1. Scripted suites need no model key. agent-live and agent-interruption-live require explicit --live-configured and uses only the selected ordinary Grain model with disposable tool objects; it is excluded from all. native-auth, Agent workflow/interruption suites and MCP fixtures require Python cryptography for owned TLS. mcp-foundation runs seventeen controlled transport/OAuth cases in one host; mcp-independence selects its two independent-provider cases. mcp-live is opt-in public DeepWiki acceptance and excluded from all. --focus-click is confined to agent.reopen-escape.",
+    "node tests/agent-harness/run.mjs [--list] [--suite smoke|lifecycle|idle|agent-workflow|agent-live|agent-interruption|agent-interruption-live|native-failures|native-foundation|native-auth|native-auth-schedules|mcp|mcp-auth|mcp-independence|mcp-refresh|mcp-foundation|mcp-live|native-installation|registry-recovery|store|all] [--scenario ID] [--binary path] [--output directory] [--focus-click] [--live-configured]\nWindows real Agent/WebView2 acceptance. Build first with tests/agent-harness/build.ps1. Scripted suites need no model key. agent-live and agent-interruption-live require explicit --live-configured and uses only the selected ordinary Grain model with disposable tool objects; it is excluded from all. native-auth, Agent workflow/interruption suites and MCP fixtures require Python cryptography for owned TLS. mcp-foundation runs nineteen controlled transport/OAuth cases in one host; mcp-independence selects its two independent-provider cases; mcp-refresh selects its two actual-expiry/recovery cases. mcp-live is opt-in public DeepWiki acceptance and excluded from all. --focus-click is confined to agent.reopen-escape.",
   );
   process.exit(0);
 }
@@ -150,6 +150,7 @@ if (
     "missing-live-evidence",
     "wrong-mcp-account",
     "wrong-mcp-peer-account",
+    "wrong-mcp-refresh-account",
     "skip-fixed-port-conflict",
     "abandoned-mcp-credential",
     "lost-mcp-account",
@@ -189,6 +190,7 @@ if (
   );
 for (const [fault, scenario] of [
   ["wrong-mcp-peer-account", "mcp.auth-provider-independence"],
+  ["wrong-mcp-refresh-account", "mcp.auth-refresh-recovery"],
   ["skip-fixed-port-conflict", "mcp.auth-fixed-port-conflict"],
   ["lost-mcp-account", "mcp.auth-close-cancellation"],
   ["skip-mcp-disable", "mcp.auth-shutdown"],
