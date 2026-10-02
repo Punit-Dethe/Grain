@@ -11,6 +11,7 @@ import {
   writeFile,
   copyFile,
   rm,
+  realpath,
 } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { createServer, connect } from "node:net";
@@ -30,6 +31,10 @@ import { accountScheduleHandlers } from "./auth-schedules.mjs";
 import { startAuthFixture } from "./auth-fixture.mjs";
 import { startMcpFixture } from "./mcp-fixture.mjs";
 import { mcpHandlers } from "./mcp.mjs";
+import {
+  cases as conformanceCases,
+  startConformanceRelay,
+} from "./conformance-support.mjs";
 import { startStore, STORE_PUBLIC_KEY } from "./store-fixture.mjs";
 import { startModel } from "./model.mjs";
 import { developerReload } from "./developer.mjs";
@@ -50,9 +55,14 @@ for (let i = 2; i < process.argv.length; i++) {
   if (["--list", "--help", "--focus-click"].includes(option))
     options[option.slice(2)] = true;
   else if (
-    ["--suite", "--scenario", "--binary", "--output", "--fault"].includes(
-      option,
-    )
+    [
+      "--suite",
+      "--scenario",
+      "--binary",
+      "--output",
+      "--fault",
+      "--conformance-root",
+    ].includes(option)
   ) {
     if (!process.argv[i + 1] || process.argv[i + 1].startsWith("--"))
       throw new Error(`${option} requires a value`);
@@ -74,6 +84,26 @@ const selected = options.scenario
   ? scenarios.filter((scenario) => scenario.id === options.scenario)
   : selectScenarios(options.suite);
 if (!selected.length) throw new Error(`Unknown scenario: ${options.scenario}`);
+let conformanceBinding;
+if (selected.some((scenario) => scenario.suite === "mcp-conformance")) {
+  assert.ok(
+    options["conformance-root"] && selected.length === 1,
+    "Use the maintained official conformance runner",
+  );
+  const owned = await realpath(options["conformance-root"]);
+  assertWithin(await realpath(join(here, ".runs")), owned);
+  conformanceBinding = JSON.parse(
+    await readFile(join(owned, "binding.json"), "utf8"),
+  );
+  assert.equal(conformanceBinding.id, selected[0].id);
+  assert.equal(conformanceBinding.schema, 1);
+  assert.ok(conformanceCases.some((item) => item.id === selected[0].id));
+} else
+  assert.equal(
+    options["conformance-root"],
+    undefined,
+    "Conformance context is confined to official cases",
+  );
 if (options["focus-click"] && options.scenario !== "agent.reopen-escape")
   throw new Error("--focus-click requires --scenario agent.reopen-escape");
 if (
@@ -1305,6 +1335,103 @@ const mcpSuite = mcpHandlers({
   log: () => logTail,
 });
 Object.assign(handlers, mcpSuite.handlers);
+const conformanceEvidence = [];
+for (const testCase of conformanceCases) {
+  handlers[testCase.id] = async () => {
+    const observation = {
+      stage: testCase.id,
+      status: "Running",
+      protocolVersion: testCase.version,
+    };
+    conformanceEvidence.push(observation);
+    const control = (operation) => invoke("agent_harness_mcp", { operation });
+    await control("enable");
+    try {
+      if (testCase.scenario === "initialize") {
+        const found = await control("discover");
+        assert.equal(found.tool_count, 0);
+        assert.deepEqual(found.tools, []);
+        assert.equal(
+          mcpProvider.journal.filter((item) => item.method === "initialize")
+            .length,
+          1,
+        );
+        assert.equal(
+          mcpProvider.journal.filter((item) => item.method === "tools/list")
+            .length,
+          1,
+        );
+        assert.equal(
+          mcpProvider.journal.filter((item) => item.method === "tools/call")
+            .length,
+          0,
+        );
+      } else {
+        const start = model.journal.length;
+        const page = await request("mcp_conformance");
+        assert.equal(
+          mcpProvider.journal.filter((item) => item.method === "tools/call")
+            .length,
+          0,
+          "Official tool escaped approval",
+        );
+        await activate(page.locator(".agc-confirm-actions .agc-action-btn"));
+        await waitFor(
+          "Actual official tool result",
+          async () => !(await status()).agent.active,
+        );
+        assert.equal(
+          model.journal
+            .slice(start)
+            .filter((item) => item.mcpConformanceVerified).length,
+          1,
+        );
+        assert.equal(
+          mcpProvider.journal.filter((item) => item.method === "tools/call")
+            .length,
+          1,
+        );
+        await page
+          .getByText("Harness verified official MCP sum: 8", { exact: false })
+          .first()
+          .waitFor({ state: "visible", timeout: 10000 });
+        assert.ok(
+          mcpProvider.journal.some(
+            (item) => item.wireVersion === testCase.version,
+          ),
+          "Expected official wire version not observed",
+        );
+        if (testCase.version === "2026-07-28")
+          assert.equal(
+            mcpProvider.journal.filter((item) => item.method === "initialize")
+              .length,
+            0,
+          );
+        else
+          assert.ok(
+            mcpProvider.journal.some((item) => item.method === "initialize"),
+          );
+      }
+      assert.equal(mcpProvider.activeSessions, 0);
+      assert.ok(
+        !mcpProvider.journal.some(
+          (item) => item.phase === "error" || item.phase === "upstream-error",
+        ),
+        "Conformance relay failed",
+      );
+      Object.assign(observation, {
+        status: "Pass",
+        wireCalls: testCase.scenario === "initialize" ? 0 : 1,
+        approvalRequired: testCase.scenario !== "initialize",
+        activeSessions: 0,
+        actualResultVerified: testCase.scenario !== "initialize",
+      });
+    } finally {
+      await closePanel();
+      await control("disable");
+    }
+  };
+}
 let baselineTokens = 0;
 let cdpPort;
 try {
@@ -1398,6 +1525,7 @@ try {
   for (const [suite, purpose] of [
     ["native-auth", "native"],
     ["mcp", "mcp"],
+    ["mcp-conformance", "mcp"],
   ]) {
     if (!selected.some((scenario) => scenario.suite === suite)) continue;
     try {
@@ -1417,7 +1545,9 @@ try {
       wrongAccount: options.fault === "wrong-account",
     });
   }
-  if (selected.some((scenario) => scenario.suite === "mcp")) {
+  if (conformanceBinding)
+    mcpProvider = await startConformanceRelay(root, conformanceBinding);
+  else if (selected.some((scenario) => scenario.suite === "mcp")) {
     mcpProvider = await startMcpFixture(root, {
       wrongNestedType: options.fault === "wrong-mcp-type",
       supportedExcluded: options.fault === "supported-mcp-excluded",
@@ -1507,6 +1637,7 @@ try {
         scenario.id !== "native.legacy-migration" &&
         scenario.suite !== "native-auth" &&
         scenario.suite !== "mcp" &&
+        scenario.suite !== "mcp-conformance" &&
         !["native-installation", "registry-recovery", "store"].includes(
           scenario.suite,
         )
@@ -1544,6 +1675,7 @@ try {
         ...accountSchedules.takeEvidence(),
         ...accountRefresh.takeEvidence(),
         ...mcpSuite.takeEvidence(),
+        ...conformanceEvidence.splice(0),
       ];
       assert.ok(
         !result.model.some((entry) => entry.state === "error"),
@@ -1566,8 +1698,9 @@ try {
         ...accountSchedules.takeEvidence(),
         ...accountRefresh.takeEvidence(),
         ...mcpSuite.takeEvidence(),
+        ...conformanceEvidence.splice(0),
       ];
-      if (scenario.suite === "mcp") {
+      if (["mcp", "mcp-conformance"].includes(scenario.suite)) {
         for (const observation of result.observations) {
           if (observation.status === "Running") {
             observation.status = result.status;
@@ -1730,7 +1863,9 @@ try {
       heldCallsBeforeShutdown: mcpProvider.heldCalls,
       delayedRepliesBeforeShutdown: mcpProvider.delayedReplies,
       limitations: [
-        "Unauthenticated controlled HTTPS peer; no live provider, OAuth, account persistence or official conformance certification.",
+        conformanceBinding
+          ? "Pinned official server via owned TLS relay; named tool-only subset, no live provider, OAuth, account persistence or full conformance/tier certification."
+          : "Unauthenticated controlled HTTPS peer; no live provider, OAuth, account persistence or official conformance certification.",
       ],
     };
     try {

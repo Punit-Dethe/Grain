@@ -1,0 +1,9 @@
+{
+  "name": "grain-agent-conformance-tests",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@modelcontextprotocol/conformance": "0.2.0-alpha.12"
+  }
+}

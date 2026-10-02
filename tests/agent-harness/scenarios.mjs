@@ -250,6 +250,32 @@ scenarios.push(
   },
 );
 
+// Official runner owns the server prerequisite. Normal --suite all excludes
+// these entries; conformance.mjs invokes each finite case with its owned binding.
+scenarios.push(
+  {
+    id: "mcp.conformance-initialize",
+    suite: "mcp-conformance",
+    checks: [8, 17],
+    description:
+      "Official legacy initialization through Grain production discovery, no actions",
+  },
+  {
+    id: "mcp.conformance-tools-legacy",
+    suite: "mcp-conformance",
+    checks: [8, 17],
+    description:
+      "Official legacy numeric tool through real Agent discovery, selected schema and approval",
+  },
+  {
+    id: "mcp.conformance-tools-modern",
+    suite: "mcp-conformance",
+    checks: [8, 17],
+    description:
+      "Official modern numeric tool through real Agent discovery, selected schema and approval",
+  },
+);
+
 export function selectScenarios(suite) {
   if (suite === "native-auth-schedules")
     return scenarios.filter((scenario) =>
@@ -278,7 +304,7 @@ export function selectScenarios(suite) {
     throw new Error(`Unknown suite: ${suite}`);
   return scenarios.filter(
     (scenario) =>
-      suite === "all" ||
+      (suite === "all" && scenario.suite !== "mcp-conformance") ||
       (suite === "registry-recovery" &&
         scenario.id === "native.registry-refusal") ||
       scenario.suite === suite ||

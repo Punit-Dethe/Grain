@@ -287,7 +287,26 @@ Exit codes: **0** = every selected scenario and cleanup passed; **1** = assertio
 4. Add an intentional failure case or other test of the new oracle. Run from two clean profiles and inspect JSON evidence as well as the readable summary.
 5. Review the changed production paths and the harness's test assumptions. Update this README and the maintained plan/progress documents. Keep automation evidence distinct from human acceptance.
 
-Remaining suites can cover official production-wrapper conformance, a native+MCP task, forced model misbehavior, human-assisted real MCP OAuth consent, live-model selection, actual summon/global shortcuts and microphone/pill behavior. Current controlled MCP tests do not certify these remaining paths.
+Remaining suites can cover the blocked official initialization prerequisite and broader applicable authentication conformance, a native+MCP task, forced model misbehavior, human-assisted real MCP OAuth consent, live-model selection, actual summon/global shortcuts and microphone/pill behavior. The named official tool subset below is separately accepted; current controlled MCP tests do not certify these remaining paths.
+
+## Pinned official conformance through Grain
+
+Build the stamped real harness application first; use Windows, Node and Python `cryptography`, with no concurrent native compilation. The separate private package locks `@modelcontextprotocol/conformance` to **0.2.0-alpha.12**. Installation uses locked `npm ci --ignore-scripts` in ignored `.build/conformance/`; it adds no application dependency.
+
+```powershell
+node tests/agent-harness/conformance.mjs --install
+node tests/agent-harness/conformance.mjs --suite tools
+node tests/agent-harness/conformance.mjs
+node tests/agent-harness/conformance.mjs --scenario mcp.conformance-tools-modern --fault missing-official-check
+```
+
+The tools subset expects **exit 0**: separate legacy 2025-11-25 and modern 2026-07-28 tool cases Pass. The complete entry currently expects **exit 2**: those two Pass and standalone initialization Blocked because the pinned raw fixture sends an invalid empty discovery reply. The fault expects **exit 1**, missing required official evidence detected after a real successful call and cleanup Pass. Check the Node exit code and JSON, not just an outer shell's generic nonzero code. A Blocked/empty/skipped/warning result is never a Pass.
+
+Each official case has its own actual server, isolated real application and owned-PID HTTPS relay. The relay preserves wire bodies/status/metadata and checks the upstream listener PID before every exchange; it accepts no user account, redirect or arbitrary endpoint. Grain performs production discovery, selected-tool loading and actual Agent UI approval. Exactly one `add_numbers` call with 5 and 3 must return the real result 8; both official numeric and wire-schema checks, application acceptance and independent cleanup must pass.
+
+Stable IDs are `mcp.conformance-tools-legacy`, `mcp.conformance-tools-modern` and `mcp.conformance-initialize`. These require the separately owned official binding; plain `run.mjs` cannot silently substitute a synthetic peer. Ordinary `--suite all` still selects all 48 self-contained cases. Reports retain raw official checks, application children, identities, case verdicts and cleanup under `.runs/conformance-*/`. Keep init Blocked until a compatible fixture is audited; do not force a different production negotiation mode.
+
+The [focused conformance audit](../../docs/Extensions%202.0/MCP-CONFORMANCE-AUDIT.md) records the pin, evidence, blocked prerequisite and retirement conditions for the temporary relay. The [retention inventory](../../docs/Extensions%202.0/AGENT-TEST-HARNESS.md#harness-retention-and-cleanup-inventory) preserves the earlier interrupted-root cleanup exception. This named subset is not full SDK-tier, OAuth, live-provider or whole B2 acceptance.
 
 ## Controlled real-app MCP suite
 
@@ -309,7 +328,7 @@ node tests/agent-harness/run.mjs --scenario mcp.response-preview --fault short-m
 | `mcp.http-deadline` | Four real 45-second approved-call timeouts; unknown result, one call, measured duration, response/session release, discarded late reply and fresh recovery. |
 | `mcp.discovery-deadline` | Modern/SSE and legacy/JSON each finish two 35-second pages, then stop the third at the real 90-second absolute deadline; no tool dispatch, no retained delay timer/session and fresh recovery. |
 
-There are 48 distinct maintained real-app scenarios, eight MCP, and 23 runner self-tests. Run cases serially after native compilation finishes. The full MCP suite includes six minutes of genuine timeout waits plus setup/recovery; clocks are unchanged. Each failure records its exact stage and model observations, stops the batch and leaves later cases Not run. The preview fault must fail for a missing notice with one provider call and cleanup Pass. A nonzero prerequisite/reporting failure is not an accepted oracle check.
+There are 51 maintained scenario IDs: all 48 self-contained real-app cases (eight MCP), plus three explicitly external official cases (one Blocked), and 28 runner self-tests. Ordinary `all` selects all 48 self-contained cases; the official entry below supplies the other prerequisites. Run cases serially after native compilation finishes. The full MCP suite includes six minutes of genuine timeout waits plus setup/recovery; clocks are unchanged. Each failure records its exact stage and model observations, stops the batch and leaves later cases Not run. The preview fault must fail for a missing notice with one provider call and cleanup Pass. A nonzero prerequisite/reporting failure is not an accepted oracle check.
 
 ```powershell
 node tests/agent-harness/run.mjs --scenario mcp.catalog-budgets --fault accepted-mcp-catalog
