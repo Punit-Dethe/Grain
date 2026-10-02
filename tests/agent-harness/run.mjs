@@ -25,6 +25,7 @@ import { registryHandlers } from "./registry.mjs";
 import { foundationHandlers } from "./foundation.mjs";
 import { authenticationHandlers } from "./authentication.mjs";
 import { accountOwnershipHandlers } from "./auth-ownership.mjs";
+import { accountRefreshHandlers } from "./auth-refresh.mjs";
 import { accountScheduleHandlers } from "./auth-schedules.mjs";
 import { startAuthFixture } from "./auth-fixture.mjs";
 import { startStore, STORE_PUBLIC_KEY } from "./store-fixture.mjs";
@@ -91,10 +92,12 @@ if (
     "unchanged-auth-declaration",
     "uncancelled-login",
     "accepted-partial-consent",
+    "released-refresh",
   ].includes(options.fault)
 )
   throw new Error("Unknown oracle fault");
 for (const [fault, scenario] of [
+  ["released-refresh", "native.auth-refresh-logout"],
   ["uncancelled-login", "native.auth-cancellation"],
   ["accepted-partial-consent", "native.auth-expiry"],
 ]) {
@@ -1273,6 +1276,11 @@ const accountSchedules = accountScheduleHandlers(
   accountOwnershipSuite.controls,
 );
 Object.assign(handlers, accountSchedules.handlers);
+const accountRefresh = accountRefreshHandlers(
+  accountContext,
+  accountOwnershipSuite.controls,
+);
+Object.assign(handlers, accountRefresh.handlers);
 let baselineTokens = 0;
 let cdpPort;
 try {
@@ -1483,6 +1491,7 @@ try {
         ...authenticationSuite.takeEvidence(),
         ...accountOwnershipSuite.takeEvidence(),
         ...accountSchedules.takeEvidence(),
+        ...accountRefresh.takeEvidence(),
       ];
       assert.ok(
         !result.model.some((entry) => entry.state === "error"),
@@ -1493,6 +1502,7 @@ try {
       result.status = error instanceof Blocked ? "Blocked" : "Fail";
       result.error = String(error.message ?? error).slice(0, 2500);
       result.observations = [
+        ...(result.observations ?? []),
         ...takeInputEvidence(),
         ...installation.takeEvidence(),
         ...storeSuite.takeEvidence(),
@@ -1501,6 +1511,7 @@ try {
         ...authenticationSuite.takeEvidence(),
         ...accountOwnershipSuite.takeEvidence(),
         ...accountSchedules.takeEvidence(),
+        ...accountRefresh.takeEvidence(),
       ];
       try {
         result.snapshot = await status();
@@ -1679,6 +1690,7 @@ try {
     "fixture.grainpack",
     "auth-tls",
     "auth-fixture.grainpack",
+    "auth-peer.grainpack",
     "auth-fixture-a",
     "auth-fixture-b",
     "auth-fixture-a.grainpack",

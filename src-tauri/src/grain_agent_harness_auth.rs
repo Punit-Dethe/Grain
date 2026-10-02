@@ -1,12 +1,43 @@
 //! Fixed native-account fixture controls. Compiled only into the debug harness.
-//! No token access, arbitrary IDs/paths/endpoints, or declaration approval bypass.
+//! No token export, arbitrary IDs/paths/endpoints, or declaration approval bypass.
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::{path::PathBuf, sync::Mutex, time::Duration};
 use tauri::{AppHandle, Manager, WebviewWindow};
 
 pub(crate) const FIXTURE_ID: &str = "com.grain.harness.auth";
+pub(crate) const PEER_ID: &str = "com.grain.harness.auth-peer";
 static AUTHORIZATION: Mutex<Option<(uuid::Uuid, String)>> = Mutex::new(None);
+static PEER_AUTHORIZATION: Mutex<Option<(uuid::Uuid, String)>> = Mutex::new(None);
+
+#[derive(Clone, Copy, Default, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Target {
+    #[default]
+    Primary,
+    Peer,
+}
+impl Target {
+    fn id(self) -> &'static str {
+        match self {
+            Self::Primary => FIXTURE_ID,
+            Self::Peer => PEER_ID,
+        }
+    }
+    fn handoff(self) -> &'static Mutex<Option<(uuid::Uuid, String)>> {
+        match self {
+            Self::Primary => &AUTHORIZATION,
+            Self::Peer => &PEER_AUTHORIZATION,
+        }
+    }
+}
+fn target_for_id(id: &str) -> Option<Target> {
+    match id {
+        FIXTURE_ID => Some(Target::Primary),
+        PEER_ID => Some(Target::Peer),
+        _ => None,
+    }
+}
 
 fn owned_path(name: &str) -> Result<PathBuf, String> {
     let (root, _) = super::grain_agent_harness::auth_fixture_config()?;
@@ -53,7 +84,11 @@ pub(crate) fn scoped_tls(
     if url.host_str() != Some("127.0.0.1") {
         return Ok(builder);
     }
-    validate_url(endpoint, port, &["/token", "/token-v2", "/me"])?;
+    validate_url(
+        endpoint,
+        port,
+        &["/token", "/token-v2", "/me", "/peer/token", "/peer/me"],
+    )?;
     if url.query().is_some() {
         return Err("Fixture token/API URL cannot have a query".into());
     }
@@ -72,8 +107,15 @@ pub(crate) fn scoped_tls(
     Ok(builder.add_root_certificate(cert).no_proxy())
 }
 
-pub(crate) fn api_client(url: &str) -> Result<reqwest::Client, String> {
-    check_origin(url, &["/me"])?;
+pub(crate) fn api_client(id: &str, url: &str) -> Result<reqwest::Client, String> {
+    check_origin(
+        url,
+        match target_for_id(id) {
+            Some(Target::Primary) => &["/me"],
+            Some(Target::Peer) => &["/peer/me"],
+            None => return Err("Unknown account fixture".into()),
+        },
+    )?;
     scoped_tls(
         reqwest::Client::builder()
             .redirect(reqwest::redirect::Policy::none())
@@ -92,11 +134,18 @@ pub(crate) fn capture_authorization(
     owner: uuid::Uuid,
     url: &str,
 ) -> Result<bool, String> {
-    if id != FIXTURE_ID {
+    let Some(target) = target_for_id(id) else {
         return Ok(false);
-    }
-    check_origin(url, &["/authorize"])?;
-    let mut slot = AUTHORIZATION
+    };
+    check_origin(
+        url,
+        match target {
+            Target::Primary => &["/authorize"],
+            Target::Peer => &["/peer/authorize"],
+        },
+    )?;
+    let mut slot = target
+        .handoff()
         .lock()
         .map_err(|_| "Fixture consent state unavailable")?;
     *slot = Some((owner, url.into()));
@@ -111,17 +160,17 @@ fn release_if_current(slot: &mut Option<(uuid::Uuid, String)>, owner: uuid::Uuid
 
 /// A dropped/cancelled flow may clear only its own unconsumed handoff.
 pub(crate) fn finish_authorization(id: &str, owner: uuid::Uuid) {
-    if id == FIXTURE_ID {
-        if let Ok(mut slot) = AUTHORIZATION.lock() {
+    if let Some(target) = target_for_id(id) {
+        if let Ok(mut slot) = target.handoff().lock() {
             release_if_current(&mut slot, owner);
         }
     }
 }
 
-fn validate_pack(pack: &grain_sdk::GrainPack) -> Result<(), String> {
+fn validate_pack(pack: &grain_sdk::GrainPack, target: Target) -> Result<(), String> {
     pack.validate()?;
     let m = &pack.manifest;
-    if m.id != FIXTURE_ID
+    if m.id != target.id()
         || (m.permissions != ["auth", "net:127.0.0.1"]
             && m.permissions != ["auth", "net:127.0.0.1", "net:localhost"])
         || m.contributes.actions.len() != 1
@@ -134,6 +183,20 @@ fn validate_pack(pack: &grain_sdk::GrainPack) -> Result<(), String> {
         .authentication
         .as_ref()
         .ok_or("Auth fixture declaration missing")?;
+    if matches!(target, Target::Peer) {
+        if m.permissions != ["auth", "net:127.0.0.1"]
+            || d.provider_name != "Harness Peer OAuth"
+            || d.client_id != "grain-harness-peer"
+            || d.scopes != ["fixture.peer.read"]
+            || d.api_hosts != ["127.0.0.1"]
+            || !d.authorization_parameters.is_empty()
+        {
+            return Err("Unexpected peer account fixture declaration".into());
+        }
+        check_origin(&d.authorization_endpoint, &["/peer/authorize"])?;
+        check_origin(&d.token_endpoint, &["/peer/token"])?;
+        return Ok(());
+    }
     if d.provider_name != "Harness OAuth"
         || !["grain-harness-public", "grain-harness-public-v2"].contains(&d.client_id.as_str())
         || (d.scopes != ["fixture.read"] && d.scopes != ["fixture.read", "fixture.extra"])
@@ -167,6 +230,7 @@ pub enum Operation {
     SeedUnbound,
     SeedLegacy,
     Cancel,
+    Refresh,
 }
 
 #[tauri::command]
@@ -174,12 +238,44 @@ pub async fn agent_harness_auth(
     app: AppHandle,
     window: WebviewWindow,
     operation: Operation,
+    target: Option<Target>,
 ) -> Result<Value, String> {
     super::grain_agent_harness::guard(&app, &window)?;
     super::grain_agent_harness::auth_fixture_config()?;
+    let target = target.unwrap_or_default();
+    let id = target.id();
+    if matches!(target, Target::Peer)
+        && matches!(
+            operation,
+            Operation::LoadA
+                | Operation::LoadB
+                | Operation::Unload
+                | Operation::SeedUnbound
+                | Operation::SeedLegacy
+                | Operation::RemoveInstalled
+                | Operation::Refresh
+        )
+    {
+        return Err("Peer fixture supports installed-account operations only".into());
+    }
     match operation {
+        Operation::Refresh => {
+            // Fixed auth-only concurrency probe: execute the production refresh
+            // path for its current approved registry owner, then erase the token.
+            // No tool dispatch, generation input or credential export is added.
+            let reg = app.state::<std::sync::Arc<grain_core::extensions::ExtensionsRegistry>>();
+            let generation = reg
+                .record(id)
+                .ok_or("Account fixture missing")?
+                .execution_generation;
+            drop(crate::grain_auth::access_token(&app, id, "127.0.0.1", generation).await?);
+            Ok(Value::Null)
+        }
         Operation::Import => {
-            let path = owned_path("auth-fixture.grainpack")?;
+            let path = owned_path(match target {
+                Target::Primary => "auth-fixture.grainpack",
+                Target::Peer => "auth-peer.grainpack",
+            })?;
             use std::io::Read;
             let mut bytes = Vec::new();
             std::fs::File::open(&path)
@@ -192,7 +288,7 @@ pub async fn agent_harness_auth(
             }
             let pack: grain_sdk::GrainPack =
                 serde_json::from_slice(&bytes).map_err(|_| "Invalid auth package")?;
-            validate_pack(&pack)?;
+            validate_pack(&pack, target)?;
             crate::grain_commands::extension_import_pack(
                 app,
                 window,
@@ -202,13 +298,10 @@ pub async fn agent_harness_auth(
         }
         Operation::Status => {
             let reg = app.state::<std::sync::Arc<grain_core::extensions::ExtensionsRegistry>>();
-            let record = reg.record(FIXTURE_ID);
-            let connection = crate::grain_auth::extension_auth_connection(
-                app.clone(),
-                window,
-                FIXTURE_ID.into(),
-            )
-            .await?;
+            let record = reg.record(id);
+            let connection =
+                crate::grain_auth::extension_auth_connection(app.clone(), window, id.into())
+                    .await?;
             let (root, _) = super::grain_agent_harness::auth_fixture_config()?;
             let owner = record.as_ref().map(|record| match &record.dev {
                 None => "installed",
@@ -217,52 +310,53 @@ pub async fn agent_harness_auth(
                 Some(_) => "unexpected",
             });
             Ok(json!({"enabled": record.as_ref().is_some_and(|r|r.enabled),
-                "installed": reg.installed_record(FIXTURE_ID).is_some(),
+                "installed": reg.installed_record(id).is_some(),
                 "owner": owner,
                 "connection": connection,
-                "worker": crate::extension_host::harness_snapshot(FIXTURE_ID)}))
+                "worker": crate::extension_host::harness_snapshot(id)}))
         }
         Operation::Connect => {
-            *AUTHORIZATION
+            *target
+                .handoff()
                 .lock()
                 .map_err(|_| "Fixture consent state unavailable")? = None;
-            let result =
-                crate::grain_auth::extension_auth_connect(app, window, FIXTURE_ID.into()).await;
+            let result = crate::grain_auth::extension_auth_connect(app, window, id.into()).await;
             result.and_then(|value| {
                 serde_json::to_value(value).map_err(|_| "Cannot encode auth status".into())
             })
         }
-        Operation::Authorization => Ok(AUTHORIZATION
+        Operation::Authorization => Ok(target
+            .handoff()
             .lock()
             .map_err(|_| "Fixture consent state unavailable")?
             .take()
             .map_or(Value::Null, |(_, url)| Value::String(url))),
         Operation::Disconnect => {
-            crate::grain_auth::extension_auth_disconnect(app, window, FIXTURE_ID.into()).await?;
+            crate::grain_auth::extension_auth_disconnect(app, window, id.into()).await?;
             Ok(Value::Null)
         }
         Operation::Cancel => {
             // Cancel only the fixed fixture's pending production flow; retain
             // its previously selected account, as on normal owner teardown.
-            crate::grain_auth::cancel_extension(FIXTURE_ID);
+            crate::grain_auth::cancel_extension(id);
             Ok(Value::Null)
         }
         Operation::Remove => {
-            crate::grain_auth::cancel_extension(FIXTURE_ID);
-            *AUTHORIZATION
+            crate::grain_auth::cancel_extension(id);
+            *target
+                .handoff()
                 .lock()
                 .map_err(|_| "Fixture consent state unavailable")? = None;
             let reg = app.state::<std::sync::Arc<grain_core::extensions::ExtensionsRegistry>>();
-            if reg.dev_path(FIXTURE_ID).is_some() {
+            if reg.dev_path(id).is_some() {
                 crate::grain_commands::extension_unload_dev(
                     app.clone(),
                     window.clone(),
-                    FIXTURE_ID.into(),
+                    id.into(),
                 )?;
             }
-            if reg.installed_record(FIXTURE_ID).is_some() {
-                crate::grain_commands::extension_uninstall(app, window, FIXTURE_ID.into(), true)
-                    .await?;
+            if reg.installed_record(id).is_some() {
+                crate::grain_commands::extension_uninstall(app, window, id.into(), true).await?;
             }
             Ok(Value::Null)
         }
@@ -273,21 +367,20 @@ pub async fn agent_harness_auth(
                 "auth-fixture-b"
             })?;
             let loaded = crate::dev_extensions::load_project(&root)?;
-            validate_pack(&loaded.pack)?;
+            validate_pack(&loaded.pack, target)?;
             crate::grain_commands::load_unpacked_project(&app, &root)?;
             Ok(Value::Null)
         }
         Operation::Unload => {
-            crate::grain_commands::extension_unload_dev(app, window, FIXTURE_ID.into())?;
+            crate::grain_commands::extension_unload_dev(app, window, id.into())?;
             Ok(Value::Null)
         }
         Operation::Enable => {
-            crate::grain_commands::extension_set_enabled(app, window, FIXTURE_ID.into(), true)?;
+            crate::grain_commands::extension_set_enabled(app, window, id.into(), true)?;
             Ok(Value::Null)
         }
         Operation::RemoveInstalled => {
-            crate::grain_commands::extension_uninstall(app, window, FIXTURE_ID.into(), false)
-                .await?;
+            crate::grain_commands::extension_uninstall(app, window, id.into(), false).await?;
             Ok(Value::Null)
         }
         Operation::SeedUnbound | Operation::SeedLegacy => {
@@ -307,6 +400,25 @@ pub async fn agent_harness_auth(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn account_targets_are_finite_and_handoffs_are_independent() {
+        assert!(matches!(
+            serde_json::from_str::<Target>("\"primary\""),
+            Ok(Target::Primary)
+        ));
+        assert!(matches!(
+            serde_json::from_str::<Target>("\"peer\""),
+            Ok(Target::Peer)
+        ));
+        assert!(serde_json::from_str::<Target>("\"com.example.other\"").is_err());
+        assert!(target_for_id("com.grain.harness.auth-peer-extra").is_none());
+        assert!(!std::ptr::eq(
+            Target::Primary.handoff(),
+            Target::Peer.handoff()
+        ));
+        assert!(validate_url("https://127.0.0.1:32100/peer/me", 32100, &["/peer/me"]).is_ok());
+        assert!(validate_url("https://127.0.0.1:32100/me", 32100, &["/peer/me"]).is_err());
+    }
     #[test]
     fn old_consent_cleanup_cannot_clear_a_replacement() {
         let old = uuid::Uuid::new_v4();

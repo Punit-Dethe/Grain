@@ -315,3 +315,11 @@ scenarios.push(
       "Partial consent refused, real short-lived grants expire without refresh and reconnect, real refresh recovers once without login",
   },
 );
+
+scenarios.push({
+  id: "native.auth-refresh-logout",
+  suite: "native-auth",
+  checks: [44],
+  description:
+    "Actual held refresh cannot restore logout; reconnect/restart identify replacement account; a second provider reads independently in the same host",
+});

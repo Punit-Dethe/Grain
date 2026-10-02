@@ -33,7 +33,7 @@ const body = (results = [], actions = []) => ({
 });
 
 test("native account oracle verifies actual identity and refuses credential context", () => {
-  assert.equal(selectScenarios("native-auth").length, 7);
+  assert.equal(selectScenarios("native-auth").length, 8);
   assert.equal(selectScenarios("native-auth-schedules").length, 4);
   for (const account of ["A", "B"]) {
     const frame = body([
@@ -50,7 +50,13 @@ test("native account oracle verifies actual identity and refuses credential cont
     assert.throws(() => nextReply(frame), /credential leaked/);
     frame.messages.at(-1).content = "Account connected";
     assert.throws(() => nextReply(frame), /No real authenticated/);
-    for (const owner of ["installed", "developer-a", "developer-b"]) {
+    frame.messages.at(-1).content =
+      "Outcome unknown \u2014 do not claim it succeeded: The provider may have performed the action.";
+    const unknown = nextReply(frame);
+    assert.equal(unknown.accountUnknown, true);
+    assert.equal(unknown.accountVerified, undefined);
+    assert.equal(unknown.tool_calls, undefined);
+    for (const owner of ["installed", "developer-a", "developer-b", "peer"]) {
       frame.messages[0].content = `Harness request: account_read_${account.toLowerCase()}_${owner.replaceAll("-", "_")}`;
       frame.messages.at(-1).content =
         `Harness account reply: ${JSON.stringify({ account, owner })}`;
@@ -71,7 +77,7 @@ test("native account oracle verifies actual identity and refuses credential cont
 });
 
 test("native auth package retains fixed identity and exact TLS endpoints", async () => {
-  const { authPackage } = await import("./auth-fixture.mjs");
+  const { authPackage, peerAuthPackage } = await import("./auth-fixture.mjs");
   const pack = authPackage(32100);
   assert.equal(pack.manifest.id, "com.grain.harness.auth");
   assert.deepEqual(pack.manifest.permissions, ["auth", "net:127.0.0.1"]);
@@ -83,6 +89,26 @@ test("native auth package retains fixed identity and exact TLS endpoints", async
   assert.equal(pack.manifest.contributes.actions.length, 1);
   for (const port of [-1, 0, 65536, "32100"])
     assert.throws(() => authPackage(port));
+  const peer = peerAuthPackage(32100);
+  assert.equal(peer.manifest.id, "com.grain.harness.auth-peer");
+  assert.equal(
+    peer.manifest.contributes.authentication.clientId,
+    "grain-harness-peer",
+  );
+  assert.deepEqual(peer.manifest.contributes.authentication.scopes, [
+    "fixture.peer.read",
+  ]);
+  assert.equal(
+    peer.manifest.contributes.authentication.tokenEndpoint,
+    "https://127.0.0.1:32100/peer/token",
+  );
+  assert.match(peer.manifest.entry_source, /32100\/peer\/me/);
+  const frame = body();
+  frame.messages[0].content = "Harness request: account_read_b_peer";
+  assert.equal(
+    JSON.parse(nextReply(frame).tool_calls[0].function.arguments).extension_id,
+    peer.manifest.id,
+  );
 });
 
 test("scenario IDs are unique and each suite is explicit", () => {

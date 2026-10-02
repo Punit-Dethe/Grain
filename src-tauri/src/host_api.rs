@@ -983,9 +983,14 @@ async fn proxy_fetch(
 
     for redirect_count in 0..=NET_MAX_REDIRECTS {
         #[cfg(feature = "agent-harness")]
-        let scoped_client = if identity.id == crate::grain_agent_harness_auth::FIXTURE_ID {
+        let scoped_client = if [
+            crate::grain_agent_harness_auth::FIXTURE_ID,
+            crate::grain_agent_harness_auth::PEER_ID,
+        ]
+        .contains(&identity.id.as_str())
+        {
             Some(
-                crate::grain_agent_harness_auth::api_client(url.as_str())
+                crate::grain_agent_harness_auth::api_client(&identity.id, url.as_str())
                     .map_err(internal_error)?,
             )
         } else {

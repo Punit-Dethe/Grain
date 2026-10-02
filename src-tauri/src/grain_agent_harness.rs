@@ -231,7 +231,13 @@ pub(super) fn guard(app: &AppHandle, window: &WebviewWindow) -> Result<(), Strin
 }
 
 pub fn observe(phase: &str, extension: &str, action: &str, token: &str) {
-    if extension != FIXTURE_ID && extension != super::grain_agent_harness_auth::FIXTURE_ID {
+    if ![
+        FIXTURE_ID,
+        super::grain_agent_harness_auth::FIXTURE_ID,
+        super::grain_agent_harness_auth::PEER_ID,
+    ]
+    .contains(&extension)
+    {
         return;
     }
     let mut events = EVENTS.lock().unwrap();
@@ -239,7 +245,7 @@ pub fn observe(phase: &str, extension: &str, action: &str, token: &str) {
         OVERFLOW.store(true, std::sync::atomic::Ordering::Relaxed);
         return;
     }
-    events.push(json!({"phase": phase, "action": action, "worker": worker_identity(token), "elapsedMs": config().started.elapsed().as_millis() as u64}));
+    events.push(json!({"phase": phase, "extension": extension, "action": action, "worker": worker_identity(token), "elapsedMs": config().started.elapsed().as_millis() as u64}));
 }
 
 pub fn worker_identity(token: &str) -> String {
@@ -258,7 +264,13 @@ pub fn observe_outcome(
     outcome: &grain_core::execution::ActionOutcome,
 ) {
     use grain_core::execution::ActionOutcome;
-    if extension != FIXTURE_ID && extension != super::grain_agent_harness_auth::FIXTURE_ID {
+    if ![
+        FIXTURE_ID,
+        super::grain_agent_harness_auth::FIXTURE_ID,
+        super::grain_agent_harness_auth::PEER_ID,
+    ]
+    .contains(&extension)
+    {
         return;
     }
     let status = match outcome {
@@ -275,7 +287,7 @@ pub fn observe_outcome(
         OVERFLOW.store(true, std::sync::atomic::Ordering::Relaxed);
         return;
     }
-    events.push(json!({"phase": "outcome", "action": action, "outcome": status, "elapsedMs": config().started.elapsed().as_millis() as u64}));
+    events.push(json!({"phase": "outcome", "extension": extension, "action": action, "outcome": status, "elapsedMs": config().started.elapsed().as_millis() as u64}));
 }
 
 #[tauri::command]
@@ -473,6 +485,7 @@ pub enum Instruction {
     TypedNumberZero,
     AccountReadA,
     AccountReadB,
+    AccountReadBPeer,
     AccountReadAInstalled,
     AccountReadBInstalled,
     AccountReadADeveloperA,
@@ -513,6 +526,7 @@ pub async fn agent_harness_submit(
         Instruction::TypedNumberZero => "Harness request: typed_number_zero",
         Instruction::AccountReadA => "Harness request: account_read_a",
         Instruction::AccountReadB => "Harness request: account_read_b",
+        Instruction::AccountReadBPeer => "Harness request: account_read_b_peer",
         Instruction::AccountReadAInstalled => "Harness request: account_read_a_installed",
         Instruction::AccountReadBInstalled => "Harness request: account_read_b_installed",
         Instruction::AccountReadADeveloperA => "Harness request: account_read_a_developer_a",

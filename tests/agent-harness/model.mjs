@@ -66,12 +66,17 @@ export function nextReply(body) {
     return { content: "Harness delayed model reply", delayMs: 15000 };
   const requested = instruction.slice("Harness request: ".length);
   const accountRequest =
-    /^account_read_([ab])(?:_(installed|developer_a|developer_b))?$/.exec(
+    /^account_read_([ab])(?:_(installed|developer_a|developer_b|peer))?$/.exec(
       requested,
     );
   const account = accountRequest?.[1].toUpperCase() ?? null;
   const owner = accountRequest?.[2]?.replaceAll("_", "-");
-  const extensionId = account ? AUTH_FIXTURE_ID : FIXTURE_ID;
+  const extensionId =
+    owner === "peer"
+      ? "com.grain.harness.auth-peer"
+      : account
+        ? AUTH_FIXTURE_ID
+        : FIXTURE_ID;
   if (JSON.stringify(body).includes("HARNESS_OAUTH_PRIVATE_"))
     throw new Error("Native credential leaked into model context");
   const titles = {
@@ -165,6 +170,13 @@ export function nextReply(body) {
   }
   if (account) {
     const content = results.at(-1).content;
+    if (
+      content.startsWith("Outcome unknown \u2014 do not claim it succeeded: ")
+    )
+      return {
+        content: "Harness observed unknown account outcome; no replay",
+        accountUnknown: true,
+      };
     if (content.startsWith("Failed ("))
       return { content: "Harness observed refused account call" };
     assert.ok(
@@ -238,6 +250,7 @@ export async function startModel() {
         ...(reply.typedVerified ? { typedVerified: true } : {}),
         ...(reply.accountVerified ? { accountVerified: true } : {}),
         ...(reply.accountRefused ? { accountRefused: true } : {}),
+        ...(reply.accountUnknown ? { accountUnknown: true } : {}),
       };
       journal.push(entry);
       if (journal.length > 4096) throw new Error("Model journal overflow");

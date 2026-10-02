@@ -6,6 +6,7 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 
 export const AUTH_FIXTURE_ID = "com.grain.harness.auth";
+export const PEER_FIXTURE_ID = "com.grain.harness.auth-peer";
 export const PRIVATE_MARKER = "HARNESS_OAUTH_PRIVATE_";
 
 export async function startAuthFixture(root, { wrongAccount = false } = {}) {
@@ -17,19 +18,30 @@ export async function startAuthFixture(root, { wrongAccount = false } = {}) {
   const journal = [],
     sockets = new Set(),
     held = new Set();
-  let mode = {
-    account: "A",
-    deny: false,
-    partial: false,
-    expiresIn: 1200,
-    holdToken: false,
-    holdRefresh: false,
-    failToken: false,
-    issueRefresh: true,
-    refreshExpiresIn: 1200,
-    clientId: "grain-harness-public",
-    scope: "fixture.read",
-    tokenPath: "/token",
+  const modes = {
+    primary: {
+      account: "A",
+      deny: false,
+      partial: false,
+      expiresIn: 1200,
+      holdToken: false,
+      holdRefresh: false,
+      failToken: false,
+      issueRefresh: true,
+      refreshExpiresIn: 1200,
+      clientId: "grain-harness-public",
+      scope: "fixture.read",
+      tokenPath: "/token",
+      provider: "primary",
+    },
+  };
+  modes.peer = {
+    ...modes.primary,
+    provider: "peer",
+    account: "B",
+    clientId: "grain-harness-peer",
+    scope: "fixture.peer.read",
+    tokenPath: "/peer/token",
   };
   function record(entry) {
     assert.ok(journal.length < 256, "OAuth fixture journal overflow");
@@ -45,20 +57,29 @@ export async function startAuthFixture(root, { wrongAccount = false } = {}) {
   const server = createServer({ key, cert }, async (req, res) => {
     try {
       const url = new URL(req.url, "https://127.0.0.1");
-      if (req.method === "GET" && url.pathname === "/authorize") {
+      const provider = url.pathname.startsWith("/peer/") ? "peer" : "primary";
+      const mode = modes[provider];
+      if (
+        req.method === "GET" &&
+        ["/authorize", "/peer/authorize"].includes(url.pathname)
+      ) {
         const query = url.searchParams;
         assert.ok(
-          ["grain-harness-public", "grain-harness-public-v2"].includes(
-            query.get("client_id"),
-          ),
+          [
+            "grain-harness-public",
+            "grain-harness-public-v2",
+            "grain-harness-peer",
+          ].includes(query.get("client_id")),
         );
         assert.equal(query.get("response_type"), "code");
         assert.equal(query.get("client_id"), mode.clientId);
         assert.equal(query.get("code_challenge_method"), "S256");
         assert.ok(
-          ["fixture.read", "fixture.read fixture.extra"].includes(
-            query.get("scope"),
-          ),
+          [
+            "fixture.read",
+            "fixture.read fixture.extra",
+            "fixture.peer.read",
+          ].includes(query.get("scope")),
         );
         assert.match(query.get("code_challenge"), /^[\w-]{43}$/);
         assert.equal(query.get("scope"), mode.scope);
@@ -70,7 +91,12 @@ export async function startAuthFixture(root, { wrongAccount = false } = {}) {
         assert.match(redirect.pathname, /^\/grain\/oauth\/[a-f\d-]{36}$/);
         assert.equal(redirect.search, "");
         redirect.searchParams.set("state", query.get("state"));
-        record({ phase: "consent", account: mode.account, denied: mode.deny });
+        record({
+          phase: "consent",
+          provider,
+          account: mode.account,
+          denied: mode.deny,
+        });
         if (mode.deny) redirect.searchParams.set("error", "access_denied");
         else {
           assert.ok(codes.size < 32, "Authorization code bound");
@@ -91,7 +117,7 @@ export async function startAuthFixture(root, { wrongAccount = false } = {}) {
         res.end();
       } else if (
         req.method === "POST" &&
-        ["/token", "/token-v2"].includes(url.pathname)
+        ["/token", "/token-v2", "/peer/token"].includes(url.pathname)
       ) {
         let body = "";
         for await (const chunk of req) {
@@ -118,10 +144,16 @@ export async function startAuthFixture(root, { wrongAccount = false } = {}) {
           issued = refreshTokens.get(params.get("refresh_token"));
           assert.ok(issued, "Unknown refresh token");
         }
+        assert.equal(
+          issued.provider,
+          provider,
+          "Grant crossed provider boundary",
+        );
         assert.equal(params.get("client_id"), issued.clientId);
         assert.equal(url.pathname, issued.tokenPath);
         record({
           phase: "exchange",
+          provider,
           account: issued.account,
           grant,
           pkceVerified: grant === "authorization_code",
@@ -163,15 +195,22 @@ export async function startAuthFixture(root, { wrongAccount = false } = {}) {
           expires_in: responseOptions.expiresIn,
           scope: issued.partial ? "fixture.other" : issued.scope,
         });
-      } else if (req.method === "GET" && url.pathname === "/me") {
+      } else if (
+        req.method === "GET" &&
+        ["/me", "/peer/me"].includes(url.pathname)
+      ) {
         const issued = tokens.get(
           req.headers.authorization?.slice("Bearer ".length),
         );
-        if (!issued || issued.expiresAt <= Math.floor(Date.now() / 1000)) {
+        if (
+          !issued ||
+          issued.provider !== provider ||
+          issued.expiresAt <= Math.floor(Date.now() / 1000)
+        ) {
           json(res, 401, { error: "invalid_grant" });
           return;
         }
-        record({ phase: "read", account: issued.account });
+        record({ phase: "read", provider, account: issued.account });
         json(res, 200, {
           account: wrongAccount
             ? issued.account === "A"
@@ -200,8 +239,11 @@ export async function startAuthFixture(root, { wrongAccount = false } = {}) {
   return {
     port,
     journal,
-    configure(update) {
-      mode = { ...mode, ...update };
+    configure(update, target = "primary") {
+      assert.ok(["primary", "peer"].includes(target));
+      const mode = { ...modes[target], ...update };
+      assert.equal(mode.provider, target);
+      modes[target] = mode;
       assert.ok(["A", "B"].includes(mode.account));
       assert.ok(
         Number.isInteger(mode.expiresIn) &&
@@ -224,7 +266,7 @@ export async function startAuthFixture(root, { wrongAccount = false } = {}) {
     async consent(raw) {
       const url = new URL(raw);
       assert.equal(url.origin, `https://127.0.0.1:${port}`);
-      assert.equal(url.pathname, "/authorize");
+      assert.ok(["/authorize", "/peer/authorize"].includes(url.pathname));
       const location = await new Promise((resolve, reject) => {
         const req = httpsRequest(url, { ca: cert, agent: false }, (res) => {
           res.resume();
@@ -263,7 +305,10 @@ export async function startAuthFixture(root, { wrongAccount = false } = {}) {
         signal: AbortSignal.timeout(5000),
       });
       await response.text();
-      assert.equal(response.status, mode.deny ? 400 : 200);
+      assert.equal(
+        response.status,
+        callback.searchParams.has("error") ? 400 : 200,
+      );
     },
     async close() {
       for (const resolve of held) resolve();
@@ -284,7 +329,8 @@ export async function startAuthFixture(root, { wrongAccount = false } = {}) {
 export function authPackage(port, { owner, change } = {}) {
   assert.ok(Number.isInteger(port) && port > 0 && port <= 65535);
   assert.ok(
-    !owner || ["installed", "developer-a", "developer-b"].includes(owner),
+    !owner ||
+      ["installed", "developer-a", "developer-b", "peer"].includes(owner),
   );
   assert.ok(!change || ["client", "token", "scopes", "hosts"].includes(change));
   const pack = {
@@ -329,5 +375,23 @@ export function authPackage(port, { owner, change } = {}) {
     declaration.apiHosts.push("localhost");
     pack.manifest.permissions.push("net:localhost");
   }
+  return pack;
+}
+
+// A second fixed identity with independent client, scopes and endpoint routes.
+export function peerAuthPackage(port) {
+  const pack = authPackage(port, { owner: "peer" });
+  pack.manifest.id = PEER_FIXTURE_ID;
+  pack.manifest.name = "Harness Native Peer";
+  pack.manifest.entry_source = pack.manifest.entry_source.replace(
+    `${port}/me`,
+    `${port}/peer/me`,
+  );
+  const d = pack.manifest.contributes.authentication;
+  d.providerName = "Harness Peer OAuth";
+  d.clientId = "grain-harness-peer";
+  d.scopes = ["fixture.peer.read"];
+  d.authorizationEndpoint = `https://127.0.0.1:${port}/peer/authorize`;
+  d.tokenEndpoint = `https://127.0.0.1:${port}/peer/token`;
   return pack;
 }

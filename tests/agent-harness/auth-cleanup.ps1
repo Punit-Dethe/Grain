@@ -33,7 +33,7 @@ public static class GrainOwnedAuthCleanup {
         if (!Guid.TryParseExact(runId, "D", out parsed)) throw new Exception("Invalid run UUID");
         string service = "com.grain.extension.oauth.agent-harness." + parsed.ToString("D");
         string suffix = "." + service;
-        string pattern = "^com\\.grain\\.harness\\.auth(?:/[a-fA-F0-9]{32})?" + Regex.Escape(suffix) + "$";
+        string pattern = "^com\\.grain\\.harness\\.auth(?:-peer)?(?:/[a-fA-F0-9]{32})?" + Regex.Escape(suffix) + "$";
         uint count; IntPtr entries;
         if (!Enumerate("com.grain.harness.auth*", 0, out count, out entries)) {
             int error = Marshal.GetLastWin32Error();
