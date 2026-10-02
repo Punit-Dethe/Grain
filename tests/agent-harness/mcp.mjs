@@ -39,6 +39,8 @@ export function mcpHandlers(ctx) {
     );
   }
   async function read(stage) {
+    const observation = { stage, status: "Running" };
+    evidence.push(observation);
     const before = calls(),
       modelStart = ctx.model().journal.length;
     const page = await ctx.request("mcp_read");
@@ -74,8 +76,9 @@ export function mcpHandlers(ctx) {
       !ctx.provider().journal.some((entry) => entry.phase === "error"),
       "MCP fixture rejected real wire traffic",
     );
-    evidence.push({
+    Object.assign(observation, {
       stage,
+      status: "Pass",
       wireCalls: 1,
       approvalRequired: true,
       nestedWireAndResultVerified: true,
@@ -102,6 +105,52 @@ export function mcpHandlers(ctx) {
     );
     evidence.push({ stage: "stale-approval", wireCalls: 0 });
   }
+  async function outcome(stage, instruction, flag, visibleText) {
+    const observation = { stage, status: "Running" };
+    evidence.push(observation);
+    const before = calls(),
+      modelStart = ctx.model().journal.length;
+    const page = await ctx.request(instruction);
+    assert.equal(calls(), before, `${stage}: call escaped approval`);
+    await ctx.activate(page.locator(".agc-confirm-actions .agc-action-btn"));
+    await ctx.waitFor(
+      `${stage}: actual Agent completes`,
+      async () => !(await ctx.status()).agent.active,
+    );
+    assert.equal(
+      calls(),
+      before + 1,
+      `${stage}: dispatched call absent or replayed`,
+    );
+    assert.equal(
+      ctx
+        .model()
+        .journal.slice(modelStart)
+        .filter((entry) => entry[flag]).length,
+      1,
+      `${stage}: wrong result classification`,
+    );
+    await page
+      .getByText(visibleText, { exact: false })
+      .first()
+      .waitFor({ state: "visible", timeout: 10000 });
+    assert.equal(
+      ctx.provider().activeSessions,
+      0,
+      `${stage}: session survived`,
+    );
+    assert.ok(
+      !ctx.provider().journal.some((entry) => entry.phase === "error"),
+      `${stage}: fixture rejected wire traffic`,
+    );
+    Object.assign(observation, {
+      status: "Pass",
+      wireCalls: 1,
+      approvalRequired: true,
+      modelOracle: flag,
+      activeSessions: 0,
+    });
+  }
   return {
     takeEvidence() {
       const value = evidence;
@@ -109,6 +158,157 @@ export function mcpHandlers(ctx) {
       return value;
     },
     handlers: {
+      async "mcp.response-preview"() {
+        const provider = ctx.provider();
+        await enabled();
+        try {
+          for (const reply of ["json", "sse"]) {
+            provider.configure({
+              lifecycle: "stateless",
+              reply,
+              catalog: "mixed",
+              revision: "one",
+              result: "preview",
+            });
+            await outcome(
+              `${reply}-utf8-and-structured-preview`,
+              "mcp_preview",
+              "mcpPreviewVerified",
+              "Some result data was omitted because of the size limit.",
+            );
+            provider.configure({ result: "normal" });
+            await read(`${reply}-preview-recovery`);
+          }
+        } finally {
+          await ctx.closePanel();
+          await control("disable");
+        }
+      },
+      async "mcp.transport-bounds"() {
+        const provider = ctx.provider();
+        await enabled();
+        try {
+          for (const lifecycle of ["stateless", "legacy"]) {
+            for (const kind of [
+              "json_declared",
+              "json_chunked",
+              "sse_data",
+              "sse_comments",
+              "http_error",
+              "drop",
+            ]) {
+              provider.configure({
+                lifecycle,
+                reply: "json",
+                catalog: "mixed",
+                revision: "one",
+                result: kind === "drop" ? kind : `overflow_${kind}`,
+              });
+              await outcome(
+                `${lifecycle}-${kind}`,
+                "mcp_unknown",
+                "mcpUnknownVerified",
+                "could not confirm",
+              );
+              provider.configure({ result: "normal" });
+              await read(`${lifecycle}-${kind}-recovery`);
+            }
+          }
+        } finally {
+          await ctx.closePanel();
+          await control("disable");
+        }
+      },
+      async "mcp.close-cancellation"() {
+        const provider = ctx.provider();
+        await enabled();
+        try {
+          for (const lifecycle of ["stateless", "legacy"]) {
+            for (const reply of ["json", "sse"]) {
+              const stage = `${lifecycle}-${reply}-close-held`;
+              const observation = { stage, status: "Running" };
+              evidence.push(observation);
+              provider.configure({
+                lifecycle,
+                reply,
+                catalog: "mixed",
+                revision: "one",
+                result: "held",
+              });
+              const before = calls(),
+                modelStart = ctx.model().journal.length;
+              const page = await ctx.request("mcp_read");
+              assert.equal(calls(), before, `${stage}: call escaped approval`);
+              await ctx.activate(
+                page.locator(".agc-confirm-actions .agc-action-btn"),
+              );
+              await ctx.waitFor(
+                `${stage}: provider receives approved call`,
+                () => provider.heldCalls === 1,
+              );
+              assert.equal(calls(), before + 1);
+              await ctx.closePanel();
+              await ctx.waitFor(
+                `${stage}: HTTP reply closes and session retires`,
+                () => provider.heldCalls === 0 && provider.activeSessions === 0,
+              );
+              provider.attemptLateReply();
+              assert.equal(
+                calls(),
+                before + 1,
+                `${stage}: cancelled call replayed`,
+              );
+              assert.equal(
+                ctx
+                  .model()
+                  .journal.slice(modelStart)
+                  .filter((entry) => entry.mcpVerified).length,
+                0,
+                `${stage}: late success reached model`,
+              );
+              assert.ok(
+                !provider.journal.some((entry) => entry.phase === "error"),
+                `${stage}: fixture wire error`,
+              );
+              provider.configure({ result: "normal" });
+              await read(`${stage}-fresh-session`);
+              assert.equal(
+                ctx
+                  .model()
+                  .journal.slice(modelStart)
+                  .filter((entry) => entry.mcpVerified).length,
+                1,
+                `${stage}: late result contaminated fresh session`,
+              );
+              Object.assign(observation, {
+                status: "Pass",
+                cancelledWireCalls: 1,
+                freshWireCalls: 1,
+                lateReplyDiscarded: true,
+                activeSessions: 0,
+                heldCalls: 0,
+              });
+            }
+            const before = calls();
+            await ctx.request("mcp_read");
+            await ctx.closePanel();
+            assert.equal(
+              calls(),
+              before,
+              `${lifecycle}: closed pending approval dispatched`,
+            );
+            evidence.push({
+              stage: `${lifecycle}-close-pending`,
+              status: "Pass",
+              wireCalls: 0,
+            });
+            await read(`${lifecycle}-pending-close-recovery`);
+          }
+        } finally {
+          await ctx.closePanel();
+          await control("disable");
+        }
+      },
       async "mcp.transport-contract"() {
         const provider = ctx.provider();
         const start = provider.journal.length;

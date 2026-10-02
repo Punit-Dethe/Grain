@@ -340,4 +340,25 @@ scenarios.push(
     description:
       "Real MCP mixed pages, unsupported selection/empty catalog, repeated cursor refusal, changed approval and fresh recovery",
   },
+  {
+    id: "mcp.response-preview",
+    suite: "mcp",
+    checks: [20],
+    description:
+      "Real JSON/SSE large UTF-8 and structured previews retain explicit byte bounds, omission notices and fresh-call recovery",
+  },
+  {
+    id: "mcp.transport-bounds",
+    suite: "mcp",
+    checks: [20],
+    description:
+      "Separate modern/legacy declared/chunked JSON, SSE data/comments, error-body overflow and dropped replies classify unknown, never replay and recover",
+  },
+  {
+    id: "mcp.close-cancellation",
+    suite: "mcp",
+    checks: [31],
+    description:
+      "Modern/legacy JSON/SSE approved held calls and pending approvals close through real Agent UI; late replies cannot contaminate fresh sessions",
+  },
 );

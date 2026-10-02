@@ -97,12 +97,14 @@ if (
     "released-refresh",
     "wrong-mcp-type",
     "supported-mcp-excluded",
+    "short-mcp-preview",
   ].includes(options.fault)
 )
   throw new Error("Unknown oracle fault");
 for (const [fault, scenario] of [
   ["wrong-mcp-type", "mcp.transport-contract"],
   ["supported-mcp-excluded", "mcp.mixed-catalog"],
+  ["short-mcp-preview", "mcp.response-preview"],
   ["released-refresh", "native.auth-refresh-logout"],
   ["uncancelled-login", "native.auth-cancellation"],
   ["accepted-partial-consent", "native.auth-expiry"],
@@ -1416,6 +1418,7 @@ try {
     mcpProvider = await startMcpFixture(root, {
       wrongNestedType: options.fault === "wrong-mcp-type",
       supportedExcluded: options.fault === "supported-mcp-excluded",
+      shortPreview: options.fault === "short-mcp-preview",
     });
   }
   if (authProvider || mcpProvider) {
@@ -1473,6 +1476,7 @@ try {
   for (const scenario of selected) {
     if (interrupted) throw new Error("Run interrupted");
     const started = performance.now();
+    const modelStart = model.journal.length;
     console.log(`RUN ${scenario.id}`);
     const result = {
       id: scenario.id,
@@ -1501,7 +1505,6 @@ try {
       )
         await fixture("load");
       const eventStart = (await status()).events.length;
-      const modelStart = model.journal.length;
       await handlers[scenario.id]();
       if (scenario.suite === "store") await invoke("store_close");
       await closePanel();
@@ -1542,6 +1545,7 @@ try {
     } catch (error) {
       result.status = error instanceof Blocked ? "Blocked" : "Fail";
       result.error = String(error.message ?? error).slice(0, 2500);
+      result.model = model.journal.slice(modelStart);
       result.observations = [
         ...(result.observations ?? []),
         ...takeInputEvidence(),
@@ -1555,6 +1559,14 @@ try {
         ...accountRefresh.takeEvidence(),
         ...mcpSuite.takeEvidence(),
       ];
+      if (scenario.suite === "mcp") {
+        for (const observation of result.observations) {
+          if (observation.status === "Running") {
+            observation.status = result.status;
+            observation.error = result.error;
+          }
+        }
+      }
       try {
         result.snapshot = await status();
       } catch {
@@ -1705,6 +1717,7 @@ try {
       port: mcpProvider.port,
       requests: mcpProvider.journal,
       activeSessionsBeforeShutdown: mcpProvider.activeSessions,
+      heldCallsBeforeShutdown: mcpProvider.heldCalls,
       limitations: [
         "Unauthenticated controlled HTTPS peer; no live provider, OAuth, account persistence or official conformance certification.",
       ],

@@ -480,6 +480,8 @@ pub async fn agent_harness_fixture(
 pub enum Instruction {
     McpRead,
     McpExcluded,
+    McpPreview,
+    McpUnknown,
     Hello,
     SlowHello,
     ModelWait,
@@ -523,6 +525,8 @@ pub async fn agent_harness_submit(
     let text = match instruction {
         Instruction::McpRead => "Harness request: mcp_read",
         Instruction::McpExcluded => "Harness request: mcp_excluded",
+        Instruction::McpPreview => "Harness request: mcp_preview",
+        Instruction::McpUnknown => "Harness request: mcp_unknown",
         Instruction::Hello => "Harness request: hello",
         Instruction::SlowHello => "Harness request: slow_hello",
         Instruction::ModelWait => "Harness request: model_wait",

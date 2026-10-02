@@ -88,7 +88,7 @@ Runtime reports also identify the Node/WebView adapter version and an independen
 | `native.result-budgets`    | Replies exceeding the 64 KiB decoded budget and 512 KiB raw wire budget fail at distinct boundaries; workers/tokens/supervisors retire, then fresh native calls recover.                          |
 | `native.invalid-input`     | Unknown keys, missing required values, wrong types, oversized arguments and malformed JSON fail before approval/startup; private rejected parameter keys stay hidden.                             |
 
-`smoke` contains the first two; `lifecycle` includes smoke and the original remaining non-idle lifecycle cases; `native-failures` contains the six Block 2C scenarios above. `native-installation` contains six native consent/package/restart cases. `native-foundation` contains the two B1a cases below. `native-auth` contains eight guarded native-account cases below; `native-auth-schedules` selects the four B1c cases. `store` contains three signed-store cases below. `registry-recovery` contains the existing `native.registry-refusal` plus two new cases below. `all` includes all forty distinct cases; overlapping suite selections are not additive. `idle` runs only the long timing case. Scenarios set up their own fixture baseline and clean it up. A failed scenario stops the batch; later scenarios are Not run rather than being assessed against contaminated state.
+`smoke` contains the first two; `lifecycle` includes smoke and the original remaining non-idle lifecycle cases; `native-failures` contains the six Block 2C scenarios above. `native-installation` contains six native consent/package/restart cases. `native-foundation` contains the two B1a cases below. `native-auth` contains eight guarded native-account cases below; `native-auth-schedules` selects the four B1c cases. `store` contains three signed-store cases below. `registry-recovery` contains the existing `native.registry-refusal` plus two new cases below. `mcp` contains the five controlled MCP cases below. `all` includes all forty-five distinct cases; overlapping suite selections are not additive. `idle` runs only the long timing case. Scenarios set up their own fixture baseline and clean it up. A failed scenario stops the batch; later scenarios are Not run rather than being assessed against contaminated state.
 
 ### Native foundation (B1a)
 
@@ -287,6 +287,27 @@ Exit codes: **0** = every selected scenario and cleanup passed; **1** = assertio
 4. Add an intentional failure case or other test of the new oracle. Run from two clean profiles and inspect JSON evidence as well as the readable summary.
 5. Review the changed production paths and the harness's test assumptions. Update this README and the maintained plan/progress documents. Keep automation evidence distinct from human acceptance.
 
-Next suites can cover controlled MCP transport, a native+MCP task, forced model misbehavior, human-assisted real OAuth consent, account replacement, live-model selection, actual summon/global shortcuts and microphone/pill behavior. The current runner is not a certification of those paths.
+Remaining suites can cover MCP catalog/whole-operation floods and real deadlines, official production-wrapper conformance, a native+MCP task, forced model misbehavior, human-assisted real MCP OAuth consent, live-model selection, actual summon/global shortcuts and microphone/pill behavior. Current controlled MCP tests do not certify these remaining paths.
+
+## Controlled real-app MCP suite
+
+Requires the stamped real harness application and Python `cryptography` for owned TLS. No user account, model API key or production trust-store change is required. A fixed debug-only provider uses only its run's exact loopback endpoint and CA; it refuses account commands. The external peer supplies wire replies, not Agent/executor mocks.
+
+```powershell
+node tests/agent-harness/run.mjs --suite mcp
+node tests/agent-harness/run.mjs --scenario mcp.response-preview --fault short-mcp-preview
+```
+
+| ID | Separate assertions |
+| --- | --- |
+| `mcp.transport-contract` | Modern/legacy JSON/SSE, two-page nested reads, one approved call, no idle negotiation, actual restart and stale disable refusal. |
+| `mcp.mixed-catalog` | Supported/excluded schemas, excluded selection with zero dispatch, empty supported catalog, repeated cursor and changed-approval refusal. |
+| `mcp.response-preview` | Multi-byte text/large structured data, bounded model preview, distinct model/UI omission notices and fresh recovery in JSON/SSE. |
+| `mcp.transport-bounds` | Twelve named lifecycle/overflow/drop variants: declared/chunked JSON, SSE data/small comments, error body and lost reply. Honest unknown result, one call, no replay and fresh read after each. |
+| `mcp.close-cancellation` | Four approved held calls, actual panel close/HTTP disconnect/session cleanup, attempted late reply, fresh result isolation; two pending-approval closes never dispatch. |
+
+There are 45 distinct maintained real-app scenarios, five MCP, and 22 runner self-tests. Run cases serially after native compilation finishes. Each failure records its exact stage and model observations, stops the batch and leaves later cases Not run. The fault command must fail for a missing preview notice with one provider call and cleanup Pass. A nonzero prerequisite/reporting failure is not an accepted oracle check.
+
+[Catalog audit](../../docs/Extensions%202.0/MCP-CATALOG-TRANSPORT-AUDIT.md), [bounds/cancellation audit](../../docs/Extensions%202.0/MCP-BOUNDS-CANCELLATION-AUDIT.md), and [retention/cleanup inventory](../../docs/Extensions%202.0/AGENT-TEST-HARNESS.md#harness-retention-and-cleanup-inventory) give evidence identities and exclusions. Controlled partial coverage never certifies live MCP OAuth, account persistence or official conformance. Retain fixtures as regression tests; delete owned profiles, keys, credentials, processes and response handles each run. Feature-gated test seams have documented retirement conditions.
 
 Implementation/design references: [Playwright WebView2 automation](https://playwright.dev/docs/webview2), [Microsoft WebView2 environment options](https://learn.microsoft.com/en-us/microsoft-edge/webview2/reference/win32/webview2-idl), [Tauri's distinction between mock-runtime and real-application tests](https://v2.tauri.app/develop/tests/), [Windows SendInput](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-sendinput) and [foreground window restrictions](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setforegroundwindow). These support the adapter choice; Grain's isolation and evidence policies are local requirements.

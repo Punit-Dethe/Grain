@@ -154,3 +154,27 @@ node tests/agent-harness/run.mjs --scenario mcp.mixed-catalog --fault supported-
 ```
 
 Build first using `tests/agent-harness/build.ps1`, with Python `cryptography` available; run real suites serially and after native compilation finishes. Both fault commands must fail with their intended assertion and cleanup Pass. Final accepted runs `run-gysFYv` / `run-C2iw9m`, fault runs, production tests and native/smoke regression identities are in the audit. This controlled peer supplies supporting evidence for 8/17 and full evidence for 23; it supplies no OAuth/account-persistence, oversized-response, slow-call, live-provider or official-conformance certification. Those are the next B2/B3 requirements. No additional manual batch is required now.
+
+## Harness retention and cleanup inventory
+
+**Current maintained coverage (2 October):** [MCP bounds/cancellation audit](MCP-BOUNDS-CANCELLATION-AUDIT.md) adds `mcp.response-preview`, `mcp.transport-bounds` and `mcp.close-cancellation`. There are **45 scenarios**, five MCP, and 22 runner self-tests. Final full MCP runs `run-mnHybt` / `run-Rc2B9N` each pass five separately reported procedures and 52 supporting stages, with 46 actual calls, zero retained sessions/held calls and cleanup Pass. The deliberate `short-mcp-preview` fault fails as required; ordinary smoke and 46 production MCP tests pass. The audit preserves the early UI-oracle and failed-report scope errors. Checks 20/31 remain Pending for their complete live/account requirements; **39 Pass / 14 Pending** is unchanged. No new user batch or broader platform work starts here.
+
+```powershell
+node tests/agent-harness/run.mjs --suite mcp
+node tests/agent-harness/run.mjs --scenario mcp.response-preview --fault short-mcp-preview
+```
+
+Retain `tests/agent-harness/` as regression infrastructure. Its scripted model and external native/OAuth/store/MCP fixtures exercise the real application; they are not alternate application engines or production dependencies. Retain stable scenario IDs, failure assertions and privacy-safe evidence when adapters change. Remove a fixture only after equivalent final-path coverage exists and its scenario/documentation references are removed together.
+
+| Item | Lifetime / required cleanup | Retirement trigger |
+| --- | --- | --- |
+| Run-local profile, marker, TLS CA/leaf/private keys, scoped credentials, packages and registry locks | Owned by one run; runner `finally` removes them on success or failure and records cleanup failures. Never reuse a personal profile or credentials. | Every run, immediately after evidence collection. |
+| Owned application, model/provider processes, sockets, listeners and timers | Explicit shutdown; owned ports must close. No surviving MCP sessions or held response handles. | Every run; cleanup failure makes the run unsuccessful. |
+| Feature-gated Rust commands, fixed MCP endpoint/CA adapter and finite instructions | Debug harness only; preserve existing application/window/profile/marker guards. No arbitrary endpoint, direct executor, real-account bypass or release feature. | Replace/remove when maintained real-app automation can cover the same path without the seam. Until then these are intentional test support. |
+| Closed MCP response handles used for deliberate late replies | Bounded to four handles; consumed immediately by `attemptLateReply()`. End-run cleanup drops handles even if an assertion fails. | After each late-reply assertion, or failed-run cleanup. |
+| `.build/` assets, CLI/host identities and compiled executable | Local rebuild cache, ignored by Git; source and runner fingerprints distinguish evidence. | Regenerate when fingerprints change; removable when no owned test process is using them. |
+| Privacy-safe reports and failed-run evidence | Retain for comparison and audit; no keys, grants, private prompts or personal content. | Explicit evidence-retention policy, never silently overwrite failures. |
+
+No unused scaffold is intentionally deferred by the MCP bounds/cancellation batch. Known **production** cleanup work remains separate: discarded native grant/orphan reconciliation, retained input investigation and the later physical retirement sweep in the execution plan. A passing end-run credential cleanup does not close production orphan reconciliation.
+
+Batching policy: compile stable edits once, then execute cases serially with distinct IDs and per-stage observations. Each affected case verifies a fresh request after failure/cancellation. Stop the batch on its first failure; preserve failed and Not run verdicts. Repeat the audited batch in a clean profile. Never shorten production deadlines, manufacture acceptance from aggregate results, or treat controlled fixtures as live-provider/conformance certificates.

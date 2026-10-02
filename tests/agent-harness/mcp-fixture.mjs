@@ -65,7 +65,11 @@ export function catalog(revision = "one") {
 
 export async function startMcpFixture(
   root,
-  { wrongNestedType = false, supportedExcluded = false } = {},
+  {
+    wrongNestedType = false,
+    supportedExcluded = false,
+    shortPreview = false,
+  } = {},
 ) {
   const [cert, key] = await Promise.all([
     readFile(join(root, "mcp-tls/cert.pem")),
@@ -73,15 +77,18 @@ export async function startMcpFixture(
   ]);
   const journal = [],
     sockets = new Set(),
-    sessions = new Set();
-  let mode = {
+    sessions = new Set(),
+    held = new Set(),
+    closedReplies = [];
+  let configuredMode = {
     lifecycle: "stateless",
     reply: "json",
     catalog: "mixed",
     revision: "one",
+    result: "normal",
   };
   function record(entry) {
-    assert.ok(journal.length < 512, "MCP fixture journal overflow");
+    assert.ok(journal.length < 2048, "MCP fixture journal overflow");
     journal.push(entry);
   }
   function json(res, status, value, headers = {}) {
@@ -94,6 +101,8 @@ export async function startMcpFixture(
   }
   const server = createServer({ key, cert }, async (req, res) => {
     try {
+      // A held reply must keep the mode of its own request.
+      const mode = { ...configuredMode };
       assert.equal(req.url, "/mcp");
       assert.equal(
         req.headers.authorization,
@@ -130,6 +139,7 @@ export async function startMcpFixture(
         method: body.method,
         lifecycle: mode.lifecycle,
         reply: mode.reply,
+        result: mode.result,
       };
       record(entry);
       if (body.id === undefined) {
@@ -230,6 +240,85 @@ export async function startMcpFixture(
             ],
             isError: false,
           };
+          if (mode.result === "preview") {
+            result.content[0].text =
+              "Harness MCP large: " + "\u00e9".repeat(32768);
+            result.structuredContent = { omitted: "x".repeat(32768) };
+            if (shortPreview) {
+              result.content[0].text = "Harness MCP large: small";
+              delete result.structuredContent;
+            }
+          }
+          if (mode.result === "held") {
+            res.writeHead(200, {
+              "content-type":
+                mode.reply === "sse" ? "text/event-stream" : "application/json",
+            });
+            res.flushHeaders();
+            const handle = {
+              res,
+              message: { jsonrpc: "2.0", id: body.id, result },
+              reply: mode.reply,
+            };
+            held.add(handle);
+            entry.phase = "held";
+            res.once("close", () => {
+              held.delete(handle);
+              assert.ok(
+                closedReplies.length < 4,
+                "Unreleased closed reply handles",
+              );
+              closedReplies.push(handle);
+              record({
+                phase: "held-closed",
+                lifecycle: mode.lifecycle,
+                reply: mode.reply,
+              });
+            });
+            return;
+          }
+          if (mode.result === "drop") {
+            entry.phase = "dropped-after-dispatch";
+            res.destroy();
+            return;
+          }
+          if (mode.result.startsWith("overflow_")) {
+            const kind = mode.result.slice("overflow_".length);
+            const sse = kind.startsWith("sse");
+            const size =
+              kind === "http_error"
+                ? 17 * 1024
+                : sse
+                  ? 513 * 1024
+                  : 2 * 1024 * 1024 + 1;
+            // Valid JSON/SSE envelopes isolate byte-limit failures from parse
+            // failures. Many small comments isolate the raw stream budget.
+            const oversized = {
+              jsonrpc: "2.0",
+              id: body.id,
+              result: { content: [{ type: "text", text: "x".repeat(size) }] },
+            };
+            const payload =
+              kind === "sse_comments"
+                ? (":" + "x".repeat(1020) + "\n\n").repeat(515) +
+                  `event: message\ndata: ${JSON.stringify({ jsonrpc: "2.0", id: body.id, result })}\n\n`
+                : kind === "sse_data"
+                  ? `event: message\ndata: ${JSON.stringify(oversized)}\n\n`
+                  : JSON.stringify(oversized);
+            res.writeHead(kind === "http_error" ? 500 : 200, {
+              "content-type": sse ? "text/event-stream" : "application/json",
+              ...(kind === "json_declared"
+                ? { "content-length": String(Buffer.byteLength(payload)) }
+                : {}),
+            });
+            entry.phase = "overflow-sent";
+            entry.wireBytes = Buffer.byteLength(payload);
+            // Explicit chunked framing exercises incremental limits, even if
+            // the OS coalesces writes. No timer or background flood survives.
+            res.write(payload.slice(0, 4096));
+            res.end(payload.slice(4096));
+            return;
+          }
         } else throw new Error(`Unexpected MCP method: ${body.method}`);
       }
       const message = { jsonrpc: "2.0", id: body.id, result };
@@ -262,6 +351,26 @@ export async function startMcpFixture(
     get activeSessions() {
       return sessions.size;
     },
+    get heldCalls() {
+      return held.size;
+    },
+    attemptLateReply() {
+      // Deliberately misbehaving peer: try to finish a closed request. Never
+      // retain a response handle beyond this operation.
+      assert.ok(
+        closedReplies.length > 0 && held.size === 0,
+        "Late reply attempted before disconnect",
+      );
+      for (const { res, message, reply } of closedReplies.splice(0)) {
+        assert.equal(res.destroyed, true, "Cancelled reply still writable");
+        res.end(
+          reply === "sse"
+            ? `event: message\ndata: ${JSON.stringify(message)}\n\n`
+            : JSON.stringify(message),
+        );
+        record({ phase: "late-reply-discarded", destroyed: res.destroyed });
+      }
+    },
     configure(next) {
       assert.equal(
         sessions.size,
@@ -270,24 +379,40 @@ export async function startMcpFixture(
       );
       assert.ok(
         Object.keys(next).every((key) =>
-          ["lifecycle", "reply", "catalog", "revision"].includes(key),
+          ["lifecycle", "reply", "catalog", "revision", "result"].includes(key),
         ),
       );
-      const candidate = { ...mode, ...next };
+      assert.equal(held.size, 0, "Fixture reconfigured with a held call");
+      const candidate = { ...configuredMode, ...next };
       assert.ok(["stateless", "legacy"].includes(candidate.lifecycle));
       assert.ok(["json", "sse"].includes(candidate.reply));
       assert.ok(
         ["mixed", "unsupported", "repeat_cursor"].includes(candidate.catalog),
       );
       assert.ok(["one", "two"].includes(candidate.revision));
-      mode = candidate;
+      assert.ok(
+        [
+          "normal",
+          "preview",
+          "held",
+          "drop",
+          "overflow_json_declared",
+          "overflow_json_chunked",
+          "overflow_sse_data",
+          "overflow_sse_comments",
+          "overflow_http_error",
+        ].includes(candidate.result),
+      );
+      configuredMode = candidate;
     },
     async close() {
       const pending = new Promise((resolve) => server.close(resolve));
       for (const socket of sockets) socket.destroy();
       await pending;
+      closedReplies.length = 0;
       assert.equal(sockets.size, 0, "MCP fixture retained sockets");
       assert.equal(sessions.size, 0, "MCP fixture retained protocol sessions");
+      assert.equal(held.size, 0, "MCP fixture retained held replies");
     },
   };
 }
