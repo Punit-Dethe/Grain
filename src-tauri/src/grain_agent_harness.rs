@@ -33,6 +33,8 @@ struct Marker {
     #[serde(default)]
     mcp_live_deepwiki: bool,
     #[serde(default)]
+    mcp_live_huggingface: bool,
+    #[serde(default)]
     mcp_live_linear: bool,
     #[serde(default)]
     mcp_linear_consent: bool,
@@ -67,6 +69,10 @@ fn read_marker(root: &Path) -> Result<Marker, String> {
     }
     let marker: Marker = serde_json::from_slice(&bytes).map_err(|_| "Invalid harness marker")?;
     if marker.schema != 1
+        || (marker.mcp_live_huggingface
+            && (marker.mcp_live_deepwiki || marker.mcp_live_linear || marker.mcp_auth
+                || marker.mcp_port.is_some() || marker.mcp_peer_port.is_some()
+                || marker.auth_port.is_some() || marker.store_port.is_some()))
         || (marker.mcp_linear_consent && !marker.mcp_live_linear)
         || (marker.mcp_live_linear
             && (marker.mcp_live_deepwiki || marker.mcp_auth || marker.mcp_port.is_some()
@@ -152,6 +158,12 @@ pub(super) fn live_deepwiki_enabled() -> bool {
     CONFIG
         .get()
         .is_some_and(|value| value.marker.mcp_live_deepwiki)
+}
+
+pub(super) fn live_huggingface_enabled() -> bool {
+    CONFIG
+        .get()
+        .is_some_and(|value| value.marker.mcp_live_huggingface)
 }
 
 pub(super) fn mcp_auth_enabled() -> bool {
@@ -254,7 +266,9 @@ pub fn configure(app: &AppHandle) -> Result<(), String> {
     // Ordinary provider entries remain excluded from the isolated host.
     settings.mcp_enabled_providers.retain(|id| {
         (live_linear_enabled() && id == crate::grain_agent_harness_mcp::LINEAR_PROVIDER_ID)
-            || ((config().marker.mcp_port.is_some() || live_deepwiki_enabled())
+            || ((config().marker.mcp_port.is_some()
+                || live_deepwiki_enabled()
+                || live_huggingface_enabled())
                 && id == crate::grain_agent_harness_mcp::PROVIDER_ID)
             || (mcp_auth_enabled()
                 && [
@@ -572,6 +586,7 @@ pub enum Instruction {
     McpConformance,
     McpLiveRead,
     McpLiveLarge,
+    McpHfRead,
     McpAccountA,
     McpAccountB,
     McpClientA,
@@ -634,6 +649,7 @@ pub async fn agent_harness_submit(
         Instruction::McpConformance => "Harness request: mcp_conformance",
         Instruction::McpLiveRead => "Harness request: mcp_live_read",
         Instruction::McpLiveLarge => "Harness request: mcp_live_large",
+        Instruction::McpHfRead => "Harness request: mcp_hf_read",
         Instruction::McpAccountA => "Harness request: mcp_account_a",
         Instruction::McpAccountB => "Harness request: mcp_account_b",
         Instruction::McpClientA => "Harness request: mcp_client_a",
@@ -749,6 +765,30 @@ mod tests {
         ] {
             std::fs::write(&marker, serde_json::to_vec(&serde_json::json!({"schema":1,"runId":uuid::Uuid::new_v4(),"modelPort":9000,"mcpLiveDeepwiki":live,"mcpPort":port})).unwrap()).unwrap();
             assert_eq!(read_marker(root.path()).is_ok(), valid);
+        }
+    }
+
+    #[test]
+    fn public_nested_marker_excludes_all_other_fixture_and_account_sources() {
+        let root = tempfile::tempdir().unwrap();
+        let marker = serde_json::json!({"schema":1,"runId":uuid::Uuid::new_v4(),"modelPort":9000,"mcpLiveHuggingface":true});
+        let path = root.path().join(".grain-agent-harness.json");
+        std::fs::write(&path, serde_json::to_vec(&marker).unwrap()).unwrap();
+        assert!(read_marker(root.path()).is_ok());
+        for (key, value) in [
+            ("mcpLiveDeepwiki", serde_json::json!(true)),
+            ("mcpLiveLinear", serde_json::json!(true)),
+            ("mcpLinearConsent", serde_json::json!(true)),
+            ("mcpAuth", serde_json::json!(true)),
+            ("mcpPort", serde_json::json!(9001)),
+            ("mcpPeerPort", serde_json::json!(9002)),
+            ("authPort", serde_json::json!(9003)),
+            ("storePort", serde_json::json!(9004)),
+        ] {
+            let mut mixed = marker.clone();
+            mixed[key] = value;
+            std::fs::write(&path, serde_json::to_vec(&mixed).unwrap()).unwrap();
+            assert!(read_marker(root.path()).is_err());
         }
     }
 

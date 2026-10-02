@@ -369,7 +369,21 @@ scenarios.push(
 );
 
 // Explicit Linear browser/grant control cases are also excluded from all.
+scenarios.push({
+  id: "mcp.hf-nested-read",
+  suite: "mcp-hf-live",
+  checks: [17],
+  description:
+    "Opt-in anonymous Hugging Face hf_fs nested public document read, actual selective schema/approval/result and repeat after real restart",
+});
 scenarios.push(
+  {
+    id: "mcp.linear-contracts",
+    suite: "mcp-linear-contracts",
+    checks: [12, 17],
+    description:
+      "One explicit human sign-in inspects actual supported structural input contracts and repeats discovery after restart; no tools execute and no numbered test completes from metadata alone",
+  },
   {
     id: "mcp.linear-consent-guards",
     suite: "mcp-linear-guards",
@@ -453,9 +467,11 @@ export function selectScenarios(suite) {
       "native-auth",
       "mcp",
       "mcp-live",
+      "mcp-hf-live",
       "mcp-linear-preflight",
       "mcp-linear-guards",
       "mcp-linear-sign-in",
+      "mcp-linear-contracts",
       "mcp-auth",
       "native-installation",
       "registry-recovery",
@@ -470,9 +486,11 @@ export function selectScenarios(suite) {
         ![
           "mcp-conformance",
           "mcp-live",
+          "mcp-hf-live",
           "mcp-linear-preflight",
           "mcp-linear-guards",
           "mcp-linear-sign-in",
+          "mcp-linear-contracts",
           "agent-live",
           "agent-interruption-live",
         ].includes(scenario.suite)) ||

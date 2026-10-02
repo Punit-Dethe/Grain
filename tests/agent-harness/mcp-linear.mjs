@@ -9,7 +9,8 @@ export const LINEAR_ENDPOINT = "https://mcp.linear.app/mcp/readonly";
 export function linearIpcDeadline(command, args, signIn) {
   if (signIn && command === "agent_harness_mcp" && args.target === "linear") {
     if (args.operation === "connect") return 310000;
-    if (args.operation === "discover") return 95000;
+    if (["discover", "catalog_contracts"].includes(args.operation))
+      return 95000;
   }
   return 10000;
 }
@@ -25,6 +26,8 @@ export function safeLinearError(error) {
     "Linear browser sign-in did not complete",
     "Linear grant metadata failed validation",
     "Linear read-only discovery failed",
+    "Linear contract metadata failed validation",
+    "Linear contract inspection exceeded its metadata boundary",
     "Linear cancellation requires typing only cancelled",
     "Linear cancellation acknowledgement timed out",
     "Linear cancellation acknowledgement was interrupted",
@@ -100,6 +103,151 @@ export function verifyLinearDiscoveryCounts(value) {
   return {
     supportedToolCount: value.tool_count,
     toolExecutionPermitted: false,
+  };
+}
+
+// Structural metadata only. This is deliberately not a JSON Schema validator
+// or a way to synthesize executable arguments; omitted constraints stay explicit.
+export function verifyLinearContracts(value) {
+  const fail = () => {
+    throw new Error("Linear contract metadata failed validation");
+  };
+  const keys = (object, expected) =>
+    object &&
+    typeof object === "object" &&
+    !Array.isArray(object) &&
+    Object.keys(object).length === expected.length &&
+    Object.keys(object).every((key) => expected.includes(key));
+  if (
+    !keys(value, ["tool_count", "contracts"]) ||
+    !Array.isArray(value.contracts) ||
+    !Number.isSafeInteger(value.tool_count) ||
+    value.tool_count < 1 ||
+    value.tool_count > 128 ||
+    value.contracts.length !== value.tool_count ||
+    Buffer.byteLength(JSON.stringify(value)) > 64 * 1024
+  )
+    return fail();
+  let nodes = 8192;
+  const validName = (name) =>
+    typeof name === "string" &&
+    name.length > 0 &&
+    Buffer.byteLength(name) <= 256 &&
+    !/[\x00-\x1f\x7f]/.test(name);
+  const walk = (shape, depth = 0, dataDepth = 0) => {
+    if (depth > 24 || --nodes < 0) return fail();
+    if (typeof shape === "boolean") return false;
+    const allowed = [
+      "type",
+      "properties",
+      "required",
+      "items",
+      "additionalProperties",
+      "anyOf",
+      "oneOf",
+      "allOf",
+      "constraintsOmitted",
+    ];
+    if (
+      !shape ||
+      typeof shape !== "object" ||
+      Array.isArray(shape) ||
+      Object.keys(shape).some((key) => !allowed.includes(key)) ||
+      typeof shape.constraintsOmitted !== "boolean"
+    )
+      return fail();
+    const types = Array.isArray(shape.type)
+      ? shape.type
+      : shape.type === undefined
+        ? []
+        : [shape.type];
+    if (
+      types.length > 7 ||
+      (shape.type !== undefined && !types.length) ||
+      types.some(
+        (type) =>
+          ![
+            "object",
+            "array",
+            "string",
+            "number",
+            "integer",
+            "boolean",
+            "null",
+          ].includes(type),
+      )
+    )
+      return fail();
+    let nested =
+      dataDepth > 0 &&
+      (types.includes("object") || shape.properties !== undefined);
+    if (shape.properties !== undefined) {
+      if (
+        !shape.properties ||
+        typeof shape.properties !== "object" ||
+        Array.isArray(shape.properties) ||
+        Object.keys(shape.properties).length > 128
+      )
+        return fail();
+      for (const [name, child] of Object.entries(shape.properties)) {
+        if (!validName(name)) return fail();
+        const childNested = walk(child, depth + 1, dataDepth + 1);
+        nested ||= childNested;
+      }
+    }
+    if (
+      shape.required !== undefined &&
+      (!Array.isArray(shape.required) ||
+        shape.required.length > 128 ||
+        shape.required.some((name) => !validName(name)))
+    )
+      return fail();
+    for (const key of ["items", "additionalProperties"]) {
+      if (shape[key] !== undefined) {
+        const childNested = walk(shape[key], depth + 1, dataDepth + 1);
+        if (key === "items") nested ||= childNested;
+      }
+    }
+    for (const key of ["anyOf", "oneOf", "allOf"]) {
+      if (shape[key] !== undefined) {
+        if (!Array.isArray(shape[key]) || shape[key].length > 128)
+          return fail();
+        for (const child of shape[key]) {
+          const childNested = walk(child, depth + 1, dataDepth);
+          nested ||= childNested;
+        }
+      }
+    }
+    return nested;
+  };
+  let previous = "";
+  for (const entry of value.contracts) {
+    if (
+      !keys(entry, [
+        "name",
+        "schemaDigest",
+        "nestedObjectInput",
+        "inputShape",
+      ]) ||
+      typeof entry.name !== "string" ||
+      !/^[A-Za-z0-9_.-]{1,128}$/.test(entry.name) ||
+      entry.name <= previous ||
+      typeof entry.schemaDigest !== "string" ||
+      !/^[a-f0-9]{64}$/.test(entry.schemaDigest) ||
+      typeof entry.nestedObjectInput !== "boolean" ||
+      walk(entry.inputShape) !== entry.nestedObjectInput
+    )
+      return fail();
+    previous = entry.name;
+  }
+  return {
+    supportedToolCount: value.tool_count,
+    nestedObjectToolCount: value.contracts.filter(
+      (entry) => entry.nestedObjectInput,
+    ).length,
+    contracts: structuredClone(value.contracts),
+    toolExecutionPermitted: false,
+    executableSchema: false,
   };
 }
 
@@ -311,7 +459,7 @@ export function linearHandlers(ctx) {
       await pending;
     }
   }
-  async function browserConsent() {
+  async function browserConsent({ inspectContracts = false } = {}) {
     await control("disconnect");
     await disconnected();
     const stage = (name) => {
@@ -346,36 +494,40 @@ export function linearHandlers(ctx) {
     }
     let flow;
     try {
-      const cancel = stage("human-browser-cancellation");
-      flow = await begin();
-      console.log(
-        "LINEAR STEP 1/2: Cancel or close the first Linear consent tab WITHOUT approving. Then type cancelled and Enter here. No credentials go in this terminal.",
-      );
-      const opened = await control("open_authorization");
-      assert.equal(opened.opened, true);
-      await ctx.humanCancelled();
-      await control("disconnect");
-      await flow.pending;
-      if (flow.outcome().kind === "connected")
-        throw new Error(
-          "Linear browser cancellation unexpectedly authorized the account",
+      if (!inspectContracts) {
+        const cancel = stage("human-browser-cancellation");
+        flow = await begin();
+        console.log(
+          "LINEAR STEP 1/2: Cancel or close the first Linear consent tab WITHOUT approving. Then type cancelled and Enter here. No credentials go in this terminal.",
         );
-      if (!["cancelled", "denied"].includes(flow.outcome().kind))
-        throw new Error("Linear browser sign-in did not complete");
-      await reusable(opened.callbackPort);
-      await disconnected();
-      Object.assign(cancel, {
-        status: "Pass",
-        humanReportedBrowserCancellation: true,
-        productionOutcome: flow.outcome().kind,
-        callbackReleased: true,
-        vaultEntries: 0,
-      });
+        const opened = await control("open_authorization");
+        assert.equal(opened.opened, true);
+        await ctx.humanCancelled();
+        await control("disconnect");
+        await flow.pending;
+        if (flow.outcome().kind === "connected")
+          throw new Error(
+            "Linear browser cancellation unexpectedly authorized the account",
+          );
+        if (!["cancelled", "denied"].includes(flow.outcome().kind))
+          throw new Error("Linear browser sign-in did not complete");
+        await reusable(opened.callbackPort);
+        await disconnected();
+        Object.assign(cancel, {
+          status: "Pass",
+          humanReportedBrowserCancellation: true,
+          productionOutcome: flow.outcome().kind,
+          callbackReleased: true,
+          vaultEntries: 0,
+        });
+      }
 
       const consent = stage("human-browser-consent");
       flow = await begin();
       console.log(
-        "LINEAR STEP 2/2: Sign in to Linear in the new browser tab and approve READ-ONLY access. Return here; the remaining checks run automatically. No tool actions will execute.",
+        inspectContracts
+          ? "LINEAR CONTRACT CHECK: Sign in in the new browser tab and approve READ-ONLY access. Contract inspection, restart and cleanup run automatically; no account tool actions execute."
+          : "LINEAR STEP 2/2: Sign in to Linear in the new browser tab and approve READ-ONLY access. Return here; the remaining checks run automatically. No tool actions will execute.",
       );
       const accepted = await control("open_authorization");
       assert.equal(accepted.opened, true);
@@ -410,6 +562,14 @@ export function linearHandlers(ctx) {
         status: "Pass",
         ...verifyLinearDiscoveryCounts(result),
       });
+      let contracts;
+      if (inspectContracts) {
+        const inspection = stage("actual-supported-input-contracts");
+        contracts = verifyLinearContracts(await control("catalog_contracts"));
+        if (contracts.supportedToolCount !== discovery.supportedToolCount)
+          throw new Error("Linear contract metadata failed validation");
+        Object.assign(inspection, { status: "Pass", ...contracts });
+      }
       const beforeRestart = verifyLinearGrantMetadata(
         await control("grant_metadata"),
       );
@@ -425,6 +585,18 @@ export function linearHandlers(ctx) {
         grant: restored,
         scopedVaultEntries: 1,
       });
+      if (inspectContracts) {
+        const repeated = stage("actual-contracts-after-restart");
+        const after = verifyLinearContracts(await control("catalog_contracts"));
+        assert.deepEqual(after, contracts);
+        Object.assign(repeated, {
+          status: "Pass",
+          supportedToolCount: after.supportedToolCount,
+          nestedObjectToolCount: after.nestedObjectToolCount,
+          stableContracts: true,
+          toolExecutionPermitted: false,
+        });
+      }
     } finally {
       await control("disconnect");
       if (flow) await flow.pending;
@@ -516,7 +688,8 @@ export function linearHandlers(ctx) {
       "mcp.linear-cancel-disable": () => cancellation("disable"),
       "mcp.linear-cancel-disconnect": () => cancellation("disconnect"),
       "mcp.linear-consent-guards": guards,
-      "mcp.linear-browser-consent": browserConsent,
+      "mcp.linear-browser-consent": () => browserConsent(),
+      "mcp.linear-contracts": () => browserConsent({ inspectContracts: true }),
     },
     takeEvidence() {
       const result = evidence;

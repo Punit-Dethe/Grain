@@ -16,6 +16,8 @@ pub(crate) const ACCOUNT_IDS: [&str; 4] = [
     PEER_CLIENT_PROVIDER_ID,
 ];
 pub(crate) const LIVE_ENDPOINT: &str = "https://mcp.deepwiki.com/mcp";
+pub(crate) const HF_ENDPOINT: &str = "https://huggingface.co/mcp";
+const HF_DOCUMENT: &str = "hf://models/google-bert/bert-base-uncased/README.md";
 pub(crate) const LINEAR_PROVIDER_ID: &str = "grain-harness-linear";
 pub(crate) const LINEAR_ENDPOINT: &str = "https://mcp.linear.app/mcp/readonly";
 const LIVE_REPOSITORY: &str = "modelcontextprotocol/rust-sdk";
@@ -36,6 +38,9 @@ pub(crate) fn require_linear_consent() -> Result<(), String> {
 }
 
 pub(crate) fn endpoint() -> Result<String, String> {
+    if super::grain_agent_harness::live_huggingface_enabled() {
+        return Ok(HF_ENDPOINT.into());
+    }
     if super::grain_agent_harness::live_deepwiki_enabled() {
         return Ok(LIVE_ENDPOINT.into());
     }
@@ -60,9 +65,11 @@ fn account_config(id: &str) -> Result<(std::path::PathBuf, u16), String> {
 }
 
 pub(crate) fn client() -> Result<(String, reqwest_mcp::Client), String> {
-    if super::grain_agent_harness::live_deepwiki_enabled() {
+    if super::grain_agent_harness::live_deepwiki_enabled()
+        || super::grain_agent_harness::live_huggingface_enabled()
+    {
         return Ok((
-            LIVE_ENDPOINT.into(),
+            endpoint()?,
             super::grain_mcp::McpHttpClient::builder()
                 .no_proxy()
                 .build()
@@ -109,6 +116,21 @@ pub(crate) fn validate_live_post(
         let value =
             serde_json::to_value(message).map_err(|_| "Invalid Linear preflight message")?;
         return validate_linear_method(&value);
+    }
+    if uri == HF_ENDPOINT {
+        if !super::grain_agent_harness::live_huggingface_enabled() || has_auth {
+            return Err("Public MCP test requires its isolated no-account marker".into());
+        }
+        let value = serde_json::to_value(message).map_err(|_| "Invalid public MCP test message")?;
+        if let Some(action) = validated_hf_action(&value)? {
+            super::grain_agent_harness::observe(
+                "mcp-live-attempt",
+                "mcp.grain-harness",
+                action,
+                "",
+            );
+        }
+        return Ok(());
     }
     if uri != LIVE_ENDPOINT {
         return Ok(());
@@ -171,9 +193,121 @@ fn validated_live_action(value: &serde_json::Value) -> Result<Option<&str>, Stri
     Ok(Some(name))
 }
 
+// One fixed public text read. No arbitrary filesystem command, URI, batch,
+// account, image attachment or broader tool is admitted by this test path.
+fn validated_hf_action(value: &serde_json::Value) -> Result<Option<&str>, String> {
+    if value["method"] != "tools/call" {
+        return validate_linear_method(value).map(|_| None);
+    }
+    if value["params"]["name"] != "hf_fs"
+        || value["params"]["arguments"]
+            != serde_json::json!({"operations":[{
+                "cmd":"cat", "args":[HF_DOCUMENT, "--max-bytes", "2048"]
+            }]})
+    {
+        return Err("Public nested MCP test admits only its fixed document read".into());
+    }
+    Ok(Some("hf_fs"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn public_nested_read_refuses_other_tools_commands_targets_batches_and_fields() {
+        let good = serde_json::json!({"method":"tools/call","params":{"name":"hf_fs","arguments":{"operations":[{"cmd":"cat","args":[HF_DOCUMENT,"--max-bytes","2048"]}]}}});
+        assert_eq!(validated_hf_action(&good).unwrap(), Some("hf_fs"));
+        for args in [
+            serde_json::json!({"operations":[{"cmd":"attach","args":[HF_DOCUMENT,"--max-bytes","2048"]}]}),
+            serde_json::json!({"operations":[{"cmd":"cat","args":["hf://models/private/secret/README.md","--max-bytes","2048"]}]}),
+            serde_json::json!({"operations":[{"cmd":"cat","args":[HF_DOCUMENT]}]}),
+            serde_json::json!({"operations":[{"cmd":"cat","args":[HF_DOCUMENT,"--max-bytes","2048"],"extra":"private"}]}),
+            serde_json::json!({"operations":[]}),
+            serde_json::json!({"operations":[good["params"]["arguments"]["operations"][0].clone(),good["params"]["arguments"]["operations"][0].clone()]}),
+        ] {
+            let mut bad = good.clone();
+            bad["params"]["arguments"] = args;
+            assert!(validated_hf_action(&bad).is_err());
+        }
+        let mut bad = good.clone();
+        bad["params"]["name"] = serde_json::json!("hf_whoami");
+        assert!(validated_hf_action(&bad).is_err());
+        assert!(validated_hf_action(&serde_json::json!({"method":"resources/read"})).is_err());
+        assert_eq!(
+            validated_hf_action(&serde_json::json!({"method":"tools/list"})).unwrap(),
+            None
+        );
+    }
+    #[test]
+    fn linear_contract_projection_strips_private_literals_and_classifies_input_nesting() {
+        let schema = serde_json::json!({"type":"object", "description":"private account",
+        "properties": {
+            "query":{"type":"string", "default":"private issue", "enum":["private-user"]},
+            "filter":{"anyOf":[{"type":"null"},{"type":"object", "properties":{
+                "owners":{"type":"array", "items":{"type":"object", "properties":{"active":{"type":"boolean"}}}}
+            }}]}
+        }});
+        let tool = rmcp::model::Tool::new(
+            "list_test",
+            "private description",
+            std::sync::Arc::new(schema.as_object().unwrap().clone()),
+        );
+        let projected = linear_catalog_contracts(&[tool]).unwrap();
+        assert_eq!(projected["contracts"][0]["nestedObjectInput"], true);
+        assert_eq!(
+            projected["contracts"][0]["inputShape"]["properties"]["query"]["constraintsOmitted"],
+            true
+        );
+        assert!(!projected.to_string().contains("private"));
+        let flat = serde_json::json!({"type":"object", "properties":{"query":{"type":"string"}, "ids":{"type":"array", "items":{"type":"string"}}}});
+        let tool = rmcp::model::Tool::new(
+            "flat_test",
+            "private",
+            std::sync::Arc::new(flat.as_object().unwrap().clone()),
+        );
+        assert_eq!(
+            linear_catalog_contracts(&[tool]).unwrap()["contracts"][0]["nestedObjectInput"],
+            false
+        );
+    }
+
+    #[test]
+    fn linear_contract_projection_refuses_duplicates_depth_node_and_retained_byte_overflow() {
+        let schema = serde_json::json!({"type":"object"});
+        let tool = rmcp::model::Tool::new(
+            "test",
+            "",
+            std::sync::Arc::new(schema.as_object().unwrap().clone()),
+        );
+        assert!(linear_catalog_contracts(&[]).is_err());
+        assert!(linear_catalog_contracts(&[tool.clone(), tool]).is_err());
+        let mut deep = schema;
+        for _ in 0..26 {
+            deep = serde_json::json!({"anyOf":[deep]});
+        }
+        assert!(linear_schema_shape(&deep, 0, &mut 8192).is_err());
+        assert!(linear_schema_shape(&serde_json::json!({}), 0, &mut 0).is_err());
+        let mut properties = serde_json::Map::new();
+        for index in 0..128 {
+            properties.insert(
+                format!("{}{:03}", "x".repeat(245), index),
+                serde_json::json!({"type":"string"}),
+            );
+        }
+        let schema = serde_json::json!({"type":"object", "properties":properties});
+        let tools: Vec<_> = ["one", "two"]
+            .iter()
+            .map(|name| {
+                rmcp::model::Tool::new(
+                    *name,
+                    "",
+                    std::sync::Arc::new(schema.as_object().unwrap().clone()),
+                )
+            })
+            .collect();
+        assert!(linear_catalog_contracts(&tools).is_err());
+    }
+
     #[test]
     fn public_test_refuses_questions_other_repositories_and_extra_arguments() {
         for name in ["read_wiki_structure", "read_wiki_contents"] {
@@ -316,6 +450,7 @@ pub enum Operation {
     ConsentReady,
     OpenAuthorization,
     GrantMetadata,
+    CatalogContracts,
 }
 
 #[derive(Default, Deserialize)]
@@ -365,6 +500,14 @@ pub async fn agent_harness_mcp(
         }
     };
     match operation {
+        Operation::CatalogContracts => {
+            if id != LINEAR_PROVIDER_ID {
+                return Err("Contract inspection requires the fixed Linear test identity".into());
+            }
+            require_linear_consent()?;
+            let catalog = super::grain_mcp::list_tools(&app, id).await?;
+            linear_catalog_contracts(&catalog.tools)
+        }
         Operation::ConsentReady | Operation::OpenAuthorization | Operation::GrantMetadata => {
             if id != LINEAR_PROVIDER_ID {
                 return Err(
@@ -439,6 +582,180 @@ pub async fn agent_harness_mcp(
                 .unwrap_or(serde_json::Value::Null))
         }
     }
+}
+
+/// Read-only contract evidence, never executable schemas or provider content.
+/// Reuse production catalog validation/bounds; strip prose and literal values.
+fn linear_catalog_contracts(tools: &[rmcp::model::Tool]) -> Result<serde_json::Value, String> {
+    use sha2::{Digest, Sha256};
+    let refused = || "Linear contract inspection exceeded its metadata boundary".to_string();
+    if tools.is_empty() || tools.len() > 128 {
+        return Err(refused());
+    }
+    let mut nodes = 8192usize;
+    let mut entries = Vec::with_capacity(tools.len());
+    for tool in tools {
+        let name = tool.name.as_ref();
+        if name.is_empty()
+            || name.len() > 128
+            || !name
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b'.'))
+        {
+            return Err(refused());
+        }
+        let schema = serde_json::Value::Object(tool.input_schema.as_ref().clone());
+        let shape = linear_schema_shape(&schema, 0, &mut nodes)?;
+        let encoded = serde_json::to_vec(&schema).map_err(|_| refused())?;
+        entries.push(serde_json::json!({
+            "name": name,
+            "schemaDigest": format!("{:x}", Sha256::digest(encoded)),
+            "nestedObjectInput": linear_shape_has_nested_object(&shape, 0),
+            "inputShape": shape,
+        }));
+    }
+    entries.sort_by(|a, b| a["name"].as_str().cmp(&b["name"].as_str()));
+    if entries
+        .windows(2)
+        .any(|pair| pair[0]["name"] == pair[1]["name"])
+    {
+        return Err(refused());
+    }
+    let report = serde_json::json!({"tool_count":entries.len(), "contracts":entries});
+    if serde_json::to_vec(&report).map_err(|_| refused())?.len() > 64 * 1024 {
+        return Err(refused());
+    }
+    Ok(report)
+}
+
+fn linear_schema_shape(
+    schema: &serde_json::Value,
+    depth: usize,
+    nodes: &mut usize,
+) -> Result<serde_json::Value, String> {
+    let refused = || "Linear contract inspection exceeded its metadata boundary".to_string();
+    if depth > 24 || *nodes == 0 {
+        return Err(refused());
+    }
+    *nodes -= 1;
+    if let Some(value) = schema.as_bool() {
+        return Ok(value.into());
+    }
+    let object = schema.as_object().ok_or_else(refused)?;
+    let mut shape = serde_json::Map::new();
+    if let Some(value) = object.get("type") {
+        let types: Vec<_> = if let Some(array) = value.as_array() {
+            array.iter().collect()
+        } else {
+            vec![value]
+        };
+        if types.is_empty()
+            || types.len() > 7
+            || types.iter().any(|v| {
+                !matches!(
+                    v.as_str(),
+                    Some("object" | "array" | "string" | "number" | "integer" | "boolean" | "null")
+                )
+            })
+        {
+            return Err(refused());
+        }
+        shape.insert("type".into(), value.clone());
+    }
+    if let Some(properties) = object.get("properties") {
+        let properties = properties.as_object().ok_or_else(refused)?;
+        if properties.len() > 128 {
+            return Err(refused());
+        }
+        let mut projected = serde_json::Map::new();
+        for (name, value) in properties {
+            if name.is_empty() || name.len() > 256 || name.chars().any(char::is_control) {
+                return Err(refused());
+            }
+            projected.insert(name.clone(), linear_schema_shape(value, depth + 1, nodes)?);
+        }
+        shape.insert("properties".into(), projected.into());
+    }
+    if let Some(required) = object.get("required") {
+        let required = required.as_array().ok_or_else(refused)?;
+        if required.len() > 128
+            || required.iter().any(|value| {
+                value.as_str().is_none_or(|name| {
+                    name.is_empty() || name.len() > 256 || name.chars().any(char::is_control)
+                })
+            })
+        {
+            return Err(refused());
+        }
+        shape.insert("required".into(), required.clone().into());
+    }
+    for key in ["items", "additionalProperties"] {
+        if let Some(value) = object.get(key) {
+            shape.insert(key.into(), linear_schema_shape(value, depth + 1, nodes)?);
+        }
+    }
+    for key in ["anyOf", "oneOf", "allOf"] {
+        if let Some(values) = object.get(key) {
+            let values = values.as_array().ok_or_else(refused)?;
+            if values.len() > 128 {
+                return Err(refused());
+            }
+            let projected: Result<Vec<_>, _> = values
+                .iter()
+                .map(|value| linear_schema_shape(value, depth + 1, nodes))
+                .collect();
+            shape.insert(key.into(), projected?.into());
+        }
+    }
+    // Full schemas remain authoritative in production. This projection is not
+    // sufficient to authorize arguments; flags expose omitted constraints.
+    shape.insert(
+        "constraintsOmitted".into(),
+        object
+            .keys()
+            .any(|key| {
+                ![
+                    "type",
+                    "properties",
+                    "required",
+                    "items",
+                    "additionalProperties",
+                    "anyOf",
+                    "oneOf",
+                    "allOf",
+                    "title",
+                    "description",
+                    "$schema",
+                ]
+                .contains(&key.as_str())
+            })
+            .into(),
+    );
+    Ok(shape.into())
+}
+
+fn linear_shape_has_nested_object(shape: &serde_json::Value, data_depth: usize) -> bool {
+    let object_type = shape["type"] == "object"
+        || shape["type"]
+            .as_array()
+            .is_some_and(|types| types.iter().any(|value| value == "object"));
+    if data_depth > 0 && (object_type || shape.get("properties").is_some()) {
+        return true;
+    }
+    shape["properties"].as_object().is_some_and(|properties| {
+        properties
+            .values()
+            .any(|value| linear_shape_has_nested_object(value, data_depth + 1))
+    }) || shape
+        .get("items")
+        .is_some_and(|value| linear_shape_has_nested_object(value, data_depth + 1))
+        || ["anyOf", "oneOf", "allOf"].iter().any(|key| {
+            shape[*key].as_array().is_some_and(|values| {
+                values
+                    .iter()
+                    .any(|value| linear_shape_has_nested_object(value, data_depth))
+            })
+        })
 }
 
 // Five fixed handoffs; taking/cancelling one cannot consume another provider.

@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import assert from "node:assert/strict";
 import { MCP_INPUT, MCP_EXTENSION_ID } from "./mcp-fixture.mjs";
 import { liveReply } from "./mcp-live.mjs";
+import { hfReply } from "./mcp-hf-live.mjs";
 import { mcpAccountReply } from "./mcp-auth.mjs";
 import {
   MCP_CLIENT_ID,
@@ -107,6 +108,7 @@ export function nextReply(body, fault, workflowMode = "normal") {
     );
   if (["mcp_live_read", "mcp_live_large"].includes(requested))
     return liveReply(body, requested);
+  if (requested === "mcp_hf_read") return hfReply(body);
   if (requested === "mcp_conformance") return conformanceReply(body);
   if (
     [
@@ -515,6 +517,8 @@ export async function startModel({ fault, liveConfig } = {}) {
         ...(reply.mcpVerified ? { mcpVerified: true } : {}),
         ...(reply.mcpExcludedVerified ? { mcpExcludedVerified: true } : {}),
         ...(reply.mcpRefused ? { mcpRefused: true } : {}),
+        ...(reply.hfVerified ? { hfVerified: reply.hfVerified } : {}),
+        ...(reply.hfAction ? { hfAction: reply.hfAction } : {}),
         ...(reply.mcpLiveVerified
           ? { mcpLiveVerified: reply.mcpLiveVerified }
           : {}),

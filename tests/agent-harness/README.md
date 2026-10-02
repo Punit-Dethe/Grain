@@ -1,5 +1,19 @@
 # Grain Agent acceptance harness
 
+**Current inventory, 3 October:** 88 distinct scenario IDs, 73 self-contained `all` cases, 69 harness self-tests. Baseline 52 Pass / 1 Pending (live expiry/refresh check 12). The [live nested-read audit](../../docs/Extensions%202.0/MCP-NESTED-LIVE-READ-AUDIT.md) records this unit; older dated inventory counts below retain historical evidence.
+
+`mcp-linear-contracts` requires `--linear-sign-in`, an interactive terminal and one owner-approved READ-ONLY browser consent. It calls no account tool, inspects actual production-supported contracts, repeats discovery after restart, then disconnects and removes its scoped grant/profile. Unlike the counts-only sign-in suite, this report intentionally retains bounded tool/property names, primitive structural shapes, schema digests and nesting flags. Prose, defaults, enums, const/private literals and raw schemas remain omitted; the projection is explicitly **not an executable schema**. The inspected catalog had 38 supported reads and no nested object parameters.
+
+`mcp-hf-live` uses fixed anonymous `https://huggingface.co/mcp`, selects only `hf_fs` and requires actual approval for one nested `cat` operation on the public `google-bert/bert-base-uncased/README.md`, limited to 2,048 bytes of file content. It verifies actual document/result bytes and repeats after a real host restart. The transport refuses other commands, URIs, batches, tools or credentials. Both suites are excluded from `all`; the local model scripts decisions and does not certify live-model judgment.
+
+```powershell
+node tests/agent-harness/run.mjs --suite mcp-hf-live
+# Expected Fail/exit 1 with cleanup Pass and the missing-evidence assertion:
+node tests/agent-harness/run.mjs --scenario mcp.hf-nested-read --fault missing-live-evidence
+```
+
+The next test implementation is a finite Linear expiry preparation/resume/abort interface; it does not exist yet. Completed Linear runs delete their grants, so their expiry timestamps cannot be reused as refresh evidence. No new manual batch is assigned for accepted check 17.
+
 This is a persistent **Agent** harness. Its first real-application suite covers native tools and lifecycle. It runs Grain's actual Rust/Tauri host, actual Agent React panel, real WebView2 extension workers, selective tool discovery, host confirmation and continuation. It connects Playwright to those owned WebViews; it never launches a browser replica or replaces Tauri APIs.
 
 The local scripted model implements the normal OpenAI-compatible HTTP interface. It reliably requests search → selected schema load → one action → result, without a paid model or an external account. It checks that the initial frame contains no action schemas and exactly one requested action is offered after loading. This proves Agent mechanics with controlled decisions, not a live model's judgment.
@@ -47,6 +61,12 @@ npm run test:agent -- --suite mcp-linear-guards
 # Human-assisted Linear consent; run only when the account owner is present.
 # Requires an interactive terminal. No credentials are typed in this terminal.
 npm run test:agent -- --suite mcp-linear-sign-in --linear-sign-in
+
+# One human sign-in; supported shapes/restart only, no account tools.
+npm run test:agent -- --suite mcp-linear-contracts --linear-sign-in
+
+# No account: fixed public nested text read before/after restart.
+npm run test:agent -- --suite mcp-hf-live
 
 # Signed local store, real Store page, offline and interrupted downloads.
 npm run test:agent -- --suite store
@@ -104,7 +124,7 @@ Runtime reports also identify the Node/WebView adapter version and an independen
 | `native.result-budgets`    | Replies exceeding the 64 KiB decoded budget and 512 KiB raw wire budget fail at distinct boundaries; workers/tokens/supervisors retire, then fresh native calls recover.                          |
 | `native.invalid-input`     | Unknown keys, missing required values, wrong types, oversized arguments and malformed JSON fail before approval/startup; private rejected parameter keys stay hidden.                             |
 
-`smoke` contains two cases; `lifecycle` includes smoke and the original remaining non-idle cases. `native-failures` contains six cases; `native-installation` six; `native-foundation` two; `native-auth` eight, with four in `native-auth-schedules`; `store` three; `registry-recovery` three. `mcp` contains nine controlled transport cases; `mcp-auth` ten SDK OAuth cases; `mcp-independence` selects its two-provider cases; `mcp-refresh` selects its two expiry/recovery cases; `mcp-foundation` selects all nineteen in one host. `agent-workflow` contains six separately reported controlled workflow cases; `agent-interruption` contains eight. `all` includes 73 distinct self-contained cases; overlapping suite selections are not additive. Three official, two public-live, two Linear consent-preflight, one Linear control-guard, one human Linear sign-in and four configured-model cases (`agent-live` and `agent-interruption-live`) require explicit selection and their external prerequisites, bringing the complete inventory to 86 IDs. `idle` runs only the long timing case. Each scenario establishes and cleans up its own baseline. A failed scenario stops the batch; later scenarios are Not run instead of being assessed against a contaminated baseline.
+`smoke` contains two cases; `lifecycle` includes smoke and the original remaining non-idle cases. `native-failures` contains six cases; `native-installation` six; `native-foundation` two; `native-auth` eight, with four in `native-auth-schedules`; `store` three; `registry-recovery` three. `mcp` contains nine controlled transport cases; `mcp-auth` ten SDK OAuth cases; `mcp-independence` selects its two-provider cases; `mcp-refresh` selects its two expiry/recovery cases; `mcp-foundation` selects all nineteen in one host. `agent-workflow` contains six separately reported controlled workflow cases; `agent-interruption` contains eight. `all` includes 73 distinct self-contained cases; overlapping suite selections are not additive. Three official, two public-live, two Linear consent-preflight, one Linear control-guard, one human Linear sign-in, one Linear contract inspection, one public nested-read and four configured-model cases (`agent-live` and `agent-interruption-live`) require explicit selection and their external prerequisites, bringing the complete inventory to 88 IDs. `idle` runs only the long timing case. Each scenario establishes and cleans up its own baseline. A failed scenario stops the batch; later scenarios are Not run instead of being assessed against a contaminated baseline.
 
 ### Linear consent preflight (opt-in, no account)
 
@@ -507,4 +527,4 @@ The positive suite uses two separately reported cases in one real host. Recovery
 
 The fault changes the actual refreshed bearer account and must exit 1 with cleanup Pass. The issuer and acceptance oracles have client/resource/rotation/account and privacy negative tests. The complete runner has 57 self-tests. See the [focused refresh audit](../../docs/Extensions%202.0/MCP-REFRESH-RECOVERY-AUDIT.md) for final report identities, retained candidate/oracle repair and the current generic reconnect-error finding.
 
-These controlled cases do not accept live account check 12. Linear is the user's selected next account; its anonymous read-only/resource/issuer metadata has been verified, but personal consent, actual issued lifetime, refresh and nested schema remain prerequisites. The current host does not admit personal Linear accounts into its isolated marker. Do not copy ordinary credentials or run these fixture commands against a personal account. The audit documents the next finite opt-in path and human consent steps; no new manual batch is assigned yet.
+These controlled cases do not accept live check 12. Explicit isolated Linear consent, actual issued lifetime and restart have since passed through the opt-in human suites; genuine expiry/refresh remains pending. Linear has no nested object inputs in the inspected supported catalog; the separate anonymous Hugging Face suite supplies that prerequisite. No ordinary credentials are copied and these local fixture commands must not target an ordinary account. See the [current audit](../../docs/Extensions%202.0/MCP-NESTED-LIVE-READ-AUDIT.md).

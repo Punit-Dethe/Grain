@@ -39,6 +39,7 @@ import {
 import { workflowHandlers } from "./workflow.mjs";
 import { configuredModel } from "./live-model.mjs";
 import { liveHandlers, LIVE_ENDPOINT, LIVE_REPOSITORY } from "./mcp-live.mjs";
+import { hfHandlers, HF_ENDPOINT, HF_DOCUMENT } from "./mcp-hf-live.mjs";
 import {
   linearHandlers,
   LINEAR_ENDPOINT,
@@ -94,7 +95,7 @@ for (let i = 2; i < process.argv.length; i++) {
 }
 if (options.help) {
   console.log(
-    "node tests/agent-harness/run.mjs [--list] [--suite smoke|lifecycle|idle|agent-workflow|agent-live|agent-interruption|agent-interruption-live|native-failures|native-foundation|native-auth|native-auth-schedules|mcp|mcp-auth|mcp-independence|mcp-refresh|mcp-foundation|mcp-live|mcp-linear-preflight|mcp-linear-guards|mcp-linear-sign-in|native-installation|registry-recovery|store|all] [--scenario ID] [--binary path] [--output directory] [--focus-click] [--live-configured] [--linear-sign-in]\nWindows real Agent/WebView2 acceptance. Build first with tests/agent-harness/build.ps1. Scripted suites need no model key. agent-live and agent-interruption-live require explicit --live-configured and uses only the selected ordinary Grain model with disposable tool objects; it is excluded from all. native-auth, Agent workflow/interruption suites and MCP fixtures require Python cryptography for owned TLS. mcp-foundation runs nineteen controlled transport/OAuth cases in one host; mcp-independence selects its two independent-provider cases; mcp-refresh selects its two actual-expiry/recovery cases. mcp-live is opt-in public DeepWiki acceptance and excluded from all. mcp-linear-preflight creates actual read-only Linear SDK consent and cancels without opening a browser; excluded from all. mcp-linear-guards verifies browser/grant controls without opening a browser. mcp-linear-sign-in requires --linear-sign-in and an interactive terminal; two human browser steps, no tool execution. These suites are excluded from all. --focus-click is confined to agent.reopen-escape.",
+    "node tests/agent-harness/run.mjs [--list] [--suite smoke|lifecycle|idle|agent-workflow|agent-live|agent-interruption|agent-interruption-live|native-failures|native-foundation|native-auth|native-auth-schedules|mcp|mcp-auth|mcp-independence|mcp-refresh|mcp-foundation|mcp-live|mcp-hf-live|mcp-linear-preflight|mcp-linear-guards|mcp-linear-sign-in|mcp-linear-contracts|native-installation|registry-recovery|store|all] [--scenario ID] [--binary path] [--output directory] [--focus-click] [--live-configured] [--linear-sign-in]\nWindows real Agent/WebView2 acceptance. Build first with tests/agent-harness/build.ps1. Scripted suites need no model key. agent-live and agent-interruption-live require explicit --live-configured and uses only the selected ordinary Grain model with disposable tool objects; it is excluded from all. native-auth, Agent workflow/interruption suites and MCP fixtures require Python cryptography for owned TLS. mcp-foundation runs nineteen controlled transport/OAuth cases in one host; mcp-independence selects its two independent-provider cases; mcp-refresh selects its two actual-expiry/recovery cases. mcp-live is opt-in public DeepWiki acceptance; mcp-hf-live is a fixed anonymous public Hugging Face nested text read. Both are excluded from all. mcp-linear-preflight creates actual read-only Linear SDK consent and cancels without opening a browser; excluded from all. mcp-linear-guards verifies browser/grant controls without opening a browser. mcp-linear-sign-in requires --linear-sign-in and an interactive terminal; two human browser steps, no tool execution. mcp-linear-contracts uses the same opt-in with one sign-in and structural contract inspection/restart, no tools execute. These suites are excluded from all. --focus-click is confined to agent.reopen-escape.",
   );
   process.exit(0);
 }
@@ -110,8 +111,8 @@ if (!selected.length) throw new Error(`Unknown scenario: ${options.scenario}`);
 const linearPreflightSelected = selected.some(
   (scenario) => scenario.suite === "mcp-linear-preflight",
 );
-const linearHumanSelected = selected.some(
-  (scenario) => scenario.suite === "mcp-linear-sign-in",
+const linearHumanSelected = selected.some((scenario) =>
+  ["mcp-linear-sign-in", "mcp-linear-contracts"].includes(scenario.suite),
 );
 const linearGuardsSelected = selected.some(
   (scenario) => scenario.suite === "mcp-linear-guards",
@@ -120,11 +121,11 @@ const linearSelected =
   linearPreflightSelected || linearHumanSelected || linearGuardsSelected;
 if (linearHumanSelected !== !!options["linear-sign-in"])
   throw new Error(
-    "Linear browser testing requires --suite mcp-linear-sign-in with --linear-sign-in; refused in other suites",
+    "Linear browser testing requires --suite mcp-linear-sign-in or mcp-linear-contracts with --linear-sign-in; refused in other suites",
   );
 if (linearHumanSelected && !process.stdin.isTTY)
   throw new Error(
-    "Linear browser testing requires an interactive terminal for the cancellation acknowledgement",
+    "Linear browser testing requires an interactive terminal for browser approval",
   );
 if (
   selected.some((scenario) =>
@@ -228,6 +229,13 @@ if (
   throw new Error(
     "wrong-workflow-receipt requires an isolated write workflow scenario",
   );
+if (
+  options.fault === "missing-live-evidence" &&
+  !["mcp.live-read-disable", "mcp.hf-nested-read"].includes(options.scenario)
+)
+  throw new Error(
+    "missing-live-evidence requires one isolated public live read scenario",
+  );
 for (const [fault, scenario] of [
   ["wrong-mcp-peer-account", "mcp.auth-provider-independence"],
   ["wrong-mcp-refresh-account", "mcp.auth-refresh-recovery"],
@@ -238,7 +246,6 @@ for (const [fault, scenario] of [
   ["abandoned-mcp-client-secret", "mcp.auth-client-configuration"],
   ["wrong-mcp-account", "mcp.auth-fixture"],
   ["abandoned-mcp-credential", "mcp.auth-fixture"],
-  ["missing-live-evidence", "mcp.live-read-disable"],
   ["wrong-mcp-type", "mcp.transport-contract"],
   ["supported-mcp-excluded", "mcp.mixed-catalog"],
   ["short-mcp-preview", "mcp.response-preview"],
@@ -1469,6 +1476,19 @@ const liveSuite = liveHandlers({
   fault: options.fault,
 });
 Object.assign(handlers, liveSuite.handlers);
+const hfSuite = hfHandlers({
+  invoke,
+  status,
+  request,
+  activate,
+  waitFor,
+  closePanel,
+  restartHost,
+  model: () => model,
+  log: () => logTail,
+  fault: options.fault,
+});
+Object.assign(handlers, hfSuite.handlers);
 const mcpAuthSuite = mcpAuthHandlers({
   invoke,
   status,
@@ -1728,8 +1748,8 @@ try {
         : "real-application/live-issuer/SDK-consent-preflight",
       limitations: [
         linearHumanSelected
-          ? "Human browser authentication, scoped grant metadata and discovery only; no account tool execution or actual expiry/refresh certification; checks 9/12/17 remain pending."
-          : "No browser sign-in, token exchange, account read or live refresh certification; checks 9/12/17 remain pending.",
+          ? "Human browser authentication, scoped grant metadata and discovery/contracts only; no account tool execution or actual expiry/refresh certification; metadata alone does not accept numbered checks."
+          : "No browser sign-in, token exchange, account read or live refresh certification; metadata alone does not accept numbered checks.",
       ],
       privacy: {
         metadataOnly: true,
@@ -1747,6 +1767,16 @@ try {
       limitations: [
         "Public documentation reads only; no OAuth, account, private repository, live-model relevance or universal provider certification.",
         "Backend attempt counts are conservative client dispatch observations, not independent remote-server receipts.",
+      ],
+    };
+  if (selected.some((scenario) => scenario.suite === "mcp-hf-live"))
+    report.liveMcp = {
+      endpoint: HF_ENDPOINT,
+      document: HF_DOCUMENT,
+      evidenceClass: "real-application/live-provider/scripted-model",
+      limitations: [
+        "One fixed anonymous public text read only; no OAuth, writes, private content or live-model relevance certification.",
+        "Dispatch observations are client-side; no independent remote-server receipt.",
       ],
     };
   const liveConfig = options["live-configured"]
@@ -1785,6 +1815,9 @@ try {
       storePort: store?.port,
       mcpLiveDeepwiki: selected.some(
         (scenario) => scenario.suite === "mcp-live",
+      ),
+      mcpLiveHuggingface: selected.some(
+        (scenario) => scenario.suite === "mcp-hf-live",
       ),
       mcpAuth: selected.some((scenario) => scenario.suite === "mcp-auth"),
       mcpLiveLinear: linearSelected,
@@ -1890,6 +1923,7 @@ try {
       "consent_ready",
       "open_authorization",
       "grant_metadata",
+      "catalog_contracts",
     ])
       await assert.rejects(
         invoke("agent_harness_mcp", { operation, target: "linear" }),
@@ -1968,9 +2002,11 @@ try {
         scenario.suite !== "mcp" &&
         scenario.suite !== "mcp-conformance" &&
         scenario.suite !== "mcp-live" &&
+        scenario.suite !== "mcp-hf-live" &&
         scenario.suite !== "mcp-linear-preflight" &&
         scenario.suite !== "mcp-linear-guards" &&
         scenario.suite !== "mcp-linear-sign-in" &&
+        scenario.suite !== "mcp-linear-contracts" &&
         scenario.suite !== "mcp-auth" &&
         !["native-installation", "registry-recovery", "store"].includes(
           scenario.suite,
@@ -2010,6 +2046,7 @@ try {
         ...accountRefresh.takeEvidence(),
         ...mcpSuite.takeEvidence(),
         ...liveSuite.takeEvidence(),
+        ...hfSuite.takeEvidence(),
         ...linearSuite.takeEvidence(),
         ...mcpAuthSuite.takeEvidence(),
         ...mcpIndependenceSuite.takeEvidence(),
@@ -2064,6 +2101,7 @@ try {
         ...accountRefresh.takeEvidence(),
         ...mcpSuite.takeEvidence(),
         ...liveSuite.takeEvidence(),
+        ...hfSuite.takeEvidence(),
         ...linearSuite.takeEvidence(),
         ...mcpAuthSuite.takeEvidence(),
         ...mcpIndependenceSuite.takeEvidence(),
@@ -2075,9 +2113,11 @@ try {
           "mcp",
           "mcp-conformance",
           "mcp-live",
+          "mcp-hf-live",
           "mcp-linear-preflight",
           "mcp-linear-guards",
           "mcp-linear-sign-in",
+          "mcp-linear-contracts",
           "mcp-auth",
           "agent-workflow",
           "agent-live",
