@@ -368,6 +368,24 @@ scenarios.push(
   })),
 );
 
+// Explicit Linear browser/grant control cases are also excluded from all.
+scenarios.push(
+  {
+    id: "mcp.linear-consent-guards",
+    suite: "mcp-linear-guards",
+    checks: [9],
+    description:
+      "Actual SDK readiness and guarded browser/grant controls refuse missing consent, retire without a browser, and remain disconnected after restart",
+  },
+  {
+    id: "mcp.linear-browser-consent",
+    suite: "mcp-linear-sign-in",
+    checks: [9, 12, 17],
+    description:
+      "Explicit human browser cancellation/consent, actual read-only scoped grant/lifetime metadata, discovery and restart; no tool execution or refresh certification",
+  },
+);
+
 // Official runner owns the server prerequisite. Normal --suite all excludes
 // these entries; conformance.mjs invokes each finite case with its owned binding.
 scenarios.push(
@@ -436,6 +454,8 @@ export function selectScenarios(suite) {
       "mcp",
       "mcp-live",
       "mcp-linear-preflight",
+      "mcp-linear-guards",
+      "mcp-linear-sign-in",
       "mcp-auth",
       "native-installation",
       "registry-recovery",
@@ -451,6 +471,8 @@ export function selectScenarios(suite) {
           "mcp-conformance",
           "mcp-live",
           "mcp-linear-preflight",
+          "mcp-linear-guards",
+          "mcp-linear-sign-in",
           "agent-live",
           "agent-interruption-live",
         ].includes(scenario.suite)) ||

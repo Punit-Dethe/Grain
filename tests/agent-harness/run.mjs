@@ -39,7 +39,13 @@ import {
 import { workflowHandlers } from "./workflow.mjs";
 import { configuredModel } from "./live-model.mjs";
 import { liveHandlers, LIVE_ENDPOINT, LIVE_REPOSITORY } from "./mcp-live.mjs";
-import { linearHandlers, LINEAR_ENDPOINT } from "./mcp-linear.mjs";
+import {
+  linearHandlers,
+  LINEAR_ENDPOINT,
+  linearIpcDeadline,
+  safeLinearError,
+  waitForLinearCancellation,
+} from "./mcp-linear.mjs";
 import {
   cases as conformanceCases,
   startConformanceRelay,
@@ -62,7 +68,13 @@ const options = { suite: "smoke" };
 for (let i = 2; i < process.argv.length; i++) {
   const option = process.argv[i];
   if (
-    ["--list", "--help", "--focus-click", "--live-configured"].includes(option)
+    [
+      "--list",
+      "--help",
+      "--focus-click",
+      "--live-configured",
+      "--linear-sign-in",
+    ].includes(option)
   )
     options[option.slice(2)] = true;
   else if (
@@ -82,7 +94,7 @@ for (let i = 2; i < process.argv.length; i++) {
 }
 if (options.help) {
   console.log(
-    "node tests/agent-harness/run.mjs [--list] [--suite smoke|lifecycle|idle|agent-workflow|agent-live|agent-interruption|agent-interruption-live|native-failures|native-foundation|native-auth|native-auth-schedules|mcp|mcp-auth|mcp-independence|mcp-refresh|mcp-foundation|mcp-live|mcp-linear-preflight|native-installation|registry-recovery|store|all] [--scenario ID] [--binary path] [--output directory] [--focus-click] [--live-configured]\nWindows real Agent/WebView2 acceptance. Build first with tests/agent-harness/build.ps1. Scripted suites need no model key. agent-live and agent-interruption-live require explicit --live-configured and uses only the selected ordinary Grain model with disposable tool objects; it is excluded from all. native-auth, Agent workflow/interruption suites and MCP fixtures require Python cryptography for owned TLS. mcp-foundation runs nineteen controlled transport/OAuth cases in one host; mcp-independence selects its two independent-provider cases; mcp-refresh selects its two actual-expiry/recovery cases. mcp-live is opt-in public DeepWiki acceptance and excluded from all. mcp-linear-preflight creates actual read-only Linear SDK consent and cancels without opening a browser; excluded from all. --focus-click is confined to agent.reopen-escape.",
+    "node tests/agent-harness/run.mjs [--list] [--suite smoke|lifecycle|idle|agent-workflow|agent-live|agent-interruption|agent-interruption-live|native-failures|native-foundation|native-auth|native-auth-schedules|mcp|mcp-auth|mcp-independence|mcp-refresh|mcp-foundation|mcp-live|mcp-linear-preflight|mcp-linear-guards|mcp-linear-sign-in|native-installation|registry-recovery|store|all] [--scenario ID] [--binary path] [--output directory] [--focus-click] [--live-configured] [--linear-sign-in]\nWindows real Agent/WebView2 acceptance. Build first with tests/agent-harness/build.ps1. Scripted suites need no model key. agent-live and agent-interruption-live require explicit --live-configured and uses only the selected ordinary Grain model with disposable tool objects; it is excluded from all. native-auth, Agent workflow/interruption suites and MCP fixtures require Python cryptography for owned TLS. mcp-foundation runs nineteen controlled transport/OAuth cases in one host; mcp-independence selects its two independent-provider cases; mcp-refresh selects its two actual-expiry/recovery cases. mcp-live is opt-in public DeepWiki acceptance and excluded from all. mcp-linear-preflight creates actual read-only Linear SDK consent and cancels without opening a browser; excluded from all. mcp-linear-guards verifies browser/grant controls without opening a browser. mcp-linear-sign-in requires --linear-sign-in and an interactive terminal; two human browser steps, no tool execution. These suites are excluded from all. --focus-click is confined to agent.reopen-escape.",
   );
   process.exit(0);
 }
@@ -98,6 +110,22 @@ if (!selected.length) throw new Error(`Unknown scenario: ${options.scenario}`);
 const linearPreflightSelected = selected.some(
   (scenario) => scenario.suite === "mcp-linear-preflight",
 );
+const linearHumanSelected = selected.some(
+  (scenario) => scenario.suite === "mcp-linear-sign-in",
+);
+const linearGuardsSelected = selected.some(
+  (scenario) => scenario.suite === "mcp-linear-guards",
+);
+const linearSelected =
+  linearPreflightSelected || linearHumanSelected || linearGuardsSelected;
+if (linearHumanSelected !== !!options["linear-sign-in"])
+  throw new Error(
+    "Linear browser testing requires --suite mcp-linear-sign-in with --linear-sign-in; refused in other suites",
+  );
+if (linearHumanSelected && !process.stdin.isTTY)
+  throw new Error(
+    "Linear browser testing requires an interactive terminal for the cancellation acknowledgement",
+  );
 if (
   selected.some((scenario) =>
     ["agent-live", "agent-interruption-live"].includes(scenario.suite),
@@ -335,6 +363,11 @@ const redact = (text) =>
     .replace(/\b[a-f0-9]{64}\b/gi, "[redacted]")
     .replace(/Bearer\s+\S+/gi, "Bearer [redacted]");
 const appendLog = (chunk) => {
+  if (linearHumanSelected) {
+    logTail =
+      "Live Linear host output omitted to protect private diagnostics.\n";
+    return;
+  }
   logTail = (logTail + redact(chunk.toString())).slice(-65536);
 };
 const shutdownSignal = () => {
@@ -378,6 +411,11 @@ async function invoke(command, args = {}) {
   if (!main || child.exitCode !== null || child.signalCode !== null)
     throw new Error("Harness host is not running");
   let deadline;
+  const timeoutMs = linearIpcDeadline(
+    command,
+    args,
+    linearHumanSelected || linearGuardsSelected,
+  );
   try {
     return await Promise.race([
       main.evaluate(
@@ -387,8 +425,12 @@ async function invoke(command, args = {}) {
       new Promise((_, reject) => {
         deadline = setTimeout(
           () =>
-            reject(new Error(`${command} exceeded its 10-second IPC deadline`)),
-          10000,
+            reject(
+              new Error(
+                `${command} exceeded its ${timeoutMs / 1000}-second IPC deadline`,
+              ),
+            ),
+          timeoutMs,
         );
       }),
     ]);
@@ -1452,7 +1494,7 @@ const mcpAuthSuite = mcpAuthHandlers({
         "-Mcp",
         "-InventoryOnly",
         ...(clientSecret ? ["-McpClientSecret"] : []),
-        ...(linearPreflightSelected ? ["-McpLinear"] : []),
+        ...(linearSelected ? ["-McpLinear"] : []),
       ],
       { timeout: 10000, windowsHide: true, maxBuffer: 4096 },
     );
@@ -1471,6 +1513,8 @@ const linearSuite = linearHandlers({
   restartHost,
   vaultCount: mcpAuthSuite.vaultCount,
   fault: options.fault,
+  humanCancelled: () =>
+    waitForLinearCancellation(process.stdin, cancellation.signal),
 });
 Object.assign(handlers, linearSuite.handlers);
 const mcpIndependenceSuite = mcpIndependenceHandlers({
@@ -1673,13 +1717,26 @@ try {
     report.cli = cliIdentity;
   }
   report.injectedFault = options.fault ?? null;
-  if (linearPreflightSelected) {
+  if (linearSelected) {
+    if (linearHumanSelected)
+      report.evidenceClass =
+        "real-application/human-browser-consent/live-issuer";
     report.linearPreflight = {
       endpoint: LINEAR_ENDPOINT,
-      evidenceClass: "real-application/live-issuer/SDK-consent-preflight",
+      evidenceClass: linearHumanSelected
+        ? "real-application/human-browser-consent/live-issuer"
+        : "real-application/live-issuer/SDK-consent-preflight",
       limitations: [
-        "No browser sign-in, token exchange, account read or live refresh certification; checks 9/12/17 remain pending.",
+        linearHumanSelected
+          ? "Human browser authentication, scoped grant metadata and discovery only; no account tool execution or actual expiry/refresh certification; checks 9/12/17 remain pending."
+          : "No browser sign-in, token exchange, account read or live refresh certification; checks 9/12/17 remain pending.",
       ],
+      privacy: {
+        metadataOnly: true,
+        privateConsentUrlRetained: false,
+        privateDiagnosticsOmitted: linearHumanSelected,
+        screenshotsPermitted: !linearHumanSelected,
+      },
     };
   }
   if (selected.some((scenario) => scenario.suite === "mcp-live"))
@@ -1730,7 +1787,8 @@ try {
         (scenario) => scenario.suite === "mcp-live",
       ),
       mcpAuth: selected.some((scenario) => scenario.suite === "mcp-auth"),
-      mcpLiveLinear: linearPreflightSelected,
+      mcpLiveLinear: linearSelected,
+      mcpLinearConsent: linearHumanSelected || linearGuardsSelected,
     }),
   );
   const tlsPurposes = new Set();
@@ -1819,7 +1877,7 @@ try {
   await launchHost();
   report.adapter.webViewVersion = browser.version();
   const firstStatus = await status();
-  if (!linearPreflightSelected)
+  if (!linearSelected)
     await assert.rejects(
       invoke("agent_harness_mcp", {
         operation: "authorization",
@@ -1827,6 +1885,16 @@ try {
       }),
       /Live Linear preflight is not enabled/,
     );
+  if (!linearHumanSelected && !linearGuardsSelected)
+    for (const operation of [
+      "consent_ready",
+      "open_authorization",
+      "grant_metadata",
+    ])
+      await assert.rejects(
+        invoke("agent_harness_mcp", { operation, target: "linear" }),
+        /Live Linear (preflight|browser consent) is not enabled/,
+      );
   if (!mcpPeer)
     await assert.rejects(
       invoke("agent_harness_mcp", {
@@ -1901,6 +1969,8 @@ try {
         scenario.suite !== "mcp-conformance" &&
         scenario.suite !== "mcp-live" &&
         scenario.suite !== "mcp-linear-preflight" &&
+        scenario.suite !== "mcp-linear-guards" &&
+        scenario.suite !== "mcp-linear-sign-in" &&
         scenario.suite !== "mcp-auth" &&
         !["native-installation", "registry-recovery", "store"].includes(
           scenario.suite,
@@ -1926,8 +1996,8 @@ try {
         );
       });
       const end = await status();
-      result.events = end.events.slice(eventStart);
-      result.model = model.journal.slice(modelStart);
+      result.events = linearHumanSelected ? [] : end.events.slice(eventStart);
+      result.model = linearHumanSelected ? [] : model.journal.slice(modelStart);
       result.observations = [
         ...takeInputEvidence(),
         ...installation.takeEvidence(),
@@ -1977,8 +2047,10 @@ try {
       result.status = "Pass";
     } catch (error) {
       result.status = error instanceof Blocked ? "Blocked" : "Fail";
-      result.error = String(error.message ?? error).slice(0, 2500);
-      result.model = model.journal.slice(modelStart);
+      result.error = linearHumanSelected
+        ? safeLinearError(error)
+        : String(error.message ?? error).slice(0, 2500);
+      result.model = linearHumanSelected ? [] : model.journal.slice(modelStart);
       result.observations = [
         ...(result.observations ?? []),
         ...takeInputEvidence(),
@@ -2004,6 +2076,8 @@ try {
           "mcp-conformance",
           "mcp-live",
           "mcp-linear-preflight",
+          "mcp-linear-guards",
+          "mcp-linear-sign-in",
           "mcp-auth",
           "agent-workflow",
           "agent-live",
@@ -2018,12 +2092,13 @@ try {
           }
         }
       }
-      try {
-        result.snapshot = await status();
-      } catch {
-        /* host might have exited */
-      }
-      if (main && !main.isClosed()) {
+      if (!linearHumanSelected)
+        try {
+          result.snapshot = await status();
+        } catch {
+          /* host might have exited */
+        }
+      if (!linearHumanSelected && main && !main.isClosed()) {
         try {
           result.mainText = (await main.locator("body").innerText()).slice(
             0,
@@ -2037,7 +2112,7 @@ try {
           /* renderer diagnostic is best effort */
         }
       }
-      const page = await findWindow("agent-panel");
+      const page = linearHumanSelected ? null : await findWindow("agent-panel");
       if (page) {
         try {
           await mkdir(join(root, "evidence"), { recursive: true });
@@ -2063,7 +2138,9 @@ try {
   report.results.push({
     id: "harness.prerequisites",
     status: error instanceof Blocked ? "Blocked" : "Fail",
-    error: String(error.message ?? error).slice(0, 2500),
+    error: linearHumanSelected
+      ? safeLinearError(error)
+      : String(error.message ?? error).slice(0, 2500),
   });
 } finally {
   const errors = [];
@@ -2191,7 +2268,7 @@ try {
       errors.push(`MCP provider cleanup: ${error.message}`);
     }
   }
-  if (mcpProvider?.oauth || linearPreflightSelected) {
+  if (mcpProvider?.oauth || linearSelected) {
     if (mcpProvider?.oauth)
       report.mcpOAuthFixture = { requests: mcpProvider.oauth.journal };
     try {
@@ -2206,7 +2283,7 @@ try {
           "-RunId",
           runId,
           "-Mcp",
-          ...(linearPreflightSelected ? ["-McpLinear"] : []),
+          ...(linearSelected ? ["-McpLinear"] : []),
         ],
         { timeout: 10000, windowsHide: true, maxBuffer: 4096 },
       );
@@ -2261,7 +2338,10 @@ try {
       errors.push(error.message);
     }
   }
-  report.cleanup = { status: errors.length ? "Fail" : "Pass", errors };
+  report.cleanup = {
+    status: errors.length ? "Fail" : "Pass",
+    errors: linearHumanSelected ? errors.map(safeLinearError) : errors,
+  };
   report.completedAt = new Date().toISOString();
   // Keep reports/screenshots only. Delete only verified children of this unique run.
   for (const name of [
@@ -2287,7 +2367,11 @@ try {
       });
     } catch (error) {
       report.cleanup.status = "Fail";
-      report.cleanup.errors.push(`Scratch cleanup: ${error.message}`);
+      report.cleanup.errors.push(
+        linearHumanSelected
+          ? safeLinearError(error)
+          : `Scratch cleanup: ${error.message}`,
+      );
     }
   }
   await mkdir(join(root, "evidence"), { recursive: true });

@@ -41,6 +41,13 @@ npm run test:agent -- --suite mcp-foundation
 # Opt-in actual Linear SDK/DCR consent preflight; no browser/sign-in/tools.
 npm run test:agent -- --suite mcp-linear-preflight
 
+# Browser/grant controls without opening a browser or signing in.
+npm run test:agent -- --suite mcp-linear-guards
+
+# Human-assisted Linear consent; run only when the account owner is present.
+# Requires an interactive terminal. No credentials are typed in this terminal.
+npm run test:agent -- --suite mcp-linear-sign-in --linear-sign-in
+
 # Signed local store, real Store page, offline and interrupted downloads.
 npm run test:agent -- --suite store
 
@@ -97,7 +104,7 @@ Runtime reports also identify the Node/WebView adapter version and an independen
 | `native.result-budgets`    | Replies exceeding the 64 KiB decoded budget and 512 KiB raw wire budget fail at distinct boundaries; workers/tokens/supervisors retire, then fresh native calls recover.                          |
 | `native.invalid-input`     | Unknown keys, missing required values, wrong types, oversized arguments and malformed JSON fail before approval/startup; private rejected parameter keys stay hidden.                             |
 
-`smoke` contains two cases; `lifecycle` includes smoke and the original remaining non-idle cases. `native-failures` contains six cases; `native-installation` six; `native-foundation` two; `native-auth` eight, with four in `native-auth-schedules`; `store` three; `registry-recovery` three. `mcp` contains nine controlled transport cases; `mcp-auth` ten SDK OAuth cases; `mcp-independence` selects its two-provider cases; `mcp-refresh` selects its two expiry/recovery cases; `mcp-foundation` selects all nineteen in one host. `agent-workflow` contains six separately reported controlled workflow cases; `agent-interruption` contains eight. `all` includes 73 distinct self-contained cases; overlapping suite selections are not additive. Three official, two public-live, two Linear consent-preflight and four configured-model cases (`agent-live` and `agent-interruption-live`) require explicit selection and their external prerequisites, bringing the complete inventory to 84 IDs. `idle` runs only the long timing case. Each scenario establishes and cleans up its own baseline. A failed scenario stops the batch; later scenarios are Not run instead of being assessed against a contaminated baseline.
+`smoke` contains two cases; `lifecycle` includes smoke and the original remaining non-idle cases. `native-failures` contains six cases; `native-installation` six; `native-foundation` two; `native-auth` eight, with four in `native-auth-schedules`; `store` three; `registry-recovery` three. `mcp` contains nine controlled transport cases; `mcp-auth` ten SDK OAuth cases; `mcp-independence` selects its two-provider cases; `mcp-refresh` selects its two expiry/recovery cases; `mcp-foundation` selects all nineteen in one host. `agent-workflow` contains six separately reported controlled workflow cases; `agent-interruption` contains eight. `all` includes 73 distinct self-contained cases; overlapping suite selections are not additive. Three official, two public-live, two Linear consent-preflight, one Linear control-guard, one human Linear sign-in and four configured-model cases (`agent-live` and `agent-interruption-live`) require explicit selection and their external prerequisites, bringing the complete inventory to 86 IDs. `idle` runs only the long timing case. Each scenario establishes and cleans up its own baseline. A failed scenario stops the batch; later scenarios are Not run instead of being assessed against a contaminated baseline.
 
 ### Linear consent preflight (opt-in, no account)
 
@@ -108,6 +115,21 @@ The guarded debug host admits exactly `grain-harness-linear`, `https://mcp.linea
 Test the cancellation oracle with `npm run test:agent -- --scenario mcp.linear-cancel-disable --fault skip-linear-cancel`. It must **Fail** at the five-second observation that cancellation settled, then retire the owned flow in `finally` and report cleanup Pass. This short observation does not replace the production five-minute authentication deadline. The fault is refused in other suites or multi-case selections. Reports retain scope/resource/PKCE and cleanup booleans, never authorization URL, state, client ID or grant contents.
 
 This is preparation for checks 9/12/17, not their acceptance. The next account unit must provide a private browser handoff and a bounded human-sign-in wait, verify the actual granted scope/lifetime, suppress private workspace data in diagnostics, and validate a fixed harmless read against actual authenticated tool metadata before permitting its dispatch. A suitable nested schema is required for check 17; normal reads alone do not certify it. Real MCP expiry/refresh uses the issued grant's actual clock, not API lifetime assumptions or modified credentials. No personal sign-in is needed for the preflight command.
+
+### Human Linear consent (explicit opt-in)
+
+`mcp-linear-guards` verifies the new ready/open/grant controls in the real host, first without an available consent URL, then with actual SDK readiness and host cancellation. It never opens a browser. `mcp-linear-sign-in --linear-sign-in` is a separate interactive case; the flag is refused in other suites, and a noninteractive launch is refused before any profile/network/browser work. Both suites are excluded from `all`.
+
+The account owner performs only two browser steps:
+
+1. Cancel or close the first Linear consent page **without approving**. Type only `cancelled` and Enter in the runner terminal. The report distinguishes this human acknowledgement from the actual denied/cancelled backend outcome, callback release and zero vault entries. Accidentally approving this first flow fails the procedure.
+2. Sign in to Linear in the second page and approve the requested **read-only** access. The SDK validates the real callback, performs the actual code exchange and stores the grant in this run's Windows vault namespace. The runner then verifies scope/lifetime metadata, authenticated tool discovery, real restart and persistence, and disconnects/cleans up. It **does not execute any tool** or send workspace results to a model.
+
+Only the fixed alias Connect receives a 310-second IPC observation, around the unchanged production five-minute authentication deadline; its discovery receives 95 seconds around the unchanged 90-second production budget. Other commands/providers keep ten seconds. Cancellation input is bounded, abortable, accepts only the fixed acknowledgement, and releases its readline/input listeners and timer on every exit. A timeout or terminal close fails and retires the owned login; it never counts as successful consent.
+
+The harness validates the grant **before every vault publication**, including refresh: exact issuer, read-only SDK-granted scopes, a nonempty bearer token and bounded client/timestamp/lifetime metadata. If the token response omits scope, the locked SDK's RFC 6749 requested-scope resolution is recorded explicitly; it is not reported as an explicit token-response scope. Unknown expiry remains `expiryKnown: false`, never an assumed lifetime. Reports contain only scope source, issued/expiry seconds, refresh availability and supported-tool counts. They omit authorization URLs, token/client values, tool names/descriptions, host logs, model/event bodies, snapshots and screenshots in human mode. Provider/error bodies are replaced by fixed stage diagnostics. Local scope cleanup remains independent of remote grant revocation; remove the test authorization from Linear's account settings if you also want remote revocation.
+
+This procedure prepares live acceptance; it does not by itself close 9/12/17. Actual browser/exchange/discovery behavior must be run with the account owner, reviewed and repeated. A credentials badge or a discovered tool count is insufficient to certify harmless Agent execution, nested compatibility or post-expiry refresh. Tool calls remain blocked until a separately reviewed fixed read allowance can be based on real authenticated schemas. Credentials/profile are deleted when the run completes, so no idle test host or grant is left for a later coding phase. The `oauth2` harness-only dependency only names the SDK's already-locked v5 token trait; it adds no new library version, client or OAuth implementation.
 
 ### Native foundation (B1a)
 

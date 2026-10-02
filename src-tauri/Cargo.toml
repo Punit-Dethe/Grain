@@ -8,7 +8,7 @@ license = "MIT"
 default-run = "handy"
 
 [features]
-agent-harness = []
+agent-harness = ["dep:oauth2"]
 custom-protocol = ["tauri/custom-protocol"]
 
 [[bin]]
@@ -80,6 +80,9 @@ reqwest = { version = "0.12", features = ["json", "stream", "multipart", "gzip",
 # for the stateless 2026-07-28 lifecycle. Keep features client-only: no stdio,
 # child-process, server, or Dynamic UI surface is linked.
 rmcp = { version = "3.0.0", default-features = false, features = ["client", "auth", "reqwest", "transport-streamable-http-client-reqwest"] }
+# Names the SDK's already-locked token trait for metadata-only acceptance checks.
+# No additional OAuth client or token serialization; absent from ordinary builds.
+oauth2 = { version = "=5.0.0", default-features = false, optional = true }
 # rmcp v3 uses reqwest 0.13. Keep the existing app-wide 0.12 client stable while
 # MCP is an experimental integration layer; this alias is managed as one lazy
 # MCP-only pool and can disappear if the host converges on 0.13 later.

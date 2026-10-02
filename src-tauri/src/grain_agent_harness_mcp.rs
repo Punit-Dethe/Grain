@@ -2,6 +2,7 @@
 //! Reuses production discovery, approvals, SDK, byte limits and cancellation.
 use serde::Deserialize;
 use tauri::{AppHandle, WebviewWindow};
+use tauri_plugin_opener::OpenerExt;
 
 pub(crate) const PROVIDER_ID: &str = "grain-harness";
 pub(crate) const AUTH_PROVIDER_ID: &str = "grain-harness-auth";
@@ -24,6 +25,14 @@ pub(crate) fn linear_endpoint() -> Result<&'static str, String> {
         return Err("Live Linear preflight is not enabled".into());
     }
     Ok(LINEAR_ENDPOINT)
+}
+
+pub(crate) fn require_linear_consent() -> Result<(), String> {
+    linear_endpoint()?;
+    if !super::grain_agent_harness::linear_consent_enabled() {
+        return Err("Live Linear browser consent is not enabled".into());
+    }
+    Ok(())
 }
 
 pub(crate) fn endpoint() -> Result<String, String> {
@@ -304,6 +313,9 @@ pub enum Operation {
     Connect,
     Disconnect,
     Authorization,
+    ConsentReady,
+    OpenAuthorization,
+    GrantMetadata,
 }
 
 #[derive(Default, Deserialize)]
@@ -353,13 +365,57 @@ pub async fn agent_harness_mcp(
         }
     };
     match operation {
+        Operation::ConsentReady | Operation::OpenAuthorization | Operation::GrantMetadata => {
+            if id != LINEAR_PROVIDER_ID {
+                return Err(
+                    "Browser consent controls require the fixed Linear test identity".into(),
+                );
+            }
+            require_linear_consent()?;
+            if matches!(operation, Operation::GrantMetadata) {
+                return super::grain_mcp::harness_linear_grant_metadata().await;
+            }
+            let raw = {
+                let mut slots = AUTHORIZATION
+                    .lock()
+                    .map_err(|_| "Consent handoff unavailable")?;
+                if matches!(operation, Operation::ConsentReady) {
+                    return Ok(serde_json::json!({"ready":slots[4].is_some()}));
+                }
+                slots[4]
+                    .take()
+                    .map(|(_, url)| url)
+                    .ok_or("Linear SDK consent is not ready")?
+            };
+            validate_linear_consent_url(&raw)?;
+            let url = reqwest_mcp::Url::parse(&raw).map_err(|_| "Invalid Linear SDK consent")?;
+            let redirect = url
+                .query_pairs()
+                .find(|(k, _)| k == "redirect_uri")
+                .ok_or("Invalid Linear SDK callback")?
+                .1;
+            let port = reqwest_mcp::Url::parse(&redirect)
+                .map_err(|_| "Invalid Linear SDK callback")?
+                .port()
+                .ok_or("Invalid Linear SDK callback")?;
+            app.opener()
+                .open_url(&raw, None::<&str>)
+                .map_err(|_| "Cannot open Linear browser consent")?;
+            Ok(serde_json::json!({"opened":true,"callbackPort":port}))
+        }
         Operation::Enable | Operation::Disable => {
             let enabled = matches!(operation, Operation::Enable);
             super::grain_mcp::mcp_set_provider_enabled(app, window, id.into(), enabled).await?;
             Ok(serde_json::json!({"enabled": enabled}))
         }
         Operation::Discover => {
-            serde_json::to_value(super::grain_mcp::mcp_test_provider(app, window, id.into()).await?)
+            let result = super::grain_mcp::mcp_test_provider(app, window, id.into()).await?;
+            if id == LINEAR_PROVIDER_ID {
+                // Authenticated provider metadata can contain private names;
+                // expose only the count of production-validated supported tools.
+                return Ok(serde_json::json!({"tool_count":result.tool_count}));
+            }
+            serde_json::to_value(result)
                 .map_err(|_| "Cannot encode bounded discovery result".into())
         }
         Operation::Connect => {

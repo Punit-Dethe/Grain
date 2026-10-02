@@ -5,6 +5,7 @@ $ErrorActionPreference = 'Stop'
 $taskRoot = (Resolve-Path -LiteralPath $Root).Path
 $taskMarker = Get-Content -Raw -LiteralPath (Join-Path $taskRoot '.grain-agent-harness.json') | ConvertFrom-Json
 if (($McpClientSecret -and -not $Mcp) -or ($McpLinear -and -not $Mcp) -or $taskMarker.schema -ne 1 -or [Guid]$taskMarker.runId -ne $RunId -or
+    ($taskMarker.mcpLinearConsent -and -not $taskMarker.mcpLiveLinear) -or
     ($Mcp -and -not $McpLinear -and (-not $taskMarker.mcpAuth -or -not $taskMarker.mcpPort -or $taskMarker.mcpLiveDeepwiki -or $taskMarker.mcpLiveLinear)) -or
     ($McpLinear -and (-not $taskMarker.mcpLiveLinear -or $taskMarker.mcpAuth -or $taskMarker.mcpPort -or $taskMarker.mcpPeerPort -or $taskMarker.mcpLiveDeepwiki -or $taskMarker.authPort -or $taskMarker.storePort)) -or
     (-not $Mcp -and -not $taskMarker.authPort)) {

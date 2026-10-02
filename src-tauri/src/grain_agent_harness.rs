@@ -35,6 +35,8 @@ struct Marker {
     #[serde(default)]
     mcp_live_linear: bool,
     #[serde(default)]
+    mcp_linear_consent: bool,
+    #[serde(default)]
     mcp_auth: bool,
 }
 
@@ -65,6 +67,7 @@ fn read_marker(root: &Path) -> Result<Marker, String> {
     }
     let marker: Marker = serde_json::from_slice(&bytes).map_err(|_| "Invalid harness marker")?;
     if marker.schema != 1
+        || (marker.mcp_linear_consent && !marker.mcp_live_linear)
         || (marker.mcp_live_linear
             && (marker.mcp_live_deepwiki || marker.mcp_auth || marker.mcp_port.is_some()
                 || marker.mcp_peer_port.is_some() || marker.auth_port.is_some()
@@ -159,6 +162,12 @@ pub(super) fn live_linear_enabled() -> bool {
     CONFIG
         .get()
         .is_some_and(|value| value.marker.mcp_live_linear)
+}
+
+pub(super) fn linear_consent_enabled() -> bool {
+    CONFIG
+        .get()
+        .is_some_and(|value| value.marker.mcp_linear_consent)
 }
 
 pub(super) fn mcp_peer_config() -> Result<(PathBuf, u16), String> {
@@ -785,6 +794,21 @@ mod tests {
         )
         .unwrap();
         assert!(read_marker(root.path()).is_ok());
+        let mut consent = marker.clone();
+        consent["mcpLinearConsent"] = serde_json::json!(true);
+        std::fs::write(
+            root.path().join(".grain-agent-harness.json"),
+            serde_json::to_vec(&consent).unwrap(),
+        )
+        .unwrap();
+        assert!(read_marker(root.path()).is_ok());
+        consent["mcpLiveLinear"] = serde_json::json!(false);
+        std::fs::write(
+            root.path().join(".grain-agent-harness.json"),
+            serde_json::to_vec(&consent).unwrap(),
+        )
+        .unwrap();
+        assert!(read_marker(root.path()).is_err());
         for (key, value) in [
             ("mcpLiveDeepwiki", serde_json::json!(true)),
             ("mcpAuth", serde_json::json!(true)),

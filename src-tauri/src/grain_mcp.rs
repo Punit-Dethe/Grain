@@ -429,6 +429,10 @@ fn read_credentials_sync(account: &str) -> Result<Option<StoredCredentials>, Aut
 }
 
 fn write_credentials_sync(account: &str, credentials: &StoredCredentials) -> Result<(), AuthError> {
+    #[cfg(feature = "agent-harness")]
+    if account == crate::grain_agent_harness_mcp::LINEAR_PROVIDER_ID {
+        linear_grant_metadata(credentials, epoch_now()).map_err(AuthError::InternalError)?;
+    }
     let entry = credential_entry(VAULT_SERVICE, account).map_err(|e| vault_error("open", e))?;
     let mut bytes = serde_json::to_vec(credentials)
         .map_err(|error| AuthError::InternalError(error.to_string()))?;
@@ -443,6 +447,70 @@ fn write_credentials_sync(account: &str, credentials: &StoredCredentials) -> Res
     };
     bytes.zeroize();
     result
+}
+
+#[cfg(feature = "agent-harness")]
+fn epoch_now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+}
+
+/// Only nonsecret counters/flags escape the scoped vault. Scope validation runs
+/// before every SDK publication, including refresh, never after enabling tools.
+#[cfg(feature = "agent-harness")]
+fn linear_grant_metadata(
+    credentials: &StoredCredentials,
+    now: u64,
+) -> Result<serde_json::Value, String> {
+    use oauth2::TokenResponse;
+    let rejected = || "Linear test grant is not a verifiable read-only grant".to_string();
+    if credentials.issuer.as_deref() != Some("https://mcp.linear.app")
+        || credentials.granted_scopes != ["read"]
+        || credentials.client_id.is_empty()
+        || credentials.client_id.len() > 4096
+    {
+        return Err(rejected());
+    }
+    let token = credentials.token_response.as_ref().ok_or_else(rejected)?;
+    if token.access_token().secret().is_empty()
+        || token.token_type() != &oauth2::basic::BasicTokenType::Bearer
+        || token
+            .scopes()
+            .is_some_and(|scopes| scopes.len() != 1 || scopes[0].as_str() != "read")
+    {
+        return Err(rejected());
+    }
+    let issued = credentials
+        .token_received_at
+        .filter(|t| *t > 0 && *t <= now.saturating_add(5))
+        .ok_or_else(rejected)?;
+    let lifetime = token.expires_in().map(|d| d.as_secs());
+    let expiry = lifetime
+        .map(|seconds| issued.checked_add(seconds).ok_or_else(rejected))
+        .transpose()?;
+    Ok(serde_json::json!({
+        "connected": true, "scope": "read", "issuerVerified": true,
+        "scopeSource": if token.scopes().is_some() { "token_response" } else { "sdk_requested_scope_rfc6749" },
+        "issuedAtEpochSeconds": issued, "expiresInSeconds": lifetime,
+        "expiresAtEpochSeconds": expiry, "expiryKnown": expiry.is_some(),
+        "expired": expiry.map(|t| now >= t),
+        "refreshAvailable": token.refresh_token().is_some_and(|t| !t.secret().is_empty()),
+    }))
+}
+
+#[cfg(feature = "agent-harness")]
+pub(super) async fn harness_linear_grant_metadata() -> Result<serde_json::Value, String> {
+    crate::grain_agent_harness_mcp::require_linear_consent()?;
+    let stored = VaultCredentialStore::new(crate::grain_agent_harness_mcp::LINEAR_PROVIDER_ID)
+        .load()
+        .await
+        .map_err(|_| "Cannot inspect isolated Linear grant metadata")?;
+    match stored {
+        Some(credentials) => linear_grant_metadata(&credentials, epoch_now()),
+        None => Ok(serde_json::json!({"connected":false})),
+    }
 }
 
 fn delete_vault_entry(service: &str, account: &str) -> Result<(), AuthError> {
@@ -1031,7 +1099,9 @@ async fn connect_oauth(
         .with_application_type("native");
     #[cfg(feature = "agent-harness")]
     if id == crate::grain_agent_harness_mcp::LINEAR_PROVIDER_ID {
-        request = request.with_scopes(["read"]);
+        request = request
+            .with_client_name("Grain Agent Harness - Linear read-only")
+            .with_scopes(["read"]);
     }
     if item.registration == Registration::PreRegistered {
         let configured_id = client_id(app, item.id)
@@ -1886,6 +1956,66 @@ mod tests {
             let _ = item;
             true
         })
+    }
+
+    #[cfg(feature = "agent-harness")]
+    #[test]
+    fn linear_grant_inspection_refuses_widened_or_unowned_grants_without_exposing_tokens() {
+        let token = serde_json::json!({"access_token":"private-access","token_type":"Bearer",
+            "refresh_token":"private-refresh","scope":"read","expires_in":1200});
+        let good = StoredCredentials::new(
+            "private-client".into(),
+            Some(serde_json::from_value(token.clone()).unwrap()),
+            vec!["read".into()],
+            Some(1000),
+        )
+        .with_issuer(Some("https://mcp.linear.app".into()));
+        let meta = linear_grant_metadata(&good, 1100).unwrap();
+        assert_eq!(meta["scope"], "read");
+        assert_eq!(meta["expiresAtEpochSeconds"], 2200);
+        assert_eq!(meta["refreshAvailable"], true);
+        assert!(!meta.to_string().contains("private"));
+        let mut implicit = good.clone();
+        let mut omitted = token.clone();
+        omitted.as_object_mut().unwrap().remove("scope");
+        omitted.as_object_mut().unwrap().remove("expires_in");
+        implicit.token_response = Some(serde_json::from_value(omitted).unwrap());
+        let unknown = linear_grant_metadata(&implicit, 1100).unwrap();
+        assert_eq!(unknown["scopeSource"], "sdk_requested_scope_rfc6749");
+        assert_eq!(unknown["expiryKnown"], false);
+        assert_eq!(unknown["expired"], serde_json::Value::Null);
+        for scope in ["write", "read write", ""] {
+            let mut wrong = good.clone();
+            let mut response = token.clone();
+            response["scope"] = serde_json::json!(scope);
+            wrong.token_response = Some(serde_json::from_value(response).unwrap());
+            assert_eq!(
+                linear_grant_metadata(&wrong, 1100).unwrap_err(),
+                "Linear test grant is not a verifiable read-only grant"
+            );
+        }
+        for mutate in 0..7 {
+            let mut bad = good.clone();
+            match mutate {
+                0 => bad.issuer = Some("https://other.invalid".into()),
+                1 => bad.granted_scopes.push("write".into()),
+                2 => bad.client_id.clear(),
+                3 => bad.token_response = None,
+                4 => bad.token_received_at = None,
+                5 => bad.token_received_at = Some(999999),
+                _ => {
+                    let mut response = token.clone();
+                    response["access_token"] = serde_json::json!("");
+                    bad.token_response = Some(serde_json::from_value(response).unwrap());
+                }
+            }
+            assert_eq!(
+                linear_grant_metadata(&bad, 1100).unwrap_err(),
+                "Linear test grant is not a verifiable read-only grant"
+            );
+        }
+        let expired = linear_grant_metadata(&good, 2200).unwrap();
+        assert_eq!(expired["expired"], true);
     }
 
     #[cfg(feature = "agent-harness")]

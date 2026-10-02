@@ -14,6 +14,8 @@ import { join, resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { PassThrough } from "node:stream";
+import { createServer } from "node:net";
 import { nextReply, startModel, FIXTURE_ID, TYPED_INPUTS } from "./model.mjs";
 import { scenarios, selectScenarios } from "./scenarios.mjs";
 import { assertWithin, waitFor, writeReport } from "./support.mjs";
@@ -22,6 +24,12 @@ import {
   LINEAR_ENDPOINT,
   validateLinearConsent,
   verifyLinearCancellation,
+  verifyLinearGrantMetadata,
+  verifyLinearDiscoveryCounts,
+  linearIpcDeadline,
+  safeLinearError,
+  waitForLinearCancellation,
+  linearHandlers,
 } from "./mcp-linear.mjs";
 import {
   cases as conformanceCases,
@@ -164,6 +172,270 @@ test("Linear fault admission and vault inventory require the exact isolated mode
     );
   } finally {
     await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("Linear grant/discovery evidence refuses broad access, unsafe lifetime math and private fields", () => {
+  const good = {
+    connected: true,
+    scope: "read",
+    issuerVerified: true,
+    scopeSource: "token_response",
+    issuedAtEpochSeconds: 1000,
+    expiresInSeconds: 1200,
+    expiresAtEpochSeconds: 2200,
+    expiryKnown: true,
+    expired: false,
+    refreshAvailable: true,
+  };
+  assert.deepEqual(verifyLinearGrantMetadata(good), good);
+  for (const patch of [
+    { scope: "read write" },
+    { issuerVerified: false },
+    { expiresAtEpochSeconds: 2201 },
+    { issuedAtEpochSeconds: Number.MAX_SAFE_INTEGER + 1 },
+    { expired: true },
+    { refreshAvailable: "yes" },
+    { scopeSource: "assumed" },
+    { access_token: "private" },
+  ])
+    assert.throws(
+      () => verifyLinearGrantMetadata({ ...good, ...patch }),
+      /Linear grant metadata failed validation/,
+    );
+  const unknown = {
+    ...good,
+    scopeSource: "sdk_requested_scope_rfc6749",
+    expiryKnown: false,
+    expiresInSeconds: null,
+    expiresAtEpochSeconds: null,
+    expired: null,
+  };
+  assert.deepEqual(verifyLinearGrantMetadata(unknown), unknown);
+  assert.throws(() =>
+    verifyLinearGrantMetadata({ ...unknown, expired: false }),
+  );
+  assert.deepEqual(verifyLinearDiscoveryCounts({ tool_count: 3 }), {
+    supportedToolCount: 3,
+    toolExecutionPermitted: false,
+  });
+  for (const bad of [
+    { tool_count: 0 },
+    { tool_count: 129 },
+    { tool_count: "3" },
+    { tool_count: 1, tools: ["private-name"] },
+  ])
+    assert.throws(
+      () => verifyLinearDiscoveryCounts(bad),
+      /Linear read-only discovery failed/,
+    );
+  assert.equal(
+    safeLinearError(new Error("private-access jane@example.com issue text")),
+    "Linear test failed; private diagnostics were omitted",
+  );
+  assert.equal(
+    safeLinearError(new Error("Linear read-only discovery failed")),
+    "Linear read-only discovery failed",
+  );
+});
+
+test("Only the explicit Linear account operations receive human/discovery IPC budgets", async () => {
+  assert.equal(
+    linearIpcDeadline(
+      "agent_harness_mcp",
+      { operation: "connect", target: "linear" },
+      true,
+    ),
+    310000,
+  );
+  assert.equal(
+    linearIpcDeadline(
+      "agent_harness_mcp",
+      { operation: "discover", target: "linear" },
+      true,
+    ),
+    95000,
+  );
+  for (const [command, args, mode] of [
+    ["agent_harness_mcp", { operation: "connect", target: "linear" }, false],
+    ["agent_harness_mcp", { operation: "connect", target: "account" }, true],
+    ["mcp_connect_provider", { id: "linear" }, true],
+    [
+      "agent_harness_mcp",
+      { operation: "grant_metadata", target: "linear" },
+      true,
+    ],
+  ])
+    assert.equal(linearIpcDeadline(command, args, mode), 10000);
+  for (const args of [
+    ["--suite", "mcp-linear-sign-in"],
+    ["--suite", "smoke", "--linear-sign-in"],
+    ["--suite", "mcp-linear-guards", "--linear-sign-in"],
+  ])
+    await assert.rejects(
+      exec(process.execPath, [join(here, "run.mjs"), ...args], {
+        timeout: 10000,
+      }),
+      /Linear browser testing requires/,
+    );
+  await assert.rejects(
+    exec(
+      process.execPath,
+      [
+        join(here, "run.mjs"),
+        "--suite",
+        "mcp-linear-sign-in",
+        "--linear-sign-in",
+      ],
+      { timeout: 10000 },
+    ),
+    /interactive terminal/,
+  );
+});
+
+test("Human cancellation acknowledgement releases input on success, wrong input, timeout, closed input and abort", async () => {
+  for (const action of ["success", "wrong", "timeout", "close", "abort"]) {
+    const input = new PassThrough();
+    const signal = new AbortController();
+    const result = waitForLinearCancellation(input, signal.signal, 50);
+    const checked =
+      action === "success"
+        ? result
+        : assert.rejects(result, /Linear cancellation/);
+    if (action === "success") input.write("cancelled\n");
+    if (action === "wrong") input.write("private-token-never-repeat\n");
+    if (action === "close") input.end();
+    if (action === "abort") signal.abort();
+    await checked;
+    assert.equal(input.listenerCount("data"), 0);
+    assert.equal(input.listenerCount("end"), 0);
+    input.destroy();
+  }
+});
+
+test("Human Linear procedure enforces cancellation, grant/discovery/restart and cleanup without calling tools", async () => {
+  // Controller unit test only: no UI, browser replica, Tauri shim or live grant.
+  // Actual browser consent remains a separate user-assisted real-app case.
+  for (const variant of [
+    "good",
+    "bad-scope",
+    "bad-discovery",
+    "lost-restart",
+    "approved-first",
+  ]) {
+    const listener = createServer();
+    await new Promise((resolve) => listener.listen(0, "127.0.0.1", resolve));
+    const port = listener.address().port;
+    await new Promise((resolve) => listener.close(resolve));
+    let grant = false,
+      held,
+      flow = 0,
+      restarts = 0,
+      discoveries = 0;
+    const operations = [];
+    const metadata = {
+      connected: true,
+      scope: "read",
+      issuerVerified: true,
+      scopeSource: "token_response",
+      issuedAtEpochSeconds: 1000,
+      expiresInSeconds: 1200,
+      expiresAtEpochSeconds: 2200,
+      expiryKnown: true,
+      expired: false,
+      refreshAvailable: true,
+    };
+    const ctx = {
+      async invoke(command, args) {
+        if (command === "mcp_provider_status")
+          return [
+            {
+              id: "grain-harness-linear",
+              endpoint: LINEAR_ENDPOINT,
+              connected: grant,
+              enabled: grant,
+              state: grant ? "stored" : "disconnected",
+            },
+          ];
+        assert.equal(command, "agent_harness_mcp");
+        assert.equal(args.target, "linear");
+        operations.push(args.operation);
+        if (args.operation === "disconnect") {
+          grant = false;
+          if (held) {
+            held.reject(new Error("MCP account or access changed. Ask again."));
+            held = null;
+          }
+          return { connected: false };
+        }
+        if (args.operation === "connect") {
+          flow++;
+          return new Promise((resolve, reject) => {
+            held = { resolve, reject };
+          });
+        }
+        if (args.operation === "consent_ready") return { ready: !!held };
+        if (args.operation === "open_authorization") {
+          if (flow === 2 || variant === "approved-first") {
+            grant = true;
+            held.resolve({ connected: true });
+            held = null;
+          }
+          return { opened: true, callbackPort: port };
+        }
+        if (args.operation === "grant_metadata")
+          return grant
+            ? { ...metadata, scope: variant === "bad-scope" ? "write" : "read" }
+            : { connected: false };
+        if (args.operation === "discover") {
+          discoveries++;
+          return { tool_count: variant === "bad-discovery" ? 0 : 3 };
+        }
+        throw new Error("Unexpected controller operation");
+      },
+      async humanCancelled() {},
+      async vaultCount() {
+        return grant ? 1 : 0;
+      },
+      async restartHost() {
+        restarts++;
+        if (variant === "lost-restart") grant = false;
+      },
+      waitFor: (description, operation, options = {}) =>
+        waitFor(description, operation, {
+          ...options,
+          timeoutMs: 100,
+          intervalMs: 1,
+        }),
+    };
+    const suite = linearHandlers(ctx);
+    if (variant === "good") {
+      await suite.handlers["mcp.linear-browser-consent"]();
+      assert.equal(restarts, 1);
+      assert.equal(discoveries, 1);
+      assert.equal(
+        suite.takeEvidence().filter((x) => x.status === "Pass").length,
+        4,
+      );
+    } else {
+      await assert.rejects(suite.handlers["mcp.linear-browser-consent"]());
+      if (["bad-scope", "approved-first"].includes(variant))
+        assert.equal(discoveries, 0);
+    }
+    assert.equal(grant, false);
+    assert.equal(held, null);
+    assert.ok(
+      operations.every((x) =>
+        [
+          "connect",
+          "disconnect",
+          "consent_ready",
+          "open_authorization",
+          "grant_metadata",
+          "discover",
+        ].includes(x),
+      ),
+    );
   }
 });
 
@@ -1143,6 +1415,8 @@ test("scenario IDs are unique and each suite is explicit", () => {
       conformanceCases.length -
       selectScenarios("mcp-live").length -
       selectScenarios("mcp-linear-preflight").length -
+      selectScenarios("mcp-linear-guards").length -
+      selectScenarios("mcp-linear-sign-in").length -
       selectScenarios("agent-live").length -
       selectScenarios("agent-interruption-live").length,
   );
