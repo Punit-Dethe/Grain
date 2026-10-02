@@ -91,6 +91,8 @@ pub(crate) use grain_settings as settings;
 mod grain_agent_harness;
 #[cfg(feature = "agent-harness")]
 mod grain_agent_harness_auth;
+#[cfg(feature = "agent-harness")]
+mod grain_agent_harness_mcp;
 #[path = "handy/managers/mod.rs"]
 mod managers;
 mod master_key; // [GRAIN] transient Alt+2 prompt-switcher chord + A/D navigation
@@ -943,6 +945,7 @@ pub fn run(cli_args: CliArgs) {
             grain_agent_harness::agent_harness_submit,
             grain_agent_harness::agent_harness_shutdown,
             grain_agent_harness_auth::agent_harness_auth,
+            grain_agent_harness_mcp::agent_harness_mcp,
         ];
         move |invoke: tauri::ipc::Invoke| {
             if invoke.message.command().starts_with("agent_harness_") {

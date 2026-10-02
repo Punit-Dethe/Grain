@@ -28,6 +28,8 @@ import { accountOwnershipHandlers } from "./auth-ownership.mjs";
 import { accountRefreshHandlers } from "./auth-refresh.mjs";
 import { accountScheduleHandlers } from "./auth-schedules.mjs";
 import { startAuthFixture } from "./auth-fixture.mjs";
+import { startMcpFixture } from "./mcp-fixture.mjs";
+import { mcpHandlers } from "./mcp.mjs";
 import { startStore, STORE_PUBLIC_KEY } from "./store-fixture.mjs";
 import { startModel } from "./model.mjs";
 import { developerReload } from "./developer.mjs";
@@ -59,7 +61,7 @@ for (let i = 2; i < process.argv.length; i++) {
 }
 if (options.help) {
   console.log(
-    "node tests/agent-harness/run.mjs [--list] [--suite smoke|lifecycle|idle|native-failures|native-foundation|native-auth|native-auth-schedules|native-installation|registry-recovery|store|all] [--scenario ID] [--binary path] [--output directory] [--focus-click]\nWindows real Agent/WebView2 acceptance. --focus-click exercises owned native header activation only for agent.reopen-escape. Build first with tests/agent-harness/build.ps1. No live account or model key required. native-auth additionally requires Python cryptography for run-local TLS.",
+    "node tests/agent-harness/run.mjs [--list] [--suite smoke|lifecycle|idle|native-failures|native-foundation|native-auth|native-auth-schedules|mcp|native-installation|registry-recovery|store|all] [--scenario ID] [--binary path] [--output directory] [--focus-click]\nWindows real Agent/WebView2 acceptance. --focus-click exercises owned native header activation only for agent.reopen-escape. Build first with tests/agent-harness/build.ps1. No live account or model key required. native-auth and mcp additionally require Python cryptography for run-local TLS.",
   );
   process.exit(0);
 }
@@ -93,10 +95,14 @@ if (
     "uncancelled-login",
     "accepted-partial-consent",
     "released-refresh",
+    "wrong-mcp-type",
+    "supported-mcp-excluded",
   ].includes(options.fault)
 )
   throw new Error("Unknown oracle fault");
 for (const [fault, scenario] of [
+  ["wrong-mcp-type", "mcp.transport-contract"],
+  ["supported-mcp-excluded", "mcp.mixed-catalog"],
   ["released-refresh", "native.auth-refresh-logout"],
   ["uncancelled-login", "native.auth-cancellation"],
   ["accepted-partial-consent", "native.auth-expiry"],
@@ -206,7 +212,7 @@ const report = {
     "Checks in scenario metadata are partial supporting coverage; manual ledger is unchanged.",
   ],
 };
-let child, browser, model, main, store, authProvider;
+let child, browser, model, main, store, authProvider, mcpProvider;
 let interrupted = false;
 const cancellation = new AbortController();
 const waitFor = (description, operation, options = {}) =>
@@ -1281,6 +1287,19 @@ const accountRefresh = accountRefreshHandlers(
   accountOwnershipSuite.controls,
 );
 Object.assign(handlers, accountRefresh.handlers);
+const mcpSuite = mcpHandlers({
+  invoke,
+  status,
+  request,
+  activate,
+  waitFor,
+  closePanel,
+  restartHost,
+  provider: () => mcpProvider,
+  model: () => model,
+  log: () => logTail,
+});
+Object.assign(handlers, mcpSuite.handlers);
 let baselineTokens = 0;
 let cdpPort;
 try {
@@ -1371,21 +1390,35 @@ try {
       storePort: store?.port,
     }),
   );
-  if (selected.some((scenario) => scenario.suite === "native-auth")) {
+  for (const [suite, purpose] of [
+    ["native-auth", "native"],
+    ["mcp", "mcp"],
+  ]) {
+    if (!selected.some((scenario) => scenario.suite === suite)) continue;
     try {
-      await exec("python", [join(here, "auth-tls.py"), root], {
+      await exec("python", [join(here, "auth-tls.py"), root, purpose], {
         timeout: 10000,
         windowsHide: true,
         maxBuffer: 4096,
       });
     } catch {
       throw new Blocked(
-        "Native auth fixture needs Python with cryptography for disposable TLS",
+        "HTTPS fixtures need Python with cryptography for disposable TLS",
       );
     }
+  }
+  if (selected.some((scenario) => scenario.suite === "native-auth")) {
     authProvider = await startAuthFixture(root, {
       wrongAccount: options.fault === "wrong-account",
     });
+  }
+  if (selected.some((scenario) => scenario.suite === "mcp")) {
+    mcpProvider = await startMcpFixture(root, {
+      wrongNestedType: options.fault === "wrong-mcp-type",
+      supportedExcluded: options.fault === "supported-mcp-excluded",
+    });
+  }
+  if (authProvider || mcpProvider) {
     await writeFile(
       join(root, ".grain-agent-harness.json"),
       JSON.stringify({
@@ -1393,7 +1426,8 @@ try {
         runId,
         modelPort: model.port,
         storePort: store?.port,
-        authPort: authProvider.port,
+        authPort: authProvider?.port,
+        mcpPort: mcpProvider?.port,
       }),
     );
   }
@@ -1412,6 +1446,11 @@ try {
     await assert.rejects(
       invoke("agent_harness_auth", { operation: "status" }),
       /Native auth fixture is not enabled/,
+    );
+  if (!mcpProvider)
+    await assert.rejects(
+      invoke("agent_harness_mcp", { operation: "discover" }),
+      /MCP fixture is not enabled/,
     );
   assert.equal(firstStatus.runId, runId);
   assert.equal(firstStatus.applicationId, "com.grain.agent-harness");
@@ -1455,6 +1494,7 @@ try {
       if (
         scenario.id !== "native.legacy-migration" &&
         scenario.suite !== "native-auth" &&
+        scenario.suite !== "mcp" &&
         !["native-installation", "registry-recovery", "store"].includes(
           scenario.suite,
         )
@@ -1492,6 +1532,7 @@ try {
         ...accountOwnershipSuite.takeEvidence(),
         ...accountSchedules.takeEvidence(),
         ...accountRefresh.takeEvidence(),
+        ...mcpSuite.takeEvidence(),
       ];
       assert.ok(
         !result.model.some((entry) => entry.state === "error"),
@@ -1512,6 +1553,7 @@ try {
         ...accountOwnershipSuite.takeEvidence(),
         ...accountSchedules.takeEvidence(),
         ...accountRefresh.takeEvidence(),
+        ...mcpSuite.takeEvidence(),
       ];
       try {
         result.snapshot = await status();
@@ -1658,6 +1700,26 @@ try {
       errors.push(`Owned credential cleanup: ${error.message}`);
     }
   }
+  if (mcpProvider) {
+    report.mcpFixture = {
+      port: mcpProvider.port,
+      requests: mcpProvider.journal,
+      activeSessionsBeforeShutdown: mcpProvider.activeSessions,
+      limitations: [
+        "Unauthenticated controlled HTTPS peer; no live provider, OAuth, account persistence or official conformance certification.",
+      ],
+    };
+    try {
+      await mcpProvider.close();
+      await poll(
+        "MCP fixture listener release",
+        async () => !(await portOpen(mcpProvider.port)),
+        { timeoutMs: 3000 },
+      );
+    } catch (error) {
+      errors.push(`MCP provider cleanup: ${error.message}`);
+    }
+  }
   if (cdpPort) {
     try {
       await poll(
@@ -1689,6 +1751,7 @@ try {
     "fixture-b",
     "fixture.grainpack",
     "auth-tls",
+    "mcp-tls",
     "auth-fixture.grainpack",
     "auth-peer.grainpack",
     "auth-fixture-a",

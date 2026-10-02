@@ -26,6 +26,8 @@ struct Marker {
     store_port: Option<u16>,
     #[serde(default)]
     auth_port: Option<u16>,
+    #[serde(default)]
+    mcp_port: Option<u16>,
 }
 
 struct Config {
@@ -66,6 +68,11 @@ fn read_marker(root: &Path) -> Result<Marker, String> {
         || marker.auth_port.is_some_and(|port| {
             port == 0 || port == marker.model_port || Some(port) == marker.store_port
                 || port == 7124 || port == crate::events_server::EVENTS_PORT
+        })
+        || marker.mcp_port.is_some_and(|port| {
+            port == 0 || port == marker.model_port || Some(port) == marker.store_port
+                || Some(port) == marker.auth_port || port == 7124
+                || port == crate::events_server::EVENTS_PORT
         })
     {
         return Err("Invalid harness run identity or model port".into());
@@ -109,6 +116,12 @@ pub(super) fn auth_fixture_config() -> Result<(PathBuf, u16), String> {
         .marker
         .auth_port
         .ok_or("Native auth fixture is not enabled")?;
+    Ok((value.root.clone(), port))
+}
+
+pub(super) fn mcp_fixture_config() -> Result<(PathBuf, u16), String> {
+    let value = CONFIG.get().ok_or("MCP fixture is not initialized")?;
+    let port = value.marker.mcp_port.ok_or("MCP fixture is not enabled")?;
     Ok((value.root.clone(), port))
 }
 
@@ -183,7 +196,11 @@ pub fn configure(app: &AppHandle) -> Result<(), String> {
     settings.agent_quick_enabled = false;
     settings.agent_panel_position = crate::settings::AgentPanelPosition::Center;
     settings.extension_developer_mode = true;
-    settings.mcp_enabled_providers.clear();
+    // Preserve only this run's explicitly enabled peer across real restarts.
+    // Ordinary provider entries remain excluded from the isolated host.
+    settings.mcp_enabled_providers.retain(|id| {
+        config().marker.mcp_port.is_some() && id == crate::grain_agent_harness_mcp::PROVIDER_ID
+    });
     settings.mcp_oauth_client_ids.clear();
     settings.post_process_api_keys.0.clear();
     settings.stt_api_keys.0.clear();
@@ -461,6 +478,8 @@ pub async fn agent_harness_fixture(
 #[derive(Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Instruction {
+    McpRead,
+    McpExcluded,
     Hello,
     SlowHello,
     ModelWait,
@@ -502,6 +521,8 @@ pub async fn agent_harness_submit(
 ) -> Result<(), String> {
     guard(&app, &window)?;
     let text = match instruction {
+        Instruction::McpRead => "Harness request: mcp_read",
+        Instruction::McpExcluded => "Harness request: mcp_excluded",
         Instruction::Hello => "Harness request: hello",
         Instruction::SlowHello => "Harness request: slow_hello",
         Instruction::ModelWait => "Harness request: model_wait",
@@ -586,6 +607,13 @@ mod tests {
         for port in [0, 9000, 9001, 7124, crate::events_server::EVENTS_PORT] {
             std::fs::write(&marker, format!(
                 r#"{{"schema":1,"runId":"{}","modelPort":9000,"storePort":9001,"authPort":{port}}}"#,
+                uuid::Uuid::new_v4(),
+            )).unwrap();
+            assert!(read_marker(root.path()).is_err());
+        }
+        for port in [0, 9000, 9001, 9002, 7124, crate::events_server::EVENTS_PORT] {
+            std::fs::write(&marker, format!(
+                r#"{{"schema":1,"runId":"{}","modelPort":9000,"storePort":9001,"authPort":9002,"mcpPort":{port}}}"#,
                 uuid::Uuid::new_v4(),
             )).unwrap();
             assert!(read_marker(root.path()).is_err());

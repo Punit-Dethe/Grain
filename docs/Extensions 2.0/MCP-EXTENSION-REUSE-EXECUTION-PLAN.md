@@ -1,6 +1,6 @@
 # Extension platform: audit, reuse and execution plan
 
-**Updated:** 2 October 2026. **Branch:** `extensions/tool-only-retirement`. **Status:** testing-only execution; all ten B1 numbered requirements accepted after focused audits/repeated real-app evidence. MCP B2 is next. Planning snapshot remains `b0afe340`; current ledger **38 Pass / 15 Pending**. Retained input findings, controlled-provider limits, live providers and vault reconciliation remain open.
+**Updated:** 2 October 2026. **Branch:** `extensions/tool-only-retirement`. **Status:** testing-only execution; all B1 numbered requirements and B2 mixed-catalog check 23 accepted after focused audits/repeated real-app evidence. Planning snapshot remains `b0afe340`; current ledger **39 Pass / 14 Pending**. B2 byte limits/cancellation/conformance and live prerequisites remain next; B3/B4, retained input findings, production vault reconciliation and release gates remain open.
 
 This is the forward execution order for the existing [extension plan](MCP-EXTENSION-PLAN.md). That document retains the product contract, R0–R6 release gates and full numbered test procedures. The [progress report](MCP-EXTENSION-PROGRESS.md) retains verdicts and evidence. If older chronological handoffs disagree about what comes next, use this document. No existing acceptance requirement is waived.
 
@@ -188,6 +188,8 @@ Add a thin conformance client entry point that invokes these production wrappers
 
 **Gate:** checks 8/17/20/23/31, adversarial no-replay/byte-limit schedules and focused MCP boundary audit accepted. Controlled results and unavailable live tool shapes are distinct. Do not provoke production writes to test lost replies or cancellation.
 
+**B2 first unit accepted (2 October):** [Catalog/transport audit](MCP-CATALOG-TRANSPORT-AUDIT.md) accepts 23 using the real app and a guarded unauthenticated HTTPS MCP peer. JSON/SSE modern discovery and legacy handshake, nested wire/result values, selected schemas, mixed/excluded/all-unsupported catalogs, cursor refusal, actual restart and stale disable/schema approvals pass. Both final cases pass twice in fresh profiles; both deliberate corruptions fail; all eight native-auth and both ordinary smoke cases pass, cleanup Pass. Inventory: **42 distinct scenarios**, including two MCP cases. Ledger: **39 Pass / 14 Pending**. Checks 8/17 have controlled supporting evidence and remain Pending for their live requirements; 20/31, conformance and whole B2 remain open. No new manual batch. The fixed peer stores no credential; account persistence/authentication are excluded. The audit retains all early TLS/fixture/oracle/bootstrap failures.
+
 ### B3 — Certify current MCP authentication (7 checks)
 
 Use the same controlled transport and SDK auth path for denial, wrong/late state, supported registration, config replacement, refresh/logout races, port conflict and independent providers. Use SDK conformance for standards cases and Grain fixtures for host ownership.
@@ -255,6 +257,6 @@ Record commit/binary/source/runner identity, platform, model/provider, controlle
 
 ## 9. First implementation handoff and completion definition
 
-**B1a/B1b and B1c 42/43/50/51 are accepted; next work is native check 44 and its focused audit.** Do not upgrade `rmcp`, introduce `oauth2` as a direct native dependency, delete legacy modules or start broader Agent features. Use the current implementation to obtain missing evidence, fix demonstrated failures and audit each module. Remaining baseline checks: **B1 1 + B2 5 + B3 7 + B4 3 = 16**. No extra human batch is needed for the accepted controlled native units; live accounts and orphan reconciliation remain separate release requirements.
+**All B1 numbered requirements and B2 check 23 are accepted. Next work is B2 byte-limit/slow-call/conformance testing and its focused audit.** Do not upgrade `rmcp`, introduce native `oauth2`, delete legacy modules or start broader Agent features. Use the current implementation to obtain missing evidence and repair demonstrated failures. Remaining baseline checks: **B2 4 + B3 7 + B4 3 = 14**. Controlled 8/17 coverage preserves their live prerequisites; account persistence and cancellation portions are not certified by an unauthenticated peer. No new human batch is assigned by this unit. Live accounts, retained input findings and production orphan reconciliation remain separate release requirements.
 
 This planning audit is complete. Foundation testing, library replacement, physical retirement and release certification are not complete. All seven original whole-phase gates remain open. Continue on `extensions/tool-only-retirement`, commit/push scoped work, preserve unrelated user changes and never push these changes directly to `main`.

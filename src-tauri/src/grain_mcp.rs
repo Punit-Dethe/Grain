@@ -114,9 +114,37 @@ struct CatalogProvider {
 enum Registration {
     Dynamic,
     PreRegistered,
+    #[cfg(feature = "agent-harness")]
+    NoAuthFixture,
+}
+
+fn requires_account(item: &CatalogProvider) -> bool {
+    #[cfg(feature = "agent-harness")]
+    if item.registration == Registration::NoAuthFixture {
+        return false;
+    }
+    let _ = item;
+    true
+}
+
+fn provider_endpoint(item: &CatalogProvider) -> Result<std::borrow::Cow<'static, str>, String> {
+    #[cfg(feature = "agent-harness")]
+    if item.registration == Registration::NoAuthFixture {
+        return crate::grain_agent_harness_mcp::endpoint().map(Into::into);
+    }
+    Ok(item.endpoint.into())
 }
 
 const CATALOG: &[CatalogProvider] = &[
+    #[cfg(feature = "agent-harness")]
+    CatalogProvider {
+        id: "grain-harness",
+        name: "Harness MCP",
+        description: "Disposable, unauthenticated MCP tools for real Agent acceptance tests.",
+        endpoint: "https://grain-agent-harness.invalid/mcp",
+        registration: Registration::NoAuthFixture,
+        setup_url: "https://modelcontextprotocol.io/",
+    },
     CatalogProvider {
         id: "linear",
         name: "Linear",
@@ -176,13 +204,17 @@ const CATALOG: &[CatalogProvider] = &[
 pub struct McpHttpClient(pub reqwest_mcp::Client);
 
 impl McpHttpClient {
-    pub fn build() -> Result<Self, String> {
+    pub(super) fn builder() -> reqwest_mcp::ClientBuilder {
         reqwest_mcp::Client::builder()
             .redirect(reqwest_mcp::redirect::Policy::none())
             .connect_timeout(Duration::from_secs(10))
             .timeout(Duration::from_secs(45))
             .pool_idle_timeout(Duration::from_secs(90))
             .user_agent(format!("Grain/{} MCP", env!("CARGO_PKG_VERSION")))
+    }
+
+    pub fn build() -> Result<Self, String> {
+        Self::builder()
             .build()
             .map(Self)
             .map_err(|error| format!("could not initialize the MCP HTTP client: {error}"))
@@ -354,10 +386,12 @@ fn delete_vault_entry(service: &str, account: &str) -> Result<(), AuthError> {
 }
 
 fn provider(id: &str) -> Result<&'static CatalogProvider, String> {
-    CATALOG
+    let item = CATALOG
         .iter()
         .find(|provider| provider.id == id)
-        .ok_or_else(|| "unknown MCP provider".to_string())
+        .ok_or_else(|| "unknown MCP provider".to_string())?;
+    provider_endpoint(item)?;
+    Ok(item)
 }
 
 fn validate_hosted_oauth_metadata(metadata: &AuthorizationMetadata) -> Result<(), String> {
@@ -455,13 +489,23 @@ pub async fn mcp_provider_status(
         .collect();
     let mut statuses = Vec::with_capacity(CATALOG.len());
     for item in CATALOG {
+        if provider(item.id).is_err() {
+            continue;
+        }
         let client_id_configured = settings
             .mcp_oauth_client_ids
             .get(item.id)
             .is_some_and(|value| !value.trim().is_empty());
-        let stored = stored_connected(item.id).await;
+        let account_required = requires_account(item);
+        let stored = if account_required {
+            stored_connected(item.id).await
+        } else {
+            Ok(false)
+        };
         let connected = stored.as_ref().is_ok_and(|value| *value);
-        let state = if stored.is_err() {
+        let state = if !account_required {
+            "fixture_no_auth"
+        } else if stored.is_err() {
             "unavailable"
         } else if connected {
             "stored"
@@ -474,12 +518,12 @@ pub async fn mcp_provider_status(
             id: item.id.into(),
             name: item.name.into(),
             description: item.description.into(),
-            endpoint: item.endpoint.into(),
+            endpoint: provider_endpoint(item)?.into_owned(),
             setup_url: item.setup_url.into(),
             requires_client_credentials: item.registration == Registration::PreRegistered,
             client_id_configured,
             connected,
-            enabled: connected && enabled.contains(item.id),
+            enabled: (!account_required || connected) && enabled.contains(item.id),
             state: state.into(),
         });
     }
@@ -582,12 +626,12 @@ pub async fn mcp_set_provider_enabled(
 ) -> Result<(), String> {
     crate::grain_commands::require_main_window(&window)?;
     require_developer_mode(&app)?;
-    provider(&id)?;
+    let item = provider(&id)?;
     let ticket = provider_control(&id).invalidate();
     let _operation = tokio::time::timeout(OPERATION_TIMEOUT, ticket.acquire())
         .await
         .map_err(|_| "MCP enable/disable timed out")??;
-    if enabled && !stored_connected(&id).await? {
+    if enabled && requires_account(item) && !stored_connected(&id).await? {
         return Err("connect this MCP provider before enabling it".into());
     }
     let ctx = app
@@ -826,6 +870,9 @@ pub async fn mcp_connect_provider(
     crate::grain_commands::require_main_window(&window)?;
     require_developer_mode(&app)?;
     let item = provider(&id)?;
+    if !requires_account(item) {
+        return Err("The unauthenticated MCP fixture has no account to connect".into());
+    }
     {
         let mut active = CONNECTING
             .get_or_init(|| Mutex::new(HashSet::new()))
@@ -988,7 +1035,9 @@ pub async fn mcp_disconnect_provider(
 ) -> Result<(), String> {
     crate::grain_commands::require_main_window(&window)?;
     require_developer_mode(&app)?;
-    provider(&id)?;
+    if !requires_account(provider(&id)?) {
+        return Err("Disable the unauthenticated MCP fixture; it has no account".into());
+    }
     let ticket = provider_control(&id).invalidate();
     let _operation = tokio::time::timeout(OPERATION_TIMEOUT, ticket.acquire())
         .await
@@ -1160,6 +1209,17 @@ async fn open_service(
     operation: &session::Lease,
     deadline: tokio::time::Instant,
 ) -> Result<McpService, ExecutionFailure> {
+    #[cfg(feature = "agent-harness")]
+    if item.registration == Registration::NoAuthFixture {
+        let (endpoint, client) = crate::grain_agent_harness_mcp::client()
+            .map_err(|_| before_dispatch(FailureClass::Network, "MCP fixture is unavailable."))?;
+        return serve_http(
+            bounded_http::BoundedClient::new(client),
+            &endpoint,
+            deadline,
+        )
+        .await;
+    }
     let manager = tokio::time::timeout_at(
         deadline,
         authorization_manager(http.clone(), item, app, ticket, operation),
@@ -1641,7 +1701,7 @@ fn tool_set_digest(item: &CatalogProvider, tools: &[Tool]) -> Result<String, Str
         })
         .collect();
     canonical.sort_by(|a, b| a["name"].as_str().cmp(&b["name"].as_str()));
-    let bytes = serde_json::to_vec(&(item.id, item.endpoint, canonical))
+    let bytes = serde_json::to_vec(&(item.id, provider_endpoint(item)?.as_ref(), canonical))
         .map_err(|error| error.to_string())?;
     Ok(format!("{:x}", Sha256::digest(bytes)))
 }
@@ -1680,7 +1740,7 @@ pub(crate) fn directory(
         .collect();
     CATALOG
         .iter()
-        .filter(|item| enabled.contains(item.id))
+        .filter(|item| enabled.contains(item.id) && provider(item.id).is_ok())
         .map(
             |item| grain_core::capability_index::ExtensionDirectoryEntry {
                 extension_id: format!("mcp.{}", item.id),

@@ -268,6 +268,7 @@ export function selectScenarios(suite) {
       "native-failures",
       "native-foundation",
       "native-auth",
+      "mcp",
       "native-installation",
       "registry-recovery",
       "store",
@@ -323,3 +324,20 @@ scenarios.push({
   description:
     "Actual held refresh cannot restore logout; reconnect/restart identify replacement account; a second provider reads independently in the same host",
 });
+
+scenarios.push(
+  {
+    id: "mcp.transport-contract",
+    suite: "mcp",
+    checks: [8, 17],
+    description:
+      "Real MCP JSON/SSE stateless discovery and legacy handshake, nested wire/results, approval, restart and stale disable refusal (controlled peer only)",
+  },
+  {
+    id: "mcp.mixed-catalog",
+    suite: "mcp",
+    checks: [23],
+    description:
+      "Real MCP mixed pages, unsupported selection/empty catalog, repeated cursor refusal, changed approval and fresh recovery",
+  },
+);

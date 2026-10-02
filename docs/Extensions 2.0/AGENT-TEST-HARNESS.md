@@ -136,3 +136,21 @@ Use `node tests/agent-harness/run.mjs --scenario agent.reopen-escape --focus-cli
 **2 October B1c partial acceptance:** [Native sign-in/switch/expiry audit](NATIVE-AUTH-SCHEDULE-AUDIT.md) accepts 42/43/50/51 after six actual cancellation schedules, real account switch/failure/restart reads, partial-consent rejection and actual expiry/reconnect/refresh. The maintained inventory is now **39 distinct scenarios**; `native-auth` contains seven and `native-auth-schedules` selects the four new cases. Full affected suite, repeated new subset and both deliberate faults have expected verdicts and cleanup Pass. Current ledger: **37 Pass / 16 Pending**. Native check 44, live accounts, orphan reconciliation, retained input observations and all release gates remain open; no new manual batch is assigned.
 
 **2 October B1c final numbered acceptance:** [Native refresh/logout audit](NATIVE-AUTH-REFRESH-AUDIT.md) accepts 44 using the actual production auth/vault path, Agent-approved interrupted reads and same-host independent provider reads. The fixed auth concurrency probe returns only null after dropping its zeroizing result; it does not enable parallel Agent sessions or direct tool execution. Exact peer admission/TLS routes and finite consent/receipt controls remain debug-only. The maintained inventory is **40 scenarios**, including **eight native-auth**; the schedules subset remains four. Full affected suite, final clean repeat and ordinary smoke pass; deliberate early release fails as required, cleanup Pass. Three earlier driver/oracle failures remain recorded. Current ledger: **38 Pass / 15 Pending**. All B1 numbered requirements are accepted; retained input findings, live accounts, production orphan reconciliation and all whole release gates stay open. No new manual batch; next B2.
+
+
+## MCP catalog/transport unit - 2 October 2026
+
+The [focused audit](MCP-CATALOG-TRANSPORT-AUDIT.md) accepts numbered check 23. The maintained inventory is **42 distinct scenarios**: two new MCP cases, eight native-auth cases, four in the native-auth-schedules subset, and the retained native/Agent/store cases. There are 21 runner self-tests. Current ledger: **39 Pass / 14 Pending**; whole B2 and every release gate remain open.
+
+`--suite mcp` starts an owned HTTPS peer and drives the actual Agent search/load/approval/executor. The fixed debug-only provider requires an optional `mcpPort` marker field, exact loopback endpoint and separately generated CA/server leaf under the disposable `mcp-tls/` directory. It stores no grant and refuses account commands. The new TLS trust applies only to this fixed client; ordinary providers retain their defaults. Native auth still uses its separate established TLS fixture. All temporary keys/profiles and owned listeners are removed on success or failure.
+
+- `mcp.transport-contract`: modern discovery and legacy handshake, JSON/SSE, two-page nested reads, selected-tool exposure, exact request/result types, exactly one approved provider call, session deletion, real restart and stale disable refusal.
+- `mcp.mixed-catalog`: supported/excluded pages and developer warnings, an explicit excluded-tool load with zero dispatch, empty supported catalog, repeated cursor refusal and stale schema approval/fresh recovery.
+
+```powershell
+node tests/agent-harness/run.mjs --suite mcp
+node tests/agent-harness/run.mjs --scenario mcp.transport-contract --fault wrong-mcp-type
+node tests/agent-harness/run.mjs --scenario mcp.mixed-catalog --fault supported-mcp-excluded
+```
+
+Build first using `tests/agent-harness/build.ps1`, with Python `cryptography` available; run real suites serially and after native compilation finishes. Both fault commands must fail with their intended assertion and cleanup Pass. Final accepted runs `run-gysFYv` / `run-C2iw9m`, fault runs, production tests and native/smoke regression identities are in the audit. This controlled peer supplies supporting evidence for 8/17 and full evidence for 23; it supplies no OAuth/account-persistence, oversized-response, slow-call, live-provider or official-conformance certification. Those are the next B2/B3 requirements. No additional manual batch is required now.
