@@ -350,6 +350,13 @@ scenarios.push(
       "Cancel-sign-in, disable and Developer Mode off refuse issued old callbacks before/after restart; fresh B grant/read recovers",
   },
   {
+    id: "mcp.auth-close-cancellation",
+    suite: "mcp-auth",
+    checks: [31],
+    description:
+      "Authenticated JSON/SSE modern/legacy held/pending close, bounded cleanup, late reply refusal, preserved real grant and fresh/restart A reads",
+  },
+  {
     id: "mcp.live-read-disable",
     suite: "mcp-live",
     checks: [8],

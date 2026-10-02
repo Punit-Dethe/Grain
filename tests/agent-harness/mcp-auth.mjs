@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { createServer } from "node:net";
 import { randomUUID } from "node:crypto";
+import { performance } from "node:perf_hooks";
 import { MCP_INPUT } from "./mcp-fixture.mjs";
 import { MCP_AUTH_ID, MCP_PRIVATE_MARKER } from "./mcp-oauth-fixture.mjs";
 
@@ -349,6 +350,162 @@ export function mcpAuthHandlers(ctx) {
           }
         } finally {
           await ctx.invoke("extension_set_developer_mode", { enabled: true });
+          await clean();
+        }
+      },
+      async "mcp.auth-close-cancellation"() {
+        assert.equal(await ctx.vaultCount(), 0);
+        try {
+          await login("A");
+          const exchanges = tokenCount(),
+            endpoint = (await state()).endpoint,
+            initialCalls = count("tools/call"),
+            modelBaseline = ctx.model().journal.length;
+          async function preserved(stage) {
+            const s = await state();
+            assert.equal(s.connected, true, `${stage}: account disconnected`);
+            assert.equal(s.enabled, true, `${stage}: account disabled`);
+            assert.equal(s.state, "stored", `${stage}: grant unavailable`);
+            assert.equal(s.endpoint, endpoint, `${stage}: resource changed`);
+            assert.equal(await ctx.vaultCount(), 1, `${stage}: grant lost`);
+            assert.equal(
+              tokenCount(),
+              exchanges,
+              `${stage}: account reauthorized`,
+            );
+            assert.equal(await control("authorization"), null);
+          }
+          for (const lifecycle of ["stateless", "legacy"]) {
+            for (const reply of ["json", "sse"]) {
+              const stage = `${lifecycle}-${reply}`,
+                held = { stage: `${stage}-close-held`, status: "Running" };
+              evidence.push(held);
+              provider().configure({ lifecycle, reply, result: "held" });
+              const before = count("tools/call"),
+                modelStart = ctx.model().journal.length;
+              const page = await ctx.request("mcp_account_a");
+              assert.equal(count("tools/call"), before);
+              await ctx.activate(
+                page.locator(".agc-confirm-actions .agc-action-btn"),
+              );
+              await ctx.waitFor(
+                `${stage}: authenticated read held`,
+                () => provider().heldCalls === 1,
+              );
+              assert.equal(count("tools/call"), before + 1);
+              assert.equal(
+                provider()
+                  .journal.filter((x) => x.method === "tools/call")
+                  .at(-1).account,
+                "A",
+              );
+              const closing = performance.now();
+              await ctx.closePanel();
+              await ctx.waitFor(
+                `${stage}: held read/session released`,
+                () =>
+                  provider().heldCalls === 0 && provider().activeSessions === 0,
+              );
+              const cleanupMs = Math.round(performance.now() - closing);
+              assert.ok(
+                cleanupMs < 10000,
+                `${stage}: local cancellation exceeded 10 seconds`,
+              );
+              provider().attemptLateReply();
+              assert.equal(
+                count("tools/call"),
+                before + 1,
+                `${stage}: cancelled read replayed`,
+              );
+              assert.equal(
+                ctx.model().journal.length,
+                modelStart + 3,
+                `${stage}: closed read continued to model`,
+              );
+              assert.equal(provider().delayedReplies, 0);
+              if (ctx.fault === "lost-mcp-account") await control("disconnect");
+              await preserved(stage);
+              provider().configure({ result: "normal" });
+              await read("A", `${stage}-held-close-recovery`);
+              assert.equal(
+                ctx
+                  .model()
+                  .journal.slice(modelStart)
+                  .filter((x) => x.mcpAccountVerified).length,
+                1,
+                `${stage}: late result contaminated recovery`,
+              );
+              Object.assign(held, {
+                status: "Pass",
+                account: "A",
+                cancelledWireCalls: 1,
+                freshWireCalls: 1,
+                lateReplyDiscarded: true,
+                cleanupMs,
+                scopedVaultEntries: 1,
+                newTokenExchanges: 0,
+                activeSessions: 0,
+                heldCalls: 0,
+              });
+              const pending = {
+                stage: `${stage}-close-pending`,
+                status: "Running",
+              };
+              evidence.push(pending);
+              const pendingCalls = count("tools/call"),
+                pendingModel = ctx.model().journal.length;
+              await ctx.request("mcp_account_a");
+              await ctx.closePanel();
+              assert.equal(
+                count("tools/call"),
+                pendingCalls,
+                `${stage}: pending approval dispatched`,
+              );
+              assert.equal(
+                ctx.model().journal.length,
+                pendingModel + 3,
+                `${stage}: pending close continued to model`,
+              );
+              assert.equal(provider().activeSessions, 0);
+              await preserved(pending.stage);
+              await read("A", `${stage}-pending-close-recovery`);
+              assert.equal(
+                ctx
+                  .model()
+                  .journal.slice(pendingModel)
+                  .filter((x) => x.mcpAccountVerified).length,
+                1,
+              );
+              await ctx.restartHost();
+              await preserved(`${stage}-restart`);
+              await read("A", `${stage}-restart-account-read`);
+              await preserved(`${stage}-restart-read`);
+              Object.assign(pending, {
+                status: "Pass",
+                account: "A",
+                cancelledWireCalls: 0,
+                freshWireCalls: 1,
+                restartWireCalls: 1,
+                scopedVaultEntries: 1,
+                newTokenExchanges: 0,
+                sameAccountAfterRestart: true,
+              });
+            }
+          }
+          assert.equal(
+            count("tools/call"),
+            initialCalls + 16,
+            "Unexpected account read outside the explicit cancellation/recovery schedule",
+          );
+          assert.equal(
+            ctx
+              .model()
+              .journal.slice(modelBaseline)
+              .filter((x) => x.mcpAccountVerified).length,
+            12,
+            "Cancelled account result escaped into a later session",
+          );
+        } finally {
           await clean();
         }
       },

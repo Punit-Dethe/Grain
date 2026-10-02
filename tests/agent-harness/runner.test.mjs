@@ -289,14 +289,19 @@ test("MCP account oracle rejects wrong identity, coercion, invented results and 
 
 test("authenticated MCP suite has independent IDs and remains in ordinary all", () => {
   const auth = selectScenarios("mcp-auth");
-  assert.equal(auth.length, 3);
+  assert.equal(auth.length, 4);
   assert.deepEqual(
     auth.map((x) => x.id),
-    ["mcp.auth-fixture", "mcp.auth-denied-cancelled", "mcp.auth-late-callback"],
+    [
+      "mcp.auth-fixture",
+      "mcp.auth-denied-cancelled",
+      "mcp.auth-late-callback",
+      "mcp.auth-close-cancellation",
+    ],
   );
   for (const entry of auth) assert.ok(selectScenarios("all").includes(entry));
   const foundation = selectScenarios("mcp-foundation");
-  assert.equal(foundation.length, 12);
+  assert.equal(foundation.length, 13);
   assert.deepEqual(
     new Set(foundation),
     new Set([...auth, ...selectScenarios("mcp")]),
@@ -320,6 +325,51 @@ test("MCP journal exhaustion remains bounded, records failure and cannot copy pr
   assert.doesNotThrow(() => recordMcpFailure(journal));
   assert.equal(journal.length, MCP_JOURNAL_LIMIT);
   assert.ok(!JSON.stringify(journal).includes("HARNESS_MCP_PRIVATE_"));
+});
+
+test("OAuth evidence exhaustion refuses requests without throwing again or copying private data", async () => {
+  const { createMcpOAuth, MCP_OAUTH_JOURNAL_LIMIT, MCP_PRIVATE_MARKER } =
+    await import("./mcp-oauth-fixture.mjs");
+  const peer = createMcpOAuth(() => "https://127.0.0.1:1", Buffer.alloc(0));
+  peer.journal.push(
+    ...Array.from({ length: MCP_OAUTH_JOURNAL_LIMIT - 1 }, () => ({
+      phase: "resource-metadata",
+    })),
+  );
+  try {
+    for (let repeat = 0; repeat < 2; repeat++) {
+      let status, response;
+      const res = {
+        headersSent: false,
+        writeHead(value) {
+          status = value;
+          this.headersSent = true;
+        },
+        end(value) {
+          response = JSON.parse(value);
+        },
+      };
+      assert.equal(
+        await peer.handle(
+          {
+            method: "GET",
+            url:
+              "/.well-known/oauth-protected-resource?private=" +
+              MCP_PRIVATE_MARKER,
+          },
+          res,
+        ),
+        true,
+      );
+      assert.equal(status, 400);
+      assert.deepEqual(response, { error: "invalid_request" });
+      assert.equal(peer.journal.length, MCP_OAUTH_JOURNAL_LIMIT);
+      assert.deepEqual(peer.journal.at(-1), { phase: "oauth-error" });
+      assert.ok(!JSON.stringify(peer.journal).includes(MCP_PRIVATE_MARKER));
+    }
+  } finally {
+    peer.close();
+  }
 });
 
 test("MCP catalog refusal oracle rejects partial publication and offered actions", () => {

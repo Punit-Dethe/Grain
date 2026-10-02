@@ -6,6 +6,9 @@ import { request as httpRequest } from "node:http";
 
 export const MCP_AUTH_ID = "grain-harness-auth";
 export const MCP_PRIVATE_MARKER = "HARNESS_MCP_PRIVATE_";
+// Repeated real SDK discovery legitimately exceeded the old 256-entry log.
+// Keep combined-suite evidence bounded, with one reserved terminal error slot.
+export const MCP_OAUTH_JOURNAL_LIMIT = 1024;
 
 async function boundedBody(req) {
   const chunks = [];
@@ -27,7 +30,10 @@ export function createMcpOAuth(origin, ca, { wrongAccount = false } = {}) {
   let account = "A",
     denied = false;
   const record = (item) => {
-    assert.ok(journal.length < 256, "Owned MCP OAuth journal exceeded bound");
+    assert.ok(
+      journal.length < MCP_OAUTH_JOURNAL_LIMIT - 1,
+      "Owned MCP OAuth journal exceeded bound",
+    );
     journal.push(item);
   };
   const json = (res, status, value) => {
@@ -173,7 +179,8 @@ export function createMcpOAuth(origin, ca, { wrongAccount = false } = {}) {
       }
     } catch {
       // Assertions must never copy a code/token/authorization URL to evidence.
-      record({ phase: "oauth-error" });
+      if (journal.length < MCP_OAUTH_JOURNAL_LIMIT)
+        journal.push({ phase: "oauth-error" });
       if (!res.headersSent) json(res, 400, { error: "invalid_request" });
       else res.destroy();
     }
