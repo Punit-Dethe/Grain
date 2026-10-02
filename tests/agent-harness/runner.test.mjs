@@ -287,9 +287,31 @@ test("MCP account oracle rejects wrong identity, coercion, invented results and 
   assert.throws(() => nextReply(frame), /replayed/);
 });
 
+test("MCP account shutdown oracle requires exact dispatched uncertainty without success or replay", () => {
+  const frame = body([
+    "search",
+    "load",
+    "Outcome unknown — do not claim it succeeded: The provider may have performed the action, but Grain could not confirm its result. MCP account or access changed. Ask again. Do not repeat it automatically.",
+  ]);
+  frame.messages[0].content = "Harness request: mcp_account_a";
+  const reply = nextReply(frame);
+  assert.equal(reply.mcpAccountUnknown, true);
+  assert.equal(reply.mcpAccountVerified, undefined);
+  assert.equal(reply.mcpAccountRefused, undefined);
+  assert.equal(reply.tool_calls, undefined);
+  for (const wrong of [
+    "Outcome unknown: done",
+    "Outcome unknown — do not claim it succeeded: Network unavailable",
+    "Failed (Cancelled): expired",
+  ]) {
+    frame.messages.at(-1).content = wrong;
+    assert.throws(() => nextReply(frame));
+  }
+});
+
 test("authenticated MCP suite has independent IDs and remains in ordinary all", () => {
   const auth = selectScenarios("mcp-auth");
-  assert.equal(auth.length, 4);
+  assert.equal(auth.length, 5);
   assert.deepEqual(
     auth.map((x) => x.id),
     [
@@ -297,11 +319,12 @@ test("authenticated MCP suite has independent IDs and remains in ordinary all", 
       "mcp.auth-denied-cancelled",
       "mcp.auth-late-callback",
       "mcp.auth-close-cancellation",
+      "mcp.auth-shutdown",
     ],
   );
   for (const entry of auth) assert.ok(selectScenarios("all").includes(entry));
   const foundation = selectScenarios("mcp-foundation");
-  assert.equal(foundation.length, 13);
+  assert.equal(foundation.length, 14);
   assert.deepEqual(
     new Set(foundation),
     new Set([...auth, ...selectScenarios("mcp")]),

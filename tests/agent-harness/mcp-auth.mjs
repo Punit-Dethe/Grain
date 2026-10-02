@@ -46,6 +46,17 @@ export function mcpAccountReply(body, account) {
   }
   assert.equal(results.length, 3, "Authenticated MCP action replayed");
   const content = results[2].content;
+  if (content.startsWith("Outcome unknown")) {
+    assert.equal(
+      content,
+      "Outcome unknown — do not claim it succeeded: The provider may have performed the action, but Grain could not confirm its result. MCP account or access changed. Ask again. Do not repeat it automatically.",
+      "Expected dispatched account cancellation, not an unrelated unknown outcome",
+    );
+    return {
+      content: "Harness verified dispatched MCP cancellation; no replay",
+      mcpAccountUnknown: true,
+    };
+  }
   if (content.startsWith("Failed (")) {
     assert.equal(
       content,
@@ -351,6 +362,204 @@ export function mcpAuthHandlers(ctx) {
         } finally {
           await ctx.invoke("extension_set_developer_mode", { enabled: true });
           await clean();
+        }
+      },
+      async "mcp.auth-shutdown"() {
+        assert.equal(await ctx.vaultCount(), 0);
+        let failure;
+        try {
+          await login("A");
+          const exchanges = tokenCount(),
+            initialCalls = count("tools/call"),
+            modelBaseline = ctx.model().journal.length;
+          async function stop(boundary) {
+            if (ctx.fault === "skip-mcp-disable") return;
+            if (boundary === "provider-disable") await control("disable");
+            else
+              await ctx.invoke("extension_set_developer_mode", {
+                enabled: false,
+              });
+          }
+          async function disabled(boundary) {
+            if (boundary === "provider-disable") {
+              const s = await state();
+              assert.equal(
+                s.enabled,
+                false,
+                "Provider disable did not take effect",
+              );
+              assert.equal(s.connected, true);
+              assert.equal(s.state, "stored");
+            } else await assert.rejects(state(), /Developer mode/i);
+            // Session DELETE/held-close may finish concurrently; only RPC work
+            // is forbidden by this disabled discovery check.
+            const requests = () =>
+              provider().journal.filter((x) =>
+                [
+                  "server/discover",
+                  "initialize",
+                  "tools/list",
+                  "tools/call",
+                ].includes(x.method),
+              ).length;
+            const before = requests();
+            await assert.rejects(
+              control("discover"),
+              /disabled|Developer mode/i,
+            );
+            assert.equal(
+              requests(),
+              before,
+              "Disabled discovery reached the provider",
+            );
+            assert.equal(await ctx.vaultCount(), 1);
+            assert.equal(tokenCount(), exchanges);
+          }
+          async function resume(boundary) {
+            if (boundary === "developer-mode-off")
+              await ctx.invoke("extension_set_developer_mode", {
+                enabled: true,
+              });
+            await control("enable");
+            const s = await state();
+            assert.equal(s.connected, true);
+            assert.equal(s.enabled, true);
+            assert.equal(await ctx.vaultCount(), 1);
+            assert.equal(
+              tokenCount(),
+              exchanges,
+              "Shutdown recovery signed in again",
+            );
+          }
+          for (const boundary of ["provider-disable", "developer-mode-off"]) {
+            for (const lifecycle of ["stateless", "legacy"]) {
+              for (const reply of ["json", "sse"]) {
+                const stage = `${boundary}-${lifecycle}-${reply}`,
+                  observation = { stage, status: "Running" };
+                evidence.push(observation);
+                provider().configure({ lifecycle, reply, result: "held" });
+                const before = count("tools/call"),
+                  modelStart = ctx.model().journal.length;
+                const page = await ctx.request("mcp_account_a");
+                assert.equal(count("tools/call"), before);
+                await ctx.activate(
+                  page.locator(".agc-confirm-actions .agc-action-btn"),
+                );
+                await ctx.waitFor(
+                  `${stage}: authenticated wire receipt`,
+                  () => provider().heldCalls === 1,
+                );
+                const closing = performance.now();
+                await stop(boundary);
+                // Before awaiting the held response, prove shutdown actually took
+                // effect. The skip-disable fault must fail here, not at a timeout.
+                await disabled(boundary);
+                await ctx.waitFor(
+                  `${stage}: cancelled response/run/session release`,
+                  async () =>
+                    provider().heldCalls === 0 &&
+                    provider().activeSessions === 0 &&
+                    !(await ctx.status()).agent.active,
+                );
+                const cleanupMs = Math.round(performance.now() - closing);
+                assert.ok(
+                  cleanupMs < 10000,
+                  `${stage}: shutdown exceeded 10 seconds`,
+                );
+                assert.equal(count("tools/call"), before + 1);
+                assert.equal(
+                  provider()
+                    .journal.filter((x) => x.method === "tools/call")
+                    .at(-1).account,
+                  "A",
+                );
+                assert.equal(
+                  ctx
+                    .model()
+                    .journal.slice(modelStart)
+                    .filter((x) => x.mcpAccountUnknown).length,
+                  1,
+                );
+                assert.equal(
+                  ctx
+                    .model()
+                    .journal.slice(modelStart)
+                    .filter((x) => x.mcpAccountVerified || x.mcpAccountRefused)
+                    .length,
+                  0,
+                );
+                await page
+                  .getByText("could not confirm", { exact: false })
+                  .first()
+                  .waitFor({ state: "visible", timeout: 10000 });
+                provider().attemptLateReply();
+                assert.equal(count("tools/call"), before + 1);
+                await resume(boundary);
+                provider().configure({ result: "normal" });
+                await read("A", `${stage}-shutdown-recovery`);
+                const staleCalls = count("tools/call"),
+                  staleModel = ctx.model().journal.length;
+                const stale = await ctx.request("mcp_account_a");
+                await stop(boundary);
+                await disabled(boundary);
+                await resume(boundary);
+                await ctx.activate(
+                  stale.locator(".agc-confirm-actions .agc-action-btn"),
+                );
+                await ctx.waitFor(
+                  `${stage}: stale shutdown approval refused`,
+                  async () => !(await ctx.status()).agent.active,
+                );
+                assert.equal(count("tools/call"), staleCalls);
+                assert.equal(
+                  ctx
+                    .model()
+                    .journal.slice(staleModel)
+                    .filter((x) => x.mcpAccountRefused).length,
+                  1,
+                );
+                await read("A", `${stage}-stale-approval-recovery`);
+                await ctx.restartHost();
+                await resume(boundary);
+                await read("A", `${stage}-restart-account-read`);
+                Object.assign(observation, {
+                  status: "Pass",
+                  boundary,
+                  account: "A",
+                  cancelledWireCalls: 1,
+                  staleWireCalls: 0,
+                  freshWireCalls: 3,
+                  newTokenExchanges: 0,
+                  scopedVaultEntries: 1,
+                  lateReplyDiscarded: true,
+                  cleanupMs,
+                  activeSessions: 0,
+                  heldCalls: 0,
+                });
+              }
+            }
+          }
+          assert.equal(count("tools/call"), initialCalls + 32);
+          const final = ctx.model().journal.slice(modelBaseline);
+          assert.equal(final.filter((x) => x.mcpAccountUnknown).length, 8);
+          assert.equal(final.filter((x) => x.mcpAccountRefused).length, 8);
+          assert.equal(final.filter((x) => x.mcpAccountVerified).length, 24);
+          assert.equal(tokenCount(), exchanges);
+        } catch (error) {
+          failure = error;
+          throw error;
+        } finally {
+          try {
+            await ctx.invoke("extension_set_developer_mode", { enabled: true });
+            await clean();
+          } catch (error) {
+            if (!failure) throw error;
+            evidence.push({
+              stage: "shutdown-scenario-cleanup",
+              status: "Fail",
+              error: error.message,
+            });
+          }
         }
       },
       async "mcp.auth-close-cancellation"() {

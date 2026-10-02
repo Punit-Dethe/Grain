@@ -1243,7 +1243,7 @@ async fn open_service(
             .map_err(|_| before_dispatch(FailureClass::Network, "MCP fixture is unavailable."))?;
         let client = bounded_http::BoundedClient::new(client);
         let legacy_probe = client.legacy_probe();
-        return serve_http(client, &endpoint, deadline, legacy_probe).await;
+        return serve_http(client, &endpoint, deadline, legacy_probe, None).await;
     }
     let manager = tokio::time::timeout_at(
         deadline,
@@ -1257,8 +1257,9 @@ async fn open_service(
             "The MCP account is unavailable. Reconnect in Grain Settings.",
         )
     })?;
-    let client = bounded_http::BoundedClient::new(http);
+    let client = bounded_http::BoundedClient::new(http).with_authenticated_cleanup();
     let legacy_probe = client.legacy_probe();
+    let cleanup = client.clone();
     serve_http(
         AuthClient::new(client, manager),
         provider_endpoint(item)
@@ -1266,6 +1267,7 @@ async fn open_service(
             .as_ref(),
         deadline,
         legacy_probe,
+        Some(cleanup),
     )
     .await
 }
@@ -1275,8 +1277,16 @@ async fn serve_http<C: rmcp::transport::streamable_http_client::StreamableHttpCl
     endpoint: &str,
     deadline: tokio::time::Instant,
     legacy_probe: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    cleanup: Option<bounded_http::BoundedClient>,
 ) -> Result<McpService, ExecutionFailure> {
-    let first = serve_http_once(client.clone(), endpoint, deadline, hosted_lifecycle()).await;
+    let first = serve_http_once(
+        client.clone(),
+        endpoint,
+        deadline,
+        hosted_lifecycle(),
+        cleanup.clone(),
+    )
+    .await;
     if first.is_err()
         && legacy_probe.swap(false, std::sync::atomic::Ordering::Relaxed)
         && tokio::time::Instant::now() < deadline
@@ -1285,7 +1295,14 @@ async fn serve_http<C: rmcp::transport::streamable_http_client::StreamableHttpCl
         // first SDK transport has been dropped; start one fresh legacy handshake
         // under the SAME byte/absolute budgets. No tool has been dispatched.
         // Ordinary JSON-RPC correlation is never relaxed or rewritten.
-        return serve_http_once(client, endpoint, deadline, ClientLifecycleMode::Initialize).await;
+        return serve_http_once(
+            client,
+            endpoint,
+            deadline,
+            ClientLifecycleMode::Initialize,
+            cleanup,
+        )
+        .await;
     }
     first
 }
@@ -1297,10 +1314,12 @@ async fn serve_http_once<
     endpoint: &str,
     deadline: tokio::time::Instant,
     lifecycle: ClientLifecycleMode,
+    cleanup: Option<bounded_http::BoundedClient>,
 ) -> Result<McpService, ExecutionFailure> {
     let (cancel, receiver) = tokio::sync::watch::channel(false);
     let transport = StreamableHttpClientTransport::with_client(
-        cancellable_http::CancellableClient::new(client, receiver),
+        cancellable_http::CancellableClient::new(client, receiver)
+            .with_authenticated_cleanup(cleanup),
         transport_config(endpoint),
     );
     let info = if lifecycle == ClientLifecycleMode::Initialize {

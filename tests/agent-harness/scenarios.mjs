@@ -364,6 +364,13 @@ scenarios.push(
       "Live public DeepWiki discovery, approved fixed-repository read, disabled stale/fresh refusal and restart recovery",
   },
   {
+    id: "mcp.auth-shutdown",
+    suite: "mcp-auth",
+    checks: [13, 15],
+    description:
+      "Authenticated provider-disable/Developer Mode shutdown across JSON/SSE modern/legacy, bounded unknown result, stale approval refusal and fresh/restart recovery without reauthorization",
+  },
+  {
     id: "mcp.live-response-recovery",
     suite: "mcp-live",
     checks: [20],

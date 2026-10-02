@@ -135,11 +135,13 @@ if (
     "wrong-mcp-account",
     "abandoned-mcp-credential",
     "lost-mcp-account",
+    "skip-mcp-disable",
   ].includes(options.fault)
 )
   throw new Error("Unknown oracle fault");
 for (const [fault, scenario] of [
   ["lost-mcp-account", "mcp.auth-close-cancellation"],
+  ["skip-mcp-disable", "mcp.auth-shutdown"],
   ["wrong-mcp-account", "mcp.auth-fixture"],
   ["abandoned-mcp-credential", "mcp.auth-fixture"],
   ["missing-live-evidence", "mcp.live-read-disable"],

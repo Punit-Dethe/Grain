@@ -252,6 +252,7 @@ impl Fixture {
             &self.endpoint,
             tokio::time::Instant::now() + Duration::from_secs(3),
             legacy_probe,
+            None,
         )
         .await
         .unwrap()

@@ -16,11 +16,24 @@ use tokio::sync::watch;
 pub(super) struct CancellableClient<C> {
     client: C,
     cancel: watch::Receiver<bool>,
+    cleanup: Option<super::bounded_http::BoundedClient>,
 }
 
 impl<C> CancellableClient<C> {
     pub(super) fn new(client: C, cancel: watch::Receiver<bool>) -> Self {
-        Self { client, cancel }
+        Self {
+            client,
+            cancel,
+            cleanup: None,
+        }
+    }
+
+    pub(super) fn with_authenticated_cleanup(
+        mut self,
+        cleanup: Option<super::bounded_http::BoundedClient>,
+    ) -> Self {
+        self.cleanup = cleanup;
+        self
     }
 }
 
@@ -116,11 +129,23 @@ impl<C: StreamableHttpClient + Sync> StreamableHttpClient for CancellableClient<
     ) -> Result<(), StreamableHttpError<Self::Error>> {
         // Legacy server cleanup is allowed after local cancellation, but cannot
         // hold the operation alive indefinitely. It never repeats tools/call.
-        tokio::time::timeout(
-            std::time::Duration::from_secs(1),
-            self.client
-                .delete_session(uri, session_id, auth_header, headers),
-        )
+        tokio::time::timeout(std::time::Duration::from_secs(1), async {
+            if let Some(cleanup) = &self.cleanup {
+                cleanup
+                    .delete_owned_session(uri, session_id, headers)
+                    .await
+                    .map_err(|error| {
+                        StreamableHttpError::Io(std::io::Error::other(match error {
+                            StreamableHttpError::Io(_) => "Grain MCP cleanup ownership refused",
+                            _ => "Grain MCP authenticated cleanup failed",
+                        }))
+                    })
+            } else {
+                self.client
+                    .delete_session(uri, session_id, auth_header, headers)
+                    .await
+            }
+        })
         .await
         .unwrap_or_else(|_| {
             Err(StreamableHttpError::Io(std::io::Error::new(

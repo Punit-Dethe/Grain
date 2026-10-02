@@ -476,6 +476,7 @@ export async function startModel() {
           ? { mcpAccountVerified: reply.mcpAccountVerified }
           : {}),
         ...(reply.mcpAccountRefused ? { mcpAccountRefused: true } : {}),
+        ...(reply.mcpAccountUnknown ? { mcpAccountUnknown: true } : {}),
         ...(reply.mcpUnknownVerified ? { mcpUnknownVerified: true } : {}),
         ...(reply.mcpPreviewVerified ? { mcpPreviewVerified: true } : {}),
         ...(reply.mcpConformanceVerified

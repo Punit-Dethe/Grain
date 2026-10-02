@@ -21,9 +21,10 @@ use std::{
     io,
     sync::{
         atomic::{AtomicBool, AtomicUsize, Ordering},
-        Arc,
+        Arc, Mutex,
     },
 };
+use zeroize::Zeroizing;
 
 pub(super) const MAX_JSON_BYTES: usize = 2 * 1024 * 1024;
 pub(super) const MAX_OPERATION_BYTES: usize = 8 * 1024 * 1024;
@@ -36,6 +37,15 @@ pub(super) struct BoundedClient {
     http: Client,
     received: Arc<AtomicUsize>,
     legacy_probe: Arc<AtomicBool>,
+    cleanup: Option<Arc<Mutex<Option<SessionCleanup>>>>,
+}
+
+// Only the actual authenticated initialization response can bind this owner.
+// Never refresh/reload an account to clean up an invalidated old session.
+struct SessionCleanup {
+    endpoint: Arc<str>,
+    session: Arc<str>,
+    token: Zeroizing<String>,
 }
 
 fn invalid(message: &'static str) -> HttpError {
@@ -48,7 +58,66 @@ impl BoundedClient {
             http,
             received: Arc::new(AtomicUsize::new(0)),
             legacy_probe: Arc::new(AtomicBool::new(false)),
+            cleanup: None,
         }
+    }
+
+    pub(super) fn with_authenticated_cleanup(mut self) -> Self {
+        self.cleanup = Some(Arc::new(Mutex::new(None)));
+        self
+    }
+
+    fn bind_cleanup(
+        &self,
+        endpoint: Arc<str>,
+        session: Arc<str>,
+        token: String,
+    ) -> Result<(), HttpError> {
+        let token = Zeroizing::new(token);
+        let Some(owner) = &self.cleanup else {
+            return Ok(());
+        };
+        let mut owner = owner
+            .lock()
+            .map_err(|_| invalid("MCP cleanup owner unavailable"))?;
+        if owner.is_some() {
+            return Err(invalid("MCP cleanup owner already bound"));
+        }
+        *owner = Some(SessionCleanup {
+            endpoint,
+            session,
+            token,
+        });
+        Ok(())
+    }
+
+    fn take_cleanup(&self, endpoint: &str, session: &str) -> Result<SessionCleanup, HttpError> {
+        let Some(owner) = &self.cleanup else {
+            return Err(invalid("MCP cleanup owner missing"));
+        };
+        let mut owner = owner
+            .lock()
+            .map_err(|_| invalid("MCP cleanup owner unavailable"))?;
+        if !owner.as_ref().is_some_and(|owner| {
+            owner.endpoint.as_ref() == endpoint && owner.session.as_ref() == session
+        }) {
+            return Err(invalid("MCP cleanup owner mismatch"));
+        }
+        owner
+            .take()
+            .ok_or_else(|| invalid("MCP cleanup owner missing"))
+    }
+
+    pub(super) async fn delete_owned_session(
+        &self,
+        endpoint: Arc<str>,
+        session: Arc<str>,
+        headers: HashMap<HeaderName, HeaderValue>,
+    ) -> Result<(), HttpError> {
+        let owner = self.take_cleanup(&endpoint, &session)?;
+        self.http
+            .delete_session(endpoint, session, Some(owner.token.to_string()), headers)
+            .await
     }
 
     pub(super) fn legacy_probe(&self) -> Arc<AtomicBool> {
@@ -256,6 +325,13 @@ impl StreamableHttpClient for BoundedClient {
             return Err(StreamableHttpError::SessionExpired);
         }
         let session = Self::header(&response, "mcp-session-id")?;
+        if status.is_success()
+            && matches!(&message, ClientJsonRpcMessage::Request(request) if matches!(request.request, rmcp::model::ClientRequest::InitializeRequest(_)))
+        {
+            if let (Some(session), Some(token)) = (&session, auth_header) {
+                self.bind_cleanup(uri, Arc::from(session.as_str()), token)?;
+            }
+        }
         let kind = Self::header(&response, "content-type")?.unwrap_or_default();
         let kind = kind.split(';').next().unwrap_or_default().trim();
         let notification = !matches!(message, ClientJsonRpcMessage::Request(_));
@@ -393,6 +469,42 @@ fn uncorrelated_legacy_probe(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn authenticated_cleanup_is_exact_single_use_and_cannot_replace_an_owner() {
+        let client = BoundedClient::new(Client::new()).with_authenticated_cleanup();
+        client
+            .bind_cleanup(
+                Arc::from("https://example.test/mcp"),
+                Arc::from("old-session"),
+                "original-account".into(),
+            )
+            .unwrap();
+        assert!(client
+            .bind_cleanup(
+                Arc::from("https://example.test/mcp"),
+                Arc::from("replacement"),
+                "new-account".into()
+            )
+            .is_err());
+        assert!(client
+            .take_cleanup("https://different.test/mcp", "old-session")
+            .is_err());
+        assert!(client
+            .take_cleanup("https://example.test/mcp", "replacement")
+            .is_err());
+        let owner = client
+            .clone()
+            .take_cleanup("https://example.test/mcp", "old-session")
+            .unwrap();
+        assert_eq!(owner.token.as_str(), "original-account");
+        assert!(client
+            .take_cleanup("https://example.test/mcp", "old-session")
+            .is_err());
+        assert!(BoundedClient::new(Client::new())
+            .take_cleanup("https://example.test/mcp", "old-session")
+            .is_err());
+    }
     #[test]
     fn http_era_detection_never_retries_actions_successes_auth_or_modern_errors() {
         let probe: ClientJsonRpcMessage = serde_json::from_value(
