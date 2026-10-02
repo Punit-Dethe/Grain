@@ -53,7 +53,7 @@ pub(crate) fn scoped_tls(
     if url.host_str() != Some("127.0.0.1") {
         return Ok(builder);
     }
-    validate_url(endpoint, port, &["/token", "/me"])?;
+    validate_url(endpoint, port, &["/token", "/token-v2", "/me"])?;
     if url.query().is_some() {
         return Err("Fixture token/API URL cannot have a query".into());
     }
@@ -122,7 +122,8 @@ fn validate_pack(pack: &grain_sdk::GrainPack) -> Result<(), String> {
     pack.validate()?;
     let m = &pack.manifest;
     if m.id != FIXTURE_ID
-        || m.permissions != ["auth", "net:127.0.0.1"]
+        || (m.permissions != ["auth", "net:127.0.0.1"]
+            && m.permissions != ["auth", "net:127.0.0.1", "net:localhost"])
         || m.contributes.actions.len() != 1
         || m.contributes.actions[0].id != "account_read"
     {
@@ -134,15 +135,18 @@ fn validate_pack(pack: &grain_sdk::GrainPack) -> Result<(), String> {
         .as_ref()
         .ok_or("Auth fixture declaration missing")?;
     if d.provider_name != "Harness OAuth"
-        || d.client_id != "grain-harness-public"
-        || d.scopes != ["fixture.read"]
-        || d.api_hosts != ["127.0.0.1"]
+        || !["grain-harness-public", "grain-harness-public-v2"].contains(&d.client_id.as_str())
+        || (d.scopes != ["fixture.read"] && d.scopes != ["fixture.read", "fixture.extra"])
+        || (d.api_hosts != ["127.0.0.1"] && d.api_hosts != ["127.0.0.1", "localhost"])
         || !d.authorization_parameters.is_empty()
     {
         return Err("Unexpected account fixture declaration".into());
     }
+    if (d.api_hosts.len() == 2) != (m.permissions.len() == 3) {
+        return Err("Fixture API hosts require their exact paired permissions".into());
+    }
     check_origin(&d.authorization_endpoint, &["/authorize"])?;
-    check_origin(&d.token_endpoint, &["/token"])?;
+    check_origin(&d.token_endpoint, &["/token", "/token-v2"])?;
     Ok(())
 }
 
@@ -155,6 +159,13 @@ pub enum Operation {
     Authorization,
     Disconnect,
     Remove,
+    LoadA,
+    LoadB,
+    Unload,
+    Enable,
+    RemoveInstalled,
+    SeedUnbound,
+    SeedLegacy,
 }
 
 #[tauri::command]
@@ -197,8 +208,16 @@ pub async fn agent_harness_auth(
                 FIXTURE_ID.into(),
             )
             .await?;
+            let (root, _) = super::grain_agent_harness::auth_fixture_config()?;
+            let owner = record.as_ref().map(|record| match &record.dev {
+                None => "installed",
+                Some(dev) if dev.path == root.join("auth-fixture-a") => "developer-a",
+                Some(dev) if dev.path == root.join("auth-fixture-b") => "developer-b",
+                Some(_) => "unexpected",
+            });
             Ok(json!({"enabled": record.as_ref().is_some_and(|r|r.enabled),
-                "installed": reg.is_installed(FIXTURE_ID),
+                "installed": reg.installed_record(FIXTURE_ID).is_some(),
+                "owner": owner,
                 "connection": connection,
                 "worker": crate::extension_host::harness_snapshot(FIXTURE_ID)}))
         }
@@ -226,8 +245,53 @@ pub async fn agent_harness_auth(
             *AUTHORIZATION
                 .lock()
                 .map_err(|_| "Fixture consent state unavailable")? = None;
-            crate::grain_commands::extension_uninstall(app, window, FIXTURE_ID.into(), true)
+            let reg = app.state::<std::sync::Arc<grain_core::extensions::ExtensionsRegistry>>();
+            if reg.dev_path(FIXTURE_ID).is_some() {
+                crate::grain_commands::extension_unload_dev(
+                    app.clone(),
+                    window.clone(),
+                    FIXTURE_ID.into(),
+                )?;
+            }
+            if reg.installed_record(FIXTURE_ID).is_some() {
+                crate::grain_commands::extension_uninstall(app, window, FIXTURE_ID.into(), true)
+                    .await?;
+            }
+            Ok(Value::Null)
+        }
+        Operation::LoadA | Operation::LoadB => {
+            let root = owned_path(if matches!(operation, Operation::LoadA) {
+                "auth-fixture-a"
+            } else {
+                "auth-fixture-b"
+            })?;
+            let loaded = crate::dev_extensions::load_project(&root)?;
+            validate_pack(&loaded.pack)?;
+            crate::grain_commands::load_unpacked_project(&app, &root)?;
+            Ok(Value::Null)
+        }
+        Operation::Unload => {
+            crate::grain_commands::extension_unload_dev(app, window, FIXTURE_ID.into())?;
+            Ok(Value::Null)
+        }
+        Operation::Enable => {
+            crate::grain_commands::extension_set_enabled(app, window, FIXTURE_ID.into(), true)?;
+            Ok(Value::Null)
+        }
+        Operation::RemoveInstalled => {
+            crate::grain_commands::extension_uninstall(app, window, FIXTURE_ID.into(), false)
                 .await?;
+            Ok(Value::Null)
+        }
+        Operation::SeedUnbound | Operation::SeedLegacy => {
+            if crate::agent::harness_snapshot(&app)["active"].as_bool() != Some(false) {
+                return Err("Legacy credential fixture requires an idle Agent".into());
+            }
+            crate::grain_auth::harness_legacy_account(
+                &app,
+                matches!(operation, Operation::SeedLegacy),
+            )
+            .await?;
             Ok(Value::Null)
         }
     }

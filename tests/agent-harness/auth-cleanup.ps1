@@ -1,6 +1,6 @@
 # Remove only the exact native-auth fixture entries for one owned run.
 # Never reads or prints a credential blob; no ordinary namespace is accepted.
-param([Parameter(Mandatory=$true)][string]$Root, [Parameter(Mandatory=$true)][Guid]$RunId)
+param([Parameter(Mandatory=$true)][string]$Root, [Parameter(Mandatory=$true)][Guid]$RunId, [switch]$InventoryOnly)
 $ErrorActionPreference = 'Stop'
 $taskRoot = (Resolve-Path -LiteralPath $Root).Path
 $taskMarker = Get-Content -Raw -LiteralPath (Join-Path $taskRoot '.grain-agent-harness.json') | ConvertFrom-Json
@@ -56,6 +56,10 @@ public static class GrainOwnedAuthCleanup {
     }
 }
 '@
+if ($InventoryOnly) {
+    @{schema=1; kind='native-vault-inventory'; count=[GrainOwnedAuthCleanup]::Clean($RunId.ToString('D'), $false)} | ConvertTo-Json -Compress
+    exit 0
+}
 $taskDeleted = [GrainOwnedAuthCleanup]::Clean($RunId.ToString('D'), $true)
 $taskRemaining = [GrainOwnedAuthCleanup]::Clean($RunId.ToString('D'), $false)
 if ($taskRemaining -ne 0) { throw 'Owned native credentials remain after cleanup' }

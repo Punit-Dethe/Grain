@@ -233,6 +233,22 @@ scenarios.push({
   description:
     "Guarded native OAuth fixture: real consent, PKCE, scoped OS vault, approved A/B reads, stale approval refusal, restart and disconnect",
 });
+scenarios.push(
+  {
+    id: "native.auth-binding",
+    suite: "native-auth",
+    checks: [41],
+    description:
+      "Real vault legacy/unbound credential refusal, four reviewed declaration changes, fresh grants and restart reads",
+  },
+  {
+    id: "native.auth-owners",
+    suite: "native-auth",
+    checks: [45, 53],
+    description:
+      "Actual CLI builds and installed/developer A/B account ownership, reload, stale approval refusal, restart, restoration and parked uninstall",
+  },
+);
 
 export function selectScenarios(suite) {
   if (

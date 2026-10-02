@@ -4,7 +4,9 @@ import { FIXTURE_ID } from "./model.mjs";
 import { waitFor, Blocked } from "./support.mjs";
 
 // Existing production DevControl protocol, not a harness-specific reload API.
-export async function developerReload(root) {
+export async function developerReload(root, extensionId = FIXTURE_ID) {
+  if (![FIXTURE_ID, "com.grain.harness.auth"].includes(extensionId))
+    throw new Error("Developer reload requires a fixed harness fixture");
   if (!globalThis.WebSocket)
     throw new Blocked("Node 22+ WebSocket client is required");
   const credential = JSON.parse(
@@ -64,7 +66,7 @@ export async function developerReload(root) {
             welcomed = true;
             socket.send(
               JSON.stringify({
-                devReload: { requestId: 1, extensionId: FIXTURE_ID },
+                devReload: { requestId: 1, extensionId },
               }),
             );
             return;

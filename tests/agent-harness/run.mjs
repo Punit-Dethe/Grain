@@ -24,6 +24,7 @@ import { storeHandlers } from "./store.mjs";
 import { registryHandlers } from "./registry.mjs";
 import { foundationHandlers } from "./foundation.mjs";
 import { authenticationHandlers } from "./authentication.mjs";
+import { accountOwnershipHandlers } from "./auth-ownership.mjs";
 import { startAuthFixture } from "./auth-fixture.mjs";
 import { startStore, STORE_PUBLIC_KEY } from "./store-fixture.mjs";
 import { startModel } from "./model.mjs";
@@ -85,9 +86,23 @@ if (
     "lost-migration-archive",
     "wrong-account",
     "abandoned-auth",
+    "wrong-owner",
+    "unchanged-auth-declaration",
   ].includes(options.fault)
 )
   throw new Error("Unknown oracle fault");
+if (
+  options.fault === "wrong-owner" &&
+  options.scenario !== "native.auth-owners"
+)
+  throw new Error("wrong-owner requires --scenario native.auth-owners");
+if (
+  options.fault === "unchanged-auth-declaration" &&
+  options.scenario !== "native.auth-binding"
+)
+  throw new Error(
+    "unchanged-auth-declaration requires --scenario native.auth-binding",
+  );
 if (
   options.fault === "wrong-account" &&
   options.scenario !== "native.auth-fixture"
@@ -1201,6 +1216,47 @@ const authenticationSuite = authenticationHandlers({
   restartHost,
 });
 Object.assign(handlers, authenticationSuite.handlers);
+const accountOwnershipSuite = accountOwnershipHandlers({
+  fault: options.fault,
+  root,
+  repo,
+  invoke,
+  main: () => main,
+  provider: () => authProvider,
+  model: () => model,
+  cli: () => cliIdentity,
+  vaultCount: async () => {
+    const output = await exec(
+      "powershell.exe",
+      [
+        "-NoProfile",
+        "-File",
+        join(here, "auth-cleanup.ps1"),
+        "-Root",
+        root,
+        "-RunId",
+        runId,
+        "-InventoryOnly",
+      ],
+      { timeout: 10000, windowsHide: true, maxBuffer: 4096 },
+    );
+    const value = JSON.parse(output.stdout.trim());
+    assert.equal(value.kind, "native-vault-inventory");
+    assert.ok(
+      Number.isInteger(value.count) && value.count >= 0 && value.count <= 256,
+    );
+    return value.count;
+  },
+  closePanel,
+  panel,
+  status,
+  request,
+  activate,
+  waitFor,
+  events,
+  restartHost,
+});
+Object.assign(handlers, accountOwnershipSuite.handlers);
 let baselineTokens = 0;
 let cdpPort;
 try {
@@ -1255,7 +1311,11 @@ try {
     builtAt: build.builtAt,
   };
   if (
-    selected.some((scenario) => scenario.id === "native.cli-package-ownership")
+    selected.some((scenario) =>
+      ["native.cli-package-ownership", "native.auth-owners"].includes(
+        scenario.id,
+      ),
+    )
   ) {
     try {
       cliIdentity = await verifyCli();
@@ -1403,6 +1463,7 @@ try {
         ...registrySuite.takeEvidence(),
         ...foundationSuite.takeEvidence(),
         ...authenticationSuite.takeEvidence(),
+        ...accountOwnershipSuite.takeEvidence(),
       ];
       assert.ok(
         !result.model.some((entry) => entry.state === "error"),
@@ -1419,6 +1480,7 @@ try {
         ...registrySuite.takeEvidence(),
         ...foundationSuite.takeEvidence(),
         ...authenticationSuite.takeEvidence(),
+        ...accountOwnershipSuite.takeEvidence(),
       ];
       try {
         result.snapshot = await status();
@@ -1597,6 +1659,10 @@ try {
     "fixture.grainpack",
     "auth-tls",
     "auth-fixture.grainpack",
+    "auth-fixture-a",
+    "auth-fixture-b",
+    "auth-fixture-a.grainpack",
+    "auth-fixture-b.grainpack",
   ]) {
     try {
       await rm(assertWithin(root, join(root, name)), {

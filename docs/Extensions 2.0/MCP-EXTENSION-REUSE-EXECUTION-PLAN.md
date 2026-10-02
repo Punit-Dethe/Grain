@@ -1,6 +1,6 @@
 # Extension platform: audit, reuse and execution plan
 
-**Updated:** 2 October 2026. **Branch:** `extensions/tool-only-retirement`. **Status:** testing-only execution continues; B1a accepted and B1b's guarded account fixture prerequisite implemented/audited. Full B1b checks 41/45/53 are next. The planning source/evidence snapshot below remains at `b0afe340`; the current ledger is **30 Pass / 23 Pending** after reviewed checks 2/22. The fixture credits no additional numbered checks.
+**Updated:** 2 October 2026. **Branch:** `extensions/tool-only-retirement`. **Status:** testing-only execution continues; B1a and B1b numbered native requirements 41/45/53 accepted after focused audits and repeated real-app tests. B1c 42–44/50–51 is next. The planning snapshot below remains at `b0afe340`; the current ledger is **33 Pass / 20 Pending**. Controlled host-policy results do not certify live providers or vault orphan reconciliation.
 
 This is the forward execution order for the existing [extension plan](MCP-EXTENSION-PLAN.md). That document retains the product contract, R0–R6 release gates and full numbered test procedures. The [progress report](MCP-EXTENSION-PROGRESS.md) retains verdicts and evidence. If older chronological handoffs disagree about what comes next, use this document. No existing acceptance requirement is waived.
 
@@ -18,7 +18,7 @@ Extensions supply tools/functions only. Agent-owned application/screen/selection
 
 ## 2. What the audit establishes
 
-This section preserves the source and evidence audit at planning commit `b0afe340`, not a fresh security certification. The graph was queried first; its searches/impact output did not resolve the ownership questions, so relevant production code and maintained audit records were read directly. Absence of graph edges is not evidence that a module has no callers. No application or acceptance suite was run in that planning pass. Subsequent B1a real-app runs/fixes are recorded in the [native foundation audit](NATIVE-FOUNDATION-AUDIT.md): checks 2/22 accepted, 32 distinct harness scenarios, eight B1 account checks still pending.
+This section preserves the source and evidence audit at planning commit `b0afe340`, not a fresh security certification. The graph was queried first; its searches/impact output did not resolve the ownership questions, so relevant production code and maintained audit records were read directly. Absence of graph edges is not evidence that a module has no callers. No application or acceptance suite was run in that planning pass. Subsequent B1a real-app runs/fixes are recorded in the [native foundation audit](NATIVE-FOUNDATION-AUDIT.md): checks 2/22 accepted, 32 distinct harness scenarios and eight B1 account checks pending at that handoff. Subsequent B1b acceptance closes 41/45/53; five B1c checks remain.
 
 | Area | Current state | Meaning for the next work |
 |---|---|---|
@@ -162,15 +162,17 @@ Some conformance coverage can replace duplicated protocol fixtures after a cover
 
 Completed at `b0afe340`: source disposition, selected ownership, all-25 mapping and synchronized plan/progress links. That planning task included no dependency/app change, provider launch or acceptance verdict. Testing-only execution has now begun with B1a.
 
-### B1 — Finish the existing native foundation (10 baseline checks; 8 now pending)
+### B1 — Finish the existing native foundation (10 baseline checks; 5 now pending)
 
 Break into small units: **B1a migration/typed inputs (2, 22)**; **B1b account fixture/binding/owner (41, 45, 53)**; **B1c cancellation/switch/refresh (42–44, 50–51)**. Finish the retained input investigation alongside this block.
 
 **B1a accepted:** [migration/typed-input audit](NATIVE-FOUNDATION-AUDIT.md) closes 2/22 after a reproduced terminal-owner quarantine fix, transactional uninstall preservation, repeated actual-app tests and negative oracles. No account prerequisite is certified by those results.
 
-**B1b prerequisite accepted:** the [guarded account fixture audit](NATIVE-AUTH-FIXTURE-AUDIT.md) records actual A/B reads, PKCE/vault publication, stale approval refusal, restart and independent cleanup. It reproduces and repairs a disconnected worker surviving its account generation. The permission-free fixture remains unchanged in authority. A separate explicitly enabled debug control fixes the owned ID/root, public client, scope, exact localhost HTTPS endpoints and run vault namespace. There is no general token/profile read or permission bypass. Two final clean runs and both negative oracles passed their expected assertions. The broader unit remains open.
+**Historical B1b prerequisite acceptance:** the [guarded account fixture audit](NATIVE-AUTH-FIXTURE-AUDIT.md) records actual A/B reads, PKCE/vault publication, stale approval refusal, restart and independent cleanup. It reproduces and repairs a disconnected worker surviving its account generation. The permission-free fixture remains unchanged in authority. A separate explicitly enabled debug control fixes the owned ID/root, public client, scope, exact localhost HTTPS endpoints and run vault namespace. There is no general token/profile read or permission bypass. Two final clean runs and both negative oracles passed their expected assertions. The broader unit remains open.
 
-**Next, B1b full requirements (41/45/53):** add declaration-drift/unbound-grant and installed/developer A/B ownership/restoration scenarios using the retained production paths. Provider hold/denial/partial-scope/expiry/refresh controls are prepared; their complete B1c schedules are not yet certified. Preserve exact token/read receipts without storing secrets in evidence. Applicable live-provider portions retain explicit prerequisites.
+**B1b numbered requirements accepted (41/45/53):** the [binding/owner audit](NATIVE-ACCOUNT-OWNERSHIP-AUDIT.md) records expired unbound/id-only refusal, four reviewed declaration changes, fresh grants/restarts, actual CLI developer A/B builds and account/source verification, same-directory reload, stale approval refusal, installed restoration and independent parked-grant deletion counts. Two final combined runs and both new fault oracles have expected results with cleanup Pass. No live-provider/browser certification or production orphan reconciliation follows; three discarded development grants needed independent run-vault cleanup.
+
+**Next, B1c (42–44/50–51):** use the prepared held-token, denial, partial-scope, expiry and refresh controls to complete cancellation/switch/logout and failed-publication schedules. Those complete procedures are not yet certified. Preserve independent token/read receipts without storing secrets in evidence; audit and repeat this unit before B2. Applicable live-provider requirements remain in release certification.
 
 Use owned local TLS with scoped trust, or an equivalent isolated test transport boundary that cannot ship active. Do not weaken production HTTPS/redirect/endpoint validation to make fixtures convenient. Verify ordinary builds refuse harness controls. Extend migration snapshots in disposable directories; never damage the user's registry or vault.
 
@@ -251,6 +253,6 @@ Record commit/binary/source/runner identity, platform, model/provider, controlle
 
 ## 9. First implementation handoff and completion definition
 
-**B1a and the B1b fixture prerequisite are accepted; next work is full B1b checks 41/45/53**, then B1c. Do not upgrade `rmcp`, introduce `oauth2` as a direct native dependency, delete legacy modules or start broader Agent features. Use the current implementation to obtain missing evidence, fix demonstrated failures and audit each module. Remaining baseline checks: **B1 8 + B2 5 + B3 7 + B4 3 = 23**. No extra human batch is needed for the fixture prerequisite; controlled evidence does not waive later live-account requirements.
+**B1a and B1b numbered requirements are accepted; next work is B1c 42–44/50–51.** Do not upgrade `rmcp`, introduce `oauth2` as a direct native dependency, delete legacy modules or start broader Agent features. Use the current implementation to obtain missing evidence, fix demonstrated failures and audit each module. Remaining baseline checks: **B1 5 + B2 5 + B3 7 + B4 3 = 20**. No extra human batch is needed for B1b's controlled host-policy unit; live accounts and orphan reconciliation remain separate release requirements.
 
 This planning audit is complete. Foundation testing, library replacement, physical retirement and release certification are not complete. All seven original whole-phase gates remain open. Continue on `extensions/tool-only-retirement`, commit/push scoped work, preserve unrelated user changes and never push these changes directly to `main`.

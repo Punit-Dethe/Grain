@@ -496,6 +496,49 @@ fn check_account_token(
     Ok(())
 }
 
+/// Construct only the isolated fixture's historical credential formats.
+/// No secret/identifier is accepted from IPC or returned to the runner.
+#[cfg(feature = "agent-harness")]
+pub(crate) async fn harness_legacy_account(app: &AppHandle, id_only: bool) -> Result<(), String> {
+    crate::grain_agent_harness::auth_fixture_config()?;
+    let id = crate::grain_agent_harness_auth::FIXTURE_ID;
+    let prepared = prepare_connect(app, id)?;
+    if prepared.registry.dev_path(id).is_some() {
+        return Err("Legacy credential fixture requires its installed owner".into());
+    }
+    let session = active_session(&prepared, id)?;
+    let key = session_key(id, &session)?;
+    // This setup operation is admitted only with the Agent idle. Retire the
+    // owned worker before producing a deliberately unusable stored grant.
+    crate::extension_host::stop_extension_generation(
+        id,
+        prepared.execution_generation,
+        "legacy account fixture",
+    );
+    tokio::task::spawn_blocking(move || {
+        let mut token = read_token_sync(&key)?.ok_or("Fixture account is not connected")?;
+        prepared.check(id)?;
+        token.authentication_fingerprint = None;
+        // Make refresh necessary if a missing binding were mistakenly accepted.
+        token.expires_at = Some(now().saturating_sub(1));
+        if id_only {
+            token.account_session = None;
+            token.credential_revision = None;
+            write_token_sync(id, &token, None)?;
+            prepared
+                .registry
+                .set_authentication_session_if_current(id, prepared.revision, None, || Some(()))
+                .map_err(|_| "Cannot publish legacy fixture pointer")?;
+            delete_token_sync(&key)?;
+        } else {
+            write_token_sync(&key, &token, None)?;
+        }
+        Ok(())
+    })
+    .await
+    .map_err(|_| "Legacy fixture credential task failed")?
+}
+
 fn declaration(app: &AppHandle, extension_id: &str) -> Result<AuthenticationDecl, String> {
     crate::grain_commands::load_pack(app, extension_id)?
         .manifest

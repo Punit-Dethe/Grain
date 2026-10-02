@@ -33,7 +33,7 @@ const body = (results = [], actions = []) => ({
 });
 
 test("native account oracle verifies actual identity and refuses credential context", () => {
-  assert.equal(selectScenarios("native-auth").length, 1);
+  assert.equal(selectScenarios("native-auth").length, 3);
   for (const account of ["A", "B"]) {
     const frame = body([
       "search",
@@ -49,6 +49,23 @@ test("native account oracle verifies actual identity and refuses credential cont
     assert.throws(() => nextReply(frame), /credential leaked/);
     frame.messages.at(-1).content = "Account connected";
     assert.throws(() => nextReply(frame), /No real authenticated/);
+    for (const owner of ["installed", "developer-a", "developer-b"]) {
+      frame.messages[0].content = `Harness request: account_read_${account.toLowerCase()}_${owner.replaceAll("-", "_")}`;
+      frame.messages.at(-1).content =
+        `Harness account reply: ${JSON.stringify({ account, owner })}`;
+      assert.equal(nextReply(frame).accountVerified, true);
+      frame.messages.at(-1).content =
+        `Harness account reply: ${JSON.stringify({ account, owner: "wrong-owner" })}`;
+      assert.throws(() => nextReply(frame), /wrong account/);
+    }
+    const refusal = body([
+      "search",
+      "The native account is needs_reauthorization. Connect it in Grain Settings first.",
+    ]);
+    refusal.messages[0].content = "Harness request: account_read_a_installed";
+    assert.equal(nextReply(refusal).accountRefused, true);
+    refusal.messages.at(-1).content = "Something is unavailable";
+    assert.throws(() => nextReply(refusal), /Selected loading/);
   }
 });
 

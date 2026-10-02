@@ -65,12 +65,12 @@ export function nextReply(body) {
   if (instruction.endsWith("model_wait"))
     return { content: "Harness delayed model reply", delayMs: 15000 };
   const requested = instruction.slice("Harness request: ".length);
-  const account =
-    requested === "account_read_a"
-      ? "A"
-      : requested === "account_read_b"
-        ? "B"
-        : null;
+  const accountRequest =
+    /^account_read_([ab])(?:_(installed|developer_a|developer_b))?$/.exec(
+      requested,
+    );
+  const account = accountRequest?.[1].toUpperCase() ?? null;
+  const owner = accountRequest?.[2]?.replaceAll("_", "-");
   const extensionId = account ? AUTH_FIXTURE_ID : FIXTURE_ID;
   if (JSON.stringify(body).includes("HARNESS_OAUTH_PRIVATE_"))
     throw new Error("Native credential leaked into model context");
@@ -139,6 +139,17 @@ export function nextReply(body) {
     });
   if (results.length === 2) {
     const actionTools = offered.filter((tool) => tool.name.startsWith("act__"));
+    if (
+      account &&
+      actionTools.length === 0 &&
+      /^The native account is (needs_reauthorization|disconnected)\. Connect it in Grain Settings first\.$/.test(
+        results.at(-1).content,
+      )
+    )
+      return {
+        content: "Harness verified native account refusal",
+        accountRefused: true,
+      };
     if (actionTools.length !== 1)
       throw new Error("Selected loading did not expose exactly one action");
     const expectedTitle = titles[target];
@@ -162,7 +173,7 @@ export function nextReply(body) {
     );
     assert.deepEqual(
       JSON.parse(content.slice("Harness account reply: ".length)),
-      { account },
+      { account, ...(owner ? { owner } : {}) },
       "Real tool returned the wrong account",
     );
     return {
@@ -226,6 +237,7 @@ export async function startModel() {
         state: "received",
         ...(reply.typedVerified ? { typedVerified: true } : {}),
         ...(reply.accountVerified ? { accountVerified: true } : {}),
+        ...(reply.accountRefused ? { accountRefused: true } : {}),
       };
       journal.push(entry);
       if (journal.length > 4096) throw new Error("Model journal overflow");

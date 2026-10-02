@@ -8,6 +8,8 @@
 
 Companion to [the execution plan](MCP-EXTENSION-PLAN.md) and [the progress ledger](MCP-EXTENSION-PROGRESS.md). The user requested reproducible **Agent** testing, initially covering native extension lifecycle/tool calling and later deeper Agent, MCP and authentication behavior. Human participation remains where account sign-in or practical judgment is needed. This work supports the existing sequential acceptance blocks; it does not create another extension feature roadmap.
 
+**B1b numbered unit accepted (2 October, following the fixture prerequisite):** `native.auth-binding` and `native.auth-owners` bring the maintained inventory to **35 scenarios**. The [focused audit](NATIVE-ACCOUNT-OWNERSHIP-AUDIT.md) accepts 41/45/53 after two combined final runs, actual CLI builds, exact account/source verification, real vault declaration/legacy refusal and independent parked-grant deletion counts. Both new negative oracles fail as intended; cleanup and existing hot-reload/smoke retests pass. Current ledger **33 Pass / 20 Pending**. No manual batch is needed for this controlled unit; live providers, browser UX, production discarded-grant reconciliation and B1c remain open. Earlier inventories below are historical.
+
 ## What the harness should do
 
 Keep the test definitions and runner in the repository. Create a fresh disposable working directory for each run, containing fixtures, an isolated application profile and bounded evidence files. A run should set up a known state, perform a named scenario, assert specific results, clean up everything it owns and produce a readable report. Adding another scenario must not require a new testing architecture.

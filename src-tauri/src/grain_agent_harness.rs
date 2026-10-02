@@ -473,6 +473,12 @@ pub enum Instruction {
     TypedNumberZero,
     AccountReadA,
     AccountReadB,
+    AccountReadAInstalled,
+    AccountReadBInstalled,
+    AccountReadADeveloperA,
+    AccountReadBDeveloperA,
+    AccountReadADeveloperB,
+    AccountReadBDeveloperB,
 }
 
 #[tauri::command]
@@ -507,6 +513,12 @@ pub async fn agent_harness_submit(
         Instruction::TypedNumberZero => "Harness request: typed_number_zero",
         Instruction::AccountReadA => "Harness request: account_read_a",
         Instruction::AccountReadB => "Harness request: account_read_b",
+        Instruction::AccountReadAInstalled => "Harness request: account_read_a_installed",
+        Instruction::AccountReadBInstalled => "Harness request: account_read_b_installed",
+        Instruction::AccountReadADeveloperA => "Harness request: account_read_a_developer_a",
+        Instruction::AccountReadBDeveloperA => "Harness request: account_read_b_developer_a",
+        Instruction::AccountReadADeveloperB => "Harness request: account_read_a_developer_b",
+        Instruction::AccountReadBDeveloperB => "Harness request: account_read_b_developer_b",
     };
     crate::agent::harness_submit_instruction(&app, text.into());
     Ok(())

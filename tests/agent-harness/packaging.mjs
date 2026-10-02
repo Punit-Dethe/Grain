@@ -51,7 +51,7 @@ export async function prepareCliProject({
   return project;
 }
 
-async function cliCommand(binary, args, cwd, waitFor) {
+export async function cliCommand(binary, args, cwd, waitFor) {
   const child = spawn(binary, args, {
     cwd,
     windowsHide: true,

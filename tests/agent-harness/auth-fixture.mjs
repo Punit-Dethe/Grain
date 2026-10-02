@@ -23,6 +23,9 @@ export async function startAuthFixture(root, { wrongAccount = false } = {}) {
     partial: false,
     expiresIn: 1200,
     holdToken: false,
+    clientId: "grain-harness-public",
+    scope: "fixture.read",
+    tokenPath: "/token",
   };
   function record(entry) {
     assert.ok(journal.length < 256, "OAuth fixture journal overflow");
@@ -40,11 +43,21 @@ export async function startAuthFixture(root, { wrongAccount = false } = {}) {
       const url = new URL(req.url, "https://127.0.0.1");
       if (req.method === "GET" && url.pathname === "/authorize") {
         const query = url.searchParams;
-        assert.equal(query.get("client_id"), "grain-harness-public");
+        assert.ok(
+          ["grain-harness-public", "grain-harness-public-v2"].includes(
+            query.get("client_id"),
+          ),
+        );
         assert.equal(query.get("response_type"), "code");
+        assert.equal(query.get("client_id"), mode.clientId);
         assert.equal(query.get("code_challenge_method"), "S256");
-        assert.equal(query.get("scope"), "fixture.read");
+        assert.ok(
+          ["fixture.read", "fixture.read fixture.extra"].includes(
+            query.get("scope"),
+          ),
+        );
         assert.match(query.get("code_challenge"), /^[\w-]{43}$/);
+        assert.equal(query.get("scope"), mode.scope);
         assert.match(query.get("state"), /^[a-f\d]{64}$/);
         const redirect = new URL(query.get("redirect_uri"));
         assert.equal(redirect.protocol, "http:");
@@ -62,6 +75,8 @@ export async function startAuthFixture(root, { wrongAccount = false } = {}) {
             ...mode,
             challenge: query.get("code_challenge"),
             redirect: query.get("redirect_uri"),
+            clientId: query.get("client_id"),
+            scope: query.get("scope"),
           });
           redirect.searchParams.set("code", code);
         }
@@ -70,14 +85,16 @@ export async function startAuthFixture(root, { wrongAccount = false } = {}) {
           "cache-control": "no-store",
         });
         res.end();
-      } else if (req.method === "POST" && url.pathname === "/token") {
+      } else if (
+        req.method === "POST" &&
+        ["/token", "/token-v2"].includes(url.pathname)
+      ) {
         let body = "";
         for await (const chunk of req) {
           body += chunk.toString();
           assert.ok(body.length <= 16384, "Token request bound");
         }
         const params = new URLSearchParams(body);
-        assert.equal(params.get("client_id"), "grain-harness-public");
         const grant = params.get("grant_type");
         let issued;
         if (grant === "authorization_code") {
@@ -97,11 +114,14 @@ export async function startAuthFixture(root, { wrongAccount = false } = {}) {
           issued = refreshTokens.get(params.get("refresh_token"));
           assert.ok(issued, "Unknown refresh token");
         }
+        assert.equal(params.get("client_id"), issued.clientId);
+        assert.equal(url.pathname, issued.tokenPath);
         record({
           phase: "exchange",
           account: issued.account,
           grant,
           pkceVerified: grant === "authorization_code",
+          endpoint: url.pathname,
         });
         if (issued.holdToken)
           await new Promise((resolve) => {
@@ -122,7 +142,7 @@ export async function startAuthFixture(root, { wrongAccount = false } = {}) {
           refresh_token: refresh,
           token_type: "Bearer",
           expires_in: issued.expiresIn,
-          scope: issued.partial ? "fixture.other" : "fixture.read",
+          scope: issued.partial ? "fixture.other" : issued.scope,
         });
       } else if (req.method === "GET" && url.pathname === "/me") {
         const issued = tokens.get(
@@ -225,9 +245,13 @@ export async function startAuthFixture(root, { wrongAccount = false } = {}) {
   };
 }
 
-export function authPackage(port) {
+export function authPackage(port, { owner, change } = {}) {
   assert.ok(Number.isInteger(port) && port > 0 && port <= 65535);
-  return {
+  assert.ok(
+    !owner || ["installed", "developer-a", "developer-b"].includes(owner),
+  );
+  assert.ok(!change || ["client", "token", "scopes", "hosts"].includes(change));
+  const pack = {
     manifest: {
       id: AUTH_FIXTURE_ID,
       name: "Harness Native Account",
@@ -236,7 +260,7 @@ export function authPackage(port) {
       tier: "scripted",
       kind: "extending",
       permissions: ["auth", "net:127.0.0.1"],
-      entry_source: `grain.actions({ account_read: async () => { const reply = await grain.net.fetch("https://127.0.0.1:${port}/me", {auth: true}); if (!reply.ok) return {error: {message: "Fixture read failed"}}; return {ok: {body: "Harness account reply: " + reply.body}}; } });`,
+      entry_source: `grain.actions({ account_read: async () => { const reply = await grain.net.fetch("https://127.0.0.1:${port}/me", {auth: true}); if (!reply.ok) return {error: {message: "Fixture read failed"}}; const actual = JSON.parse(reply.body); ${owner ? `actual.owner = ${JSON.stringify(owner)};` : ""} return {ok: {body: "Harness account reply: " + JSON.stringify(actual)}}; } });`,
       contributes: {
         authentication: {
           type: "oauth2-pkce",
@@ -261,4 +285,13 @@ export function authPackage(port) {
     },
     payloads: {},
   };
+  const declaration = pack.manifest.contributes.authentication;
+  if (change === "client") declaration.clientId += "-v2";
+  if (change === "token") declaration.tokenEndpoint += "-v2";
+  if (change === "scopes") declaration.scopes.push("fixture.extra");
+  if (change === "hosts") {
+    declaration.apiHosts.push("localhost");
+    pack.manifest.permissions.push("net:localhost");
+  }
+  return pack;
 }

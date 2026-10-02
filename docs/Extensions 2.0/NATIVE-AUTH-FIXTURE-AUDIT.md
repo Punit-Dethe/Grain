@@ -2,6 +2,8 @@
 
 Date: 2 October 2026 (India; run timestamps use 1 October UTC). Branch: `extensions/tool-only-retirement`. Companion to the [forward plan](MCP-EXTENSION-REUSE-EXECUTION-PLAN.md), [progress ledger](MCP-EXTENSION-PROGRESS.md), [B1a audit](NATIVE-FOUNDATION-AUDIT.md) and [runner instructions](../../tests/agent-harness/README.md).
 
+This is the historical prerequisite snapshot. The subsequent [native binding/owner audit](NATIVE-ACCOUNT-OWNERSHIP-AUDIT.md) now accepts 41/45/53 with two additional scenarios; its current ledger is 33 Pass / 20 Pending. Requirements/evidence below retain the prerequisite's original scope and counts.
+
 ## Scope and verdict
 
 The **B1b fixture prerequisite is implemented and audited**. It supplies controlled native-account coverage through the real application and fixes a reproduced disconnect cleanup failure. It does not accept the complete authentication block or numbered checks 41/45/53. The ledger remains **30 Pass / 23 Pending**, and all seven phase gates remain open. No SDK/OAuth library replacement, feature expansion, ordinary credential change or UI design change is included.
