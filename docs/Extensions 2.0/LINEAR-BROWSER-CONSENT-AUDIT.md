@@ -1,5 +1,7 @@
 # Linear browser consent preparation: focused audit
 
+**Follow-up, 3 October 2026:** the actual human browser procedure subsequently passed in `run-Flbf3s`. The [live acceptance audit](LINEAR-LIVE-AUTH-AUDIT.md) records reviewed evidence and accepts check **9**, bringing the current ledger to **51 Pass / 2 Pending (12/17)**. This document retains the historical preparation state below; actual refresh and nested Agent reads remain unverified.
+
 **Date:** 2 October 2026. **Branch:** `extensions/tool-only-retirement`. **Status:** authentication-only harness prepared; real browser consent/code exchange remains **Pending** until the account owner is present. The guarded no-browser prerequisite is verified. Numbered ledger stays **50 Pass / 3 Pending (9/12/17)**; whole B2/B3 and all seven release gates remain open. This unit does not execute tools, certify a live account, or begin broader extension implementation.
 
 ## Source and reuse decisions
