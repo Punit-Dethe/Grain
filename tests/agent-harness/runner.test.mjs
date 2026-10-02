@@ -33,7 +33,8 @@ const body = (results = [], actions = []) => ({
 });
 
 test("native account oracle verifies actual identity and refuses credential context", () => {
-  assert.equal(selectScenarios("native-auth").length, 3);
+  assert.equal(selectScenarios("native-auth").length, 7);
+  assert.equal(selectScenarios("native-auth-schedules").length, 4);
   for (const account of ["A", "B"]) {
     const frame = body([
       "search",

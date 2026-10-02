@@ -25,6 +25,7 @@ import { registryHandlers } from "./registry.mjs";
 import { foundationHandlers } from "./foundation.mjs";
 import { authenticationHandlers } from "./authentication.mjs";
 import { accountOwnershipHandlers } from "./auth-ownership.mjs";
+import { accountScheduleHandlers } from "./auth-schedules.mjs";
 import { startAuthFixture } from "./auth-fixture.mjs";
 import { startStore, STORE_PUBLIC_KEY } from "./store-fixture.mjs";
 import { startModel } from "./model.mjs";
@@ -57,7 +58,7 @@ for (let i = 2; i < process.argv.length; i++) {
 }
 if (options.help) {
   console.log(
-    "node tests/agent-harness/run.mjs [--list] [--suite smoke|lifecycle|idle|native-failures|native-foundation|native-auth|native-installation|registry-recovery|store|all] [--scenario ID] [--binary path] [--output directory] [--focus-click]\nWindows real Agent/WebView2 acceptance. --focus-click exercises owned native header activation only for agent.reopen-escape. Build first with tests/agent-harness/build.ps1. No live account or model key required. native-auth additionally requires Python cryptography for run-local TLS.",
+    "node tests/agent-harness/run.mjs [--list] [--suite smoke|lifecycle|idle|native-failures|native-foundation|native-auth|native-auth-schedules|native-installation|registry-recovery|store|all] [--scenario ID] [--binary path] [--output directory] [--focus-click]\nWindows real Agent/WebView2 acceptance. --focus-click exercises owned native header activation only for agent.reopen-escape. Build first with tests/agent-harness/build.ps1. No live account or model key required. native-auth additionally requires Python cryptography for run-local TLS.",
   );
   process.exit(0);
 }
@@ -88,9 +89,18 @@ if (
     "abandoned-auth",
     "wrong-owner",
     "unchanged-auth-declaration",
+    "uncancelled-login",
+    "accepted-partial-consent",
   ].includes(options.fault)
 )
   throw new Error("Unknown oracle fault");
+for (const [fault, scenario] of [
+  ["uncancelled-login", "native.auth-cancellation"],
+  ["accepted-partial-consent", "native.auth-expiry"],
+]) {
+  if (options.fault === fault && options.scenario !== scenario)
+    throw new Error(`${fault} requires --scenario ${scenario}`);
+}
 if (
   options.fault === "wrong-owner" &&
   options.scenario !== "native.auth-owners"
@@ -1216,7 +1226,7 @@ const authenticationSuite = authenticationHandlers({
   restartHost,
 });
 Object.assign(handlers, authenticationSuite.handlers);
-const accountOwnershipSuite = accountOwnershipHandlers({
+const accountContext = {
   fault: options.fault,
   root,
   repo,
@@ -1255,8 +1265,14 @@ const accountOwnershipSuite = accountOwnershipHandlers({
   waitFor,
   events,
   restartHost,
-});
+};
+const accountOwnershipSuite = accountOwnershipHandlers(accountContext);
 Object.assign(handlers, accountOwnershipSuite.handlers);
+const accountSchedules = accountScheduleHandlers(
+  accountContext,
+  accountOwnershipSuite.controls,
+);
+Object.assign(handlers, accountSchedules.handlers);
 let baselineTokens = 0;
 let cdpPort;
 try {
@@ -1312,9 +1328,11 @@ try {
   };
   if (
     selected.some((scenario) =>
-      ["native.cli-package-ownership", "native.auth-owners"].includes(
-        scenario.id,
-      ),
+      [
+        "native.cli-package-ownership",
+        "native.auth-owners",
+        "native.auth-cancellation",
+      ].includes(scenario.id),
     )
   ) {
     try {
@@ -1464,6 +1482,7 @@ try {
         ...foundationSuite.takeEvidence(),
         ...authenticationSuite.takeEvidence(),
         ...accountOwnershipSuite.takeEvidence(),
+        ...accountSchedules.takeEvidence(),
       ];
       assert.ok(
         !result.model.some((entry) => entry.state === "error"),
@@ -1481,6 +1500,7 @@ try {
         ...foundationSuite.takeEvidence(),
         ...authenticationSuite.takeEvidence(),
         ...accountOwnershipSuite.takeEvidence(),
+        ...accountSchedules.takeEvidence(),
       ];
       try {
         result.snapshot = await status();

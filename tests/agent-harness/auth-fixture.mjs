@@ -23,6 +23,10 @@ export async function startAuthFixture(root, { wrongAccount = false } = {}) {
     partial: false,
     expiresIn: 1200,
     holdToken: false,
+    holdRefresh: false,
+    failToken: false,
+    issueRefresh: true,
+    refreshExpiresIn: 1200,
     clientId: "grain-harness-public",
     scope: "fixture.read",
     tokenPath: "/token",
@@ -123,7 +127,15 @@ export async function startAuthFixture(root, { wrongAccount = false } = {}) {
           pkceVerified: grant === "authorization_code",
           endpoint: url.pathname,
         });
-        if (issued.holdToken)
+        const responseOptions =
+          grant === "refresh_token"
+            ? {
+                ...issued,
+                expiresIn: issued.refreshExpiresIn,
+                holdToken: issued.holdRefresh,
+              }
+            : issued;
+        if (responseOptions.holdToken)
           await new Promise((resolve) => {
             held.add(resolve);
             res.once("close", () => {
@@ -132,23 +144,30 @@ export async function startAuthFixture(root, { wrongAccount = false } = {}) {
             });
           });
         if (res.destroyed) return;
+        if (responseOptions.failToken) {
+          json(res, 400, { error: "invalid_grant" });
+          return;
+        }
         assert.ok(tokens.size < 128, "Token fixture bound");
         const access = PRIVATE_MARKER + randomUUID(),
           refresh = PRIVATE_MARKER + randomUUID();
-        tokens.set(access, issued);
+        tokens.set(access, {
+          ...issued,
+          expiresAt: Math.floor(Date.now() / 1000) + responseOptions.expiresIn,
+        });
         refreshTokens.set(refresh, issued);
         json(res, 200, {
           access_token: access,
-          refresh_token: refresh,
+          ...(responseOptions.issueRefresh ? { refresh_token: refresh } : {}),
           token_type: "Bearer",
-          expires_in: issued.expiresIn,
+          expires_in: responseOptions.expiresIn,
           scope: issued.partial ? "fixture.other" : issued.scope,
         });
       } else if (req.method === "GET" && url.pathname === "/me") {
         const issued = tokens.get(
           req.headers.authorization?.slice("Bearer ".length),
         );
-        if (!issued) {
+        if (!issued || issued.expiresAt <= Math.floor(Date.now() / 1000)) {
           json(res, 401, { error: "invalid_grant" });
           return;
         }
@@ -184,12 +203,25 @@ export async function startAuthFixture(root, { wrongAccount = false } = {}) {
     configure(update) {
       mode = { ...mode, ...update };
       assert.ok(["A", "B"].includes(mode.account));
+      assert.ok(
+        Number.isInteger(mode.expiresIn) &&
+          mode.expiresIn > 0 &&
+          mode.expiresIn <= 1200,
+      );
+      assert.ok(
+        Number.isInteger(mode.refreshExpiresIn) &&
+          mode.refreshExpiresIn > 0 &&
+          mode.refreshExpiresIn <= 1200,
+      );
     },
     release() {
       for (const resolve of held) resolve();
       held.clear();
     },
-    async authorize(raw) {
+    get heldCount() {
+      return held.size;
+    },
+    async consent(raw) {
       const url = new URL(raw);
       assert.equal(url.origin, `https://127.0.0.1:${port}`);
       assert.equal(url.pathname, "/authorize");
@@ -222,6 +254,10 @@ export async function startAuthFixture(root, { wrongAccount = false } = {}) {
         callback.searchParams.get("state"),
         url.searchParams.get("state"),
       );
+      return callback;
+    },
+    async authorize(raw) {
+      const callback = await this.consent(raw);
       const response = await fetch(callback, {
         redirect: "error",
         signal: AbortSignal.timeout(5000),

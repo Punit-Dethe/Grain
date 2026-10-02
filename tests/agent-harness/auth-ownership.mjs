@@ -60,7 +60,7 @@ export function accountOwnershipHandlers(ctx) {
       async () => (await auth("status")).enabled,
     );
   }
-  async function connect(account) {
+  async function connect(account, options = {}) {
     const declaration = authPackage(ctx.provider().port, {
       change: declarationChange,
     }).manifest.contributes.authentication;
@@ -69,6 +69,15 @@ export function accountOwnershipHandlers(ctx) {
       clientId: declaration.clientId,
       scope: declaration.scopes.join(" "),
       tokenPath: new URL(declaration.tokenEndpoint).pathname,
+      deny: false,
+      partial: false,
+      failToken: false,
+      holdToken: false,
+      holdRefresh: false,
+      issueRefresh: true,
+      expiresIn: 1200,
+      refreshExpiresIn: 1200,
+      ...options,
     });
     const pending = auth("connect").then(
       (value) => ({ value }),
@@ -82,11 +91,12 @@ export function accountOwnershipHandlers(ctx) {
       await ctx.provider().authorize(url);
       const result = await pending;
       if (result.error) throw result.error;
-      assert.equal(result.value.state, "connected");
+      assert.equal(result.value.state, options.expectedState ?? "connected");
       assert.deepEqual(result.value.scopes, declaration.scopes);
       assert.deepEqual(result.value.granted_scopes, declaration.scopes);
       assert.deepEqual(result.value.api_hosts, declaration.apiHosts);
       evidence.push({ stage: "connected", account });
+      return result.value;
     } catch (error) {
       await auth("disconnect").catch(() => {});
       await pending;
@@ -264,6 +274,16 @@ export function accountOwnershipHandlers(ctx) {
       });
   }
   return {
+    controls: {
+      auth,
+      imported,
+      review,
+      connect,
+      read,
+      stale,
+      restart,
+      project,
+    },
     takeEvidence() {
       const result = evidence;
       evidence = [];

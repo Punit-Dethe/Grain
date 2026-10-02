@@ -166,6 +166,7 @@ pub enum Operation {
     RemoveInstalled,
     SeedUnbound,
     SeedLegacy,
+    Cancel,
 }
 
 #[tauri::command]
@@ -238,6 +239,12 @@ pub async fn agent_harness_auth(
             .map_or(Value::Null, |(_, url)| Value::String(url))),
         Operation::Disconnect => {
             crate::grain_auth::extension_auth_disconnect(app, window, FIXTURE_ID.into()).await?;
+            Ok(Value::Null)
+        }
+        Operation::Cancel => {
+            // Cancel only the fixed fixture's pending production flow; retain
+            // its previously selected account, as on normal owner teardown.
+            crate::grain_auth::cancel_extension(FIXTURE_ID);
             Ok(Value::Null)
         }
         Operation::Remove => {

@@ -88,7 +88,7 @@ Runtime reports also identify the Node/WebView adapter version and an independen
 | `native.result-budgets` | Replies exceeding the 64 KiB decoded budget and 512 KiB raw wire budget fail at distinct boundaries; workers/tokens/supervisors retire, then fresh native calls recover. |
 | `native.invalid-input` | Unknown keys, missing required values, wrong types, oversized arguments and malformed JSON fail before approval/startup; private rejected parameter keys stay hidden. |
 
-`smoke` contains the first two; `lifecycle` includes smoke and the original remaining non-idle lifecycle cases; `native-failures` contains the six Block 2C scenarios above. `native-installation` contains six native consent/package/restart cases. `native-foundation` contains the two B1a cases below. `native-auth` contains three guarded native-account cases below. `store` contains three signed-store cases below. `registry-recovery` contains the existing `native.registry-refusal` plus two new cases below. `all` includes all thirty-five distinct cases; overlapping suite selections are not additive. `idle` runs only the long timing case. Scenarios set up their own fixture baseline and clean it up. A failed scenario stops the batch; later scenarios are Not run rather than being assessed against contaminated state.
+`smoke` contains the first two; `lifecycle` includes smoke and the original remaining non-idle lifecycle cases; `native-failures` contains the six Block 2C scenarios above. `native-installation` contains six native consent/package/restart cases. `native-foundation` contains the two B1a cases below. `native-auth` contains seven guarded native-account cases below; `native-auth-schedules` selects the four B1c cases. `store` contains three signed-store cases below. `registry-recovery` contains the existing `native.registry-refusal` plus two new cases below. `all` includes all thirty-nine distinct cases; overlapping suite selections are not additive. `idle` runs only the long timing case. Scenarios set up their own fixture baseline and clean it up. A failed scenario stops the batch; later scenarios are Not run rather than being assessed against contaminated state.
 
 ### Native foundation (B1a)
 
@@ -136,6 +136,25 @@ These new faults must give Fail/exit 1/cleanup Pass. The first reimports an unch
 Historical credential setup is fixed to the installed fixture in the explicitly enabled, idle harness; it never accepts or returns tokens/keys/namespace/path. It uses the actual run vault and expires the deliberately unbound grant so a mistakenly accepted refresh would be detectable. Finite declaration variants add only a fixed second public client/token path/read scope or matching localhost API/network permission. No arbitrary endpoint/client/scope or normal trust exception is allowed. Vault inventory reports only a bounded count in the exact run namespace, not keys or blobs.
 
 The accepted combined runs still needed final independent deletion of three discarded developer grants. Their old sessions are not available to the selected owner, but ordinary-app orphan reconciliation remains open in R3. End-of-run harness cleanup does not certify production crash/orphan recovery. The next unit is B1c, followed by its focused audit and repeated acceptance.
+
+### Native sign-in/switch/expiry schedules (B1c partial)
+
+| ID | Actual application assertions |
+|---|---|
+| `native.auth-cancellation` | Actual CLI developer project and WebSocket reload, disable and Disconnect at callback/held exchange boundaries; six production cancellations, exact vault counts, actual late callback refusal/reusable ports, fresh reads/restarts. |
+| `native.auth-switch` | Disconnect A/connect B refuses the old Agent approval without dispatch; fresh actual B read/restart succeeds. |
+| `native.auth-failed-switch` | Explicit pending-flow cancellation, provider denial and actual token HTTP failure preserve A/count across reads/restarts; subsequent successful B switch refuses stale A approval. |
+| `native.auth-expiry` | Actual partial consent rejected without replacing A; real two-second grant without refresh requires reconnect before/after restart; actual expiry with refresh performs one exchange/read, zero new logins and no extra restart refresh. |
+
+The [focused audit](../../docs/Extensions%202.0/NATIVE-AUTH-SCHEDULE-AUDIT.md) accepts checks 42/43/50/51 only. Check 44 still needs refresh/logout and two independent native provider identities. Live-provider/browser, orphan reconciliation and whole authentication certification remain open. No clock/production-timeout override or vault edit is used to accelerate these cases; observed barriers and actual short-lived provider grants retain the required assertions. `native.auth-cancellation` requires the stamped actual CLI, like the owner case.
+
+```powershell
+npm run test:agent -- --suite native-auth-schedules
+npm run test:agent -- --scenario native.auth-cancellation --fault uncancelled-login
+npm run test:agent -- --scenario native.auth-expiry --fault accepted-partial-consent
+```
+
+The subset uses the same real-app runner/cleanup and avoids repeating unrelated cases. Both faults must give Fail/exit 1 and cleanup Pass. The harness-only Cancel operation calls production cancellation for the fixed fixture and preserves the prior selected account; it exposes no arbitrary target or approval bypass. The unchanged-installed-reimport driver failure is retained; developer reload is exercised through the actual CLI/project/WebSocket path.
 
 Reports identify supporting numbered checks in the existing extension plan. These links do not certify the whole numbered procedure or rewrite its ledger automatically. After reviewing complete real-app procedure coverage and its focused audit, record an automated Pass explicitly with its evidence class. Human results remain separately identified. The harness still excludes microphone/native-pill observations, including the ordinary-app portion of check 34; the user has separately completed that [2C audit handoff](../../docs/Extensions%202.0/NATIVE-FAILURE-AUDIT.md). The current ordinary-app handoff is in the installation audit.
 

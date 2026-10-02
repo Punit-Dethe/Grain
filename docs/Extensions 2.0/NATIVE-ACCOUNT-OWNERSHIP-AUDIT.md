@@ -2,6 +2,8 @@
 
 Date: 2 October 2026 (India; evidence timestamps below are UTC). Branch: `extensions/tool-only-retirement`, base `c131e3b6`. Companions: [execution order](MCP-EXTENSION-REUSE-EXECUTION-PLAN.md), [progress ledger](MCP-EXTENSION-PROGRESS.md), [fixture prerequisite audit](NATIVE-AUTH-FIXTURE-AUDIT.md), [runner instructions](../../tests/agent-harness/README.md).
 
+**Historical B1b snapshot:** its 33/20 ledger and five-check handoff below are retained. [Later B1c schedule acceptance](NATIVE-AUTH-SCHEDULE-AUDIT.md) closes 42/43/50/51; current progress is 37 Pass / 16 Pending, with 44 next.
+
 ## Verdict and scope
 
 **B1b's numbered native binding/owner requirements 41, 45 and 53 are accepted as reviewed real-application automation against a controlled public-client provider.** This is host-policy acceptance, not live-provider/browser compatibility, crash reconciliation or whole authentication certification. The ledger is **33 Pass / 20 Pending**: 15 user-reported and 18 reviewed automated. Five B1c checks remain (42–44/50–51); all seven R0–R6 release gates remain open. No SDK/OAuth replacement, shipping feature, UI design or ordinary-profile/vault modification is included.

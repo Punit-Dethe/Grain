@@ -251,6 +251,15 @@ scenarios.push(
 );
 
 export function selectScenarios(suite) {
+  if (suite === "native-auth-schedules")
+    return scenarios.filter((scenario) =>
+      [
+        "native.auth-cancellation",
+        "native.auth-switch",
+        "native.auth-failed-switch",
+        "native.auth-expiry",
+      ].includes(scenario.id),
+    );
   if (
     ![
       "smoke",
@@ -275,3 +284,34 @@ export function selectScenarios(suite) {
       (suite === "lifecycle" && scenario.suite === "smoke"),
   );
 }
+
+scenarios.push(
+  {
+    id: "native.auth-cancellation",
+    suite: "native-auth",
+    checks: [42],
+    description:
+      "Six real callback/held-exchange cancellation schedules: reload, disable, disconnect, late callback refusal and fresh restart reads",
+  },
+  {
+    id: "native.auth-switch",
+    suite: "native-auth",
+    checks: [43],
+    description:
+      "Explicit disconnect A / connect B, stale approval refuses without dispatch, actual B read and restart",
+  },
+  {
+    id: "native.auth-failed-switch",
+    suite: "native-auth",
+    checks: [50],
+    description:
+      "Cancelled, denied and failed code exchange preserve selected A across actual reads/restarts; successful B switch refuses stale approval",
+  },
+  {
+    id: "native.auth-expiry",
+    suite: "native-auth",
+    checks: [51],
+    description:
+      "Partial consent refused, real short-lived grants expire without refresh and reconnect, real refresh recovers once without login",
+  },
+);
