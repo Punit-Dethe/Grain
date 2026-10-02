@@ -32,6 +32,8 @@ import { startAuthFixture } from "./auth-fixture.mjs";
 import { startMcpFixture } from "./mcp-fixture.mjs";
 import { mcpHandlers } from "./mcp.mjs";
 import { mcpAuthHandlers } from "./mcp-auth.mjs";
+import { workflowHandlers } from "./workflow.mjs";
+import { configuredModel } from "./live-model.mjs";
 import { liveHandlers, LIVE_ENDPOINT, LIVE_REPOSITORY } from "./mcp-live.mjs";
 import {
   cases as conformanceCases,
@@ -54,7 +56,9 @@ const repo = resolve(here, "../..");
 const options = { suite: "smoke" };
 for (let i = 2; i < process.argv.length; i++) {
   const option = process.argv[i];
-  if (["--list", "--help", "--focus-click"].includes(option))
+  if (
+    ["--list", "--help", "--focus-click", "--live-configured"].includes(option)
+  )
     options[option.slice(2)] = true;
   else if (
     [
@@ -73,7 +77,7 @@ for (let i = 2; i < process.argv.length; i++) {
 }
 if (options.help) {
   console.log(
-    "node tests/agent-harness/run.mjs [--list] [--suite smoke|lifecycle|idle|native-failures|native-foundation|native-auth|native-auth-schedules|mcp|mcp-auth|mcp-foundation|mcp-live|native-installation|registry-recovery|store|all] [--scenario ID] [--binary path] [--output directory] [--focus-click]\nWindows real Agent/WebView2 acceptance. --focus-click exercises owned native header activation only for agent.reopen-escape. Build first with tests/agent-harness/build.ps1. No live account or model key required. native-auth and MCP fixtures additionally require Python cryptography for run-local TLS. mcp-foundation runs the controlled unauthenticated and SDK OAuth cases in one host. mcp-live is opt-in, requires public DeepWiki availability, and is excluded from all.",
+    "node tests/agent-harness/run.mjs [--list] [--suite smoke|lifecycle|idle|agent-workflow|agent-live|native-failures|native-foundation|native-auth|native-auth-schedules|mcp|mcp-auth|mcp-foundation|mcp-live|native-installation|registry-recovery|store|all] [--scenario ID] [--binary path] [--output directory] [--focus-click] [--live-configured]\nWindows real Agent/WebView2 acceptance. Build first with tests/agent-harness/build.ps1. Scripted suites need no model key. agent-live requires explicit --live-configured and uses only the selected ordinary Grain model with disposable tool objects; it is excluded from all. native-auth, agent-workflow, agent-live and MCP fixtures require Python cryptography for owned TLS. mcp-foundation runs fifteen controlled transport/OAuth cases in one host. mcp-live is opt-in public DeepWiki acceptance and excluded from all. --focus-click is confined to agent.reopen-escape.",
   );
   process.exit(0);
 }
@@ -86,6 +90,13 @@ const selected = options.scenario
   ? scenarios.filter((scenario) => scenario.id === options.scenario)
   : selectScenarios(options.suite);
 if (!selected.length) throw new Error(`Unknown scenario: ${options.scenario}`);
+if (
+  selected.some((scenario) => scenario.suite === "agent-live") !==
+  !!options["live-configured"]
+)
+  throw new Error(
+    "Genuine model acceptance requires --suite agent-live --live-configured (or one agent.live-* scenario); the switch is refused in ordinary suites",
+  );
 let conformanceBinding;
 if (selected.some((scenario) => scenario.suite === "mcp-conformance")) {
   assert.ok(
@@ -138,9 +149,25 @@ if (
     "skip-mcp-disable",
     "skip-mcp-client-change",
     "abandoned-mcp-client-secret",
+    "missing-staged-selection",
+    "wrong-workflow-receipt",
   ].includes(options.fault)
 )
   throw new Error("Unknown oracle fault");
+if (
+  options.fault === "missing-staged-selection" &&
+  !["agent.staged-native", "agent.staged-mcp"].includes(options.scenario)
+)
+  throw new Error(
+    "missing-staged-selection requires an isolated staged workflow scenario",
+  );
+if (
+  options.fault === "wrong-workflow-receipt" &&
+  !["agent.workflow-native", "agent.workflow-mcp"].includes(options.scenario)
+)
+  throw new Error(
+    "wrong-workflow-receipt requires an isolated write workflow scenario",
+  );
 for (const [fault, scenario] of [
   ["lost-mcp-account", "mcp.auth-close-cancellation"],
   ["skip-mcp-disable", "mcp.auth-shutdown"],
@@ -397,13 +424,13 @@ async function closePanel() {
       !(await status()).agent.active && !(await status()).agent.pendingApproval,
   );
 }
-async function request(instruction = "hello") {
+async function request(instruction = "hello", { timeoutMs = 20000 } = {}) {
   await closePanel();
   await invoke("agent_harness_submit", { instruction });
   const page = await panel();
   await page
     .locator(".agc-confirm-actions .agc-action-btn")
-    .waitFor({ state: "visible", timeout: 20000 });
+    .waitFor({ state: "visible", timeout: timeoutMs });
   assert.equal(
     (await status()).agent.pendingApproval,
     true,
@@ -1402,6 +1429,25 @@ const mcpAuthSuite = mcpAuthHandlers({
   },
 });
 Object.assign(handlers, mcpAuthSuite.handlers);
+const workflowSuite = workflowHandlers({
+  root,
+  invoke,
+  status,
+  fixture,
+  request,
+  activate,
+  waitFor,
+  closePanel,
+  panel,
+  restartHost,
+  events,
+  imported: installation.imported,
+  allow: installation.allow,
+  provider: () => mcpProvider,
+  model: () => model,
+  fault: options.fault,
+});
+Object.assign(handlers, workflowSuite.handlers);
 const conformanceEvidence = [];
 for (const testCase of conformanceCases) {
   handlers[testCase.id] = async () => {
@@ -1579,7 +1625,23 @@ try {
         "Backend attempt counts are conservative client dispatch observations, not independent remote-server receipts.",
       ],
     };
-  model = await startModel();
+  const liveConfig = options["live-configured"]
+    ? await configuredModel()
+    : null;
+  if (liveConfig) {
+    report.evidenceClass =
+      "real-application/configured-live-model/controlled-disposable-tools";
+    report.configuredModel = {
+      endpoint: liveConfig.endpoint,
+      model: liveConfig.model,
+      evidenceClass:
+        "real-application/configured-live-model/controlled-disposable-tools",
+      limitations: [
+        "One configured model; no personal provider objects, OAuth, general model compatibility or relevance certification.",
+      ],
+    };
+  }
+  model = await startModel({ fault: options.fault, liveConfig });
   if (selected.some((scenario) => scenario.suite === "store")) {
     store = await startStore(here);
     report.storeFixture = {
@@ -1609,6 +1671,8 @@ try {
     ["mcp", "mcp"],
     ["mcp-auth", "mcp"],
     ["mcp-conformance", "mcp"],
+    ["agent-workflow", "mcp"],
+    ["agent-live", "mcp"],
   ]) {
     if (!selected.some((scenario) => scenario.suite === suite)) continue;
     if (tlsPurposes.has(purpose)) continue;
@@ -1633,7 +1697,11 @@ try {
   if (conformanceBinding)
     mcpProvider = await startConformanceRelay(root, conformanceBinding);
   else if (
-    selected.some((scenario) => ["mcp", "mcp-auth"].includes(scenario.suite))
+    selected.some((scenario) =>
+      ["mcp", "mcp-auth", "agent-workflow", "agent-live"].includes(
+        scenario.suite,
+      ),
+    )
   ) {
     mcpProvider = await startMcpFixture(root, {
       authenticated: selected.some((scenario) => scenario.suite === "mcp-auth"),
@@ -1642,6 +1710,7 @@ try {
       supportedExcluded: options.fault === "supported-mcp-excluded",
       shortPreview: options.fault === "short-mcp-preview",
       acceptedCatalog: options.fault === "accepted-mcp-catalog",
+      wrongWorkflowReceipt: options.fault === "wrong-workflow-receipt",
     });
   }
   if (authProvider || mcpProvider) {
@@ -1774,6 +1843,7 @@ try {
         ...mcpSuite.takeEvidence(),
         ...liveSuite.takeEvidence(),
         ...mcpAuthSuite.takeEvidence(),
+        ...workflowSuite.takeEvidence(),
         ...conformanceEvidence.splice(0),
       ];
       assert.ok(
@@ -1813,12 +1883,18 @@ try {
         ...mcpSuite.takeEvidence(),
         ...liveSuite.takeEvidence(),
         ...mcpAuthSuite.takeEvidence(),
+        ...workflowSuite.takeEvidence(),
         ...conformanceEvidence.splice(0),
       ];
       if (
-        ["mcp", "mcp-conformance", "mcp-live", "mcp-auth"].includes(
-          scenario.suite,
-        )
+        [
+          "mcp",
+          "mcp-conformance",
+          "mcp-live",
+          "mcp-auth",
+          "agent-workflow",
+          "agent-live",
+        ].includes(scenario.suite)
       ) {
         for (const observation of result.observations) {
           if (observation.status === "Running") {

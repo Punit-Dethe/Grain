@@ -5,6 +5,8 @@ import { MCP_INPUT, MCP_EXTENSION_ID } from "./mcp-fixture.mjs";
 import { liveReply } from "./mcp-live.mjs";
 import { mcpAccountReply } from "./mcp-auth.mjs";
 import { MCP_CLIENT_ID } from "./mcp-oauth-fixture.mjs";
+import { workflowReply } from "./workflow.mjs";
+import { liveModelAdapter } from "./live-model.mjs";
 
 export const FIXTURE_ID = "com.grain.harness.lifecycle";
 const AUTH_FIXTURE_ID = "com.grain.harness.auth";
@@ -52,7 +54,10 @@ export const TYPED_INPUTS = {
   },
 };
 
-export function nextReply(body) {
+export function nextReply(body, fault) {
+  // OpenAI-compatible clients omit `tools` on the final, budget-exhausted
+  // round. Preserve that real wire shape; no definitions are offered.
+  if (body.tools === undefined) body = { ...body, tools: [] };
   if (
     body.model !== "harness-scripted" ||
     !Array.isArray(body.messages) ||
@@ -69,6 +74,17 @@ export function nextReply(body) {
   if (instruction.endsWith("model_wait"))
     return { content: "Harness delayed model reply", delayMs: 15000 };
   const requested = instruction.slice("Harness request: ".length);
+  if (
+    [
+      "native_staged",
+      "mcp_staged",
+      "mcp_schema_budget",
+      "native_workflow",
+      "mcp_workflow",
+      "native_directory",
+    ].includes(requested)
+  )
+    return workflowReply(body, requested, fault);
   if (["mcp_account_a", "mcp_account_b"].includes(requested))
     return mcpAccountReply(body, requested.endsWith("_a") ? "A" : "B");
   if (["mcp_client_a", "mcp_client_b"].includes(requested))
@@ -442,10 +458,13 @@ function mcpReply(body, requested) {
   return { content: "Harness verified MCP nested result", mcpVerified: true };
 }
 
-export async function startModel() {
+export async function startModel({ fault, liveConfig } = {}) {
   const journal = [];
   const sockets = new Set();
   const timers = new Set();
+  const live = liveConfig
+    ? liveModelAdapter(liveConfig, sockets, timers)
+    : null;
   const server = createServer(async (request, response) => {
     let size = 0;
     const chunks = [];
@@ -461,12 +480,18 @@ export async function startModel() {
         chunks.push(chunk);
       }
       const body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
-      const reply = nextReply(body);
+      const reply = live
+        ? await live.reply(body, response)
+        : nextReply(body, fault);
       const entry = {
         sequence: journal.length + 1,
-        offered: body.tools.map((tool) => tool.function.name),
+        offered: (body.tools ?? []).map((tool) => tool.function.name),
         returned: reply.tool_calls?.map((tool) => tool.function.name) ?? [],
         state: "received",
+        ...(reply.workflowVerified
+          ? { workflowVerified: reply.workflowVerified }
+          : {}),
+        ...(reply.liveModel ? { liveModel: reply.liveModel } : {}),
         ...(reply.typedVerified ? { typedVerified: true } : {}),
         ...(reply.accountVerified ? { accountVerified: true } : {}),
         ...(reply.accountRefused ? { accountRefused: true } : {}),
@@ -558,6 +583,7 @@ export async function startModel() {
     port: server.address().port,
     journal,
     async close() {
+      live?.close();
       for (const timer of timers) clearTimeout(timer);
       for (const socket of sockets) socket.destroy();
       await new Promise((resolve) => server.close(resolve));

@@ -691,6 +691,8 @@ test("live selected loading keeps unrelated schemas out and sends only the fixed
 });
 
 test("scenario IDs are unique and each suite is explicit", () => {
+  assert.equal(selectScenarios("agent-workflow").length, 6);
+  assert.equal(selectScenarios("agent-live").length, 2);
   assert.equal(
     new Set(scenarios.map((scenario) => scenario.id)).size,
     scenarios.length,
@@ -702,7 +704,8 @@ test("scenario IDs are unique and each suite is explicit", () => {
     selectScenarios("all").length,
     scenarios.length -
       conformanceCases.length -
-      selectScenarios("mcp-live").length,
+      selectScenarios("mcp-live").length -
+      selectScenarios("agent-live").length,
   );
   assert.equal(
     scenarios.filter((item) => item.suite === "mcp-conformance").length,
@@ -711,6 +714,250 @@ test("scenario IDs are unique and each suite is explicit", () => {
   assert.throws(() => selectScenarios("made-up"), /Unknown suite/);
   assert.equal(selectScenarios("mcp-live").length, 2);
   assert.ok(selectScenarios("all").every((item) => item.suite !== "mcp-live"));
+  assert.ok(
+    selectScenarios("all").every((item) => item.suite !== "agent-live"),
+  );
+});
+
+test("workflow oracle refuses premature/unrelated schemas and wrong real write receipts", async () => {
+  const { workflowReply, workflowResult, WORKFLOW_VALUE } =
+    await import("./workflow.mjs");
+  const make = (results, ids) => ({
+    model: "harness-scripted",
+    messages: results.map((content) => ({ role: "tool", content })),
+    tools: [
+      ...["search_tools", "load_extension"].map((name) => ({
+        function: { name, description: name },
+      })),
+      ...ids.map((name) => ({
+        function: {
+          name: "act__" + name,
+          description: "Harness workflow " + name,
+          parameters: {},
+        },
+      })),
+    ],
+  });
+  assert.throws(
+    () => workflowReply(make([], ["wf_read"]), "native_staged"),
+    /schema/,
+  );
+  const contents = [
+    "metadata",
+    "load",
+    workflowResult(null, 0),
+    workflowResult(WORKFLOW_VALUE, 1),
+    "Not executed because another call is awaiting approval. Ask for remaining work only after its result.",
+    "Not executed because another call is awaiting approval. Ask for remaining work only after its result.",
+  ];
+  const frame = make(contents, ["wf_read", "wf_verify", "wf_write"]);
+  const batchNames = ["wf_write", "wf_verify", "wf_write"];
+  frame.messages.push({
+    role: "assistant",
+    tool_calls: batchNames.map((name, i) => ({
+      id: `batch-${i}`,
+      function: { name: `act__${name}` },
+    })),
+  });
+  for (const [index, id] of [
+    [3, 0],
+    [4, 1],
+    [5, 2],
+  ])
+    frame.messages[index].tool_call_id = `batch-${id}`;
+  assert.equal(
+    workflowReply(frame, "native_workflow").tool_calls[0].function.name,
+    "act__wf_verify",
+  );
+  for (const bad of [
+    workflowResult(WORKFLOW_VALUE, 2),
+    workflowResult(null, 0),
+    "Succeeded",
+  ]) {
+    frame.messages[3].content = bad;
+    assert.throws(() => workflowReply(frame, "native_workflow"), /receipt/);
+  }
+  frame.messages[3].content = contents[3];
+  frame.messages[4].tool_call_id = "batch-0";
+  assert.throws(() => workflowReply(frame, "native_workflow"), /identity/);
+  frame.messages[4].tool_call_id = "batch-1";
+  frame.tools.push({
+    function: { name: "act__bulk_00", description: "Harness workflow bulk_00" },
+  });
+  assert.throws(() => workflowReply(frame, "native_workflow"), /schema/);
+});
+
+test("workflow final budget round accepts genuinely omitted tool definitions", async () => {
+  const { workflowResult } = await import("./workflow.mjs");
+  const frame = body(Array(10).fill("earlier stage"));
+  frame.messages[0].content = "Harness request: native_staged";
+  frame.messages.at(-1).content = workflowResult(null, 0);
+  delete frame.tools;
+  assert.equal(nextReply(frame).workflowVerified, "staged");
+  frame.messages.at(-1).content = workflowResult(null, 1);
+  assert.throws(() => nextReply(frame), /receipt/);
+});
+
+test("workflow catalog has 24 supported definitions and a genuine over-budget subset", async () => {
+  const { workflowCatalog, BULK_IDS } = await import("./workflow.mjs");
+  const small = workflowCatalog(),
+    large = workflowCatalog(true);
+  assert.equal(small.length, 24);
+  assert.equal(new Set(small.map((t) => t.name)).size, 24);
+  const selected = large.filter((t) => BULK_IDS.slice(0, 8).includes(t.name));
+  assert.ok(Buffer.byteLength(JSON.stringify(selected)) > 32768);
+  assert.ok(Buffer.byteLength(JSON.stringify(small)) < 32768);
+  assert.ok(selected.every((t) => !JSON.stringify(t).includes("$ref")));
+});
+
+test("live model adapter forwards only the selected key in headers and refuses early action schemas", async () => {
+  const { createServer } = await import("node:http");
+  const { liveModelAdapter } = await import("./live-model.mjs");
+  const key = "OWNED_TEST_MODEL_KEY",
+    sockets = new Set(),
+    timers = new Set();
+  let requests = 0;
+  const server = createServer(async (request, response) => {
+    const chunks = [];
+    for await (const chunk of request) chunks.push(chunk);
+    const payload = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+    assert.equal(request.headers.authorization, "Bearer " + key);
+    assert.equal(payload.model, "owned-test-model");
+    assert.equal(payload.stream, false);
+    assert.ok(!JSON.stringify(payload).includes(key));
+    assert.match(payload.messages[0].content, /Initially load ONLY wf_read/);
+    requests++;
+    response.writeHead(200, { "content-type": "application/json" });
+    response.end(
+      JSON.stringify({
+        choices: [
+          {
+            message: {
+              content: null,
+              tool_calls: [
+                {
+                  id: "owned-search",
+                  type: "function",
+                  function: { name: "search_tools", arguments: "{}" },
+                },
+              ],
+            },
+          },
+        ],
+      }),
+    );
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const config = {
+    endpoint: `http://127.0.0.1:${server.address().port}/v1/chat/completions`,
+    model: "owned-test-model",
+    key,
+  };
+  const adapter = liveModelAdapter(config, sockets, timers);
+  try {
+    const frame = {
+      model: "harness-scripted",
+      messages: [{ role: "user", content: "Harness request: native_workflow" }],
+      tools: [],
+    };
+    const reply = await adapter.reply(frame);
+    assert.deepEqual(reply.liveModel.returnedTools, ["search_tools"]);
+    assert.equal(reply.liveModel.finished, false);
+    frame.tools.push({
+      function: {
+        name: "act__write",
+        description: "Harness workflow wf_write",
+        parameters: {},
+      },
+    });
+    await assert.rejects(adapter.reply(frame), /before metadata search/);
+    assert.equal(
+      requests,
+      1,
+      "Rejected live frame contacted configured provider",
+    );
+    assert.equal(timers.size, 0);
+  } finally {
+    adapter.close();
+    assert.equal(config.key, "");
+    for (const socket of sockets) socket.destroy();
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test("live model admission requires explicit opt-in and refuses the flag in ordinary suites", async () => {
+  for (const args of [
+    ["--suite", "agent-live"],
+    ["--suite", "smoke", "--live-configured"],
+  ]) {
+    const result = await exec(process.execPath, [
+      join(here, "run.mjs"),
+      ...args,
+    ]).then(
+      () => null,
+      (error) => error,
+    );
+    assert.equal(result?.code, 1);
+    assert.match(result.stderr, /Genuine model acceptance requires/);
+  }
+});
+
+test("owned live model cancellation closes the actual upstream socket and releases its timer/listener", async () => {
+  const { createServer } = await import("node:http");
+  const { EventEmitter } = await import("node:events");
+  const { liveModelAdapter } = await import("./live-model.mjs");
+  let received,
+    calls = 0;
+  const admitted = new Promise((resolve) => {
+    received = resolve;
+  });
+  const server = createServer(async (request, response) => {
+    for await (const chunk of request) void chunk;
+    calls++;
+    response.writeHead(200, { "content-type": "application/json" });
+    response.flushHeaders();
+    received();
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const sockets = new Set(),
+    timers = new Set(),
+    frontend = new EventEmitter();
+  const config = {
+    endpoint: `http://127.0.0.1:${server.address().port}/v1/chat/completions`,
+    model: "owned-model",
+    key: "OWNED_TEST_MODEL_KEY",
+  };
+  const adapter = liveModelAdapter(config, sockets, timers);
+  const frame = {
+    model: "harness-scripted",
+    messages: [{ role: "user", content: "Harness request: native_workflow" }],
+    tools: [],
+  };
+  try {
+    const rejected = assert.rejects(
+      adapter.reply(frame, frontend),
+      /Owned live model request was cancelled/,
+    );
+    await admitted;
+    frontend.emit("close");
+    await rejected;
+    await waitFor(
+      "Owned live upstream socket closure",
+      () => sockets.size === 0,
+    );
+    assert.equal(timers.size, 0);
+    assert.equal(frontend.listenerCount("close"), 0);
+    frontend.destroyed = true;
+    await assert.rejects(adapter.reply(frame, frontend), /cancelled/);
+    assert.equal(calls, 1, "Already-closed request contacted upstream");
+    frame.messages.push({ role: "user", content: "arbitrary instructions" });
+    await assert.rejects(adapter.reply(frame), /arbitrary user prompts/);
+    assert.equal(calls, 1);
+  } finally {
+    adapter.close();
+    for (const socket of sockets) socket.destroy();
+    await new Promise((resolve) => server.close(resolve));
+  }
 });
 
 test(

@@ -2,6 +2,62 @@
 // not permission to change the manual acceptance ledger automatically.
 export const scenarios = [
   {
+    id: "agent.live-native-workflow",
+    suite: "agent-live",
+    checks: [46, 47],
+    description:
+      "Opt-in configured genuine model selects native schemas incrementally and completes an actually approved read/write/verify task",
+  },
+  {
+    id: "agent.live-mcp-workflow",
+    suite: "agent-live",
+    checks: [46, 47],
+    description:
+      "Opt-in configured genuine model selects MCP schemas incrementally and completes an approved disposable read/write/verify with actual peer receipts",
+  },
+  {
+    id: "agent.staged-native",
+    suite: "agent-workflow",
+    checks: [46],
+    description:
+      "Real native catalog pages, exact/no-match search, two incremental selected schemas and reuse of the original read",
+  },
+  {
+    id: "agent.staged-mcp",
+    suite: "agent-workflow",
+    checks: [46],
+    description:
+      "Real paginated MCP catalog, metadata-only search and incremental selection preserve the original callable read",
+  },
+  {
+    id: "agent.schema-budget",
+    suite: "agent-workflow",
+    checks: [46],
+    description:
+      "Over-budget supported MCP selection is refused atomically while the previously selected read still executes",
+  },
+  {
+    id: "agent.directory-coverage",
+    suite: "agent-workflow",
+    checks: [46],
+    description:
+      "Real startup with 101 owned installed extensions reports 100-directory coverage and refuses the omitted owner without workers",
+  },
+  {
+    id: "agent.workflow-native",
+    suite: "agent-workflow",
+    checks: [47],
+    description:
+      "Native read/approved disposable write/verify continuation, withheld model batch tails, three duplicate confirmations and stale-owner refusal",
+  },
+  {
+    id: "agent.workflow-mcp",
+    suite: "agent-workflow",
+    checks: [47],
+    description:
+      "MCP read/approved disposable write/verify continuation, actual independent wire receipts, withheld tails, duplicate/stale confirmations",
+  },
+  {
     id: "native.typed-contract",
     suite: "native-foundation",
     checks: [22],
@@ -305,6 +361,8 @@ export function selectScenarios(suite) {
       "idle",
       "native-failures",
       "native-foundation",
+      "agent-workflow",
+      "agent-live",
       "native-auth",
       "mcp",
       "mcp-live",
@@ -319,7 +377,9 @@ export function selectScenarios(suite) {
   return scenarios.filter(
     (scenario) =>
       (suite === "all" &&
-        !["mcp-conformance", "mcp-live"].includes(scenario.suite)) ||
+        !["mcp-conformance", "mcp-live", "agent-live"].includes(
+          scenario.suite,
+        )) ||
       (suite === "registry-recovery" &&
         scenario.id === "native.registry-refusal") ||
       scenario.suite === suite ||

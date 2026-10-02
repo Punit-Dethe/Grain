@@ -94,7 +94,7 @@ Runtime reports also identify the Node/WebView adapter version and an independen
 | `native.result-budgets`    | Replies exceeding the 64 KiB decoded budget and 512 KiB raw wire budget fail at distinct boundaries; workers/tokens/supervisors retire, then fresh native calls recover.                          |
 | `native.invalid-input`     | Unknown keys, missing required values, wrong types, oversized arguments and malformed JSON fail before approval/startup; private rejected parameter keys stay hidden.                             |
 
-`smoke` contains the first two cases; `lifecycle` includes smoke and the original remaining non-idle cases. `native-failures` contains six cases; `native-installation` six; `native-foundation` two; `native-auth` eight, with four in `native-auth-schedules`; `store` three; `registry-recovery` three. `mcp` contains nine controlled transport cases; `mcp-auth` six SDK OAuth cases; `mcp-foundation` selects all fifteen in one host. `all` includes 55 distinct self-contained cases; overlapping suite selections are not additive. Three official and two public-live cases require explicit selection and their external prerequisites, bringing the complete inventory to 60 IDs. `idle` runs only the long timing case. Each scenario establishes and cleans up its own baseline. A failed scenario stops the batch; later scenarios are Not run instead of being assessed against a contaminated baseline.
+`smoke` contains two cases; `lifecycle` includes smoke and the original remaining non-idle cases. `native-failures` contains six cases; `native-installation` six; `native-foundation` two; `native-auth` eight, with four in `native-auth-schedules`; `store` three; `registry-recovery` three. `mcp` contains nine controlled transport cases; `mcp-auth` six SDK OAuth cases; `mcp-foundation` selects all fifteen in one host. `agent-workflow` contains six separately reported controlled workflow cases. `all` includes 61 distinct self-contained cases; overlapping suite selections are not additive. Three official, two public-live and two configured-model `agent-live` cases require explicit selection and their external prerequisites, bringing the complete inventory to 68 IDs. `idle` runs only the long timing case. Each scenario establishes and cleans up its own baseline. A failed scenario stops the batch; later scenarios are Not run instead of being assessed against a contaminated baseline.
 
 ### Native foundation (B1a)
 
@@ -337,7 +337,7 @@ node tests/agent-harness/run.mjs --scenario mcp.response-preview --fault short-m
 | `mcp.http-deadline`      | Four real 45-second approved-call timeouts; unknown result, one call, measured duration, response/session release, discarded late reply and fresh recovery.                                                                                                       |
 | `mcp.discovery-deadline` | Modern/SSE and legacy/JSON each finish two 35-second pages, then stop the third at the real 90-second absolute deadline; no tool dispatch, no retained delay timer/session and fresh recovery.                                                                    |
 
-There are 60 maintained scenario IDs: 55 self-contained real-app cases (nine MCP transport and six MCP OAuth), three explicitly external official cases (one Blocked), and two opt-in public live cases. There are 38 runner self-tests. Ordinary `all` selects only the 55 self-contained cases; official and live entries supply their explicit prerequisites separately. Run cases serially after native compilation finishes. The full MCP suite includes six minutes of genuine timeout waits plus setup/recovery; clocks are unchanged. Each failure records its exact stage and model observations, stops the batch and leaves later cases Not run. The preview fault must fail for a missing notice with one provider call and cleanup Pass. A nonzero prerequisite/reporting failure is not an accepted oracle check.
+There are 68 maintained scenario IDs: 61 self-contained real-app cases (including nine MCP transport, six MCP OAuth and six Agent workflow cases), three explicitly external official cases (one Blocked), two opt-in public live MCP cases and two opt-in genuine-model cases. There are 44 runner self-tests. Ordinary `all` selects only the 61 self-contained cases; official/live entries supply their explicit prerequisites separately. Run cases serially after native compilation finishes. The full MCP suite includes six minutes of genuine timeout waits plus setup/recovery; clocks are unchanged. Each failure records its exact stage and model observations, stops the batch and leaves later cases Not run. A nonzero prerequisite/reporting failure is not an accepted oracle check.
 
 ```powershell
 node tests/agent-harness/run.mjs --scenario mcp.catalog-budgets --fault accepted-mcp-catalog
@@ -403,3 +403,41 @@ All six faults must report Fail/exit 1 and cleanup Pass. Wrong-account changes t
 `mcp-foundation` selects the nine existing transport cases and these six cases against the same owned peer, exercising their coexistence. It preserves genuine 45/90-second deadlines and independent scenario/stage assertions; it stops on first failure. The fifteen cases reuse the existing owned peer; no extra server or production engine is introduced. The OAuth evidence journal has a fixed 1,024-entry ceiling and reserves one constant terminal-error entry; its exhaustion self-test verifies failure without rethrow or private-request leakage.
 
 Only actual bearer lookup and exact returned nested JSON establish account evidence. The model oracle distinguishes exact Cancelled/not-dispatched refusal, exact dispatched account uncertainty and exact successful account/result; unrelated failures cannot certify any of them. The close case requires four cancelled wire calls and twelve actual successful reads across four real restarts. Shutdown requires eight cancelled receipts, eight stale confirmations with zero calls, and 24 successful fresh/restart A reads, with no new authorization exchanges. Evidence contains bounded account/stage/counter flags, never authorization URLs, codes, PKCE verifiers or tokens. The client case requires ten actual successful reads, four stale refusals with zero dispatch, five restarts, exact secret inventory/rotation and one actual unsupported-secret rejection with zero issued token. External browser UX, live OAuth/refresh, failed-switch preservation and independent authenticated MCP providers remain separate. See the [SDK/late-login audit](../../docs/Extensions%202.0/MCP-AUTH-FIXTURE-AUDIT.md), [authenticated cancellation audit](../../docs/Extensions%202.0/MCP-AUTH-CANCELLATION-AUDIT.md) and [shutdown audit](../../docs/Extensions%202.0/MCP-AUTH-SHUTDOWN-AUDIT.md) and the [client-configuration audit](../../docs/Extensions%202.0/MCP-CLIENT-CONFIGURATION-AUDIT.md) for exact boundaries.
+
+## Agent staged loading and read/write workflows
+
+Run the maintained controlled batch after building the real host:
+
+```powershell
+node tests/agent-harness/run.mjs --suite agent-workflow
+```
+
+| ID | Independent proof |
+| --- | --- |
+| `agent.staged-native` / `agent.staged-mcp` | Two metadata pages, exact/no-match search, one selected read, a second tool added later, earlier schema preserved and original read reused. |
+| `agent.schema-budget` | Eight supported large schemas exceed the 32 KiB task budget; publication is atomic and the prior read remains callable. Individual field and eight-ID limits remain unchanged. |
+| `agent.directory-coverage` | Actual startup with 101 owned installed extensions exposes 100 directory entries, states incomplete coverage and refuses the omitted owner without workers. Offline seed/restoration and owned profile cleanup are explicit. |
+| `agent.workflow-native` / `agent.workflow-mcp` | Approved read → exact disposable write → independent verification in one task. Actual batch tails are withheld; three consumed-token replays and a disabled owner's write never dispatch. |
+
+Negative oracles must report Fail/exit 1 at the specific assertion, with cleanup Pass; they are not normal acceptance runs:
+
+```powershell
+node tests/agent-harness/run.mjs --scenario agent.staged-native --fault missing-staged-selection
+node tests/agent-harness/run.mjs --scenario agent.staged-mcp --fault missing-staged-selection
+node tests/agent-harness/run.mjs --scenario agent.workflow-native --fault wrong-workflow-receipt
+node tests/agent-harness/run.mjs --scenario agent.workflow-mcp --fault wrong-workflow-receipt
+```
+
+The selection fault requests the first schema again instead of the second, so the next real offered schema set fails. The receipt fault corrupts the actual worker/peer write count; a generic success cannot pass. Both adapters keep their independent dispatch counters. A guarded debug capture retrieves only the current confirmation token into runner memory for production-command replay; it neither executes nor bypasses confirmation, and no token is written to status/model/evidence.
+
+After the user chooses the ordinary configured model, run the two genuine-model cases explicitly:
+
+```powershell
+node tests/agent-harness/run.mjs --suite agent-live --live-configured
+```
+
+Use `--scenario agent.live-native-workflow --live-configured` or its MCP counterpart to isolate a failure. This opt-in reads only the selected model registration from the normal `%APPDATA%/com.grain.app` profile. Only the selected key is retained for outgoing model headers; no secret/history/account data is copied into the isolated application, test marker, model prompt or report. Smart rotation, absent configuration and unsupported endpoint admission are blocked prerequisites; this mode does not search other/portable profiles. HTTPS uses ordinary certificate validation; HTTP is admitted only for a configured loopback proxy. These tests consume the configured model's normal quota.
+
+The real model receives a fixed disposable-object task through Grain's real Agent/model boundary and chooses the calls itself. The trace checks metadata before schemas, incremental 0/1/2/3 exposure, unchanged earlier definitions, exact returned object/write count and a single approved write. Reports preserve bounded action/schema/receipt metadata, no raw model prompts or credentials, and identify the configured model evidence class. Batch emission is recorded as observed; deterministic batch-withholding remains covered by the controlled cases.
+
+The live adapter has 1 MiB request/response limits, a 60-second upstream request deadline, no redirect or idle-pool reuse and owned socket/timer/frontend cancellation. Harness waits permit 120 seconds for genuine-model stages; production budgets/deadlines are not changed. Closing it drops credential references, not a JavaScript zeroization guarantee. Both `agent-live` cases are excluded from `all`; the live flag is refused in ordinary suites. Genuine runs do not replace SDK OAuth/account testing or check 48's denial/expiry/Stop/failure observations. See the [focused audit](../../docs/Extensions%202.0/AGENT-WORKFLOW-AUDIT.md) and the retention inventory before removing debug-only observation/relay hooks.

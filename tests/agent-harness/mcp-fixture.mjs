@@ -5,6 +5,11 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { createMcpOAuth } from "./mcp-oauth-fixture.mjs";
+import {
+  workflowCatalog,
+  workflowResult,
+  WORKFLOW_VALUE,
+} from "./workflow.mjs";
 
 // The former 2048 entries barely held transport-only runs (2017 observed).
 // Bound combined OAuth/transport evidence and reserve a terminal error entry.
@@ -88,6 +93,7 @@ export async function startMcpFixture(
     authenticated = false,
     wrongAccount = false,
     acceptedCatalog = false,
+    wrongWorkflowReceipt = false,
   } = {},
 ) {
   const [cert, key] = await Promise.all([
@@ -108,6 +114,8 @@ export async function startMcpFixture(
     result: "normal",
     probeRejection: false,
   };
+  let workflowValue = null,
+    workflowWrites = 0;
   function record(entry) {
     recordMcpRequest(journal, entry);
   }
@@ -258,10 +266,19 @@ export async function startMcpFixture(
           entry.requestMetadataVerified = true;
         }
         if (body.method === "tools/list") {
-          const tools = catalog(mode.revision);
+          const tools = mode.catalog.startsWith("workflow")
+            ? workflowCatalog(mode.catalog === "workflow_budget")
+            : catalog(mode.revision);
           if (supportedExcluded)
             tools[1].inputSchema = { type: "object", properties: {} };
-          if (
+          if (mode.catalog.startsWith("workflow")) {
+            const cursor = body.params?.cursor;
+            assert.ok(cursor === undefined || cursor === "workflow-page-two");
+            entry.page = cursor ? 2 : 1;
+            result = cursor
+              ? { tools: tools.slice(12) }
+              : { tools: tools.slice(0, 12), nextCursor: "workflow-page-two" };
+          } else if (
             [
               "tool_count",
               "duplicate",
@@ -335,109 +352,142 @@ export async function startMcpFixture(
           if (mode.catalog === "repeat_cursor") result.nextCursor = "page-two";
         } else if (body.method === "tools/call") {
           entry.tool = body.params.name;
-          assert.equal(
-            entry.tool,
-            "fixture_read",
-            "An excluded/unselected tool reached the provider",
-          );
-          assert.deepEqual(
-            body.params.arguments,
-            MCP_INPUT,
-            "Actual MCP wire argument types changed",
-          );
-          entry.argumentsVerified = true;
-          const actual = structuredClone(body.params.arguments);
-          if (wrongNestedType) actual.query.limit = String(actual.query.limit);
-          result = {
-            content: [
-              {
-                type: "text",
-                text: `Harness MCP reply: ${JSON.stringify(actual)}`,
-              },
-            ],
-            isError: false,
-          };
-          if (accountRoute) {
-            result.content[0].text = `Harness MCP account ${account}: ${JSON.stringify(actual)}`;
-          }
-          if (mode.result === "preview") {
-            result.content[0].text =
-              "Harness MCP large: " + "\u00e9".repeat(32768);
-            result.structuredContent = { omitted: "x".repeat(32768) };
-            if (shortPreview) {
-              result.content[0].text = "Harness MCP large: small";
-              delete result.structuredContent;
+          if (mode.catalog.startsWith("workflow")) {
+            assert.ok(
+              ["wf_read", "wf_verify", "wf_write"].includes(entry.tool),
+              "Unselected workflow tool reached provider",
+            );
+            assert.deepEqual(
+              body.params.arguments,
+              entry.tool === "wf_write" ? { value: WORKFLOW_VALUE } : {},
+            );
+            if (entry.tool === "wf_write") {
+              workflowValue = body.params.arguments.value;
+              workflowWrites++;
             }
-          }
-          if (mode.result === "held") {
-            res.writeHead(200, {
-              "content-type":
-                mode.reply === "sse" ? "text/event-stream" : "application/json",
-            });
-            res.flushHeaders();
-            const handle = {
-              res,
-              message: { jsonrpc: "2.0", id: body.id, result },
-              reply: mode.reply,
+            entry.argumentsVerified = true;
+            entry.workflowWrites = workflowWrites;
+            result = {
+              content: [
+                {
+                  type: "text",
+                  text: workflowResult(
+                    workflowValue,
+                    workflowWrites +
+                      (wrongWorkflowReceipt && workflowWrites > 0 ? 1 : 0),
+                  ),
+                },
+              ],
+              isError: false,
             };
-            held.add(handle);
-            entry.phase = "held";
-            res.once("close", () => {
-              held.delete(handle);
-              assert.ok(
-                closedReplies.length < 4,
-                "Unreleased closed reply handles",
-              );
-              closedReplies.push(handle);
-              record({
-                phase: "held-closed",
-                lifecycle: mode.lifecycle,
-                reply: mode.reply,
+          } else {
+            assert.equal(
+              entry.tool,
+              "fixture_read",
+              "An excluded/unselected tool reached the provider",
+            );
+            assert.deepEqual(
+              body.params.arguments,
+              MCP_INPUT,
+              "Actual MCP wire argument types changed",
+            );
+            entry.argumentsVerified = true;
+            const actual = structuredClone(body.params.arguments);
+            if (wrongNestedType)
+              actual.query.limit = String(actual.query.limit);
+            result = {
+              content: [
+                {
+                  type: "text",
+                  text: `Harness MCP reply: ${JSON.stringify(actual)}`,
+                },
+              ],
+              isError: false,
+            };
+            if (accountRoute) {
+              result.content[0].text = `Harness MCP account ${account}: ${JSON.stringify(actual)}`;
+            }
+            if (mode.result === "preview") {
+              result.content[0].text =
+                "Harness MCP large: " + "\u00e9".repeat(32768);
+              result.structuredContent = { omitted: "x".repeat(32768) };
+              if (shortPreview) {
+                result.content[0].text = "Harness MCP large: small";
+                delete result.structuredContent;
+              }
+            }
+            if (mode.result === "held") {
+              res.writeHead(200, {
+                "content-type":
+                  mode.reply === "sse"
+                    ? "text/event-stream"
+                    : "application/json",
               });
-            });
-            return;
-          }
-          if (mode.result === "drop") {
-            entry.phase = "dropped-after-dispatch";
-            res.destroy();
-            return;
-          }
-          if (mode.result.startsWith("overflow_")) {
-            const kind = mode.result.slice("overflow_".length);
-            const sse = kind.startsWith("sse");
-            const size =
-              kind === "http_error"
-                ? 17 * 1024
-                : sse
-                  ? 513 * 1024
-                  : 2 * 1024 * 1024 + 1;
-            // Valid JSON/SSE envelopes isolate byte-limit failures from parse
-            // failures. Many small comments isolate the raw stream budget.
-            const oversized = {
-              jsonrpc: "2.0",
-              id: body.id,
-              result: { content: [{ type: "text", text: "x".repeat(size) }] },
-            };
-            const payload =
-              kind === "sse_comments"
-                ? (":" + "x".repeat(1020) + "\n\n").repeat(515) +
-                  `event: message\ndata: ${JSON.stringify({ jsonrpc: "2.0", id: body.id, result })}\n\n`
-                : kind === "sse_data"
-                  ? `event: message\ndata: ${JSON.stringify(oversized)}\n\n`
-                  : JSON.stringify(oversized);
-            res.writeHead(kind === "http_error" ? 500 : 200, {
-              "content-type": sse ? "text/event-stream" : "application/json",
-              ...(kind === "json_declared"
-                ? { "content-length": String(Buffer.byteLength(payload)) }
-                : {}),
-            });
-            entry.phase = "overflow-sent";
-            entry.wireBytes = Buffer.byteLength(payload);
-            // Explicit chunked framing exercises incremental limits, even if
-            // the OS coalesces writes. No timer or background flood survives.
-            res.write(payload.slice(0, 4096));
-            res.end(payload.slice(4096));
-            return;
+              res.flushHeaders();
+              const handle = {
+                res,
+                message: { jsonrpc: "2.0", id: body.id, result },
+                reply: mode.reply,
+              };
+              held.add(handle);
+              entry.phase = "held";
+              res.once("close", () => {
+                held.delete(handle);
+                assert.ok(
+                  closedReplies.length < 4,
+                  "Unreleased closed reply handles",
+                );
+                closedReplies.push(handle);
+                record({
+                  phase: "held-closed",
+                  lifecycle: mode.lifecycle,
+                  reply: mode.reply,
+                });
+              });
+              return;
+            }
+            if (mode.result === "drop") {
+              entry.phase = "dropped-after-dispatch";
+              res.destroy();
+              return;
+            }
+            if (mode.result.startsWith("overflow_")) {
+              const kind = mode.result.slice("overflow_".length);
+              const sse = kind.startsWith("sse");
+              const size =
+                kind === "http_error"
+                  ? 17 * 1024
+                  : sse
+                    ? 513 * 1024
+                    : 2 * 1024 * 1024 + 1;
+              // Valid JSON/SSE envelopes isolate byte-limit failures from parse
+              // failures. Many small comments isolate the raw stream budget.
+              const oversized = {
+                jsonrpc: "2.0",
+                id: body.id,
+                result: { content: [{ type: "text", text: "x".repeat(size) }] },
+              };
+              const payload =
+                kind === "sse_comments"
+                  ? (":" + "x".repeat(1020) + "\n\n").repeat(515) +
+                    `event: message\ndata: ${JSON.stringify({ jsonrpc: "2.0", id: body.id, result })}\n\n`
+                  : kind === "sse_data"
+                    ? `event: message\ndata: ${JSON.stringify(oversized)}\n\n`
+                    : JSON.stringify(oversized);
+              res.writeHead(kind === "http_error" ? 500 : 200, {
+                "content-type": sse ? "text/event-stream" : "application/json",
+                ...(kind === "json_declared"
+                  ? { "content-length": String(Buffer.byteLength(payload)) }
+                  : {}),
+              });
+              entry.phase = "overflow-sent";
+              entry.wireBytes = Buffer.byteLength(payload);
+              // Explicit chunked framing exercises incremental limits, even if
+              // the OS coalesces writes. No timer or background flood survives.
+              res.write(payload.slice(0, 4096));
+              res.end(payload.slice(4096));
+              return;
+            }
           }
         } else throw new Error(`Unexpected MCP method: ${body.method}`);
       }
@@ -544,6 +594,8 @@ export async function startMcpFixture(
           "catalog_bytes",
           "operation_bytes",
           "slow_pages",
+          "workflow",
+          "workflow_budget",
         ].includes(candidate.catalog),
       );
       assert.ok(["one", "two"].includes(candidate.revision));
@@ -561,6 +613,8 @@ export async function startMcpFixture(
         ].includes(candidate.result),
       );
       configuredMode = candidate;
+      workflowValue = null;
+      workflowWrites = 0;
     },
     async close() {
       const pending = new Promise((resolve) => server.close(resolve));
@@ -568,6 +622,8 @@ export async function startMcpFixture(
       for (const socket of sockets) socket.destroy();
       await pending;
       oauth?.close();
+      workflowValue = null;
+      workflowWrites = 0;
       closedReplies.length = 0;
       assert.equal(sockets.size, 0, "MCP fixture retained sockets");
       assert.equal(sessions.size, 0, "MCP fixture retained protocol sessions");

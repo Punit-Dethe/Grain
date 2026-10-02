@@ -387,6 +387,7 @@ fn context_shortcut_bindings(app: &AppHandle) -> Vec<String> {
 #[derive(Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FixtureOperation {
+    CaptureConfirmation,
     Load,
     Register,
     LoadSecond,
@@ -405,6 +406,12 @@ pub async fn agent_harness_fixture(
 ) -> Result<Value, String> {
     guard(&app, &window)?;
     match operation {
+        FixtureOperation::CaptureConfirmation => {
+            // In-memory test replay only; never included in status or reports.
+            return crate::agent::harness_pending_confirmation(&app)
+                .map(|token| json!({"token": token}))
+                .ok_or_else(|| "No owned pending confirmation".into());
+        }
         FixtureOperation::Load | FixtureOperation::Register | FixtureOperation::LoadSecond => {
             let root = config()
                 .root
@@ -504,6 +511,12 @@ pub async fn agent_harness_fixture(
 #[derive(Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Instruction {
+    NativeStaged,
+    McpStaged,
+    McpSchemaBudget,
+    NativeWorkflow,
+    McpWorkflow,
+    NativeDirectory,
     McpRead,
     McpExcluded,
     McpPreview,
@@ -557,6 +570,12 @@ pub async fn agent_harness_submit(
 ) -> Result<(), String> {
     guard(&app, &window)?;
     let text = match instruction {
+        Instruction::NativeStaged => "Harness request: native_staged",
+        Instruction::McpStaged => "Harness request: mcp_staged",
+        Instruction::McpSchemaBudget => "Harness request: mcp_schema_budget",
+        Instruction::NativeWorkflow => "Harness request: native_workflow",
+        Instruction::McpWorkflow => "Harness request: mcp_workflow",
+        Instruction::NativeDirectory => "Harness request: native_directory",
         Instruction::McpRead => "Harness request: mcp_read",
         Instruction::McpExcluded => "Harness request: mcp_excluded",
         Instruction::McpPreview => "Harness request: mcp_preview",
