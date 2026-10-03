@@ -22,7 +22,7 @@ export function mcpAccountReply(
   assert.ok(
     [MCP_AUTH_ID, MCP_CLIENT_ID, MCP_PEER_ID, MCP_PEER_CLIENT_ID].includes(
       providerId,
-    ),
+    ) || /^configured-[0-9a-f]{32}$/.test(providerId),
   );
   assert.ok(
     !JSON.stringify(body).includes(MCP_PRIVATE_MARKER),

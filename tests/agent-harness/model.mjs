@@ -110,6 +110,31 @@ export function nextReply(body, fault, workflowMode = "normal") {
     return liveReply(body, requested);
   if (requested === "mcp_hf_read") return hfReply(body);
   if (requested === "mcp_conformance") return conformanceReply(body);
+  if (
+    ["mcp_configured_account_a", "mcp_configured_account_b"].includes(requested)
+  ) {
+    const ids = [
+      ...new Set(
+        body.messages
+          .filter((x) => x.role === "system")
+          .flatMap((x) =>
+            [
+              ...String(x.content).matchAll(/mcp\.configured-[0-9a-f]{32}/g),
+            ].map((x) => x[0]),
+          ),
+      ),
+    ].sort();
+    assert.ok(
+      ids.length > 0 && ids.length <= 32,
+      "No exact configured account directory owner",
+    );
+    const account = requested.endsWith("_a") ? "A" : "B";
+    return mcpAccountReply(
+      body,
+      account,
+      ids[account === "B" && ids.length > 1 ? 1 : 0].slice(4),
+    );
+  }
   if (["mcp_configured_read", "mcp_configured_unknown"].includes(requested)) {
     const ids = [
       ...new Set(

@@ -191,7 +191,10 @@ export function configuredRuntimeHandlers(ctx) {
               "oauth",
             ),
           );
-          await assert.rejects(enable(record), /remains inactive/);
+          await assert.rejects(
+            enable(record),
+            /Connect this configured MCP account/,
+          );
           await assert.rejects(
             ctx.invoke("mcp_connect_provider", { id: providerId(record) }),
             /unknown MCP provider/,

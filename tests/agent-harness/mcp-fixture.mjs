@@ -13,7 +13,9 @@ import {
 
 // The former 2048 entries barely held transport-only runs (2017 observed).
 // Bound combined OAuth/transport evidence and reserve a terminal error entry.
-export const MCP_JOURNAL_LIMIT = 4096;
+// The 34-case configured/catalogue checkpoint legitimately exceeds 4096.
+// Keep complete, bounded evidence; never raise the production transport limits.
+export const MCP_JOURNAL_LIMIT = 4608;
 export function recordMcpRequest(journal, entry) {
   assert.ok(
     journal.length < MCP_JOURNAL_LIMIT - 1,

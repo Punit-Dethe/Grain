@@ -191,6 +191,7 @@ struct Provider<'a> {
     endpoint: &'a str,
     registration: Registration,
     setup_url: &'a str,
+    ownership: Option<&'a connections::RuntimeOwner>,
 }
 
 type CatalogProvider = Provider<'static>;
@@ -201,6 +202,12 @@ enum RuntimeProvider {
 }
 
 impl RuntimeProvider {
+    fn invalidate(&self, app: &AppHandle) -> Result<session::Ticket, String> {
+        match self {
+            Self::Catalog(item) => Ok(provider_control(item.id).invalidate()),
+            Self::Configured(owner, _) => owner.invalidate(app),
+        }
+    }
     fn spec(&self) -> Provider<'_> {
         match self {
             Self::Catalog(item) => **item,
@@ -339,6 +346,7 @@ const CATALOG: &[CatalogProvider] = &[
         endpoint: "https://mcp.linear.app/mcp/readonly",
         registration: Registration::Dynamic,
         setup_url: "https://linear.app/docs/mcp",
+        ownership: None,
     },
     #[cfg(feature = "agent-harness")]
     CatalogProvider {
@@ -348,6 +356,7 @@ const CATALOG: &[CatalogProvider] = &[
         endpoint: "https://grain-mcp-peer-harness.invalid/mcp",
         registration: Registration::Dynamic,
         setup_url: "https://modelcontextprotocol.io/",
+        ownership: None,
     },
     #[cfg(feature = "agent-harness")]
     CatalogProvider {
@@ -357,6 +366,7 @@ const CATALOG: &[CatalogProvider] = &[
         endpoint: "https://grain-mcp-peer-harness.invalid/mcp",
         registration: Registration::PreRegistered,
         setup_url: "https://modelcontextprotocol.io/",
+        ownership: None,
     },
     #[cfg(feature = "agent-harness")]
     CatalogProvider {
@@ -366,6 +376,7 @@ const CATALOG: &[CatalogProvider] = &[
         endpoint: "https://grain-mcp-account-harness.invalid/mcp",
         registration: Registration::PreRegistered,
         setup_url: "https://modelcontextprotocol.io/",
+        ownership: None,
     },
     #[cfg(feature = "agent-harness")]
     CatalogProvider {
@@ -375,6 +386,7 @@ const CATALOG: &[CatalogProvider] = &[
         endpoint: "https://grain-mcp-account-harness.invalid/mcp",
         registration: Registration::Dynamic,
         setup_url: "https://modelcontextprotocol.io/",
+        ownership: None,
     },
     #[cfg(feature = "agent-harness")]
     CatalogProvider {
@@ -384,6 +396,7 @@ const CATALOG: &[CatalogProvider] = &[
         endpoint: "https://grain-agent-harness.invalid/mcp",
         registration: Registration::NoAuthFixture,
         setup_url: "https://modelcontextprotocol.io/",
+        ownership: None,
     },
     CatalogProvider {
         id: "linear",
@@ -392,6 +405,7 @@ const CATALOG: &[CatalogProvider] = &[
         endpoint: "https://mcp.linear.app/mcp",
         registration: Registration::Dynamic,
         setup_url: "https://linear.app/docs/mcp",
+        ownership: None,
     },
     CatalogProvider {
         id: "notion",
@@ -400,6 +414,7 @@ const CATALOG: &[CatalogProvider] = &[
         endpoint: "https://mcp.notion.com/mcp",
         registration: Registration::Dynamic,
         setup_url: "https://developers.notion.com/guides/mcp/get-started-with-mcp",
+        ownership: None,
     },
     CatalogProvider {
         id: "atlassian",
@@ -408,6 +423,7 @@ const CATALOG: &[CatalogProvider] = &[
         endpoint: "https://mcp.atlassian.com/v1/mcp/authv2",
         registration: Registration::Dynamic,
         setup_url: "https://support.atlassian.com/atlassian-ai-gateway/docs/set-up-ides/",
+        ownership: None,
     },
     CatalogProvider {
         id: "github",
@@ -420,6 +436,7 @@ const CATALOG: &[CatalogProvider] = &[
         registration: Registration::PreRegistered,
         setup_url:
             "https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/creating-an-oauth-app",
+        ownership: None,
     },
     CatalogProvider {
         id: "slack",
@@ -428,6 +445,7 @@ const CATALOG: &[CatalogProvider] = &[
         endpoint: "https://mcp.slack.com/mcp",
         registration: Registration::PreRegistered,
         setup_url: "https://docs.slack.dev/ai/slack-mcp-server/",
+        ownership: None,
     },
     CatalogProvider {
         id: "google-calendar",
@@ -437,6 +455,7 @@ const CATALOG: &[CatalogProvider] = &[
         registration: Registration::PreRegistered,
         setup_url:
             "https://developers.google.com/workspace/calendar/api/guides/configure-mcp-server",
+        ownership: None,
     },
 ];
 
@@ -609,7 +628,8 @@ pub(crate) struct McpCallOutput {
 struct VaultCredentialStore {
     account: String,
     ticket: session::Ticket,
-    operation: Option<session::Lease>,
+    _operation: Option<session::Lease>,
+    current: Option<connections::RuntimeOwner>,
 }
 
 impl VaultCredentialStore {
@@ -617,7 +637,8 @@ impl VaultCredentialStore {
         Self {
             account: catalog_account(provider_id),
             ticket: provider_control(provider_id).ticket(),
-            operation: None,
+            _operation: None,
+            current: None,
         }
     }
 
@@ -629,9 +650,39 @@ impl VaultCredentialStore {
         Self {
             account: catalog_account(provider_id),
             ticket: ticket.clone(),
-            operation: Some(operation.clone()),
+            _operation: Some(operation.clone()),
+            current: None,
         }
     }
+
+    fn for_provider(
+        item: &Provider<'_>,
+        ticket: &session::Ticket,
+        operation: &session::Lease,
+    ) -> Self {
+        Self {
+            account: provider_account(item),
+            ticket: ticket.clone(),
+            _operation: Some(operation.clone()),
+            current: item.ownership.cloned(),
+        }
+    }
+
+    fn commit<T>(&self, write: impl FnOnce() -> Result<T, AuthError>) -> Result<T, AuthError> {
+        self.ticket
+            .commit(|| {
+                if self.current.as_ref().is_some_and(|owner| !owner.current()) {
+                    return Err(AuthError::CredentialStoreError(session::CANCELLED.into()));
+                }
+                write()
+            })
+            .map_err(AuthError::CredentialStoreError)?
+    }
+}
+
+fn provider_account(item: &Provider<'_>) -> String {
+    item.ownership
+        .map_or_else(|| catalog_account(item.id), |owner| owner.account())
 }
 
 fn catalog_account(provider_id: &str) -> String {
@@ -646,42 +697,23 @@ fn catalog_account(provider_id: &str) -> String {
 #[async_trait]
 impl CredentialStore for VaultCredentialStore {
     async fn load(&self) -> Result<Option<StoredCredentials>, AuthError> {
-        let account = self.account.clone();
-        let ticket = self.ticket.clone();
-        let operation = self.operation.clone();
-        tokio::task::spawn_blocking(move || {
-            let _operation = operation;
-            ticket
-                .commit(|| read_credentials_sync(&account))
-                .map_err(AuthError::CredentialStoreError)?
-        })
-        .await
-        .map_err(|_| AuthError::CredentialStoreError("credential task failed".into()))?
+        let store = self.clone();
+        tokio::task::spawn_blocking(move || store.commit(|| read_credentials_sync(&store.account)))
+            .await
+            .map_err(|_| AuthError::CredentialStoreError("credential task failed".into()))?
     }
-
     async fn save(&self, credentials: StoredCredentials) -> Result<(), AuthError> {
-        let account = self.account.clone();
-        let ticket = self.ticket.clone();
-        let operation = self.operation.clone();
+        let store = self.clone();
         tokio::task::spawn_blocking(move || {
-            let _operation = operation;
-            ticket
-                .commit(|| write_credentials_sync(&account, &credentials))
-                .map_err(AuthError::CredentialStoreError)?
+            store.commit(|| write_credentials_sync(&store.account, &credentials))
         })
         .await
         .map_err(|_| AuthError::CredentialStoreError("credential task failed".into()))?
     }
-
     async fn clear(&self) -> Result<(), AuthError> {
-        let account = self.account.clone();
-        let ticket = self.ticket.clone();
-        let operation = self.operation.clone();
+        let store = self.clone();
         tokio::task::spawn_blocking(move || {
-            let _operation = operation;
-            ticket
-                .commit(|| delete_vault_entry(VAULT_SERVICE, &account))
-                .map_err(AuthError::CredentialStoreError)?
+            store.commit(|| delete_vault_entry(VAULT_SERVICE, &store.account))
         })
         .await
         .map_err(|_| AuthError::CredentialStoreError("credential task failed".into()))?
@@ -850,6 +882,16 @@ fn validate_hosted_oauth_metadata(metadata: &AuthorizationMetadata) -> Result<()
         .is_some_and(|value| !value.is_boolean())
     {
         return Err("OAuth issuer-response metadata must be a boolean.".into());
+    }
+    Ok(())
+}
+
+#[cfg(feature = "agent-harness")]
+pub(crate) fn require_configured_consent_fixture(app: &AppHandle, id: &str) -> Result<(), String> {
+    require_developer_mode(app)?;
+    let owner = runtime_provider(app, id)?;
+    if owner.spec().endpoint != crate::grain_agent_harness_mcp::CONFIGURED_AUTH_ENDPOINT {
+        return Err("Configured OAuth fixture endpoint required".into());
     }
     Ok(())
 }
@@ -1347,6 +1389,17 @@ pub async fn mcp_connect_provider(
     crate::grain_commands::require_main_window(&window)?;
     require_developer_mode(&app)?;
     let item = provider(&id)?;
+    connect_flow(&app, &window, RuntimeProvider::Catalog(item)).await
+}
+
+async fn connect_flow(
+    app: &AppHandle,
+    window: &WebviewWindow,
+    owner: RuntimeProvider,
+) -> Result<(), String> {
+    let spec = owner.spec();
+    let item = &spec;
+    let id = item.id.to_string();
     if !requires_account(item) {
         return Err("The unauthenticated MCP fixture has no account to connect".into());
     }
@@ -1363,7 +1416,7 @@ pub async fn mcp_connect_provider(
         id: id.clone(),
         ticket: None,
     };
-    let ticket = provider_control(item.id).invalidate();
+    let ticket = owner.invalidate(app)?;
     guard.ticket = Some(ticket.clone());
     let window_label = window.label().to_string();
     let window_closed = async {
@@ -1377,7 +1430,7 @@ pub async fn mcp_connect_provider(
     let result = tokio::select! {
         result = tokio::time::timeout(
         CONNECT_TIMEOUT,
-        ticket.run(connect_oauth(&app, &id, item, &ticket)),
+        ticket.run(connect_oauth(app, item, &ticket)),
         ) => result.map_err(|_| "authentication timed out after 5 minutes".to_string())
             .and_then(|result| result).and_then(|result| result),
         _ = window_closed => Err("authentication was cancelled because the app window closed".into()),
@@ -1390,7 +1443,6 @@ pub async fn mcp_connect_provider(
 
 async fn connect_oauth(
     app: &AppHandle,
-    id: &str,
     item: &Provider<'_>,
     ticket: &session::Ticket,
 ) -> Result<(), String> {
@@ -1407,8 +1459,8 @@ async fn connect_oauth(
     let mut manager = new_authorization_manager(http, item)
         .await
         .map_err(|error| format!("OAuth setup failed: {error}"))?;
-    manager.set_credential_store(VaultCredentialStore::with_ticket(
-        item.id,
+    manager.set_credential_store(VaultCredentialStore::for_provider(
+        item,
         ticket,
         &_operation,
     ));
@@ -1454,7 +1506,7 @@ async fn connect_oauth(
         request = request.with_client_metadata_url(metadata_url);
     }
     #[cfg(feature = "agent-harness")]
-    if id == crate::grain_agent_harness_mcp::LINEAR_PROVIDER_ID {
+    if item.id == crate::grain_agent_harness_mcp::LINEAR_PROVIDER_ID {
         request = request
             .with_client_name("Grain Agent Harness - Linear read-only")
             .with_scopes(["read"]);
@@ -1492,7 +1544,8 @@ async fn connect_oauth(
         .filter(|value| !value.is_empty() && value.len() <= 4096)
         .ok_or("OAuth provider did not return a valid state value")?;
     #[cfg(feature = "agent-harness")]
-    let consent = crate::grain_agent_harness_mcp::capture_authorization(id, authorization_url)?;
+    let consent =
+        crate::grain_agent_harness_mcp::capture_authorization(item.id, authorization_url)?;
     #[cfg(not(feature = "agent-harness"))]
     let captured = false;
     #[cfg(feature = "agent-harness")]
@@ -1519,21 +1572,24 @@ async fn connect_oauth(
     let ctx = app
         .try_state::<std::sync::Arc<grain_core::AppContext>>()
         .ok_or("application context unavailable")?;
-    ticket
-        .commit(|| {
-            ctx.update_settings(|settings| {
-                if !settings.extension_developer_mode {
-                    return;
-                }
-                settings
-                    .mcp_enabled_providers
-                    .retain(|current| current != id);
-                settings.mcp_enabled_providers.push(id.to_string());
-                settings.mcp_enabled_providers.sort();
-                settings.mcp_enabled_providers.dedup();
-            })
-        })?
-        .map_err(|error| error.to_string())?;
+    let account = provider_account(item);
+    ticket.commit(|| {
+        if item.ownership.is_some_and(|owner| !owner.current()) {
+            return Err(session::CANCELLED.to_string());
+        }
+        ctx.update_settings(|settings| {
+            if !settings.extension_developer_mode {
+                return;
+            }
+            settings
+                .mcp_enabled_providers
+                .retain(|current| current != &account);
+            settings.mcp_enabled_providers.push(account.clone());
+            settings.mcp_enabled_providers.sort();
+            settings.mcp_enabled_providers.dedup();
+        })
+        .map_err(|error| error.to_string())
+    })??;
     Ok(())
 }
 
@@ -1606,7 +1662,7 @@ async fn authorization_manager(
     let mut manager = new_authorization_manager(http, item)
         .await
         .map_err(|error| Recovery::from_auth(&error))?;
-    let store = VaultCredentialStore::with_ticket(item.id, ticket, operation);
+    let store = VaultCredentialStore::for_provider(item, ticket, operation);
     let configured_id = client_id(app, item.id);
     if item.registration == Registration::PreRegistered {
         let stored = store

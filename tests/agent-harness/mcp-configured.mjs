@@ -229,6 +229,18 @@ export function configuredMcpHandlers(ctx) {
         });
         const calls = [
           [
+            "mcp_connection_connect",
+            { id: saved.id, expectedRevision: saved.revision },
+          ],
+          [
+            "mcp_connection_status",
+            { id: saved.id, expectedRevision: saved.revision },
+          ],
+          [
+            "mcp_connection_disconnect",
+            { id: saved.id, expectedRevision: saved.revision },
+          ],
+          [
             "mcp_connection_set_enabled",
             { id: saved.id, expectedRevision: saved.revision, enabled: true },
           ],

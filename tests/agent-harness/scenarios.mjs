@@ -462,11 +462,14 @@ export function selectScenarios(suite) {
     return [
       "mcp-configured",
       "mcp-configured-runtime",
+      "mcp-configured-auth",
       "mcp-foundation",
       "smoke",
     ].flatMap(selectScenarios);
   if (suite === "mcp-configured")
     return scenarios.filter((scenario) => scenario.suite === "mcp-configured");
+  if (suite === "mcp-configured-auth")
+    return scenarios.filter((x) => x.suite === "mcp-configured-auth");
   if (suite === "mcp-configured-runtime")
     return scenarios.filter(
       (scenario) => scenario.suite === "mcp-configured-runtime",
@@ -809,5 +812,26 @@ for (const [id, description] of [
     id: `mcp.configured-${id}`,
     suite: "mcp-configured-runtime",
     checks: [63],
+    description,
+  });
+
+for (const [id, description] of [
+  [
+    "ownership",
+    "Actual configured SDK DCR, two same-endpoint accounts, approved account reads/restart, stale commands/approvals and exact endpoint/auth/removal grant retirement",
+  ],
+  [
+    "cancellation",
+    "Five actual pending configured OAuth flows cannot survive disable/label/removal/destination/developer-off; old callbacks refuse without exchange and fresh sign-in recovers",
+  ],
+  [
+    "refresh-cancellation",
+    "Actual configured issuer expiry/SDK refresh persists through restart; modern JSON and legacy SSE held calls disconnect/remove truthfully without replay and recover",
+  ],
+])
+  scenarios.push({
+    id: `mcp.configured-auth-${id}`,
+    suite: "mcp-configured-auth",
+    checks: [64],
     description,
   });

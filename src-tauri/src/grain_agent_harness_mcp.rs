@@ -6,27 +6,39 @@ use tauri_plugin_opener::OpenerExt;
 
 pub(crate) const PROVIDER_ID: &str = "grain-harness";
 pub(crate) const CONFIGURED_ENDPOINT: &str = "https://configured.grain-harness.example/mcp";
+pub(crate) const CONFIGURED_AUTH_ENDPOINT: &str =
+    "https://configured-auth.grain-harness.example/mcp";
+
+fn configured_id(id: &str) -> bool {
+    id.strip_prefix("configured-").is_some_and(|id| {
+        id.len() == 32
+            && id
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    })
+}
 
 /// Exact nonsecret descriptor fixture, then the existing owned marker/TLS
 /// boundary. This cannot map arbitrary configured URLs or exist in release.
 pub(crate) fn configured_endpoint(id: &str, endpoint: &str) -> Result<Option<String>, String> {
-    let Some(id) = id.strip_prefix("configured-") else {
-        return Ok(None);
-    };
-    if endpoint != CONFIGURED_ENDPOINT {
+    if !id.starts_with("configured-")
+        || ![CONFIGURED_ENDPOINT, CONFIGURED_AUTH_ENDPOINT].contains(&endpoint)
+    {
         return Ok(None);
     }
-    if id.len() != 32
-        || !id
-            .bytes()
-            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-    {
+    if !configured_id(id) {
         return Err("Invalid configured fixture ownership".into());
     }
-    // A real owned local peer must be configured. Public opt-ins cannot activate
-    // this marker exception accidentally.
-    super::grain_agent_harness::mcp_fixture_config()?;
-    Ok(Some(self::endpoint()?))
+    let (_, port) = super::grain_agent_harness::mcp_fixture_config()?;
+    let path = if endpoint == CONFIGURED_AUTH_ENDPOINT {
+        if !super::grain_agent_harness::mcp_auth_enabled() {
+            return Err("Configured OAuth fixture is not enabled".into());
+        }
+        "account-mcp"
+    } else {
+        "mcp"
+    };
+    Ok(Some(format!("https://127.0.0.1:{port}/{path}")))
 }
 pub(crate) const AUTH_PROVIDER_ID: &str = "grain-harness-auth";
 pub(crate) const CLIENT_PROVIDER_ID: &str = "grain-harness-auth-client";
@@ -466,17 +478,20 @@ mod tests {
         drop(ConsentGuard {
             owner: old,
             slot: primary,
+            configured: None,
         });
         assert!(AUTHORIZATION.lock().unwrap()[primary].is_some());
         drop(ConsentGuard {
             owner: current,
             slot: primary,
+            configured: None,
         });
         assert!(AUTHORIZATION.lock().unwrap()[primary].is_none());
         assert!(AUTHORIZATION.lock().unwrap()[peer].is_some());
         drop(ConsentGuard {
             owner: peer_owner,
             slot: peer,
+            configured: None,
         });
         assert!(AUTHORIZATION.lock().unwrap().iter().all(Option::is_none));
     }
@@ -816,12 +831,25 @@ fn account_slot(id: &str) -> Result<usize, String> {
         .ok_or_else(|| "Unknown MCP account fixture".into())
 }
 
+static CONFIGURED_AUTHORIZATION: std::sync::Mutex<
+    std::collections::BTreeMap<String, (uuid::Uuid, String)>,
+> = std::sync::Mutex::new(std::collections::BTreeMap::new());
+
 pub(crate) struct ConsentGuard {
     owner: uuid::Uuid,
     slot: usize,
+    configured: Option<String>,
 }
 impl Drop for ConsentGuard {
     fn drop(&mut self) {
+        if let Some(id) = &self.configured {
+            if let Ok(mut slots) = CONFIGURED_AUTHORIZATION.lock() {
+                if slots.get(id).is_some_and(|(owner, _)| *owner == self.owner) {
+                    slots.remove(id);
+                }
+            }
+            return;
+        }
         if let Ok(mut slot) = AUTHORIZATION.lock() {
             if slot[self.slot]
                 .as_ref()
@@ -836,6 +864,26 @@ impl Drop for ConsentGuard {
 /// Replace only the fixed fixture's browser handoff, never SDK state/PKCE/exchange.
 /// Consumed privately by the runner; the URL is not status or report evidence.
 pub(crate) fn capture_authorization(id: &str, raw: &str) -> Result<Option<ConsentGuard>, String> {
+    if configured_id(id) {
+        if !super::grain_agent_harness::mcp_auth_enabled() {
+            return Err("Configured OAuth fixture is not enabled".into());
+        }
+        let (_, port) = super::grain_agent_harness::mcp_fixture_config()?;
+        validate_consent_url(raw, port)?;
+        let owner = uuid::Uuid::new_v4();
+        let mut slots = CONFIGURED_AUTHORIZATION
+            .lock()
+            .map_err(|_| "Consent handoff unavailable")?;
+        if slots.len() >= 32 {
+            return Err("Configured consent handoff bound exceeded".into());
+        }
+        slots.insert(id.into(), (owner, raw.into()));
+        return Ok(Some(ConsentGuard {
+            owner,
+            slot: 0,
+            configured: Some(id.into()),
+        }));
+    }
     if id == LINEAR_PROVIDER_ID {
         linear_endpoint()?;
         validate_linear_consent_url(raw)?;
@@ -860,7 +908,11 @@ pub(crate) fn capture_authorization(id: &str, raw: &str) -> Result<Option<Consen
     AUTHORIZATION
         .lock()
         .map_err(|_| "Consent handoff unavailable")?[slot] = Some((owner, raw.into()));
-    Ok(Some(ConsentGuard { owner, slot }))
+    Ok(Some(ConsentGuard {
+        owner,
+        slot,
+        configured: None,
+    }))
 }
 
 fn validate_linear_consent_url(raw: &str) -> Result<(), String> {
@@ -939,4 +991,23 @@ fn validate_consent_url(raw: &str, port: u16) -> Result<(), String> {
         return Err("MCP consent requires its exact HTTPS fixture origin/path".into());
     }
     Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn agent_harness_configured_consent(
+    app: AppHandle,
+    window: WebviewWindow,
+    id: String,
+) -> Result<Option<String>, String> {
+    super::grain_commands::require_main_window(&window)?;
+    if !configured_id(&id) || !super::grain_agent_harness::mcp_auth_enabled() {
+        return Err("Configured OAuth fixture is not enabled".into());
+    }
+    super::grain_mcp::require_configured_consent_fixture(&app, &id)?;
+    Ok(CONFIGURED_AUTHORIZATION
+        .lock()
+        .map_err(|_| "Consent handoff unavailable")?
+        .remove(&id)
+        .map(|(_, url)| url))
 }

@@ -1,6 +1,6 @@
 //! Host configuration and current-revision ownership for direct remote MCP.
 //! Import stays inactive. Anonymous activation reuses the shared MCP runtime;
-//! OAuth stays inactive until account acquisition/retirement are integrated.
+//! OAuth uses the shared SDK with revision-owned vault publication and cleanup.
 
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
@@ -41,6 +41,7 @@ impl RuntimeOwner {
                 McpAuthentication::OAuth {} => super::Registration::Dynamic,
             },
             setup_url: &definition.url,
+            ownership: Some(self),
         }
     }
 
@@ -52,10 +53,30 @@ impl RuntimeOwner {
         self.lease.record().identity().vault_account().into_owned()
     }
 
+    pub(super) fn account(&self) -> String {
+        self.enable_key()
+    }
+
+    pub(super) fn current(&self) -> bool {
+        self.registry.is_current(&self.lease)
+    }
+
+    pub(super) fn invalidate(&self, app: &AppHandle) -> Result<super::session::Ticket, String> {
+        let state = app.try_state::<State>().ok_or("MCP storage unavailable")?;
+        let _operation = state
+            .operation
+            .lock()
+            .map_err(|_| RegistryError::InvalidState.to_string())?;
+        super::require_developer_mode(app)?;
+        if !self.current() {
+            return Err(RegistryError::Conflict.to_string());
+        }
+        Ok(self.control.invalidate())
+    }
+
     pub(super) fn enabled(&self, app: &AppHandle) -> bool {
         let settings = crate::settings::get_settings(app);
-        self.spec().registration == super::Registration::Anonymous
-            && settings.extension_developer_mode
+        settings.extension_developer_mode
             && settings.mcp_enabled_providers.contains(&self.enable_key())
             && self.registry.is_current(&self.lease)
     }
@@ -214,10 +235,7 @@ fn view(
     record: ConnectionRecord,
 ) -> ConnectionView {
     let settings = crate::settings::get_settings(app);
-    let enabled = matches!(
-        record.definition().authentication,
-        McpAuthentication::None {}
-    ) && settings.extension_developer_mode
+    let enabled = settings.extension_developer_mode
         && settings
             .mcp_enabled_providers
             .iter()
@@ -241,12 +259,180 @@ fn prune_enabled(app: &AppHandle, id: &str, keep: Option<&str>) -> Result<(), St
         .update_settings(|settings| {
             settings
                 .mcp_enabled_providers
-                .retain(|key| !key.starts_with(&prefix) || keep == Some(key.as_str()))
+                .retain(|key| !key.starts_with(&prefix) || keep == Some(key.as_str()));
         })
         .map_err(|_| {
-            "MCP metadata was saved, but old enablement cleanup failed. Reload before trying again."
-                .into()
+            "Could not update configured MCP enablement. Reload before trying again.".into()
         })
+}
+
+fn retire_account(record: &ConnectionRecord) -> Result<(), String> {
+    if matches!(
+        record.definition().authentication,
+        McpAuthentication::None {}
+    ) {
+        return Ok(());
+    }
+    retire_with(record, |service, account| {
+        super::delete_vault_entry(service, account).map_err(|_| ())
+    })
+}
+
+fn retire_with(
+    record: &ConnectionRecord,
+    mut delete: impl FnMut(&str, &str) -> Result<(), ()>,
+) -> Result<(), String> {
+    if matches!(
+        record.definition().authentication,
+        McpAuthentication::None {}
+    ) {
+        return Ok(());
+    }
+    let account = record.identity().vault_account();
+    let mut failed = false;
+    for service in [
+        super::VAULT_SERVICE,
+        super::CLIENT_SECRET_SERVICE,
+        super::CLIENT_REGISTRATION_SERVICE,
+    ] {
+        failed |= delete(service, &account).is_err();
+    }
+    if failed {
+        Err("Could not retire the configured MCP account. Metadata was preserved; reload and retry cleanup.".into())
+    } else {
+        Ok(())
+    }
+}
+
+fn expected_owner(
+    app: &AppHandle,
+    id: &str,
+    expected: &str,
+) -> Result<(RuntimeOwner, super::session::Ticket), String> {
+    let state = app.try_state::<State>().ok_or("MCP storage unavailable")?;
+    let resolved = state.resolve(app, id)?;
+    if resolved.0.lease.record().revision() != revision(expected)? {
+        return Err(RegistryError::Conflict.to_string());
+    }
+    Ok(resolved)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn mcp_connection_connect(
+    app: AppHandle,
+    window: WebviewWindow,
+    id: String,
+    expected_revision: String,
+) -> Result<(), String> {
+    guard(&app, &window)?;
+    let (owner, ticket) = expected_owner(&app, &id, &expected_revision)?;
+    super::connect_flow(
+        &app,
+        &window,
+        super::RuntimeProvider::Configured(Box::new(owner), ticket),
+    )
+    .await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn mcp_connection_status(
+    app: AppHandle,
+    window: WebviewWindow,
+    id: String,
+    expected_revision: String,
+) -> Result<super::McpProviderStatus, String> {
+    guard(&app, &window)?;
+    let (owner, ticket) = expected_owner(&app, &id, &expected_revision)?;
+    let item = owner.spec();
+    let required = super::requires_account(&item);
+    let stored = if required {
+        use rmcp::transport::auth::CredentialStore;
+        let store = super::VaultCredentialStore {
+            account: owner.account(),
+            ticket: ticket.clone(),
+            _operation: None,
+            current: Some(owner.clone()),
+        };
+        Some(store.load().await)
+    } else {
+        None
+    };
+    let observation = ticket.recovery();
+    ticket.commit(|| {
+        if !owner.current() {
+            return Err(RegistryError::Conflict.to_string());
+        }
+        let connected = stored.as_ref().is_some_and(|result| {
+            result.as_ref().is_ok_and(|value| {
+                value
+                    .as_ref()
+                    .is_some_and(|value| value.token_response.is_some())
+            })
+        });
+        let state = if !required {
+            "anonymous"
+        } else if stored.as_ref().is_some_and(Result::is_err) {
+            "unavailable"
+        } else if let Some(recovery) = observation {
+            recovery.state()
+        } else if connected {
+            "stored"
+        } else {
+            "disconnected"
+        };
+        Ok(super::McpProviderStatus {
+            id: item.id.into(),
+            name: item.name.into(),
+            description: item.description.into(),
+            endpoint: item.endpoint.into(),
+            setup_url: item.setup_url.into(),
+            requires_client_credentials: false,
+            client_id_configured: false,
+            connected,
+            enabled: (!required || connected) && owner.enabled(&app),
+            state: state.into(),
+        })
+    })?
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn mcp_connection_disconnect(
+    app: AppHandle,
+    window: WebviewWindow,
+    id: String,
+    expected_revision: String,
+) -> Result<(), String> {
+    use rmcp::transport::auth::CredentialStore;
+    guard(&app, &window)?;
+    let (owner, _) = expected_owner(&app, &id, &expected_revision)?;
+    if !super::requires_account(&owner.spec()) {
+        return Err("This anonymous server has no account to disconnect.".into());
+    }
+    let ticket = owner.invalidate(&app)?;
+    let result = tokio::time::timeout(
+        super::OPERATION_TIMEOUT,
+        ticket.run(async {
+            let operation = ticket.acquire().await?;
+            ticket.commit(|| {
+                if !owner.current() {
+                    return Err(RegistryError::Conflict.to_string());
+                }
+                prune_enabled(&app, &id, None)
+            })??;
+            super::VaultCredentialStore::for_provider(&owner.spec(), &ticket, &operation)
+                .clear()
+                .await
+                .map_err(|error| error.to_string())
+        }),
+    )
+    .await;
+    if !matches!(&result, Ok(Ok(Ok(())))) {
+        ticket.invalidate_if_current();
+    }
+    result.map_err(|_| "Configured MCP disconnect timed out".to_string())??
 }
 
 fn revision(value: &str) -> Result<u64, String> {
@@ -357,11 +543,25 @@ pub async fn mcp_connection_replace(
     let view_app = app.clone();
     storage(app, move |state, registry| {
         let lease = expected_lease(registry, &id, &expected_revision)?;
+        if lease.record().definition() != definition.definition()
+            && lease.record().revision() == u64::MAX
+        {
+            return Err(RegistryError::RevisionExhausted.to_string());
+        }
         if lease.record().definition() != definition.definition() {
             state.invalidate(&id)?;
         }
-        // OAuth stays inactive until explicit retired-account vault disposal is
-        // added. Anonymous operations are cancelled before metadata publication.
+        let account_changed = lease.record().definition().url != definition.definition().url
+            || lease.record().definition().authentication != definition.definition().authentication;
+        if account_changed {
+            if !registry.is_current(&lease) {
+                return Err(RegistryError::Conflict.to_string());
+            }
+            // Disable and clean the old account BEFORE publishing a new identity.
+            // A failed cleanup preserves metadata/identity for a safe retry.
+            prune_enabled(&view_app, &id, None)?;
+            retire_account(lease.record())?;
+        }
         let retired = registry
             .replace(&lease, definition)
             .map_err(|error| error.to_string())?;
@@ -394,14 +594,18 @@ pub async fn mcp_connection_remove(
     let view_app = app.clone();
     storage(app, move |state, registry| {
         let lease = expected_lease(registry, &id, &expected_revision)?;
+        if !registry.is_current(&lease) {
+            return Err(RegistryError::Conflict.to_string());
+        }
         state.invalidate(&id)?;
+        prune_enabled(&view_app, &id, None)?;
+        retire_account(lease.record())?;
         registry.remove(&lease).map_err(|error| error.to_string())?;
         state
             .controls
             .lock()
             .map_err(|_| RegistryError::InvalidState.to_string())?
             .remove(&id);
-        prune_enabled(&view_app, &id, None)?;
         Ok(())
     })
     .await
@@ -425,22 +629,30 @@ pub async fn mcp_connection_set_enabled(
     storage(app, move |state, registry| {
         let lease = expected_lease(registry, &id, &expected_revision)?;
         let owner = state.owner(registry.clone(), lease)?;
-        if enabled && owner.spec().registration != super::Registration::Anonymous {
-            return Err("Configured OAuth connections require the upcoming account integration; this server remains inactive.".into());
+        if enabled
+            && super::requires_account(&owner.spec())
+            && super::read_credentials_sync(&owner.account())
+                .map_err(|error| error.to_string())?
+                .is_none_or(|stored| stored.token_response.is_none())
+        {
+            return Err("Connect this configured MCP account before enabling it.".into());
         }
         owner.control.invalidate();
-        context.update_settings(|settings| {
-            let key = owner.enable_key();
-            // Only exact account ownership can enable this destination. Neither
-            // raw record IDs nor old account keys can activate an edited URL.
-            settings.mcp_enabled_providers.retain(|value| value != &key);
-            if enabled && settings.extension_developer_mode {
-                settings.mcp_enabled_providers.push(key);
-                settings.mcp_enabled_providers.sort();
-                settings.mcp_enabled_providers.dedup();
-            }
-        }).map_err(|error| error.to_string())
-    }).await
+        context
+            .update_settings(|settings| {
+                let key = owner.enable_key();
+                // Only exact account ownership can enable this destination. Neither
+                // raw record IDs nor old account keys can activate an edited URL.
+                settings.mcp_enabled_providers.retain(|value| value != &key);
+                if enabled && settings.extension_developer_mode {
+                    settings.mcp_enabled_providers.push(key);
+                    settings.mcp_enabled_providers.sort();
+                    settings.mcp_enabled_providers.dedup();
+                }
+            })
+            .map_err(|error| error.to_string())
+    })
+    .await
 }
 
 pub(super) fn directory(
@@ -473,10 +685,7 @@ pub(super) fn directory(
     records
         .into_iter()
         .filter(|record| {
-            matches!(
-                record.definition().authentication,
-                McpAuthentication::None {}
-            ) && settings
+            settings
                 .mcp_enabled_providers
                 .iter()
                 .any(|key| key == record.identity().vault_account().as_ref())
@@ -495,6 +704,64 @@ pub(super) fn directory(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn external_metadata_change_denies_vault_io_without_a_generation_notification() {
+        let data = tempfile::tempdir().unwrap();
+        let registry = Arc::new(ConnectionRegistry::load(data.path()).unwrap());
+        let input = ConnectionDefinition::parse(br#"{"name":"Account","url":"https://server.example.com/mcp","authentication":{"type":"oauth"}}"#).unwrap();
+        let record = registry.insert(input).unwrap();
+        let lease = registry.lease(record.identity().connection_id()).unwrap();
+        let state = State::default();
+        let owner = state.owner(registry.clone(), lease.clone()).unwrap();
+        let ticket = owner.ticket();
+        let store = super::super::VaultCredentialStore {
+            account: owner.account(),
+            ticket: ticket.clone(),
+            _operation: None,
+            current: Some(owner),
+        };
+        let changed = ConnectionDefinition::parse(br#"{"name":"Changed","url":"https://other.example.com/mcp","authentication":{"type":"oauth"}}"#).unwrap();
+        registry.replace(&lease, changed).unwrap();
+        assert!(
+            ticket.commit(|| ()).is_ok(),
+            "No in-process invalidation occurred"
+        );
+        let mut executed = false;
+        assert!(store
+            .commit(|| {
+                executed = true;
+                Ok(())
+            })
+            .is_err());
+        assert!(!executed, "Stale account performed vault IO");
+    }
+
+    #[test]
+    fn retirement_checks_all_three_exact_owned_keys_and_reports_partial_failure() {
+        let data = tempfile::tempdir().unwrap();
+        let registry = ConnectionRegistry::load(data.path()).unwrap();
+        let record = registry.insert(ConnectionDefinition::parse(br#"{"name":"Account","url":"https://server.example.com/mcp","authentication":{"type":"oauth"}}"#).unwrap()).unwrap();
+        let expected = record.identity().vault_account();
+        let mut services = Vec::new();
+        assert!(retire_with(&record, |service, account| {
+            assert_eq!(account, expected);
+            services.push(service.to_string());
+            if services.len() == 1 {
+                Err(())
+            } else {
+                Ok(())
+            }
+        })
+        .is_err());
+        assert_eq!(services.len(), 3);
+        assert!(services.contains(&super::super::VAULT_SERVICE.to_string()));
+        let anonymous = registry.insert(ConnectionDefinition::parse(br#"{"name":"Anonymous","url":"https://server.example.com/mcp","authentication":{"type":"none"}}"#).unwrap()).unwrap();
+        assert!(retire_with(&anonymous, |_, _| panic!(
+            "Anonymous metadata touched the vault"
+        ))
+        .is_ok());
+    }
 
     #[test]
     fn revisions_round_trip_beyond_javascript_precision_without_aliases() {

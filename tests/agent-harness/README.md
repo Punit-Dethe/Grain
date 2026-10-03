@@ -1,5 +1,16 @@
 # Grain Agent acceptance harness
 
+**E2e configured OAuth checkpoint:** [Scope, audit and retained evidence](../../docs/Extensions%202.0/CUSTOM-MCP-OAUTH-AUDIT.md). `mcp-configured-auth` runs three actual-app SDK DCR/vault cases: independent same-endpoint accounts and retirement, pending sign-in cancellation, and actual expiry/refresh plus active disconnect/removal. No user account or browser approval is needed for this owned issuer. `mcp-connection-checkpoint` now retains **34 distinct verdicts** (nine configured, 23 catalogue, two smoke), with unchanged production deadlines. Inventory **103 IDs / 88 self-contained / 79 Node self-tests**. Custom preregistration, permanent public client metadata and store acquisition remain separate work. Earlier checkpoint entries are historical scopes.
+
+```powershell
+node tests/agent-harness/run.mjs --suite mcp-connection-checkpoint
+# Expected exit 1 after one real wrong-account response, cleanup Pass:
+node tests/agent-harness/run.mjs --scenario mcp.configured-auth-ownership --fault wrong-configured-auth-account
+node tests/agent-harness/run.mjs --suite mcp-configured-auth
+```
+
+Build and backend checks before actual application tests; run scopes serially and keep runner/source inputs fixed until cleanup completes. Retain the new finite instructions, assertions and exact run/account cleanup as regression infrastructure. The owned issuer retires disposable registrations only at a zero-inventory scenario boundary; it refuses while grants or consent remain. Wire evidence has a finite 4,608-entry cap for this checkpoint; production limits are unchanged. Generated profiles/TLS/logs/inspectors remain disposable evidence. Interrupted `run-54t29c` has **no acceptance credit**: automatic approval review blocked deletion of three temporary directories, but exact scoped credentials were cleared and owned processes/listeners are absent. Do not bypass that restriction; see the audit for all retained failures and cleanup exceptions.
+
 **E2d configured runtime checkpoint:** [Implementation, audit and evidence](../../docs/Extensions%202.0/CUSTOM-MCP-RUNTIME-AUDIT.md). `mcp-configured-runtime` runs three real-app anonymous-server cases: exact enable/restart and modern/legacy JSON/SSE execution, pending approval ownership, and held-call mutation/cancellation/recovery. OAuth stays inactive; no user credentials or browser sign-in are needed. `mcp-connection-checkpoint` runs all six configured cases, all 23 catalogue transport/OAuth cases and both smoke cases in one host, retaining **31 individual verdicts** and original deadlines. Keep all runner/source inputs fixed until teardown; even a help edit invalidates the run identity. Documentation is outside the runner fingerprint. Inventory **100 IDs / 85 self-contained / 78 Node self-tests**. Existing broader suite/release triggers remain.
 
 ```powershell

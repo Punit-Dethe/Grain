@@ -947,6 +947,7 @@ pub fn run(cli_args: CliArgs) {
             grain_agent_harness::agent_harness_shutdown,
             grain_agent_harness_auth::agent_harness_auth,
             grain_agent_harness_mcp::agent_harness_mcp,
+            grain_agent_harness_mcp::agent_harness_configured_consent,
         ];
         move |invoke: tauri::ipc::Invoke| {
             if invoke.message.command().starts_with("agent_harness_") {
@@ -1472,6 +1473,9 @@ fn command_bindings() -> Builder<tauri::Wry> {
             grain_mcp::connections::mcp_connection_replace,
             grain_mcp::connections::mcp_connection_remove,
             grain_mcp::connections::mcp_connection_set_enabled,
+            grain_mcp::connections::mcp_connection_connect,
+            grain_mcp::connections::mcp_connection_status,
+            grain_mcp::connections::mcp_connection_disconnect,
             grain_commands::extension_take_slot,
             grain_commands::extension_settings_schema,
             grain_commands::extension_settings_sections,

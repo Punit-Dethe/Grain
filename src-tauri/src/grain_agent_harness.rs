@@ -281,11 +281,18 @@ pub fn configure(app: &AppHandle) -> Result<(), String> {
             .unwrap_or_default()
             .into_iter()
             .filter(|record| {
-                record.definition().url == crate::grain_agent_harness_mcp::CONFIGURED_ENDPOINT
+                (record.definition().url == crate::grain_agent_harness_mcp::CONFIGURED_ENDPOINT
                     && matches!(
                         record.definition().authentication,
                         grain_sdk::mcp::McpAuthentication::None {}
-                    )
+                    ))
+                    || (mcp_auth_enabled()
+                        && record.definition().url
+                            == crate::grain_agent_harness_mcp::CONFIGURED_AUTH_ENDPOINT
+                        && matches!(
+                            record.definition().authentication,
+                            grain_sdk::mcp::McpAuthentication::OAuth {}
+                        ))
             })
             .map(|record| record.identity().vault_account().into_owned())
             .collect()
@@ -611,6 +618,8 @@ pub enum Instruction {
     NativeDirectory,
     McpRead,
     McpConfiguredRead,
+    McpConfiguredAccountA,
+    McpConfiguredAccountB,
     McpConfiguredUnknown,
     McpExcluded,
     McpPreview,
@@ -675,6 +684,8 @@ pub async fn agent_harness_submit(
         Instruction::McpWorkflow => "Harness request: mcp_workflow",
         Instruction::NativeDirectory => "Harness request: native_directory",
         Instruction::McpRead => "Harness request: mcp_read",
+        Instruction::McpConfiguredAccountA => "Harness request: mcp_configured_account_a",
+        Instruction::McpConfiguredAccountB => "Harness request: mcp_configured_account_b",
         Instruction::McpConfiguredRead => "Harness request: mcp_configured_read",
         Instruction::McpConfiguredUnknown => "Harness request: mcp_configured_unknown",
         Instruction::McpExcluded => "Harness request: mcp_excluded",

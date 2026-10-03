@@ -536,6 +536,18 @@ export function createMcpOAuth(origin, ca, { wrongAccount = false } = {}) {
       tokens.clear();
       refreshTokens.clear();
     },
+    retireRegistrations() {
+      // Explicit scenario boundary only, after host logout and zero inventory.
+      // Never discard an active grant or a pending consent delivery.
+      assert.equal(
+        tokens.size + refreshTokens.size + callbacks.size,
+        0,
+        "Owned registrations still have active grants or consent",
+      );
+      const fixed = new Set(Object.values(MCP_CLIENTS));
+      for (const id of clients.keys()) if (!fixed.has(id)) clients.delete(id);
+      codes.clear();
+    },
     configure(next) {
       assert.ok(
         Object.keys(next).every((key) =>
