@@ -167,6 +167,76 @@ export function installationHandlers(ctx) {
       return result;
     },
     handlers: {
+      async "native.api-compatibility"() {
+        await fixture("unload"); // Foundation setup loaded the developer fixture.
+        await imported("api-preserved");
+        await allow();
+        await greeting("api-preserved");
+        await closePanel();
+        const registry = assertWithin(root, join(root, "data/extensions.json"));
+        const saved = await readFile(registry);
+        for (const requirement of ["^2.0", "^1.0.1", "*"]) {
+          const pack = await fixturePackage(here, "api-refused");
+          pack.manifest.grainApi =
+            ctx.fault === "unsupported-api-as-current" ? "^1.0" : requirement;
+          await writeFile(
+            assertWithin(root, join(root, "fixture.grainpack")),
+            JSON.stringify(pack),
+          );
+          const before = await status();
+          await assert.rejects(
+            fixture("import"),
+            /unsupported Grain API profile/i,
+          );
+          const after = await status();
+          assert.deepEqual(
+            await readFile(registry),
+            saved,
+            "Refused profile changed installed ownership",
+          );
+          assert.equal(after.fixtureEnabled, true);
+          assert.equal(after.fixtureOwner, before.fixtureOwner);
+          assert.equal(
+            events(after, "dispatched").length,
+            events(before, "dispatched").length,
+          );
+          evidence.push({
+            stage: `installed-refused:${requirement}`,
+            status: "Pass",
+            registryUnchanged: true,
+            dispatchDelta: 0,
+          });
+        }
+        await project("fixture", "api-dev-refused");
+        const manifestPath = assertWithin(
+          root,
+          join(root, "fixture/manifest.json"),
+        );
+        const developer = JSON.parse(await readFile(manifestPath, "utf8"));
+        developer.grainApi = "^2.0";
+        await writeFile(manifestPath, JSON.stringify(developer));
+        await assert.rejects(
+          fixture("register"),
+          /unsupported Grain API profile/i,
+        );
+        assert.deepEqual(
+          await readFile(registry),
+          saved,
+          "Refused developer profile changed ownership",
+        );
+        await greeting("api-preserved");
+        await note("developer-refused:working-owner-preserved");
+        await closePanel();
+        const legacy = await fixturePackage(here, "api-legacy");
+        delete legacy.manifest.grainApi;
+        await writeFile(
+          assertWithin(root, join(root, "fixture.grainpack")),
+          JSON.stringify(legacy),
+        );
+        await fixture("import");
+        await greeting("api-legacy");
+        await note("legacy-omitted-api:executed");
+      },
       async "native.cli-package-ownership"() {
         const { packagedOwnership } = await import("./packaging.mjs");
         evidence.push(

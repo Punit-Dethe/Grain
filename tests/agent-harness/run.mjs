@@ -161,6 +161,7 @@ if (
   options.fault &&
   ![
     "wrong-greeting",
+    "unsupported-api-as-current",
     "missing-escape",
     "successful-error",
     "skip-restart",
@@ -240,6 +241,7 @@ if (
     "missing-live-evidence requires one isolated public live read scenario",
   );
 for (const [fault, scenario] of [
+  ["unsupported-api-as-current", "native.api-compatibility"],
   ["wrong-mcp-peer-account", "mcp.auth-provider-independence"],
   ["missing-mcp-issuer-rotation", "mcp.auth-issuer-binding"],
   ["missing-mcp-refresh-failure", "mcp.auth-temporary-recovery"],

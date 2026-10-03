@@ -185,6 +185,19 @@ impl IndexEntry {
         }
         Ok(())
     }
+
+    /// Installation eligibility, before downloading or staging an artifact.
+    /// A future API requirement does not hide an otherwise valid tool card.
+    pub fn validate_installable(&self) -> Result<(), String> {
+        self.validate_tool_only()?;
+        if !crate::compatibility::minimum_api_supported(
+            &self.min_grain_api,
+            crate::GRAIN_API_VERSION,
+        ) {
+            return Err(crate::compatibility::UNSUPPORTED_EXTENSION_API.into());
+        }
+        Ok(())
+    }
 }
 
 /// The category vocabulary a submission may declare. Deliberately short: these
@@ -300,6 +313,23 @@ impl Revocations {
 #[cfg(test)]
 mod tool_catalogue_tests {
     use super::*;
+
+    #[test]
+    fn catalog_minimum_api_is_enforced_before_artifact_acquisition() {
+        let mut entry = tool_entry();
+        for supported in ["", "0.9", "1.0", "1.0.0"] {
+            entry.min_grain_api = supported.into();
+            entry.validate_installable().unwrap();
+        }
+        for unsupported in ["1.0.1", "2.0", "^1.0", "latest", "01.0"] {
+            entry.min_grain_api = unsupported.into();
+            entry.validate_tool_only().unwrap();
+            assert_eq!(
+                entry.validate_installable().unwrap_err(),
+                crate::compatibility::UNSUPPORTED_EXTENSION_API
+            );
+        }
+    }
 
     fn tool_entry() -> IndexEntry {
         serde_json::from_value(serde_json::json!({

@@ -6,6 +6,7 @@
 
 use std::path::{Component, Path, PathBuf};
 
+use grain_sdk::compatibility::api_requirement_supported;
 use grain_sdk::{ExtensionProjectManifest, GrainPack, PackPayloads, Tier, GRAIN_API_VERSION};
 
 const MAX_MANIFEST_BYTES: u64 = 1024 * 1024;
@@ -45,10 +46,7 @@ pub fn load_project(root: &Path) -> Result<LoadedDevProject, String> {
         return Err("manifest.json must use 'entry', not embedded 'entry_source'".into());
     }
     if !api_requirement_supported(&project.manifest.grain_api, GRAIN_API_VERSION) {
-        return Err(format!(
-            "extension requires Grain API '{}', but this build provides '{}'",
-            project.manifest.grain_api, GRAIN_API_VERSION
-        ));
+        return Err(grain_sdk::compatibility::UNSUPPORTED_EXTENSION_API.into());
     }
 
     let (entry_path, companion_path) = match project.manifest.tier {
@@ -134,33 +132,6 @@ fn canonical_project_file(root: &Path, value: &str, label: &str) -> Result<PathB
         return Err(format!("manifest {label} must stay inside the project"));
     }
     Ok(path)
-}
-
-fn api_requirement_supported(requirement: &str, current: &str) -> bool {
-    let requirement = requirement.trim();
-    let (caret, version) = match requirement.strip_prefix('^') {
-        Some(version) => (true, version),
-        None => (false, requirement),
-    };
-    let Some(required) = parse_version(version) else {
-        return false;
-    };
-    let Some(current) = parse_version(current) else {
-        return false;
-    };
-    if caret {
-        required.0 == current.0 && current >= required
-    } else {
-        current == required
-    }
-}
-
-fn parse_version(version: &str) -> Option<(u64, u64, u64)> {
-    let mut parts = version.split('.');
-    let major = parts.next()?.parse().ok()?;
-    let minor = parts.next()?.parse().ok()?;
-    let patch = parts.next().map(str::parse).transpose().ok()?.unwrap_or(0);
-    parts.next().is_none().then_some((major, minor, patch))
 }
 
 #[cfg(test)]

@@ -682,7 +682,7 @@ async fn install_entry_with_clock(
                 .cloned()
                 .ok_or_else(|| format!("no entry {id} {version} in the verified index"))?
         };
-        entry.validate_tool_only()?;
+        entry.validate_installable()?;
         if !owner.can_install
             || trust::index_status(state.index.read().unwrap().as_ref().unwrap(), now())
                 .map_err(|e| e.to_string())?

@@ -4,8 +4,8 @@
 //! widen later): identity/display fields, tier, permissions as opaque names,
 //! and tier-A pack payloads. Activation events, surfaces, slots, `provides:`,
 //! `requires:` and the settings schema join as their consumers land
-//! (Phases 2–3). Unknown JSON fields are ignored on read, so manifests written
-//! against a NEWER contract still install here with their known subset.
+//! (Phases 2–3). Unknown JSON fields remain readable for legacy compatibility;
+//! explicit unsupported API requirements are refused at every live boundary.
 //!
 //! Packaging (Phase 1): a `.grainpack` is ONE JSON file — the manifest plus
 //! embedded payloads — because tier-A packs are small data and a single file
@@ -29,8 +29,9 @@ pub struct ExtensionManifest {
     pub id: String,
     pub name: String,
     pub version: String,
-    /// Contract semver the pack was written against (informational in Phase 1;
-    /// enforced when the runtime tiers land).
+    /// Native API requirement: supported numeric exact/caret grammar. Empty is
+    /// accepted only for existing installed legacy metadata; author projects
+    /// must declare an explicit compatible requirement.
     #[serde(default, rename = "grainApi", alias = "grain_api")]
     pub grain_api: String,
     pub tier: Tier,
@@ -1946,6 +1947,14 @@ impl GrainPack {
     /// retirement error at every trust boundary instead of silently changing behavior.
     pub fn validate_tool_only(&self) -> Result<(), String> {
         let m = &self.manifest;
+        if !m.grain_api.is_empty()
+            && !crate::compatibility::api_requirement_supported(
+                &m.grain_api,
+                crate::GRAIN_API_VERSION,
+            )
+        {
+            return Err(crate::compatibility::UNSUPPORTED_EXTENSION_API.into());
+        }
         let c = &m.contributes;
         let retired = if m.tier == Tier::Native || m.companion.is_some() {
             Some("native companion executables")
@@ -2350,6 +2359,39 @@ fn validate_no_visual_customization(pack: &GrainPack) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn native_api_requirements_are_checked_at_every_pack_boundary() {
+        let mut pack: GrainPack = serde_json::from_value(serde_json::json!({"manifest": {
+            "id":"com.example.api","name":"API","version":"1.0.0","tier":"scripted",
+            "entry_source":"grain.actions({read: async () => ({ok:null})});",
+            "contributes":{"actions":[{"id":"read","title":"Read","risk":"confirm","utterances":["read data"]}]}
+        }})).unwrap();
+        // Omitted installed metadata remains readable; new project readers
+        // independently require an explicit supported requirement.
+        for supported in ["", "^1.0", "^1.0.0", "1.0", "1.0.0"] {
+            pack.manifest.grain_api = supported.into();
+            assert!(pack.validate_tool_only().is_ok());
+            assert!(pack.validate().is_ok());
+            assert!(pack.validate_dev().is_ok());
+            assert!(pack.validate_trusted().is_ok());
+        }
+        for unsupported in ["^2.0", "^1.0.1", "*", "latest", " ", "01.0", "+1.0"] {
+            pack.manifest.grain_api = unsupported.into();
+            for result in [
+                pack.validate_tool_only(),
+                pack.validate(),
+                pack.validate_dev(),
+                pack.validate_trusted(),
+            ] {
+                assert_eq!(
+                    result.unwrap_err(),
+                    crate::compatibility::UNSUPPORTED_EXTENSION_API,
+                    "{unsupported}"
+                );
+            }
+        }
+    }
 
     #[test]
     fn retired_features_fail_at_every_trust_boundary_including_mixed_tools() {

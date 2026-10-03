@@ -110,6 +110,13 @@ export const scenarios = [
       "Real native public result/context contract: tagged null/empty, plain display, invalid boolean/ambiguous/follow-up refusal and restricted invocation context",
   },
   {
+    id: "native.api-compatibility",
+    suite: "native-foundation",
+    checks: [59],
+    description:
+      "Unsupported installed/developer API profiles are refused without changing the working owner; legacy omitted profile still executes",
+  },
+  {
     id: "native.typed-contract",
     suite: "native-foundation",
     checks: [22],
@@ -433,7 +440,31 @@ scenarios.push(
   },
 );
 
+// A contract-only checkpoint: individual scenarios retain their own verdicts,
+// wire oracles and cleanup. Transport/deadline changes need broader suites.
+export const EXTENSION_CONTRACT_CHECKPOINT = [
+  "native.author-results",
+  "native.api-compatibility",
+  "native.typed-contract",
+  "native.legacy-migration",
+  "native.cli-package-ownership",
+  "native.owner-restoration",
+  "native.auth-fixture",
+  "store.integrity-close",
+  "mcp.transport-contract",
+  "mcp.auth-provider-independence",
+  "native.cold-warm",
+  "agent.decline",
+];
+
 export function selectScenarios(suite) {
+  if (suite === "extension-contract")
+    return EXTENSION_CONTRACT_CHECKPOINT.map((id) => {
+      const scenario = scenarios.find((item) => item.id === id);
+      if (!scenario)
+        throw new Error(`Missing contract checkpoint scenario: ${id}`);
+      return scenario;
+    });
   if (suite === "mcp-refresh")
     return scenarios.filter((scenario) =>
       ["mcp.auth-refresh-recovery", "mcp.auth-refresh-refusal"].includes(

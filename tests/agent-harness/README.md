@@ -1,5 +1,25 @@
 # Grain Agent acceptance harness
 
+**E1c compatibility and development checkpoints:** [Contract, audit, evidence and suite triggers](../../docs/Extensions%202.0/EXTENSION-COMPATIBILITY-CONFIGURATION-AUDIT.md). Develop a bounded block with fast affected checks, build once, then run attributable real-app tests serially. For contract-only edits:
+
+```powershell
+cargo test --locked --workspace
+node --test tests/agent-harness/runner.test.mjs tests/agent-harness/client-metadata.test.mjs
+node tests/agent-harness/production-tests.mjs --group developer
+node tests/agent-harness/production-tests.mjs --group store
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/agent-harness/build.ps1
+node tests/agent-harness/author-contract.mjs
+node tests/agent-harness/run.mjs --suite extension-contract
+# After source audit, fresh affected acceptance:
+node tests/agent-harness/run.mjs --scenario native.api-compatibility
+# Expected Fail/exit 1: Missing expected rejection; cleanup must Pass:
+node tests/agent-harness/run.mjs --scenario native.api-compatibility --fault unsupported-api-as-current
+```
+
+The checkpoint selects twelve cases covering public native results, API compatibility, typed inputs, migration, CLI packages/owner restoration, native auth, signed-store integrity/close, MCP transport/account independence and Agent smoke/denial. The compatibility case refuses unsupported installed/developer profiles without displacing the working owner, then executes an omitted-profile legacy package. A negative control supplies a supported profile where rejection is required. Each case retains its own observations/verdict; failure stops the batch. Full existing suites remain required for changed auth/permission/transport/deadline/shared-executor boundaries and E8 release coverage. Real timeout tests are unchanged, never shortened or replaced by this subset. Preserve fixture reset, source/build fingerprints, owned cleanup and independent credential/process inventory. No accounts or ordinary application profile are borrowed.
+
+Final E1c checkpoint **12/12 Pass**, fresh repeat Pass, fault detected and independent cleanup Pass. Current inventory **93 IDs / 78 self-contained / 74 Node self-tests**, including four native-foundation cases. Baseline **52 Pass / 1 Deferred (12)**; forward **54/55/57/58/59 Pass**, full **56 Pending**. E1 provisional contract complete; E2–E8 remain. Keep maintained scenario/selector/fault tests; `.runs/` logs, generated author projects and read-only inspection scripts are disposable evidence. Physical retirement remains on hold. Older dated entries below are historical.
+
 **E1b descriptor/host identity checks:** [Contract, audit and runtime evidence](../../docs/Extensions%202.0/MCP-DESCRIPTOR-IDENTITY-AUDIT.md). This is pure metadata admission and the existing catalog bridge, not custom MCP import or a second harness. Use:
 
 ```powershell

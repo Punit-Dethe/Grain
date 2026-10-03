@@ -17,7 +17,11 @@ import { promisify } from "node:util";
 import { PassThrough } from "node:stream";
 import { createServer } from "node:net";
 import { nextReply, startModel, FIXTURE_ID, TYPED_INPUTS } from "./model.mjs";
-import { scenarios, selectScenarios } from "./scenarios.mjs";
+import {
+  scenarios,
+  selectScenarios,
+  EXTENSION_CONTRACT_CHECKPOINT,
+} from "./scenarios.mjs";
 import { assertWithin, waitFor, writeReport } from "./support.mjs";
 import { LIVE_REPOSITORY, verifyLiveModel } from "./mcp-live.mjs";
 import {
@@ -1813,6 +1817,45 @@ test("scenario IDs are unique and each suite is explicit", () => {
   );
 });
 
+test("contract checkpoint retains distinct coverage and fault isolation", async () => {
+  const selected = selectScenarios("extension-contract");
+  assert.deepEqual(
+    selected.map((item) => item.id),
+    EXTENSION_CONTRACT_CHECKPOINT,
+  );
+  assert.equal(new Set(selected.map((item) => item.id)).size, 12);
+  assert.ok(selected.every((item) => scenarios.includes(item)));
+  for (const required of [
+    "native.api-compatibility",
+    "native.cli-package-ownership",
+    "store.integrity-close",
+    "native.auth-fixture",
+    "mcp.auth-provider-independence",
+  ])
+    assert.ok(selected.some((item) => item.id === required));
+  assert.ok(
+    !selected.some((item) =>
+      ["mcp.http-deadline", "mcp.discovery-deadline"].includes(item.id),
+    ),
+  );
+  await assert.rejects(
+    exec(
+      process.execPath,
+      [
+        join(here, "run.mjs"),
+        "--scenario",
+        "native.cold-warm",
+        "--fault",
+        "unsupported-api-as-current",
+      ],
+      { timeout: 10000, windowsHide: true },
+    ),
+    (error) =>
+      error.code === 1 &&
+      error.stderr.includes("requires --scenario native.api-compatibility"),
+  );
+});
+
 test("workflow oracle refuses premature/unrelated schemas and wrong real write receipts", async () => {
   const { workflowReply, workflowResult, WORKFLOW_VALUE } =
     await import("./workflow.mjs");
@@ -2523,7 +2566,7 @@ test("declined/failed tool result produces no automatic tool replay", () => {
 });
 
 test("typed oracle detects numeric coercion and optional-value loss in real results", () => {
-  assert.equal(selectScenarios("native-foundation").length, 3);
+  assert.equal(selectScenarios("native-foundation").length, 4);
   assert.ok(
     selectScenarios("native-foundation").some(
       (item) => item.id === "native.author-results",

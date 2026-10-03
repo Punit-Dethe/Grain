@@ -10,6 +10,7 @@ use std::fs;
 use std::path::{Component, Path, PathBuf};
 
 use base64::Engine as _;
+use grain_sdk::compatibility::api_requirement_supported;
 use grain_sdk::{
     daemon_event_capability, ExtensionProjectManifest, GrainPack, PackPayloads, Tier,
     DAEMON_EVENT_VARIANTS, GRAIN_API_VERSION,
@@ -568,10 +569,7 @@ fn check_api_version(project: &ExtensionProjectManifest, report: &mut DoctorRepo
         report.findings.push(Finding::project(
             "E_API_VERSION",
             "manifest.json",
-            format!(
-                "grainApi '{}' is not supported by SDK '{}'",
-                project.manifest.grain_api, GRAIN_API_VERSION
-            ),
+            grain_sdk::compatibility::UNSUPPORTED_EXTENSION_API,
         ));
     }
 }
@@ -844,33 +842,6 @@ fn forbidden_unicode_name(character: char) -> Option<&'static str> {
         0xFFF9..=0xFFFB => Some("INTERLINEAR ANNOTATION CONTROL"),
         _ => None,
     }
-}
-
-fn api_requirement_supported(requirement: &str, current: &str) -> bool {
-    let requirement = requirement.trim();
-    let (caret, version) = match requirement.strip_prefix('^') {
-        Some(version) => (true, version),
-        None => (false, requirement),
-    };
-    let Some(required) = parse_version(version) else {
-        return false;
-    };
-    let Some(current) = parse_version(current) else {
-        return false;
-    };
-    if caret {
-        required.0 == current.0 && current >= required
-    } else {
-        current == required
-    }
-}
-
-fn parse_version(version: &str) -> Option<(u64, u64, u64)> {
-    let mut parts = version.split('.');
-    let major = parts.next()?.parse().ok()?;
-    let minor = parts.next()?.parse().ok()?;
-    let patch = parts.next().map(str::parse).transpose().ok()?.unwrap_or(0);
-    parts.next().is_none().then_some((major, minor, patch))
 }
 
 fn is_ignored_directory(path: &Path) -> bool {

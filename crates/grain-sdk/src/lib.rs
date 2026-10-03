@@ -20,6 +20,7 @@
 //! narrowly, widen later).
 
 pub mod authoring;
+pub mod compatibility;
 pub mod distribution;
 pub mod error;
 pub mod event;

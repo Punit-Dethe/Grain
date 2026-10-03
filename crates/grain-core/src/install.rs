@@ -150,7 +150,9 @@ pub fn stage_artifact(
 ) -> Result<PathBuf, InstallError> {
     grain_sdk::validate_extension_id(&entry.id).map_err(InstallError::Io)?;
     grain_sdk::validate_extension_version(&entry.version).map_err(InstallError::Io)?;
-    entry.validate_tool_only().map_err(InstallError::Manifest)?;
+    entry
+        .validate_installable()
+        .map_err(InstallError::Manifest)?;
     trust::verify_artifact(bytes, &entry.sha256).map_err(InstallError::Hash)?;
 
     // Validate before filesystem mutation. Unsupported directory/native bundles
@@ -615,6 +617,21 @@ mod tests {
 
     fn tmp() -> tempfile::TempDir {
         tempfile::tempdir().unwrap()
+    }
+
+    #[test]
+    fn future_catalog_api_refuses_before_hash_or_filesystem_work() {
+        let dir = tmp();
+        let bytes = tool_pack("com.example.future", "1.0.0", &[]);
+        let mut e = entry("com.example.future", "1.0.0", Trust::Verified, &[], &bytes);
+        e.min_grain_api = "2.0".into();
+        e.validate_tool_only().unwrap(); // Browsing remains possible.
+                                         // An invalid artifact must not obscure the earlier compatibility refusal.
+        let error =
+            stage_artifact(dir.path(), &e, b"invalid", ExtractLimits::default()).unwrap_err();
+        assert!(matches!(error, InstallError::Manifest(ref message)
+            if message == grain_sdk::compatibility::UNSUPPORTED_EXTENSION_API));
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
     }
 
     // â”€â”€ Anti-forgery guarantee, DISTRIBUTION-PLAN Â§3.2 â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€

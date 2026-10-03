@@ -7,7 +7,7 @@ use grain_sdk::manifest::network_capability_host;
 use grain_sdk::mcp::{
     McpDescriptor, McpTransport, MCP_DESCRIPTOR_MAX_BYTES, MCP_DESCRIPTOR_SCHEMA,
 };
-use grain_sdk::{validate_extension_id, validate_extension_version, GRAIN_API_VERSION};
+use grain_sdk::{validate_extension_id, validate_extension_version};
 use serde::Serialize;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -54,7 +54,7 @@ impl ValidatedDescriptor {
             return Err(ContractError::UnsupportedSchema);
         }
         // Explicit provisional profile, not a guessed semver range evaluator.
-        if descriptor.grain_api != format!("^{GRAIN_API_VERSION}") {
+        if descriptor.grain_api != grain_sdk::compatibility::EXTENSION_API_REQUIREMENT {
             return Err(ContractError::UnsupportedApi);
         }
         if validate_extension_id(&descriptor.id).is_err()
