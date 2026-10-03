@@ -111,7 +111,12 @@ export function nextReply(body, fault, workflowMode = "normal") {
   if (requested === "mcp_hf_read") return hfReply(body);
   if (requested === "mcp_conformance") return conformanceReply(body);
   if (
-    ["mcp_configured_account_a", "mcp_configured_account_b"].includes(requested)
+    [
+      "mcp_configured_account_a",
+      "mcp_configured_account_b",
+      "mcp_configured_disabled_a",
+      "mcp_configured_disabled_b",
+    ].includes(requested)
   ) {
     const ids = [
       ...new Set(
@@ -133,6 +138,7 @@ export function nextReply(body, fault, workflowMode = "normal") {
       body,
       account,
       ids[account === "B" && ids.length > 1 ? 1 : 0].slice(4),
+      requested.startsWith("mcp_configured_disabled_"),
     );
   }
   if (["mcp_configured_read", "mcp_configured_unknown"].includes(requested)) {

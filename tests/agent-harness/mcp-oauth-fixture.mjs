@@ -18,9 +18,9 @@ export const MCP_CLIENT_SECRETS = Object.freeze([
   MCP_PRIVATE_MARKER + "owned-client-secret-one",
   MCP_PRIVATE_MARKER + "owned-client-secret-two",
 ]);
-// Ten combined auth cases legitimately exhaust the former 1024-entry log.
+// The combined configured/catalogue checkpoint needs about 2,200 issuer events.
 // Keep complete evidence bounded, with one reserved terminal error slot.
-export const MCP_OAUTH_JOURNAL_LIMIT = 2048;
+export const MCP_OAUTH_JOURNAL_LIMIT = 2560;
 
 async function boundedBody(req) {
   const chunks = [];

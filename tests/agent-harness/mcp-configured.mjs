@@ -229,6 +229,19 @@ export function configuredMcpHandlers(ctx) {
         });
         const calls = [
           [
+            "mcp_connection_set_client_credentials",
+            {
+              id: saved.id,
+              expectedRevision: saved.revision,
+              clientId: "owned-client",
+              clientSecret: "",
+            },
+          ],
+          [
+            "mcp_connection_clear_client_credentials",
+            { id: saved.id, expectedRevision: saved.revision },
+          ],
+          [
             "mcp_connection_connect",
             { id: saved.id, expectedRevision: saved.revision },
           ],

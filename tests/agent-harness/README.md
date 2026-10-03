@@ -1,5 +1,16 @@
 # Grain Agent acceptance harness
 
+**E2f configured registered clients:** [Scope, audit and evidence](../../docs/Extensions%202.0/CUSTOM-MCP-CLIENT-REGISTRATION-AUDIT.md). The two new client cases cover host/revision-owned public/confidential setup, secret rotation, logout/reset, independent same-endpoint accounts, discovery-failure preservation and pending/active cancellation. `mcp-configured-auth` now selects five cases; `mcp-connection-checkpoint` selects **36 distinct verdicts** (eleven configured, 23 catalogue, two smoke) with original deadlines. Inventory **105 IDs / 90 self-contained / 80 Node tests**. Run backend/build checks before actual hosts, actual scopes serially, and freeze source/runner inputs through cleanup. Keep these cases and exact fault admission as regression infrastructure; generated profiles/TLS/logs/inspectors remain disposable evidence. The finite issuer/wire evidence bounds are **2,560 / 4,608**; capacity/terminal-error tests remain and production limits are unchanged. The audit records failed/incomplete scopes separately; implementation alone does not accept check 65.
+
+```powershell
+node tests/agent-harness/run.mjs --suite mcp-connection-checkpoint
+# Expected exit 1 at old-grant retention assertion, cleanup Pass:
+node tests/agent-harness/run.mjs --scenario mcp.configured-auth-client-rotation --fault skip-configured-client-rotation
+node tests/agent-harness/run.mjs --suite mcp-configured-auth
+```
+
+Forward **65 accepted** after the **36/36** broad checkpoint, final-runner **5/5** repeat, detected rotation fault and independent nine-scope cleanup inspection. The audit records exact source/runner identities, harness-only corrections and failed/incomplete evidence. Configured JSON remains credential-free. Client setup/reset is host-managed; ordinary accounts are untouched. Public client metadata still needs official hosting; verified store acquisition remains later E2 work. No manual sign-in is needed for this owned issuer. Earlier dated entries below retain their historical scope.
+
 **E2e configured OAuth checkpoint:** [Scope, audit and retained evidence](../../docs/Extensions%202.0/CUSTOM-MCP-OAUTH-AUDIT.md). `mcp-configured-auth` runs three actual-app SDK DCR/vault cases: independent same-endpoint accounts and retirement, pending sign-in cancellation, and actual expiry/refresh plus active disconnect/removal. No user account or browser approval is needed for this owned issuer. `mcp-connection-checkpoint` now retains **34 distinct verdicts** (nine configured, 23 catalogue, two smoke), with unchanged production deadlines. Inventory **103 IDs / 88 self-contained / 79 Node self-tests**. Custom preregistration, permanent public client metadata and store acquisition remain separate work. Earlier checkpoint entries are historical scopes.
 
 ```powershell

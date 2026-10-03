@@ -835,3 +835,20 @@ for (const [id, description] of [
     checks: [64],
     description,
   });
+
+for (const [id, description] of [
+  [
+    "rotation",
+    "Configured preregistered public/confidential clients, same-ID secret rotation, stale approvals, restart, logout retention and explicit reset to SDK DCR",
+  ],
+  [
+    "ownership",
+    "Same-endpoint configured client isolation, discovery failure preservation, pending-consent save/reset cancellation and revision/metadata retirement",
+  ],
+])
+  scenarios.push({
+    id: `mcp.configured-auth-client-${id}`,
+    suite: "mcp-configured-auth",
+    checks: [65],
+    description,
+  });

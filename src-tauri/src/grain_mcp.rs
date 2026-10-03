@@ -912,33 +912,48 @@ fn client_id(app: &AppHandle, provider_id: &str) -> Option<String> {
         .filter(|value| !value.is_empty())
 }
 
+fn provider_client_id(app: &AppHandle, item: &Provider<'_>) -> Option<String> {
+    client_id(app, &provider_account(item))
+}
+
+fn preregistered(app: &AppHandle, item: &Provider<'_>) -> bool {
+    item.registration == Registration::PreRegistered
+        || (item.ownership.is_some() && provider_client_id(app, item).is_some())
+}
+
 async fn client_secret(
-    provider_id: &str,
+    store: VaultCredentialStore,
     client_id: &str,
     issuer: &str,
 ) -> Result<Option<String>, Recovery> {
-    let account = provider_id.to_string();
     let client_id = client_id.to_string();
     let issuer = issuer.to_string();
     tokio::task::spawn_blocking(move || {
-        // Registration ownership survives logout. Check it before even loading
-        // the secret; the SDK's issuer-bound token store cannot cover this case.
-        let registration = credential_entry(CLIENT_REGISTRATION_SERVICE, &account)
+        store
+            .commit(|| {
+                Ok((|| {
+                    let account = &store.account;
+                    // Registration ownership survives logout. Check it before even loading
+                    // the secret; the SDK's issuer-bound token store cannot cover this case.
+                    let registration = credential_entry(CLIENT_REGISTRATION_SERVICE, account)
+                        .map_err(|_| Recovery::CredentialStore)?
+                        .get_password()
+                        .map_err(|error| match error {
+                            keyring::Error::NoEntry => Recovery::Registration,
+                            _ => Recovery::CredentialStore,
+                        })?;
+                    validate_registration(&registration, &client_id, &issuer)
+                        .map_err(|_| Recovery::Registration)?;
+                    let entry = credential_entry(CLIENT_SECRET_SERVICE, account)
+                        .map_err(|_| Recovery::CredentialStore)?;
+                    match entry.get_password() {
+                        Ok(secret) if !secret.is_empty() => Ok(Some(secret)),
+                        Ok(_) | Err(keyring::Error::NoEntry) => Ok(None),
+                        Err(_) => Err(Recovery::CredentialStore),
+                    }
+                })())
+            })
             .map_err(|_| Recovery::CredentialStore)?
-            .get_password()
-            .map_err(|error| match error {
-                keyring::Error::NoEntry => Recovery::Registration,
-                _ => Recovery::CredentialStore,
-            })?;
-        validate_registration(&registration, &client_id, &issuer)
-            .map_err(|_| Recovery::Registration)?;
-        let entry = credential_entry(CLIENT_SECRET_SERVICE, &account)
-            .map_err(|_| Recovery::CredentialStore)?;
-        match entry.get_password() {
-            Ok(secret) if !secret.is_empty() => Ok(Some(secret)),
-            Ok(_) | Err(keyring::Error::NoEntry) => Ok(None),
-            Err(_) => Err(Recovery::CredentialStore),
-        }
     })
     .await
     .map_err(|_| Recovery::CredentialStore)?
@@ -1027,6 +1042,27 @@ pub async fn mcp_set_client_credentials(
     if item.registration != Registration::PreRegistered {
         return Err("this provider does not require developer OAuth credentials".into());
     }
+    set_client_credentials_flow(
+        &app,
+        RuntimeProvider::Catalog(item),
+        client_id,
+        client_secret,
+    )
+    .await
+}
+
+async fn set_client_credentials_flow(
+    app: &AppHandle,
+    owner: RuntimeProvider,
+    client_id: String,
+    client_secret: String,
+) -> Result<(), String> {
+    let spec = owner.spec();
+    let item = &spec;
+    if !requires_account(item) {
+        return Err("This anonymous server has no OAuth client to configure.".into());
+    }
+    let id = provider_account(item);
     let client_id = client_id.trim().to_string();
     if client_id.is_empty() || client_id.len() > 512 || client_id.chars().any(char::is_control) {
         return Err("client ID must be 1-512 printable characters".into());
@@ -1038,12 +1074,13 @@ pub async fn mcp_set_client_credentials(
     }
 
     let secret = zeroize::Zeroizing::new(client_secret);
-    let ticket = provider_control(item.id).invalidate();
+    let ticket = owner.invalidate(app)?;
     let update = ticket.run(async {
         let _operation = ticket.acquire().await?;
+        let store = VaultCredentialStore::for_provider(item, &ticket, &_operation);
         // Explicit Save binds registration without sending credentials or opening
         // consent. Discover before touching an existing usable registration/grant.
-        let manager = new_authorization_manager(provider_http(&app, item)?, item)
+        let manager = new_authorization_manager(provider_http(app, item)?, item)
             .await
             .map_err(|_| "OAuth setup failed")?;
         let resolution = manager
@@ -1070,21 +1107,20 @@ pub async fn mcp_set_client_credentials(
         let ctx = app
             .try_state::<std::sync::Arc<grain_core::AppContext>>()
             .ok_or("application context unavailable")?;
-        ticket
+        store
             .commit(|| {
                 ctx.update_settings(|settings| {
                     settings
                         .mcp_enabled_providers
                         .retain(|current| current != &id);
                 })
-            })?
+                .map_err(|error| AuthError::CredentialStoreError(error.to_string()))
+            })
             .map_err(|error| error.to_string())?;
         let account = id.clone();
-        let write_ticket = ticket.clone();
-        let write_operation = _operation.clone();
+        let write_store = store.clone();
         tokio::task::spawn_blocking(move || {
-            let _operation = write_operation;
-            let result = write_ticket
+            write_store
                 .commit(|| {
                     // Delete old ownership BEFORE replacing a secret. A partial
                     // vault/settings write cannot authorize a new secret with an
@@ -1106,16 +1142,16 @@ pub async fn mcp_set_client_credentials(
                         &secret,
                         &registration,
                     )
+                    .map_err(AuthError::CredentialStoreError)
                 })
-                .and_then(|result| result);
-            result
+                .map_err(|error| error.to_string())
         })
         .await
         .map_err(|error| format!("credential task failed: {error}"))??;
 
         // A pre-registered client change invalidates the issuer-bound token. Never
         // let an old grant ride under newly configured client credentials.
-        ticket
+        store
             .commit(|| {
                 ctx.update_settings(|settings| {
                     settings
@@ -1123,7 +1159,8 @@ pub async fn mcp_set_client_credentials(
                         .retain(|current| current != &id);
                     settings.mcp_oauth_client_ids.insert(id.clone(), client_id);
                 })
-            })?
+                .map_err(|error| AuthError::CredentialStoreError(error.to_string()))
+            })
             .map_err(|error| error.to_string())?;
         Ok(())
     });
@@ -1450,7 +1487,8 @@ async fn connect_oauth(
     require_developer_mode(app)?;
     // Preserve the existing immediate conflict refusal for configured clients:
     // their callback is known before any issuer discovery or credential work.
-    let configured_listener = if item.registration == Registration::PreRegistered {
+    let pre_registered = preregistered(app, item);
+    let configured_listener = if pre_registered {
         Some(bind_callback(true).await?)
     } else {
         None
@@ -1459,11 +1497,8 @@ async fn connect_oauth(
     let mut manager = new_authorization_manager(http, item)
         .await
         .map_err(|error| format!("OAuth setup failed: {error}"))?;
-    manager.set_credential_store(VaultCredentialStore::for_provider(
-        item,
-        ticket,
-        &_operation,
-    ));
+    let store = VaultCredentialStore::for_provider(item, ticket, &_operation);
+    manager.set_credential_store(store.clone());
     let resolution = manager
         .resolve_metadata()
         .await
@@ -1511,11 +1546,11 @@ async fn connect_oauth(
             .with_client_name("Grain Agent Harness - Linear read-only")
             .with_scopes(["read"]);
     }
-    if item.registration == Registration::PreRegistered {
-        let configured_id = client_id(app, item.id)
+    if pre_registered {
+        let configured_id = provider_client_id(app, item)
             .ok_or("configure this provider's OAuth client ID in Settings first")?;
         let configured_secret = client_secret(
-            item.id,
+            store,
             &configured_id,
             expected_issuer
                 .as_deref()
@@ -1663,8 +1698,9 @@ async fn authorization_manager(
         .await
         .map_err(|error| Recovery::from_auth(&error))?;
     let store = VaultCredentialStore::for_provider(item, ticket, operation);
-    let configured_id = client_id(app, item.id);
-    if item.registration == Registration::PreRegistered {
+    let configured_id = provider_client_id(app, item);
+    let pre_registered = preregistered(app, item);
+    if pre_registered {
         let stored = store
             .load()
             .await
@@ -1674,7 +1710,7 @@ async fn authorization_manager(
             return Err(Recovery::Registration);
         }
     }
-    manager.set_credential_store(store);
+    manager.set_credential_store(store.clone());
     let resolution = manager
         .resolve_metadata()
         .await
@@ -1684,9 +1720,9 @@ async fn authorization_manager(
     }
     validate_hosted_oauth_metadata(&resolution.metadata).map_err(|_| Recovery::Configuration)?;
     validate_oauth_destinations(item, &resolution.metadata).map_err(|_| Recovery::Configuration)?;
-    let configured_secret = if item.registration == Registration::PreRegistered {
+    let configured_secret = if pre_registered {
         client_secret(
-            item.id,
+            store,
             configured_id.as_deref().ok_or(Recovery::Registration)?,
             resolution
                 .metadata
@@ -1706,7 +1742,7 @@ async fn authorization_manager(
     {
         return Err(Recovery::Reconnect);
     }
-    if item.registration == Registration::PreRegistered {
+    if pre_registered {
         let mut config = OAuthClientConfig::new(
             configured_id.ok_or(Recovery::Registration)?,
             format!("http://{CALLBACK_ADDR}{CALLBACK_PATH}"),

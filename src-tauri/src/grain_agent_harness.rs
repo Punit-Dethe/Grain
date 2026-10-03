@@ -322,7 +322,8 @@ pub fn configure(app: &AppHandle) -> Result<(), String> {
                 .contains(&id.as_str()))
     });
     settings.mcp_oauth_client_ids.retain(|id, _| {
-        (mcp_auth_enabled() && id == crate::grain_agent_harness_mcp::CLIENT_PROVIDER_ID)
+        configured_keys.contains(id)
+            || (mcp_auth_enabled() && id == crate::grain_agent_harness_mcp::CLIENT_PROVIDER_ID)
             || (mcp_peer_config().is_ok()
                 && id == crate::grain_agent_harness_mcp::PEER_CLIENT_PROVIDER_ID)
     });
@@ -620,6 +621,8 @@ pub enum Instruction {
     McpConfiguredRead,
     McpConfiguredAccountA,
     McpConfiguredAccountB,
+    McpConfiguredDisabledA,
+    McpConfiguredDisabledB,
     McpConfiguredUnknown,
     McpExcluded,
     McpPreview,
@@ -686,6 +689,8 @@ pub async fn agent_harness_submit(
         Instruction::McpRead => "Harness request: mcp_read",
         Instruction::McpConfiguredAccountA => "Harness request: mcp_configured_account_a",
         Instruction::McpConfiguredAccountB => "Harness request: mcp_configured_account_b",
+        Instruction::McpConfiguredDisabledA => "Harness request: mcp_configured_disabled_a",
+        Instruction::McpConfiguredDisabledB => "Harness request: mcp_configured_disabled_b",
         Instruction::McpConfiguredRead => "Harness request: mcp_configured_read",
         Instruction::McpConfiguredUnknown => "Harness request: mcp_configured_unknown",
         Instruction::McpExcluded => "Harness request: mcp_excluded",

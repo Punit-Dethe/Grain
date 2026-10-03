@@ -278,6 +278,70 @@ fn retire_account(record: &ConnectionRecord) -> Result<(), String> {
     })
 }
 
+fn prune_client_ids(app: &AppHandle, id: &str) -> Result<(), String> {
+    let context = app
+        .try_state::<Arc<grain_core::AppContext>>()
+        .ok_or("Application context unavailable")?;
+    let prefix = format!("mcp:v1:configured:{id}:");
+    context
+        .update_settings(|settings| {
+            settings
+                .mcp_oauth_client_ids
+                .retain(|key, _| !key.starts_with(&prefix));
+        })
+        .map_err(|_| "Could not remove configured MCP client metadata. Reload and retry.".into())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn mcp_connection_set_client_credentials(
+    app: AppHandle,
+    window: WebviewWindow,
+    id: String,
+    expected_revision: String,
+    client_id: String,
+    client_secret: String,
+) -> Result<(), String> {
+    guard(&app, &window)?;
+    let (owner, ticket) = expected_owner(&app, &id, &expected_revision)?;
+    super::set_client_credentials_flow(
+        &app,
+        super::RuntimeProvider::Configured(Box::new(owner), ticket),
+        client_id,
+        client_secret,
+    )
+    .await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn mcp_connection_clear_client_credentials(
+    app: AppHandle,
+    window: WebviewWindow,
+    id: String,
+    expected_revision: String,
+) -> Result<(), String> {
+    guard(&app, &window)?;
+    let view_app = app.clone();
+    storage(app, move |state, registry| {
+        let lease = expected_lease(registry, &id, &expected_revision)?;
+        if matches!(
+            lease.record().definition().authentication,
+            McpAuthentication::None {}
+        ) {
+            return Err("This anonymous server has no OAuth client to configure.".into());
+        }
+        if !registry.is_current(&lease) {
+            return Err(RegistryError::Conflict.to_string());
+        }
+        state.invalidate(&id)?;
+        prune_enabled(&view_app, &id, None)?;
+        retire_account(lease.record())?;
+        prune_client_ids(&view_app, &id)
+    })
+    .await
+}
+
 fn retire_with(
     record: &ConnectionRecord,
     mut delete: impl FnMut(&str, &str) -> Result<(), ()>,
@@ -388,8 +452,8 @@ pub async fn mcp_connection_status(
             description: item.description.into(),
             endpoint: item.endpoint.into(),
             setup_url: item.setup_url.into(),
-            requires_client_credentials: false,
-            client_id_configured: false,
+            requires_client_credentials: super::preregistered(&app, &item),
+            client_id_configured: super::provider_client_id(&app, &item).is_some(),
             connected,
             enabled: (!required || connected) && owner.enabled(&app),
             state: state.into(),
@@ -561,6 +625,7 @@ pub async fn mcp_connection_replace(
             // A failed cleanup preserves metadata/identity for a safe retry.
             prune_enabled(&view_app, &id, None)?;
             retire_account(lease.record())?;
+            prune_client_ids(&view_app, &id)?;
         }
         let retired = registry
             .replace(&lease, definition)
@@ -600,6 +665,7 @@ pub async fn mcp_connection_remove(
         state.invalidate(&id)?;
         prune_enabled(&view_app, &id, None)?;
         retire_account(lease.record())?;
+        prune_client_ids(&view_app, &id)?;
         registry.remove(&lease).map_err(|error| error.to_string())?;
         state
             .controls

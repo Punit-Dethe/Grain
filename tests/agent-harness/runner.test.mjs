@@ -1017,6 +1017,19 @@ test("configured account oracle binds the system directory to the actual account
   const reply = nextReply(frame);
   assert.equal(reply.mcpAccountVerified, "B");
   assert.equal(reply.mcpAccountProvider, two);
+  const actualContent = frame.messages.at(-1).content;
+  frame.messages[0].content = "Harness request: mcp_configured_disabled_b";
+  frame.messages.at(-1).content =
+    "Failed (Cancelled): The extension action is no longer approved or available. Please ask again.";
+  assert.equal(nextReply(frame).mcpAccountRefused, true);
+  frame.messages[0].content = "Harness request: mcp_configured_account_b";
+  assert.throws(() => nextReply(frame), /actual stale account refusal/);
+  frame.messages[0].content = "Harness request: mcp_configured_disabled_b";
+  frame.messages.at(-1).content =
+    "Failed (Cancelled): The action was not dispatched. MCP account or access changed. Ask again.";
+  assert.throws(() => nextReply(frame), /actual stale account refusal/);
+  frame.messages[0].content = "Harness request: mcp_configured_account_b";
+  frame.messages.at(-1).content = actualContent;
   frame.messages.at(-1).content = frame.messages
     .at(-1)
     .content.replace("account B:", "account A:");
@@ -1125,8 +1138,8 @@ test("configured runtime oracle binds the actual directory owner and refuses unr
     assert.ok(selectScenarios("all").includes(entry));
   }
   const checkpoint = selectScenarios("mcp-connection-checkpoint");
-  assert.equal(checkpoint.length, 34);
-  assert.equal(new Set(checkpoint.map((x) => x.id)).size, 34);
+  assert.equal(checkpoint.length, 36);
+  assert.equal(new Set(checkpoint.map((x) => x.id)).size, 36);
   assert.deepEqual(
     new Set(checkpoint),
     new Set([
@@ -1137,6 +1150,25 @@ test("configured runtime oracle binds the actual directory owner and refuses unr
       ...selectScenarios("smoke"),
     ]),
   );
+});
+
+test("configured client rotation fault cannot start another scenario", async () => {
+  await assert.rejects(
+    exec(process.execPath, [
+      "tests/agent-harness/run.mjs",
+      "--scenario",
+      "mcp.configured-auth-ownership",
+      "--fault",
+      "skip-configured-client-rotation",
+    ]),
+    /skip-configured-client-rotation requires --scenario mcp.configured-auth-client-rotation/,
+  );
+  const clients = selectScenarios("mcp-configured-auth").filter((x) =>
+    x.checks.includes(65),
+  );
+  assert.equal(clients.length, 2);
+  for (const entry of clients)
+    assert.ok(selectScenarios("all").includes(entry));
 });
 
 test("wrong configured owner fault cannot start another scenario", async () => {

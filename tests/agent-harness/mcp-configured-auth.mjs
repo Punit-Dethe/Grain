@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { CONFIGURED_ENDPOINT } from "./mcp-configured-runtime.mjs";
 import { verifyMcpRefresh } from "./mcp-auth.mjs";
+import { MCP_CLIENTS, MCP_CLIENT_SECRETS } from "./mcp-oauth-fixture.mjs";
 
 export const CONFIGURED_AUTH_ENDPOINT =
   "https://configured-auth.grain-harness.example/mcp";
@@ -30,6 +31,14 @@ export function configuredAuthHandlers(ctx) {
     ctx.invoke("mcp_connection_set_enabled", { ...args(record), enabled });
   const disconnect = (record) =>
     ctx.invoke("mcp_connection_disconnect", args(record));
+  const setClient = (record, clientId, clientSecret = "") =>
+    ctx.invoke("mcp_connection_set_client_credentials", {
+      ...args(record),
+      clientId,
+      clientSecret,
+    });
+  const clearClient = (record) =>
+    ctx.invoke("mcp_connection_clear_client_credentials", args(record));
   const oauth = () => ctx.provider().oauth;
   const calls = () =>
     ctx.provider().journal.filter((x) => x.method === "tools/call");
@@ -79,6 +88,7 @@ export function configuredAuthHandlers(ctx) {
       authorizationServer: null,
       resourceOrigin: null,
       destinationMode: "valid",
+      secretVersion: 0,
     });
   }
   async function begin(record, account = "A", options = {}) {
@@ -108,11 +118,17 @@ export function configuredAuthHandlers(ctx) {
   }
   const connect = async (record, account = "A", options = {}) =>
     finish(await begin(record, account, options));
-  async function read(record, account = "A", mutation = null, refused = false) {
+  async function read(
+    record,
+    account = "A",
+    mutation = null,
+    refused = false,
+    disabled = false,
+  ) {
     const baseline = calls().length,
       start = ctx.model().journal.length;
     const page = await ctx.request(
-      `mcp_configured_account_${account.toLowerCase()}`,
+      `mcp_configured_${disabled ? "disabled" : "account"}_${account.toLowerCase()}`,
     );
     assert.equal(calls().length, baseline);
     if (mutation) await mutation();
@@ -147,6 +163,268 @@ export function configuredAuthHandlers(ctx) {
       return result;
     },
     handlers: {
+      async "mcp.configured-auth-client-rotation"() {
+        await reset();
+        const record = await add();
+        oauth().configure({ dynamicRegistration: false });
+        const registered = oauth().journal.filter(
+          (x) => x.phase === "registered",
+        ).length;
+        await stage("preregistered-public-client-and-restart", async () => {
+          for (const id of ["", "x".repeat(513), "bad\nclient"])
+            await assert.rejects(setClient(record, id), /client ID/);
+          await assert.rejects(
+            setClient(record, MCP_CLIENTS.publicOne, "x".repeat(4097)),
+            /client secret/,
+          );
+          await setClient(record, MCP_CLIENTS.publicOne);
+          assert.equal(await ctx.vaultCount(false, true), 1);
+          assert.equal(await ctx.vaultCount(), 0);
+          assert.equal((await state(record)).client_id_configured, true);
+          assert.equal((await state(record)).enabled, false);
+          await connect(record);
+          await read(record);
+          const exchanged = tokens().length;
+          await ctx.restartHost();
+          assert.equal((await state(record)).client_id_configured, true);
+          await read(record);
+          assert.equal(tokens().length, exchanged);
+        });
+        let account = "A";
+        for (const item of [
+          {
+            name: "public-id-rotation",
+            id: MCP_CLIENTS.publicTwo,
+            account: "B",
+            secrets: 0,
+          },
+          {
+            name: "confidential-client",
+            id: MCP_CLIENTS.confidential,
+            secret: MCP_CLIENT_SECRETS[0],
+            account: "A",
+            secrets: 1,
+            version: 0,
+          },
+          {
+            name: "same-id-secret-rotation",
+            id: MCP_CLIENTS.confidential,
+            secret: MCP_CLIENT_SECRETS[1],
+            account: "B",
+            secrets: 1,
+            version: 1,
+          },
+          {
+            name: "return-to-public-removes-secret",
+            id: MCP_CLIENTS.publicOne,
+            account: "A",
+            secrets: 0,
+          },
+        ]) {
+          await stage(item.name, async () => {
+            await read(
+              record,
+              account,
+              async () => {
+                if (ctx.fault !== "skip-configured-client-rotation")
+                  await setClient(record, item.id, item.secret);
+                assert.equal(await ctx.vaultCount(), 0);
+                assert.equal(await ctx.vaultCount(true), item.secrets);
+                assert.equal((await state(record)).enabled, false);
+                if (item.version !== undefined)
+                  oauth().configure({ secretVersion: item.version });
+              },
+              true,
+              true,
+            );
+            await connect(record, item.account);
+            await read(record, item.account);
+            const exchanged = tokens().length;
+            const issued = tokens().at(-1);
+            assert.equal(issued.configuredClient, true);
+            assert.equal(
+              issued.registration,
+              item.secrets ? "confidential" : "public",
+            );
+            if (item.secrets) assert.equal(issued.secretVersion, item.version);
+            await ctx.restartHost();
+            assert.equal((await state(record)).client_id_configured, true);
+            assert.equal(await ctx.vaultCount(true), item.secrets);
+            await read(record, item.account);
+            assert.equal(tokens().length, exchanged);
+            account = item.account;
+          });
+        }
+        await stage(
+          "logout-retains-client-explicit-reset-recovers-dcr",
+          async () => {
+            await disconnect(record);
+            assert.equal(await ctx.vaultCount(), 0);
+            assert.equal(await ctx.vaultCount(false, true), 1);
+            await ctx.restartHost();
+            assert.equal((await state(record)).client_id_configured, true);
+            await connect(record);
+            await read(record, "A", () => clearClient(record), true, true);
+            assert.equal(await ctx.vaultCount(), 0);
+            assert.equal(await ctx.vaultCount(true), 0);
+            assert.equal(await ctx.vaultCount(false, true), 0);
+            assert.equal((await state(record)).client_id_configured, false);
+            assert.equal((await state(record)).enabled, false);
+            assert.equal(
+              oauth().journal.filter((x) => x.phase === "registered").length,
+              registered,
+            );
+            oauth().configure({ dynamicRegistration: true });
+            await connect(record);
+            await read(record);
+            assert.equal(
+              oauth().journal.filter((x) => x.phase === "registered").length,
+              registered + 1,
+            );
+          },
+        );
+        await reset();
+      },
+      async "mcp.configured-auth-client-ownership"() {
+        await reset();
+        let [one, two] = [await add(), await add()].sort((a, b) =>
+          a.id.localeCompare(b.id),
+        );
+        oauth().configure({ dynamicRegistration: false });
+        await stage(
+          "same-endpoint-client-isolation-and-discovery-refusal",
+          async () => {
+            await setClient(
+              one,
+              MCP_CLIENTS.confidential,
+              MCP_CLIENT_SECRETS[0],
+            );
+            await setClient(two, MCP_CLIENTS.publicTwo);
+            await connect(one, "A");
+            await connect(two, "B");
+            assert.equal(await ctx.vaultCount(), 2);
+            assert.equal(await ctx.vaultCount(true), 1);
+            assert.equal(await ctx.vaultCount(false, true), 2);
+            for (const options of [
+              { metadataUnavailable: true },
+              { destinationMode: "remote-token" },
+            ]) {
+              oauth().configure(options);
+              await assert.rejects(setClient(one, MCP_CLIENTS.publicOne));
+              oauth().configure({
+                metadataUnavailable: false,
+                destinationMode: "valid",
+              });
+              assert.equal(await ctx.vaultCount(), 2);
+              assert.equal(await ctx.vaultCount(true), 1);
+              assert.equal(await ctx.vaultCount(false, true), 2);
+              await read(one);
+            }
+            await clearClient(one);
+            assert.equal((await state(one)).client_id_configured, false);
+            assert.equal((await state(two)).client_id_configured, true);
+            assert.equal(await ctx.vaultCount(), 1);
+            assert.equal(await ctx.vaultCount(true), 0);
+            assert.equal(await ctx.vaultCount(false, true), 1);
+            await read(two, "B");
+          },
+        );
+        await stage("pending-consent-client-save-and-clear", async () => {
+          for (const transition of ["save", "clear"]) {
+            await setClient(one, MCP_CLIENTS.publicOne);
+            const baseline = tokens().length;
+            const flow = await begin(one);
+            if (transition === "save")
+              await setClient(one, MCP_CLIENTS.publicTwo);
+            else await clearClient(one);
+            const result = await flow.pending;
+            assert.match(result.error ?? "", /account or access changed/);
+            await assert.rejects(oauth().callback(flow.callback));
+            assert.equal(tokens().length, baseline);
+            await setClient(one, MCP_CLIENTS.publicOne);
+            await connect(one);
+            await read(one);
+            await read(two, "B");
+          }
+        });
+        for (const [lifecycle, reply, transition] of [
+          ["stateless", "json", "save"],
+          ["legacy", "sse", "clear"],
+        ]) {
+          await stage(`held-client-${lifecycle}-${transition}`, async () => {
+            ctx.provider().configure({ lifecycle, reply, result: "held" });
+            const baseline = calls().length,
+              start = ctx.model().journal.length;
+            const page = await ctx.request("mcp_configured_unknown");
+            await ctx.activate(
+              page.locator(".agc-confirm-actions .agc-action-btn"),
+            );
+            await ctx.waitFor(
+              "Configured client reply held",
+              () => ctx.provider().heldCalls === 1,
+            );
+            if (transition === "save")
+              await setClient(one, MCP_CLIENTS.publicTwo);
+            else await clearClient(one);
+            await ctx.waitFor(
+              "Configured client change stops Agent",
+              async () => !(await ctx.status()).agent.active,
+            );
+            await ctx.waitFor(
+              "Configured client work disposed",
+              () =>
+                ctx.provider().activeSessions === 0 &&
+                ctx.provider().heldCalls === 0,
+            );
+            assert.equal(
+              ctx
+                .model()
+                .journal.slice(start)
+                .filter((x) => x.mcpUnknownVerified).length,
+              1,
+            );
+            assert.equal(calls().length, baseline + 1);
+            assert.equal(await ctx.vaultCount(), 1);
+            ctx.provider().attemptLateReply();
+            await ctx.closePanel();
+            ctx.provider().configure({ result: "normal" });
+            await setClient(one, MCP_CLIENTS.publicOne);
+            await connect(one);
+            await read(one);
+            await read(two, "B");
+          });
+        }
+        await stage("revision-guard-and-metadata-retirement", async () => {
+          const stale = one;
+          one = await replace(one, definition("Renamed registration"));
+          await assert.rejects(
+            setClient(stale, MCP_CLIENTS.publicTwo),
+            /changed; reload/,
+          );
+          await assert.rejects(clearClient(stale), /changed; reload/);
+          assert.equal((await state(one)).client_id_configured, true);
+          await read(one);
+          one = await replace(
+            one,
+            definition("Anonymous", CONFIGURED_ENDPOINT, "none"),
+          );
+          assert.equal(await ctx.vaultCount(), 1);
+          assert.equal(await ctx.vaultCount(false, true), 1);
+          await assert.rejects(
+            setClient(one, MCP_CLIENTS.publicOne),
+            /anonymous/,
+          );
+          await assert.rejects(clearClient(one), /anonymous/);
+          one = await replace(one, definition());
+          assert.equal((await state(one)).client_id_configured, false);
+          await remove(two);
+          assert.equal(await ctx.vaultCount(), 0);
+          assert.equal(await ctx.vaultCount(false, true), 0);
+          await ctx.restartHost();
+          assert.equal((await state(one)).client_id_configured, false);
+        });
+        await reset();
+      },
       async "mcp.configured-auth-ownership"() {
         await reset();
         let [one, two] = [await add(), await add()].sort((a, b) =>
