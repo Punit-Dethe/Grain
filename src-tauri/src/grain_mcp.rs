@@ -79,6 +79,41 @@ fn credential_entry(service: &str, account: &str) -> Result<keyring::Entry, keyr
 }
 const CALLBACK_ADDR: &str = "127.0.0.1:31938";
 const CALLBACK_PATH: &str = "/mcp/oauth/callback";
+// No permanent Grain website exists yet. Enable only after the public HTTPS
+// document is deployed and verified against this exact callback inventory.
+const CLIENT_METADATA_URL: Option<&str> = None;
+
+fn client_metadata_url(item: &CatalogProvider) -> Result<Option<String>, String> {
+    #[cfg(feature = "agent-harness")]
+    if crate::grain_agent_harness_mcp::ACCOUNT_IDS.contains(&item.id) {
+        let endpoint = provider_endpoint(item)?;
+        let origin = reqwest_mcp::Url::parse(&endpoint)
+            .map_err(|_| "Invalid owned MCP fixture")?
+            .origin()
+            .ascii_serialization();
+        return Ok(Some(format!("{origin}/oauth/client.json")));
+    }
+    let _ = item;
+    Ok(CLIENT_METADATA_URL.map(str::to_owned))
+}
+
+fn metadata_registration_available(
+    metadata: &AuthorizationMetadata,
+    client_metadata_url: Option<&str>,
+) -> bool {
+    client_metadata_url.is_some()
+        && metadata
+            .additional_fields
+            .get("client_id_metadata_document_supported")
+            .and_then(serde_json::Value::as_bool)
+            == Some(true)
+}
+
+async fn bind_callback(fixed: bool) -> Result<TcpListener, String> {
+    TcpListener::bind(if fixed { CALLBACK_ADDR } else { "127.0.0.1:0" })
+        .await
+        .map_err(|_| "another authentication flow is already using Grain's callback port".into())
+}
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(300);
 const CALLBACK_MAX_BYTES: usize = 16 * 1024;
 const MAX_TOOL_COUNT: usize = 128;
@@ -1157,17 +1192,13 @@ async fn connect_oauth(
 ) -> Result<(), String> {
     let _operation = ticket.acquire().await?;
     require_developer_mode(app)?;
-    let listener = TcpListener::bind(if item.registration == Registration::PreRegistered {
-        CALLBACK_ADDR
+    // Preserve the existing immediate conflict refusal for configured clients:
+    // their callback is known before any issuer discovery or credential work.
+    let configured_listener = if item.registration == Registration::PreRegistered {
+        Some(bind_callback(true).await?)
     } else {
-        "127.0.0.1:0"
-    })
-    .await
-    .map_err(|_| "another authentication flow is already using Grain's callback port")?;
-    let redirect_uri = format!(
-        "http://{}{CALLBACK_PATH}",
-        listener.local_addr().map_err(|e| e.to_string())?
-    );
+        None
+    };
     let http = provider_http(app, item)?;
     let mut manager = AuthorizationManager::new(provider_endpoint(item)?.as_ref())
         .await
@@ -1188,6 +1219,24 @@ async fn connect_oauth(
         return Err("This provider does not publish usable OAuth metadata; derived legacy endpoints are disabled.".into());
     }
     validate_hosted_oauth_metadata(&resolution.metadata)?;
+    let metadata_url = client_metadata_url(item)?;
+    // DCR keeps its ephemeral loopback port. CIMD uses only the exact redirect
+    // in the hosted document; never invent a port or silently downgrade a
+    // rejected CIMD flow to a different registration mechanism.
+    let listener = match configured_listener {
+        Some(listener) => listener,
+        None => {
+            bind_callback(metadata_registration_available(
+                &resolution.metadata,
+                metadata_url.as_deref(),
+            ))
+            .await?
+        }
+    };
+    let redirect_uri = format!(
+        "http://{}{CALLBACK_PATH}",
+        listener.local_addr().map_err(|e| e.to_string())?
+    );
     let expected_issuer = resolution.metadata.issuer.clone();
     let require_issuer = resolution
         .metadata
@@ -1199,6 +1248,9 @@ async fn connect_oauth(
     let mut request = AuthorizationRequest::new(&redirect_uri)
         .with_client_name("Grain")
         .with_application_type("native");
+    if let Some(metadata_url) = metadata_url {
+        request = request.with_client_metadata_url(metadata_url);
+    }
     #[cfg(feature = "agent-harness")]
     if id == crate::grain_agent_harness_mcp::LINEAR_PROVIDER_ID {
         request = request
@@ -2081,6 +2133,40 @@ pub(crate) fn directory(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn metadata_registration_requires_both_a_hosted_identity_and_boolean_support() {
+        for advertised in [
+            serde_json::json!(true),
+            serde_json::json!(false),
+            serde_json::json!("true"),
+            serde_json::Value::Null,
+        ] {
+            let metadata: AuthorizationMetadata = serde_json::from_value(serde_json::json!({
+                "issuer": "https://issuer.example",
+                "authorization_endpoint": "https://issuer.example/authorize",
+                "token_endpoint": "https://issuer.example/token",
+                "client_id_metadata_document_supported": advertised,
+            }))
+            .unwrap();
+            assert!(!metadata_registration_available(&metadata, None));
+            assert_eq!(
+                metadata_registration_available(
+                    &metadata,
+                    Some("https://client.example/oauth/client.json")
+                ),
+                advertised == serde_json::json!(true)
+            );
+        }
+    }
+
+    #[test]
+    fn experimental_websites_are_not_production_oauth_identities() {
+        assert_eq!(CLIENT_METADATA_URL, None);
+        for item in production_catalog() {
+            assert_eq!(client_metadata_url(item).unwrap(), None);
+        }
+    }
 
     #[test]
     fn registration_requires_exact_client_and_issuer_without_url_normalization() {

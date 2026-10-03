@@ -59,7 +59,10 @@ export function createMcpOAuth(origin, ca, { wrongAccount = false } = {}) {
     wrongRefreshAccount = false,
     authorizationServer = null,
     resourceOrigin = null,
-    metadataUnavailable = false;
+    metadataUnavailable = false,
+    metadataClientSupported = false,
+    dynamicRegistration = true,
+    clientDocument = "valid";
   const record = (item) => {
     assert.ok(
       journal.length < MCP_OAUTH_JOURNAL_LIMIT - 1,
@@ -78,7 +81,12 @@ export function createMcpOAuth(origin, ca, { wrongAccount = false } = {}) {
     issuer: origin(),
     authorization_endpoint: origin() + "/authorize",
     token_endpoint: origin() + "/token",
-    registration_endpoint: origin() + "/register",
+    ...(dynamicRegistration
+      ? { registration_endpoint: origin() + "/register" }
+      : {}),
+    ...(metadataClientSupported
+      ? { client_id_metadata_document_supported: true }
+      : {}),
     response_types_supported: ["code"],
     grant_types_supported: [
       "authorization_code",
@@ -115,7 +123,34 @@ export function createMcpOAuth(origin, ca, { wrongAccount = false } = {}) {
         if (metadataUnavailable)
           json(res, 503, { error: "fixture_metadata_unavailable" });
         else json(res, 200, metadata());
+      } else if (req.method === "GET" && path === "/oauth/client.json") {
+        record({ phase: "client-document", mode: clientDocument });
+        if (clientDocument === "unavailable")
+          json(res, 503, { error: "unavailable" });
+        else
+          json(res, 200, {
+            client_id:
+              origin() +
+              (clientDocument === "wrong-id"
+                ? "/wrong-client.json"
+                : "/oauth/client.json"),
+            client_name: "Grain Agent Harness",
+            redirect_uris: [
+              clientDocument === "wrong-redirect"
+                ? "http://127.0.0.1:31939/mcp/oauth/callback"
+                : fixedRedirect,
+            ],
+            application_type: "native",
+            grant_types: ["authorization_code", "refresh_token"],
+            response_types: ["code"],
+            token_endpoint_auth_method: "none",
+          });
       } else if (req.method === "POST" && path === "/register") {
+        assert.equal(
+          dynamicRegistration,
+          true,
+          "Unadvertised DCR was attempted",
+        );
         const body = JSON.parse(await boundedBody(req));
         assert.equal(body.token_endpoint_auth_method, "none");
         assert.equal(body.redirect_uris.length, 1);
@@ -142,6 +177,55 @@ export function createMcpOAuth(origin, ca, { wrongAccount = false } = {}) {
         });
       } else if (req.method === "GET" && path === "/authorize") {
         const q = new URL(req.url, origin()).searchParams;
+        if (q.get("client_id") === origin() + "/oauth/client.json") {
+          assert.equal(metadataClientSupported, true);
+          // The authorization server fetches the document, not Grain. Use the
+          // actual owned HTTPS endpoint and scoped CA, not an in-memory shortcut.
+          const fetched = await fetchClientDocument();
+          const document = fetched.value;
+          if (clientDocument === "unavailable") {
+            assert.equal(fetched.status, 503);
+            assert.deepEqual(document, { error: "unavailable" });
+          } else {
+            assert.equal(fetched.status, 200);
+            assert.equal(
+              document.client_id,
+              origin() +
+                (clientDocument === "wrong-id"
+                  ? "/wrong-client.json"
+                  : "/oauth/client.json"),
+            );
+            assert.equal(document.application_type, "native");
+            assert.equal(document.token_endpoint_auth_method, "none");
+            assert.deepEqual(document.grant_types, [
+              "authorization_code",
+              "refresh_token",
+            ]);
+            assert.deepEqual(document.response_types, ["code"]);
+            assert.deepEqual(document.redirect_uris, [
+              clientDocument === "wrong-redirect"
+                ? "http://127.0.0.1:31939/mcp/oauth/callback"
+                : fixedRedirect,
+            ]);
+            assert.equal(q.get("redirect_uri"), fixedRedirect);
+          }
+          // Confirm the exact injected fault arrived over HTTPS before counting
+          // its refusal. A dropped connection/other fixture error cannot pass it.
+          if (clientDocument !== "valid") {
+            record({ phase: "client-document-refused", mode: clientDocument });
+            json(res, 400, { error: "invalid_client_metadata" });
+            return true;
+          }
+          clients.set(q.get("client_id"), {
+            redirect: fixedRedirect,
+            metadata: true,
+          });
+          record({
+            phase: "metadata-client-accepted",
+            fixedRedirect: true,
+            publicClient: true,
+          });
+        }
         const client = clients.get(q.get("client_id"));
         assert.ok(client, "Unregistered fixture client");
         const redirect = client.redirect;
@@ -175,7 +259,12 @@ export function createMcpOAuth(origin, ca, { wrongAccount = false } = {}) {
         }
         assert.ok(callbacks.size < 16, "Owned callback count exceeded bound");
         callbacks.add(callback.href);
-        record({ phase: "consent", account, denied });
+        record({
+          phase: "consent",
+          account,
+          denied,
+          metadataClient: !!client.metadata,
+        });
         res.writeHead(302, {
           location: callback.href,
           "cache-control": "no-store",
@@ -290,6 +379,7 @@ export function createMcpOAuth(origin, ca, { wrongAccount = false } = {}) {
           resourceVerified: true,
           registration: client.confidential ? "confidential" : "public",
           configuredClient: Object.values(MCP_CLIENTS).includes(grant.clientId),
+          metadataClient: !!client.metadata,
           issuedAt: issued.issuedAt,
           expiresAt: issued.expiresAt,
           expiresIn,
@@ -334,6 +424,43 @@ export function createMcpOAuth(origin, ca, { wrongAccount = false } = {}) {
       });
     }
     return { reply, issuedAt, expiresAt };
+  }
+  function fetchClientDocument() {
+    return new Promise((resolve, reject) => {
+      const req = httpsRequest(
+        origin() + "/oauth/client.json",
+        { agent: false, ca, timeout: 2500 },
+        (res) => {
+          const chunks = [];
+          let bytes = 0;
+          res.on("data", (chunk) => {
+            bytes += chunk.length;
+            if (bytes > 2048)
+              res.destroy(new Error("Owned client document exceeded bound"));
+            else chunks.push(chunk);
+          });
+          res.on("error", reject);
+          res.on("end", () => {
+            try {
+              assert.equal(res.headers["content-type"], "application/json");
+              resolve({
+                status: res.statusCode,
+                value: JSON.parse(Buffer.concat(chunks).toString("utf8")),
+              });
+            } catch {
+              reject(new Error("Owned client document unavailable or invalid"));
+            }
+          });
+        },
+      );
+      req.on("timeout", () =>
+        req.destroy(new Error("Owned client document timed out")),
+      );
+      req.on("error", () =>
+        reject(new Error("Owned client document connection failed")),
+      );
+      req.end();
+    });
   }
   function authenticatedAccount(req, res) {
     const header = req.headers.authorization;
@@ -413,6 +540,9 @@ export function createMcpOAuth(origin, ca, { wrongAccount = false } = {}) {
             "authorizationServer",
             "resourceOrigin",
             "metadataUnavailable",
+            "metadataClientSupported",
+            "dynamicRegistration",
+            "clientDocument",
           ].includes(key),
         ),
       );
@@ -432,6 +562,21 @@ export function createMcpOAuth(origin, ca, { wrongAccount = false } = {}) {
       if (next.metadataUnavailable !== undefined) {
         assert.equal(typeof next.metadataUnavailable, "boolean");
         metadataUnavailable = next.metadataUnavailable;
+      }
+      for (const key of ["metadataClientSupported", "dynamicRegistration"]) {
+        if (next[key] !== undefined) assert.equal(typeof next[key], "boolean");
+      }
+      if (next.metadataClientSupported !== undefined)
+        metadataClientSupported = next.metadataClientSupported;
+      if (next.dynamicRegistration !== undefined)
+        dynamicRegistration = next.dynamicRegistration;
+      if (next.clientDocument !== undefined) {
+        assert.ok(
+          ["valid", "wrong-id", "wrong-redirect", "unavailable"].includes(
+            next.clientDocument,
+          ),
+        );
+        clientDocument = next.clientDocument;
       }
       if (next.account !== undefined) {
         assert.ok(["A", "B"].includes(next.account));

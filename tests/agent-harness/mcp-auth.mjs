@@ -349,6 +349,216 @@ export function mcpAuthHandlers(ctx) {
     },
     vaultCount: ctx.vaultCount,
     handlers: {
+      async "mcp.auth-client-metadata"() {
+        let failure;
+        const configure = (next) =>
+          oauth().configure({
+            metadataClientSupported: false,
+            dynamicRegistration: true,
+            clientDocument: "valid",
+            refreshable: false,
+            expiresIn: 1200,
+            ...next,
+          });
+        const baseline = () => oauth().journal.length;
+        const entries = (start, phase) =>
+          oauth()
+            .journal.slice(start)
+            .filter((x) => x.phase === phase);
+        const clearClient = async () => {
+          await control("disconnect", "client");
+          await ctx.invoke("mcp_set_client_credentials", {
+            id: MCP_CLIENT_ID,
+            clientId: MCP_CLIENTS.publicOne,
+            clientSecret: "",
+          });
+        };
+        try {
+          assert.equal(await ctx.vaultCount(), 0);
+          oauth().retireGrants();
+          for (const mode of [
+            "metadata-preferred",
+            "metadata-without-dcr",
+            "dcr-fallback",
+            "configured-priority",
+          ]) {
+            const configured = mode === "configured-priority";
+            const metadata = mode.startsWith("metadata-");
+            configure({
+              metadataClientSupported:
+                mode !== "dcr-fallback" &&
+                !(
+                  ctx.fault === "missing-mcp-cimd" &&
+                  mode === "metadata-preferred"
+                ),
+              dynamicRegistration: mode !== "metadata-without-dcr",
+            });
+            const start = baseline();
+            if (configured)
+              await ctx.invoke("mcp_set_client_credentials", {
+                id: MCP_CLIENT_ID,
+                clientId: MCP_CLIENTS.confidential,
+                clientSecret: MCP_CLIENT_SECRETS[0],
+              });
+            const target = configured ? "client" : "account";
+            await login("A", target);
+            assert.equal(entries(start, "token").length, 1);
+            assert.equal(
+              entries(start, "token")[0].metadataClient,
+              metadata,
+              "SDK selected the wrong registration mechanism",
+            );
+            assert.equal(
+              entries(start, "registered").length,
+              mode === "dcr-fallback" ? 1 : 0,
+            );
+            assert.equal(
+              entries(start, "client-document").length,
+              metadata ? 1 : 0,
+            );
+            assert.equal(
+              entries(start, "metadata-client-accepted").length,
+              metadata ? 1 : 0,
+            );
+            assert.equal(
+              entries(start, "token-attempt")[0].secretPresent,
+              configured,
+            );
+            await read("A", mode + "-fresh", target);
+            await ctx.restartHost();
+            provider().configure({ lifecycle: "legacy" });
+            await read("A", mode + "-restart-legacy", target);
+            assert.equal(
+              entries(start, "token").length,
+              1,
+              "Restart caused reauthorization",
+            );
+            assert.equal(
+              entries(start, "client-document").length,
+              metadata ? 1 : 0,
+            );
+            evidence.push({
+              stage: mode,
+              status: "Pass",
+              publicClient: !configured,
+              documentFetches: metadata ? 1 : 0,
+              dcrRequests: mode === "dcr-fallback" ? 1 : 0,
+              postRestartConsent: 0,
+            });
+            if (configured) await clearClient();
+            else await clean();
+            assert.equal(await ctx.vaultCount(), 0);
+            assert.equal(await ctx.vaultCount(true), 0);
+            oauth().retireGrants();
+          }
+          configure({ dynamicRegistration: false });
+          const unsupportedStart = baseline();
+          await assert.rejects(control("connect"), /OAuth registration failed/);
+          assert.equal(entries(unsupportedStart, "registered").length, 0);
+          assert.equal(entries(unsupportedStart, "consent").length, 0);
+          assert.equal(entries(unsupportedStart, "token-attempt").length, 0);
+          assert.equal(await ctx.vaultCount(), 0);
+          evidence.push({
+            stage: "no-supported-registration",
+            status: "Pass",
+            tokenExchanges: 0,
+          });
+          for (const clientDocument of [
+            "wrong-id",
+            "wrong-redirect",
+            "unavailable",
+          ]) {
+            configure({ metadataClientSupported: true, clientDocument });
+            const start = baseline();
+            await assert.rejects(
+              begin("A"),
+              /Owned consent did not produce a callback/,
+            );
+            assert.equal(entries(start, "client-document").length, 1);
+            assert.equal(entries(start, "client-document-refused").length, 1);
+            assert.equal(
+              entries(start, "registered").length,
+              0,
+              "Rejected CIMD silently downgraded to DCR",
+            );
+            assert.equal(entries(start, "token-attempt").length, 0);
+            assert.equal(entries(start, "consent").length, 0);
+            assert.equal(await ctx.vaultCount(), 0);
+            assert.equal(await control("authorization"), null);
+            await reusableListener("http://127.0.0.1:31938/mcp/oauth/callback");
+            evidence.push({
+              stage: "refused-document-" + clientDocument,
+              status: "Pass",
+              tokenExchanges: 0,
+              dcrRequests: 0,
+              scopedVaultEntries: 0,
+            });
+            configure({ metadataClientSupported: true });
+            await login("B");
+            await read("B", "document-recovery-" + clientDocument);
+            await clean();
+            oauth().retireGrants();
+          }
+          configure({ metadataClientSupported: true });
+          const portOwner = createServer();
+          await new Promise((resolve, reject) => {
+            portOwner.once("error", reject);
+            portOwner.listen(31938, "127.0.0.1", resolve);
+          });
+          const start = baseline();
+          try {
+            await assert.rejects(control("connect"), /callback port/);
+            assert.equal(entries(start, "client-document").length, 0);
+            assert.equal(entries(start, "consent").length, 0);
+            assert.equal(entries(start, "token-attempt").length, 0);
+            assert.equal(await ctx.vaultCount(), 0);
+          } finally {
+            await new Promise((resolve, reject) =>
+              portOwner.close((error) => (error ? reject(error) : resolve())),
+            );
+          }
+          evidence.push({
+            stage: "cimd-fixed-port-conflict",
+            status: "Pass",
+            tokenExchanges: 0,
+          });
+          const flow = await begin("A");
+          await control("disconnect");
+          assert.ok((await flow.pending).error);
+          await reusableListener(flow.callback);
+          await assert.rejects(
+            oauth().callback(flow.callback),
+            (error) => error.code === "ECONNREFUSED",
+          );
+          assert.equal(entries(start, "token-attempt").length, 0);
+          assert.equal(await ctx.vaultCount(), 0);
+          evidence.push({
+            stage: "cimd-cancel-late-callback",
+            status: "Pass",
+            tokenExchanges: 0,
+            scopedVaultEntries: 0,
+          });
+          await login("B");
+          await read("B", "cimd-cancel-fresh-recovery");
+        } catch (error) {
+          failure = error;
+          throw error;
+        } finally {
+          try {
+            await clean();
+            await clearClient();
+            configure({});
+            oauth().retireGrants();
+          } catch (error) {
+            if (!failure) throw error;
+            evidence.push({
+              stage: "metadata-scenario-cleanup",
+              status: "Fail",
+              error: error.message,
+            });
+          }
+        }
+      },
       async "mcp.auth-temporary-recovery"() {
         try {
           assert.equal(

@@ -696,6 +696,14 @@ scenarios.push({
 });
 
 scenarios.push({
+  id: "mcp.auth-client-metadata",
+  suite: "mcp-auth",
+  checks: [56],
+  description:
+    "Owned HTTPS client document drives SDK CIMD priority/no-DCR, DCR fallback, confidential priority, malformed-document refusal, fixed-port/cancel recovery and restart reads; permanent public hosting remains gated",
+});
+
+scenarios.push({
   id: "mcp.auth-temporary-recovery",
   suite: "mcp-auth",
   checks: [55],

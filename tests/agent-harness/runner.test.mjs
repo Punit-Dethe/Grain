@@ -1020,7 +1020,7 @@ test("MCP account shutdown oracle requires exact dispatched uncertainty without 
 
 test("authenticated MCP suite has independent IDs and remains in ordinary all", () => {
   const auth = selectScenarios("mcp-auth");
-  assert.equal(auth.length, 12);
+  assert.equal(auth.length, 13);
   assert.deepEqual(
     auth.map((x) => x.id),
     [
@@ -1035,12 +1035,13 @@ test("authenticated MCP suite has independent IDs and remains in ordinary all", 
       "mcp.auth-refresh-recovery",
       "mcp.auth-refresh-refusal",
       "mcp.auth-issuer-binding",
+      "mcp.auth-client-metadata",
       "mcp.auth-temporary-recovery",
     ],
   );
   for (const entry of auth) assert.ok(selectScenarios("all").includes(entry));
   const foundation = selectScenarios("mcp-foundation");
-  assert.equal(foundation.length, 21);
+  assert.equal(foundation.length, 22);
   assert.deepEqual(
     new Set(foundation),
     new Set([...auth, ...selectScenarios("mcp")]),
