@@ -20,7 +20,7 @@ pub struct ExtensionProjectManifest {
 }
 
 /// The author-facing `grain` global. `grain-ext` combines this declaration with
-/// event types reflected from `grain-sdk` and the current capability union.
+/// the tool-only capability union, never the internal daemon/pill protocol.
 /// Keeping the API declaration here makes the SDK the source copied into every
 /// scaffold instead of letting a CLI template drift from the wire contract.
 pub const GRAIN_API_TYPESCRIPT: &str = r#"export type JsonValue =
@@ -43,6 +43,58 @@ export type GrainErrorCode =
   | "E_UNKNOWN_METHOD"
   | "E_UNAVAILABLE"
   | "E_INTERNAL";
+
+/** Only arguments validated against this tool's manifest are passed in. */
+export type GrainToolArguments = { [key: string]: JsonValue };
+
+export interface GrainToolContext {
+  /** Opaque key for this prepared write, or null for a read. Forward it only
+   * when your service supports idempotency. It does not authorize a call,
+   * guarantee deduplication, or permit automatic retries. */
+  readonly idempotencyKey: string | null;
+}
+
+/** Bounded display data. Grain owns provenance, receipts and rendering.
+ * Additional scalar fields can be shown as details; arbitrary nested JSON
+ * is not currently retained as structured model output. */
+export interface GrainToolDisplay {
+  title?: string;
+  body?: string;
+  details?: { label: string; value: string }[];
+}
+
+export interface GrainToolData extends GrainToolDisplay {
+  [key: string]: JsonValue | undefined;
+}
+
+export type GrainToolErrorClass =
+  | "auth"
+  | "network"
+  | "invalid_argument"
+  | "not_found"
+  | "rate_limited"
+  | "cancelled"
+  | "internal";
+
+/** Return exactly one envelope. Plain display data/string/null also work for
+ * compatibility. Error messages are not shown verbatim by the host. Auth
+ * errors do not automatically open sign-in. Extension-authored follow-up
+ * interactions are unsupported and intentionally absent here. */
+export type GrainToolResult =
+  | (GrainToolDisplay & { ok?: never; error?: never; needsInteraction?: never })
+  | string
+  | null
+  | { ok: GrainToolData | string | null; error?: never; needsInteraction?: never }
+  | {
+      error: { class?: GrainToolErrorClass; message?: string };
+      ok?: never;
+      needsInteraction?: never;
+    };
+
+export type GrainToolHandler = (
+  args: GrainToolArguments,
+  context: GrainToolContext,
+) => GrainToolResult | Promise<GrainToolResult>;
 
 export interface GrainApi {
   readonly caps: readonly GrainCapability[];
@@ -84,8 +136,7 @@ export interface GrainApi {
     disconnect(): Promise<unknown>;
   };
   /** Register exact declared tools. Only explicit validated arguments arrive. */
-  actions(handlers: Record<string, (args: { [key: string]: JsonValue }) =>
-    { title?: string; body?: string } | Promise<{ title?: string; body?: string }>>): void;
+  actions(handlers: Record<string, GrainToolHandler>): void;
 }
 
 export interface GrainAuthConnection {

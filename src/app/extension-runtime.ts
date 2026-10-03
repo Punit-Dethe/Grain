@@ -171,7 +171,8 @@ export const GRAIN_RUNTIME_JS = `(function () {
     // Grain owns all rendering (markdown now, native cards later). Return shapes:
     //   { ...data }               plain result data (wrapped as ok by Grain)
     //   { error: { class?, message } }
-    //   { needsInteraction: <interaction> }
+    // Extension-authored follow-up is unsupported by the host; do not advertise
+    // needsInteraction in the public author API.
     //   grain.actions({ create_issue: async function (args) { return { title, body }; } })
     actions: function (map) {
       // Copy own functions once; later prototype/map mutation cannot introduce
@@ -194,7 +195,9 @@ export const GRAIN_RUNTIME_JS = `(function () {
           })
           .then(function (out) {
             // Pass through an already-tagged result; wrap plain data as ok.
-            if (out && (out.error || out.needsInteraction || out.ok)) return out;
+            if (out && ["error", "needsInteraction", "ok"].some(function (key) {
+              return Object.prototype.hasOwnProperty.call(out, key);
+            })) return out;
             return { ok: out == null ? {} : out };
           })
           .catch(function (e) {

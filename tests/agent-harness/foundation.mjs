@@ -44,6 +44,96 @@ export function foundationHandlers(ctx) {
       return result;
     },
     handlers: {
+      async "native.author-results"() {
+        const sourcePath = assertWithin(
+          root,
+          join(root, "fixture/dist/main.js"),
+        );
+        const original = await readFile(sourcePath, "utf8");
+        const cases = [
+          ["tagged-null", "null", "succeeded"],
+          ["tagged-empty-text", '""', "succeeded"],
+          [
+            "plain-display",
+            '{ body: "Harness contract plain" }',
+            "succeeded",
+            "Harness contract plain",
+          ],
+          [
+            "invalid-boolean",
+            "false",
+            "resultUnavailable",
+            "invalid action result",
+          ],
+          [
+            "ambiguous-null-envelope",
+            "{ ok: null, error: null }",
+            "resultUnavailable",
+            "invalid action result",
+          ],
+          [
+            "unsupported-follow-up",
+            "{ needsInteraction: null }",
+            "resultUnavailable",
+            "extension follow-up is not available",
+          ],
+          [
+            "invocation-context",
+            '{ body: "Harness contract context: " + JSON.stringify({ arguments: Object.keys(args), context: Object.keys(context), keyType: context.idempotencyKey === null ? "null" : typeof context.idempotencyKey }) }',
+            "succeeded",
+            "Harness contract context:",
+          ],
+        ];
+        try {
+          for (const [stage, value, classification, uiText] of cases) {
+            await fixture("unload");
+            const tagged = [
+              "tagged-null",
+              "tagged-empty-text",
+              "invalid-boolean",
+            ].includes(stage)
+              ? `{ ok: ${value} }`
+              : value;
+            await writeFile(
+              sourcePath,
+              `grain.actions({ hello: async function(args, context) { return ${tagged}; } });\n`,
+            );
+            await fixture("load");
+            try {
+              const call = await ctx.failureCall("hello", classification, {
+                retire: false,
+                uiText,
+              });
+              if (stage === "invocation-context") {
+                const text = await call.page.locator("body").innerText();
+                const match = text.match(
+                  /Harness contract context: (\{[^\n]+\})/,
+                );
+                assert.ok(match, "Invocation context result was not displayed");
+                const actual = JSON.parse(match[1]);
+                assert.deepEqual(actual.arguments, []);
+                assert.deepEqual(actual.context, ["idempotencyKey"]);
+                assert.ok(["string", "null"].includes(actual.keyType));
+              }
+              evidence.push({
+                stage,
+                classification,
+                dispatchDelta: 1,
+                pending: call.after.worker.current.pending,
+              });
+            } catch (error) {
+              evidence.push({ stage, status: "Fail", error: error.message });
+              throw new Error(
+                `Native author result ${stage}: ${error.message}`,
+                { cause: error },
+              );
+            }
+          }
+        } finally {
+          await fixture("unload");
+          await writeFile(sourcePath, original);
+        }
+      },
       async "native.typed-contract"() {
         async function typed(instruction) {
           const action = instruction.startsWith("typed_number_")

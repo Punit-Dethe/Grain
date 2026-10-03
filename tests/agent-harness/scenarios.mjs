@@ -103,6 +103,13 @@ export const scenarios = [
       "MCP read/approved disposable write/verify continuation, actual independent wire receipts, withheld tails, duplicate/stale confirmations",
   },
   {
+    id: "native.author-results",
+    suite: "native-foundation",
+    checks: [57],
+    description:
+      "Real native public result/context contract: tagged null/empty, plain display, invalid boolean/ambiguous/follow-up refusal and restricted invocation context",
+  },
+  {
     id: "native.typed-contract",
     suite: "native-foundation",
     checks: [22],

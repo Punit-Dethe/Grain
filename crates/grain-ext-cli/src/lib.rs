@@ -6,11 +6,9 @@ use std::time::{Duration, Instant};
 use anyhow::{bail, Context, Result};
 use grain_sdk::manifest::Surfaces;
 use grain_sdk::{
-    Contributes, DaemonEvent, ExtensionManifest, ExtensionProjectManifest, GrainPack, PackPayloads,
-    Tier, GRAIN_API_TYPESCRIPT, GRAIN_API_VERSION, KNOWN_CAPABILITIES,
+    Contributes, ExtensionManifest, ExtensionProjectManifest, GrainPack, PackPayloads, Tier,
+    GRAIN_API_TYPESCRIPT, GRAIN_API_VERSION, KNOWN_CAPABILITIES,
 };
-use specta::TypeCollection;
-use specta_typescript::{BigIntExportBehavior, Typescript};
 
 const HELP: &str = "grain-ext — build Grain extensions
 
@@ -665,13 +663,6 @@ fn validate_scaffold(project: &ExtensionProjectManifest) -> Result<()> {
 }
 
 fn typescript_declarations() -> Result<String> {
-    let mut types = TypeCollection::default();
-    types.register::<DaemonEvent>();
-    let reflected = Typescript::new()
-        .framework_header("// Generated from grain-sdk by grain-ext. DO NOT EDIT.")
-        .bigint(BigIntExportBehavior::Number)
-        .export(&types)
-        .context("generate Grain event types")?;
     let capabilities = KNOWN_CAPABILITIES
         .iter()
         .filter(|cap| grain_sdk::manifest::tool_permission_allowed(cap))
@@ -679,7 +670,7 @@ fn typescript_declarations() -> Result<String> {
         .collect::<Vec<_>>()
         .join("\n");
     Ok(format!(
-        "{reflected}\nexport type GrainCapability =\n{capabilities}\n  | `net:${{string}}`;\n\n{GRAIN_API_TYPESCRIPT}\n"
+        "// Generated public tool API from grain-sdk by grain-ext. DO NOT EDIT.\nexport type GrainCapability =\n{capabilities}\n  | `net:${{string}}`;\n\n{GRAIN_API_TYPESCRIPT}\n"
     ))
 }
 
@@ -696,7 +687,8 @@ fn package_json(slug: &str) -> serde_json::Value {
         "version": "0.1.0",
         "private": true,
         "scripts": {
-            "build": "esbuild src/main.ts --bundle --format=iife --platform=browser --target=es2020 --outfile=dist/main.js --sourcemap"
+            "check": "tsc --noEmit",
+            "build": "tsc --noEmit && esbuild src/main.ts --bundle --format=iife --platform=browser --target=es2020 --outfile=dist/main.js --sourcemap"
         },
         "devDependencies": {
             "esbuild": "^0.25.0",
@@ -712,6 +704,7 @@ fn tsconfig_json() -> serde_json::Value {
             "module": "ESNext",
             "moduleResolution": "Bundler",
             "strict": true,
+            "exactOptionalPropertyTypes": true,
             "noEmit": true,
             "lib": ["ES2020", "WebWorker"]
         },
@@ -791,7 +784,17 @@ mod tests {
         validate_scaffold(&project).unwrap();
 
         let declarations = fs::read_to_string(result.root.join("grain.d.ts")).unwrap();
-        assert!(declarations.contains("export type DaemonEvent"));
+        for internal in [
+            "DaemonEvent",
+            "PillAction",
+            "HostFrame",
+            "TranscriptionComplete",
+        ] {
+            assert!(
+                !declarations.contains(internal),
+                "internal type leaked: {internal}"
+            );
+        }
         assert!(declarations.contains("interface GrainError extends Error"));
         assert!(declarations
             .split_once("declare global")

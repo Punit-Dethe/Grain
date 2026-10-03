@@ -98,7 +98,10 @@ export function installationHandlers(ctx) {
   ) {
     const { button } = await management(name);
     await activate(button);
-    const sheet = ctx.main().getByRole("dialog");
+    const sheet = ctx.main().getByRole("dialog", {
+      name: `Allow “${name}”?`,
+      exact: true,
+    });
     await sheet.waitFor({ state: "visible", timeout: 10000 });
     assert.match(await sheet.innerText(), /It provides these tools/);
     assert.ok((await sheet.innerText()).includes(title));
@@ -119,7 +122,7 @@ export function installationHandlers(ctx) {
       async () => (await status()).fixtureEnabled,
     );
     assert.equal(
-      await ctx.main().getByRole("dialog").count(),
+      await ctx.main().locator(".extension-confirm").count(),
       0,
       "Consent required a second sheet",
     );
@@ -204,7 +207,7 @@ export function installationHandlers(ctx) {
           "Re-enable saved approval",
           async () => (await status()).fixtureEnabled,
         );
-        assert.equal(await ctx.main().getByRole("dialog").count(), 0);
+        assert.equal(await ctx.main().locator(".extension-confirm").count(), 0);
         await greeting("installed-one");
       },
       async "native.stale-review"() {

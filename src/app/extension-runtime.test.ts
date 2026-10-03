@@ -52,6 +52,54 @@ function worker() {
 }
 
 describe("tool-only production worker", () => {
+  it("preserves supported tagged results even when their payload is null or empty", async () => {
+    const { grain, call } = worker();
+    for (const result of [
+      { ok: null },
+      { ok: "" },
+      { ok: { body: "done", details: [{ label: "id", value: "123" }] } },
+      { error: { class: "network", message: "private diagnostic" } },
+    ]) {
+      grain.actions({ read: () => result });
+      expect((await call("action", { action: "read" })).callres.ok).toEqual(
+        result,
+      );
+    }
+  });
+
+  it("forwards only the write key alongside validated arguments", async () => {
+    const { grain, call } = worker();
+    const handler = vi.fn(() => ({ ok: { body: "done" } }));
+    grain.actions({ write: handler });
+    await call("action", {
+      action: "write",
+      arguments: { item: "123" },
+      idempotencyKey: "owned-write-key",
+      screen: "private",
+      transcript: "private",
+      otherExtensions: ["private"],
+    });
+    expect(handler).toHaveBeenCalledExactlyOnceWith(
+      { item: "123" },
+      { idempotencyKey: "owned-write-key" },
+    );
+  });
+
+  it("preserves reserved envelopes for host classification instead of wrapping them as successful data", async () => {
+    const { grain, call } = worker();
+    for (const result of [
+      { ok: null, error: null },
+      { ok: false },
+      { error: null },
+      { needsInteraction: null },
+    ]) {
+      grain.actions({ read: () => result });
+      expect((await call("action", { action: "read" })).callres.ok).toEqual(
+        result,
+      );
+    }
+  });
+
   it("has no retired APIs or ambient activation and sends exact tool arguments only", async () => {
     const { grain, call, socket } = worker();
     expect(Object.keys(grain).sort()).toEqual([

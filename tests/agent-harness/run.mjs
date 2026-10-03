@@ -1384,6 +1384,7 @@ const foundationSuite = foundationHandlers({
   imported: installation.imported,
   allow: installation.allow,
   model: () => model,
+  failureCall,
   fault: options.fault,
 });
 Object.assign(handlers, foundationSuite.handlers);

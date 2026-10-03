@@ -2523,7 +2523,12 @@ test("declined/failed tool result produces no automatic tool replay", () => {
 });
 
 test("typed oracle detects numeric coercion and optional-value loss in real results", () => {
-  assert.equal(selectScenarios("native-foundation").length, 2);
+  assert.equal(selectScenarios("native-foundation").length, 3);
+  assert.ok(
+    selectScenarios("native-foundation").some(
+      (item) => item.id === "native.author-results",
+    ),
+  );
   for (const [instruction, values] of Object.entries(TYPED_INPUTS)) {
     const expected = Object.fromEntries(
       Object.entries(values).filter(([, value]) => value !== null),

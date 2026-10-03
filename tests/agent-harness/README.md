@@ -1,5 +1,14 @@
 # Grain Agent acceptance harness
 
+**E1a public author contract accepted:** [Contract, audit and limitations](../../docs/Extensions%202.0/NATIVE-AUTHOR-CONTRACT-AUDIT.md). Build first, then run serially:
+
+```powershell
+node tests/agent-harness/author-contract.mjs
+node tests/agent-harness/run.mjs --suite native-foundation
+```
+
+The first command verifies the stamped CLI, generates an owned project, compiles its unmodified example and supported API/15 negative cases, proves the compiler refuses an unguarded negative, and checks the generated hello bundle. It uses installed TypeScript/esbuild without a network install; reports and generated projects remain under `.runs/author-*`. This is non-visual contract evidence, never a substitute application. The second command runs three real Grain cases: seven named result/context modes, typed arguments/stale approval, and migration/restarts. The new result case preserves exact dispatch/pending-call and honest unsupported-result checks. The existing reply-failure oracle also detects deliberate error-to-success corruption. No account approval or new human batch is required. E1 is partially complete; custom MCP identity/configuration is next.
+
 **Client metadata integration verified; production activation pending:** [Focused audit](../../docs/Extensions%202.0/MCP-CLIENT-METADATA-AUDIT.md) records the final thirteen-case auth batch, fresh metadata repeat, strict fault, fixed-port regression repair and scope limits. The maintained `mcp.auth-client-metadata` uses actual SDK/Tauri/vault/Agent reads and an owned HTTPS document resolved by the controlled issuer. It proves metadata selection with/without DCR, fallback/explicit credentials, separate wrong-ID/redirect/503 refusal, callback conflict/cancel and restart reads. It does not certify public hosting: the user confirms no official Grain website and production identity remains absent. Build once, run serially:
 
 ```powershell
@@ -33,7 +42,7 @@ node tests/agent-harness/run.mjs --scenario mcp.auth-issuer-binding --fault miss
 
 **Native OAuth reuse verified:** [B5b audit](../../docs/Extensions%202.0/NATIVE-OAUTH-REUSE-AUDIT.md) records exact `oauth2` 5.0.0 adoption with existing account/vault/cancellation guards. Run the unchanged `native-auth`, `mcp-auth` and `agent-workflow` suites against the stamped build. All final cases pass; the partial-consent fault fails as expected. The native peer treats state as an opaque long URL-safe nonce, retaining independent PKCE/receipt/ownership assertions. No IDs, clocks or retention rules are removed. `run-uZZ7J8` is an interrupted, nonaccepted run with separately cleaned credentials and policy-blocked scratch/TLS deletion; its limitation is retained in the audit and harness inventory.
 
-**Current inventory, 3 October:** 91 distinct scenario IDs, 76 self-contained `all` cases, 73 harness self-tests; 13 `mcp-auth` and 22 `mcp-foundation` cases. Original baseline **52 Pass / 1 Deferred / 0 active Pending**, additional forward **54/55 Pass**, full **56 Pending for permanent hosting/provider acceptance**. The user defers live expiry/refresh check 12 and authorizes forward implementation; it is not passed. Obsolete-code removal stays on hold. The [client metadata audit](../../docs/Extensions%202.0/MCP-CLIENT-METADATA-AUDIT.md) records the current activation gate; older dated counts retain historical evidence.
+**Current inventory, 3 October:** 92 distinct scenario IDs, 77 self-contained `all` cases, 73 harness self-tests; three `native-foundation`, 13 `mcp-auth` and 22 `mcp-foundation` cases. Original baseline **52 Pass / 1 Deferred / 0 active Pending**, additional forward **54/55/57 Pass**, full **56 Pending for permanent hosting/provider acceptance**. The user defers live expiry/refresh check 12; it is not passed. E1a is accepted; E1b identity/configuration is next. Obsolete-code removal stays on hold. The [author contract audit](../../docs/Extensions%202.0/NATIVE-AUTHOR-CONTRACT-AUDIT.md) and [client metadata audit](../../docs/Extensions%202.0/MCP-CLIENT-METADATA-AUDIT.md) record scope and gates; older dated counts retain historical evidence.
 
 **SDK regression accepted:** exact `rmcp` 3.5.0 passes two complete `mcp-foundation` runs, affected shared workflows/smoke, public-provider/Linear no-consent checks and the existing fault oracle. Scenario definitions/IDs, clocks and retention rules are unchanged. Official tools pass; the existing standalone initialization fixture remains Blocked. [Final evidence and reproducible commands](../../docs/Extensions%202.0/MCP-AUTH-LIFECYCLE-REUSE-AUDIT.md#final-evidence-and-scoped-acceptance). Native OAuth/issuer recovery/metadata integration will extend this maintained harness only as their next focused units require.
 
