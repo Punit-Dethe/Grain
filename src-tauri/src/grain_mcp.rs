@@ -23,7 +23,7 @@ use rmcp::transport::auth::{
 use rmcp::transport::streamable_http_client::StreamableHttpClientTransportConfig;
 use rmcp::transport::StreamableHttpClientTransport;
 use rmcp::{ClientLifecycleMode, ClientServiceExt};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tauri::{AppHandle, Manager, WebviewWindow};
 use tauri_plugin_opener::OpenerExt;
@@ -33,6 +33,44 @@ use zeroize::Zeroize;
 
 const VAULT_SERVICE: &str = "com.grain.mcp.oauth";
 const CLIENT_SECRET_SERVICE: &str = "com.grain.mcp.client-secret";
+const CLIENT_REGISTRATION_SERVICE: &str = "com.grain.mcp.client-registration";
+const MAX_REGISTRATION_BYTES: usize = 8 * 1024;
+const REGISTRATION_RECOVERY: &str = "OAuth client registration does not match this authorization server. Register a client for the current issuer and save its credentials again in Grain Settings.";
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct ClientRegistration {
+    schema: u8,
+    client_id: String,
+    issuer: String,
+}
+
+fn validate_registration(raw: &str, client_id: &str, issuer: &str) -> Result<(), String> {
+    if raw.len() > MAX_REGISTRATION_BYTES {
+        return Err(REGISTRATION_RECOVERY.into());
+    }
+    let binding: ClientRegistration =
+        serde_json::from_str(raw).map_err(|_| REGISTRATION_RECOVERY)?;
+    if binding.schema != 1 || binding.client_id != client_id || binding.issuer != issuer {
+        return Err(REGISTRATION_RECOVERY.into());
+    }
+    Ok(())
+}
+
+fn publish_registration(
+    mut write: impl FnMut(&'static str, Option<&str>) -> Result<(), String>,
+    secret: &str,
+    registration: &str,
+) -> Result<(), String> {
+    // A failed update cannot pair replaced secrets with old issuer ownership.
+    write(VAULT_SERVICE, None)?;
+    write(CLIENT_REGISTRATION_SERVICE, None)?;
+    write(
+        CLIENT_SECRET_SERVICE,
+        (!secret.is_empty()).then_some(secret),
+    )?;
+    write(CLIENT_REGISTRATION_SERVICE, Some(registration))
+}
 
 fn credential_entry(service: &str, account: &str) -> Result<keyring::Entry, keyring::Error> {
     #[cfg(feature = "agent-harness")]
@@ -586,9 +624,25 @@ fn client_id(app: &AppHandle, provider_id: &str) -> Option<String> {
         .filter(|value| !value.is_empty())
 }
 
-async fn client_secret(provider_id: &str) -> Result<Option<String>, String> {
+async fn client_secret(
+    provider_id: &str,
+    client_id: &str,
+    issuer: &str,
+) -> Result<Option<String>, String> {
     let account = provider_id.to_string();
+    let client_id = client_id.to_string();
+    let issuer = issuer.to_string();
     tokio::task::spawn_blocking(move || {
+        // Registration ownership survives logout. Check it before even loading
+        // the secret; the SDK's issuer-bound token store cannot cover this case.
+        let registration = credential_entry(CLIENT_REGISTRATION_SERVICE, &account)
+            .map_err(|error| format!("OS credential vault unavailable: {error}"))?
+            .get_password()
+            .map_err(|error| match error {
+                keyring::Error::NoEntry => REGISTRATION_RECOVERY.into(),
+                _ => format!("OS credential vault read failed: {error}"),
+            })?;
+        validate_registration(&registration, &client_id, &issuer)?;
         let entry = credential_entry(CLIENT_SECRET_SERVICE, &account)
             .map_err(|error| format!("OS credential vault unavailable: {error}"))?;
         match entry.get_password() {
@@ -691,65 +745,104 @@ pub async fn mcp_set_client_credentials(
         );
     }
 
+    let secret = zeroize::Zeroizing::new(client_secret);
     let ticket = provider_control(item.id).invalidate();
-    let _operation = tokio::time::timeout(OPERATION_TIMEOUT, ticket.acquire())
-        .await
-        .map_err(|_| "MCP credential update timed out")??;
-    let ctx = app
-        .try_state::<std::sync::Arc<grain_core::AppContext>>()
-        .ok_or("application context unavailable")?;
-    ticket
-        .commit(|| {
-            ctx.update_settings(|settings| {
-                settings
-                    .mcp_enabled_providers
-                    .retain(|current| current != &id);
-            })
-        })?
-        .map_err(|error| error.to_string())?;
-    let account = id.clone();
-    let write_ticket = ticket.clone();
-    let write_operation = _operation.clone();
-    tokio::task::spawn_blocking(move || {
-        let _operation = write_operation;
-        let mut secret = client_secret;
-        let result = write_ticket
+    let update = ticket.run(async {
+        let _operation = ticket.acquire().await?;
+        // Explicit Save binds registration without sending credentials or opening
+        // consent. Discover before touching an existing usable registration/grant.
+        let mut manager = AuthorizationManager::new(provider_endpoint(item)?.as_ref())
+            .await
+            .map_err(|_| "OAuth setup failed")?;
+        manager
+            .with_client(provider_http(&app, item)?)
+            .map_err(|_| "OAuth setup failed")?;
+        let resolution = manager
+            .resolve_metadata()
+            .await
+            .map_err(|_| "OAuth metadata discovery failed")?;
+        if !resolution.source.is_discovered() {
+            return Err("OAuth metadata unavailable".to_string());
+        }
+        validate_hosted_oauth_metadata(&resolution.metadata)?;
+        let registration = serde_json::to_string(&ClientRegistration {
+            schema: 1,
+            client_id: client_id.clone(),
+            issuer: resolution
+                .metadata
+                .issuer
+                .ok_or("OAuth issuer unavailable")?,
+        })
+        .map_err(|_| "Could not encode OAuth client registration")?;
+        if registration.len() > MAX_REGISTRATION_BYTES {
+            return Err("OAuth client registration exceeds its storage bound".into());
+        }
+        let ctx = app
+            .try_state::<std::sync::Arc<grain_core::AppContext>>()
+            .ok_or("application context unavailable")?;
+        ticket
             .commit(|| {
-                // Clear the grant first: a partially failed client update must not
-                // leave old tokens paired with a different secret.
-                delete_vault_entry(VAULT_SERVICE, &account).map_err(|e| e.to_string())?;
-                if secret.is_empty() {
-                    return delete_vault_entry(CLIENT_SECRET_SERVICE, &account)
-                        .map_err(|e| e.to_string());
-                }
-                credential_entry(CLIENT_SECRET_SERVICE, &account)
-                    .map_err(|error| format!("OS credential vault unavailable: {error}"))
-                    .and_then(|entry| {
-                        entry
-                            .set_password(&secret)
-                            .map_err(|error| format!("OS credential vault write failed: {error}"))
-                    })
-            })
-            .and_then(|result| result);
-        secret.zeroize();
-        result
-    })
-    .await
-    .map_err(|error| format!("credential task failed: {error}"))??;
+                ctx.update_settings(|settings| {
+                    settings
+                        .mcp_enabled_providers
+                        .retain(|current| current != &id);
+                })
+            })?
+            .map_err(|error| error.to_string())?;
+        let account = id.clone();
+        let write_ticket = ticket.clone();
+        let write_operation = _operation.clone();
+        tokio::task::spawn_blocking(move || {
+            let _operation = write_operation;
+            let result = write_ticket
+                .commit(|| {
+                    // Delete old ownership BEFORE replacing a secret. A partial
+                    // vault/settings write cannot authorize a new secret with an
+                    // old binding, even when the configured client ID is unchanged.
+                    publish_registration(
+                        |service, value| match value {
+                            None => {
+                                delete_vault_entry(service, &account).map_err(|e| e.to_string())
+                            }
+                            Some(value) => credential_entry(service, &account)
+                                .map_err(|error| {
+                                    format!("OS credential vault unavailable: {error}")
+                                })?
+                                .set_password(value)
+                                .map_err(|error| {
+                                    format!("OS credential vault write failed: {error}")
+                                }),
+                        },
+                        &secret,
+                        &registration,
+                    )
+                })
+                .and_then(|result| result);
+            result
+        })
+        .await
+        .map_err(|error| format!("credential task failed: {error}"))??;
 
-    // A pre-registered client change invalidates the issuer-bound token. Never
-    // let an old grant ride under newly configured client credentials.
-    ticket
-        .commit(|| {
-            ctx.update_settings(|settings| {
-                settings
-                    .mcp_enabled_providers
-                    .retain(|current| current != &id);
-                settings.mcp_oauth_client_ids.insert(id.clone(), client_id);
-            })
-        })?
-        .map_err(|error| error.to_string())?;
-    Ok(())
+        // A pre-registered client change invalidates the issuer-bound token. Never
+        // let an old grant ride under newly configured client credentials.
+        ticket
+            .commit(|| {
+                ctx.update_settings(|settings| {
+                    settings
+                        .mcp_enabled_providers
+                        .retain(|current| current != &id);
+                    settings.mcp_oauth_client_ids.insert(id.clone(), client_id);
+                })
+            })?
+            .map_err(|error| error.to_string())?;
+        Ok(())
+    });
+    let result = tokio::time::timeout(OPERATION_TIMEOUT, update).await;
+    if !matches!(&result, Ok(Ok(Ok(())))) {
+        // Detached blocking writes retain their lease and are generation-checked.
+        ticket.invalidate_if_current();
+    }
+    result.map_err(|_| "MCP credential update timed out")??
 }
 
 #[tauri::command]
@@ -1106,8 +1199,16 @@ async fn connect_oauth(
     if item.registration == Registration::PreRegistered {
         let configured_id = client_id(app, item.id)
             .ok_or("configure this provider's OAuth client ID in Settings first")?;
+        let configured_secret = client_secret(
+            item.id,
+            &configured_id,
+            expected_issuer
+                .as_deref()
+                .ok_or("OAuth issuer unavailable")?,
+        )
+        .await?;
         request = request.with_preregistered_client(configured_id);
-        if let Some(configured_secret) = client_secret(item.id).await? {
+        if let Some(configured_secret) = configured_secret {
             request = request.with_client_secret(configured_secret);
         }
     }
@@ -1268,6 +1369,22 @@ async fn authorization_manager(
         return Err("OAuth metadata unavailable".into());
     }
     validate_hosted_oauth_metadata(&resolution.metadata)?;
+    let configured_secret = if item.registration == Registration::PreRegistered {
+        client_secret(
+            item.id,
+            configured_id
+                .as_deref()
+                .ok_or("OAuth client ID unavailable")?,
+            resolution
+                .metadata
+                .issuer
+                .as_deref()
+                .ok_or("OAuth issuer unavailable")?,
+        )
+        .await?
+    } else {
+        None
+    };
     manager.set_metadata(resolution.metadata);
     if !manager
         .initialize_from_store()
@@ -1281,7 +1398,7 @@ async fn authorization_manager(
             configured_id.ok_or("OAuth client ID unavailable")?,
             format!("http://{CALLBACK_ADDR}{CALLBACK_PATH}"),
         );
-        if let Some(secret) = client_secret(item.id).await? {
+        if let Some(secret) = configured_secret {
             config = config.with_client_secret(secret);
         }
         manager
@@ -1943,6 +2060,96 @@ pub(crate) fn directory(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn registration_requires_exact_client_and_issuer_without_url_normalization() {
+        let raw = r#"{"schema":1,"client_id":"client","issuer":"https://issuer.example"}"#;
+        assert!(validate_registration(raw, "client", "https://issuer.example").is_ok());
+        for (client, issuer) in [
+            ("other", "https://issuer.example"),
+            ("client", "https://other.example"),
+            ("client", "https://issuer.example/"),
+            ("client", "https://ISSUER.example"),
+        ] {
+            assert_eq!(
+                validate_registration(raw, client, issuer).unwrap_err(),
+                REGISTRATION_RECOVERY
+            );
+        }
+    }
+
+    #[test]
+    fn unbound_corrupt_future_and_oversized_registrations_are_refused() {
+        for raw in [
+            "",
+            "legacy-secret",
+            "{}",
+            r#"{"schema":2,"client_id":"client","issuer":"https://issuer.example"}"#,
+            r#"{"schema":1,"client_id":"client","issuer":"https://issuer.example","extra":true}"#,
+            &" ".repeat(MAX_REGISTRATION_BYTES + 1),
+        ] {
+            assert!(validate_registration(raw, "client", "https://issuer.example").is_err());
+        }
+    }
+
+    #[test]
+    fn every_partial_vault_update_preserves_old_pair_or_removes_its_ownership() {
+        for failing_write in 0..4 {
+            let mut vault = BTreeMap::from([
+                (VAULT_SERVICE, "old-grant".to_string()),
+                (CLIENT_SECRET_SERVICE, "old-secret".to_string()),
+                (CLIENT_REGISTRATION_SERVICE, "old-binding".to_string()),
+            ]);
+            let mut step = 0;
+            assert!(publish_registration(
+                |service, value| {
+                    let current = step;
+                    step += 1;
+                    if current == failing_write {
+                        return Err("controlled vault failure".into());
+                    }
+                    if let Some(value) = value {
+                        vault.insert(service, value.to_string());
+                    } else {
+                        vault.remove(service);
+                    }
+                    Ok(())
+                },
+                "new-secret",
+                "new-binding"
+            )
+            .is_err());
+            if vault
+                .get(CLIENT_SECRET_SERVICE)
+                .is_some_and(|v| v == "new-secret")
+            {
+                assert!(!vault.contains_key(CLIENT_REGISTRATION_SERVICE));
+                assert!(!vault.contains_key(VAULT_SERVICE));
+            } else {
+                assert_eq!(vault[CLIENT_SECRET_SERVICE], "old-secret");
+            }
+        }
+    }
+
+    #[test]
+    fn successful_public_registration_removes_secret_but_retains_ownership() {
+        let mut vault = BTreeMap::from([(CLIENT_SECRET_SERVICE, "old-secret".to_string())]);
+        publish_registration(
+            |service, value| {
+                if let Some(value) = value {
+                    vault.insert(service, value.to_string());
+                } else {
+                    vault.remove(service);
+                }
+                Ok(())
+            },
+            "",
+            "new-binding",
+        )
+        .unwrap();
+        assert!(!vault.contains_key(CLIENT_SECRET_SERVICE));
+        assert_eq!(vault[CLIENT_REGISTRATION_SERVICE], "new-binding");
+    }
 
     fn production_catalog() -> impl Iterator<Item = &'static CatalogProvider> {
         CATALOG.iter().filter(|item| {

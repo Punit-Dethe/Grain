@@ -55,7 +55,10 @@ export function createMcpOAuth(origin, ca, { wrongAccount = false } = {}) {
     refreshable = false,
     refreshExpiresIn = 1200,
     rejectRefresh = false,
-    wrongRefreshAccount = false;
+    wrongRefreshAccount = false,
+    authorizationServer = null,
+    resourceOrigin = null,
+    metadataUnavailable = false;
   const record = (item) => {
     assert.ok(
       journal.length < MCP_OAUTH_JOURNAL_LIMIT - 1,
@@ -99,7 +102,7 @@ export function createMcpOAuth(origin, ca, { wrongAccount = false } = {}) {
         record({ phase: "resource-metadata" });
         json(res, 200, {
           resource: origin() + "/account-mcp",
-          authorization_servers: [origin()],
+          authorization_servers: [authorizationServer ?? origin()],
           scopes_supported: ["fixture.read"],
           bearer_methods_supported: ["header"],
         });
@@ -108,7 +111,9 @@ export function createMcpOAuth(origin, ca, { wrongAccount = false } = {}) {
         path === "/.well-known/oauth-authorization-server"
       ) {
         record({ phase: "issuer-metadata" });
-        json(res, 200, metadata());
+        if (metadataUnavailable)
+          json(res, 503, { error: "fixture_metadata_unavailable" });
+        else json(res, 200, metadata());
       } else if (req.method === "POST" && path === "/register") {
         const body = JSON.parse(await boundedBody(req));
         assert.equal(body.token_endpoint_auth_method, "none");
@@ -148,7 +153,10 @@ export function createMcpOAuth(origin, ca, { wrongAccount = false } = {}) {
           "Invalid owned OAuth state",
         );
         assert.equal(q.get("scope"), "fixture.read");
-        assert.equal(q.get("resource"), origin() + "/account-mcp");
+        assert.equal(
+          q.get("resource"),
+          (resourceOrigin ?? origin()) + "/account-mcp",
+        );
         const callback = new URL(redirect);
         callback.searchParams.set("state", q.get("state"));
         callback.searchParams.set("iss", origin());
@@ -174,6 +182,13 @@ export function createMcpOAuth(origin, ca, { wrongAccount = false } = {}) {
         res.end();
       } else if (req.method === "POST" && path === "/token") {
         const q = new URLSearchParams(await boundedBody(req));
+        record({
+          phase: "token-attempt",
+          secretPresent: q.has("client_secret"),
+          secretVersion: q.has("client_secret")
+            ? MCP_CLIENT_SECRETS.indexOf(q.get("client_secret"))
+            : null,
+        });
         if (q.get("grant_type") === "refresh_token") {
           const old = refreshTokens.get(q.get("refresh_token"));
           if (!old || rejectRefresh) {
@@ -182,7 +197,10 @@ export function createMcpOAuth(origin, ca, { wrongAccount = false } = {}) {
             return true;
           }
           assert.equal(q.get("client_id"), old.clientId);
-          assert.equal(q.get("resource"), origin() + "/account-mcp");
+          assert.equal(
+            q.get("resource"),
+            (resourceOrigin ?? origin()) + "/account-mcp",
+          );
           assert.equal(q.get("client_secret"), old.secret);
           refreshTokens.delete(q.get("refresh_token"));
           const selected = wrongRefreshAccount
@@ -226,7 +244,10 @@ export function createMcpOAuth(origin, ca, { wrongAccount = false } = {}) {
           grant.challenge,
           "PKCE verification failed",
         );
-        assert.equal(q.get("resource"), origin() + "/account-mcp");
+        assert.equal(
+          q.get("resource"),
+          (resourceOrigin ?? origin()) + "/account-mcp",
+        );
         codes.delete(q.get("code"));
         const client = clients.get(grant.clientId);
         assert.ok(client, "Unknown grant client");
@@ -368,9 +389,29 @@ export function createMcpOAuth(origin, ca, { wrongAccount = false } = {}) {
             "refreshExpiresIn",
             "rejectRefresh",
             "wrongRefreshAccount",
+            "authorizationServer",
+            "resourceOrigin",
+            "metadataUnavailable",
           ].includes(key),
         ),
       );
+      for (const key of ["authorizationServer", "resourceOrigin"]) {
+        if (next[key] !== undefined && next[key] !== null) {
+          const value = new URL(next[key]);
+          assert.equal(value.protocol, "https:");
+          assert.equal(value.hostname, "127.0.0.1");
+          assert.ok(Number(value.port) > 0);
+          assert.equal(value.origin, next[key]);
+        }
+      }
+      if (next.authorizationServer !== undefined)
+        authorizationServer = next.authorizationServer;
+      if (next.resourceOrigin !== undefined)
+        resourceOrigin = next.resourceOrigin;
+      if (next.metadataUnavailable !== undefined) {
+        assert.equal(typeof next.metadataUnavailable, "boolean");
+        metadataUnavailable = next.metadataUnavailable;
+      }
       if (next.account !== undefined) {
         assert.ok(["A", "B"].includes(next.account));
         account = next.account;

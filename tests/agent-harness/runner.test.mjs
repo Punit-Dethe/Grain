@@ -1020,7 +1020,7 @@ test("MCP account shutdown oracle requires exact dispatched uncertainty without 
 
 test("authenticated MCP suite has independent IDs and remains in ordinary all", () => {
   const auth = selectScenarios("mcp-auth");
-  assert.equal(auth.length, 10);
+  assert.equal(auth.length, 11);
   assert.deepEqual(
     auth.map((x) => x.id),
     [
@@ -1034,11 +1034,12 @@ test("authenticated MCP suite has independent IDs and remains in ordinary all", 
       "mcp.auth-fixed-port-conflict",
       "mcp.auth-refresh-recovery",
       "mcp.auth-refresh-refusal",
+      "mcp.auth-issuer-binding",
     ],
   );
   for (const entry of auth) assert.ok(selectScenarios("all").includes(entry));
   const foundation = selectScenarios("mcp-foundation");
-  assert.equal(foundation.length, 19);
+  assert.equal(foundation.length, 20);
   assert.deepEqual(
     new Set(foundation),
     new Set([...auth, ...selectScenarios("mcp")]),
@@ -1132,7 +1133,11 @@ test("MCP independence subset is explicit and faults cannot enter another unit",
     selectScenarios("mcp-independence").map((x) => x.id),
     MCP_INDEPENDENCE_IDS,
   );
-  for (const fault of ["wrong-mcp-peer-account", "skip-fixed-port-conflict"]) {
+  for (const fault of [
+    "wrong-mcp-peer-account",
+    "skip-fixed-port-conflict",
+    "missing-mcp-issuer-rotation",
+  ]) {
     await assert.rejects(
       exec(
         process.execPath,
@@ -1269,6 +1274,64 @@ test("owned issuer rejects mismatched client secrets without issuing a token or 
     assert.equal(peer.journal.filter((x) => x.phase === "token").length, 1);
     assert.ok(!JSON.stringify(peer.journal).includes(MCP_PRIVATE_MARKER));
     assert.ok(!peer.journal.some((x) => x.phase === "oauth-error"));
+  } finally {
+    peer.close();
+  }
+});
+
+test("issuer rotation uses only exact loopback origins and preserves distinct resource and issuer metadata", async () => {
+  const { createMcpOAuth } = await import("./mcp-oauth-fixture.mjs");
+  const peer = createMcpOAuth(() => "https://127.0.0.1:1", Buffer.alloc(0));
+  try {
+    for (const value of [
+      "https://example.com",
+      "http://127.0.0.1:2",
+      "https://user@127.0.0.1:2",
+      "https://127.0.0.1:2/path",
+      "https://127.0.0.1:2/",
+      "https://127.0.0.1:2#x",
+    ]) {
+      assert.throws(() => peer.configure({ authorizationServer: value }));
+      assert.throws(() => peer.configure({ resourceOrigin: value }));
+    }
+    peer.configure({
+      authorizationServer: "https://127.0.0.1:2",
+      resourceOrigin: "https://127.0.0.1:3",
+    });
+    async function metadata(path) {
+      let status, body;
+      await peer.handle(
+        { method: "GET", url: path },
+        {
+          writeHead(code) {
+            status = code;
+            this.headersSent = true;
+          },
+          end(raw) {
+            body = JSON.parse(raw);
+          },
+        },
+      );
+      return { status, body };
+    }
+    const resource = await metadata("/.well-known/oauth-protected-resource");
+    assert.equal(resource.body.resource, "https://127.0.0.1:1/account-mcp");
+    assert.deepEqual(resource.body.authorization_servers, [
+      "https://127.0.0.1:2",
+    ]);
+    assert.equal(
+      (await metadata("/.well-known/oauth-authorization-server")).body.issuer,
+      "https://127.0.0.1:1",
+    );
+    peer.configure({ metadataUnavailable: true });
+    assert.equal(
+      (await metadata("/.well-known/oauth-authorization-server")).status,
+      503,
+    );
+    assert.deepEqual(
+      peer.journal.map((x) => x.phase),
+      ["resource-metadata", "issuer-metadata", "issuer-metadata"],
+    );
   } finally {
     peer.close();
   }

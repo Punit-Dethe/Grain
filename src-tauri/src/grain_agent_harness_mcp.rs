@@ -214,6 +214,28 @@ fn validated_hf_action(value: &serde_json::Value) -> Result<Option<&str>, String
 mod tests {
     use super::*;
     #[test]
+    fn rotation_consent_admits_only_the_two_exact_owned_authorize_origins() {
+        for (raw, peer, valid) in [
+            ("https://127.0.0.1:9001/authorize?state=owned", None, true),
+            ("https://127.0.0.1:9002/authorize?state=owned", None, false),
+            (
+                "https://127.0.0.1:9002/authorize?state=owned",
+                Some(9002),
+                true,
+            ),
+            ("https://127.0.0.1:9003/authorize", Some(9002), false),
+            ("https://127.0.0.1:9002/token", Some(9002), false),
+            ("http://127.0.0.1:9002/authorize", Some(9002), false),
+            ("https://secret@127.0.0.1:9002/authorize", Some(9002), false),
+        ] {
+            assert_eq!(
+                validate_rotation_consent_url(raw, 9001, peer).is_ok(),
+                valid
+            );
+        }
+    }
+
+    #[test]
     fn public_nested_read_refuses_other_tools_commands_targets_batches_and_fields() {
         let good = serde_json::json!({"method":"tools/call","params":{"name":"hf_fs","arguments":{"operations":[{"cmd":"cat","args":[HF_DOCUMENT,"--max-bytes","2048"]}]}}});
         assert_eq!(validated_hf_action(&good).unwrap(), Some("hf_fs"));
@@ -802,7 +824,14 @@ pub(crate) fn capture_authorization(id: &str, raw: &str) -> Result<Option<Consen
             return Err("MCP account fixture is not enabled".into());
         }
         let (_, port) = account_config(id)?;
-        validate_consent_url(raw, port)?;
+        let alternate = if id == CLIENT_PROVIDER_ID
+            && super::grain_agent_harness::mcp_issuer_rotation_enabled()
+        {
+            Some(super::grain_agent_harness::mcp_peer_config()?.1)
+        } else {
+            None
+        };
+        validate_rotation_consent_url(raw, port, alternate)?;
     }
     let owner = uuid::Uuid::new_v4();
     let slot = account_slot(id)?;
@@ -861,6 +890,17 @@ fn validate_linear_consent_url(raw: &str) -> Result<(), String> {
         return Err(rejected());
     }
     Ok(())
+}
+
+fn validate_rotation_consent_url(
+    raw: &str,
+    port: u16,
+    alternate: Option<u16>,
+) -> Result<(), String> {
+    validate_consent_url(raw, port).or_else(|error| match alternate {
+        Some(peer) => validate_consent_url(raw, peer),
+        None => Err(error),
+    })
 }
 
 fn validate_consent_url(raw: &str, port: u16) -> Result<(), String> {

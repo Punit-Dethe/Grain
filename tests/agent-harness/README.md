@@ -1,8 +1,19 @@
 # Grain Agent acceptance harness
 
+**Configured-client issuer protection verified:** [Focused audit](../../docs/Extensions%202.0/MCP-REGISTRATION-ISSUER-AUDIT.md) covers actual cross-issuer disclosure reproduction and the fix. `mcp.auth-issuer-binding` reuses two owned HTTPS peers and the real SDK/settings/vault path; only its explicit marker admits the second exact consent origin. Registration ownership survives logout/restart, changed issuers are refused before consent/secret use, explicit re-save enables the new issuer, and failed discovery preserves the existing account. All eleven `mcp-auth` cases and the fresh repeat pass; the deliberate missing-rotation fault fails as intended. MCP teardown independently removes/asserts zero grants, client secrets and new registration records, including public clients. No ordinary credentials or provider writes are involved. See the commands and retention rules below.
+
+After building the stamped host, run the focused case or its combined regression serially:
+
+```powershell
+node tests/agent-harness/run.mjs --scenario mcp.auth-issuer-binding
+node tests/agent-harness/run.mjs --suite mcp-auth
+# Expected Fail/exit 1 and cleanup Pass; never a positive acceptance run:
+node tests/agent-harness/run.mjs --scenario mcp.auth-issuer-binding --fault missing-mcp-issuer-rotation
+```
+
 **Native OAuth reuse verified:** [B5b audit](../../docs/Extensions%202.0/NATIVE-OAUTH-REUSE-AUDIT.md) records exact `oauth2` 5.0.0 adoption with existing account/vault/cancellation guards. Run the unchanged `native-auth`, `mcp-auth` and `agent-workflow` suites against the stamped build. All final cases pass; the partial-consent fault fails as expected. The native peer treats state as an opaque long URL-safe nonce, retaining independent PKCE/receipt/ownership assertions. No IDs, clocks or retention rules are removed. `run-uZZ7J8` is an interrupted, nonaccepted run with separately cleaned credentials and policy-blocked scratch/TLS deletion; its limitation is retained in the audit and harness inventory.
 
-**Current inventory, 3 October:** 88 distinct scenario IDs, 73 self-contained `all` cases, 69 harness self-tests. Baseline **52 Pass / 1 Deferred / 0 active Pending**: the user defers live expiry/refresh check 12 and authorizes SDK/native-OAuth work. It is not passed; obsolete-code removal stays on hold. The [authentication/lifecycle reuse audit](../../docs/Extensions%202.0/MCP-AUTH-LIFECYCLE-REUSE-AUDIT.md) records the current scope; older dated counts retain historical evidence.
+**Current inventory, 3 October:** 89 distinct scenario IDs, 74 self-contained `all` cases, 70 harness self-tests. Original baseline **52 Pass / 1 Deferred / 0 active Pending**, additional forward **54 Pass**: the user defers live expiry/refresh check 12 and authorizes forward implementation. It is not passed; obsolete-code removal stays on hold. The [authentication/lifecycle reuse audit](../../docs/Extensions%202.0/MCP-AUTH-LIFECYCLE-REUSE-AUDIT.md) records ownership; older dated counts retain historical evidence.
 
 **SDK regression accepted:** exact `rmcp` 3.5.0 passes two complete `mcp-foundation` runs, affected shared workflows/smoke, public-provider/Linear no-consent checks and the existing fault oracle. Scenario definitions/IDs, clocks and retention rules are unchanged. Official tools pass; the existing standalone initialization fixture remains Blocked. [Final evidence and reproducible commands](../../docs/Extensions%202.0/MCP-AUTH-LIFECYCLE-REUSE-AUDIT.md#final-evidence-and-scoped-acceptance). Native OAuth/issuer recovery/metadata integration will extend this maintained harness only as their next focused units require.
 

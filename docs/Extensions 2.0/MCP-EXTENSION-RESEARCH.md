@@ -2,6 +2,8 @@
 
 Research date: 26 September 2026. Companion: [executable delivery plan](MCP-EXTENSION-PLAN.md). Reproducible repository snapshots and source URLs: [source ledger](MCP-EXTENSION-SOURCES.json).
 
+**3 October registration follow-up:** the current MCP client-registration standard explicitly requires credentials to be bound to the authorization-server issuer independently of access tokens. The [focused multi-source research and implementation audit](MCP-REGISTRATION-ISSUER-AUDIT.md) cites the 2026-07-28 registration/authentication text, RFC 9700, pinned official Rust SDK and pinned OpenCode integration. It distinguishes callback mix-up protection, SDK token ownership and configured registration ownership; none substitutes for the others. A real two-issuer test reproduces the missing configured-client protection before the host fix. Keep the official SDK and add only the bounded OS-vault ownership record/explicit-save integration; no whole framework, gateway or idle runtime is warranted. Typed recovery and public client metadata registration remain separate units.
+
 ## Recommendation
 
 Make **native Grain extensions and MCP extensions two adapters behind one extension system**. Preserve Grain's current Rust host, native worker runtime, OS credential vaults, and authoritative execution checks. Strengthen the shared agent workflow and turn the development-only MCP integration into a supported adapter through explicit compatibility gates.

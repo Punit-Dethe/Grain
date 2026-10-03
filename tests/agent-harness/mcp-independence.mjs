@@ -7,11 +7,13 @@ import {
   MCP_PEER_ID,
   MCP_PEER_CLIENT_ID,
   MCP_CLIENTS,
+  MCP_CLIENT_SECRETS,
 } from "./mcp-oauth-fixture.mjs";
 
 export const MCP_INDEPENDENCE_IDS = [
   "mcp.auth-provider-independence",
   "mcp.auth-fixed-port-conflict",
+  "mcp.auth-issuer-binding",
 ];
 const CONFLICT =
   "another authentication flow is already using Grain's callback port";
@@ -198,6 +200,159 @@ export function mcpIndependenceHandlers(ctx) {
       return value;
     },
     handlers: {
+      async "mcp.auth-issuer-binding"() {
+        const primary = ctx.provider(false),
+          peer = ctx.provider(true);
+        primary.oauth.configure({
+          account: "A",
+          denied: false,
+          secretVersion: 0,
+        });
+        peer.oauth.configure({ account: "A", denied: false, secretVersion: 0 });
+        const origin = `https://127.0.0.1:${primary.port}`,
+          other = `https://127.0.0.1:${peer.port}`;
+        const attempts = () =>
+          peer.oauth.journal.filter((x) => x.phase === "token-attempt");
+        const save = (id, secret = "") =>
+          ctx.invoke("mcp_set_client_credentials", {
+            id: MCP_CLIENT_ID,
+            clientId: id,
+            clientSecret: secret,
+          });
+        async function loginAt(issuer, expectRefusal = false) {
+          let settled;
+          const pending = control("connect", "client").then(
+            (value) => (settled = { value }),
+            (error) => (settled = { error: String(error) }),
+          );
+          try {
+            const outcome = await ctx.waitFor(
+              "Issuer-bound login completion or owned consent",
+              async () => {
+                if (settled) return settled;
+                const url = await control("authorization", "client");
+                return url ? { url } : settled;
+              },
+            );
+            if (expectRefusal)
+              assert.equal(
+                outcome.url,
+                undefined,
+                "Changed issuer opened consent before registration refusal",
+              );
+            if (outcome.url) {
+              const callback = await issuer.oauth.authorize(outcome.url);
+              assert.equal((await issuer.oauth.callback(callback)).status, 200);
+            }
+            const result = await pending;
+            if (expectRefusal)
+              assert.match(
+                result.error ?? "",
+                /registration.*server|issuer.*changed/i,
+                "Changed issuer did not refuse saved registration: " +
+                  (result.error ?? "unexpected success"),
+              );
+            else {
+              if (result.error) throw new Error(result.error);
+              assert.equal(result.value.connected, true);
+            }
+          } finally {
+            if (!settled) await control("disable", "client");
+            await pending;
+          }
+        }
+        try {
+          await save(MCP_CLIENTS.confidential, MCP_CLIENT_SECRETS[0]);
+          // Earlier combined cases legitimately retain peer registration metadata
+          // across logout. Check preservation relative to this scoped inventory;
+          // actual login/refusal independently proves the selected client's binding.
+          const registrations = await ctx.vaultCount(false, true);
+          assert.ok(registrations >= 1 && registrations <= 4);
+          await loginAt(primary);
+          peer.oauth.configure({ resourceOrigin: origin });
+          primary.oauth.configure({
+            authorizationServer:
+              ctx.fault === "missing-mcp-issuer-rotation" ? origin : other,
+          });
+          // Before the fix this completes an actual code exchange with A's secret at B.
+          const before = attempts().length;
+          await assert.rejects(
+            control("discover", "client"),
+            /The MCP account is unavailable\. Reconnect in Grain Settings\./,
+          );
+          assert.equal(
+            attempts().length,
+            before,
+            "Stored-grant initialization sent a foreign credential",
+          );
+          note("stored-grant-discovery-refused", { foreignTokenRequests: 0 });
+          await loginAt(peer, true);
+          assert.equal(
+            attempts().length,
+            before,
+            "Saved issuer-A credential reached issuer B",
+          );
+          note("issuer-change-refused-with-grant", { foreignTokenRequests: 0 });
+          await control("disconnect", "client");
+          await ctx.restartHost();
+          assert.equal(await ctx.vaultCount(false, true), registrations);
+          await loginAt(peer, true);
+          assert.equal(
+            attempts().length,
+            before,
+            "Clearing grant lost registration issuer ownership",
+          );
+          note("issuer-binding-survives-disconnect-restart", {
+            foreignTokenRequests: 0,
+          });
+          peer.oauth.configure({ secretVersion: 1 });
+          await save(MCP_CLIENTS.confidential, MCP_CLIENT_SECRETS[1]);
+          await loginAt(peer);
+          assert.equal(attempts().length, before + 1);
+          assert.equal(attempts().at(-1).secretVersion, 1);
+          note("explicit-new-issuer-registration", {
+            tokenRequests: 1,
+            secretVersion: 1,
+          });
+          peer.oauth.configure({ metadataUnavailable: true });
+          await assert.rejects(save(MCP_CLIENTS.publicTwo), /metadata|verify/i);
+          assert.equal(
+            await ctx.vaultCount(),
+            1,
+            "Failed metadata save deleted selected grant",
+          );
+          assert.equal(
+            await ctx.vaultCount(true),
+            1,
+            "Failed metadata save replaced client secret",
+          );
+          assert.equal(await ctx.vaultCount(false, true), registrations);
+          peer.oauth.configure({ metadataUnavailable: false });
+          await loginAt(peer);
+          assert.equal(attempts().at(-1).secretVersion, 1);
+          note("metadata-save-failure-preserves-registration-grant", {
+            retainedClient: "confidential",
+          });
+          primary.oauth.configure({ authorizationServer: null });
+          await save(MCP_CLIENTS.publicOne);
+          assert.equal(await ctx.vaultCount(true), 0);
+          assert.equal(await ctx.vaultCount(false, true), registrations);
+          await loginAt(primary);
+          await read("client", "public-client-recovery-read");
+          await control("disconnect", "client");
+          await ctx.restartHost();
+          await loginAt(primary);
+          await read("client", "same-issuer-reconnect-after-restart");
+        } finally {
+          primary.oauth.configure({ authorizationServer: null });
+          peer.oauth.configure({
+            resourceOrigin: null,
+            metadataUnavailable: false,
+            secretVersion: 0,
+          });
+          await control("disconnect", "client");
+        }
+      },
       async "mcp.auth-provider-independence"() {
         assert.equal(await ctx.vaultCount(), 0);
         let first, second, failure;

@@ -438,6 +438,7 @@ export function selectScenarios(suite) {
       [
         "mcp.auth-provider-independence",
         "mcp.auth-fixed-port-conflict",
+        "mcp.auth-issuer-binding",
       ].includes(scenario.id),
     );
   if (suite === "mcp-foundation")
@@ -685,3 +686,11 @@ scenarios.push(
       "Actual 90-second discovery deadline bounds successive sub-45s pages across modern/legacy, dispatches nothing, retires timers/sessions and recovers",
   },
 );
+
+scenarios.push({
+  id: "mcp.auth-issuer-binding",
+  suite: "mcp-auth",
+  checks: [54],
+  description:
+    "Preregistered issuer rotation refuses old secrets before consent/exchange, persists through disconnect/restart, and explicit re-registration and failed-discovery recovery are verified",
+});

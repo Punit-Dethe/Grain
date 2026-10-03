@@ -40,6 +40,8 @@ struct Marker {
     mcp_linear_consent: bool,
     #[serde(default)]
     mcp_auth: bool,
+    #[serde(default)]
+    mcp_issuer_rotation: bool,
 }
 
 struct Config {
@@ -81,6 +83,7 @@ fn read_marker(root: &Path) -> Result<Marker, String> {
         || (marker.mcp_live_deepwiki && marker.mcp_port.is_some())
         || (marker.mcp_auth && (marker.mcp_port.is_none() || marker.mcp_live_deepwiki))
         || (marker.mcp_peer_port.is_some() && !marker.mcp_auth)
+        || (marker.mcp_issuer_rotation && (!marker.mcp_auth || marker.mcp_peer_port.is_none()))
         || uuid::Uuid::parse_str(&marker.run_id).is_err()
         || marker.model_port == 0
         || marker.model_port == crate::events_server::EVENTS_PORT
@@ -164,6 +167,12 @@ pub(super) fn live_huggingface_enabled() -> bool {
     CONFIG
         .get()
         .is_some_and(|value| value.marker.mcp_live_huggingface)
+}
+
+pub(super) fn mcp_issuer_rotation_enabled() -> bool {
+    CONFIG
+        .get()
+        .is_some_and(|value| value.marker.mcp_issuer_rotation)
 }
 
 pub(super) fn mcp_auth_enabled() -> bool {
@@ -801,6 +810,24 @@ mod tests {
             (Some(9001), true, false),
         ] {
             std::fs::write(root.path().join(".grain-agent-harness.json"), serde_json::to_vec(&serde_json::json!({"schema":1,"runId":uuid::Uuid::new_v4(),"modelPort":9000,"mcpPort":port,"mcpLiveDeepwiki":live,"mcpAuth":true})).unwrap()).unwrap();
+            assert_eq!(read_marker(root.path()).is_ok(), valid);
+        }
+    }
+
+    #[test]
+    fn issuer_rotation_marker_requires_both_owned_authenticated_peers() {
+        let root = tempfile::tempdir().unwrap();
+        for (auth, peer, valid) in [
+            (false, None, false),
+            (true, None, false),
+            (true, Some(9002), true),
+        ] {
+            let marker = serde_json::json!({"schema":1,"runId":uuid::Uuid::new_v4(),"modelPort":9000,"mcpPort":9001,"mcpPeerPort":peer,"mcpAuth":auth,"mcpIssuerRotation":true});
+            std::fs::write(
+                root.path().join(".grain-agent-harness.json"),
+                serde_json::to_vec(&marker).unwrap(),
+            )
+            .unwrap();
             assert_eq!(read_marker(root.path()).is_ok(), valid);
         }
     }

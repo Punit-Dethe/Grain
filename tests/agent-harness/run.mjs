@@ -184,6 +184,7 @@ if (
     "skip-linear-cancel",
     "wrong-mcp-account",
     "wrong-mcp-peer-account",
+    "missing-mcp-issuer-rotation",
     "wrong-mcp-refresh-account",
     "skip-fixed-port-conflict",
     "abandoned-mcp-credential",
@@ -238,6 +239,7 @@ if (
   );
 for (const [fault, scenario] of [
   ["wrong-mcp-peer-account", "mcp.auth-provider-independence"],
+  ["missing-mcp-issuer-rotation", "mcp.auth-issuer-binding"],
   ["wrong-mcp-refresh-account", "mcp.auth-refresh-recovery"],
   ["skip-fixed-port-conflict", "mcp.auth-fixed-port-conflict"],
   ["lost-mcp-account", "mcp.auth-close-cancellation"],
@@ -1500,7 +1502,7 @@ const mcpAuthSuite = mcpAuthHandlers({
   provider: () => mcpProvider,
   model: () => model,
   fault: options.fault,
-  vaultCount: async (clientSecret = false) => {
+  vaultCount: async (clientSecret = false, registration = false) => {
     const output = await exec(
       "powershell.exe",
       [
@@ -1514,6 +1516,7 @@ const mcpAuthSuite = mcpAuthHandlers({
         "-Mcp",
         "-InventoryOnly",
         ...(clientSecret ? ["-McpClientSecret"] : []),
+        ...(registration ? ["-McpRegistration"] : []),
         ...(linearSelected ? ["-McpLinear"] : []),
       ],
       { timeout: 10000, windowsHide: true, maxBuffer: 4096 },
@@ -1521,7 +1524,11 @@ const mcpAuthSuite = mcpAuthHandlers({
     const value = JSON.parse(output.stdout.trim());
     assert.equal(
       value.kind,
-      clientSecret ? "mcp-client-secret-inventory" : "mcp-vault-inventory",
+      registration
+        ? "mcp-registration-inventory"
+        : clientSecret
+          ? "mcp-client-secret-inventory"
+          : "mcp-vault-inventory",
     );
     return value.count;
   },
@@ -1896,6 +1903,9 @@ try {
         mcpPort: mcpProvider?.port,
         mcpPeerPort: mcpPeer?.port,
         mcpAuth: selected.some((scenario) => scenario.suite === "mcp-auth"),
+        mcpIssuerRotation: selected.some(
+          (scenario) => scenario.id === "mcp.auth-issuer-binding",
+        ),
       }),
     );
   }
@@ -2331,6 +2341,7 @@ try {
       assert.equal(value.kind, "mcp-vault-cleanup");
       assert.equal(value.remaining, 0);
       assert.equal(value.clientSecretsRemaining, 0);
+      assert.equal(value.registrationsRemaining, 0);
       report.mcpVaultCleanup = value;
     } catch (error) {
       errors.push(`Owned MCP credential cleanup: ${error.message}`);
