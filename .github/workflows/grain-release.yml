@@ -2,7 +2,8 @@ name: "Grain Release (Windows)"
 
 # [GRAIN] Windows-only, free release + auto-update pipeline.
 #
-# Flow: bump `version` in src-tauri/tauri.conf.json, commit, then run this
+# Flow: bump `version` in package.json, src-tauri/Cargo.toml,
+# src-tauri/Cargo.lock and src-tauri/tauri.conf.json, commit, then run this
 # workflow (Actions tab → "Grain Release (Windows)" → Run workflow). It builds
 # the NSIS installer, signs the UPDATER artifacts with the minisign key (free —
 # no paid code-signing service), and creates a GitHub Release (draft by default)
@@ -75,6 +76,17 @@ jobs:
         with:
           workspaces: "./src-tauri -> target"
           key: windows-x86_64
+
+      - name: Setup Python for native source verification
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Verify pinned native fork source and Windows backend features
+        shell: bash
+        run: |
+          python -m unittest discover -s scripts -p test_transcribe_fork.py
+          python scripts/transcribe_fork.py --check --metadata --official --target x86_64-pc-windows-msvc
 
       - name: Install Vulkan SDK
         uses: humbletim/install-vulkan-sdk@v1.2
@@ -205,17 +217,25 @@ jobs:
           releaseDraft: ${{ github.event_name != 'workflow_dispatch' || inputs.draft }}
           prerelease: false
           releaseBody: |
-            # Grain v0.0.6
+            # Grain v0.0.7
 
-            This update refreshes Grain's interface and improves history, context awareness, Flow reliability, and overall performance.
+            This Windows release improves dictation timing, context awareness, Flow accuracy, and native dependency maintenance.
 
-            - Refreshed the application UI with a cleaner, more cohesive design and updated Grain branding.
-            - Fixed History audio playback, starring, copying, and action feedback.
-            - Simplified the Overview section.
-            - Fixed URL handling in Notes and improved the Notes window UI.
-            - Simplified Context Awareness by removing unnecessary complexity and improving performance.
-            - Prevented the start sound from leaking into Flow recordings when input and output use the same audio device.
-            - Improved overall performance.
-            - Audited Grain's divergence and brought the application back in line with upstream Handy.
+            - Removed pill logo delays when switching windows with Alt-Tab and addressed waveform timing.
+            - Improved the Home start section and reordered the sidebar.
+            - Refined Context Awareness prompts and added text context on both sides of the caret.
+            - Fixed duplicate shortcut assignments and simultaneous capture/Agent starts.
+            - Allowed spaces in dictionary entries and fixed interactions at the top of the Agent window.
+            - Tuned Parakeet TDT v2 Flow windows for a better speed/accuracy balance.
+            - Removed Flow live preview and Grain's extra voice-enhancement processing from shared capture paths.
+            - Restored upstream GPU fallback selection instead of forcing offloading.
+            - Moved Grain's native Flow extensions into a maintained transcribe.cpp fork, pinned to an immutable source revision and built into the app.
+            - Removed Grain Space while retaining shared embedding settings.
+
+            Known issue: Onboarding lacks minimize, maximize, and close controls; it also needs scrolling and better centering. These are planned for the next release.
           # NSIS installer only (matches tauri.conf.json windows.nsis).
           args: "--bundles nsis"
+
+      - name: Verify staged native runtime contract and CPU fallback
+        shell: pwsh
+        run: python scripts/transcribe_fork.py --runtime-dir src-tauri/transcribe-libs
