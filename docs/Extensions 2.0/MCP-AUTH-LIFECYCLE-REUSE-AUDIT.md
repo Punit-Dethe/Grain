@@ -1,5 +1,7 @@
 # Authentication and lifecycle: reuse review, 3 October 2026
 
+**Subsequent B5b checkpoint, 3 October:** native standard OAuth now uses the selected exact `oauth2` 5.0.0 library. The separate [native reuse audit](NATIVE-OAUTH-REUSE-AUDIT.md) records final-path verification, compatibility corrections, unchanged vault formats and the interrupted-run cleanup exception. This document retains the original B5a research/checkpoint; next units are configured-client issuer ownership/typed recovery and Grain-owned client metadata registration. Check 12 and physical retirement remain Deferred/on hold.
+
 Scope: hosted MCP authentication, credential ownership, connection setup and disposal, plus native OAuth library ownership. Tool selection, calling policy, model budgets and agent frameworks are outside this comparison. Base: `2c4c506a`, branch `extensions/tool-only-retirement`. The unrelated `src/app/bindings.ts` working change is excluded.
 
 ## Decisions and execution order

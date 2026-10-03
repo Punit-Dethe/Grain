@@ -83,7 +83,8 @@ export async function startAuthFixture(root, { wrongAccount = false } = {}) {
         );
         assert.match(query.get("code_challenge"), /^[\w-]{43}$/);
         assert.equal(query.get("scope"), mode.scope);
-        assert.match(query.get("state"), /^[a-f\d]{64}$/);
+        // Treat state as an opaque, sufficiently long URL-safe nonce, not UUID hex.
+        assert.match(query.get("state"), /^[A-Za-z0-9_-]{43,128}$/);
         const redirect = new URL(query.get("redirect_uri"));
         assert.equal(redirect.protocol, "http:");
         assert.equal(redirect.hostname, "127.0.0.1");

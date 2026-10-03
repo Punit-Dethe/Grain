@@ -9,12 +9,16 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, Weak};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use futures_util::StreamExt;
 use grain_sdk::AuthenticationDecl;
+use oauth2::{
+    basic::{BasicClient, BasicTokenResponse},
+    AuthUrl, AuthorizationCode, ClientId, CsrfToken, EndpointNotSet, EndpointSet,
+    PkceCodeChallenge, PkceCodeVerifier, RedirectUrl, RefreshToken, Scope, TokenResponse as _,
+    TokenUrl,
+};
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use tauri::{AppHandle, Manager, WebviewWindow};
 use tauri_plugin_opener::OpenerExt;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -711,30 +715,128 @@ fn check_token_binding(token: &TokenSet, decl: &AuthenticationDecl) -> Result<()
     Ok(())
 }
 
-async fn parse_token_response(
-    response: reqwest::Response,
-) -> Result<(reqwest::StatusCode, TokenResponse), String> {
+// The SDK owns OAuth request/response semantics; this adapter owns transport and
+// validates the raw grant before SDK scope normalization can discard bad spacing.
+// Neither SDK errors nor reqwest diagnostics are formatted: they may hold secrets.
+async fn bounded_oauth_http(
+    request: oauth2::HttpRequest,
+    decl: &AuthenticationDecl,
+    fallback_scopes: &[String],
+) -> Result<oauth2::HttpResponse, std::io::Error> {
+    use std::io::Error;
+    let destination = Url::parse(&request.uri().to_string())
+        .map_err(|_| Error::other("unexpected OAuth token destination"))?;
+    let expected = Url::parse(&decl.token_endpoint)
+        .map_err(|_| Error::other("invalid OAuth token endpoint"))?;
+    if destination != expected || request.method() != "POST" {
+        return Err(Error::other("unexpected OAuth token destination"));
+    }
+    let builder = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(Duration::from_secs(20));
+    #[cfg(feature = "agent-harness")]
+    let builder = crate::grain_agent_harness_auth::scoped_tls(builder, &decl.token_endpoint)
+        .map_err(Error::other)?;
+    let client = builder
+        .build()
+        .map_err(|_| Error::other("OAuth HTTP client unavailable"))?;
+    let (parts, body) = request.into_parts();
+    let body = Zeroizing::new(body);
+    let response = client
+        .post(&decl.token_endpoint)
+        .headers(parts.headers)
+        .body(body.to_vec())
+        .send()
+        .await
+        .map_err(|_| Error::other("OAuth token request failed"))?;
+    if response.status().is_redirection() {
+        return Err(Error::other("token endpoint redirects are not allowed"));
+    }
     if response
         .content_length()
         .is_some_and(|length| length > TOKEN_MAX_BYTES as u64)
     {
-        return Err("token response exceeded 64 KiB".into());
+        return Err(Error::other("token response exceeded 64 KiB"));
     }
     let status = response.status();
     let mut bytes = Zeroizing::new(Vec::new());
     let mut stream = response.bytes_stream();
     while let Some(chunk) = stream.next().await {
-        let chunk = chunk.map_err(|_| "token response could not be read".to_string())?;
+        let chunk = chunk.map_err(|_| Error::other("token response could not be read"))?;
         if bytes.len().saturating_add(chunk.len()) > TOKEN_MAX_BYTES {
-            bytes.zeroize();
-            return Err("token response exceeded 64 KiB".into());
+            return Err(Error::other("token response exceeded 64 KiB"));
         }
         bytes.extend_from_slice(&chunk);
     }
-    let parsed = serde_json::from_slice(&bytes)
-        .map_err(|_| "token endpoint returned an invalid response".to_string());
-    bytes.zeroize();
-    parsed.map(|token| (status, token))
+    let mut token: TokenResponse = serde_json::from_slice(&bytes)
+        .map_err(|_| Error::other("token endpoint returned an invalid response"))?;
+    if !status.is_success() || token.error.is_some() {
+        return Err(Error::other(provider_error(status, token.error.take())));
+    }
+    validated_grant(&token, decl, fallback_scopes).map_err(Error::other)?;
+    // The prior parser accepted JSON irrespective of Content-Type. Keep that
+    // compatibility after strict raw validation; never forward response headers.
+    // The old host accepted any validated 2xx token response. The SDK requires
+    // 200; normalize only after checking the actual status and raw grant above.
+    tauri::http::Response::builder()
+        .status(tauri::http::StatusCode::OK)
+        .header("content-type", "application/json")
+        .body(bytes.to_vec())
+        .map_err(|_| Error::other("OAuth response could not be constructed"))
+}
+
+struct NativeOAuthHttp<'a> {
+    declaration: &'a AuthenticationDecl,
+    fallback_scopes: &'a [String],
+}
+
+impl<'c> oauth2::AsyncHttpClient<'c> for NativeOAuthHttp<'_> {
+    type Error = std::io::Error;
+    type Future = std::pin::Pin<
+        Box<
+            dyn std::future::Future<Output = Result<oauth2::HttpResponse, Self::Error>> + Send + 'c,
+        >,
+    >;
+
+    fn call(&'c self, request: oauth2::HttpRequest) -> Self::Future {
+        Box::pin(bounded_oauth_http(
+            request,
+            self.declaration,
+            self.fallback_scopes,
+        ))
+    }
+}
+
+fn oauth_error(
+    error: oauth2::RequestTokenError<std::io::Error, oauth2::basic::BasicErrorResponse>,
+) -> String {
+    match error {
+        oauth2::RequestTokenError::Request(error) => error.to_string(),
+        oauth2::RequestTokenError::Parse(_, mut body) => {
+            body.zeroize();
+            "token endpoint returned an invalid OAuth response".into()
+        }
+        _ => "token endpoint returned an invalid OAuth response".into(),
+    }
+}
+
+// Keep the host-owned persisted TokenSet unchanged. SDK response objects never
+// cross the extension boundary or become a second credential serialization.
+fn host_token_response(token: BasicTokenResponse) -> TokenResponse {
+    TokenResponse {
+        access_token: Some(token.access_token().secret().to_owned()),
+        refresh_token: token.refresh_token().map(|token| token.secret().to_owned()),
+        token_type: Some("Bearer".into()),
+        expires_in: token.expires_in().map(|duration| duration.as_secs()),
+        scope: token.scopes().map(|scopes| {
+            scopes
+                .iter()
+                .map(|scope| scope.as_str())
+                .collect::<Vec<_>>()
+                .join(" ")
+        }),
+        error: None,
+    }
 }
 
 fn provider_error(status: reqwest::StatusCode, code: Option<String>) -> String {
@@ -830,28 +932,40 @@ pub(crate) async fn connection(
     }
 }
 
+type NativeOAuthClient =
+    BasicClient<EndpointSet, EndpointNotSet, EndpointNotSet, EndpointNotSet, EndpointSet>;
+
+fn oauth_client(decl: &AuthenticationDecl) -> Result<NativeOAuthClient, String> {
+    Ok(BasicClient::new(ClientId::new(decl.client_id.clone()))
+        .set_auth_uri(
+            AuthUrl::new(decl.authorization_endpoint.clone())
+                .map_err(|_| "invalid OAuth authorization endpoint")?,
+        )
+        .set_token_uri(
+            TokenUrl::new(decl.token_endpoint.clone())
+                .map_err(|_| "invalid OAuth token endpoint")?,
+        ))
+}
+
 fn authorize_url(
     decl: &AuthenticationDecl,
     redirect: &str,
     state: &str,
-    challenge: &str,
+    challenge: PkceCodeChallenge,
 ) -> Result<String, String> {
-    let mut url = Url::parse(&decl.authorization_endpoint).map_err(|error| error.to_string())?;
-    {
-        let mut query = url.query_pairs_mut();
-        query
-            .append_pair("response_type", "code")
-            .append_pair("client_id", &decl.client_id)
-            .append_pair("redirect_uri", redirect)
-            .append_pair("scope", &decl.scopes.join(" "))
-            .append_pair("state", state)
-            .append_pair("code_challenge", challenge)
-            .append_pair("code_challenge_method", "S256");
-        for (key, value) in &decl.authorization_parameters {
-            query.append_pair(key, value);
-        }
+    let client = oauth_client(decl)?.set_redirect_uri(
+        RedirectUrl::new(redirect.to_owned()).map_err(|_| "invalid OAuth redirect URI")?,
+    );
+    let mut request = client
+        .authorize_url(|| CsrfToken::new(state.to_owned()))
+        .set_pkce_challenge(challenge);
+    for scope in &decl.scopes {
+        request = request.add_scope(Scope::new(scope.clone()));
     }
-    Ok(url.into())
+    for (key, value) in &decl.authorization_parameters {
+        request = request.add_extra_param(key, value);
+    }
+    Ok(request.url().0.into())
 }
 
 async fn read_callback_request(stream: &mut TcpStream) -> Result<Vec<u8>, String> {
@@ -988,33 +1102,20 @@ async fn exchange(
     redirect: &str,
     verifier: &str,
 ) -> Result<TokenSet, String> {
-    let builder = reqwest::Client::builder()
-        .redirect(reqwest::redirect::Policy::none())
-        .timeout(Duration::from_secs(20));
-    #[cfg(feature = "agent-harness")]
-    let builder = crate::grain_agent_harness_auth::scoped_tls(builder, &decl.token_endpoint)?;
-    let response = builder
-        .build()
-        .map_err(|error| error.to_string())?
-        .post(&decl.token_endpoint)
-        .header(reqwest::header::ACCEPT, "application/json")
-        .form(&[
-            ("grant_type", "authorization_code"),
-            ("code", code),
-            ("client_id", decl.client_id.as_str()),
-            ("redirect_uri", redirect),
-            ("code_verifier", verifier),
-        ])
-        .send()
+    let client = oauth_client(decl)?.set_redirect_uri(
+        RedirectUrl::new(redirect.to_owned()).map_err(|_| "invalid OAuth redirect URI")?,
+    );
+    let http = NativeOAuthHttp {
+        declaration: decl,
+        fallback_scopes: &decl.scopes,
+    };
+    let response = client
+        .exchange_code(AuthorizationCode::new(code.to_owned()))
+        .set_pkce_verifier(PkceCodeVerifier::new(verifier.to_owned()))
+        .request_async(&http)
         .await
-        .map_err(|error| format!("token exchange failed: {error}"))?;
-    if response.status().is_redirection() {
-        return Err("token endpoint redirects are not allowed".into());
-    }
-    let (status, mut token) = parse_token_response(response).await?;
-    if !status.is_success() || token.error.is_some() {
-        return Err(provider_error(status, token.error.take()));
-    }
+        .map_err(oauth_error)?;
+    let mut token = host_token_response(response);
     let (scopes, expires_at) = validated_grant(&token, decl, &decl.scopes)?;
     Ok(TokenSet {
         authentication_fingerprint: Some(grain_core::extensions::authentication_fingerprint(decl)),
@@ -1042,31 +1143,18 @@ async fn refresh(decl: &AuthenticationDecl, previous: &TokenSet) -> Result<Token
         .ok_or_else(|| {
             "authentication has expired; reconnect it in extension settings".to_string()
         })?;
-    let builder = reqwest::Client::builder()
-        .redirect(reqwest::redirect::Policy::none())
-        .timeout(Duration::from_secs(20));
-    #[cfg(feature = "agent-harness")]
-    let builder = crate::grain_agent_harness_auth::scoped_tls(builder, &decl.token_endpoint)?;
-    let response = builder
-        .build()
-        .map_err(|error| error.to_string())?
-        .post(&decl.token_endpoint)
-        .header(reqwest::header::ACCEPT, "application/json")
-        .form(&[
-            ("grant_type", "refresh_token"),
-            ("refresh_token", refresh_token),
-            ("client_id", decl.client_id.as_str()),
-        ])
-        .send()
+    let client = oauth_client(decl)?;
+    let credential = RefreshToken::new(refresh_token.to_owned());
+    let http = NativeOAuthHttp {
+        declaration: decl,
+        fallback_scopes: &previous.scopes,
+    };
+    let response = client
+        .exchange_refresh_token(&credential)
+        .request_async(&http)
         .await
-        .map_err(|error| format!("token refresh failed: {error}"))?;
-    if response.status().is_redirection() {
-        return Err("token endpoint redirects are not allowed".into());
-    }
-    let (status, mut token) = parse_token_response(response).await?;
-    if !status.is_success() || token.error.is_some() {
-        return Err(provider_error(status, token.error.take()));
-    }
+        .map_err(oauth_error)?;
+    let mut token = host_token_response(response);
     let (scopes, expires_at) = validated_grant(&token, decl, &previous.scopes)?;
     Ok(TokenSet {
         authentication_fingerprint: Some(grain_core::extensions::authentication_fingerprint(decl)),
@@ -1139,18 +1227,10 @@ async fn connect_attempt(
         .port();
     let path = format!("/grain/oauth/{}", uuid::Uuid::new_v4());
     let redirect = format!("http://127.0.0.1:{port}{path}");
-    let state = format!(
-        "{}{}",
-        uuid::Uuid::new_v4().simple(),
-        uuid::Uuid::new_v4().simple()
-    );
-    let verifier = Zeroizing::new(format!(
-        "{}{}",
-        uuid::Uuid::new_v4().simple(),
-        uuid::Uuid::new_v4().simple()
-    ));
-    let challenge = URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes()));
-    let url = authorize_url(decl, &redirect, &state, &challenge)?;
+    let state = CsrfToken::new_random_len(32).secret().to_owned();
+    let (challenge, verifier) = PkceCodeChallenge::new_random_sha256();
+    let verifier = Zeroizing::new(verifier.secret().to_owned());
+    let url = authorize_url(decl, &redirect, &state, challenge)?;
     prepared.check(id)?;
     owner.publish(|| Ok(()))?;
     #[cfg(feature = "agent-harness")]
@@ -1956,13 +2036,74 @@ mod tests {
                 let (mut stream, _) = listener.accept().await.unwrap();
                 let request = read_callback_request(&mut stream).await.unwrap();
                 assert!(request.starts_with(b"POST /token HTTP/1.1"));
+                let headers_end = request
+                    .windows(4)
+                    .position(|bytes| bytes == b"\r\n\r\n")
+                    .unwrap()
+                    + 4;
+                let headers = std::str::from_utf8(&request[..headers_end])
+                    .unwrap()
+                    .to_owned();
+                let length: usize = headers
+                    .lines()
+                    .find_map(|line| {
+                        let (name, value) = line.split_once(':')?;
+                        name.eq_ignore_ascii_case("content-length")
+                            .then(|| value.trim().parse().unwrap())
+                    })
+                    .unwrap();
+                assert!(length < CALLBACK_MAX_BYTES);
+                let mut request = request;
+                while request.len() < headers_end + length {
+                    let mut chunk = [0; 1024];
+                    let read = stream.read(&mut chunk).await.unwrap();
+                    assert!(read > 0);
+                    request.extend_from_slice(&chunk[..read]);
+                    assert!(request.len() <= CALLBACK_MAX_BYTES);
+                }
+                let form_url = Url::parse(&format!(
+                    "http://fixture/?{}",
+                    std::str::from_utf8(&request[headers_end..headers_end + length]).unwrap()
+                ))
+                .unwrap();
+                let form: std::collections::BTreeMap<_, _> =
+                    form_url.query_pairs().into_owned().collect();
+                assert_eq!(form.get("client_id").map(String::as_str), Some("client"));
+                assert!(!headers.to_ascii_lowercase().contains("authorization:"));
+                if index == 0 {
+                    assert_eq!(form.len(), 5);
+                    assert_eq!(
+                        form.get("grant_type").map(String::as_str),
+                        Some("authorization_code")
+                    );
+                    assert_eq!(form.get("code").map(String::as_str), Some("code +/&é"));
+                    assert_eq!(
+                        form.get("code_verifier").map(String::as_str),
+                        Some("verifier")
+                    );
+                    assert_eq!(
+                        form.get("redirect_uri").map(String::as_str),
+                        Some("http://127.0.0.1/cb")
+                    );
+                } else {
+                    assert_eq!(form.len(), 3);
+                    assert_eq!(
+                        form.get("grant_type").map(String::as_str),
+                        Some("refresh_token")
+                    );
+                    assert_eq!(
+                        form.get("refresh_token").map(String::as_str),
+                        Some("fixture-refresh")
+                    );
+                }
                 let body = if index == 0 {
                     r#"{"access_token":"fixture-access","token_type":"Bearer","refresh_token":"fixture-refresh","expires_in":3600,"scope":"read extra"}"#
                 } else {
                     r#"{"access_token":"fixture-refreshed","token_type":"Bearer","expires_in":3600}"#
                 };
+                let status = if index == 0 { "201 Created" } else { "200 OK" };
                 let response = format!(
-                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    "HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
                     body.len()
                 );
                 stream.write_all(response.as_bytes()).await.unwrap();
@@ -1970,7 +2111,7 @@ mod tests {
         });
         let mut declaration = test_declaration();
         declaration.token_endpoint = format!("http://{address}/token");
-        let token = exchange(&declaration, "code", "http://127.0.0.1/cb", "verifier")
+        let token = exchange(&declaration, "code +/&é", "http://127.0.0.1/cb", "verifier")
             .await
             .unwrap();
         assert!(check_token_binding(&token, &declaration).is_ok());
@@ -1982,6 +2123,73 @@ mod tests {
         assert!(check_token_binding(&token, &declaration).is_ok());
         assert_eq!(token.refresh_token.as_deref(), Some("fixture-refresh"));
         server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn sdk_transport_refuses_redirects_and_raw_budgets_without_secret_diagnostics() {
+        for mode in ["redirect", "declared-size", "chunked-size", "malformed"] {
+            let listener = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
+                .await
+                .unwrap();
+            let address = listener.local_addr().unwrap();
+            let server = tokio::spawn(async move {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                read_callback_request(&mut stream).await.unwrap();
+                let response = match mode {
+                    "redirect" => format!("HTTP/1.1 302 Found\r\nLocation: http://{address}/leak?secret=fixture-secret\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"),
+                    "declared-size" => format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", TOKEN_MAX_BYTES + 1),
+                    "chunked-size" => format!("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n{:x}\r\n{}\r\n0\r\n\r\n", TOKEN_MAX_BYTES + 1, "x".repeat(TOKEN_MAX_BYTES + 1)),
+                    _ => "HTTP/1.1 200 OK\r\nContent-Length: 14\r\nConnection: close\r\n\r\nfixture-secret".into(),
+                };
+                let _ = stream.write_all(response.as_bytes()).await;
+                drop(stream);
+                // No automatic redirect/retry request may reach the owned peer.
+                assert!(
+                    tokio::time::timeout(Duration::from_millis(100), listener.accept())
+                        .await
+                        .is_err()
+                );
+            });
+            let mut declaration = test_declaration();
+            declaration.token_endpoint = format!("http://{address}/token?secret=fixture-secret");
+            let error = exchange(
+                &declaration,
+                "fixture-secret",
+                "http://127.0.0.1/cb",
+                "fixture-secret",
+            )
+            .await
+            .err()
+            .unwrap();
+            assert!(!error.contains("fixture-secret"), "{mode}");
+            assert!(!error.contains(&address.to_string()), "{mode}");
+            assert!(
+                error.contains(match mode {
+                    "redirect" => "redirects",
+                    "declared-size" | "chunked-size" => "64 KiB",
+                    _ => "invalid response",
+                }),
+                "{mode}: {error}"
+            );
+            server.await.unwrap();
+        }
+        let listener = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
+            .await
+            .unwrap();
+        let address = listener.local_addr().unwrap();
+        drop(listener);
+        let mut declaration = test_declaration();
+        declaration.token_endpoint = format!("http://{address}/token?secret=fixture-secret");
+        let error = exchange(
+            &declaration,
+            "fixture-secret",
+            "http://127.0.0.1/cb",
+            "fixture-secret",
+        )
+        .await
+        .err()
+        .unwrap();
+        assert_eq!(error, "OAuth token request failed");
     }
 
     fn account_token() -> TokenSet {
@@ -2400,7 +2608,15 @@ mod tests {
             authorization_parameters: Default::default(),
         };
         let url = Url::parse(
-            &authorize_url(&decl, "http://127.0.0.1:1/cb", "state", "challenge").unwrap(),
+            &authorize_url(
+                &decl,
+                "http://127.0.0.1:1/cb",
+                "state",
+                PkceCodeChallenge::from_code_verifier_sha256(&PkceCodeVerifier::new(
+                    "a".repeat(43),
+                )),
+            )
+            .unwrap(),
         )
         .unwrap();
         let query = url
@@ -2418,7 +2634,8 @@ mod tests {
     fn pkce_s256_matches_rfc_7636_vector() {
         let verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
         assert_eq!(
-            URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes())),
+            PkceCodeChallenge::from_code_verifier_sha256(&PkceCodeVerifier::new(verifier.into()))
+                .as_str(),
             "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"
         );
     }
