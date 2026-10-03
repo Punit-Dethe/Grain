@@ -205,6 +205,9 @@ fn requires_account(item: &CatalogProvider) -> bool {
 }
 
 fn provider_endpoint(item: &CatalogProvider) -> Result<std::borrow::Cow<'static, str>, String> {
+    // Common author metadata admission, without retaining clients or identities.
+    // Owned harness URL overrides still pass their separate marker/HTTPS guards.
+    item.descriptor().map_err(|error| error.to_string())?;
     #[cfg(feature = "agent-harness")]
     if item.id == crate::grain_agent_harness_mcp::LINEAR_PROVIDER_ID {
         return crate::grain_agent_harness_mcp::linear_endpoint().map(Into::into);
@@ -221,6 +224,32 @@ fn provider_endpoint(item: &CatalogProvider) -> Result<std::borrow::Cow<'static,
         return crate::grain_agent_harness_mcp::endpoint().map(Into::into);
     }
     Ok(item.endpoint.into())
+}
+
+impl CatalogProvider {
+    fn descriptor(
+        &self,
+    ) -> Result<grain_core::mcp::ValidatedDescriptor, grain_core::mcp::ContractError> {
+        use grain_sdk::mcp::{
+            McpAuthentication, McpDescriptor, McpTransport, MCP_DESCRIPTOR_SCHEMA,
+        };
+        grain_core::mcp::ValidatedDescriptor::validate(McpDescriptor {
+            schema: MCP_DESCRIPTOR_SCHEMA,
+            id: format!("mcp.{}", self.id),
+            name: self.name.into(),
+            description: self.description.into(),
+            version: "1.0.0".into(),
+            grain_api: format!("^{}", grain_sdk::GRAIN_API_VERSION),
+            transport: McpTransport::StreamableHttp {
+                url: self.endpoint.into(),
+            },
+            authentication: if requires_account(self) {
+                McpAuthentication::OAuth {}
+            } else {
+                McpAuthentication::None {}
+            },
+        })
+    }
 }
 
 const CATALOG: &[CatalogProvider] = &[
@@ -418,7 +447,7 @@ struct VaultCredentialStore {
 impl VaultCredentialStore {
     fn new(provider_id: &str) -> Self {
         Self {
-            account: provider_id.to_string(),
+            account: catalog_account(provider_id),
             ticket: provider_control(provider_id).ticket(),
             operation: None,
         }
@@ -430,11 +459,20 @@ impl VaultCredentialStore {
         operation: &session::Lease,
     ) -> Self {
         Self {
-            account: provider_id.into(),
+            account: catalog_account(provider_id),
             ticket: ticket.clone(),
             operation: Some(operation.clone()),
         }
     }
+}
+
+fn catalog_account(provider_id: &str) -> String {
+    // All callers already resolve a fixed catalog provider before accessing its
+    // control/vault. This assertion enforces that internal catalog invariant.
+    grain_core::mcp::ConnectionIdentity::catalog(provider_id)
+        .expect("catalog provider identities must be canonical")
+        .vault_account()
+        .into_owned()
 }
 
 #[async_trait]
@@ -2133,6 +2171,46 @@ pub(crate) fn directory(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn catalog_descriptors_preserve_endpoints_auth_and_deployed_vault_keys() {
+        use grain_sdk::mcp::McpAuthentication;
+        let mut keys = std::collections::BTreeSet::new();
+        for item in CATALOG {
+            let descriptor = item.descriptor().unwrap();
+            assert_eq!(descriptor.endpoint(), item.endpoint);
+            assert_eq!(descriptor.descriptor().id, format!("mcp.{}", item.id));
+            assert_eq!(
+                descriptor.descriptor().authentication,
+                if requires_account(item) {
+                    McpAuthentication::OAuth {}
+                } else {
+                    McpAuthentication::None {}
+                }
+            );
+            assert_eq!(catalog_account(item.id), item.id);
+            assert!(keys.insert(catalog_account(item.id)));
+            let bytes = serde_json::to_vec(descriptor.descriptor()).unwrap();
+            assert_eq!(
+                grain_core::mcp::ValidatedDescriptor::parse(&bytes).unwrap(),
+                descriptor
+            );
+        }
+        assert_eq!(production_catalog().count(), 6);
+    }
+
+    #[test]
+    fn user_supplied_provider_ids_are_resolved_before_identity_construction() {
+        for id in [
+            "unknown",
+            "Linear",
+            "linear:work",
+            "",
+            "https://mcp.example.com",
+        ] {
+            assert!(provider(id).is_err());
+        }
+    }
 
     #[test]
     fn metadata_registration_requires_both_a_hosted_identity_and_boolean_support() {

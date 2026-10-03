@@ -25,6 +25,7 @@ pub mod error;
 pub mod event;
 pub mod flagged;
 pub mod manifest;
+pub mod mcp;
 pub mod pill_skin;
 pub mod protocol;
 pub mod settings_schema;

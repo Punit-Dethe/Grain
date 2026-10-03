@@ -1,5 +1,19 @@
 # Grain Agent acceptance harness
 
+**E1b descriptor/host identity checks:** [Contract, audit and runtime evidence](../../docs/Extensions%202.0/MCP-DESCRIPTOR-IDENTITY-AUDIT.md). This is pure metadata admission and the existing catalog bridge, not custom MCP import or a second harness. Use:
+
+```powershell
+cargo test --locked -p grain-core mcp::
+node tests/agent-harness/production-tests.mjs --group mcp
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/agent-harness/build.ps1
+node tests/agent-harness/run.mjs --suite mcp-foundation
+node tests/agent-harness/run.mjs --scenario mcp.auth-provider-independence
+# Expected Fail/exit 1 at wrong-account oracle; cleanup must Pass:
+node tests/agent-harness/run.mjs --scenario mcp.auth-provider-independence --fault wrong-mcp-peer-account
+```
+
+The pure Rust matrices reject unknown/duplicate/secret/host-owned fields, unsupported profiles, oversized metadata, unsafe endpoint forms and identity collisions. They create no client, account, listener or background service. The real-app suite independently checks the existing SDK/account/lifecycle paths; public-looking URL syntax alone never proves DNS/network admission. New configured/store identity namespaces are not yet wired to runtime/storage/import. Existing catalog grant, client-secret and registration keys stay unchanged. Keep the source tests; ignored logs, reports and read-only inspectors are disposable evidence. Inventory remains **92 IDs / 77 self-contained / 73 Node self-tests**; no new executable scenario or manual account assignment was needed.
+
 **E1a public author contract accepted:** [Contract, audit and limitations](../../docs/Extensions%202.0/NATIVE-AUTHOR-CONTRACT-AUDIT.md). Build first, then run serially:
 
 ```powershell
@@ -7,7 +21,7 @@ node tests/agent-harness/author-contract.mjs
 node tests/agent-harness/run.mjs --suite native-foundation
 ```
 
-The first command verifies the stamped CLI, generates an owned project, compiles its unmodified example and supported API/15 negative cases, proves the compiler refuses an unguarded negative, and checks the generated hello bundle. It uses installed TypeScript/esbuild without a network install; reports and generated projects remain under `.runs/author-*`. This is non-visual contract evidence, never a substitute application. The second command runs three real Grain cases: seven named result/context modes, typed arguments/stale approval, and migration/restarts. The new result case preserves exact dispatch/pending-call and honest unsupported-result checks. The existing reply-failure oracle also detects deliberate error-to-success corruption. No account approval or new human batch is required. E1 is partially complete; custom MCP identity/configuration is next.
+The first command verifies the stamped CLI, generates an owned project, compiles its unmodified example and supported API/15 negative cases, proves the compiler refuses an unguarded negative, and checks the generated hello bundle. It uses installed TypeScript/esbuild without a network install; reports and generated projects remain under `.runs/author-*`. This is non-visual contract evidence, never a substitute application. The second command runs three real Grain cases: seven named result/context modes, typed arguments/stale approval, and migration/restarts. The new result case preserves exact dispatch/pending-call and honest unsupported-result checks. The existing reply-failure oracle also detects deliberate error-to-success corruption. No account approval or new human batch is required. E1 is partially complete; custom MCP runtime/import remains E2 work under the identity boundary above.
 
 **Client metadata integration verified; production activation pending:** [Focused audit](../../docs/Extensions%202.0/MCP-CLIENT-METADATA-AUDIT.md) records the final thirteen-case auth batch, fresh metadata repeat, strict fault, fixed-port regression repair and scope limits. The maintained `mcp.auth-client-metadata` uses actual SDK/Tauri/vault/Agent reads and an owned HTTPS document resolved by the controlled issuer. It proves metadata selection with/without DCR, fallback/explicit credentials, separate wrong-ID/redirect/503 refusal, callback conflict/cancel and restart reads. It does not certify public hosting: the user confirms no official Grain website and production identity remains absent. Build once, run serially:
 
