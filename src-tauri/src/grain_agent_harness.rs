@@ -271,10 +271,32 @@ pub fn configure(app: &AppHandle) -> Result<(), String> {
     settings.agent_quick_enabled = false;
     settings.agent_panel_position = crate::settings::AgentPanelPosition::Center;
     settings.extension_developer_mode = true;
+    // Preserve only exact anonymous records belonging to this isolated peer.
+    // A prefix alone would also retain unrelated/custom remote destinations.
+    let configured_keys: Vec<String> = if config().marker.mcp_port.is_some() {
+        grain_core::mcp_connections::ConnectionRegistry::load(&context.data_dir)
+            .and_then(|registry| registry.list())
+            // Corrupt metadata must remain preserved and command-visible; it
+            // cannot authorize enablement or abort unrelated Agent startup.
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|record| {
+                record.definition().url == crate::grain_agent_harness_mcp::CONFIGURED_ENDPOINT
+                    && matches!(
+                        record.definition().authentication,
+                        grain_sdk::mcp::McpAuthentication::None {}
+                    )
+            })
+            .map(|record| record.identity().vault_account().into_owned())
+            .collect()
+    } else {
+        Vec::new()
+    };
     // Preserve only this run's explicitly enabled peer across real restarts.
     // Ordinary provider entries remain excluded from the isolated host.
     settings.mcp_enabled_providers.retain(|id| {
-        (live_linear_enabled() && id == crate::grain_agent_harness_mcp::LINEAR_PROVIDER_ID)
+        configured_keys.contains(id)
+            || (live_linear_enabled() && id == crate::grain_agent_harness_mcp::LINEAR_PROVIDER_ID)
             || ((config().marker.mcp_port.is_some()
                 || live_deepwiki_enabled()
                 || live_huggingface_enabled())
@@ -588,6 +610,8 @@ pub enum Instruction {
     McpWorkflow,
     NativeDirectory,
     McpRead,
+    McpConfiguredRead,
+    McpConfiguredUnknown,
     McpExcluded,
     McpPreview,
     McpUnknown,
@@ -651,6 +675,8 @@ pub async fn agent_harness_submit(
         Instruction::McpWorkflow => "Harness request: mcp_workflow",
         Instruction::NativeDirectory => "Harness request: native_directory",
         Instruction::McpRead => "Harness request: mcp_read",
+        Instruction::McpConfiguredRead => "Harness request: mcp_configured_read",
+        Instruction::McpConfiguredUnknown => "Harness request: mcp_configured_unknown",
         Instruction::McpExcluded => "Harness request: mcp_excluded",
         Instruction::McpPreview => "Harness request: mcp_preview",
         Instruction::McpUnknown => "Harness request: mcp_unknown",

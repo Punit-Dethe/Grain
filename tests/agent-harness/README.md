@@ -1,5 +1,19 @@
 # Grain Agent acceptance harness
 
+**E2d configured runtime checkpoint:** [Implementation, audit and evidence](../../docs/Extensions%202.0/CUSTOM-MCP-RUNTIME-AUDIT.md). `mcp-configured-runtime` runs three real-app anonymous-server cases: exact enable/restart and modern/legacy JSON/SSE execution, pending approval ownership, and held-call mutation/cancellation/recovery. OAuth stays inactive; no user credentials or browser sign-in are needed. `mcp-connection-checkpoint` runs all six configured cases, all 23 catalogue transport/OAuth cases and both smoke cases in one host, retaining **31 individual verdicts** and original deadlines. Keep all runner/source inputs fixed until teardown; even a help edit invalidates the run identity. Documentation is outside the runner fingerprint. Inventory **100 IDs / 85 self-contained / 78 Node self-tests**. Existing broader suite/release triggers remain.
+
+```powershell
+node tests/agent-harness/production-tests.mjs --group mcp
+cargo test --locked -p grain-core mcp_connections::
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/agent-harness/build.ps1
+node tests/agent-harness/run.mjs --suite mcp-connection-checkpoint
+# Expected exit 1 at owner receipt assertion, cleanup Pass:
+node tests/agent-harness/run.mjs --scenario mcp.configured-execution --fault wrong-configured-owner
+node tests/agent-harness/run.mjs --suite mcp-configured-runtime
+```
+
+Compile and run backend checks before actual-app tests; finish owned cleanup before another build. Keep the configured cases, finite instructions, negative oracle and selector as regression infrastructure. Generated profiles/TLS keys/logs/read-only inspectors in `.runs/` are disposable evidence. No second runtime or alternate UI was added. Next configured OAuth requires exact vault ownership and retired-account disposal before activation. Older checkpoints below record their original scopes.
+
 **Custom MCP management checkpoint:** [Implementation, audit and scope](../../docs/Extensions%202.0/CUSTOM-MCP-HOST-MANAGEMENT-AUDIT.md). `mcp-configured` runs three separate real-app cases in one stamped host: inactive imports and exact stale/concurrent ownership; Developer Mode/actual Agent-window restrictions and strict nonsecret JSON; external/corrupt-file refusal, repair/restart, large string revisions and 32-record bounds. These are metadata checks, not custom authentication/tool-call certification. No account or manual browser step is required. The negative fault skips owned deletion and must exit 1 at its exact stage. Keep these maintained cases; generated profiles, logs and read-only inspectors are disposable evidence.
 
 ```powershell

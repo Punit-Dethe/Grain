@@ -1471,6 +1471,7 @@ fn command_bindings() -> Builder<tauri::Wry> {
             grain_mcp::connections::mcp_connection_import,
             grain_mcp::connections::mcp_connection_replace,
             grain_mcp::connections::mcp_connection_remove,
+            grain_mcp::connections::mcp_connection_set_enabled,
             grain_commands::extension_take_slot,
             grain_commands::extension_settings_schema,
             grain_commands::extension_settings_sections,

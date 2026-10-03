@@ -458,8 +458,19 @@ export const EXTENSION_CONTRACT_CHECKPOINT = [
 ];
 
 export function selectScenarios(suite) {
+  if (suite === "mcp-connection-checkpoint")
+    return [
+      "mcp-configured",
+      "mcp-configured-runtime",
+      "mcp-foundation",
+      "smoke",
+    ].flatMap(selectScenarios);
   if (suite === "mcp-configured")
     return scenarios.filter((scenario) => scenario.suite === "mcp-configured");
+  if (suite === "mcp-configured-runtime")
+    return scenarios.filter(
+      (scenario) => scenario.suite === "mcp-configured-runtime",
+    );
   if (suite === "extension-contract")
     return EXTENSION_CONTRACT_CHECKPOINT.map((id) => {
       const scenario = scenarios.find((item) => item.id === id);
@@ -777,5 +788,26 @@ for (const [id, description] of [
     id: `mcp.configured-${id}`,
     suite: "mcp-configured",
     checks: [62],
+    description,
+  });
+
+for (const [id, description] of [
+  [
+    "execution",
+    "Direct configured anonymous server enablement, actual modern/legacy JSON/SSE Agent reads, restart, destination/account isolation and OAuth activation refusal",
+  ],
+  [
+    "approval-ownership",
+    "Exact configured instance/revision approvals refuse edits, disable/remove/developer-off; unchanged saves and peer removal preserve the approved owner",
+  ],
+  [
+    "active-cancellation",
+    "Four real held configured calls cancel truthfully, dispose sessions, discard late replies and recover; unchanged active metadata saves do not cancel",
+  ],
+])
+  scenarios.push({
+    id: `mcp.configured-${id}`,
+    suite: "mcp-configured-runtime",
+    checks: [63],
     description,
   });

@@ -33,6 +33,7 @@ import { startMcpFixture } from "./mcp-fixture.mjs";
 import { mcpHandlers } from "./mcp.mjs";
 import { mcpAuthHandlers } from "./mcp-auth.mjs";
 import { configuredMcpHandlers } from "./mcp-configured.mjs";
+import { configuredRuntimeHandlers } from "./mcp-configured-runtime.mjs";
 import {
   mcpIndependenceHandlers,
   MCP_INDEPENDENCE_IDS,
@@ -96,7 +97,7 @@ for (let i = 2; i < process.argv.length; i++) {
 }
 if (options.help) {
   console.log(
-    "node tests/agent-harness/run.mjs [--list] [--suite smoke|lifecycle|idle|agent-workflow|agent-live|agent-interruption|agent-interruption-live|native-failures|native-foundation|native-auth|native-auth-schedules|mcp|mcp-auth|mcp-configured|mcp-independence|mcp-refresh|mcp-foundation|mcp-live|mcp-hf-live|mcp-linear-preflight|mcp-linear-guards|mcp-linear-sign-in|mcp-linear-contracts|native-installation|registry-recovery|store|all] [--scenario ID] [--binary path] [--output directory] [--focus-click] [--live-configured] [--linear-sign-in]\nWindows real Agent/WebView2 acceptance. Build first with tests/agent-harness/build.ps1. Scripted suites need no model key. agent-live and agent-interruption-live require explicit --live-configured and uses only the selected ordinary Grain model with disposable tool objects; it is excluded from all. native-auth, Agent workflow/interruption suites and MCP fixtures require Python cryptography for owned TLS. mcp-foundation runs twenty-three controlled transport/OAuth cases in one host; mcp-configured runs three inactive host metadata management cases without account sign-in; mcp-independence selects its two independent-provider cases; mcp-refresh selects its two actual-expiry/recovery cases. mcp-live is opt-in public DeepWiki acceptance; mcp-hf-live is a fixed anonymous public Hugging Face nested text read. Both are excluded from all. mcp-linear-preflight creates actual read-only Linear SDK consent and cancels without opening a browser; excluded from all. mcp-linear-guards verifies browser/grant controls without opening a browser. mcp-linear-sign-in requires --linear-sign-in and an interactive terminal; two human browser steps, no tool execution. mcp-linear-contracts uses the same opt-in with one sign-in and structural contract inspection/restart, no tools execute. These suites are excluded from all. --focus-click is confined to agent.reopen-escape.",
+    "node tests/agent-harness/run.mjs [--list] [--suite smoke|lifecycle|idle|agent-workflow|agent-live|agent-interruption|agent-interruption-live|native-failures|native-foundation|native-auth|native-auth-schedules|mcp|mcp-auth|mcp-configured|mcp-configured-runtime|mcp-connection-checkpoint|mcp-independence|mcp-refresh|mcp-foundation|mcp-live|mcp-hf-live|mcp-linear-preflight|mcp-linear-guards|mcp-linear-sign-in|mcp-linear-contracts|native-installation|registry-recovery|store|all] [--scenario ID] [--binary path] [--output directory] [--focus-click] [--live-configured] [--linear-sign-in]\nWindows real Agent/WebView2 acceptance. Build first with tests/agent-harness/build.ps1. Scripted suites need no model key. agent-live and agent-interruption-live require explicit --live-configured and uses only the selected ordinary Grain model with disposable tool objects; it is excluded from all. native-auth, Agent workflow/interruption suites and MCP fixtures require Python cryptography for owned TLS. mcp-foundation runs twenty-three controlled transport/OAuth cases in one host; mcp-configured runs three host metadata management cases without account sign-in; mcp-configured-runtime runs three anonymous custom-server execution/ownership/cancellation cases; mcp-connection-checkpoint runs all six configured cases, all twenty-three foundation cases and both smoke cases in one host, with separate verdicts and original deadlines; mcp-independence selects its two independent-provider cases; mcp-refresh selects its two actual-expiry/recovery cases. mcp-live is opt-in public DeepWiki acceptance; mcp-hf-live is a fixed anonymous public Hugging Face nested text read. Both are excluded from all. mcp-linear-preflight creates actual read-only Linear SDK consent and cancels without opening a browser; excluded from all. mcp-linear-guards verifies browser/grant controls without opening a browser. mcp-linear-sign-in requires --linear-sign-in and an interactive terminal; two human browser steps, no tool execution. mcp-linear-contracts uses the same opt-in with one sign-in and structural contract inspection/restart, no tools execute. These suites are excluded from all. --focus-click is confined to agent.reopen-escape.",
   );
   process.exit(0);
 }
@@ -191,6 +192,7 @@ if (
     "missing-mcp-cimd",
     "missing-mcp-destination-refusal",
     "missing-configured-cleanup",
+    "wrong-configured-owner",
     "wrong-mcp-refresh-account",
     "skip-fixed-port-conflict",
     "abandoned-mcp-credential",
@@ -251,6 +253,7 @@ for (const [fault, scenario] of [
   ["missing-mcp-cimd", "mcp.auth-client-metadata"],
   ["missing-mcp-destination-refusal", "mcp.destination-boundary"],
   ["missing-configured-cleanup", "mcp.configured-storage"],
+  ["wrong-configured-owner", "mcp.configured-execution"],
   ["wrong-mcp-refresh-account", "mcp.auth-refresh-recovery"],
   ["skip-fixed-port-conflict", "mcp.auth-fixed-port-conflict"],
   ["lost-mcp-account", "mcp.auth-close-cancellation"],
@@ -1406,6 +1409,18 @@ const configuredMcpSuite = configuredMcpHandlers({
   fault: options.fault,
 });
 Object.assign(handlers, configuredMcpSuite.handlers);
+const configuredRuntimeSuite = configuredRuntimeHandlers({
+  invoke,
+  status,
+  request,
+  activate,
+  waitFor,
+  closePanel,
+  restartHost,
+  provider: () => mcpProvider,
+  model: () => model,
+});
+Object.assign(handlers, configuredRuntimeSuite.handlers);
 const authenticationSuite = authenticationHandlers({
   fault: options.fault,
   root,
@@ -1859,6 +1874,7 @@ try {
   for (const [suite, purpose] of [
     ["native-auth", "native"],
     ["mcp", "mcp"],
+    ["mcp-configured-runtime", "mcp"],
     ["mcp-auth", "mcp"],
     ["mcp-conformance", "mcp"],
     ["agent-workflow", "mcp"],
@@ -1892,6 +1908,7 @@ try {
     selected.some((scenario) =>
       [
         "mcp",
+        "mcp-configured-runtime",
         "mcp-auth",
         "agent-workflow",
         "agent-live",
@@ -2043,6 +2060,7 @@ try {
         scenario.suite !== "mcp-linear-contracts" &&
         scenario.suite !== "mcp-auth" &&
         scenario.suite !== "mcp-configured" &&
+        scenario.suite !== "mcp-configured-runtime" &&
         !["native-installation", "registry-recovery", "store"].includes(
           scenario.suite,
         )
@@ -2076,6 +2094,7 @@ try {
         ...registrySuite.takeEvidence(),
         ...foundationSuite.takeEvidence(),
         ...configuredMcpSuite.takeEvidence(),
+        ...configuredRuntimeSuite.takeEvidence(),
         ...authenticationSuite.takeEvidence(),
         ...accountOwnershipSuite.takeEvidence(),
         ...accountSchedules.takeEvidence(),
@@ -2132,6 +2151,7 @@ try {
         ...registrySuite.takeEvidence(),
         ...foundationSuite.takeEvidence(),
         ...configuredMcpSuite.takeEvidence(),
+        ...configuredRuntimeSuite.takeEvidence(),
         ...authenticationSuite.takeEvidence(),
         ...accountOwnershipSuite.takeEvidence(),
         ...accountSchedules.takeEvidence(),

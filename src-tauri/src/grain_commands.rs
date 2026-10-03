@@ -1680,7 +1680,7 @@ pub fn extension_set_developer_mode(
         .ok_or("extensions registry unavailable")?;
     let mut cleanup_error = None;
     if !enabled {
-        crate::grain_mcp::invalidate_all_sessions();
+        crate::grain_mcp::invalidate_all_sessions(&app);
         let ids: Vec<String> = reg.dev_records().into_iter().map(|(id, _)| id).collect();
         for id in ids {
             stop_extension_runtime(&app, &id, "developer mode disabled");

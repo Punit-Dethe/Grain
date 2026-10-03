@@ -228,6 +228,10 @@ export function configuredMcpHandlers(ctx) {
           assert.equal(await readFile(path, "utf8"), before);
         });
         const calls = [
+          [
+            "mcp_connection_set_enabled",
+            { id: saved.id, expectedRevision: saved.revision, enabled: true },
+          ],
           ["mcp_connections_list", {}],
           ["mcp_connection_import", { definitionJson: definition() }],
           [

@@ -86,7 +86,7 @@ const CALLBACK_PATH: &str = "/mcp/oauth/callback";
 // document is deployed and verified against this exact callback inventory.
 const CLIENT_METADATA_URL: Option<&str> = None;
 
-fn client_metadata_url(item: &CatalogProvider) -> Result<Option<String>, String> {
+fn client_metadata_url(item: &Provider<'_>) -> Result<Option<String>, String> {
     #[cfg(feature = "agent-harness")]
     if crate::grain_agent_harness_mcp::ACCOUNT_IDS.contains(&item.id) {
         let endpoint = provider_endpoint(item)?;
@@ -174,31 +174,100 @@ fn provider_control(id: &str) -> std::sync::Arc<session::Control> {
         .clone()
 }
 
-pub(crate) fn invalidate_all_sessions() {
+pub(crate) fn invalidate_all_sessions(app: &AppHandle) {
     for item in CATALOG {
         provider_control(item.id).invalidate();
+    }
+    if let Some(state) = app.try_state::<connections::State>() {
+        state.invalidate_all();
     }
 }
 
 #[derive(Clone, Copy)]
-struct CatalogProvider {
-    id: &'static str,
-    name: &'static str,
-    description: &'static str,
-    endpoint: &'static str,
+struct Provider<'a> {
+    id: &'a str,
+    name: &'a str,
+    description: &'a str,
+    endpoint: &'a str,
     registration: Registration,
-    setup_url: &'static str,
+    setup_url: &'a str,
+}
+
+type CatalogProvider = Provider<'static>;
+
+enum RuntimeProvider {
+    Catalog(&'static CatalogProvider),
+    Configured(Box<connections::RuntimeOwner>, session::Ticket),
+}
+
+impl RuntimeProvider {
+    fn spec(&self) -> Provider<'_> {
+        match self {
+            Self::Catalog(item) => **item,
+            Self::Configured(owner, _) => owner.spec(),
+        }
+    }
+    fn ticket(&self) -> session::Ticket {
+        match self {
+            Self::Catalog(item) => provider_control(item.id).ticket(),
+            Self::Configured(_, ticket) => ticket.clone(),
+        }
+    }
+    fn enabled(&self, app: &AppHandle) -> bool {
+        match self {
+            Self::Configured(owner, _) => owner.enabled(app),
+            Self::Catalog(item) => {
+                let settings = crate::settings::get_settings(app);
+                settings.extension_developer_mode
+                    && settings
+                        .mcp_enabled_providers
+                        .iter()
+                        .any(|id| id == item.id)
+            }
+        }
+    }
+    fn bind(&self, digest: &str) -> String {
+        match self {
+            Self::Catalog(_) => digest.into(),
+            Self::Configured(owner, _) => owner.bind(digest),
+        }
+    }
+    fn unbind<'a>(&self, digest: &'a str) -> Result<&'a str, String> {
+        match self {
+            Self::Catalog(_) => Ok(digest),
+            Self::Configured(owner, _) => owner.unbind(digest),
+        }
+    }
+}
+
+fn runtime_provider(app: &AppHandle, id: &str) -> Result<RuntimeProvider, String> {
+    if let Ok(item) = provider(id) {
+        return Ok(RuntimeProvider::Catalog(item));
+    }
+    let connection_id = id
+        .strip_prefix("configured-")
+        .ok_or("unknown MCP provider")?;
+    let state = app
+        .try_state::<connections::State>()
+        .ok_or("MCP connection storage unavailable")?;
+    state
+        .resolve(app, connection_id)
+        .map(|(owner, ticket)| RuntimeProvider::Configured(Box::new(owner), ticket))
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Registration {
+    Anonymous,
     Dynamic,
     PreRegistered,
     #[cfg(feature = "agent-harness")]
     NoAuthFixture,
 }
 
-fn requires_account(item: &CatalogProvider) -> bool {
+fn requires_account(item: &Provider<'_>) -> bool {
+    if item.registration == Registration::Anonymous {
+        return false;
+    }
     #[cfg(feature = "agent-harness")]
     if item.registration == Registration::NoAuthFixture {
         return false;
@@ -207,10 +276,16 @@ fn requires_account(item: &CatalogProvider) -> bool {
     true
 }
 
-fn provider_endpoint(item: &CatalogProvider) -> Result<std::borrow::Cow<'static, str>, String> {
+fn provider_endpoint<'a>(item: &'a Provider<'_>) -> Result<std::borrow::Cow<'a, str>, String> {
     // Common author metadata admission, without retaining clients or identities.
     // Owned harness URL overrides still pass their separate marker/HTTPS guards.
     item.descriptor().map_err(|error| error.to_string())?;
+    #[cfg(feature = "agent-harness")]
+    if let Some(endpoint) =
+        crate::grain_agent_harness_mcp::configured_endpoint(item.id, item.endpoint)?
+    {
+        return Ok(endpoint.into());
+    }
     #[cfg(feature = "agent-harness")]
     if item.id == crate::grain_agent_harness_mcp::LINEAR_PROVIDER_ID {
         return crate::grain_agent_harness_mcp::linear_endpoint().map(Into::into);
@@ -229,7 +304,7 @@ fn provider_endpoint(item: &CatalogProvider) -> Result<std::borrow::Cow<'static,
     Ok(item.endpoint.into())
 }
 
-impl CatalogProvider {
+impl Provider<'_> {
     fn descriptor(
         &self,
     ) -> Result<grain_core::mcp::ValidatedDescriptor, grain_core::mcp::ContractError> {
@@ -371,7 +446,15 @@ pub struct McpHttpClient(pub reqwest_mcp::Client);
 #[path = "grain_mcp_destination.rs"]
 mod destination;
 
-fn provider_destination_policy(item: &CatalogProvider) -> Result<destination::Policy, String> {
+fn provider_destination_policy(item: &Provider<'_>) -> Result<destination::Policy, String> {
+    #[cfg(feature = "agent-harness")]
+    if let Some(endpoint) =
+        crate::grain_agent_harness_mcp::configured_endpoint(item.id, item.endpoint)?
+    {
+        let url =
+            reqwest_mcp::Url::parse(&endpoint).map_err(|_| "Invalid owned configured endpoint")?;
+        return Ok(destination::Policy::OwnedOrigins(vec![url]));
+    }
     #[cfg(feature = "agent-harness")]
     if crate::grain_agent_harness_mcp::ACCOUNT_IDS.contains(&item.id)
         || item.registration == Registration::NoAuthFixture
@@ -407,7 +490,7 @@ fn provider_destination_policy(item: &CatalogProvider) -> Result<destination::Po
 
 async fn new_authorization_manager(
     http: reqwest_mcp::Client,
-    item: &CatalogProvider,
+    item: &Provider<'_>,
 ) -> Result<AuthorizationManager, AuthError> {
     let endpoint = provider_endpoint(item).map_err(AuthError::InternalError)?;
     let policy = provider_destination_policy(item).map_err(AuthError::InternalError)?;
@@ -422,7 +505,7 @@ async fn new_authorization_manager(
 }
 
 fn validate_oauth_destinations(
-    item: &CatalogProvider,
+    item: &Provider<'_>,
     metadata: &AuthorizationMetadata,
 ) -> Result<(), String> {
     let policy = provider_destination_policy(item)?;
@@ -438,7 +521,11 @@ fn validate_oauth_destinations(
     Ok(())
 }
 
-fn provider_http(app: &AppHandle, item: &CatalogProvider) -> Result<reqwest_mcp::Client, String> {
+fn provider_http(app: &AppHandle, item: &Provider<'_>) -> Result<reqwest_mcp::Client, String> {
+    #[cfg(feature = "agent-harness")]
+    if crate::grain_agent_harness_mcp::configured_endpoint(item.id, item.endpoint)?.is_some() {
+        return crate::grain_agent_harness_mcp::client().map(|(_, client)| client);
+    }
     #[cfg(feature = "agent-harness")]
     if crate::grain_agent_harness_mcp::ACCOUNT_IDS.contains(&item.id) {
         provider_endpoint(item)?;
@@ -1304,7 +1391,7 @@ pub async fn mcp_connect_provider(
 async fn connect_oauth(
     app: &AppHandle,
     id: &str,
-    item: &CatalogProvider,
+    item: &Provider<'_>,
     ticket: &session::Ticket,
 ) -> Result<(), String> {
     let _operation = ticket.acquire().await?;
@@ -1511,7 +1598,7 @@ fn hosted_lifecycle() -> ClientLifecycleMode {
 
 async fn authorization_manager(
     http: reqwest_mcp::Client,
-    item: &CatalogProvider,
+    item: &Provider<'_>,
     app: &AppHandle,
     ticket: &session::Ticket,
     operation: &session::Lease,
@@ -1590,16 +1677,14 @@ fn transport_config(endpoint: &str) -> StreamableHttpClientTransportConfig {
 pub(crate) async fn list_tools(app: &AppHandle, provider_id: &str) -> Result<McpToolSet, String> {
     let deadline = tokio::time::Instant::now() + OPERATION_TIMEOUT;
     require_developer_mode(app)?;
-    let item = provider(provider_id)?;
-    let ticket = provider_control(item.id).ticket();
+    let owner = runtime_provider(app, provider_id)?;
+    let spec = owner.spec();
+    let item = &spec;
+    let ticket = owner.ticket();
     let _operation = tokio::time::timeout_at(deadline, ticket.acquire())
         .await
         .map_err(|_| "MCP operation queue timed out")??;
-    let enabled = crate::settings::get_settings(app)
-        .mcp_enabled_providers
-        .iter()
-        .any(|id| id == provider_id);
-    if !enabled {
+    if !owner.enabled(app) {
         return Err(format!("{} MCP is disabled in Grain Settings", item.name));
     }
     let http = provider_http(app, item)?;
@@ -1617,11 +1702,11 @@ pub(crate) async fn list_tools(app: &AppHandle, provider_id: &str) -> Result<Mcp
     let result = ticket.run(discover_on_service(&service, deadline)).await;
     close_service(service).await;
     let tools = result??;
-    if !is_enabled_extension(app, &format!("mcp.{provider_id}")) {
+    if !owner.enabled(app) {
         return Err("The MCP extension was disabled during discovery.".into());
     }
     let raw_digest = tool_set_digest(item, &tools)?;
-    let digest = ticket.commit(|| ticket.bind_digest(&raw_digest))?;
+    let digest = ticket.commit(|| ticket.bind_digest(&owner.bind(&raw_digest)))?;
     Ok(McpToolSet {
         provider_id: item.id.into(),
         provider_name: item.name.into(),
@@ -1632,12 +1717,29 @@ pub(crate) async fn list_tools(app: &AppHandle, provider_id: &str) -> Result<Mcp
 
 async fn open_service(
     http: reqwest_mcp::Client,
-    item: &CatalogProvider,
+    item: &Provider<'_>,
     app: &AppHandle,
     ticket: &session::Ticket,
     operation: &session::Lease,
     deadline: tokio::time::Instant,
 ) -> Result<McpService, ExecutionFailure> {
+    if item.registration == Registration::Anonymous {
+        let endpoint = provider_endpoint(item).map_err(|_| Recovery::Configuration.failure())?;
+        let client = bounded_http::BoundedClient::guarded(
+            http,
+            provider_destination_policy(item).map_err(|_| Recovery::Configuration.failure())?,
+        );
+        let legacy_probe = client.legacy_probe();
+        return serve_http(
+            client,
+            &endpoint,
+            deadline,
+            legacy_probe,
+            None,
+            Some(ticket.clone()),
+        )
+        .await;
+    }
     #[cfg(feature = "agent-harness")]
     if item.registration == Registration::NoAuthFixture {
         let (endpoint, client) = crate::grain_agent_harness_mcp::client()
@@ -1856,12 +1958,7 @@ pub(crate) fn is_enabled_extension(app: &AppHandle, extension_id: &str) -> bool 
     let Some(provider_id) = extension_id.strip_prefix("mcp.") else {
         return false;
     };
-    provider(provider_id).is_ok()
-        && crate::settings::get_settings(app).extension_developer_mode
-        && crate::settings::get_settings(app)
-            .mcp_enabled_providers
-            .iter()
-            .any(|id| id == provider_id)
+    runtime_provider(app, provider_id).is_ok_and(|owner| owner.enabled(app))
 }
 
 pub(crate) async fn call_tool(
@@ -1875,17 +1972,22 @@ pub(crate) async fn call_tool(
     require_developer_mode(app).map_err(|_| {
         before_dispatch(FailureClass::Cancelled, "MCP developer access is disabled.")
     })?;
-    let item = provider(provider_id)
+    let owner = runtime_provider(app, provider_id)
         .map_err(|_| before_dispatch(FailureClass::NotFound, "Unknown MCP provider."))?;
-    let ticket = provider_control(item.id).ticket();
+    let spec = owner.spec();
+    let item = &spec;
+    let ticket = owner.ticket();
     let expected_digest = ticket
         .unbind_digest(expected_digest)
+        .map_err(|message| before_dispatch(FailureClass::Cancelled, message))?;
+    let expected_digest = owner
+        .unbind(expected_digest)
         .map_err(|message| before_dispatch(FailureClass::Cancelled, message))?;
     let _operation = tokio::time::timeout_at(deadline, ticket.acquire())
         .await
         .map_err(|_| before_dispatch(FailureClass::Network, "MCP operation queue timed out."))?
         .map_err(|message| before_dispatch(FailureClass::Cancelled, message))?;
-    if !is_enabled_extension(app, &format!("mcp.{provider_id}")) {
+    if !owner.enabled(app) {
         return Err(before_dispatch(
             FailureClass::Cancelled,
             "The MCP extension is disabled.",
@@ -1918,11 +2020,7 @@ pub(crate) async fn call_tool(
             arguments,
             expected_digest,
             deadline,
-            || {
-                ticket
-                    .commit(|| is_enabled_extension(app, &format!("mcp.{provider_id}")))
-                    .unwrap_or(false)
-            },
+            || ticket.commit(|| owner.enabled(app)).unwrap_or(false),
         ))
         .await
         .unwrap_or_else(|message| Err(session_cancelled(&service, message)));
@@ -1947,7 +2045,7 @@ fn session_cancelled(service: &McpService, message: String) -> ExecutionFailure 
 
 async fn call_on_service(
     service: &McpService,
-    item: &CatalogProvider,
+    item: &Provider<'_>,
     tool_name: &str,
     arguments: serde_json::Map<String, serde_json::Value>,
     expected_digest: &str,
@@ -2179,7 +2277,7 @@ fn validate_tool_name(name: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn tool_set_digest(item: &CatalogProvider, tools: &[Tool]) -> Result<String, String> {
+fn tool_set_digest(item: &Provider<'_>, tools: &[Tool]) -> Result<String, String> {
     let mut canonical: Vec<_> = tools
         .iter()
         .map(|tool| {
@@ -2229,7 +2327,7 @@ pub(crate) fn directory(
         .mcp_enabled_providers
         .into_iter()
         .collect();
-    CATALOG
+    let mut entries: Vec<_> = CATALOG
         .iter()
         .filter(|item| enabled.contains(item.id) && provider(item.id).is_ok())
         .map(
@@ -2243,7 +2341,9 @@ pub(crate) fn directory(
                 action_count: 1,
             },
         )
-        .collect()
+        .collect();
+    entries.extend(connections::directory(app));
+    entries
 }
 
 #[cfg(test)]

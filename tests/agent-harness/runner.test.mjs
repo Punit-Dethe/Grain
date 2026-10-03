@@ -1070,6 +1070,61 @@ test("configured metadata checkpoint keeps three distinct cases outside transpor
   }
 });
 
+test("configured runtime oracle binds the actual directory owner and refuses unrelated outcomes", () => {
+  const id = "mcp.configured-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+  const frame = body([
+    "search",
+    "load",
+    "Failed (Cancelled): The action was not dispatched. MCP account or access changed. Ask again.",
+  ]);
+  frame.messages[0].content = "Harness request: mcp_configured_read";
+  frame.messages.unshift({
+    role: "system",
+    content: `Configured directory: ${id}`,
+  });
+  const reply = nextReply(frame);
+  assert.equal(reply.configuredOwner, id);
+  assert.equal(reply.mcpRefused, true);
+  frame.messages.at(-1).content = "Failed (Network): unavailable";
+  assert.throws(() => nextReply(frame), /exact configured stale/);
+  frame.messages.at(-1).content = "Failed (Cancelled): unrelated cancellation";
+  assert.throws(() => nextReply(frame), /exact configured stale/);
+  frame.messages[0].content = "No configured directory";
+  assert.throws(() => nextReply(frame), /exact configured directory owner/);
+  const runtime = selectScenarios("mcp-configured-runtime");
+  assert.equal(runtime.length, 3);
+  for (const entry of runtime) {
+    assert.deepEqual(entry.checks, [63]);
+    assert.ok(selectScenarios("all").includes(entry));
+  }
+  const checkpoint = selectScenarios("mcp-connection-checkpoint");
+  assert.equal(checkpoint.length, 31);
+  assert.equal(new Set(checkpoint.map((x) => x.id)).size, 31);
+  assert.deepEqual(
+    new Set(checkpoint),
+    new Set([
+      ...selectScenarios("mcp-configured"),
+      ...runtime,
+      ...selectScenarios("mcp-foundation"),
+      ...selectScenarios("smoke"),
+    ]),
+  );
+});
+
+test("wrong configured owner fault cannot start another scenario", async () => {
+  await assert.rejects(
+    exec(process.execPath, [
+      "tests/agent-harness/run.mjs",
+      "--scenario",
+      "mcp.configured-storage",
+      "--fault",
+      "wrong-configured-owner",
+    ]),
+    (error) =>
+      error.stderr.includes("requires --scenario mcp.configured-execution"),
+  );
+});
+
 test("two-provider read oracle rejects cross-wire calls, wrong accounts and false receipts", async () => {
   const { verifyProviderRead } = await import("./mcp-independence.mjs");
   const { MCP_PEER_ID } = await import("./mcp-oauth-fixture.mjs");

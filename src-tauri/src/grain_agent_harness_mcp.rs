@@ -5,6 +5,29 @@ use tauri::{AppHandle, WebviewWindow};
 use tauri_plugin_opener::OpenerExt;
 
 pub(crate) const PROVIDER_ID: &str = "grain-harness";
+pub(crate) const CONFIGURED_ENDPOINT: &str = "https://configured.grain-harness.example/mcp";
+
+/// Exact nonsecret descriptor fixture, then the existing owned marker/TLS
+/// boundary. This cannot map arbitrary configured URLs or exist in release.
+pub(crate) fn configured_endpoint(id: &str, endpoint: &str) -> Result<Option<String>, String> {
+    let Some(id) = id.strip_prefix("configured-") else {
+        return Ok(None);
+    };
+    if endpoint != CONFIGURED_ENDPOINT {
+        return Ok(None);
+    }
+    if id.len() != 32
+        || !id
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        return Err("Invalid configured fixture ownership".into());
+    }
+    // A real owned local peer must be configured. Public opt-ins cannot activate
+    // this marker exception accidentally.
+    super::grain_agent_harness::mcp_fixture_config()?;
+    Ok(Some(self::endpoint()?))
+}
 pub(crate) const AUTH_PROVIDER_ID: &str = "grain-harness-auth";
 pub(crate) const CLIENT_PROVIDER_ID: &str = "grain-harness-auth-client";
 pub(crate) const PEER_PROVIDER_ID: &str = "grain-harness-auth-peer";
