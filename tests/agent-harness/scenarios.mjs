@@ -458,6 +458,8 @@ export const EXTENSION_CONTRACT_CHECKPOINT = [
 ];
 
 export function selectScenarios(suite) {
+  if (suite === "mcp-configured")
+    return scenarios.filter((scenario) => scenario.suite === "mcp-configured");
   if (suite === "extension-contract")
     return EXTENSION_CONTRACT_CHECKPOINT.map((id) => {
       const scenario = scenarios.find((item) => item.id === id);
@@ -756,3 +758,24 @@ scenarios.push({
   description:
     "Real host refuses out-of-scope OAuth destinations and oversized metadata before credential publication/consent/exchange; fresh and restarted authenticated reads recover",
 });
+
+for (const [id, description] of [
+  [
+    "ownership",
+    "Real inactive custom imports, host identity isolation, stale/concurrent edits, account rotation, removal and restart persistence",
+  ],
+  [
+    "access",
+    "Strict credential-free JSON and actual Developer Mode/main-window restrictions preserve saved definitions",
+  ],
+  [
+    "storage",
+    "Externally changed and corrupt scoped registry bytes cannot be overwritten; repair/restart, 32-record limit and explicit cleanup",
+  ],
+])
+  scenarios.push({
+    id: `mcp.configured-${id}`,
+    suite: "mcp-configured",
+    checks: [62],
+    description,
+  });

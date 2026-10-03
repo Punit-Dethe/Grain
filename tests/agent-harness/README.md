@@ -1,5 +1,17 @@
 # Grain Agent acceptance harness
 
+**Custom MCP management checkpoint:** [Implementation, audit and scope](../../docs/Extensions%202.0/CUSTOM-MCP-HOST-MANAGEMENT-AUDIT.md). `mcp-configured` runs three separate real-app cases in one stamped host: inactive imports and exact stale/concurrent ownership; Developer Mode/actual Agent-window restrictions and strict nonsecret JSON; external/corrupt-file refusal, repair/restart, large string revisions and 32-record bounds. These are metadata checks, not custom authentication/tool-call certification. No account or manual browser step is required. The negative fault skips owned deletion and must exit 1 at its exact stage. Keep these maintained cases; generated profiles, logs and read-only inspectors are disposable evidence.
+
+```powershell
+node tests/agent-harness/production-tests.mjs --group mcp
+cargo test --locked -p grain-core mcp_connections::
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/agent-harness/build.ps1
+node tests/agent-harness/run.mjs --suite mcp-configured
+node tests/agent-harness/run.mjs --scenario mcp.configured-storage --fault missing-configured-cleanup
+```
+
+Compile/backend checks before real-app runs; shared Windows DLLs must not be rebuilt while a harness host is open. Runtime/auth/transport changes still require their broader suites and genuine deadline checks.
+
 **E2 destination checkpoint:** [Implementation, source audit and exact acceptance scope](../../docs/Extensions%202.0/MCP-DESTINATION-BOUNDARY-AUDIT.md). The new `mcp.destination-boundary` case uses the maintained owned HTTPS issuer and real host: three out-of-scope metadata destinations and an oversized response refuse before saved registration/secret changes or consent/token exchange; valid preregistered sign-in and fresh/restart approved reads recover. Existing registered bindings are compared to their starting inventory, not deleted to force zero. The deliberately valid-metadata fault must fail the expected-refusal oracle and independently clean the resulting scoped registration. It never bypasses production policy. No browser-only UI or new server is added.
 
 ```powershell

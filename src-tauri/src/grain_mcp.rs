@@ -31,6 +31,9 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use zeroize::Zeroize;
 
+#[path = "grain_mcp_connections.rs"]
+pub mod connections;
+
 const VAULT_SERVICE: &str = "com.grain.mcp.oauth";
 const CLIENT_SECRET_SERVICE: &str = "com.grain.mcp.client-secret";
 const CLIENT_REGISTRATION_SERVICE: &str = "com.grain.mcp.client-registration";

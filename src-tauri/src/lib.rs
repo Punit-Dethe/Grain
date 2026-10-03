@@ -461,6 +461,7 @@ fn initialize_core_logic(app_handle: &AppHandle) {
     // pool (the official rmcp v3 transport). It creates no connection until a
     // provider is explicitly connected/tested and holds no service at idle.
     app_handle.manage(grain_mcp::McpHttpClient::build().expect("failed to build MCP HTTP client"));
+    app_handle.manage(grain_mcp::connections::State::default());
     // [GRAIN] Agent: holds the selection captured at summon time until the window
     // reads it on mount. The window itself is created on demand and destroyed on close.
     app_handle.manage(agent::AgentState::default());
@@ -1466,6 +1467,10 @@ fn command_bindings() -> Builder<tauri::Wry> {
             grain_mcp::mcp_connect_provider,
             grain_mcp::mcp_disconnect_provider,
             grain_mcp::mcp_test_provider,
+            grain_mcp::connections::mcp_connections_list,
+            grain_mcp::connections::mcp_connection_import,
+            grain_mcp::connections::mcp_connection_replace,
+            grain_mcp::connections::mcp_connection_remove,
             grain_commands::extension_take_slot,
             grain_commands::extension_settings_schema,
             grain_commands::extension_settings_sections,

@@ -1053,6 +1053,23 @@ test("authenticated MCP suite has independent IDs and remains in ordinary all", 
   );
 });
 
+test("configured metadata checkpoint keeps three distinct cases outside transport/auth acceptance", () => {
+  const configured = selectScenarios("mcp-configured");
+  assert.deepEqual(
+    configured.map((x) => x.id),
+    [
+      "mcp.configured-ownership",
+      "mcp.configured-access",
+      "mcp.configured-storage",
+    ],
+  );
+  for (const entry of configured) {
+    assert.deepEqual(entry.checks, [62]);
+    assert.ok(selectScenarios("all").includes(entry));
+    assert.ok(!selectScenarios("mcp-foundation").includes(entry));
+  }
+});
+
 test("two-provider read oracle rejects cross-wire calls, wrong accounts and false receipts", async () => {
   const { verifyProviderRead } = await import("./mcp-independence.mjs");
   const { MCP_PEER_ID } = await import("./mcp-oauth-fixture.mjs");
