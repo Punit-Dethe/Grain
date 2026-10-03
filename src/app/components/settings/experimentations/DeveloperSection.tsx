@@ -78,10 +78,12 @@ const McpProviders: React.FC<{
     setResult(null);
     try {
       await action();
-      await refresh();
     } catch (reason) {
       setError(String(reason));
     } finally {
+      await refresh().catch((reason) =>
+        setError((current) => current ?? String(reason)),
+      );
       active.current.delete(id);
       setBusy(new Set(active.current));
     }
@@ -199,9 +201,9 @@ const McpProviders: React.FC<{
                       {provider.name}
                     </span>
                     <span className="rounded-full border border-line px-1.5 py-0.5 text-[10px] text-ink-faint">
-                      {provider.connected
+                      {provider.state === "stored"
                         ? "credentials stored"
-                        : provider.state}
+                        : provider.state.replace(/_/g, " ")}
                     </span>
                     {!provider.requires_client_credentials && (
                       <span className="rounded-full border border-accent/30 px-1.5 py-0.5 text-[10px] text-accent">
@@ -223,6 +225,16 @@ const McpProviders: React.FC<{
                 </a>
                 {provider.connected ? (
                   <>
+                    {provider.state === "reconnect_required" && (
+                      <button
+                        type="button"
+                        className="button"
+                        disabled={isBusy}
+                        onClick={() => connect(provider.id)}
+                      >
+                        Sign in again
+                      </button>
+                    )}
                     <button
                       type="button"
                       className="button"

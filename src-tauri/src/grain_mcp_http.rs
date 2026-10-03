@@ -17,6 +17,7 @@ pub(super) struct CancellableClient<C> {
     client: C,
     cancel: watch::Receiver<bool>,
     cleanup: Option<super::bounded_http::BoundedClient>,
+    ticket: Option<super::session::Ticket>,
 }
 
 impl<C> CancellableClient<C> {
@@ -25,6 +26,7 @@ impl<C> CancellableClient<C> {
             client,
             cancel,
             cleanup: None,
+            ticket: None,
         }
     }
 
@@ -34,6 +36,28 @@ impl<C> CancellableClient<C> {
     ) -> Self {
         self.cleanup = cleanup;
         self
+    }
+
+    pub(super) fn with_auth_observer(mut self, ticket: Option<super::session::Ticket>) -> Self {
+        self.ticket = ticket;
+        self
+    }
+
+    fn observe_error(&self, error: &StreamableHttpError<C::Error>)
+    where
+        C: StreamableHttpClient,
+    {
+        let recovery = match error {
+            StreamableHttpError::Auth(error) => Some(super::Recovery::from_auth(error)),
+            // The SDK intentionally sends an unauthenticated request when a
+            // grant cannot be renewed; its final challenge is also typed.
+            StreamableHttpError::AuthRequired(_) => Some(super::Recovery::Reconnect),
+            StreamableHttpError::InsufficientScope(_) => Some(super::Recovery::Configuration),
+            _ => None,
+        };
+        if let (Some(ticket), Some(recovery)) = (&self.ticket, recovery) {
+            ticket.observe_recovery(Some(recovery));
+        }
     }
 }
 
@@ -87,6 +111,7 @@ impl<C: StreamableHttpClient + Sync> StreamableHttpClient for CancellableClient<
                 .post_message(uri, message, session_id, auth_header, headers),
         )
         .await
+        .inspect_err(|error| self.observe_error(error))
     }
 
     async fn post_message_with_max_sse_event_size(
@@ -118,6 +143,7 @@ impl<C: StreamableHttpClient + Sync> StreamableHttpClient for CancellableClient<
             ),
         )
         .await
+        .inspect_err(|error| self.observe_error(error))
     }
 
     async fn delete_session(
@@ -169,6 +195,7 @@ impl<C: StreamableHttpClient + Sync> StreamableHttpClient for CancellableClient<
                 .get_stream(uri, session_id, last_event_id, auth_header, headers),
         )
         .await
+        .inspect_err(|error| self.observe_error(error))
     }
 
     async fn get_stream_with_max_sse_event_size(
@@ -192,5 +219,6 @@ impl<C: StreamableHttpClient + Sync> StreamableHttpClient for CancellableClient<
             ),
         )
         .await
+        .inspect_err(|error| self.observe_error(error))
     }
 }

@@ -694,3 +694,11 @@ scenarios.push({
   description:
     "Preregistered issuer rotation refuses old secrets before consent/exchange, persists through disconnect/restart, and explicit re-registration and failed-discovery recovery are verified",
 });
+
+scenarios.push({
+  id: "mcp.auth-temporary-recovery",
+  suite: "mcp-auth",
+  checks: [55],
+  description:
+    "Real expired SDK refresh under HTTP 503, malformed and dropped replies in modern/legacy transport preserves grants; restart/manual recovery and metadata failure require no new login",
+});

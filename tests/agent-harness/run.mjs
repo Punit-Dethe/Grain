@@ -185,6 +185,7 @@ if (
     "wrong-mcp-account",
     "wrong-mcp-peer-account",
     "missing-mcp-issuer-rotation",
+    "missing-mcp-refresh-failure",
     "wrong-mcp-refresh-account",
     "skip-fixed-port-conflict",
     "abandoned-mcp-credential",
@@ -240,6 +241,7 @@ if (
 for (const [fault, scenario] of [
   ["wrong-mcp-peer-account", "mcp.auth-provider-independence"],
   ["missing-mcp-issuer-rotation", "mcp.auth-issuer-binding"],
+  ["missing-mcp-refresh-failure", "mcp.auth-temporary-recovery"],
   ["wrong-mcp-refresh-account", "mcp.auth-refresh-recovery"],
   ["skip-fixed-port-conflict", "mcp.auth-fixed-port-conflict"],
   ["lost-mcp-account", "mcp.auth-close-cancellation"],
@@ -1492,6 +1494,7 @@ const hfSuite = hfHandlers({
 });
 Object.assign(handlers, hfSuite.handlers);
 const mcpAuthSuite = mcpAuthHandlers({
+  main: () => main,
   invoke,
   status,
   request,

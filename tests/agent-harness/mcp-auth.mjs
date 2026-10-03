@@ -140,7 +140,7 @@ export function verifyMcpRefreshRefusal(error) {
   const message = error instanceof Error ? error.message : String(error);
   assert.equal(
     message.replace(/^page\.evaluate: /, ""),
-    "MCP protocol negotiation failed. Check the account and provider availability.",
+    "The MCP account needs sign-in again. Reconnect in Grain Settings.",
   );
   return true;
 }
@@ -157,6 +157,72 @@ export function mcpAuthHandlers(ctx) {
     oauth().journal.filter((x) => x.phase === "token").length;
   async function state(id = MCP_AUTH_ID) {
     return (await ctx.invoke("mcp_provider_status")).find((x) => x.id === id);
+  }
+  async function testInDeveloperPanel(expectedState, message) {
+    const main = ctx.main();
+    const click = async (locator) => {
+      let last;
+      try {
+        return await ctx.waitFor(
+          "Actual developer control unobstructed: " + locator.toString(),
+          async () => {
+            const updateClose = main.getByRole("button", {
+              name: "Close update details",
+              exact: true,
+            });
+            if (await updateClose.isVisible())
+              await updateClose.click({ timeout: 1000 });
+            try {
+              await locator.click({ timeout: 750 });
+              return true;
+            } catch (error) {
+              if (error.name === "TimeoutError") {
+                last = error.message;
+                return false;
+              }
+              throw error;
+            }
+          },
+        );
+      } catch (error) {
+        throw new Error(error.message + "\n" + (last ?? ""));
+      }
+    };
+    await main.evaluate(() => {
+      window.location.hash = "#/extensions/installed";
+    });
+    await click(main.getByRole("button", { name: "Developer", exact: true }));
+    const dialog = main.getByRole("dialog", {
+      name: "Extension developer tools",
+    });
+    try {
+      const row = dialog.locator(".divide-y > div").filter({
+        has: main.getByText("Harness MCP Account", { exact: true }),
+      });
+      await click(row.getByRole("button", { name: "Test", exact: true }));
+      await dialog
+        .getByText(message, { exact: true })
+        .waitFor({ state: "visible", timeout: 10000 });
+      await row
+        .getByText(expectedState.replace(/_/g, " "), { exact: true })
+        .waitFor({ state: "visible", timeout: 10000 });
+      assert.equal(
+        await row
+          .getByRole("button", { name: "Sign in again", exact: true })
+          .count(),
+        expectedState === "reconnect_required" ? 1 : 0,
+      );
+      evidence.push({
+        stage: `actual-developer-ui-${expectedState}`,
+        status: "Pass",
+        failedTestRefreshedStatus: true,
+        explicitSignInControl: expectedState === "reconnect_required",
+      });
+    } finally {
+      await click(
+        dialog.getByRole("button", { name: "Close developer tools" }),
+      );
+    }
   }
   async function begin(account, denied = false, target = "account") {
     provider().configure({
@@ -283,6 +349,138 @@ export function mcpAuthHandlers(ctx) {
     },
     vaultCount: ctx.vaultCount,
     handlers: {
+      async "mcp.auth-temporary-recovery"() {
+        try {
+          assert.equal(
+            await ctx.vaultCount(),
+            0,
+            "New case requires no active account",
+          );
+          assert.equal(provider().activeSessions, 0);
+          oauth().retireGrants();
+          for (const lifecycle of ["stateless", "legacy"]) {
+            for (const mode of ["server", "malformed", "dropped"]) {
+              oauth().configure({
+                expiresIn: 2,
+                refreshable: true,
+                refreshExpiresIn: 1200,
+                rejectRefresh: false,
+                refreshFailure: "none",
+              });
+              const baseline = oauth().journal.length;
+              const entries = (phase) =>
+                oauth()
+                  .journal.slice(baseline)
+                  .filter((x) => x.phase === phase);
+              await login("A");
+              provider().configure({ lifecycle });
+              const issued = entries("token")[0];
+              await ctx.waitFor(
+                "Real temporary-recovery grant expiry",
+                () => Date.now() >= issued.expiresAt,
+              );
+              oauth().configure({
+                refreshFailure:
+                  ctx.fault === "missing-mcp-refresh-failure" &&
+                  mode === "server"
+                    ? "none"
+                    : mode,
+              });
+              const before = count("tools/call");
+              if (
+                lifecycle === "stateless" &&
+                mode === "server" &&
+                ctx.fault !== "missing-mcp-refresh-failure"
+              ) {
+                await testInDeveloperPanel(
+                  "temporarily_unavailable",
+                  "MCP authentication is temporarily unavailable. Keep this connection and try again later.",
+                );
+              } else
+                await assert.rejects(control("discover"), (error) => {
+                  assert.equal(
+                    String(
+                      error instanceof Error ? error.message : error,
+                    ).replace(/^page\.evaluate: /, ""),
+                    "MCP authentication is temporarily unavailable. Keep this connection and try again later.",
+                  );
+                  return true;
+                });
+              const failed = await state();
+              assert.equal(failed.state, "temporarily_unavailable");
+              assert.equal(failed.connected, true);
+              assert.equal(failed.enabled, true);
+              assert.equal(await ctx.vaultCount(), 1);
+              assert.equal(count("tools/call"), before);
+              assert.equal(
+                entries("refresh-unavailable").length,
+                1,
+                "Failed refresh was retried automatically",
+              );
+              assert.equal(entries("token").length, 1);
+              assert.equal(entries("refresh").length, 0);
+              assert.equal(await control("authorization"), null);
+              await ctx.restartHost();
+              assert.equal(
+                (await state()).state,
+                "stored",
+                "Restart must not claim an unperformed health check",
+              );
+              oauth().configure({ refreshFailure: "none" });
+              await read("A", `temporary-${lifecycle}-${mode}-recovered`);
+              verifyMcpRefresh(entries("refresh")[0], "A", 1);
+              assert.equal(entries("refresh").length, 1);
+              assert.equal(
+                entries("token").length,
+                1,
+                "Recovery required another sign-in",
+              );
+              assert.equal((await state()).state, "stored");
+              evidence.push({
+                stage: `temporary-${lifecycle}-${mode}`,
+                status: "Pass",
+                actualExpiry: true,
+                failedRefreshAttempts: 1,
+                toolCallsOnFailure: 0,
+                grantPreserved: true,
+                restartRecovery: true,
+                additionalLogins: 0,
+              });
+              await clean();
+              oauth().retireGrants();
+            }
+          }
+          oauth().configure({ expiresIn: 1200, refreshable: false });
+          await login("A");
+          const before = count("tools/call");
+          oauth().configure({ metadataUnavailable: true });
+          await assert.rejects(
+            control("discover"),
+            /MCP authentication is temporarily unavailable/,
+          );
+          assert.equal((await state()).state, "temporarily_unavailable");
+          assert.equal(await ctx.vaultCount(), 1);
+          assert.equal(count("tools/call"), before);
+          oauth().configure({ metadataUnavailable: false });
+          await read("A", "metadata-recovered-without-login");
+          assert.equal((await state()).state, "stored");
+          evidence.push({
+            stage: "metadata-recovery",
+            status: "Pass",
+            grantPreserved: true,
+            toolCallsOnFailure: 0,
+          });
+        } finally {
+          oauth().configure({
+            refreshFailure: "none",
+            metadataUnavailable: false,
+            expiresIn: 1200,
+            refreshable: false,
+            rejectRefresh: false,
+          });
+          await clean();
+        }
+      },
       async "mcp.auth-refresh-recovery"() {
         const baseline = oauth().journal.length;
         const entries = (phase) =>
@@ -388,7 +586,22 @@ export function mcpAuthHandlers(ctx) {
               () => Date.now() >= issued.expiresAt,
             );
             const before = count("tools/call");
-            await assert.rejects(control("discover"), verifyMcpRefreshRefusal);
+            if (!refreshable)
+              await testInDeveloperPanel(
+                "reconnect_required",
+                "The MCP account needs sign-in again. Reconnect in Grain Settings.",
+              );
+            else
+              await assert.rejects(
+                control("discover"),
+                verifyMcpRefreshRefusal,
+              );
+            assert.equal((await state()).state, "reconnect_required");
+            assert.equal(
+              (await state()).connected,
+              true,
+              "Recovery advice must not delete the grant",
+            );
             assert.equal(
               count("tools/call"),
               before,

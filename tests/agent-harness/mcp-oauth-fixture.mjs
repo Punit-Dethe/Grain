@@ -55,6 +55,7 @@ export function createMcpOAuth(origin, ca, { wrongAccount = false } = {}) {
     refreshable = false,
     refreshExpiresIn = 1200,
     rejectRefresh = false,
+    refreshFailure = "none",
     wrongRefreshAccount = false,
     authorizationServer = null,
     resourceOrigin = null,
@@ -190,6 +191,19 @@ export function createMcpOAuth(origin, ca, { wrongAccount = false } = {}) {
             : null,
         });
         if (q.get("grant_type") === "refresh_token") {
+          if (refreshFailure !== "none") {
+            record({ phase: "refresh-unavailable", mode: refreshFailure });
+            if (refreshFailure === "server")
+              json(res, 503, {
+                error: "temporarily_unavailable",
+                error_description: MCP_PRIVATE_MARKER,
+              });
+            else if (refreshFailure === "malformed") {
+              res.writeHead(200, { "content-type": "application/json" });
+              res.end('{"access_token":');
+            } else req.socket.destroy();
+            return true;
+          }
           const old = refreshTokens.get(q.get("refresh_token"));
           if (!old || rejectRefresh) {
             record({ phase: "refresh-refused", reason: "invalid_grant" });
@@ -377,6 +391,12 @@ export function createMcpOAuth(origin, ca, { wrongAccount = false } = {}) {
     handle,
     authenticatedAccount,
     journal,
+    retireGrants() {
+      // Call only after host logout/zero inventory. Receipt history remains;
+      // the fixture must not keep completed scenarios' bearer grants alive.
+      tokens.clear();
+      refreshTokens.clear();
+    },
     configure(next) {
       assert.ok(
         Object.keys(next).every((key) =>
@@ -388,6 +408,7 @@ export function createMcpOAuth(origin, ca, { wrongAccount = false } = {}) {
             "refreshable",
             "refreshExpiresIn",
             "rejectRefresh",
+            "refreshFailure",
             "wrongRefreshAccount",
             "authorizationServer",
             "resourceOrigin",
@@ -442,6 +463,14 @@ export function createMcpOAuth(origin, ca, { wrongAccount = false } = {}) {
         refreshExpiresIn = next.refreshExpiresIn;
       if (next.refreshable !== undefined) refreshable = next.refreshable;
       if (next.rejectRefresh !== undefined) rejectRefresh = next.rejectRefresh;
+      if (next.refreshFailure !== undefined) {
+        assert.ok(
+          ["none", "server", "malformed", "dropped"].includes(
+            next.refreshFailure,
+          ),
+        );
+        refreshFailure = next.refreshFailure;
+      }
       if (next.wrongRefreshAccount !== undefined)
         wrongRefreshAccount = next.wrongRefreshAccount;
     },

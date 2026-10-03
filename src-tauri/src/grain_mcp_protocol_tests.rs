@@ -253,6 +253,7 @@ impl Fixture {
             tokio::time::Instant::now() + Duration::from_secs(3),
             legacy_probe,
             None,
+            None,
         )
         .await
         .unwrap()

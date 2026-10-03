@@ -1020,7 +1020,7 @@ test("MCP account shutdown oracle requires exact dispatched uncertainty without 
 
 test("authenticated MCP suite has independent IDs and remains in ordinary all", () => {
   const auth = selectScenarios("mcp-auth");
-  assert.equal(auth.length, 11);
+  assert.equal(auth.length, 12);
   assert.deepEqual(
     auth.map((x) => x.id),
     [
@@ -1035,11 +1035,12 @@ test("authenticated MCP suite has independent IDs and remains in ordinary all", 
       "mcp.auth-refresh-recovery",
       "mcp.auth-refresh-refusal",
       "mcp.auth-issuer-binding",
+      "mcp.auth-temporary-recovery",
     ],
   );
   for (const entry of auth) assert.ok(selectScenarios("all").includes(entry));
   const foundation = selectScenarios("mcp-foundation");
-  assert.equal(foundation.length, 20);
+  assert.equal(foundation.length, 21);
   assert.deepEqual(
     new Set(foundation),
     new Set([...auth, ...selectScenarios("mcp")]),
@@ -1411,7 +1412,7 @@ test("MCP refresh acceptance rejects missing, premature, wrong-account and unrot
 test("expired-account refusal admits only the exact host failure through the Playwright transport wrapper", async () => {
   const { verifyMcpRefreshRefusal } = await import("./mcp-auth.mjs");
   const exact =
-    "MCP protocol negotiation failed. Check the account and provider availability.";
+    "The MCP account needs sign-in again. Reconnect in Grain Settings.";
   assert.equal(verifyMcpRefreshRefusal(exact), true);
   assert.equal(
     verifyMcpRefreshRefusal(new Error("page.evaluate: " + exact)),

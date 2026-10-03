@@ -278,7 +278,7 @@ export function mcpIndependenceHandlers(ctx) {
           const before = attempts().length;
           await assert.rejects(
             control("discover", "client"),
-            /The MCP account is unavailable\. Reconnect in Grain Settings\./,
+            /OAuth client registration does not match this authorization server\./,
           );
           assert.equal(
             attempts().length,

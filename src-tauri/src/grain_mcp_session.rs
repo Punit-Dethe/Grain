@@ -9,6 +9,7 @@ pub(super) struct Control {
     generation: Mutex<u64>,
     changed: watch::Sender<u64>,
     operation: Arc<tokio::sync::Mutex<()>>,
+    recovery: Mutex<Option<super::Recovery>>,
 }
 
 #[derive(Clone)]
@@ -26,6 +27,7 @@ impl Control {
             generation: Mutex::new(1),
             changed,
             operation: Arc::new(tokio::sync::Mutex::new(())),
+            recovery: Mutex::new(None),
         })
     }
 
@@ -39,6 +41,7 @@ impl Control {
     pub(super) fn invalidate(self: &Arc<Self>) -> Ticket {
         let mut generation = self.generation.lock().unwrap_or_else(|e| e.into_inner());
         *generation = generation.checked_add(1).expect("MCP generation exhausted");
+        *self.recovery.lock().unwrap_or_else(|e| e.into_inner()) = None;
         self.changed.send_replace(*generation);
         Ticket {
             control: self.clone(),
@@ -48,6 +51,28 @@ impl Control {
 }
 
 impl Ticket {
+    pub(super) fn observe_recovery(&self, recovery: Option<super::Recovery>) {
+        let _ = self.commit(|| {
+            *self
+                .control
+                .recovery
+                .lock()
+                .unwrap_or_else(|e| e.into_inner()) = recovery;
+        });
+    }
+
+    pub(super) fn recovery(&self) -> Option<super::Recovery> {
+        self.commit(|| {
+            *self
+                .control
+                .recovery
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+        })
+        .ok()
+        .flatten()
+    }
+
     pub(super) fn invalidate_if_current(&self) {
         let mut generation = self
             .control
@@ -56,6 +81,11 @@ impl Ticket {
             .unwrap_or_else(|e| e.into_inner());
         if *generation == self.generation {
             *generation = generation.checked_add(1).expect("MCP generation exhausted");
+            *self
+                .control
+                .recovery
+                .lock()
+                .unwrap_or_else(|e| e.into_inner()) = None;
             self.control.changed.send_replace(*generation);
         }
     }
@@ -115,6 +145,22 @@ impl Ticket {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn old_auth_failure_cannot_overwrite_replacement_status() {
+        let control = Control::new();
+        let old = control.ticket();
+        old.observe_recovery(Some(super::super::Recovery::Reconnect));
+        assert_eq!(old.recovery(), Some(super::super::Recovery::Reconnect));
+        let replacement = control.invalidate();
+        assert_eq!(replacement.recovery(), None);
+        replacement.observe_recovery(Some(super::super::Recovery::Temporary));
+        old.observe_recovery(Some(super::super::Recovery::Reconnect));
+        assert_eq!(
+            replacement.recovery(),
+            Some(super::super::Recovery::Temporary)
+        );
+    }
 
     #[tokio::test]
     async fn queued_old_account_cannot_acquire_new_account_gate() {

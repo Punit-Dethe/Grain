@@ -120,6 +120,10 @@ mod bounded_http;
 #[path = "grain_mcp_session.rs"]
 mod session;
 
+#[path = "grain_mcp_recovery.rs"]
+mod recovery;
+use recovery::Recovery;
+
 fn provider_control(id: &str) -> std::sync::Arc<session::Control> {
     static CONTROLS: OnceLock<BTreeMap<&'static str, std::sync::Arc<session::Control>>> =
         OnceLock::new();
@@ -339,7 +343,8 @@ pub struct McpProviderStatus {
     pub connected: bool,
     pub enabled: bool,
     /// Stored credentials are not a live health check.
-    /// `stored` | `needs_client_credentials` | `disconnected` | `unavailable`
+    /// Storage inventory plus the last generation-owned recovery observation.
+    /// Recovery is cleared on restart/invalidation; this never polls a provider.
     pub state: String,
 }
 
@@ -407,10 +412,10 @@ impl CredentialStore for VaultCredentialStore {
             let _operation = operation;
             ticket
                 .commit(|| read_credentials_sync(&account))
-                .map_err(AuthError::InternalError)?
+                .map_err(AuthError::CredentialStoreError)?
         })
         .await
-        .map_err(|error| AuthError::InternalError(format!("credential task failed: {error}")))?
+        .map_err(|_| AuthError::CredentialStoreError("credential task failed".into()))?
     }
 
     async fn save(&self, credentials: StoredCredentials) -> Result<(), AuthError> {
@@ -421,10 +426,10 @@ impl CredentialStore for VaultCredentialStore {
             let _operation = operation;
             ticket
                 .commit(|| write_credentials_sync(&account, &credentials))
-                .map_err(AuthError::InternalError)?
+                .map_err(AuthError::CredentialStoreError)?
         })
         .await
-        .map_err(|error| AuthError::InternalError(format!("credential task failed: {error}")))?
+        .map_err(|_| AuthError::CredentialStoreError("credential task failed".into()))?
     }
 
     async fn clear(&self) -> Result<(), AuthError> {
@@ -435,15 +440,15 @@ impl CredentialStore for VaultCredentialStore {
             let _operation = operation;
             ticket
                 .commit(|| delete_vault_entry(VAULT_SERVICE, &account))
-                .map_err(AuthError::InternalError)?
+                .map_err(AuthError::CredentialStoreError)?
         })
         .await
-        .map_err(|error| AuthError::InternalError(format!("credential task failed: {error}")))?
+        .map_err(|_| AuthError::CredentialStoreError("credential task failed".into()))?
     }
 }
 
 fn vault_error(context: &str, error: keyring::Error) -> AuthError {
-    AuthError::InternalError(format!("OS credential vault {context} failed: {error}"))
+    AuthError::CredentialStoreError(format!("OS credential vault {context} failed: {error}"))
 }
 
 fn read_credentials_sync(account: &str) -> Result<Option<StoredCredentials>, AuthError> {
@@ -628,7 +633,7 @@ async fn client_secret(
     provider_id: &str,
     client_id: &str,
     issuer: &str,
-) -> Result<Option<String>, String> {
+) -> Result<Option<String>, Recovery> {
     let account = provider_id.to_string();
     let client_id = client_id.to_string();
     let issuer = issuer.to_string();
@@ -636,23 +641,24 @@ async fn client_secret(
         // Registration ownership survives logout. Check it before even loading
         // the secret; the SDK's issuer-bound token store cannot cover this case.
         let registration = credential_entry(CLIENT_REGISTRATION_SERVICE, &account)
-            .map_err(|error| format!("OS credential vault unavailable: {error}"))?
+            .map_err(|_| Recovery::CredentialStore)?
             .get_password()
             .map_err(|error| match error {
-                keyring::Error::NoEntry => REGISTRATION_RECOVERY.into(),
-                _ => format!("OS credential vault read failed: {error}"),
+                keyring::Error::NoEntry => Recovery::Registration,
+                _ => Recovery::CredentialStore,
             })?;
-        validate_registration(&registration, &client_id, &issuer)?;
+        validate_registration(&registration, &client_id, &issuer)
+            .map_err(|_| Recovery::Registration)?;
         let entry = credential_entry(CLIENT_SECRET_SERVICE, &account)
-            .map_err(|error| format!("OS credential vault unavailable: {error}"))?;
+            .map_err(|_| Recovery::CredentialStore)?;
         match entry.get_password() {
             Ok(secret) if !secret.is_empty() => Ok(Some(secret)),
             Ok(_) | Err(keyring::Error::NoEntry) => Ok(None),
-            Err(error) => Err(format!("OS credential vault read failed: {error}")),
+            Err(_) => Err(Recovery::CredentialStore),
         }
     })
     .await
-    .map_err(|error| format!("credential task failed: {error}"))?
+    .map_err(|_| Recovery::CredentialStore)?
 }
 
 async fn stored_connected(provider_id: &str) -> Result<bool, String> {
@@ -693,10 +699,13 @@ pub async fn mcp_provider_status(
             Ok(false)
         };
         let connected = stored.as_ref().is_ok_and(|value| *value);
+        let observation = provider_control(item.id).ticket().recovery();
         let state = if !account_required {
             "fixture_no_auth"
         } else if stored.is_err() {
             "unavailable"
+        } else if let Some(recovery) = observation {
+            recovery.state()
         } else if connected {
             "stored"
         } else if item.registration == Registration::PreRegistered && !client_id_configured {
@@ -1206,7 +1215,8 @@ async fn connect_oauth(
                 .as_deref()
                 .ok_or("OAuth issuer unavailable")?,
         )
-        .await?;
+        .await
+        .map_err(|recovery| recovery.message())?;
         request = request.with_preregistered_client(configured_id);
         if let Some(configured_secret) = configured_secret {
             request = request.with_client_secret(configured_secret);
@@ -1338,48 +1348,47 @@ async fn authorization_manager(
     app: &AppHandle,
     ticket: &session::Ticket,
     operation: &session::Lease,
-) -> Result<AuthorizationManager, String> {
-    let mut manager = AuthorizationManager::new(provider_endpoint(item)?.as_ref())
-        .await
-        .map_err(|error| format!("OAuth setup failed: {error}"))?;
+) -> Result<AuthorizationManager, Recovery> {
+    let mut manager = AuthorizationManager::new(
+        provider_endpoint(item)
+            .map_err(|_| Recovery::Configuration)?
+            .as_ref(),
+    )
+    .await
+    .map_err(|error| Recovery::from_auth(&error))?;
     manager
         .with_client(http)
-        .map_err(|error| format!("OAuth setup failed: {error}"))?;
+        .map_err(|error| Recovery::from_auth(&error))?;
     let store = VaultCredentialStore::with_ticket(item.id, ticket, operation);
     let configured_id = client_id(app, item.id);
     if item.registration == Registration::PreRegistered {
         let stored = store
             .load()
             .await
-            .map_err(|e| e.to_string())?
-            .ok_or("MCP account is disconnected")?;
+            .map_err(|error| Recovery::from_auth(&error))?
+            .ok_or(Recovery::Reconnect)?;
         if Some(stored.client_id.as_str()) != configured_id.as_deref() {
-            return Err(
-                "Stored OAuth client differs from configuration. Reconnect in Grain Settings."
-                    .into(),
-            );
+            return Err(Recovery::Registration);
         }
     }
     manager.set_credential_store(store);
     let resolution = manager
         .resolve_metadata()
         .await
-        .map_err(|_| "OAuth metadata discovery failed")?;
+        .map_err(|_| Recovery::Temporary)?;
     if !resolution.source.is_discovered() {
-        return Err("OAuth metadata unavailable".into());
+        return Err(Recovery::Temporary);
     }
-    validate_hosted_oauth_metadata(&resolution.metadata)?;
+    validate_hosted_oauth_metadata(&resolution.metadata).map_err(|_| Recovery::Configuration)?;
     let configured_secret = if item.registration == Registration::PreRegistered {
         client_secret(
             item.id,
-            configured_id
-                .as_deref()
-                .ok_or("OAuth client ID unavailable")?,
+            configured_id.as_deref().ok_or(Recovery::Registration)?,
             resolution
                 .metadata
                 .issuer
                 .as_deref()
-                .ok_or("OAuth issuer unavailable")?,
+                .ok_or(Recovery::Configuration)?,
         )
         .await?
     } else {
@@ -1389,13 +1398,13 @@ async fn authorization_manager(
     if !manager
         .initialize_from_store()
         .await
-        .map_err(|error| format!("stored OAuth credential is unusable: {error}"))?
+        .map_err(|error| Recovery::from_auth(&error))?
     {
-        return Err(format!("{} is not connected in Grain Settings", item.name));
+        return Err(Recovery::Reconnect);
     }
     if item.registration == Registration::PreRegistered {
         let mut config = OAuthClientConfig::new(
-            configured_id.ok_or("OAuth client ID unavailable")?,
+            configured_id.ok_or(Recovery::Registration)?,
             format!("http://{CALLBACK_ADDR}{CALLBACK_PATH}"),
         );
         if let Some(secret) = configured_secret {
@@ -1403,7 +1412,7 @@ async fn authorization_manager(
         }
         manager
             .configure_client(config)
-            .map_err(|_| "OAuth client configuration failed")?;
+            .map_err(|_| Recovery::Configuration)?;
     }
     Ok(manager)
 }
@@ -1474,19 +1483,18 @@ async fn open_service(
             .map_err(|_| before_dispatch(FailureClass::Network, "MCP fixture is unavailable."))?;
         let client = bounded_http::BoundedClient::new(client);
         let legacy_probe = client.legacy_probe();
-        return serve_http(client, &endpoint, deadline, legacy_probe, None).await;
+        return serve_http(client, &endpoint, deadline, legacy_probe, None, None).await;
     }
+    ticket.observe_recovery(None);
     let manager = tokio::time::timeout_at(
         deadline,
         authorization_manager(http.clone(), item, app, ticket, operation),
     )
     .await
     .map_err(|_| before_dispatch(FailureClass::Network, "MCP account setup timed out."))?
-    .map_err(|_| {
-        before_dispatch(
-            FailureClass::Auth,
-            "The MCP account is unavailable. Reconnect in Grain Settings.",
-        )
+    .map_err(|recovery| {
+        ticket.observe_recovery(Some(recovery));
+        recovery.failure()
     })?;
     let client = bounded_http::BoundedClient::new(http).with_authenticated_cleanup();
     let legacy_probe = client.legacy_probe();
@@ -1499,6 +1507,7 @@ async fn open_service(
         deadline,
         legacy_probe,
         Some(cleanup),
+        Some(ticket.clone()),
     )
     .await
 }
@@ -1509,6 +1518,7 @@ async fn serve_http<C: rmcp::transport::streamable_http_client::StreamableHttpCl
     deadline: tokio::time::Instant,
     legacy_probe: std::sync::Arc<std::sync::atomic::AtomicBool>,
     cleanup: Option<bounded_http::BoundedClient>,
+    ticket: Option<session::Ticket>,
 ) -> Result<McpService, ExecutionFailure> {
     let first = serve_http_once(
         client.clone(),
@@ -1516,9 +1526,14 @@ async fn serve_http<C: rmcp::transport::streamable_http_client::StreamableHttpCl
         deadline,
         hosted_lifecycle(),
         cleanup.clone(),
+        ticket.clone(),
     )
     .await;
     if first.is_err()
+        && ticket
+            .as_ref()
+            .and_then(session::Ticket::recovery)
+            .is_none()
         && legacy_probe.swap(false, std::sync::atomic::Ordering::Relaxed)
         && tokio::time::Instant::now() < deadline
     {
@@ -1532,6 +1547,7 @@ async fn serve_http<C: rmcp::transport::streamable_http_client::StreamableHttpCl
             deadline,
             ClientLifecycleMode::Initialize,
             cleanup,
+            ticket,
         )
         .await;
     }
@@ -1546,11 +1562,13 @@ async fn serve_http_once<
     deadline: tokio::time::Instant,
     lifecycle: ClientLifecycleMode,
     cleanup: Option<bounded_http::BoundedClient>,
+    ticket: Option<session::Ticket>,
 ) -> Result<McpService, ExecutionFailure> {
     let (cancel, receiver) = tokio::sync::watch::channel(false);
     let transport = StreamableHttpClientTransport::with_client(
         cancellable_http::CancellableClient::new(client, receiver)
-            .with_authenticated_cleanup(cleanup),
+            .with_authenticated_cleanup(cleanup)
+            .with_auth_observer(ticket.clone()),
         transport_config(endpoint),
     );
     let info = if lifecycle == ClientLifecycleMode::Initialize {
@@ -1562,6 +1580,9 @@ async fn serve_http_once<
         .await
         .map_err(|_| before_dispatch(FailureClass::Network, "MCP protocol negotiation timed out."))?
         .map_err(|_| {
+            if let Some(recovery) = ticket.as_ref().and_then(session::Ticket::recovery) {
+                return recovery.failure();
+            }
             before_dispatch(
                 FailureClass::Network,
                 "MCP protocol negotiation failed. Check the account and provider availability.",
