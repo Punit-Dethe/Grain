@@ -365,6 +365,76 @@ const CATALOG: &[CatalogProvider] = &[
 #[derive(Clone)]
 pub struct McpHttpClient(pub reqwest_mcp::Client);
 
+#[path = "grain_mcp_destination.rs"]
+mod destination;
+
+fn provider_destination_policy(item: &CatalogProvider) -> Result<destination::Policy, String> {
+    #[cfg(feature = "agent-harness")]
+    if crate::grain_agent_harness_mcp::ACCOUNT_IDS.contains(&item.id)
+        || item.registration == Registration::NoAuthFixture
+    {
+        // Validate owned profile/fixture configuration before granting this
+        // exact origin. Public live fixtures must use the production policy.
+        let endpoint = provider_endpoint(item)?;
+        let url = reqwest_mcp::Url::parse(&endpoint).map_err(|_| "Invalid owned MCP endpoint")?;
+        if url.host_str() == Some("127.0.0.1") {
+            let mut origins = vec![url];
+            if crate::grain_agent_harness_mcp::ACCOUNT_IDS.contains(&item.id) {
+                // The issuer-rotation test deliberately crosses the two peer
+                // origins. Both must come from this profile's validated marker.
+                for id in [
+                    crate::grain_agent_harness_mcp::AUTH_PROVIDER_ID,
+                    crate::grain_agent_harness_mcp::PEER_PROVIDER_ID,
+                ] {
+                    if let Ok(endpoint) = crate::grain_agent_harness_mcp::auth_endpoint(id) {
+                        let url = reqwest_mcp::Url::parse(&endpoint)
+                            .map_err(|_| "Invalid owned MCP issuer")?;
+                        if !origins.iter().any(|origin| origin.origin() == url.origin()) {
+                            origins.push(url);
+                        }
+                    }
+                }
+            }
+            return Ok(destination::Policy::OwnedOrigins(origins));
+        }
+    }
+    let _ = item;
+    Ok(destination::Policy::Public)
+}
+
+async fn new_authorization_manager(
+    http: reqwest_mcp::Client,
+    item: &CatalogProvider,
+) -> Result<AuthorizationManager, AuthError> {
+    let endpoint = provider_endpoint(item).map_err(AuthError::InternalError)?;
+    let policy = provider_destination_policy(item).map_err(AuthError::InternalError)?;
+    policy
+        .validate_uri(&endpoint)
+        .map_err(|_| AuthError::InternalError("MCP destination refused".into()))?;
+    AuthorizationManager::new_with_oauth_http_client(
+        endpoint.as_ref(),
+        std::sync::Arc::new(destination::OAuthClient::new(http, policy)),
+    )
+    .await
+}
+
+fn validate_oauth_destinations(
+    item: &CatalogProvider,
+    metadata: &AuthorizationMetadata,
+) -> Result<(), String> {
+    let policy = provider_destination_policy(item)?;
+    for uri in std::iter::once(metadata.authorization_endpoint.as_str())
+        .chain(std::iter::once(metadata.token_endpoint.as_str()))
+        .chain(metadata.registration_endpoint.as_deref())
+        .chain(metadata.issuer.as_deref())
+    {
+        policy
+            .validate_uri(uri)
+            .map_err(|_| "OAuth metadata contains an unsupported destination")?;
+    }
+    Ok(())
+}
+
 fn provider_http(app: &AppHandle, item: &CatalogProvider) -> Result<reqwest_mcp::Client, String> {
     #[cfg(feature = "agent-harness")]
     if crate::grain_agent_harness_mcp::ACCOUNT_IDS.contains(&item.id) {
@@ -388,10 +458,18 @@ impl McpHttpClient {
     }
 
     pub fn build() -> Result<Self, String> {
-        Self::builder()
+        destination::public_builder(Self::builder())
             .build()
             .map(Self)
             .map_err(|error| format!("could not initialize the MCP HTTP client: {error}"))
+    }
+
+    #[cfg(test)]
+    fn local_test_client() -> reqwest_mcp::Client {
+        // Existing protocol/SDK logic fixtures own plain HTTP loopback sockets.
+        // This constructor is absent from application and release builds; real
+        // application acceptance uses HTTPS and exact owned-origin admission.
+        Self::builder().no_proxy().build().unwrap()
     }
 }
 
@@ -833,11 +911,8 @@ pub async fn mcp_set_client_credentials(
         let _operation = ticket.acquire().await?;
         // Explicit Save binds registration without sending credentials or opening
         // consent. Discover before touching an existing usable registration/grant.
-        let mut manager = AuthorizationManager::new(provider_endpoint(item)?.as_ref())
+        let manager = new_authorization_manager(provider_http(&app, item)?, item)
             .await
-            .map_err(|_| "OAuth setup failed")?;
-        manager
-            .with_client(provider_http(&app, item)?)
             .map_err(|_| "OAuth setup failed")?;
         let resolution = manager
             .resolve_metadata()
@@ -847,6 +922,7 @@ pub async fn mcp_set_client_credentials(
             return Err("OAuth metadata unavailable".to_string());
         }
         validate_hosted_oauth_metadata(&resolution.metadata)?;
+        validate_oauth_destinations(item, &resolution.metadata)?;
         let registration = serde_json::to_string(&ClientRegistration {
             schema: 1,
             client_id: client_id.clone(),
@@ -1238,11 +1314,8 @@ async fn connect_oauth(
         None
     };
     let http = provider_http(app, item)?;
-    let mut manager = AuthorizationManager::new(provider_endpoint(item)?.as_ref())
+    let mut manager = new_authorization_manager(http, item)
         .await
-        .map_err(|error| format!("OAuth setup failed: {error}"))?;
-    manager
-        .with_client(http)
         .map_err(|error| format!("OAuth setup failed: {error}"))?;
     manager.set_credential_store(VaultCredentialStore::with_ticket(
         item.id,
@@ -1257,6 +1330,7 @@ async fn connect_oauth(
         return Err("This provider does not publish usable OAuth metadata; derived legacy endpoints are disabled.".into());
     }
     validate_hosted_oauth_metadata(&resolution.metadata)?;
+    validate_oauth_destinations(item, &resolution.metadata)?;
     let metadata_url = client_metadata_url(item)?;
     // DCR keeps its ephemeral loopback port. CIMD uses only the exact redirect
     // in the hosted document; never invent a port or silently downgrade a
@@ -1439,15 +1513,8 @@ async fn authorization_manager(
     ticket: &session::Ticket,
     operation: &session::Lease,
 ) -> Result<AuthorizationManager, Recovery> {
-    let mut manager = AuthorizationManager::new(
-        provider_endpoint(item)
-            .map_err(|_| Recovery::Configuration)?
-            .as_ref(),
-    )
-    .await
-    .map_err(|error| Recovery::from_auth(&error))?;
-    manager
-        .with_client(http)
+    let mut manager = new_authorization_manager(http, item)
+        .await
         .map_err(|error| Recovery::from_auth(&error))?;
     let store = VaultCredentialStore::with_ticket(item.id, ticket, operation);
     let configured_id = client_id(app, item.id);
@@ -1470,6 +1537,7 @@ async fn authorization_manager(
         return Err(Recovery::Temporary);
     }
     validate_hosted_oauth_metadata(&resolution.metadata).map_err(|_| Recovery::Configuration)?;
+    validate_oauth_destinations(item, &resolution.metadata).map_err(|_| Recovery::Configuration)?;
     let configured_secret = if item.registration == Registration::PreRegistered {
         client_secret(
             item.id,
@@ -1571,7 +1639,10 @@ async fn open_service(
     if item.registration == Registration::NoAuthFixture {
         let (endpoint, client) = crate::grain_agent_harness_mcp::client()
             .map_err(|_| before_dispatch(FailureClass::Network, "MCP fixture is unavailable."))?;
-        let client = bounded_http::BoundedClient::new(client);
+        let client = bounded_http::BoundedClient::guarded(
+            client,
+            provider_destination_policy(item).map_err(|_| Recovery::Configuration.failure())?,
+        );
         let legacy_probe = client.legacy_probe();
         return serve_http(client, &endpoint, deadline, legacy_probe, None, None).await;
     }
@@ -1586,7 +1657,11 @@ async fn open_service(
         ticket.observe_recovery(Some(recovery));
         recovery.failure()
     })?;
-    let client = bounded_http::BoundedClient::new(http).with_authenticated_cleanup();
+    let client = bounded_http::BoundedClient::guarded(
+        http,
+        provider_destination_policy(item).map_err(|_| Recovery::Configuration.failure())?,
+    )
+    .with_authenticated_cleanup();
     let legacy_probe = client.legacy_probe();
     let cleanup = client.clone();
     serve_http(

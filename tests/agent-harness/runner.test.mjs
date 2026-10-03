@@ -1024,7 +1024,7 @@ test("MCP account shutdown oracle requires exact dispatched uncertainty without 
 
 test("authenticated MCP suite has independent IDs and remains in ordinary all", () => {
   const auth = selectScenarios("mcp-auth");
-  assert.equal(auth.length, 13);
+  assert.equal(auth.length, 14);
   assert.deepEqual(
     auth.map((x) => x.id),
     [
@@ -1041,11 +1041,12 @@ test("authenticated MCP suite has independent IDs and remains in ordinary all", 
       "mcp.auth-issuer-binding",
       "mcp.auth-client-metadata",
       "mcp.auth-temporary-recovery",
+      "mcp.destination-boundary",
     ],
   );
   for (const entry of auth) assert.ok(selectScenarios("all").includes(entry));
   const foundation = selectScenarios("mcp-foundation");
-  assert.equal(foundation.length, 22);
+  assert.equal(foundation.length, 23);
   assert.deepEqual(
     new Set(foundation),
     new Set([...auth, ...selectScenarios("mcp")]),
@@ -1280,6 +1281,56 @@ test("owned issuer rejects mismatched client secrets without issuing a token or 
     assert.equal(peer.journal.filter((x) => x.phase === "token").length, 1);
     assert.ok(!JSON.stringify(peer.journal).includes(MCP_PRIVATE_MARKER));
     assert.ok(!peer.journal.some((x) => x.phase === "oauth-error"));
+  } finally {
+    peer.close();
+  }
+});
+
+test("destination fixture uses fixed refusal modes and bounded resettable metadata", async () => {
+  const { createMcpOAuth, MCP_PRIVATE_MARKER } =
+    await import("./mcp-oauth-fixture.mjs");
+  const peer = createMcpOAuth(() => "https://127.0.0.1:1234", Buffer.alloc(0));
+  try {
+    assert.throws(() =>
+      peer.configure({ destinationMode: "https://arbitrary.example.com" }),
+    );
+    for (const [mode, endpoint] of [
+      ["other-token-port", "https://127.0.0.1:1/token"],
+      ["remote-token", "https://unowned.example.com/token"],
+      ["private-authorization", "https://169.254.169.254/authorize"],
+      ["oversized-metadata", null],
+      ["valid", "https://127.0.0.1:1234/token"],
+    ]) {
+      peer.configure({ destinationMode: mode });
+      let status, raw;
+      await peer.handle(
+        { method: "GET", url: "/.well-known/oauth-authorization-server" },
+        {
+          writeHead(code) {
+            status = code;
+            this.headersSent = true;
+          },
+          end(value) {
+            raw = value;
+          },
+        },
+      );
+      assert.equal(status, 200);
+      const body = JSON.parse(raw);
+      if (mode === "oversized-metadata") {
+        assert.ok(raw.length > 1024 * 1024 && raw.length < 1024 * 1024 + 4096);
+      } else {
+        assert.equal(
+          mode === "private-authorization"
+            ? body.authorization_endpoint
+            : body.token_endpoint,
+          endpoint,
+        );
+        assert.equal(body.padding, undefined);
+      }
+    }
+    assert.ok(peer.journal.every((entry) => entry.phase === "issuer-metadata"));
+    assert.ok(!JSON.stringify(peer.journal).includes(MCP_PRIVATE_MARKER));
   } finally {
     peer.close();
   }

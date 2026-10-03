@@ -212,7 +212,7 @@ impl TokenServer {
             .await
             .unwrap();
         manager
-            .with_client(McpHttpClient::build().unwrap().0)
+            .with_client(McpHttpClient::local_test_client())
             .unwrap();
         manager.set_metadata(self.metadata());
         manager.set_credential_store(store);

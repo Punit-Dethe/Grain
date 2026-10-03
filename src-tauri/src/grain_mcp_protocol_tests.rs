@@ -404,7 +404,7 @@ async fn oversized_raw_responses_stop_discovery_and_never_replay_writes() {
             WireLimit::HttpError,
         ] {
             let fixture = Fixture::start(Behavior::Oversized { discovery, framing }).await;
-            let service = fixture.service(McpHttpClient::build().unwrap().0).await;
+            let service = fixture.service(McpHttpClient::local_test_client()).await;
             if discovery {
                 assert!(discover_on_service(
                     &service,
@@ -435,7 +435,7 @@ async fn oversized_raw_responses_stop_discovery_and_never_replay_writes() {
 #[tokio::test]
 async fn aggregate_wire_bytes_stop_empty_catalog_padding_before_page_limit() {
     let fixture = Fixture::start(Behavior::PaddedPages).await;
-    let service = fixture.service(McpHttpClient::build().unwrap().0).await;
+    let service = fixture.service(McpHttpClient::local_test_client()).await;
     assert!(discover_on_service(
         &service,
         tokio::time::Instant::now() + Duration::from_secs(3)
@@ -451,7 +451,7 @@ async fn aggregate_wire_bytes_stop_empty_catalog_padding_before_page_limit() {
 #[tokio::test]
 async fn ordinary_sse_discovery_and_tool_result_still_complete_once() {
     let fixture = Fixture::start(Behavior::CompleteSse(json!({"resultType": "complete", "content": [{"type": "text", "text": "recorded"}], "isError": false}))).await;
-    let service = fixture.service(McpHttpClient::build().unwrap().0).await;
+    let service = fixture.service(McpHttpClient::local_test_client()).await;
     let output = execute(&service, Duration::from_secs(2)).await.unwrap();
     assert!(output.text.contains("recorded"));
     assert_eq!(fixture.calls.load(Ordering::SeqCst), 1);
@@ -465,7 +465,7 @@ async fn legacy_handshake_keeps_bounded_transport_and_one_tool_call() {
         json!({"content": [{"type": "text", "text": "legacy result"}], "isError": false}),
     ))
     .await;
-    let service = fixture.service(McpHttpClient::build().unwrap().0).await;
+    let service = fixture.service(McpHttpClient::local_test_client()).await;
     let output = execute(&service, Duration::from_secs(2)).await.unwrap();
     assert!(output.text.contains("legacy result"));
     assert_eq!(fixture.calls.load(Ordering::SeqCst), 1);
@@ -480,7 +480,7 @@ async fn uncorrelated_http_probe_rejection_uses_one_fresh_legacy_handshake() {
         json!({"content":[{"type":"text","text":"HTTP legacy result"}],"isError":false}),
     ))
     .await;
-    let service = fixture.service(McpHttpClient::build().unwrap().0).await;
+    let service = fixture.service(McpHttpClient::local_test_client()).await;
     let output = execute(&service, Duration::from_secs(2)).await.unwrap();
     assert!(output.text.contains("HTTP legacy result"));
     assert_eq!(fixture.probes.load(Ordering::SeqCst), 1);
@@ -517,7 +517,7 @@ async fn resumed_get_stream_preserves_identity_and_bounds_raw_sse() {
         }
         send_oversized(&mut socket, WireLimit::SseComments).await;
     };
-    let http = bounded_http::BoundedClient::new(McpHttpClient::build().unwrap().0);
+    let http = bounded_http::BoundedClient::new(McpHttpClient::local_test_client());
     let get = async {
         let mut stream = http
             .get_stream(
@@ -594,7 +594,7 @@ async fn bounded_binding_preserves_auth_protocol_headers_and_http_outcomes() {
                 reqwest_mcp::header::HeaderValue::from_static(value),
             );
         }
-        let http = bounded_http::BoundedClient::new(McpHttpClient::build().unwrap().0);
+        let http = bounded_http::BoundedClient::new(McpHttpClient::local_test_client());
         let call = http.post_message(
             endpoint,
             message,
@@ -652,7 +652,7 @@ async fn execute(
 #[tokio::test]
 async fn a_recorded_write_with_a_lost_response_is_unknown_and_never_replayed() {
     let fixture = Fixture::start(Behavior::DropAfterWrite).await;
-    let service = fixture.service(McpHttpClient::build().unwrap().0).await;
+    let service = fixture.service(McpHttpClient::local_test_client()).await;
     let result = execute(&service, Duration::from_secs(2)).await;
     let outcome = crate::action_exec::mcp_outcome(result, &prepared(SideEffect::Write));
     assert!(matches!(outcome, ActionOutcome::UnknownOutcome { .. }));
@@ -667,7 +667,7 @@ async fn a_recorded_write_with_a_lost_response_is_unknown_and_never_replayed() {
 async fn agent_session_close_drops_the_mcp_service_after_one_recorded_write() {
     for behavior in [Behavior::HangAfterWrite, Behavior::HangSseAfterWrite] {
         let fixture = Fixture::start(behavior).await;
-        let service = fixture.service(McpHttpClient::build().unwrap().0).await;
+        let service = fixture.service(McpHttpClient::local_test_client()).await;
         let cancelled = service.cancel.subscribe();
         let control = crate::agent::AgentRunControl::default();
         let (run, registration) = control.begin().unwrap();
@@ -707,7 +707,7 @@ async fn agent_session_close_drops_the_mcp_service_after_one_recorded_write() {
 #[tokio::test]
 async fn account_cancellation_after_a_recorded_write_remains_unknown() {
     let fixture = Fixture::start(Behavior::HangAfterWrite).await;
-    let service = fixture.service(McpHttpClient::build().unwrap().0).await;
+    let service = fixture.service(McpHttpClient::local_test_client()).await;
     let control = session::Control::new();
     let ticket = control.ticket();
     let operation = async {
@@ -737,7 +737,7 @@ async fn account_cancellation_after_a_recorded_write_remains_unknown() {
 #[tokio::test]
 async fn a_write_response_deadline_is_unknown_and_cleanup_is_bounded() {
     let fixture = Fixture::start(Behavior::HangAfterWrite).await;
-    let service = fixture.service(McpHttpClient::build().unwrap().0).await;
+    let service = fixture.service(McpHttpClient::local_test_client()).await;
     let failure = execute(&service, Duration::from_millis(250))
         .await
         .unwrap_err();
@@ -752,7 +752,7 @@ async fn a_write_response_deadline_is_unknown_and_cleanup_is_bounded() {
 async fn repeated_and_unbounded_empty_pages_stop_before_dispatch() {
     for behavior in [Behavior::RepeatedCursor, Behavior::EmptyPages] {
         let fixture = Fixture::start(behavior).await;
-        let service = fixture.service(McpHttpClient::build().unwrap().0).await;
+        let service = fixture.service(McpHttpClient::local_test_client()).await;
         let failure = execute(&service, Duration::from_secs(3)).await.unwrap_err();
         assert_eq!(failure.phase, DispatchPhase::NotDispatched);
         assert!(failure.message.contains("incomplete"));
@@ -766,7 +766,7 @@ async fn repeated_and_unbounded_empty_pages_stop_before_dispatch() {
 #[tokio::test]
 async fn a_hanging_sse_response_releases_the_service_on_deadline() {
     let fixture = Fixture::start(Behavior::HangSseAfterWrite).await;
-    let service = fixture.service(McpHttpClient::build().unwrap().0).await;
+    let service = fixture.service(McpHttpClient::local_test_client()).await;
     let failure = execute(&service, Duration::from_millis(250))
         .await
         .unwrap_err();
@@ -779,7 +779,7 @@ async fn a_hanging_sse_response_releases_the_service_on_deadline() {
 #[tokio::test]
 async fn a_protocol_error_is_received_and_its_payload_is_not_exposed() {
     let fixture = Fixture::start(Behavior::ProtocolError).await;
-    let service = fixture.service(McpHttpClient::build().unwrap().0).await;
+    let service = fixture.service(McpHttpClient::local_test_client()).await;
     let failure = execute(&service, Duration::from_secs(3)).await.unwrap_err();
     assert_eq!(failure.phase, DispatchPhase::ResponseReceived);
     let outcome = crate::action_exec::mcp_outcome(Err(failure), &prepared(SideEffect::Write));
@@ -796,7 +796,7 @@ async fn unsupported_in_call_interaction_does_not_claim_non_execution() {
         "resultType": "input_required", "inputRequests": {}, "requestState": "pending"
     })))
     .await;
-    let service = fixture.service(McpHttpClient::build().unwrap().0).await;
+    let service = fixture.service(McpHttpClient::local_test_client()).await;
     let failure = execute(&service, Duration::from_secs(3)).await.unwrap_err();
     assert_eq!(failure.phase, DispatchPhase::ResponseReceived);
     assert!(failure.message.contains("in-call interaction"));
@@ -808,7 +808,7 @@ async fn unsupported_in_call_interaction_does_not_claim_non_execution() {
 #[tokio::test]
 async fn schema_change_or_disable_blocks_the_call_after_discovery() {
     let fixture = Fixture::start(Behavior::Complete(json!({ "content": [] }))).await;
-    let service = fixture.service(McpHttpClient::build().unwrap().0).await;
+    let service = fixture.service(McpHttpClient::local_test_client()).await;
     for (expected, enabled) in [("old-digest".to_string(), true), (digest(), false)] {
         let failure = call_on_service(
             &service,
@@ -837,7 +837,7 @@ async fn structured_and_unsupported_results_do_not_erase_execution_status() {
         "structuredContent": { "value": "a  b", "false": false }
     })))
     .await;
-    let service = fixture.service(McpHttpClient::build().unwrap().0).await;
+    let service = fixture.service(McpHttpClient::local_test_client()).await;
     let outcome = crate::action_exec::mcp_outcome(
         execute(&service, Duration::from_secs(3)).await,
         &prepared(SideEffect::Write),
@@ -860,7 +860,7 @@ async fn provider_tool_error_remains_distinct_from_non_dispatch() {
         "content": [{ "type": "text", "text": "Second step failed." }] }),
     ))
     .await;
-    let service = fixture.service(McpHttpClient::build().unwrap().0).await;
+    let service = fixture.service(McpHttpClient::local_test_client()).await;
     let outcome = crate::action_exec::mcp_outcome(
         execute(&service, Duration::from_secs(3)).await,
         &prepared(SideEffect::Write),
@@ -874,7 +874,7 @@ async fn provider_tool_error_remains_distinct_from_non_dispatch() {
 #[tokio::test]
 async fn one_hundred_discovery_services_join_their_owned_tasks_on_close() {
     let fixture = Fixture::start(Behavior::Complete(json!({ "content": [] }))).await;
-    let http = McpHttpClient::build().unwrap().0;
+    let http = McpHttpClient::local_test_client();
     for _ in 0..100 {
         let service = fixture.service(http.clone()).await;
         assert_eq!(
@@ -948,7 +948,7 @@ async fn nested_invalid_arguments_never_reach_tools_call() {
         tool,
     )
     .await;
-    let service = fixture.service(McpHttpClient::build().unwrap().0).await;
+    let service = fixture.service(McpHttpClient::local_test_client()).await;
     for arguments in [
         json!({"request": {"count": "private-token"}}),
         json!({"request": {"count": 0}}),
@@ -995,7 +995,7 @@ async fn malformed_schema_stops_discovery_without_a_tool_call() {
     let mut tool = tool_json();
     tool["inputSchema"]["required"] = json!([7]);
     let fixture = Fixture::start_with_tool(Behavior::Complete(json!({})), tool).await;
-    let service = fixture.service(McpHttpClient::build().unwrap().0).await;
+    let service = fixture.service(McpHttpClient::local_test_client()).await;
     let failure = execute(&service, Duration::from_secs(3)).await.unwrap_err();
     assert_eq!(failure.phase, DispatchPhase::NotDispatched);
     assert!(failure.message.contains("changed after confirmation"));
@@ -1007,7 +1007,7 @@ async fn malformed_schema_stops_discovery_without_a_tool_call() {
 #[tokio::test]
 async fn duplicate_tool_names_across_pages_never_dispatch() {
     let fixture = Fixture::start(Behavior::DuplicateToolsAcrossPages).await;
-    let service = fixture.service(McpHttpClient::build().unwrap().0).await;
+    let service = fixture.service(McpHttpClient::local_test_client()).await;
     let failure = execute(&service, Duration::from_secs(3)).await.unwrap_err();
     assert_eq!(failure.phase, DispatchPhase::NotDispatched);
     assert!(failure.message.contains("duplicate tool names"));
@@ -1025,7 +1025,7 @@ async fn unsupported_tools_are_isolated_across_pages_and_cannot_dispatch() {
     let valid = tool_json();
     let fixture =
         Fixture::start(Behavior::CatalogPages(vec![vec![bad], vec![valid.clone()]])).await;
-    let service = fixture.service(McpHttpClient::build().unwrap().0).await;
+    let service = fixture.service(McpHttpClient::local_test_client()).await;
     let tools = discover_on_service(
         &service,
         tokio::time::Instant::now() + Duration::from_secs(3),
@@ -1082,7 +1082,7 @@ async fn rejected_definitions_cannot_hide_duplicates_or_tool_budget() {
             vec![vec![bad], vec![tool_json()]]
         };
         let fixture = Fixture::start(Behavior::CatalogPages(pages)).await;
-        let service = fixture.service(McpHttpClient::build().unwrap().0).await;
+        let service = fixture.service(McpHttpClient::local_test_client()).await;
         let error = discover_on_service(
             &service,
             tokio::time::Instant::now() + Duration::from_secs(3),
@@ -1108,7 +1108,7 @@ async fn entirely_unsupported_catalog_is_empty_and_digest_still_revalidates() {
     let mut bad = tool_json();
     bad["inputSchema"]["required"] = json!([7]);
     let fixture = Fixture::start(Behavior::CatalogPages(vec![vec![bad]])).await;
-    let service = fixture.service(McpHttpClient::build().unwrap().0).await;
+    let service = fixture.service(McpHttpClient::local_test_client()).await;
     let tools = discover_on_service(
         &service,
         tokio::time::Instant::now() + Duration::from_secs(3),

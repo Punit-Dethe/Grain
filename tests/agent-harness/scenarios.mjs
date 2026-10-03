@@ -748,3 +748,11 @@ scenarios.push({
   description:
     "Real expired SDK refresh under HTTP 503, malformed and dropped replies in modern/legacy transport preserves grants; restart/manual recovery and metadata failure require no new login",
 });
+
+scenarios.push({
+  id: "mcp.destination-boundary",
+  suite: "mcp-auth",
+  checks: [61],
+  description:
+    "Real host refuses out-of-scope OAuth destinations and oversized metadata before credential publication/consent/exchange; fresh and restarted authenticated reads recover",
+});

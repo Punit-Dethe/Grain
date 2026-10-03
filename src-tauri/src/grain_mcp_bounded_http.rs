@@ -38,6 +38,7 @@ pub(super) struct BoundedClient {
     received: Arc<AtomicUsize>,
     legacy_probe: Arc<AtomicBool>,
     cleanup: Option<Arc<Mutex<Option<SessionCleanup>>>>,
+    destination: Option<super::destination::Policy>,
 }
 
 // Only the actual authenticated initialization response can bind this owner.
@@ -53,13 +54,30 @@ fn invalid(message: &'static str) -> HttpError {
 }
 
 impl BoundedClient {
+    #[cfg(test)]
     pub(super) fn new(http: Client) -> Self {
+        Self::create(http, None)
+    }
+
+    pub(super) fn guarded(http: Client, policy: super::destination::Policy) -> Self {
+        Self::create(http, Some(policy))
+    }
+
+    fn create(http: Client, destination: Option<super::destination::Policy>) -> Self {
         Self {
             http,
             received: Arc::new(AtomicUsize::new(0)),
             legacy_probe: Arc::new(AtomicBool::new(false)),
             cleanup: None,
+            destination,
         }
+    }
+
+    fn validate_destination(&self, uri: &str) -> Result<(), HttpError> {
+        if let Some(policy) = &self.destination {
+            policy.validate_uri(uri).map_err(StreamableHttpError::Io)?;
+        }
+        Ok(())
     }
 
     pub(super) fn with_authenticated_cleanup(mut self) -> Self {
@@ -115,6 +133,7 @@ impl BoundedClient {
         headers: HashMap<HeaderName, HeaderValue>,
     ) -> Result<(), HttpError> {
         let owner = self.take_cleanup(&endpoint, &session)?;
+        self.validate_destination(&endpoint)?;
         self.http
             .delete_session(endpoint, session, Some(owner.token.to_string()), headers)
             .await
@@ -132,6 +151,7 @@ impl BoundedClient {
         token: Option<&str>,
         headers: HashMap<HeaderName, HeaderValue>,
     ) -> Result<RequestBuilder, HttpError> {
+        self.validate_destination(uri)?;
         let mut request = self
             .http
             .request(method, uri)
@@ -377,6 +397,7 @@ impl StreamableHttpClient for BoundedClient {
         headers: HashMap<HeaderName, HeaderValue>,
     ) -> Result<(), HttpError> {
         // SDK deletion never reads the body; the outer adapter bounds its lifetime.
+        self.validate_destination(&uri)?;
         self.http
             .delete_session(uri, session_id, auth_header, headers)
             .await
@@ -469,6 +490,66 @@ fn uncorrelated_legacy_probe(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn public_destination_policy_blocks_posts_streams_and_both_cleanup_paths() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let endpoint: Arc<str> = format!("https://{}/mcp", listener.local_addr().unwrap()).into();
+        // Deliberately use an unguarded client so this proves URL admission, not
+        // TLS failure or the DNS resolver accidentally preventing the request.
+        let client =
+            BoundedClient::guarded(Client::new(), super::super::destination::Policy::Public)
+                .with_authenticated_cleanup();
+        for method in [reqwest_mcp::Method::GET, reqwest_mcp::Method::POST] {
+            let error = client
+                .request(
+                    method,
+                    &endpoint,
+                    Some("session"),
+                    Some("must-not-leak"),
+                    HashMap::new(),
+                )
+                .unwrap_err();
+            assert!(
+                matches!(error, StreamableHttpError::Io(ref error) if error.kind() == io::ErrorKind::PermissionDenied)
+            );
+        }
+        client
+            .bind_cleanup(
+                endpoint.clone(),
+                Arc::from("session"),
+                "must-not-leak".into(),
+            )
+            .unwrap();
+        let error = client
+            .delete_owned_session(endpoint.clone(), Arc::from("session"), HashMap::new())
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(error, StreamableHttpError::Io(ref error) if error.kind() == io::ErrorKind::PermissionDenied)
+        );
+        assert!(
+            client.take_cleanup(&endpoint, "session").is_err(),
+            "Refused cleanup retained bearer state"
+        );
+        let error = client
+            .delete_session(
+                endpoint,
+                Arc::from("session"),
+                Some("must-not-leak".into()),
+                HashMap::new(),
+            )
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(error, StreamableHttpError::Io(ref error) if error.kind() == io::ErrorKind::PermissionDenied)
+        );
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(100), listener.accept())
+                .await
+                .is_err()
+        );
+    }
 
     #[test]
     fn authenticated_cleanup_is_exact_single_use_and_cannot_replace_an_owner() {

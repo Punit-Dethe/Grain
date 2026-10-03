@@ -349,6 +349,84 @@ export function mcpAuthHandlers(ctx) {
     },
     vaultCount: ctx.vaultCount,
     handlers: {
+      async "mcp.destination-boundary"() {
+        const clear = async () => {
+          await control("disconnect", "client");
+        };
+        try {
+          await clear();
+          await clean();
+          const registrations = await ctx.vaultCount(false, true);
+          const secrets = await ctx.vaultCount(true);
+          for (const mode of [
+            "other-token-port",
+            "remote-token",
+            "private-authorization",
+            "oversized-metadata",
+          ]) {
+            oauth().configure({
+              destinationMode:
+                ctx.fault === "missing-mcp-destination-refusal"
+                  ? "valid"
+                  : mode,
+            });
+            const start = oauth().journal.length;
+            await assert.rejects(
+              ctx.invoke("mcp_set_client_credentials", {
+                id: MCP_CLIENT_ID,
+                clientId: MCP_CLIENTS.publicOne,
+                clientSecret: "",
+              }),
+              mode === "oversized-metadata"
+                ? /OAuth metadata unavailable|OAuth metadata discovery failed/
+                : /OAuth metadata contains an unsupported destination/,
+            );
+            const entries = oauth().journal.slice(start);
+            assert.ok(
+              entries.some((entry) => entry.phase === "issuer-metadata"),
+              "Malformed response never reached the production adapter",
+            );
+            assert.ok(
+              !entries.some((entry) =>
+                [
+                  "registered",
+                  "consent",
+                  "token-attempt",
+                  "token",
+                  "refresh",
+                ].includes(entry.phase),
+              ),
+            );
+            assert.equal(await ctx.vaultCount(), 0);
+            assert.equal(await ctx.vaultCount(true), secrets);
+            assert.equal(await ctx.vaultCount(false, true), registrations);
+            assert.equal(await control("authorization", "client"), null);
+            evidence.push({
+              stage: "destination-refused-" + mode,
+              status: "Pass",
+              credentialPublication: 0,
+              consent: 0,
+              tokenExchanges: 0,
+            });
+          }
+          oauth().configure({ destinationMode: "valid" });
+          await ctx.invoke("mcp_set_client_credentials", {
+            id: MCP_CLIENT_ID,
+            clientId: MCP_CLIENTS.publicOne,
+            clientSecret: "",
+          });
+          await login("A", "client");
+          await read("A", "destination-positive-fresh", "client");
+          await ctx.restartHost();
+          await read("A", "destination-positive-restart", "client");
+        } finally {
+          oauth().configure({ destinationMode: "valid" });
+          await clear();
+        }
+        assert.equal(await ctx.vaultCount(), 0);
+        assert.equal(await ctx.vaultCount(true), 0);
+        oauth().retireGrants();
+      },
       async "mcp.auth-client-metadata"() {
         let failure;
         const configure = (next) =>

@@ -1,5 +1,17 @@
 # Grain Agent acceptance harness
 
+**E2 destination checkpoint:** [Implementation, source audit and exact acceptance scope](../../docs/Extensions%202.0/MCP-DESTINATION-BOUNDARY-AUDIT.md). The new `mcp.destination-boundary` case uses the maintained owned HTTPS issuer and real host: three out-of-scope metadata destinations and an oversized response refuse before saved registration/secret changes or consent/token exchange; valid preregistered sign-in and fresh/restart approved reads recover. Existing registered bindings are compared to their starting inventory, not deleted to force zero. The deliberately valid-metadata fault must fail the expected-refusal oracle and independently clean the resulting scoped registration. It never bypasses production policy. No browser-only UI or new server is added.
+
+```powershell
+node tests/agent-harness/production-tests.mjs --group mcp
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/agent-harness/build.ps1
+node tests/agent-harness/run.mjs --suite mcp-foundation
+node tests/agent-harness/run.mjs --scenario mcp.destination-boundary --fault missing-mcp-destination-refusal
+node tests/agent-harness/run.mjs --suite mcp-live
+```
+
+Run application scenarios serially. `mcp-foundation` now contains **23** attributable cases (nine transport, fourteen OAuth/destination); real 45/90-second deadlines remain. `mcp-live` is an opt-in fixed anonymous public read, excluded from `all`; it checks the actual production DNS/TLS client without human credentials. Normal backend tests own local sockets and use a test-only HTTP client, while destination tests exercise public address checks and zero accepted listener connections. Cargo build/Clippy scripts stage DLLs in the shared target directory, so finish application cleanup before starting them. Keep these scenarios and fixed peer modes for configured-runtime regression; ignored finished evidence is disposable. Current inventory **94 IDs / 79 self-contained / 75 self-tests**. No custom connection import/UI path or E2 completion is certified by this checkpoint.
+
 **E2a direct-connection library tests:** [Production boundary, audit and evidence](../../docs/Extensions%202.0/CUSTOM-MCP-CONNECTION-REGISTRY-AUDIT.md). Run `cargo test --locked -p grain-core mcp_connections::` for strict metadata, identity/account isolation, stale edits/restart, corrupt state, actual locks/publication rollback and concurrent writers. All thirteen Windows cases pass. This is a production library/real-filesystem test; no custom MCP import/runtime route or credentials are exercised yet. Reuse `extension-contract` for affected baseline application regression and the existing owned MCP fixtures for the upcoming runtime/auth integration. No scenario, mock application or testing service was added; inventory stays **93 IDs / 78 self-contained / 74 self-tests**. E2 remains in progress; no manual test is needed for this unit.
 
 **E1c compatibility and development checkpoints:** [Contract, audit, evidence and suite triggers](../../docs/Extensions%202.0/EXTENSION-COMPATIBILITY-CONFIGURATION-AUDIT.md). Develop a bounded block with fast affected checks, build once, then run attributable real-app tests serially. For contract-only edits:

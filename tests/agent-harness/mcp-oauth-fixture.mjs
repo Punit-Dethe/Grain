@@ -62,7 +62,8 @@ export function createMcpOAuth(origin, ca, { wrongAccount = false } = {}) {
     metadataUnavailable = false,
     metadataClientSupported = false,
     dynamicRegistration = true,
-    clientDocument = "valid";
+    clientDocument = "valid",
+    destinationMode = "valid";
   const record = (item) => {
     assert.ok(
       journal.length < MCP_OAUTH_JOURNAL_LIMIT - 1,
@@ -79,8 +80,19 @@ export function createMcpOAuth(origin, ca, { wrongAccount = false } = {}) {
   };
   const metadata = () => ({
     issuer: origin(),
-    authorization_endpoint: origin() + "/authorize",
-    token_endpoint: origin() + "/token",
+    authorization_endpoint:
+      destinationMode === "private-authorization"
+        ? "https://169.254.169.254/authorize"
+        : origin() + "/authorize",
+    token_endpoint:
+      destinationMode === "other-token-port"
+        ? "https://127.0.0.1:1/token"
+        : destinationMode === "remote-token"
+          ? "https://unowned.example.com/token"
+          : origin() + "/token",
+    ...(destinationMode === "oversized-metadata"
+      ? { padding: "x".repeat(1024 * 1024) }
+      : {}),
     ...(dynamicRegistration
       ? { registration_endpoint: origin() + "/register" }
       : {}),
@@ -543,9 +555,22 @@ export function createMcpOAuth(origin, ca, { wrongAccount = false } = {}) {
             "metadataClientSupported",
             "dynamicRegistration",
             "clientDocument",
+            "destinationMode",
           ].includes(key),
         ),
       );
+      if (next.destinationMode !== undefined) {
+        assert.ok(
+          [
+            "valid",
+            "other-token-port",
+            "remote-token",
+            "private-authorization",
+            "oversized-metadata",
+          ].includes(next.destinationMode),
+        );
+        destinationMode = next.destinationMode;
+      }
       for (const key of ["authorizationServer", "resourceOrigin"]) {
         if (next[key] !== undefined && next[key] !== null) {
           const value = new URL(next[key]);

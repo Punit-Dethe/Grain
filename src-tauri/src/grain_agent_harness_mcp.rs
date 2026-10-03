@@ -70,9 +70,8 @@ pub(crate) fn client() -> Result<(String, reqwest_mcp::Client), String> {
     {
         return Ok((
             endpoint()?,
-            super::grain_mcp::McpHttpClient::builder()
-                .no_proxy()
-                .build()
+            super::grain_mcp::McpHttpClient::build()
+                .map(|client| client.0)
                 .map_err(|_| "Cannot build public MCP test client")?,
         ));
     }
