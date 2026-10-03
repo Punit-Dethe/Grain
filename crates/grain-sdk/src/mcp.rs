@@ -6,6 +6,18 @@ use serde::{Deserialize, Serialize};
 pub const MCP_DESCRIPTOR_SCHEMA: u8 = 1;
 pub const MCP_DESCRIPTOR_MAX_BYTES: usize = 8 * 1024;
 
+/// Direct connection input: no extension package, host identity or credentials.
+/// Parsing/endpoint admission belongs to Grain, not to this wire declaration.
+pub const MCP_CONNECTION_MAX_BYTES: usize = 4 * 1024;
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RemoteMcpConnection {
+    pub name: String,
+    pub url: String,
+    pub authentication: McpAuthentication,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct McpDescriptor {

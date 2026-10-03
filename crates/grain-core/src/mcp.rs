@@ -86,7 +86,7 @@ impl ValidatedDescriptor {
     }
 }
 
-fn display_text(value: &str, max: usize) -> bool {
+pub(crate) fn display_text(value: &str, max: usize) -> bool {
     !value.is_empty()
         && value.len() <= max
         && value == value.trim()
@@ -95,7 +95,7 @@ fn display_text(value: &str, max: usize) -> bool {
             .any(|ch| ch.is_control() || crate::execution::is_hidden_result_character(ch))
 }
 
-fn canonical_endpoint(raw: &str) -> Result<String, ContractError> {
+pub(crate) fn canonical_endpoint(raw: &str) -> Result<String, ContractError> {
     if raw.len() > 2048
         || raw.contains('\\')
         || raw.chars().any(|ch| ch.is_whitespace() || ch.is_control())

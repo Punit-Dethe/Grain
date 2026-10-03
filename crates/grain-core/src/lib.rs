@@ -14,6 +14,8 @@ pub mod context;
 pub mod extensions;
 // Provisional remote descriptors and host-owned identity, without a transport.
 pub mod mcp;
+// Host-owned custom connection metadata, separate from credentials/transport.
+pub mod mcp_connections;
 // The event/action wire types moved to grain-sdk (the dependency leaf);
 // this alias keeps every `grain_core::event::X` path compiling unchanged.
 pub use grain_sdk as event;

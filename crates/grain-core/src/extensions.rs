@@ -3524,7 +3524,7 @@ impl std::io::Write for RegistryWriter<'_> {
     }
 }
 
-fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {
+pub(crate) fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {
     use std::io::Write;
     atomic_write_with(path, |file| {
         file.write_all(bytes).context("write extension state")

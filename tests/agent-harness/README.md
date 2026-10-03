@@ -1,5 +1,7 @@
 # Grain Agent acceptance harness
 
+**E2a direct-connection library tests:** [Production boundary, audit and evidence](../../docs/Extensions%202.0/CUSTOM-MCP-CONNECTION-REGISTRY-AUDIT.md). Run `cargo test --locked -p grain-core mcp_connections::` for strict metadata, identity/account isolation, stale edits/restart, corrupt state, actual locks/publication rollback and concurrent writers. All thirteen Windows cases pass. This is a production library/real-filesystem test; no custom MCP import/runtime route or credentials are exercised yet. Reuse `extension-contract` for affected baseline application regression and the existing owned MCP fixtures for the upcoming runtime/auth integration. No scenario, mock application or testing service was added; inventory stays **93 IDs / 78 self-contained / 74 self-tests**. E2 remains in progress; no manual test is needed for this unit.
+
 **E1c compatibility and development checkpoints:** [Contract, audit, evidence and suite triggers](../../docs/Extensions%202.0/EXTENSION-COMPATIBILITY-CONFIGURATION-AUDIT.md). Develop a bounded block with fast affected checks, build once, then run attributable real-app tests serially. For contract-only edits:
 
 ```powershell

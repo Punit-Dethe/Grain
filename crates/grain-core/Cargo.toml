@@ -33,3 +33,5 @@ chrono = { version = "0.4", default-features = false, features = ["alloc"] }
 zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
 # Private, create-new staging directories with scoped cleanup (already locked).
 tempfile = "3"
+# Host-generated connection/account/restart identities; match desktop's lock.
+uuid = { version = "=1.21.0", features = ["v4"] }
