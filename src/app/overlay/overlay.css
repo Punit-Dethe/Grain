@@ -111,6 +111,19 @@
     border-radius 460ms cubic-bezier(0.22, 1, 0.36, 1);
   will-change: transform, width, opacity;
 }
+/* Agent capture: sky blue and blue at the base, fading into the dark surface.
+   Background layers leave controls, layout and waveform untouched. */
+.scard.agent {
+  background:
+    linear-gradient(to top, transparent, var(--s-surface) 80%),
+    linear-gradient(
+      110deg,
+      rgb(125 211 252 / 32%),
+      rgb(56 189 248 / 28%),
+      rgb(59 130 246 / 32%)
+    ),
+    var(--s-surface);
+}
 @keyframes scard-pop {
   from {
     opacity: 0;
@@ -281,60 +294,6 @@
   opacity: 1;
 }
 
-/* Waveform — reactive only after the first microphone callback. While arming,
-   a muted travelling pulse acknowledges the shortcut without pretending that
-   audio levels are already being received. */
-.swave {
-  display: flex;
-  align-items: center;
-  gap: 3px;
-  padding-right: 8px;
-  height: 18px;
-  flex: none;
-}
-.swave i {
-  width: 4px;
-  min-height: 3px;
-  max-height: 18px;
-  border-radius: 2px;
-  background: var(--s-accent);
-  transition:
-    height 80ms linear,
-    background-color 180ms ease,
-    opacity 180ms ease;
-}
-.swave.arming i {
-  height: 6px !important;
-  background: var(--s-muted);
-  opacity: 0.35;
-  animation: swave-arming 900ms ease-in-out infinite;
-}
-.swave.arming i:nth-child(2),
-.swave.arming i:nth-child(8) {
-  animation-delay: 75ms;
-}
-.swave.arming i:nth-child(3),
-.swave.arming i:nth-child(7) {
-  animation-delay: 150ms;
-}
-.swave.arming i:nth-child(4),
-.swave.arming i:nth-child(6) {
-  animation-delay: 225ms;
-}
-.swave.arming i:nth-child(5) {
-  animation-delay: 300ms;
-}
-@keyframes swave-arming {
-  0%,
-  100% {
-    transform: scaleY(0.55);
-    opacity: 0.25;
-  }
-  50% {
-    transform: scaleY(1.5);
-    opacity: 0.7;
-  }
-}
 .sx {
   width: 22px;
   height: 22px;
@@ -416,46 +375,14 @@ body,
 .swave.grain-wave {
   width: 51px;
   height: 26px;
-  padding-right: 0;
+  display: flex;
+  align-items: center;
+  flex: none;
   justify-content: center;
-  gap: 1.7px;
   overflow: hidden;
 }
-.swave.grain-wave i {
-  display: block;
-  flex: 0 0 2px;
-  width: 2px;
-  height: 2px;
-  min-height: 2px;
-  max-height: 14px;
-  border-radius: 999px;
-  background: var(--s-accent);
-  transition:
-    background-color 180ms ease,
-    opacity 180ms ease;
-}
-.swave.grain-wave.arming i {
-  background: var(--s-muted);
-}
-.swave.grain-wave.matrix {
-  width: 96px;
-  display: grid;
-  grid-template-columns: repeat(25, 2px);
-  grid-template-rows: repeat(8, 3px);
-  gap: 1px;
-  height: 31px;
-}
-.swave.grain-wave.matrix.live {
-  height: 7px;
-  grid-template-rows: repeat(2, 3px);
-}
-.swave.grain-wave.matrix i {
-  width: 2px;
-  height: 3px;
-  border-radius: 50%;
-}
-/* Closed Wave and working pills share exact center-to-control gaps. */
-.scard.wave:not(.open):not(.working):not(.cworking) .sbase {
+/* Closed recording and working pills share exact center-to-control gaps. */
+.scard:not(.open):not(.working):not(.cworking) .sbase {
   grid-template-columns: 18px 51px 22px;
   column-gap: var(--grain-row-gap);
   justify-content: center;
@@ -469,19 +396,11 @@ body,
   --ov-rest-w: calc(18px + 51px + var(--grain-row-gap) + 20px);
   --ov-pill-w: var(--ov-rest-w);
 }
-.scard.wave.no-close:not(.working):not(.cworking) .sbase {
+.scard.no-close:not(.working):not(.cworking) .sbase {
   grid-template-columns: 18px 51px;
 }
 .scard.no-close .work-row {
   grid-template-columns: 18px minmax(0, 1fr);
-}
-.scard.matrix.no-close:not(.working):not(.cworking) .sbase {
-  grid-template-columns: 18px 96px;
-  column-gap: var(--grain-row-gap);
-  justify-content: center;
-}
-.scard.matrix.no-close .sbase-l {
-  padding-left: 0;
 }
 .scard:not(.open) .work-row .swork-label {
   padding: 0;
@@ -495,33 +414,21 @@ body,
   width: 18px;
   height: 18px;
 }
-.scard.wave:not(.open) .sbase-l,
+.scard:not(.open) .sbase-l,
 .scard:not(.open) .work-row .sbase-l {
   padding-left: 0;
   width: 18px;
 }
 /* SVG uses the retired renderer's 2px round caps and floating-point 1.7px gaps.
    No CSS height interpolation or flex rounding competes with its spring filter. */
-.grain-wave.wave svg {
+.grain-wave svg {
   display: block;
   flex: none;
   color: var(--s-accent);
 }
-.grain-wave.wave.arming svg {
+.grain-wave.arming svg {
   color: var(--s-muted);
   opacity: 0.35;
-}
-/* The optional matrix skin keeps its existing footprint so its 96px field
-   cannot displace the icon/cancel from the tighter waveform capsule. */
-.scard.compact.matrix:not(.cworking) {
-  width: 172px;
-}
-.scard.matrix:not(.compact):not(.open):not(.working) {
-  width: 184px;
-}
-.scard.compact.matrix.no-close:not(.cworking),
-.scard.matrix.no-close:not(.compact):not(.working) {
-  width: calc(18px + 96px + var(--grain-row-gap) + 20px);
 }
 /* Existing supplemental notices are independent of the recording card. */
 @font-face {

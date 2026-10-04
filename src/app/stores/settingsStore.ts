@@ -176,11 +176,18 @@ const settingUpdaters: {
     commands.changeSelectedLanguageSetting(value as string),
   overlay_position: (value) =>
     commands.changeOverlayPositionSetting(value as string),
-  overlay_style: (value) =>
-    commands.changeOverlayStyleSetting(value as "none" | "minimal" | "live"),
-  pill_skin: (value) => commands.changePillSkinSetting(value as string),
-  pill_show_app_icon: (value) =>
-    commands.changePillShowAppIconSetting(value as boolean),
+  overlay_style: async (value) => {
+    const result = await commands.changeOverlayStyleSetting(
+      value as "none" | "minimal" | "live",
+    );
+    if (result.status === "error") throw new Error(result.error);
+  },
+  pill_show_app_icon: async (value) => {
+    const result = await commands.changePillShowAppIconSetting(
+      value as boolean,
+    );
+    if (result.status === "error") throw new Error(result.error);
+  },
   pill_hide_close_button: async (value) => {
     const result = await commands.changePillHideCloseButtonSetting(
       value as boolean,

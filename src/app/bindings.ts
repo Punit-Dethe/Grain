@@ -252,8 +252,13 @@ async changeOverlayPositionSetting(position: string) : Promise<Result<null, stri
     else return { status: "error", error: e  as any };
 }
 },
-async changeOverlayStyleSetting(style: OverlayStyle) : Promise<void> {
-    await TAURI_INVOKE("change_overlay_style_setting", { style });
+async changeOverlayStyleSetting(style: OverlayStyle) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_overlay_style_setting", { style }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
 },
 async changePillHideCloseButtonSetting(hidden: boolean) : Promise<Result<null, string>> {
     try {
@@ -271,20 +276,6 @@ async overlayCancel() : Promise<void> {
 },
 async overlayFollowup() : Promise<void> {
     await TAURI_INVOKE("overlay_followup");
-},
-/**
- * [GRAIN] Which built-in look the collapsed pill wears. Unlike a pill *theme*
- * (an extension's colours), a skin changes the pill's geometry — so the pill
- * resizes its own window on receipt. An unknown name resolves to the default
- * rather than erroring: the user must never end up with no pill.
- */
-async changePillSkinSetting(skin: string) : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("change_pill_skin_setting", { skin }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
 },
 /**
  * [GRAIN] Pill identity: show the icon of the app being dictated into in place
@@ -2157,7 +2148,6 @@ grainEmbedModelProgress: GrainEmbedModelProgress,
 grainOverlayCompactCloseHidden: GrainOverlayCompactCloseHidden,
 grainOverlayContext: GrainOverlayContext,
 grainOverlayPosition: GrainOverlayPosition,
-grainOverlaySkin: GrainOverlaySkin,
 hideOverlay: HideOverlay,
 historyUpdatePayload: HistoryUpdatePayload,
 micLevel: MicLevel,
@@ -2189,7 +2179,6 @@ grainEmbedModelProgress: "grain-embed-model-progress",
 grainOverlayCompactCloseHidden: "grain-overlay-compact-close-hidden",
 grainOverlayContext: "grain-overlay-context",
 grainOverlayPosition: "grain-overlay-position",
-grainOverlaySkin: "grain-overlay-skin",
 hideOverlay: "hide-overlay",
 historyUpdatePayload: "history-update-payload",
 micLevel: "mic-level",
@@ -2405,11 +2394,6 @@ selected_asr_model?: string; always_on_microphone?: boolean; selected_microphone
  * None means "average all channels" (original behavior).
  */
 selected_channel?: number | null; clamshell_microphone?: string | null; selected_output_device?: string | null; translate_to_english?: boolean; selected_language?: string; overlay_position?: OverlayPosition; overlay_style?: OverlayStyle; 
-/**
- * [GRAIN] Which built-in look the collapsed pill wears (form, not colour —
- * see `PillSkin`). Defaults to the smooth waveform.
- */
-pill_skin?: PillSkin; 
 /**
  * [GRAIN] Show the icon of the app being dictated into, in place of the
  * pill's state dot. ON while the behaviour is being developed; it will
@@ -2956,7 +2940,6 @@ export type GrainEmbedModelProgress = { downloaded: number; total: number; perce
 export type GrainOverlayCompactCloseHidden = boolean
 export type GrainOverlayContext = OverlayPresentation
 export type GrainOverlayPosition = OverlayPosition
-export type GrainOverlaySkin = PillSkin
 export type HideOverlay = null
 export type HistoryEntry = { id: number; file_name: string; timestamp: number; saved: boolean; title: string; transcription_text: string; post_processed_text: string | null; post_process_prompt: string | null; post_process_requested: boolean }
 export type HistoryUpdatePayload = { action: "added"; entry: HistoryEntry } | { action: "updated"; entry: HistoryEntry } | { action: "deleted"; id: number } | { action: "toggled"; id: number }
@@ -3131,7 +3114,7 @@ export type OnboardingTestMode = "standard" | "flow" | "streaming"
  */
 export type OverlayPosition = "top" | "bottom"
 export type OverlayPresentation = { visible: boolean; state: string; ready: boolean; session_id: number; agent: boolean; owner: string | null; icon: string | null; notice: string | null; followup: string | null; committed: string; tentative: string; working: boolean; work_kind: string }
-export type OverlaySnapshot = { presentation: OverlayPresentation; position: OverlayPosition; skin: PillSkin; pill_hide_close_button: boolean; theme: ThemeState; streaming_width: number; streaming_height: number }
+export type OverlaySnapshot = { presentation: OverlayPresentation; position: OverlayPosition; pill_hide_close_button: boolean; theme: ThemeState; streaming_width: number; streaming_height: number }
 /**
  * Handy's presentation contract. Position only selects an edge.
  */
@@ -3144,21 +3127,6 @@ export type PaginatedHistory = { entries: HistoryEntry[]; has_more: boolean }
 export type PasteError = null
 export type PasteMethod = "ctrl_v" | "direct" | "none" | "shift_insert" | "ctrl_shift_v" | "external_script"
 export type PermissionAccess = "allowed" | "denied" | "unknown"
-/**
- * The collapsed pill's body look. Adding a variant here is the ONLY thing a new
- * pill look must touch in the protocol; the renderer owns everything else.
- */
-export type PillSkin = 
-/**
- * **Default.** A compact capsule with a smooth, centre-mirrored waveform —
- * the quiet, professional look. 20% smaller than [`PillSkin::Matrix`].
- */
-"wave" | 
-/**
- * The original dot-matrix aura: an 25x8 grid of dots whose density tracks
- * the voice. Kept as a selectable look, no longer the default.
- */
-"matrix"
 export type PostProcessProvider = { id: string; label: string; base_url: string; allow_base_url_edit?: boolean; models_endpoint?: string | null; supports_structured_output?: boolean; 
 /**
  * [GRAIN] Included in smart rotation when true. Defaults true so existing

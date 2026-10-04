@@ -623,7 +623,7 @@ mod tests {
     }
 
     #[test]
-    fn compact_close_preference_defaults_for_legacy_settings_and_survives_reload() {
+    fn pill_preferences_default_for_legacy_settings_and_survive_reload() {
         let dir = tempfile::tempdir().unwrap();
         let data = dir.path().join("data");
         fs::create_dir_all(&data).unwrap();
@@ -643,12 +643,75 @@ mod tests {
         drop(ctx);
         for hidden in [true, false] {
             let ctx = AppContext::new("res", &data);
-            ctx.update_settings(|s| s.pill_hide_close_button = hidden)
-                .unwrap();
+            ctx.update_settings(|s| {
+                s.pill_hide_close_button = hidden;
+                s.pill_show_app_icon = !hidden;
+                s.overlay_position = if hidden {
+                    crate::settings::OverlayPosition::Top
+                } else {
+                    crate::settings::OverlayPosition::Bottom
+                };
+                s.overlay_style = if hidden {
+                    crate::settings::OverlayStyle::None
+                } else {
+                    crate::settings::OverlayStyle::Minimal
+                };
+            })
+            .unwrap();
             drop(ctx);
             let reloaded = AppContext::new("res", &data);
             assert_eq!(reloaded.settings().pill_hide_close_button, hidden);
+            assert_eq!(reloaded.settings().pill_show_app_icon, !hidden);
+            assert_eq!(
+                reloaded.settings().overlay_position,
+                if hidden {
+                    crate::settings::OverlayPosition::Top
+                } else {
+                    crate::settings::OverlayPosition::Bottom
+                }
+            );
+            assert_eq!(
+                reloaded.settings().overlay_style,
+                if hidden {
+                    crate::settings::OverlayStyle::None
+                } else {
+                    crate::settings::OverlayStyle::Minimal
+                }
+            );
             assert_eq!(reloaded.settings().selected_language, "fr");
+        }
+    }
+
+    #[test]
+    fn retired_pill_skin_is_removed_from_disk_without_resetting_preferences() {
+        for skin in ["matrix", "wave"] {
+            let dir = tempfile::tempdir().unwrap();
+            let data = dir.path().join("data");
+            fs::create_dir_all(&data).unwrap();
+            let mut legacy = serde_json::to_value(AppSettings::default()).unwrap();
+            legacy["pill_skin"] = serde_json::json!(skin);
+            legacy["selected_language"] = serde_json::json!("fr");
+            legacy["pill_hide_close_button"] = serde_json::json!(true);
+            legacy["pill_show_app_icon"] = serde_json::json!(false);
+            fs::write(
+                data.join(SETTINGS_FILE),
+                serde_json::to_vec(&legacy).unwrap(),
+            )
+            .unwrap();
+            // Loading must persist the cleanup without requiring a later edit.
+            let ctx = AppContext::new("res", &data);
+            assert_eq!(ctx.settings().selected_language, "fr");
+            assert!(ctx.settings().pill_hide_close_button);
+            assert!(!ctx.settings().pill_show_app_icon);
+            drop(ctx);
+            let saved: serde_json::Value =
+                serde_json::from_str(&fs::read_to_string(data.join(SETTINGS_FILE)).unwrap())
+                    .unwrap();
+            assert!(saved.get("pill_skin").is_none());
+            let reloaded = AppContext::new("res", &data);
+            assert_eq!(reloaded.settings().selected_language, "fr");
+            assert!(reloaded.settings().pill_hide_close_button);
+            assert!(!reloaded.settings().pill_show_app_icon);
         }
     }
 

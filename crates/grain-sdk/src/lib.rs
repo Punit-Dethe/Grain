@@ -25,7 +25,6 @@ pub mod error;
 pub mod event;
 pub mod flagged;
 pub mod manifest;
-pub mod pill_skin;
 pub mod protocol;
 pub mod settings_schema;
 
@@ -47,7 +46,6 @@ pub use manifest::{
     ShortcutDecl, Tier, ANCHORS, ICON_MASTER_DIM, ICON_MAX_BYTES, KNOWN_CAPABILITIES, KNOWN_SLOTS,
     PACK_ENTRY_MAX_BYTES, PACK_MAX_BYTES, PROMPT_CONTEXT_SLOT, PROMPT_MAIN_SLOT, SURFACE_PROMPTS,
 };
-pub use pill_skin::PillSkin;
 pub use protocol::{
     ClientHello, ClientRequest, DevControlFrame, DevReloadResult, HostCall, HostCallResult,
     HostFrame, ServerResponse, ServerWelcome, GRAIN_API_VERSION,

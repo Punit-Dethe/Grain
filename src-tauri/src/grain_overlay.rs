@@ -208,7 +208,6 @@ pub fn on_event(app: &AppHandle, event: &DaemonEvent) {
             | DaemonEvent::PasteMissed { .. }
             | DaemonEvent::PasteCatchDisabled
             | DaemonEvent::PillIcon { .. }
-            | DaemonEvent::PillSkin { .. }
             | DaemonEvent::OverlayConfig { .. }
             | DaemonEvent::PasteError { .. }
             | DaemonEvent::AsrStreamText { .. }
@@ -222,9 +221,6 @@ pub fn on_event(app: &AppHandle, event: &DaemonEvent) {
 
 fn on_event_main(app: &AppHandle, event: &DaemonEvent) {
     match event {
-        DaemonEvent::PillSkin { skin } => {
-            let _ = app.emit_to("recording_overlay", "grain-overlay-skin", skin);
-        }
         DaemonEvent::OverlayConfig { position } => {
             let _ = app.emit_to("recording_overlay", "grain-overlay-position", position);
         }
@@ -244,7 +240,6 @@ fn on_event_main(app: &AppHandle, event: &DaemonEvent) {
             | DaemonEvent::PasteMissed { .. }
             | DaemonEvent::PasteCatchDisabled
             | DaemonEvent::PillIcon { .. }
-            | DaemonEvent::PillSkin { .. }
             | DaemonEvent::OverlayConfig { .. }
             | DaemonEvent::PasteError { .. }
             | DaemonEvent::AsrStreamText { .. }
@@ -398,7 +393,6 @@ fn on_event_main(app: &AppHandle, event: &DaemonEvent) {
 pub struct OverlaySnapshot {
     pub presentation: OverlayPresentation,
     pub position: crate::settings::OverlayPosition,
-    pub skin: grain_core::settings::PillSkin,
     pub pill_hide_close_button: bool,
     pub theme: crate::grain_theme::ThemeState,
     pub streaming_width: f64,
@@ -417,7 +411,6 @@ pub fn overlay_snapshot(app: AppHandle) -> OverlaySnapshot {
             .unwrap()
             .clone(),
         position: settings.overlay_position,
-        skin: settings.pill_skin,
         pill_hide_close_button: settings.pill_hide_close_button,
         theme: crate::grain_theme::get_theme(app.clone()),
         streaming_width: crate::overlay::overlay_dimensions("streaming").0,
@@ -441,10 +434,13 @@ pub fn change_pill_hide_close_button_setting(app: AppHandle, hidden: bool) -> Re
 
 #[tauri::command]
 #[specta::specta]
-pub fn change_overlay_style_setting(app: AppHandle, style: crate::settings::OverlayStyle) {
-    let mut settings = crate::settings::get_settings(&app);
-    settings.overlay_style = style;
-    crate::settings::write_settings(&app, settings);
+pub fn change_overlay_style_setting(
+    app: AppHandle,
+    style: crate::settings::OverlayStyle,
+) -> Result<(), String> {
+    app.state::<std::sync::Arc<grain_core::AppContext>>()
+        .update_settings(|settings| settings.overlay_style = style)
+        .map_err(|error| error.to_string())?;
     crate::overlay::update_overlay_enabled_cache(style != crate::settings::OverlayStyle::None);
     if style == crate::settings::OverlayStyle::None {
         app.state::<OverlayContext>()
@@ -454,6 +450,7 @@ pub fn change_overlay_style_setting(app: AppHandle, style: crate::settings::Over
             .visible = false;
         crate::overlay::hide_recording_overlay(&app);
     }
+    Ok(())
 }
 
 #[tauri::command]

@@ -55,13 +55,12 @@ pub const DAEMON_EVENT_VARIANTS: &[&str] = &[
     "AsrSessionFinal",
     "AsrError",
     "ExtensionDisabled",
-    "PillSkin",
     "PillIcon",
 ];
 
 /// Edge length of the icon the core hands the pill, in pixels. Fixed so the
 /// wire payload is always exactly `PILL_ICON_PX² × 4` bytes and neither side has
-/// to negotiate a size; the pill scales it down to whatever its skin draws at.
+/// to negotiate a size; the pill scales it down to its fixed application-icon slot.
 pub const PILL_ICON_PX: usize = 64;
 
 /// Capability required to receive (or be woken by) a daemon event variant.
@@ -398,14 +397,6 @@ pub enum DaemonEvent {
         reason: String,
     },
 
-    /// [GRAIN] Which built-in look the collapsed pill should wear. Sent when the
-    /// pill authenticates and whenever the user changes the `pill_skin` setting.
-    /// Changing it resizes the pill window, so it is never sent per frame.
-    PillSkin {
-        #[serde(default)]
-        skin: crate::PillSkin,
-    },
-
     /// [GRAIN] The icon of whatever the user is dictating into, so the pill can
     /// show that it understands the surface rather than merely that it is on.
     ///
@@ -473,7 +464,6 @@ impl DaemonEvent {
             AsrSessionFinal { .. } => "AsrSessionFinal",
             AsrError { .. } => "AsrError",
             ExtensionDisabled { .. } => "ExtensionDisabled",
-            PillSkin { .. } => "PillSkin",
             PillIcon { .. } => "PillIcon",
         }
     }

@@ -10,7 +10,7 @@
 //! path in `lib.rs`'s `collect_commands!` differs.
 
 use crate::settings;
-use crate::settings::{DefaultPanel, PillSkin};
+use crate::settings::DefaultPanel;
 use crate::shortcut::{register_shortcut, unregister_shortcut};
 use log::warn;
 use tauri::{AppHandle, Manager};
@@ -604,40 +604,15 @@ pub fn change_default_panel_setting(app: AppHandle, panel: String) -> Result<(),
     Ok(())
 }
 
-/// [GRAIN] Which built-in look the collapsed pill wears. Unlike a pill *theme*
-/// (an extension's colours), a skin changes the pill's geometry — so the pill
-/// resizes its own window on receipt. An unknown name resolves to the default
-/// rather than erroring: the user must never end up with no pill.
-#[tauri::command]
-#[specta::specta]
-pub fn change_pill_skin_setting(app: AppHandle, skin: String) -> Result<(), String> {
-    let parsed = PillSkin::from_wire(&skin);
-    if parsed.as_wire() != skin {
-        warn!(
-            "Invalid pill skin '{}', defaulting to {}",
-            skin,
-            parsed.as_wire()
-        );
-    }
-    let mut settings = settings::get_settings(&app);
-    settings.pill_skin = parsed;
-    settings::write_settings(&app, settings);
-
-    // Drive the live pill: it re-sizes and re-centers on the next frame. An idle
-    // pill picks the skin up from its welcome frame on the next connect.
-    crate::pill_skin::broadcast(&app, parsed);
-    Ok(())
-}
-
 /// [GRAIN] Pill identity: show the icon of the app being dictated into in place
 /// of the pill's state dot. Takes effect on the next session — the icon is
 /// resolved at record-start, never held between sessions.
 #[tauri::command]
 #[specta::specta]
 pub fn change_pill_show_app_icon_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
-    let mut settings = settings::get_settings(&app);
-    settings.pill_show_app_icon = enabled;
-    settings::write_settings(&app, settings);
+    app.state::<std::sync::Arc<grain_core::AppContext>>()
+        .update_settings(|settings| settings.pill_show_app_icon = enabled)
+        .map_err(|error| error.to_string())?;
     Ok(())
 }
 

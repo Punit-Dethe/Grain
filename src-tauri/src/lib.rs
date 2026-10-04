@@ -99,7 +99,6 @@ mod net_diag; // [GRAIN] shared reqwest transport-error diagnostics (upstream #1
 #[path = "handy/paste_tx/mod.rs"]
 mod paste_tx;
 mod pill_icon; // [GRAIN] pill identity — the foreground app's icon → pill
-mod pill_skin; // [GRAIN] pill skin delivery — the built-in look setting → pill
 #[path = "handy/portable.rs"]
 pub mod portable;
 mod post_process_router; // [GRAIN] post-process (LLM) dispatcher (single vs rotation)
@@ -1358,7 +1357,6 @@ fn command_bindings() -> Builder<tauri::Wry> {
             grain_overlay::overlay_snapshot,
             grain_overlay::overlay_cancel,
             grain_overlay::overlay_followup,
-            grain_commands::change_pill_skin_setting,
             grain_commands::change_pill_show_app_icon_setting,
             shortcut::change_debug_mode_setting,
             shortcut::change_word_correction_threshold_setting,
@@ -1577,7 +1575,6 @@ fn command_bindings() -> Builder<tauri::Wry> {
             grain_events::RecordingReady,
             grain_events::MicLevel,
             grain_events::GrainOverlayContext,
-            grain_events::GrainOverlaySkin,
             grain_events::GrainOverlayPosition,
             grain_events::GrainOverlayCompactCloseHidden,
             grain_events::ModelStateChanged,

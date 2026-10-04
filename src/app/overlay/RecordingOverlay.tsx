@@ -4,7 +4,6 @@ import {
   commands,
   events,
   type OverlayPresentation,
-  type PillSkin,
   type StreamTextEvent,
 } from "@/bindings";
 import {
@@ -17,7 +16,6 @@ import {
   waveBarX,
   waveBarHalfLength,
 } from "./wave";
-import { MatrixField } from "./matrix";
 import { useTranslation } from "react-i18next";
 import i18n from "@/i18n";
 import { getLanguageDirection } from "@/lib/utils/rtl";
@@ -41,20 +39,15 @@ const empty: OverlayPresentation = {
 const Waveform = memo(function Waveform({
   ready,
   session,
-  skin,
-  live,
 }: {
   ready: boolean;
   session: number;
-  skin: PillSkin;
-  live: boolean;
 }) {
   const row = useRef<HTMLDivElement>(null);
   const amplitude = useRef(0);
   // Original compact icon slot leaves ~50.75px for 13 bars; use it in both forms.
   const count = barCount(WAVE_WIDTH);
   const [field] = useState(() => new WaveField());
-  const [matrix] = useState(() => new MatrixField());
   useEffect(() => {
     let disposed = false;
     let release: UnlistenFn | undefined;
@@ -74,69 +67,52 @@ const Waveform = memo(function Waveform({
   }, []);
   useEffect(() => {
     field.reset();
-    matrix.reset();
     amplitude.current = 0;
-  }, [session, field, matrix]);
+  }, [session, field]);
   useEffect(() => {
     const element = row.current;
     if (!element) return;
-    const bars =
-      skin === "matrix" ? element.children : element.querySelectorAll("line");
+    const bars = element.querySelectorAll("line");
     let frame = 0;
     let previous = performance.now();
     const animate = (now: number) => {
       const dt = (now - previous) / 1000;
-      const changed =
-        skin !== "matrix" ||
-        matrix.advance(dt, ready ? amplitude.current : 0, live);
-      if (skin !== "matrix")
-        field.advance(dt, ready ? amplitude.current : 0, count);
+      field.advance(dt, ready ? amplitude.current : 0, count);
       previous = now;
-      for (let i = 0; changed && i < bars.length; i++) {
-        if (skin === "matrix") {
-          const bar = bars[i] as HTMLElement;
-          const start = (i + (live ? 75 : 0)) * 4;
-          bar.style.backgroundColor = `rgb(${matrix.dots[start]} ${matrix.dots[start + 1]} ${matrix.dots[start + 2]})`;
-          bar.style.opacity = String(matrix.dots[start + 3] / 255);
-        } else {
-          const half = waveBarHalfLength(field.bars[i]);
-          bars[i].setAttribute("y1", String(WAVE_HEIGHT / 2 - half));
-          bars[i].setAttribute("y2", String(WAVE_HEIGHT / 2 + half));
-        }
+      for (let i = 0; i < bars.length; i++) {
+        const half = waveBarHalfLength(field.bars[i]);
+        bars[i].setAttribute("y1", String(WAVE_HEIGHT / 2 - half));
+        bars[i].setAttribute("y2", String(WAVE_HEIGHT / 2 + half));
       }
       frame = requestAnimationFrame(animate);
     };
     frame = requestAnimationFrame(animate);
     return () => cancelAnimationFrame(frame);
-  }, [count, ready, skin, live, field, matrix]);
+  }, [count, ready, field]);
   return (
     <div
       ref={row}
-      className={`swave grain-wave ${skin} ${live ? "live" : ""} ${ready ? "ready" : "arming"}`}
+      className={`swave grain-wave ${ready ? "ready" : "arming"}`}
       aria-hidden="true"
     >
-      {skin === "matrix" ? (
-        Array.from({ length: live ? 50 : 200 }, (_, i) => <i key={i} />)
-      ) : (
-        <svg
-          width={WAVE_WIDTH}
-          height={WAVE_HEIGHT}
-          viewBox={`0 0 ${WAVE_WIDTH} ${WAVE_HEIGHT}`}
-          stroke="currentColor"
-          strokeWidth={WAVE_BAR_WIDTH}
-          strokeLinecap="round"
-        >
-          {Array.from({ length: count }, (_, i) => (
-            <line
-              key={i}
-              x1={waveBarX(i, count)}
-              x2={waveBarX(i, count)}
-              y1={WAVE_HEIGHT / 2}
-              y2={WAVE_HEIGHT / 2}
-            />
-          ))}
-        </svg>
-      )}
+      <svg
+        width={WAVE_WIDTH}
+        height={WAVE_HEIGHT}
+        viewBox={`0 0 ${WAVE_WIDTH} ${WAVE_HEIGHT}`}
+        stroke="currentColor"
+        strokeWidth={WAVE_BAR_WIDTH}
+        strokeLinecap="round"
+      >
+        {Array.from({ length: count }, (_, i) => (
+          <line
+            key={i}
+            x1={waveBarX(i, count)}
+            x2={waveBarX(i, count)}
+            y1={WAVE_HEIGHT / 2}
+            y2={WAVE_HEIGHT / 2}
+          />
+        ))}
+      </svg>
     </div>
   );
 });
@@ -144,7 +120,6 @@ const Waveform = memo(function Waveform({
 export function RecordingOverlay() {
   const { t } = useTranslation();
   const [presentation, setPresentation] = useState(empty);
-  const [skin, setSkin] = useState<PillSkin>("wave");
   const [position, setPosition] = useState("bottom");
   const [hideCompactClose, setHideCompactClose] = useState(false);
   const [text, setText] = useState<StreamTextEvent>({
@@ -166,7 +141,6 @@ export function RecordingOverlay() {
     let disposed = false;
     let revision = 0;
     const updated = {
-      skin: false,
       position: false,
       theme: false,
       close: false,
@@ -265,14 +239,6 @@ export function RecordingOverlay() {
           }),
         ),
         register(
-          events.grainOverlaySkin.listen(({ payload }) => {
-            if (!disposed) {
-              updated.skin = true;
-              setSkin(payload);
-            }
-          }),
-        ),
-        register(
           events.grainOverlayPosition.listen(({ payload }) => {
             if (!disposed) {
               updated.position = true;
@@ -295,7 +261,6 @@ export function RecordingOverlay() {
       const before = revision;
       const snapshot = await commands.overlaySnapshot();
       if (disposed) return;
-      if (!updated.skin) setSkin(snapshot.skin);
       if (!updated.position) setPosition(snapshot.position);
       if (!updated.close) setHideCompactClose(snapshot.pill_hide_close_button);
       if (!updated.theme)
@@ -370,7 +335,6 @@ export function RecordingOverlay() {
     working,
     kind,
     hasText,
-    skin,
     hideCompactClose,
     session,
     t,
@@ -380,6 +344,7 @@ export function RecordingOverlay() {
   const showClose =
     !hideCompactClose || (presentation.state === "streaming" && hasText);
   const closeClass = showClose ? "" : "no-close";
+  const agentClass = presentation.agent ? "agent" : "";
   const direction = getLanguageDirection(i18n.language);
   const handleScroll = () => {
     const element = cap.current;
@@ -403,7 +368,7 @@ export function RecordingOverlay() {
       </svg>
     </button>
   );
-  const listeningRow = (showTimer: boolean, live: boolean) => (
+  const listeningRow = (showTimer: boolean) => (
     <div className="sbase">
       <div className="sbase-l" title={presentation.owner || undefined}>
         {presentation.icon ? (
@@ -412,12 +377,7 @@ export function RecordingOverlay() {
           <span className={`sdot ${presentation.ready ? "ready" : "arming"}`} />
         )}
       </div>
-      <Waveform
-        ready={presentation.ready}
-        session={session}
-        skin={skin}
-        live={live}
-      />
+      <Waveform ready={presentation.ready} session={session} />
       {showClose && (
         <div className="sbase-r">
           {showTimer && (
@@ -470,7 +430,7 @@ export function RecordingOverlay() {
       <div dir={direction} className={`ov-stage ${position}`}>
         <div
           key={session}
-          className={`scard ${skin} ${closeClass} ${open ? "open" : ""} ${collapsed ? "working" : ""}`}
+          className={`scard ${agentClass} ${closeClass} ${open ? "open" : ""} ${collapsed ? "working" : ""}`}
         >
           <div className="stext">
             <div className="stext-clip">
@@ -495,7 +455,7 @@ export function RecordingOverlay() {
                   ? t("overlay.processing")
                   : t("overlay.transcribing"),
               )
-            : listeningRow(open, open)}
+            : listeningRow(open)}
         </div>
       </div>
     );
@@ -511,9 +471,9 @@ export function RecordingOverlay() {
   return (
     <div dir={direction} className={`ov-stage ${position} ov-fade show`}>
       <div
-        className={`scard compact ${skin} ${closeClass} ${busy ? "cworking" : ""}`}
+        className={`scard compact ${agentClass} ${closeClass} ${busy ? "cworking" : ""}`}
       >
-        {busy ? workingRow(workLabel) : listeningRow(false, false)}
+        {busy ? workingRow(workLabel) : listeningRow(false)}
       </div>
     </div>
   );

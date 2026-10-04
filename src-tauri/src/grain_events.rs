@@ -51,8 +51,6 @@ pub struct MicLevel(pub Vec<f32>);
 #[derive(Clone, Serialize, Deserialize, Type, tauri_specta::Event)]
 pub struct GrainOverlayContext(pub crate::grain_overlay::OverlayPresentation);
 #[derive(Clone, Debug, Serialize, Deserialize, Type, tauri_specta::Event)]
-pub struct GrainOverlaySkin(pub grain_sdk::PillSkin);
-#[derive(Clone, Debug, Serialize, Deserialize, Type, tauri_specta::Event)]
 pub struct GrainOverlayPosition(pub crate::settings::OverlayPosition);
 #[derive(Clone, Debug, Serialize, Deserialize, Type, tauri_specta::Event)]
 pub struct GrainOverlayCompactCloseHidden(pub bool);
@@ -178,7 +176,6 @@ mod tests {
         assert_eq!(RecordingReady::NAME, "recording-ready");
         assert_eq!(MicLevel::NAME, "mic-level");
         assert_eq!(GrainOverlayContext::NAME, "grain-overlay-context");
-        assert_eq!(GrainOverlaySkin::NAME, "grain-overlay-skin");
         assert_eq!(GrainOverlayPosition::NAME, "grain-overlay-position");
         assert_eq!(
             GrainOverlayCompactCloseHidden::NAME,

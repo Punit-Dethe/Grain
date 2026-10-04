@@ -381,12 +381,12 @@ fn default_overlay_style() -> OverlayStyle {
     }
 }
 
-/// Normalize the legacy position before deserialization loses its disabled value.
+/// Normalize legacy placement and retire the removed pill renderer setting.
 pub fn migrate_overlay_settings(value: &mut serde_json::Value) -> bool {
     let Some(map) = value.as_object_mut() else {
         return false;
     };
-    let mut changed = false;
+    let mut changed = map.remove("pill_skin").is_some();
     if !map.contains_key("overlay_style") {
         let style = match map.get("overlay_position").and_then(|v| v.as_str()) {
             Some("none") => OverlayStyle::None,
@@ -405,11 +405,6 @@ pub fn migrate_overlay_settings(value: &mut serde_json::Value) -> bool {
     }
     changed
 }
-
-// [GRAIN] PillSkin lives in grain-sdk (it crosses the wire in
-// DaemonEvent::PillSkin); re-exported here so it is a `settings::PillSkin` like
-// every other settings-visible enum, and so specta generates its binding.
-pub use grain_sdk::PillSkin;
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Type)]
 #[serde(rename_all = "snake_case")]
@@ -760,10 +755,6 @@ pub struct AppSettings {
     pub overlay_position: OverlayPosition,
     #[serde(default = "default_overlay_style")]
     pub overlay_style: OverlayStyle,
-    /// [GRAIN] Which built-in look the collapsed pill wears (form, not colour —
-    /// see `PillSkin`). Defaults to the smooth waveform.
-    #[serde(default)]
-    pub pill_skin: PillSkin,
     /// [GRAIN] Show the icon of the app being dictated into, in place of the
     /// pill's state dot. ON while the behaviour is being developed; it will
     /// later be folded into Context Awareness and shown only for surfaces Grain
@@ -1811,7 +1802,6 @@ pub fn get_default_settings() -> AppSettings {
         selected_language: "auto".to_string(),
         overlay_position: default_overlay_position(),
         overlay_style: default_overlay_style(),
-        pill_skin: PillSkin::default(),
         pill_show_app_icon: default_pill_show_app_icon(),
         pill_hide_close_button: false,
         debug_mode: false,
