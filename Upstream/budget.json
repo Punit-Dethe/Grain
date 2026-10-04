@@ -1,6 +1,6 @@
 {
   "src-tauri/.gitignore": 4,
-  "src-tauri/Cargo.toml": 139,
+  "src-tauri/Cargo.toml": 138,
   "src-tauri/build.rs": 12,
   "src-tauri/capabilities/default.json": 16,
   "src-tauri/capabilities/desktop.json": 2,
@@ -17,7 +17,7 @@
   "src-tauri/src/handy/audio_toolkit/vad/smoothed.rs": 137,
   "src-tauri/src/handy/clipboard.rs": 58,
   "src-tauri/src/handy/commands/history.rs": 13,
-  "src-tauri/src/handy/commands/mod.rs": 22,
+  "src-tauri/src/handy/commands/mod.rs": 21,
   "src-tauri/src/handy/commands/models.rs": 57,
   "src-tauri/src/handy/commands/transcription.rs": 9,
   "src-tauri/src/handy/input.rs": 39,
@@ -35,7 +35,7 @@
   "src-tauri/src/handy/transcription_coordinator.rs": 1619,
   "src-tauri/src/handy/tray.rs": 642,
   "src-tauri/src/handy/utils.rs": 55,
-  "src-tauri/src/lib.rs": 1260,
+  "src-tauri/src/lib.rs": 1259,
   "src-tauri/src/main.rs": 9,
   "src-tauri/tauri.conf.json": 22
 }
