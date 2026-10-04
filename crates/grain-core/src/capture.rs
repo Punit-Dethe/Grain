@@ -267,7 +267,7 @@ mod tests {
         assert!(!shortcut_holds_hotkey(&s, "agent_followup"));
         assert!(!shortcut_holds_hotkey(&s, "paste_catch_deliver"));
         // An unrelated shortcut is untouched.
-        assert!(shortcut_holds_hotkey(&s, "prompt_next"));
+        assert!(shortcut_holds_hotkey(&s, "custom_binding"));
     }
 
     #[test]
@@ -283,7 +283,7 @@ mod tests {
             assert!(is_dynamic_binding(id));
             assert!(!shortcut_holds_hotkey(&s, id));
         }
-        assert!(!is_dynamic_binding("prompt_next"));
+        assert!(!is_dynamic_binding("custom_binding"));
     }
 
     #[test]

@@ -43,7 +43,6 @@ export const AgentSection: React.FC = () => {
   const quick = getSetting("agent_quick_enabled") ?? false;
   const contextMode = getSetting("agent_context_mode") ?? "off";
   const screenImage = getSetting("agent_screen_image") ?? false;
-  const typeToExpand = getSetting("agent_input_type_to_expand") ?? true;
   const panelPosition = getSetting("agent_panel_position") ?? "side";
 
   return (
@@ -104,16 +103,6 @@ export const AgentSection: React.FC = () => {
         />
       </SettingContainer>
 
-      {/* 5. How you talk to it. */}
-      <ToggleSwitch
-        label="Type to expand"
-        description="The summon card records by default. Start typing while it's listening to jump straight to the typing card; turn this off to keep it voice-first (press Tab or click to type)."
-        descriptionMode="tooltip"
-        grouped
-        checked={typeToExpand}
-        isUpdating={isUpdating("agent_input_type_to_expand")}
-        onChange={(v) => updateSetting("agent_input_type_to_expand", v)}
-      />
       {/* Renders its own row (name + description from the binding). While the
           Agent is open this shortcut OVERRIDES any other Grain shortcut on the
           same keys; outside the Agent it does nothing. */}

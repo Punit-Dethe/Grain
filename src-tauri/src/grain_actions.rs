@@ -1,14 +1,14 @@
 //! [GRAIN] Grain's own shortcut actions, out of the Handy-derived `actions.rs`
 //! (Handy Isolation phase 6). Everything here has no upstream counterpart:
-//! rolling real-time dictation, Native ASR streaming, the prompt switcher,
-//! master chords and the Agent bindings. `actions.rs` keeps
+//! rolling real-time dictation, Native ASR streaming,
+//! and the Agent bindings. `actions.rs` keeps
 //! upstream's actions and calls [`register`] once from its `ACTION_MAP`.
 
 use crate::actions::{
     process_transcription_output, FinishGuard, ProcessedTranscription, RecordingErrorEvent,
     ShortcutAction,
 };
-use crate::audio_feedback::{play_feedback_sound, play_feedback_sound_blocking, SoundType};
+use crate::audio_feedback::{play_feedback_sound, SoundType};
 use crate::audio_toolkit::{is_microphone_access_denied, is_no_input_device_error, VadPolicy};
 use crate::managers::audio::AudioRecordingManager;
 use crate::managers::history::HistoryManager;
@@ -111,14 +111,6 @@ fn emit_session_started_with_owner(
     // paste target, and the pill should end up agreeing with post-processing
     // (which resolves its context at paste time, after every switch).
     crate::surface_watch::start(app);
-    // [GRAIN] Tell the pill which prompt is active BEFORE it shows. The switcher
-    // capsule is revealed by hover on the expanded card, not only by a switch,
-    // so without this it would open with empty space between its arrows until
-    // the user happened to cycle a prompt. Silent by contract — `PromptActive`
-    // never arms the riser (see `DaemonEvent::PromptActive`).
-    if let Some(name) = current_prompt_name(app) {
-        crate::bridge::emit(app, DaemonEvent::PromptActive { name });
-    }
     crate::bridge::emit(
         app,
         DaemonEvent::RecordingStarted {
@@ -146,7 +138,7 @@ pub(crate) fn extension_session_started(app: &AppHandle, owner: &str) -> u64 {
 }
 
 /// Start the native capture-pill lifecycle for Extension Mode without arming
-/// dictation-only resources such as focused-field watching or prompt switching.
+/// dictation-only resources such as focused-field watching.
 /// Recommendation and everything after capture live in the prewarmed Tauri
 /// interaction window; this native surface never becomes a chooser.
 pub(crate) fn extension_mode_started(app: &AppHandle) -> u64 {
@@ -173,6 +165,8 @@ pub(crate) fn extension_mode_started(app: &AppHandle) -> u64 {
 /// produced. Returns the session id to carry into the async tail so the matching
 /// [`emit_processing_complete`] reuses it.
 pub(crate) fn emit_recording_stopped(app: &AppHandle) -> u64 {
+    app.state::<Arc<AudioRecordingManager>>()
+        .invalidate_recording_readiness();
     let session_id = current_session_id();
     // [GRAIN] Nothing left to follow — drop the hook rather than leave it live
     // between sessions, and invalidate any icon resolution still in flight.
@@ -194,22 +188,6 @@ pub(crate) fn emit_processing_complete(app: &AppHandle, session_id: u64) {
     );
 }
 
-/// Register the shortcuts that live only while a recording session is open:
-/// the transient Alt+2 prompt switcher chord. Registration is deferred
-/// internally, which keeps this safe to call from inside a `ShortcutAction`.
-pub(crate) fn register_session_shortcuts(app: &AppHandle) {
-    crate::master_key::register_chords(app);
-    // [GRAIN] send-to-AI is no longer taken here. It is registered globally at
-    // init, because it now also *starts* a capture from idle — a key that only
-    // exists once you are already recording cannot do that. Re-registering it
-    // per session would just collide with the global one.
-}
-
-/// Release what [`register_session_shortcuts`] took.
-pub(crate) fn unregister_session_shortcuts(app: &AppHandle) {
-    crate::master_key::unregister_chords(app);
-}
-
 /// One capture owns the shared recorder at a time. The coordinator checks this
 /// before starting any dictation engine, including when Agent has released its
 /// microphone for typing but still owns the input card or reply panel.
@@ -220,8 +198,7 @@ pub(crate) fn dictation_start_blocked(app: &AppHandle) -> bool {
             .is_some_and(|audio| audio.is_recording())
 }
 
-/// Mirror a live streaming snapshot to the native pill's Studio Window over the
-/// WS event bus. Both parts are cumulative snapshots (SET, not append):
+/// Mirror a live streaming snapshot to the public SDK bus and WebView context. Both parts are cumulative snapshots (SET, not append):
 /// `committed` is the stable prefix, `tentative` the volatile tail — the pill
 /// needs the tail so the preview keeps moving while the engine's auto-commit is
 /// between commit points.
@@ -237,7 +214,7 @@ pub(crate) fn mirror_stream_text(app: &AppHandle, committed: &str, tentative: &s
 }
 
 /// Tear down every Grain surface a cancel has to clear, on top of upstream's
-/// `utils::cancel_current_operation`: foreground watching, the master chords,
+/// `utils::cancel_current_operation`: foreground watching,
 /// any rolling session, and any live stream worker (whose command channel would
 /// otherwise stay open and block the next `start_stream`) — then hide the pill.
 /// The discarded transcript is intentionally dropped.
@@ -249,7 +226,6 @@ pub(crate) fn cancel_session(app: &AppHandle) {
     crate::surface_watch::stop(app);
     crate::extension_session::cancel(app);
     let extension_mode_cancelled = action_session::cancel(app);
-    crate::master_key::unregister_chords(app);
     if let Some(rt) = app.try_state::<Arc<crate::rolling::RollingTranscriber>>() {
         rt.cancel_session();
     }
@@ -264,96 +240,6 @@ pub(crate) fn cancel_session(app: &AppHandle) {
             },
         );
     }
-}
-
-// Prompt switcher — cycles the active post-processing prompt and shows
-// the new title in the pill. A tap shortcut: the switch happens on press.
-struct PromptSwitchAction {
-    delta: i32,
-}
-
-/// The active post-processing prompt's display name, or `None` only when there
-/// are no prompts at all. With none explicitly selected this falls back to the
-/// FIRST prompt — the same index [`cycle_prompt`] treats as current — so the
-/// switcher capsule never shows empty arrows over a prompt the keys would
-/// actually cycle away from. Single lookup shared by the switcher and the
-/// session-start announcement, so the two can never disagree.
-pub(crate) fn current_prompt_name(app: &AppHandle) -> Option<String> {
-    let settings = get_settings(app);
-    let selected = settings
-        .post_process_selected_prompt_id
-        .as_deref()
-        .and_then(|id| settings.post_process_prompts.iter().find(|p| p.id == id));
-    selected
-        .or_else(|| settings.post_process_prompts.first())
-        .map(|p| p.name.clone())
-}
-
-/// Cycle the active post-processing prompt by `delta` (wrapping) and show
-/// the new title in the pill's switcher capsule. Shared by the hold-shortcut
-/// [`PromptSwitchAction`] and the switcher's transient arrow keys ([`SwitcherArrowAction`]).
-pub fn cycle_prompt(app: &AppHandle, delta: i32) {
-    let mut settings = get_settings(app);
-    let n = settings.post_process_prompts.len() as i32;
-    if n == 0 {
-        return;
-    }
-    let cur_idx = settings
-        .post_process_selected_prompt_id
-        .as_deref()
-        .and_then(|id| {
-            settings
-                .post_process_prompts
-                .iter()
-                .position(|p| p.id == id)
-        })
-        .unwrap_or(0) as i32;
-    // Wrapping modulo that stays correct for negative deltas.
-    let new_idx = (((cur_idx + delta) % n) + n) % n;
-    let chosen = &settings.post_process_prompts[new_idx as usize];
-    let chosen_id = chosen.id.clone();
-    let chosen_name = chosen.name.clone();
-
-    settings.post_process_selected_prompt_id = Some(chosen_id);
-    crate::settings::write_settings(app, settings);
-
-    // Show the new title in the pill.
-    crate::bridge::emit(app, DaemonEvent::PromptChanged { name: chosen_name });
-}
-
-impl ShortcutAction for PromptSwitchAction {
-    fn start(&self, app: &AppHandle, _binding_id: &str, _shortcut_str: &str) {
-        cycle_prompt(app, self.delta);
-    }
-
-    fn stop(&self, _app: &AppHandle, _binding_id: &str, _shortcut_str: &str) {}
-}
-
-// The transient arrow keys registered by `master_key` while the Alt+2
-// prompt switcher is open. Cycles like `PromptSwitchAction`, then re-arms the
-// switcher's idle-close timer so it stays open while the user keeps cycling.
-struct SwitcherArrowAction {
-    delta: i32,
-}
-
-impl ShortcutAction for SwitcherArrowAction {
-    fn start(&self, app: &AppHandle, _binding_id: &str, _shortcut_str: &str) {
-        cycle_prompt(app, self.delta);
-        crate::master_key::bump_switcher(app);
-    }
-
-    fn stop(&self, _app: &AppHandle, _binding_id: &str, _shortcut_str: &str) {}
-}
-
-// Master chord Alt+2 — open the prompt switcher (capsule + arrow keys).
-struct MasterPromptSwitchAction;
-
-impl ShortcutAction for MasterPromptSwitchAction {
-    fn start(&self, app: &AppHandle, _binding_id: &str, _shortcut_str: &str) {
-        crate::master_key::open_switcher(app);
-    }
-
-    fn stop(&self, _app: &AppHandle, _binding_id: &str, _shortcut_str: &str) {}
 }
 
 // Summon the Agent — a voice-first AI scratchpad on the current selection.
@@ -381,7 +267,7 @@ impl ShortcutAction for ExtensionModeAction {
             action_session::stop(app);
             return;
         }
-        match action_session::start(app) {
+        match action_session::start_locked(app) {
             Ok(()) => {}
             Err(action_session::StartError::Busy) => {
                 log::debug!("[GRAIN] extension mode: shortcut ignored while busy");
@@ -483,24 +369,25 @@ impl ShortcutAction for RealtimeTranscribeAction {
         let binding_id = binding_id.to_string();
         // Flow uses exact continuous audio and does not load or run the ASR VAD.
         let vad_policy = VadPolicy::Disabled;
+        let overlay_generation = crate::grain_overlay::show_capture(app, SessionMode::Dictation);
+        let mut readiness = None;
         let mut recording_error = rolling_error;
         if recording_error.is_none() {
-            // A speaker cue is ordinary microphone input. Flow uses the visual
-            // recording indicator so short speech can begin immediately without
-            // the cue masking its first word or delaying capture.
-            if let Err(e) = rm.try_start_recording_low_ram(&binding_id, vad_policy) {
-                recording_error = Some(e);
-            } else {
-                rm.apply_mute();
+            match rm.try_start_recording_low_ram(&binding_id, vad_policy) {
+                Ok(ready) => readiness = Some(ready),
+                Err(error) => recording_error = Some(error),
             }
         }
 
         if recording_error.is_none() {
             change_tray_icon(app, TrayIconState::Recording);
             emit_session_started(app, sid, SessionMode::Dictation);
+            if let Some(readiness) = readiness {
+                crate::grain_capture::announce_ready(app, &rm, readiness, false);
+            }
             shortcut::register_cancel_shortcut(app);
-            register_session_shortcuts(app);
         } else {
+            crate::grain_overlay::hide_failed_capture(app, overlay_generation);
             rt.cancel_session();
             change_tray_icon(app, TrayIconState::Idle);
             if let Some(err) = recording_error {
@@ -535,7 +422,6 @@ impl ShortcutAction for RealtimeTranscribeAction {
         .then(crate::context_detect::capture_stop_context)
         .unwrap_or_default();
         shortcut::unregister_cancel_shortcut(app);
-        unregister_session_shortcuts(app);
         let ah = app.clone();
         let tm = Arc::clone(&app.state::<Arc<TranscriptionManager>>());
         let hm = Arc::clone(&app.state::<Arc<HistoryManager>>());
@@ -782,47 +668,27 @@ impl ShortcutAction for NativeAsrAction {
         let binding_id = binding_id.to_string();
         change_tray_icon(app, TrayIconState::Recording);
 
-        let settings = get_settings(app);
-        let is_always_on = settings.always_on_microphone;
         // Streaming-capable model verified above → the streaming VAD profile
         // (longer post-speech tail). No `vad_enabled` toggle in
         // grain-core settings — VAD is always on.
         let vad_policy = VadPolicy::Streaming;
+        let overlay_generation = crate::grain_overlay::show_capture(app, SessionMode::NativeAsr);
         let mut recording_error: Option<String> = None;
-        if is_always_on {
-            let rm_clone = Arc::clone(&rm);
-            let app_clone = app.clone();
-            std::thread::spawn(move || {
-                play_feedback_sound_blocking(&app_clone, SoundType::Start);
-                rm_clone.apply_mute();
-            });
-            if let Err(e) = rm.try_start_recording(&binding_id, vad_policy) {
-                recording_error = Some(e);
-            }
-        } else {
-            match rm.try_start_recording(&binding_id, vad_policy) {
-                Ok(()) => {
-                    let app2 = app.clone();
-                    let rm2 = Arc::clone(&rm);
-                    std::thread::spawn(move || {
-                        std::thread::sleep(std::time::Duration::from_millis(100));
-                        play_feedback_sound_blocking(&app2, SoundType::Start);
-                        rm2.apply_mute();
-                    });
-                }
-                Err(e) => recording_error = Some(e),
-            }
+        let mut readiness = None;
+        match rm.try_start_recording(&binding_id, vad_policy) {
+            Ok(ready) => readiness = Some(ready),
+            Err(error) => recording_error = Some(error),
         }
 
         if recording_error.is_none() {
             session_started(app, SessionMode::NativeAsr);
 
             shortcut::register_cancel_shortcut(app);
-            // Master chords for the live session. Native ASR has no send-to-AI
-            // binding, so the chords are registered directly rather than via
-            // `register_session_shortcuts`.
-            crate::master_key::register_chords(app);
+            if let Some(readiness) = readiness {
+                crate::grain_capture::announce_ready(app, &rm, readiness, true);
+            }
         } else {
+            crate::grain_overlay::hide_failed_capture(app, overlay_generation);
             // Tear down the pending stream worker so its channel doesn't leak
             // and block the next start_stream.
             tm.cancel_stream();
@@ -853,8 +719,6 @@ impl ShortcutAction for NativeAsrAction {
         .then(crate::context_detect::capture_stop_context)
         .unwrap_or_default();
         shortcut::unregister_cancel_shortcut(app);
-        // Release the master chords (and the switcher, if open).
-        crate::master_key::unregister_chords(app);
 
         let ah = app.clone();
         let tm = Arc::clone(&app.state::<Arc<TranscriptionManager>>());
@@ -1019,29 +883,6 @@ pub(crate) fn register(map: &mut HashMap<String, Arc<dyn ShortcutAction>>) {
     map.insert(
         "transcribe_native_asr".to_string(),
         Arc::new(NativeAsrAction) as Arc<dyn ShortcutAction>,
-    );
-    // Prompt switcher (cycles the active post-processing prompt).
-    map.insert(
-        "prompt_next".to_string(),
-        Arc::new(PromptSwitchAction { delta: 1 }) as Arc<dyn ShortcutAction>,
-    );
-    map.insert(
-        "prompt_prev".to_string(),
-        Arc::new(PromptSwitchAction { delta: -1 }) as Arc<dyn ShortcutAction>,
-    );
-    // Master switch chord (transiently registered by `master_key` while a
-    // recording session is live) + the switcher's transient arrow keys.
-    map.insert(
-        "master_prompt_switch".to_string(),
-        Arc::new(MasterPromptSwitchAction) as Arc<dyn ShortcutAction>,
-    );
-    map.insert(
-        "switcher_prompt_next".to_string(),
-        Arc::new(SwitcherArrowAction { delta: 1 }) as Arc<dyn ShortcutAction>,
-    );
-    map.insert(
-        "switcher_prompt_prev".to_string(),
-        Arc::new(SwitcherArrowAction { delta: -1 }) as Arc<dyn ShortcutAction>,
     );
     // Summon the Agent window.
     map.insert(

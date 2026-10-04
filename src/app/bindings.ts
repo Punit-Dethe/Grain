@@ -34,11 +34,11 @@ async grainEmbedUninstallModel() : Promise<Result<null, string>> {
 },
 /**
  * Is there a newer release?
- *
+ * 
  * `force` is the manual "Check now" button: it bypasses `update_checks_enabled`
  * because the user just asked, in person. The automatic check on launch passes
  * `false` and stays silent when the setting is off.
- *
+ * 
  * Returns `Ok(None)` both when the app is current and when checks are off — to
  * every caller those are the same answer ("nothing to show"), and reporting a
  * disabled setting as an error would surface it as a failure in the UI.
@@ -61,7 +61,7 @@ async getCachedUpdate() : Promise<UpdateInfo | null> {
 },
 /**
  * Download and install the pending update, then restart into it.
- *
+ * 
  * `restart()` does not return, so there is deliberately no success path: either
  * this call diverges into the new build or it returns an error.
  */
@@ -137,7 +137,7 @@ async contextProfiles() : Promise<ContextProfileInfo[]> {
 },
 /**
  * [GRAIN] Set (or clear) one profile's instruction.
- *
+ * 
  * Passing text equal to the default CLEARS the override rather than storing a
  * copy of it. That is what keeps an untouched-in-effect profile tracking the
  * shipped wording as it improves, instead of being pinned by a user who opened
@@ -153,7 +153,7 @@ async setContextProfileInstruction(id: string, instruction: string) : Promise<Re
 },
 /**
  * [GRAIN] A supported site's favicon as a PNG data URL, or `None`.
- *
+ * 
  * Async and one host per call, so the settings UI paints immediately and each
  * icon appears as it resolves. A batch command would make the whole row wait
  * for the slowest site — and these are cached after the first fetch, so the
@@ -164,7 +164,7 @@ async siteIcon(host: string) : Promise<string | null> {
 },
 /**
  * [GRAIN] Every application this user can launch, for the profile app picker.
- *
+ * 
  * Async and off the runtime's threads: this walks a Shell namespace and reads
  * two properties per entry, which on a well-populated machine is a couple of
  * hundred milliseconds. The picker asks once when it opens and filters the
@@ -175,7 +175,7 @@ async installedApps() : Promise<InstalledApp[]> {
 },
 /**
  * [GRAIN] An installed application's icon as a PNG data URL, or `None`.
- *
+ * 
  * One app per call for the same reason [`site_icon`] is: the list paints at
  * once and each icon lands as it resolves, rather than the whole picker waiting
  * on the slowest entry.
@@ -185,7 +185,7 @@ async appIcon(id: string) : Promise<string | null> {
 },
 /**
  * [GRAIN] The user's own context profiles, as stored.
- *
+ * 
  * Read back through a command rather than off the settings blob so the UI sees
  * the NORMALISED targets — a pasted URL is stored as a bare host, and an editor
  * showing what was typed instead of what was saved is how a user ends up
@@ -196,7 +196,7 @@ async contextCustomProfiles() : Promise<CustomContextProfile[]> {
 },
 /**
  * [GRAIN] Replace the whole set of user-made context profiles.
- *
+ * 
  * Whole-set rather than per-profile because the UI edits a list and the list is
  * small; a partial update API would only add ordering questions. Targets are
  * normalised here rather than trusted, since precedence and icon eligibility
@@ -251,6 +251,18 @@ async changeOverlayPositionSetting(position: string) : Promise<Result<null, stri
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
+},
+async changeOverlayStyleSetting(style: OverlayStyle) : Promise<void> {
+    await TAURI_INVOKE("change_overlay_style_setting", { style });
+},
+async overlaySnapshot() : Promise<OverlaySnapshot> {
+    return await TAURI_INVOKE("overlay_snapshot");
+},
+async overlayCancel() : Promise<void> {
+    await TAURI_INVOKE("overlay_cancel");
+},
+async overlayFollowup() : Promise<void> {
+    await TAURI_INVOKE("overlay_followup");
 },
 /**
  * [GRAIN] Which built-in look the collapsed pill wears. Unlike a pill *theme*
@@ -667,17 +679,6 @@ async changeAgentScreenImageSetting(enabled: boolean) : Promise<Result<null, str
 }
 },
 /**
- * [GRAIN] Toggle "type to expand" on the native agent input.
- */
-async changeAgentInputTypeToExpandSetting(enabled: boolean) : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("change_agent_input_type_to_expand_setting", { enabled }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
  * [GRAIN] Agent reply-surface position (side card vs center-top panel).
  */
 async changeAgentPanelPositionSetting(position: AgentPanelPosition) : Promise<Result<null, string>> {
@@ -858,7 +859,7 @@ async storeEntry(id: string) : Promise<Result<StoreEntry | null, string>> {
 },
 /**
  * Cover references for a set of ids, from the CACHED index in ONE parse.
- *
+ * 
  * The installed list shows each extension's picture, and asking `store_entry`
  * per row would re-read and re-verify the whole catalogue once per extension.
  * This reads it once, keeps only `(id, cover)`, and drops the rest — the list
@@ -982,11 +983,11 @@ async extensionRecommendationLabRemove() : Promise<Result<null, string>> {
  * Record the user's approval of what an extension asked for (SPEC §6) —
  * capabilities, and the prompt layers it contributes. Called by the permission
  * sheet on Approve; the caller then retries enable.
- *
+ * 
  * Grants are clamped to what the manifest actually requests, so neither a
  * compromised frontend nor a stale sheet can widen an extension's reach beyond
  * what the user was shown.
- *
+ * 
  * **Prompt layers are approved here too**, by the same act and with no
  * parameter of their own: the approved value is recomputed from the pack on
  * disk, so what gets recorded is necessarily the text the sheet just rendered
@@ -1079,7 +1080,7 @@ async mcpTestProvider(id: string) : Promise<Result<McpDiscoveryResult, string>> 
  * to `id` and disables whoever held it, in one step — the counterpart to
  * `extension_grant` for the `slotConflict` error. The caller then retries
  * enable, which now sees the slot as its own.
- *
+ * 
  * This is the ONLY path that moves a slot between extensions: `set_enabled`
  * refuses a contested claim, so a takeover is always something the user chose.
  */
@@ -1095,7 +1096,7 @@ async extensionTakeSlot(id: string, slot: string) : Promise<Result<null, string>
  * The settings an extension declares, resolved against what is stored
  * (SPEC §4.1, levels 1–2). Ordered by `order`, ties on declaration order, so
  * the host renders straight down the list.
- *
+ * 
  * Controls this build doesn't understand are dropped rather than drawn blank;
  * their stored values stay untouched for a build that does understand them.
  */
@@ -1109,7 +1110,7 @@ async extensionSettingsSchema(id: string) : Promise<Result<ExtensionSettingRow[]
 },
 /**
  * Every **enabled** extension's declared settings, in toggle order.
- *
+ * 
  * One pass over the packs answers all five anchors, so opening a settings tab
  * costs one read rather than one per anchor. Disabled extensions are absent
  * entirely (SPEC §6: disable makes anchored sections disappear) — their values
@@ -1162,11 +1163,11 @@ async extensionShortcutsStatus(id: string) : Promise<ShortcutStatus[]> {
 /**
  * [GRAIN] Start or stop listening for a request
  * (`docs/Extensions V1/PLAN.md` §3).
- *
+ * 
  * Grain's persisted `extension_mode` binding is the normal trigger. This
  * command remains the trusted-surface seam for the same start/stop/cancel
  * lifecycle; it does not create a second recording implementation.
- *
+ * 
  * One command for all three transitions rather than three, because the
  * invoke-handler list lives in the Handy-derived `lib.rs` and every entry is a
  * merge-conflict surface.
@@ -1182,7 +1183,7 @@ async grainActionListen(phase: string) : Promise<Result<boolean, string>> {
 /**
  * [GRAIN] Read the action log, optionally clearing it first
  * (`docs/Extensions V1/PLAN.md`).
- *
+ * 
  * The "why did that happen" surface. It holds what was heard, so it is capped,
  * lives only in memory, and clearing it is one call with no confirmation
  * dance — this is the user's own speech and asking twice before letting them
@@ -1206,7 +1207,7 @@ async grainExtensionModeStatus() : Promise<ExtensionModeStatus> {
  * [GRAIN] Download the understanding model for Extension Mode
  * (`docs/Extensions V1/PLAN.md` §5). The first-use offer calls this after the
  * user consents; progress and completion arrive on the shared model events.
- *
+ * 
  */
 async grainExtensionModeDownloadModel() : Promise<Result<null, string>> {
     try {
@@ -1274,7 +1275,7 @@ async changeAutoSendForExtension(id: string, enabled: boolean) : Promise<Result<
 },
 /**
  * Write one schema-declared setting from the host's own control.
- *
+ * 
  * Validated against the same schema as `host_api`'s `settings.set`, and
  * returns the row actually stored — a clamped number or a normalised colour
  * comes straight back, so the control shows the truth rather than what was
@@ -1467,7 +1468,7 @@ async changeTranscribeGpuDevice(device: string | null) : Promise<Result<null, st
 },
 /**
  * Return which accelerators and GPU devices are available for this build.
- *
+ * 
  * First-call cost is dominated by enumerating GPU devices through the
  * transcribe.cpp Metal/Vulkan backend, which loads dynamic libraries and
  * probes hardware. Run it on the blocking pool so the webview thread
@@ -1576,7 +1577,7 @@ async agentConfirmAction(token: string, approve: boolean) : Promise<Result<Agent
  * and swap the global Enter accordingly: compact owns a global
  * Enter (= Confirm/paste); expanded owns an in-window input, so a registered
  * global Enter would swallow the user's keystrokes.
- *
+ * 
  * ASYNC on purpose: a sync command runs on the MAIN thread, and calling
  * `set_size` on a visible window from inside a command on the main thread
  * deadlocks on Windows (tauri#3990 / tao#381). On a runtime worker the window
@@ -2145,7 +2146,12 @@ grainEmbedModelCancelled: GrainEmbedModelCancelled,
 grainEmbedModelComplete: GrainEmbedModelComplete,
 grainEmbedModelError: GrainEmbedModelError,
 grainEmbedModelProgress: GrainEmbedModelProgress,
+grainOverlayContext: GrainOverlayContext,
+grainOverlayPosition: GrainOverlayPosition,
+grainOverlaySkin: GrainOverlaySkin,
+hideOverlay: HideOverlay,
 historyUpdatePayload: HistoryUpdatePayload,
+micLevel: MicLevel,
 modelDeleted: ModelDeleted,
 modelDownloadCancelled: ModelDownloadCancelled,
 modelDownloadComplete: ModelDownloadComplete,
@@ -2158,6 +2164,8 @@ modelVerificationStarted: ModelVerificationStarted,
 onboardingMicrophoneLevel: OnboardingMicrophoneLevel,
 pasteError: PasteError,
 recordingError: RecordingError,
+recordingReady: RecordingReady,
+showOverlay: ShowOverlay,
 streamPhaseEvent: StreamPhaseEvent,
 streamTextEvent: StreamTextEvent,
 themeChanged: ThemeChanged,
@@ -2169,7 +2177,12 @@ grainEmbedModelCancelled: "grain-embed-model-cancelled",
 grainEmbedModelComplete: "grain-embed-model-complete",
 grainEmbedModelError: "grain-embed-model-error",
 grainEmbedModelProgress: "grain-embed-model-progress",
+grainOverlayContext: "grain-overlay-context",
+grainOverlayPosition: "grain-overlay-position",
+grainOverlaySkin: "grain-overlay-skin",
+hideOverlay: "hide-overlay",
 historyUpdatePayload: "history-update-payload",
+micLevel: "mic-level",
 modelDeleted: "model-deleted",
 modelDownloadCancelled: "model-download-cancelled",
 modelDownloadComplete: "model-download-complete",
@@ -2182,6 +2195,8 @@ modelVerificationStarted: "model-verification-started",
 onboardingMicrophoneLevel: "onboarding-microphone-level",
 pasteError: "paste-error",
 recordingError: "recording-error",
+recordingReady: "recording-ready",
+showOverlay: "show-overlay",
 streamPhaseEvent: "stream-phase-event",
 streamTextEvent: "stream-text-event",
 themeChanged: "theme-changed",
@@ -2198,41 +2213,41 @@ updateDownloadProgress: "update-download-progress"
 /**
  * [GRAIN] One declared action, as the approval sheet and the extension card
  * need it (`docs/Extensions V1/PLAN.md` §5).
- *
+ * 
  * Note what is **absent**: the utterance list. The consent question is "what
  * can this do", not "what words does it listen for" — a list of phrasings is
  * review and `doctor` material, and putting it on a sheet trains people to
  * scroll past the part that matters. What the user decides on is the title and
  * whether it will ask before acting.
  */
-export type ActionInfo = { id: string;
+export type ActionInfo = { id: string; 
 /**
  * One plain line, written for the user.
  */
-title: string;
+title: string; 
 /**
  * Whether performing this reads the resolved action back first. The single
  * most important thing on the row.
  */
-confirms: boolean;
+confirms: boolean; 
 /**
  * No conditions at all — offered on every request.
  */
 everywhere: boolean; app: string[]; website: string[] }
-export type ActionLogEntry = {
+export type ActionLogEntry = { 
 /**
  * Milliseconds since the Unix epoch, for ordering and display only.
  */
-at: number;
+at: number; 
 /**
  * What the acoustic model produced, before any routing. The whole point of
  * the log: when an action surprises someone, this is usually the answer.
  */
-heard: string;
+heard: string; 
 /**
  * `<extension>:<action>`, when one was chosen.
  */
-action: string | null;
+action: string | null; 
 /**
  * The user-facing title, so the log reads without a manifest.
  */
@@ -2241,33 +2256,33 @@ title: string | null; score: number | null; outcome: ActionLogOutcome }
  * What became of one routed request. Mirrors the decision layer's outcomes,
  * flattened for display.
  */
-export type ActionLogOutcome =
+export type ActionLogOutcome = 
 /**
  * It ran. `confirmed` records whether the user read it back first.
  */
-{ ran: { confirmed: boolean } } |
+{ ran: { confirmed: boolean } } | 
 /**
  * The user was asked and picked.
  */
-"chose" |
+"chose" | 
 /**
  * The user was asked and walked away. **The single most useful signal in
  * here**: a route that is regularly offered and regularly declined is one
  * the ranking is getting wrong, and it is what feeds the misroute counter.
  */
-"cancelled" |
+"cancelled" | 
 /**
  * Handed to the Agent.
  */
-"escalated" |
+"escalated" | 
 /**
  * Nothing installed could do it, or the capture was unusable.
  */
-{ refused: { reason: string } } |
+{ refused: { reason: string } } | 
 /**
  * It ran and failed for a reason worth showing.
  */
-{ failed: { reason: string } } |
+{ failed: { reason: string } } | 
 /**
  * The deadline passed with the call already in flight — it may well have
  * happened. Kept distinct from `Failed` because telling someone their
@@ -2298,15 +2313,15 @@ export type AgentConfirmField = { label: string; value: string }
  * unique-term extractor (high-signal identifiers/names only); `Full` sends the
  * capped raw field text. OFF by default — reading field content is opt-in.
  */
-export type AgentContextMode = "off" | "unique" | "full" |
+export type AgentContextMode = "off" | "unique" | "full" | 
 /**
  * The whole foreground window's visible text, from its accessibility tree.
- *
+ * 
  * The rung above `Full`: `Full` sends the field being typed into, this
  * sends what surrounds it. It is what makes "reply saying I can't make
  * Thursday" answerable — the thread being replied to lives outside the
  * compose box, so no amount of field context reaches it.
- *
+ * 
  * Never a screenshot: no screen-recording permission, no image, and only
  * the foreground window is ever read.
  */
@@ -2314,7 +2329,7 @@ export type AgentContextMode = "off" | "unique" | "full" |
 /**
  * One conversation turn from the frontend.
  */
-export type AgentMessage = {
+export type AgentMessage = { 
 /**
  * `"user"` or `"assistant"` (anything else is treated as `"user"`).
  */
@@ -2337,95 +2352,95 @@ export type AgentReply = { text: string; confirm_action: AgentConfirm | null }
  * object, so a partial store can never fail the whole load (upstream #1619).
  * Field-level defaults below take precedence where present.
  */
-export type AppSettings = {
+export type AppSettings = { 
 /**
  * Missing in pre-schema settings files; the field-level default of zero
  * intentionally triggers one-time migrations instead of using `Self::default()`.
  */
-settings_schema_version?: number; bindings: Partial<{ [key in string]: ShortcutBinding }>; push_to_talk: boolean; audio_feedback: boolean; audio_feedback_volume?: number; sound_theme?: SoundTheme;
+settings_schema_version?: number; bindings: Partial<{ [key in string]: ShortcutBinding }>; push_to_talk: boolean; audio_feedback: boolean; audio_feedback_volume?: number; sound_theme?: SoundTheme; 
 /**
  * [GRAIN] Which panel is visible when the main window opens.
  */
-default_panel?: DefaultPanel;
+default_panel?: DefaultPanel; 
 /**
  * [GRAIN] Colour scheme preference for every Grain surface. See `ThemeMode`.
  */
-theme?: ThemeMode;
+theme?: ThemeMode; 
 /**
  * [GRAIN] Which mode the AI shortcut starts when pressed from idle. All
  * three capture modes are always live, so this is a free choice among
  * `CAPTURE_MODE_IDS`.
  */
-capture_ai_start_mode?: string;
+capture_ai_start_mode?: string; 
 /**
  * [GRAIN] Whether the AI shortcut, pressed *during* a capture, ends it and
  * routes the transcript to AI. On by default — this is what replaces the
  * separate "Send to AI (End)" row that only ever appeared with
  * push-to-talk off.
  */
-capture_end_with_ai?: boolean;
+capture_end_with_ai?: boolean; 
 /**
  * [GRAIN] Send every capture to AI, whichever shortcut started it. With
  * this on there is exactly one key to remember for the whole product.
  */
-capture_always_ai?: boolean; start_hidden?: boolean; autostart_enabled?: boolean; update_checks_enabled?: boolean; selected_model?: string;
+capture_always_ai?: boolean; start_hidden?: boolean; autostart_enabled?: boolean; update_checks_enabled?: boolean; selected_model?: string; 
 /**
  * [GRAIN] Native ASR model id (separate registry from `selected_model`).
  * Empty = none selected. Never overload `selected_model`: Batch/Rolling and
  * Native ASR have different model topologies and lifecycles.
  */
-selected_asr_model?: string; always_on_microphone?: boolean; selected_microphone?: string | null;
+selected_asr_model?: string; always_on_microphone?: boolean; selected_microphone?: string | null; 
 /**
  * Which input channel to use on the selected microphone device.
  * None means "average all channels" (original behavior).
  */
-selected_channel?: number | null; clamshell_microphone?: string | null; selected_output_device?: string | null; translate_to_english?: boolean; selected_language?: string; overlay_position?: OverlayPosition;
+selected_channel?: number | null; clamshell_microphone?: string | null; selected_output_device?: string | null; translate_to_english?: boolean; selected_language?: string; overlay_position?: OverlayPosition; overlay_style?: OverlayStyle; 
 /**
  * [GRAIN] Which built-in look the collapsed pill wears (form, not colour —
  * see `PillSkin`). Defaults to the smooth waveform.
  */
-pill_skin?: PillSkin;
+pill_skin?: PillSkin; 
 /**
  * [GRAIN] Show the icon of the app being dictated into, in place of the
  * pill's state dot. ON while the behaviour is being developed; it will
  * later be folded into Context Awareness and shown only for surfaces Grain
  * actually differentiates.
  */
-pill_show_app_icon?: boolean; debug_mode?: boolean; log_level?: LogLevel; custom_words?: string[];
+pill_show_app_icon?: boolean; debug_mode?: boolean; log_level?: LogLevel; custom_words?: string[]; 
 /**
  * [GRAIN] Voice snippets (Experimentations tab): trigger phrase → expansion.
  */
-snippets?: Snippet[]; model_unload_timeout?: ModelUnloadTimeout; word_correction_threshold?: number; history_limit?: number; recording_retention_period?: RecordingRetentionPeriod; paste_method?: PasteMethod; clipboard_handling?: ClipboardHandling; auto_submit?: boolean; auto_submit_key?: AutoSubmitKey; post_process_enabled?: boolean; post_process_provider_id?: string; post_process_providers?: PostProcessProvider[]; post_process_api_keys?: SecretMap;
+snippets?: Snippet[]; model_unload_timeout?: ModelUnloadTimeout; word_correction_threshold?: number; history_limit?: number; recording_retention_period?: RecordingRetentionPeriod; paste_method?: PasteMethod; clipboard_handling?: ClipboardHandling; auto_submit?: boolean; auto_submit_key?: AutoSubmitKey; post_process_enabled?: boolean; post_process_provider_id?: string; post_process_providers?: PostProcessProvider[]; post_process_api_keys?: SecretMap; 
 /**
  * [GRAIN] When true, post-processing routes among ENABLED post-process
  * providers (round-robin + per-provider daily quota + failover). When false
  * (default), the single `post_process_provider_id` is used — today's behavior.
  * Independent of STT rotation: each side has its OWN provider list.
  */
-post_process_smart_rotation?: boolean;
+post_process_smart_rotation?: boolean; 
 /**
  * [GRAIN] Local date (YYYY-MM-DD) the post-process daily quotas last reset on.
  */
-post_process_quota_reset_date?: string;
+post_process_quota_reset_date?: string; 
 /**
  * [GRAIN] STT routing pool (local + remote OpenAI-compatible providers).
  */
-stt_providers?: SttProvider[];
+stt_providers?: SttProvider[]; 
 /**
  * [GRAIN] When true, transcription routes among enabled CLOUD providers
  * (round-robin + quota + failover); the LOCAL model is excluded. When false
  * (default), the local in-process model is used — never a surprise spike.
  */
-stt_smart_rotation?: boolean;
+stt_smart_rotation?: boolean; 
 /**
  * [GRAIN] STT provider API keys, by pool-entry id. Split into grain.secrets.json.
  */
-stt_api_keys?: SecretMap;
+stt_api_keys?: SecretMap; 
 /**
  * [GRAIN] Local date (YYYY-MM-DD) the STT daily quotas were last reset on.
  * When today differs, quotas roll back to 0 (checked lazily at routing time).
  */
-stt_quota_reset_date?: string; post_process_models?: Partial<{ [key in string]: string }>; post_process_prompts?: LLMPrompt[]; post_process_selected_prompt_id?: string | null; mute_while_recording?: boolean; append_trailing_space?: boolean;
+stt_quota_reset_date?: string; post_process_models?: Partial<{ [key in string]: string }>; post_process_prompts?: LLMPrompt[]; post_process_selected_prompt_id?: string | null; mute_while_recording?: boolean; append_trailing_space?: boolean; 
 /**
  * [GRAIN] Extension Mode Auto-send (`docs/Extensions V1/PLAN.md` §5). The
  * global opt-in, **off by default** and beta-gated (only active while
@@ -2433,26 +2448,26 @@ stt_quota_reset_date?: string; post_process_models?: Partial<{ [key in string]: 
  * author-eligible extension is handed over without a chooser — and a Notice
  * says so afterwards. Never fires on a name match.
  */
-auto_send_enabled?: boolean;
+auto_send_enabled?: boolean; 
 /**
  * [GRAIN] Extensions the user has switched Auto-send OFF for individually.
  * The user may only make Auto-send *stricter* than the author allows —
  * disabling one an author marked eligible — never enable one the author
  * excluded, so this is a deny-list, not an allow-list.
  */
-auto_send_disabled?: string[]; app_language?: string; experimental_enabled?: boolean; lazy_stream_close?: boolean; keyboard_implementation?: KeyboardImplementation; show_tray_icon?: boolean; paste_delay_ms?: number;
+auto_send_disabled?: string[]; app_language?: string; experimental_enabled?: boolean; lazy_stream_close?: boolean; keyboard_implementation?: KeyboardImplementation; show_tray_icon?: boolean; paste_delay_ms?: number; 
 /**
  * Debug-gated ("beta") receipt-sequenced paste: restore the clipboard only
  * after the target app actually reads the transcript, instead of after a
  * fixed delay. See `paste_tx`. macOS and Windows only.
  */
-reliable_paste?: boolean; paste_delay_after_ms?: number; typing_tool?: TypingTool; external_script_path: string | null; filler_word_removal_enabled?: boolean; custom_filler_words?: string[] | null; transcribe_accelerator?: TranscribeAcceleratorSetting;
+reliable_paste?: boolean; paste_delay_after_ms?: number; typing_tool?: TypingTool; external_script_path: string | null; filler_word_removal_enabled?: boolean; custom_filler_words?: string[] | null; transcribe_accelerator?: TranscribeAcceleratorSetting; 
 /**
  * Stable transcribe.cpp device selector, derived from the backend's
  * `device_id` when available (or its name for backends such as Metal).
  * Never persist process-local registry indices.
  */
-transcribe_gpu_device?: string | null; extra_recording_buffer_ms?: number;
+transcribe_gpu_device?: string | null; extra_recording_buffer_ms?: number; 
 /**
  * [GRAIN] Context awareness (post-processing only): when on, the backend
  * detects the foreground app/site right before LLM post-processing and layers
@@ -2461,27 +2476,27 @@ transcribe_gpu_device?: string | null; extra_recording_buffer_ms?: number;
  * in, and it only affects installs that also run post-processing. HARD
  * per-app formatting is the App Modes extension's job, not a setting here.
  */
-context_awareness_enabled?: boolean;
+context_awareness_enabled?: boolean; 
 /**
  * [GRAIN] Per-profile instruction edits, stored SPARSELY — see
  * [`ContextProfileInstruction`]. Empty on a fresh install and for anyone
  * who never edits a profile, which is the common case, so this costs one
  * empty `Vec` in `AppSettings` and nothing on the prompt path.
  */
-context_profile_instructions?: ContextProfileInstruction[];
+context_profile_instructions?: ContextProfileInstruction[]; 
 /**
  * [GRAIN] User-made context profiles. These OUTRANK the built-in category
  * for any app or site they claim — see [`CustomContextProfile`]. Empty for
  * everyone who has not made one, which is the default.
  */
-context_custom_profiles?: CustomContextProfile[];
+context_custom_profiles?: CustomContextProfile[]; 
 /**
  * [GRAIN] Extension platform (SPEC §10.1): the Snippets built-in extension's
  * switch. OFF by default for NEW installs; the one-time import in
  * `load_settings` turns it on for existing users who already have snippets
  * (the upgrade rule — a working feature must not vanish on update).
  */
-snippets_enabled?: boolean;
+snippets_enabled?: boolean; 
 /**
  * [GRAIN] Extension platform (SPEC §10.1): the Agent built-in extension's
  * switch — the on/off the Agent never had. Gates summoning and the
@@ -2489,7 +2504,7 @@ snippets_enabled?: boolean;
  * import turns it on for existing users (the Agent was previously always
  * available).
  */
-agent_enabled?: boolean;
+agent_enabled?: boolean; 
 /**
  * [GRAIN] Paste Catch: when a dictation paste provably misses the text
  * field, hold the transcript on the clipboard behind a visible offer
@@ -2497,71 +2512,71 @@ agent_enabled?: boolean;
  * paste currently loses the transcript outright, and the detection only
  * fires on positive evidence, so the failure mode is "no offer shown".
  */
-paste_catch_enabled?: boolean;
+paste_catch_enabled?: boolean; 
 /**
  * [GRAIN] How long the caught transcript stays on the clipboard before the
  * clipboard is handed back exactly as Handy would have. Long enough to
  * notice the offer and reach a field; short enough that holding someone
  * else's clipboard stays defensible.
  */
-paste_catch_hold_ms?: number;
+paste_catch_hold_ms?: number; 
 /**
  * [GRAIN] One-time marker for the extension-platform settings import above
  * (SPEC §10.1 upgrade rule). False in files written before the platform;
  * `load_settings` performs the import exactly once and sets it.
  */
-extensions_imported_v1?: boolean;
+extensions_imported_v1?: boolean; 
 /**
  * [GRAIN] Explicit human-controlled authoring mode (Phase 3.5). This is
  * separate from diagnostic `debug_mode`: only this switch allows native
  * folder selection and load-unpacked projects. OFF by default.
  */
-extension_developer_mode?: boolean;
+extension_developer_mode?: boolean; 
 /**
  * [GRAIN] Hosted MCP providers admitted to the Agent directory while the
  * development integration layer is enabled. IDs are resolved exclusively
  * through Grain's compiled HTTPS catalog; this is never an endpoint list.
  */
-mcp_enabled_providers?: string[];
+mcp_enabled_providers?: string[]; 
 /**
  * [GRAIN] Non-secret OAuth client IDs for hosted MCP providers that do not
  * support dynamic registration. Client secrets and tokens stay in the OS
  * credential vault and never enter AppSettings.
  */
-mcp_oauth_client_ids?: Partial<{ [key in string]: string }>;
+mcp_oauth_client_ids?: Partial<{ [key in string]: string }>; 
 /**
  * [GRAIN] Which Agent replies are auto-copied to the clipboard (off / first
  * reply only / every reply). Default `first` — the original behavior.
  */
-agent_autocopy?: AgentAutocopy;
+agent_autocopy?: AgentAutocopy; 
 /**
  * [GRAIN] Quick Agent: when on, submitting an instruction from the palette
  * runs the AI headlessly and pastes the reply straight at the cursor instead
  * of opening the reply panel. The pill then briefly offers "ask follow-up".
  */
-agent_quick_enabled?: boolean;
+agent_quick_enabled?: boolean; 
 /**
  * [GRAIN] Agent context awareness: read the focused field at summon and pass
  * it to the AI as background (`unique` = high-signal terms only, `full` =
  * capped raw text). OFF by default.
  */
-agent_context_mode?: AgentContextMode;
+agent_context_mode?: AgentContextMode; 
 /**
  * [GRAIN] Agent screen vision: when on, summoning the Agent also photographs
  * the window you were in and sends that frame with your instruction, so it
  * can answer about what is actually on screen — a chart, a diff, an error
  * dialog, a page that has no accessibility text at all.
- *
+ * 
  * Deliberately a separate switch from [`AgentContextMode::Screen`] rather
  * than a fifth rung on it. That mode reads the window's accessibility TEXT;
  * this one takes a picture. They cost different things, they fail in
  * different ways, and a model that cannot see images still handles the text
  * one — folding them together would make choosing "read my window" silently
  * start uploading screenshots.
- *
+ * 
  * OFF by default and off is free: no capture, no permission, no bytes.
  */
-agent_screen_image?: boolean;
+agent_screen_image?: boolean; 
 /**
  * [GRAIN] "Scrap that" voice reset: when on, saying the phrase "scrap that"
  * mid-dictation discards everything spoken before it — the transcript starts
@@ -2569,14 +2584,14 @@ agent_screen_image?: boolean;
  * is truly zero-overhead. In live-streaming modes the expanded Studio pill
  * resets and collapses back to the compact capsule until the next word.
  */
-scrap_that_enabled?: boolean;
+scrap_that_enabled?: boolean; 
 /**
  * [GRAIN] Native agent input: when on (default), typing a printable key
  * while the input is listening immediately switches it to the expanded
  * typing card. When off, the input stays in voice mode and typing is
  * ignored until the user expands it explicitly (Tab / click).
  */
-agent_input_type_to_expand?: boolean;
+agent_input_type_to_expand?: boolean; 
 /**
  * [GRAIN] Where the Agent reply surface appears: the original bottom-right
  * `side` card, or the sleek center-top `center` panel that hugs its content
@@ -2584,11 +2599,11 @@ agent_input_type_to_expand?: boolean;
  */
 agent_panel_position?: AgentPanelPosition }
 export type AudioDevice = { index: string; name: string; is_default: boolean }
-export type AuthConnection = { provider_name: string; authorization_host: string; token_host: string; scopes: string[]; api_hosts: string[];
+export type AuthConnection = { provider_name: string; authorization_host: string; token_host: string; scopes: string[]; api_hosts: string[]; 
 /**
  * `connected` | `needs_reauthorization` | `expired` | `disconnected` | `unavailable`
  */
-state: string; granted_scopes: string[];
+state: string; granted_scopes: string[]; 
 /**
  * Unix seconds, sent as a string to avoid JS integer loss.
  */
@@ -2599,32 +2614,32 @@ export type BindingResponse = { success: boolean; binding: ShortcutBinding | nul
 export type ClipboardHandling = "dont_modify" | "copy_to_clipboard"
 /**
  * [GRAIN] One context-awareness profile, as the settings UI needs it.
- *
+ * 
  * Carries BOTH texts on purpose. The UI has to be able to show the effective
  * instruction, tell whether it has been edited, and put the shipped wording
  * back — and deriving "edited" from a copy of the defaults kept in TypeScript
  * is how the two drift apart. Rust ships the text; the frontend owns only the
  * label and the icon.
  */
-export type ContextProfileInfo = {
+export type ContextProfileInfo = { 
 /**
  * `email` / `work` / `casual` / `technical`.
  */
-id: string;
+id: string; 
 /**
  * What is sent to the model today: the user's edit, or the default.
  */
-instruction: string;
+instruction: string; 
 /**
  * The shipped wording, for "reset to default".
  */
-default_instruction: string;
+default_instruction: string; 
 /**
  * Whether the user has edited this profile. An override trimmed to empty
  * counts as edited — "this profile says nothing" is a deliberate choice,
  * not an absent one.
  */
-edited: boolean;
+edited: boolean; 
 /**
  * A few real hosts this profile covers, for the card's icon stack. Derived
  * from the site table, so the card cannot claim a site the profile does
@@ -2633,14 +2648,14 @@ edited: boolean;
 sample_sites: string[] }
 /**
  * [GRAIN] A user's edit to one context-awareness profile's instruction.
- *
+ * 
  * **Overrides only.** A profile the user has never touched does not appear
  * here at all, and keeps using the instruction compiled into the binary. That
  * is the whole reason this is a sparse list rather than a full copy of the
  * four texts: storing them all would freeze every user on whatever wording
  * shipped the day they first opened the tab, and improvements to the defaults
  * would then only ever reach people who had never looked at the feature.
- *
+ * 
  * `id` is [`AppCategory::profile_id`] — "email" / "work" / "casual" /
  * "technical". An unknown id is ignored rather than rejected, so a settings
  * file written by a newer build (or a profile that is later renamed) degrades
@@ -2649,13 +2664,13 @@ sample_sites: string[] }
 export type ContextProfileInstruction = { id: string; instruction: string }
 /**
  * [GRAIN] One app or website a custom context profile claims.
- *
+ * 
  * `value` is an executable stem for `application` (lowercased, no extension,
  * e.g. `figma`) and a bare host for `website` (no scheme, no path, e.g.
  * `figma.com`). Anything else is ignored at match time rather than rejected at
  * write time — a target that names nothing simply never matches.
  */
-export type ContextProfileTarget = {
+export type ContextProfileTarget = { 
 /**
  * `application` or `website`.
  */
@@ -2663,7 +2678,7 @@ kind: string; value: string }
 /**
  * [GRAIN] A profile the user made, which OUTRANKS the built-in category for
  * every app and site it claims.
- *
+ * 
  * The precedence is the whole point: naming a surface is a statement that the
  * built-in guess is wrong for it. A profile is allowed exactly one target —
  * that is how "this one app gets its own instruction" is expressed, and it
@@ -2677,20 +2692,20 @@ export type DefaultPanel = "settings" | "quick_panel"
  * focused app" button when creating a mode. Backend-side detection so the same
  * exe-stem normalization used at match time pre-fills the matcher exactly.
  */
-export type DetectedApp = {
+export type DetectedApp = { 
 /**
  * Executable stem (the value a `Process` mode matches on).
  */
-exe: string;
+exe: string; 
 /**
  * Full, launchable executable path (for voice actions' app capture). Empty
  * when it couldn't be resolved.
  */
-exe_path: string;
+exe_path: string; 
 /**
  * Human-facing name (window title, for display).
  */
-name: string;
+name: string; 
 /**
  * Browser address-bar host, when the foreground app is a browser and the
  * URL reader resolved it. `None` otherwise.
@@ -2698,7 +2713,7 @@ name: string;
 url_host: string | null }
 export type DeveloperExtension = { id: string; path: string }
 export type EmbedModelStatus = "ready" | "downloading" | "absent"
-export type EngineType =
+export type EngineType = 
 /**
  * Any GGML/GGUF model loaded through transcribe-cpp (Whisper, Parakeet,
  * Voxtral, Qwen3-ASR, Nemotron, …). The architecture is auto-detected from
@@ -2710,90 +2725,90 @@ export type EngineType =
  * state to core settings flags (manifest-first, PLAN.md D4); installed packs
  * read the registry.
  */
-export type ExtensionCard = { id: string; name: string; description: string;
+export type ExtensionCard = { id: string; name: string; description: string; 
 /**
  * Grain-derived 128² PNG for settings. Never the resident 512² master.
  */
-icon: string | null; version: string;
+icon: string | null; version: string; 
 /**
  * "pack" | "scripted" | "native"
  */
-tier: string;
+tier: string; 
 /**
  * "core" | "community" | "dev". Dev is permanent while loaded and is
  * never allowed to masquerade as verified.
  */
-trust: string;
+trust: string; 
 /**
  * A separately installed copy with this id is parked beneath the active
  * load-unpacked project.
  */
-overrides_installed: boolean; overridden_version: string | null; enabled: boolean;
+overrides_installed: boolean; overridden_version: string | null; enabled: boolean; 
 /**
  * Toggle-order position (SPEC §4.4); u64::MAX = never toggled (sorts last).
  * Sent as string — u64 doesn't survive JS numbers.
  */
-toggle_seq: string; repository: string | null;
+toggle_seq: string; repository: string | null; 
 /**
  * Manifest-declared capabilities. The installed UI needs these even for
  * local/imported packs which have no signed-store catalogue entry.
  */
-capabilities: string[];
+capabilities: string[]; 
 /**
  * The pack declares settings or shortcuts, so it has a section of its own
  * worth opening. Free to compute — Overview already reads every manifest.
  */
-has_detail: boolean;
+has_detail: boolean; 
 /**
  * [GRAIN] Non-visual behavior slots this extension takes over.
  */
-slots: string[];
+slots: string[]; 
 /**
  * [GRAIN] Prompt layers this pack contributes.
- *
+ * 
  * Carried on the card because **attribution is not optional for this
  * contribution**: a prompt layer changes what the model does to the user's
  * own words, and unlike a capability it is invisible once approved. The
  * approval sheet is where the user first reads it; this is where they can
  * go back and read it again without uninstalling anything.
  */
-prompt_layers: PromptLayerInfo[];
+prompt_layers: PromptLayerInfo[]; 
 /**
  * [GRAIN] What this extension can do when asked out loud
  * (`docs/Extensions V1/PLAN.md` §5).
- *
+ * 
  * Here for the same reason as `prompt_layers`, and a stronger one: the
  * approval sheet is a single moment, and "what can this thing do" is
  * exactly what someone wants to look up again a week later without
  * uninstalling it to find out.
  */
-actions: ActionInfo[];
+actions: ActionInfo[]; 
 /**
  * [GRAIN] `"searchable" | "standalone" | "extending"`
  * (`docs/Extensions V1/PLAN.md` §2). Declared, never inferred.
- *
+ * 
  * The card carries it because it is the difference between an extension
  * that can be handed what the user said and one that cannot, and that is
  * not visible from anything else on the row.
  */
-kind: string;
+kind: string; 
 /**
  * [GRAIN] What Grain ranks this extension by. `None` for anything that is
  * not `searchable` — validation guarantees the two agree.
  */
-recommend: RecommendInfo | null;
+recommend: RecommendInfo | null; 
 /**
  * [GRAIN] Resources this extension asks Grain to have ready, e.g.
  * `semantic` for the ~130 MB embedding model (§6). Card-visible by design:
  * a capability governs *reach* and this governs *cost*, and hiding the
  * second is how a lightweight-looking install turns out not to be.
  */
-needs: string[];
+needs: string[]; 
 /**
  * The author permits Auto-send and explains why. The user's setting can
  * only remove this eligibility, never grant it to another extension.
  */
-auto_send_eligible: boolean;
+auto_send_eligible: boolean; 
 /**
  * Effective per-extension state. This does not include the global beta
  * switch; it answers only whether this author-eligible extension is on the
@@ -2805,17 +2820,17 @@ export type ExtensionDeveloperStatus = { enabled: boolean; loaded: DeveloperExte
 /**
  * [GRAIN] Whether Extension Mode can recommend, and how well
  * (`docs/Extensions V1/PLAN.md` §5).
- *
+ * 
  * The one query a surface needs to decide what to offer: is there anything to
  * rank (`searchable`), and whether semantic retrieval is available or name-only
  * until the shared embedding model is downloaded.
  */
-export type ExtensionModeStatus = {
+export type ExtensionModeStatus = { 
 /**
  * Searchable, approved extensions installed. Zero means Extension Mode has
  * nothing to rank and the download is not worth offering.
  */
-searchable_count: number;
+searchable_count: number; 
 /**
  * `"ready" | "downloading" | "absent"`. `absent` is name-only mode (§5):
  * Extension Mode still works on names, and first use is where the download
@@ -2826,7 +2841,7 @@ model: string }
  * [GRAIN] Extension Mode ranked a captured request
  * (`docs/Extensions V1/PLAN.md` §3, §6b). The surface (behind the design gate)
  * consumes this; the backend emits it and draws nothing.
- *
+ * 
  * One event covers every outcome the surface must distinguish, because they are
  * one state machine, not several: an EMPTY `candidates` is the "nothing matched"
  * state — a real state, not an error — and `name_only` says the topical leg
@@ -2834,27 +2849,27 @@ model: string }
  * the verbatim `request` is deliberate: it is what would be handed to the
  * accepted extension, so the surface must hold it, not reconstruct it.
  */
-export type ExtensionRecommendation = {
+export type ExtensionRecommendation = { 
 /**
  * Opaque presentation nonce. Accept/decline must echo it so delayed UI
  * input cannot act on a newer request with the same extension id or text.
  * Zero only for an Auto-send notice, which has no chooser actions.
  */
-presentation_id: number;
+presentation_id: number; 
 /**
  * What the user said, verbatim. The payload a hand-off would carry.
  */
-request: string;
+request: string; 
 /**
  * Best first. Empty is "nothing matched".
  */
-candidates: RecommendationCandidate[];
+candidates: RecommendationCandidate[]; 
 /**
  * The topical leg did not run (model absent): only names could match, and
  * the surface may offer the download. Named candidates still populate the
  * list.
  */
-name_only: boolean;
+name_only: boolean; 
 /**
  * [GRAIN] Set to the extension id when Auto-send fired (§5): Grain already
  * handed the request over, so the surface shows a **Notice** naming it
@@ -2867,11 +2882,11 @@ auto_sent: string | null }
  * renderer so it can draw a `list` row's inputs, or an `app_path`/`url` field.
  * Recursive: a list field carries its own `fields` so lists nest.
  */
-export type ExtensionSettingField = { key: string; label: string; description: string; kind: string; min: number | null; max: number | null; step: number | null; options: SelectOptionDto[];
+export type ExtensionSettingField = { key: string; label: string; description: string; kind: string; min: number | null; max: number | null; step: number | null; options: SelectOptionDto[]; 
 /**
  * Sub-field schema for a `list` field (empty otherwise).
  */
-fields: ExtensionSettingField[];
+fields: ExtensionSettingField[]; 
 /**
  * Singular noun for a `list`'s Add button / row header.
  */
@@ -2879,36 +2894,36 @@ item_label: string | null }
 /**
  * One row of an extension's settings section: the declaration flattened into
  * exactly what a control needs, plus the value to show.
- *
+ * 
  * Deliberately NOT the manifest type: `SettingKind` is an internally-tagged
  * enum with per-variant fields, which crosses the bindings boundary as an
  * awkward union. The renderer wants `kind` plus optional extras, so that is
  * what it gets.
  */
-export type ExtensionSettingRow = { key: string; label: string; description: string;
+export type ExtensionSettingRow = { key: string; label: string; description: string; 
 /**
  * `bool | string | secret | number | select | shortcut | color | slider`.
  */
-kind: string;
+kind: string; 
 /**
  * Where the section renders (SPEC §4.3). An anchor this build doesn't know
  * is passed through untouched — the frontend falls back to the extension's
  * own section, because settings are never lost.
  */
-anchor: string | null; order: number;
+anchor: string | null; order: number; 
 /**
  * The resolved current value: bool, number, or string per `kind`.
  */
-value: JsonValue;
+value: JsonValue; 
 /**
  * Set when a stored value had to be reset — a change the user did not make
  * must never be silent.
  */
-notice: string | null; min: number | null; max: number | null; step: number | null; options: SelectOptionDto[];
+notice: string | null; min: number | null; max: number | null; step: number | null; options: SelectOptionDto[]; 
 /**
  * Sub-field schema for a `list` row (empty otherwise).
  */
-fields: ExtensionSettingField[];
+fields: ExtensionSettingField[]; 
 /**
  * Singular noun for a `list`'s Add button / row header.
  */
@@ -2924,12 +2939,16 @@ export type GrainEmbedModelCancelled = null
 export type GrainEmbedModelComplete = null
 export type GrainEmbedModelError = string
 export type GrainEmbedModelProgress = { downloaded: number; total: number; percentage: number }
+export type GrainOverlayContext = OverlayPresentation
+export type GrainOverlayPosition = OverlayPosition
+export type GrainOverlaySkin = PillSkin
+export type HideOverlay = null
 export type HistoryEntry = { id: number; file_name: string; timestamp: number; saved: boolean; title: string; transcription_text: string; post_processed_text: string | null; post_process_prompt: string | null; post_process_requested: boolean }
 export type HistoryUpdatePayload = { action: "added"; entry: HistoryEntry } | { action: "updated"; entry: HistoryEntry } | { action: "deleted"; id: number } | { action: "toggled"; id: number }
 /**
  * Result of changing keyboard implementation
  */
-export type ImplementationChangeResult = { success: boolean;
+export type ImplementationChangeResult = { success: boolean; 
 /**
  * List of binding IDs that were reset to defaults due to incompatibility
  */
@@ -2937,17 +2956,17 @@ reset_bindings: string[] }
 /**
  * One launchable application.
  */
-export type InstalledApp = {
+export type InstalledApp = { 
 /**
  * What the Start menu calls it.
  */
-name: string;
+name: string; 
 /**
  * The identity a context profile stores: a lowercased executable stem for a
  * desktop app (`code`), an AppUserModelID for a packaged one
  * (`Claude_pzs8sxrjxfjjc!Claude`). Matched against the foreground window.
  */
-target: string;
+target: string; 
 /**
  * What to ask the Shell for a picture of: the executable's full path, or
  * the AppUserModelID. Distinct from `target` because matching wants the
@@ -2956,7 +2975,7 @@ target: string;
  */
 icon_id: string }
 export type JsonValue = null | boolean | number | string | JsonValue[] | Partial<{ [key in string]: JsonValue }>
-export type KeyboardDiagnosticReport = { secure_input_enabled: boolean; culprit_pid: number | null; culprit_name: string | null;
+export type KeyboardDiagnosticReport = { secure_input_enabled: boolean; culprit_pid: number | null; culprit_name: string | null; 
 /**
  * Counts only — key identity is deliberately never captured.
  */
@@ -2965,11 +2984,12 @@ export type KeyboardImplementation = "tauri" | "handy_keys"
 export type LLMPrompt = { id: string; name: string; prompt: string }
 export type LogLevel = "trace" | "debug" | "info" | "warn" | "error"
 export type McpDiscoveryResult = { provider_id: string; provider_name: string; tool_count: number; tools: string[]; tool_set_digest: string }
-export type McpProviderStatus = { id: string; name: string; description: string; endpoint: string; setup_url: string; requires_client_credentials: boolean; client_id_configured: boolean; connected: boolean; enabled: boolean;
+export type McpProviderStatus = { id: string; name: string; description: string; endpoint: string; setup_url: string; requires_client_credentials: boolean; client_id_configured: boolean; connected: boolean; enabled: boolean; 
 /**
  * `ready` | `needs_client_credentials` | `disconnected` | `unavailable`
  */
 state: string }
+export type MicLevel = number[]
 /**
  * The model's files were removed.
  */
@@ -3000,21 +3020,21 @@ export type ModelLoadStatus = { is_loaded: boolean; current_model: string | null
  * Where a model comes from and how Handy obtains it — the routing discriminant
  * for downloading and on-disk resolution.
  */
-export type ModelSource =
+export type ModelSource = 
 /**
  * Direct HTTP download from a URL (current blob.handy.computer hosting).
  */
-{ Url: { url: string;
+{ Url: { url: string; 
 /**
  * Expected SHA-256 for integrity verification; `None` skips it.
  */
-sha256: string | null } } |
+sha256: string | null } } | 
 /**
  * A file inside a Hugging Face Hub repo, fetched via hf-hub into the shared
  * HF cache (so other tools reuse it). The file within the repo is
  * [`ModelInfo::filename`].
  */
-{ HuggingFace: { repo_id: string; revision: string } } |
+{ HuggingFace: { repo_id: string; revision: string } } | 
 /**
  * Already present on disk — a user-provided custom model, or one discovered
  * in a shared cache. Nothing to download.
@@ -3040,18 +3060,18 @@ export type ModelVerificationStarted = string
 export type OnboardingMicrophoneLevel = { levels: number[]; rms_dbfs: number; peak_dbfs: number }
 /**
  * The single editorially "best" model in each onboarding family.
- *
+ * 
  * These are full registry IDs (repo + default quant filename), ready to pass
  * to the existing download/select commands. Keeping the pair behind a command
  * lets us update the defaults without teaching the frontend catalog internals.
  */
 export type OnboardingModelDefaults = { standard_model_id: string; asr_model_id: string }
-export type OnboardingState = { step: OnboardingStep;
+export type OnboardingState = { step: OnboardingStep; 
 /**
  * Has models already. Decides where "permissions granted" goes next: a
  * returning user goes straight to the app, a new user picks a model first.
  */
-is_returning_user: boolean;
+is_returning_user: boolean; 
 /**
  * True when `step` is `Accessibility` *because a permission is missing*
  * rather than because this is a first run. Lets the UI say "Grain lost
@@ -3061,46 +3081,46 @@ blocked_on_permissions: boolean }
 /**
  * Which screen the app should open on.
  */
-export type OnboardingStep =
+export type OnboardingStep = 
 /**
  * Permissions screen — either first-run, or a returning user who has since
  * had a permission revoked.
  */
-"accessibility" |
+"accessibility" | 
 /**
  * Short demonstration of Standard, Flow, and Streaming for a new user.
  */
-"modes" |
+"modes" | 
 /**
  * Model picker. Only ever reached by a genuinely new user, and only after
  * the capture-mode tour.
  */
-"model" |
+"model" | 
 /**
  * Real capture against the models installed during onboarding.
  */
-"try" |
+"try" | 
 /**
  * Choose the everyday capture mode and configure its real global shortcut.
  */
-"shortcuts" |
+"shortcuts" | 
 /**
  * Nothing in the way; show the app.
  */
 "done"
 export type OnboardingTestMode = "standard" | "flow" | "streaming"
 /**
- * Where the single pill anchors on screen (`None` = never show). Lives in the
+ * Where the recording pill anchors on screen. Visibility is OverlayStyle. Lives in the
  * SDK because it crosses the wire inside [`DaemonEvent::OverlayConfig`]; it is
  * also the persisted `overlay_position` setting (grain-core re-exports it).
  */
-export type OverlayPosition = "none" | "top" | "bottom" |
+export type OverlayPosition = "top" | "bottom"
+export type OverlayPresentation = { visible: boolean; state: string; ready: boolean; session_id: number; agent: boolean; owner: string | null; icon: string | null; notice: string | null; followup: string | null; committed: string; tentative: string; working: boolean; work_kind: string }
+export type OverlaySnapshot = { presentation: OverlayPresentation; position: OverlayPosition; skin: PillSkin; theme: ThemeState; streaming_width: number; streaming_height: number }
 /**
- * [GRAIN] Vertically centered — the Native ASR Studio Window's natural home
- * (a tall content box reads poorly hugging an edge); also selectable for
- * the small pill.
+ * Handy's presentation contract. Position only selects an edge.
  */
-"center"
+export type OverlayStyle = "none" | "minimal" | "live"
 export type PaginatedHistory = { entries: HistoryEntry[]; has_more: boolean }
 /**
  * The transcript could not be pasted. Carries no payload — the technical
@@ -3113,23 +3133,23 @@ export type PermissionAccess = "allowed" | "denied" | "unknown"
  * The collapsed pill's body look. Adding a variant here is the ONLY thing a new
  * pill look must touch in the protocol; the renderer owns everything else.
  */
-export type PillSkin =
+export type PillSkin = 
 /**
  * **Default.** A compact capsule with a smooth, centre-mirrored waveform —
  * the quiet, professional look. 20% smaller than [`PillSkin::Matrix`].
  */
-"wave" |
+"wave" | 
 /**
  * The original dot-matrix aura: an 25x8 grid of dots whose density tracks
  * the voice. Kept as a selectable look, no longer the default.
  */
 "matrix"
-export type PostProcessProvider = { id: string; label: string; base_url: string; allow_base_url_edit?: boolean; models_endpoint?: string | null; supports_structured_output?: boolean;
+export type PostProcessProvider = { id: string; label: string; base_url: string; allow_base_url_edit?: boolean; models_endpoint?: string | null; supports_structured_output?: boolean; 
 /**
  * [GRAIN] Included in smart rotation when true. Defaults true so existing
  * configs (and the manual single-provider path) behave exactly as before.
  */
-enabled?: boolean;
+enabled?: boolean; 
 /**
  * [GRAIN] Daily request cap for rotation; `None` = unlimited.
  */
@@ -3143,20 +3163,20 @@ export type PpPoolView = { smart_rotation: boolean; providers: PostProcessProvid
 /**
  * [GRAIN] One contributed prompt layer, as every surface that shows one needs
  * it: the approval sheet, the extension card, and the prompt-stack view.
- *
+ * 
  * One type for all three deliberately. The sheet's copy and the card's copy
  * drifting apart would mean the user approved one wording and can later only
  * review another.
  */
-export type PromptLayerInfo = { id: string;
+export type PromptLayerInfo = { id: string; 
 /**
  * `additive` | `main` | `context`.
  */
-target: string;
+target: string; 
 /**
  * The instruction, verbatim. Never summarised anywhere it is displayed.
  */
-text: string;
+text: string; 
 /**
  * No conditions at all — it applies to every dictation.
  */
@@ -3164,7 +3184,7 @@ everywhere: boolean; app: string[]; website: string[]; category: string[] }
 /**
  * [GRAIN] The recommendation surface an extension declares
  * (`docs/Extensions V1/PLAN.md` §3.1).
- *
+ * 
  * Carried whole rather than pre-formatted: `purpose` is a plain line anyone
  * can read, while `examples` are the greedy-declaration surface store review
  * has to see (G3). Whether the in-app card renders the examples is a UI
@@ -3175,12 +3195,12 @@ export type RecommendInfo = { purpose: string; examples: string[]; aliases: stri
 /**
  * One extension Extension Mode would offer, enriched for display.
  */
-export type RecommendationCandidate = { extension_id: string;
+export type RecommendationCandidate = { extension_id: string; 
 /**
  * The display name and the one-line purpose, so the surface reads without a
  * second round-trip for each row.
  */
-name: string; purpose: string;
+name: string; purpose: string; 
 /**
  * `"named" | "topical"`. The surface may present a named hit differently
  * (the user said it outright), and Auto-send later reads this to refuse
@@ -3192,13 +3212,14 @@ signal: string; score: number }
  * `actions::RecordingErrorEvent`.
  */
 export type RecordingError = { error_type: string; detail: string | null }
+export type RecordingReady = null
 export type RecordingRetentionPeriod = "never" | "preserve_limit" | "days_3" | "weeks_2" | "months_3"
 /**
  * [GRAIN] What to actually paint — the user's `theme` preference already
  * resolved against the OS. Lives in the SDK because it crosses the wire inside
  * [`DaemonEvent::ThemeConfig`]; grain-core re-exports it next to the
  * `ThemeMode` preference that produces it.
- *
+ * 
  * Only the resolved answer travels. A surface that received `System` would
  * have to ask the OS itself, and the pill, the capsule and a sandboxed
  * extension frame are three different toolkits with three different ways of
@@ -3215,32 +3236,32 @@ export type RevocationBanner = { id: string; state: string; reason: string }
  * [`crate::context`], never inline in the main settings JSON. `Debug` redacts.
  */
 export type SecretMap = Partial<{ [key in string]: string }>
-export type SecureInputStatus = {
+export type SecureInputStatus = { 
 /**
  * Secure input is currently enabled (live check)
  */
-enabled: boolean;
+enabled: boolean; 
 /**
  * Enabled continuously long enough to be considered stuck (not just a
  * password field gaining momentary focus)
  */
-sustained: boolean; culprit_pid: number | null; culprit_name: string | null;
+sustained: boolean; culprit_pid: number | null; culprit_name: string | null; 
 /**
  * Carbon fallback registrations are currently active
  */
-fallback_active: boolean;
+fallback_active: boolean; 
 /**
  * Binding ids shadow-registered with identical semantics
  */
-covered_bindings: string[];
+covered_bindings: string[]; 
 /**
  * Side-specific binding ids widened to match either side while shadowed
  */
-degraded_bindings: string[];
+degraded_bindings: string[]; 
 /**
  * Binding ids that cannot fire at all (e.g. fn+key, registration failure)
  */
-uncovered_bindings: string[];
+uncovered_bindings: string[]; 
 /**
  * The user tried to record a shortcut while secure input was active.
  * Treated as user impact even when every binding is covered, so the
@@ -3252,20 +3273,21 @@ export type ShortcutBinding = { id: string; name: string; description: string; d
 /**
  * One declared shortcut's live state, for the extension's settings section.
  */
-export type ShortcutStatus = { id: string; label: string;
+export type ShortcutStatus = { id: string; label: string; 
 /**
  * The chord currently bound, or empty when the extension suggested none.
  */
-binding: string;
+binding: string; 
 /**
  * False when the chord is taken — SPEC §3.3: the later registrant is
  * inactive until rebound, and both rows say so.
  */
-active: boolean;
+active: boolean; 
 /**
  * Who holds the chord, when inactive.
  */
 conflicts_with: string | null }
+export type ShowOverlay = string
 /**
  * [GRAIN] A voice snippet: when the (normalized) trigger phrase appears in a
  * final transcript, it is replaced by the expansion text verbatim. Matching is
@@ -3282,47 +3304,47 @@ export type StoreCover = { id: string; sha256: string; kind: string }
  * One card's data for the store UI (a specta-friendly projection of
  * [`IndexEntry`]; the index type itself lives in the crypto-free leaf).
  */
-export type StoreEntry = { id: string; name: string; version: string; tier: string; trust: string; capabilities: string[];
+export type StoreEntry = { id: string; name: string; version: string; tier: string; trust: string; capabilities: string[]; 
 /**
  * One-line summary shown under the name on the card.
  */
-description: string;
+description: string; 
 /**
  * Source repository (GitHub), for the "view on GitHub" link.
  */
-repo: string; size: string; author: string; reviewed_at: string; reviewed_commit: string;
+repo: string; size: string; author: string; reviewed_at: string; reviewed_commit: string; 
 /**
  * Repository popularity captured by the signed publish pipeline. The
  * desktop client never contacts GitHub to populate detail pages.
  */
-stars: number;
+stars: number; 
 /**
  * Popularity signal shown on the card and detail page. Read straight from
  * the signed index — the client never counts or queries per card.
  */
-installs: number;
+installs: number; 
 /**
  * README media hash (empty = none). The detail page fetches it lazily.
  */
-readme: string;
+readme: string; 
 /**
  * Screenshots / GIFs for the detail page, loaded lazily — never in browse.
  */
-media: StoreMedia[];
+media: StoreMedia[]; 
 /**
  * What kind of thing this is, for the store's filter row.
  */
-categories: string[];
+categories: string[]; 
 /**
  * Which parts of Grain this extension changes (slots claimed, settings
  * anchors, payload surfaces). Read straight from the signed index, so the
  * store can place a card without downloading its artifact.
  */
-extends: string[];
+extends: string[]; 
 /**
  * Revocation state for this exact version, if any: "revoked" | "deprecated".
  */
-revocation: string | null;
+revocation: string | null; 
 /**
  * Flagged capability combinations (DISTRIBUTION-PLAN §3.3), plain-language,
  * so the card tells the user what the reviewer was warned about.
@@ -3331,7 +3353,7 @@ flags: string[] }
 /**
  * One screenshot/GIF ref crossed to the store UI (mirror of `MediaRef`).
  */
-export type StoreMedia = { sha256: string;
+export type StoreMedia = { sha256: string; 
 /**
  * `webp` | `gif`.
  */
@@ -3339,11 +3361,11 @@ kind: string }
 /**
  * Catalogue state projected into the Extensions store and detail UI.
  */
-export type StoreView = {
+export type StoreView = { 
 /**
  * "fresh" | "offline" | "needs-newer-client".
  */
-status: string;
+status: string; 
 /**
  * Whether new installs are allowed (false when offline/expired).
  */
@@ -3351,13 +3373,13 @@ can_install: boolean; entries: StoreEntry[] }
 /**
  * Phase of the streaming overlay card, emitted to drive its UI state.
  */
-export type StreamPhase =
+export type StreamPhase = 
 /**
  * Receiving audio / live text (or waiting for the stream to begin). Rust
  * does not emit this today; the frontend starts in this phase and Rust only
  * emits transitions away from it.
  */
-"listening" |
+"listening" | 
 /**
  * Finalizing or post-processing — show a spinner.
  */
@@ -3365,7 +3387,7 @@ export type StreamPhase =
 /**
  * Emitted to switch the streaming overlay to a working spinner.
  */
-export type StreamPhaseEvent = { phase: StreamPhase;
+export type StreamPhaseEvent = { phase: StreamPhase; 
 /**
  * Present only when `phase` is `Working`.
  */
@@ -3391,15 +3413,15 @@ export type SttPoolView = { smart_rotation: boolean; providers: SttProvider[]; p
  * `base_url` = two keys for one provider. Mirrors `provider_router::ProviderConfig`
  * plus the fields the HTTP client needs (`kind`, `model`).
  */
-export type SttProvider = { id: string; name: string; kind: SttProviderKind;
+export type SttProvider = { id: string; name: string; kind: SttProviderKind; 
 /**
  * Ignored for `Local`.
  */
-base_url?: string;
+base_url?: string; 
 /**
  * Model/engine name sent to the provider (ignored for `Local`).
  */
-model?: string; enabled?: boolean;
+model?: string; enabled?: boolean; 
 /**
  * Daily request cap; `None` = unlimited.
  */
@@ -3408,11 +3430,11 @@ quota_limit?: number | null; quota_used_today?: number }
  * [GRAIN] Which transcription backend an STT pool entry talks to. `Local` is the
  * in-process transcribe-rs model; the rest are HTTP adapters (see `stt_client`).
  */
-export type SttProviderKind =
+export type SttProviderKind = 
 /**
  * The in-process Parakeet/Whisper model (no network). Exactly one is implicit.
  */
-"local" |
+"local" | 
 /**
  * Generic OpenAI-compatible `/v1/audio/transcriptions`.
  */
@@ -3424,14 +3446,13 @@ export type SttProviderKind =
 export type ThemeChanged = { mode: ThemeMode; resolved: ResolvedTheme }
 /**
  * [GRAIN] Which colour scheme the user asked for.
- *
+ * 
  * This is the *preference*, not the answer — `System` still has to be resolved
  * against what the OS is currently doing. See `grain_theme` for that half.
- *
+ * 
  * It lives in settings rather than `localStorage` because Grain paints more
- * surfaces than the settings window: the native pill, the switcher capsule,
- * the Agent and host-owned Extension Mode windows all need the same answer,
- * while the native surfaces cannot read a browser store.
+ * surfaces than the settings window: recording pills, Agent and host-owned
+ * Extension Mode windows all need the same authoritative preference.
  */
 export type ThemeMode = "system" | "light" | "dark"
 /**
@@ -3456,7 +3477,7 @@ export type UpdateAvailable = { update: UpdateInfo }
 /**
  * Download progress for an update, so a 100 MB installer is not a dead button.
  */
-export type UpdateDownloadProgress = { downloaded: number;
+export type UpdateDownloadProgress = { downloaded: number; 
 /**
  * `0` when the server sends no content length.
  */
@@ -3464,15 +3485,15 @@ total: number; percentage: number }
 /**
  * A release newer than the running build.
  */
-export type UpdateInfo = {
+export type UpdateInfo = { 
 /**
  * Version of the available release, e.g. `0.0.2`.
  */
-version: string;
+version: string; 
 /**
  * Release notes, when the release carried a body.
  */
-notes: string | null;
+notes: string | null; 
 /**
  * RFC 3339 publication date as `latest.json` reported it.
  */

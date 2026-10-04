@@ -364,6 +364,48 @@ fn default_stt_api_keys() -> SecretMap {
 // paths — and the generated bindings — are unchanged.
 pub use grain_sdk::OverlayPosition;
 
+/// Handy's presentation contract. Position only selects an edge.
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, Copy, PartialEq, Eq, specta::Type)]
+#[serde(rename_all = "lowercase")]
+pub enum OverlayStyle {
+    None,
+    Minimal,
+    Live,
+}
+
+fn default_overlay_style() -> OverlayStyle {
+    if cfg!(target_os = "linux") {
+        OverlayStyle::None
+    } else {
+        OverlayStyle::Live
+    }
+}
+
+/// Normalize the legacy position before deserialization loses its disabled value.
+pub fn migrate_overlay_settings(value: &mut serde_json::Value) -> bool {
+    let Some(map) = value.as_object_mut() else {
+        return false;
+    };
+    let mut changed = false;
+    if !map.contains_key("overlay_style") {
+        let style = match map.get("overlay_position").and_then(|v| v.as_str()) {
+            Some("none") => OverlayStyle::None,
+            Some("top" | "bottom" | "center") => OverlayStyle::Live,
+            _ => default_overlay_style(),
+        };
+        map.insert("overlay_style".into(), serde_json::to_value(style).unwrap());
+        changed = true;
+    }
+    if matches!(
+        map.get("overlay_position").and_then(|v| v.as_str()),
+        Some("none" | "center")
+    ) {
+        map.insert("overlay_position".into(), serde_json::json!("bottom"));
+        changed = true;
+    }
+    changed
+}
+
 // [GRAIN] PillSkin lives in grain-sdk (it crosses the wire in
 // DaemonEvent::PillSkin); re-exported here so it is a `settings::PillSkin` like
 // every other settings-visible enum, and so specta generates its binding.
@@ -388,9 +430,8 @@ impl Default for DefaultPanel {
 /// against what the OS is currently doing. See `grain_theme` for that half.
 ///
 /// It lives in settings rather than `localStorage` because Grain paints more
-/// surfaces than the settings window: the native pill, the switcher capsule,
-/// the Agent and host-owned Extension Mode windows all need the same answer,
-/// while the native surfaces cannot read a browser store.
+/// surfaces than the settings window: recording pills, Agent and host-owned
+/// Extension Mode windows all need the same authoritative preference.
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Type)]
 #[serde(rename_all = "snake_case")]
 pub enum ThemeMode {
@@ -717,6 +758,8 @@ pub struct AppSettings {
     pub selected_language: String,
     #[serde(default = "default_overlay_position")]
     pub overlay_position: OverlayPosition,
+    #[serde(default = "default_overlay_style")]
+    pub overlay_style: OverlayStyle,
     /// [GRAIN] Which built-in look the collapsed pill wears (form, not colour —
     /// see `PillSkin`). Defaults to the smooth waveform.
     #[serde(default)]
@@ -995,13 +1038,57 @@ fn default_selected_language() -> String {
     "auto".to_string()
 }
 fn default_overlay_position() -> OverlayPosition {
-    #[cfg(target_os = "linux")]
-    return OverlayPosition::None;
-    #[cfg(not(target_os = "linux"))]
-    return OverlayPosition::Bottom;
+    OverlayPosition::Bottom
 }
 fn default_pill_show_app_icon() -> bool {
     true
+}
+
+#[cfg(test)]
+mod overlay_migration_tests {
+    use super::*;
+
+    #[test]
+    fn legacy_positions_keep_enabled_state_and_normalize_the_edge() {
+        for (old, position, style) in [
+            ("none", OverlayPosition::Bottom, OverlayStyle::None),
+            ("center", OverlayPosition::Bottom, OverlayStyle::Live),
+            ("top", OverlayPosition::Top, OverlayStyle::Live),
+            ("bottom", OverlayPosition::Bottom, OverlayStyle::Live),
+        ] {
+            let mut value = serde_json::json!({"overlay_position": old, "selected_language": "fr"});
+            assert!(migrate_overlay_settings(&mut value));
+            assert!(!migrate_overlay_settings(&mut value));
+            let settings: AppSettings = serde_json::from_value(value).unwrap();
+            assert_eq!(settings.overlay_position, position);
+            assert_eq!(settings.overlay_style, style);
+            assert_eq!(settings.selected_language, "fr");
+        }
+    }
+
+    #[test]
+    fn explicit_style_wins_and_retired_switcher_bindings_never_return() {
+        let mut value =
+            serde_json::json!({"overlay_position": "center", "overlay_style": "minimal"});
+        migrate_overlay_settings(&mut value);
+        let settings: AppSettings = serde_json::from_value(value).unwrap();
+        assert_eq!(settings.overlay_style, OverlayStyle::Minimal);
+        let mut settings = get_default_settings();
+        let mut binding = settings.bindings["transcribe"].clone();
+        binding.id = "prompt_next".into();
+        settings.bindings.insert(binding.id.clone(), binding);
+        assert!(apply_settings_migrations(&mut settings));
+        ensure_post_process_defaults(&mut settings);
+        for id in [
+            "prompt_next",
+            "prompt_prev",
+            "master_prompt_switch",
+            "switcher_prompt_next",
+            "switcher_prompt_prev",
+        ] {
+            assert!(!settings.bindings.contains_key(id));
+        }
+    }
 }
 fn default_debug_mode() -> bool {
     false
@@ -1330,6 +1417,15 @@ where
 pub fn apply_settings_migrations(settings: &mut AppSettings) -> bool {
     let mut changed = false;
     let stored_version = settings.settings_schema_version;
+    for id in [
+        "prompt_next",
+        "prompt_prev",
+        "master_prompt_switch",
+        "switcher_prompt_next",
+        "switcher_prompt_prev",
+    ] {
+        changed |= settings.bindings.remove(id).is_some();
+    }
 
     if stored_version < 2 {
         settings.transcribe_gpu_device = None;
@@ -1416,12 +1512,10 @@ pub fn ensure_post_process_defaults(settings: &mut AppSettings) -> bool {
         changed = true;
     }
 
-    // [GRAIN] Seed the prompt-switcher + agent bindings for installs that predate them.
+    // [GRAIN] Seed Agent bindings for installs that predate them.
     let defaults = get_default_settings();
     for id in [
         "extension_mode",
-        "prompt_next",
-        "prompt_prev",
         "summon_agent",
         "agent_followup",
         "transcribe_send_to_ai",
@@ -1564,31 +1658,6 @@ pub fn get_default_settings() -> AppSettings {
             description: "Fast Parakeet TDT transcription that processes as you speak.".to_string(),
             default_binding: default_realtime_shortcut.to_string(),
             current_binding: default_realtime_shortcut.to_string(),
-        },
-    );
-
-    // [GRAIN] Prompt switcher: cycle the active post-processing prompt; the new
-    // title shows in the pill. Tap shortcuts (not push-to-talk). Defaults use the
-    // arrow keys per the "control + arrows" idea — rebindable if the platform
-    // key parser names them differently.
-    bindings.insert(
-        "prompt_next".to_string(),
-        ShortcutBinding {
-            id: "prompt_next".to_string(),
-            name: "Next Prompt".to_string(),
-            description: "Switch to the next post-processing prompt.".to_string(),
-            default_binding: "alt+]".to_string(),
-            current_binding: "alt+]".to_string(),
-        },
-    );
-    bindings.insert(
-        "prompt_prev".to_string(),
-        ShortcutBinding {
-            id: "prompt_prev".to_string(),
-            name: "Previous Prompt".to_string(),
-            description: "Switch to the previous post-processing prompt.".to_string(),
-            default_binding: "alt+[".to_string(),
-            current_binding: "alt+[".to_string(),
         },
     );
 
@@ -1738,6 +1807,7 @@ pub fn get_default_settings() -> AppSettings {
         translate_to_english: false,
         selected_language: "auto".to_string(),
         overlay_position: default_overlay_position(),
+        overlay_style: default_overlay_style(),
         pill_skin: PillSkin::default(),
         pill_show_app_icon: default_pill_show_app_icon(),
         debug_mode: false,

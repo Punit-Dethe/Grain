@@ -2,13 +2,13 @@
 //!
 //! The **dependency leaf** of the workspace (SPEC §7.3): this crate depends
 //! only on `serde`/`specta`, and everything that speaks Grain's protocol —
-//! `grain-core`, `grain-pill`, the Tauri shell, and eventually third-party
+//! `grain-core`, the Tauri shell, and third-party
 //! extensions — depends on *it*, never the reverse. That direction is what
 //! lets the contract be versioned independently of Grain's internals.
 //!
 //! Contents:
 //! - [`event`] — the typed [`DaemonEvent`] stream the core broadcasts, and the
-//!   [`PillAction`] reverse channel.
+//!   legacy [`PillAction`] wire types (the native reverse handler is retired).
 //! - [`protocol`] — the authenticated-connection handshake for the local
 //!   WebSocket ([`ClientHello`] / [`ServerWelcome`], SPEC §7.1): identity is
 //!   bound to the *channel* by a per-client token presented in the first

@@ -11,13 +11,22 @@
   },
   "src-tauri/src/settings.rs": {
     "kind": "inert",
-    "grain": ["src-tauri/src/grain_settings.rs", "crates/grain-core/src/settings.rs"],
+    "grain": [
+      "src-tauri/src/grain_settings.rs",
+      "crates/grain-core/src/settings.rs"
+    ],
     "why": "Inert (no `mod settings;`). Grain's settings are grain-core AppContext; a NEW upstream setting must be added there and to its Default, or `get_settings().<field>` in merged handy code fails to compile. (#1254 selected_channel needed this.)"
   },
   "src-tauri/src/overlay.rs": {
-    "kind": "inert",
-    "grain": ["crates/grain-pill/src/lib.rs", "src-tauri/src/grain_overlay.rs"],
-    "why": "Inert (no `mod overlay;`). The native grain-pill replaces the webview overlay; mic-level fan-out is grain_overlay.rs. Overlay UX/perf fixes (e.g. #1445 stop animating while hidden) may have a pill analog to verify."
+    "kind": "relocated",
+    "grain": [
+      "src-tauri/src/handy/overlay.rs",
+      "src-tauri/src/grain_overlay.rs",
+      "src-tauri/src/grain_capture.rs",
+      "src/app/overlay/RecordingOverlay.tsx",
+      "src/app/overlay/wave.ts"
+    ],
+    "why": "Handy overlay.rs is compiled directly again: native window, platform geometry, nonactivation, readiness events, audio throttling and hide generations are shared. Grain capture modes/context/icon/clipboard/follow-up adapters and owned visual/waveform presentation are listed here; relevant behavior changes require checking these destinations while the frontend freeze remains in force."
   },
   "src-tauri/src/actions.rs": {
     "kind": "relocated",

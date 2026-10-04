@@ -409,14 +409,6 @@
             "name": "Cancel",
             "description": "Stop and discard the current recording."
           },
-          "prompt_prev": {
-            "name": "Previous Prompt",
-            "description": "Switch the active AI prompt to the previous one."
-          },
-          "prompt_next": {
-            "name": "Next Prompt",
-            "description": "Switch the active AI prompt to the next one."
-          },
           "summon_agent": {
             "name": "Summon Agent",
             "description": "Open the AI agent on your selected text — dictate or type an instruction."
@@ -556,7 +548,9 @@
           "none": "None",
           "bottom": "Bottom",
           "top": "Top",
-          "center": "Center"
+          "center": "Center",
+          "minimal": "Minimal",
+          "live": "Live preview"
         }
       },
       "pillSkin": {
@@ -1257,6 +1251,7 @@
     }
   },
   "overlay": {
+    "askFollowup": "Ask follow-up",
     "transcribing": "Transcribing...",
     "processing": "Processing..."
   },

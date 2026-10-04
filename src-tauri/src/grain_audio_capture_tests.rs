@@ -49,7 +49,12 @@ fn batch_and_live_frames_keep_unenhanced_audio_through_stop_and_flush() {
             );
         });
         cmd_tx
-            .send(Cmd::Start(VadPolicy::Disabled, Instant::now(), true))
+            .send(Cmd::Start(
+                VadPolicy::Disabled,
+                Instant::now(),
+                true,
+                mpsc::channel().0,
+            ))
             .unwrap();
         sample_tx
             .send(AudioChunk::Samples(chunks[0].clone()))
@@ -74,5 +79,66 @@ fn batch_and_live_frames_keep_unenhanced_audio_through_stop_and_flush() {
             expected,
             "Live at {sample_rate} Hz"
         );
+    }
+}
+
+#[test]
+fn readiness_requires_samples_and_stop_invalidates_an_unready_capture() {
+    for cancel_before_samples in [false, true] {
+        let (sample_tx, sample_rx) = mpsc::channel();
+        let (cmd_tx, cmd_rx) = mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            run_consumer(
+                16_000,
+                None,
+                sample_rx,
+                cmd_rx,
+                None,
+                None,
+                None,
+                Arc::new(AtomicUsize::new(0)),
+                Arc::new(AtomicBool::new(false)),
+                Arc::new(AtomicBool::new(false)),
+                Instant::now(),
+            );
+        });
+        let (ready_tx, ready_rx) = mpsc::channel();
+        cmd_tx
+            .send(Cmd::Start(
+                VadPolicy::Disabled,
+                Instant::now(),
+                false,
+                ready_tx,
+            ))
+            .unwrap();
+        assert!(matches!(
+            ready_rx.try_recv(),
+            Err(mpsc::TryRecvError::Empty)
+        ));
+        if cancel_before_samples {
+            let (stop_tx, stop_rx) = mpsc::channel();
+            cmd_tx.send(Cmd::Stop(stop_tx)).unwrap();
+            sample_tx.send(AudioChunk::Samples(vec![0.1; 600])).unwrap();
+            sample_tx.send(AudioChunk::EndOfStream).unwrap();
+            stop_rx
+                .recv_timeout(Duration::from_secs(2))
+                .unwrap()
+                .unwrap();
+            assert_eq!(
+                ready_rx.recv_timeout(Duration::from_secs(2)),
+                Err(mpsc::RecvTimeoutError::Disconnected)
+            );
+        } else {
+            sample_tx.send(AudioChunk::Samples(vec![0.1; 600])).unwrap();
+            assert_eq!(ready_rx.recv_timeout(Duration::from_secs(2)), Ok(()));
+            // Notification is exactly once, even as more audio arrives.
+            sample_tx.send(AudioChunk::Samples(vec![0.1; 600])).unwrap();
+            assert_eq!(
+                ready_rx.recv_timeout(Duration::from_secs(2)),
+                Err(mpsc::RecvTimeoutError::Disconnected)
+            );
+        }
+        drop(sample_tx);
+        worker.join().unwrap();
     }
 }

@@ -1,35 +1,8 @@
-//! [GRAIN] Delivering the pill SKIN (the built-in look) from settings to the pill.
-//!
-//! The skin is native Grain data, resolved here and sent to the pill as a
-//! [`DaemonEvent::PillSkin`]. Two delivery moments, and both matter:
-//! - **on connect** the pill is handed the current skin directly (a broadcast
-//!   only reaches an already-connected client, and the pill connects late);
-//! - **on change** it is broadcast, from the settings command that wrote it.
-//!
-//! A skin always has a value, so this resolves to a concrete [`PillSkin`].
-
-use std::sync::Arc;
-
-use grain_core::AppContext;
+//! Grain-owned pill styling updates on the public bus and WebView event bridge.
 use grain_sdk::{DaemonEvent, PillSkin};
-use tauri::{AppHandle, Manager};
+use tauri::AppHandle;
 
-/// The skin the pill should currently wear — straight from settings.
-pub fn current(app: &AppHandle) -> PillSkin {
-    crate::settings::get_settings(app).pill_skin
-}
-
-/// A serialized `PillSkin` event for the current skin, ready to queue onto a
-/// connection. Used by the events server to greet the pill.
-pub fn welcome_frame(app: &AppHandle) -> Option<String> {
-    serde_json::to_string(&DaemonEvent::PillSkin { skin: current(app) }).ok()
-}
-
-/// Broadcast the current skin to every subscriber (the pill). Harmless if
-/// nothing is listening yet — an idle pill picks it up from the welcome frame
-/// when it next connects.
+/// Late WebView subscribers obtain current settings from `overlay_snapshot`.
 pub fn broadcast(app: &AppHandle, skin: PillSkin) {
-    if let Some(ctx) = app.try_state::<Arc<AppContext>>() {
-        ctx.emit(DaemonEvent::PillSkin { skin });
-    }
+    crate::bridge::emit(app, DaemonEvent::PillSkin { skin });
 }

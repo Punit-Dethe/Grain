@@ -265,7 +265,7 @@ fn summon_inner(app: &AppHandle) {
                 &app,
                 DaemonEvent::AgentInputShow {
                     selection_chars: chars,
-                    type_to_expand: get_settings(&app).agent_input_type_to_expand,
+                    type_to_expand: false,
                 },
             );
             return;
@@ -288,10 +288,9 @@ fn summon_inner(app: &AppHandle) {
         // Capturing the selection can take long enough for another shortcut to
         // start dictation. The audio manager decides ownership atomically; a
         // competing capture must not change Agent state or present its card.
-        // A missing microphone still permits the existing typed Agent input.
-        if !start_dictation(&app) {
+        let Some(readiness) = start_dictation(&app) else {
             return;
-        }
+        };
         // A fresh summon supersedes any lingering Quick-Agent offer.
         clear_followup_offer(&app);
         clear_pending_action(&app);
@@ -328,25 +327,36 @@ fn summon_inner(app: &AppHandle) {
             // until it actually expands into the conversation stage.
             state.panel_expanded.store(false, Ordering::SeqCst);
         }
-        drop(start_guard);
-
-        // Present the native input RIGHT AWAY after checking recorder ownership —
-        // the panel work below must never delay the "it's listening" feedback.
+        // Publish ownership before presenting the cancellable voice input.
+        crate::grain_overlay::show_capture(&app, grain_core::SessionMode::Batch);
+        crate::pill_icon::emit_for_session(&app);
+        crate::surface_watch::start(&app);
         crate::bridge::emit(
             &app,
             DaemonEvent::AgentInputShow {
                 selection_chars: chars,
-                type_to_expand: get_settings(&app).agent_input_type_to_expand,
+                type_to_expand: false,
             },
         );
-        // Global Enter (= submit request routed to the pill) + Escape (cancel)
-        // while the input is up. The pill has real focus, but the globals cover
-        // Windows' foreground-lock failures uniformly.
+        // Nonactivating voice pill: global Enter submits and Escape cancels.
         register_transient_shortcuts(&app);
+        crate::grain_capture::announce_ready(
+            &app,
+            &app.state::<Arc<AudioRecordingManager>>(),
+            readiness,
+            true,
+        );
+        drop(start_guard);
 
         // A new summon starts a fresh session — drop any open reply panel.
         let app_close = app.clone();
         let _ = app.run_on_main_thread(move || {
+            if !app_close.try_state::<AgentState>().is_some_and(|state| {
+                state.input_active.load(Ordering::SeqCst)
+                    && state.summon_gen.load(Ordering::SeqCst) == summon_gen
+            }) {
+                return;
+            }
             if let Some(panel) = app_close.get_webview_window(PANEL_LABEL) {
                 let _ = panel.close();
             }
@@ -355,6 +365,12 @@ fn summon_inner(app: &AppHandle) {
             std::thread::sleep(Duration::from_millis(120)); // let the close land
             let app_prep = app.clone();
             let _ = app.run_on_main_thread(move || {
+                if !app_prep.try_state::<AgentState>().is_some_and(|state| {
+                    state.input_active.load(Ordering::SeqCst)
+                        && state.summon_gen.load(Ordering::SeqCst) == summon_gen
+                }) {
+                    return;
+                }
                 if let Err(e) = prepare_panel(&app_prep) {
                     warn!("[GRAIN] agent: failed to pre-create panel: {e}");
                 }
@@ -409,6 +425,11 @@ pub fn panel_dictation_target(app: &AppHandle) -> bool {
 
 /// While the Agent card or reply panel is open, ordinary dictation shortcuts
 /// must leave its recording and conversation surface alone.
+pub(crate) fn input_is_active(app: &AppHandle) -> bool {
+    app.try_state::<AgentState>()
+        .is_some_and(|state| state.input_active.load(Ordering::SeqCst))
+}
+
 pub(crate) fn blocks_dictation(app: &AppHandle) -> bool {
     app.try_state::<AgentState>()
         .is_some_and(|state| state.input_active.load(Ordering::SeqCst))
@@ -431,10 +452,10 @@ fn prepare_panel(app: &AppHandle) -> Result<(), String> {
 
 /// Start the agent dictation (warm the local model/VAD exactly like the batch
 /// press path would, so the transcript is ready quickly on submit).
-fn start_dictation(app: &AppHandle) -> bool {
+fn start_dictation(app: &AppHandle) -> Option<crate::managers::audio::RecordingReadiness> {
     let rm = Arc::clone(&app.state::<Arc<AudioRecordingManager>>());
     if rm.is_recording() {
-        return false;
+        return None;
     }
     if !crate::stt_router::will_route_to_cloud(app) {
         let tm = app.state::<Arc<TranscriptionManager>>();
@@ -449,14 +470,14 @@ fn start_dictation(app: &AppHandle) -> bool {
     // Agent dictation is a batch-style capture: offline VAD profile (VAD is
     // always on — grain-core settings have no `vad_enabled` toggle).
     match rm.try_start_recording(AGENT_BINDING, crate::audio_toolkit::VadPolicy::Offline) {
-        Ok(()) => true,
+        Ok(readiness) => Some(readiness),
         Err(e) => {
             if rm.is_recording() {
                 log::debug!("[GRAIN] agent: another capture claimed the recorder");
-                false
+                None
             } else {
                 warn!("[GRAIN] agent: failed to start dictation: {e}");
-                true // preserve the typed-input fallback when the mic is unavailable
+                None // Voice-only summon must fail cleanly without a microphone.
             }
         }
     }
@@ -1491,7 +1512,17 @@ pub fn input_typing(app: &AppHandle, active: bool) {
     if active {
         app.state::<Arc<AudioRecordingManager>>().cancel_recording();
     } else {
-        let _ = start_dictation(app);
+        if let Some(readiness) = start_dictation(app) {
+            crate::grain_overlay::show_capture(app, grain_core::SessionMode::Batch);
+            crate::pill_icon::emit_for_session(app);
+            crate::surface_watch::start(app);
+            crate::grain_capture::announce_ready(
+                app,
+                &app.state::<Arc<AudioRecordingManager>>(),
+                readiness,
+                true,
+            );
+        }
     }
 }
 
@@ -1753,7 +1784,7 @@ pub fn global_submit(app: &AppHandle) {
         .map(|s| s.input_active.load(Ordering::SeqCst))
         .unwrap_or(false);
     if input_live {
-        crate::bridge::emit(app, DaemonEvent::AgentInputSubmitRequest);
+        input_submit_voice(app, get_settings(app).agent_quick_enabled);
     } else if app.get_webview_window(PANEL_LABEL).is_some() {
         let _ = app.emit_to(PANEL_LABEL, "agent-global-enter", ());
     }

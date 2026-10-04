@@ -1157,9 +1157,6 @@ impl TranscriptionManager {
     }
 
     /// Emit a working-phase event to the streaming overlay (spinner + label).
-    /// [GRAIN] Kept for upstream parity; Grain's native pill drives its own
-    /// processing state from DaemonEvents, so nothing calls this today.
-    #[allow(dead_code)]
     pub fn emit_stream_working(&self, kind: StreamWorkKind) {
         let _ = StreamPhaseEvent {
             phase: StreamPhase::Working,
@@ -1174,7 +1171,7 @@ impl TranscriptionManager {
             tentative: tentative.to_string(),
         }
         .emit(&self.app_handle);
-        // [GRAIN] mirror the snapshot to the native pill's Studio Window.
+        // [GRAIN] Preserve public snapshots and late WebView hydration.
         crate::grain_actions::mirror_stream_text(&self.app_handle, committed, tentative);
     }
 
@@ -1384,7 +1381,10 @@ impl TranscriptionManager {
         if final_result.is_empty() {
             info!("Transcription result is empty");
         } else {
-            info!("Transcription result: {}", crate::utils::redact_text(&final_result));
+            info!(
+                "Transcription result: {}",
+                crate::utils::redact_text(&final_result)
+            );
         }
 
         self.maybe_unload_immediately("transcription");

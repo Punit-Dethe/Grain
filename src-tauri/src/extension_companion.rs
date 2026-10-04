@@ -99,7 +99,7 @@ fn supervise(
     control: Arc<Control>,
 ) {
     #[cfg(windows)]
-    let job = crate::events_server::create_job_object();
+    let job = crate::grain_process::create_job_object();
 
     let mut crashes = 0_u32;
     loop {
@@ -112,7 +112,7 @@ fn supervise(
             Ok(mut child) => {
                 #[cfg(windows)]
                 if let Some(job) = &job {
-                    crate::events_server::assign_child_to_job(job, &child);
+                    crate::grain_process::assign_child_to_job(job, &child);
                 }
                 log::info!("[ext:{ext_id}] life companion started (pid {})", child.id());
                 drain_logs(&ext_id, child.stdout.take(), child.stderr.take());

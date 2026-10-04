@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "recording-overlay",
+  "description": "Events for Grain's nonactivating recording overlay",
+  "windows": ["recording_overlay"],
+  "permissions": ["core:event:default"]
+}

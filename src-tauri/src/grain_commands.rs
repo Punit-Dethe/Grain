@@ -117,12 +117,12 @@ mod capture_shortcut_conflict_tests {
             ));
             assert!(!capture_shortcut_conflicts(
                 &settings,
-                "prompt_next",
+                "agent_followup",
                 &settings.bindings["transcribe"].current_binding
             ));
             settings
                 .bindings
-                .get_mut("prompt_next")
+                .get_mut("agent_followup")
                 .unwrap()
                 .current_binding = "alt+ctrl+f9".into();
             assert!(!capture_shortcut_conflicts(
@@ -556,19 +556,6 @@ pub fn change_agent_context_mode_setting(
 pub fn change_agent_screen_image_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
     let mut settings = settings::get_settings(&app);
     settings.agent_screen_image = enabled;
-    settings::write_settings(&app, settings);
-    Ok(())
-}
-
-/// [GRAIN] Toggle "type to expand" on the native agent input.
-#[tauri::command]
-#[specta::specta]
-pub fn change_agent_input_type_to_expand_setting(
-    app: AppHandle,
-    enabled: bool,
-) -> Result<(), String> {
-    let mut settings = settings::get_settings(&app);
-    settings.agent_input_type_to_expand = enabled;
     settings::write_settings(&app, settings);
     Ok(())
 }

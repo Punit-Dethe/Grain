@@ -680,10 +680,8 @@ pub fn change_selected_language_setting(app: AppHandle, language: String) -> Res
 pub fn change_overlay_position_setting(app: AppHandle, position: String) -> Result<(), String> {
     let mut settings = settings::get_settings(&app);
     let parsed = match position.as_str() {
-        "none" => OverlayPosition::None,
         "top" => OverlayPosition::Top,
         "bottom" => OverlayPosition::Bottom,
-        "center" => OverlayPosition::Center,
         other => {
             warn!("Invalid overlay position '{}', defaulting to bottom", other);
             OverlayPosition::Bottom
@@ -692,6 +690,8 @@ pub fn change_overlay_position_setting(app: AppHandle, position: String) -> Resu
     settings.overlay_position = parsed;
     settings::write_settings(&app, settings);
 
+    // [GRAIN] Reposition the shared Handy WebView.
+    crate::overlay::update_overlay_position(&app);
     // [GRAIN] Drive the single pill: tell it the new anchor (None = hide). A live
     // pill repositions/hides on the next frame; an idle pill picks it up at the
     // next session start (which re-emits OverlayConfig).

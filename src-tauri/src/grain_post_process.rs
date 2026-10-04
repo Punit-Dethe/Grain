@@ -69,6 +69,7 @@ pub(crate) async fn post_process_transcription(
     spoken_prompt: Option<&str>,
     stop_context: Option<&crate::context_detect::StopContext>,
 ) -> Option<String> {
+    crate::grain_overlay::show_processing(app);
     if is_blank_transcription(transcription) {
         debug!("Post-processing skipped because the transcription is empty");
         return None;

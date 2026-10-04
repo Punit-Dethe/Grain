@@ -332,14 +332,13 @@
     "notes": "Kept Grain non-panicking icon load; menu now reflects real state"
   },
   "549cbde3ebb72459f7f7230783931a45222018a1": {
-    "notes": "Handy webview arming visualization is retired in Grain; recorder readiness API was not adopted across Grain-native capture paths.",
-    "status": "Ignored"
+    "notes": "Overlay migration 2026-10-04 restores first-sample readiness for Batch, Flow, Native ASR, Agent and extension capture. grain_capture polls a bounded receiver lifetime and rejects cancelled generations; recorder test covers no-sample Stop. The owned WebView uses Handy show/ready/hide events; the separate ring-buffer rewrite remains deferred."
   },
   "58760b22cd13e709384a617a6d86b7df506a65ae": {
     "notes": "Added `ne` translation."
   },
   "5a7c0eac1ac250142b9fe58a898cbf79cf9f1814": {
-    "notes": "tauri 2.11.5 + api/cli ^2.11; cjpais runtime fork replaced by tao rev pin; overlay Dock fix n/a (native pill)"
+    "notes": "Tauri dependency/fork decisions remain unchanged. Overlay migration 2026-10-04 compiles Handy overlay.rs and adopts its current NSPanel lifecycle and Dock/nonactivation handling; macOS platform acceptance is pending."
   },
   "5c77861f17a51996070b6b5e0a688d08a652e1e0": {
     "notes": "Bumped handy-keys to 0.3.4 for Pause/Break, PrintScreen/SysRq, and ContextMenu/Application key support on supported platforms.",
@@ -506,7 +505,20 @@
     "notes": "Skipped (Grain manages custom catalog)."
   },
   "9bcb6d9d46c88517d2b5519d3a4f900ee3968c99": {
-    "notes": "n/a: #1700 fixes the upstream WEBVIEW overlay on Wayland (Tauri 2.11.5). Grain's overlay is the native grain-pill (not a webview) and overlay.rs is inert, so there is no pill analog to port."
+    "notes": "2026-10-04: actual handy/overlay.rs is compiled for window lifecycle, GTK/NSScreen main-thread geometry, Wayland layer-shell/fallback, NSPanel activation, Windows work-area/DPI/text scale and generation-aware hides. Grain integration lives in grain_overlay/grain_capture; owned presentation retains WaveField response. Windows Rust suite and build pass; macOS/Linux visual acceptance remains pending.",
+    "ports": {
+      "src-tauri/src/overlay.rs": {
+        "outcome": "ported",
+        "destinations": [
+          "src-tauri/src/handy/overlay.rs",
+          "src-tauri/src/grain_overlay.rs",
+          "src-tauri/src/grain_capture.rs",
+          "src/app/overlay/RecordingOverlay.tsx",
+          "src/app/overlay/wave.ts"
+        ],
+        "evidence": "2026-10-04: actual handy/overlay.rs is compiled for window lifecycle, GTK/NSScreen main-thread geometry, Wayland layer-shell/fallback, NSPanel activation, Windows work-area/DPI/text scale and generation-aware hides. Grain integration lives in grain_overlay/grain_capture; owned presentation retains WaveField response. Windows Rust suite and build pass; macOS/Linux visual acceptance remains pending."
+      }
+    }
   },
   "a201be9161cd3e62934dec98531204beb1a2a062": {
     "notes": "Bumped in `Cargo.toml`."
@@ -728,12 +740,15 @@
   "c6fa60da2f13a5af660fba17f37af548855119c5": {
     "ports": {
       "src-tauri/src/overlay.rs": {
-        "outcome": "not-applicable",
+        "outcome": "ported",
         "destinations": [
-          "crates/grain-pill/src/lib.rs",
-          "src-tauri/src/grain_overlay.rs"
+          "src-tauri/src/handy/overlay.rs",
+          "src-tauri/src/grain_overlay.rs",
+          "src-tauri/src/grain_capture.rs",
+          "src/app/overlay/RecordingOverlay.tsx",
+          "src/app/overlay/wave.ts"
         ],
-        "evidence": "Handy web overlay transitions are inert; Grain's native pill has separate session events."
+        "evidence": "2026-10-04: actual handy/overlay.rs is compiled for window lifecycle, GTK/NSScreen main-thread geometry, Wayland layer-shell/fallback, NSPanel activation, Windows work-area/DPI/text scale and generation-aware hides. Grain integration lives in grain_overlay/grain_capture; owned presentation retains WaveField response. Windows Rust suite and build pass; macOS/Linux visual acceptance remains pending."
       }
     },
     "notes": "Shortcut parity state-machine rewrite deferred because Grain coordinator retains action IDs and Flow routing across start/stop."
@@ -764,8 +779,7 @@
     "notes": "Reimplemented in grain-core AppContext (headless store); secrets file protected; +4 tests"
   },
   "cdb46339cd2dcd82f5a82aeed0b759096c66fb0b": {
-    "notes": "Irrelevant (Grain uses a native Rust pill architecture).",
-    "status": "Ignored"
+    "notes": "Overlay migration 2026-10-04 adopts preserved live text and working/polishing states through grain_overlay; actual Handy show/hide lifecycle is active. Full Rust and frontend verification passed; visual/platform acceptance remains pending."
   },
   "cdbc22390987643237756382ef367f7244b2844f": {
     "notes": "it: 3 keys translated (capabilities.languageCount, modelUnload.title, clamshellMicrophone.title) — clean apply. de/fr: all 5 hunks targeted upstream-only keys Grain already removed (existingModelsTitle/showAllModels/showFewerModels, selectModel, languageCount, overlay.style/position, voiceActivityDetection) → conflicts resolved by keeping Grain HEAD; de/fr unchanged (nothing to translate)."
@@ -775,7 +789,20 @@
     "status": "Ignored"
   },
   "cf49ab3543a3e4d1fdcc318014393975b4a3306a": {
-    "notes": "overlay.rs inert; run-on-main-thread targets the webview overlay's GTK/NSScreen access. Grain's native grain-pill runs its own winit event loop (main-thread-correct by construction). n/a."
+    "notes": "2026-10-04: actual handy/overlay.rs is compiled for window lifecycle, GTK/NSScreen main-thread geometry, Wayland layer-shell/fallback, NSPanel activation, Windows work-area/DPI/text scale and generation-aware hides. Grain integration lives in grain_overlay/grain_capture; owned presentation retains WaveField response. Windows Rust suite and build pass; macOS/Linux visual acceptance remains pending.",
+    "ports": {
+      "src-tauri/src/overlay.rs": {
+        "outcome": "ported",
+        "destinations": [
+          "src-tauri/src/handy/overlay.rs",
+          "src-tauri/src/grain_overlay.rs",
+          "src-tauri/src/grain_capture.rs",
+          "src/app/overlay/RecordingOverlay.tsx",
+          "src/app/overlay/wave.ts"
+        ],
+        "evidence": "2026-10-04: actual handy/overlay.rs is compiled for window lifecycle, GTK/NSScreen main-thread geometry, Wayland layer-shell/fallback, NSPanel activation, Windows work-area/DPI/text scale and generation-aware hides. Grain integration lives in grain_overlay/grain_capture; owned presentation retains WaveField response. Windows Rust suite and build pass; macOS/Linux visual acceptance remains pending."
+      }
+    }
   },
   "cfab1dda9db103e95e9fe2f4d76d2168caf0a59d": {
     "notes": "Model sizes already visible in Grain UI with dynamic icons (ported during UI overhaul)."
@@ -873,23 +900,43 @@
     "notes": "FFT scaling already present in `recorder.rs` (likely ported during audio perf rewrite)."
   },
   "e1152d86935562264d7c5637d77ce2e29aeef57e": {
-    "notes": "overlay.rs inert; grain-pill does its own Windows multi-monitor positioning (MonitorFromPoint/GetMonitorInfoW on the cursor's monitor work area). n/a."
+    "notes": "2026-10-04: actual handy/overlay.rs is compiled for window lifecycle, GTK/NSScreen main-thread geometry, Wayland layer-shell/fallback, NSPanel activation, Windows work-area/DPI/text scale and generation-aware hides. Grain integration lives in grain_overlay/grain_capture; owned presentation retains WaveField response. Windows Rust suite and build pass; macOS/Linux visual acceptance remains pending.",
+    "ports": {
+      "src-tauri/src/overlay.rs": {
+        "outcome": "ported",
+        "destinations": [
+          "src-tauri/src/handy/overlay.rs",
+          "src-tauri/src/grain_overlay.rs",
+          "src-tauri/src/grain_capture.rs",
+          "src/app/overlay/RecordingOverlay.tsx",
+          "src/app/overlay/wave.ts"
+        ],
+        "evidence": "2026-10-04: actual handy/overlay.rs is compiled for window lifecycle, GTK/NSScreen main-thread geometry, Wayland layer-shell/fallback, NSPanel activation, Windows work-area/DPI/text scale and generation-aware hides. Grain integration lives in grain_overlay/grain_capture; owned presentation retains WaveField response. Windows Rust suite and build pass; macOS/Linux visual acceptance remains pending."
+      }
+    }
   },
   "e29520d623e2dea86ef1b13d452eea5440ddfe7d": {
     "frontend_review": {
-      "outcome": "not-applicable",
-      "problem": "Windows webview overlay text scaling",
-      "destinations": [],
-      "evidence": "Grain displays the native grain-pill overlay, not Handy's RecordingOverlay.css webview."
+      "outcome": "adapted",
+      "problem": "Windows WebView text scaling can clip or misplace the recording pill.",
+      "destinations": [
+        "src-tauri/src/handy/overlay.rs",
+        "src-tauri/src/grain_overlay.rs",
+        "src/app/overlay/overlay.css"
+      ],
+      "evidence": "Shared Windows placement applies native text scale to logical bounds; Grain live dimensions are passed from Rust to CSS. Platform visual acceptance remains pending."
     },
     "ports": {
       "src-tauri/src/overlay.rs": {
-        "outcome": "not-applicable",
+        "outcome": "ported",
         "destinations": [
-          "crates/grain-pill/src/lib.rs",
-          "src-tauri/src/grain_overlay.rs"
+          "src-tauri/src/handy/overlay.rs",
+          "src-tauri/src/grain_overlay.rs",
+          "src-tauri/src/grain_capture.rs",
+          "src/app/overlay/RecordingOverlay.tsx",
+          "src/app/overlay/wave.ts"
         ],
-        "evidence": "Text scaling change targets Handy's webview RecordingOverlay; Grain uses native grain-pill."
+        "evidence": "2026-10-04: actual handy/overlay.rs is compiled for window lifecycle, GTK/NSScreen main-thread geometry, Wayland layer-shell/fallback, NSPanel activation, Windows work-area/DPI/text scale and generation-aware hides. Grain integration lives in grain_overlay/grain_capture; owned presentation retains WaveField response. Windows Rust suite and build pass; macOS/Linux visual acceptance remains pending."
       }
     }
   },

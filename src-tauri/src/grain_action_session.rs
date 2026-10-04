@@ -83,6 +83,12 @@ pub enum StartError {
 
 /// Begin listening for a request.
 pub fn start(app: &AppHandle) -> Result<(), StartError> {
+    let _start_guard = crate::grain_actions::capture_start_guard();
+    start_locked(app)
+}
+
+/// Shortcut coordinator already owns the shared capture-start gate.
+pub(crate) fn start_locked(app: &AppHandle) -> Result<(), StartError> {
     // Gate on the POOL, not on declared actions. A searchable extension may have
     // a `recommend` block and no command catalogue at all (a translator, §3.1);
     // gating on `action_vocabulary` here would refuse to start for exactly that
@@ -99,9 +105,12 @@ pub fn start(app: &AppHandle) -> Result<(), StartError> {
 
     let generation = NEXT_GENERATION.fetch_add(1, Ordering::Relaxed);
     let binding_id = format!("grain-action:{generation}");
-    recording
+    let overlay_generation =
+        crate::grain_overlay::show_capture(app, grain_core::SessionMode::Batch);
+    let readiness = recording
         .try_start_recording(&binding_id, VadPolicy::Offline)
         .map_err(|error| {
+            crate::grain_overlay::hide_failed_capture(app, overlay_generation);
             if error == "Already recording" {
                 StartError::Busy
             } else {
@@ -129,6 +138,7 @@ pub fn start(app: &AppHandle) -> Result<(), StartError> {
     supersede(app);
     crate::extension_view::capture_output_target(app);
     let pill_session_id = crate::grain_actions::extension_mode_started(app);
+    crate::grain_capture::announce_ready(app, &recording, readiness, false);
 
     let mut slot = active().lock().unwrap();
     *slot = Some(ActiveSession {

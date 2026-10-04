@@ -3,8 +3,7 @@
  *
  * This used to keep the preference in `localStorage` under two keys, one for
  * Settings and one for the Quick Panel. That could not be the source of truth:
- * Grain paints a native pill and a switcher capsule that have no browser
- * storage to read. Host-owned webviews also need one authoritative preference.
+ * Recording pills and host-owned WebViews need one authoritative preference.
  *
  * The preference now lives in settings (`grain_theme` in Rust), which resolves
  * `system` against the OS and broadcasts the answer on both buses. This file

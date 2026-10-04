@@ -28,6 +28,8 @@ python scripts/ui_parity.py --commands # what nothing calls any more
 
 ## Backend-only — internal bookkeeping, never user-facing
 
+| `agent_input_type_to_expand` | Retained for future typed Agent input; production voice pills do not expand or expose this preference. Existing Agent result/conversation settings remain available. |
+
 | Field                           | Reason                                                                                                          |
 | ------------------------------- | --------------------------------------------------------------------------------------------------------------- |
 | `extensions_imported_v1`        | One-shot migration flag (`grain-core/context.rs`): marks that the bundled packs were imported. Nothing to show. |

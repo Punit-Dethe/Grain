@@ -30,8 +30,6 @@ pub const DAEMON_EVENT_VARIANTS: &[&str] = &[
     "ModelError",
     "ModelDownloadProgress",
     "AudioLevel",
-    "PromptChanged",
-    "PromptActive",
     "ActionChoice",
     "ActionChoiceClosed",
     "ActionResult",
@@ -85,19 +83,15 @@ pub fn daemon_event_capability(variant: &str) -> Option<&'static str> {
     }
 }
 
-/// Where the single pill anchors on screen (`None` = never show). Lives in the
+/// Where the recording pill anchors on screen. Visibility is OverlayStyle. Lives in the
 /// SDK because it crosses the wire inside [`DaemonEvent::OverlayConfig`]; it is
 /// also the persisted `overlay_position` setting (grain-core re-exports it).
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone, Copy, PartialEq, Eq, specta::Type)]
 #[serde(rename_all = "lowercase")]
 pub enum OverlayPosition {
-    None,
     Top,
+    #[serde(alias = "none", alias = "center")]
     Bottom,
-    /// [GRAIN] Vertically centered — the Native ASR Studio Window's natural home
-    /// (a tall content box reads poorly hugging an edge); also selectable for
-    /// the small pill.
-    Center,
 }
 
 /// [GRAIN] What to actually paint — the user's `theme` preference already
@@ -232,18 +226,6 @@ pub enum DaemonEvent {
     /// Per-bucket audio energy driving the Aura Core dots (replaces `mic-level`).
     AudioLevel {
         levels: Vec<f32>,
-    },
-    /// Active prompt changed mid-speech → pill riser (← name →).
-    PromptChanged {
-        name: String,
-    },
-    /// [GRAIN] The active prompt's name, announced WITHOUT a switch — emitted at
-    /// session start so the pill's switcher can render the current title the
-    /// moment it is revealed by hover. Deliberately distinct from
-    /// [`DaemonEvent::PromptChanged`]: this one must never arm the riser or
-    /// reveal an idle pill, it only refreshes the label.
-    PromptActive {
-        name: String,
     },
     /// [GRAIN] A routed action needs the user to decide
     /// (`docs/Action Routing/PLAN.md` §7). The pill reveals a capsule listing
@@ -467,8 +449,6 @@ impl DaemonEvent {
             ModelDownloadProgress { .. } => "ModelDownloadProgress",
             ThemeConfig { .. } => "ThemeConfig",
             AudioLevel { .. } => "AudioLevel",
-            PromptChanged { .. } => "PromptChanged",
-            PromptActive { .. } => "PromptActive",
             ActionChoice { .. } => "ActionChoice",
             ActionChoiceClosed => "ActionChoiceClosed",
             ActionResult { .. } => "ActionResult",
@@ -589,11 +569,6 @@ pub enum PillAction {
     /// [GRAIN] User clicked the pill's Quick-Agent follow-up offer — reopen the
     /// Agent expanded with the retained conversation.
     AgentFollowup,
-    /// [GRAIN] User clicked one of the switcher capsule's `‹`/`›` arrows.
-    /// `delta` is the step through the prompt list (`-1` previous, `1` next) —
-    /// the same cycle the switcher shortcut performs, so the core answers with
-    /// `PromptChanged` exactly as it would for the keyboard.
-    PromptCycle { delta: i32 },
     /// [GRAIN] User clicked the expanded (live transcription) card's cancel ×.
     /// Identical to pressing the Cancel shortcut: the core drops the recording,
     /// the transcript, and every session surface, then hides the pill.

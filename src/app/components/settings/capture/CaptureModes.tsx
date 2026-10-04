@@ -180,12 +180,7 @@ export const CaptureModes: React.FC = () => {
         )}
 
         {/* Prompt cycling only exists once there are prompts to cycle. */}
-        {postProcessEnabled && (
-          <>
-            <ShortcutInput shortcutId="prompt_prev" grouped />
-            <ShortcutInput shortcutId="prompt_next" grouped />
-          </>
-        )}
+        {postProcessEnabled && <></>}
       </SettingsGroup>
     </>
   );

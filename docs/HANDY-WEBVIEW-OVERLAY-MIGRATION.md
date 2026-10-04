@@ -1,15 +1,15 @@
 # Handy WebView overlay migration
 
-Status: planning complete; product implementation has not started. Reviewed 2026-10-04.
+Status: implementation and Windows build verification complete; real-application visual, hardware, RAM and cross-platform acceptance pending. Reviewed 2026-10-04.
 
 Visual references and placement were confirmed on 2026-10-04. Grain's existing smooth waveform reaction is an explicit retained behavior; live-preview expansion, scrolling and timing follow Handy. Top/bottom placement is approved.
 
 ## Baselines and objective
 
 - Branch: `codex/handy-webview-overlays`, created from GitHub `main` at `69807ccef1fcdfb70a796a981ad308733262adea`.
-- Handy reference: `ffbc9504cbf004ce4819d2ca872fcea92be0fddf`, latest `main` when inspected; `git describe` reports `v0.9.8-3-gffbc950`.
+- Handy reference: `73ab851c2b6242283759a4c101b60f0ece132f08`, latest `main` fetched before implementation close-out. Its only change after the planning reference `ffbc9504cbf004ce4819d2ca872fcea92be0fddf` is Ubuntu troubleshooting documentation (#2206); the overlay/capture behavioral reference is unchanged.
 - Local reference checkout: `C:\Projects\Grain\Reference\Handy`.
-- Grain's `src-tauri/src/handy/overlay.rs` already matches that Handy file byte for byte: SHA-256 `875C06C96EF8297C26622FF9B6143863B4350BDB7FACC63004430F3DCCBA27D7`.
+- Before implementation, Grain's `src-tauri/src/handy/overlay.rs` matched that Handy file byte for byte: SHA-256 `875C06C96EF8297C26622FF9B6143863B4350BDB7FACC63004430F3DCCBA27D7`. It is now compiled with narrow marked Grain presentation hooks; upstream platform lifecycle code remains active.
 
 Replace the TinySkia overlay runtime with Handy's actual Tauri WebView window lifecycle and platform handling. Preserve Grain's visual design and foreground application/site icon. Follow `Upstream/UPSTREAM.md` and `Upstream/UPSTREAM-DIVERGENCE.md` for every upstream assessment and port. The user's explicit request establishes this new branch from `main` for the migration.
 
@@ -50,7 +50,7 @@ Sources: [overlay backend](https://github.com/cjpais/Handy/blob/ffbc9504cbf004ce
 - Starts the live timer at readiness, opens the text panel when text exists, retains that text while finalizing/polishing, and pauses auto-follow when the user scrolls back.
 - Guards the delayed native hide with a show-generation counter so it cannot hide a newer session. Hidden React content does not continue its visible animation/timer loop.
 
-Grain presently announces capture after `try_start_recording` returns `Ok(())`, uses fixed start-cue delays in several paths, and drives the native process through `DaemonEvent`/WebSocket. Restore Handy's readiness and delivery contracts. Grain's waveform dynamics are deliberately retained at the presentation layer under the user's latest instruction.
+The pre-migration Grain baseline announced capture after `try_start_recording` returned `Ok(())`, used fixed start-cue delays in several paths, and drove the native process through `DaemonEvent`/WebSocket. Implementation restores Handy's readiness and delivery contracts. Grain's waveform dynamics are deliberately retained at the presentation layer under the user's latest instruction.
 
 ## Architecture and blast radius
 
@@ -133,7 +133,30 @@ Real application command for visual checkpoints from the migration worktree:
 ```powershell
 Set-Location C:\Users\watrm\.codex\worktrees\handy-webview-overlays\grain
 bun install --frozen-lockfile
+$env:CARGO_TARGET_DIR='C:\gtc'
 bun run dev:asr
 ```
 
 Use the repository's Windows build environment/target-directory workaround when applicable. Do not terminate the user's existing Grain instance. User visual confirmation is required before accepting each UI phase. RTK was unavailable in this session; enable the installed wrapper when available, otherwise record that tooling limitation rather than treating a failed wrapper invocation as a passed check.
+
+## Implementation evidence — 2026-10-04
+
+- The actual `handy/overlay.rs` window is active. Marked hooks supply the Grain HTML entry, live-card bounds, supplemental clipboard/follow-up states and the independent public audio feed. Grain presentation, capture feedback and shared Windows child-process job helpers live in Grain modules.
+- The owned WebView retains the Wave/Matrix skins, original waveform dynamics, font and app/site icons. Wave trajectory tests compare against values evaluated from the removed Rust implementation. Typed Tauri events/commands, listener disposal, visible-only animation/timers and bounded animation arrays replace the native socket/render path.
+- First-sample readiness and generation checks cover Batch, Flow, Native ASR, Agent and extension capture callers. Onboarding reaches the same manager contract. Stop/cancel invalidate readiness; failed queued startup cannot leave a visible pill or dismiss a newer capture. Extension API entry points share the existing capture-start gate.
+- Clipboard expiry is independent of capture completion, preserves live text/readiness and follow-up state, and cannot hide a replacement session. Live text remains through transcribing/polishing and is released at completion.
+- `grain-pill`, multicall startup, its supervisor/credentials/reverse handlers and prompt-switching machinery are removed. Agent's typing preference/entry wiring is hidden; underlying typed submission and Prompt Record split processing remain. `AgentPanel.tsx` and existing extension/result WebViews are unchanged.
+- Frontend: TypeScript/Vite production build, ESLint and 117 tests in 14 files passed. Core: 205 unit plus 4 integration tests passed. SDK: 87 tests passed. App: final full Rust suite passed (574 passed, 3 ignored, zero failures). Targeted wire-event, first-sample readiness and overlay lifecycle tests also passed.
+- `bun run tauri build --debug --no-bundle` succeeded with the actual frontend embedded in `C:\gtc\debug\handy.exe`. Nix dependency validation and native transcribe-fork verification passed. Specta bindings were regenerated by the real ignored export test; the generated file is intentionally exempt from Prettier.
+- Windows Rust test execution required the existing Common Controls v6 manifest workaround: compile the tests, embed a standard manifest with the Windows SDK `mt.exe` into the disposable test executable, then run it from `src-tauri`. No shipped executable/source workaround was added.
+- The graph was unindexed in this worktree; structural review fell back to source tracing and diffs. No mock UI or alternate visual renderer was created. No user process, profile or original working-tree files were changed.
+
+### Divergence budget review
+
+The committed budget was already stale on `main`: `clipboard.rs` was 58 versus 46 allowed lines, `commands/history.rs` 13 versus 6, `shortcut/mod.rs` 388 versus 375, `transcription_coordinator.rs` 1621 versus 1616, and `lib.rs` 1259 versus 1022. These are pre-existing changes; stop-time caret insertion (`b4469e52`), history consistency (`7c3d34fc`), capture shortcut coordination (`69761ef8`) and shared embedding settings (`f70e30b1`) account for the affected backend areas. This migration does not modify clipboard/history/coordinator behavior.
+
+Migration removes old native presentation hooks and reduces actions/manager/transcription/main divergence. Its deliberate growth is first-sample readiness in the recorder, 15 lines of narrow overlay hooks, and app composition/typed command-event registration. Rebaseline only committed, reviewed numbers with `ratchet.py --update --accept-growth`, as required by the runbook; preserve the separately deferred recorder ring-buffer rewrite and unrelated upstream backlog.
+
+### Remaining acceptance
+
+User visual approval, real microphone/foreground/monitor checks, WebView RAM measurement and macOS/Linux acceptance are pending. The maintained Agent acceptance runner is absent from this `main` baseline and depends on different APIs on the original feature branch; it was not copied or run. Automated real-app Agent acceptance requires that reviewed dependency first. Production packaging/signing was not exercised by the successful debug/no-bundle build. Prompt Record's configurable shortcut remains the explicitly deferred next phase.

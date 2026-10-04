@@ -16,10 +16,8 @@ export const ShowOverlay: React.FC<ShowOverlayProps> = React.memo(
     const { getSetting, updateSetting, isUpdating } = useSettings();
 
     const overlayOptions = [
-      { value: "none", label: t("settings.advanced.overlay.options.none") },
       { value: "bottom", label: t("settings.advanced.overlay.options.bottom") },
       { value: "top", label: t("settings.advanced.overlay.options.top") },
-      { value: "center", label: t("settings.advanced.overlay.options.center") },
     ];
 
     const selectedPosition = (getSetting("overlay_position") ||
@@ -32,6 +30,27 @@ export const ShowOverlay: React.FC<ShowOverlayProps> = React.memo(
         descriptionMode={descriptionMode}
         grouped={grouped}
       >
+        <Dropdown
+          options={[
+            {
+              value: "none",
+              label: t("settings.advanced.overlay.options.none"),
+            },
+            {
+              value: "minimal",
+              label: t("settings.advanced.overlay.options.minimal"),
+            },
+            {
+              value: "live",
+              label: t("settings.advanced.overlay.options.live"),
+            },
+          ]}
+          selectedValue={getSetting("overlay_style") || "live"}
+          onSelect={(value) =>
+            updateSetting("overlay_style", value as "none" | "minimal" | "live")
+          }
+          disabled={isUpdating("overlay_style")}
+        />
         <Dropdown
           options={overlayOptions}
           selectedValue={selectedPosition}

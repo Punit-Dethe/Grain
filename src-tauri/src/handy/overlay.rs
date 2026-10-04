@@ -55,6 +55,10 @@ const OVERLAY_STREAM_HEIGHT: f64 = 120.0;
 
 /// Overlay window size (logical) for a given UI state.
 fn overlay_dimensions(state: &str) -> (f64, f64) {
+    // [GRAIN] Visual bounds only; all platform geometry remains upstream.
+    if let Some(size) = crate::grain_overlay::dimensions(state) {
+        return size;
+    }
     if state == "streaming" {
         (OVERLAY_STREAM_WIDTH, OVERLAY_STREAM_HEIGHT)
     } else {
@@ -404,7 +408,8 @@ pub fn create_recording_overlay(app_handle: &AppHandle) {
     let mut builder = WebviewWindowBuilder::new(
         app_handle,
         "recording_overlay",
-        tauri::WebviewUrl::App("src/overlay/index.html".into()),
+        // [GRAIN] Owned presentation; shared window lifecycle.
+        tauri::WebviewUrl::App("recording-overlay.html".into()),
     )
     .title("Recording")
     .resizable(false)
@@ -454,7 +459,8 @@ pub fn create_recording_overlay(app_handle: &AppHandle) {
         // PanelBuilder creates a Tauri window then converts it to NSPanel.
         // The window remains registered, so get_webview_window() still works.
         match PanelBuilder::<_, RecordingOverlayPanel>::new(app_handle, "recording_overlay")
-            .url(WebviewUrl::App("src/overlay/index.html".into()))
+            // [GRAIN] Owned presentation; shared window lifecycle.
+            .url(WebviewUrl::App("recording-overlay.html".into()))
             .title("Recording")
             .position(tauri::Position::Logical(tauri::LogicalPosition { x, y }))
             .level(PanelLevel::Status)
@@ -485,7 +491,8 @@ pub fn create_recording_overlay(app_handle: &AppHandle) {
     }
 }
 
-fn show_overlay_state(app_handle: &AppHandle, state: &str) {
+// [GRAIN] Clipboard and follow-up presentation reuse the same lifecycle.
+pub(crate) fn show_overlay_state(app_handle: &AppHandle, state: &str) {
     // Whether the overlay shows at all is governed by overlay_style; position
     // only chooses Top vs Bottom placement. Checked here (off the main thread)
     // so the common overlay-disabled case never pays for a main-thread hop.
@@ -728,6 +735,8 @@ pub fn update_overlay_enabled_cache(enabled: bool) {
 }
 
 pub fn emit_levels(app_handle: &AppHandle, levels: &[f32]) {
+    // [GRAIN] Extensions receive bounded audio events even with overlays disabled.
+    crate::grain_overlay::emit_public_levels(app_handle, levels);
     // Skip emission when the overlay is disabled. The recording_overlay
     // window is created at boot regardless of overlay_style, so without this
     // guard a hidden overlay's WebKit subprocess still

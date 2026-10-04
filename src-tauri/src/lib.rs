@@ -65,14 +65,17 @@ mod grain_onboarding; // [GRAIN] where a launching app lands: onboarding / permi
                       // [GRAIN] Native-pill mic-level fan-out — Grain's replacement for upstream's
                       // webview `overlay.rs`, which likewise stays on disk un-compiled. The alias
                       // keeps `crate::overlay::` paths (e.g. utils' re-export) working.
+mod grain_capture;
 mod grain_embed;
 mod grain_overlay;
-mod grain_post_process; // [GRAIN] multi-provider post-processing (rewrite of upstream's single-provider path)
-                        // [GRAIN] Settings facade over grain-core's owned AppContext — Grain's
-                        // replacement for upstream's tauri-plugin-store `settings.rs`, which stays on
-                        // disk UN-COMPILED (no `mod settings;`) so upstream's settings changes merge
-                        // cleanly; port anything relevant into `crates/grain-core`. The alias keeps
-                        // every `crate::settings::` path working.
+mod grain_post_process;
+#[cfg(windows)]
+mod grain_process; // [GRAIN] multi-provider post-processing (rewrite of upstream's single-provider path)
+                   // [GRAIN] Settings facade over grain-core's owned AppContext — Grain's
+                   // replacement for upstream's tauri-plugin-store `settings.rs`, which stays on
+                   // disk UN-COMPILED (no `mod settings;`) so upstream's settings changes merge
+                   // cleanly; port anything relevant into `crates/grain-core`. The alias keeps
+                   // every `crate::settings::` path working.
 mod grain_settings;
 mod grain_store; // [GRAIN] Phase 5A: signed-catalogue store client (verify, install, revoke)
 mod grain_theme; // [GRAIN] one resolved colour scheme for every surface (was localStorage)
@@ -85,11 +88,11 @@ mod host_api; // [GRAIN] extension host API router (SPEC 1.3) — capability-che
 mod input;
 mod paste_catch; // [GRAIN] safety net for a dictation paste that misses the text field
 pub(crate) use grain_llm_client as llm_client;
-pub(crate) use grain_overlay as overlay;
+#[path = "handy/overlay.rs"]
+mod overlay;
 pub(crate) use grain_settings as settings;
 #[path = "handy/managers/mod.rs"]
 mod managers;
-mod master_key; // [GRAIN] transient Alt+2 prompt-switcher chord + A/D navigation
 #[path = "handy/memory.rs"]
 mod memory; // upstream #1846 glibc allocator tuning; relocated into handy/ (upstream `mod overlay;` dropped — Grain aliases grain_overlay as overlay above)
 mod net_diag; // [GRAIN] shared reqwest transport-error diagnostics (upstream #1823, applied to both cloud clients)
@@ -435,6 +438,11 @@ fn initialize_core_logic(app_handle: &AppHandle) {
         transcription_manager.clone(),
     ));
     app_handle.manage(rolling_transcriber);
+    app_handle.manage(grain_overlay::OverlayContext::default());
+    overlay::update_overlay_enabled_cache(
+        settings::get_settings(&app_handle).overlay_style != settings::OverlayStyle::None,
+    );
+    overlay::create_recording_overlay(&app_handle);
     // [GRAIN] smart-rotation health trackers (one per domain), shared by the STT
     // and post-process routers for cooldown-aware provider ordering.
     app_handle.manage(Arc::new(rotation_state::RotationTrackers::default()));
@@ -619,10 +627,7 @@ fn initialize_core_logic(app_handle: &AppHandle) {
     // tauri-plugin-autostart elsewhere)
     autostart::apply_autostart(app_handle, settings.autostart_enabled);
 
-    // [GRAIN] The Handy webview recording overlay is retired — the winit
-    // grain-pill is now the SINGLE overlay surface for both batch and rolling
-    // (driven by DaemonEvents over the local WS). Nothing to create here; the
-    // event server launches the supervisor after its listener owns the port.
+    // Shared recording overlay is created once during main-thread setup.
 }
 
 #[tauri::command]
@@ -1348,6 +1353,10 @@ fn command_bindings() -> Builder<tauri::Wry> {
             shortcut::change_translate_to_english_setting,
             shortcut::change_selected_language_setting,
             shortcut::change_overlay_position_setting,
+            grain_overlay::change_overlay_style_setting,
+            grain_overlay::overlay_snapshot,
+            grain_overlay::overlay_cancel,
+            grain_overlay::overlay_followup,
             grain_commands::change_pill_skin_setting,
             grain_commands::change_pill_show_app_icon_setting,
             shortcut::change_debug_mode_setting,
@@ -1395,7 +1404,6 @@ fn command_bindings() -> Builder<tauri::Wry> {
             grain_commands::change_agent_quick_enabled_setting,
             grain_commands::change_agent_context_mode_setting,
             grain_commands::change_agent_screen_image_setting,
-            grain_commands::change_agent_input_type_to_expand_setting,
             grain_commands::change_agent_panel_position_setting,
             grain_commands::change_scrap_that_enabled_setting,
             grain_commands::change_paste_catch_enabled_setting,
@@ -1556,17 +1564,20 @@ fn command_bindings() -> Builder<tauri::Wry> {
             grain_update::UpdateAvailable,
             grain_update::UpdateDownloadProgress,
             managers::history::HistoryUpdatePayload,
-            // The Native ASR stream events MUST be registered even though Grain's
-            // webview doesn't render them (the native pill does, via the WS
-            // bridge): tauri-specta's Event::emit PANICS on an unregistered
-            // event, which killed the stream worker mid-lease (no pill text,
-            // engine dropped, batch fallback found nothing loaded).
+            // Typed live-caption events used by the recording WebView.
             managers::transcription::StreamPhaseEvent,
             managers::transcription::StreamTextEvent,
             // [GRAIN] The webview event surface, typed. Registration alone is
             // what puts these in bindings.ts; the emit sites are untouched (and
             // most are inside handy/, which must stay byte-identical). See
             // grain_events for why this bus and DaemonEvent are both correct.
+            grain_events::ShowOverlay,
+            grain_events::HideOverlay,
+            grain_events::RecordingReady,
+            grain_events::MicLevel,
+            grain_events::GrainOverlayContext,
+            grain_events::GrainOverlaySkin,
+            grain_events::GrainOverlayPosition,
             grain_events::ModelStateChanged,
             grain_events::ModelDownloadProgress,
             grain_events::ModelDownloadComplete,

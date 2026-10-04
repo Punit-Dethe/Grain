@@ -176,6 +176,8 @@ const settingUpdaters: {
     commands.changeSelectedLanguageSetting(value as string),
   overlay_position: (value) =>
     commands.changeOverlayPositionSetting(value as string),
+  overlay_style: (value) =>
+    commands.changeOverlayStyleSetting(value as "none" | "minimal" | "live"),
   pill_skin: (value) => commands.changePillSkinSetting(value as string),
   pill_show_app_icon: (value) =>
     commands.changePillShowAppIconSetting(value as boolean),
@@ -212,8 +214,6 @@ const settingUpdaters: {
     commands.changeAgentContextModeSetting(value as AgentContextMode),
   agent_screen_image: (value) =>
     commands.changeAgentScreenImageSetting(value as boolean),
-  agent_input_type_to_expand: (value) =>
-    commands.changeAgentInputTypeToExpandSetting(value as boolean),
   agent_panel_position: (value) =>
     commands.changeAgentPanelPositionSetting(value as AgentPanelPosition),
   word_correction_threshold: (value) =>

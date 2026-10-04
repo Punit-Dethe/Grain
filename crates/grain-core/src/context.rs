@@ -211,7 +211,10 @@ fn load_settings(data_dir: &Path) -> Result<(AppSettings, SecretMap)> {
     let mut salvaged = false;
     let mut settings = if path.exists() {
         let raw = fs::read_to_string(&path).with_context(|| format!("read {}", path.display()))?;
-        match serde_json::from_str::<AppSettings>(&raw) {
+        let mut value: serde_json::Value =
+            serde_json::from_str(&raw).with_context(|| format!("parse {}", path.display()))?;
+        salvaged = crate::settings::migrate_overlay_settings(&mut value);
+        match serde_json::from_value::<AppSettings>(value.clone()) {
             Ok(settings) => settings,
             Err(e) => {
                 // One bad field must not reset the user's whole configuration
@@ -219,8 +222,6 @@ fn load_settings(data_dir: &Path) -> Result<(AppSettings, SecretMap)> {
                 // individually-valid field. If the file isn't even JSON, err
                 // out to the caller's defaults fallback.
                 log::warn!("Failed to parse stored settings ({e}); salvaging valid fields");
-                let value: serde_json::Value = serde_json::from_str(&raw)
-                    .with_context(|| format!("parse {}", path.display()))?;
                 salvaged = true;
                 salvage_settings(&value)
             }
