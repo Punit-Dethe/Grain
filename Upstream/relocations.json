@@ -27,9 +27,10 @@
       "crates/grain-core/src/providers.rs",
       "src-tauri/src/grain_provider_commands.rs",
       "src/app/stores/ppPoolStore.ts",
-      "src/app/components/settings/post-processing/pool/PostProcessingPool.tsx"
+      "src/app/components/settings/post-processing/pool/PostProcessingPool.tsx",
+      "src/app/components/settings/experimentations/AgentSection.tsx"
     ],
-    "why": "Inert (no `mod settings;`). Grain's settings are grain-core AppContext; a NEW upstream setting must be added there and to its Default, or `get_settings().<field>` in merged handy code fails to compile. (#1254 selected_channel needed this.) Provider participation and order are persisted through Grain commands; smart rotation and quotas are retired. Preserve the exact-permutation reorder validation and credential boundary in Upstream/LLM-FALLBACK.md."
+    "why": "Inert (no `mod settings;`). Grain's settings are grain-core AppContext; a NEW upstream setting must be added there and to its Default, or `get_settings().<field>` in merged handy code fails to compile. (#1254 selected_channel needed this.) Provider participation and order are persisted through Grain commands; smart rotation and quotas are retired. Preserve the exact-permutation reorder validation and credential boundary in Upstream/LLM-FALLBACK.md. Automatic Agent text context was retired on 2026-10-04; do not restore agent_context_mode or field/unique/window background capture when porting settings. Dictation caret context and extension screenText remain active; see Upstream/AGENT-TEXT-CONTEXT.md."
   },
   "src-tauri/src/overlay.rs": {
     "kind": "relocated",

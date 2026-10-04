@@ -752,6 +752,40 @@ mod tests {
     }
 
     #[test]
+    fn retired_agent_text_context_does_not_reset_retained_settings() {
+        for mode in ["off", "unique", "full", "screen"] {
+            let dir = tempfile::tempdir().unwrap();
+            let data = dir.path().join("data");
+            fs::create_dir_all(&data).unwrap();
+            let mut legacy = serde_json::to_value(AppSettings::default()).unwrap();
+            legacy["agent_context_mode"] = serde_json::json!(mode);
+            legacy["context_awareness_enabled"] = serde_json::json!(true);
+            legacy["agent_screen_image"] = serde_json::json!(true);
+            legacy["agent_quick_enabled"] = serde_json::json!(true);
+            legacy["selected_language"] = serde_json::json!("fr");
+            fs::write(
+                data.join(SETTINGS_FILE),
+                serde_json::to_vec(&legacy).unwrap(),
+            )
+            .unwrap();
+            let ctx = AppContext::new("res", &data);
+            ctx.update_settings(|s| s.agent_enabled = true).unwrap();
+            drop(ctx);
+            let reloaded = AppContext::new("res", &data);
+            let settings = reloaded.settings();
+            assert!(settings.context_awareness_enabled);
+            assert!(settings.agent_screen_image);
+            assert!(settings.agent_quick_enabled);
+            assert!(settings.agent_enabled);
+            assert_eq!(settings.selected_language, "fr");
+            let saved: serde_json::Value =
+                serde_json::from_str(&fs::read_to_string(data.join(SETTINGS_FILE)).unwrap())
+                    .unwrap();
+            assert!(saved.get("agent_context_mode").is_none());
+        }
+    }
+
+    #[test]
     fn fallback_and_provider_priority_persist_without_rotation_metadata() {
         let dir = tempfile::tempdir().unwrap();
         let data = dir.path().join("data");

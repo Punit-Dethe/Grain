@@ -183,28 +183,6 @@ impl Default for AgentAutocopy {
     }
 }
 
-/// [GRAIN] Agent context awareness: what (if anything) is read from the focused
-/// field at summon and handed to the LLM as background. `Unique` reuses the
-/// unique-term extractor (high-signal identifiers/names only); `Full` sends the
-/// capped raw field text. OFF by default — reading field content is opt-in.
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Type)]
-#[serde(rename_all = "snake_case")]
-pub enum AgentContextMode {
-    Off,
-    Unique,
-    Full,
-    /// The whole foreground window's visible text, from its accessibility tree.
-    ///
-    /// The rung above `Full`: `Full` sends the field being typed into, this
-    /// sends what surrounds it. It is what makes "reply saying I can't make
-    /// Thursday" answerable — the thread being replied to lives outside the
-    /// compose box, so no amount of field context reaches it.
-    ///
-    /// Never a screenshot: no screen-recording permission, no image, and only
-    /// the foreground window is ever read.
-    Screen,
-}
-
 /// [GRAIN] Where the Agent reply surface appears. `Side` (default) is the
 /// original bottom-right card that grows into a right-side conversation.
 /// `Center` is the sleek center-top panel that hugs its content and grows
@@ -219,12 +197,6 @@ pub enum AgentPanelPosition {
 impl Default for AgentPanelPosition {
     fn default() -> Self {
         AgentPanelPosition::Side
-    }
-}
-
-impl Default for AgentContextMode {
-    fn default() -> Self {
-        AgentContextMode::Off
     }
 }
 
@@ -823,22 +795,10 @@ pub struct AppSettings {
     /// of opening the reply panel. The pill then briefly offers "ask follow-up".
     #[serde(default)]
     pub agent_quick_enabled: bool,
-    /// [GRAIN] Agent context awareness: read the focused field at summon and pass
-    /// it to the AI as background (`unique` = high-signal terms only, `full` =
-    /// capped raw text). OFF by default.
-    #[serde(default)]
-    pub agent_context_mode: AgentContextMode,
     /// [GRAIN] Agent screen vision: when on, summoning the Agent also photographs
     /// the window you were in and sends that frame with your instruction, so it
     /// can answer about what is actually on screen — a chart, a diff, an error
     /// dialog, a page that has no accessibility text at all.
-    ///
-    /// Deliberately a separate switch from [`AgentContextMode::Screen`] rather
-    /// than a fifth rung on it. That mode reads the window's accessibility TEXT;
-    /// this one takes a picture. They cost different things, they fail in
-    /// different ways, and a model that cannot see images still handles the text
-    /// one — folding them together would make choosing "read my window" silently
-    /// start uploading screenshots.
     ///
     /// OFF by default and off is free: no capture, no permission, no bytes.
     #[serde(default)]
@@ -1709,7 +1669,6 @@ pub fn get_default_settings() -> AppSettings {
         mcp_oauth_client_ids: HashMap::new(),
         agent_autocopy: AgentAutocopy::default(),
         agent_quick_enabled: false,
-        agent_context_mode: AgentContextMode::default(),
         agent_screen_image: false,
         scrap_that_enabled: false,
         agent_input_type_to_expand: true,

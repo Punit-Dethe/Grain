@@ -1,9 +1,5 @@
 import React from "react";
-import type {
-  AgentAutocopy,
-  AgentContextMode,
-  AgentPanelPosition,
-} from "@/bindings";
+import type { AgentAutocopy, AgentPanelPosition } from "@/bindings";
 import { useSettings } from "../../../hooks/useSettings";
 import { Dropdown } from "../../ui/Dropdown";
 import { SettingContainer } from "../../ui/SettingContainer";
@@ -16,13 +12,6 @@ const AUTOCOPY_OPTIONS: { value: AgentAutocopy; label: string }[] = [
   { value: "all", label: "All replies" },
 ];
 
-const CONTEXT_OPTIONS: { value: AgentContextMode; label: string }[] = [
-  { value: "off", label: "Off" },
-  { value: "unique", label: "Unique terms only" },
-  { value: "full", label: "Full field text" },
-  { value: "screen", label: "Whole window text" },
-];
-
 const LOOK_OPTIONS: { value: AgentPanelPosition; label: string }[] = [
   { value: "side", label: "Side card" },
   { value: "center", label: "Center panel (beta)" },
@@ -31,17 +20,12 @@ const LOOK_OPTIONS: { value: AgentPanelPosition; label: string }[] = [
 /** [GRAIN] Agent settings — the rows BELOW the tool's master switch (the one
  * in Agent's feature card), rendered as one ungrouped list.
  *
- * There are no sub-headings. Seven controls split across "Reply surface",
- * "Replies" and "Input & context" spent three headings naming what the rows
- * already said, and made a short list look like a long one. They read in the
- * order you meet them instead: how the reply appears, how it comes back to you,
- * how you talk to it, and what it is allowed to read. All copy lives in the
- * per-row "i" hints. */
+ * Reply appearance, copying, follow-ups and optional screen images use existing
+ * settings. Automatic field/window text capture is retired. */
 export const AgentSection: React.FC = () => {
   const { getSetting, updateSetting, isUpdating } = useSettings();
   const autocopy = getSetting("agent_autocopy") ?? "first";
   const quick = getSetting("agent_quick_enabled") ?? false;
-  const contextMode = getSetting("agent_context_mode") ?? "off";
   const screenImage = getSetting("agent_screen_image") ?? false;
   const panelPosition = getSetting("agent_panel_position") ?? "side";
 
@@ -112,28 +96,6 @@ export const AgentSection: React.FC = () => {
         descriptionMode="tooltip"
       />
 
-      {/* 6. What it is allowed to read. */}
-      <SettingContainer
-        title="Context"
-        description="What the Agent reads at summon, from least to most. 'Unique terms' passes only high-signal names and identifiers, never raw text. 'Full field text' sends the field you're in (capped). 'Whole window text' also sends what surrounds it — the email thread you're replying to, the page you're on — read from the window's accessibility tree, never a screenshot, and only the window you're in. Selected text always stays the subject; context is reference only. Password fields are never read."
-        descriptionMode="tooltip"
-        grouped
-      >
-        <Dropdown
-          options={CONTEXT_OPTIONS}
-          selectedValue={contextMode}
-          disabled={isUpdating("agent_context_mode")}
-          onSelect={(v) =>
-            updateSetting("agent_context_mode", v as AgentContextMode)
-          }
-        />
-      </SettingContainer>
-
-      {/* 7. …and whether it may LOOK. Its own row rather than a fifth entry in
-          the dropdown above: that one is a ladder of how much text to read,
-          and a screenshot is a different kind of thing to hand over — worth
-          its own deliberate switch. Sits last because it is the most it can
-          ever be given. */}
       <ToggleSwitch
         label="See my screen"
         description="Send a picture of the window you summoned from, so the Agent can answer about what's actually there — a chart, a diff, an error dialog, anything with no readable text. One window only, never the whole desktop or another app; the picture is taken when you press the key, kept only for that conversation, and never saved to disk. Needs an AI model that accepts images — on one that doesn't, your request still goes through as text and you still get a reply."

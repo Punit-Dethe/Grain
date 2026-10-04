@@ -69,7 +69,7 @@ coverage for `grain_* as upstream_name` inert module aliases.
 | `src-tauri/src/managers/audio.rs` | relocated | `src-tauri/src/grain_capture.rs`<br>`src-tauri/src/grain_actions.rs`<br>`src-tauri/src/agent.rs`<br>`src-tauri/src/extension_session.rs`<br>`src-tauri/src/grain_action_session.rs`<br>`src-tauri/src/grain_onboarding.rs` |
 | `src-tauri/src/managers/transcription.rs` | parallel | `src-tauri/src/rolling.rs`<br>`src-tauri/src/tdt_flow.rs`<br>`crates/grain-tdt/src`<br>`src-tauri/src/grain_overlay.rs`<br>`src/app/overlay/RecordingOverlay.tsx`<br>`src-tauri/src/grain_transcription.rs` |
 | `src-tauri/src/overlay.rs` | relocated | `src-tauri/src/handy/overlay.rs`<br>`src-tauri/src/grain_overlay.rs`<br>`src-tauri/src/grain_capture.rs`<br>`src/app/overlay/RecordingOverlay.tsx`<br>`src/app/overlay/wave.ts`<br>`src/app/overlay/overlay.css`<br>`src-tauri/src/grain_events.rs`<br>`recording-overlay.html`<br>`vite.config.ts`<br>`src-tauri/src/pill_icon.rs`<br>`src-tauri/src/surface_watch.rs`<br>`src/app/overlay/main.tsx`<br>`crates/grain-sdk/src/event.rs` |
-| `src-tauri/src/settings.rs` | inert | `src-tauri/src/grain_settings.rs`<br>`crates/grain-core/src/settings.rs`<br>`crates/grain-core/src/context.rs`<br>`src/app/components/settings/ShowOverlay.tsx`<br>`src/app/components/settings/PillCloseButton.tsx`<br>`src/app/components/settings/PillAppIcon.tsx`<br>`src/app/stores/settingsStore.ts`<br>`crates/grain-core/src/capture.rs`<br>`src-tauri/src/grain_dictation_routing.rs`<br>`src/app/components/settings/capture/CaptureModes.tsx`<br>`crates/grain-core/src/providers.rs`<br>`src-tauri/src/grain_provider_commands.rs`<br>`src/app/stores/ppPoolStore.ts`<br>`src/app/components/settings/post-processing/pool/PostProcessingPool.tsx` |
+| `src-tauri/src/settings.rs` | inert | `src-tauri/src/grain_settings.rs`<br>`crates/grain-core/src/settings.rs`<br>`crates/grain-core/src/context.rs`<br>`src/app/components/settings/ShowOverlay.tsx`<br>`src/app/components/settings/PillCloseButton.tsx`<br>`src/app/components/settings/PillAppIcon.tsx`<br>`src/app/stores/settingsStore.ts`<br>`crates/grain-core/src/capture.rs`<br>`src-tauri/src/grain_dictation_routing.rs`<br>`src/app/components/settings/capture/CaptureModes.tsx`<br>`crates/grain-core/src/providers.rs`<br>`src-tauri/src/grain_provider_commands.rs`<br>`src/app/stores/ppPoolStore.ts`<br>`src/app/components/settings/post-processing/pool/PostProcessingPool.tsx`<br>`src/app/components/settings/experimentations/AgentSection.tsx` |
 <!-- END GENERATED RELOCATION POLICY -->
 
 ## Recording overlay audit (current)
@@ -199,6 +199,16 @@ fallback tries configured, enabled records in persisted order and carries no
 health, quota, token or cooldown state. Transport and settings upstream review
 routes include these active owners; [LLM-FALLBACK.md](LLM-FALLBACK.md) records
 failure, ordering, Agent tools, extension and verification contracts.
+
+### Agent text-context retirement (2026-10-04)
+
+Agent's automatic unique-term, full-field and whole-window text modes are
+removed, including settings, command, session state and prompt injection.
+Agent-only field readers and unique-term extraction are deleted. Dictation's
+bounded caret reads, focus/Paste Catch probes, selected-text instructions and
+extension `capture.screenText` remain active. The latter uses accessibility
+text, not OCR. See [AGENT-TEXT-CONTEXT.md](AGENT-TEXT-CONTEXT.md) before porting
+context/settings changes; no retired Agent background collector should return.
 
 ## Frontend — FROZEN 2026-07-31 (UI 2.0)
 

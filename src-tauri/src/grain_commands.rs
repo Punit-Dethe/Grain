@@ -554,19 +554,6 @@ pub fn change_agent_quick_enabled_setting(app: AppHandle, enabled: bool) -> Resu
     Ok(())
 }
 
-/// [GRAIN] Agent context awareness mode (off / unique terms / full field text).
-#[tauri::command]
-#[specta::specta]
-pub fn change_agent_context_mode_setting(
-    app: AppHandle,
-    mode: settings::AgentContextMode,
-) -> Result<(), String> {
-    let mut settings = settings::get_settings(&app);
-    settings.agent_context_mode = mode;
-    settings::write_settings(&app, settings);
-    Ok(())
-}
-
 /// [GRAIN] Agent screen vision: send a picture of the summoned-from window with
 /// the instruction. OFF by default; see `Settings::agent_screen_image`.
 #[tauri::command]

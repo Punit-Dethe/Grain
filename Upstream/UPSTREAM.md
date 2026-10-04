@@ -396,7 +396,9 @@ matching remains only a heuristic signal.
   counterpart; be careful when upstream touches chunking in
   `handy/managers/transcription.rs`.
 - **Grain-only subsystems**: Grain Space, context awareness,
-  snippets/"scrap that", prompt record, agent.
+  snippets/"scrap that", prompt record, agent. Agent automatic text-context
+  modes are retired; preserve active shared readers as recorded in
+  [AGENT-TEXT-CONTEXT.md](AGENT-TEXT-CONTEXT.md).
 - **CI**: Grain ships its own workflows; upstream workflow changes are
   ignored via `merge=ours`.
 - **`tailwind.config.js`**: converged 2026-07-17 (deleted, matching upstream).

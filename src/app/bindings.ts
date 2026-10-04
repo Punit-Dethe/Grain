@@ -655,17 +655,6 @@ async changeAgentQuickEnabledSetting(enabled: boolean) : Promise<Result<null, st
 }
 },
 /**
- * [GRAIN] Agent context awareness mode (off / unique terms / full field text).
- */
-async changeAgentContextModeSetting(mode: AgentContextMode) : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("change_agent_context_mode_setting", { mode }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
  * [GRAIN] Agent screen vision: send a picture of the summoned-from window with
  * the instruction. OFF by default; see `Settings::agent_screen_image`.
  */
@@ -1546,7 +1535,7 @@ async agentCopy(text: string) : Promise<Result<null, string>> {
  * Run the conversation against the configured AI and return the assistant reply.
  * Uses the post-processing provider config: a single provider, or the smart
  * fallback pool (enabled providers in saved order). The
- * focused-field context captured at summon (if any) is injected backend-side.
+ * Explicitly selected text is supplied as the subject of the instruction.
  */
 async agentRun(messages: AgentMessage[], context: string | null) : Promise<Result<AgentReply, string>> {
     try {
@@ -2281,25 +2270,6 @@ export type AgentConfirm = { token: string; title: string; summary: string; deta
  */
 export type AgentConfirmField = { label: string; value: string }
 /**
- * [GRAIN] Agent context awareness: what (if anything) is read from the focused
- * field at summon and handed to the LLM as background. `Unique` reuses the
- * unique-term extractor (high-signal identifiers/names only); `Full` sends the
- * capped raw field text. OFF by default — reading field content is opt-in.
- */
-export type AgentContextMode = "off" | "unique" | "full" | 
-/**
- * The whole foreground window's visible text, from its accessibility tree.
- * 
- * The rung above `Full`: `Full` sends the field being typed into, this
- * sends what surrounds it. It is what makes "reply saying I can't make
- * Thursday" answerable — the thread being replied to lives outside the
- * compose box, so no amount of field context reaches it.
- * 
- * Never a screenshot: no screen-recording permission, no image, and only
- * the foreground window is ever read.
- */
-"screen"
-/**
  * One conversation turn from the frontend.
  */
 export type AgentMessage = { 
@@ -2502,23 +2472,10 @@ agent_autocopy?: AgentAutocopy;
  */
 agent_quick_enabled?: boolean; 
 /**
- * [GRAIN] Agent context awareness: read the focused field at summon and pass
- * it to the AI as background (`unique` = high-signal terms only, `full` =
- * capped raw text). OFF by default.
- */
-agent_context_mode?: AgentContextMode; 
-/**
  * [GRAIN] Agent screen vision: when on, summoning the Agent also photographs
  * the window you were in and sends that frame with your instruction, so it
  * can answer about what is actually on screen — a chart, a diff, an error
  * dialog, a page that has no accessibility text at all.
- * 
- * Deliberately a separate switch from [`AgentContextMode::Screen`] rather
- * than a fifth rung on it. That mode reads the window's accessibility TEXT;
- * this one takes a picture. They cost different things, they fail in
- * different ways, and a model that cannot see images still handles the text
- * one — folding them together would make choosing "read my window" silently
- * start uploading screenshots.
  * 
  * OFF by default and off is free: no capture, no permission, no bytes.
  */

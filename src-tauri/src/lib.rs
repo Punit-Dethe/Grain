@@ -1394,7 +1394,6 @@ fn command_bindings() -> Builder<tauri::Wry> {
             grain_commands::change_context_awareness_enabled_setting,
             grain_commands::change_agent_autocopy_setting,
             grain_commands::change_agent_quick_enabled_setting,
-            grain_commands::change_agent_context_mode_setting,
             grain_commands::change_agent_screen_image_setting,
             grain_commands::change_agent_panel_position_setting,
             grain_commands::change_scrap_that_enabled_setting,

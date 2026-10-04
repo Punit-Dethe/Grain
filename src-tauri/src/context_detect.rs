@@ -1185,350 +1185,6 @@ fn is_browser_exe(stem: &str) -> bool {
         .any(|k| stem == *k || (k.len() >= 4 && stem.contains(k)))
 }
 
-/// Cap on unique terms used by the explicitly invoked Agent field-context mode.
-const MAX_UNIQUE_TERMS: usize = 12;
-/// Cap on how much focused-field text we scan for terms (bounds cost on huge docs).
-const MAX_SCAN_CHARS: usize = 4000;
-
-/// A compact stop-list of the most common English words. Extraction drops any
-/// lowercase token found here, so ordinary prose contributes nothing — only
-/// genuinely unusual tokens (names, identifiers, jargon) survive. Kept small on
-/// purpose: the shape heuristics in [`extract_unique_terms`] do the heavy lifting;
-/// this only catches common *lowercase* words that would otherwise slip through.
-const COMMON_WORDS: &[&str] = &[
-    "the",
-    "and",
-    "you",
-    "that",
-    "was",
-    "for",
-    "are",
-    "with",
-    "his",
-    "they",
-    "this",
-    "have",
-    "from",
-    "one",
-    "had",
-    "but",
-    "not",
-    "what",
-    "all",
-    "were",
-    "when",
-    "your",
-    "can",
-    "said",
-    "there",
-    "use",
-    "each",
-    "which",
-    "she",
-    "how",
-    "their",
-    "will",
-    "other",
-    "about",
-    "out",
-    "many",
-    "then",
-    "them",
-    "these",
-    "some",
-    "her",
-    "would",
-    "make",
-    "like",
-    "him",
-    "into",
-    "time",
-    "has",
-    "look",
-    "two",
-    "more",
-    "write",
-    "see",
-    "number",
-    "way",
-    "could",
-    "people",
-    "than",
-    "first",
-    "water",
-    "been",
-    "call",
-    "who",
-    "its",
-    "now",
-    "find",
-    "long",
-    "down",
-    "day",
-    "did",
-    "get",
-    "come",
-    "made",
-    "may",
-    "part",
-    "over",
-    "new",
-    "sound",
-    "take",
-    "only",
-    "little",
-    "work",
-    "know",
-    "place",
-    "year",
-    "live",
-    "back",
-    "give",
-    "most",
-    "very",
-    "after",
-    "thing",
-    "our",
-    "just",
-    "name",
-    "good",
-    "sentence",
-    "man",
-    "think",
-    "say",
-    "great",
-    "where",
-    "help",
-    "through",
-    "much",
-    "before",
-    "line",
-    "right",
-    "too",
-    "mean",
-    "old",
-    "any",
-    "same",
-    "tell",
-    "boy",
-    "follow",
-    "came",
-    "want",
-    "show",
-    "also",
-    "around",
-    "form",
-    "three",
-    "small",
-    "set",
-    "put",
-    "end",
-    "does",
-    "another",
-    "well",
-    "large",
-    "must",
-    "big",
-    "even",
-    "such",
-    "because",
-    "turn",
-    "here",
-    "why",
-    "ask",
-    "went",
-    "men",
-    "read",
-    "need",
-    "land",
-    "different",
-    "home",
-    "move",
-    "try",
-    "kind",
-    "hand",
-    "picture",
-    "again",
-    "change",
-    "off",
-    "play",
-    "spell",
-    "air",
-    "away",
-    "animal",
-    "house",
-    "point",
-    "page",
-    "letter",
-    "mother",
-    "answer",
-    "found",
-    "study",
-    "still",
-    "learn",
-    "should",
-    "america",
-    "world",
-    "high",
-    "every",
-    "near",
-    "add",
-    "food",
-    "between",
-    "own",
-    "below",
-    "country",
-    "plant",
-    "last",
-    "school",
-    "father",
-    "keep",
-    "tree",
-    "never",
-    "start",
-    "city",
-    "earth",
-    "eye",
-    "light",
-    "thought",
-    "head",
-    "under",
-    "story",
-    "saw",
-    "left",
-    "few",
-    "while",
-    "along",
-    "might",
-    "close",
-    "something",
-    "seem",
-    "next",
-    "hard",
-    "open",
-    "example",
-    "begin",
-    "life",
-    "always",
-    "those",
-    "both",
-    "paper",
-    "together",
-    "got",
-    "group",
-    "often",
-    "run",
-    "important",
-    "until",
-    "children",
-    "side",
-    "feet",
-    "car",
-    "mile",
-    "night",
-    "walk",
-    "white",
-    "sea",
-    "began",
-    "grow",
-    "took",
-    "river",
-    "four",
-    "carry",
-    "state",
-    "once",
-    "book",
-    "hear",
-    "stop",
-    "without",
-    "second",
-    "later",
-    "miss",
-    "idea",
-    "enough",
-    "eat",
-    "face",
-    "watch",
-    "far",
-    "really",
-    "almost",
-    "let",
-    "above",
-    "girl",
-    "sometimes",
-    "mountain",
-    "cut",
-    "young",
-    "talk",
-    "soon",
-    "list",
-    "song",
-    "being",
-    "leave",
-    "family",
-    "it's",
-    "please",
-    "thanks",
-    "hey",
-    "hi",
-    "yeah",
-    "okay",
-    "just",
-    "going",
-    "really",
-    "actually",
-    "basically",
-];
-
-/// Extract unique high-signal terms for Agent's explicit field-context mode.
-/// A token is kept when it "looks intentional":
-///   * has an internal capital (camelCase / PascalCase), or
-///   * contains `_` or a digit (identifiers/versions), or
-///   * is Capitalized (a likely proper noun), or
-///   * is an ALL-CAPS acronym (≥2 chars),
-/// and it is not an ordinary lowercase English word (checked against
-/// [`COMMON_WORDS`]). De-duplicated case-insensitively, first-seen casing kept,
-/// capped at [`MAX_UNIQUE_TERMS`].
-pub fn extract_unique_terms(text: &str) -> Vec<String> {
-    let text: String = text.chars().take(MAX_SCAN_CHARS).collect();
-    let mut seen = std::collections::HashSet::new();
-    let mut out = Vec::new();
-
-    // Tokens are runs of letters/digits/underscore (identifier-ish).
-    for tok in text.split(|c: char| !(c.is_alphanumeric() || c == '_')) {
-        let tok = tok.trim_matches('_');
-        if tok.chars().count() < 3 || tok.chars().count() > 40 {
-            continue;
-        }
-        let lower = tok.to_ascii_lowercase();
-        if COMMON_WORDS.contains(&lower.as_str()) {
-            continue;
-        }
-
-        let chars: Vec<char> = tok.chars().collect();
-        let first_upper = chars[0].is_uppercase();
-        let has_underscore = tok.contains('_');
-        let has_digit = chars.iter().any(|c| c.is_ascii_digit());
-        let internal_upper = chars.iter().skip(1).any(|c| c.is_uppercase());
-        let all_upper = chars.iter().all(|c| c.is_uppercase() || c.is_ascii_digit())
-            && chars.iter().any(|c| c.is_uppercase());
-        // Plain lowercase words with no distinguishing shape are ordinary prose —
-        // skip them even if they dodged the stop-list, to stay high-signal.
-        let intentional = internal_upper || has_underscore || has_digit || first_upper || all_upper;
-        if !intentional {
-            continue;
-        }
-
-        if seen.insert(lower) {
-            out.push(tok.to_string());
-            if out.len() >= MAX_UNIQUE_TERMS {
-                break;
-            }
-        }
-    }
-    out
-}
-
 /// A snapshot of the foreground target, taken right before post-processing. The
 /// paste target keeps focus while Grain runs in the background, so the foreground
 /// window IS the app the text is about to land in.
@@ -1876,20 +1532,6 @@ pub fn read_window_text() -> Option<String> {
     }
 }
 
-/// Read the currently focused editable field's full text via UI Automation.
-/// Used by the Agent (field context at summon) and by context bias. `None` on
-/// unsupported platforms, password fields, or any failure. Silent — no UI.
-pub fn read_focused_text() -> Option<String> {
-    #[cfg(windows)]
-    {
-        uia::read_focused_value()
-    }
-    #[cfg(not(windows))]
-    {
-        None
-    }
-}
-
 /// Whether the focused text range is non-empty, without reading its contents.
 /// Used only to label a finite result action honestly as Replace vs Insert.
 pub fn focused_has_selection() -> bool {
@@ -2152,9 +1794,6 @@ mod uia {
     use windows::Win32::UI::Accessibility::{
         TextPatternRangeEndpoint_End, TextPatternRangeEndpoint_Start, TextUnit_Character,
     };
-
-    /// Cap on focused-field text scanned (bounds cost on huge documents).
-    const MAX_TEXT_CHARS: usize = 8000;
 
     /// Upper bound on `Edit` controls inspected when hunting the address bar —
     /// keeps a page full of inputs from making URL detection expensive.
@@ -2646,8 +2285,7 @@ mod uia {
 
     /// What shape of field the caret is in.
     ///
-    /// The single/multi-line split leans on a finding already recorded in
-    /// [`read_text_content`]: multiline editors expose `TextPattern` but often
+    /// Multiline editors expose `TextPattern` but often
     /// NOT `ValuePattern`, while one-line inputs do the reverse. These are
     /// current-property calls rather than cached ones, but they are made against
     /// exactly ONE element, so the round-trips the cache request exists to
@@ -2759,21 +2397,6 @@ mod uia {
         }
     }
 
-    /// The focused field's raw text. Own COM scope so it is safe to call
-    /// standalone from any thread. Password fields skipped.
-    pub(in crate::context_detect) fn read_focused_value() -> Option<String> {
-        unsafe {
-            let _com = ComGuard::init();
-            let automation: IUIAutomation =
-                CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER).ok()?;
-            let el = automation.GetFocusedElement().ok()?;
-            if is_password(&el) {
-                return None;
-            }
-            read_text_content(&el)
-        }
-    }
-
     pub(in crate::context_detect) fn focused_has_selection() -> bool {
         unsafe {
             let _com = ComGuard::init();
@@ -2821,35 +2444,6 @@ mod uia {
         } else {
             Some(s)
         }
-    }
-
-    /// Full textual content of an editable element: `ValuePattern` first (cheap,
-    /// covers single-line inputs), falling back to `TextPattern`'s document range.
-    /// **This is essential for multiline editors** (Notepad, VS Code, chat/mail
-    /// composers, browser `<textarea>`s), which expose `TextPattern` but often NOT
-    /// `ValuePattern` — reading only ValuePattern returned nothing there. Capped.
-    unsafe fn read_text_content(el: &IUIAutomationElement) -> Option<String> {
-        if let Some(v) = read_value(el) {
-            return Some(cap(v));
-        }
-        if let Ok(tp) = el.GetCurrentPatternAs::<IUIAutomationTextPattern>(UIA_TextPatternId) {
-            if let Ok(range) = tp.DocumentRange() {
-                if let Ok(bstr) = range.GetText(MAX_TEXT_CHARS as i32) {
-                    let s = bstr.to_string();
-                    if !s.trim().is_empty() {
-                        return Some(s);
-                    }
-                }
-            }
-        }
-        None
-    }
-
-    fn cap(mut s: String) -> String {
-        if s.len() > MAX_TEXT_CHARS {
-            s.truncate(MAX_TEXT_CHARS);
-        }
-        s
     }
 
     /// The element's Name as a non-empty `String` (URL fallback on some browsers).
@@ -4325,31 +3919,6 @@ mod tests {
             out.find(base).unwrap() < out.find("[Active context profile]").unwrap(),
             "the higher-priority profile must be later than Main"
         );
-    }
-
-    #[test]
-    fn extract_terms_keeps_names_and_identifiers_drops_prose() {
-        let text = "I asked Rita to fix the useGrainStore hook and the snake_case bug in PyTorch v2 today because it was broken";
-        let terms = extract_unique_terms(text);
-        assert!(terms.contains(&"Rita".to_string()));
-        assert!(terms.contains(&"useGrainStore".to_string()));
-        assert!(terms.contains(&"snake_case".to_string()));
-        assert!(terms.contains(&"PyTorch".to_string()));
-        // Ordinary lowercase prose contributes nothing.
-        for w in [
-            "asked", "the", "hook", "bug", "today", "because", "was", "broken",
-        ] {
-            assert!(!terms.iter().any(|t| t == w), "leaked prose word: {w}");
-        }
-    }
-
-    #[test]
-    fn extract_terms_dedups_and_caps() {
-        let text = "Rita Rita Rita ".repeat(20);
-        let terms = extract_unique_terms(&text);
-        assert_eq!(terms, vec!["Rita".to_string()]); // de-duped.
-        let many: String = (0..50).map(|i| format!("Ident{i} ")).collect();
-        assert!(extract_unique_terms(&many).len() <= MAX_UNIQUE_TERMS);
     }
 
     #[test]

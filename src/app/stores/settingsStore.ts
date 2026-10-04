@@ -3,7 +3,6 @@ import { subscribeWithSelector } from "zustand/middleware";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
   AgentAutocopy,
-  AgentContextMode,
   AgentPanelPosition,
   AppSettings as Settings,
   AudioDevice,
@@ -223,8 +222,6 @@ const settingUpdaters: {
     commands.changeAgentAutocopySetting(value as AgentAutocopy),
   agent_quick_enabled: (value) =>
     commands.changeAgentQuickEnabledSetting(value as boolean),
-  agent_context_mode: (value) =>
-    commands.changeAgentContextModeSetting(value as AgentContextMode),
   agent_screen_image: (value) =>
     commands.changeAgentScreenImageSetting(value as boolean),
   agent_panel_position: (value) =>
