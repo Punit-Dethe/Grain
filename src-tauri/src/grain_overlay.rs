@@ -19,6 +19,8 @@ pub struct OverlayPresentation {
     pub ready: bool,
     pub session_id: u64,
     pub agent: bool,
+    pub prompt_recording: bool,
+    pub app_icon_enabled: bool,
     pub owner: Option<String>,
     pub icon: Option<String>,
     pub notice: Option<String>,
@@ -30,8 +32,13 @@ pub struct OverlayPresentation {
 }
 
 impl OverlayPresentation {
-    fn for_capture(mode: SessionMode, style: crate::settings::OverlayStyle) -> Self {
+    fn for_capture(
+        mode: SessionMode,
+        style: crate::settings::OverlayStyle,
+        app_icon_enabled: bool,
+    ) -> Self {
         Self {
+            app_icon_enabled,
             visible: style != crate::settings::OverlayStyle::None,
             // Live preview applies only to the live-transcription action.
             // Minimal forces every action to use the compact recording card.
@@ -48,9 +55,22 @@ impl OverlayPresentation {
 
     fn clear_capture(&mut self) {
         self.ready = false;
+        self.prompt_recording = false;
         self.committed = String::new();
         self.tentative = String::new();
         self.working = false;
+    }
+
+    fn mark_prompt_record(&mut self, session_id: u64) -> bool {
+        if session_id != self.session_id
+            || self.agent
+            || self.working
+            || !matches!(self.state.as_str(), "recording" | "streaming")
+        {
+            return false;
+        }
+        self.prompt_recording = true;
+        true
     }
 
     fn complete(&mut self, session_id: u64) -> bool {
@@ -102,6 +122,28 @@ fn publish(app: &AppHandle, value: &OverlayPresentation) {
     let _ = app.emit_to("recording_overlay", "grain-overlay-context", value);
 }
 
+/// Called only after the recorder accepted the split; stale queued feedback
+/// cannot tint another capture or a session that has already stopped.
+pub fn mark_prompt_record(app: &AppHandle, session_id: u64) {
+    let app_handle = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        if let Some(ctx) = app_handle.try_state::<OverlayContext>() {
+            let mut value = ctx.presentation.lock().unwrap();
+            if value.mark_prompt_record(session_id) {
+                publish(&app_handle, &value);
+            }
+        }
+    });
+}
+
+pub fn set_app_icon_enabled(app: &AppHandle, enabled: bool) {
+    if let Some(ctx) = app.try_state::<OverlayContext>() {
+        let mut value = ctx.presentation.lock().unwrap();
+        value.app_icon_enabled = enabled;
+        publish(app, &value);
+    }
+}
+
 pub fn show_capture(app: &AppHandle, mode: SessionMode) -> u64 {
     let generation = app
         .state::<OverlayContext>()
@@ -141,7 +183,8 @@ pub fn hide_failed_capture(app: &AppHandle, generation: u64) {
 
 fn show_capture_main(app: &AppHandle, mode: SessionMode) {
     let settings = crate::settings::get_settings(app);
-    let presentation = OverlayPresentation::for_capture(mode, settings.overlay_style);
+    let presentation =
+        OverlayPresentation::for_capture(mode, settings.overlay_style, settings.pill_show_app_icon);
     let streaming = presentation.state == "streaming";
     if let Some(ctx) = app.try_state::<OverlayContext>() {
         ctx.notice_generation.fetch_add(1, Ordering::AcqRel);
@@ -404,13 +447,15 @@ pub struct OverlaySnapshot {
 #[specta::specta]
 pub fn overlay_snapshot(app: AppHandle) -> OverlaySnapshot {
     let settings = crate::settings::get_settings(&app);
+    let mut presentation = app
+        .state::<OverlayContext>()
+        .presentation
+        .lock()
+        .unwrap()
+        .clone();
+    presentation.app_icon_enabled = settings.pill_show_app_icon;
     OverlaySnapshot {
-        presentation: app
-            .state::<OverlayContext>()
-            .presentation
-            .lock()
-            .unwrap()
-            .clone(),
+        presentation,
         position: settings.overlay_position,
         pill_hide_close_button: settings.pill_hide_close_button,
         theme: crate::grain_theme::get_theme(app.clone()),
@@ -497,6 +542,53 @@ mod tests {
     use grain_core::SessionMode;
 
     #[test]
+    fn prompt_feedback_is_confirmed_for_its_capture_and_cleared_at_completion() {
+        for mode in [SessionMode::Batch, SessionMode::NativeAsr] {
+            let mut value = OverlayPresentation::for_capture(mode, OverlayStyle::Live, false);
+            value.session_id = 2;
+            assert!(!value.mark_prompt_record(1));
+            assert!(!value.prompt_recording);
+            assert!(value.mark_prompt_record(2));
+            assert!(value.prompt_recording);
+            assert!(!value.complete(1));
+            assert!(value.prompt_recording);
+            assert!(value.complete(2));
+            assert!(!value.prompt_recording);
+            assert!(!value.app_icon_enabled);
+        }
+        for (state, working, agent) in [
+            ("transcribing", false, false),
+            ("processing", false, false),
+            ("streaming", true, false),
+            ("recording", false, true),
+        ] {
+            let mut value = OverlayPresentation {
+                session_id: 2,
+                state: state.into(),
+                working,
+                agent,
+                ..Default::default()
+            };
+            assert!(!value.mark_prompt_record(2));
+            assert!(!value.prompt_recording);
+        }
+    }
+
+    #[test]
+    fn missing_icon_is_distinct_from_the_disabled_icon_preference() {
+        for enabled in [true, false] {
+            let value = OverlayPresentation::for_capture(
+                SessionMode::Batch,
+                OverlayStyle::Minimal,
+                enabled,
+            );
+            assert_eq!(value.app_icon_enabled, enabled);
+            assert!(value.icon.is_none());
+            assert!(!value.prompt_recording);
+        }
+    }
+
+    #[test]
     fn pill_preference_and_capture_mode_select_presentation() {
         for (style, visible, expected_states) in [
             (OverlayStyle::None, false, ["recording"; 4]),
@@ -516,7 +608,7 @@ mod tests {
             .into_iter()
             .zip(expected_states)
             {
-                let mut value = OverlayPresentation::for_capture(mode, style);
+                let mut value = OverlayPresentation::for_capture(mode, style, true);
                 value.session_id = 7;
                 assert_eq!(value.visible, visible, "{style:?} / {mode:?}");
                 assert_eq!(value.state, expected_state, "{style:?} / {mode:?}");

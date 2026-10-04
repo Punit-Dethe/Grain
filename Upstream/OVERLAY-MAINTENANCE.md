@@ -219,3 +219,28 @@ capabilities, coordinator, overlay, shortcut conflicts and stale-session cleanup
 parity and runtime-port policy pass. The F8 default parses on both backends.
 Real-microphone Prompt Record behavior, visual acceptance, and non-Windows host
 activation remain real-application checks.
+
+## Prompt Record tint and optional icon geometry (2026-10-04)
+
+The owned `OverlayPresentation` context/snapshot includes `prompt_recording`
+and `app_icon_enabled`. `PromptRecordAction` publishes confirmation only after
+`arm_prompt_record` succeeds; the presentation accepts it only for the same
+recording session, outside Agent/working states. Completion/cancel clears the
+tint, and new capture construction resets it. No public SDK event, shared Handy
+change, additional listener or animation worker is required.
+
+Grain's WebView reveals an orange/amber/yellow variant of the Agent base tint
+upward over 420 ms using opacity/transform. Reduced motion changes it immediately.
+The app-icon setting updates the existing context immediately and is hydrated
+from the saved setting. Compact listening removes its left slot and 12px gap
+when disabled, independently of the compact X preference. With both hidden,
+only the original 51px waveform and symmetric 10px padding remain. Expanded
+Live retains its indicator (neutral fallback dot when icons are disabled),
+timer and X; working states retain the spinner and measured label width.
+An unavailable icon with the preference enabled still uses the fallback dot.
+Keep these distinctions when reviewing upstream overlay changes.
+
+Verification: the Rust library build, six overlay tests, Prompt Record and
+shortcut-conflict tests, generated binding export, frontend build/lint and 124
+unit tests pass. Settings parity, upstream policy and divergence ratchet pass.
+Gradient timing and compact/expanded visual acceptance require the real app.

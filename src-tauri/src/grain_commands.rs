@@ -655,6 +655,7 @@ pub fn change_pill_show_app_icon_setting(app: AppHandle, enabled: bool) -> Resul
     app.state::<std::sync::Arc<grain_core::AppContext>>()
         .update_settings(|settings| settings.pill_show_app_icon = enabled)
         .map_err(|error| error.to_string())?;
+    crate::grain_overlay::set_app_icon_enabled(&app, enabled);
     Ok(())
 }
 

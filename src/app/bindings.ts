@@ -3010,7 +3010,7 @@ export type OnboardingTestMode = "standard" | "flow" | "streaming"
  * also the persisted `overlay_position` setting (grain-core re-exports it).
  */
 export type OverlayPosition = "top" | "bottom"
-export type OverlayPresentation = { visible: boolean; state: string; ready: boolean; session_id: number; agent: boolean; owner: string | null; icon: string | null; notice: string | null; followup: string | null; committed: string; tentative: string; working: boolean; work_kind: string }
+export type OverlayPresentation = { visible: boolean; state: string; ready: boolean; session_id: number; agent: boolean; prompt_recording: boolean; app_icon_enabled: boolean; owner: string | null; icon: string | null; notice: string | null; followup: string | null; committed: string; tentative: string; working: boolean; work_kind: string }
 export type OverlaySnapshot = { presentation: OverlayPresentation; position: OverlayPosition; pill_hide_close_button: boolean; theme: ThemeState; streaming_width: number; streaming_height: number }
 /**
  * Handy's presentation contract. Position only selects an edge.

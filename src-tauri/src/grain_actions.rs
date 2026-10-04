@@ -259,7 +259,10 @@ impl ShortcutAction for PromptRecordAction {
             return;
         }
         if let Some(manager) = app.try_state::<Arc<AudioRecordingManager>>() {
-            manager.arm_prompt_record();
+            let session_id = current_session_id();
+            if manager.arm_prompt_record() {
+                crate::grain_overlay::mark_prompt_record(app, session_id);
+            }
         }
     }
 

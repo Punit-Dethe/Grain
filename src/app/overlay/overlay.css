@@ -91,6 +91,8 @@
 
 /* Shared base card. Flat dark surface + border, no shadow or blur. */
 .scard {
+  position: relative;
+  isolation: isolate;
   width: var(--ov-pill-w);
   /* Never wider than the window: an unaccounted content zoom degrades to a
      narrower card instead of clipping. 2px = our border (no border-box reset). */
@@ -123,6 +125,46 @@
       rgb(59 130 246 / 32%)
     ),
     var(--s-surface);
+}
+/* Prompt Record: the same base tint as Agent, in orange/amber/yellow. Reveal
+   upward after confirmed activation; the waveform and controls stay above it. */
+.scard::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background:
+    linear-gradient(to top, transparent, var(--s-surface) 80%),
+    linear-gradient(
+      110deg,
+      rgb(251 146 60 / 32%),
+      rgb(251 191 36 / 28%),
+      rgb(253 224 71 / 32%)
+    );
+  opacity: 0;
+  transform: translateY(65%);
+  transition:
+    opacity 180ms ease-out,
+    transform 180ms ease-out;
+}
+.scard.prompt-recording::before {
+  opacity: 1;
+  transform: translateY(0);
+  transition-duration: 420ms;
+  transition-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
+}
+.scard > .sbase,
+.scard > .stext {
+  position: relative;
+  z-index: 1;
+}
+@media (prefers-reduced-motion: reduce) {
+  .scard::before,
+  .scard.prompt-recording::before {
+    transition: none;
+    transform: none;
+  }
 }
 @keyframes scard-pop {
   from {
@@ -354,8 +396,8 @@
   text-overflow: ellipsis;
 }
 
-/* Grain substitutions: application icon and retained waveform presentation.
- * All card, caption, placement and transition rules above are Handy's. */
+/* Grain application icon and retained waveform presentation. Card/caption
+ * behavior follows Handy; Grain owns the preferences and visual treatment. */
 html,
 body,
 #root {
@@ -401,6 +443,21 @@ body,
 }
 .scard.no-close .work-row {
   grid-template-columns: 18px minmax(0, 1fr);
+}
+/* Only closed listening cards omit the app-icon slot. Working cards retain
+   their spinner and expanded Live cards retain their original indicator. */
+.scard.no-icon {
+  --ov-rest-w: calc(51px + 22px + var(--grain-row-gap) + 20px);
+  --ov-pill-w: var(--ov-rest-w);
+}
+.scard.no-icon:not(.open):not(.working):not(.cworking) .sbase {
+  grid-template-columns: 51px 22px;
+}
+.scard.no-icon.no-close {
+  --ov-rest-w: calc(51px + 20px);
+}
+.scard.no-icon.no-close:not(.open):not(.working):not(.cworking) .sbase {
+  grid-template-columns: 51px;
 }
 .scard:not(.open) .work-row .swork-label {
   padding: 0;

@@ -26,6 +26,8 @@ const empty: OverlayPresentation = {
   ready: false,
   session_id: 0,
   agent: false,
+  prompt_recording: false,
+  app_icon_enabled: true,
   owner: null,
   icon: null,
   notice: null,
@@ -191,6 +193,10 @@ export function RecordingOverlay() {
                 payload === "recording" || payload === "streaming"
                   ? false
                   : value.ready,
+              prompt_recording:
+                payload === "recording" || payload === "streaming"
+                  ? false
+                  : value.prompt_recording,
             }));
           }),
         ),
@@ -203,6 +209,7 @@ export function RecordingOverlay() {
               ...value,
               visible: false,
               ready: false,
+              prompt_recording: false,
             }));
             setText({ committed: "", tentative: "" });
             setWorking(false);
@@ -349,6 +356,7 @@ export function RecordingOverlay() {
     !hideCompactClose || (presentation.state === "streaming" && hasText);
   const closeClass = showClose ? "" : "no-close";
   const agentClass = presentation.agent ? "agent" : "";
+  const promptClass = presentation.prompt_recording ? "prompt-recording" : "";
   const direction = getLanguageDirection(i18n.language);
   const handleScroll = () => {
     const element = cap.current;
@@ -374,13 +382,17 @@ export function RecordingOverlay() {
   );
   const listeningRow = (showTimer: boolean) => (
     <div className="sbase">
-      <div className="sbase-l" title={presentation.owner || undefined}>
-        {presentation.icon ? (
-          <img src={presentation.icon} alt="" />
-        ) : (
-          <span className={`sdot ${presentation.ready ? "ready" : "arming"}`} />
-        )}
-      </div>
+      {(presentation.app_icon_enabled || showTimer) && (
+        <div className="sbase-l" title={presentation.owner || undefined}>
+          {presentation.app_icon_enabled && presentation.icon ? (
+            <img src={presentation.icon} alt="" />
+          ) : (
+            <span
+              className={`sdot ${presentation.ready ? "ready" : "arming"}`}
+            />
+          )}
+        </div>
+      )}
       <Waveform ready={presentation.ready} session={session} />
       {showClose && (
         <div className="sbase-r">
@@ -425,16 +437,18 @@ export function RecordingOverlay() {
     );
   }
 
-  // Handy's Live card and Minimal card keep their exact structure and states.
-  // Grain substitutes only the listening indicator and waveform contents.
+  // Retain Handy-derived Live/Minimal states; Grain owns listening controls,
+  // optional icon/close slots and capture tint.
   if (presentation.state === "streaming") {
     const open = hasText;
     const collapsed = working && !open;
+    const iconClass =
+      !presentation.app_icon_enabled && !open && !working ? "no-icon" : "";
     return (
       <div dir={direction} className={`ov-stage ${position}`}>
         <div
           key={session}
-          className={`scard ${agentClass} ${closeClass} ${open ? "open" : ""} ${collapsed ? "working" : ""}`}
+          className={`scard ${agentClass} ${promptClass} ${closeClass} ${iconClass} ${open ? "open" : ""} ${collapsed ? "working" : ""}`}
         >
           <div className="stext">
             <div className="stext-clip">
@@ -472,10 +486,11 @@ export function RecordingOverlay() {
     presentation.state === "processing"
       ? t("overlay.processing")
       : t("overlay.transcribing");
+  const iconClass = !presentation.app_icon_enabled && !busy ? "no-icon" : "";
   return (
     <div dir={direction} className={`ov-stage ${position} ov-fade show`}>
       <div
-        className={`scard compact ${agentClass} ${closeClass} ${busy ? "cworking" : ""}`}
+        className={`scard compact ${agentClass} ${promptClass} ${closeClass} ${iconClass} ${busy ? "cworking" : ""}`}
       >
         {busy ? workingRow(workLabel) : listeningRow(false)}
       </div>
