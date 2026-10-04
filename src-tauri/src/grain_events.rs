@@ -54,8 +54,6 @@ pub struct GrainOverlayContext(pub crate::grain_overlay::OverlayPresentation);
 pub struct GrainOverlayPosition(pub crate::settings::OverlayPosition);
 #[derive(Clone, Debug, Serialize, Deserialize, Type, tauri_specta::Event)]
 pub struct GrainOverlayCompactCloseHidden(pub bool);
-#[derive(Clone, Debug, Serialize, Deserialize, Type, tauri_specta::Event)]
-pub struct AgentInputReady;
 
 /// A model was selected, started loading, finished loading, or failed.
 /// Mirrors `managers::transcription::ModelStateEvent`.

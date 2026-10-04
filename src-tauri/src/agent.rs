@@ -2,8 +2,8 @@
 //! destroyable windows ("if it's not in use, destroy it").
 //!
 //! Two surfaces (faithful to the reference design):
-//!   • INPUT — the nonactivating recording WebView records by default; the
-//!     explicit keyboard button or second summon opens a focused typing card.
+//!   • INPUT — NATIVE (it lives in the pill process, shown instantly on summon):
+//!     records by default, expands into a typing card on the first keystroke.
 //!     The core captures the foreground selection at summon, starts dictation,
 //!     and pre-creates the reply panel HIDDEN so it is warm at submit.
 //!   • PANEL — a bottom-right reply card webview (COMPACT: pager over retry
@@ -51,8 +51,9 @@ use crate::settings::{
 };
 
 /// Window label (matched by its capability + the frontend router in
-/// `main.tsx`). The PANEL (`agent-panel`) is the reply card / conversation;
-/// `grain_agent_input` owns the separate, destroyable typing card.
+/// `main.tsx`). The summon INPUT is native (it lives in the pill process); the
+/// PANEL (`agent-panel`) is the only Agent webview — the bottom-right reply
+/// card / conversation.
 pub const PANEL_LABEL: &str = "agent-panel";
 
 /// Recording binding id used for the palette's dictation (kept distinct from the
@@ -146,19 +147,9 @@ pub struct AgentState {
     /// returns (the screen capture) compares against it before writing, so a
     /// slow capture can never land in the session that superseded it.
     pub summon_gen: AtomicU64,
-    /// True while voice or typed summon input is up. Gates the
+    /// True while the NATIVE input (the pill's summon card) is up. Gates the
     /// transient global Enter/Escape routing and dedups double submits.
     pub input_active: AtomicBool,
-    /// The focused typing card owns Enter/Escape instead of global voice keys.
-    pub input_typing_active: AtomicBool,
-    pub input_typing_ready: AtomicBool,
-    /// Actual Tab registration plus any saved Grain key displaced by it.
-    pub typing_shortcut: Mutex<
-        Option<(
-            crate::settings::KeyboardImplementation,
-            Vec<ShortcutBinding>,
-        )>,
-    >,
     /// [GRAIN] True while the reply panel is in its EXPANDED conversation stage
     /// (it owns a follow-up text field). Dictation is routed INTO that field
     /// only when the panel is expanded AND focused — never over the compact
@@ -225,7 +216,7 @@ impl AgentReply {
 // ============================================================================
 
 /// Summon the Agent (Assist mode): capture the foreground selection + field
-/// context, present voice input, start dictation, and pre-warm the reply
+/// context, present the NATIVE input, start dictation, and pre-warm the reply
 /// panel. See [`summon_inner`].
 ///
 /// [GRAIN] Gated on the Agent built-in extension (SPEC §10.1): its binding is
@@ -243,14 +234,26 @@ pub fn summon(app: &AppHandle) {
 fn summon_inner(app: &AppHandle) {
     let app = app.clone();
     std::thread::spawn(move || {
-        // Re-summon opens the focused typing card. No fresh capture — a
+        // Re-summon while the input is already up: just re-present it (the pill
+        // refreshes the chip and re-grabs keyboard focus). No fresh capture — a
         // synthetic Ctrl+C now would clobber the user's original selection.
         let already_open = app
             .try_state::<AgentState>()
             .map(|s| s.input_active.load(Ordering::SeqCst))
             .unwrap_or(false);
         if already_open {
-            crate::grain_agent_input::open(&app);
+            let chars = app
+                .try_state::<AgentState>()
+                .and_then(|s| s.context.lock().ok().and_then(|g| g.clone()))
+                .map(|c| c.chars().count() as u32)
+                .unwrap_or(0);
+            crate::bridge::emit(
+                &app,
+                DaemonEvent::AgentInputShow {
+                    selection_chars: chars,
+                    type_to_expand: false,
+                },
+            );
             return;
         }
 
@@ -302,7 +305,6 @@ fn summon_inner(app: &AppHandle) {
                 *g = 0.0; // fresh session opens at the start height
             }
             state.input_active.store(true, Ordering::SeqCst);
-            state.input_typing_active.store(false, Ordering::SeqCst);
             // Fresh session starts compact — dictation won't route to the panel
             // until it actually expands into the conversation stage.
             state.panel_expanded.store(false, Ordering::SeqCst);
@@ -481,7 +483,7 @@ fn reveal_panel(win: &tauri::WebviewWindow) {
 /// window is subject to Windows' foreground lock: it appears on top but keyboard
 /// focus stays with the previous app, so typing/Enter/Esc go nowhere. We bridge the
 /// foreground thread's input queue to ours, force the window foreground, then detach.
-pub(crate) fn show_and_focus(win: &tauri::WebviewWindow) {
+fn show_and_focus(win: &tauri::WebviewWindow) {
     let _ = win.show();
     focus_now(win);
 
@@ -1303,11 +1305,12 @@ fn show_panel(app: &AppHandle, expanded: bool) -> Result<(), String> {
 }
 
 // ============================================================================
-// Voice and typed input → core (WebViews use owned Tauri commands)
+// Native input → core (the pill's summon card talks back over the WS)
 // ============================================================================
 
 /// Pill → core: the user submitted TYPED text from the expanded input card.
-/// `quick` selects the existing paste-at-cursor path.
+/// `quick` selects paste in place when the user holds Shift.
+#[allow(dead_code)] // Retained for the deferred expanded Agent input UI.
 pub fn input_submit_text(app: &AppHandle, text: String, quick: bool) {
     let Some(state) = app.try_state::<AgentState>() else {
         return;
@@ -1315,7 +1318,6 @@ pub fn input_submit_text(app: &AppHandle, text: String, quick: bool) {
     if !state.input_active.swap(false, Ordering::SeqCst) {
         return; // stale double-submit (global Enter + window Enter, etc.)
     }
-    crate::grain_agent_input::close(app);
     // Typed text wins — abandon the voice capture and release the mic.
     app.state::<Arc<AudioRecordingManager>>().cancel_recording();
 
@@ -1343,7 +1345,6 @@ pub fn input_submit_voice(app: &AppHandle, quick: bool) {
     if !state.input_active.swap(false, Ordering::SeqCst) {
         return;
     }
-    crate::grain_agent_input::close(app);
     crate::bridge::emit(app, DaemonEvent::AgentInputHide);
 
     let app = app.clone();
@@ -1397,7 +1398,6 @@ pub fn input_cancel(app: &AppHandle) {
     if !state.input_active.swap(false, Ordering::SeqCst) {
         return;
     }
-    crate::grain_agent_input::close(app);
     app.state::<Arc<AudioRecordingManager>>().cancel_recording();
     crate::bridge::emit(app, DaemonEvent::AgentInputHide);
     input_cancel_cleanup(app);
@@ -1427,7 +1427,8 @@ fn input_cancel_cleanup(app: &AppHandle) {
 }
 
 /// Pill → core: typing started (`true` → drop the voice capture) or the user
-/// chose Speak instead (`false` → restart dictation).
+/// tabbed back to voice (`false` → restart dictation).
+#[allow(dead_code)] // Retained for the deferred expanded Agent input UI.
 pub fn input_typing(app: &AppHandle, active: bool) {
     let live = app
         .try_state::<AgentState>()
@@ -1437,19 +1438,10 @@ pub fn input_typing(app: &AppHandle, active: bool) {
         return;
     }
     if active {
-        let manager = app.state::<Arc<AudioRecordingManager>>();
-        manager.cancel_recording();
-        manager.remove_mute();
+        app.state::<Arc<AudioRecordingManager>>().cancel_recording();
     } else {
         if let Some(readiness) = start_dictation(app) {
             crate::grain_overlay::show_capture(app, grain_core::SessionMode::Batch);
-            crate::bridge::emit(
-                app,
-                DaemonEvent::AgentInputShow {
-                    selection_chars: 0,
-                    type_to_expand: false,
-                },
-            );
             crate::pill_icon::emit_for_session(app);
             crate::surface_watch::start(app);
             crate::grain_capture::announce_ready(
@@ -1458,8 +1450,6 @@ pub fn input_typing(app: &AppHandle, active: bool) {
                 readiness,
                 true,
             );
-        } else {
-            input_cancel(app);
         }
     }
 }
@@ -1572,76 +1562,6 @@ fn close_binding() -> ShortcutBinding {
     }
 }
 
-fn typing_binding() -> ShortcutBinding {
-    ShortcutBinding {
-        id: "agent_type".into(),
-        name: "Agent typing".into(),
-        description: "Switch Agent voice input to typing.".into(),
-        default_binding: "tab".into(),
-        current_binding: "tab".into(),
-    }
-}
-
-pub(crate) fn release_typing_shortcut(app: &AppHandle) {
-    let state = app.state::<AgentState>();
-    let mut owned = state.typing_shortcut.lock().unwrap();
-    let Some((backend, displaced)) = owned.as_ref() else {
-        return;
-    };
-    let result = match backend {
-        crate::settings::KeyboardImplementation::Tauri => {
-            crate::shortcut::tauri_impl::unregister_shortcut(app, typing_binding())
-        }
-        crate::settings::KeyboardImplementation::HandyKeys => {
-            crate::shortcut::handy_keys::unregister_shortcut(app, typing_binding())
-        }
-    };
-    if let Err(error) = result {
-        warn!("[GRAIN] Agent Tab cleanup failed: {error}");
-        return; // Keep ownership for the next teardown attempt.
-    }
-    let settings = get_settings(app);
-    for previous in displaced {
-        if let Some(binding) = settings.bindings.get(&previous.id).filter(|binding| {
-            binding.current_binding.eq_ignore_ascii_case("tab")
-                && grain_core::capture::shortcut_holds_hotkey(&settings, &binding.id)
-        }) {
-            let _ = crate::shortcut::register_shortcut(app, binding.clone());
-        }
-    }
-    *owned = None;
-}
-
-fn register_typing_shortcut(app: &AppHandle) {
-    let state = app.state::<AgentState>();
-    let mut owned = state.typing_shortcut.lock().unwrap();
-    if owned.is_some() {
-        return;
-    }
-    let settings = get_settings(app);
-    let displaced: Vec<_> = settings
-        .bindings
-        .values()
-        .filter(|binding| {
-            binding.current_binding.eq_ignore_ascii_case("tab")
-                && grain_core::capture::shortcut_holds_hotkey(&settings, &binding.id)
-        })
-        .cloned()
-        .collect();
-    for binding in &displaced {
-        let _ = crate::shortcut::unregister_shortcut(app, binding.clone());
-    }
-    match crate::shortcut::register_shortcut(app, typing_binding()) {
-        Ok(()) => *owned = Some((settings.keyboard_implementation, displaced)),
-        Err(error) => {
-            warn!("[GRAIN] Agent Tab registration failed: {error}");
-            for binding in displaced {
-                let _ = crate::shortcut::register_shortcut(app, binding);
-            }
-        }
-    }
-}
-
 fn transient_bindings() -> [ShortcutBinding; 2] {
     [submit_binding(), close_binding()]
 }
@@ -1717,18 +1637,8 @@ fn unregister_followup_shortcut(app: &AppHandle) {
 /// mirrors the old QML assist workflow and covers Windows focus loss, where the
 /// palette is on screen but ordinary webview keydown events never arrive.
 pub fn register_transient_shortcuts(app: &AppHandle) {
-    if app
-        .state::<AgentState>()
-        .input_typing_active
-        .load(Ordering::SeqCst)
-    {
-        return; // A late voice-start job cannot reclaim keys from the typing field.
-    }
     for binding in transient_bindings() {
         register_one_transient(app, binding);
-    }
-    if input_is_active(app) {
-        register_typing_shortcut(app);
     }
 }
 
@@ -1746,7 +1656,6 @@ pub fn unregister_transient_shortcuts(app: &AppHandle) {
     for binding in transient_bindings() {
         let _ = crate::shortcut::unregister_shortcut(app, binding);
     }
-    release_typing_shortcut(app);
 }
 
 pub fn unregister_transient_shortcuts_deferred(app: &AppHandle) {
@@ -1794,8 +1703,8 @@ pub fn unregister_transient_shortcuts_deferred(app: &AppHandle) {
 }
 
 /// Called by the transient global Enter shortcut. During the INPUT phase the
-/// voice input submits directly; focused typing handles its own Enter. On the
-/// compact panel the frontend owns
+/// pill owns the typed text, so the core asks it to submit (it answers with
+/// SubmitText/SubmitVoice over the WS). On the compact panel the frontend owns
 /// the displayed reply version and answers with `agent_confirm_paste`.
 pub fn global_submit(app: &AppHandle) {
     let input_live = app
@@ -1803,13 +1712,6 @@ pub fn global_submit(app: &AppHandle) {
         .map(|s| s.input_active.load(Ordering::SeqCst))
         .unwrap_or(false);
     if input_live {
-        if app
-            .state::<AgentState>()
-            .input_typing_active
-            .load(Ordering::SeqCst)
-        {
-            return; // A queued global voice Enter must never submit typed input.
-        }
         input_submit_voice(app, get_settings(app).agent_quick_enabled);
     } else if app.get_webview_window(PANEL_LABEL).is_some() {
         let _ = app.emit_to(PANEL_LABEL, "agent-global-enter", ());

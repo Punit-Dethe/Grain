@@ -1505,49 +1505,6 @@ async showMainWindowCommand() : Promise<Result<null, string>> {
 async agentGetContext() : Promise<string | null> {
     return await TAURI_INVOKE("agent_get_context");
 },
-async agentInputSnapshot(generation: number) : Promise<Result<AgentInputSnapshot, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("agent_input_snapshot", { generation }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * The loaded UI has listeners and a painted compact state before handing off.
- */
-async agentInputReveal(generation: number) : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("agent_input_reveal", { generation }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async agentInputSubmit(generation: number, text: string, quick: boolean) : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("agent_input_submit", { generation, text, quick }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async agentInputSpeak(generation: number) : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("agent_input_speak", { generation }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async agentInputCancel(generation: number) : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("agent_input_cancel", { generation }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
 /**
  * Consume the first instruction (the panel calls this on mount).
  */
@@ -2138,7 +2095,6 @@ async isLaptop() : Promise<Result<boolean, string>> {
 
 
 export const events = __makeEvents__<{
-agentInputReady: AgentInputReady,
 extensionRecommendation: ExtensionRecommendation,
 grainEmbedModelCancelled: GrainEmbedModelCancelled,
 grainEmbedModelComplete: GrainEmbedModelComplete,
@@ -2170,7 +2126,6 @@ themeChanged: ThemeChanged,
 updateAvailable: UpdateAvailable,
 updateDownloadProgress: UpdateDownloadProgress
 }>({
-agentInputReady: "agent-input-ready",
 extensionRecommendation: "extension-recommendation",
 grainEmbedModelCancelled: "grain-embed-model-cancelled",
 grainEmbedModelComplete: "grain-embed-model-complete",
@@ -2306,8 +2261,6 @@ export type AgentConfirm = { token: string; title: string; summary: string; deta
  * [GRAIN] One material argument of a pending action, for the confirmation panel.
  */
 export type AgentConfirmField = { label: string; value: string }
-export type AgentInputReady = null
-export type AgentInputSnapshot = { generation: number; selection_chars: number; quick: boolean; ready: boolean; pill: OverlaySnapshot }
 /**
  * One conversation turn from the frontend.
  */
