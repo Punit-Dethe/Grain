@@ -21,7 +21,7 @@
 //! provider, or the smart-rotation pool with failover + daily quota).
 //!
 //! Everything here is headless-friendly: it reads the owned settings, reuses the
-//! STT dispatcher (`stt_router`) and the LLM rotation infra (`post_process_router`
+//! local transcription helper (`grain_transcription`) and the LLM rotation infra (`post_process_router`
 //! + `rotation_state`), and never assumes a UI is alive.
 
 use std::{
@@ -457,10 +457,8 @@ fn start_dictation(app: &AppHandle) -> Option<crate::managers::audio::RecordingR
     if rm.is_recording() {
         return None;
     }
-    if !crate::stt_router::will_route_to_cloud(app) {
-        let tm = app.state::<Arc<TranscriptionManager>>();
-        tm.initiate_model_load();
-    }
+    let tm = app.state::<Arc<TranscriptionManager>>();
+    tm.initiate_model_load();
     {
         let rm = Arc::clone(&rm);
         std::thread::spawn(move || {
@@ -1442,15 +1440,16 @@ pub fn input_submit_voice(app: &AppHandle, quick: bool) {
         );
         // Blocking this detached thread on the shared runtime is fine — it is
         // not a runtime worker.
-        let text =
-            match tauri::async_runtime::block_on(crate::stt_router::transcribe(&app, samples)) {
-                Ok(t) => t.trim().to_string(),
-                Err(e) => {
-                    warn!("[GRAIN] agent: dictation transcription failed: {e}");
-                    no_speech(&app, &e);
-                    return;
-                }
-            };
+        let text = match tauri::async_runtime::block_on(crate::grain_transcription::transcribe(
+            &app, samples,
+        )) {
+            Ok(t) => t.trim().to_string(),
+            Err(e) => {
+                warn!("[GRAIN] agent: dictation transcription failed: {e}");
+                no_speech(&app, &e);
+                return;
+            }
+        };
         if text.is_empty() {
             no_speech(&app, "Nothing was heard — try again.");
             return;

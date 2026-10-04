@@ -324,14 +324,7 @@ const SETTING_DEFS: SettingDef[] = [
     id: "stt",
     titleKey: "settings.speechToText.title",
     section: "speech-to-text",
-    keywords: [
-      "model",
-      "asr",
-      "whisper",
-      "parakeet",
-      "transcription engine",
-      "cloud provider",
-    ],
+    keywords: ["model", "asr", "whisper", "parakeet", "transcription engine"],
   },
   // post-processing (gated) ----------------------------------------------
   {

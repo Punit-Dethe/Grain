@@ -35,15 +35,13 @@ python scripts/ui_parity.py --commands # what nothing calls any more
 | `extensions_imported_v1`        | One-shot migration flag (`grain-core/context.rs`): marks that the bundled packs were imported. Nothing to show. |
 | `settings_schema_version`       | Internal settings-file format version used to run migrations after upgrades; never user-configurable.           |
 | `post_process_quota_reset_date` | Local date the post-process daily quotas last rolled over; the router resets lazily at routing time.            |
-| `stt_quota_reset_date`          | Same, for the STT pool.                                                                                         |
 
 ## Write-only by design
 
-| Field                   | Reason                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
-| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `stt_api_keys`          | Key material, write-only by construction. Written through `stt_upsert_provider`'s `apiKey` argument; `get_app_settings` no longer serializes either key map to the renderer at all (`grain_settings::get_settings_for_renderer`), so the UI asks `providers_with_keys` for the only thing it may know — _which_ providers have a key. `post_process_api_keys` gets the same treatment; the legacy panel that read it in plaintext is deleted. PLAN.md §6.2 closed. |
-| `post_process_api_keys` | Same write-only key-presence contract as `stt_api_keys`; values are written through `pp_upsert_provider` and never returned to the renderer.                                                                                                                                                                                                                                                                                                                       |
-| `mcp_oauth_client_ids`  | Managed through the Developer section's `mcp_set_client_credentials` command. The UI displays `mcp_provider_status.client_id_configured` and never reads the stored map.                                                                                                                                                                                                                                                                                           |
+| Field                   | Reason                                                                                                                                                                   |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `post_process_api_keys` | Write-only key-presence contract; values are written through `pp_upsert_provider` and never returned to the renderer.                                                    |
+| `mcp_oauth_client_ids`  | Managed through the Developer section's `mcp_set_client_credentials` command. The UI displays `mcp_provider_status.client_id_configured` and never reads the stored map. |
 
 ## Deliberately not surfaced
 

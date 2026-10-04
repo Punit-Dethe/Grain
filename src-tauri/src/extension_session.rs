@@ -80,9 +80,7 @@ pub fn start(app: &AppHandle, ext_id: &str, mode_id: &str) -> Result<u64, StartE
         return Err(StartError::Busy);
     }
 
-    if !crate::stt_router::will_route_to_cloud(app) {
-        transcription.initiate_model_load();
-    }
+    transcription.initiate_model_load();
     {
         let recording = Arc::clone(&recording);
         std::thread::spawn(move || {

@@ -1649,43 +1649,6 @@ async getAppSettings() : Promise<Result<AppSettings, string>> {
     else return { status: "error", error: e  as any };
 }
 },
-async sttGetPool() : Promise<Result<SttPoolView, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("stt_get_pool") };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async sttSetSmartRotation(enabled: boolean) : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("stt_set_smart_rotation", { enabled }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * Add or update a cloud provider (matched by `id`), optionally setting its API
- * key (written to grain.secrets.json). The local provider is managed
- * automatically and cannot be created/edited here.
- */
-async sttUpsertProvider(provider: SttProvider, apiKey: string | null) : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("stt_upsert_provider", { provider, apiKey }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async sttRemoveProvider(id: string) : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("stt_remove_provider", { id }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
 async ppGetPool() : Promise<Result<PpPoolView, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("pp_get_pool") };
@@ -2412,32 +2375,12 @@ snippets?: Snippet[]; model_unload_timeout?: ModelUnloadTimeout; word_correction
  * [GRAIN] When true, post-processing routes among ENABLED post-process
  * providers (round-robin + per-provider daily quota + failover). When false
  * (default), the single `post_process_provider_id` is used — today's behavior.
- * Independent of STT rotation: each side has its OWN provider list.
  */
 post_process_smart_rotation?: boolean; 
 /**
  * [GRAIN] Local date (YYYY-MM-DD) the post-process daily quotas last reset on.
  */
-post_process_quota_reset_date?: string; 
-/**
- * [GRAIN] STT routing pool (local + remote OpenAI-compatible providers).
- */
-stt_providers?: SttProvider[]; 
-/**
- * [GRAIN] When true, transcription routes among enabled CLOUD providers
- * (round-robin + quota + failover); the LOCAL model is excluded. When false
- * (default), the local in-process model is used — never a surprise spike.
- */
-stt_smart_rotation?: boolean; 
-/**
- * [GRAIN] STT provider API keys, by pool-entry id. Split into grain.secrets.json.
- */
-stt_api_keys?: SecretMap; 
-/**
- * [GRAIN] Local date (YYYY-MM-DD) the STT daily quotas were last reset on.
- * When today differs, quotas roll back to 0 (checked lazily at routing time).
- */
-stt_quota_reset_date?: string; post_process_models?: Partial<{ [key in string]: string }>; post_process_prompts?: LLMPrompt[]; post_process_selected_prompt_id?: string | null; mute_while_recording?: boolean; append_trailing_space?: boolean; 
+post_process_quota_reset_date?: string; post_process_models?: Partial<{ [key in string]: string }>; post_process_prompts?: LLMPrompt[]; post_process_selected_prompt_id?: string | null; mute_while_recording?: boolean; append_trailing_space?: boolean; 
 /**
  * [GRAIN] Extension Mode Auto-send (`docs/Extensions V1/PLAN.md` §5). The
  * global opt-in, **off by default** and beta-gated (only active while
@@ -3384,43 +3327,6 @@ export type StreamTextEvent = { committed: string; tentative: string }
  * Semantic kind of "working" phase, used to localize the spinner label.
  */
 export type StreamWorkKind = "transcribing" | "polishing"
-/**
- * A read-only view of the STT pool. API keys are NEVER returned — only the set
- * of provider ids that currently have a key stored.
- */
-export type SttPoolView = { smart_rotation: boolean; providers: SttProvider[]; providers_with_keys: string[] }
-/**
- * [GRAIN] One entry in the STT routing pool. Each entry carries its OWN key
- * (stored separately in `stt_api_keys` by `id`), so two entries with the same
- * `base_url` = two keys for one provider. Mirrors `provider_router::ProviderConfig`
- * plus the fields the HTTP client needs (`kind`, `model`).
- */
-export type SttProvider = { id: string; name: string; kind: SttProviderKind; 
-/**
- * Ignored for `Local`.
- */
-base_url?: string; 
-/**
- * Model/engine name sent to the provider (ignored for `Local`).
- */
-model?: string; enabled?: boolean; 
-/**
- * Daily request cap; `None` = unlimited.
- */
-quota_limit?: number | null; quota_used_today?: number }
-/**
- * [GRAIN] Which transcription backend an STT pool entry talks to. `Local` is the
- * in-process transcribe-rs model; the rest are HTTP adapters (see `stt_client`).
- */
-export type SttProviderKind = 
-/**
- * The in-process Parakeet/Whisper model (no network). Exactly one is implicit.
- */
-"local" | 
-/**
- * Generic OpenAI-compatible `/v1/audio/transcriptions`.
- */
-"openai" | "deepgram" | "assemblyai"
 /**
  * Broadcast when the effective colour scheme changes — either because the user
  * picked a different mode, or because the OS flipped while on `System`.

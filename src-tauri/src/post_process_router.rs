@@ -1,6 +1,6 @@
-//! [GRAIN] Post-process (LLM) routing — the rotation counterpart to `stt_router`.
+//! [GRAIN] Post-process (LLM) routing.
 //!
-//! Post-processing keeps its OWN provider list (separate from STT). When
+//! Post-processing owns its provider list. When
 //! `post_process_smart_rotation` is on, requests fan out across ENABLED
 //! post-process providers (health-ordered by `select_order` + per-provider
 //! daily quota + failover); when off, the single selected provider is used
@@ -38,10 +38,7 @@ fn is_eligible(p: &PostProcessProvider) -> bool {
 /// The rotation pool for this request: every eligible provider, in settings
 /// order. Ordering is NOT done here — the caller passes this set to
 /// `rotation_state::select_order`, which orders best-first by live health
-/// (recent 429s cool down, headroom leads). This mirrors `stt_router::cloud_pool`
-/// exactly so the two routers stay consistent: the pool filters, the tracker
-/// orders. (Previously this pre-shuffled round-robin, which `select_order` then
-/// discarded while a process-wide cursor desynced from the calls made.)
+/// (recent 429s cool down, headroom leads). The pool filters, the tracker orders.
 pub fn rotation_pool(settings: &AppSettings) -> Vec<PostProcessProvider> {
     settings
         .post_process_providers

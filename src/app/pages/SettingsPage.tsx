@@ -10,7 +10,6 @@ import { CapturePane } from "../settings/panes/CapturePane";
 import { OutputPane } from "../settings/panes/OutputPane";
 import { useSettings } from "@/hooks/useSettings";
 import { initPpPool } from "@/stores/ppPoolStore";
-import { initSttPool } from "@/stores/sttPoolStore";
 import { hashForRoute, type SettingsSectionId } from "../navigation";
 import {
   isSettingsSectionEnabled,
@@ -59,12 +58,7 @@ export function SettingsPage({ section }: SettingsPageProps) {
   useEffect(() => {
     if (isLoading || activeSection !== section) return;
 
-    const initialize =
-      activeSection === "speech-to-text"
-        ? initSttPool
-        : activeSection === "post-processing"
-          ? initPpPool
-          : null;
+    const initialize = activeSection === "post-processing" ? initPpPool : null;
 
     if (initialize) {
       void initialize().catch((error) => {

@@ -436,7 +436,6 @@
     "models": {
       "title": "Transcription Models",
       "description": "Select a transcription model or download additional models. Different models offer varying levels of accuracy and speed.",
-      "cloudActiveBanner": "Cloud transcription is on, so the local model is inactive. Manage cloud providers in the Speech to Text tab, or turn cloud transcription off to use a local model.",
       "yourModels": "Downloaded Models",
       "availableModels": "Available to Download",
       "downloaded": "Downloaded",
@@ -635,17 +634,14 @@
     },
     "speechToText": {
       "title": "Transcription",
-      "description": "Choose how speech is transcribed: the local on-device model, or your own cloud providers with smart rotation.",
+      "description": "Choose on-device models for Standard and Streaming.",
       "groups": {
-        "engine": "On-device models",
-        "routing": "Transcription routing",
-        "providers": "Cloud providers"
+        "engine": "On-device models"
       },
       "localModel": {
         "title": "Standard model",
         "none": "No model selected",
         "activeHint": "Active · used for on-device transcription",
-        "disabledByCloud": "Disabled — cloud transcription is handling this",
         "browse": "Browse models",
         "showLess": "Show less"
       },
@@ -655,64 +651,15 @@
         "activeHint": "Active · used for live streaming dictation",
         "noneHint": "Pick a model to enable live streaming dictation"
       },
-      "rotationNoProvider": "No provider is configured yet. Add a cloud provider before enabling cloud transcription.",
-      "smartRotation": {
-        "label": "Cloud transcription",
-        "short": "Enable cloud providers",
-        "description": "Disables the local model and uses your cloud providers. Rotates automatically if multiple are enabled."
-      },
-      "localActive": {
-        "title": "Local on-device model",
-        "descriptionActive": "Active. Speech is transcribed locally with no network. Choose the model in the Models tab.",
-        "descriptionDisabled": "Disabled while cloud transcription is on. The cloud providers below are used instead."
-      },
-      "emptyPoolWarning": "Cloud transcription is on, but no provider has an API key yet. Add a key below, or turn cloud transcription off to use the local model.",
-      "noProviders": "No cloud providers yet. Add one to transcribe in the cloud.",
-      "rotateLabel": "Rotate",
-      "rotateTooltip": "Include this provider in smart rotation.",
-      "keySet": "Key set",
-      "noKey": "No key",
-      "quotaUsed": "{{used}} / {{limit}} today",
-      "quotaUnlimited": "{{used}} used today",
-      "edit": "Edit",
-      "remove": "Remove",
-      "removeConfirm": "Remove provider \"{{name}}\"? Its API key will be deleted.",
-      "addProvider": "Add Provider",
-      "form": {
-        "addTitle": "Add cloud provider",
-        "editTitle": "Edit provider",
-        "name": "Name",
-        "namePlaceholder": "e.g. My OpenAI key",
-        "kind": "Type",
-        "kindOpenai": "OpenAI-compatible",
-        "kindDeepgram": "Deepgram",
-        "kindAssemblyai": "AssemblyAI",
-        "baseUrl": "Base URL",
-        "baseUrlPlaceholder": "https://api.openai.com/v1",
-        "model": "Model",
-        "modelPlaceholder": "e.g. whisper-1",
-        "apiKey": "API Key",
-        "apiKeyPlaceholder": "sk-...",
-        "apiKeyKeepPlaceholder": "Leave blank to keep current key",
-        "quotaLimit": "Daily request limit",
-        "quotaLimitPlaceholder": "Unlimited",
-        "save": "Save",
-        "cancel": "Cancel",
-        "nameRequired": "Name is required.",
-        "baseUrlRequired": "Base URL is required.",
-        "multiKeyTip": "Tip: add the same Base URL twice with different names and keys to rotate across multiple keys for one provider."
-      },
       "picker": {
         "title": "Models",
         "empty": "No model selected",
         "choose": "Choose a model",
         "change": "Change",
-        "unavailable": "Handled in the cloud",
         "standard": {
           "label": "Standard",
           "purpose": "Transcribes after you stop",
-          "purposeFlow": "Processes while you speak, pastes after you stop",
-          "purposeCloud": "Saved for Standard when cloud transcription is off"
+          "purposeFlow": "Processes while you speak, pastes after you stop"
         },
         "streaming": {
           "label": "Streaming",
@@ -1167,7 +1114,7 @@
         },
         "speech-to-text": {
           "label": "Speech to Text",
-          "description": "Local and native models, rolling preview, unload behavior, and cloud transcription providers."
+          "description": "On-device models and model unload behavior."
         },
         "post-processing": {
           "label": "Post-processing",

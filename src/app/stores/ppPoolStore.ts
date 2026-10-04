@@ -1,7 +1,7 @@
 /**
  * [GRAIN] Singleton Zustand store for the post-process (LLM) provider pool.
  *
- * Same rationale as sttPoolStore — one live view shared between the settings
+ * One live view shared between the settings
  * panel and the quick panel, so provider renames / key additions / smart
  * rotation changes are reflected everywhere without a second fetch.
  */

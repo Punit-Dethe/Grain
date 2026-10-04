@@ -237,9 +237,6 @@ fn load_settings(data_dir: &Path) -> Result<(AppSettings, SecretMap)> {
     for (id, key) in secrets.post_process_api_keys.0 {
         settings.post_process_api_keys.insert(id, key);
     }
-    for (id, key) in secrets.stt_api_keys.0 {
-        settings.stt_api_keys.insert(id, key);
-    }
 
     // Provider/key migrations. A salvaged store is persisted here too — only
     // after the secrets merge, since save_settings rewrites the credential
@@ -320,8 +317,6 @@ struct StoredSecrets {
     #[serde(default)]
     post_process_api_keys: SecretMap,
     #[serde(default)]
-    stt_api_keys: SecretMap,
-    #[serde(default)]
     extension_secrets: SecretMap,
 }
 
@@ -335,14 +330,13 @@ fn load_secrets(data_dir: &Path) -> Result<StoredSecrets> {
         serde_json::from_str(&raw).with_context(|| format!("parse {}", path.display()))?;
     // New format has the named sub-maps; anything else is a legacy bare map of
     // post-process keys.
-    if value.get("post_process_api_keys").is_some() || value.get("stt_api_keys").is_some() {
+    if value.get("post_process_api_keys").is_some() || value.get("extension_secrets").is_some() {
         serde_json::from_value(value).with_context(|| format!("parse {}", path.display()))
     } else {
         let legacy: SecretMap = serde_json::from_value(value)
             .with_context(|| format!("parse legacy {}", path.display()))?;
         Ok(StoredSecrets {
             post_process_api_keys: legacy,
-            stt_api_keys: SecretMap::default(),
             extension_secrets: SecretMap::default(),
         })
     }
@@ -362,7 +356,6 @@ fn save_settings(
     let mut sanitized = settings.clone();
     let secrets = StoredSecrets {
         post_process_api_keys: std::mem::take(&mut sanitized.post_process_api_keys),
-        stt_api_keys: std::mem::take(&mut sanitized.stt_api_keys),
         extension_secrets: extension_secrets.clone(),
     };
 
@@ -400,6 +393,49 @@ mod tests {
         // update checks ship ON.
         assert!(!ctx.settings().push_to_talk);
         assert!(ctx.settings().update_checks_enabled);
+    }
+
+    #[test]
+    fn retired_cloud_settings_cannot_override_local_routing_or_rewrite_credentials() {
+        let dir = tempfile::tempdir().unwrap();
+        let data = dir.path().join("data");
+        fs::create_dir_all(&data).unwrap();
+        let mut stored = serde_json::to_value(AppSettings::default()).unwrap();
+        stored["selected_model"] = serde_json::json!(
+            "handy-computer/parakeet-tdt-0.6b-v3-gguf/parakeet-tdt-0.6b-v3-Q8_0.gguf"
+        );
+        stored["stt_smart_rotation"] = serde_json::json!(true);
+        stored["stt_providers"] = serde_json::json!([{"id": "openai", "enabled": true}]);
+        fs::write(data.join(SETTINGS_FILE), stored.to_string()).unwrap();
+        fs::write(
+            data.join(SECRETS_FILE),
+            serde_json::json!({
+                "post_process_api_keys": {"openai": "text-key"},
+                "extension_secrets": {"ext.example.api_key": "extension-key"},
+                "stt_api_keys": {"openai": "retired-audio-key"}
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        let ctx = AppContext::new(dir.path().join("res"), &data);
+        assert_eq!(
+            crate::capture::action_id_for(&ctx.settings(), "transcribe"),
+            "transcribe_realtime"
+        );
+        ctx.update_settings(|s| s.paste_delay_ms = 60).unwrap();
+        let saved: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(data.join(SETTINGS_FILE)).unwrap()).unwrap();
+        assert!(saved.get("stt_smart_rotation").is_none());
+        assert!(saved.get("stt_providers").is_none());
+        let secrets: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(data.join(SECRETS_FILE)).unwrap()).unwrap();
+        assert!(secrets.get("stt_api_keys").is_none());
+        assert_eq!(secrets["post_process_api_keys"]["openai"], "text-key");
+        assert_eq!(
+            secrets["extension_secrets"]["ext.example.api_key"],
+            "extension-key"
+        );
     }
 
     #[test]
@@ -496,7 +532,7 @@ mod tests {
         .unwrap();
         fs::write(
             data.join(SECRETS_FILE),
-            r#"{"post_process_api_keys":{"openai":"sk-keepme"},"stt_api_keys":{}}"#,
+            r#"{"post_process_api_keys":{"openai":"sk-keepme"}}"#,
         )
         .unwrap();
 

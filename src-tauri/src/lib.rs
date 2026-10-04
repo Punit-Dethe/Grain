@@ -88,11 +88,12 @@ pub(crate) use grain_llm_client as llm_client;
 #[path = "handy/overlay.rs"]
 mod overlay;
 pub(crate) use grain_settings as settings;
+mod grain_transcription;
 #[path = "handy/managers/mod.rs"]
 mod managers;
 #[path = "handy/memory.rs"]
 mod memory; // upstream #1846 glibc allocator tuning; compiled from handy/
-mod net_diag; // [GRAIN] shared reqwest transport-error diagnostics (upstream #1823, applied to both cloud clients)
+mod net_diag; // [GRAIN] shared reqwest transport-error diagnostics (upstream #1823)
 #[path = "handy/paste_tx/mod.rs"]
 mod paste_tx;
 mod pill_icon; // [GRAIN] pill identity — the foreground app's icon → pill
@@ -108,8 +109,6 @@ mod secure_input;
 mod shortcut;
 #[path = "handy/signal_handle.rs"]
 mod signal_handle;
-mod stt_client; // [GRAIN] S2: HTTP STT adapters (OpenAI / Deepgram / AssemblyAI)
-mod stt_router; // [GRAIN] S3: STT dispatcher (local vs cloud rotation)
 mod surface_watch; // [GRAIN] follow the foreground app mid-session
 mod tdt_flow; // [GRAIN] capability-gated stateless TDT window adapter/accumulator
 #[path = "handy/transcription_coordinator.rs"]
@@ -439,10 +438,9 @@ fn initialize_core_logic(app_handle: &AppHandle) {
         settings::get_settings(&app_handle).overlay_style != settings::OverlayStyle::None,
     );
     overlay::create_recording_overlay(&app_handle);
-    // [GRAIN] smart-rotation health trackers (one per domain), shared by the STT
-    // and post-process routers for cooldown-aware provider ordering.
+    // [GRAIN] LLM provider health for cooldown-aware ordering.
     app_handle.manage(Arc::new(rotation_state::RotationTrackers::default()));
-    // [GRAIN] One shared reqwest::Client for ALL outbound HTTP calls (LLM + STT).
+    // [GRAIN] One shared reqwest::Client for outbound AI text requests.
     // reqwest::Client is designed to be cloned/shared — it manages a connection pool,
     // TLS sessions, and keep-alive internally. Building one per request throws all of
     // that away. Centralising here means every provider call reuses connections.
@@ -1492,10 +1490,6 @@ fn command_bindings() -> Builder<tauri::Wry> {
             commands::is_portable,
             commands::get_app_dir_path,
             commands::get_app_settings,
-            commands::stt::stt_get_pool,
-            commands::stt::stt_set_smart_rotation,
-            commands::stt::stt_upsert_provider,
-            commands::stt::stt_remove_provider,
             commands::post_process::pp_get_pool,
             commands::post_process::pp_set_smart_rotation,
             commands::post_process::pp_upsert_provider,

@@ -8,11 +8,9 @@ import { PpProviderForm } from "./PpProviderForm";
 import { PpAddProvider } from "./PpAddProvider";
 import { ProviderPool } from "../../ProviderPool";
 
-// [GRAIN] The Processing (LLM) provider pool — the SAME interface as the
-// Transcription cloud pool: "Add provider" on the left, smart rotation on the
-// right, the configured providers listed below (edit / delete inline). The old
-// always-on add form and separate routing group are gone. Rotation here has no
-// local-model side effect; it's only blocked when no provider is configured.
+// [GRAIN] AI text provider pool: add and rotation controls in the header,
+// configured providers below with inline editing. Rotation is blocked when
+// no provider is configured.
 export const PostProcessingPool: React.FC = () => {
   const { t } = useTranslation();
   const pool = usePpPool();

@@ -121,9 +121,7 @@ pub(crate) fn start_locked(app: &AppHandle) -> Result<(), StartError> {
     // Only acquire model resources after the microphone reservation succeeds.
     // Their startup still hides behind capture, without warming anything for a
     // losing/failed start attempt.
-    if !crate::stt_router::will_route_to_cloud(app) {
-        transcription.initiate_model_load();
-    }
+    transcription.initiate_model_load();
     crate::grain_embed::touch_extension_mode(app);
 
     // Bias the recogniser with what the installed extensions actually say.

@@ -1,12 +1,8 @@
 //! Shared data types for provider routing.
 //!
-//! Minimal ports of the fields `router`/`rotation` actually need from the Python
-//! `models.ProviderConfig` / `models.AppSettings` and `exceptions.ProviderError`.
-//! The full daemon settings map onto these at the wiring layer.
+//! The AI text rotation tracker uses this compact provider configuration.
 
-use std::fmt;
-
-/// Configuration for a single STT or LLM provider.
+/// Configuration for a single AI text provider.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ProviderConfig {
     pub id: String,
@@ -41,37 +37,3 @@ impl ProviderConfig {
         self
     }
 }
-
-/// The provider lists the router reads/persists. (Subset of the Python
-/// `AppSettings` — only what routing touches.)
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct AppSettings {
-    pub stt_providers: Vec<ProviderConfig>,
-    pub llm_providers: Vec<ProviderConfig>,
-}
-
-impl AppSettings {
-    pub fn new(stt_providers: Vec<ProviderConfig>, llm_providers: Vec<ProviderConfig>) -> Self {
-        Self {
-            stt_providers,
-            llm_providers,
-        }
-    }
-}
-
-/// Raised when no eligible provider remains. Port of `exceptions.ProviderError`
-/// for the one case the router produces.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ProviderError {
-    AllExhausted,
-}
-
-impl fmt::Display for ProviderError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            ProviderError::AllExhausted => write!(f, "All providers exhausted"),
-        }
-    }
-}
-
-impl std::error::Error for ProviderError {}

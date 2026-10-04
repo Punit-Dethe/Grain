@@ -11,7 +11,7 @@ driven three different ways:
 
   * by **name** — ``updateSetting("paste_method", …)``;
   * by a **dedicated command** — the provider pools never touch
-    ``stt_providers`` by name, they call ``sttUpsertProvider``;
+    ``post_process_providers`` by name, they call ``ppUpsertProvider``;
   * by a **raw invoke** — the extension platform calls
     ``invoke("extension_set_developer_mode")`` rather than the typed binding.
 
@@ -229,7 +229,7 @@ def gate(tree: str) -> int:
         # reaches post_process_smart_rotation, and extension_set_developer_mode
         # reaches extension_developer_mode, without either spelling the field.
         # Matched on word tokens (singularised) rather than substrings, so
-        # `stt_providers` pairs with `stt_upsert_provider`.
+        # `post_process_providers` pairs with `pp_upsert_provider`.
         if any(covers(field, snake) for snake in called):
             continue
         unreachable.append(field)

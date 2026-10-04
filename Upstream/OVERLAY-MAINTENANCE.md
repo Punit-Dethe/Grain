@@ -40,7 +40,7 @@ apply to the next capture; None hides the active pill. Top/Bottom placement is
 independent of this preference. Selected models choose the internal Standard action, not the pill presentation.
 `selected_model` drives Standard; `selected_asr_model` drives Streaming.
 Alt+Space (Option+Space on macOS) starts Standard or reviewed Parakeet TDT
-v2/v3 Flow automatically. Cloud transcription takes priority while enabled;
+v2/v3 Flow automatically; all speech-to-text runs locally.
 Translate to English retains Standard because Flow cannot translate.
 The coordinator resolves through `grain_dictation_routing.rs` at start and
 retains that action for stop/PTT release even if settings change.

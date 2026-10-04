@@ -8,8 +8,8 @@
 //!
 //! Why slice the audio rather than the transcript? The mark is a sample index, so
 //! the two halves transcribe as fully independent utterances — no dependence on
-//! word-level timestamps (which cloud STT providers give unreliably or not at
-//! all) and no ambiguity about which side a boundary word belongs to. It costs a
+//! word-level timestamps and no ambiguity about which side a boundary word
+//! belongs to. It costs a
 //! second STT pass, but only when Prompt Record was actually used (a deliberate,
 //! occasional action) — the no-mark path is byte-for-byte today's single pass.
 
@@ -25,8 +25,8 @@ use tauri::AppHandle;
 ///   or empty result simply yields `None`, so the session degrades to a normal
 ///   dictation instead of erroring).
 ///
-/// Both passes route through [`crate::stt_router::transcribe`], so they honor the
-/// same local/cloud routing and final-text cleanup as any other transcription.
+/// Both passes route through [`crate::grain_transcription::transcribe`], so they honor the
+/// same local model and final-text cleanup as any other transcription.
 pub async fn transcribe_split(
     app: &AppHandle,
     samples: Vec<f32>,
@@ -38,11 +38,11 @@ pub async fn transcribe_split(
             let instruction = samples[m..].to_vec();
 
             // Content first (this is what gets pasted / post-processed).
-            let content_res = crate::stt_router::transcribe(app, content).await;
+            let content_res = crate::grain_transcription::transcribe(app, content).await;
 
             // Instruction is best-effort: an error or blank result just means "no
             // spoken prompt", and the caller falls back to a normal paste.
-            let spoken = crate::stt_router::transcribe(app, instruction)
+            let spoken = crate::grain_transcription::transcribe(app, instruction)
                 .await
                 .ok()
                 .map(|s| s.trim().to_string())
@@ -50,6 +50,9 @@ pub async fn transcribe_split(
 
             (content_res, spoken)
         }
-        _ => (crate::stt_router::transcribe(app, samples).await, None),
+        _ => (
+            crate::grain_transcription::transcribe(app, samples).await,
+            None,
+        ),
     }
 }

@@ -1,5 +1,4 @@
-//! [GRAIN] Smart-rotation runtime state shared by the STT and post-process (LLM)
-//! routers.
+//! [GRAIN] Smart-rotation runtime state for AI text providers.
 //!
 //! The heavy lifting — cooldowns from real 429s, Retry-After parsing, live
 //! rate-limit-header headroom scoring, round-robin among equally-healthy
@@ -19,13 +18,9 @@ use std::time::Instant;
 use once_cell::sync::Lazy;
 use provider_router::{ProviderConfig, RotationTracker};
 
-/// One live `RotationTracker` per routing domain (STT vs LLM), held in Tauri
-/// managed state so health/cooldowns persist across requests for the process
-/// lifetime. The two domains never share health — a 429 on a cloud STT provider
-/// must not cool down an LLM provider that happens to share an id.
+/// LLM health/cooldowns persist across requests for the process lifetime.
 #[derive(Default)]
 pub struct RotationTrackers {
-    pub stt: Mutex<RotationTracker>,
     pub llm: Mutex<RotationTracker>,
 }
 
@@ -37,10 +32,10 @@ pub fn now_secs() -> f64 {
     START.elapsed().as_secs_f64()
 }
 
-/// The outcome of ONE provider call, normalized across STT and LLM so a single
+/// The outcome of ONE provider call, normalized for LLM routing so a single
 /// `record_outcome` teaches the tracker. `remaining_*` come from rate-limit
 /// headers when present (else `None`); `total_tokens` is the request's measured
-/// or estimated token cost (LLM only; `None` for STT).
+/// or estimated token cost .
 pub enum CallOutcome {
     Ok {
         text: String,

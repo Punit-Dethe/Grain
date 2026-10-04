@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Port audit — the guard the ratchet and the faithfulness diff cannot be.
 
-Grain keeps Handy's STT core byte-identical inside `src-tauri/src/handy/`, so a
+Grain keeps Handy's local speech core inside `src-tauri/src/handy/`, so a
 plain diff against `upstream/main` reliably proves the *shared* surface is on
 par with Handy. That check has one structural blind spot, and it is exactly the
 one that bites:
@@ -14,7 +14,7 @@ one that bites:
   * Some logic was **relocated** out of an otherwise-merged file
     (`post_process_transcription` → `grain_post_process.rs`).
   * Some subsystems are **parallel** Grain-only implementations that share a
-    bug class with upstream but have no upstream file at all (`stt_client.rs`,
+    bug class with upstream but have no upstream file at all (`rolling.rs`,
     the rolling engine).
 
 For all three, an upstream fix can merge "successfully" and never reach the

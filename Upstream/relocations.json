@@ -4,10 +4,9 @@
     "kind": "inert",
     "grain": [
       "src-tauri/src/grain_llm_client.rs",
-      "src-tauri/src/net_diag.rs",
-      "src-tauri/src/stt_client.rs"
+      "src-tauri/src/net_diag.rs"
     ],
-    "why": "Inert (no `mod llm_client;`). Grain's multi-provider LLM client is grain_llm_client.rs; shared reqwest diagnostics live in net_diag.rs; the SAME HTTP bug-class also lives in the parallel cloud STT client stt_client.rs. (#1823, #2211 both landed here and needed hand-porting.)"
+    "why": "Inert (no `mod llm_client;`). Grain uses grain_llm_client.rs and shared payload-safe reqwest diagnostics in net_diag.rs. Cloud speech-to-text was removed on 2026-10-04."
   },
   "src-tauri/src/settings.rs": {
     "kind": "inert",
@@ -59,7 +58,9 @@
   },
   "src-tauri/src/audio_toolkit/text.rs": {
     "kind": "relocated",
-    "grain": ["src-tauri/src/handy/audio_toolkit/grain_text.rs"],
+    "grain": [
+      "src-tauri/src/handy/audio_toolkit/grain_text.rs"
+    ],
     "why": "finalize_transcript relocated to grain_text.rs; final-text / word-boundary fixes may belong there rather than the merged handy text.rs."
   },
   "src-tauri/src/managers/transcription.rs": {
@@ -69,9 +70,10 @@
       "src-tauri/src/tdt_flow.rs",
       "crates/grain-tdt/src",
       "src-tauri/src/grain_overlay.rs",
-      "src/app/overlay/RecordingOverlay.tsx"
+      "src/app/overlay/RecordingOverlay.tsx",
+      "src-tauri/src/grain_transcription.rs"
     ],
-    "why": "Merged in handy/, but Parakeet TDT Flow has Grain-only capture scheduling, native adaptation, and window/token logic that upstream's batch/streaming fixes cannot reach. Check whether the fixed bug-class exists there too."
+    "why": "Merged in handy/, but Parakeet TDT Flow has Grain-only capture scheduling, native adaptation, and window/token logic that upstream's batch/streaming fixes cannot reach. Check whether the fixed bug-class exists there too. Local batch callers share Grain's grain_transcription adapter; it delegates loading, inference and final cleanup to the shared manager."
   },
   "src-tauri/src/audio_toolkit/audio/recorder.rs": {
     "kind": "parallel",

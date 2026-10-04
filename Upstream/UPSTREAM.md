@@ -195,7 +195,7 @@ Handy — but they are blind to the fixes that merge into an **inert** file
 (`llm_client.rs`, `settings.rs` — byte-identical to upstream but
 uncompiled), into a file whose logic Grain **relocated** (`actions.rs` →
 `grain_post_process.rs`), or that share a bug class with a Grain-only
-**parallel** implementation (`stt_client`, the rolling engine). In all three
+**parallel** implementation (the rolling engine). In all three
 the upstream-shaped file matches perfectly while the code Grain actually runs
 lacks the fix, and no diff spans the gap. The port audit reads the relocation
 map and fails when a merged upstream commit touched a mapped file without a
@@ -378,9 +378,9 @@ matching remains only a heuristic signal.
   host can run, which locale a system tag resolves to). Port those into Rust —
   which we still merge in full — and the freeze costs nothing. See
   [`docs/UI 2.0/PLAN.md`](../docs/UI%202.0/PLAN.md).
-- **Multi-provider cloud STT + LLM**: `stt_router.rs` /
-  `post_process_router.rs` / `grain_llm_client.rs` replace upstream's
-  single-provider client.
+- **Multi-provider AI text processing**: `post_process_router.rs` and
+  `grain_llm_client.rs` replace upstream's single-provider client. Speech-to-text
+  is local only; see [LOCAL-TRANSCRIPTION.md](LOCAL-TRANSCRIPTION.md).
 - **Recording pills**: compiled `handy/overlay.rs` owns WebView window lifecycle
   and platform handling. `grain_overlay`/`grain_capture` adapt Grain capture
   paths; `src/app/overlay` owns appearance and waveform response. Upstream

@@ -21,7 +21,7 @@ interface ProviderPoolProps {
 // [GRAIN] Shared provider-pool card. A titled section whose header BAR carries
 // "Add provider" on the left and the smart-rotation toggle (with a hover "i") on
 // the right; the provider list sits in the lighter body below. Used by both the
-// Transcription (cloud STT) and Processing (LLM) pools so the two read identically.
+// AI text provider settings.
 export const ProviderPool: React.FC<ProviderPoolProps> = ({
   title,
   addLabel,

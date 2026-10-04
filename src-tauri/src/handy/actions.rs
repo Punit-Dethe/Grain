@@ -300,19 +300,8 @@ impl ShortcutAction for TranscribeAction {
         let tm = app.state::<Arc<TranscriptionManager>>();
         let rm = app.state::<Arc<AudioRecordingManager>>();
 
-        // [GRAIN] Only warm the local ASR model when this recording will be
-        // transcribed locally. When STT smart rotation routes batch to a cloud
-        // provider, loading the on-device model here is wasted work that sits
-        // resident in RAM until the idle/immediate unload fires. The cloud route
-        // never touches it; if rotation later finds no eligible provider,
-        // stt_router::local() loads the model on demand. VAD pre-load stays
-        // unconditional below — recording needs it for either backend.
         let kickoff_started = Instant::now();
-        if !crate::stt_router::will_route_to_cloud(app) {
-            tm.initiate_model_load();
-        } else {
-            debug!("[GRAIN] batch routes to cloud STT — skipping local model warm-up");
-        }
+        tm.initiate_model_load();
         let rm_clone = Arc::clone(&rm);
         std::thread::spawn(move || {
             if let Err(e) = rm_clone.preload_vad() {

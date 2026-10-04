@@ -279,13 +279,7 @@ function Sidebar({
   const loading = useModelStore((state) => state.loading);
   const isModelLoaded = useModelStore((state) => state.isModelLoaded);
   const { settings } = useSettings();
-  // Cloud STT rotation replaces the local model entirely: when it is on there
-  // is no resident model, so we say "Cloud" and stop — name and load state only
-  // mean something for a local model.
-  const cloudStt = settings?.stt_smart_rotation === true;
-
   const modelStatus = useMemo(() => {
-    if (cloudStt) return { title: "Cloud model", subtitle: "Cloud" };
     // The manager holds ONE resident model across Standard/Live/Batch. When a
     // model is loaded, show exactly that (so a Live/Batch switch is reflected,
     // not just the Standard slot). When nothing is resident, show the selected
@@ -301,7 +295,7 @@ function Sidebar({
       title: name,
       subtitle: `${isModelLoaded ? "Loaded" : "Unloaded"} · Local`,
     };
-  }, [cloudStt, loading, currentModel, loadedModelId, models, isModelLoaded]);
+  }, [loading, currentModel, loadedModelId, models, isModelLoaded]);
 
   return (
     <aside aria-label="Primary navigation" className="sidebar">

@@ -35,9 +35,7 @@ pub fn is_reviewed_flow_model(model_id: &str) -> bool {
 /// Settings-only Flow eligibility. Installation is host state and is checked
 /// separately by the Tauri shell before a capture starts.
 pub fn flow_is_eligible(settings: &AppSettings) -> bool {
-    !settings.stt_smart_rotation
-        && !settings.translate_to_english
-        && is_reviewed_flow_model(&settings.selected_model)
+    !settings.translate_to_english && is_reviewed_flow_model(&settings.selected_model)
 }
 
 /// Is `id` one of the two capture-starting bindings?
@@ -217,21 +215,6 @@ mod tests {
         let mut s = get_default_settings();
         s.capture_ai_start_mode = "transcribe_teleport".to_string();
         assert_eq!(ai_start_mode(&s), "transcribe");
-    }
-
-    #[test]
-    fn cloud_has_priority_over_the_selected_flow_model() {
-        let mut s = with_reviewed_flow_model(get_default_settings());
-        s.stt_smart_rotation = true;
-        for id in ["transcribe", "transcribe_send_to_ai"] {
-            assert_eq!(action_id_for(&s, id), "transcribe");
-        }
-        assert_eq!(
-            action_id_for(&s, "transcribe_native_asr"),
-            "transcribe_native_asr"
-        );
-        s.stt_smart_rotation = false;
-        assert_eq!(action_id_for(&s, "transcribe"), "transcribe_realtime");
     }
 
     #[test]

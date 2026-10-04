@@ -254,111 +254,6 @@ fn default_pp_enabled() -> bool {
     true
 }
 
-/// [GRAIN] Which transcription backend an STT pool entry talks to. `Local` is the
-/// in-process transcribe-rs model; the rest are HTTP adapters (see `stt_client`).
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Type)]
-#[serde(rename_all = "lowercase")]
-pub enum SttProviderKind {
-    /// The in-process Parakeet/Whisper model (no network). Exactly one is implicit.
-    Local,
-    /// Generic OpenAI-compatible `/v1/audio/transcriptions`.
-    Openai,
-    Deepgram,
-    Assemblyai,
-}
-
-/// [GRAIN] One entry in the STT routing pool. Each entry carries its OWN key
-/// (stored separately in `stt_api_keys` by `id`), so two entries with the same
-/// `base_url` = two keys for one provider. Mirrors `provider_router::ProviderConfig`
-/// plus the fields the HTTP client needs (`kind`, `model`).
-#[derive(Serialize, Deserialize, Debug, Clone, Type)]
-pub struct SttProvider {
-    pub id: String,
-    pub name: String,
-    pub kind: SttProviderKind,
-    /// Ignored for `Local`.
-    #[serde(default)]
-    pub base_url: String,
-    /// Model/engine name sent to the provider (ignored for `Local`).
-    #[serde(default)]
-    pub model: String,
-    #[serde(default = "default_stt_enabled")]
-    pub enabled: bool,
-    /// Daily request cap; `None` = unlimited.
-    #[serde(default)]
-    pub quota_limit: Option<i64>,
-    #[serde(default)]
-    pub quota_used_today: i64,
-}
-
-fn default_stt_enabled() -> bool {
-    true
-}
-
-/// The implicit, always-present local provider's pool id.
-pub const STT_LOCAL_PROVIDER_ID: &str = "local";
-
-/// Default STT pool: just the in-process local model. Remote entries are added
-/// by the user. Local is always first so single-provider behavior == today.
-pub fn default_stt_providers() -> Vec<SttProvider> {
-    vec![
-        SttProvider {
-            id: STT_LOCAL_PROVIDER_ID.to_string(),
-            name: "Local (on-device)".to_string(),
-            kind: SttProviderKind::Local,
-            base_url: String::new(),
-            model: String::new(),
-            enabled: true,
-            quota_limit: None,
-            quota_used_today: 0,
-        },
-        SttProvider {
-            id: "groq".to_string(),
-            name: "Groq STT".to_string(),
-            kind: SttProviderKind::Openai,
-            base_url: "https://api.groq.com/openai/v1".to_string(),
-            model: "whisper-large-v3".to_string(),
-            enabled: false,
-            quota_limit: None,
-            quota_used_today: 0,
-        },
-        SttProvider {
-            id: "openai".to_string(),
-            name: "OpenAI Whisper".to_string(),
-            kind: SttProviderKind::Openai,
-            base_url: "https://api.openai.com/v1".to_string(),
-            model: "whisper-1".to_string(),
-            enabled: false,
-            quota_limit: None,
-            quota_used_today: 0,
-        },
-        SttProvider {
-            id: "deepgram".to_string(),
-            name: "Deepgram".to_string(),
-            kind: SttProviderKind::Deepgram,
-            base_url: "https://api.deepgram.com".to_string(),
-            model: "nova-2".to_string(),
-            enabled: false,
-            quota_limit: None,
-            quota_used_today: 0,
-        },
-        SttProvider {
-            id: "assemblyai".to_string(),
-            name: "AssemblyAI".to_string(),
-            kind: SttProviderKind::Assemblyai,
-            base_url: "https://api.assemblyai.com".to_string(),
-            model: String::new(),
-            enabled: false,
-            quota_limit: None,
-            quota_used_today: 0,
-        },
-    ]
-}
-
-fn default_stt_api_keys() -> SecretMap {
-    SecretMap::default()
-}
-
 // OverlayPosition moved to grain-sdk (it crosses the wire in
 // DaemonEvent::OverlayConfig); re-exported here so `settings::OverlayPosition`
 // paths — and the generated bindings — are unchanged.
@@ -798,27 +693,11 @@ pub struct AppSettings {
     /// [GRAIN] When true, post-processing routes among ENABLED post-process
     /// providers (round-robin + per-provider daily quota + failover). When false
     /// (default), the single `post_process_provider_id` is used — today's behavior.
-    /// Independent of STT rotation: each side has its OWN provider list.
     #[serde(default)]
     pub post_process_smart_rotation: bool,
     /// [GRAIN] Local date (YYYY-MM-DD) the post-process daily quotas last reset on.
     #[serde(default)]
     pub post_process_quota_reset_date: String,
-    /// [GRAIN] STT routing pool (local + remote OpenAI-compatible providers).
-    #[serde(default = "default_stt_providers")]
-    pub stt_providers: Vec<SttProvider>,
-    /// [GRAIN] When true, transcription routes among enabled CLOUD providers
-    /// (round-robin + quota + failover); the LOCAL model is excluded. When false
-    /// (default), the local in-process model is used — never a surprise spike.
-    #[serde(default)]
-    pub stt_smart_rotation: bool,
-    /// [GRAIN] STT provider API keys, by pool-entry id. Split into grain.secrets.json.
-    #[serde(default = "default_stt_api_keys")]
-    pub stt_api_keys: SecretMap,
-    /// [GRAIN] Local date (YYYY-MM-DD) the STT daily quotas were last reset on.
-    /// When today differs, quotas roll back to 0 (checked lazily at routing time).
-    #[serde(default)]
-    pub stt_quota_reset_date: String,
     #[serde(default = "default_post_process_models")]
     pub post_process_models: HashMap<String, String>,
     #[serde(default = "default_post_process_prompts")]
@@ -1806,10 +1685,6 @@ pub fn get_default_settings() -> AppSettings {
         post_process_api_keys: default_post_process_api_keys(),
         post_process_smart_rotation: false,
         post_process_quota_reset_date: String::new(),
-        stt_providers: default_stt_providers(),
-        stt_smart_rotation: false,
-        stt_api_keys: default_stt_api_keys(),
-        stt_quota_reset_date: String::new(),
         post_process_models: default_post_process_models(),
         post_process_prompts: default_post_process_prompts(),
         post_process_selected_prompt_id: Some(DEFAULT_POST_PROCESS_PROMPT_ID.to_string()),
