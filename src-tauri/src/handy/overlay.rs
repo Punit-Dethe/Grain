@@ -830,7 +830,7 @@ mod tests {
                 OVERLAY_HEIGHT,
                 OverlayPosition::Bottom,
             ),
-            (3648, 2013, 384, 75) // [GRAIN] 8 logical pixels higher, scaled by destination DPI
+            (3648, 2001, 384, 75) // [GRAIN] 16 logical pixels higher, scaled by destination DPI
         );
         assert_eq!(
             windows_overlay_bounds(
@@ -859,7 +859,7 @@ mod tests {
                 OVERLAY_STREAM_HEIGHT,
                 OverlayPosition::Bottom,
             ),
-            (-1530, 1030, 500, 150) // [GRAIN] visual clearance
+            (-1530, 1020, 500, 150) // [GRAIN] visual clearance
         );
     }
 
@@ -879,9 +879,9 @@ mod tests {
             OverlayPosition::Bottom,
         );
         // 400x120 logical at 1.25 DPI x 1.1 text, still centered horizontally.
-        // [GRAIN] Visual clearance; bottom edge unchanged from 1.0 above (1030 + 150).
-        assert_eq!((x, y, width, height), (-1555, 1015, 550, 165));
-        assert_eq!(y + height, 1180);
+        // [GRAIN] Visual clearance; bottom edge unchanged from 1.0 above (1020 + 150).
+        assert_eq!((x, y, width, height), (-1555, 1005, 550, 165));
+        assert_eq!(y + height, 1170);
 
         let (_, top_y, _, _) = windows_overlay_bounds(
             monitor_position,

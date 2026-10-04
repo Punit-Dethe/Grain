@@ -623,6 +623,36 @@ mod tests {
     }
 
     #[test]
+    fn compact_close_preference_defaults_for_legacy_settings_and_survives_reload() {
+        let dir = tempfile::tempdir().unwrap();
+        let data = dir.path().join("data");
+        fs::create_dir_all(&data).unwrap();
+        let mut legacy = serde_json::to_value(AppSettings::default()).unwrap();
+        legacy
+            .as_object_mut()
+            .unwrap()
+            .remove("pill_hide_close_button");
+        legacy["selected_language"] = serde_json::json!("fr");
+        fs::write(
+            data.join(SETTINGS_FILE),
+            serde_json::to_vec(&legacy).unwrap(),
+        )
+        .unwrap();
+        let ctx = AppContext::new("res", &data);
+        assert!(!ctx.settings().pill_hide_close_button);
+        drop(ctx);
+        for hidden in [true, false] {
+            let ctx = AppContext::new("res", &data);
+            ctx.update_settings(|s| s.pill_hide_close_button = hidden)
+                .unwrap();
+            drop(ctx);
+            let reloaded = AppContext::new("res", &data);
+            assert_eq!(reloaded.settings().pill_hide_close_button, hidden);
+            assert_eq!(reloaded.settings().selected_language, "fr");
+        }
+    }
+
+    #[test]
     fn secrets_go_to_separate_file_not_settings() {
         let dir = tempfile::tempdir().unwrap();
         let data = dir.path().join("data");

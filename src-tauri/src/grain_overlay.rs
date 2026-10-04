@@ -10,7 +10,7 @@ use std::sync::{
 use tauri::{AppHandle, Emitter, Manager};
 
 /// Grain's visual clearance above Handy's platform-specific bottom placement.
-pub const BOTTOM_RAISE: f64 = 8.0;
+pub const BOTTOM_RAISE: f64 = 16.0;
 
 #[derive(Clone, Default, Serialize, Deserialize, Type)]
 pub struct OverlayPresentation {
@@ -388,6 +388,7 @@ pub struct OverlaySnapshot {
     pub presentation: OverlayPresentation,
     pub position: crate::settings::OverlayPosition,
     pub skin: grain_core::settings::PillSkin,
+    pub pill_hide_close_button: bool,
     pub theme: crate::grain_theme::ThemeState,
     pub streaming_width: f64,
     pub streaming_height: f64,
@@ -406,10 +407,25 @@ pub fn overlay_snapshot(app: AppHandle) -> OverlaySnapshot {
             .clone(),
         position: settings.overlay_position,
         skin: settings.pill_skin,
+        pill_hide_close_button: settings.pill_hide_close_button,
         theme: crate::grain_theme::get_theme(app.clone()),
         streaming_width: crate::overlay::overlay_dimensions("streaming").0,
         streaming_height: crate::overlay::overlay_dimensions("streaming").1,
     }
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn change_pill_hide_close_button_setting(app: AppHandle, hidden: bool) -> Result<(), String> {
+    app.state::<std::sync::Arc<grain_core::AppContext>>()
+        .update_settings(|settings| settings.pill_hide_close_button = hidden)
+        .map_err(|error| error.to_string())?;
+    let _ = app.emit_to(
+        "recording_overlay",
+        "grain-overlay-compact-close-hidden",
+        hidden,
+    );
+    Ok(())
 }
 
 #[tauri::command]

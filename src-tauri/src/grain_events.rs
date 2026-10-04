@@ -54,6 +54,8 @@ pub struct GrainOverlayContext(pub crate::grain_overlay::OverlayPresentation);
 pub struct GrainOverlaySkin(pub grain_sdk::PillSkin);
 #[derive(Clone, Debug, Serialize, Deserialize, Type, tauri_specta::Event)]
 pub struct GrainOverlayPosition(pub crate::settings::OverlayPosition);
+#[derive(Clone, Debug, Serialize, Deserialize, Type, tauri_specta::Event)]
+pub struct GrainOverlayCompactCloseHidden(pub bool);
 
 /// A model was selected, started loading, finished loading, or failed.
 /// Mirrors `managers::transcription::ModelStateEvent`.
@@ -178,6 +180,10 @@ mod tests {
         assert_eq!(GrainOverlayContext::NAME, "grain-overlay-context");
         assert_eq!(GrainOverlaySkin::NAME, "grain-overlay-skin");
         assert_eq!(GrainOverlayPosition::NAME, "grain-overlay-position");
+        assert_eq!(
+            GrainOverlayCompactCloseHidden::NAME,
+            "grain-overlay-compact-close-hidden"
+        );
         assert_eq!(ModelStateChanged::NAME, "model-state-changed");
         assert_eq!(ModelDownloadProgress::NAME, "model-download-progress");
         assert_eq!(ModelDownloadComplete::NAME, "model-download-complete");

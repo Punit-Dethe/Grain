@@ -770,6 +770,9 @@ pub struct AppSettings {
     /// actually differentiates.
     #[serde(default = "default_pill_show_app_icon")]
     pub pill_show_app_icon: bool,
+    /// Hide only the compact recording/working pill's close control.
+    #[serde(default)]
+    pub pill_hide_close_button: bool,
     #[serde(default = "default_debug_mode")]
     pub debug_mode: bool,
     #[serde(default = "default_log_level")]
@@ -1810,6 +1813,7 @@ pub fn get_default_settings() -> AppSettings {
         overlay_style: default_overlay_style(),
         pill_skin: PillSkin::default(),
         pill_show_app_icon: default_pill_show_app_icon(),
+        pill_hide_close_button: false,
         debug_mode: false,
         log_level: default_log_level(),
         custom_words: Vec::new(),

@@ -146,6 +146,7 @@ export function RecordingOverlay() {
   const [presentation, setPresentation] = useState(empty);
   const [skin, setSkin] = useState<PillSkin>("wave");
   const [position, setPosition] = useState("bottom");
+  const [hideCompactClose, setHideCompactClose] = useState(false);
   const [text, setText] = useState<StreamTextEvent>({
     committed: "",
     tentative: "",
@@ -164,7 +165,12 @@ export function RecordingOverlay() {
   useEffect(() => {
     let disposed = false;
     let revision = 0;
-    const updated = { skin: false, position: false, theme: false };
+    const updated = {
+      skin: false,
+      position: false,
+      theme: false,
+      close: false,
+    };
     const releases: UnlistenFn[] = [];
     const register = async (promise: Promise<UnlistenFn>) => {
       const fn = await promise;
@@ -274,6 +280,14 @@ export function RecordingOverlay() {
             }
           }),
         ),
+        register(
+          events.grainOverlayCompactCloseHidden.listen(({ payload }) => {
+            if (!disposed) {
+              updated.close = true;
+              setHideCompactClose(payload);
+            }
+          }),
+        ),
       ]);
       for (const result of registrations)
         if (result.status === "rejected")
@@ -283,6 +297,7 @@ export function RecordingOverlay() {
       if (disposed) return;
       if (!updated.skin) setSkin(snapshot.skin);
       if (!updated.position) setPosition(snapshot.position);
+      if (!updated.close) setHideCompactClose(snapshot.pill_hide_close_button);
       if (!updated.theme)
         document.documentElement.dataset.theme = snapshot.theme.resolved;
       if (before === revision) apply(snapshot.presentation);
@@ -333,11 +348,12 @@ export function RecordingOverlay() {
     // the same explicit gap as recording, including translated working labels.
     const update = () => {
       const style = getComputedStyle(row);
+      const right = row.querySelector<HTMLElement>(".sbase-r");
       const width =
         label.offsetWidth +
         (row.firstElementChild as HTMLElement).offsetWidth +
-        (row.lastElementChild as HTMLElement).offsetWidth +
-        2 * parseFloat(style.columnGap) +
+        (right?.offsetWidth ?? 0) +
+        (right ? 2 : 1) * parseFloat(style.columnGap) +
         parseFloat(style.paddingLeft) +
         parseFloat(style.paddingRight);
       card.style.setProperty("--ov-work-w", `${width}px`);
@@ -355,11 +371,15 @@ export function RecordingOverlay() {
     kind,
     hasText,
     skin,
+    hideCompactClose,
     session,
     t,
   ]);
 
   if (!presentation.visible) return null;
+  const showClose =
+    !hideCompactClose || (presentation.state === "streaming" && hasText);
+  const closeClass = showClose ? "" : "no-close";
   const direction = getLanguageDirection(i18n.language);
   const handleScroll = () => {
     const element = cap.current;
@@ -398,14 +418,16 @@ export function RecordingOverlay() {
         skin={skin}
         live={live}
       />
-      <div className="sbase-r">
-        {showTimer && (
-          <span className="stimer">
-            {Math.floor(elapsed / 60)}:{String(elapsed % 60).padStart(2, "0")}
-          </span>
-        )}
-        {cancelBtn}
-      </div>
+      {showClose && (
+        <div className="sbase-r">
+          {showTimer && (
+            <span className="stimer">
+              {Math.floor(elapsed / 60)}:{String(elapsed % 60).padStart(2, "0")}
+            </span>
+          )}
+          {cancelBtn}
+        </div>
+      )}
     </div>
   );
   const workingRow = (label: string) => (
@@ -416,7 +438,7 @@ export function RecordingOverlay() {
       <span className="swork-label">
         <span ref={workText}>{label}</span>
       </span>
-      <div className="sbase-r">{cancelBtn}</div>
+      {showClose && <div className="sbase-r">{cancelBtn}</div>}
     </div>
   );
 
@@ -448,7 +470,7 @@ export function RecordingOverlay() {
       <div dir={direction} className={`ov-stage ${position}`}>
         <div
           key={session}
-          className={`scard ${skin} ${open ? "open" : ""} ${collapsed ? "working" : ""}`}
+          className={`scard ${skin} ${closeClass} ${open ? "open" : ""} ${collapsed ? "working" : ""}`}
         >
           <div className="stext">
             <div className="stext-clip">
@@ -488,7 +510,9 @@ export function RecordingOverlay() {
       : t("overlay.transcribing");
   return (
     <div dir={direction} className={`ov-stage ${position} ov-fade show`}>
-      <div className={`scard compact ${skin} ${busy ? "cworking" : ""}`}>
+      <div
+        className={`scard compact ${skin} ${closeClass} ${busy ? "cworking" : ""}`}
+      >
         {busy ? workingRow(workLabel) : listeningRow(false, false)}
       </div>
     </div>

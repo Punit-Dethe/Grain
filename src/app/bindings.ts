@@ -255,6 +255,14 @@ async changeOverlayPositionSetting(position: string) : Promise<Result<null, stri
 async changeOverlayStyleSetting(style: OverlayStyle) : Promise<void> {
     await TAURI_INVOKE("change_overlay_style_setting", { style });
 },
+async changePillHideCloseButtonSetting(hidden: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_pill_hide_close_button_setting", { hidden }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async overlaySnapshot() : Promise<OverlaySnapshot> {
     return await TAURI_INVOKE("overlay_snapshot");
 },
@@ -2146,6 +2154,7 @@ grainEmbedModelCancelled: GrainEmbedModelCancelled,
 grainEmbedModelComplete: GrainEmbedModelComplete,
 grainEmbedModelError: GrainEmbedModelError,
 grainEmbedModelProgress: GrainEmbedModelProgress,
+grainOverlayCompactCloseHidden: GrainOverlayCompactCloseHidden,
 grainOverlayContext: GrainOverlayContext,
 grainOverlayPosition: GrainOverlayPosition,
 grainOverlaySkin: GrainOverlaySkin,
@@ -2177,6 +2186,7 @@ grainEmbedModelCancelled: "grain-embed-model-cancelled",
 grainEmbedModelComplete: "grain-embed-model-complete",
 grainEmbedModelError: "grain-embed-model-error",
 grainEmbedModelProgress: "grain-embed-model-progress",
+grainOverlayCompactCloseHidden: "grain-overlay-compact-close-hidden",
 grainOverlayContext: "grain-overlay-context",
 grainOverlayPosition: "grain-overlay-position",
 grainOverlaySkin: "grain-overlay-skin",
@@ -2406,7 +2416,11 @@ pill_skin?: PillSkin;
  * later be folded into Context Awareness and shown only for surfaces Grain
  * actually differentiates.
  */
-pill_show_app_icon?: boolean; debug_mode?: boolean; log_level?: LogLevel; custom_words?: string[]; 
+pill_show_app_icon?: boolean; 
+/**
+ * Hide only the compact recording/working pill's close control.
+ */
+pill_hide_close_button?: boolean; debug_mode?: boolean; log_level?: LogLevel; custom_words?: string[]; 
 /**
  * [GRAIN] Voice snippets (Experimentations tab): trigger phrase → expansion.
  */
@@ -2939,6 +2953,7 @@ export type GrainEmbedModelCancelled = null
 export type GrainEmbedModelComplete = null
 export type GrainEmbedModelError = string
 export type GrainEmbedModelProgress = { downloaded: number; total: number; percentage: number }
+export type GrainOverlayCompactCloseHidden = boolean
 export type GrainOverlayContext = OverlayPresentation
 export type GrainOverlayPosition = OverlayPosition
 export type GrainOverlaySkin = PillSkin
@@ -3116,7 +3131,7 @@ export type OnboardingTestMode = "standard" | "flow" | "streaming"
  */
 export type OverlayPosition = "top" | "bottom"
 export type OverlayPresentation = { visible: boolean; state: string; ready: boolean; session_id: number; agent: boolean; owner: string | null; icon: string | null; notice: string | null; followup: string | null; committed: string; tentative: string; working: boolean; work_kind: string }
-export type OverlaySnapshot = { presentation: OverlayPresentation; position: OverlayPosition; skin: PillSkin; theme: ThemeState; streaming_width: number; streaming_height: number }
+export type OverlaySnapshot = { presentation: OverlayPresentation; position: OverlayPosition; skin: PillSkin; pill_hide_close_button: boolean; theme: ThemeState; streaming_width: number; streaming_height: number }
 /**
  * Handy's presentation contract. Position only selects an edge.
  */

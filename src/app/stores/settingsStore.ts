@@ -181,6 +181,12 @@ const settingUpdaters: {
   pill_skin: (value) => commands.changePillSkinSetting(value as string),
   pill_show_app_icon: (value) =>
     commands.changePillShowAppIconSetting(value as boolean),
+  pill_hide_close_button: async (value) => {
+    const result = await commands.changePillHideCloseButtonSetting(
+      value as boolean,
+    );
+    if (result.status === "error") throw new Error(result.error);
+  },
   debug_mode: (value) => commands.changeDebugModeSetting(value as boolean),
   custom_words: (value) => commands.updateCustomWords(value as string[]),
   snippets: (value) => commands.updateSnippets(value as Snippet[]),

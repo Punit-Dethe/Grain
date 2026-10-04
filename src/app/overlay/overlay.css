@@ -464,6 +464,25 @@ body,
   grid-template-columns: 18px minmax(0, 1fr) 22px;
   column-gap: var(--grain-row-gap);
 }
+/* Remove the control and its gap, preserving waveform width and outer padding. */
+.scard.no-close {
+  --ov-rest-w: calc(18px + 51px + var(--grain-row-gap) + 20px);
+  --ov-pill-w: var(--ov-rest-w);
+}
+.scard.wave.no-close:not(.working):not(.cworking) .sbase {
+  grid-template-columns: 18px 51px;
+}
+.scard.no-close .work-row {
+  grid-template-columns: 18px minmax(0, 1fr);
+}
+.scard.matrix.no-close:not(.working):not(.cworking) .sbase {
+  grid-template-columns: 18px 96px;
+  column-gap: var(--grain-row-gap);
+  justify-content: center;
+}
+.scard.matrix.no-close .sbase-l {
+  padding-left: 0;
+}
 .scard:not(.open) .work-row .swork-label {
   padding: 0;
 }
@@ -499,6 +518,10 @@ body,
 }
 .scard.matrix:not(.compact):not(.open):not(.working) {
   width: 184px;
+}
+.scard.compact.matrix.no-close:not(.cworking),
+.scard.matrix.no-close:not(.compact):not(.working) {
+  width: calc(18px + 96px + var(--grain-row-gap) + 20px);
 }
 /* Existing supplemental notices are independent of the recording card. */
 @font-face {
