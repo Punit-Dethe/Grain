@@ -1772,7 +1772,12 @@ html[data-theme="light"] .overview-card-title {
   padding-top: 6px;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 10px;
+}
+
+.overview-shortcut-list > .overview-shortcut-row + .overview-shortcut-row {
+  border-top: 1px solid var(--hairline);
+  padding-top: 10px;
 }
 
 .overview-shortcut-row {
@@ -2408,6 +2413,35 @@ html[data-theme="light"] .overview-cta-arrow {
 /* The role is in the class list for styling hooks; never shown. */
 .model-slot-id {
   display: none;
+}
+
+/* Shared Badge geometry matches Active. Color pools blend along the bottom
+   and fade into the dark cap, including when the app uses its light theme. */
+.flow-support-badge {
+  color: #f3f4f2;
+  background:
+    linear-gradient(to top, transparent, #1f1f21 80%),
+    radial-gradient(
+      ellipse at 10% 100%,
+      rgb(59 130 246 / 42%),
+      transparent 65%
+    ),
+    radial-gradient(
+      ellipse at 35% 100%,
+      rgb(125 211 252 / 38%),
+      transparent 65%
+    ),
+    radial-gradient(
+      ellipse at 75% 100%,
+      rgb(251 146 60 / 38%),
+      transparent 65%
+    ),
+    radial-gradient(
+      ellipse at 100% 100%,
+      rgb(253 224 71 / 35%),
+      transparent 65%
+    ),
+    #1f1f21;
 }
 
 .model-library-panel {

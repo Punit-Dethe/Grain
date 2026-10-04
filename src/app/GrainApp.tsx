@@ -43,6 +43,7 @@ import {
   type HistoryController,
 } from "./history/useHistoryController";
 import { OverviewCards } from "./overview/OverviewCards";
+import { getModelIndicatorStatus } from "./lib/modelIndicator";
 import overviewHeroOption2 from "./overview/overview-hero-option-2.webp";
 import overviewHeroOption4 from "./overview/studio-feature-agent.webp";
 import grainMark from "./branding/grain-mark.png";
@@ -280,21 +281,13 @@ function Sidebar({
   const isModelLoaded = useModelStore((state) => state.isModelLoaded);
   const { settings } = useSettings();
   const modelStatus = useMemo(() => {
-    // The manager holds ONE resident model across Standard/Live/Batch. When a
-    // model is loaded, show exactly that (so a Live/Batch switch is reflected,
-    // not just the Standard slot). When nothing is resident, show the selected
-    // Standard model so a fresh switch appears immediately, before it loads.
-    const activeId =
-      isModelLoaded && loadedModelId ? loadedModelId : currentModel;
-    if (loading && !activeId)
-      return { title: "Checking model", subtitle: "Checking" };
-    const name =
-      models.find((model) => model.id === activeId)?.name ?? activeId;
-    if (!name) return { title: "No model", subtitle: "Not loaded" };
-    return {
-      title: name,
-      subtitle: `${isModelLoaded ? "Loaded" : "Unloaded"} · Local`,
-    };
+    return getModelIndicatorStatus({
+      loading,
+      currentModel,
+      loadedModelId,
+      models,
+      isModelLoaded,
+    });
   }, [loading, currentModel, loadedModelId, models, isModelLoaded]);
 
   return (
