@@ -2,6 +2,8 @@
 
 Status: planning complete; product implementation has not started. Reviewed 2026-10-04.
 
+Visual references and placement were confirmed on 2026-10-04. Grain's existing smooth waveform reaction is an explicit retained behavior; live-preview expansion, scrolling and timing follow Handy. Top/bottom placement is approved.
+
 ## Baselines and objective
 
 - Branch: `codex/handy-webview-overlays`, created from GitHub `main` at `69807ccef1fcdfb70a796a981ad308733262adea`.
@@ -19,8 +21,8 @@ The user's clarification preserves the existing Agent result window and every ot
 
 | Surface or feature | Migration outcome |
 | --- | --- |
-| Compact dictation pill | Grain appearance; Handy recording, readiness, waveform, work-state, cancellation and window behavior. |
-| Native ASR live preview | Grain appearance; Handy committed/tentative text handling, timer, scrolling, working state and visibility behavior. |
+| Compact dictation pill | Grain appearance and smooth waveform reaction; Handy recording, readiness, microphone event delivery, work-state, cancellation and window behavior. |
+| Native ASR live preview | Grain appearance and smooth waveform reaction; Handy committed/tentative text handling, expansion speed, timer, scrolling, working state and visibility behavior. |
 | Agent summon/input | Uses the same compact pill presentation as dictation. Voice submission still opens the current Agent result surface according to the existing Agent settings. |
 | TinySkia Agent typed expansion | Unavailable in production. Preserve the underlying typed submission functions; remove the native input renderer when retiring TinySkia. |
 | `Type to expand` setting | Remove its production row and native-input wiring. An old persisted value must not enable expansion. |
@@ -48,7 +50,7 @@ Sources: [overlay backend](https://github.com/cjpais/Handy/blob/ffbc9504cbf004ce
 - Starts the live timer at readiness, opens the text panel when text exists, retains that text while finalizing/polishing, and pauses auto-follow when the user scrolls back.
 - Guards the delayed native hide with a show-generation counter so it cannot hide a newer session. Hidden React content does not continue its visible animation/timer loop.
 
-Grain presently announces capture after `try_start_recording` returns `Ok(())`, uses fixed start-cue delays in several paths, renders its own waveform dynamics, and drives the native process through `DaemonEvent`/WebSocket. Merely displaying a React pill would leave these behavioral gaps.
+Grain presently announces capture after `try_start_recording` returns `Ok(())`, uses fixed start-cue delays in several paths, and drives the native process through `DaemonEvent`/WebSocket. Restore Handy's readiness and delivery contracts. Grain's waveform dynamics are deliberately retained at the presentation layer under the user's latest instruction.
 
 ## Architecture and blast radius
 
@@ -79,9 +81,9 @@ The event server and headless bus also serve extensions. Retire only pill spawni
 
 1. **Capture baseline and finalize the contracts.** Recheck both remote pins before implementation. Record real-app reference images and the existing surface inventory. Review readiness and the deferred recorder rewrite as one capture contract; settle necessary dependencies before editing. Do not bulk-upgrade the native ASR library merely because current Handy changed it. Keep unrelated deferred VAD, tray and shortcut rewrites separate unless a demonstrated dependency requires them.
 
-2. **Align settings and restore capture readiness.** Add Handy's `OverlayStyle` and top/bottom position contract to Grain's real settings. Migrate legacy `none` to disabled style with bottom position; migrate `center` to bottom for the affected pill, and preserve old top/bottom choices. Default enabled legacy installations to Live so existing Native ASR preview remains available, while retaining Linux's disabled default. Keep Wave/Matrix skin and app-icon preferences separate. Restore first-sample readiness and generation checks across all six caller families, including low-RAM Flow, Agent, extensions and onboarding. An unavailable microphone must fail voice-only Agent input cleanly.
+2. **Align settings and restore capture readiness.** Add Handy's `OverlayStyle` and top/bottom position contract to Grain's real settings. The user approved Handy placement: migrate legacy `none` to disabled style with bottom position; migrate `center` to bottom for the affected pill, and preserve old top/bottom choices. Default enabled legacy installations to Live so existing Native ASR preview remains available, while retaining Linux's disabled default. Keep Wave/Matrix skin and app-icon preferences separate. Restore first-sample readiness and generation checks across all six caller families, including low-RAM Flow, Agent, extensions and onboarding. An unavailable microphone must fail voice-only Agent input cleanly.
 
-3. **Activate the Handy window and implement Grain presentation.** Restore startup creation, enabled-cache updates, positioning commands and existing platform dependencies. Reuse upstream readiness, show/hide and waveform events. Use existing `StreamTextEvent`/`StreamPhaseEvent` for Native ASR; preserve model capability gating and compact fallback. Add Grain chrome, icon and skin rendering to the owned component. Ensure all asynchronous listeners are actually released: Handy's current component calls an async setup function but does not return its eventual cleanup from the React effect, so copying that effect literally would violate Grain's cleanup requirement.
+3. **Activate the Handy window and implement Grain presentation.** Restore startup creation, enabled-cache updates, positioning commands and existing platform dependencies. Reuse upstream readiness, show/hide and microphone events. Port Grain's existing `WaveField`, amplitude mapping and bar geometry into a small frontend animation helper so both compact and live forms retain the current smooth response. Use Handy's live-preview expansion and transition timing, plus existing `StreamTextEvent`/`StreamPhaseEvent` for Native ASR; preserve model capability gating and compact fallback. Add Grain chrome, icon and skin rendering to the owned component. Ensure all asynchronous listeners are actually released: Handy's current component calls an async setup function but does not return its eventual cleanup from the React effect, so copying that effect literally would violate Grain's cleanup requirement.
 
 4. **Migrate every live TinySkia supplement.** Agent summon uses the same nonactivating compact pill; existing transient Enter submits voice through Rust and Escape/cancel performs the existing full cleanup. Remove native typing/click/Tab expansion and the Type to expand production setting. Preserve all existing Agent reply-window behavior, Quick Agent routing and follow-up destination. Move clipboard acknowledgement, follow-up capsule, extension owner indication and active error presentation into the shared window; reuse their backend logic and generation/expiry ownership. Never let a stale notice hide a new capture.
 
@@ -95,15 +97,28 @@ The event server and headless bus also serve extensions. Retire only pill spawni
 
 ## Visual reference
 
+The four supplied screenshots are saved unchanged beside this plan:
+
+| Reference | Role |
+| --- | --- |
+| [Grain compact](overlay-reference/grain-compact.png) | Current capsule, foreground app/site icon, neutral surface and pale waveform. |
+| [Grain live preview](overlay-reference/grain-live.png) | Current caption typography, rounded card, fading text edge, bottom-left app icon, centered waveform and bottom-right cancel control. |
+| [Handy compact](overlay-reference/handy-compact.png) | Handy compact form; its pink color is reference material, not Grain's palette. |
+| [Handy live preview](overlay-reference/handy-live.png) | Handy live form and control layout; use the actual Handy code for temporal behavior. |
+
+These references are sufficient for implementation. Keep Grain's screenshot appearance and existing waveform reaction; adopt Handy's preview opening/expansion speed, text lifecycle and window behavior. The unchanged clipboard notice can be translated from its existing code; no additional screenshot is required for planning.
+
 The existing native code is the primary reference: near-black `#1E1E20`, alpha 242 for the pill/246 for cards, a one-pixel `#4B4B4D` rim, full-round compact capsules, Wave and Matrix skins, and Space Grotesk. The live card uses a 420px width, 16px corners and a 15.5px/21px caption scale. Translate these as visual tokens rather than retaining native window/pointer machinery. Handy's permanent cancel control must fit within the Grain presentation.
 
-Existing window bounds (Handy: compact 256×50, streaming 400×120) do not contain Grain's wider live card unchanged. Use a small geometry hook with one source of truth for CSS/native bounds; preserve upstream positioning math. The current code's accent is `255,93,30`. Use supplied reference screenshots to verify the icon treatment, colors and geometry at visual approval; code is the primary reference until those images are available.
+Preserve the existing waveform's presentation math from `crates/grain-pill/src/lib.rs`: finite/clamped RMS of the incoming microphone buckets, noise floor `0.012`, amplitude curve exponent `0.45`, attack/release `0.028s`/`0.14s`, center-to-edge travel `0.22s`, critically damped spring rate `26`, edge taper, bar spacing and minimum height. Its history is only 24 scalar levels at 60 Hz and the maximum is 48 bars. Port this bounded state into persistent frontend refs/arrays and update the existing bar elements from one visible-only animation frame loop. Reset between sessions and cancel the loop on hide/unmount. Do not add Handy's frontend exponential filter in front of this retained response: that would change the reaction the user explicitly likes. The backend still supplies Handy's normalized buckets and targeted, throttled event delivery; there is no new audio capture or DSP service.
+
+Existing window bounds (Handy: compact 256×50, streaming 400×120) do not contain Grain's wider live card unchanged. Use a small geometry hook with one source of truth for CSS/native bounds; preserve upstream positioning math. Source tokens and the supplied Grain images define colors for each element: the existing `ACCENT` constant does not justify recoloring the pale waveform visible in these references.
 
 Retain `pill_icon`'s foreground/site detection, cache, nonblocking lookup and stale-resolution guards. Its current payload is premultiplied RGBA; a WebView image needs straight-alpha PNG. Reuse its existing `png_data_url` conversion and encode only on icon changes. Keep the fallback dot and clear stale icons between sessions. Stop `surface_watch` and pending resolution on stop/cancel.
 
 ## Verification and acceptance
 
-Meaningful automated tests cover settings migration; first-sample readiness/cancel races; stale hide/notice generations; session reset and stream text retention; cancellation of Batch/Flow/Native ASR/Agent; removal of switcher registrations; and preservation of Prompt Record's split processing. Exercise listener cleanup under React StrictMode and verify hidden timers/animation work stops. Avoid tests that merely mirror CSS or implementation details.
+Meaningful automated tests cover settings migration; first-sample readiness/cancel races; stale hide/notice generations; session reset and stream text retention; cancellation of Batch/Flow/Native ASR/Agent; removal of switcher registrations; and preservation of Prompt Record's split processing. Verify the ported waveform against the current Rust behavior for attack/release, center-out travel, symmetry, rest/reset and a stalled frame. Exercise listener cleanup under React StrictMode and verify hidden timers/animation work stops. Avoid tests that merely mirror CSS or implementation details.
 
 Run frontend type checks, lint, unit tests and the production build; Rust formatting, app `cargo check --lib`/`cargo test --lib`, affected `grain-core`/`grain-sdk` tests; and the existing dependency/Nix derivative checks. For shared-tree edits run `python Upstream/ratchet.py --worktree` before commit. Complete `preflight.py`, `policy_check.py`, `port_audit.py`, the applicable frontend/suppressed review audit and the ratchet after commit, following the runbook's fetch and budget rules.
 
