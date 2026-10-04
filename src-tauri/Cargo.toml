@@ -32,7 +32,6 @@ serde = { version = "1", features = ["derive"] }
 grain-core = { path = "../crates/grain-core" } # [GRAIN] headless core: owned settings + event bus
 grain-sdk = { path = "../crates/grain-sdk" } # [GRAIN] the wire contract: events, actions, WS auth handshake
 grain-tdt = { path = "../crates/grain-tdt" } # [GRAIN] Fluid-style Parakeet TDT geometry + token merger
-provider-router = { path = "../crates/provider-router" } # [GRAIN] smart rotation: cooldowns + headroom ordering
 tempfile = "3" # [GRAIN] auto-deleted PCM journal for low-RAM rolling sessions
 once_cell = "1"
 tauri = { version = "2.11.5", features = [

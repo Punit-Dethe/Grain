@@ -752,6 +752,68 @@ mod tests {
     }
 
     #[test]
+    fn fallback_and_provider_priority_persist_without_rotation_metadata() {
+        let dir = tempfile::tempdir().unwrap();
+        let data = dir.path().join("data");
+        fs::create_dir_all(&data).unwrap();
+        let mut legacy = serde_json::to_value(AppSettings::default()).unwrap();
+        legacy["post_process_smart_rotation"] = serde_json::json!(true);
+        legacy["post_process_quota_reset_date"] = serde_json::json!("2026-10-04");
+        legacy["post_process_providers"][0]["quota_limit"] = serde_json::json!(10);
+        legacy["post_process_providers"][0]["quota_used_today"] = serde_json::json!(9);
+        fs::write(
+            data.join(SETTINGS_FILE),
+            serde_json::to_vec(&legacy).unwrap(),
+        )
+        .unwrap();
+        let ctx = AppContext::new("res", &data);
+        assert!(!ctx.settings().post_process_fallback_enabled);
+        let ids: Vec<_> = ctx
+            .settings()
+            .post_process_providers
+            .iter()
+            .rev()
+            .map(|p| p.id.clone())
+            .collect();
+        ctx.update_settings(|s| {
+            s.post_process_fallback_enabled = true;
+            crate::providers::reorder(s, &ids).unwrap();
+            s.post_process_provider_id = "groq".into();
+            s.post_process_models
+                .insert("groq".into(), "test-model".into());
+            s.post_process_api_keys
+                .insert("groq".into(), "test-key".into());
+        })
+        .unwrap();
+        drop(ctx);
+        let reloaded = AppContext::new("res", &data);
+        let settings = reloaded.settings();
+        assert!(settings.post_process_fallback_enabled);
+        assert_eq!(
+            settings
+                .post_process_providers
+                .iter()
+                .map(|p| p.id.clone())
+                .collect::<Vec<_>>(),
+            ids
+        );
+        assert_eq!(settings.post_process_provider_id, "groq");
+        assert_eq!(settings.post_process_models["groq"], "test-model");
+        assert_eq!(
+            settings.post_process_api_keys.get("groq").unwrap(),
+            "test-key"
+        );
+        let saved: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(data.join(SETTINGS_FILE)).unwrap()).unwrap();
+        assert!(saved.get("post_process_smart_rotation").is_none());
+        assert!(saved.get("post_process_quota_reset_date").is_none());
+        for provider in saved["post_process_providers"].as_array().unwrap() {
+            assert!(provider.get("quota_limit").is_none());
+            assert!(provider.get("quota_used_today").is_none());
+        }
+    }
+
+    #[test]
     fn secrets_go_to_separate_file_not_settings() {
         let dir = tempfile::tempdir().unwrap();
         let data = dir.path().join("data");

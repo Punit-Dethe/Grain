@@ -60,9 +60,9 @@ src-tauri/src/handy/   Handy's tree, byte-preserved + small marked [GRAIN]
                        so crate paths AND file contents are unchanged — files
                        still diff 1:1 against upstream. DON'T ADD FEATURES HERE.
 src-tauri/src/         Grain: composition roots (lib.rs, main.rs) + grain_*
-                       modules, agent, bridge, rolling, routers, grain_space…
-crates/                Grain crates (grain-core, provider-router,
-                       grain-tdt).
+                       modules, agent, bridge, rolling, grain_space…
+crates/                Grain crates (grain-core, grain-sdk, grain-tdt,
+                       grain-editor).
 ```
 
 Two files inside `handy/` are **inert** — byte-identical to upstream but
@@ -378,9 +378,12 @@ matching remains only a heuristic signal.
   host can run, which locale a system tag resolves to). Port those into Rust —
   which we still merge in full — and the freeze costs nothing. See
   [`docs/UI 2.0/PLAN.md`](../docs/UI%202.0/PLAN.md).
-- **Multi-provider AI text processing**: `post_process_router.rs` and
-  `grain_llm_client.rs` replace upstream's single-provider client. Speech-to-text
-  is local only; see [LOCAL-TRANSCRIPTION.md](LOCAL-TRANSCRIPTION.md).
+- **AI text provider fallback**: `grain_llm_client.rs` owns transport;
+  `grain_llm_fallback.rs` and Agent try enabled, configured providers in saved
+  order when Fallback is on. Rotation, scoring, quotas and the routing crate
+  are retired. Preserve the settings/transport seams in
+  [LLM-FALLBACK.md](LLM-FALLBACK.md). Speech-to-text is local only; see
+  [LOCAL-TRANSCRIPTION.md](LOCAL-TRANSCRIPTION.md).
 - **Recording pills**: compiled `handy/overlay.rs` owns WebView window lifecycle
   and platform handling. `grain_overlay`/`grain_capture` adapt Grain capture
   paths; `src/app/overlay` owns appearance and waveform response. Upstream

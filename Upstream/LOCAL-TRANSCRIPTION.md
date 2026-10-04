@@ -13,7 +13,8 @@ network access is still used for those features and model downloads.
 3. Remove cloud settings forms, the singleton store and initialization, search
    terms, status indicators, translations and generated command/types.
 4. Remove unused multipart uploads and the unconsumed legacy provider router;
-   retain the live LLM rotation implementation.
+   retain the then-current LLM implementation (subsequently simplified in
+   [LLM-FALLBACK.md](LLM-FALLBACK.md)).
 5. Verify persistence/routing, build and test the application, audit independently,
    update review routes and tighten measured shared-code budgets.
 
@@ -51,7 +52,7 @@ of the code that existed when those ports were assessed.
 The retirement regression loads obsolete cloud settings and credentials,
 checks that the Parakeet model still selects local Flow, then saves and verifies
 that retired data is omitted while LLM and extension credentials are preserved.
-Run grain-core/provider-router tests, targeted recorder/coordinator/overlay/LLM
+Run grain-core tests and the current LLM fallback tests, targeted recorder/coordinator/overlay/LLM
 tests, Specta export, frontend build/lint/tests, settings parity and upstream
 policy/preflight. Independent review checks runtime reachability, retained
 local behavior, credentials, dependencies and current maintenance records.

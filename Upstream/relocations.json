@@ -4,9 +4,12 @@
     "kind": "inert",
     "grain": [
       "src-tauri/src/grain_llm_client.rs",
-      "src-tauri/src/net_diag.rs"
+      "src-tauri/src/net_diag.rs",
+      "src-tauri/src/grain_llm_fallback.rs",
+      "src-tauri/src/grain_post_process.rs",
+      "src-tauri/src/agent.rs"
     ],
-    "why": "Inert (no `mod llm_client;`). Grain uses grain_llm_client.rs and shared payload-safe reqwest diagnostics in net_diag.rs. Cloud speech-to-text was removed on 2026-10-04."
+    "why": "Inert (no `mod llm_client;`). Grain uses grain_llm_client.rs and shared payload-safe reqwest diagnostics in net_diag.rs. Cloud speech-to-text was removed on 2026-10-04. LLM requests use optional stateless fallback in saved provider order. Review transport/response fixes against post-processing and Agent plain/image/tool paths; preserve per-attempt timeout and stop at first successful reply. See Upstream/LLM-FALLBACK.md."
   },
   "src-tauri/src/settings.rs": {
     "kind": "inert",
@@ -20,9 +23,13 @@
       "src/app/stores/settingsStore.ts",
       "crates/grain-core/src/capture.rs",
       "src-tauri/src/grain_dictation_routing.rs",
-      "src/app/components/settings/capture/CaptureModes.tsx"
+      "src/app/components/settings/capture/CaptureModes.tsx",
+      "crates/grain-core/src/providers.rs",
+      "src-tauri/src/grain_provider_commands.rs",
+      "src/app/stores/ppPoolStore.ts",
+      "src/app/components/settings/post-processing/pool/PostProcessingPool.tsx"
     ],
-    "why": "Inert (no `mod settings;`). Grain's settings are grain-core AppContext; a NEW upstream setting must be added there and to its Default, or `get_settings().<field>` in merged handy code fails to compile. (#1254 selected_channel needed this.)"
+    "why": "Inert (no `mod settings;`). Grain's settings are grain-core AppContext; a NEW upstream setting must be added there and to its Default, or `get_settings().<field>` in merged handy code fails to compile. (#1254 selected_channel needed this.) Provider participation and order are persisted through Grain commands; smart rotation and quotas are retired. Preserve the exact-permutation reorder validation and credential boundary in Upstream/LLM-FALLBACK.md."
   },
   "src-tauri/src/overlay.rs": {
     "kind": "relocated",

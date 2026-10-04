@@ -88,6 +88,8 @@ pub(crate) use grain_llm_client as llm_client;
 #[path = "handy/overlay.rs"]
 mod overlay;
 pub(crate) use grain_settings as settings;
+mod grain_llm_fallback;
+mod grain_provider_commands;
 mod grain_transcription;
 #[path = "handy/managers/mod.rs"]
 mod managers;
@@ -99,10 +101,8 @@ mod paste_tx;
 mod pill_icon; // [GRAIN] pill identity — the foreground app's icon → pill
 #[path = "handy/portable.rs"]
 pub mod portable;
-mod post_process_router; // [GRAIN] post-process (LLM) dispatcher (single vs rotation)
 mod prompt_record; // [GRAIN] Prompt Record: split content vs spoken AI instruction at the pill-control mark
 mod rolling; // [GRAIN] Parakeet TDT Flow capture and scheduling service
-mod rotation_state; // [GRAIN] smart-rotation trackers (cooldowns + headroom), shared by both routers
 #[path = "handy/secure_input.rs"]
 mod secure_input;
 #[path = "handy/shortcut/mod.rs"]
@@ -438,8 +438,6 @@ fn initialize_core_logic(app_handle: &AppHandle) {
         settings::get_settings(&app_handle).overlay_style != settings::OverlayStyle::None,
     );
     overlay::create_recording_overlay(&app_handle);
-    // [GRAIN] LLM provider health for cooldown-aware ordering.
-    app_handle.manage(Arc::new(rotation_state::RotationTrackers::default()));
     // [GRAIN] One shared reqwest::Client for outbound AI text requests.
     // reqwest::Client is designed to be cloned/shared — it manages a connection pool,
     // TLS sessions, and keep-alive internally. Building one per request throws all of
@@ -1490,10 +1488,11 @@ fn command_bindings() -> Builder<tauri::Wry> {
             commands::is_portable,
             commands::get_app_dir_path,
             commands::get_app_settings,
-            commands::post_process::pp_get_pool,
-            commands::post_process::pp_set_smart_rotation,
-            commands::post_process::pp_upsert_provider,
-            commands::post_process::pp_remove_provider,
+            grain_provider_commands::pp_get_pool,
+            grain_provider_commands::pp_set_fallback_enabled,
+            grain_provider_commands::pp_upsert_provider,
+            grain_provider_commands::pp_remove_provider,
+            grain_provider_commands::pp_reorder_providers,
             commands::get_default_settings,
             commands::get_log_dir_path,
             commands::set_log_level,

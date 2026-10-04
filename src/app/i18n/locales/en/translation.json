@@ -706,21 +706,13 @@
         }
       },
       "pool": {
-        "smartRotation": {
-          "label": "Smart rotation",
-          "description": "When on, post-processing rotates across the enabled providers below, each with its own daily quota and automatic failover. When off, the single selected provider (the filled dot) is used."
-        },
         "routingTitle": "Routing",
         "addTitle": "Add provider",
         "yourProvidersTitle": "Your providers",
         "selectHintSingle": "Select the provider to use.",
-        "selectHintRotation": "Select the providers to rotate across.",
         "noConfigured": "No API keys added yet. Choose a provider above and add a key.",
-        "emptyPoolWarning": "Smart rotation is on, but none of your providers are selected. Tick at least one above, or turn smart rotation off.",
-        "rotateTooltip": "Include this provider in smart rotation.",
+        "emptyPoolWarning": "No providers are enabled for fallback. Select one below.",
         "setActive": "Use this provider.",
-        "quotaUsed": "{{used}} / {{limit}} today",
-        "quotaUnlimited": "{{used}} used today",
         "edit": "Edit",
         "remove": "Remove",
         "removeConfirm": "Remove provider \"{{name}}\"? Its API key will be deleted.",
@@ -753,15 +745,22 @@
           "apiKey": "API Key",
           "apiKeyPlaceholder": "sk-...",
           "apiKeyKeepPlaceholder": "Leave blank to keep current key",
-          "quotaLimit": "Daily request limit",
-          "quotaLimitPlaceholder": "Unlimited",
           "save": "Save",
           "cancel": "Cancel",
-          "multiKeyTip": "Tip: add the same Base URL twice with different names and keys to rotate across multiple keys for one provider."
+          "multiKeyTip": "Add multiple entries for one endpoint with separate keys, then order them for fallback."
         },
         "addProvider": "Add provider",
-        "rotationNoProvider": "No provider is configured yet. Add a provider before turning on smart rotation.",
-        "providersTitle": "Providers"
+        "providersTitle": "Providers",
+        "fallback": {
+          "label": "Fallback",
+          "description": "Try enabled providers from top to bottom until one succeeds. When off, use only the selected provider."
+        },
+        "fallbackNoProvider": "Add a provider before enabling fallback.",
+        "fallbackProviderTooltip": "Include this provider in fallback.",
+        "reorder": "Reorder {{name}}. Drag or use Up and Down arrow keys.",
+        "orderStatus": "{{name}} is priority {{position}}.",
+        "saveOrderError": "Could not save provider order. Try again.",
+        "priority": "Priority {{position}}"
       },
       "prompts": {
         "title": "Prompt",
@@ -1118,7 +1117,7 @@
         },
         "post-processing": {
           "label": "Post-processing",
-          "description": "Provider rotation and the prompts used to refine completed transcriptions."
+          "description": "Provider fallback and prompts for refining completed transcriptions."
         },
         "debug": {
           "label": "Debug",

@@ -45,9 +45,6 @@ export const PpProviderForm: React.FC<PpProviderFormProps> = ({
   const [baseUrl, setBaseUrl] = useState(existing?.base_url ?? "");
   const [model, setModel] = useState(existingModel ?? "");
   const [apiKey, setApiKey] = useState("");
-  const [quotaLimit, setQuotaLimit] = useState(
-    existing?.quota_limit != null ? String(existing.quota_limit) : "",
-  );
   const [modelOptions, setModelOptions] = useState<string[]>([]);
   const [fetching, setFetching] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -81,7 +78,6 @@ export const PpProviderForm: React.FC<PpProviderFormProps> = ({
     }
     setValidationError(null);
 
-    const parsedQuota = quotaLimit.trim() === "" ? null : Number(quotaLimit);
     const provider: PostProcessProvider = existing
       ? { ...existing, label: label.trim(), base_url: baseUrl.trim() }
       : {
@@ -92,13 +88,7 @@ export const PpProviderForm: React.FC<PpProviderFormProps> = ({
           models_endpoint: "/models",
           supports_structured_output: false,
           enabled: true,
-          quota_limit: null,
-          quota_used_today: 0,
         };
-    provider.quota_limit =
-      parsedQuota != null && Number.isFinite(parsedQuota) && parsedQuota > 0
-        ? Math.floor(parsedQuota)
-        : null;
 
     const keyArg = apiKey.trim() === "" ? (isEdit ? null : "") : apiKey.trim();
     const modelArg = model.trim() === "" ? (isEdit ? null : "") : model.trim();
@@ -119,7 +109,7 @@ export const PpProviderForm: React.FC<PpProviderFormProps> = ({
           : t("settings.postProcessing.pool.form.addTitle")}
       </h4>
 
-      <div className="grid grid-cols-2 gap-3">
+      <div className="space-y-3">
         <label className="flex flex-col gap-1">
           <span className="text-xs font-medium text-ink-soft">
             {t("settings.postProcessing.pool.form.label")}
@@ -130,22 +120,6 @@ export const PpProviderForm: React.FC<PpProviderFormProps> = ({
             onChange={(e) => setLabel(e.target.value)}
             placeholder={t(
               "settings.postProcessing.pool.form.labelPlaceholder",
-            )}
-            variant="compact"
-          />
-        </label>
-
-        <label className="flex flex-col gap-1">
-          <span className="text-xs font-medium text-ink-soft">
-            {t("settings.postProcessing.pool.form.quotaLimit")}
-          </span>
-          <Input
-            type="number"
-            min={0}
-            value={quotaLimit}
-            onChange={(e) => setQuotaLimit(e.target.value)}
-            placeholder={t(
-              "settings.postProcessing.pool.form.quotaLimitPlaceholder",
             )}
             variant="compact"
           />

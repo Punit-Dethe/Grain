@@ -16,7 +16,7 @@ import { useSettings } from "../../../hooks/useSettings";
 import { PostProcessingPool } from "./pool";
 import { ExtensionAnchor } from "../experimentations/ExtensionSettings";
 
-// [GRAIN] The API section is now the multi-provider rotation pool (key-redacted,
+// [GRAIN] The API section is now the ordered fallback pool (key-redacted,
 // driven by the pp_* commands). The legacy single-provider form is superseded.
 const PostProcessingSettingsApiComponent: React.FC = () => {
   return <PostProcessingPool />;
@@ -389,7 +389,7 @@ export const PostProcessingSettings: React.FC = () => {
 
   return (
     <div className="post-processing-pane max-w-4xl w-full mx-auto space-y-6">
-      {/* Providers + smart rotation — the unified add-provider pool. */}
+      {/* Providers + ordered fallback — the unified add-provider pool. */}
       <PostProcessingSettingsApi />
 
       <SettingsGroup title={t("settings.postProcessing.prompts.title")}>

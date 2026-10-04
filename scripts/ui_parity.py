@@ -106,8 +106,8 @@ def tokens(name: str) -> set:
 
     `pp` and `stt` are the pool commands' shorthand for the settings prefixes
     `post_process` and `stt`, so they are folded together; without that,
-    `pp_set_smart_rotation` would not be seen to cover
-    `post_process_smart_rotation`.
+    `pp_set_fallback_enabled` would not be seen to cover
+    `post_process_fallback_enabled`.
     """
     parts = []
     for p in name.split("_"):
@@ -225,8 +225,8 @@ def gate(tree: str) -> int:
     for field in fields:
         if field in blob:
             continue
-        # A dedicated command that covers the field counts: pp_set_smart_rotation
-        # reaches post_process_smart_rotation, and extension_set_developer_mode
+        # A dedicated command that covers the field counts: pp_set_fallback_enabled
+        # reaches post_process_fallback_enabled, and extension_set_developer_mode
         # reaches extension_developer_mode, without either spelling the field.
         # Matched on word tokens (singularised) rather than substrings, so
         # `post_process_providers` pairs with `pp_upsert_provider`.

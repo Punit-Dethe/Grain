@@ -18,11 +18,10 @@
 //! reopening it expanded with the conversation restored is instant.
 //!
 //! The conversation is sent to the SAME AI the post-processing layer uses (single
-//! provider, or the smart-rotation pool with failover + daily quota).
+//! provider, or the ordered fallback pool).
 //!
 //! Everything here is headless-friendly: it reads the owned settings, reuses the
-//! local transcription helper (`grain_transcription`) and the LLM rotation infra (`post_process_router`
-//! + `rotation_state`), and never assumes a UI is alive.
+//! local transcription helper (`grain_transcription`) and the shared LLM client, and never assumes a UI is alive.
 
 use std::{
     collections::HashSet,
@@ -41,11 +40,11 @@ use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_clipboard_manager::ClipboardExt;
 
 use crate::context_screen::CapturedImage;
+use crate::grain_llm_fallback::ProviderOutcome;
 use crate::input::EnigoState;
 use crate::llm_client::{ImageAttachment, LlmError};
 use crate::managers::audio::AudioRecordingManager;
 use crate::managers::transcription::TranscriptionManager;
-use crate::rotation_state::{CallOutcome, RotationTrackers};
 use crate::settings::{
     get_settings, AgentAutocopy, AgentContextMode, AgentPanelPosition, ShortcutBinding,
     APPLE_INTELLIGENCE_PROVIDER_ID,
@@ -2212,7 +2211,7 @@ pub fn agent_confirm_paste(app: AppHandle, text: String) -> Result<(), String> {
 
 /// Run the conversation against the configured AI and return the assistant reply.
 /// Uses the post-processing provider config: a single provider, or the smart
-/// rotation pool (round-robin + daily quota + health-ordered failover). The
+/// fallback pool (enabled providers in saved order). The
 /// focused-field context captured at summon (if any) is injected backend-side.
 #[tauri::command]
 #[specta::specta]
@@ -2476,7 +2475,7 @@ pub async fn run_conversation(
 }
 
 /// Run an ALREADY-BUILT `(role, content)` message list through the configured
-/// AI (single provider or the smart-rotation pool). Used by the plain assistant
+/// AI (single provider or the ordered fallback pool). Used by the plain assistant
 /// path after its selection/field framing. Action execution belongs to
 /// the unified tool loop, not this tool-free helper.
 ///
@@ -2490,8 +2489,12 @@ pub(crate) async fn run_messages(
 ) -> Result<String, String> {
     let settings = get_settings(app);
 
-    if settings.post_process_smart_rotation {
-        return agent_run_rotated(app, &full, image).await;
+    if settings.post_process_fallback_enabled {
+        let client = app
+            .try_state::<reqwest::Client>()
+            .map(|s| s.inner().clone())
+            .ok_or("Agent: shared HTTP client unavailable")?;
+        return agent_run_with_fallback(&client, &settings, &full, image).await;
     }
 
     let provider = settings
@@ -2521,12 +2524,12 @@ pub(crate) async fn run_messages(
         .ok_or("Agent: shared HTTP client unavailable")?;
 
     match run_agent_once(&http_client, &provider, model, api_key, &full, image).await {
-        CallOutcome::Ok { text, .. } => Ok(text),
-        CallOutcome::RateLimited { .. } => Err(format!(
+        ProviderOutcome::Ok { text, .. } => Ok(text),
+        ProviderOutcome::RateLimited => Err(format!(
             "{} is rate-limited right now — try again shortly.",
             provider.label
         )),
-        CallOutcome::Failed => Err(format!("{} could not produce a response.", provider.label)),
+        ProviderOutcome::Failed => Err(format!("{} could not produce a response.", provider.label)),
     }
 }
 
@@ -2586,93 +2589,32 @@ fn build_messages(
     full
 }
 
-/// Smart-rotation path: health-ordered failover across eligible post-process
-/// providers (those enabled, under daily quota, and with a model configured),
-/// recording quota usage on success — exactly the post-processing strategy.
-async fn agent_run_rotated(
-    app: &AppHandle,
+/// Try configured providers in saved order; the first successful response wins.
+pub(crate) async fn agent_run_with_fallback(
+    http_client: &reqwest::Client,
+    settings: &grain_core::AppSettings,
     full: &[(String, String)],
     image: Option<&ImageAttachment>,
 ) -> Result<String, String> {
-    crate::post_process_router::reset_quota_if_new_day(app);
-    let settings = get_settings(app); // re-read so quotas reflect any reset
-
-    let eligible: Vec<PostProcessProvider> = crate::post_process_router::rotation_pool(&settings)
-        .into_iter()
-        .filter(|p| {
-            settings
-                .post_process_models
-                .get(&p.id)
-                .map(|m| !m.trim().is_empty())
-                .unwrap_or(false)
-        })
-        .collect();
-    if eligible.is_empty() {
-        return Err(
-            "Smart rotation is on, but no eligible AI providers have a model configured.".into(),
-        );
+    for provider in grain_core::providers::fallback_pool(settings) {
+        let model = settings.post_process_models[&provider.id].clone();
+        let key = settings
+            .post_process_api_keys
+            .get(&provider.id)
+            .cloned()
+            .unwrap_or_default();
+        if let ProviderOutcome::Ok { text } =
+            run_agent_once(http_client, provider, model, key, full, image).await
+        {
+            return Ok(text);
+        }
     }
-
-    let trackers = app
-        .try_state::<Arc<RotationTrackers>>()
-        .ok_or("RotationTrackers unavailable")?;
-
-    let est_text: String = full
-        .iter()
-        .map(|(_, c)| c.as_str())
-        .collect::<Vec<_>>()
-        .join(" ");
-    let est_tokens = provider_router::estimate_tokens(&est_text);
-    let candidates: Vec<(String, String)> = eligible
-        .iter()
-        .map(|p| (p.id.clone(), p.base_url.clone()))
-        .collect();
-
-    let Some(http_client) = app.try_state::<reqwest::Client>() else {
-        return Err("Agent: shared HTTP client unavailable".into());
-    };
-    let http_client = http_client.inner().clone();
-
-    // Failover walk lives in the shared driver; we supply only how to run one
-    // provider (resolve model/key + call) and how to record quota on success.
-    crate::rotation_state::run_with_rotation(
-        &trackers.llm,
-        &candidates,
-        est_tokens,
-        |id| {
-            let http_client = http_client.clone();
-            let eligible = &eligible;
-            let settings = &settings;
-            let full = full;
-            async move {
-                let Some(provider) = eligible.iter().find(|p| p.id == id) else {
-                    return CallOutcome::Failed;
-                };
-                let model = settings
-                    .post_process_models
-                    .get(&provider.id)
-                    .cloned()
-                    .unwrap_or_default();
-                let api_key = settings
-                    .post_process_api_keys
-                    .get(&provider.id)
-                    .cloned()
-                    .unwrap_or_default();
-                run_agent_once(&http_client, provider, model, api_key, full, image).await
-            }
-        },
-        |id| {
-            crate::post_process_router::record_usage(app, id);
-            log::info!("[GRAIN] agent routed to '{id}'");
-        },
-    )
-    .await
+    Err("No fallback provider produced a response. Check providers in AI settings.".into())
 }
 
 /// Run ONE provider with already-resolved model/key. HTTP providers go through
 /// `llm_client::send_chat`; Apple Intelligence (local, no HTTP) is flattened to a
-/// single system+user prompt. Returns a [`CallOutcome`] so the rotation tracker
-/// learns from it.
+/// single system+user prompt. Returns a [`ProviderOutcome`] for fallback.
 async fn run_agent_once(
     client: &reqwest::Client,
     provider: &PostProcessProvider,
@@ -2680,7 +2622,7 @@ async fn run_agent_once(
     api_key: String,
     messages: &[(String, String)],
     image: Option<&ImageAttachment>,
-) -> CallOutcome {
+) -> ProviderOutcome {
     // Disable reasoning where it adds latency without helping (mirrors the
     // post-process path): custom servers + OpenRouter.
     let (reasoning_effort, reasoning) = match provider.id.as_str() {
@@ -2699,7 +2641,7 @@ async fn run_agent_once(
         #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
         {
             if !crate::apple_intelligence::check_apple_intelligence_availability() {
-                return CallOutcome::Failed;
+                return ProviderOutcome::Failed;
             }
             let (system, user) = flatten_for_single_prompt(messages);
             let token_limit = model.trim().parse::<i32>().unwrap_or(0);
@@ -2708,18 +2650,13 @@ async fn run_agent_once(
                 &user,
                 token_limit,
             ) {
-                Ok(result) if !result.trim().is_empty() => CallOutcome::Ok {
-                    text: result,
-                    remaining_requests: None,
-                    remaining_tokens: None,
-                    total_tokens: None,
-                },
-                _ => CallOutcome::Failed,
+                Ok(result) if !result.trim().is_empty() => ProviderOutcome::Ok { text: result },
+                _ => ProviderOutcome::Failed,
             };
         }
         #[cfg(not(all(target_os = "macos", target_arch = "aarch64")))]
         {
-            return CallOutcome::Failed;
+            return ProviderOutcome::Failed;
         }
     }
 
@@ -2767,23 +2704,16 @@ async fn run_agent_once(
                 provider.id,
                 AGENT_LLM_TIMEOUT.as_secs()
             );
-            CallOutcome::Failed
+            ProviderOutcome::Failed
         }
         Ok(Ok(success)) => match success.content {
-            Some(content) if !content.trim().is_empty() => CallOutcome::Ok {
-                text: content,
-                remaining_requests: success.remaining_requests,
-                remaining_tokens: success.remaining_tokens,
-                total_tokens: success.total_tokens,
-            },
-            _ => CallOutcome::Failed,
+            Some(content) if !content.trim().is_empty() => ProviderOutcome::Ok { text: content },
+            _ => ProviderOutcome::Failed,
         },
-        Ok(Err(LlmError::RateLimited { retry_after_s })) => {
-            CallOutcome::RateLimited { retry_after_s }
-        }
+        Ok(Err(LlmError::RateLimited)) => ProviderOutcome::RateLimited,
         Ok(Err(LlmError::Other(e))) => {
             warn!("[GRAIN] agent provider '{}' failed: {e}", provider.id);
-            CallOutcome::Failed
+            ProviderOutcome::Failed
         }
     }
 }
@@ -2801,12 +2731,12 @@ pub(crate) struct LlmToolReply {
 }
 
 /// Run ONE tool-enabled turn through the configured AI (single provider or the
-/// smart-rotation pool). Mirrors [`run_messages`] but carries `tools` and can
+/// ordered fallback pool). Mirrors [`run_messages`] but carries `tools` and can
 /// return `tool_calls`. tool-call ids are opaque strings we echo back, so a
-/// different rotation provider answering a later hop is harmless.
+/// different fallback provider answering a later hop is harmless.
 ///
 /// A provider must support native tool calls whenever `tools` is non-empty.
-/// Smart rotation skips known-ineligible providers; a directly selected
+/// Fallback skips known-ineligible providers; a directly selected
 /// ineligible provider returns an actionable error instead of silently acting
 /// as though the unavailable tools ran.
 ///
@@ -2824,8 +2754,8 @@ pub(crate) async fn run_messages_with_tools(
         .map(|s| s.inner().clone())
         .ok_or("Agent: shared HTTP client unavailable")?;
 
-    if settings.post_process_smart_rotation {
-        return agent_run_rotated_tools(app, &http_client, entries, tools, image).await;
+    if settings.post_process_fallback_enabled {
+        return agent_run_with_fallback_tools(&http_client, &settings, entries, tools, image).await;
     }
 
     let provider = settings
@@ -2834,7 +2764,7 @@ pub(crate) async fn run_messages_with_tools(
         .ok_or("No AI provider is configured. Choose one in Post-Processing settings.")?;
     if !tools.is_empty() && provider.id == APPLE_INTELLIGENCE_PROVIDER_ID {
         return Err(
-            "Apple Intelligence cannot use Agent tools yet. Choose a tool-capable provider or enable smart rotation."
+            "Apple Intelligence cannot use Agent tools yet. Choose a tool-capable provider or enable fallback."
                 .to_string(),
         );
     }
@@ -2866,130 +2796,44 @@ pub(crate) async fn run_messages_with_tools(
     )
     .await;
     match outcome {
-        CallOutcome::Ok { .. } => Ok(reply),
-        CallOutcome::RateLimited { .. } => Err(format!(
+        ProviderOutcome::Ok { .. } => Ok(reply),
+        ProviderOutcome::RateLimited => Err(format!(
             "{} is rate-limited right now — try again shortly.",
             provider.label
         )),
-        CallOutcome::Failed => Err(format!("{} could not produce a response.", provider.label)),
+        ProviderOutcome::Failed => Err(format!("{} could not produce a response.", provider.label)),
     }
 }
 
-/// Smart-rotation failover for the tool path. Reuses the shared health-ordered
-/// driver ([`run_with_rotation`]) for provider selection + tracker learning; the
-/// structured reply is captured out-of-band (the driver's text return is unused
-/// here) so `CallOutcome` stays a text-only contract for every other caller.
-async fn agent_run_rotated_tools(
-    app: &AppHandle,
+/// Try tool-capable providers in saved order, returning the winning reply directly.
+pub(crate) async fn agent_run_with_fallback_tools(
     http_client: &reqwest::Client,
+    settings: &grain_core::AppSettings,
     entries: Vec<crate::llm_client::ChatEntry>,
     tools: Vec<crate::llm_client::ToolSpec>,
     image: Option<&ImageAttachment>,
 ) -> Result<LlmToolReply, String> {
-    crate::post_process_router::reset_quota_if_new_day(app);
-    let settings = get_settings(app);
-
-    let eligible: Vec<PostProcessProvider> = crate::post_process_router::rotation_pool(&settings)
-        .into_iter()
-        .filter(|p| {
-            (tools.is_empty() || p.id != APPLE_INTELLIGENCE_PROVIDER_ID)
-                && settings
-                    .post_process_models
-                    .get(&p.id)
-                    .map(|m| !m.trim().is_empty())
-                    .unwrap_or(false)
-        })
-        .collect();
-    if eligible.is_empty() {
-        return Err(
-            "Smart rotation is on, but no eligible AI providers have a model configured.".into(),
-        );
+    for provider in grain_core::providers::fallback_pool(settings) {
+        if !tools.is_empty() && provider.id == APPLE_INTELLIGENCE_PROVIDER_ID {
+            continue;
+        }
+        let model = settings.post_process_models[&provider.id].clone();
+        let key = settings
+            .post_process_api_keys
+            .get(&provider.id)
+            .cloned()
+            .unwrap_or_default();
+        let (outcome, reply) =
+            run_agent_once_tools(http_client, provider, model, key, &entries, &tools, image).await;
+        if matches!(outcome, ProviderOutcome::Ok { .. }) {
+            return Ok(reply);
+        }
     }
-
-    let trackers = app
-        .try_state::<Arc<RotationTrackers>>()
-        .ok_or("RotationTrackers unavailable")?;
-
-    let est_text: String = entries
-        .iter()
-        .map(|e| match e {
-            crate::llm_client::ChatEntry::System(c)
-            | crate::llm_client::ChatEntry::User(c)
-            | crate::llm_client::ChatEntry::Assistant(c)
-            | crate::llm_client::ChatEntry::ToolResult { content: c, .. } => c.as_str(),
-            crate::llm_client::ChatEntry::AssistantToolCalls(_) => "",
-        })
-        .collect::<Vec<_>>()
-        .join(" ");
-    let est_tokens = provider_router::estimate_tokens(&est_text);
-    let candidates: Vec<(String, String)> = eligible
-        .iter()
-        .map(|p| (p.id.clone(), p.base_url.clone()))
-        .collect();
-
-    // Captured out-of-band: the winning provider's structured reply. The driver
-    // only knows about the (unused) text projection in `CallOutcome::Ok`.
-    let captured: Arc<Mutex<Option<LlmToolReply>>> = Arc::new(Mutex::new(None));
-
-    crate::rotation_state::run_with_rotation(
-        &trackers.llm,
-        &candidates,
-        est_tokens,
-        |id| {
-            let http_client = http_client.clone();
-            let eligible = &eligible;
-            let settings = &settings;
-            let entries = &entries;
-            let tools = &tools;
-            let captured = Arc::clone(&captured);
-            async move {
-                let Some(provider) = eligible.iter().find(|p| p.id == id) else {
-                    return CallOutcome::Failed;
-                };
-                let model = settings
-                    .post_process_models
-                    .get(&provider.id)
-                    .cloned()
-                    .unwrap_or_default();
-                let api_key = settings
-                    .post_process_api_keys
-                    .get(&provider.id)
-                    .cloned()
-                    .unwrap_or_default();
-                let (outcome, reply) = run_agent_once_tools(
-                    &http_client,
-                    provider,
-                    model,
-                    api_key,
-                    entries,
-                    tools,
-                    image,
-                )
-                .await;
-                if matches!(outcome, CallOutcome::Ok { .. }) {
-                    if let Ok(mut g) = captured.lock() {
-                        *g = Some(reply);
-                    }
-                }
-                outcome
-            }
-        },
-        |id| {
-            crate::post_process_router::record_usage(app, id);
-            log::info!("[GRAIN] agent (tools) routed to '{id}'");
-        },
-    )
-    .await?;
-
-    captured
-        .lock()
-        .ok()
-        .and_then(|mut g| g.take())
-        .ok_or_else(|| "tool turn produced no reply".to_string())
+    Err("No fallback provider produced a response. Check providers in AI settings.".into())
 }
 
 /// Run ONE tool-enabled provider call with already-resolved model/key. Returns
-/// a [`CallOutcome`] for the rotation tracker plus the structured reply. A
+/// a [`ProviderOutcome`] plus the structured reply. A
 /// response that carries ONLY tool calls (empty content) is still a success.
 #[allow(clippy::too_many_arguments)]
 async fn run_agent_once_tools(
@@ -3000,14 +2844,14 @@ async fn run_agent_once_tools(
     entries: &[crate::llm_client::ChatEntry],
     tools: &[crate::llm_client::ToolSpec],
     image: Option<&ImageAttachment>,
-) -> (CallOutcome, LlmToolReply) {
+) -> (ProviderOutcome, LlmToolReply) {
     let empty_reply = || LlmToolReply {
         content: String::new(),
         tool_calls: Vec::new(),
     };
 
     if !tools.is_empty() && provider.id == APPLE_INTELLIGENCE_PROVIDER_ID {
-        return (CallOutcome::Failed, empty_reply());
+        return (ProviderOutcome::Failed, empty_reply());
     }
 
     let (reasoning_effort, reasoning) = match provider.id.as_str() {
@@ -3028,7 +2872,7 @@ async fn run_agent_once_tools(
         #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
         {
             if !crate::apple_intelligence::check_apple_intelligence_availability() {
-                return (CallOutcome::Failed, empty_reply());
+                return (ProviderOutcome::Failed, empty_reply());
             }
             let pairs = tool_entries_to_pairs(entries);
             let (system, user) = flatten_for_single_prompt(&pairs);
@@ -3039,23 +2883,20 @@ async fn run_agent_once_tools(
                 token_limit,
             ) {
                 Ok(result) if !result.trim().is_empty() => (
-                    CallOutcome::Ok {
+                    ProviderOutcome::Ok {
                         text: result.clone(),
-                        remaining_requests: None,
-                        remaining_tokens: None,
-                        total_tokens: None,
                     },
                     LlmToolReply {
                         content: result,
                         tool_calls: Vec::new(),
                     },
                 ),
-                _ => (CallOutcome::Failed, empty_reply()),
+                _ => (ProviderOutcome::Failed, empty_reply()),
             };
         }
         #[cfg(not(all(target_os = "macos", target_arch = "aarch64")))]
         {
-            return (CallOutcome::Failed, empty_reply());
+            return (ProviderOutcome::Failed, empty_reply());
         }
     }
 
@@ -3082,18 +2923,15 @@ async fn run_agent_once_tools(
                 provider.id,
                 AGENT_LLM_TIMEOUT.as_secs()
             );
-            (CallOutcome::Failed, empty_reply())
+            (ProviderOutcome::Failed, empty_reply())
         }
         Ok(Ok(result)) => {
             let content = result.content.unwrap_or_default();
             let has_output = !content.trim().is_empty() || !result.tool_calls.is_empty();
             if has_output {
                 (
-                    CallOutcome::Ok {
+                    ProviderOutcome::Ok {
                         text: content.clone(),
-                        remaining_requests: result.remaining_requests,
-                        remaining_tokens: result.remaining_tokens,
-                        total_tokens: result.total_tokens,
                     },
                     LlmToolReply {
                         content,
@@ -3101,18 +2939,16 @@ async fn run_agent_once_tools(
                     },
                 )
             } else {
-                (CallOutcome::Failed, empty_reply())
+                (ProviderOutcome::Failed, empty_reply())
             }
         }
-        Ok(Err(LlmError::RateLimited { retry_after_s })) => {
-            (CallOutcome::RateLimited { retry_after_s }, empty_reply())
-        }
+        Ok(Err(LlmError::RateLimited)) => (ProviderOutcome::RateLimited, empty_reply()),
         Ok(Err(LlmError::Other(e))) => {
             warn!(
                 "[GRAIN] agent (tools) provider '{}' failed: {e}",
                 provider.id
             );
-            (CallOutcome::Failed, empty_reply())
+            (ProviderOutcome::Failed, empty_reply())
         }
     }
 }

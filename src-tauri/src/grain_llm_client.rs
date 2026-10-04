@@ -125,7 +125,7 @@ impl ChatMessage {
 
 /// One image to attach to the final user turn, already encoded.
 ///
-/// Base64 once per turn, not once per provider attempt: smart rotation can walk
+/// Base64 once per turn, not once per provider attempt: fallback can walk
 /// several providers for a single request, and re-encoding a few hundred KB on
 /// each hop is pure waste.
 #[derive(Debug, Clone)]
@@ -275,13 +275,10 @@ pub enum ChatEntry {
 
 /// A tool-enabled chat completion result: either free-text `content`, or one or
 /// more `tool_calls` the caller must execute and feed back — plus the same
-/// rate-limit signal the plain path returns.
+/// response content the plain path returns.
 pub struct LlmChatResult {
     pub content: Option<String>,
     pub tool_calls: Vec<ToolCallOut>,
-    pub remaining_requests: Option<i64>,
-    pub remaining_tokens: Option<i64>,
-    pub total_tokens: Option<i64>,
 }
 
 #[derive(Debug, Serialize)]
@@ -332,8 +329,6 @@ struct ChatCompletionRequest {
 #[derive(Debug, Deserialize)]
 struct ChatCompletionResponse {
     choices: Vec<ChatChoice>,
-    #[serde(default)]
-    usage: Option<Usage>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -363,27 +358,15 @@ struct RespToolCallFn {
     arguments: String,
 }
 
-#[derive(Debug, Deserialize)]
-struct Usage {
-    #[serde(default)]
-    total_tokens: Option<i64>,
-}
-
-/// A successful chat completion plus the live rate-limit signal the rotation
-/// tracker learns from. `remaining_*` come from response headers when present;
-/// `total_tokens` from the response `usage` (both `None` if the provider omits them).
+/// A successful chat completion.
 pub struct LlmSuccess {
     pub content: Option<String>,
-    pub remaining_requests: Option<i64>,
-    pub remaining_tokens: Option<i64>,
-    pub total_tokens: Option<i64>,
 }
 
-/// Why a chat completion failed, split so the router can cool a rate-limited
-/// provider (honoring Retry-After) versus briefly backing off any other error.
+/// Why a chat completion failed, preserving a useful single-provider error.
 pub enum LlmError {
-    /// HTTP 429. `retry_after_s` parsed from Retry-After / reset headers (or `None`).
-    RateLimited { retry_after_s: Option<f64> },
+    /// HTTP 429.
+    RateLimited,
     /// Network error, non-429 HTTP status, bad key (401), parse failure, etc.
     Other(String),
 }
@@ -391,17 +374,14 @@ pub enum LlmError {
 impl std::fmt::Display for LlmError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            LlmError::RateLimited { retry_after_s } => {
-                write!(f, "rate limited (retry after {retry_after_s:?}s)")
-            }
+            LlmError::RateLimited => write!(f, "rate limited"),
             LlmError::Other(m) => write!(f, "{m}"),
         }
     }
 }
 
 /// Send a chat completion request to an OpenAI-compatible API. Returns an
-/// [`LlmSuccess`] (content may be `None` if the response carried none) plus the
-/// rate-limit signal, or an [`LlmError`] distinguishing 429 from other failures.
+/// [`LlmSuccess`] (content may be `None`) or an [`LlmError`].
 pub async fn send_chat_completion(
     client: &reqwest::Client,
     provider: &PostProcessProvider,
@@ -726,15 +706,12 @@ async fn send_request(
     headers: HeaderMap,
     request_body: &ChatCompletionRequest,
 ) -> Result<LlmSuccess, LlmError> {
-    let (completion, rem_req, rem_tok) = post_chat(client, url, headers, request_body).await?;
+    let completion = post_chat(client, url, headers, request_body).await?;
     Ok(LlmSuccess {
         content: completion
             .choices
             .first()
             .and_then(|choice| choice.message.content.clone()),
-        remaining_requests: rem_req,
-        remaining_tokens: rem_tok,
-        total_tokens: completion.usage.and_then(|u| u.total_tokens),
     })
 }
 
@@ -746,7 +723,7 @@ async fn send_request_with_tools(
     headers: HeaderMap,
     request_body: &ChatCompletionRequest,
 ) -> Result<LlmChatResult, LlmError> {
-    let (completion, rem_req, rem_tok) = post_chat(client, url, headers, request_body).await?;
+    let completion = post_chat(client, url, headers, request_body).await?;
     let message = completion.choices.into_iter().next().map(|c| c.message);
     let (content, tool_calls) = match message {
         Some(m) => {
@@ -767,9 +744,6 @@ async fn send_request_with_tools(
     Ok(LlmChatResult {
         content,
         tool_calls,
-        remaining_requests: rem_req,
-        remaining_tokens: rem_tok,
-        total_tokens: completion.usage.and_then(|u| u.total_tokens),
     })
 }
 
@@ -783,7 +757,7 @@ async fn post_chat(
     url: &str,
     headers: HeaderMap,
     request_body: &ChatCompletionRequest,
-) -> Result<(ChatCompletionResponse, Option<i64>, Option<i64>), LlmError> {
+) -> Result<ChatCompletionResponse, LlmError> {
     // [GRAIN] Reasoning-rejection retry (ported from upstream Handy #1809).
     // Grain gates reasoning-disable fields by provider, so only "custom" and
     // "openrouter" ever send them — but a "custom" endpoint pointed at a strict
@@ -858,16 +832,9 @@ async fn post_chat(
             .map_err(|e| LlmError::Other(report_reqwest_error("HTTP retry failed", &e)))?;
     }
 
-    // Capture rate-limit signal from headers BEFORE consuming the body.
     let status = response.status();
-    let hmap = crate::rotation_state::headers_to_map(response.headers());
-    let (rem_req, rem_tok) = provider_router::parse_rate_limit_headers(&hmap);
-
     if status.as_u16() == 429 {
-        let retry = provider_router::parse_retry_after(&hmap);
-        return Err(LlmError::RateLimited {
-            retry_after_s: Some(retry),
-        });
+        return Err(LlmError::RateLimited);
     }
 
     let body = response.text().await.map_err(|e| {
@@ -883,7 +850,7 @@ async fn post_chat(
 
     let completion: ChatCompletionResponse = serde_json::from_str(&body)
         .map_err(|e| LlmError::Other(format!("Failed to parse API response: {}", e)))?;
-    Ok((completion, rem_req, rem_tok))
+    Ok(completion)
 }
 
 /// Fetch available models from an OpenAI-compatible API

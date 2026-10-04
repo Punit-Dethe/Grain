@@ -239,15 +239,9 @@ pub struct PostProcessProvider {
     pub models_endpoint: Option<String>,
     #[serde(default)]
     pub supports_structured_output: bool,
-    /// [GRAIN] Included in smart rotation when true. Defaults true so existing
-    /// configs (and the manual single-provider path) behave exactly as before.
+    /// [GRAIN] Included in ordered fallback when true.
     #[serde(default = "default_pp_enabled")]
     pub enabled: bool,
-    /// [GRAIN] Daily request cap for rotation; `None` = unlimited.
-    #[serde(default)]
-    pub quota_limit: Option<i64>,
-    #[serde(default)]
-    pub quota_used_today: i64,
 }
 
 fn default_pp_enabled() -> bool {
@@ -690,14 +684,10 @@ pub struct AppSettings {
     pub post_process_providers: Vec<PostProcessProvider>,
     #[serde(default = "default_post_process_api_keys")]
     pub post_process_api_keys: SecretMap,
-    /// [GRAIN] When true, post-processing routes among ENABLED post-process
-    /// providers (round-robin + per-provider daily quota + failover). When false
-    /// (default), the single `post_process_provider_id` is used — today's behavior.
+    /// [GRAIN] Try enabled, configured providers in their saved order on failure.
+    /// When false, use only the selected provider.
     #[serde(default)]
-    pub post_process_smart_rotation: bool,
-    /// [GRAIN] Local date (YYYY-MM-DD) the post-process daily quotas last reset on.
-    #[serde(default)]
-    pub post_process_quota_reset_date: String,
+    pub post_process_fallback_enabled: bool,
     #[serde(default = "default_post_process_models")]
     pub post_process_models: HashMap<String, String>,
     #[serde(default = "default_post_process_prompts")]
@@ -1026,7 +1016,7 @@ fn default_post_process_provider_id() -> String {
 }
 
 pub fn default_post_process_providers() -> Vec<PostProcessProvider> {
-    // Local constructor so the rotation fields (enabled/quota) stay in one place
+    // Local constructor so the fallback participation field stays in one place
     // instead of being repeated across every built-in entry.
     fn p(
         id: &str,
@@ -1044,8 +1034,6 @@ pub fn default_post_process_providers() -> Vec<PostProcessProvider> {
             models_endpoint: models_endpoint.map(|s| s.to_string()),
             supports_structured_output,
             enabled: true,
-            quota_limit: None,
-            quota_used_today: 0,
         }
     }
 
@@ -1683,8 +1671,7 @@ pub fn get_default_settings() -> AppSettings {
         post_process_provider_id: default_post_process_provider_id(),
         post_process_providers: default_post_process_providers(),
         post_process_api_keys: default_post_process_api_keys(),
-        post_process_smart_rotation: false,
-        post_process_quota_reset_date: String::new(),
+        post_process_fallback_enabled: false,
         post_process_models: default_post_process_models(),
         post_process_prompts: default_post_process_prompts(),
         post_process_selected_prompt_id: Some(DEFAULT_POST_PROCESS_PROMPT_ID.to_string()),

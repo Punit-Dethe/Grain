@@ -34,7 +34,6 @@ python scripts/ui_parity.py --commands # what nothing calls any more
 | ------------------------------- | --------------------------------------------------------------------------------------------------------------- |
 | `extensions_imported_v1`        | One-shot migration flag (`grain-core/context.rs`): marks that the bundled packs were imported. Nothing to show. |
 | `settings_schema_version`       | Internal settings-file format version used to run migrations after upgrades; never user-configurable.           |
-| `post_process_quota_reset_date` | Local date the post-process daily quotas last rolled over; the router resets lazily at routing time.            |
 
 ## Write-only by design
 

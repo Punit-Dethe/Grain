@@ -9,29 +9,31 @@ interface ProviderPoolProps {
   addLabel: string;
   onAdd: () => void;
   addDisabled?: boolean;
-  smartRotation: boolean;
-  onToggleRotation: (enabled: boolean) => void;
-  togglingRotation?: boolean;
-  rotationLabel: string;
-  rotationInfo: string;
+  fallbackEnabled: boolean;
+  onToggleFallback: (enabled: boolean) => void;
+  togglingFallback?: boolean;
+  fallbackDisabled?: boolean;
+  fallbackLabel: string;
+  fallbackInfo: string;
   /** The provider list (rows / add form / empty state). */
   children: React.ReactNode;
 }
 
 // [GRAIN] Shared provider-pool card. A titled section whose header BAR carries
-// "Add provider" on the left and the smart-rotation toggle (with a hover "i") on
-// the right; the provider list sits in the lighter body below. Used by both the
+// "Add provider" on the left and the fallback toggle (with a hover "i") on
+// the right; the provider list sits in the lighter body below. Used by the
 // AI text provider settings.
 export const ProviderPool: React.FC<ProviderPoolProps> = ({
   title,
   addLabel,
   onAdd,
   addDisabled = false,
-  smartRotation,
-  onToggleRotation,
-  togglingRotation = false,
-  rotationLabel,
-  rotationInfo,
+  fallbackEnabled,
+  onToggleFallback,
+  togglingFallback = false,
+  fallbackDisabled = false,
+  fallbackLabel,
+  fallbackInfo,
   children,
 }) => {
   return (
@@ -49,7 +51,7 @@ export const ProviderPool: React.FC<ProviderPoolProps> = ({
       </div>
 
       <div className="rounded-xl border border-line overflow-hidden">
-        {/* Header bar — darker strip: add (left) + smart rotation (right). */}
+        {/* Header bar — darker strip: add (left) + fallback (right). */}
         <div className="flex items-center justify-between gap-3 px-3 py-2.5 bg-paper-sunken border-b border-line">
           <Button
             onClick={onAdd}
@@ -64,14 +66,15 @@ export const ProviderPool: React.FC<ProviderPoolProps> = ({
 
           <div className="flex items-center gap-1.5">
             <span className="text-xs font-medium text-ink-soft">
-              {rotationLabel}
+              {fallbackLabel}
             </span>
-            <InfoHint text={rotationInfo} position="bottom" />
+            <InfoHint text={fallbackInfo} position="bottom" />
             <Switch
-              checked={smartRotation}
-              onChange={onToggleRotation}
-              isUpdating={togglingRotation}
-              ariaLabel={rotationLabel}
+              checked={fallbackEnabled}
+              onChange={onToggleFallback}
+              isUpdating={togglingFallback}
+              disabled={fallbackDisabled}
+              ariaLabel={fallbackLabel}
             />
           </div>
         </div>

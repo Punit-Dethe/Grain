@@ -1,54 +1,67 @@
 import React, { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { ask } from "@tauri-apps/plugin-dialog";
-import { Check, Pencil, Trash2 } from "lucide-react";
+import { Check, GripVertical, Pencil, Trash2 } from "lucide-react";
 import type { PostProcessProvider } from "@/bindings";
 import { isBuiltinPpId } from "./usePpPool";
 
 interface PpProviderRowProps {
   provider: PostProcessProvider;
   model: string;
-  /** Single-select active state (used when rotation is off). */
+  /** Single-select active state (used when fallback is off). */
   isActive: boolean;
-  /** Multi-select rotation state (used when rotation is on). */
-  smartRotation: boolean;
-  onToggleRotate: (
+  /** Multi-select fallback state (used when fallback is on). */
+  fallbackEnabled: boolean;
+  onToggleFallbackProvider: (
     provider: PostProcessProvider,
     enabled: boolean,
   ) => Promise<void>;
   onSetActive: (id: string) => Promise<void>;
   onEdit: (provider: PostProcessProvider) => void;
   onRemove: (id: string) => Promise<void>;
+  position: number;
+  reorderDisabled: boolean;
+  dragging: boolean;
+  onDragStart: (
+    event: React.PointerEvent<HTMLButtonElement>,
+    id: string,
+  ) => void;
+  onMove: (id: string, direction: number) => void;
 }
 
 export const PpProviderRow: React.FC<PpProviderRowProps> = ({
   provider,
   model,
   isActive,
-  smartRotation,
-  onToggleRotate,
+  fallbackEnabled,
+  onToggleFallbackProvider,
   onSetActive,
   onEdit,
   onRemove,
+  position,
+  reorderDisabled,
+  dragging,
+  onDragStart,
+  onMove,
 }) => {
   const { t } = useTranslation();
   const [busy, setBusy] = useState(false);
 
   const enabled = provider.enabled ?? true;
-  const quotaUsed = provider.quota_used_today ?? 0;
-  const quotaLimit = provider.quota_limit ?? null;
   const removable = !isBuiltinPpId(provider.id);
-  // The single control: checkbox in rotation mode, radio in single mode.
-  const selected = smartRotation ? enabled : isActive;
+  // The single control: checkbox in fallback mode, radio in single mode.
+  const selected = fallbackEnabled ? enabled : isActive;
 
   const handleSelect = async () => {
     setBusy(true);
     try {
-      if (smartRotation) {
-        await onToggleRotate(provider, !enabled);
+      if (fallbackEnabled) {
+        await onToggleFallbackProvider(provider, !enabled);
       } else if (!isActive) {
         await onSetActive(provider.id);
       }
+    } catch {
+      // The shared pool store displays command errors.
     } finally {
       setBusy(false);
     }
@@ -65,25 +78,33 @@ export const PpProviderRow: React.FC<PpProviderRowProps> = ({
     setBusy(true);
     try {
       await onRemove(provider.id);
+    } catch {
+      // The shared pool store displays command errors.
     } finally {
       setBusy(false);
     }
   };
 
   return (
-    <div className="group flex items-center gap-3 px-4 py-3">
-      {/* One selection control — radio (single) or checkbox (rotation). */}
+    <div
+      data-provider-row={provider.id}
+      className={`group flex items-center gap-3 px-4 py-3 ${dragging ? "bg-paper-sunken ring-1 ring-inset ring-accent/40" : ""}`}
+    >
+      {/* One selection control — radio (single) or checkbox (fallback). */}
       <button
         type="button"
         onClick={handleSelect}
-        disabled={busy}
+        disabled={busy || reorderDisabled}
+        role={fallbackEnabled ? "checkbox" : "radio"}
+        aria-checked={selected}
+        aria-label={provider.label}
         title={
-          smartRotation
-            ? t("settings.postProcessing.pool.rotateTooltip")
+          fallbackEnabled
+            ? t("settings.postProcessing.pool.fallbackProviderTooltip")
             : t("settings.postProcessing.pool.setActive")
         }
         className={`shrink-0 w-[1.1rem] h-[1.1rem] flex items-center justify-center border-2 transition-colors ${
-          smartRotation ? "rounded-[4px]" : "rounded-full"
+          fallbackEnabled ? "rounded-[4px]" : "rounded-full"
         } ${
           selected
             ? "border-accent bg-accent"
@@ -91,7 +112,7 @@ export const PpProviderRow: React.FC<PpProviderRowProps> = ({
         } ${busy ? "opacity-50 cursor-not-allowed" : "cursor-pointer"}`}
       >
         {selected &&
-          (smartRotation ? (
+          (fallbackEnabled ? (
             <Check className="w-3 h-3 text-[var(--on-accent)]" />
           ) : (
             <span className="w-2 h-2 rounded-full bg-[var(--on-accent)]" />
@@ -103,6 +124,16 @@ export const PpProviderRow: React.FC<PpProviderRowProps> = ({
           <div className="text-sm font-medium text-ink truncate">
             {provider.label}
           </div>
+          {fallbackEnabled && (
+            <span
+              className="text-xs text-ink-faint font-mono"
+              aria-label={t("settings.postProcessing.pool.priority", {
+                position: position + 1,
+              })}
+            >
+              {position + 1}
+            </span>
+          )}
           <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-all duration-300 ease-in-out min-w-0">
             <span className="text-line font-medium shrink-0">|</span>
             <div className="flex items-center gap-1.5 text-xs text-ink-faint font-mono truncate">
@@ -111,20 +142,36 @@ export const PpProviderRow: React.FC<PpProviderRowProps> = ({
             </div>
           </div>
         </div>
-        <div className="mt-0.5 text-[0.7rem] text-ink-soft">
-          {quotaLimit != null
-            ? t("settings.postProcessing.pool.quotaUsed", {
-                used: quotaUsed,
-                limit: quotaLimit,
-              })
-            : t("settings.postProcessing.pool.quotaUnlimited", {
-                used: quotaUsed,
-              })}
-        </div>
       </div>
 
+      {fallbackEnabled && (
+        <button
+          type="button"
+          disabled={busy || reorderDisabled}
+          aria-label={t("settings.postProcessing.pool.reorder", {
+            name: provider.label,
+          })}
+          title={t("settings.postProcessing.pool.reorder", {
+            name: provider.label,
+          })}
+          data-provider-grip={provider.id}
+          aria-keyshortcuts="ArrowUp ArrowDown"
+          onPointerDown={(event) => onDragStart(event, provider.id)}
+          onKeyDown={(event) => {
+            if (event.key === "ArrowUp" || event.key === "ArrowDown") {
+              event.preventDefault();
+              onMove(provider.id, event.key === "ArrowUp" ? -1 : 1);
+            }
+          }}
+          style={{ touchAction: "none" }}
+          className="shrink-0 p-1.5 rounded-lg text-ink-soft hover:text-ink hover:bg-paper-sunken cursor-grab active:cursor-grabbing disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-2 focus-visible:outline-accent"
+        >
+          <GripVertical className="w-4 h-4" aria-hidden="true" />
+        </button>
+      )}
       <button
         type="button"
+        disabled={busy || reorderDisabled}
         onClick={() => onEdit(provider)}
         title={t("settings.postProcessing.pool.edit")}
         className="shrink-0 p-1.5 rounded-lg text-ink-soft hover:text-ink hover:bg-paper-sunken transition-colors cursor-pointer"
@@ -135,7 +182,7 @@ export const PpProviderRow: React.FC<PpProviderRowProps> = ({
         <button
           type="button"
           onClick={handleRemove}
-          disabled={busy}
+          disabled={busy || reorderDisabled}
           title={t("settings.postProcessing.pool.remove")}
           className="shrink-0 p-1.5 rounded-lg text-ink-soft hover:text-status-error hover:bg-[var(--status-error-tint)] transition-colors cursor-pointer disabled:opacity-50"
         >

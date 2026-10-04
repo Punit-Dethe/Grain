@@ -1,9 +1,4 @@
-//! [GRAIN] Management of the post-process (LLM) routing pool — the counterpart to
-//! `commands/stt.rs`. Lets a user (or a future UI) add/remove post-process
-//! providers, set keys + models, and toggle smart rotation WITHOUT any front end:
-//! everything operates on grain-core's owned `AppContext` settings +
-//! `grain.secrets.json`. Keys never leave the backend.
-
+//! Grain-owned AI text provider settings. Keys never leave the backend.
 use std::sync::Arc;
 
 use grain_core::{AppContext, PostProcessProvider};
@@ -22,9 +17,10 @@ fn ctx(app: &AppHandle) -> Result<Arc<AppContext>, String> {
 /// model map (model names are not secret).
 #[derive(Serialize, Deserialize, Debug, Clone, Type)]
 pub struct PpPoolView {
-    pub smart_rotation: bool,
+    pub fallback_enabled: bool,
     pub providers: Vec<PostProcessProvider>,
     pub selected_provider_id: String,
+    pub configured_provider_ids: Vec<String>,
     pub providers_with_keys: Vec<String>,
     pub models: std::collections::HashMap<String, String>,
 }
@@ -33,8 +29,14 @@ pub struct PpPoolView {
 #[specta::specta]
 pub fn pp_get_pool(app: AppHandle) -> Result<PpPoolView, String> {
     Ok(ctx(&app)?.with_settings(|s| PpPoolView {
-        smart_rotation: s.post_process_smart_rotation,
+        fallback_enabled: s.post_process_fallback_enabled,
         providers: s.post_process_providers.clone(),
+        configured_provider_ids: s
+            .post_process_providers
+            .iter()
+            .filter(|p| grain_core::providers::is_configured(s, p))
+            .map(|p| p.id.clone())
+            .collect(),
         selected_provider_id: s.post_process_provider_id.clone(),
         providers_with_keys: s
             .post_process_api_keys
@@ -49,16 +51,16 @@ pub fn pp_get_pool(app: AppHandle) -> Result<PpPoolView, String> {
 
 #[tauri::command]
 #[specta::specta]
-pub fn pp_set_smart_rotation(app: AppHandle, enabled: bool) -> Result<(), String> {
+pub fn pp_set_fallback_enabled(app: AppHandle, enabled: bool) -> Result<(), String> {
     ctx(&app)?
-        .update_settings(|s| s.post_process_smart_rotation = enabled)
+        .update_settings(|s| s.post_process_fallback_enabled = enabled)
         .map_err(|e| e.to_string())
 }
 
 /// Add or update a post-process provider (matched by `id`), optionally setting its
 /// API key (→ grain.secrets.json) and model (→ `post_process_models`). Two entries
 /// with the same `base_url` but different `id`s = two keys for one endpoint, which
-/// is how multi-key rotation is expressed.
+/// is how multiple fallback entries are expressed.
 #[tauri::command]
 #[specta::specta]
 pub fn pp_upsert_provider(
@@ -116,4 +118,13 @@ pub fn pp_remove_provider(app: AppHandle, id: String) -> Result<(), String> {
             }
         })
         .map_err(|e| e.to_string())
+}
+
+/// Commit an exact permutation of provider ids, atomically with other settings writes.
+#[tauri::command]
+#[specta::specta]
+pub fn pp_reorder_providers(app: AppHandle, ids: Vec<String>) -> Result<(), String> {
+    ctx(&app)?
+        .update_settings(|s| grain_core::providers::reorder(s, &ids))
+        .map_err(|e| e.to_string())?
 }

@@ -1545,7 +1545,7 @@ async agentCopy(text: string) : Promise<Result<null, string>> {
 /**
  * Run the conversation against the configured AI and return the assistant reply.
  * Uses the post-processing provider config: a single provider, or the smart
- * rotation pool (round-robin + daily quota + health-ordered failover). The
+ * fallback pool (enabled providers in saved order). The
  * focused-field context captured at summon (if any) is injected backend-side.
  */
 async agentRun(messages: AgentMessage[], context: string | null) : Promise<Result<AgentReply, string>> {
@@ -1657,9 +1657,9 @@ async ppGetPool() : Promise<Result<PpPoolView, string>> {
     else return { status: "error", error: e  as any };
 }
 },
-async ppSetSmartRotation(enabled: boolean) : Promise<Result<null, string>> {
+async ppSetFallbackEnabled(enabled: boolean) : Promise<Result<null, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("pp_set_smart_rotation", { enabled }) };
+    return { status: "ok", data: await TAURI_INVOKE("pp_set_fallback_enabled", { enabled }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1669,7 +1669,7 @@ async ppSetSmartRotation(enabled: boolean) : Promise<Result<null, string>> {
  * Add or update a post-process provider (matched by `id`), optionally setting its
  * API key (→ grain.secrets.json) and model (→ `post_process_models`). Two entries
  * with the same `base_url` but different `id`s = two keys for one endpoint, which
- * is how multi-key rotation is expressed.
+ * is how multiple fallback entries are expressed.
  */
 async ppUpsertProvider(provider: PostProcessProvider, apiKey: string | null, model: string | null) : Promise<Result<null, string>> {
     try {
@@ -1682,6 +1682,17 @@ async ppUpsertProvider(provider: PostProcessProvider, apiKey: string | null, mod
 async ppRemoveProvider(id: string) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("pp_remove_provider", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Commit an exact permutation of provider ids, atomically with other settings writes.
+ */
+async ppReorderProviders(ids: string[]) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("pp_reorder_providers", { ids }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2372,15 +2383,10 @@ pill_hide_close_button?: boolean; debug_mode?: boolean; log_level?: LogLevel; cu
  */
 snippets?: Snippet[]; model_unload_timeout?: ModelUnloadTimeout; word_correction_threshold?: number; history_limit?: number; recording_retention_period?: RecordingRetentionPeriod; paste_method?: PasteMethod; clipboard_handling?: ClipboardHandling; auto_submit?: boolean; auto_submit_key?: AutoSubmitKey; post_process_enabled?: boolean; post_process_provider_id?: string; post_process_providers?: PostProcessProvider[]; post_process_api_keys?: SecretMap; 
 /**
- * [GRAIN] When true, post-processing routes among ENABLED post-process
- * providers (round-robin + per-provider daily quota + failover). When false
- * (default), the single `post_process_provider_id` is used — today's behavior.
+ * [GRAIN] Try enabled, configured providers in their saved order on failure.
+ * When false, use only the selected provider.
  */
-post_process_smart_rotation?: boolean; 
-/**
- * [GRAIN] Local date (YYYY-MM-DD) the post-process daily quotas last reset on.
- */
-post_process_quota_reset_date?: string; post_process_models?: Partial<{ [key in string]: string }>; post_process_prompts?: LLMPrompt[]; post_process_selected_prompt_id?: string | null; mute_while_recording?: boolean; append_trailing_space?: boolean; 
+post_process_fallback_enabled?: boolean; post_process_models?: Partial<{ [key in string]: string }>; post_process_prompts?: LLMPrompt[]; post_process_selected_prompt_id?: string | null; mute_while_recording?: boolean; append_trailing_space?: boolean; 
 /**
  * [GRAIN] Extension Mode Auto-send (`docs/Extensions V1/PLAN.md` §5). The
  * global opt-in, **off by default** and beta-gated (only active while
@@ -3071,20 +3077,15 @@ export type PasteMethod = "ctrl_v" | "direct" | "none" | "shift_insert" | "ctrl_
 export type PermissionAccess = "allowed" | "denied" | "unknown"
 export type PostProcessProvider = { id: string; label: string; base_url: string; allow_base_url_edit?: boolean; models_endpoint?: string | null; supports_structured_output?: boolean; 
 /**
- * [GRAIN] Included in smart rotation when true. Defaults true so existing
- * configs (and the manual single-provider path) behave exactly as before.
+ * [GRAIN] Included in ordered fallback when true.
  */
-enabled?: boolean; 
-/**
- * [GRAIN] Daily request cap for rotation; `None` = unlimited.
- */
-quota_limit?: number | null; quota_used_today?: number }
+enabled?: boolean }
 /**
  * A read-only view of the post-process pool. API keys are NEVER returned — only
  * the set of provider ids that currently have a key stored, plus the per-provider
  * model map (model names are not secret).
  */
-export type PpPoolView = { smart_rotation: boolean; providers: PostProcessProvider[]; selected_provider_id: string; providers_with_keys: string[]; models: Partial<{ [key in string]: string }> }
+export type PpPoolView = { fallback_enabled: boolean; providers: PostProcessProvider[]; selected_provider_id: string; configured_provider_ids: string[]; providers_with_keys: string[]; models: Partial<{ [key in string]: string }> }
 /**
  * [GRAIN] One contributed prompt layer, as every surface that shows one needs
  * it: the approval sheet, the extension card, and the prompt-stack view.

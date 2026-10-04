@@ -2,7 +2,6 @@ pub mod audio;
 pub mod history;
 pub mod models;
 pub mod native_asr; // [GRAIN] streaming-model view of the unified catalog + selection
-pub mod post_process; // [GRAIN] post-process (LLM) routing-pool management
 pub mod transcription;
 
 use crate::settings::{get_settings, write_settings, AppSettings, LogLevel};

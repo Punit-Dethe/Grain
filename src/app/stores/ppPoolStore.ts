@@ -2,8 +2,8 @@
  * [GRAIN] Singleton Zustand store for the post-process (LLM) provider pool.
  *
  * One live view shared between the settings
- * panel and the quick panel, so provider renames / key additions / smart
- * rotation changes are reflected everywhere without a second fetch.
+ * panel and the quick panel, so provider renames / key additions / fallback
+ * changes are reflected everywhere without a second fetch.
  */
 import { create } from "zustand";
 import {
@@ -18,15 +18,16 @@ export interface PpPoolStore {
   error: string | null;
 
   // Derived
-  smartRotation: boolean;
+  fallbackEnabled: boolean;
   providers: PostProcessProvider[];
   selectedProviderId: string;
   providersWithKeys: Set<string>;
+  configuredProviderIds: Set<string>;
   models: Record<string, string>;
 
   // Actions
   reload: () => Promise<void>;
-  setSmartRotation: (enabled: boolean) => Promise<void>;
+  setFallbackEnabled: (enabled: boolean) => Promise<void>;
   setActiveProvider: (id: string) => Promise<void>;
   upsertProvider: (
     provider: PostProcessProvider,
@@ -39,6 +40,7 @@ export interface PpPoolStore {
   ) => Promise<void>;
   removeProvider: (id: string) => Promise<void>;
   fetchModels: (id: string) => Promise<string[]>;
+  reorderProviders: (ids: string[]) => Promise<void>;
 }
 
 export const usePpPoolStore = create<PpPoolStore>()((set, get) => ({
@@ -46,40 +48,59 @@ export const usePpPoolStore = create<PpPoolStore>()((set, get) => ({
   loading: true,
   error: null,
 
-  smartRotation: false,
+  fallbackEnabled: false,
   providers: [],
   selectedProviderId: "",
   providersWithKeys: new Set(),
+  configuredProviderIds: new Set(),
   models: {},
 
   reload: async () => {
-    const res = await commands.ppGetPool();
-    if (res.status === "ok") {
-      const v = res.data;
-      const modelsOut: Record<string, string> = {};
-      for (const [k, val] of Object.entries(v.models ?? {})) {
-        if (typeof val === "string") modelsOut[k] = val;
+    try {
+      const res = await commands.ppGetPool();
+      if (res.status === "ok") {
+        const v = res.data;
+        const modelsOut: Record<string, string> = {};
+        for (const [k, val] of Object.entries(v.models ?? {})) {
+          if (typeof val === "string") modelsOut[k] = val;
+        }
+        set({
+          view: v,
+          loading: false,
+          error: null,
+          fallbackEnabled: v.fallback_enabled ?? false,
+          providers: v.providers ?? [],
+          selectedProviderId: v.selected_provider_id ?? "",
+          providersWithKeys: new Set(v.providers_with_keys ?? []),
+          configuredProviderIds: new Set(v.configured_provider_ids ?? []),
+          models: modelsOut,
+        });
+      } else {
+        throw new Error(res.error);
       }
+    } catch (error) {
       set({
-        view: v,
+        error: error instanceof Error ? error.message : String(error),
         loading: false,
-        error: null,
-        smartRotation: v.smart_rotation ?? false,
-        providers: v.providers ?? [],
-        selectedProviderId: v.selected_provider_id ?? "",
-        providersWithKeys: new Set(v.providers_with_keys ?? []),
-        models: modelsOut,
       });
-    } else {
-      set({ error: res.error, loading: false });
+      throw error;
     }
   },
 
-  setSmartRotation: async (enabled) => {
-    const res = await commands.ppSetSmartRotation(enabled);
+  reorderProviders: async (ids) => {
+    const res = await commands.ppReorderProviders(ids);
     if (res.status === "error") {
       set({ error: res.error });
-      return;
+      throw new Error(res.error);
+    }
+    await get().reload();
+  },
+
+  setFallbackEnabled: async (enabled) => {
+    const res = await commands.ppSetFallbackEnabled(enabled);
+    if (res.status === "error") {
+      set({ error: res.error });
+      throw new Error(res.error);
     }
     await get().reload();
   },
@@ -88,7 +109,7 @@ export const usePpPoolStore = create<PpPoolStore>()((set, get) => ({
     const res = await commands.setPostProcessProvider(id);
     if (res.status === "error") {
       set({ error: res.error });
-      return;
+      throw new Error(res.error);
     }
     await get().reload();
   },

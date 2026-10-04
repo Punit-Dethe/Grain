@@ -82,8 +82,6 @@ export const PpAddProvider: React.FC<PpAddProviderProps> = ({
       models_endpoint: template.models_endpoint ?? "/models",
       supports_structured_output: template.supports_structured_output ?? false,
       enabled: true,
-      quota_limit: null,
-      quota_used_today: 0,
     };
 
     setSaving(true);

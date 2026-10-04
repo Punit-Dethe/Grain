@@ -65,11 +65,11 @@ coverage for `grain_* as upstream_name` inert module aliases.
 | `src-tauri/src/actions.rs` | relocated | `src-tauri/src/grain_post_process.rs`<br>`src-tauri/src/grain_actions.rs`<br>`src-tauri/src/grain_capture.rs`<br>`src-tauri/src/grain_overlay.rs`<br>`crates/grain-core/src/capture.rs`<br>`src-tauri/src/grain_dictation_routing.rs`<br>`src/app/components/settings/capture/CaptureModes.tsx` |
 | `src-tauri/src/audio_toolkit/audio/recorder.rs` | parallel | `src-tauri/src/handy/managers/audio.rs`<br>`src-tauri/src/grain_capture.rs`<br>`src-tauri/src/grain_audio_journal.rs`<br>`src-tauri/src/grain_actions.rs` |
 | `src-tauri/src/audio_toolkit/text.rs` | relocated | `src-tauri/src/handy/audio_toolkit/grain_text.rs` |
-| `src-tauri/src/llm_client.rs` | inert | `src-tauri/src/grain_llm_client.rs`<br>`src-tauri/src/net_diag.rs` |
+| `src-tauri/src/llm_client.rs` | inert | `src-tauri/src/grain_llm_client.rs`<br>`src-tauri/src/net_diag.rs`<br>`src-tauri/src/grain_llm_fallback.rs`<br>`src-tauri/src/grain_post_process.rs`<br>`src-tauri/src/agent.rs` |
 | `src-tauri/src/managers/audio.rs` | relocated | `src-tauri/src/grain_capture.rs`<br>`src-tauri/src/grain_actions.rs`<br>`src-tauri/src/agent.rs`<br>`src-tauri/src/extension_session.rs`<br>`src-tauri/src/grain_action_session.rs`<br>`src-tauri/src/grain_onboarding.rs` |
 | `src-tauri/src/managers/transcription.rs` | parallel | `src-tauri/src/rolling.rs`<br>`src-tauri/src/tdt_flow.rs`<br>`crates/grain-tdt/src`<br>`src-tauri/src/grain_overlay.rs`<br>`src/app/overlay/RecordingOverlay.tsx`<br>`src-tauri/src/grain_transcription.rs` |
 | `src-tauri/src/overlay.rs` | relocated | `src-tauri/src/handy/overlay.rs`<br>`src-tauri/src/grain_overlay.rs`<br>`src-tauri/src/grain_capture.rs`<br>`src/app/overlay/RecordingOverlay.tsx`<br>`src/app/overlay/wave.ts`<br>`src/app/overlay/overlay.css`<br>`src-tauri/src/grain_events.rs`<br>`recording-overlay.html`<br>`vite.config.ts`<br>`src-tauri/src/pill_icon.rs`<br>`src-tauri/src/surface_watch.rs`<br>`src/app/overlay/main.tsx`<br>`crates/grain-sdk/src/event.rs` |
-| `src-tauri/src/settings.rs` | inert | `src-tauri/src/grain_settings.rs`<br>`crates/grain-core/src/settings.rs`<br>`crates/grain-core/src/context.rs`<br>`src/app/components/settings/ShowOverlay.tsx`<br>`src/app/components/settings/PillCloseButton.tsx`<br>`src/app/components/settings/PillAppIcon.tsx`<br>`src/app/stores/settingsStore.ts`<br>`crates/grain-core/src/capture.rs`<br>`src-tauri/src/grain_dictation_routing.rs`<br>`src/app/components/settings/capture/CaptureModes.tsx` |
+| `src-tauri/src/settings.rs` | inert | `src-tauri/src/grain_settings.rs`<br>`crates/grain-core/src/settings.rs`<br>`crates/grain-core/src/context.rs`<br>`src/app/components/settings/ShowOverlay.tsx`<br>`src/app/components/settings/PillCloseButton.tsx`<br>`src/app/components/settings/PillAppIcon.tsx`<br>`src/app/stores/settingsStore.ts`<br>`crates/grain-core/src/capture.rs`<br>`src-tauri/src/grain_dictation_routing.rs`<br>`src/app/components/settings/capture/CaptureModes.tsx`<br>`crates/grain-core/src/providers.rs`<br>`src-tauri/src/grain_provider_commands.rs`<br>`src/app/stores/ppPoolStore.ts`<br>`src/app/components/settings/post-processing/pool/PostProcessingPool.tsx` |
 <!-- END GENERATED RELOCATION POLICY -->
 
 ## Recording overlay audit (current)
@@ -181,12 +181,24 @@ backend `audio_toolkit/text.rs`; removal acts on transcription text, not audio.
 ## Grain-only subsystems (no upstream counterpart — never expect upstream changes)
 
 `grain_actions.rs`, `grain_commands.rs`, `grain_post_process.rs`,
-`grain_settings.rs`, `grain_llm_client.rs`, `grain_overlay.rs`,
+`grain_settings.rs`, `grain_llm_client.rs`, `grain_llm_fallback.rs`,
+`grain_provider_commands.rs`, `grain_overlay.rs`,
 `audio_toolkit/grain_text.rs` (all `grain_*` files are Grain-owned by
 convention — upstream has no counterpart, so they never conflict),
-`crates/*` (grain-core, grain-pill, grain-editor, provider-router),
-`src-tauri/src/{rolling,tdt_flow,grain_audio_journal,post_process_router,rotation_state,agent,bridge,events_server,context_detect,context_bias,context_screen,grain_space/**}.rs`,
+`crates/*` (grain-core, grain-sdk, grain-tdt, grain-editor),
+`src-tauri/src/{rolling,tdt_flow,grain_audio_journal,agent,bridge,events_server,context_detect,context_bias,context_screen,grain_space/**}.rs`,
 `Upstream/`, `docs/`.
+
+### AI provider simplification (2026-10-04)
+
+`provider-router`, `post_process_router` and `rotation_state` are deleted.
+The Grain-only provider commands moved out of `handy/commands/post_process.rs`
+to `grain_provider_commands.rs`; `handy/commands/mod.rs` loses that registration.
+The compiled Handy tree contains no provider pool feature code. Optional
+fallback tries configured, enabled records in persisted order and carries no
+health, quota, token or cooldown state. Transport and settings upstream review
+routes include these active owners; [LLM-FALLBACK.md](LLM-FALLBACK.md) records
+failure, ordering, Agent tools, extension and verification contracts.
 
 ## Frontend — FROZEN 2026-07-31 (UI 2.0)
 
