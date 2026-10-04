@@ -66,6 +66,23 @@ mod capture_shortcut_conflict_tests {
     use super::*;
 
     #[test]
+    fn streaming_default_is_supported_by_both_shortcut_backends() {
+        let settings = settings::get_default_settings();
+        let raw = &settings.bindings["transcribe_native_asr"].current_binding;
+        assert_eq!(raw, "ctrl+space");
+        assert!(crate::shortcut::tauri_impl::validate_shortcut(raw).is_ok());
+        assert!(raw
+            .parse::<tauri_plugin_global_shortcut::Shortcut>()
+            .is_ok());
+        assert!(raw.parse::<handy_keys::Hotkey>().unwrap().key.is_some());
+        assert!(!capture_shortcut_conflicts(
+            &settings,
+            "transcribe_native_asr",
+            raw
+        ));
+    }
+
+    #[test]
     fn every_capture_and_agent_pair_conflicts_even_when_features_are_off() {
         let ids = [
             "transcribe",

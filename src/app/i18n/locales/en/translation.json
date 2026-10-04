@@ -106,12 +106,12 @@
         "back": "Back",
         "chooseModels": "Choose models",
         "standard": {
-          "title": "Dictation",
+          "title": "Standard",
           "takeaway": "One shortcut · Parakeet TDT v2/v3 uses Flow automatically; other models transcribe after you stop."
         },
         "flow": {
-          "title": "Dictation · Flow",
-          "takeaway": "Same Dictation shortcut · Parakeet TDT v2/v3 works while you speak."
+          "title": "Standard · Flow",
+          "takeaway": "Same Standard shortcut · Parakeet TDT v2/v3 works while you speak."
         },
         "streaming": {
           "title": "Streaming",
@@ -147,7 +147,7 @@
         "description": "Install either family or both. You can add more later.",
         "standard": {
           "title": "Batch model",
-          "description": "One Dictation shortcut. Supported Parakeet models use Flow automatically."
+          "description": "One Standard shortcut. Supported Parakeet models use Flow automatically."
         },
         "streaming": {
           "title": "Streaming ASR",
@@ -180,7 +180,7 @@
         "defaultsFallback": "Recommendations could not load. You can still choose from the available models below.",
         "unavailable": "No model available",
         "chooseAlternative": "Choose another family or retry the recommendations.",
-        "standardOnly": "Uses Standard with the Dictation shortcut",
+        "standardOnly": "Transcribes after you stop",
         "cancelling": "Cancelling…"
       },
       "try": {
@@ -202,14 +202,14 @@
         "continue": "Continue",
         "modes": {
           "flow": {
-            "title": "Dictation",
+            "title": "Standard",
             "speed": "Batch model check",
             "hint": "Check your dictation model here. After setup, Alt+Space uses Flow automatically with this Parakeet model."
           },
           "standard": {
-            "title": "Dictation",
+            "title": "Standard",
             "speed": "After you stop",
-            "hint": "Record a complete thought, then stop to transcribe. The Dictation shortcut uses Standard with this model."
+            "hint": "Record a complete thought, then stop to transcribe."
           },
           "streaming": {
             "title": "Streaming",
@@ -394,12 +394,12 @@
         "pressKeys": "Press keys...",
         "bindings": {
           "transcribe": {
-            "name": "Dictation",
-            "description": "Record and paste text. Your selected model chooses Flow or Standard; cloud takes priority when enabled."
+            "name": "Standard",
+            "description": "Speak, then paste text when you stop."
           },
           "transcribe_native_asr": {
             "name": "Streaming",
-            "description": "Native real-time dictation with live preview text."
+            "description": "See text live as you speak."
           },
           "cancel": {
             "name": "Cancel",
@@ -542,7 +542,7 @@
         "description": "Choose whether recording pills appear at the top or bottom of the screen.",
         "display": {
           "title": "Recording pill",
-          "description": "None hides the pill in every mode. Compact uses a compact pill in every mode. Live preview shows text only with the Streaming shortcut; Dictation stays compact.",
+          "description": "None hides the pill in every mode. Compact uses a compact pill in every mode. Live preview shows text only with the Streaming shortcut; Standard stays compact.",
           "options": {
             "none": "None",
             "compact": "Compact",
@@ -710,9 +710,9 @@
         "unavailable": "Handled in the cloud",
         "standard": {
           "label": "Standard",
-          "purpose": "Dictation uses Standard with this model",
-          "purposeFlow": "Dictation uses Flow automatically with this model",
-          "purposeCloud": "Saved for Dictation when cloud transcription is off"
+          "purpose": "Transcribes after you stop",
+          "purposeFlow": "Processes while you speak, pastes after you stop",
+          "purposeCloud": "Saved for Standard when cloud transcription is off"
         },
         "streaming": {
           "label": "Streaming",
@@ -1234,7 +1234,7 @@
         },
         "startMode": {
           "title": "AI shortcut starts",
-          "description": "Choose Dictation or Streaming. Dictation automatically selects Standard or Flow from your model; cloud transcription takes priority when enabled."
+          "description": "Choose Standard or Streaming for the AI shortcut."
         }
       }
     }

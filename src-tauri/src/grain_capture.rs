@@ -4,7 +4,7 @@ use std::sync::Arc;
 use tauri::AppHandle;
 
 /// Call after queuing the session's overlay show. Stop/cancel invalidates every
-/// stage, including the mute after a blocking cue. Flow deliberately has no cue.
+/// stage, including the mute after a blocking cue.
 pub fn announce_ready(
     app: &AppHandle,
     manager: &Arc<AudioRecordingManager>,

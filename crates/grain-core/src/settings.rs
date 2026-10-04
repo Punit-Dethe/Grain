@@ -1602,13 +1602,11 @@ pub fn get_default_settings() -> AppSettings {
     //
     //   Space  = speak            Enter = speak to AI       letter = a surface
     //
-    // Alt (Option) is the Grain modifier: bare Alt+key is the least-contended
-    // global space on every platform. Modifiers then stack by how often a mode
-    // is used -- Dictation gets the bare chord; Streaming adds Shift.
+    // Standard uses Alt+Space (Option+Space on macOS); Streaming uses the
+    // user-requested Ctrl+Space chord. Both are supported by our shortcut backends.
     //
     // What we deliberately do NOT bind, because a global hotkey outranks the
     // focused app and would break these everywhere:
-    //   Ctrl+Space         IDE autocomplete; macOS "previous input source"
     //   Shift+Enter        newline in Slack, Discord, Teams, Gmail, Excel
     //   Ctrl+Shift+Arrow   extend-selection-by-word in every text field
     //   Alt+Arrow          Back/Forward in browsers and file managers
@@ -1622,8 +1620,8 @@ pub fn get_default_settings() -> AppSettings {
         "transcribe".to_string(),
         ShortcutBinding {
             id: "transcribe".to_string(),
-            name: "Dictation".to_string(),
-            description: "Record and paste text. Your selected model chooses Flow or Standard; cloud takes priority when enabled.".to_string(),
+            name: "Standard".to_string(),
+            description: "Speak, then paste text when you stop.".to_string(),
             default_binding: default_shortcut.to_string(),
             current_binding: default_shortcut.to_string(),
         },
@@ -1648,17 +1646,14 @@ pub fn get_default_settings() -> AppSettings {
     // [GRAIN] Native ASR: streaming dictation with live partial/committed text in
     // the Studio Window overlay. Push-to-talk like the other capture modes — the
     // engine loads/unloads automatically around the shortcut, never resident
-    // otherwise. Default adds Shift to the Dictation chord.
-    #[cfg(target_os = "macos")]
-    let default_native_asr_shortcut = "option+shift+space";
-    #[cfg(not(target_os = "macos"))]
-    let default_native_asr_shortcut = "alt+shift+space";
+    // otherwise. Ctrl+Space is supported by both shortcut implementations.
+    let default_native_asr_shortcut = "ctrl+space";
     bindings.insert(
         "transcribe_native_asr".to_string(),
         ShortcutBinding {
             id: "transcribe_native_asr".to_string(),
-            name: "Live".to_string(),
-            description: "Native real-time dictation with live streaming text.".to_string(),
+            name: "Streaming".to_string(),
+            description: "See text live as you speak.".to_string(),
             default_binding: default_native_asr_shortcut.to_string(),
             current_binding: default_native_asr_shortcut.to_string(),
         },

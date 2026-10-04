@@ -380,7 +380,7 @@ impl ShortcutAction for RealtimeTranscribeAction {
             change_tray_icon(app, TrayIconState::Recording);
             emit_session_started(app, sid, SessionMode::Dictation);
             if let Some(readiness) = readiness {
-                crate::grain_capture::announce_ready(app, &rm, readiness, false);
+                crate::grain_capture::announce_ready(app, &rm, readiness, true);
             }
             shortcut::register_cancel_shortcut(app);
         } else {
@@ -431,6 +431,7 @@ impl ShortcutAction for RealtimeTranscribeAction {
         change_tray_icon(app, TrayIconState::Transcribing);
         // C1: pill already showed "processing" from RecordingStopped above.
         rm.remove_mute();
+        play_feedback_sound(app, SoundType::Stop);
 
         let binding_id = binding_id.to_string();
         // Snapshot before the stop so a cancel landing during the extra
