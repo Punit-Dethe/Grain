@@ -10,7 +10,8 @@ import {
 import { audioAmplitude, barCount, WaveField } from "./wave";
 import { MatrixField } from "./matrix";
 import { useTranslation } from "react-i18next";
-import "@/i18n";
+import i18n from "@/i18n";
+import { getLanguageDirection } from "@/lib/utils/rtl";
 
 const empty: OverlayPresentation = {
   visible: false,
@@ -41,7 +42,7 @@ const Waveform = memo(function Waveform({
 }) {
   const row = useRef<HTMLDivElement>(null);
   const amplitude = useRef(0);
-  const [count, setCount] = useState(14);
+  const count = barCount(96);
   const [field] = useState(() => new WaveField());
   const [matrix] = useState(() => new MatrixField());
   useEffect(() => {
@@ -66,15 +67,6 @@ const Waveform = memo(function Waveform({
     matrix.reset();
     amplitude.current = 0;
   }, [session, field, matrix]);
-  useLayoutEffect(() => {
-    const element = row.current;
-    if (!element) return;
-    const observer = new ResizeObserver(() =>
-      setCount(barCount(element.clientWidth)),
-    );
-    observer.observe(element);
-    return () => observer.disconnect();
-  }, []);
   useEffect(() => {
     const element = row.current;
     if (!element) return;
@@ -105,7 +97,7 @@ const Waveform = memo(function Waveform({
   return (
     <div
       ref={row}
-      className={`wave ${skin} ${live ? "live" : ""} ${ready ? "ready" : "arming"}`}
+      className={`swave grain-wave ${skin} ${live ? "live" : ""} ${ready ? "ready" : "arming"}`}
       aria-hidden="true"
     >
       {Array.from(
@@ -255,14 +247,6 @@ export function RecordingOverlay() {
       const before = revision;
       const snapshot = await commands.overlaySnapshot();
       if (disposed) return;
-      document.documentElement.style.setProperty(
-        "--streaming-width",
-        `${snapshot.streaming_width - 10}px`,
-      );
-      document.documentElement.style.setProperty(
-        "--caption-height",
-        `${snapshot.streaming_height - 44}px`,
-      );
       if (!updated.skin) setSkin(snapshot.skin);
       if (!updated.position) setPosition(snapshot.position);
       if (!updated.theme)
@@ -280,13 +264,12 @@ export function RecordingOverlay() {
     if (
       !presentation.visible ||
       !presentation.ready ||
-      presentation.state !== "streaming" ||
-      working
+      presentation.state !== "streaming"
     )
       return;
     const timer = setInterval(() => setElapsed((value) => value + 1), 1000);
     return () => clearInterval(timer);
-  }, [presentation.visible, presentation.ready, presentation.state, working]);
+  }, [presentation.visible, presentation.ready, presentation.state]);
 
   useLayoutEffect(() => {
     const element = cap.current;
@@ -299,25 +282,31 @@ export function RecordingOverlay() {
     const observer = new ResizeObserver(update);
     observer.observe(element);
     return () => observer.disconnect();
-  }, [text, presentation.visible]);
+  }, [
+    text,
+    presentation.visible,
+    presentation.notice,
+    presentation.followup,
+    session,
+  ]);
 
   if (!presentation.visible) return null;
-  const live = presentation.state === "streaming";
-  const open = live && !!(text.committed || text.tentative);
-  const busy =
-    working ||
-    presentation.state === "transcribing" ||
-    presentation.state === "processing";
-  const cancel = (
+  const direction = getLanguageDirection(i18n.language);
+  const handleScroll = () => {
+    const element = cap.current;
+    if (element)
+      pinned.current =
+        element.scrollHeight - element.scrollTop - element.clientHeight <= 16;
+  };
+  const cancelBtn = (
     <button
-      className="cancel"
-      aria-label="Cancel"
+      className="sx"
+      aria-label="cancel"
       onClick={() => void commands.overlayCancel()}
     >
       <svg viewBox="0 0 16 16" aria-hidden="true">
         <path
-          d="M4 4l8 8M12 4l-8 8"
-          fill="none"
+          d="M4 4 L12 12 M12 4 L4 12"
           stroke="currentColor"
           strokeWidth="1.6"
           strokeLinecap="round"
@@ -325,89 +314,112 @@ export function RecordingOverlay() {
       </svg>
     </button>
   );
+  const listeningRow = (showTimer: boolean, live: boolean) => (
+    <div className="sbase">
+      <div className="sbase-l" title={presentation.owner || undefined}>
+        {presentation.icon ? (
+          <img src={presentation.icon} alt="" />
+        ) : (
+          <span className={`sdot ${presentation.ready ? "ready" : "arming"}`} />
+        )}
+      </div>
+      <Waveform
+        ready={presentation.ready}
+        session={session}
+        skin={skin}
+        live={live}
+      />
+      <div className="sbase-r">
+        {showTimer && (
+          <span className="stimer">
+            {Math.floor(elapsed / 60)}:{String(elapsed % 60).padStart(2, "0")}
+          </span>
+        )}
+        {cancelBtn}
+      </div>
+    </div>
+  );
+  const workingRow = (label: string) => (
+    <div className="sbase">
+      <div className="sbase-l">
+        <span className="sspinner" />
+      </div>
+      <span className="swork-label">{label}</span>
+      <div className="sbase-r">{cancelBtn}</div>
+    </div>
+  );
+
+  if (presentation.notice || presentation.followup) {
+    return (
+      <div dir={direction} className={`ov-stage ${position}`}>
+        {presentation.notice ? (
+          <div className="grain-notice" role="status">
+            {presentation.notice}
+          </div>
+        ) : (
+          <button
+            className="grain-followup"
+            onClick={() => void commands.overlayFollowup()}
+          >
+            {t("overlay.askFollowup")} <span>{presentation.followup}</span>
+          </button>
+        )}
+      </div>
+    );
+  }
+
+  // Handy's Live card and Minimal card keep their exact structure and states.
+  // Grain substitutes only the listening indicator and waveform contents.
+  if (presentation.state === "streaming") {
+    const open = text.committed.length > 0 || text.tentative.length > 0;
+    const collapsed = working && !open;
+    return (
+      <div dir={direction} className={`ov-stage ${position}`}>
+        <div
+          key={session}
+          className={`scard ${open ? "open" : ""} ${collapsed ? "working" : ""}`}
+        >
+          <div className="stext">
+            <div className="stext-clip">
+              <div
+                ref={cap}
+                className={`stext-cap ${overflowing ? "overflowing" : ""}`}
+                onScroll={handleScroll}
+              >
+                <p>
+                  <span className="committed">
+                    {text.committed ? text.committed + " " : ""}
+                  </span>
+                  <span className="tentative">{text.tentative}</span>
+                  {!working && <span className="scaret" />}
+                </p>
+              </div>
+            </div>
+          </div>
+          {working
+            ? workingRow(
+                kind === "polishing"
+                  ? t("overlay.processing")
+                  : t("overlay.transcribing"),
+              )
+            : listeningRow(open, open)}
+        </div>
+      </div>
+    );
+  }
+
+  const busy =
+    presentation.state === "transcribing" ||
+    presentation.state === "processing";
   const workLabel =
-    presentation.state === "processing" || kind === "polishing"
+    presentation.state === "processing"
       ? t("overlay.processing")
       : t("overlay.transcribing");
   return (
-    <div className={`stage ${position}`}>
-      {presentation.notice ? (
-        <div className="card notice" role="status">
-          {presentation.notice}
-        </div>
-      ) : presentation.followup ? (
-        <button
-          className="card followup"
-          onClick={() => void commands.overlayFollowup()}
-        >
-          {t("overlay.askFollowup")} <span>{presentation.followup}</span>
-        </button>
-      ) : (
-        <div
-          key={session}
-          className={`card ${open ? "open" : "compact"} ${busy ? "working" : ""} ${skin}`}
-        >
-          {live && (
-            <div className="text">
-              <div className="text-clip">
-                <div
-                  ref={cap}
-                  className={`caption ${overflowing ? "overflowing" : ""}`}
-                  onScroll={() => {
-                    const element = cap.current;
-                    if (element)
-                      pinned.current =
-                        element.scrollHeight -
-                          element.scrollTop -
-                          element.clientHeight <=
-                        16;
-                  }}
-                >
-                  <p dir="auto">
-                    {text.committed && <span>{text.committed} </span>}
-                    <span>{text.tentative}</span>
-                  </p>
-                </div>
-              </div>
-            </div>
-          )}
-          <div className="base">
-            <div className="identity" title={presentation.owner || undefined}>
-              {busy ? (
-                <span className="spinner" />
-              ) : presentation.icon ? (
-                <img src={presentation.icon} alt="" />
-              ) : (
-                <span
-                  className={`dot ${presentation.ready ? "ready" : "arming"}`}
-                />
-              )}
-            </div>
-            {busy ? (
-              <span className="work-label">{workLabel}</span>
-            ) : (
-              <Waveform
-                ready={presentation.ready}
-                session={session}
-                skin={skin}
-                live={open}
-              />
-            )}
-            <div className="controls">
-              {open && !busy && (
-                <span className="timer">
-                  {Math.floor(elapsed / 60)}:
-                  {String(elapsed % 60).padStart(2, "0")}
-                </span>
-              )}
-              {cancel}
-            </div>
-          </div>
-          {presentation.owner && (
-            <span className="owner">{presentation.owner}</span>
-          )}
-        </div>
-      )}
+    <div dir={direction} className={`ov-stage ${position} ov-fade show`}>
+      <div className={`scard compact ${busy ? "cworking" : ""}`}>
+        {busy ? workingRow(workLabel) : listeningRow(false, false)}
+      </div>
     </div>
   );
 }

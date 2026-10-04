@@ -79,10 +79,6 @@ pub struct OverlayContext {
     capture_generation: AtomicU64,
 }
 
-pub fn dimensions(state: &str) -> Option<(f64, f64)> {
-    (state == "streaming").then_some((430.0, 140.0))
-}
-
 fn publish(app: &AppHandle, value: &OverlayPresentation) {
     let _ = app.emit_to("recording_overlay", "grain-overlay-context", value);
 }
@@ -408,8 +404,8 @@ pub fn overlay_snapshot(app: AppHandle) -> OverlaySnapshot {
         position: settings.overlay_position,
         skin: settings.pill_skin,
         theme: crate::grain_theme::get_theme(app.clone()),
-        streaming_width: dimensions("streaming").unwrap().0,
-        streaming_height: dimensions("streaming").unwrap().1,
+        streaming_width: crate::overlay::overlay_dimensions("streaming").0,
+        streaming_height: crate::overlay::overlay_dimensions("streaming").1,
     }
 }
 

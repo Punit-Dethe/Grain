@@ -54,11 +54,8 @@ const OVERLAY_STREAM_WIDTH: f64 = 400.0;
 const OVERLAY_STREAM_HEIGHT: f64 = 120.0;
 
 /// Overlay window size (logical) for a given UI state.
-fn overlay_dimensions(state: &str) -> (f64, f64) {
-    // [GRAIN] Visual bounds only; all platform geometry remains upstream.
-    if let Some(size) = crate::grain_overlay::dimensions(state) {
-        return size;
-    }
+// [GRAIN] Report shared window bounds in the owned overlay snapshot.
+pub(crate) fn overlay_dimensions(state: &str) -> (f64, f64) {
     if state == "streaming" {
         (OVERLAY_STREAM_WIDTH, OVERLAY_STREAM_HEIGHT)
     } else {

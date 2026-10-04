@@ -2,6 +2,8 @@
 
 Status: implementation and Windows build verification complete; real-application visual, hardware, RAM and cross-platform acceptance pending. Reviewed 2026-10-04.
 
+Current visual direction: the user rejected the initial Grain-layout port on 2026-10-04. Use Handy's exact recording-card layout and styling, replacing only its waveform presentation and pink listening dot with Grain's waveform and app/site icon. The original visual plan below is historical and superseded by this correction.
+
 Visual references and placement were confirmed on 2026-10-04. Grain's existing smooth waveform reaction is an explicit retained behavior; live-preview expansion, scrolling and timing follow Handy. Top/bottom placement is approved.
 
 ## Baselines and objective
@@ -161,3 +163,14 @@ Migration removes old native presentation hooks and reduces actions/manager/tran
 ### Remaining acceptance
 
 User visual approval, real microphone/foreground/monitor checks, WebView RAM measurement and macOS/Linux acceptance are pending. The maintained Agent acceptance runner is absent from this `main` baseline and depends on different APIs on the original feature branch; it was not copied or run. Automated real-app Agent acceptance requires that reviewed dependency first. Production packaging/signing was not exercised by the successful debug/no-bundle build. Prompt Record's configurable shortcut remains the explicitly deferred next phase.
+
+
+## Visual correction — 2026-10-04
+
+The user reported an invisible compact waveform, edge-clipped control rows and incomplete live-preview expansion. The first pass recreated Grain's card dimensions and structure; it has not received visual approval.
+
+Correction uses the pinned Handy `RecordingOverlay.css` card rules and `styles/theme.css` palette in the owned overlay. The listening and working row markup, Minimal versus Live card branches, italic caption, caret, timer, placement reversal and transitions match Handy. Only the pink listening dot is replaced by the existing app/site image, and the waveform content uses the retained Grain WaveField/skin renderer. Clipboard/follow-up notices retain their separate presentation; Agent's result window is unchanged.
+
+Remove the Grain 430×140 native override and return to Handy's compact 256×50 and streaming 400×120 window bounds. The Handy card is 172px at rest, 216px when working and 392px when expanded; its caption cap is 64px with upstream viewport clamping. The snapshot reports the shared native bounds instead of computing a second geometry. The retained waveform has a fixed 96px presentation width (25 WaveField bars), so its bar count cannot feed back into its own measured width and collapse. Async event cleanup and hidden animation teardown remain Grain's required integration adaptations.
+
+Non-visual verification passed: the recording CSS prefix and palette match the local pinned Handy files (ignoring whitespace), and the WaveField math is unchanged. TypeScript/Vite build, ESLint, all 117 frontend tests, Rust check, formatting, UI parity and the real Tauri debug/no-bundle build passed. Visual confirmation in the real application is still required; no browser-only replica or UI automation was used.

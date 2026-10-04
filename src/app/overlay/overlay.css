@@ -1,91 +1,189 @@
-@font-face {
-  font-family: "Grain Pill";
-  src: url("./SpaceGrotesk-pill.ttf") format("truetype");
-  font-weight: 500;
-  font-display: swap;
-}
+@import "./theme.css";
+
 :root {
-  font-family: "Grain Pill", "Segoe UI", sans-serif;
-  color: #eceff5;
-  --surface: rgb(30 30 32 / 95%);
-  --rim: #4b4b4d;
-  --muted: #8a92a3;
-  --button: #303032;
+  --s-font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  /* Near-opaque app surface (theme.css --color-background at 98%). Auto-flips
+     light/dark with --color-background, so no dark-mode override is needed. */
+  --s-surface: color-mix(in srgb, var(--color-background) 98%, transparent);
+  /* Accent = logo pink; flips automatically via --color-logo-primary. */
+  --s-accent: var(--color-logo-primary);
+  /* Light/dark pairs for the tokens that can't flip through a shared palette
+     variable on their own. Same shape as theme.css: each value is written once
+     here, and the active token below is re-pointed by the media query or by the
+     `data-theme` overrides. */
+  --light-s-accent-soft: color-mix(
+    in srgb,
+    var(--color-background-ui) 16%,
+    transparent
+  );
+  /* Dark uses the lighter logo pink — reads better on the dark surface than the
+     deeper UI pink. */
+  --dark-s-accent-soft: color-mix(
+    in srgb,
+    var(--color-logo-primary) 20%,
+    transparent
+  );
+  /* Neutrals. muted/faint are overlay-specific secondary/tertiary text grays
+     (no theme equivalent). */
+  --light-s-muted: #6e6e6e;
+  --dark-s-muted: #a3a09a;
+  --light-s-faint: #9a9a9a;
+  --dark-s-faint: #6f6c66;
+  /* Hairlines reuse the app's mid-gray at low opacity in light — same vocabulary
+     as the app's border-mid-gray/* utilities — and flip to the near-white text
+     token for contrast on dark. */
+  --light-s-border: color-mix(in srgb, var(--color-mid-gray) 22%, transparent);
+  --dark-s-border: color-mix(in srgb, var(--color-text) 12%, transparent);
+  --light-s-hair: color-mix(in srgb, var(--color-mid-gray) 12%, transparent);
+  --dark-s-hair: color-mix(in srgb, var(--color-text) 8%, transparent);
+
+  /* Active neutrals — default light, flipped by the media query below or forced
+     by `data-theme`. */
+  --s-accent-soft: var(--light-s-accent-soft);
+  --s-muted: var(--light-s-muted);
+  --s-faint: var(--light-s-faint);
+  --s-border: var(--light-s-border);
+  --s-hair: var(--light-s-hair);
+
+  /* Card geometry — single source of truth for the visible overlay sizes. The
+     native overlay window (overlay.rs) is sized from these: it must be at least
+     the card's max footprint (--ov-work-w for compact, --ov-open-w for Live),
+     since the card is anchored flush to the screen edge in CSS. Keep overlay.rs
+     in sync when these change. */
+  --ov-rest-w: 172px; /* resting compact pill (minimal, recording) -- roomy enough
+                         for the English working label before the grow starts */
+  --ov-pill-w: 184px; /* base width / Live pill before it opens or collapses */
+  --ov-work-w: 216px; /* working pill (transcribing / polishing) -- wide enough to
+                         center longer labels; shared by Live (collapsed) + minimal */
+  --ov-open-w: 392px; /* Live panel, expanded */
+  --ov-base-h: 40px; /* control-row height (.sbase) */
+  --ov-cap-max-h: 64px; /* max height of the scrolling live-text region */
 }
+@media (prefers-color-scheme: dark) {
+  :root {
+    --s-accent-soft: var(--dark-s-accent-soft);
+    --s-muted: var(--dark-s-muted);
+    --s-faint: var(--dark-s-faint);
+    --s-border: var(--dark-s-border);
+    --s-hair: var(--dark-s-hair);
+  }
+}
+
+/*
+ * Explicit theme override, matching the `data-theme` blocks in theme.css.
+ * `--s-surface` and `--s-accent` honour the setting for free because they derive
+ * from shared palette tokens, but the neutrals above are chosen here, so without
+ * this block a forced theme on a differently-themed OS mixes the two — e.g. dark
+ * surface with light-theme secondary text at ~2.8:1 contrast. macOS masks that
+ * (setting the app appearance flips the webview's `prefers-color-scheme` to
+ * match), so this is what Windows and Linux need.
+ */
 :root[data-theme="light"] {
-  color: #242428;
-  --surface: rgb(247 247 249 / 96%);
-  --rim: #bdbdc2;
-  --muted: #636671;
-  --button: #e1e1e5;
+  --s-accent-soft: var(--light-s-accent-soft);
+  --s-muted: var(--light-s-muted);
+  --s-faint: var(--light-s-faint);
+  --s-border: var(--light-s-border);
+  --s-hair: var(--light-s-hair);
 }
-* {
-  box-sizing: border-box;
+
+:root[data-theme="dark"] {
+  --s-accent-soft: var(--dark-s-accent-soft);
+  --s-muted: var(--dark-s-muted);
+  --s-faint: var(--dark-s-faint);
+  --s-border: var(--dark-s-border);
+  --s-hair: var(--dark-s-hair);
 }
-html,
-body,
-#root {
-  margin: 0;
-  width: 100%;
-  height: 100%;
-  background: transparent;
-  overflow: hidden;
-  user-select: none;
-}
-button {
-  font: inherit;
-  color: inherit;
-}
-.stage {
-  height: 100%;
+
+/* ============================================================
+   Unified overlay stage — one fixed, transparent container shared by the compact
+   pill and the Live panel (both render the same `.scard` base). The card is
+   anchored flush to the screen-edge side (bottom by default, top when placed up
+   top) and centered horizontally, so the visible card sits exactly
+   OVERLAY_*_OFFSET from the screen edge regardless of window height — only the
+   offsets in overlay.rs move it. Pops scale from that edge, so the card is never
+   drawn past it (matters for the 4px top offset on Windows/Linux).
+   ============================================================ */
+.ov-stage {
+  position: fixed;
+  inset: 0;
   display: flex;
-  justify-content: center;
-  align-items: flex-end;
-  padding: 0 5px;
+  justify-content: center; /* horizontal centering, kept for both forms */
+  align-items: flex-end; /* bottom placement: flush to the bottom edge */
+  font-family: var(--s-font);
 }
-.stage.top {
-  align-items: flex-start;
+.ov-stage.top {
+  align-items: flex-start; /* top placement: flush to the top edge */
 }
-.card {
+
+/* Compact pill: fade the whole container in/out (the pill itself never pops or
+   morphs). */
+.ov-fade {
+  opacity: 0;
+  transition: opacity 200ms ease-out;
+}
+.ov-fade.show {
+  opacity: 1;
+}
+
+/* Top placement, Live panel: stack the control pill above the text region so the
+   card grows downward from its top edge (oldest line under the pill, newest at
+   the bottom) — mirroring the bottom overlay's upward flow. The compact pill has
+   no flowing text, so this only affects the Live panel. The text region keeps the
+   same fade + scroll-pin; older lines dissolve up under the pill. */
+.ov-stage.top .scard {
+  /* column-reverse stacks the control pill above the text region. */
+  flex-direction: column-reverse;
+  transform-origin: top center;
+}
+.ov-stage.top .stext-cap {
+  /* Mirror of the bottom overlay (top: 12 / bottom: 0): the first line sits flush
+     under the pill and the breathing room moves below the text. The top fade is
+     off at rest — at zero top padding it would dim the resting first line — and
+     switches on (below) only once text overflows. */
+  padding-top: 0;
+  padding-bottom: 12px;
+  -webkit-mask-image: none;
+  mask-image: none;
+}
+/* Once live text overflows, fade older lines up under the pill, matching the
+   bottom overlay's top fade. Gated on `.overflowing` so a short resting line
+   (sitting at the very top) is never dimmed. */
+.ov-stage.top .stext-cap.overflowing {
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 18px);
+  mask-image: linear-gradient(to bottom, transparent 0, #000 18px);
+}
+.ov-stage.top .stext-cap p {
+  /* Top-anchor short text just under the pill; on overflow the cap still pins to
+     the bottom (newest visible) and older lines fade off the top, same as bottom. */
+  margin: 0;
+}
+
+/* Shared base card. Flat: theme surface + hairline border, no shadow or blur. */
+.scard {
+  width: var(--ov-pill-w);
+  /* Never wider than the window: an unaccounted content zoom degrades to a
+     narrower card instead of clipping. 2px = our border (no border-box reset). */
+  max-width: calc(100vw - 2px);
+  border-radius: 24px;
+  overflow: hidden;
   display: flex;
   flex-direction: column;
-  flex-shrink: 0;
-  max-width: 100%;
-  width: 132px;
-  min-height: 38px;
-  border: 1px solid var(--rim);
-  border-radius: 24px;
-  background: var(--surface);
-  overflow: hidden;
+  flex: none; /* hold our own width; never let the stage flex shrink the card */
+  transform-origin: bottom center;
+  background: var(--s-surface);
+  border: 1px solid var(--s-border);
+  /* Flat: no drop shadow, no backdrop blur/saturate (was a glassy gradient look). */
+  /* pop-in plays on mount; morph (width/radius) is a transition */
+  animation: scard-pop 460ms cubic-bezier(0.22, 1, 0.36, 1);
   transition:
-    width 440ms cubic-bezier(0.22, 1, 0.36, 1),
-    border-radius 440ms cubic-bezier(0.22, 1, 0.36, 1);
-  animation: enter 340ms cubic-bezier(0.22, 1, 0.36, 1) both;
-  transform-origin: center bottom;
+    width 460ms cubic-bezier(0.22, 1, 0.36, 1),
+    border-radius 460ms cubic-bezier(0.22, 1, 0.36, 1);
+  will-change: transform, width, opacity;
 }
-.top .card {
-  transform-origin: center top;
-}
-.card.matrix {
-  width: 216px;
-  min-height: 46px;
-}
-.card {
-  position: relative;
-}
-.card.matrix:not(.open) .base {
-  height: 44px;
-}
-.card.open {
-  width: var(--streaming-width, 420px);
-  border-radius: 16px;
-}
-.card.working.compact {
-  width: 216px;
-}
-@keyframes enter {
+@keyframes scard-pop {
   from {
     opacity: 0;
+    /* Scale from the anchored edge (transform-origin) — never translate past it. */
     transform: scale(0.92);
   }
   to {
@@ -93,7 +191,37 @@ button {
     transform: none;
   }
 }
-.text {
+.scard.leaving {
+  opacity: 0;
+  transform: scale(0.96);
+  transition:
+    opacity 240ms ease,
+    transform 300ms ease;
+}
+.scard.open {
+  width: var(--ov-open-w);
+  border-radius: 16px;
+}
+.scard.working {
+  width: var(--ov-work-w);
+  border-radius: 18px;
+}
+
+/* Compact form: two fixed widths so the recording→working change is an animatable
+   width transition (intrinsic max-content can't be transitioned, and every label
+   is short enough to fit the resting pill, so content-sizing produced no visible
+   grow). The resting pill hugs the waveform; the working pill is roomy enough to
+   center the longest label — the .swork-label ellipsis is only a safety net past it. */
+.scard.compact {
+  animation: none;
+  width: var(--ov-rest-w);
+}
+.scard.compact.cworking {
+  width: var(--ov-work-w);
+}
+
+/* text region — auto-height open via grid-rows trick; region fades as a whole */
+.stext {
   display: grid;
   grid-template-rows: 0fr;
   opacity: 0;
@@ -101,187 +229,342 @@ button {
     grid-template-rows 440ms cubic-bezier(0.22, 1, 0.36, 1),
     opacity 260ms ease;
 }
-.open .text {
+.scard.open .stext {
   grid-template-rows: 1fr;
   opacity: 1;
 }
-.text-clip {
-  min-height: 0;
+.stext-clip {
   overflow: hidden;
+  min-height: 0;
 }
-.caption {
-  padding: 0 17px;
-  max-height: min(var(--caption-height, 96px), calc(100vh - 40px));
+.stext-cap {
+  /* Vertical counterpart of the .scard clamp: show fewer lines rather than clip.
+     20px = cap padding (12) + card borders (2) + 6px slack for zoom rounding. */
+  max-height: min(var(--ov-cap-max-h), calc(100vh - var(--ov-base-h) - 20px));
   overflow-y: auto;
   overscroll-behavior: contain;
-  scrollbar-width: none;
-  font-size: 15.5px;
-  line-height: 21px;
+  display: flex;
+  flex-direction: column;
+  padding-top: 12px;
+  padding-bottom: 0px;
+  padding-left: 14px;
+  padding-right: 14px;
+  font-size: 15px;
+  font-style: italic;
+  line-height: 1.35;
   letter-spacing: -0.003em;
-  user-select: text;
+  color: color-mix(in srgb, var(--color-text) 90%, transparent);
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 18px);
+  mask-image: linear-gradient(to bottom, transparent 0, #000 18px);
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* legacy Edge */
 }
-.caption::-webkit-scrollbar {
+/* Hide the scrollbar (WebKit/Chromium) — scroll-back is signalled by the fade. */
+.stext-cap::-webkit-scrollbar {
   display: none;
 }
-.caption p {
-  margin: 0;
-  padding-top: 10px;
+.stext-cap p {
+  /* Bottom-anchor the text when it's shorter than the viewport, avoiding the
+     justify-content:flex-end overflow bug that makes the top unscrollable. */
+  margin: auto 0 0;
 }
-.caption.overflowing {
-  mask-image: linear-gradient(to bottom, transparent 0, black 22px);
+.stext-cap .tentative {
+  color: inherit;
 }
-.top .text {
-  order: 2;
+.scaret {
+  display: inline-block;
+  width: 2px;
+  height: 1.02em;
+  translate: 0 3px;
+  margin-left: 1px;
+  background: var(--s-accent);
+  border-radius: 2px;
+  animation: scaret-blink 1.05s steps(1) infinite;
 }
-.base {
-  height: 36px;
-  flex-shrink: 0;
+@keyframes scaret-blink {
+  50% {
+    opacity: 0;
+  }
+}
+
+/* base row — dot (left) | waveform (center) | timer + cancel (right).
+   Same structure for pill & panel; the dot stays anchored left in both. */
+.sbase {
+  height: var(--ov-base-h);
+  flex: none; /* the control row never squashes; only the text region gives */
   padding: 0 10px;
   display: grid;
-  grid-template-columns: 18px minmax(0, 1fr) 22px;
+  /* Equal side columns (min 22px to hold the cancel button) keep the center item
+     — waveform or label — centered whether the pill is at min width or content-
+     sized. */
+  grid-template-columns: minmax(22px, 1fr) auto minmax(22px, 1fr);
   align-items: center;
-  gap: 9px;
 }
-.open .base {
-  grid-template-columns: 1fr 96px 1fr;
-  padding: 0 14px;
+.sbase-l {
+  display: flex;
+  padding-left: 5px;
+  align-items: center;
+  justify-self: start;
 }
-.identity {
+.sbase-r {
   display: flex;
   align-items: center;
-  justify-content: center;
-  width: 18px;
+  gap: 10px;
+  justify-self: end;
 }
-.identity img {
-  width: 18px;
-  height: 18px;
-  object-fit: contain;
-}
-.dot {
-  width: 6px;
-  height: 6px;
+.sdot {
+  width: 7px;
+  height: 7px;
   border-radius: 50%;
-  background: var(--muted);
+  flex: none;
+  box-sizing: border-box;
+  transition:
+    background-color 180ms ease,
+    opacity 180ms ease;
 }
-.dot.ready {
-  background: #76cf95;
+.sdot.ready {
+  background: var(--s-accent);
+  opacity: 1;
+  animation: sdot-pulse 1.9s infinite;
 }
-.dot.arming {
+/* A quiet neutral dot while the host has not delivered its first sample yet. */
+.sdot.arming {
+  background: var(--s-muted);
   opacity: 0.45;
+  animation: none;
 }
-.controls {
+@keyframes sdot-pulse {
+  0% {
+    box-shadow: 0 0 0 0 var(--s-accent-soft);
+  }
+  70% {
+    box-shadow: 0 0 0 7px transparent;
+  }
+}
+.stimer {
+  font-size: 12px;
+  color: var(--s-faint);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  opacity: 0;
+  transition: opacity 240ms ease 80ms;
+}
+.scard.open .stimer {
+  opacity: 1;
+}
+
+/* Waveform — reactive only after the first microphone callback. While arming,
+   a muted travelling pulse acknowledges the shortcut without pretending that
+   audio levels are already being received. */
+.swave {
   display: flex;
   align-items: center;
-  justify-content: flex-end;
-  gap: 8px;
+  gap: 3px;
+  padding-right: 8px;
+  height: 18px;
+  flex: none;
 }
-.cancel {
-  display: flex;
-  align-items: center;
-  justify-content: center;
+.swave i {
+  width: 4px;
+  min-height: 3px;
+  max-height: 18px;
+  border-radius: 2px;
+  background: var(--s-accent);
+  transition:
+    height 80ms linear,
+    background-color 180ms ease,
+    opacity 180ms ease;
+}
+.swave.arming i {
+  height: 6px !important;
+  background: var(--s-muted);
+  opacity: 0.35;
+  animation: swave-arming 900ms ease-in-out infinite;
+}
+.swave.arming i:nth-child(2),
+.swave.arming i:nth-child(8) {
+  animation-delay: 75ms;
+}
+.swave.arming i:nth-child(3),
+.swave.arming i:nth-child(7) {
+  animation-delay: 150ms;
+}
+.swave.arming i:nth-child(4),
+.swave.arming i:nth-child(6) {
+  animation-delay: 225ms;
+}
+.swave.arming i:nth-child(5) {
+  animation-delay: 300ms;
+}
+@keyframes swave-arming {
+  0%,
+  100% {
+    transform: scaleY(0.55);
+    opacity: 0.25;
+  }
+  50% {
+    transform: scaleY(1.5);
+    opacity: 0.7;
+  }
+}
+.sx {
   width: 22px;
   height: 22px;
-  padding: 5px;
-  border: 0;
   border-radius: 50%;
-  background: var(--button);
-  color: #9a9a9c;
-  cursor: pointer;
-}
-.cancel svg {
-  width: 12px;
-  height: 12px;
-}
-.wave {
+  flex: none;
+  padding: 0;
+  border: 0;
+  -webkit-appearance: none;
+  appearance: none;
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 1.7px;
-  height: 24px;
-  overflow: hidden;
+  color: var(--s-muted);
+  background: var(--s-hair);
+  cursor: pointer;
+  transition:
+    background-color 150ms ease,
+    color 150ms ease,
+    transform 100ms ease;
 }
-.wave i {
+.sx svg {
+  width: 9px;
+  height: 9px;
   display: block;
-  flex: 0 0 2px;
-  height: 2px;
-  border-radius: 1px;
-  background: currentColor;
 }
-.wave.arming {
-  color: var(--muted);
-  opacity: 0.55;
+.sx:hover {
+  background: var(--s-accent-soft);
+  color: var(--color-text);
+  transform: scale(1.05);
 }
-.wave.matrix {
-  height: 38px;
-  display: grid;
-  grid-template-columns: repeat(25, 3px);
-  grid-template-rows: repeat(8, 3px);
-  gap: 2px;
+.sx:active {
+  transform: scale(0.95);
 }
-.wave.matrix.live {
-  height: 8px;
-  grid-template-rows: repeat(2, 3px);
-}
-.open.matrix .base {
-  grid-template-columns: 1fr 125px 1fr;
-}
-.wave.matrix i {
-  width: 3px;
-  height: 3px;
-  border-radius: 50%;
-}
-.spinner {
+
+/* working state (transcribing / polishing) — spinner + label */
+.sspinner {
   width: 13px;
   height: 13px;
   border-radius: 50%;
-  border: 2px solid var(--button);
-  border-top-color: var(--muted);
-  animation: spin 0.7s linear infinite;
+  border: 2px solid var(--s-hair);
+  border-top-color: var(--s-accent);
+  animation: sspin 0.7s linear infinite;
+  flex: none;
 }
-@keyframes spin {
+@keyframes sspin {
   to {
     transform: rotate(1turn);
   }
 }
-.work-label {
-  text-align: center;
+.swork-label {
   font-size: 12px;
+  color: var(--s-muted);
   white-space: nowrap;
-  color: var(--muted);
-}
-.timer {
-  font-size: 11px;
-  font-variant-numeric: tabular-nums;
-  color: var(--muted);
-}
-.notice {
-  width: 136px;
-  justify-content: center;
-  align-items: center;
-  font-size: 11px;
-}
-.followup {
-  width: 250px;
-  flex-direction: row;
-  justify-content: center;
-  align-items: center;
-  gap: 10px;
-  font-size: 11px;
-  cursor: pointer;
-}
-.followup span {
-  color: var(--muted);
-}
-.owner {
-  position: absolute;
-  bottom: 1px;
-  left: 32px;
-  right: 32px;
-  font-size: 8px;
-  line-height: 9px;
-  text-align: center;
-  white-space: nowrap;
+  padding: 0 8px; /* breathing room from the spinner / cancel when content-sized */
+  /* Safety net: ellipsize rather than clip if a label exceeds the max pill width. */
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
-  color: var(--muted);
+}
+
+/* Grain substitutions: application icon and retained waveform presentation.
+ * All card, caption, placement and transition rules above are Handy's. */
+html,
+body,
+#root {
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  overflow: hidden;
+  width: 100%;
+  height: 100%;
+}
+.sbase-l img {
+  width: 18px;
+  height: 18px;
+  object-fit: contain;
+  flex: none;
+}
+.swave.grain-wave {
+  width: 96px;
+  height: 24px;
+  padding-right: 0;
+  justify-content: center;
+  gap: 1.7px;
+  overflow: hidden;
+}
+.swave.grain-wave i {
+  display: block;
+  flex: 0 0 2px;
+  width: 2px;
+  height: 2px;
+  min-height: 2px;
+  max-height: 22px;
+  border-radius: 1px;
+  background: var(--color-text);
+  transition:
+    background-color 180ms ease,
+    opacity 180ms ease;
+}
+.swave.grain-wave.arming i {
+  background: var(--s-muted);
+}
+.swave.grain-wave.matrix {
+  display: grid;
+  grid-template-columns: repeat(25, 2px);
+  grid-template-rows: repeat(8, 3px);
+  gap: 1px;
+  height: 31px;
+}
+.swave.grain-wave.matrix.live {
+  height: 7px;
+  grid-template-rows: repeat(2, 3px);
+}
+.swave.grain-wave.matrix i {
+  width: 2px;
+  height: 3px;
+  border-radius: 50%;
+}
+/* Existing supplemental notices are independent of the recording card. */
+@font-face {
+  font-family: "Grain Pill";
+  src: url("./SpaceGrotesk-pill.ttf") format("truetype");
+  font-weight: 500;
+  font-display: swap;
+}
+.grain-notice,
+.grain-followup {
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 38px;
+  border: 1px solid #4b4b4d;
+  border-radius: 24px;
+  background: rgb(30 30 32 / 95%);
+  color: #eceff5;
+  font:
+    11px "Grain Pill",
+    "Segoe UI",
+    sans-serif;
+}
+.grain-notice {
+  width: 136px;
+}
+.grain-followup {
+  width: 250px;
+  gap: 10px;
+  cursor: pointer;
+}
+.grain-followup span {
+  color: #8a92a3;
+}
+:root[data-theme="light"] .grain-notice,
+:root[data-theme="light"] .grain-followup {
+  background: rgb(247 247 249 / 96%);
+  border-color: #bdbdc2;
+  color: #242428;
+}
+:root[data-theme="light"] .grain-followup span {
+  color: #636671;
 }
