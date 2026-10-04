@@ -71,6 +71,8 @@ static NEXT_GENERATION: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum StartError {
+    /// This build withholds the feature before any resource acquisition.
+    Disabled,
     /// Something else already owns the microphone — a dictation, an extension
     /// session, or a request still being processed. One recording at a time is
     /// a hard singleton and this inherits it by going through the same
@@ -89,6 +91,9 @@ pub fn start(app: &AppHandle) -> Result<(), StartError> {
 
 /// Shortcut coordinator already owns the shared capture-start gate.
 pub(crate) fn start_locked(app: &AppHandle) -> Result<(), StartError> {
+    if !grain_core::capture::EXTENSION_MODE_AVAILABLE {
+        return Err(StartError::Disabled);
+    }
     // Gate on the POOL, not on declared actions. A searchable extension may have
     // a `recommend` block and no command catalogue at all (a translator, §3.1);
     // gating on `action_vocabulary` here would refuse to start for exactly that

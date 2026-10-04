@@ -780,9 +780,10 @@ pub fn grain_action_listen(app: AppHandle, phase: String) -> Result<bool, String
     match phase.as_str() {
         "start" => match action_session::start(&app) {
             Ok(()) => Ok(true),
-            // Not an error the user needs shown: something else already owns the
-            // microphone, or nothing is installed that could answer.
-            Err(action_session::StartError::Busy)
+            // Quiet refusal: the build withholds the feature, something else
+            // owns the microphone, or nothing installed could answer.
+            Err(action_session::StartError::Disabled)
+            | Err(action_session::StartError::Busy)
             | Err(action_session::StartError::NothingInstalled) => Ok(false),
             Err(action_session::StartError::Unavailable(why)) => Err(why),
         },

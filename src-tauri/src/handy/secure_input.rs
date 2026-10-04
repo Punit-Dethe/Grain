@@ -521,6 +521,10 @@ mod imp {
         let mut immune = 0usize;
         if eligible {
             for (id, binding) in &settings.bindings {
+                // [GRAIN] Withheld features must not regain a shadow hotkey.
+                if grain_core::capture::shortcut_is_withheld(id) {
+                    continue;
+                }
                 if id == "cancel" && !state.cancel_requested.load(Ordering::SeqCst) {
                     continue;
                 }

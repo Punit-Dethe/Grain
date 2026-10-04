@@ -323,16 +323,16 @@ html[data-theme="light"] body {
 
 .grain-mark {
   display: block;
-  width: 28px;
-  height: 28px;
-  flex: 0 0 28px;
+  width: 32px;
+  height: 32px;
+  flex: 0 0 32px;
   object-fit: contain;
   filter: invert(1);
 }
 
 .grain-wordmark strong {
   font-family: "IBM Plex Sans Variable", var(--font-sans);
-  font-size: 22px;
+  font-size: 24px;
   font-weight: 600;
   line-height: 1;
   letter-spacing: -0.045em;

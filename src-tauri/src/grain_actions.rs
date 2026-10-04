@@ -269,6 +269,8 @@ impl ShortcutAction for ExtensionModeAction {
         }
         match action_session::start_locked(app) {
             Ok(()) => {}
+            // A stale/programmatic dispatch must not open a warning surface.
+            Err(action_session::StartError::Disabled) => {}
             Err(action_session::StartError::Busy) => {
                 log::debug!("[GRAIN] extension mode: shortcut ignored while busy");
             }

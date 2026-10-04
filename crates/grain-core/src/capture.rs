@@ -11,6 +11,16 @@
 
 use crate::settings::{AppSettings, CAPTURE_MODE_IDS};
 
+/// Extension Mode is withheld while its transition proceeds on another branch.
+/// Keep the implementation and saved preferences; claim no hotkey or capture
+/// resources in either production or the current development application.
+pub const EXTENSION_MODE_AVAILABLE: bool = false;
+
+/// Withheld bindings must not hold or reserve a chord in any host path.
+pub fn shortcut_is_withheld(id: &str) -> bool {
+    id == "extension_mode" && !EXTENSION_MODE_AVAILABLE
+}
+
 const REVIEWED_FLOW_QUANTIZATIONS: &[&str] = &["Q4_K_M", "Q5_K_M", "Q6_K", "Q8_0", "F16", "F32"];
 
 /// Exact catalog artifacts reviewed for Flow. Matching a family-like name is
@@ -69,6 +79,9 @@ pub fn is_dynamic_binding(id: &str) -> bool {
 ///
 /// Dynamic bindings are never held here — see [`is_dynamic_binding`].
 pub fn shortcut_holds_hotkey(settings: &AppSettings, id: &str) -> bool {
+    if shortcut_is_withheld(id) {
+        return false;
+    }
     if is_dynamic_binding(id) {
         return false;
     }
@@ -282,6 +295,26 @@ mod tests {
         assert!(!shortcut_holds_hotkey(&s, "paste_catch_deliver"));
         // An unrelated shortcut is untouched.
         assert!(shortcut_holds_hotkey(&s, "custom_binding"));
+    }
+
+    #[test]
+    fn withheld_extension_mode_never_claims_a_saved_chord() {
+        let mut settings = get_default_settings();
+        settings.experimental_enabled = true;
+        settings.agent_enabled = true;
+        settings.post_process_enabled = true;
+        for chord in ["alt_left+e", "ctrl+shift+e", "alt+shift+enter"] {
+            settings
+                .bindings
+                .get_mut("extension_mode")
+                .unwrap()
+                .current_binding = chord.into();
+            assert!(!shortcut_holds_hotkey(&settings, "extension_mode"));
+            // Withholding must not erase a preference used by the other branch.
+            assert_eq!(settings.bindings["extension_mode"].current_binding, chord);
+            assert!(shortcut_holds_hotkey(&settings, "transcribe"));
+            assert!(shortcut_holds_hotkey(&settings, "transcribe_native_asr"));
+        }
     }
 
     #[test]
