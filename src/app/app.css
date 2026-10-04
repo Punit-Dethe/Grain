@@ -48,6 +48,7 @@
   --accent-focus: rgba(143, 170, 255, 0.28);
   --accent-glow: rgba(143, 170, 255, 0.22);
   --accent-ink: #091126;
+  --on-accent: var(--accent-ink);
   --peach: #efad90;
   --lilac: #aaa0e8;
   --sage: #a8c9a8;
@@ -183,12 +184,22 @@ html[data-theme="light"] body {
 .grain-root input,
 .grain-root textarea,
 .grain-root select {
-  color: inherit;
   font: inherit;
 }
 
-.grain-root button {
-  border: 0;
+/* Defaults belong below utilities: unlayered resets override Button's
+   foreground and erase the provider selector's explicitly authored border. */
+@layer base {
+  .grain-root button,
+  .grain-root input,
+  .grain-root textarea,
+  .grain-root select {
+    color: inherit;
+  }
+
+  .grain-root button {
+    border: 0;
+  }
 }
 
 .grain-root button:disabled {
@@ -2598,21 +2609,8 @@ html[data-theme="light"] .capture-mode-option {
   letter-spacing: -0.035em;
 }
 
-.settings-current-copy {
-  margin-top: 28px;
-}
-
-.settings-current-copy strong {
-  display: block;
-  font-size: 16px;
-  font-weight: 640;
-  line-height: 1.3;
-  letter-spacing: -0.018em;
-}
-
-.settings-current-copy span {
-  display: block;
-  margin-top: 5px;
+.settings-main-heading p {
+  margin: 8px 0 0;
   color: var(--text-3);
   font-size: 12.5px;
   line-height: 1.5;
@@ -2745,10 +2743,6 @@ html[data-theme="light"] .capture-mode-option {
 .next-settings-content button:not(.button):not([role="option"]),
 .next-settings-content .button {
   border-radius: 8px;
-}
-
-.post-processing-pane {
-  --on-accent: #fff;
 }
 
 /* The settings toggle is defined entirely by the ToggleSwitch/Switch

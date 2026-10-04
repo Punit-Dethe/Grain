@@ -137,15 +137,12 @@ export function SettingsPage({ section }: SettingsPageProps) {
             <div ref={scrollRef} className="settings-scroll">
               <div className="settings-content">
                 <header className="settings-main-heading">
-                  <h1 id="next-settings-title">{t("ui2.settings.title")}</h1>
-                  <div className="settings-current-copy">
-                    <strong>
-                      {t(`ui2.settings.sections.${activeSection}.label`)}
-                    </strong>
-                    <span>
-                      {t(`ui2.settings.sections.${activeSection}.description`)}
-                    </span>
-                  </div>
+                  <h1 id="next-settings-title">
+                    {t(`ui2.settings.sections.${activeSection}.label`)}
+                  </h1>
+                  <p>
+                    {t(`ui2.settings.sections.${activeSection}.description`)}
+                  </p>
                 </header>
 
                 {isLoading ? (

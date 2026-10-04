@@ -108,7 +108,7 @@ export const PpProviderRow: React.FC<PpProviderRowProps> = ({
         } ${
           selected
             ? "border-accent bg-accent"
-            : "border-line hover:border-accent"
+            : "border-ink-soft hover:border-accent"
         } ${busy ? "opacity-50 cursor-not-allowed" : "cursor-pointer"}`}
       >
         {selected &&
