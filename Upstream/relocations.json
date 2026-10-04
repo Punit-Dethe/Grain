@@ -13,7 +13,12 @@
     "kind": "inert",
     "grain": [
       "src-tauri/src/grain_settings.rs",
-      "crates/grain-core/src/settings.rs"
+      "crates/grain-core/src/settings.rs",
+      "crates/grain-core/src/context.rs",
+      "src/app/components/settings/ShowOverlay.tsx",
+      "src/app/components/settings/PillCloseButton.tsx",
+      "src/app/components/settings/PillAppIcon.tsx",
+      "src/app/stores/settingsStore.ts"
     ],
     "why": "Inert (no `mod settings;`). Grain's settings are grain-core AppContext; a NEW upstream setting must be added there and to its Default, or `get_settings().<field>` in merged handy code fails to compile. (#1254 selected_channel needed this.)"
   },
@@ -24,15 +29,25 @@
       "src-tauri/src/grain_overlay.rs",
       "src-tauri/src/grain_capture.rs",
       "src/app/overlay/RecordingOverlay.tsx",
-      "src/app/overlay/wave.ts"
+      "src/app/overlay/wave.ts",
+      "src/app/overlay/overlay.css",
+      "src-tauri/src/grain_events.rs",
+      "recording-overlay.html",
+      "vite.config.ts",
+      "src-tauri/src/pill_icon.rs",
+      "src-tauri/src/surface_watch.rs",
+      "src/app/overlay/main.tsx",
+      "crates/grain-sdk/src/event.rs"
     ],
-    "why": "Handy overlay.rs is compiled directly again: native window, platform geometry, nonactivation, readiness events, audio throttling and hide generations are shared. Grain capture modes/context/icon/clipboard/follow-up adapters and owned visual/waveform presentation are listed here; relevant behavior changes require checking these destinations while the frontend freeze remains in force."
+    "why": "Handy overlay.rs is compiled directly again: native window, platform geometry, nonactivation, readiness events, audio throttling and hide generations are shared. Grain capture modes/context/icon/clipboard/follow-up adapters and owned visual/waveform presentation are listed here; relevant behavior changes require checking these destinations while the frontend freeze remains in force. See Upstream/OVERLAY-MAINTENANCE.md for the event, settings, lifecycle and acceptance contract."
   },
   "src-tauri/src/actions.rs": {
     "kind": "relocated",
     "grain": [
       "src-tauri/src/grain_post_process.rs",
-      "src-tauri/src/grain_actions.rs"
+      "src-tauri/src/grain_actions.rs",
+      "src-tauri/src/grain_capture.rs",
+      "src-tauri/src/grain_overlay.rs"
     ],
     "why": "Merged in handy/ for its shape, BUT post_process_transcription is relocated to grain_post_process.rs and Grain's action variants live in grain_actions.rs. A fix to post-processing or the finish/guard flow may need porting there (e.g. #1846 trim_freed_memory in FinishGuard::drop did not auto-merge into the diverged actions.rs)."
   },
@@ -46,8 +61,32 @@
     "grain": [
       "src-tauri/src/rolling.rs",
       "src-tauri/src/tdt_flow.rs",
-      "crates/grain-tdt/src"
+      "crates/grain-tdt/src",
+      "src-tauri/src/grain_overlay.rs",
+      "src/app/overlay/RecordingOverlay.tsx"
     ],
     "why": "Merged in handy/, but Parakeet TDT Flow has Grain-only capture scheduling, native adaptation, and window/token logic that upstream's batch/streaming fixes cannot reach. Check whether the fixed bug-class exists there too."
+  },
+  "src-tauri/src/audio_toolkit/audio/recorder.rs": {
+    "kind": "parallel",
+    "grain": [
+      "src-tauri/src/handy/managers/audio.rs",
+      "src-tauri/src/grain_capture.rs",
+      "src-tauri/src/grain_audio_journal.rs",
+      "src-tauri/src/grain_actions.rs"
+    ],
+    "why": "Shared bounded recorder differs from upstream callback/ring-buffer implementation. First-sample acknowledgements, no-sample cancellation, resampler tail and journal callbacks must still satisfy Grain capture callers; a successful merge alone cannot prove those adapters are correct."
+  },
+  "src-tauri/src/managers/audio.rs": {
+    "kind": "relocated",
+    "grain": [
+      "src-tauri/src/grain_capture.rs",
+      "src-tauri/src/grain_actions.rs",
+      "src-tauri/src/agent.rs",
+      "src-tauri/src/extension_session.rs",
+      "src-tauri/src/grain_action_session.rs",
+      "src-tauri/src/grain_onboarding.rs"
+    ],
+    "why": "Shared RecordingReadiness/capture-generation API is consumed by Grain startup, feedback, failure and cancellation adapters across every capture family. Review these callers when upstream changes stream startup, disconnect recovery, readiness, stop or mute."
   }
 }

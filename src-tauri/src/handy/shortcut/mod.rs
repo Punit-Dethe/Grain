@@ -692,9 +692,8 @@ pub fn change_overlay_position_setting(app: AppHandle, position: String) -> Resu
 
     // [GRAIN] Reposition the shared Handy WebView.
     crate::overlay::update_overlay_position(&app);
-    // [GRAIN] Drive the single pill: tell it the new anchor (None = hide). A live
-    // pill repositions/hides on the next frame; an idle pill picks it up at the
-    // next session start (which re-emits OverlayConfig).
+    // [GRAIN] Publish Top/Bottom to the owned renderer. Visibility is controlled
+    // separately by overlay_style; an idle renderer hydrates from its snapshot.
     crate::bridge::emit(
         &app,
         grain_core::DaemonEvent::OverlayConfig { position: parsed },

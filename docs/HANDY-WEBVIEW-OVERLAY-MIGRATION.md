@@ -1,6 +1,6 @@
 # Handy WebView overlay migration
 
-Status: implementation and Windows build verification complete; real-application visual, hardware, RAM and cross-platform acceptance pending. Reviewed 2026-10-04.
+Status: implementation verified; the user accepted real Windows app visuals/behavior on 2026-10-04. Hardware disconnect recovery, RAM measurements and cross-platform acceptance remain separate. Current maintenance ownership and upstream-review contract: [Upstream/OVERLAY-MAINTENANCE.md](../Upstream/OVERLAY-MAINTENANCE.md).
 
 Current recording preference: None hides pills in all capture modes; Compact keeps all modes compact; Live preview expands only for the Streaming shortcut.
 
@@ -239,3 +239,10 @@ The existing Rust-owned `overlay_style` setting, persisted command, error handli
 The backend chooses streaming presentation only when both the selected preference is Live and the action is Native ASR. Streamed text cannot open a Compact or disabled presentation. The frontend also ignores caption/phase events outside a visible streaming presentation instead of retaining unused live text. Working labels and compact close-button handling use their existing paths.
 
 Verification: TypeScript/Vite production build, lint, all 118 frontend tests, all nine overlay Rust tests, binding export, backend settings save/reload, both legacy-overlay migration tests, formatting, settings UI parity and the divergence ratchet passed. The routing regression uses an explicit twelve-case expectation table across all four capture modes and all three stored preferences, including caption acceptance/rejection and cleanup. No shared Handy file or divergence budget changed. Real-application visual approval remains pending under AGENTS.md; no mock visual harness or UI automation was used.
+
+
+### Upstream maintenance close-out
+
+The accepted implementation is now covered by the current `Upstream/OVERLAY-MAINTENANCE.md` contract, runbook and generated divergence map. Machine-readable review routes cover native overlay, owned presentation/entry/CSS/events, settings/store controls, capture readiness callers, recorder and audio manager, and transcription/working-state hydration. Existing preflight and CI policy gates now protect the active shared module and owned entry; the automatic sync PR checklist names the overlay contract.
+
+Historical mapped capture commits were reviewed through the verdict CLI. Pending ports use an explicit deferred outcome tied to a full-SHA deferred queue row. The audit corrected an older overstatement of full #1874 parity: successful default-open persistence is present, while CPAL stream-error reopening remains queued. Earshot/ring-buffer ports remain pending and the tail-loss bug class is covered by Grain's existing resampler drain. No accepted UI, capture semantics or microphone behavior changed during this maintenance phase.

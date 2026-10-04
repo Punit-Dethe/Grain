@@ -7,7 +7,8 @@ upstream updates are absorbed. The per-file conflict policy lives in
 [UPSTREAM-DIVERGENCE.md](UPSTREAM-DIVERGENCE.md); fixes we should send _to_
 Handy live in [UPSTREAMABLE.md](UPSTREAMABLE.md).
 
-**Before the next sync, read [DEFERRED-PORTS.md](DEFERRED-PORTS.md).** It lists
+**Before the next sync, read [DEFERRED-PORTS.md](DEFERRED-PORTS.md) and the
+[recording overlay maintenance contract](OVERLAY-MAINTENANCE.md).** It lists
 the exact Handy commits already present in ancestry whose runtime behavior
 Grain has deliberately not implemented yet.
 
@@ -203,6 +204,18 @@ does not apply) — turning "did we forget to port it?" from unbounded worry int
 a bounded, gated list. Wired into `preflight.py`; clear each finding with
 `python Upstream/verdict.py <sha> --note "..."`.
 
+Record mapped runtime decisions through the existing verdict command:
+
+```bash
+python Upstream/verdict.py <sha> --port <source> <ported|not-applicable|deferred> "evidence"
+```
+
+`deferred` is reviewed pending work, not implementation. It requires a full-SHA
+queue row in `DEFERRED-PORTS.md`. On completion, record the adopted behavior and
+verification before removing that row; the port audit rejects an untracked
+deferral. The overlay/capture review routes and acceptance checklist are in
+[OVERLAY-MAINTENANCE.md](OVERLAY-MAINTENANCE.md).
+
 ## Runbook
 
 ### A. The auto-PR is open (common case)
@@ -211,7 +224,9 @@ a bounded, gated list. Wired into `preflight.py`; clear each finding with
    needs saying so — `python Upstream/verdict.py <sha> Ignored "why"` (the
    divergence map says where Grain replaced that surface). Everything merged
    needs nothing: ancestry files it.
-2. CI must be green (build, tests, ratchet). If the ratchet flags a stray
+2. Review affected recording-window/capture changes using
+   [OVERLAY-MAINTENANCE.md](OVERLAY-MAINTENANCE.md), including owned callers and
+   frozen-frontend behavior. CI must be green (build, tests, ratchet). If the ratchet flags a stray
    file, `git mv` it into `handy/` on the branch.
 3. Merge the PR with a **merge commit — never squash** (squashing discards
    the recorded ancestry, so the board would forget these commits were merged
@@ -337,6 +352,7 @@ matching remains only a heuristic signal.
 - Rust: `cargo check --lib` then `cargo test --lib` in `src-tauri/`
 - Frontend: `./node_modules/.bin/tsc --noEmit`
 - Boundary: `python Upstream/ratchet.py`
+- Process guards: `python -m unittest discover -s Upstream/tests -p "test_*.py"`
 - Runtime ports/policy: `python Upstream/port_audit.py` and
   `python Upstream/policy_check.py`
 - Dependencies: `bun install --frozen-lockfile`; regenerate intentionally if
@@ -369,6 +385,10 @@ matching remains only a heuristic signal.
   and platform handling. `grain_overlay`/`grain_capture` adapt Grain capture
   paths; `src/app/overlay` owns appearance and waveform response. Upstream
   frontend files remain frozen; review behavioral changes against the owned UI.
+  The [maintenance contract](OVERLAY-MAINTENANCE.md) maps readiness, streaming,
+  settings, app icons, Agent capture and retired surfaces to their active owners.
+  The policy gate protects module/entry wiring; runtime-port review includes
+  recorder/audio-manager changes, even when the shared merge is clean.
 - **Rolling transcription**: `rolling.rs` + RCSR seam revision — no upstream
   counterpart; be careful when upstream touches chunking in
   `handy/managers/transcription.rs`.

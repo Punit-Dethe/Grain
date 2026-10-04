@@ -57,17 +57,14 @@ mod grain_events; // [GRAIN] typed payloads for the webview event surface (see t
                   // single-provider `llm_client.rs`. Upstream's file stays on disk untouched and
                   // UN-COMPILED (no `mod llm_client;`) so upstream merges land conflict-free;
                   // the alias keeps every `crate::llm_client::` path working.
+mod grain_capture; // [GRAIN] shared first-sample readiness for owned capture callers
+mod grain_embed;
 mod grain_flow_availability; // [GRAIN] model/install/settings gate + Flow shortcut reconciliation
 mod grain_llm_client;
 mod grain_locale; // [GRAIN] locale-tag resolution, owned in Rust (was duplicated in TS)
 mod grain_mcp; // [GRAIN] stateless hosted MCP development providers (2026-07-28 only)
 mod grain_onboarding; // [GRAIN] where a launching app lands: onboarding / permissions / app
-                      // [GRAIN] Native-pill mic-level fan-out — Grain's replacement for upstream's
-                      // webview `overlay.rs`, which likewise stays on disk un-compiled. The alias
-                      // keeps `crate::overlay::` paths (e.g. utils' re-export) working.
-mod grain_capture;
-mod grain_embed;
-mod grain_overlay;
+mod grain_overlay; // [GRAIN] presentation adapter; handy/overlay.rs owns native window lifecycle
 mod grain_post_process;
 #[cfg(windows)]
 mod grain_process; // [GRAIN] multi-provider post-processing (rewrite of upstream's single-provider path)
@@ -94,7 +91,7 @@ pub(crate) use grain_settings as settings;
 #[path = "handy/managers/mod.rs"]
 mod managers;
 #[path = "handy/memory.rs"]
-mod memory; // upstream #1846 glibc allocator tuning; relocated into handy/ (upstream `mod overlay;` dropped — Grain aliases grain_overlay as overlay above)
+mod memory; // upstream #1846 glibc allocator tuning; compiled from handy/
 mod net_diag; // [GRAIN] shared reqwest transport-error diagnostics (upstream #1823, applied to both cloud clients)
 #[path = "handy/paste_tx/mod.rs"]
 mod paste_tx;

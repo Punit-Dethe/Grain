@@ -141,6 +141,28 @@
           "crates/grain-core/src/settings.rs"
         ],
         "evidence": "Experimental selectable Earshot backend was excluded; Grain keeps its current Silero recorder contract."
+      },
+      "src-tauri/src/audio_toolkit/audio/recorder.rs": {
+        "outcome": "deferred",
+        "destinations": [
+          "src-tauri/src/handy/managers/audio.rs",
+          "src-tauri/src/grain_capture.rs",
+          "src-tauri/src/grain_audio_journal.rs",
+          "src-tauri/src/grain_actions.rs"
+        ],
+        "evidence": "Earshot/variable-frame integration remains queued; the current shared recorder uses Silero and Grain bounded sample/journal hooks. Overlay readiness restoration does not implement this VAD rewrite."
+      },
+      "src-tauri/src/managers/audio.rs": {
+        "outcome": "deferred",
+        "destinations": [
+          "src-tauri/src/grain_capture.rs",
+          "src-tauri/src/grain_actions.rs",
+          "src-tauri/src/agent.rs",
+          "src-tauri/src/extension_session.rs",
+          "src-tauri/src/grain_action_session.rs",
+          "src-tauri/src/grain_onboarding.rs"
+        ],
+        "evidence": "Audio manager retains the fixed-frame Silero contract and owned capture callers. Earshot selection and variable-frame integration remain queued, independently of restored readiness."
       }
     }
   },
@@ -457,6 +479,22 @@
   "87c45f814be4b7e7ee9b0783c1fe74e2c74d99c6": {
     "notes": "Bumped `transcribe-cpp` to 0.1.2."
   },
+  "8a362e9eba59d4057fda79b7f38f5b0d5cbabf65": {
+    "ports": {
+      "src-tauri/src/managers/audio.rs": {
+        "outcome": "ported",
+        "destinations": [
+          "src-tauri/src/grain_capture.rs",
+          "src-tauri/src/grain_actions.rs",
+          "src-tauri/src/agent.rs",
+          "src-tauri/src/extension_session.rs",
+          "src-tauri/src/grain_action_session.rs",
+          "src-tauri/src/grain_onboarding.rs"
+        ],
+        "evidence": "apply_mute snapshots prior system mute, avoids duplicate snapshotting and restores previous state during removal/close. Grain announce_ready applies mute after feedback only while the capture generation remains current. Source inspection confirms the ownership and cancellation seam."
+      }
+    }
+  },
   "8c46721a77cf157092802f1024c04394b22d1113": {
     "notes": "AUDIT 2026-07-17: was NOT actually applied - all 12 Moonshine models still read \"English speech-to-text\". Fixed by taking upstream catalog.json verbatim (also converged its hand-reformatting)."
   },
@@ -522,6 +560,32 @@
   },
   "a201be9161cd3e62934dec98531204beb1a2a062": {
     "notes": "Bumped in `Cargo.toml`."
+  },
+  "a4348beb18abdb255b230b659f4adf4774de8270": {
+    "ports": {
+      "src-tauri/src/audio_toolkit/audio/recorder.rs": {
+        "outcome": "ported",
+        "destinations": [
+          "src-tauri/src/handy/managers/audio.rs",
+          "src-tauri/src/grain_capture.rs",
+          "src-tauri/src/grain_audio_journal.rs",
+          "src-tauri/src/grain_actions.rs"
+        ],
+        "evidence": "Source inspection confirms is_capture_worker_dead and recorder close/reopen after worker death; the existing unopened_recorder_is_not_reported_dead regression covers the initial no-worker guard. The later CPAL stream-error variant is separately deferred under c89b7bf3."
+      },
+      "src-tauri/src/managers/audio.rs": {
+        "outcome": "ported",
+        "destinations": [
+          "src-tauri/src/grain_capture.rs",
+          "src-tauri/src/grain_actions.rs",
+          "src-tauri/src/agent.rs",
+          "src-tauri/src/extension_session.rs",
+          "src-tauri/src/grain_action_session.rs",
+          "src-tauri/src/grain_onboarding.rs"
+        ],
+        "evidence": "start_microphone_stream checks worker liveness before the already-open fast path, closes dead capture and restores mute; startup checks are retained across capture callers. This source review does not claim validation of the later CPAL callback-error remainder."
+      }
+    }
   },
   "a6df742880ada3c006ad376c1a89d8565b003e69": {
     "notes": "Recover poisoned mutexes inside Drop impls using `match` + logged warnings."
@@ -763,8 +827,32 @@
       "outcome": "adapted",
       "problem": "After a selected microphone disconnects, the backend can recover on the system default while the UI and persisted setting still name the missing device."
     },
-    "notes": "Ported successful default-microphone fallback, race-safe persistence, and frontend settings/device refresh after disconnect.",
-    "status": "Merged"
+    "notes": "Successful default-microphone fallback persistence, concurrent-selection guards and settings/device refresh are ported. Maintenance audit 2026-10-04 found the CPAL stream-error/needs_reopen portion absent in recorder and manager; that remainder is explicitly queued in DEFERRED-PORTS.md, so this commit does not imply full runtime parity.",
+    "status": "Merged",
+    "ports": {
+      "src-tauri/src/audio_toolkit/audio/recorder.rs": {
+        "outcome": "deferred",
+        "destinations": [
+          "src-tauri/src/handy/managers/audio.rs",
+          "src-tauri/src/grain_capture.rs",
+          "src-tauri/src/grain_audio_journal.rs",
+          "src-tauri/src/grain_actions.rs"
+        ],
+        "evidence": "Source inspection confirms worker-liveness recovery but no upstream CPAL stream_error flag / needs_reopen path. The remaining disconnect/no-sample reopen contract is now explicitly queued; existing fallback-persistence behavior is not claimed as full parity."
+      },
+      "src-tauri/src/managers/audio.rs": {
+        "outcome": "deferred",
+        "destinations": [
+          "src-tauri/src/grain_capture.rs",
+          "src-tauri/src/grain_actions.rs",
+          "src-tauri/src/agent.rs",
+          "src-tauri/src/extension_session.rs",
+          "src-tauri/src/grain_action_session.rs",
+          "src-tauri/src/grain_onboarding.rs"
+        ],
+        "evidence": "Successful default-open persistence and concurrent selection guards are present, but the manager still checks is_capture_worker_dead rather than upstream needs_reopen. The missing stream-error integration is tracked in DEFERRED-PORTS.md; hardware recovery remains unvalidated."
+      }
+    }
   },
   "c8eb33bc59bd6e1a3959c40c4b435c6e18d633bf": {
     "notes": "Applied upstream check."
@@ -821,7 +909,19 @@
       "destinations": [],
       "evidence": "The large microphone callback rewrite and its dependency were deferred; Grain's current rolling and conditioning recorder contract remains in place."
     },
-    "notes": "Real-time-safe microphone ring-buffer rewrite deferred for dedicated rolling/conditioning and capture-lifecycle review."
+    "notes": "Real-time-safe microphone ring-buffer rewrite deferred for dedicated rolling/conditioning and capture-lifecycle review.",
+    "ports": {
+      "src-tauri/src/audio_toolkit/audio/recorder.rs": {
+        "outcome": "deferred",
+        "destinations": [
+          "src-tauri/src/handy/managers/audio.rs",
+          "src-tauri/src/grain_capture.rs",
+          "src-tauri/src/grain_audio_journal.rs",
+          "src-tauri/src/grain_actions.rs"
+        ],
+        "evidence": "Retained bounded capture/journal and restored first-sample acknowledgements; the CPAL ring-buffer rewrite remains explicitly queued in DEFERRED-PORTS.md. No completion or hardware validation is claimed."
+      }
+    }
   },
   "d55ea7ef12b82176239264d0b5078cd07b114687": {
     "frontend_review": {
@@ -898,6 +998,20 @@
   },
   "dd6cc676112b9c8123ebd34c6765444b7a855cfb": {
     "notes": "FFT scaling already present in `recorder.rs` (likely ported during audio perf rewrite)."
+  },
+  "df2168326e360f7c52d57b896cc624fb66e1c035": {
+    "ports": {
+      "src-tauri/src/audio_toolkit/audio/recorder.rs": {
+        "outcome": "not-applicable",
+        "destinations": [
+          "src-tauri/src/handy/managers/audio.rs",
+          "src-tauri/src/grain_capture.rs",
+          "src-tauri/src/grain_audio_journal.rs",
+          "src-tauri/src/grain_actions.rs"
+        ],
+        "evidence": "Tail-loss bug class is already covered by the guarded resampler output_delay drain and recorder frame_resampler.finish callback. The upstream finish rewrite is not copied because it would replace that guarantee; source inspection and existing resampler tail fixtures document the retained contract."
+      }
+    }
   },
   "e1152d86935562264d7c5637d77ce2e29aeef57e": {
     "notes": "2026-10-04: actual handy/overlay.rs is compiled for window lifecycle, GTK/NSScreen main-thread geometry, Wayland layer-shell/fallback, NSPanel activation, Windows work-area/DPI/text scale and generation-aware hides. Grain integration lives in grain_overlay/grain_capture; owned presentation retains WaveField response. Windows Rust suite and build pass; macOS/Linux visual acceptance remains pending.",

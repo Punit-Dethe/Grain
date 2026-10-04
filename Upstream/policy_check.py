@@ -65,9 +65,60 @@ def aliased_replacements() -> dict[str, str]:
     }
 
 
+def overlay_seam_failures(relocations: dict, root: str = ROOT) -> list[str]:
+    """Guard the active shared lifecycle and the owned renderer's review routes."""
+    failures = []
+    required = {
+        "src-tauri/src/overlay.rs": {
+            "src-tauri/src/handy/overlay.rs", "src-tauri/src/grain_overlay.rs",
+            "src/app/overlay/RecordingOverlay.tsx", "src/app/overlay/wave.ts",
+            "src/app/overlay/overlay.css", "recording-overlay.html", "vite.config.ts",
+        },
+        "src-tauri/src/audio_toolkit/audio/recorder.rs": {"src-tauri/src/grain_capture.rs"},
+        "src-tauri/src/managers/audio.rs": {"src-tauri/src/grain_capture.rs"},
+        "src-tauri/src/managers/transcription.rs": {"src-tauri/src/grain_overlay.rs"},
+        "src-tauri/src/settings.rs": {"src/app/components/settings/ShowOverlay.tsx"},
+    }
+    for source, destinations in required.items():
+        missing = destinations - set(relocations.get(source, {}).get("grain", []))
+        if missing:
+            failures.append(f"overlay review route missing: {source} -> {', '.join(sorted(missing))}")
+
+    def read(path: str) -> str:
+        try:
+            with open(os.path.join(root, path), encoding="utf-8") as handle:
+                return handle.read()
+        except OSError as error:
+            failures.append(f"overlay seam: cannot read {path}: {error}")
+            return ""
+
+    lib = read("src-tauri/src/lib.rs")
+    # Ignore comments; old historical wording must not masquerade as wiring.
+    code = re.sub(r"//[^\n]*", "", lib)
+    if not re.search(r'#\[path\s*=\s*"handy/overlay.rs"\]\s*(?:pub(?:\([^)]*\))?\s+)?mod\s+overlay\s*;', code):
+        failures.append("overlay seam: crate::overlay must compile handy/overlay.rs")
+    if re.search(r'\buse\s+grain_overlay\s+as\s+overlay\s*;', code):
+        failures.append("overlay seam: grain_overlay must not replace Handy's lifecycle module")
+    for module in ("grain_overlay", "grain_capture"):
+        if not re.search(rf'\bmod\s+{module}\s*;', code):
+            failures.append(f"overlay seam: owned {module} adapter is not compiled")
+    for path, needle in (
+        ("src-tauri/src/handy/overlay.rs", '"recording-overlay.html"'),
+        ("recording-overlay.html", '/src/app/overlay/main.tsx'),
+        ("vite.config.ts", '"recording-overlay.html"'),
+    ):
+        if needle not in read(path):
+            failures.append(f"overlay seam: owned recording entry is disconnected in {path}")
+    for path in ("crates/grain-pill/Cargo.toml", "src/app/overlay/matrix.ts",
+                 "src/app/components/settings/PillSkinSelector.tsx"):
+        if os.path.isfile(os.path.join(root, path)):
+            failures.append(f"overlay seam: retired production implementation returned: {path}")
+    return failures
+
+
 def main() -> int:
     relocations = load_relocations()
-    failures: list[str] = []
+    failures: list[str] = overlay_seam_failures(relocations)
 
     # Preserve the maintained fork when Handy changes its native dependency.
     # The shared checker validates both workspaces/pins/locks without fetching.
@@ -168,7 +219,7 @@ def main() -> int:
         return 1
     print(
         f"[policy] OK: {len(relocations)} relocation rules; alias coverage, "
-        "transcribe.cpp contract, and human policy agree"
+        "overlay seams, transcribe.cpp contract, and human policy agree"
     )
     return 0
 

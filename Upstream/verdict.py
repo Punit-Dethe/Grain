@@ -24,7 +24,7 @@ import sys
 import sync_upstream as sync
 
 STATUSES = ("Merged", "Ignored", "Pending")
-PORT_OUTCOMES = ("ported", "not-applicable")
+PORT_OUTCOMES = ("ported", "not-applicable", "deferred")
 REVIEW_OUTCOMES = ("adapted", "already-covered", "not-applicable")
 RELOCATIONS_FILE = os.path.join(os.path.dirname(__file__), "relocations.json")
 
@@ -115,7 +115,7 @@ def main(argv):
         entry["notes"] = rest[1]
     elif rest[0] == "--port":
         if len(rest) < 4:
-            raise SystemExit("--port needs <source> <ported|not-applicable> and evidence.")
+            raise SystemExit("--port needs <source> <ported|not-applicable|deferred> and evidence.")
         source, outcome, evidence = rest[1], rest[2].lower(), rest[3].strip()
         with open(RELOCATIONS_FILE, encoding="utf-8") as handle:
             relocations = json.load(handle)
@@ -123,6 +123,11 @@ def main(argv):
             raise SystemExit(f"'{source}' is not a source in relocations.json.")
         if outcome not in PORT_OUTCOMES or not evidence:
             raise SystemExit("Port outcome/evidence is invalid or empty.")
+        if outcome == "deferred":
+            from port_audit import deferred_commit_ids
+
+            if row["sha"] not in deferred_commit_ids():
+                raise SystemExit("Add a DEFERRED-PORTS.md queue row before recording a deferred port.")
         ports = dict(entry.get("ports") or {})
         ports[source] = {
             "outcome": outcome,

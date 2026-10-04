@@ -794,8 +794,8 @@ impl TranscriptionManager {
     }
 
     /// Whether a live streaming run is currently in flight.
-    /// [GRAIN] Kept for upstream parity; upstream's overlay-style decision was
-    /// the only caller and Grain's native pill replaced that surface.
+    /// [GRAIN] Kept for upstream parity; Grain chooses WebView presentation
+    /// from its explicit capture mode and persisted preference in grain_overlay.
     #[allow(dead_code)]
     pub fn is_streaming(&self) -> bool {
         self.stream_active.load(Ordering::Acquire)
