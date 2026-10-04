@@ -325,6 +325,16 @@ impl ShortcutAction for ExtensionModeAction {
 
 struct AgentSubmitAction;
 
+struct AgentTypeAction;
+impl ShortcutAction for AgentTypeAction {
+    fn start(&self, app: &AppHandle, _binding_id: &str, _shortcut_str: &str) {
+        if crate::agent::input_is_active(app) {
+            crate::grain_agent_input::open(app);
+        }
+    }
+    fn stop(&self, _app: &AppHandle, _binding_id: &str, _shortcut_str: &str) {}
+}
+
 impl ShortcutAction for AgentSubmitAction {
     fn start(&self, app: &AppHandle, _binding_id: &str, _shortcut_str: &str) {
         crate::agent::global_submit(app);
@@ -919,6 +929,10 @@ pub(crate) fn register(map: &mut HashMap<String, Arc<dyn ShortcutAction>>) {
     map.insert(
         "agent_submit".to_string(),
         Arc::new(AgentSubmitAction) as Arc<dyn ShortcutAction>,
+    );
+    map.insert(
+        "agent_type".to_string(),
+        Arc::new(AgentTypeAction) as Arc<dyn ShortcutAction>,
     );
     map.insert(
         "agent_close".to_string(),

@@ -28,7 +28,7 @@ python scripts/ui_parity.py --commands # what nothing calls any more
 
 ## Backend-only — internal bookkeeping, never user-facing
 
-| `agent_input_type_to_expand` | Retained for future typed Agent input; production voice pills do not expand or expose this preference. Existing Agent result/conversation settings remain available. |
+| `agent_input_type_to_expand` | Retained legacy value, not consulted. Tab or a second Agent summon opens typing explicitly, with no visual mode-switch hint, global printable-key interception or configurable preference. Existing Agent result/conversation settings remain available. |
 
 | Field                     | Reason                                                                                                          |
 | ------------------------- | --------------------------------------------------------------------------------------------------------------- |

@@ -516,6 +516,17 @@ pub fn overlay_followup(app: AppHandle) {
     crate::agent::open_followup(&app);
 }
 
+pub(crate) fn hide_agent_voice(app: &AppHandle) {
+    if let Some(ctx) = app.try_state::<OverlayContext>() {
+        let mut value = ctx.presentation.lock().unwrap();
+        value.visible = false;
+        value.ready = false;
+        publish(app, &value);
+    }
+    crate::surface_watch::stop(app);
+    crate::overlay::hide_recording_overlay(app);
+}
+
 static LAST_PUBLIC_LEVEL: AtomicU64 = AtomicU64::new(0);
 pub fn emit_public_levels(app: &AppHandle, levels: &[f32]) {
     let now = std::time::SystemTime::now()

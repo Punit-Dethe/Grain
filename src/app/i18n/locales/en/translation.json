@@ -1,5 +1,11 @@
 {
   "agent": {
+    "inputInstruction": "Agent instruction",
+    "inputPlaceholder": "Type your instruction…",
+    "inputSelection": "{{count}} selected characters",
+    "inputSend": "Send instruction",
+    "inputHint": "Shift+Enter for a new line",
+    "inputEnter": "Enter",
     "brand": "Grain Assist",
     "selectionChip": "SELECTION · {{count}} CHARS",
     "noSelection": "NO SELECTION",

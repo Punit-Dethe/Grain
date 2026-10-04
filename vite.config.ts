@@ -25,6 +25,7 @@ export default defineConfig(async () => ({
       input: {
         main: resolve(__dirname, "index.html"),
         recordingOverlay: resolve(__dirname, "recording-overlay.html"),
+        agentInput: resolve(__dirname, "agent-input.html"),
         extensionHost: resolve(__dirname, "extension-host.html"),
         // Grain-owned recommendation, progress, and result surface.
         extensionView: resolve(__dirname, "extension-view.html"),

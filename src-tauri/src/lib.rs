@@ -49,6 +49,7 @@ mod extension_session; // [GRAIN] host-owned extension recording modes + bounded
 mod extension_shortcuts; // [GRAIN] contributed global shortcuts, namespaced `ext:<id>:<sid>` (SPEC 3.3)
 mod extension_view; // [GRAIN] host-rendered standard Extension Mode component tree
 mod grain_actions; // [GRAIN] Grain's shortcut actions (rolling, Native ASR, switcher, agent)
+mod grain_agent_input; // [GRAIN] on-demand focused Agent typing card
 mod grain_audio_journal; // [GRAIN] bounded-RAM PCM backing for rolling sessions
 mod grain_auth; // [GRAIN] host-owned extension OAuth + OS credential vault
 mod grain_commands; // [GRAIN] Grain-only Tauri settings commands (moved out of shortcut/mod.rs)
@@ -1231,9 +1232,8 @@ pub fn run(cli_args: CliArgs) {
                 if window.label() == "main" {
                     grain_onboarding::close_onboarding_tests(window.app_handle());
                 }
-                // [GRAIN] The Agent panel is the only Agent webview (the summon
-                // input is native, in the pill process). On its close, release
-                // the transient Enter/Escape shortcuts — unless the native input
+                // [GRAIN] On Agent reply-panel close, release the transient
+                // Enter/Escape shortcuts — unless voice or typed summon input
                 // phase still owns them (guarded inside the deferred helper).
                 if window.label() == agent::PANEL_LABEL {
                     agent::unregister_transient_shortcuts_deferred(&window.app_handle());
@@ -1474,6 +1474,11 @@ fn command_bindings() -> Builder<tauri::Wry> {
             secure_input::run_keyboard_diagnostic,
             show_main_window_command,
             agent::agent_get_context,
+            grain_agent_input::agent_input_snapshot,
+            grain_agent_input::agent_input_reveal,
+            grain_agent_input::agent_input_submit,
+            grain_agent_input::agent_input_speak,
+            grain_agent_input::agent_input_cancel,
             agent::agent_take_instruction,
             agent::agent_copy,
             agent::agent_run,
@@ -1565,6 +1570,7 @@ fn command_bindings() -> Builder<tauri::Wry> {
             grain_events::GrainOverlayContext,
             grain_events::GrainOverlayPosition,
             grain_events::GrainOverlayCompactCloseHidden,
+            grain_events::AgentInputReady,
             grain_events::ModelStateChanged,
             grain_events::ModelDownloadProgress,
             grain_events::ModelDownloadComplete,

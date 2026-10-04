@@ -185,6 +185,9 @@ unchanged. Audible Flow feedback and OS hotkey activation remain real-app checks
 
 ## Prompt Record shortcut and warning cleanup (2026-10-04)
 
+The warning-by-warning explanation and verification limits are recorded in
+[OVERLAY-WARNING-FIXES.md](OVERLAY-WARNING-FIXES.md).
+
 The normal shortcut registry dispatches `PromptRecordAction` in `grain_actions.rs`.
 It marks an ongoing Standard, Flow or Streaming capture once; it starts no new
 recording and releases no capture key. The original capture key still stops it.
@@ -244,3 +247,56 @@ Verification: the Rust library build, six overlay tests, Prompt Record and
 shortcut-conflict tests, generated binding export, frontend build/lint and 124
 unit tests pass. Settings parity, upstream policy and divergence ratchet pass.
 Gradient timing and compact/expanded visual acceptance require the real app.
+
+## Restored Agent typing input (2026-10-04)
+
+The user superseded the earlier deferred-input decision. `grain_agent_input.rs`
+owns an on-demand, focusable `agent-input` WebView; it is built only when Tab
+or a second Agent summon requests typing, and destroyed on submission,
+cancellation or return to voice. Handy's recording window remains nonactivating.
+No feature code or focus-mode exception is added to the Handy overlay module.
+
+`AgentInput.tsx` uses the same dark palette, border and blue base gradient.
+Its native bounds stay fixed during the 420 ms CSS morph: the card starts at
+the compact pill's exact dimensions/anchor and grows to the typing layout.
+Readiness is published through the typed `AgentInputReady` event, with a
+snapshot fallback when the event preceded listener setup. The loaded UI
+acknowledges readiness before native reveal/handoff, then paints a compact
+frame before expanding. Return to voice collapses before releasing the typing
+window. Reduced motion is immediate. The shared `Waveform.tsx` preserves the
+existing filter/math; it unmounts while typing so its mic listener and animation
+frame do not remain active behind the field.
+
+The 186 px typing card is one text line shorter than the initial 208 px version;
+the field scrolls. The white send button contains Enter and the return icon;
+Shift+Enter inserts a newline, IME confirmation does not submit/cancel/switch,
+and the textarea has no blue focus border. Tab switches modes, with no mode-switch
+control or hint in the pill. Shift+Tab retains backward keyboard navigation.
+
+Agent voice input transiently owns `agent_type` (Tab), registered by the
+existing action system. It is dynamic/absent at idle and released on typed
+handoff and every terminal path; any saved Grain binding it displaced is
+restored. Cleanup remembers the actual keyboard backend and avoids a second
+unregistration after release. No persisted setting or always-running listener
+is added. The legacy `agent_input_type_to_expand` value remains ignored.
+
+All typed commands require the Agent input window, current summon generation
+and active typing ownership. Audio operations run on the existing blocking
+runtime, serialized with the existing capture-start guard; window work stays
+on the main thread. New readiness flags prevent stale queued global Enter from
+submitting voice during typing preparation. The microphone and mute are released
+when entering typing. The retained `input_submit_text` and `input_typing` APIs
+now have real callers, so their dead-code allowances are removed. Existing Agent
+selection, screenshot, Quick Agent and reply/conversation pipelines are reused.
+
+The only Handy-derived growth is the narrow `lib.rs` module/command/event
+registration seam. The reviewed budget changes from 1257 to 1263; all new
+implementation remains Grain-owned. Actual focus, transition appearance and
+cross-platform activation require real-application acceptance.
+
+Verification: 221 Grain core tests, 17 targeted Agent/input/overlay/event tests
+and 126 frontend unit tests passed. Production frontend build, lint, generated
+binding export, Rust library build, settings parity and upstream policy checks
+passed. The extracted waveform implementation was compared with its previous
+version and is unchanged. The normal library build has no unused-code warnings;
+test compilation retains the pre-existing clamshell test-only unused import.

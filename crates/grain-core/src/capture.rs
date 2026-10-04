@@ -79,7 +79,7 @@ pub fn supports_prompt_record(action_id: &str) -> bool {
 pub fn is_dynamic_binding(id: &str) -> bool {
     matches!(
         id,
-        "cancel" | "prompt_record" | "agent_followup" | "paste_catch_deliver"
+        "cancel" | "prompt_record" | "agent_followup" | "agent_type" | "paste_catch_deliver"
     )
 }
 
@@ -366,6 +366,7 @@ mod tests {
             "cancel",
             "prompt_record",
             "agent_followup",
+            "agent_type",
             "paste_catch_deliver",
         ] {
             assert!(is_dynamic_binding(id));
