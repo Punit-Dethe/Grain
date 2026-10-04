@@ -12,6 +12,9 @@ use tauri::{AppHandle, Emitter, Manager};
 /// Grain's visual clearance above Handy's platform-specific bottom placement.
 pub const BOTTOM_RAISE: f64 = 16.0;
 
+// Leave a short gap after Handy's 300 ms recording-window hide delay.
+const CLIPBOARD_NOTICE_DELAY: std::time::Duration = std::time::Duration::from_millis(400);
+
 #[derive(Clone, Default, Serialize, Deserialize, Type)]
 pub struct OverlayPresentation {
     pub visible: bool,
@@ -250,6 +253,7 @@ pub fn on_event(app: &AppHandle, event: &DaemonEvent) {
             | DaemonEvent::AgentFollowupOffer { .. }
             | DaemonEvent::AgentFollowupClear
             | DaemonEvent::PasteMissed { .. }
+            | DaemonEvent::PasteMissedClear
             | DaemonEvent::PasteCatchDisabled
             | DaemonEvent::PillIcon { .. }
             | DaemonEvent::OverlayConfig { .. }
@@ -260,7 +264,31 @@ pub fn on_event(app: &AppHandle, event: &DaemonEvent) {
     }
     let handle = app.clone();
     let event = event.clone();
-    let _ = app.run_on_main_thread(move || on_event_main(&handle, &event));
+    let _ = app.run_on_main_thread(move || {
+        if matches!(event, DaemonEvent::PasteMissed { .. }) {
+            let Some(ctx) = handle.try_state::<OverlayContext>() else {
+                return;
+            };
+            let generation = ctx.notice_generation.fetch_add(1, Ordering::AcqRel) + 1;
+            // Delay presentation only: clipboard contents and the deliver
+            // shortcut are already available. Reuse the async runtime timer.
+            tauri::async_runtime::spawn(async move {
+                tokio::time::sleep(CLIPBOARD_NOTICE_DELAY).await;
+                let app = handle.clone();
+                let _ = handle.run_on_main_thread(move || {
+                    let Some(ctx) = app.try_state::<OverlayContext>() else {
+                        return;
+                    };
+                    // A new capture, replacement offer or clear owns the UI now.
+                    if ctx.notice_generation.load(Ordering::Acquire) == generation {
+                        on_event_main(&app, &event);
+                    }
+                });
+            });
+        } else {
+            on_event_main(&handle, &event);
+        }
+    });
 }
 
 fn on_event_main(app: &AppHandle, event: &DaemonEvent) {
@@ -282,6 +310,7 @@ fn on_event_main(app: &AppHandle, event: &DaemonEvent) {
             | DaemonEvent::AgentFollowupOffer { .. }
             | DaemonEvent::AgentFollowupClear
             | DaemonEvent::PasteMissed { .. }
+            | DaemonEvent::PasteMissedClear
             | DaemonEvent::PasteCatchDisabled
             | DaemonEvent::PillIcon { .. }
             | DaemonEvent::OverlayConfig { .. }
@@ -373,7 +402,7 @@ fn on_event_main(app: &AppHandle, event: &DaemonEvent) {
                 }
                 expiry = Some(ctx.notice_generation.fetch_add(1, Ordering::AcqRel) + 1);
             }
-            DaemonEvent::PasteCatchDisabled => {
+            DaemonEvent::PasteCatchDisabled | DaemonEvent::PasteMissedClear => {
                 ctx.notice_generation.fetch_add(1, Ordering::AcqRel);
                 value.notice = None;
                 if value.state == "notice" {

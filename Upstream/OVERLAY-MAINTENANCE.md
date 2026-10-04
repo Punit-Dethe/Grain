@@ -244,3 +244,17 @@ Verification: the Rust library build, six overlay tests, Prompt Record and
 shortcut-conflict tests, generated binding export, frontend build/lint and 124
 unit tests pass. Settings parity, upstream policy and divergence ratchet pass.
 Gradient timing and compact/expanded visual acceptance require the real app.
+
+## Clipboard notice timing (2026-10-04)
+
+`grain_overlay::on_event` delays only `PasteMissed` presentation by 400 ms,
+allowing Handy's 300 ms recording-window hide to finish. Clipboard publication
+and the deliver shortcut remain immediate. The existing notice generation
+rejects pending presentation after a new capture, replacement notice, follow-up
+or clear. `PasteMissedClear` now also clears pending/displayed feedback when the
+held transcript is delivered, superseded or expires. The three-second notice
+lifetime starts when shown. The timer uses the existing async runtime; shared
+Handy lifecycle code and the experimental Agent typing branch are unchanged.
+
+Verification: six overlay regression tests, normal Rust library build and
+format/whitespace checks pass. Notice timing remains a real-app visual check.
