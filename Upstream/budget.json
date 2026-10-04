@@ -25,7 +25,7 @@
   "src-tauri/src/handy/managers/history.rs": 33,
   "src-tauri/src/handy/managers/model.rs": 677,
   "src-tauri/src/handy/managers/transcription.rs": 1076,
-  "src-tauri/src/handy/overlay.rs": 14,
+  "src-tauri/src/handy/overlay.rs": 28,
   "src-tauri/src/handy/secure_input.rs": 204,
   "src-tauri/src/handy/shortcut/handler.rs": 47,
   "src-tauri/src/handy/shortcut/handy_keys.rs": 14,
