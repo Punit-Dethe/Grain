@@ -33,14 +33,15 @@ impl OverlayPresentation {
     fn for_capture(mode: SessionMode, style: crate::settings::OverlayStyle) -> Self {
         Self {
             visible: style != crate::settings::OverlayStyle::None,
-            // The action selected by the shortcut owns presentation. Stored
-            // Minimal/Live values both mean enabled; neither overrides a mode.
-            state: if mode == SessionMode::NativeAsr {
-                "streaming"
-            } else {
-                "recording"
-            }
-            .into(),
+            // Live preview applies only to the live-transcription action.
+            // Minimal forces every action to use the compact recording card.
+            state:
+                if style == crate::settings::OverlayStyle::Live && mode == SessionMode::NativeAsr {
+                    "streaming"
+                } else {
+                    "recording"
+                }
+                .into(),
             ..Default::default()
         }
     }
@@ -496,34 +497,39 @@ mod tests {
     use grain_core::SessionMode;
 
     #[test]
-    fn capture_mode_owns_presentation_for_all_legacy_overlay_preferences() {
-        for style in [
-            OverlayStyle::None,
-            OverlayStyle::Minimal,
-            OverlayStyle::Live,
+    fn pill_preference_and_capture_mode_select_presentation() {
+        for (style, visible, expected_states) in [
+            (OverlayStyle::None, false, ["recording"; 4]),
+            (OverlayStyle::Minimal, true, ["recording"; 4]),
+            (
+                OverlayStyle::Live,
+                true,
+                ["recording", "recording", "recording", "streaming"],
+            ),
         ] {
-            for mode in [
+            for (mode, expected_state) in [
                 SessionMode::Batch,
                 SessionMode::Dictation,
                 SessionMode::VoiceToAI,
                 SessionMode::NativeAsr,
-            ] {
+            ]
+            .into_iter()
+            .zip(expected_states)
+            {
                 let mut value = OverlayPresentation::for_capture(mode, style);
                 value.session_id = 7;
-                assert_eq!(value.visible, style != OverlayStyle::None);
-                if mode == SessionMode::NativeAsr {
-                    assert_eq!(value.state, "streaming");
+                assert_eq!(value.visible, visible, "{style:?} / {mode:?}");
+                assert_eq!(value.state, expected_state, "{style:?} / {mode:?}");
+                if expected_state == "streaming" {
                     value.stream_text(7, "live words", "tail");
-                    if value.visible {
-                        assert_eq!(value.committed, "live words");
-                        // Working phases keep the live card and its text.
-                        value.working = true;
-                        assert_eq!(value.state, "streaming");
-                        assert_eq!(value.tentative, "tail");
-                    }
+                    assert_eq!(value.committed, "live words");
+                    // Working phases keep the live card and its text.
+                    value.working = true;
+                    assert_eq!(value.state, "streaming");
+                    assert_eq!(value.tentative, "tail");
                 } else {
-                    assert_eq!(value.state, "recording");
-                    // A stream-capable selected model cannot open these pills.
+                    // Compact and None never open from streamed text; Standard,
+                    // Flow and Agent stay compact even with Live selected.
                     value.stream_text(7, "unrelated stream", "tail");
                     assert!(value.committed.is_empty() && value.tentative.is_empty());
                 }

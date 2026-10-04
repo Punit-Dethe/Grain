@@ -140,6 +140,7 @@ export function RecordingOverlay() {
   useEffect(() => {
     let disposed = false;
     let revision = 0;
+    let acceptsLiveText = false;
     const updated = {
       position: false,
       theme: false,
@@ -162,6 +163,7 @@ export function RecordingOverlay() {
     };
     const initialize = async () => {
       const apply = (value: OverlayPresentation) => {
+        acceptsLiveText = value.visible && value.state === "streaming";
         setPresentation(value);
         setText({ committed: value.committed, tentative: value.tentative });
         setWorking(value.working);
@@ -178,6 +180,7 @@ export function RecordingOverlay() {
         register(
           events.showOverlay.listen(({ payload }) => {
             if (disposed) return;
+            acceptsLiveText = payload === "streaming";
             revision++;
             if (payload === "recording" || payload === "streaming") reset();
             setPresentation((value) => ({
@@ -194,6 +197,7 @@ export function RecordingOverlay() {
         register(
           events.hideOverlay.listen(() => {
             if (disposed) return;
+            acceptsLiveText = false;
             revision++;
             setPresentation((value) => ({
               ...value,
@@ -215,7 +219,7 @@ export function RecordingOverlay() {
         ),
         register(
           events.streamTextEvent.listen(({ payload }) => {
-            if (!disposed) {
+            if (!disposed && acceptsLiveText) {
               revision++;
               setText(payload);
             }
@@ -223,7 +227,7 @@ export function RecordingOverlay() {
         ),
         register(
           events.streamPhaseEvent.listen(({ payload }) => {
-            if (!disposed) {
+            if (!disposed && acceptsLiveText) {
               revision++;
               setWorking(payload.phase === "working");
               if (payload.kind) setKind(payload.kind);

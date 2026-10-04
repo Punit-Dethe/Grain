@@ -544,9 +544,14 @@
       "overlay": {
         "title": "Pill Position",
         "description": "Choose whether recording pills appear at the top or bottom of the screen.",
-        "enabled": {
-          "label": "Show recording pill",
-          "description": "The shortcut determines the pill: Standard and Flow use the compact pill; Streaming shows live text."
+        "display": {
+          "title": "Recording pill",
+          "description": "None hides the pill in every mode. Compact uses a compact pill in every mode. Live preview shows text only with the Streaming shortcut; Standard and Flow stay compact.",
+          "options": {
+            "none": "None",
+            "compact": "Compact",
+            "live": "Live preview"
+          }
         },
         "options": {
           "none": "None",
