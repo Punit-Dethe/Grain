@@ -20,7 +20,9 @@
 
 use serde::Serialize;
 use specta::Type;
-use tauri::{AppHandle, Emitter, Manager};
+#[cfg(target_os = "macos")] // [GRAIN] Only the macOS fallback emits status changes.
+use tauri::Emitter;
+use tauri::{AppHandle, Manager};
 
 #[derive(Debug, Clone, Serialize, Type)]
 pub struct SecureInputStatus {
@@ -526,6 +528,10 @@ mod imp {
                     continue;
                 }
                 if id == "cancel" && !state.cancel_requested.load(Ordering::SeqCst) {
+                    continue;
+                }
+                // [GRAIN] A capture-only key must not regain an idle Carbon shadow.
+                if id == "prompt_record" && !crate::prompt_record::shortcut_is_active() {
                     continue;
                 }
                 if id == "transcribe_with_post_process" && !settings.post_process_enabled {

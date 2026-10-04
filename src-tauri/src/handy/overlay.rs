@@ -625,6 +625,7 @@ pub fn show_streaming_overlay(app_handle: &AppHandle) {
 }
 
 /// Shows the transcribing overlay window
+#[allow(dead_code)] // [GRAIN] Retain Handy's API; owned presentation calls show_overlay_state.
 pub fn show_transcribing_overlay(app_handle: &AppHandle) {
     show_overlay_state(app_handle, "transcribing");
 }

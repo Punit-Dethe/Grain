@@ -166,6 +166,12 @@ const SETTING_DEFS: SettingDef[] = [
     enabled: (s) => !s?.capture_always_ai,
   },
   {
+    id: "prompt-record",
+    titleKey: "settings.general.shortcut.bindings.prompt_record.name",
+    section: "capture",
+    keywords: ["spoken instruction", "prompt record", "f8"],
+  },
+  {
     id: "language",
     titleKey: "settings.general.language.title",
     section: "capture",

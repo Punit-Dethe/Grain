@@ -1310,6 +1310,7 @@ fn show_panel(app: &AppHandle, expanded: bool) -> Result<(), String> {
 
 /// Pill → core: the user submitted TYPED text from the expanded input card.
 /// `quick` selects paste in place when the user holds Shift.
+#[allow(dead_code)] // Retained for the deferred expanded Agent input UI.
 pub fn input_submit_text(app: &AppHandle, text: String, quick: bool) {
     let Some(state) = app.try_state::<AgentState>() else {
         return;
@@ -1427,6 +1428,7 @@ fn input_cancel_cleanup(app: &AppHandle) {
 
 /// Pill → core: typing started (`true` → drop the voice capture) or the user
 /// tabbed back to voice (`false` → restart dictation).
+#[allow(dead_code)] // Retained for the deferred expanded Agent input UI.
 pub fn input_typing(app: &AppHandle, active: bool) {
     let live = app
         .try_state::<AgentState>()

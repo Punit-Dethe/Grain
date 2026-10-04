@@ -412,6 +412,10 @@
           "transcribe_send_to_ai": {
             "name": "AI Dictation",
             "description": "One key for AI: press it to start an AI dictation, or press it during any dictation to end that one and send it to AI."
+          },
+          "prompt_record": {
+            "name": "Prompt Record",
+            "description": "During dictation, press this key, then speak an AI instruction. Stop dictation with its original shortcut to apply it."
           }
         },
         "errors": {

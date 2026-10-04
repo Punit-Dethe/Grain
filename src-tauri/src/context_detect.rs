@@ -39,7 +39,7 @@ use std::fmt::Write as _;
 #[path = "prompt_stack.rs"]
 pub(crate) mod prompt_stack;
 
-use prompt_stack::{ContributedLayer, Contributions, PromptStack};
+use prompt_stack::{Contributions, PromptStack};
 
 /// [GRAIN] The installed-application catalogue behind the context-profile app
 /// picker.
@@ -2886,6 +2886,7 @@ mod site_table_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use prompt_stack::ContributedLayer;
 
     #[test]
     fn stop_caret_preserves_empty_and_seam_whitespace() {

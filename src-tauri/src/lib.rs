@@ -101,7 +101,7 @@ mod paste_tx;
 mod pill_icon; // [GRAIN] pill identity — the foreground app's icon → pill
 #[path = "handy/portable.rs"]
 pub mod portable;
-mod prompt_record; // [GRAIN] Prompt Record: split content vs spoken AI instruction at the pill-control mark
+mod prompt_record; // [GRAIN] Prompt Record: split content vs spoken AI instruction at the shortcut mark
 mod rolling; // [GRAIN] Parakeet TDT Flow capture and scheduling service
 #[path = "handy/secure_input.rs"]
 mod secure_input;

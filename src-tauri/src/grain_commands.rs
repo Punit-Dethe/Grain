@@ -15,7 +15,7 @@ use crate::shortcut::{register_shortcut, unregister_shortcut};
 use log::warn;
 use tauri::{AppHandle, Manager};
 
-/// The four capture/Agent keys reserve their saved chords even while a feature
+/// Capture, Agent and Prompt Record keys reserve their saved chords even while a feature
 /// is disabled and its OS shortcut is unregistered. Other bindings are outside
 /// this policy.
 pub(crate) fn capture_shortcut_conflicts(
@@ -23,11 +23,12 @@ pub(crate) fn capture_shortcut_conflicts(
     id: &str,
     candidate: &str,
 ) -> bool {
-    const IDS: [&str; 4] = [
+    const IDS: [&str; 5] = [
         "transcribe",
         "transcribe_native_asr",
         "summon_agent",
         "transcribe_send_to_ai",
+        "prompt_record",
     ];
     if !IDS.contains(&id) {
         return false;
@@ -42,13 +43,22 @@ pub(crate) fn capture_shortcut_conflicts(
         let Ok(candidate) = candidate.parse::<T>() else {
             return false; // The existing validator reports malformed shortcuts.
         };
-        ids.iter().filter(|other| **other != id).any(|other| {
-            settings
-                .bindings
-                .get(*other)
-                .and_then(|binding| binding.current_binding.parse::<T>().ok())
-                .is_some_and(|stored| stored == candidate)
-        })
+        settings
+            .bindings
+            .iter()
+            .filter(|(other, _)| {
+                other.as_str() != id
+                    && (ids.contains(&other.as_str())
+                        || (id == "prompt_record"
+                            && !grain_core::capture::shortcut_is_withheld(other)))
+            })
+            .any(|(_, binding)| {
+                binding
+                    .current_binding
+                    .parse::<T>()
+                    .ok()
+                    .is_some_and(|stored| stored == candidate)
+            })
     }
 
     match settings.keyboard_implementation {
@@ -89,6 +99,7 @@ mod capture_shortcut_conflict_tests {
             "transcribe_native_asr",
             "summon_agent",
             "transcribe_send_to_ai",
+            "prompt_record",
         ];
         for implementation in [
             settings::KeyboardImplementation::Tauri,
@@ -144,6 +155,32 @@ mod capture_shortcut_conflict_tests {
                 &settings,
                 "summon_agent",
                 "ctrl+alt+f9"
+            ));
+        }
+    }
+
+    #[test]
+    fn prompt_record_default_is_supported_and_cannot_override_cancel() {
+        for implementation in [
+            settings::KeyboardImplementation::Tauri,
+            settings::KeyboardImplementation::HandyKeys,
+        ] {
+            let mut settings = settings::get_default_settings();
+            settings.keyboard_implementation = implementation;
+            let chord = &settings.bindings["prompt_record"].current_binding;
+            assert!(chord
+                .parse::<tauri_plugin_global_shortcut::Shortcut>()
+                .is_ok());
+            assert!(chord.parse::<handy_keys::Hotkey>().is_ok());
+            assert!(!capture_shortcut_conflicts(
+                &settings,
+                "prompt_record",
+                chord
+            ));
+            assert!(capture_shortcut_conflicts(
+                &settings,
+                "prompt_record",
+                &settings.bindings["cancel"].current_binding
             ));
         }
     }

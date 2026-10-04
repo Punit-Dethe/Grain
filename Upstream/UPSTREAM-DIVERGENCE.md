@@ -16,6 +16,21 @@ the default: normal 3-way merge, preferring upstream in the STT core.
 > live at `src-tauri/src/handy/…` in Grain (declared via `#[path]`, contents
 > unchanged). `Upstream/ratchet.py` maps between the two.
 
+## Prompt Record shortcut seam (2026-10-04)
+
+`OVERLAY-MAINTENANCE.md` covers the restored F8 binding and its lifecycle.
+Defaults/persistence/eligibility live in `grain-core`, dispatch in
+`grain_actions.rs`, and the settings row in Grain's CaptureModes UI.
+The existing `managers/audio.rs` Prompt Record hook now locks recording state
+through marking and excludes non-dictation/stopping captures. Preserve that
+hook when adopting recorder changes. Narrow dead-code annotations retain Handy
+APIs (`RecordingReadiness::wait`, `show_transcribing_overlay`, and the hidden
+post-processing master setter) without reinstating retired UI/commands.
+`shortcut/mod.rs` carries marked delegation hooks for dynamic rebinding,
+editor resume and keyboard backend switches. `secure_input.rs` excludes idle
+Prompt Record from Carbon shadows; preserve that lifecycle gate. The macOS-only
+`Emitter` import is platform-gated.
+
 ## Current conflict rules (authoritative; audited 2026-08-22)
 
 Never copy a static merge-base claim from this document. Query

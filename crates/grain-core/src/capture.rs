@@ -53,10 +53,22 @@ pub fn is_capture_mode(id: &str) -> bool {
     CAPTURE_MODE_IDS.contains(&id)
 }
 
+/// Only dictation actions consume a content/instruction audio split.
+pub fn supports_prompt_record(action_id: &str) -> bool {
+    matches!(
+        action_id,
+        "transcribe"
+            | "transcribe_with_post_process"
+            | "transcribe_realtime"
+            | "transcribe_native_asr"
+    )
+}
+
 /// Bindings that are registered **dynamically** — held only while the surface
 /// that owns them is live, never at init:
 ///
 /// - `cancel` — while a recording is running.
+/// - `prompt_record` — while a dictation recording is running.
 /// - `agent_followup` — while an Agent surface (panel / pill offer) is open.
 /// - `paste_catch_deliver` — while Grain is holding a transcript whose paste
 ///   missed the text field.
@@ -65,7 +77,10 @@ pub fn is_capture_mode(id: &str) -> bool {
 /// binding is a change here and nowhere else. Registering one of these globally
 /// would squat on the user's keys for a surface that is not on screen.
 pub fn is_dynamic_binding(id: &str) -> bool {
-    matches!(id, "cancel" | "agent_followup" | "paste_catch_deliver")
+    matches!(
+        id,
+        "cancel" | "prompt_record" | "agent_followup" | "paste_catch_deliver"
+    )
 }
 
 /// Whether a shortcut id should hold a global hotkey at registration time,
@@ -178,6 +193,27 @@ mod tests {
             "handy-computer/parakeet-tdt-0.6b-v3-gguf/parakeet-tdt-0.6b-v3-Q2_K.gguf",
         ] {
             assert!(!is_reviewed_flow_model(id), "accepted {id}");
+        }
+    }
+
+    #[test]
+    fn prompt_record_is_limited_to_dictation_actions() {
+        for id in [
+            "transcribe",
+            "transcribe_with_post_process",
+            "transcribe_realtime",
+            "transcribe_native_asr",
+        ] {
+            assert!(supports_prompt_record(id));
+        }
+        for id in [
+            "summon_agent",
+            "agent",
+            "extension_mode",
+            "ext:example:capture",
+            "",
+        ] {
+            assert!(!supports_prompt_record(id));
         }
     }
 
@@ -326,7 +362,12 @@ mod tests {
         s.post_process_enabled = true;
         s.agent_enabled = true;
         s.paste_catch_enabled = true;
-        for id in ["cancel", "agent_followup", "paste_catch_deliver"] {
+        for id in [
+            "cancel",
+            "prompt_record",
+            "agent_followup",
+            "paste_catch_deliver",
+        ] {
             assert!(is_dynamic_binding(id));
             assert!(!shortcut_holds_hotkey(&s, id));
         }

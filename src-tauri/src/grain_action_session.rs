@@ -790,19 +790,8 @@ pub fn accept(app: &AppHandle, presentation_id: u64, extension_id: &str) -> Resu
     Ok(())
 }
 
-/// The user dismissed the recommendation surface without choosing (§8). Clears
-/// the pending request so a later stale click does nothing and hides the
-/// surface. No-op past the first dismissal.
-pub fn dismiss(app: &AppHandle, presentation_id: u64) {
-    if !dismiss_from_view(presentation_id) {
-        return;
-    }
-    crate::extension_view::destroy(app);
-    log::info!("[GRAIN] extension mode: surface dismissed");
-}
-
-/// Retire a chooser whose own host window is already closing. This is separate
-/// from [`dismiss`] to avoid recursively destroying the same native window.
+/// Retire a chooser whose own host window is already closing, without
+/// recursively destroying that same native window.
 pub fn dismiss_from_view(presentation_id: u64) -> bool {
     let _gate = request_gate().lock().unwrap();
     let dismissed = {
@@ -844,7 +833,7 @@ pub fn dismiss_request_from_view(request_id: u64) -> bool {
 }
 
 /// Invalidate Extension Mode because another capture has begun. Unlike
-/// [`dismiss`], this emits only when there was a chooser to withdraw; the epoch
+/// [`dismiss_from_view`], this emits only when there was a chooser to withdraw; the epoch
 /// still advances every time so a handed-off extension cannot decline back over
 /// a newer recording.
 pub fn supersede(app: &AppHandle) {

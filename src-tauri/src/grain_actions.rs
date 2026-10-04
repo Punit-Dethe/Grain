@@ -111,6 +111,9 @@ fn emit_session_started_with_owner(
     // paste target, and the pill should end up agreeing with post-processing
     // (which resolves its context at paste time, after every switch).
     crate::surface_watch::start(app);
+    if owner.is_none() {
+        crate::prompt_record::capture_started(app, session_id);
+    }
     crate::bridge::emit(
         app,
         DaemonEvent::RecordingStarted {
@@ -246,6 +249,22 @@ pub(crate) fn cancel_session(app: &AppHandle) {
 // A tap shortcut: it fires on press and hands off to `agent::summon`, which does
 // the selection capture + window creation off the input thread.
 struct SummonAgentAction;
+
+/// Mark the current dictation buffer; release and repeated presses do nothing.
+struct PromptRecordAction;
+
+impl ShortcutAction for PromptRecordAction {
+    fn start(&self, app: &AppHandle, _binding_id: &str, _shortcut_str: &str) {
+        if !crate::prompt_record::shortcut_is_active() {
+            return;
+        }
+        if let Some(manager) = app.try_state::<Arc<AudioRecordingManager>>() {
+            manager.arm_prompt_record();
+        }
+    }
+
+    fn stop(&self, _app: &AppHandle, _binding_id: &str, _shortcut_str: &str) {}
+}
 
 impl ShortcutAction for SummonAgentAction {
     fn start(&self, app: &AppHandle, _binding_id: &str, _shortcut_str: &str) {
@@ -872,6 +891,7 @@ impl ShortcutAction for NativeAsrAction {
 /// Register every Grain action into the shared `ACTION_MAP`. Called once from
 /// `actions.rs` — the single hook the Handy-derived registry needs.
 pub(crate) fn register(map: &mut HashMap<String, Arc<dyn ShortcutAction>>) {
+    map.insert("prompt_record".to_string(), Arc::new(PromptRecordAction));
     // Parakeet TDT Flow transcription.
     map.insert(
         "transcribe_realtime".to_string(),

@@ -1345,6 +1345,7 @@ pub fn ensure_post_process_defaults(settings: &mut AppSettings) -> bool {
         "agent_followup",
         "transcribe_send_to_ai",
         "transcribe_native_asr",
+        "prompt_record",
     ] {
         if !settings.bindings.contains_key(id) {
             if let Some(binding) = defaults.bindings.get(id) {
@@ -1588,6 +1589,18 @@ pub fn get_default_settings() -> AppSettings {
                 .to_string(),
             default_binding: default_send_to_ai_shortcut.to_string(),
             current_binding: default_send_to_ai_shortcut.to_string(),
+        },
+    );
+
+    let default_prompt_record_shortcut = "f8";
+    bindings.insert(
+        "prompt_record".to_string(),
+        ShortcutBinding {
+            id: "prompt_record".to_string(),
+            name: "Prompt Record".to_string(),
+            description: "During dictation, press this key, then speak an AI instruction. Stop dictation with its original shortcut to apply it.".to_string(),
+            default_binding: default_prompt_record_shortcut.to_string(),
+            current_binding: default_prompt_record_shortcut.to_string(),
         },
     );
 
@@ -1904,6 +1917,30 @@ mod retired_audio_conditioning_tests {
 #[cfg(test)]
 mod transcribe_device_migration_tests {
     use super::*;
+
+    #[test]
+    fn prompt_record_is_seeded_and_custom_binding_survives_save_reload() {
+        let mut settings = get_default_settings();
+        assert_eq!(settings.bindings["prompt_record"].current_binding, "f8");
+        settings.bindings.remove("prompt_record");
+        assert!(ensure_post_process_defaults(&mut settings));
+        assert_eq!(
+            settings.bindings["prompt_record"].current_binding,
+            get_default_settings().bindings["prompt_record"].current_binding
+        );
+        settings
+            .bindings
+            .get_mut("prompt_record")
+            .unwrap()
+            .current_binding = "ctrl+alt+p".into();
+        let encoded = serde_json::to_string(&settings).unwrap();
+        let mut restored: AppSettings = serde_json::from_str(&encoded).unwrap();
+        ensure_post_process_defaults(&mut restored);
+        assert_eq!(
+            restored.bindings["prompt_record"].current_binding,
+            "ctrl+alt+p"
+        );
+    }
 
     #[test]
     fn legacy_integer_device_is_cleared_and_generic_gpu_becomes_auto() {

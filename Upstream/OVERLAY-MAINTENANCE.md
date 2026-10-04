@@ -58,7 +58,8 @@ keeps the X.
 TinySkia runtime/supervisor, Dot Matrix/Pill Style, prompt switcher machinery and
 hover controls are retired. Typed Agent capture expansion is unavailable in
 production; its underlying submission capability is retained. Prompt Record
-processing remains without a pill button. Do not revive retired code during
+processing is activated by the saved `prompt_record` binding (F8),
+shown last in Transcription → AI processing; it has no pill button. Do not revive retired code during
 conflict resolution.
 
 ## How an upstream change is reviewed
@@ -181,3 +182,40 @@ export, frontend build/lint/118 tests, settings parity, formatting and upstream
 preflight pass. Rust test compilation used a command-local resource override
 to avoid recopying DLLs locked by the running app; production configuration is
 unchanged. Audible Flow feedback and OS hotkey activation remain real-app checks.
+
+## Prompt Record shortcut and warning cleanup (2026-10-04)
+
+The normal shortcut registry dispatches `PromptRecordAction` in `grain_actions.rs`.
+It marks an ongoing Standard, Flow or Streaming capture once; it starts no new
+recording and releases no capture key. The original capture key still stops it.
+`grain-core::capture::supports_prompt_record` owns eligibility. The existing
+`AudioRecordingManager::arm_prompt_record` hook holds the recording-state lock
+through marking, excluding idle/stopping, Agent and Extension sessions and
+serializing against Stop/Cancel/restart. Zero-length capture cannot arm. Registry calls use short-lived jobs on the existing runtime; no persistent
+worker, service or listener is introduced. Existing split/ASR/AI paths consume
+and clear the mark. Backend defaults seed the binding into existing profiles;
+normal `change_binding` persistence, shortcut-backend switching and macOS
+Secure Input fallback apply. `prompt_record` is a dynamic binding: no OS hotkey
+at idle/startup. Normal dictation start claims it; matching Stop/Cancel/completion
+releases it. The owned helper remembers the actual chord/backend, restores after
+shortcut editing (including cancel/unmount), and excludes stale terminal events
+from newer captures. The editor suspension flag also gates Carbon shadows. macOS
+Carbon shadow registration uses the same active-capture gate. Rebinding cannot overwrite capture/Agent/cancel keys.
+
+The removed native-pill reverse channel left an unused all-capabilities grant
+and an obsolete Extension dismissal wrapper; both are removed. Scoped worker
+authentication and native-window dismissal remain. Typed Agent submission and
+typing are retained with narrowly documented dead-code allowances, as required
+by the deferred expanded UI. Handy's `wait`, `show_transcribing_overlay` and
+unregistered post-processing master setter remain compatibility APIs with local
+allowances; do not re-expose that setter. `Emitter` is imported only on macOS.
+`ContributedLayer` is now imported inside the tests that use it.
+
+Verification: Windows library build resolves all ten reported compiler warnings;
+test compilation retains only the pre-existing clamshell test-import warning.
+221 grain-core tests, 144 targeted Tauri tests (context, Agent, authentication,
+capabilities, coordinator, overlay, shortcut conflicts and stale-session cleanup),
+124 frontend tests, frontend production build/lint, Specta export, settings
+parity and runtime-port policy pass. The F8 default parses on both backends.
+Real-microphone Prompt Record behavior, visual acceptance, and non-Windows host
+activation remain real-application checks.

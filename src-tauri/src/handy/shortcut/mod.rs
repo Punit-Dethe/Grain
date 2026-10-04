@@ -186,10 +186,16 @@ pub fn change_binding(
     // shares one answer; a dynamic binding registered globally here would squat
     // on the user's keys for a surface that is not on screen.
     if grain_core::capture::is_dynamic_binding(&id) {
+        // [GRAIN] Validate dynamic edits before saving, just like global keys.
+        validate_shortcut_for_implementation(&binding, settings.keyboard_implementation)?;
         if let Some(mut b) = settings.bindings.get(&id).cloned() {
             b.current_binding = binding;
             settings.bindings.insert(id.clone(), b.clone());
             settings::write_settings(&app, settings);
+            if id == "prompt_record" {
+                // [GRAIN] Finish editing and retire the previous capture chord.
+                crate::prompt_record::set_shortcut_suspended(&app, false);
+            }
             crate::secure_input::reconcile_fallback(&app);
             return Ok(BindingResponse {
                 success: true,
@@ -278,8 +284,10 @@ pub fn reset_binding(app: AppHandle, id: String) -> Result<BindingResponse, Stri
 /// mid-capture. The "cancel" binding is untouched: it is managed dynamically
 /// by the recording lifecycle.
 pub fn suspend_all_shortcuts(app: &AppHandle) {
+    crate::prompt_record::set_shortcut_suspended(app, true); // [GRAIN] Capture key shares editor suspension.
     for (id, binding) in settings::get_bindings(app) {
-        if id == "cancel" {
+        if id == "cancel" || id == "prompt_record" {
+            // [GRAIN] The owned hook suspends Prompt Record.
             continue;
         }
         if let Err(e) = unregister_shortcut(app, binding) {
@@ -296,6 +304,11 @@ pub fn suspend_all_shortcuts(app: &AppHandle) {
 #[tauri::command]
 #[specta::specta]
 pub fn suspend_binding(app: AppHandle, id: String) -> Result<(), String> {
+    if id == "prompt_record" {
+        // [GRAIN] No idle OS registration to unregister.
+        crate::prompt_record::set_shortcut_suspended(&app, true);
+        return Ok(());
+    }
     if let Some(b) = settings::get_bindings(&app).get(&id).cloned() {
         if let Err(e) = unregister_shortcut(&app, b.clone()) {
             error!("suspend_binding error for id '{}': {}", id, e);
@@ -321,6 +334,7 @@ pub fn resume_all_shortcuts(app: &AppHandle) {
             debug!("resume_all_shortcuts: could not register '{}': {}", id, e);
         }
     }
+    crate::prompt_record::set_shortcut_suspended(app, false); // [GRAIN] Restore the capture-only key after editing.
 }
 
 /// Temporarily unregister all bindings while the user is recording a
@@ -344,6 +358,11 @@ pub fn resume_all_bindings(app: AppHandle) -> Result<(), String> {
 #[tauri::command]
 #[specta::specta]
 pub fn resume_binding(app: AppHandle, id: String) -> Result<(), String> {
+    if id == "prompt_record" {
+        // [GRAIN] Restore only if a dictation capture still owns the key.
+        crate::prompt_record::set_shortcut_suspended(&app, false);
+        return Ok(());
+    }
     if let Some(b) = settings::get_bindings(&app).get(&id).cloned() {
         // [GRAIN] Resuming a binding must not bypass the feature gate.
         let settings = get_settings(&app);
@@ -421,6 +440,7 @@ pub fn change_keyboard_implementation_setting(
         // Shortcuts already registered during init.
         crate::extension_shortcuts::sync(&app); // [GRAIN]
         crate::secure_input::reconcile_fallback(&app);
+        crate::prompt_record::reconcile_shortcut(&app); // [GRAIN] Move a live capture key to the new backend.
         return Ok(ImplementationChangeResult {
             success: true,
             reset_bindings: vec![],
@@ -429,6 +449,7 @@ pub fn change_keyboard_implementation_setting(
 
     // Register all shortcuts with new implementation, resetting invalid ones
     let reset_bindings = register_all_shortcuts_for_implementation(&app, new_impl);
+    crate::prompt_record::reconcile_shortcut(&app); // [GRAIN] Move a live capture key to the new backend.
     crate::extension_shortcuts::sync(&app); // [GRAIN]
     crate::secure_input::reconcile_fallback(&app);
 
@@ -953,6 +974,7 @@ pub fn change_auto_submit_key_setting(app: AppHandle, key: String) -> Result<(),
 
 #[tauri::command]
 #[specta::specta]
+#[allow(dead_code)] // [GRAIN] Handy compatibility only; Grain keeps processing enabled and does not expose this command.
 pub fn change_post_process_enabled_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
     let mut settings = settings::get_settings(&app);
     settings.post_process_enabled = enabled;

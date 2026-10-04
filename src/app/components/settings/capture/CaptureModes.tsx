@@ -132,6 +132,11 @@ export const CaptureModes: React.FC = () => {
             onChange={(value) => updateSetting("capture_end_with_ai", value)}
           />
         )}
+        <ShortcutInput
+          shortcutId="prompt_record"
+          descriptionMode="tooltip"
+          grouped
+        />
       </SettingsGroup>
     </>
   );

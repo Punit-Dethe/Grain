@@ -20,7 +20,6 @@ use grain_sdk::{daemon_event_capability, ClientHello};
 /// derived from user-granted manifests; developer control receives no events.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum CapabilitySet {
-    All,
     Named(HashSet<String>),
 }
 
@@ -120,7 +119,6 @@ pub fn allows_event(identity: &ClientIdentity, ev: &DaemonEvent) -> bool {
         return false;
     }
     match &identity.caps {
-        CapabilitySet::All => true,
         CapabilitySet::Named(caps) => caps.contains(required_capability(ev)),
     }
 }
@@ -160,7 +158,10 @@ mod tests {
             .authenticate(r#"{"token":"ext-a-secret","client":"pill"}"#)
             .unwrap();
         assert_eq!(id.id, "com.example.a");
-        assert_ne!(id.caps, CapabilitySet::All);
+        assert_eq!(
+            id.caps,
+            CapabilitySet::Named(["events:sessions".to_string()].into_iter().collect())
+        );
     }
 
     #[test]

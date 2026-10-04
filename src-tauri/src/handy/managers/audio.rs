@@ -357,6 +357,7 @@ pub struct RecordingReadiness {
 }
 
 impl RecordingReadiness {
+    #[allow(dead_code)] // [GRAIN] Keep Handy's API; owned callers use cancellable wait_timeout.
     pub fn wait(self) -> bool {
         self.receiver.recv().is_ok()
     }
@@ -386,8 +387,8 @@ pub struct AudioRecordingManager {
     cancel_generation: Arc<AtomicU64>,
     capture_generation: Arc<AtomicU64>,
     stream_router: Arc<StreamRouter>,
-    /// [GRAIN] Prompt Record split mark: the sample index where the user clicked
-    /// the pill mid-recording to switch from dictating CONTENT to dictating an AI
+    /// [GRAIN] Prompt Record split mark: the sample index where the user pressed
+    /// the shortcut mid-recording to switch from dictating CONTENT to dictating an AI
     /// INSTRUCTION. `Some(n)` once armed (one-way per session); `None` otherwise.
     /// Snapshotted from the recorder's live length so it indexes the buffer
     /// `stop_recording` returns. Reset at the start of every recording.
@@ -887,13 +888,20 @@ impl AudioRecordingManager {
     }
 
     /// [GRAIN] Prompt Record: mark the current audio position as the
-    /// content→instruction split point (the user clicked the pill). One-way per
+    /// content→instruction split point (the user pressed the shortcut). One-way per
     /// session — a second call while already armed is a no-op. Returns `true` only
-    /// when it newly armed (so the caller knows to flip the pill blue), `false`
-    /// when not recording or already armed. The mark is snapshotted from the
+    /// when it newly armed, `false` when not dictating or already armed.
+    /// The mark is snapshotted from the
     /// recorder's live length, so it indexes the buffer `stop_recording` returns.
     pub fn arm_prompt_record(&self) -> bool {
-        if !self.is_recording() {
+        // [GRAIN] Serialize marking with Stop/Cancel/start so an old key event
+        // cannot leave a mark after teardown. Agent/extensions do not consume it.
+        let Ok(state) = self.state.try_lock() else {
+            return false; // Never block a shortcut callback on slow microphone startup.
+        };
+        if !matches!(&*state, RecordingState::Recording { binding_id }
+            if grain_core::capture::supports_prompt_record(binding_id))
+        {
             return false;
         }
         let mut mark = self.prompt_mark.lock().unwrap();
@@ -904,6 +912,9 @@ impl AudioRecordingManager {
             Some(rec) => rec.recorded_len(),
             None => return false,
         };
+        if len == 0 {
+            return false;
+        }
         *mark = Some(len);
         debug!("Prompt Record armed at sample {len}");
         true
