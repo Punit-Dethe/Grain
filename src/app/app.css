@@ -1436,7 +1436,15 @@ html[data-theme="light"] .hero {
 
 .hero .button.primary {
   color: #fff !important;
-  background: #111 !important;
+  background: rgb(17 17 17 / 70%) !important;
+  border: 1px solid rgb(255 255 255 / 18%);
+  -webkit-backdrop-filter: blur(14px);
+  backdrop-filter: blur(14px);
+}
+
+.hero .button.primary:hover {
+  background: rgb(17 17 17 / 80%) !important;
+  border-color: rgb(255 255 255 / 28%);
 }
 
 .section-head {
@@ -1706,6 +1714,12 @@ html[data-theme="light"] .overview-card--interactive:hover {
   min-width: 0;
   margin-top: 0;
   margin-bottom: 2px;
+}
+
+.overview-card--shortcuts .overview-card-header {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
 }
 
 .overview-card-icon {
