@@ -441,10 +441,9 @@ impl Default for ThemeMode {
     }
 }
 
-/// The three binding ids that start a capture. Order is the order they are
+/// The two binding ids that start a capture. Order is the order they are
 /// offered in the UI: least to most machinery.
-pub const CAPTURE_MODE_IDS: [&str; 3] =
-    ["transcribe", "transcribe_realtime", "transcribe_native_asr"];
+pub const CAPTURE_MODE_IDS: [&str; 2] = ["transcribe", "transcribe_native_asr"];
 
 pub fn default_capture_mode() -> String {
     "transcribe".to_string()
@@ -707,9 +706,8 @@ pub struct AppSettings {
     /// [GRAIN] Colour scheme preference for every Grain surface. See `ThemeMode`.
     #[serde(default)]
     pub theme: ThemeMode,
-    /// [GRAIN] Which mode the AI shortcut starts when pressed from idle. All
-    /// three capture modes are always live, so this is a free choice among
-    /// `CAPTURE_MODE_IDS`.
+    /// [GRAIN] Which capture binding the AI shortcut borrows from idle:
+    /// Dictation (model-selected Standard/Flow) or Streaming.
     #[serde(default = "default_capture_mode")]
     pub capture_ai_start_mode: String,
     /// [GRAIN] Whether the AI shortcut, pressed *during* a capture, ends it and
@@ -1534,8 +1532,17 @@ pub fn ensure_post_process_defaults(settings: &mut AppSettings) -> bool {
         // chord for a subset of another key's behaviour. The ACTION id lives on
         // for the CLI and SIGUSR1 -- it is only the binding that retires here.
         "transcribe_with_post_process",
+        // Flow remains an internal action selected by the Dictation model.
+        "transcribe_realtime",
     ] {
         if settings.bindings.remove(id).is_some() {
+            if id == "transcribe_realtime" {
+                // Development reset: retire Flow's chord and use the new
+                // Dictation default directly, without migrating custom keys.
+                settings
+                    .bindings
+                    .insert("transcribe".into(), defaults.bindings["transcribe"].clone());
+            }
             changed = true;
         }
     }
@@ -1597,8 +1604,7 @@ pub fn get_default_settings() -> AppSettings {
     //
     // Alt (Option) is the Grain modifier: bare Alt+key is the least-contended
     // global space on every platform. Modifiers then stack by how often a mode
-    // is used -- Flow, the everyday one, gets the bare chord; Standard, the
-    // rarest, carries the extra Ctrl.
+    // is used -- Dictation gets the bare chord; Streaming adds Shift.
     //
     // What we deliberately do NOT bind, because a global hotkey outranks the
     // focused app and would break these everywhere:
@@ -1607,17 +1613,17 @@ pub fn get_default_settings() -> AppSettings {
     //   Ctrl+Shift+Arrow   extend-selection-by-word in every text field
     //   Alt+Arrow          Back/Forward in browsers and file managers
     #[cfg(target_os = "macos")]
-    let default_shortcut = "ctrl+option+space";
+    let default_shortcut = "option+space";
     #[cfg(not(target_os = "macos"))]
-    let default_shortcut = "ctrl+alt+space";
+    let default_shortcut = "alt+space";
 
     let mut bindings = HashMap::new();
     bindings.insert(
         "transcribe".to_string(),
         ShortcutBinding {
             id: "transcribe".to_string(),
-            name: "Standard".to_string(),
-            description: "Converts your speech into text.".to_string(),
+            name: "Dictation".to_string(),
+            description: "Record and paste text. Your selected model chooses Flow or Standard; cloud takes priority when enabled.".to_string(),
             default_binding: default_shortcut.to_string(),
             current_binding: default_shortcut.to_string(),
         },
@@ -1639,27 +1645,10 @@ pub fn get_default_settings() -> AppSettings {
         },
     );
 
-    // [GRAIN] dedicated Parakeet TDT Flow shortcut.
-    #[cfg(target_os = "macos")]
-    let default_realtime_shortcut = "option+space";
-    #[cfg(not(target_os = "macos"))]
-    let default_realtime_shortcut = "alt+space";
-    bindings.insert(
-        "transcribe_realtime".to_string(),
-        ShortcutBinding {
-            id: "transcribe_realtime".to_string(),
-            name: "Flow".to_string(),
-            description: "Fast Parakeet TDT transcription that processes as you speak.".to_string(),
-            default_binding: default_realtime_shortcut.to_string(),
-            current_binding: default_realtime_shortcut.to_string(),
-        },
-    );
-
     // [GRAIN] Native ASR: streaming dictation with live partial/committed text in
     // the Studio Window overlay. Push-to-talk like the other capture modes — the
     // engine loads/unloads automatically around the shortcut, never resident
-    // otherwise. Default mirrors the "+shift" relationship between
-    // transcribe_realtime and transcribe_with_post_process.
+    // otherwise. Default adds Shift to the Dictation chord.
     #[cfg(target_os = "macos")]
     let default_native_asr_shortcut = "option+shift+space";
     #[cfg(not(target_os = "macos"))]
@@ -2161,74 +2150,68 @@ mod binding_migration_tests {
     }
 
     #[test]
-    fn untouched_bindings_move_to_the_new_default() {
+    fn dictation_owns_alt_space_and_flow_has_no_binding() {
+        let settings = get_default_settings();
+        #[cfg(target_os = "macos")]
+        let expected = "option+space";
+        #[cfg(not(target_os = "macos"))]
+        let expected = "alt+space";
+        assert_eq!(settings.bindings["transcribe"].current_binding, expected);
+        assert_eq!(settings.bindings["transcribe"].default_binding, expected);
+        assert_eq!(CAPTURE_MODE_IDS, ["transcribe", "transcribe_native_asr"]);
+        assert!(!settings.bindings.contains_key("transcribe_realtime"));
+    }
+
+    #[test]
+    fn retired_flow_binding_is_dropped_without_preserving_its_chord() {
         let mut settings = get_default_settings();
-        let fresh = get_default_settings();
-        // Never customised: current still equals the old default.
+        let mut old_flow = settings.bindings["transcribe"].clone();
+        old_flow.id = "transcribe_realtime".into();
+        old_flow.current_binding = "f9".into();
+        settings.bindings.insert(old_flow.id.clone(), old_flow);
         stored_as(
             &mut settings,
-            "transcribe_realtime",
+            "transcribe",
             "ctrl+alt+space",
             "ctrl+alt+space",
         );
-
-        ensure_post_process_defaults(&mut settings);
-
-        let moved = &settings.bindings["transcribe_realtime"];
+        assert!(ensure_post_process_defaults(&mut settings));
+        assert!(!settings.bindings.contains_key("transcribe_realtime"));
         assert_eq!(
-            moved.current_binding,
-            fresh.bindings["transcribe_realtime"].current_binding
+            settings.bindings["transcribe"].current_binding,
+            get_default_settings().bindings["transcribe"].current_binding
         );
-        assert_eq!(
-            moved.default_binding,
-            fresh.bindings["transcribe_realtime"].default_binding
-        );
+        assert!(!ensure_post_process_defaults(&mut settings));
     }
 
     #[test]
     fn a_customised_binding_keeps_the_users_key() {
         let mut settings = get_default_settings();
-        let fresh = get_default_settings();
-        stored_as(&mut settings, "transcribe_realtime", "ctrl+alt+space", "f9");
-
+        stored_as(&mut settings, "summon_agent", "ctrl+shift+a", "f9");
         ensure_post_process_defaults(&mut settings);
-
-        let kept = &settings.bindings["transcribe_realtime"];
-        assert_eq!(kept.current_binding, "f9", "the user's key must survive");
-        // Reset should still offer the CURRENT default, not the retired one.
+        assert_eq!(settings.bindings["summon_agent"].current_binding, "f9");
         assert_eq!(
-            kept.default_binding,
-            fresh.bindings["transcribe_realtime"].default_binding
+            settings.bindings["summon_agent"].default_binding,
+            get_default_settings().bindings["summon_agent"].default_binding
         );
     }
 
     #[test]
     fn a_repoint_never_steals_a_chord_the_user_chose() {
         let mut settings = get_default_settings();
-        let fresh = get_default_settings();
-        let flow_target = fresh.bindings["transcribe_realtime"]
+        let target = get_default_settings().bindings["summon_agent"]
             .current_binding
             .clone();
-
-        // The user put Standard on exactly the chord Flow is about to adopt.
-        stored_as(&mut settings, "transcribe", "ctrl+space", &flow_target);
+        stored_as(&mut settings, "transcribe", "ctrl+space", &target);
         stored_as(
             &mut settings,
-            "transcribe_realtime",
-            "ctrl+alt+space",
-            "ctrl+alt+space",
+            "summon_agent",
+            "ctrl+shift+a",
+            "ctrl+shift+a",
         );
-
         ensure_post_process_defaults(&mut settings);
-
-        assert_eq!(
-            settings.bindings["transcribe"].current_binding, flow_target,
-            "the user's own choice outranks a new default"
-        );
-        assert_ne!(
-            settings.bindings["transcribe_realtime"].current_binding, flow_target,
-            "two actions must never end up on one chord"
-        );
+        assert_eq!(settings.bindings["transcribe"].current_binding, target);
+        assert_ne!(settings.bindings["summon_agent"].current_binding, target);
     }
 
     #[test]

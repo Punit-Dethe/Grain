@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import { ArrowRight, ChevronLeft, FileText, Radio, Waves } from "lucide-react";
+import { ArrowRight, ChevronLeft, FileText, Radio } from "lucide-react";
 import { OnboardingLayout } from "./OnboardingLayout";
 import { ModePreview } from "./ModePreview";
 
@@ -8,15 +8,15 @@ interface ModesOnboardingProps {
   onBack: () => void;
   onComplete: () => void;
 }
-const MODES = ["standard", "flow", "streaming"] as const;
-const MODE_ICONS = { standard: FileText, flow: Waves, streaming: Radio };
+const MODES = ["standard", "streaming"] as const;
+const MODE_ICONS = { standard: FileText, streaming: Radio };
 
 export default function ModesOnboarding({
   onBack,
   onComplete,
 }: ModesOnboardingProps) {
   const { t } = useTranslation();
-  const [mode, setMode] = useState<(typeof MODES)[number]>("flow");
+  const [mode, setMode] = useState<(typeof MODES)[number]>("standard");
 
   return (
     <OnboardingLayout

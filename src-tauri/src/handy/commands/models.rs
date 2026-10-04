@@ -27,16 +27,13 @@ pub async fn get_model_info(
 #[tauri::command]
 #[specta::specta]
 pub async fn rescan_local_models(
-    app_handle: AppHandle, // [GRAIN] reconcile Flow if rescan auto-selects a model
     model_manager: State<'_, Arc<ModelManager>>,
 ) -> Result<(), String> {
-    let was_flow_available = crate::grain_flow_availability::is_available(&app_handle);
     let mm = model_manager.inner().clone();
     let result = tokio::task::spawn_blocking(move || mm.rescan_local_models())
         .await
         .map_err(|e| format!("rescan task panicked: {e}"))?
         .map_err(|e| e.to_string());
-    crate::grain_flow_availability::reconcile_after_change(&app_handle, was_flow_available);
     result
 }
 
@@ -47,14 +44,10 @@ pub async fn download_model(
     model_manager: State<'_, Arc<ModelManager>>,
     model_id: String,
 ) -> Result<(), String> {
-    let was_flow_available = crate::grain_flow_availability::is_available(&app_handle); // [GRAIN]
     let result = model_manager
         .download_model(&model_id)
         .await
         .map_err(|e| e.to_string());
-
-    // [GRAIN] A successful download can auto-select the first local model.
-    crate::grain_flow_availability::reconcile_after_change(&app_handle, was_flow_available);
 
     if let Err(ref error) = result {
         // Log as well as emit: the toast is transient, and failed downloads have
@@ -77,8 +70,7 @@ pub async fn delete_model(
     transcription_manager: State<'_, Arc<TranscriptionManager>>,
     model_id: String,
 ) -> Result<(), String> {
-    let was_flow_available = crate::grain_flow_availability::is_available(&app_handle); // [GRAIN]
-                                                                                        // If deleting the active model, unload it and clear the setting
+    // If deleting the active model, unload it and clear the setting
     let settings = get_settings(&app_handle);
     if settings.selected_model == model_id {
         transcription_manager
@@ -93,9 +85,6 @@ pub async fn delete_model(
     let result = model_manager
         .delete_model(&model_id)
         .map_err(|e| e.to_string());
-    // [GRAIN] Reconcile even if disk deletion fails: the existing command has
-    // already cleared an active selection before touching the file.
-    crate::grain_flow_availability::reconcile_after_change(&app_handle, was_flow_available);
     result
 }
 
@@ -137,7 +126,6 @@ pub fn switch_active_model(app: &AppHandle, model_id: &str) -> Result<(), String
         ));
     }
 
-    let was_flow_available = crate::grain_flow_availability::is_available(app); // [GRAIN]
     let settings = get_settings(app);
     let unload_timeout = settings.model_unload_timeout;
     let old_model = settings.selected_model.clone();
@@ -168,7 +156,6 @@ pub fn switch_active_model(app: &AppHandle, model_id: &str) -> Result<(), String
             "Model selection changed to {} (not loading — unload set to Immediately).",
             model_id
         );
-        crate::grain_flow_availability::reconcile_after_change(app, was_flow_available); // [GRAIN]
         return Ok(());
     }
 
@@ -179,8 +166,6 @@ pub fn switch_active_model(app: &AppHandle, model_id: &str) -> Result<(), String
         write_settings(app, settings);
         return Err(e.to_string());
     }
-
-    crate::grain_flow_availability::reconcile_after_change(app, was_flow_available); // [GRAIN]
 
     Ok(())
 }

@@ -58,8 +58,8 @@ mod grain_events; // [GRAIN] typed payloads for the webview event surface (see t
                   // UN-COMPILED (no `mod llm_client;`) so upstream merges land conflict-free;
                   // the alias keeps every `crate::llm_client::` path working.
 mod grain_capture; // [GRAIN] shared first-sample readiness for owned capture callers
+mod grain_dictation_routing; // [GRAIN] model-selected Dictation action resolution
 mod grain_embed;
-mod grain_flow_availability; // [GRAIN] model/install/settings gate + Flow shortcut reconciliation
 mod grain_llm_client;
 mod grain_locale; // [GRAIN] locale-tag resolution, owned in Rust (was duplicated in TS)
 mod grain_mcp; // [GRAIN] stateless hosted MCP development providers (2026-07-28 only)

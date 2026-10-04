@@ -1,9 +1,8 @@
 /**
- * [GRAIN] Capture modes — the three ways to start a capture, plus the AI key.
+ * [GRAIN] Capture bindings — Dictation and Streaming, plus the AI key.
  *
- * Standard and Streaming are always live. Flow remains visible for
- * discoverability but is disabled unless the selected local model satisfies
- * its reviewed Parakeet TDT contract.
+ * Dictation chooses Standard or Flow in Rust from the selected model;
+ * Streaming keeps its separate model and shortcut.
  *
  * The mode names and descriptions come from the Grain translation table
  * (`settings.general.shortcut.bindings.*`), the same source the Overview key
@@ -20,15 +19,9 @@ import { ToggleSwitch } from "../../ui/ToggleSwitch";
 import { Dropdown } from "../../ui/Dropdown";
 import { ShortcutInput } from "../ShortcutInput";
 import { PostProcessingToggle } from "../PostProcessingToggle";
-import { useModelStore } from "@/stores/modelStore";
-import { getFlowAvailability } from "@/lib/flowAvailability";
 
 /** Mirrors `CAPTURE_MODE_IDS` in grain-core. Order = least to most machinery. */
-const CAPTURE_MODE_IDS = [
-  "transcribe",
-  "transcribe_realtime",
-  "transcribe_native_asr",
-] as const;
+const CAPTURE_MODE_IDS = ["transcribe", "transcribe_native_asr"] as const;
 
 type CaptureModeId = (typeof CAPTURE_MODE_IDS)[number];
 
@@ -41,22 +34,12 @@ interface CaptureMode {
 export const CaptureModes: React.FC = () => {
   const { t } = useTranslation();
   const { settings, getSetting, updateSetting, isUpdating } = useSettings();
-  const { models: allModels, currentModel } = useModelStore();
 
   const pushToTalk = getSetting("push_to_talk") ?? false;
   const postProcessEnabled = getSetting("post_process_enabled") ?? false;
   const alwaysAi = getSetting("capture_always_ai") ?? false;
   const endWithAi = getSetting("capture_end_with_ai") ?? true;
   const aiStartMode = getSetting("capture_ai_start_mode") ?? "transcribe";
-  const flowAvailability = getFlowAvailability(
-    allModels,
-    currentModel,
-    getSetting("translate_to_english") ?? false,
-  );
-  const flowUnavailableDescription = !flowAvailability.available
-    ? t(`settings.speechToText.flowUnavailable.${flowAvailability.reason}`)
-    : null;
-
   const modes = useMemo<CaptureMode[]>(
     () =>
       CAPTURE_MODE_IDS.map((id) => {
@@ -67,24 +50,16 @@ export const CaptureModes: React.FC = () => {
             `settings.general.shortcut.bindings.${id}.name`,
             binding?.name ?? id,
           ),
-          description:
-            id === "transcribe_realtime" && flowUnavailableDescription
-              ? flowUnavailableDescription
-              : t(
-                  `settings.general.shortcut.bindings.${id}.description`,
-                  binding?.description ?? "",
-                ),
+          description: t(
+            `settings.general.shortcut.bindings.${id}.description`,
+            binding?.description ?? "",
+          ),
         };
       }),
-    [flowUnavailableDescription, settings, t],
+    [settings, t],
   );
 
-  const availableModes = modes.filter(
-    (mode) => mode.id !== "transcribe_realtime" || flowAvailability.available,
-  );
-  const effectiveAiStartMode = availableModes.some(
-    (mode) => mode.id === aiStartMode,
-  )
+  const effectiveAiStartMode = modes.some((mode) => mode.id === aiStartMode)
     ? aiStartMode
     : "transcribe";
 
@@ -92,34 +67,22 @@ export const CaptureModes: React.FC = () => {
     <>
       <SettingsGroup title={t("ui2.capture.group")}>
         <div className="capture-mode-picker">
-          {modes.map((mode) => {
-            const disabled =
-              mode.id === "transcribe_realtime" && !flowAvailability.available;
-            return (
-              <div
-                key={mode.id}
-                className={`capture-mode-option${disabled ? " is-disabled" : ""}`}
-                aria-disabled={disabled}
-              >
-                <span className="capture-mode-copy">
-                  <strong>{mode.name}</strong>
-                  <small>{mode.description}</small>
-                </span>
-                <span className="capture-mode-shortcut">
-                  <ShortcutInput
-                    shortcutId={mode.id}
-                    bare
-                    disabled={disabled}
-                  />
-                </span>
-              </div>
-            );
-          })}
+          {modes.map((mode) => (
+            <div key={mode.id} className="capture-mode-option">
+              <span className="capture-mode-copy">
+                <strong>{mode.name}</strong>
+                <small>{mode.description}</small>
+              </span>
+              <span className="capture-mode-shortcut">
+                <ShortcutInput shortcutId={mode.id} bare />
+              </span>
+            </div>
+          ))}
         </div>
       </SettingsGroup>
 
       {/* AI is deliberately its own group: it is a property of what happens
-          *after* speech, not a fourth way to start speaking. Its master switch
+          *after* speech, not another way to start speaking. Its master switch
           leads the group rather than owning a section elsewhere, so the rows it
           governs sit directly under the thing that turns them on — and turning
           it off leaves one row rather than an empty heading. */}
@@ -167,7 +130,7 @@ export const CaptureModes: React.FC = () => {
             grouped
           >
             <Dropdown
-              options={availableModes.map((mode) => ({
+              options={modes.map((mode) => ({
                 value: mode.id,
                 label: mode.name,
               }))}
@@ -178,9 +141,6 @@ export const CaptureModes: React.FC = () => {
             />
           </SettingContainer>
         )}
-
-        {/* Prompt cycling only exists once there are prompts to cycle. */}
-        {postProcessEnabled && <></>}
       </SettingsGroup>
     </>
   );

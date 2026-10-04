@@ -53,7 +53,7 @@ pub enum OnboardingStep {
     /// Permissions screen — either first-run, or a returning user who has since
     /// had a permission revoked.
     Accessibility,
-    /// Short demonstration of Standard, Flow, and Streaming for a new user.
+    /// Short demonstration of Dictation and Streaming for a new user.
     Modes,
     /// Model picker. Only ever reached by a genuinely new user, and only after
     /// the capture-mode tour.

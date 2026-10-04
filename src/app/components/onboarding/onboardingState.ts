@@ -21,9 +21,11 @@ export function onboardingModes(
     if (
       isReviewedFlowModelId(draft.selectedModels.standard) &&
       !translateToEnglish
-    )
+    ) {
       modes.push("flow");
-    modes.push("standard");
+    } else {
+      modes.push("standard");
+    }
   }
   if (draft.enabledFamilies.streaming && draft.selectedModels.streaming)
     modes.push("streaming");

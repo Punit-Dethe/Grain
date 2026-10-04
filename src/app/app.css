@@ -2452,7 +2452,7 @@ html[data-theme="light"] .model-role-tabs {
   padding: 12px 14px;
 }
 
-/* All three capture modes are always live. Each is a static row — name and
+/* Dictation and Streaming each have a static row — name and
    description on the left, its shortcut keycap on the right edge. No selection
    state: there is nothing to pick any more. */
 .capture-mode-option {
@@ -2465,10 +2465,6 @@ html[data-theme="light"] .model-role-tabs {
   color: inherit;
   background: rgba(255, 255, 255, 0.022);
   text-align: left;
-}
-
-.capture-mode-option.is-disabled {
-  opacity: 0.58;
 }
 
 .capture-mode-copy {

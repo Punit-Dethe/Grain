@@ -14,8 +14,8 @@ import { ExtensionAnchor } from "../experimentations/ExtensionSettings";
 // [GRAIN] The unified Transcription tab. Top to bottom: the local model
 // (collapsible picker), the local engine settings, then the cloud providers — one
 // surface for the whole transcription pipeline. Smart rotation lives in the cloud
-// header. The local picker stays usable because Flow always runs locally even
-// while Standard capture is routed to cloud providers.
+// header. The local picker remains usable to choose the Dictation model for
+// when cloud transcription is turned off. Cloud takes priority while enabled.
 export const SpeechToTextSettings: React.FC = () => {
   const { t } = useTranslation();
   const pool = useSttPool();

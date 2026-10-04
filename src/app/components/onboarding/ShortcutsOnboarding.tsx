@@ -10,7 +10,7 @@ interface ShortcutsOnboardingProps {
   availableModes: OnboardingTestMode[];
 }
 const SHORTCUTS = {
-  flow: "transcribe_realtime",
+  flow: "transcribe",
   standard: "transcribe",
   streaming: "transcribe_native_asr",
 } as const;
@@ -21,6 +21,9 @@ export default function ShortcutsOnboarding({
   availableModes,
 }: ShortcutsOnboardingProps) {
   const { t } = useTranslation();
+  const shortcutIds = [
+    ...new Set(availableModes.map((mode) => SHORTCUTS[mode])),
+  ];
   return (
     <OnboardingLayout
       step={4}
@@ -48,10 +51,10 @@ export default function ShortcutsOnboarding({
         </div>
         <div className="onboarding-shortcut-editor">
           <div className="onboarding-shortcut-list">
-            {availableModes.map((mode) => (
+            {shortcutIds.map((id) => (
               <ShortcutInput
-                key={mode}
-                shortcutId={SHORTCUTS[mode]}
+                key={id}
+                shortcutId={id}
                 descriptionMode="inline"
                 grouped
               />

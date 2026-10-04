@@ -363,9 +363,6 @@ impl ShortcutAction for RealtimeTranscribeAction {
         // wait for weights or allocate a second engine.
         let rolling_error = rt.start_session(app.clone(), sid).err();
 
-        // C1: no Handy webview overlay on the real-time path — the winit
-        // pill is the only surface, driven by the DaemonEvents below.
-
         let binding_id = binding_id.to_string();
         // Flow uses exact continuous audio and does not load or run the ASR VAD.
         let vad_policy = VadPolicy::Disabled;

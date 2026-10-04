@@ -12,15 +12,11 @@ describe("onboarding capture availability", () => {
   it("offers only native Streaming for ASR-only setup", () => {
     expect(onboardingModes(draft(false, true))).toEqual(["streaming"]);
   });
-  it("offers Standard and Flow for a supported batch-only setup", () => {
-    expect(onboardingModes(draft(true, false))).toEqual(["flow", "standard"]);
+  it("offers only Flow for a supported dictation model", () => {
+    expect(onboardingModes(draft(true, false))).toEqual(["flow"]);
   });
-  it("offers all three for both selected families", () => {
-    expect(onboardingModes(draft(true, true))).toEqual([
-      "flow",
-      "standard",
-      "streaming",
-    ]);
+  it("offers one dictation path and Streaming for both selected families", () => {
+    expect(onboardingModes(draft(true, true))).toEqual(["flow", "streaming"]);
   });
   it("does not offer Flow for arbitrary batch or custom Parakeet models", () => {
     expect(onboardingModes(draft(true, false, "whisper-small"))).toEqual([

@@ -18,7 +18,10 @@
       "src/app/components/settings/ShowOverlay.tsx",
       "src/app/components/settings/PillCloseButton.tsx",
       "src/app/components/settings/PillAppIcon.tsx",
-      "src/app/stores/settingsStore.ts"
+      "src/app/stores/settingsStore.ts",
+      "crates/grain-core/src/capture.rs",
+      "src-tauri/src/grain_dictation_routing.rs",
+      "src/app/components/settings/capture/CaptureModes.tsx"
     ],
     "why": "Inert (no `mod settings;`). Grain's settings are grain-core AppContext; a NEW upstream setting must be added there and to its Default, or `get_settings().<field>` in merged handy code fails to compile. (#1254 selected_channel needed this.)"
   },
@@ -47,9 +50,12 @@
       "src-tauri/src/grain_post_process.rs",
       "src-tauri/src/grain_actions.rs",
       "src-tauri/src/grain_capture.rs",
-      "src-tauri/src/grain_overlay.rs"
+      "src-tauri/src/grain_overlay.rs",
+      "crates/grain-core/src/capture.rs",
+      "src-tauri/src/grain_dictation_routing.rs",
+      "src/app/components/settings/capture/CaptureModes.tsx"
     ],
-    "why": "Merged in handy/ for its shape, BUT post_process_transcription is relocated to grain_post_process.rs and Grain's action variants live in grain_actions.rs. A fix to post-processing or the finish/guard flow may need porting there (e.g. #1846 trim_freed_memory in FinishGuard::drop did not auto-merge into the diverged actions.rs)."
+    "why": "Merged in handy/ for its shape, BUT post_process_transcription is relocated to grain_post_process.rs and Grain's action variants live in grain_actions.rs. A fix to post-processing or the finish/guard flow may need porting there (e.g. #1846 trim_freed_memory in FinishGuard::drop did not auto-merge into the diverged actions.rs). Dictation now resolves Standard/Flow through grain-core capture policy and grain_dictation_routing at coordinator start, retaining the action through stop/PTT; upstream capture changes must preserve that seam."
   },
   "src-tauri/src/audio_toolkit/text.rs": {
     "kind": "relocated",

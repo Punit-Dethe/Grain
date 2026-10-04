@@ -2366,9 +2366,8 @@ default_panel?: DefaultPanel;
  */
 theme?: ThemeMode; 
 /**
- * [GRAIN] Which mode the AI shortcut starts when pressed from idle. All
- * three capture modes are always live, so this is a free choice among
- * `CAPTURE_MODE_IDS`.
+ * [GRAIN] Which capture binding the AI shortcut borrows from idle:
+ * Dictation (model-selected Standard/Flow) or Streaming.
  */
 capture_ai_start_mode?: string; 
 /**
@@ -3086,7 +3085,7 @@ export type OnboardingStep =
  */
 "accessibility" | 
 /**
- * Short demonstration of Standard, Flow, and Streaming for a new user.
+ * Short demonstration of Dictation and Streaming for a new user.
  */
 "modes" | 
 /**

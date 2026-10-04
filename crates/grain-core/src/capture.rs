@@ -1,13 +1,13 @@
 //! [GRAIN] Capture-mode policy.
 //!
-//! Grain has three ways to start a capture — Standard, Flow and Live — and a
-//! fourth shortcut that routes a transcript to AI. Flow is intentionally
+//! Grain has two capture bindings — Dictation and Streaming — plus the AI key.
+//! Dictation selects Standard or Flow from the selected model. Flow is intentionally
 //! narrower: only the reviewed Parakeet TDT v2/v3 catalog artifacts can run it.
 //!
 //! This module is the single place that answers "what does the AI key do, and
 //! which shortcuts hold a global hotkey?". The Handy-derived shortcut backends
-//! and the coordinator both call `shortcut_holds_hotkey`, so the two keyboard
-//! implementations cannot drift apart on it.
+//! call `shortcut_holds_hotkey`; the coordinator calls `action_id_for`.
+//! Both keyboard implementations share the same gates and capture routing.
 
 use crate::settings::{AppSettings, CAPTURE_MODE_IDS};
 
@@ -35,10 +35,12 @@ pub fn is_reviewed_flow_model(model_id: &str) -> bool {
 /// Settings-only Flow eligibility. Installation is host state and is checked
 /// separately by the Tauri shell before a capture starts.
 pub fn flow_is_eligible(settings: &AppSettings) -> bool {
-    !settings.translate_to_english && is_reviewed_flow_model(&settings.selected_model)
+    !settings.stt_smart_rotation
+        && !settings.translate_to_english
+        && is_reviewed_flow_model(&settings.selected_model)
 }
 
-/// Is `id` one of the three capture-starting bindings?
+/// Is `id` one of the two capture-starting bindings?
 pub fn is_capture_mode(id: &str) -> bool {
     CAPTURE_MODE_IDS.contains(&id)
 }
@@ -86,7 +88,8 @@ pub fn shortcut_holds_hotkey(settings: &AppSettings, id: &str) -> bool {
     if id == "summon_agent" && !settings.agent_enabled {
         return false;
     }
-    if id == "transcribe_realtime" && !flow_is_eligible(settings) {
+    // Flow is an internal action, never a separately registered shortcut.
+    if id == "transcribe_realtime" {
         return false;
     }
     true
@@ -94,13 +97,9 @@ pub fn shortcut_holds_hotkey(settings: &AppSettings, id: &str) -> bool {
 
 /// Which mode the AI shortcut starts when pressed from idle.
 ///
-/// Falls back to Standard if the stored value is not a mode we ship, or if it
-/// names Flow while the selected model/settings cannot run Flow. The stored
-/// preference is left intact so selecting a reviewed model restores it.
+/// Falls back to Dictation if the stored value is not a binding we ship.
 pub fn ai_start_mode(settings: &AppSettings) -> &str {
-    if is_capture_mode(&settings.capture_ai_start_mode)
-        && (settings.capture_ai_start_mode != "transcribe_realtime" || flow_is_eligible(settings))
-    {
+    if is_capture_mode(&settings.capture_ai_start_mode) {
         &settings.capture_ai_start_mode
     } else {
         CAPTURE_MODE_IDS[0]
@@ -109,23 +108,27 @@ pub fn ai_start_mode(settings: &AppSettings) -> &str {
 
 /// The capture action a trigger key actually runs.
 ///
-/// Every key is its own action except the AI key, which has no capture engine
-/// of its own — it borrows whichever mode the user nominated. The session is
+/// The main key selects Flow for a reviewed model, otherwise Standard. The AI
+/// key borrows Dictation or Streaming. The session is
 /// still *staged* under the trigger key, so push-to-talk release matching and
 /// the tap-to-stop path keep working against the key the user is holding.
 pub fn action_id_for<'a>(settings: &'a AppSettings, binding_id: &'a str) -> &'a str {
-    if binding_id == "transcribe_send_to_ai" {
+    let capture_id = if binding_id == "transcribe_send_to_ai" {
         ai_start_mode(settings)
     } else {
         binding_id
+    };
+    if capture_id == "transcribe" && flow_is_eligible(settings) {
+        "transcribe_realtime"
+    } else {
+        capture_id
     }
 }
 
 /// Should the finished transcript go to AI, for a capture started by `id`?
 ///
-/// `capture_always_ai` makes every capture an AI capture, which collapses the
-/// product to a single key. Otherwise only the two shortcuts that mean AI by
-/// construction route there.
+/// `capture_always_ai` makes every capture an AI capture. Otherwise only the
+/// AI binding and legacy AI action route there.
 ///
 /// Gated on `post_process_enabled` throughout: routing to AI with no
 /// post-processing configured would drop the transcript into a pipeline that
@@ -174,11 +177,12 @@ mod tests {
     }
 
     #[test]
-    fn flow_holds_a_key_only_when_eligible() {
+    fn flow_never_holds_a_separate_key() {
         let mut s = get_default_settings();
         assert!(!shortcut_holds_hotkey(&s, "transcribe_realtime"));
 
         s = with_reviewed_flow_model(s);
+        assert!(!shortcut_holds_hotkey(&s, "transcribe_realtime"));
         for id in CAPTURE_MODE_IDS {
             assert!(shortcut_holds_hotkey(&s, id));
         }
@@ -190,17 +194,20 @@ mod tests {
     }
 
     #[test]
-    fn ai_start_mode_uses_flow_only_when_eligible() {
+    fn dictation_routes_by_model_and_preserves_translation_gate() {
         let mut s = with_reviewed_flow_model(get_default_settings());
-        s.capture_ai_start_mode = "transcribe_realtime".to_string();
-        assert_eq!(ai_start_mode(&s), "transcribe_realtime");
+        assert_eq!(action_id_for(&s, "transcribe"), "transcribe_realtime");
+        assert_eq!(
+            action_id_for(&s, "transcribe_send_to_ai"),
+            "transcribe_realtime"
+        );
 
         s.selected_model = "openai/whisper/ggml-base.bin".into();
-        assert_eq!(ai_start_mode(&s), "transcribe");
+        assert_eq!(action_id_for(&s, "transcribe"), "transcribe");
 
         s = with_reviewed_flow_model(s);
         s.translate_to_english = true;
-        assert_eq!(ai_start_mode(&s), "transcribe");
+        assert_eq!(action_id_for(&s, "transcribe"), "transcribe");
     }
 
     #[test]
@@ -213,14 +220,38 @@ mod tests {
     }
 
     #[test]
-    fn the_ai_key_borrows_a_capture_engine_but_others_run_their_own() {
+    fn cloud_has_priority_over_the_selected_flow_model() {
         let mut s = with_reviewed_flow_model(get_default_settings());
-        s.capture_ai_start_mode = "transcribe_realtime".to_string();
+        s.stt_smart_rotation = true;
+        for id in ["transcribe", "transcribe_send_to_ai"] {
+            assert_eq!(action_id_for(&s, id), "transcribe");
+        }
+        assert_eq!(
+            action_id_for(&s, "transcribe_native_asr"),
+            "transcribe_native_asr"
+        );
+        s.stt_smart_rotation = false;
+        assert_eq!(action_id_for(&s, "transcribe"), "transcribe_realtime");
+    }
+
+    #[test]
+    fn streaming_selection_does_not_change_dictation_routing() {
+        let mut s = with_reviewed_flow_model(get_default_settings());
+        s.selected_asr_model = "unrelated-streaming-model".into();
         assert_eq!(
             action_id_for(&s, "transcribe_send_to_ai"),
             "transcribe_realtime"
         );
-        assert_eq!(action_id_for(&s, "transcribe"), "transcribe");
+        assert_eq!(
+            action_id_for(&s, "transcribe_native_asr"),
+            "transcribe_native_asr"
+        );
+        s.capture_ai_start_mode = "transcribe_native_asr".into();
+        assert_eq!(
+            action_id_for(&s, "transcribe_send_to_ai"),
+            "transcribe_native_asr"
+        );
+        assert_eq!(action_id_for(&s, "transcribe"), "transcribe_realtime");
         assert_eq!(action_id_for(&s, "summon_agent"), "summon_agent");
     }
 
@@ -248,12 +279,12 @@ mod tests {
     }
 
     #[test]
-    fn gate_hides_disabled_features_and_ineligible_flow() {
+    fn gate_hides_disabled_features_and_retired_flow_binding() {
         let mut s = with_reviewed_flow_model(get_default_settings());
         s.post_process_enabled = false;
         s.agent_enabled = false;
 
-        // Feature toggles do not affect the three eligible capture modes.
+        // Feature toggles do not affect the two capture bindings.
         for id in CAPTURE_MODE_IDS {
             assert!(shortcut_holds_hotkey(&s, id));
         }

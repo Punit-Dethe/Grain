@@ -3,7 +3,7 @@
  *
  * Grain needs two model slots: one local model and one Live streaming model.
  * Flow can use the local slot only when it contains a reviewed Parakeet TDT
- * artifact; Standard may use the slot or the cloud pool.
+ * artifact; cloud transcription takes priority over model-based routing.
  * They were two visually identical collapsibles stacked on top of each other,
  * which asked the user to work out from their titles alone that these were
  * different registries serving different capture modes — and gave no answer at
@@ -26,7 +26,7 @@ import { getFlowAvailability } from "@/lib/flowAvailability";
 export type ModelRole = "standard" | "streaming";
 
 interface ModelPickerProps {
-  /** Standard capture is routed to cloud; Flow still needs the local slot. */
+  /** Cloud handles Dictation; keep the local selection for when it is off. */
   cloudActive?: boolean;
 }
 
@@ -142,13 +142,11 @@ export const ModelPicker: React.FC<ModelPickerProps> = ({
     getSetting("translate_to_english") ?? false,
   ).available;
   const standardPurpose = t(
-    cloudActive && flowAvailable
-      ? "settings.speechToText.picker.standard.purposeFlowCloud"
-      : cloudActive
-        ? "settings.speechToText.picker.standard.purposeCloud"
-        : flowAvailable
-          ? "settings.speechToText.picker.standard.purposeFlow"
-          : "settings.speechToText.picker.standard.purpose",
+    cloudActive
+      ? "settings.speechToText.picker.standard.purposeCloud"
+      : flowAvailable
+        ? "settings.speechToText.picker.standard.purposeFlow"
+        : "settings.speechToText.picker.standard.purpose",
   );
 
   // Close the library once a role's model actually changes — the question that

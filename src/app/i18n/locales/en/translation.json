@@ -106,12 +106,12 @@
         "back": "Back",
         "chooseModels": "Choose models",
         "standard": {
-          "title": "Standard",
-          "takeaway": "Batch model · records first, transcribes after you stop."
+          "title": "Dictation",
+          "takeaway": "One shortcut · Parakeet TDT v2/v3 uses Flow automatically; other models transcribe after you stop."
         },
         "flow": {
-          "title": "Flow",
-          "takeaway": "Batch model · works while you speak, finishes after you stop."
+          "title": "Dictation · Flow",
+          "takeaway": "Same Dictation shortcut · Parakeet TDT v2/v3 works while you speak."
         },
         "streaming": {
           "title": "Streaming",
@@ -147,7 +147,7 @@
         "description": "Install either family or both. You can add more later.",
         "standard": {
           "title": "Batch model",
-          "description": "Standard + Flow with supported Parakeet models."
+          "description": "One Dictation shortcut. Supported Parakeet models use Flow automatically."
         },
         "streaming": {
           "title": "Streaming ASR",
@@ -180,7 +180,7 @@
         "defaultsFallback": "Recommendations could not load. You can still choose from the available models below.",
         "unavailable": "No model available",
         "chooseAlternative": "Choose another family or retry the recommendations.",
-        "standardOnly": "Standard only · Flow needs a supported Parakeet model",
+        "standardOnly": "Uses Standard with the Dictation shortcut",
         "cancelling": "Cancelling…"
       },
       "try": {
@@ -202,14 +202,14 @@
         "continue": "Continue",
         "modes": {
           "flow": {
-            "title": "Flow",
+            "title": "Dictation",
             "speed": "Batch model check",
-            "hint": "Check your batch model here. After setup, the Flow shortcut starts rolling capture."
+            "hint": "Check your dictation model here. After setup, Alt+Space uses Flow automatically with this Parakeet model."
           },
           "standard": {
-            "title": "Standard",
+            "title": "Dictation",
             "speed": "After you stop",
-            "hint": "Record a complete thought, then stop to transcribe."
+            "hint": "Record a complete thought, then stop to transcribe. The Dictation shortcut uses Standard with this model."
           },
           "streaming": {
             "title": "Streaming",
@@ -394,16 +394,12 @@
         "pressKeys": "Press keys...",
         "bindings": {
           "transcribe": {
-            "name": "Standard",
-            "description": "Record your voice and paste the plain transcript."
-          },
-          "transcribe_realtime": {
-            "name": "Flow",
-            "description": "Stream words as you speak, using the rolling window."
+            "name": "Dictation",
+            "description": "Record and paste text. Your selected model chooses Flow or Standard; cloud takes priority when enabled."
           },
           "transcribe_native_asr": {
             "name": "Streaming",
-            "description": "Native real-time dictation with live streaming text in the Studio Window."
+            "description": "Native real-time dictation with live preview text."
           },
           "cancel": {
             "name": "Cancel",
@@ -546,7 +542,7 @@
         "description": "Choose whether recording pills appear at the top or bottom of the screen.",
         "display": {
           "title": "Recording pill",
-          "description": "None hides the pill in every mode. Compact uses a compact pill in every mode. Live preview shows text only with the Streaming shortcut; Standard and Flow stay compact.",
+          "description": "None hides the pill in every mode. Compact uses a compact pill in every mode. Live preview shows text only with the Streaming shortcut; Dictation stays compact.",
           "options": {
             "none": "None",
             "compact": "Compact",
@@ -645,11 +641,6 @@
         "routing": "Transcription routing",
         "providers": "Cloud providers"
       },
-      "flowUnavailable": {
-        "model": "Select and download Parakeet TDT v2 or v3 in Transcription settings to use Flow.",
-        "translation": "Turn off Translate to English to use Flow.",
-        "modelAndTranslation": "Select and download Parakeet TDT v2 or v3 in Transcription settings, then turn off Translate to English to use Flow."
-      },
       "localModel": {
         "title": "Standard model",
         "none": "No model selected",
@@ -719,10 +710,9 @@
         "unavailable": "Handled in the cloud",
         "standard": {
           "label": "Standard",
-          "purpose": "Used by Standard captures",
-          "purposeFlow": "Used by Standard and Flow captures",
-          "purposeCloud": "Saved for Standard while cloud providers are active",
-          "purposeFlowCloud": "Used by Flow; Standard currently uses cloud providers"
+          "purpose": "Dictation uses Standard with this model",
+          "purposeFlow": "Dictation uses Flow automatically with this model",
+          "purposeCloud": "Saved for Dictation when cloud transcription is off"
         },
         "streaming": {
           "label": "Streaming",
@@ -1232,17 +1222,11 @@
     },
     "capture": {
       "group": "Capture",
-      "set": {
-        "title": "Capture modes",
-        "description": "Grain has three ways to capture. Keeping one means one shortcut to remember; the other modes stay available, they just stop holding a hotkey. Switch to all three whenever you want them back.",
-        "single": "One mode",
-        "all": "All three"
-      },
       "ai": {
         "group": "AI",
         "always": {
           "title": "Send every capture to AI",
-          "description": "Every capture is post-processed, whichever key started it. With this on there is exactly one shortcut to remember for the whole product."
+          "description": "Every capture is post-processed, whichever key started it."
         },
         "end": {
           "title": "Finish with AI",
@@ -1250,7 +1234,7 @@
         },
         "startMode": {
           "title": "AI shortcut starts",
-          "description": "Which capture mode the AI shortcut uses when you press it to begin. With one mode live it necessarily uses that one."
+          "description": "Choose Dictation or Streaming. Dictation automatically selects Standard or Flow from your model; cloud transcription takes priority when enabled."
         }
       }
     }

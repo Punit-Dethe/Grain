@@ -28,16 +28,24 @@ offset hooks and updated bounds fixtures do not replace Handy placement logic.
 
 ## Product contract to preserve
 
-| Saved preference      | Standard / Flow | Streaming shortcut |
-| --------------------- | --------------- | ------------------ |
-| `none` (None)         | Hidden          | Hidden             |
-| `minimal` (Compact)   | Compact         | Compact            |
-| `live` (Live preview) | Compact         | Live text          |
+| Saved preference      | Dictation (Standard / Flow) | Streaming shortcut |
+| --------------------- | --------------------------- | ------------------ |
+| `none` (None)         | Hidden                      | Hidden             |
+| `minimal` (Compact)   | Compact                     | Compact            |
+| `live` (Live preview) | Compact                     | Live text          |
 
 Agent capture is compact when enabled, with its blue/sky-blue base tint.
 Its result/conversation window stays separate. Compact/Live preference changes
 apply to the next capture; None hides the active pill. Top/Bottom placement is
-independent of this preference. Separate selected models do not choose the pill.
+independent of this preference. Selected models choose the internal Dictation action, not the pill presentation.
+`selected_model` drives Dictation; `selected_asr_model` drives Streaming.
+Alt+Space (Option+Space on macOS) starts Standard or reviewed Parakeet TDT
+v2/v3 Flow automatically. Cloud transcription takes priority while enabled;
+Translate to English retains Standard because Flow cannot translate.
+The coordinator resolves through `grain_dictation_routing.rs` at start and
+retains that action for stop/PTT release even if settings change.
+`transcribe_realtime` remains an internal action with no binding or model-change
+shortcut reconciliation. AI can borrow Dictation or Streaming.
 
 Preserve the always-dark `#1F1F21` surface and `#474749` border, neutral gray
 accents, foreground icon, and original Grain waveform response. Waveform is the
@@ -82,7 +90,7 @@ conflict resolution.
 - Rust overlay/session tests (including the 12 preference/mode combinations),
   first-sample/no-sample Stop tests, readiness cancellation, and settings
   migration/save/reload. Add focused regressions for the actual upstream bug.
-- In the real app: exercise all three shortcuts with each preference, startup
+- In the real app: exercise both shortcuts and both internal Dictation paths with each preference, startup
   and stop/cancel, transcribing/processing, live text and scrolling, close-button
   visibility, Agent capture/result, clipboard/follow-up, missing microphone and
   rapid restart. Verify per-session listener/timer/frame cleanup.
@@ -130,3 +138,24 @@ runtime-port and full preflight gates pass. Removing obsolete comments tightens
 `shortcut/mod.rs` from 388 to 387 and `lib.rs` from 1269 to 1266; runtime
 algorithms and accepted UI are unchanged. `verdicts.json` keeps the existing CLI
 serialization (its Prettier mismatch also exists at the baseline).
+
+## Dictation routing update (2026-10-04)
+
+The two capture bindings are Dictation (`transcribe`, Alt+Space / Option+Space)
+and Streaming (`transcribe_native_asr`, Alt+Shift+Space / Option+Shift+Space).
+Flow is selected internally; its old development binding is dropped and the
+Dictation default is enforced directly, without transferring custom Flow keys.
+Model switches, downloads, rescans, deletion and translation changes no longer
+reconcile a separate Flow hotkey. No extra engine or background service is added.
+
+Verified: 209 grain-core tests, 8 coordinator tests (including stopping Flow
+through the Dictation trigger), 2 shortcut-conflict tests, 9 overlay tests,
+118 frontend tests, Rust test compilation, production frontend build/lint,
+Specta binding export, settings parity and upstream policy/preflight. Real-app
+acceptance of the unified shortcut remains a user check; the earlier Windows
+visual acceptance covers the pill presentation only.
+
+Relative to `10dd1d41`, the shared-code ratchet decreases by 30 lines:
+`commands/models.rs` 74→57, `shortcut/handler.rs` 47→40,
+`shortcut/mod.rs` 387→383 and `transcription_coordinator.rs` 1621→1619.
+The new routing policy and host installation seam remain Grain-owned.

@@ -15,7 +15,7 @@ use crate::shortcut::{register_shortcut, unregister_shortcut};
 use log::warn;
 use tauri::{AppHandle, Manager};
 
-/// The five capture/Agent keys reserve their saved chords even while a feature
+/// The four capture/Agent keys reserve their saved chords even while a feature
 /// is disabled and its OS shortcut is unregistered. Other bindings are outside
 /// this policy.
 pub(crate) fn capture_shortcut_conflicts(
@@ -23,9 +23,8 @@ pub(crate) fn capture_shortcut_conflicts(
     id: &str,
     candidate: &str,
 ) -> bool {
-    const IDS: [&str; 5] = [
+    const IDS: [&str; 4] = [
         "transcribe",
-        "transcribe_realtime",
         "transcribe_native_asr",
         "summon_agent",
         "transcribe_send_to_ai",
@@ -70,7 +69,6 @@ mod capture_shortcut_conflict_tests {
     fn every_capture_and_agent_pair_conflicts_even_when_features_are_off() {
         let ids = [
             "transcribe",
-            "transcribe_realtime",
             "transcribe_native_asr",
             "summon_agent",
             "transcribe_send_to_ai",
@@ -446,6 +444,9 @@ pub fn update_snippets(app: AppHandle, snippets: Vec<settings::Snippet>) -> Resu
 #[tauri::command]
 #[specta::specta]
 pub fn change_capture_ai_start_mode_setting(app: AppHandle, mode: String) -> Result<(), String> {
+    if !grain_core::capture::is_capture_mode(&mode) {
+        return Err("AI start mode must be Dictation or Streaming".into());
+    }
     let mut settings = settings::get_settings(&app);
     settings.capture_ai_start_mode = mode;
     settings::write_settings(&app, settings);
