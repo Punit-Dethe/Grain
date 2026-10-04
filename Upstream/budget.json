@@ -29,13 +29,13 @@
   "src-tauri/src/handy/secure_input.rs": 204,
   "src-tauri/src/handy/shortcut/handler.rs": 47,
   "src-tauri/src/handy/shortcut/handy_keys.rs": 14,
-  "src-tauri/src/handy/shortcut/mod.rs": 388,
+  "src-tauri/src/handy/shortcut/mod.rs": 387,
   "src-tauri/src/handy/shortcut/tauri_impl.rs": 9,
   "src-tauri/src/handy/signal_handle.rs": 2,
   "src-tauri/src/handy/transcription_coordinator.rs": 1621,
   "src-tauri/src/handy/tray.rs": 642,
   "src-tauri/src/handy/utils.rs": 55,
-  "src-tauri/src/lib.rs": 1269,
+  "src-tauri/src/lib.rs": 1266,
   "src-tauri/src/main.rs": 9,
   "src-tauri/tauri.conf.json": 22
 }
