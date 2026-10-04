@@ -3,6 +3,20 @@
 const MAX_BARS = 48;
 const HISTORY = 24;
 const HZ = 60;
+export const WAVE_WIDTH = 51;
+export const WAVE_HEIGHT = 26;
+export const WAVE_BAR_WIDTH = 2;
+const WAVE_BAR_GAP = 1.7;
+// Native compact renderer: 40px body, 0.85 shrink, 1.12 boost, 0.62 fill.
+const WAVE_MAX_HEIGHT = 40 * 0.85 * 1.12 * 0.62;
+export function waveBarX(index: number, count: number): number {
+  const pitch = WAVE_BAR_WIDTH + WAVE_BAR_GAP;
+  const used = count * pitch - WAVE_BAR_GAP;
+  return (WAVE_WIDTH - used) / 2 + index * pitch + WAVE_BAR_WIDTH / 2;
+}
+// Round line caps add one bar width to the segment's visible height.
+export const waveBarHalfLength = (value: number) =>
+  (value * (WAVE_MAX_HEIGHT - WAVE_BAR_WIDTH)) / 2;
 export const barCount = (width: number) =>
   width <= 0.5
     ? 0

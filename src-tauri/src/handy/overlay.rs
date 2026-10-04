@@ -72,10 +72,10 @@ const OVERLAY_TOP_OFFSET: f64 = 46.0;
 const OVERLAY_TOP_OFFSET: f64 = 4.0;
 
 #[cfg(target_os = "macos")]
-const OVERLAY_BOTTOM_OFFSET: f64 = 15.0;
+const OVERLAY_BOTTOM_OFFSET: f64 = 15.0 + crate::grain_overlay::BOTTOM_RAISE; // [GRAIN] visual clearance
 
 #[cfg(any(target_os = "windows", target_os = "linux"))]
-const OVERLAY_BOTTOM_OFFSET: f64 = 40.0;
+const OVERLAY_BOTTOM_OFFSET: f64 = 40.0 + crate::grain_overlay::BOTTOM_RAISE; // [GRAIN] visual clearance
 
 /// Configures the edge and offset of a GTK layer surface. gtk-layer-shell
 /// commits anchor and margin changes itself, including while the surface is
@@ -830,7 +830,7 @@ mod tests {
                 OVERLAY_HEIGHT,
                 OverlayPosition::Bottom,
             ),
-            (3648, 2025, 384, 75)
+            (3648, 2013, 384, 75) // [GRAIN] 8 logical pixels higher, scaled by destination DPI
         );
         assert_eq!(
             windows_overlay_bounds(
@@ -859,7 +859,7 @@ mod tests {
                 OVERLAY_STREAM_HEIGHT,
                 OverlayPosition::Bottom,
             ),
-            (-1530, 1040, 500, 150)
+            (-1530, 1030, 500, 150) // [GRAIN] visual clearance
         );
     }
 
@@ -879,9 +879,9 @@ mod tests {
             OverlayPosition::Bottom,
         );
         // 400x120 logical at 1.25 DPI x 1.1 text, still centered horizontally.
-        assert_eq!((x, y, width, height), (-1555, 1025, 550, 165));
-        // Bottom edge unchanged from the 1.0 case above (1040 + 150).
-        assert_eq!(y + height, 1190);
+        // [GRAIN] Visual clearance; bottom edge unchanged from 1.0 above (1030 + 150).
+        assert_eq!((x, y, width, height), (-1555, 1015, 550, 165));
+        assert_eq!(y + height, 1180);
 
         let (_, top_y, _, _) = windows_overlay_bounds(
             monitor_position,

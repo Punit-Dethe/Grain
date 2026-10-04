@@ -7,7 +7,16 @@ import {
   type PillSkin,
   type StreamTextEvent,
 } from "@/bindings";
-import { audioAmplitude, barCount, WaveField } from "./wave";
+import {
+  audioAmplitude,
+  barCount,
+  WaveField,
+  WAVE_WIDTH,
+  WAVE_HEIGHT,
+  WAVE_BAR_WIDTH,
+  waveBarX,
+  waveBarHalfLength,
+} from "./wave";
 import { MatrixField } from "./matrix";
 import { useTranslation } from "react-i18next";
 import i18n from "@/i18n";
@@ -43,7 +52,7 @@ const Waveform = memo(function Waveform({
   const row = useRef<HTMLDivElement>(null);
   const amplitude = useRef(0);
   // Original compact icon slot leaves ~50.75px for 13 bars; use it in both forms.
-  const count = barCount(51);
+  const count = barCount(WAVE_WIDTH);
   const [field] = useState(() => new WaveField());
   const [matrix] = useState(() => new MatrixField());
   useEffect(() => {
@@ -71,7 +80,8 @@ const Waveform = memo(function Waveform({
   useEffect(() => {
     const element = row.current;
     if (!element) return;
-    const bars = element.children;
+    const bars =
+      skin === "matrix" ? element.children : element.querySelectorAll("line");
     let frame = 0;
     let previous = performance.now();
     const animate = (now: number) => {
@@ -83,12 +93,16 @@ const Waveform = memo(function Waveform({
         field.advance(dt, ready ? amplitude.current : 0, count);
       previous = now;
       for (let i = 0; changed && i < bars.length; i++) {
-        const bar = bars[i] as HTMLElement;
         if (skin === "matrix") {
+          const bar = bars[i] as HTMLElement;
           const start = (i + (live ? 75 : 0)) * 4;
           bar.style.backgroundColor = `rgb(${matrix.dots[start]} ${matrix.dots[start + 1]} ${matrix.dots[start + 2]})`;
           bar.style.opacity = String(matrix.dots[start + 3] / 255);
-        } else bar.style.height = `${2 + field.bars[i] * 12}px`;
+        } else {
+          const half = waveBarHalfLength(field.bars[i]);
+          bars[i].setAttribute("y1", String(WAVE_HEIGHT / 2 - half));
+          bars[i].setAttribute("y2", String(WAVE_HEIGHT / 2 + half));
+        }
       }
       frame = requestAnimationFrame(animate);
     };
@@ -101,11 +115,27 @@ const Waveform = memo(function Waveform({
       className={`swave grain-wave ${skin} ${live ? "live" : ""} ${ready ? "ready" : "arming"}`}
       aria-hidden="true"
     >
-      {Array.from(
-        { length: skin === "matrix" ? (live ? 50 : 200) : count },
-        (_, i) => (
-          <i key={i} />
-        ),
+      {skin === "matrix" ? (
+        Array.from({ length: live ? 50 : 200 }, (_, i) => <i key={i} />)
+      ) : (
+        <svg
+          width={WAVE_WIDTH}
+          height={WAVE_HEIGHT}
+          viewBox={`0 0 ${WAVE_WIDTH} ${WAVE_HEIGHT}`}
+          stroke="currentColor"
+          strokeWidth={WAVE_BAR_WIDTH}
+          strokeLinecap="round"
+        >
+          {Array.from({ length: count }, (_, i) => (
+            <line
+              key={i}
+              x1={waveBarX(i, count)}
+              x2={waveBarX(i, count)}
+              y1={WAVE_HEIGHT / 2}
+              y2={WAVE_HEIGHT / 2}
+            />
+          ))}
+        </svg>
       )}
     </div>
   );
@@ -127,6 +157,9 @@ export function RecordingOverlay() {
   const cap = useRef<HTMLDivElement>(null);
   const pinned = useRef(true);
   const [overflowing, setOverflowing] = useState(false);
+  const workRow = useRef<HTMLDivElement>(null);
+  const workText = useRef<HTMLSpanElement>(null);
+  const hasText = text.committed.length > 0 || text.tentative.length > 0;
 
   useEffect(() => {
     let disposed = false;
@@ -291,6 +324,41 @@ export function RecordingOverlay() {
     session,
   ]);
 
+  useLayoutEffect(() => {
+    const row = workRow.current;
+    const label = workText.current;
+    const card = row?.closest<HTMLElement>(".scard");
+    if (!row || !label || !card || card.classList.contains("open")) return;
+    // Measure intrinsic text, independent of the card's animated width. Keep
+    // the same explicit gap as recording, including translated working labels.
+    const update = () => {
+      const style = getComputedStyle(row);
+      const width =
+        label.offsetWidth +
+        (row.firstElementChild as HTMLElement).offsetWidth +
+        (row.lastElementChild as HTMLElement).offsetWidth +
+        2 * parseFloat(style.columnGap) +
+        parseFloat(style.paddingLeft) +
+        parseFloat(style.paddingRight);
+      card.style.setProperty("--ov-work-w", `${width}px`);
+    };
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(label);
+    return () => observer.disconnect();
+  }, [
+    presentation.visible,
+    presentation.state,
+    presentation.notice,
+    presentation.followup,
+    working,
+    kind,
+    hasText,
+    skin,
+    session,
+    t,
+  ]);
+
   if (!presentation.visible) return null;
   const direction = getLanguageDirection(i18n.language);
   const handleScroll = () => {
@@ -341,11 +409,13 @@ export function RecordingOverlay() {
     </div>
   );
   const workingRow = (label: string) => (
-    <div className="sbase">
+    <div ref={workRow} className="sbase work-row">
       <div className="sbase-l">
         <span className="sspinner" />
       </div>
-      <span className="swork-label">{label}</span>
+      <span className="swork-label">
+        <span ref={workText}>{label}</span>
+      </span>
       <div className="sbase-r">{cancelBtn}</div>
     </div>
   );
@@ -372,7 +442,7 @@ export function RecordingOverlay() {
   // Handy's Live card and Minimal card keep their exact structure and states.
   // Grain substitutes only the listening indicator and waveform contents.
   if (presentation.state === "streaming") {
-    const open = text.committed.length > 0 || text.tentative.length > 0;
+    const open = hasText;
     const collapsed = working && !open;
     return (
       <div dir={direction} className={`ov-stage ${position}`}>

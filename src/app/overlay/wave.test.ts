@@ -1,5 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { audioAmplitude, barCount, WaveField } from "./wave";
+import {
+  audioAmplitude,
+  barCount,
+  WaveField,
+  WAVE_WIDTH,
+  WAVE_HEIGHT,
+  WAVE_BAR_WIDTH,
+  waveBarX,
+  waveBarHalfLength,
+} from "./wave";
 
 describe("Grain's retained waveform", () => {
   it("matches trajectories evaluated by the original Rust WaveField", () => {
@@ -14,19 +23,37 @@ describe("Grain's retained waveform", () => {
       [60, [0.0501257, 0.057968434, 0.02651876]],
       [90, [0.0014486954, 0.0016413801, 0.0007468766]],
     ]);
-    const field = new WaveField();
-    for (let frame = 1; frame <= 90; frame++) {
-      field.advance(1 / 60, frame <= 30 ? 0.2 : 0, 25);
-      reference
-        .get(frame)
-        ?.forEach((value, index) =>
-          expect(field.bars[index * 6]).toBeCloseTo(value, 5),
-        );
-      for (let i = 0; i < 25; i++)
-        expect(field.bars[i]).toBeCloseTo(field.bars[24 - i], 10);
+    // The compact 13-bar slot has the same sampled positions at 0, 3, 6.
+    for (const count of [13, 25]) {
+      const field = new WaveField();
+      for (let frame = 1; frame <= 90; frame++) {
+        field.advance(1 / 60, frame <= 30 ? 0.2 : 0, count);
+        reference
+          .get(frame)
+          ?.forEach((value, index) =>
+            expect(field.bars[(index * (count - 1)) / 4]).toBeCloseTo(value, 5),
+          );
+        for (let i = 0; i < count; i++)
+          expect(field.bars[i]).toBeCloseTo(field.bars[count - 1 - i], 10);
+      }
+      field.reset();
+      expect([...field.bars].every((value) => value === 0)).toBe(true);
     }
-    field.reset();
-    expect([...field.bars].every((value) => value === 0)).toBe(true);
+  });
+  it("retains native compact bar spacing and visible round-cap heights", () => {
+    const count = barCount(WAVE_WIDTH);
+    expect(count).toBe(13);
+    expect(waveBarX(0, count)).toBeCloseTo(3.3);
+    expect(waveBarX(6, count)).toBeCloseTo(25.5);
+    expect(waveBarX(12, count)).toBeCloseTo(47.7);
+    for (let i = 1; i < count; i++)
+      expect(
+        waveBarX(i, count) - waveBarX(i - 1, count) - WAVE_BAR_WIDTH,
+      ).toBeCloseTo(1.7);
+    expect(2 * waveBarHalfLength(0) + WAVE_BAR_WIDTH).toBe(2);
+    const fullHeight = 2 * waveBarHalfLength(1) + WAVE_BAR_WIDTH;
+    expect(fullHeight).toBeCloseTo(23.6096);
+    expect(fullHeight).toBeLessThan(WAVE_HEIGHT);
   });
   it("rejects malformed audio and stays bounded across a stalled frame", () => {
     expect(audioAmplitude([NaN, Infinity, -1, 2])).toBeCloseTo(Math.sqrt(0.5));

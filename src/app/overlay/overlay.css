@@ -1,96 +1,28 @@
 @import "./theme.css";
 
-:root {
-  --s-font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-  /* Near-opaque app surface (theme.css --color-background at 98%). Auto-flips
-     light/dark with --color-background, so no dark-mode override is needed. */
-  --s-surface: color-mix(in srgb, var(--color-background) 98%, transparent);
-  /* Grain's neutral accent for recording indicators, spinner and live caret. */
-  --light-s-accent: #636671;
-  --dark-s-accent: #eceff5;
-  /* Light/dark pairs for the tokens that can't flip through a shared palette
-     variable on their own. Same shape as theme.css: each value is written once
-     here, and the active token below is re-pointed by the media query or by the
-     `data-theme` overrides. */
-  --light-s-accent-soft: color-mix(
-    in srgb,
-    var(--color-mid-gray) 16%,
-    transparent
-  );
-  /* Match the waveform's light-gray accent on the dark surface. */
-  --dark-s-accent-soft: color-mix(in srgb, var(--s-accent) 20%, transparent);
-  /* Neutrals. muted/faint are overlay-specific secondary/tertiary text grays
-     (no theme equivalent). */
-  --light-s-muted: #6e6e6e;
-  --dark-s-muted: #a3a09a;
-  --light-s-faint: #9a9a9a;
-  --dark-s-faint: #6f6c66;
-  /* Hairlines reuse the app's mid-gray at low opacity in light — same vocabulary
-     as the app's border-mid-gray/* utilities — and flip to the near-white text
-     token for contrast on dark. */
-  --light-s-border: color-mix(in srgb, var(--color-mid-gray) 22%, transparent);
-  --dark-s-border: color-mix(in srgb, var(--color-text) 12%, transparent);
-  --light-s-hair: color-mix(in srgb, var(--color-mid-gray) 12%, transparent);
-  --dark-s-hair: color-mix(in srgb, var(--color-text) 8%, transparent);
-
-  /* Active neutrals — default light, flipped by the media query below or forced
-     by `data-theme`. */
-  --s-accent-soft: var(--light-s-accent-soft);
-  --s-accent: var(--light-s-accent);
-  --s-muted: var(--light-s-muted);
-  --s-faint: var(--light-s-faint);
-  --s-border: var(--light-s-border);
-  --s-hair: var(--light-s-hair);
-
-  /* Card geometry — single source of truth for the visible overlay sizes. The
-     native overlay window (overlay.rs) is sized from these: it must be at least
-     the card's max footprint (--ov-work-w for compact, --ov-open-w for Live),
-     since the card is anchored flush to the screen edge in CSS. Keep overlay.rs
-     in sync when these change. */
-  --ov-rest-w: 136px; /* Grain's compact listening pill: icon, wave and cancel. */
-  --ov-pill-w: 136px; /* Same compact width before the Live card opens. */
-  --ov-work-w: 216px; /* working pill (transcribing / polishing) -- wide enough to
-                         center longer labels; shared by Live (collapsed) + minimal */
-  --ov-open-w: 392px; /* Live panel, expanded */
-  --ov-base-h: 40px; /* control-row height (.sbase) */
-  --ov-cap-max-h: 64px; /* max height of the scrolling live-text region */
-}
-@media (prefers-color-scheme: dark) {
-  :root {
-    --s-accent: var(--dark-s-accent);
-    --s-accent-soft: var(--dark-s-accent-soft);
-    --s-muted: var(--dark-s-muted);
-    --s-faint: var(--dark-s-faint);
-    --s-border: var(--dark-s-border);
-    --s-hair: var(--dark-s-hair);
-  }
-}
-
-/*
- * Explicit theme override, matching the `data-theme` blocks in theme.css.
- * The surface follows the shared palette; neutral accents and secondary colors
- * are chosen here, so without these overrides a forced theme on a differently-
- * themed OS mixes the two — e.g. dark
- * surface with light-theme secondary text at ~2.8:1 contrast. macOS masks that
- * (setting the app appearance flips the webview's `prefers-color-scheme` to
- * match), so this is what Windows and Linux need.
- */
-:root[data-theme="light"] {
-  --s-accent: var(--light-s-accent);
-  --s-accent-soft: var(--light-s-accent-soft);
-  --s-muted: var(--light-s-muted);
-  --s-faint: var(--light-s-faint);
-  --s-border: var(--light-s-border);
-  --s-hair: var(--light-s-hair);
-}
-
+/* Recording pills keep Grain's dark palette independently of app/OS theme. */
+:root,
+:root[data-theme="light"],
 :root[data-theme="dark"] {
-  --s-accent: var(--dark-s-accent);
-  --s-accent-soft: var(--dark-s-accent-soft);
-  --s-muted: var(--dark-s-muted);
-  --s-faint: var(--dark-s-faint);
-  --s-border: var(--dark-s-border);
-  --s-hair: var(--dark-s-hair);
+  --s-font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --s-surface: #1f1f21;
+  --s-border: #474749;
+  --s-accent: #eceff5;
+  --s-accent-soft: color-mix(in srgb, var(--s-accent) 20%, transparent);
+  --s-muted: #a3a09a;
+  --s-faint: #6f6c66;
+  --s-hair: color-mix(in srgb, var(--s-accent) 8%, transparent);
+  --color-text: #fbfbfb;
+
+  --grain-row-gap: 12px;
+  /* 18px icon + 51px wave + 22px cancel + two gaps + symmetric 10px padding. */
+  --ov-rest-w: calc(18px + 51px + 22px + 2 * var(--grain-row-gap) + 20px);
+  --ov-pill-w: var(--ov-rest-w);
+  /* Working width is measured from the label with those same gaps/padding. */
+  --ov-work-w: var(--ov-rest-w);
+  --ov-open-w: 392px;
+  --ov-base-h: 40px;
+  --ov-cap-max-h: 64px;
 }
 
 /* ============================================================
@@ -157,7 +89,7 @@
   margin: 0;
 }
 
-/* Shared base card. Flat: theme surface + hairline border, no shadow or blur. */
+/* Shared base card. Flat dark surface + border, no shadow or blur. */
 .scard {
   width: var(--ov-pill-w);
   /* Never wider than the window: an unaccounted content zoom degrades to a
@@ -206,11 +138,8 @@
   border-radius: 18px;
 }
 
-/* Compact form: two fixed widths so the recording→working change is an animatable
-   width transition (intrinsic max-content can't be transitioned, and every label
-   is short enough to fit the resting pill, so content-sizing produced no visible
-   grow). The resting pill hugs the waveform; the working pill is roomy enough to
-   center the longest label — the .swork-label ellipsis is only a safety net past it. */
+/* Explicit pixel widths keep the recording-to-working transition animatable.
+   Working rows measure their intrinsic label; expanded Live geometry is fixed. */
 .scard.compact {
   animation: none;
   width: var(--ov-rest-w);
@@ -486,7 +415,7 @@ body,
 }
 .swave.grain-wave {
   width: 51px;
-  height: 16px;
+  height: 26px;
   padding-right: 0;
   justify-content: center;
   gap: 1.7px;
@@ -525,14 +454,43 @@ body,
   height: 3px;
   border-radius: 50%;
 }
-/* Equal outside padding and equal gaps around the small compact waveform.
-   The expanded/working rows keep Handy's original centered grid. */
+/* Closed Wave and working pills share exact center-to-control gaps. */
 .scard.wave:not(.open):not(.working):not(.cworking) .sbase {
   grid-template-columns: 18px 51px 22px;
-  justify-content: space-between;
+  column-gap: var(--grain-row-gap);
+  justify-content: center;
 }
-.scard.wave:not(.open):not(.working):not(.cworking) .sbase-l {
+.scard:not(.open) .work-row {
+  grid-template-columns: 18px minmax(0, 1fr) 22px;
+  column-gap: var(--grain-row-gap);
+}
+.scard:not(.open) .work-row .swork-label {
+  padding: 0;
+}
+.swork-label > span {
+  display: inline-block;
+  width: max-content;
+}
+.scard:not(.open) .work-row .sspinner {
+  box-sizing: border-box;
+  width: 18px;
+  height: 18px;
+}
+.scard.wave:not(.open) .sbase-l,
+.scard:not(.open) .work-row .sbase-l {
   padding-left: 0;
+  width: 18px;
+}
+/* SVG uses the retired renderer's 2px round caps and floating-point 1.7px gaps.
+   No CSS height interpolation or flex rounding competes with its spring filter. */
+.grain-wave.wave svg {
+  display: block;
+  flex: none;
+  color: var(--s-accent);
+}
+.grain-wave.wave.arming svg {
+  color: var(--s-muted);
+  opacity: 0.35;
 }
 /* The optional matrix skin keeps its existing footprint so its 96px field
    cannot displace the icon/cancel from the tighter waveform capsule. */
@@ -575,13 +533,4 @@ body,
 }
 .grain-followup span {
   color: #8a92a3;
-}
-:root[data-theme="light"] .grain-notice,
-:root[data-theme="light"] .grain-followup {
-  background: rgb(247 247 249 / 96%);
-  border-color: #bdbdc2;
-  color: #242428;
-}
-:root[data-theme="light"] .grain-followup span {
-  color: #636671;
 }

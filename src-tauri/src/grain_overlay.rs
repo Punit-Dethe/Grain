@@ -9,6 +9,9 @@ use std::sync::{
 };
 use tauri::{AppHandle, Emitter, Manager};
 
+/// Grain's visual clearance above Handy's platform-specific bottom placement.
+pub const BOTTOM_RAISE: f64 = 8.0;
+
 #[derive(Clone, Default, Serialize, Deserialize, Type)]
 pub struct OverlayPresentation {
     pub visible: bool,
