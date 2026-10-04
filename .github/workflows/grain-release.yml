@@ -217,22 +217,21 @@ jobs:
           releaseDraft: ${{ github.event_name != 'workflow_dispatch' || inputs.draft }}
           prerelease: false
           releaseBody: |
-            # Grain v0.0.7
+            # Grain v0.0.8
 
-            This Windows release improves dictation timing, context awareness, Flow accuracy, and native dependency maintenance.
+            This Windows release moves the recording pill to WebView, simplifies dictation settings and provider routing, and improves everyday feedback.
 
-            - Removed pill logo delays when switching windows with Alt-Tab and addressed waveform timing.
-            - Improved the Home start section and reordered the sidebar.
-            - Refined Context Awareness prompts and added text context on both sides of the caret.
-            - Fixed duplicate shortcut assignments and simultaneous capture/Agent starts.
-            - Allowed spaces in dictionary entries and fixed interactions at the top of the Agent window.
-            - Tuned Parakeet TDT v2 Flow windows for a better speed/accuracy balance.
-            - Removed Flow live preview and Grain's extra voice-enhancement processing from shared capture paths.
-            - Restored upstream GPU fallback selection instead of forcing offloading.
-            - Moved Grain's native Flow extensions into a maintained transcribe.cpp fork, pinned to an immutable source revision and built into the app.
-            - Removed Grain Space while retaining shared embedding settings.
-
-            Known issue: Onboarding lacks minimize, maximize, and close controls; it also needs scrolling and better centering. These are planned for the next release.
+            - Replaced the small native Rust recording pill with a WebView pill and migrated its interactions. Dot Matrix was retired, leaving one pill style.
+            - Fixed the model indicator, restored Flow audio feedback, and allowed streaming ASR without a live preview.
+            - Added options to hide the pill's close button and app icon, removed hover-only interactions, and gave Agent a gradient variant of the same pill.
+            - Retired the prompt switcher. Prompt Record now uses a shortcut with clearer recording feedback.
+            - Fixed the Alt+E shortcut issue and unified dictation shortcut routing.
+            - Updated Home, refined the sidebar, and merged Capture and Speech-to-Text settings.
+            - Corrected light-theme text contrast. The production interface uses the light theme while dark-theme work remains in development.
+            - Stopped automatically collecting OCR, text-field contents, and unique words for Agent; screen capture remains available when needed.
+            - Removed cloud STT and simplified LLM selection to ordered fallback.
+            - Smoothed copied-to-clipboard feedback by waiting until the recording pill clears.
+            - Mapped and reduced Handy divergence around the pill, model, and settings integration.
           # NSIS installer only (matches tauri.conf.json windows.nsis).
           args: "--bundles nsis"
 
