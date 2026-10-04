@@ -42,7 +42,8 @@ const Waveform = memo(function Waveform({
 }) {
   const row = useRef<HTMLDivElement>(null);
   const amplitude = useRef(0);
-  const count = barCount(96);
+  // Original compact icon slot leaves ~50.75px for 13 bars; use it in both forms.
+  const count = barCount(51);
   const [field] = useState(() => new WaveField());
   const [matrix] = useState(() => new MatrixField());
   useEffect(() => {
@@ -87,7 +88,7 @@ const Waveform = memo(function Waveform({
           const start = (i + (live ? 75 : 0)) * 4;
           bar.style.backgroundColor = `rgb(${matrix.dots[start]} ${matrix.dots[start + 1]} ${matrix.dots[start + 2]})`;
           bar.style.opacity = String(matrix.dots[start + 3] / 255);
-        } else bar.style.height = `${Math.max(2, field.bars[i] * 22)}px`;
+        } else bar.style.height = `${2 + field.bars[i] * 12}px`;
       }
       frame = requestAnimationFrame(animate);
     };
@@ -377,7 +378,7 @@ export function RecordingOverlay() {
       <div dir={direction} className={`ov-stage ${position}`}>
         <div
           key={session}
-          className={`scard ${open ? "open" : ""} ${collapsed ? "working" : ""}`}
+          className={`scard ${skin} ${open ? "open" : ""} ${collapsed ? "working" : ""}`}
         >
           <div className="stext">
             <div className="stext-clip">
@@ -417,7 +418,7 @@ export function RecordingOverlay() {
       : t("overlay.transcribing");
   return (
     <div dir={direction} className={`ov-stage ${position} ov-fade show`}>
-      <div className={`scard compact ${busy ? "cworking" : ""}`}>
+      <div className={`scard compact ${skin} ${busy ? "cworking" : ""}`}>
         {busy ? workingRow(workLabel) : listeningRow(false, false)}
       </div>
     </div>

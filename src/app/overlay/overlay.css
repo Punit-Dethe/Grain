@@ -5,24 +5,20 @@
   /* Near-opaque app surface (theme.css --color-background at 98%). Auto-flips
      light/dark with --color-background, so no dark-mode override is needed. */
   --s-surface: color-mix(in srgb, var(--color-background) 98%, transparent);
-  /* Accent = logo pink; flips automatically via --color-logo-primary. */
-  --s-accent: var(--color-logo-primary);
+  /* Grain's neutral accent for recording indicators, spinner and live caret. */
+  --light-s-accent: #636671;
+  --dark-s-accent: #eceff5;
   /* Light/dark pairs for the tokens that can't flip through a shared palette
      variable on their own. Same shape as theme.css: each value is written once
      here, and the active token below is re-pointed by the media query or by the
      `data-theme` overrides. */
   --light-s-accent-soft: color-mix(
     in srgb,
-    var(--color-background-ui) 16%,
+    var(--color-mid-gray) 16%,
     transparent
   );
-  /* Dark uses the lighter logo pink — reads better on the dark surface than the
-     deeper UI pink. */
-  --dark-s-accent-soft: color-mix(
-    in srgb,
-    var(--color-logo-primary) 20%,
-    transparent
-  );
+  /* Match the waveform's light-gray accent on the dark surface. */
+  --dark-s-accent-soft: color-mix(in srgb, var(--s-accent) 20%, transparent);
   /* Neutrals. muted/faint are overlay-specific secondary/tertiary text grays
      (no theme equivalent). */
   --light-s-muted: #6e6e6e;
@@ -40,6 +36,7 @@
   /* Active neutrals — default light, flipped by the media query below or forced
      by `data-theme`. */
   --s-accent-soft: var(--light-s-accent-soft);
+  --s-accent: var(--light-s-accent);
   --s-muted: var(--light-s-muted);
   --s-faint: var(--light-s-faint);
   --s-border: var(--light-s-border);
@@ -50,9 +47,8 @@
      the card's max footprint (--ov-work-w for compact, --ov-open-w for Live),
      since the card is anchored flush to the screen edge in CSS. Keep overlay.rs
      in sync when these change. */
-  --ov-rest-w: 172px; /* resting compact pill (minimal, recording) -- roomy enough
-                         for the English working label before the grow starts */
-  --ov-pill-w: 184px; /* base width / Live pill before it opens or collapses */
+  --ov-rest-w: 136px; /* Grain's compact listening pill: icon, wave and cancel. */
+  --ov-pill-w: 136px; /* Same compact width before the Live card opens. */
   --ov-work-w: 216px; /* working pill (transcribing / polishing) -- wide enough to
                          center longer labels; shared by Live (collapsed) + minimal */
   --ov-open-w: 392px; /* Live panel, expanded */
@@ -61,6 +57,7 @@
 }
 @media (prefers-color-scheme: dark) {
   :root {
+    --s-accent: var(--dark-s-accent);
     --s-accent-soft: var(--dark-s-accent-soft);
     --s-muted: var(--dark-s-muted);
     --s-faint: var(--dark-s-faint);
@@ -71,14 +68,15 @@
 
 /*
  * Explicit theme override, matching the `data-theme` blocks in theme.css.
- * `--s-surface` and `--s-accent` honour the setting for free because they derive
- * from shared palette tokens, but the neutrals above are chosen here, so without
- * this block a forced theme on a differently-themed OS mixes the two — e.g. dark
+ * The surface follows the shared palette; neutral accents and secondary colors
+ * are chosen here, so without these overrides a forced theme on a differently-
+ * themed OS mixes the two — e.g. dark
  * surface with light-theme secondary text at ~2.8:1 contrast. macOS masks that
  * (setting the app appearance flips the webview's `prefers-color-scheme` to
  * match), so this is what Windows and Linux need.
  */
 :root[data-theme="light"] {
+  --s-accent: var(--light-s-accent);
   --s-accent-soft: var(--light-s-accent-soft);
   --s-muted: var(--light-s-muted);
   --s-faint: var(--light-s-faint);
@@ -87,6 +85,7 @@
 }
 
 :root[data-theme="dark"] {
+  --s-accent: var(--dark-s-accent);
   --s-accent-soft: var(--dark-s-accent-soft);
   --s-muted: var(--dark-s-muted);
   --s-faint: var(--dark-s-faint);
@@ -486,8 +485,8 @@ body,
   flex: none;
 }
 .swave.grain-wave {
-  width: 96px;
-  height: 24px;
+  width: 51px;
+  height: 16px;
   padding-right: 0;
   justify-content: center;
   gap: 1.7px;
@@ -499,9 +498,9 @@ body,
   width: 2px;
   height: 2px;
   min-height: 2px;
-  max-height: 22px;
-  border-radius: 1px;
-  background: var(--color-text);
+  max-height: 14px;
+  border-radius: 999px;
+  background: var(--s-accent);
   transition:
     background-color 180ms ease,
     opacity 180ms ease;
@@ -510,6 +509,7 @@ body,
   background: var(--s-muted);
 }
 .swave.grain-wave.matrix {
+  width: 96px;
   display: grid;
   grid-template-columns: repeat(25, 2px);
   grid-template-rows: repeat(8, 3px);
@@ -524,6 +524,23 @@ body,
   width: 2px;
   height: 3px;
   border-radius: 50%;
+}
+/* Equal outside padding and equal gaps around the small compact waveform.
+   The expanded/working rows keep Handy's original centered grid. */
+.scard.wave:not(.open):not(.working):not(.cworking) .sbase {
+  grid-template-columns: 18px 51px 22px;
+  justify-content: space-between;
+}
+.scard.wave:not(.open):not(.working):not(.cworking) .sbase-l {
+  padding-left: 0;
+}
+/* The optional matrix skin keeps its existing footprint so its 96px field
+   cannot displace the icon/cancel from the tighter waveform capsule. */
+.scard.compact.matrix:not(.cworking) {
+  width: 172px;
+}
+.scard.matrix:not(.compact):not(.open):not(.working) {
+  width: 184px;
 }
 /* Existing supplemental notices are independent of the recording card. */
 @font-face {
