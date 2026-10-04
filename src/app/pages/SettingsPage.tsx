@@ -3,7 +3,6 @@ import { useTranslation } from "react-i18next";
 import { AboutSettings } from "@/components/settings/about/AboutSettings";
 import { DebugSettings } from "@/components/settings/debug/DebugSettings";
 import { PostProcessingSettings } from "@/components/settings/post-processing/PostProcessingSettings";
-import { SpeechToTextSettings } from "@/components/settings/speech-to-text/SpeechToTextSettings";
 import { ApplicationPane } from "../settings/panes/ApplicationPane";
 import { AudioPane } from "../settings/panes/AudioPane";
 import { CapturePane } from "../settings/panes/CapturePane";
@@ -22,7 +21,6 @@ const sectionComponents: Record<SettingsSectionId, ComponentType> = {
   audio: AudioPane,
   output: OutputPane,
   application: ApplicationPane,
-  "speech-to-text": SpeechToTextSettings,
   "post-processing": PostProcessingSettings,
   debug: DebugSettings,
   about: AboutSettings,

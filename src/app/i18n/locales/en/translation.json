@@ -1096,8 +1096,8 @@
       "loading": "Loading settings",
       "sections": {
         "capture": {
-          "label": "Capture",
-          "description": "How a recording starts, is held, and ends — including what the AI key does."
+          "label": "Transcription",
+          "description": "Models, recording shortcuts and AI processing."
         },
         "audio": {
           "label": "Audio",
@@ -1110,10 +1110,6 @@
         "application": {
           "label": "Application",
           "description": "Appearance, startup, the tray, what Grain keeps on disk, and experiments."
-        },
-        "speech-to-text": {
-          "label": "Speech to Text",
-          "description": "On-device models and model unload behavior."
         },
         "post-processing": {
           "label": "Post-processing",
@@ -1167,9 +1163,9 @@
       }
     },
     "capture": {
-      "group": "Capture",
+      "group": "Configure",
       "ai": {
-        "group": "AI",
+        "group": "AI processing",
         "always": {
           "title": "Send every capture to AI",
           "description": "Every capture is post-processed, whichever key started it."

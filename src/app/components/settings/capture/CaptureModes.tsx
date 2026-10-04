@@ -18,7 +18,7 @@ import { SettingContainer } from "../../ui/SettingContainer";
 import { ToggleSwitch } from "../../ui/ToggleSwitch";
 import { Dropdown } from "../../ui/Dropdown";
 import { ShortcutInput } from "../ShortcutInput";
-import { PostProcessingToggle } from "../PostProcessingToggle";
+import { ModelUnloadTimeoutSetting } from "../ModelUnloadTimeout";
 
 /** Mirrors `CAPTURE_MODE_IDS` in grain-core. Order = least to most machinery. */
 const CAPTURE_MODE_IDS = ["transcribe", "transcribe_native_asr"] as const;
@@ -36,7 +36,6 @@ export const CaptureModes: React.FC = () => {
   const { settings, getSetting, updateSetting, isUpdating } = useSettings();
 
   const pushToTalk = getSetting("push_to_talk") ?? false;
-  const postProcessEnabled = getSetting("post_process_enabled") ?? false;
   const alwaysAi = getSetting("capture_always_ai") ?? false;
   const endWithAi = getSetting("capture_end_with_ai") ?? true;
   const aiStartMode = getSetting("capture_ai_start_mode") ?? "transcribe";
@@ -79,50 +78,21 @@ export const CaptureModes: React.FC = () => {
             </div>
           ))}
         </div>
+        <ModelUnloadTimeoutSetting descriptionMode="tooltip" grouped />
       </SettingsGroup>
 
-      {/* AI is deliberately its own group: it is a property of what happens
-          *after* speech, not another way to start speaking. Its master switch
-          leads the group rather than owning a section elsewhere, so the rows it
-          governs sit directly under the thing that turns them on — and turning
-          it off leaves one row rather than an empty heading. */}
       <SettingsGroup title={t("ui2.capture.ai.group")}>
-        <PostProcessingToggle descriptionMode="tooltip" grouped />
+        <ToggleSwitch
+          label={t("ui2.capture.ai.always.title")}
+          description={t("ui2.capture.ai.always.description")}
+          descriptionMode="tooltip"
+          grouped
+          checked={alwaysAi}
+          isUpdating={isUpdating("capture_always_ai")}
+          onChange={(value) => updateSetting("capture_always_ai", value)}
+        />
 
-        {postProcessEnabled && (
-          <ToggleSwitch
-            label={t("ui2.capture.ai.always.title")}
-            description={t("ui2.capture.ai.always.description")}
-            descriptionMode="tooltip"
-            grouped
-            checked={alwaysAi}
-            isUpdating={isUpdating("capture_always_ai")}
-            onChange={(value) => updateSetting("capture_always_ai", value)}
-          />
-        )}
-
-        {/* With every capture already going to AI there is nothing for the AI
-            key to add mid-capture, so we do not offer a switch that changes
-            nothing. */}
-        {postProcessEnabled && !alwaysAi && (
-          <ShortcutInput shortcutId="transcribe_send_to_ai" grouped />
-        )}
-
-        {/* Push-to-talk ends a capture by releasing the key, so there is no
-            moment at which a second key could end it with AI. */}
-        {postProcessEnabled && !alwaysAi && !pushToTalk && (
-          <ToggleSwitch
-            label={t("ui2.capture.ai.end.title")}
-            description={t("ui2.capture.ai.end.description")}
-            descriptionMode="tooltip"
-            grouped
-            checked={endWithAi}
-            isUpdating={isUpdating("capture_end_with_ai")}
-            onChange={(value) => updateSetting("capture_end_with_ai", value)}
-          />
-        )}
-
-        {postProcessEnabled && !alwaysAi && (
+        {!alwaysAi && (
           <SettingContainer
             title={t("ui2.capture.ai.startMode.title")}
             description={t("ui2.capture.ai.startMode.description")}
@@ -140,6 +110,27 @@ export const CaptureModes: React.FC = () => {
               }
             />
           </SettingContainer>
+        )}
+
+        {/* With every capture already going to AI there is nothing for the AI
+            key to add mid-capture, so we do not offer a switch that changes
+            nothing. */}
+        {!alwaysAi && (
+          <ShortcutInput shortcutId="transcribe_send_to_ai" grouped />
+        )}
+
+        {/* Push-to-talk ends a capture by releasing the key, so there is no
+            moment at which a second key could end it with AI. */}
+        {!alwaysAi && !pushToTalk && (
+          <ToggleSwitch
+            label={t("ui2.capture.ai.end.title")}
+            description={t("ui2.capture.ai.end.description")}
+            descriptionMode="tooltip"
+            grouped
+            checked={endWithAi}
+            isUpdating={isUpdating("capture_end_with_ai")}
+            onChange={(value) => updateSetting("capture_end_with_ai", value)}
+          />
         )}
       </SettingsGroup>
     </>

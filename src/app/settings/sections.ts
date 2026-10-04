@@ -2,7 +2,6 @@ import {
   AudioLines,
   Bug,
   Info,
-  Keyboard,
   Mic,
   MonitorCog,
   Sparkles,
@@ -19,15 +18,14 @@ export interface SettingsSection {
 }
 
 export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
-  { id: "capture", icon: Keyboard, enabled: () => true },
+  { id: "capture", icon: AudioLines, enabled: () => true },
   { id: "audio", icon: Mic, enabled: () => true },
   { id: "output", icon: TextCursorInput, enabled: () => true },
   { id: "application", icon: MonitorCog, enabled: () => true },
-  { id: "speech-to-text", icon: AudioLines, enabled: () => true },
   {
     id: "post-processing",
     icon: Sparkles,
-    enabled: (settings) => settings?.post_process_enabled === true,
+    enabled: () => true,
   },
   {
     id: "debug",

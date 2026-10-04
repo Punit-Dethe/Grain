@@ -1364,7 +1364,6 @@ fn command_bindings() -> Builder<tauri::Wry> {
             shortcut::change_clipboard_handling_setting,
             shortcut::change_auto_submit_setting,
             shortcut::change_auto_submit_key_setting,
-            shortcut::change_post_process_enabled_setting,
             grain_locale::resolve_app_locale,
             grain_onboarding::resolve_onboarding_state,
             grain_onboarding::onboarding_step_after_permissions,

@@ -6,15 +6,12 @@ import { PushToTalk } from "@/components/settings/PushToTalk";
 import { ShortcutInput } from "@/components/settings/ShortcutInput";
 import { SettingsGroup } from "@/components/ui/SettingsGroup";
 import { useSettings } from "@/hooks/useSettings";
+import { ModelPicker } from "@/components/settings/speech-to-text/ModelPicker";
+import { ExtensionAnchor } from "@/components/settings/experimentations/ExtensionSettings";
 
 /**
- * [GRAIN] Capture — everything about starting, holding and ending a recording.
- *
- * This is the first of four panes that replaced two ("General" and "Advanced").
- * Those two had become storage rather than subjects: General held capture keys,
- * microphones, speakers and AI; Advanced held appearance, paste behaviour,
- * history retention and startup. Nothing in either name told you which one to
- * open, so every question meant reading both.
+ * [GRAIN] Transcription — model selection, capture keys and AI processing.
+ * The capture route stays stable for Overview and Quick Panel links.
  */
 export function CapturePane() {
   const { t } = useTranslation();
@@ -24,6 +21,8 @@ export function CapturePane() {
 
   return (
     <div className="max-w-4xl w-full mx-auto space-y-7">
+      <ModelPicker />
+      <ExtensionAnchor anchor="models.after" />
       <CaptureModes />
 
       {/* Extension Mode remains a backend shortcut, but its experimental

@@ -44,7 +44,7 @@ export type ExtensionDestination =
   | { kind: "agent" }
   | {
       kind: "settings";
-      section: "post-processing" | "speech-to-text";
+      section: "post-processing" | "capture";
     }
   | { kind: "extension-settings"; extensionId: string }
   | { kind: "preview" };
@@ -218,7 +218,7 @@ const SURFACE_DESTINATIONS: Record<string, ExtensionDestination> = {
   "context.after": { kind: "tools", section: "context" },
   "dictation.pipeline.after": { kind: "settings", section: "post-processing" },
   "dictation.prompts": { kind: "settings", section: "post-processing" },
-  "models.after": { kind: "settings", section: "speech-to-text" },
+  "models.after": { kind: "settings", section: "capture" },
 };
 
 const ANCHOR_SURFACES = new Set(

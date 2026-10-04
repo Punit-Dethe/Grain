@@ -97,7 +97,7 @@ describe("extension destination routing", () => {
       "dictation.pipeline.after",
       { kind: "settings", section: "post-processing" },
     ],
-    ["models.after", { kind: "settings", section: "speech-to-text" }],
+    ["models.after", { kind: "settings", section: "capture" }],
   ])("routes %s contributions", (anchor, expected) => {
     expect(extensionDestination(card(), sections(anchor))).toEqual(expected);
   });

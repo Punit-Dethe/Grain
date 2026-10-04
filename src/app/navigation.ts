@@ -7,7 +7,6 @@ export const SETTINGS_SECTION_IDS = [
   "audio",
   "output",
   "application",
-  "speech-to-text",
   "post-processing",
   "debug",
   // About sits last: it is the reference shelf of the settings pane, not a
@@ -55,7 +54,7 @@ export function routeFromHash(hash: string): AppRoute {
   // Legacy destination from the brief period About was its own tab.
   if (path === "/about") return { page: "settings", section: "about" };
   // Legacy destinations from before settings were split by subject.
-  if (path === "/settings/general") {
+  if (path === "/settings/general" || path === "/settings/speech-to-text") {
     return { page: "settings", section: "capture" };
   }
   if (path === "/settings/advanced") {

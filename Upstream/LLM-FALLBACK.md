@@ -40,6 +40,14 @@ routing engine.
 
 ## Settings and UI seam
 
+Transcription settings now combine Models, Configure (Standard, Streaming,
+model unload) and AI processing. The `capture` route owns this pane and the
+`models.after` extension anchor. AI processing availability stays enabled:
+Grain core settings loading restores `post_process_enabled` to true, and the
+former master-toggle command is no longer exposed. Do not restore that toggle
+when adapting upstream shortcut changes. This does not send every recording to
+AI: the existing capture policy settings still decide when processing runs.
+
 `post_process_fallback_enabled` is a backend-owned boolean, default false.
 Priority is the order of existing `post_process_providers` records; no duplicate
 order map is maintained. Each record's `enabled` flag controls participation.
@@ -98,7 +106,6 @@ one provider. With a failing first endpoint and working second endpoint,
 verify dictation and Agent succeed through the second. No browser-only visual
 harness was used; real-device visual/audio and non-Windows acceptance remain
 user checks.
-
 
 ### Recorded results (2026-10-04)
 

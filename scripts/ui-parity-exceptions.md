@@ -30,10 +30,10 @@ python scripts/ui_parity.py --commands # what nothing calls any more
 
 | `agent_input_type_to_expand` | Retained for future typed Agent input; production voice pills do not expand or expose this preference. Existing Agent result/conversation settings remain available. |
 
-| Field                           | Reason                                                                                                          |
-| ------------------------------- | --------------------------------------------------------------------------------------------------------------- |
-| `extensions_imported_v1`        | One-shot migration flag (`grain-core/context.rs`): marks that the bundled packs were imported. Nothing to show. |
-| `settings_schema_version`       | Internal settings-file format version used to run migrations after upgrades; never user-configurable.           |
+| Field                     | Reason                                                                                                          |
+| ------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| `extensions_imported_v1`  | One-shot migration flag (`grain-core/context.rs`): marks that the bundled packs were imported. Nothing to show. |
+| `settings_schema_version` | Internal settings-file format version used to run migrations after upgrades; never user-configurable.           |
 
 ## Write-only by design
 
@@ -43,6 +43,10 @@ python scripts/ui_parity.py --commands # what nothing calls any more
 | `mcp_oauth_client_ids`  | Managed through the Developer section's `mcp_set_client_credentials` command. The UI displays `mcp_provider_status.client_id_configured` and never reads the stored map. |
 
 ## Deliberately not surfaced
+
+`post_process_enabled` remains readable for compatibility, but Grain's settings
+load policy keeps it enabled. Its master toggle and Tauri command are removed;
+capture policy controls when AI processing runs.
 
 | Field                 | Reason                                                                                                                                                                                                                                                                                                                                                                                                       |
 | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |

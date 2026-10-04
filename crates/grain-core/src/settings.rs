@@ -1235,6 +1235,12 @@ where
 /// Returns true exactly when the caller must rewrite the settings file.
 pub fn apply_settings_migrations(settings: &mut AppSettings) -> bool {
     let mut changed = false;
+    // AI processing remains available. Capture policy decides which recordings
+    // use it; the former master switch is no longer a user preference.
+    if !settings.post_process_enabled {
+        settings.post_process_enabled = true;
+        changed = true;
+    }
     let stored_version = settings.settings_schema_version;
     for id in [
         "prompt_next",
@@ -1727,6 +1733,21 @@ mod retired_dictation_context_tests {
 #[cfg(test)]
 mod prompt_migration_tests {
     use super::*;
+
+    #[test]
+    fn ai_availability_is_enabled_without_changing_capture_policy() {
+        let mut settings = get_default_settings();
+        settings.post_process_enabled = false;
+        settings.capture_always_ai = false;
+        settings.capture_end_with_ai = false;
+        settings.capture_ai_start_mode = "transcribe_native_asr".into();
+        assert!(apply_settings_migrations(&mut settings));
+        assert!(settings.post_process_enabled);
+        assert!(!settings.capture_always_ai);
+        assert!(!settings.capture_end_with_ai);
+        assert_eq!(settings.capture_ai_start_mode, "transcribe_native_asr");
+        assert!(!apply_settings_migrations(&mut settings));
+    }
 
     fn prompt(id: &str, name: &str, body: &str) -> LLMPrompt {
         LLMPrompt {
