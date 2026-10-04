@@ -543,7 +543,11 @@
       },
       "overlay": {
         "title": "Pill Position",
-        "description": "Display visual feedback overlay during recording and transcription. On Linux 'None' is recommended.",
+        "description": "Choose whether recording pills appear at the top or bottom of the screen.",
+        "enabled": {
+          "label": "Show recording pill",
+          "description": "The shortcut determines the pill: Standard and Flow use the compact pill; Streaming shows live text."
+        },
         "options": {
           "none": "None",
           "bottom": "Bottom",

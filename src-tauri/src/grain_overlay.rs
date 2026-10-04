@@ -30,6 +30,21 @@ pub struct OverlayPresentation {
 }
 
 impl OverlayPresentation {
+    fn for_capture(mode: SessionMode, style: crate::settings::OverlayStyle) -> Self {
+        Self {
+            visible: style != crate::settings::OverlayStyle::None,
+            // The action selected by the shortcut owns presentation. Stored
+            // Minimal/Live values both mean enabled; neither overrides a mode.
+            state: if mode == SessionMode::NativeAsr {
+                "streaming"
+            } else {
+                "recording"
+            }
+            .into(),
+            ..Default::default()
+        }
+    }
+
     fn clear_capture(&mut self) {
         self.ready = false;
         self.committed = String::new();
@@ -125,16 +140,12 @@ pub fn hide_failed_capture(app: &AppHandle, generation: u64) {
 
 fn show_capture_main(app: &AppHandle, mode: SessionMode) {
     let settings = crate::settings::get_settings(app);
-    let streaming = mode == SessionMode::NativeAsr
-        && settings.overlay_style == crate::settings::OverlayStyle::Live;
+    let presentation = OverlayPresentation::for_capture(mode, settings.overlay_style);
+    let streaming = presentation.state == "streaming";
     if let Some(ctx) = app.try_state::<OverlayContext>() {
         ctx.notice_generation.fetch_add(1, Ordering::AcqRel);
         let mut value = ctx.presentation.lock().unwrap();
-        *value = OverlayPresentation {
-            visible: settings.overlay_style != crate::settings::OverlayStyle::None,
-            state: if streaming { "streaming" } else { "recording" }.into(),
-            ..Default::default()
-        };
+        *value = presentation;
         publish(app, &value);
     }
     if streaming {
@@ -484,6 +495,46 @@ pub fn emit_public_levels(app: &AppHandle, levels: &[f32]) {
 #[cfg(test)]
 mod tests {
     use super::OverlayPresentation;
+    use crate::settings::OverlayStyle;
+    use grain_core::SessionMode;
+
+    #[test]
+    fn capture_mode_owns_presentation_for_all_legacy_overlay_preferences() {
+        for style in [
+            OverlayStyle::None,
+            OverlayStyle::Minimal,
+            OverlayStyle::Live,
+        ] {
+            for mode in [
+                SessionMode::Batch,
+                SessionMode::Dictation,
+                SessionMode::VoiceToAI,
+                SessionMode::NativeAsr,
+            ] {
+                let mut value = OverlayPresentation::for_capture(mode, style);
+                value.session_id = 7;
+                assert_eq!(value.visible, style != OverlayStyle::None);
+                if mode == SessionMode::NativeAsr {
+                    assert_eq!(value.state, "streaming");
+                    value.stream_text(7, "live words", "tail");
+                    if value.visible {
+                        assert_eq!(value.committed, "live words");
+                        // Working phases keep the live card and its text.
+                        value.working = true;
+                        assert_eq!(value.state, "streaming");
+                        assert_eq!(value.tentative, "tail");
+                    }
+                } else {
+                    assert_eq!(value.state, "recording");
+                    // A stream-capable selected model cannot open these pills.
+                    value.stream_text(7, "unrelated stream", "tail");
+                    assert!(value.committed.is_empty() && value.tentative.is_empty());
+                }
+                assert!(value.complete(7));
+                assert!(!value.visible && value.committed.is_empty());
+            }
+        }
+    }
 
     #[test]
     fn stale_capture_updates_cannot_overwrite_or_hide_a_new_session() {
