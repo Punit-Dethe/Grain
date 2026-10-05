@@ -1,5 +1,17 @@
 # Grain Agent acceptance harness
 
+**E2i store MCP checkpoint (5 October):** [Implementation, audit and evidence](../../docs/Extensions%202.0/STORE-MCP-ACQUISITION-AUDIT.md#e2i-real-app-activation-checkpoint-and-block-audit). `store-mcp` runs three real-app cases for signed acquisition/update/removal, SDK account retirement and signed/cached revocation. `mcp-store-checkpoint` combines them with eleven configured and two smoke cases, preserving **16 separate verdicts**; final affected repeat adds version/deprecation/connect checks. All peers/model inputs reuse maintained infrastructure; no browser-only replica or new engine. Store consent is controlled, not live-provider/browser certification. Ordinary profiles/accounts are untouched. Keep code below as regression infrastructure; `.runs/` data/TLS/logs/inspectors are disposable evidence. Inventory **108 / 93 / 81**.
+
+```powershell
+powershell.exe -NoProfile -File tests/agent-harness/build.ps1
+node tests/agent-harness/run.mjs --suite mcp-store-checkpoint
+node tests/agent-harness/run.mjs --suite store-mcp
+# Expected exit 1 at the owner receipt assertion, with cleanup Pass:
+node tests/agent-harness/run.mjs --scenario mcp.configured-execution --fault wrong-configured-owner
+```
+
+Develop with focused component tests; real-app runs belong at feature checkpoints. New store cases were necessary because native-package store cases cannot exercise the MCP commands; protocol/account matrices are reused rather than duplicated. The existing lock helper accepts only `extensions.json`, `mcp-connections.json` or `grain.settings.json` under the verified isolated root. `-McpConfigured` inventory/cleanup includes only the two fixed store IDs when a validated store marker exists, with the exact run/service suffix; it never reads credential blobs. Keep runner/source inputs fixed through teardown. E2's remote connection model is accepted; E3 SDK/CLI is next, with store UI/publishing and public release still separate.
+
 **E2f configured registered clients:** [Scope, audit and evidence](../../docs/Extensions%202.0/CUSTOM-MCP-CLIENT-REGISTRATION-AUDIT.md). The two new client cases cover host/revision-owned public/confidential setup, secret rotation, logout/reset, independent same-endpoint accounts, discovery-failure preservation and pending/active cancellation. `mcp-configured-auth` now selects five cases; `mcp-connection-checkpoint` selects **36 distinct verdicts** (eleven configured, 23 catalogue, two smoke) with original deadlines. Inventory **105 IDs / 90 self-contained / 80 Node tests**. Run backend/build checks before actual hosts, actual scopes serially, and freeze source/runner inputs through cleanup. Keep these cases and exact fault admission as regression infrastructure; generated profiles/TLS/logs/inspectors remain disposable evidence. The finite issuer/wire evidence bounds are **2,560 / 4,608**; capacity/terminal-error tests remain and production limits are unchanged. The audit records failed/incomplete scopes separately; implementation alone does not accept check 65.
 
 ```powershell

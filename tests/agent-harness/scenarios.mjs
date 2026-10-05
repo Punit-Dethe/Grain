@@ -440,6 +440,28 @@ scenarios.push(
   },
 );
 
+scenarios.push(
+  ...[
+    [
+      "management",
+      "Signed descriptor acquisition, exact updates, real publication failures, approval invalidation, removal races and restart",
+    ],
+    [
+      "accounts",
+      "Actual store SDK OAuth and scoped vault, client/grant retirement on auth/destination changes, failed settings save and recovery",
+    ],
+    [
+      "revocation",
+      "Signed revocation cancels a running read and pending consent despite settings failure; cached refusal and configured independence",
+    ],
+  ].map(([id, description]) => ({
+    id: `store.mcp-${id}`,
+    suite: "store-mcp",
+    checks: [],
+    description,
+  })),
+);
+
 // A contract-only checkpoint: individual scenarios retain their own verdicts,
 // wire oracles and cleanup. Transport/deadline changes need broader suites.
 export const EXTENSION_CONTRACT_CHECKPOINT = [
@@ -458,6 +480,16 @@ export const EXTENSION_CONTRACT_CHECKPOINT = [
 ];
 
 export function selectScenarios(suite) {
+  if (suite === "mcp-store-checkpoint")
+    return [
+      "store-mcp",
+      "mcp-configured",
+      "mcp-configured-runtime",
+      "mcp-configured-auth",
+      "smoke",
+    ].flatMap(selectScenarios);
+  if (suite === "store-mcp")
+    return scenarios.filter((scenario) => scenario.suite === "store-mcp");
   if (suite === "mcp-connection-checkpoint")
     return [
       "mcp-configured",

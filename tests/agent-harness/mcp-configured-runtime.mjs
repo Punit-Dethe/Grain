@@ -128,13 +128,18 @@ export function configuredRuntimeHandlers(ctx) {
       async "mcp.configured-execution"() {
         await reset();
         let record = await add();
+        const initialCalls = calls();
         await stage("inactive-until-exact-enable", async () => {
           assert.equal(record.state, "inactive");
           await assert.rejects(
             ctx.invoke("mcp_test_provider", { id: providerId(record) }),
             /disabled/,
           );
-          assert.equal(calls(), 0);
+          assert.equal(
+            calls(),
+            initialCalls,
+            "Inactive import dispatched a tool",
+          );
           await enable(record);
           assert.equal((await list())[0].state, "enabled");
           const tools = await ctx.invoke("mcp_test_provider", {

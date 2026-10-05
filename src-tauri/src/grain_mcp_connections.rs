@@ -35,7 +35,7 @@ impl RuntimeOwner {
         super::Provider {
             id: &self.provider_id,
             name: &definition.name,
-            description: "Tools from a directly configured MCP server.",
+            description: "Tools from this MCP server.",
             endpoint: &definition.url,
             registration: match definition.authentication {
                 McpAuthentication::None {} => super::Registration::Anonymous,
@@ -85,12 +85,8 @@ impl RuntimeOwner {
     pub(super) fn enabled(&self, app: &AppHandle) -> bool {
         let settings = crate::settings::get_settings(app);
         settings.extension_developer_mode
-            && !matches!(
-                self.lease.record().identity().source(),
-                grain_core::mcp::ConnectionSource::Store { .. }
-            )
             && settings.mcp_enabled_providers.contains(&self.enable_key())
-            && self.registry.is_current(&self.lease)
+            && self.current()
     }
 
     fn stamp(&self) -> String {
@@ -345,10 +341,7 @@ fn view(
 ) -> ConnectionView {
     let settings = crate::settings::get_settings(app);
     let enabled = settings.extension_developer_mode
-        && !matches!(
-            record.identity().source(),
-            grain_core::mcp::ConnectionSource::Store { .. }
-        )
+        && record_allowed(app, &record)
         && settings
             .mcp_enabled_providers
             .iter()
@@ -361,6 +354,15 @@ fn view(
         result.state = "enabled".into();
     }
     result
+}
+
+fn record_allowed(app: &AppHandle, record: &ConnectionRecord) -> bool {
+    match record.identity().source() {
+        grain_core::mcp::ConnectionSource::Store { .. } => app
+            .try_state::<Arc<crate::grain_store::StoreState>>()
+            .is_some_and(|store| store.mcp_record_allowed(record)),
+        _ => true,
+    }
 }
 
 fn prune_enabled(app: &AppHandle, id: &str, keep: Option<&str>) -> Result<(), String> {
@@ -517,11 +519,8 @@ pub async fn mcp_connection_connect(
 ) -> Result<(), String> {
     guard(&app, &window)?;
     let (owner, ticket) = expected_owner(&app, &id, &expected_revision)?;
-    if matches!(
-        owner.lease.record().identity().source(),
-        grain_core::mcp::ConnectionSource::Store { .. }
-    ) {
-        return Err("Store MCP activation awaits the full store acceptance checkpoint.".into());
+    if !owner.current() {
+        return Err("This MCP connection is revoked or no longer available.".into());
     }
     super::connect_flow(
         &app,
@@ -839,13 +838,8 @@ pub async fn mcp_connection_set_enabled(
             .try_state::<Arc<crate::grain_store::StoreState>>()
             .map(|store| store.inner().clone());
         let owner = state.owner(registry.clone(), lease, store)?;
-        if enabled
-            && matches!(
-                owner.lease.record().identity().source(),
-                grain_core::mcp::ConnectionSource::Store { .. }
-            )
-        {
-            return Err("Store MCP activation awaits the full store acceptance checkpoint.".into());
+        if enabled && !owner.current() {
+            return Err("This MCP connection is revoked or no longer available.".into());
         }
         if enabled
             && super::requires_account(&owner.spec())
@@ -903,19 +897,17 @@ pub(super) fn directory(
     records
         .into_iter()
         .filter(|record| {
-            !matches!(
-                record.identity().source(),
-                grain_core::mcp::ConnectionSource::Store { .. }
-            ) && settings
-                .mcp_enabled_providers
-                .iter()
-                .any(|key| key == record.identity().vault_account().as_ref())
+            record_allowed(app, record)
+                && settings
+                    .mcp_enabled_providers
+                    .iter()
+                    .any(|key| key == record.identity().vault_account().as_ref())
         })
         .map(
             |record| grain_core::capability_index::ExtensionDirectoryEntry {
                 extension_id: format!("mcp.configured-{}", record.identity().connection_id()),
                 name: record.definition().name.clone(),
-                description: "Tools from a directly configured MCP server.".into(),
+                description: "Tools from this MCP server.".into(),
                 action_count: 1,
             },
         )

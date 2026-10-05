@@ -2716,6 +2716,47 @@ test("owned store transport preserves byte length and releases a held request", 
   }
 });
 
+test("store MCP checkpoint reuses existing peers with separate cases and bounded signed artifacts", async () => {
+  const selected = selectScenarios("mcp-store-checkpoint");
+  assert.equal(selected.length, 16);
+  assert.equal(new Set(selected.map((x) => x.id)).size, selected.length);
+  assert.equal(selectScenarios("store-mcp").length, 3);
+  const { startStore } = await import("./store-fixture.mjs");
+  const store = await startStore(here);
+  try {
+    store.configureMcp();
+    const base = `http://127.0.0.1:${store.port}`;
+    const index = await (await fetch(`${base}/index.json`)).json();
+    const entry = index.entries[0];
+    assert.equal(entry.artifact_kind, "mcp-descriptor");
+    const blob = Buffer.from(
+      await (
+        await fetch(`${base}/blob/${entry.sha256}.mcp.json`)
+      ).arrayBuffer(),
+    );
+    assert.equal(blob.length, entry.size);
+    assert.ok(blob.length <= 8192);
+    assert.equal(JSON.parse(blob).id, entry.id);
+    assert.equal(
+      (await fetch(`${base}/blob/${entry.sha256}.grainpack`)).status,
+      404,
+    );
+    store.revokeMcp();
+    const revocations = await (await fetch(`${base}/revocations.json`)).json();
+    assert.ok(revocations.version > index.version);
+    assert.deepEqual(
+      revocations.entries.map((x) => [x.id, x.version, x.state]),
+      [[entry.id, null, "revoked"]],
+    );
+    assert.match(
+      await (await fetch(`${base}/revocations.json.minisig`)).text(),
+      /PUBLIC TEST KEY/,
+    );
+  } finally {
+    await store.close();
+  }
+});
+
 test("scripted provider enforces search, selective load and offered-action discipline", () => {
   const first = nextReply(body());
   assert.equal(first.tool_calls[0].function.name, "search_tools");

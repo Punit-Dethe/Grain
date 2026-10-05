@@ -32,14 +32,14 @@ public static class GrainOwnedAuthCleanup {
     [DllImport("advapi32.dll", EntryPoint="CredDeleteW", CharSet=CharSet.Unicode, SetLastError=true)]
     private static extern bool Delete(string target, uint type, uint flags);
     [DllImport("advapi32.dll")] private static extern void CredFree(IntPtr pointer);
-    public static int Clean(string runId, bool delete, bool mcp, bool clientSecret = false, bool linear = false, bool registration = false, bool configured = false) {
+    public static int Clean(string runId, bool delete, bool mcp, bool clientSecret = false, bool linear = false, bool registration = false, bool configured = false, bool store = false) {
         Guid parsed;
         if (!Guid.TryParseExact(runId, "D", out parsed)) throw new Exception("Invalid run UUID");
         string service = (mcp ? (registration ? "com.grain.mcp.client-registration" : clientSecret ? "com.grain.mcp.client-secret" : "com.grain.mcp.oauth") : "com.grain.extension.oauth") + ".agent-harness." + parsed.ToString("D");
         string suffix = "." + service;
-        string pattern = (mcp ? (configured ? "^mcp:v1:configured:[a-f0-9]{32}:[a-f0-9]{32}" : linear ? "^grain-harness-linear" : "^grain-harness-auth(?:-client|-peer|-peer-client)?") : "^com\\.grain\\.harness\\.auth(?:-peer)?(?:/[a-fA-F0-9]{32})?") + Regex.Escape(suffix) + "$";
+        string pattern = (mcp ? (configured ? (store ? "^mcp:v1:(?:configured|store:com\\.grain\\.harness\\.mcp(?:-peer)?):[a-f0-9]{32}:[a-f0-9]{32}" : "^mcp:v1:configured:[a-f0-9]{32}:[a-f0-9]{32}") : linear ? "^grain-harness-linear" : "^grain-harness-auth(?:-client|-peer|-peer-client)?") : "^com\\.grain\\.harness\\.auth(?:-peer)?(?:/[a-fA-F0-9]{32})?") + Regex.Escape(suffix) + "$";
         uint count; IntPtr entries;
-        if (!Enumerate(mcp ? (configured ? "mcp:v1:configured:*" : linear ? "grain-harness-linear*" : "grain-harness-auth*") : "com.grain.harness.auth*", 0, out count, out entries)) {
+        if (!Enumerate(mcp ? (configured ? (store ? "mcp:v1:*" : "mcp:v1:configured:*") : linear ? "grain-harness-linear*" : "grain-harness-auth*") : "com.grain.harness.auth*", 0, out count, out entries)) {
             int error = Marshal.GetLastWin32Error();
             if (error == 1168) return 0;
             throw new Win32Exception(error);
@@ -61,19 +61,19 @@ public static class GrainOwnedAuthCleanup {
 }
 '@
 if ($InventoryOnly) {
-    @{schema=1; kind=$(if ($McpRegistration) {'mcp-registration-inventory'} elseif ($McpClientSecret) {'mcp-client-secret-inventory'} elseif ($Mcp) {'mcp-vault-inventory'} else {'native-vault-inventory'}); count=[GrainOwnedAuthCleanup]::Clean($RunId.ToString('D'), $false, $Mcp.IsPresent, $McpClientSecret.IsPresent, $McpLinear.IsPresent, $McpRegistration.IsPresent, $McpConfigured.IsPresent)} | ConvertTo-Json -Compress
+    @{schema=1; kind=$(if ($McpRegistration) {'mcp-registration-inventory'} elseif ($McpClientSecret) {'mcp-client-secret-inventory'} elseif ($Mcp) {'mcp-vault-inventory'} else {'native-vault-inventory'}); count=[GrainOwnedAuthCleanup]::Clean($RunId.ToString('D'), $false, $Mcp.IsPresent, $McpClientSecret.IsPresent, $McpLinear.IsPresent, $McpRegistration.IsPresent, $McpConfigured.IsPresent, [bool]$taskMarker.storePort)} | ConvertTo-Json -Compress
     exit 0
 }
-$taskDeleted = [GrainOwnedAuthCleanup]::Clean($RunId.ToString('D'), $true, $Mcp.IsPresent, $false, $McpLinear.IsPresent, $false, $McpConfigured.IsPresent)
-$taskRemaining = [GrainOwnedAuthCleanup]::Clean($RunId.ToString('D'), $false, $Mcp.IsPresent, $false, $McpLinear.IsPresent, $false, $McpConfigured.IsPresent)
+$taskDeleted = [GrainOwnedAuthCleanup]::Clean($RunId.ToString('D'), $true, $Mcp.IsPresent, $false, $McpLinear.IsPresent, $false, $McpConfigured.IsPresent, [bool]$taskMarker.storePort)
+$taskRemaining = [GrainOwnedAuthCleanup]::Clean($RunId.ToString('D'), $false, $Mcp.IsPresent, $false, $McpLinear.IsPresent, $false, $McpConfigured.IsPresent, [bool]$taskMarker.storePort)
 if ($taskRemaining -ne 0) { throw 'Owned credentials remain after cleanup' }
 $taskResult = @{schema=1; kind=$(if ($Mcp) {'mcp-vault-cleanup'} else {'native-vault-cleanup'}); deleted=$taskDeleted; remaining=$taskRemaining}
 if ($Mcp) {
-    $taskResult.clientSecretsDeleted = [GrainOwnedAuthCleanup]::Clean($RunId.ToString('D'), $true, $true, $true, $McpLinear.IsPresent, $false, $McpConfigured.IsPresent)
-    $taskResult.clientSecretsRemaining = [GrainOwnedAuthCleanup]::Clean($RunId.ToString('D'), $false, $true, $true, $McpLinear.IsPresent, $false, $McpConfigured.IsPresent)
+    $taskResult.clientSecretsDeleted = [GrainOwnedAuthCleanup]::Clean($RunId.ToString('D'), $true, $true, $true, $McpLinear.IsPresent, $false, $McpConfigured.IsPresent, [bool]$taskMarker.storePort)
+    $taskResult.clientSecretsRemaining = [GrainOwnedAuthCleanup]::Clean($RunId.ToString('D'), $false, $true, $true, $McpLinear.IsPresent, $false, $McpConfigured.IsPresent, [bool]$taskMarker.storePort)
     if ($taskResult.clientSecretsRemaining -ne 0) { throw 'Owned client secrets remain after cleanup' }
-    $taskResult.registrationsDeleted = [GrainOwnedAuthCleanup]::Clean($RunId.ToString('D'), $true, $true, $false, $McpLinear.IsPresent, $true, $McpConfigured.IsPresent)
-    $taskResult.registrationsRemaining = [GrainOwnedAuthCleanup]::Clean($RunId.ToString('D'), $false, $true, $false, $McpLinear.IsPresent, $true, $McpConfigured.IsPresent)
+    $taskResult.registrationsDeleted = [GrainOwnedAuthCleanup]::Clean($RunId.ToString('D'), $true, $true, $false, $McpLinear.IsPresent, $true, $McpConfigured.IsPresent, [bool]$taskMarker.storePort)
+    $taskResult.registrationsRemaining = [GrainOwnedAuthCleanup]::Clean($RunId.ToString('D'), $false, $true, $false, $McpLinear.IsPresent, $true, $McpConfigured.IsPresent, [bool]$taskMarker.storePort)
     if ($taskResult.registrationsRemaining -ne 0) { throw 'Owned client registrations remain after cleanup' }
 }
 $taskResult | ConvertTo-Json -Compress

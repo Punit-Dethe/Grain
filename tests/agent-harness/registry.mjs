@@ -8,8 +8,17 @@ const ID = "com.grain.harness.lifecycle";
 // Opaque, nonsecret registry metadata. No corresponding vault entry is created.
 const POINTER = "a".repeat(32);
 
-export async function withRegistryLock(ctx, operation) {
-  const path = assertWithin(ctx.root, join(ctx.root, "data/extensions.json"));
+export async function withRegistryLock(
+  ctx,
+  operation,
+  fileName = "extensions.json",
+) {
+  assert.ok(
+    ["extensions.json", "mcp-connections.json", "grain.settings.json"].includes(
+      fileName,
+    ),
+  );
+  const path = assertWithin(ctx.root, join(ctx.root, "data", fileName));
   assertWithin(await realpath(ctx.root), await realpath(path));
   const child = spawn(
     "powershell.exe",
@@ -21,6 +30,8 @@ export async function withRegistryLock(ctx, operation) {
       join(ctx.here, "registry-lock.ps1"),
       "-Root",
       ctx.root,
+      "-FileName",
+      fileName,
     ],
     { windowsHide: true, stdio: ["pipe", "pipe", "pipe"] },
   );

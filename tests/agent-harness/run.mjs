@@ -22,6 +22,7 @@ import { chromium } from "@playwright/test";
 import { scenarios, selectScenarios } from "./scenarios.mjs";
 import { installationHandlers } from "./installation.mjs";
 import { storeHandlers } from "./store.mjs";
+import { storeMcpHandlers } from "./store-mcp.mjs";
 import { registryHandlers } from "./registry.mjs";
 import { foundationHandlers } from "./foundation.mjs";
 import { authenticationHandlers } from "./authentication.mjs";
@@ -98,7 +99,7 @@ for (let i = 2; i < process.argv.length; i++) {
 }
 if (options.help) {
   console.log(
-    "node tests/agent-harness/run.mjs [--list] [--suite smoke|lifecycle|idle|agent-workflow|agent-live|agent-interruption|agent-interruption-live|native-failures|native-foundation|native-auth|native-auth-schedules|mcp|mcp-auth|mcp-configured|mcp-configured-runtime|mcp-configured-auth|mcp-connection-checkpoint|mcp-independence|mcp-refresh|mcp-foundation|mcp-live|mcp-hf-live|mcp-linear-preflight|mcp-linear-guards|mcp-linear-sign-in|mcp-linear-contracts|native-installation|registry-recovery|store|all] [--scenario ID] [--binary path] [--output directory] [--focus-click] [--live-configured] [--linear-sign-in]\nWindows real Agent/WebView2 acceptance. Build first with tests/agent-harness/build.ps1. Scripted suites need no model key. agent-live and agent-interruption-live require explicit --live-configured and uses only the selected ordinary Grain model with disposable tool objects; it is excluded from all. native-auth, Agent workflow/interruption suites and MCP fixtures require Python cryptography for owned TLS. mcp-foundation runs twenty-three controlled transport/OAuth cases in one host; mcp-configured runs three host metadata management cases without account sign-in; mcp-configured-runtime runs three anonymous custom-server execution/ownership/cancellation cases; mcp-configured-auth runs five custom OAuth/account/client cases; mcp-connection-checkpoint runs all eleven configured cases, all twenty-three foundation cases and both smoke cases in one host, with separate verdicts and original deadlines; mcp-independence selects its two independent-provider cases; mcp-refresh selects its two actual-expiry/recovery cases. mcp-live is opt-in public DeepWiki acceptance; mcp-hf-live is a fixed anonymous public Hugging Face nested text read. Both are excluded from all. mcp-linear-preflight creates actual read-only Linear SDK consent and cancels without opening a browser; excluded from all. mcp-linear-guards verifies browser/grant controls without opening a browser. mcp-linear-sign-in requires --linear-sign-in and an interactive terminal; two human browser steps, no tool execution. mcp-linear-contracts uses the same opt-in with one sign-in and structural contract inspection/restart, no tools execute. These suites are excluded from all. --focus-click is confined to agent.reopen-escape.",
+    "node tests/agent-harness/run.mjs [--list] [--suite smoke|lifecycle|idle|agent-workflow|agent-live|agent-interruption|agent-interruption-live|native-failures|native-foundation|native-auth|native-auth-schedules|mcp|mcp-auth|mcp-configured|mcp-configured-runtime|mcp-configured-auth|mcp-connection-checkpoint|mcp-independence|mcp-refresh|mcp-foundation|mcp-live|mcp-hf-live|mcp-linear-preflight|mcp-linear-guards|mcp-linear-sign-in|mcp-linear-contracts|native-installation|registry-recovery|store|store-mcp|mcp-store-checkpoint|all] [--scenario ID] [--binary path] [--output directory] [--focus-click] [--live-configured] [--linear-sign-in]\nWindows real Agent/WebView2 acceptance. Build first with tests/agent-harness/build.ps1. Scripted suites need no model key. agent-live and agent-interruption-live require explicit --live-configured and uses only the selected ordinary Grain model with disposable tool objects; it is excluded from all. native-auth, Agent workflow/interruption suites and MCP fixtures require Python cryptography for owned TLS. mcp-foundation runs twenty-three controlled transport/OAuth cases in one host; mcp-configured runs three host metadata management cases without account sign-in; mcp-configured-runtime runs three anonymous custom-server execution/ownership/cancellation cases; mcp-configured-auth runs five custom OAuth/account/client cases; mcp-connection-checkpoint runs all eleven configured cases, all twenty-three foundation cases and both smoke cases in one host, with separate verdicts and original deadlines; store-mcp runs three signed-store acquisition/account/revocation cases; mcp-store-checkpoint combines them with eleven configured cases and two smoke cases (sixteen separate verdicts), reusing the owned peers; mcp-independence selects its two independent-provider cases; mcp-refresh selects its two actual-expiry/recovery cases. mcp-live is opt-in public DeepWiki acceptance; mcp-hf-live is a fixed anonymous public Hugging Face nested text read. Both are excluded from all. mcp-linear-preflight creates actual read-only Linear SDK consent and cancels without opening a browser; excluded from all. mcp-linear-guards verifies browser/grant controls without opening a browser. mcp-linear-sign-in requires --linear-sign-in and an interactive terminal; two human browser steps, no tool execution. mcp-linear-contracts uses the same opt-in with one sign-in and structural contract inspection/restart, no tools execute. These suites are excluded from all. --focus-click is confined to agent.reopen-escape.",
   );
   process.exit(0);
 }
@@ -1598,6 +1599,23 @@ const configuredAuthSuite = configuredAuthHandlers({
     mcpAuthSuite.vaultCount(secret, registration, true),
 });
 Object.assign(handlers, configuredAuthSuite.handlers);
+const storeMcpSuite = storeMcpHandlers({
+  root,
+  here,
+  invoke,
+  status,
+  request,
+  activate,
+  waitFor,
+  closePanel,
+  restartHost,
+  provider: () => mcpProvider,
+  model: () => model,
+  store: () => store,
+  vaultCount: (secret = false, registration = false) =>
+    mcpAuthSuite.vaultCount(secret, registration, true),
+});
+Object.assign(handlers, storeMcpSuite.handlers);
 
 const linearSuite = linearHandlers({
   invoke,
@@ -1868,7 +1886,9 @@ try {
     };
   }
   model = await startModel({ fault: options.fault, liveConfig });
-  if (selected.some((scenario) => scenario.suite === "store")) {
+  if (
+    selected.some((scenario) => ["store", "store-mcp"].includes(scenario.suite))
+  ) {
     store = await startStore(here);
     report.storeFixture = {
       port: store.port,
@@ -1892,7 +1912,9 @@ try {
         (scenario) => scenario.suite === "mcp-hf-live",
       ),
       mcpAuth: selected.some((scenario) =>
-        ["mcp-auth", "mcp-configured-auth"].includes(scenario.suite),
+        ["mcp-auth", "mcp-configured-auth", "store-mcp"].includes(
+          scenario.suite,
+        ),
       ),
       mcpLiveLinear: linearSelected,
       mcpLinearConsent: linearHumanSelected || linearGuardsSelected,
@@ -1904,6 +1926,7 @@ try {
     ["mcp", "mcp"],
     ["mcp-configured-runtime", "mcp"],
     ["mcp-configured-auth", "mcp"],
+    ["store-mcp", "mcp"],
     ["mcp-auth", "mcp"],
     ["mcp-conformance", "mcp"],
     ["agent-workflow", "mcp"],
@@ -1939,6 +1962,7 @@ try {
         "mcp",
         "mcp-configured-runtime",
         "mcp-configured-auth",
+        "store-mcp",
         "mcp-auth",
         "agent-workflow",
         "agent-live",
@@ -1949,7 +1973,9 @@ try {
   ) {
     mcpProvider = await startMcpFixture(root, {
       authenticated: selected.some((scenario) =>
-        ["mcp-auth", "mcp-configured-auth"].includes(scenario.suite),
+        ["mcp-auth", "mcp-configured-auth", "store-mcp"].includes(
+          scenario.suite,
+        ),
       ),
       wrongAccount: [
         "wrong-mcp-account",
@@ -1979,7 +2005,9 @@ try {
         mcpPort: mcpProvider?.port,
         mcpPeerPort: mcpPeer?.port,
         mcpAuth: selected.some((scenario) =>
-          ["mcp-auth", "mcp-configured-auth"].includes(scenario.suite),
+          ["mcp-auth", "mcp-configured-auth", "store-mcp"].includes(
+            scenario.suite,
+          ),
         ),
         mcpIssuerRotation: selected.some(
           (scenario) => scenario.id === "mcp.auth-issuer-binding",
@@ -2099,6 +2127,7 @@ try {
         scenario.suite !== "mcp-configured" &&
         scenario.suite !== "mcp-configured-runtime" &&
         scenario.suite !== "mcp-configured-auth" &&
+        scenario.suite !== "store-mcp" &&
         !["native-installation", "registry-recovery", "store"].includes(
           scenario.suite,
         )
@@ -2106,7 +2135,8 @@ try {
         await fixture("load");
       const eventStart = (await status()).events.length;
       await handlers[scenario.id]();
-      if (scenario.suite === "store") await invoke("store_close");
+      if (["store", "store-mcp"].includes(scenario.suite))
+        await invoke("store_close");
       await closePanel();
       await fixture("unload").catch((error) => {
         if (!String(error).includes("not a load-unpacked")) throw error;
@@ -2129,6 +2159,7 @@ try {
         ...takeInputEvidence(),
         ...installation.takeEvidence(),
         ...storeSuite.takeEvidence(),
+        ...storeMcpSuite.takeEvidence(),
         ...registrySuite.takeEvidence(),
         ...foundationSuite.takeEvidence(),
         ...configuredMcpSuite.takeEvidence(),
@@ -2187,6 +2218,7 @@ try {
         ...takeInputEvidence(),
         ...installation.takeEvidence(),
         ...storeSuite.takeEvidence(),
+        ...storeMcpSuite.takeEvidence(),
         ...registrySuite.takeEvidence(),
         ...foundationSuite.takeEvidence(),
         ...configuredMcpSuite.takeEvidence(),
@@ -2430,7 +2462,11 @@ try {
       assert.equal(value.clientSecretsRemaining, 0);
       assert.equal(value.registrationsRemaining, 0);
       report.mcpVaultCleanup = value;
-      if (selected.some((x) => x.suite === "mcp-configured-auth")) {
+      if (
+        selected.some((x) =>
+          ["mcp-configured-auth", "store-mcp"].includes(x.suite),
+        )
+      ) {
         const cleaned = await exec(
           "powershell.exe",
           [

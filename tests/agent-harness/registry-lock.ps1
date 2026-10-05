@@ -1,4 +1,4 @@
-param([Parameter(Mandatory = $true)][string]$Root)
+param([Parameter(Mandatory = $true)][string]$Root, [ValidateSet('extensions.json', 'mcp-connections.json', 'grain.settings.json')][string]$FileName = 'extensions.json')
 $ErrorActionPreference = 'Stop'
 $ownedRoot = [System.IO.Path]::GetFullPath($Root)
 $rootItem = Get-Item -LiteralPath $ownedRoot
@@ -8,7 +8,7 @@ $marker = Get-Content -LiteralPath $markerPath -Raw | ConvertFrom-Json
 $runUuid = [guid]::Empty
 if ($marker.schema -ne 1 -or -not [guid]::TryParse($marker.runId, [ref]$runUuid)) { throw 'Invalid owned harness marker' }
 $dataPath = Join-Path $ownedRoot 'data'
-$registryPath = Join-Path $dataPath 'extensions.json'
+$registryPath = Join-Path $dataPath $FileName
 foreach ($target in @($dataPath, $registryPath)) {
     $item = Get-Item -LiteralPath $target
     if ($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) { throw 'Registry path cannot be a link' }
