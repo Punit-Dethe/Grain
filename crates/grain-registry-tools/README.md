@@ -143,9 +143,85 @@ Signed catalogue deployment, complete serving paths, protections and key custody
 are the remaining E4 work. New schema-1 source submissions still refuse the
 legacy README-based publisher. Prepared receipt folders also refuse that publisher,
 even without `--media-src`, before key reads or output writes. No new publication
-command is enabled here.
+command is activated here. The controlled signer below is a separate boundary.
 
 Existing legacy key/sign/catalogue commands remain development tools under the
 physical-removal hold. They are not a production deployment procedure. Do not
 interpret the existence of a signature, local receipt or passing doctor as
 release acceptance.
+
+## Reviewed candidate signing (E4b3 local boundary)
+
+`sign-reviewed-candidate` produces a **signed catalogue update fragment**, without
+uploading, executing author code, modifying the previous catalogue or activating
+the old registry workflow. This command is maintainer-only and never ships in Grain.
+Positive trusted registry CI provenance and production governance remain unaccepted.
+
+```powershell
+grain-registry sign-reviewed-candidate --submission registry/extensions/com.example.tools --prepared prepared-tools --candidate catalogue-candidate --policy protected-review/approved.json --policy-sha256 '<independent policy SHA256>' --gh 'C:\Program Files\GitHub CLI\gh.exe' --attestation candidate-attestation.jsonl --previous previous-v1 --key protected-keys/publishing.key --out signed-update
+```
+
+The strict policy has these required fields. All digests are lowercase hexadecimal;
+SHA256 fields have 64 characters and commit fields have 40. `submission_sha256`
+is the SHA256 of `serde_json::to_vec(SourceSubmission)` in contract field order,
+not TOML bytes or arbitrarily reformatted JSON.
+
+| Policy field | Trusted meaning |
+| --- | --- |
+| `schema` | Integer `1` |
+| `candidate_sha256`, `submission_sha256`, `receipt_sha256` | Exact approved candidate, complete structured source submission and preparation receipt |
+| `producer_sha256`, `verifier_sha256` | Independently approved registry builder and official `gh` executable bytes |
+| `registry_repo` | GitHub `owner/repo` whose CI provenance must verify |
+| `registry_commit`, `registry_ref` | Exact registry commit and `refs/heads/<branch>` (single branch component in this profile) |
+| `signer_workflow`, `signer_commit` | Same-repository `owner/repo/.github/workflows/<file>.yml` or `.yaml` and immutable workflow commit; reusable workflow identity is the signer |
+| `reviewer`, `submitter` | Protected review record's reviewer and submitting GitHub account; only submitter becomes catalogue `author` |
+| `approved_at`, `expires_at` | RFC3339 approval window: not future-dated, still valid and at most seven days; rechecked before opening the key |
+| `publishing_public_key` | Independently approved base64 minisign publishing public key |
+| `previous_index_sha256`, `previous_index_version` | Exact currently signed index bytes and monotonic version to extend |
+
+Keep the policy, its expected digest, verifier executable and publishing key in
+immutable operator-owned locations outside author/build workspaces. A digest
+copied from an untrusted policy does **not** establish review. The command verifies
+the supplied protected record; it does not independently query GitHub reviews or
+configure branch/environment protections. Those belong to the next CI activation
+checkpoint. Do not generate this record in an author-execution job.
+
+The signer reuses received-byte validation, binds the complete approved submission,
+and stages one owned snapshot. It compares every candidate file against that
+snapshot, including exact candidate JSON, artifact, DESCRIPTION and pictures;
+extra files, ignored JSON fields, altered trust and symlinks refuse. Existing output
+or output inside an input/policy tree refuses. The previous index must match its
+approved digest/version, verify against the approved public key and be fresh.
+
+Cryptographic provenance uses the maintained [GitHub attestation verifier](https://cli.github.com/manual/gh_attestation_verify)
+(checked with `gh` 2.100.0), with fixed repository/workflow/commit/ref/certificate
+issuer/predicate flags and self-hosted runners refused. The local bundle is copied
+into scratch space; standard GitHub/Sigstore trust roots are used, with no custom
+root or bypass switch. Trust-root retrieval may need network access. No user GitHub
+login, publishing secrets or inherited verifier overrides enter the child; temporary
+home/config paths are owned by this call. Fixed arguments use no shell. Verifier
+stdout is capped at 1 MiB, runtime at 60 seconds, and owned children are killed/reaped
+on monitoring failure. Raw attestation output/errors are not printed.
+
+Only after these gates does the command read the bounded key file and use the
+existing minisign library. It grants **verified**, never **core**, attaches reviewed
+source/date and submitter metadata, refuses reissuing an existing `(id, version)`,
+increments the index version with overflow checks, and sets a 30-day expiry.
+Previously signed entries and forward-compatible fields survive. The actual Grain
+index verifier checks the new signature against the approved public key before
+output is created; a wrong private key leaves no output.
+
+Output contains the new artifact/listing blobs plus `index.json` and
+`index.json.minisig`, written last. It is **not** a complete serving tree: prior
+referenced assets, signed roots and revocations are not copied. Promotion must be
+serialized against the exact current index and verify all serving paths and the
+deployed root/key relationship. A local policy key is not evidence of app-pinned
+root deployment. Crash leftovers are not publishable merely because files exist;
+future promotion must verify the whole fragment. Key custody still follows the
+existing development-key arrangement, not a production KMS claim.
+
+Next: a pinned, isolated trusted builder/review/signing workflow and positive
+candidate attestation checkpoint. Author builds must have no publishing credentials
+or privileged attestation step. Follow [GitHub's trusted-builder guidance](https://docs.github.com/en/actions/how-tos/secure-your-work/use-artifact-attestations/increase-security-rating)
+and [secure workflow guidance](https://docs.github.com/en/actions/reference/security/secure-use).
+Do not activate the current nested registry's incomplete legacy publisher.

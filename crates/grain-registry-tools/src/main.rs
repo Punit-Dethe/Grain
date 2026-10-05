@@ -21,6 +21,7 @@ use minisign::{KeyPair, PublicKeyBox, SecretKeyBox};
 mod catalogue;
 mod prepare;
 mod receive;
+mod review;
 
 #[derive(Parser)]
 #[command(
@@ -34,6 +35,36 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Cmd {
+    /// Sign a new catalogue update only after pinned review and GitHub provenance.
+    /// Produces an update fragment, never uploads or mutates the served registry.
+    SignReviewedCandidate {
+        #[arg(long)]
+        submission: PathBuf,
+        #[arg(long)]
+        prepared: PathBuf,
+        #[arg(long)]
+        candidate: PathBuf,
+        /// Operator-owned review policy, outside author-controlled workspaces.
+        #[arg(long)]
+        policy: PathBuf,
+        /// Independent digest of the protected, approved policy document.
+        #[arg(long)]
+        policy_sha256: String,
+        /// Absolute path to the independently pinned official GitHub CLI binary.
+        #[arg(long)]
+        gh: PathBuf,
+        /// GitHub/Sigstore attestation bundle for candidate.json.
+        #[arg(long)]
+        attestation: PathBuf,
+        /// Previously signed index.json and index.json.minisig directory.
+        #[arg(long)]
+        previous: PathBuf,
+        #[arg(long)]
+        key: PathBuf,
+        /// New update directory; complete hosting/roots/revocations are separate.
+        #[arg(long)]
+        out: PathBuf,
+    },
     /// Generate a minisign keypair. Writes <name>.pub and <name>.key into --out,
     /// and prints the base64 public-key line to pin in the binary.
     Keygen {
@@ -366,6 +397,29 @@ fn edit_distance(a: &str, b: &str) -> usize {
 
 fn main() -> Result<()> {
     match Cli::parse().cmd {
+        Cmd::SignReviewedCandidate {
+            submission,
+            prepared,
+            candidate,
+            policy,
+            policy_sha256,
+            gh,
+            attestation,
+            previous,
+            key,
+            out,
+        } => review::sign(review::Inputs {
+            submission: &submission,
+            prepared: &prepared,
+            candidate: &candidate,
+            policy: &policy,
+            policy_pin: &policy_sha256,
+            gh: &gh,
+            attestation: &attestation,
+            previous: &previous,
+            key: &key,
+            out: &out,
+        }),
         Cmd::Keygen { out, name } => keygen(out, name),
         Cmd::Sign { key, input, out } => sign(key, input, out),
         Cmd::Publine { pubkey } => publine(pubkey),
@@ -609,7 +663,11 @@ fn tier_dbg(t: &grain_sdk::Tier) -> &'static str {
 /// Sign `bytes` into a detached `.minisig` string with a secret-key file.
 fn sign_bytes(key: &std::path::Path, bytes: &[u8]) -> Result<String> {
     let sk_str = fs::read_to_string(key).with_context(|| format!("read {}", key.display()))?;
-    let sk_box = SecretKeyBox::from_string(&sk_str).context("parse secret key")?;
+    sign_text(&sk_str, bytes)
+}
+
+fn sign_text(sk_str: &str, bytes: &[u8]) -> Result<String> {
+    let sk_box = SecretKeyBox::from_string(sk_str).context("parse secret key")?;
     let sk = sk_box
         .into_secret_key(Some(String::new()))
         .context("decode secret key (unencrypted dev key)")?;

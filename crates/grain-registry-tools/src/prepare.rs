@@ -383,14 +383,14 @@ pub(super) fn prepare(submission_dir: PathBuf, src: PathBuf, out: PathBuf) -> Re
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
-    struct Fixture {
+    pub(crate) struct Fixture {
         _owned: tempfile::TempDir,
         src: PathBuf,
-        submission: PathBuf,
-        out: PathBuf,
-        value: SourceSubmission,
+        pub(crate) submission: PathBuf,
+        pub(crate) out: PathBuf,
+        pub(crate) value: SourceSubmission,
     }
     fn command(root: &Path, args: &[&str]) {
         let mut command = Command::new("git");
@@ -419,7 +419,7 @@ mod tests {
         let status = command.status().unwrap();
         assert!(status.success(), "fixture git operation failed: {args:?}");
     }
-    fn fixture(mcp: bool, media: bool) -> Fixture {
+    pub(crate) fn fixture(mcp: bool, media: bool) -> Fixture {
         let owned = tempfile::tempdir().unwrap();
         let mut args = vec!["init", "Tools", "--id", "com.example.tools"];
         if mcp {
@@ -721,7 +721,7 @@ mod tests {
         assert!(write_artifact(&f.src, &manifest_path, b"overwrite").is_err());
     }
 
-    fn receipt_pins(f: &Fixture) -> (String, String) {
+    pub(crate) fn receipt_pins(f: &Fixture) -> (String, String) {
         let raw = fs::read(f.out.join("receipt.json")).unwrap();
         let receipt: Receipt = serde_json::from_slice(&raw).unwrap();
         (digest(&raw), receipt.producer_sha256)

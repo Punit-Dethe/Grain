@@ -7,13 +7,14 @@ use serde::Serialize;
 
 use crate::prepare::{digest, new_output, OwnedOutput};
 
-#[derive(Serialize)]
-struct Candidate<'a> {
+#[derive(Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct Candidate {
     schema: u8,
-    evidence_class: &'static str,
-    receipt_sha256: &'a str,
-    producer_sha256: &'a str,
-    entry: IndexEntry,
+    evidence_class: String,
+    receipt_sha256: String,
+    producer_sha256: String,
+    pub entry: IndexEntry,
 }
 
 pub(super) fn prepare(
@@ -24,6 +25,24 @@ pub(super) fn prepare(
     out: &Path,
 ) -> Result<()> {
     let checked = crate::receive::verify(submission, prepared, receipt_pin, producer_pin)?;
+    stage(
+        checked,
+        submission,
+        prepared,
+        receipt_pin,
+        producer_pin,
+        out,
+    )
+}
+
+pub(super) fn stage(
+    checked: crate::receive::Verified,
+    submission: &Path,
+    prepared: &Path,
+    receipt_pin: &str,
+    producer_pin: &str,
+    out: &Path,
+) -> Result<()> {
     let source = &checked.receipt.submission;
     let (name, capabilities) = match source.artifact_kind {
         ArtifactKind::Native => {
@@ -119,9 +138,9 @@ pub(super) fn prepare(
     // Completion marker last. No index.json or signature is produced.
     let candidate = Candidate {
         schema: 1,
-        evidence_class: "unsigned-catalogue-candidate/not-reviewed",
-        receipt_sha256: receipt_pin,
-        producer_sha256: producer_pin,
+        evidence_class: "unsigned-catalogue-candidate/not-reviewed".into(),
+        receipt_sha256: receipt_pin.into(),
+        producer_sha256: producer_pin.into(),
         entry,
     };
     fs::write(
