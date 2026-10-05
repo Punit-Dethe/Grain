@@ -10,25 +10,26 @@ use std::{
 
 use anyhow::{bail, Context, Result};
 use grain_sdk::{distribution::ArtifactKind, submission::SourceSubmission};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 const GIT_OUTPUT_MAX: u64 = 256 * 1024;
 
-#[derive(Serialize)]
-struct Receipt<'a> {
-    schema: u8,
-    evidence_class: &'static str,
-    producer_version: &'static str,
-    producer_sha256: String,
-    submission_sha256: String,
-    submission: &'a SourceSubmission,
-    artifact: &'static str,
-    artifact_sha256: String,
-    artifact_size: usize,
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct Receipt {
+    pub schema: u8,
+    pub evidence_class: String,
+    pub producer_version: String,
+    pub producer_sha256: String,
+    pub submission_sha256: String,
+    pub submission: SourceSubmission,
+    pub artifact: String,
+    pub artifact_sha256: String,
+    pub artifact_size: u64,
 }
 
-fn digest(bytes: &[u8]) -> String {
+pub(super) fn digest(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }
 
@@ -358,14 +359,14 @@ pub(super) fn prepare(submission_dir: PathBuf, src: PathBuf, out: PathBuf) -> Re
     }
     let receipt = Receipt {
         schema: 1,
-        evidence_class: "local-preparation/unsigned-not-reviewed",
-        producer_version: env!("CARGO_PKG_VERSION"),
+        evidence_class: "local-preparation/unsigned-not-reviewed".into(),
+        producer_version: env!("CARGO_PKG_VERSION").into(),
         producer_sha256: format!("{:x}", hash.finalize()),
         submission_sha256: digest(&submitted),
-        submission: &submission,
-        artifact,
+        submission: submission.clone(),
+        artifact: artifact.into(),
         artifact_sha256: digest(&bytes),
-        artifact_size: bytes.len(),
+        artifact_size: bytes.len() as u64,
     };
     // Completion marker last. Signing will require independently trusted CI
     // identity/review/digest checks, never this self-authored receipt alone.
@@ -718,5 +719,148 @@ mod tests {
         assert!(crate::build_pack(f.src.clone(), f.out.clone()).is_err());
         assert!(!f.out.exists());
         assert!(write_artifact(&f.src, &manifest_path, b"overwrite").is_err());
+    }
+
+    fn receipt_pins(f: &Fixture) -> (String, String) {
+        let raw = fs::read(f.out.join("receipt.json")).unwrap();
+        let receipt: Receipt = serde_json::from_slice(&raw).unwrap();
+        (digest(&raw), receipt.producer_sha256)
+    }
+    fn receive(f: &Fixture, pins: &(String, String)) -> Result<crate::receive::Verified> {
+        crate::receive::verify(&f.submission, &f.out, &pins.0, &pins.1)
+    }
+    fn receive_refused(f: &Fixture, pins: &(String, String), fragment: &str) {
+        let error = match receive(f, pins) {
+            Ok(_) => panic!("received invalid bundle"),
+            Err(error) => error,
+        };
+        assert!(
+            format!("{error:#}").contains(fragment),
+            "unexpected refusal: {error:#}"
+        );
+    }
+    #[test]
+    fn receiving_both_kinds_rechecks_exact_artifact_and_listing_without_execution() {
+        for mcp in [false, true] {
+            let f = fixture(mcp, true);
+            prepare(f.submission.clone(), f.src.clone(), f.out.clone()).unwrap();
+            let received = receive(&f, &receipt_pins(&f)).unwrap();
+            assert_eq!(
+                received.artifact,
+                fs::read(f.out.join(&received.receipt.artifact)).unwrap()
+            );
+            assert_eq!(
+                received.description,
+                fs::read_to_string(f.out.join("DESCRIPTION.md")).unwrap()
+            );
+            assert_eq!(received.receipt.submission.id, f.value.id);
+        }
+    }
+    #[test]
+    fn receiving_requires_independent_pins_and_exact_reviewed_submission() {
+        let mut f = fixture(true, false);
+        prepare(f.submission.clone(), f.src.clone(), f.out.clone()).unwrap();
+        let pins = receipt_pins(&f);
+        receive_refused(&f, &("bad".into(), pins.1.clone()), "lowercase SHA256");
+        receive_refused(&f, &("1".repeat(64), pins.1.clone()), "independent digest");
+        receive_refused(&f, &(pins.0.clone(), "1".repeat(64)), "independent policy");
+        f.value.commit = "1".repeat(40);
+        update(&f);
+        receive_refused(&f, &pins, "independent policy");
+    }
+    #[test]
+    fn receiving_detects_artifact_description_media_and_receipt_tampering() {
+        let f = fixture(true, true);
+        prepare(f.submission.clone(), f.src.clone(), f.out.clone()).unwrap();
+        let pins = receipt_pins(&f);
+        for (name, error) in [
+            ("artifact.mcp.json", "Artifact differs"),
+            ("DESCRIPTION.md", "DESCRIPTION/media"),
+            ("media/cover.webp", "DESCRIPTION/media"),
+        ] {
+            let path = f.out.join(name);
+            let saved = fs::read(&path).unwrap();
+            let mut changed = saved.clone();
+            // Keep the image valid but change its bytes; text/JSON need not be
+            // decoded before the independent digest checks detect changes.
+            changed.extend_from_slice(b"\n");
+            fs::write(&path, changed).unwrap();
+            receive_refused(&f, &pins, error);
+            fs::write(&path, saved).unwrap();
+        }
+        let path = f.out.join("receipt.json");
+        let mut raw = fs::read(path.clone()).unwrap();
+        raw.push(b' ');
+        fs::write(path, raw).unwrap();
+        receive_refused(&f, &pins, "independent digest");
+    }
+    #[test]
+    fn a_consistent_receipt_cannot_admit_wrong_identity_or_retired_native_capabilities() {
+        for mcp in [false, true] {
+            let f = fixture(mcp, false);
+            prepare(f.submission.clone(), f.src.clone(), f.out.clone()).unwrap();
+            let receipt_path = f.out.join("receipt.json");
+            let mut receipt: Receipt =
+                serde_json::from_slice(&fs::read(&receipt_path).unwrap()).unwrap();
+            let artifact_path = f.out.join(&receipt.artifact);
+            let mut artifact: serde_json::Value =
+                serde_json::from_slice(&fs::read(&artifact_path).unwrap()).unwrap();
+            if mcp {
+                artifact["id"] = "com.example.other".into();
+            } else {
+                artifact["manifest"]["permissions"] = serde_json::json!(["capture"]);
+            }
+            let raw = serde_json::to_vec(&artifact).unwrap();
+            fs::write(artifact_path, &raw).unwrap();
+            receipt.artifact_sha256 = digest(&raw);
+            receipt.artifact_size = raw.len() as u64;
+            fs::write(&receipt_path, serde_json::to_vec_pretty(&receipt).unwrap()).unwrap();
+            receive_refused(
+                &f,
+                &receipt_pins(&f),
+                if mcp {
+                    "identity/API/canonical"
+                } else {
+                    "capture"
+                },
+            );
+        }
+    }
+    #[test]
+    fn receiving_rejects_path_injection_unknown_fields_and_extraneous_inputs() {
+        let f = fixture(true, false);
+        prepare(f.submission.clone(), f.src.clone(), f.out.clone()).unwrap();
+        let pins = receipt_pins(&f);
+        fs::write(f.out.join("README.md"), "Not a listing fallback").unwrap();
+        receive_refused(&f, &pins, "Unexpected");
+        fs::remove_file(f.out.join("README.md")).unwrap();
+        let path = f.out.join("receipt.json");
+        let saved = fs::read(&path).unwrap();
+        let mut raw: serde_json::Value = serde_json::from_slice(&saved).unwrap();
+        raw["approved"] = true.into();
+        let mutated = serde_json::to_vec(&raw).unwrap();
+        fs::write(&path, &mutated).unwrap();
+        receive_refused(&f, &(digest(&mutated), pins.1.clone()), "unknown field");
+        let mut receipt: Receipt = serde_json::from_slice(&saved).unwrap();
+        receipt.artifact = "../artifact.mcp.json".into();
+        fs::write(&path, serde_json::to_vec(&receipt).unwrap()).unwrap();
+        receive_refused(&f, &receipt_pins(&f), "Unsupported artifact name");
+    }
+    #[test]
+    fn receiving_enforces_receipt_and_artifact_bounds_without_allocating_unbounded_data() {
+        let f = fixture(true, false);
+        prepare(f.submission.clone(), f.src.clone(), f.out.clone()).unwrap();
+        let pins = receipt_pins(&f);
+        let path = f.out.join("receipt.json");
+        let saved = fs::read(&path).unwrap();
+        fs::write(&path, vec![b' '; 64 * 1024 + 1]).unwrap();
+        receive_refused(&f, &pins, "byte budget");
+        fs::write(&path, saved).unwrap();
+        fs::write(
+            f.out.join("artifact.mcp.json"),
+            vec![b' '; grain_sdk::mcp::MCP_DESCRIPTOR_MAX_BYTES + 1],
+        )
+        .unwrap();
+        receive_refused(&f, &pins, "byte budget");
     }
 }

@@ -19,6 +19,7 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use minisign::{KeyPair, PublicKeyBox, SecretKeyBox};
 mod prepare;
+mod receive;
 
 #[derive(Parser)]
 #[command(
@@ -188,6 +189,20 @@ enum Cmd {
         /// New output directory; existing output is never overwritten.
         #[arg(long)]
         out: PathBuf,
+    },
+    /// Revalidate a received preparation against a reviewed submission and
+    /// independently expected hashes. This never grants review/signing trust.
+    VerifyPrepared {
+        #[arg(long)]
+        submission: PathBuf,
+        #[arg(long)]
+        prepared: PathBuf,
+        /// Expected receipt digest from independently verified CI/review.
+        #[arg(long)]
+        receipt_sha256: String,
+        /// Expected builder executable digest from trusted build policy.
+        #[arg(long)]
+        producer_sha256: String,
     },
 }
 
@@ -386,6 +401,24 @@ fn main() -> Result<()> {
             src,
             out,
         } => prepare::prepare(submission, src, out),
+        Cmd::VerifyPrepared {
+            submission,
+            prepared,
+            receipt_sha256,
+            producer_sha256,
+        } => {
+            let verified =
+                receive::verify(&submission, &prepared, &receipt_sha256, &producer_sha256)?;
+            println!(
+                "verified {} {} ({}, {} artifact bytes, {} DESCRIPTION bytes) — bytes only; CI review/signing authority still required",
+                verified.receipt.submission.id,
+                verified.receipt.submission.version,
+                verified.receipt.artifact_sha256,
+                verified.artifact.len(),
+                verified.description.len()
+            );
+            Ok(())
+        }
     }
 }
 
