@@ -1,10 +1,12 @@
 // Only store feature boundaries. Protocol/account matrices stay in the existing
 // production/component suites; this exercises real Tauri, Agent and OS vault.
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { readFile, mkdir, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { assertWithin } from "./support.mjs";
 import { withRegistryLock } from "./registry.mjs";
+import { cliCommand } from "./packaging.mjs";
 import { CONFIGURED_ENDPOINT } from "./mcp-configured-runtime.mjs";
 import { CONFIGURED_AUTH_ENDPOINT } from "./mcp-configured-auth.mjs";
 import { MCP_CLIENTS, MCP_CLIENT_SECRETS } from "./mcp-oauth-fixture.mjs";
@@ -162,7 +164,50 @@ export function storeMcpHandlers(ctx) {
     handlers: {
       async "store.mcp-management"() {
         await reset();
-        await publish();
+        await stage("cli-authored-descriptor-to-signed-store", async () => {
+          const authorRoot = assertWithin(
+            ctx.root,
+            join(ctx.root, "mcp-author"),
+          );
+          await mkdir(authorRoot);
+          const commands = [];
+          commands.push(
+            await cliCommand(
+              ctx.cli().binary,
+              [
+                "init",
+                "Store MCP harness",
+                "--id",
+                ID,
+                "--mcp-url",
+                CONFIGURED_ENDPOINT,
+                "--authentication",
+                "none",
+              ],
+              authorRoot,
+              ctx.waitFor,
+            ),
+          );
+          const project = join(authorRoot, "store-mcp-harness");
+          const source = join(project, "mcp.json");
+          const descriptor = JSON.parse(await readFile(source, "utf8"));
+          descriptor.version = "1.0.0";
+          descriptor.description = "Owned store MCP tools.";
+          await writeFile(source, JSON.stringify(descriptor));
+          for (const args of [["doctor"], ["pack"]])
+            commands.push(
+              await cliCommand(ctx.cli().binary, args, project, ctx.waitFor),
+            );
+          const bytes = await readFile(join(project, `${ID}-1.0.0.mcp.json`));
+          await publish({ descriptorBytes: bytes });
+          evidence.push({
+            stage: "cli-authored-artifact",
+            status: "Pass",
+            commands,
+            sha256: createHash("sha256").update(bytes).digest("hex"),
+            bytes: bytes.length,
+          });
+        });
         let record;
         await stage("verified-inactive-acquisition-and-guards", async () => {
           const before = ctx.provider().journal.length;

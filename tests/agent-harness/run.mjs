@@ -1602,6 +1602,7 @@ Object.assign(handlers, configuredAuthSuite.handlers);
 const storeMcpSuite = storeMcpHandlers({
   root,
   here,
+  cli: () => cliIdentity,
   invoke,
   status,
   request,
@@ -1816,6 +1817,7 @@ try {
         "native.cli-package-ownership",
         "native.auth-owners",
         "native.auth-cancellation",
+        "store.mcp-management",
       ].includes(scenario.id),
     )
   ) {
@@ -2544,6 +2546,7 @@ try {
     "data",
     "fixture",
     "fixture-b",
+    "mcp-author",
     "fixture.grainpack",
     "auth-tls",
     "mcp-tls",

@@ -14,6 +14,8 @@ const HELP: &str = "grain-ext — build Grain extensions
 
 Usage:
   grain-ext init <name> [--id <reverse-dns-id>]
+  grain-ext init <name> --mcp-url <https-url> [--authentication oauth|none]
+                 [--id <reverse-dns-id>]
   grain-ext dev [--token-file <path>]
   grain-ext doctor
   grain-ext pack [--output <path>]
@@ -50,6 +52,8 @@ where
             }
 
             let mut id = None;
+            let mut mcp_url = None;
+            let mut authentication = None;
             while let Some(flag) = args.next() {
                 match flag.as_str() {
                     "--id" => {
@@ -58,11 +62,40 @@ where
                         }
                         id = Some(args.next().context("--id requires a value")?);
                     }
+                    "--mcp-url" => {
+                        if mcp_url.is_some() {
+                            bail!("--mcp-url may be supplied only once");
+                        }
+                        mcp_url = Some(args.next().context("--mcp-url requires a value")?);
+                    }
+                    "--authentication" => {
+                        if authentication.is_some() {
+                            bail!("--authentication may be supplied only once");
+                        }
+                        authentication = Some(
+                            args.next()
+                                .context("--authentication requires oauth or none")?,
+                        );
+                    }
                     _ => bail!("unknown init option '{flag}'"),
                 }
             }
 
-            Ok(init_project(cwd, &name, id.as_deref())?.output)
+            if let Some(url) = mcp_url {
+                Ok(init_mcp_project(
+                    cwd,
+                    &name,
+                    id.as_deref(),
+                    &url,
+                    authentication.as_deref().unwrap_or("oauth"),
+                )?
+                .output)
+            } else {
+                if authentication.is_some() {
+                    bail!("--authentication requires --mcp-url");
+                }
+                Ok(init_project(cwd, &name, id.as_deref())?.output)
+            }
         }
         "dev" => {
             let mut token_file = None;
@@ -121,6 +154,21 @@ where
         }
     }
 
+    if grain_extension_checks::is_mcp_project(cwd).map_err(anyhow::Error::msg)? {
+        let report = grain_extension_checks::doctor(cwd);
+        if !report.is_clean() {
+            bail!("doctor found problems:\n{report}");
+        }
+        let descriptor =
+            grain_extension_checks::read_mcp_descriptor(cwd).map_err(anyhow::Error::msg)?;
+        let bytes = serde_json::to_vec(&descriptor).context("serialize MCP descriptor")?;
+        return publish_artifact(
+            cwd,
+            output,
+            format!("{}-{}.mcp.json", descriptor.id, descriptor.version),
+            &bytes,
+        );
+    }
     let raw = fs::read_to_string(cwd.join("manifest.json"))
         .context("read manifest.json (run pack from the project root)")?;
     let project: ExtensionProjectManifest =
@@ -130,6 +178,16 @@ where
     }
     let pack = grain_extension_checks::build_pack(cwd).map_err(anyhow::Error::msg)?;
     let default_name = format!("{}-{}.grainpack", pack.manifest.id, pack.manifest.version);
+    let bytes = serde_json::to_vec(&pack).context("serialize .grainpack")?;
+    publish_artifact(cwd, output, default_name, &bytes)
+}
+
+fn publish_artifact(
+    cwd: &Path,
+    output: Option<PathBuf>,
+    default_name: String,
+    bytes: &[u8],
+) -> Result<String> {
     let output = output.unwrap_or_else(|| PathBuf::from(default_name));
     let output = if output.is_absolute() {
         output
@@ -140,9 +198,76 @@ where
         fs::create_dir_all(parent)
             .with_context(|| format!("create output directory {}", parent.display()))?;
     }
-    let bytes = serde_json::to_vec(&pack).context("serialize .grainpack")?;
-    replace_artifact(&output, &bytes)?;
+    // Neither source definition may become a built output. Creating the other
+    // definition would make a previously valid project ambiguous as well.
+    let root = cwd.canonicalize().context("resolve project root")?;
+    let output_parent = output.parent().and_then(|p| p.canonicalize().ok());
+    for source in ["mcp.json", "manifest.json"] {
+        let reserved = output_parent.as_ref() == Some(&root)
+            && output
+                .file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| n.eq_ignore_ascii_case(source));
+        let alias = output
+            .canonicalize()
+            .ok()
+            .is_some_and(|p| Some(p) == root.join(source).canonicalize().ok());
+        if reserved || alias {
+            bail!("artifact output must not replace {source}");
+        }
+    }
+    replace_artifact(&output, bytes)?;
     Ok(format!("Built {}", output.display()))
+}
+
+/// Metadata-only MCP authoring. No Node project, worker, credentials or local
+/// server command is generated. OAuth discovery/consent belongs to Grain.
+pub fn init_mcp_project(
+    cwd: &Path,
+    name: &str,
+    id: Option<&str>,
+    url: &str,
+    authentication: &str,
+) -> Result<InitResult> {
+    use grain_sdk::mcp::{McpAuthentication, McpDescriptor, McpTransport, MCP_DESCRIPTOR_SCHEMA};
+    let name = name.trim();
+    let slug = slugify(name)?;
+    let id = id.unwrap_or("").trim();
+    let descriptor = McpDescriptor {
+        schema: MCP_DESCRIPTOR_SCHEMA,
+        id: if id.is_empty() {
+            format!("com.example.{slug}")
+        } else {
+            id.into()
+        },
+        name: name.into(),
+        description: format!("Tools provided by {name}"),
+        version: "0.1.0".into(),
+        grain_api: grain_sdk::compatibility::EXTENSION_API_REQUIREMENT.into(),
+        transport: McpTransport::StreamableHttp { url: url.into() },
+        authentication: match authentication {
+            "oauth" => McpAuthentication::OAuth {},
+            "none" => McpAuthentication::None {},
+            _ => bail!("--authentication must be oauth or none"),
+        },
+    };
+    let root = cwd.join(&slug);
+    fs::create_dir(&root)
+        .with_context(|| format!("create project directory {}", root.display()))?;
+    let mut guard = NewProjectGuard::new(root.clone());
+    write_json(&root.join("mcp.json"), &descriptor)?;
+    // Canonicalize with the same validator the host uses before keeping any project.
+    let descriptor =
+        grain_extension_checks::read_mcp_descriptor(&root).map_err(anyhow::Error::msg)?;
+    write_json(&root.join("mcp.json"), &descriptor)?;
+    write_text(&root.join("README.md"), &format!("# {name}\n\nMCP extension `{}`. Edit `mcp.json`, run `grain-ext doctor`, then `grain-ext pack`.\n\nGrain owns connection identities, enablement and OAuth consent. Never put credentials, client IDs, headers or server-launch commands in this descriptor. No Grain JavaScript SDK or Node build is required. `grain-ext dev` applies only to native tool projects. Store publishing remains provisional.\n", descriptor.id))?;
+    write_text(
+        &root.join("DESCRIPTION.md"),
+        &format!("# {name}\n\n{}\n", descriptor.description),
+    )?;
+    write_text(&root.join(".gitignore"), "*.mcp.json\n")?;
+    guard.keep();
+    Ok(InitResult { root: root.clone(), output: format!("Created {}\n\nMCP descriptor only; no Node build or server launch. OAuth is managed by Grain.\n\nNext:\n  cd {slug}\n  grain-ext doctor\n  grain-ext pack\n\nStore submission and listing remain provisional.", root.display()) })
 }
 
 fn replace_artifact(output: &Path, bytes: &[u8]) -> Result<()> {
@@ -219,6 +344,10 @@ pub fn init_project(cwd: &Path, name: &str, id: Option<&str>) -> Result<InitResu
     write_json(&root.join("tsconfig.json"), &tsconfig_json())?;
     write_text(&root.join("README.md"), &readme(name, &id))?;
     write_text(
+        &root.join("DESCRIPTION.md"),
+        &format!("# {name}\n\nA native Grain tool extension.\n"),
+    )?;
+    write_text(
         &root.join(".gitignore"),
         "node_modules/\ndist/\n*.grainpack\n",
     )?;
@@ -242,6 +371,9 @@ fn submit_project<I>(cwd: &Path, mut args: I) -> Result<String>
 where
     I: Iterator<Item = String>,
 {
+    if grain_extension_checks::is_mcp_project(cwd).map_err(anyhow::Error::msg)? {
+        bail!("MCP store submission is not available yet; use doctor and pack for the provisional descriptor. Registry migration is a separate checkpoint.");
+    }
     let mut registry: Option<PathBuf> = None;
     let mut repo: Option<String> = None;
     let mut tag: Option<String> = None;
@@ -551,6 +683,10 @@ fn reload_watch_path(root: &Path, path: &Path, entry: &Path) -> bool {
 pub fn dev_project(root: &Path, token_file: Option<&Path>) -> Result<()> {
     use notify::Watcher;
 
+    if grain_extension_checks::is_mcp_project(root).map_err(anyhow::Error::msg)? {
+        bail!("MCP projects have no Grain worker to reload; edit mcp.json, then run grain-ext doctor and grain-ext pack. Configure your server through Grain's MCP connection flow.");
+    }
+
     let manifest_path = root.join("manifest.json");
     let read_project = || -> Result<ExtensionProjectManifest> {
         let raw = fs::read_to_string(&manifest_path)
@@ -714,7 +850,7 @@ fn tsconfig_json() -> serde_json::Value {
 
 fn readme(name: &str, id: &str) -> String {
     format!(
-        "# {name}\n\nGrain extension id: `{id}`\n\n## Develop\n\n1. Install Node.js and run `npm install`.\n2. Run `npm run build` once.\n3. Run `grain-ext doctor`.\n4. Enable Developer mode in Grain and add this folder as an unpacked extension.\n5. Run `grain-ext dev` for incremental builds and hot reload.\n\nEdit `src/main.ts`; `grain.d.ts` is generated from the Grain SDK.\n"
+        "# {name}\n\nGrain extension id: `{id}`\n\n## Develop\n\n1. Install Node.js and run `npm install`.\n2. Run `npm run build` once.\n3. Run `grain-ext doctor`.\n4. Enable Developer mode in Grain and add this folder as an unpacked extension.\n5. Run `grain-ext dev` for incremental builds and hot reload.\n\nEdit `src/main.ts`; `grain.d.ts` is generated from the Grain SDK. `DESCRIPTION.md` is reserved for user-facing listing text; README is developer documentation. Catalog/media migration remains provisional.\n"
     )
 }
 
@@ -754,6 +890,121 @@ impl Drop for NewProjectGuard {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mcp_cli_scaffolds_doctors_and_packages_without_a_js_toolchain() {
+        let temp = tempfile::tempdir().unwrap();
+        run(
+            [
+                "init",
+                "Remote tools",
+                "--mcp-url",
+                "https://TOOLS.example:443/mcp",
+                "--id",
+                "com.example.remote",
+            ]
+            .map(String::from),
+            temp.path(),
+        )
+        .unwrap();
+        let root = temp.path().join("remote-tools");
+        for forbidden in ["manifest.json", "package.json", "grain.d.ts", "src", "dist"] {
+            assert!(!root.join(forbidden).exists(), "unexpected {forbidden}");
+        }
+        assert!(root.join("DESCRIPTION.md").is_file());
+        let descriptor = grain_extension_checks::read_mcp_descriptor(&root).unwrap();
+        assert_eq!(
+            descriptor.authentication,
+            grain_sdk::mcp::McpAuthentication::OAuth {}
+        );
+        assert_eq!(
+            descriptor.transport,
+            grain_sdk::mcp::McpTransport::StreamableHttp {
+                url: "https://tools.example/mcp".into()
+            }
+        );
+        assert!(run(["doctor".into()], &root)
+            .unwrap()
+            .contains("0 findings"));
+        let output = run(["pack".into()], &root).unwrap();
+        let artifact = root.join("com.example.remote-0.1.0.mcp.json");
+        assert!(output.contains(".mcp.json"));
+        assert_eq!(
+            serde_json::from_slice::<grain_sdk::mcp::McpDescriptor>(&fs::read(&artifact).unwrap())
+                .unwrap(),
+            descriptor
+        );
+        assert!(run(["doctor".into()], &root).is_ok());
+        assert!(run(["pack".into()], &root).is_ok());
+        assert!(run(["dev".into()], &root)
+            .unwrap_err()
+            .to_string()
+            .contains("no Grain worker"));
+        assert!(run(["submit".into()], &root)
+            .unwrap_err()
+            .to_string()
+            .contains("not available yet"));
+    }
+
+    #[test]
+    fn mcp_refusals_preserve_existing_source_and_artifact() {
+        let temp = tempfile::tempdir().unwrap();
+        for (url, auth) in [
+            ("http://tools.example", "oauth"),
+            ("https://localhost/mcp", "none"),
+            ("https://user:secret@tools.example", "oauth"),
+            ("https://tools.example", "bearer"),
+        ] {
+            assert!(init_mcp_project(temp.path(), "Bad", None, url, auth).is_err());
+            assert!(!temp.path().join("bad").exists());
+        }
+        let project = init_mcp_project(
+            temp.path(),
+            "Good",
+            None,
+            "https://tools.example/mcp",
+            "none",
+        )
+        .unwrap();
+        let root = &project.root;
+        let source = fs::read(root.join("mcp.json")).unwrap();
+        assert!(init_mcp_project(
+            temp.path(),
+            "Good",
+            None,
+            "https://other.example/mcp",
+            "oauth"
+        )
+        .is_err());
+        assert!(run(["pack", "--output", "mcp.json"].map(String::from), root).is_err());
+        assert!(run(
+            ["pack", "--output", "manifest.json"].map(String::from),
+            root
+        )
+        .is_err());
+        assert!(!root.join("manifest.json").exists());
+        assert_eq!(fs::read(root.join("mcp.json")).unwrap(), source);
+        let artifact = root.join("com.example.good-0.1.0.mcp.json");
+        run(["pack".into()], root).unwrap();
+        let original = fs::read(&artifact).unwrap();
+        let mut bad: serde_json::Value = serde_json::from_slice(&source).unwrap();
+        bad["headers"] = serde_json::json!({"Authorization":"secret"});
+        write_json(&root.join("mcp.json"), &bad).unwrap();
+        assert!(run(["doctor".into()], root)
+            .unwrap_err()
+            .to_string()
+            .contains("E_MCP_DESCRIPTOR"));
+        assert!(run(["pack".into()], root).is_err());
+        assert_eq!(fs::read(&artifact).unwrap(), original);
+        fs::write(root.join("mcp.json"), &source).unwrap();
+        fs::write(root.join("manifest.json"), "{}").unwrap();
+        assert!(run(["doctor".into()], root)
+            .unwrap_err()
+            .to_string()
+            .contains("E_PROJECT_KIND"));
+        assert!(run(["pack".into()], root).is_err());
+        assert_eq!(fs::read(&artifact).unwrap(), original);
+    }
 
     #[test]
     fn init_creates_a_valid_typed_scripted_project() {

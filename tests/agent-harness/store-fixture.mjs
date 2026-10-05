@@ -144,6 +144,7 @@ export async function startStore(here) {
       url = "https://configured.grain-harness.example/mcp",
       authentication = "none",
       description = "Owned store MCP tools.",
+      descriptorBytes = null,
     } = {}) {
       assert.equal(held.size, 0, "Previous store request still held");
       assert.ok(
@@ -161,6 +162,12 @@ export async function startStore(here) {
           authentication: { type: authentication },
         }),
       );
+      if (descriptorBytes !== null) {
+        assert.ok(Buffer.isBuffer(descriptorBytes));
+        assert.ok(descriptorBytes.length <= 8192);
+        assert.deepEqual(JSON.parse(descriptorBytes), JSON.parse(bytes));
+        bytes = descriptorBytes;
+      }
       hash = createHash("sha256").update(bytes).digest("hex");
       artifactSuffix = "mcp.json";
       index = Buffer.from(

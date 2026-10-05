@@ -20,6 +20,44 @@ pub const MAX_MANIFEST_BYTES: u64 = 1024 * 1024;
 pub const MAX_PROJECT_FILE_BYTES: u64 = 5 * 1024 * 1024;
 pub const MAX_ENTRY_BYTES: u64 = MAX_PROJECT_FILE_BYTES;
 
+/// An MCP project contains metadata, never a JavaScript entry or host identity.
+/// Refuse ambiguous roots rather than silently choosing one extension kind.
+pub fn is_mcp_project(root: &Path) -> Result<bool, String> {
+    let mcp = root
+        .join("mcp.json")
+        .try_exists()
+        .map_err(|e| e.to_string())?;
+    let native = root
+        .join("manifest.json")
+        .try_exists()
+        .map_err(|e| e.to_string())?;
+    if mcp && native {
+        return Err("project must contain either manifest.json or mcp.json, not both".into());
+    }
+    Ok(mcp)
+}
+
+/// The exact host parser, bounded filesystem read and canonical descriptor are
+/// shared by doctor, CLI packaging and registry tooling. This performs no DNS,
+/// network, registration or execution; destination admission remains host-owned.
+pub fn read_mcp_descriptor(root: &Path) -> Result<grain_sdk::mcp::McpDescriptor, String> {
+    let root = root
+        .canonicalize()
+        .map_err(|e| format!("open project root: {e}"))?;
+    if !is_mcp_project(&root)? {
+        return Err("MCP project requires mcp.json".into());
+    }
+    let path = safe_project_file(&root, "mcp.json", "MCP descriptor")?;
+    let bytes = read_bounded(
+        &path,
+        grain_sdk::mcp::MCP_DESCRIPTOR_MAX_BYTES as u64,
+        "mcp.json",
+    )?;
+    grain_core::mcp::ValidatedDescriptor::parse(&bytes)
+        .map(|value| value.descriptor().clone())
+        .map_err(|e| e.to_string())
+}
+
 const IGNORED_DIRECTORIES: &[&str] = &[".git", "dist", "node_modules", "target"];
 
 /// [GRAIN] Whether a finding blocks.
@@ -164,7 +202,19 @@ pub fn doctor(root: &Path) -> DoctorReport {
     };
 
     scan_submitted_files(&root, &mut report);
-    check_manifest(&root, &mut report);
+    match is_mcp_project(&root) {
+        Ok(true) => {
+            if let Err(error) = read_mcp_descriptor(&root) {
+                report
+                    .findings
+                    .push(Finding::project("E_MCP_DESCRIPTOR", "mcp.json", error));
+            }
+        }
+        Ok(false) => check_manifest(&root, &mut report),
+        Err(error) => report
+            .findings
+            .push(Finding::project("E_PROJECT_KIND", ".", error)),
+    }
     sort_findings(&mut report.findings);
     report
 }
@@ -875,6 +925,47 @@ fn sort_findings(findings: &mut [Finding]) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mcp_doctor_uses_host_admission_and_bounds_without_native_requirements() {
+        let directory = tempfile::tempdir().unwrap();
+        let descriptor = serde_json::json!({"schema":1,"id":"com.example.mcp","name":"Tools","description":"Remote tools","version":"1.0.0","grainApi":"^1.0","transport":{"type":"streamable-http","url":"https://tools.example/mcp"},"authentication":{"type":"none"}});
+        let path = directory.path().join("mcp.json");
+        fs::write(&path, serde_json::to_vec(&descriptor).unwrap()).unwrap();
+        assert!(doctor(directory.path()).is_clean());
+        assert_eq!(doctor(directory.path()).files_checked, 1);
+        for (key, value) in [
+            ("schema", serde_json::json!(2)),
+            ("grainApi", serde_json::json!("^2.0")),
+            ("id", serde_json::json!("../escape")),
+            (
+                "transport",
+                serde_json::json!({"type":"stdio","command":"app"}),
+            ),
+            (
+                "authentication",
+                serde_json::json!({"type":"none","token":"secret"}),
+            ),
+            ("enabled", serde_json::json!(true)),
+        ] {
+            let mut bad = descriptor.clone();
+            bad[key] = value;
+            fs::write(&path, serde_json::to_vec(&bad).unwrap()).unwrap();
+            let report = doctor(directory.path());
+            assert!(!report.is_clean(), "unexpected admission of {key}");
+            assert!(report.findings.iter().any(|f| f.code == "E_MCP_DESCRIPTOR"));
+        }
+        fs::write(
+            &path,
+            vec![b' '; grain_sdk::mcp::MCP_DESCRIPTOR_MAX_BYTES + 1],
+        )
+        .unwrap();
+        assert!(read_mcp_descriptor(directory.path())
+            .unwrap_err()
+            .contains("8192"));
+        fs::write(&path, b"{invalid").unwrap();
+        assert!(!doctor(directory.path()).is_clean());
+    }
 
     fn fake_png(dim: u32) -> Vec<u8> {
         let mut bytes = std::io::Cursor::new(Vec::new());

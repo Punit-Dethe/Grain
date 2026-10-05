@@ -850,6 +850,7 @@ name = "grain-extension-checks"
 version = "0.1.0"
 dependencies = [
  "base64",
+ "grain-core",
  "grain-sdk",
  "image",
  "serde_json",
