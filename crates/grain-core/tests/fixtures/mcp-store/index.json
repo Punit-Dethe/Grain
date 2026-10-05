@@ -1,0 +1,1 @@
+{"spec":1,"version":100,"expires":"2099-01-01T00:00:00Z","entries":[{"artifact_kind":"mcp-descriptor","id":"com.example.calendar","name":"Calendar","description":"Read calendar events.","version":"1.0.0","tier":"scripted","trust":"verified","sha256":"0174f9e7727fcae737fcc5f4bea03f5fbad2e8f2b916a05530b1013519bae0d5","size":241,"min_grain_api":"1.0","categories":["tools"]}]}

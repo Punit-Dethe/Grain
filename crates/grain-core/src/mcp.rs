@@ -40,6 +40,56 @@ impl std::error::Error for ContractError {}
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ValidatedDescriptor(McpDescriptor);
 
+/// Hash/identity admission of an MCP artifact selected from the host's verified
+/// catalogue. The caller must verify signature, freshness and revocation first.
+/// This value does not grant credentials, trust badges or execution approval.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StoreDescriptor {
+    descriptor: ValidatedDescriptor,
+    artifact: String,
+    sha256: String,
+}
+
+impl StoreDescriptor {
+    pub fn admit(
+        entry: &grain_sdk::distribution::IndexEntry,
+        bytes: &[u8],
+    ) -> Result<Self, String> {
+        entry.validate_mcp_installable()?;
+        if bytes.len() as u64 != entry.size {
+            return Err("MCP artifact size does not match the signed catalogue.".into());
+        }
+        crate::trust::verify_artifact(bytes, &entry.sha256)
+            .map_err(|_| "MCP artifact hash does not match the signed catalogue.")?;
+        let descriptor = ValidatedDescriptor::parse(bytes).map_err(|error| error.to_string())?;
+        let metadata = descriptor.descriptor();
+        if metadata.id != entry.id
+            || metadata.version != entry.version
+            || metadata.name != entry.name
+            || metadata.description != entry.description
+        {
+            return Err("MCP descriptor does not match the signed catalogue identity.".into());
+        }
+        Ok(Self {
+            descriptor,
+            artifact: std::str::from_utf8(bytes)
+                .map_err(|_| "MCP artifact is not UTF-8.")?
+                .into(),
+            sha256: entry.sha256.clone(),
+        })
+    }
+
+    pub fn descriptor(&self) -> &ValidatedDescriptor {
+        &self.descriptor
+    }
+    pub fn artifact(&self) -> &str {
+        &self.artifact
+    }
+    pub fn sha256(&self) -> &str {
+        &self.sha256
+    }
+}
+
 impl ValidatedDescriptor {
     pub fn parse(bytes: &[u8]) -> Result<Self, ContractError> {
         if bytes.len() > MCP_DESCRIPTOR_MAX_BYTES {

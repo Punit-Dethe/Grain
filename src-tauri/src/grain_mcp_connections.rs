@@ -77,6 +77,10 @@ impl RuntimeOwner {
     pub(super) fn enabled(&self, app: &AppHandle) -> bool {
         let settings = crate::settings::get_settings(app);
         settings.extension_developer_mode
+            && !matches!(
+                self.lease.record().identity().source(),
+                grain_core::mcp::ConnectionSource::Store { .. }
+            )
             && settings.mcp_enabled_providers.contains(&self.enable_key())
             && self.registry.is_current(&self.lease)
     }
@@ -179,7 +183,7 @@ impl State {
         }
     }
 
-    fn registry(&self, app: &AppHandle) -> Result<Arc<ConnectionRegistry>, String> {
+    pub(crate) fn registry(&self, app: &AppHandle) -> Result<Arc<ConnectionRegistry>, String> {
         let mut slot = self
             .registry
             .lock()
@@ -236,6 +240,10 @@ fn view(
 ) -> ConnectionView {
     let settings = crate::settings::get_settings(app);
     let enabled = settings.extension_developer_mode
+        && !matches!(
+            record.identity().source(),
+            grain_core::mcp::ConnectionSource::Store { .. }
+        )
         && settings
             .mcp_enabled_providers
             .iter()
@@ -254,7 +262,7 @@ fn prune_enabled(app: &AppHandle, id: &str, keep: Option<&str>) -> Result<(), St
     let context = app
         .try_state::<Arc<grain_core::AppContext>>()
         .ok_or("Application context unavailable")?;
-    let prefix = format!("mcp:v1:configured:{id}:");
+    let prefix = account_prefix(app, id)?;
     context
         .update_settings(|settings| {
             settings
@@ -282,7 +290,7 @@ fn prune_client_ids(app: &AppHandle, id: &str) -> Result<(), String> {
     let context = app
         .try_state::<Arc<grain_core::AppContext>>()
         .ok_or("Application context unavailable")?;
-    let prefix = format!("mcp:v1:configured:{id}:");
+    let prefix = account_prefix(app, id)?;
     context
         .update_settings(|settings| {
             settings
@@ -290,6 +298,19 @@ fn prune_client_ids(app: &AppHandle, id: &str) -> Result<(), String> {
                 .retain(|key, _| !key.starts_with(&prefix));
         })
         .map_err(|_| "Could not remove configured MCP client metadata. Reload and retry.".into())
+}
+
+fn account_prefix(app: &AppHandle, id: &str) -> Result<String, String> {
+    let state = app.try_state::<State>().ok_or("MCP storage unavailable")?;
+    let lease = state
+        .registry(app)?
+        .lease(id)
+        .map_err(|error| error.to_string())?;
+    let account = lease.record().identity().vault_account();
+    let (prefix, _) = account
+        .rsplit_once(':')
+        .ok_or("Invalid MCP account ownership")?;
+    Ok(format!("{prefix}:"))
 }
 
 #[tauri::command]
@@ -391,6 +412,12 @@ pub async fn mcp_connection_connect(
 ) -> Result<(), String> {
     guard(&app, &window)?;
     let (owner, ticket) = expected_owner(&app, &id, &expected_revision)?;
+    if matches!(
+        owner.lease.record().identity().source(),
+        grain_core::mcp::ConnectionSource::Store { .. }
+    ) {
+        return Err("Store MCP activation awaits catalogue revocation integration.".into());
+    }
     super::connect_flow(
         &app,
         &window,
@@ -607,6 +634,14 @@ pub async fn mcp_connection_replace(
     let view_app = app.clone();
     storage(app, move |state, registry| {
         let lease = expected_lease(registry, &id, &expected_revision)?;
+        if matches!(
+            lease.record().identity().source(),
+            grain_core::mcp::ConnectionSource::Store { .. }
+        ) {
+            return Err(
+                "Store MCP metadata must be updated through the verified catalogue.".into(),
+            );
+        }
         if lease.record().definition() != definition.definition()
             && lease.record().revision() == u64::MAX
         {
@@ -696,6 +731,14 @@ pub async fn mcp_connection_set_enabled(
         let lease = expected_lease(registry, &id, &expected_revision)?;
         let owner = state.owner(registry.clone(), lease)?;
         if enabled
+            && matches!(
+                owner.lease.record().identity().source(),
+                grain_core::mcp::ConnectionSource::Store { .. }
+            )
+        {
+            return Err("Store MCP activation awaits catalogue revocation integration.".into());
+        }
+        if enabled
             && super::requires_account(&owner.spec())
             && super::read_credentials_sync(&owner.account())
                 .map_err(|error| error.to_string())?
@@ -751,7 +794,10 @@ pub(super) fn directory(
     records
         .into_iter()
         .filter(|record| {
-            settings
+            !matches!(
+                record.identity().source(),
+                grain_core::mcp::ConnectionSource::Store { .. }
+            ) && settings
                 .mcp_enabled_providers
                 .iter()
                 .any(|key| key == record.identity().vault_account().as_ref())

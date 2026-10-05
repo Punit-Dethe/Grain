@@ -583,6 +583,7 @@ mod tests {
 
     fn entry(id: &str, version: &str, trust: Trust, caps: &[&str], bytes: &[u8]) -> IndexEntry {
         IndexEntry {
+            artifact_kind: grain_sdk::distribution::ArtifactKind::Native,
             id: id.into(),
             name: id.into(),
             version: version.into(),

@@ -896,7 +896,7 @@ pub(crate) fn require_configured_consent_fixture(app: &AppHandle, id: &str) -> R
     Ok(())
 }
 
-fn require_developer_mode(app: &AppHandle) -> Result<(), String> {
+pub(crate) fn require_developer_mode(app: &AppHandle) -> Result<(), String> {
     if crate::settings::get_settings(app).extension_developer_mode {
         Ok(())
     } else {

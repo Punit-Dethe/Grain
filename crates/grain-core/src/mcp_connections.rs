@@ -15,6 +15,7 @@ use uuid::Uuid;
 
 use crate::mcp::{
     canonical_endpoint, display_text, ConnectionIdentity, ConnectionSource, ContractError,
+    StoreDescriptor, ValidatedDescriptor,
 };
 
 const FILE_NAME: &str = "mcp-connections.json";
@@ -88,6 +89,17 @@ pub struct ConnectionRecord {
     identity: ConnectionIdentity,
     revision: u64,
     definition: RemoteMcpConnection,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    store_artifact: Option<StoreArtifact>,
+}
+
+/// Preserved original bytes bind persisted provenance to the downloaded hash.
+/// Not publisher input to the direct-connection parser.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StoreArtifact {
+    artifact: String,
+    sha256: String,
 }
 
 impl ConnectionRecord {
@@ -122,6 +134,8 @@ struct DiskRecord {
     account_id: String,
     revision: u64,
     definition: RemoteMcpConnection,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    store_artifact: Option<StoreArtifact>,
 }
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -154,6 +168,7 @@ impl ConnectionRegistry {
                 return Err(RegistryError::InvalidState);
             }
             let mut accounts = HashSet::new();
+            let mut store_ids = HashSet::new();
             for row in disk.connections {
                 if !opaque_id(&row.connection_id)
                     || !opaque_id(&row.account_id)
@@ -162,12 +177,32 @@ impl ConnectionRegistry {
                 {
                     return Err(RegistryError::InvalidState);
                 }
-                let identity = ConnectionIdentity::new(
-                    &row.connection_id,
-                    &row.account_id,
-                    ConnectionSource::Configured,
-                )
-                .map_err(|_| RegistryError::InvalidState)?;
+                let source = match &row.store_artifact {
+                    None => ConnectionSource::Configured,
+                    Some(store) => {
+                        let descriptor = ValidatedDescriptor::parse(store.artifact.as_bytes())
+                            .map_err(|_| RegistryError::InvalidState)?;
+                        crate::trust::verify_artifact(store.artifact.as_bytes(), &store.sha256)
+                            .map_err(|_| RegistryError::InvalidState)?;
+                        let metadata = descriptor.descriptor();
+                        if !store_ids.insert(metadata.id.clone()) {
+                            return Err(RegistryError::InvalidState);
+                        }
+                        if row.definition.name != metadata.name
+                            || row.definition.url != descriptor.endpoint()
+                            || row.definition.authentication != metadata.authentication
+                        {
+                            return Err(RegistryError::InvalidState);
+                        }
+                        ConnectionSource::Store {
+                            extension_id: metadata.id.clone(),
+                            version: metadata.version.clone(),
+                            artifact_sha256: store.sha256.clone(),
+                        }
+                    }
+                };
+                let identity = ConnectionIdentity::new(&row.connection_id, &row.account_id, source)
+                    .map_err(|_| RegistryError::InvalidState)?;
                 let definition = ConnectionDefinition::validate(row.definition)
                     .map_err(|_| RegistryError::InvalidState)?;
                 if records
@@ -177,6 +212,7 @@ impl ConnectionRegistry {
                             identity,
                             revision: row.revision,
                             definition: definition.0,
+                            store_artifact: row.store_artifact,
                         },
                     )
                     .is_some()
@@ -251,6 +287,7 @@ impl ConnectionRegistry {
                 identity,
                 revision: 1,
                 definition: definition.0,
+                store_artifact: None,
             };
             records.insert(id, record.clone());
             Ok(record)
@@ -267,6 +304,9 @@ impl ConnectionRegistry {
     ) -> Result<Option<ConnectionRecord>, RegistryError> {
         self.mutate(|records| {
             self.check_lease(records, lease)?;
+            if lease.record.store_artifact.is_some() {
+                return Err(RegistryError::Conflict);
+            }
             let id = lease.record.identity.connection_id();
             let old = records.get(id).unwrap();
             if old.definition == definition.0 {
@@ -299,6 +339,7 @@ impl ConnectionRegistry {
                         identity,
                         revision,
                         definition: definition.0,
+                        store_artifact: None,
                     },
                 )
                 .unwrap();
@@ -312,6 +353,60 @@ impl ConnectionRegistry {
             Ok(records
                 .remove(lease.record.identity.connection_id())
                 .unwrap())
+        })
+    }
+
+    /// Fresh, inactive store acquisition. Updates require a distinct host-owned
+    /// retirement transaction; direct edits cannot relabel publisher metadata.
+    pub fn insert_store(
+        &self,
+        admitted: StoreDescriptor,
+    ) -> Result<ConnectionRecord, RegistryError> {
+        self.mutate(|records| {
+            if records.len() >= MAX_CONNECTIONS {
+                return Err(RegistryError::Limit);
+            }
+            let metadata = admitted.descriptor().descriptor();
+            if records.values().any(|record| {
+                matches!(record.identity.source(),
+                ConnectionSource::Store { extension_id, .. } if extension_id == &metadata.id)
+            }) {
+                return Err(RegistryError::Conflict);
+            }
+            let id = new_id();
+            let account = new_id();
+            if records.contains_key(&id)
+                || records
+                    .values()
+                    .any(|row| row.identity.account_id() == account)
+            {
+                return Err(RegistryError::InvalidState);
+            }
+            let identity = ConnectionIdentity::new(
+                &id,
+                &account,
+                ConnectionSource::Store {
+                    extension_id: metadata.id.clone(),
+                    version: metadata.version.clone(),
+                    artifact_sha256: admitted.sha256().into(),
+                },
+            )
+            .map_err(|_| RegistryError::InvalidState)?;
+            let record = ConnectionRecord {
+                identity,
+                revision: 1,
+                definition: RemoteMcpConnection {
+                    name: metadata.name.clone(),
+                    url: admitted.descriptor().endpoint().into(),
+                    authentication: metadata.authentication,
+                },
+                store_artifact: Some(StoreArtifact {
+                    artifact: admitted.artifact().into(),
+                    sha256: admitted.sha256().into(),
+                }),
+            };
+            records.insert(id, record.clone());
+            Ok(record)
         })
     }
 
@@ -344,6 +439,7 @@ impl ConnectionRegistry {
                     account_id: row.identity.account_id().into(),
                     revision: row.revision,
                     definition: row.definition.clone(),
+                    store_artifact: row.store_artifact.clone(),
                 })
                 .collect(),
         };
@@ -427,6 +523,200 @@ mod tests {
     use super::*;
     use grain_sdk::mcp::McpAuthentication;
     use serde_json::{json, Value};
+
+    fn store_entry() -> (grain_sdk::IndexEntry, &'static [u8]) {
+        let roots = grain_sdk::Roots {
+            spec: 1,
+            version: 1,
+            publishing_key: "RWRncmFpbi1oMeKKiXB1MzK9cv70E+awsu8bSq3aeqLBQfIzcSpodrNR".into(),
+            base_urls: vec![],
+            mirrors: vec![],
+            expires: None,
+        };
+        let index = include_bytes!("../tests/fixtures/mcp-store/index.json");
+        let signature = include_str!("../tests/fixtures/mcp-store/index.json.minisig");
+        let (verified, status) =
+            crate::trust::verify_index(&roots, index, signature, Some(99), 1_800_000_000, false)
+                .unwrap();
+        assert_eq!(status, crate::trust::IndexStatus::Fresh);
+        let mut tampered = index.to_vec();
+        tampered[0] = b'!';
+        assert!(crate::trust::verify_index(
+            &roots,
+            &tampered,
+            signature,
+            None,
+            1_800_000_000,
+            false
+        )
+        .is_err());
+        assert!(crate::trust::verify_index(
+            &roots,
+            index,
+            signature,
+            Some(101),
+            1_800_000_000,
+            false
+        )
+        .is_err());
+        (
+            verified.entries[0].clone(),
+            include_bytes!("../tests/fixtures/mcp-store/descriptor.json"),
+        )
+    }
+
+    #[test]
+    fn signed_mcp_artifact_admission_refuses_substitution_and_native_authority() {
+        let (entry, artifact) = store_entry();
+        StoreDescriptor::admit(&entry, artifact).unwrap();
+        assert!(entry.validate_installable().is_err());
+        for field in [
+            "id",
+            "version",
+            "name",
+            "description",
+            "size",
+            "sha256",
+            "capabilities",
+            "extends",
+            "categories",
+            "trust",
+            "artifact_kind",
+            "min_grain_api",
+        ] {
+            let mut value = serde_json::to_value(&entry).unwrap();
+            value[field] = match field {
+                "size" => json!(artifact.len() + 1),
+                "sha256" => json!("a".repeat(64)),
+                "capabilities" => json!(["auth"]),
+                "extends" => json!(["pill"]),
+                "categories" => json!(["prompts"]),
+                "trust" => json!("dev"),
+                "artifact_kind" => json!("native"),
+                "min_grain_api" => json!("2.0"),
+                _ => json!("substitution"),
+            };
+            let changed = serde_json::from_value(value).unwrap();
+            assert!(
+                StoreDescriptor::admit(&changed, artifact).is_err(),
+                "{field}"
+            );
+        }
+        let mut altered = artifact.to_vec();
+        altered[0] = b'!';
+        assert!(StoreDescriptor::admit(&entry, &altered).is_err());
+        let mut wire: Value = serde_json::from_slice(artifact).unwrap();
+        for field in ["token", "enabled", "trust", "accountId", "command"] {
+            wire[field] = json!("forged");
+            let body = serde_json::to_vec(&wire).unwrap();
+            let mut changed = entry.clone();
+            changed.size = body.len() as u64;
+            changed.sha256 = crate::trust::sha256_hex(&body);
+            assert!(StoreDescriptor::admit(&changed, &body).is_err(), "{field}");
+            wire.as_object_mut().unwrap().remove(field);
+        }
+    }
+
+    #[test]
+    fn store_acquisition_has_separate_persistent_ownership_and_no_direct_edit() {
+        let dir = tempfile::tempdir().unwrap();
+        let registry = ConnectionRegistry::load(dir.path()).unwrap();
+        let (entry, artifact) = store_entry();
+        let direct = registry.insert(definition(&wire())).unwrap();
+        let store = registry
+            .insert_store(StoreDescriptor::admit(&entry, artifact).unwrap())
+            .unwrap();
+        let lease = registry.lease(store.identity().connection_id()).unwrap();
+        assert!(
+            matches!(store.identity().source(), ConnectionSource::Store { extension_id, .. } if extension_id == &entry.id)
+        );
+        assert!(store
+            .identity()
+            .vault_account()
+            .starts_with("mcp:v1:store:com.example.calendar:"));
+        assert_ne!(
+            store.identity().vault_account(),
+            direct.identity().vault_account()
+        );
+        let original = bytes(dir.path());
+        assert_eq!(
+            registry.replace(&lease, definition(&wire())),
+            Err(RegistryError::Conflict)
+        );
+        assert_eq!(
+            registry.insert_store(StoreDescriptor::admit(&entry, artifact).unwrap()),
+            Err(RegistryError::Conflict)
+        );
+        assert_eq!(bytes(dir.path()), original);
+        let reloaded = ConnectionRegistry::load(dir.path()).unwrap();
+        assert_eq!(
+            reloaded
+                .lease(store.identity().connection_id())
+                .unwrap()
+                .record(),
+            &store
+        );
+        assert!(!reloaded.is_current(&lease));
+        let current = registry.lease(store.identity().connection_id()).unwrap();
+        registry.remove(&current).unwrap();
+        assert_eq!(registry.list().unwrap(), vec![direct]);
+    }
+
+    #[test]
+    fn stored_artifact_drift_is_preserved_and_refused_at_restart() {
+        for field in ["artifact", "sha256", "definition", "duplicate"] {
+            let dir = tempfile::tempdir().unwrap();
+            let registry = ConnectionRegistry::load(dir.path()).unwrap();
+            let (entry, artifact) = store_entry();
+            registry
+                .insert_store(StoreDescriptor::admit(&entry, artifact).unwrap())
+                .unwrap();
+            let mut disk: Value = serde_json::from_slice(&bytes(dir.path())).unwrap();
+            if field == "duplicate" {
+                let mut duplicate = disk["connections"][0].clone();
+                duplicate["connectionId"] = json!(new_id());
+                duplicate["accountId"] = json!(new_id());
+                disk["connections"].as_array_mut().unwrap().push(duplicate);
+            } else if field == "definition" {
+                disk["connections"][0]["definition"]["url"] =
+                    json!("https://changed.example.com/mcp");
+            } else {
+                disk["connections"][0]["storeArtifact"][field] = json!("changed");
+            }
+            let changed = serde_json::to_vec(&disk).unwrap();
+            fs::write(dir.path().join(FILE_NAME), &changed).unwrap();
+            assert!(
+                matches!(
+                    ConnectionRegistry::load(dir.path()),
+                    Err(RegistryError::InvalidState)
+                ),
+                "{field}"
+            );
+            assert_eq!(bytes(dir.path()), changed);
+        }
+    }
+
+    #[test]
+    fn failed_store_publication_preserves_registry_memory_and_bytes() {
+        let dir = tempfile::tempdir().unwrap();
+        let registry = ConnectionRegistry::load(dir.path()).unwrap();
+        registry.insert(definition(&wire())).unwrap();
+        let previous = registry.list().unwrap();
+        let original = bytes(dir.path());
+        let lock = File::options()
+            .read(true)
+            .write(true)
+            .open(dir.path().join(LOCK_NAME))
+            .unwrap();
+        lock.try_lock().unwrap();
+        let (entry, artifact) = store_entry();
+        assert_eq!(
+            registry.insert_store(StoreDescriptor::admit(&entry, artifact).unwrap()),
+            Err(RegistryError::Conflict)
+        );
+        assert_eq!(registry.list().unwrap(), previous);
+        assert_eq!(bytes(dir.path()), original);
+    }
 
     fn wire() -> Value {
         json!({"name":"Test calendar","url":"https://mcp.example.com/mcp",

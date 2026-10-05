@@ -774,6 +774,7 @@ fn publish(
         }
     }
     let entry = grain_sdk::IndexEntry {
+        artifact_kind: grain_sdk::distribution::ArtifactKind::Native,
         id: manifest.id.clone(),
         name: manifest.name.clone(),
         version: manifest.version.clone(),

@@ -1470,6 +1470,7 @@ fn command_bindings() -> Builder<tauri::Wry> {
             grain_mcp::mcp_test_provider,
             grain_mcp::connections::mcp_connections_list,
             grain_mcp::connections::mcp_connection_import,
+            grain_store::store_mcp_install,
             grain_mcp::connections::mcp_connection_replace,
             grain_mcp::connections::mcp_connection_remove,
             grain_mcp::connections::mcp_connection_set_enabled,

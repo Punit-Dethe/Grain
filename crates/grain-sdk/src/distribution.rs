@@ -82,6 +82,10 @@ pub struct Index {
 /// One published extension version (DISTRIBUTION-PLAN §2.1).
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct IndexEntry {
+    /// Explicit signed artifact format. Missing means a legacy native package;
+    /// unknown formats fail parsing rather than entering the native loader.
+    #[serde(default, skip_serializing_if = "ArtifactKind::is_native")]
+    pub artifact_kind: ArtifactKind,
     pub id: String,
     pub name: String,
     pub version: String,
@@ -153,10 +157,27 @@ pub struct IndexEntry {
     pub extends: Vec<String>,
 }
 
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum ArtifactKind {
+    #[default]
+    Native,
+    McpDescriptor,
+}
+
+impl ArtifactKind {
+    fn is_native(&self) -> bool {
+        *self == Self::Native
+    }
+}
+
 impl IndexEntry {
     /// Cheap catalogue eligibility check, before any artifact or media fetch.
     /// Signed metadata does not replace validation of the downloaded manifest.
     pub fn validate_tool_only(&self) -> Result<(), String> {
+        if self.artifact_kind != ArtifactKind::Native {
+            return Err("MCP descriptors require the MCP acquisition path.".into());
+        }
         // Match the retired built-ins at the host boundary, including old
         // catalogues that omitted capabilities or host-surface metadata.
         if matches!(
@@ -190,6 +211,35 @@ impl IndexEntry {
     /// A future API requirement does not hide an otherwise valid tool card.
     pub fn validate_installable(&self) -> Result<(), String> {
         self.validate_tool_only()?;
+        if !crate::compatibility::minimum_api_supported(
+            &self.min_grain_api,
+            crate::GRAIN_API_VERSION,
+        ) {
+            return Err(crate::compatibility::UNSUPPORTED_EXTENSION_API.into());
+        }
+        Ok(())
+    }
+
+    /// MCP metadata cannot declare native permissions or host contributions.
+    pub fn validate_mcp_installable(&self) -> Result<(), String> {
+        if self.artifact_kind != ArtifactKind::McpDescriptor
+            || self.tier != Tier::Scripted
+            || !matches!(self.trust, Trust::Verified | Trust::Core)
+            || !self.capabilities.is_empty()
+            || !self.extends.is_empty()
+            || self.categories.iter().any(|category| category != "tools")
+            || self.size == 0
+            || self.size > crate::mcp::MCP_DESCRIPTOR_MAX_BYTES as u64
+            || self.sha256.len() != 64
+            || !self
+                .sha256
+                .bytes()
+                .all(|ch| ch.is_ascii_digit() || (b'a'..=b'f').contains(&ch))
+        {
+            return Err("Unsupported MCP catalogue metadata.".into());
+        }
+        crate::validate_extension_id(&self.id)?;
+        crate::validate_extension_version(&self.version)?;
         if !crate::compatibility::minimum_api_supported(
             &self.min_grain_api,
             crate::GRAIN_API_VERSION,
@@ -388,5 +438,18 @@ mod tool_catalogue_tests {
             retired.extends.push(surface.into());
             assert!(retired.validate_tool_only().is_err(), "{surface}");
         }
+    }
+
+    #[test]
+    fn artifact_discriminator_preserves_legacy_encoding_and_refuses_unknown_formats() {
+        let legacy = tool_entry();
+        assert_eq!(legacy.artifact_kind, ArtifactKind::Native);
+        let mut wire = serde_json::to_value(&legacy).unwrap();
+        assert!(wire.get("artifact_kind").is_none());
+        wire["artifact_kind"] = serde_json::json!("future-executable");
+        assert!(serde_json::from_value::<IndexEntry>(wire.clone()).is_err());
+        wire["artifact_kind"] = serde_json::json!("mcp-descriptor");
+        let descriptor: IndexEntry = serde_json::from_value(wire).unwrap();
+        assert!(descriptor.validate_installable().is_err());
     }
 }

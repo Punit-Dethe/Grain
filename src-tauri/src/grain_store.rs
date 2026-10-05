@@ -756,6 +756,131 @@ async fn install_entry_with_clock(
 
 // ── Tauri commands ─────────────────────────────────────────────────────────
 
+/// Acquire an inactive remote descriptor through the existing signed store.
+/// No connection to the publisher's MCP endpoint or credential write occurs.
+pub async fn acquire_mcp_entry(
+    state: &StoreState,
+    registry: &grain_core::mcp_connections::ConnectionRegistry,
+    client: &reqwest::Client,
+    id: &str,
+    version: &str,
+    authorize: impl Fn() -> Result<(), String> + Sync,
+) -> Result<grain_core::mcp_connections::ConnectionRecord, String> {
+    acquire_mcp_entry_with_clock(state, registry, client, id, version, now_unix, authorize).await
+}
+
+async fn acquire_mcp_entry_with_clock(
+    state: &StoreState,
+    registry: &grain_core::mcp_connections::ConnectionRegistry,
+    client: &reqwest::Client,
+    id: &str,
+    version: &str,
+    now: impl Fn() -> i64 + Sync,
+    authorize: impl Fn() -> Result<(), String> + Sync,
+) -> Result<grain_core::mcp_connections::ConnectionRecord, String> {
+    let (entry, revision, changed, bases) = {
+        let owner = state.ownership.lock().unwrap();
+        let index = state.index.read().unwrap();
+        let index = index.as_ref().ok_or("store is not open")?;
+        let entry = index
+            .entries
+            .iter()
+            .find(|entry| entry.id == id && entry.version == version)
+            .cloned()
+            .ok_or("MCP entry is not in the verified catalogue")?;
+        entry.validate_mcp_installable()?;
+        if !owner.can_install
+            || trust::index_status(index, now()).map_err(|error| error.to_string())?
+                != IndexStatus::Fresh
+        {
+            return Err("store is offline or expired; refresh it before installing".into());
+        }
+        if state.revocation_state(id, version).is_some() {
+            return Err("MCP catalogue entry is revoked or deprecated".into());
+        }
+        let roots = state.roots.read().unwrap();
+        (
+            entry,
+            owner.revision,
+            owner.changed.subscribe(),
+            roots
+                .base_urls
+                .iter()
+                .chain(roots.mirrors.iter())
+                .cloned()
+                .collect::<Vec<_>>(),
+        )
+    };
+    let download = async {
+        let blob = format!("blob/{}.mcp.json", entry.sha256);
+        for base in bases {
+            if let Some(bytes) = fetch(
+                client,
+                &base,
+                &blob,
+                grain_sdk::mcp::MCP_DESCRIPTOR_MAX_BYTES as u64,
+            )
+            .await
+            {
+                return Ok(bytes);
+            }
+        }
+        Err("could not download the MCP descriptor from any host")
+    };
+    let bytes = state.while_current(revision, changed, download).await??;
+    let admitted = grain_core::mcp::StoreDescriptor::admit(&entry, &bytes)?;
+    // Close/refresh/revocation and the bounded registry commit are serialized.
+    // No lock spans a network await; failed save cannot publish a connection.
+    let _owner = state.current(revision)?;
+    if !_owner.can_install
+        || state
+            .index
+            .read()
+            .unwrap()
+            .as_ref()
+            .map(|index| trust::index_status(index, now()))
+            .transpose()
+            .map_err(|error| error.to_string())?
+            != Some(IndexStatus::Fresh)
+    {
+        return Err("store is offline or expired; refresh it before installing".into());
+    }
+    if state.revocation_state(id, version).is_some() {
+        return Err("MCP catalogue entry is revoked or deprecated".into());
+    }
+    authorize()?;
+    registry
+        .insert_store(admitted)
+        .map_err(|error| error.to_string())
+}
+
+/// Development-gated acquisition only. E2's next slice supplies verified
+/// update/revocation handling before store accounts can be activated.
+#[tauri::command]
+#[specta::specta]
+pub async fn store_mcp_install(
+    app: AppHandle,
+    window: tauri::WebviewWindow,
+    id: String,
+    version: String,
+) -> Result<(), String> {
+    crate::grain_commands::require_main_window(&window)?;
+    crate::grain_mcp::require_developer_mode(&app)?;
+    let state = store_state(&app)?;
+    let registry = app
+        .try_state::<crate::grain_mcp::connections::State>()
+        .ok_or("MCP registry unavailable")?
+        .registry(&app)?;
+    let client = app
+        .try_state::<reqwest::Client>()
+        .ok_or("http client unavailable")?;
+    acquire_mcp_entry(&state, &registry, &client, &id, &version, || {
+        crate::grain_mcp::require_developer_mode(&app)
+    })
+    .await?;
+    Ok(())
+}
+
 use std::sync::Arc;
 use tauri::{AppHandle, Manager};
 
@@ -1312,6 +1437,90 @@ mod tests {
                 state.close();
                 drop(listener);
                 let _ = std::fs::remove_dir_all(&data);
+            }
+        });
+    }
+
+    #[test]
+    fn mcp_download_commits_only_current_verified_descriptor() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            for mode in ["valid", "hash", "identity", "size", "expiry", "close", "refresh", "revoke", "consent", "writer"] {
+                let data = tempfile::tempdir().unwrap();
+                let state = StoreState::init(data.path());
+                state.ownership.lock().unwrap().can_install = true;
+                let clock = std::sync::atomic::AtomicI64::new(now_unix());
+                let body = include_bytes!("../../crates/grain-core/tests/fixtures/mcp-store/descriptor.json");
+                let mut entry: IndexEntry = serde_json::from_slice::<grain_sdk::Index>(include_bytes!("../../crates/grain-core/tests/fixtures/mcp-store/index.json")).unwrap().entries.remove(0);
+                if mode == "identity" { entry.id = "com.example.substitute".into(); }
+                if mode == "size" { entry.size += 1; }
+                let id = entry.id.clone();
+                let hash = entry.sha256.clone();
+                *state.index.write().unwrap() = Some(grain_sdk::Index {
+                    spec: 1, version: 100, expires: "2099-01-01T00:00:00Z".into(), entries: vec![entry],
+                });
+                let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+                {
+                    let mut roots = state.roots.write().unwrap();
+                    roots.base_urls = vec![format!("http://{}/", listener.local_addr().unwrap())];
+                    roots.mirrors.clear();
+                }
+                let registry = grain_core::mcp_connections::ConnectionRegistry::load(data.path()).unwrap();
+                let mut writer = None;
+                if mode == "writer" {
+                    let lock = std::fs::File::options().read(true).write(true).create(true).truncate(false)
+                        .open(data.path().join(".mcp-connections.lock")).unwrap();
+                    lock.try_lock().unwrap(); writer = Some(lock);
+                }
+                let server = async {
+                    let (mut socket, _) = listener.accept().await.unwrap();
+                    let mut request = [0u8; 2048];
+                    let mut count = 0;
+                    while !request[..count].windows(4).any(|part| part == b"\r\n\r\n") {
+                        assert!(count < request.len());
+                        let read = socket.read(&mut request[count..]).await.unwrap();
+                        assert_ne!(read, 0); count += read;
+                    }
+                    assert!(String::from_utf8_lossy(&request[..count]).starts_with(&format!("GET /blob/{hash}.mcp.json HTTP/1.1")));
+                    match mode {
+                        "expiry" => { clock.store(i64::MAX, std::sync::atomic::Ordering::SeqCst); }
+                        "close" => { state.close(); return; }
+                        "refresh" => { state.begin_refresh(); return; }
+                        "revoke" => {
+                            let _owner = state.ownership.lock().unwrap();
+                            *state.revocations.write().unwrap() = serde_json::from_value(serde_json::json!({
+                                "spec":1,"version":999,"expires":"2099-01-01T00:00:00Z",
+                                "entries":[{"id":id,"state":"revoked","reason":"test"}]
+                            })).unwrap();
+                        }
+                        _ => {}
+                    }
+                    let mut bytes = body.to_vec(); if mode == "hash" { bytes[0] = b'!'; }
+                    socket.write_all(format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", bytes.len()).as_bytes()).await.unwrap();
+                    socket.write_all(&bytes).await.unwrap();
+                };
+                let client = reqwest::Client::builder().timeout(std::time::Duration::from_secs(2)).build().unwrap();
+                let acquire = acquire_mcp_entry_with_clock(&state, &registry, &client, &id, "1.0.0",
+                    || clock.load(std::sync::atomic::Ordering::SeqCst),
+                    || if mode == "consent" { Err("developer consent withdrawn".into()) } else { Ok(()) });
+                let (_, result) = tokio::time::timeout(std::time::Duration::from_secs(3), async { tokio::join!(server, acquire) }).await.unwrap();
+                if mode == "valid" {
+                    let record = result.unwrap();
+                    assert_eq!(registry.list().unwrap(), vec![record.clone()]);
+                    let loaded = grain_core::mcp_connections::ConnectionRegistry::load(data.path()).unwrap();
+                    assert_eq!(loaded.list().unwrap(), vec![record]);
+                } else {
+                    let expected = match mode {
+                        "hash" => "hash", "identity" => "identity", "size" => "size",
+                        "expiry" => "expired", "revoke" => "revoked", "consent" => "consent",
+                        "writer" => "changed", _ => "superseded",
+                    };
+                    let error = result.unwrap_err(); assert!(error.contains(expected), "{mode}: {error}");
+                    assert!(registry.list().unwrap().is_empty());
+                    assert!(!data.path().join("mcp-connections.json").exists());
+                }
+                drop(writer); state.close();
             }
         });
     }
