@@ -11,8 +11,10 @@ grain-sdk = { path = "../grain-sdk" }
 # Reuse the host's pure descriptor admission; no second endpoint/schema policy.
 grain-core = { path = "../grain-core" }
 serde_json = { workspace = true }
-image = { version = "0.25", default-features = false, features = ["png"] }
+image = { version = "0.25", default-features = false, features = ["png", "webp", "gif"] }
 base64 = "0.22"
+toml = "0.8"
+sha2 = "0.10"
 
 [dev-dependencies]
 tempfile = "3"

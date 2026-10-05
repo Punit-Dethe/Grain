@@ -178,6 +178,9 @@ enum Cmd {
 }
 
 /// The submission manifest an author writes (source pointer, never an artifact).
+/// Retained only for the legacy producer until E4 migration; new source
+/// admission uses the shared strict SourceSubmission contract instead.
+#[allow(dead_code)]
 #[derive(serde::Deserialize)]
 struct Submission {
     id: String,
@@ -193,11 +196,15 @@ struct Submission {
 
 fn check_submission(dir: PathBuf) -> Result<()> {
     let ext_dir = dir.join("extensions");
+    if fs::symlink_metadata(&ext_dir)?.file_type().is_symlink() {
+        anyhow::bail!("registry extensions path must not be a symbolic link");
+    }
     let mut ids: Vec<String> = Vec::new();
     let mut problems = 0usize;
 
     let entries = fs::read_dir(&ext_dir).with_context(|| format!("read {}", ext_dir.display()))?;
-    for entry in entries.flatten() {
+    for entry in entries {
+        let entry = entry.context("read submission directory entry")?;
         if !entry.path().is_dir() {
             continue;
         }
@@ -208,11 +215,15 @@ fn check_submission(dir: PathBuf) -> Result<()> {
             problems += 1;
             continue;
         }
-        let raw = fs::read_to_string(&toml_path)?;
-        let s: Submission = match toml::from_str(&raw) {
+        if entry.file_type()?.is_symlink() {
+            println!("FAIL {folder}: submission folders must not be symbolic links");
+            problems += 1;
+            continue;
+        }
+        let s = match grain_extension_checks::read_submission(&entry.path(), &folder) {
             Ok(s) => s,
             Err(e) => {
-                println!("FAIL {folder}: unparseable submission.toml: {e}");
+                println!("FAIL {folder}: {e}");
                 problems += 1;
                 continue;
             }
@@ -690,6 +701,12 @@ fn publish(
     v1: PathBuf,
     media_src: Option<PathBuf>,
 ) -> Result<()> {
+    if media_src
+        .as_ref()
+        .is_some_and(|src| src.join("submission.toml").exists())
+    {
+        anyhow::bail!("Source-pointer publication requires the E4 reviewed-build and DESCRIPTION/media migration; use check-submission for author metadata only.");
+    }
     let bytes = fs::read(&pack).with_context(|| format!("read {}", pack.display()))?;
     let (manifest, extends) = manifest_of(&bytes)?;
     let sha256 = grain_core::trust::sha256_hex(&bytes);
@@ -1018,4 +1035,64 @@ fn publine(pubkey: PathBuf) -> Result<()> {
     let pk = pk_box.into_public_key().context("decode public key")?;
     println!("{}", pk.to_base64());
     Ok(())
+}
+
+#[cfg(test)]
+mod submission_tests {
+    use super::*;
+    #[test]
+    fn registry_accepts_shared_contract_and_refuses_changed_description_or_folder() {
+        let root = tempfile::tempdir().unwrap();
+        let folder = root.path().join("extensions/com.example.tools");
+        fs::create_dir_all(&folder).unwrap();
+        fs::write(folder.join("DESCRIPTION.md"), "# Tools\n").unwrap();
+        let listing = grain_extension_checks::listing::read_listing(&folder).unwrap();
+        let value = grain_sdk::submission::SourceSubmission {
+            schema: 1,
+            artifact_kind: grain_sdk::distribution::ArtifactKind::McpDescriptor,
+            id: "com.example.tools".into(),
+            version: "1.0.0".into(),
+            grain_api: "^1.0".into(),
+            source_repo: "https://github.com/example/tools".into(),
+            tag: "v1.0.0".into(),
+            commit: "1".repeat(40),
+            summary: "Tools".into(),
+            categories: vec!["tools".into()],
+            license: "MIT".into(),
+            contact: "maintainer".into(),
+            description_sha256: listing.sha256,
+            description_size: listing.description.len() as u64,
+            media: Vec::new(),
+        };
+        fs::write(
+            folder.join("submission.toml"),
+            grain_extension_checks::serialize_submission(&value).unwrap(),
+        )
+        .unwrap();
+        check_submission(root.path().into()).unwrap();
+        fs::write(folder.join("DESCRIPTION.md"), "changed").unwrap();
+        assert!(check_submission(root.path().into()).is_err());
+        fs::write(folder.join("DESCRIPTION.md"), "# Tools\n").unwrap();
+        fs::rename(&folder, root.path().join("extensions/com.example.other")).unwrap();
+        assert!(check_submission(root.path().into()).is_err());
+    }
+    #[test]
+    fn schema_one_sources_cannot_enter_the_legacy_signing_pipeline() {
+        let root = tempfile::tempdir().unwrap();
+        fs::write(root.path().join("submission.toml"), "schema = 1").unwrap();
+        let error = publish(
+            root.path().join("missing.key"),
+            root.path().join("missing.grainpack"),
+            "verified".into(),
+            String::new(),
+            String::new(),
+            String::new(),
+            30,
+            root.path().join("v1"),
+            Some(root.path().into()),
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("E4"));
+        assert!(!root.path().join("v1").exists());
+    }
 }

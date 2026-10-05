@@ -30,6 +30,7 @@ pub mod mcp;
 pub mod pill_skin;
 pub mod protocol;
 pub mod settings_schema;
+pub mod submission;
 
 pub use authoring::{ExtensionProjectManifest, GRAIN_API_TYPESCRIPT};
 pub use distribution::{

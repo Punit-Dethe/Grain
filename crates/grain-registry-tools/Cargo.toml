@@ -16,6 +16,7 @@ grain-sdk = { path = "../grain-sdk" }
 # Reuse the verifier's hashing + distribution types so the producer and the app
 # agree byte-for-byte (shared fixtures are the 5A↔5B contract).
 grain-core = { path = "../grain-core" }
+grain-extension-checks = { path = "../grain-extension-checks" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 # The full minisign implementation (keygen + sign + verify). Deliberately NOT a
@@ -26,3 +27,6 @@ clap = { version = "4", features = ["derive"] }
 sha2 = "0.10"
 chrono = { version = "0.4", default-features = false, features = ["alloc", "clock"] }
 toml = "0.8"
+
+[dev-dependencies]
+tempfile = "3"

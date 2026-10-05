@@ -76,28 +76,65 @@ and account consent. Failed validation preserves an existing artifact. Built
 output cannot replace either project definition.
 
 `dev` refuses MCP projects because there is no Grain worker to reload.
-MCP `submit` remains explicitly unavailable until the next submission/listing
-checkpoint and registry migration. The signed test-store path has been verified
-against the real application; direct local descriptor import and public store
-listing are not promised by this CLI block. Direct user-configured MCPs use the
+The signed test-store path has been verified against the real application;
+direct local descriptor import and public store listing are not promised by
+this CLI block. Direct user-configured MCPs use the
 host's separate credential-free connection definition and do not require an
 extension package.
 
 ## Listing and publishing status
 
-Both scaffolds create `DESCRIPTION.md` for eventual user-facing listing text;
-README is for developer/source documentation. This convention is not yet a
-catalog producer/consumer migration. Description/media validation, structured
-source submissions and documentation migration remain in E3; protected signing
-and registry rollout remain E4; store/connection UI remains E5. Existing native
-`submit` is the older development workflow and has not received the new
-submission-contract certification. Do not publish a final SDK or rely on a
+Both scaffolds create `DESCRIPTION.md` for user-facing listing text; README is
+developer/source documentation. `submit` now drafts a local source-pointer
+submission for either project kind. It does not clone, install dependencies,
+upload, create a pull request, sign or publish anything.
+
+From the project root, with an existing local registry checkout:
+
+```powershell
+grain-ext submit --registry C:\path\to\registry --repo https://github.com/owner/repository --tag v1.0.0 --commit <full-lowercase-40-character-commit> --summary "What these tools do" --license MIT --contact "Maintainer contact"
+grain-registry check-submission --dir C:\path\to\registry
+```
+
+Build the maintainer checker with `cargo build --locked -p grain-registry-tools
+--bin grain-registry`. Schema 1 records the artifact kind, project identity/API,
+source pointer, listing hashes/sizes and maintainer text. TOML uses structured
+serialization, including quotes and backslashes. Unknown fields and duplicate
+singleton CLI flags refuse. Category defaults to, and must be exactly, `tools`.
+License/contact are bounded text, not verified SPDX identifiers or identities.
+
+The current source profile accepts canonical `https://github.com/owner/repository`
+URLs without credentials, query, fragment or `.git` suffix; a bounded literal
+ASCII Git tag; and a nonzero lowercase 40-character commit. This validates the
+pointer's shape, not repository ownership or whether that tag resolves to that
+commit. E4 must verify the pinned source and build.
+
+Submission requires nonempty UTF-8 `DESCRIPTION.md` (maximum 64 KiB); README is
+never a fallback. Optional `media/` contains at most six flat `.webp`/`.gif`
+files, each at most 4 MiB, with a total listing budget of 16 MiB including the
+description. Images must decode with width/height at most 2048 pixels. The
+requested 16 MiB decoder allocation limit is best effort; only the first frame
+is decoded. This is not full animation validation or a rendering-safety claim.
+Symlinks, unsupported files, case-insensitive duplicate names and multiple
+cover assets refuse. Size/hash metadata and cover-first ordering are stable.
+
+The CLI creates `extensions/<id>/DESCRIPTION.md` and publishes `submission.toml`
+last as its completion marker. Existing submission directories are never
+overwritten; updating a prior submission is not yet supported by this command.
+Media remains at the source pointer with hashes/sizes in the submission. The
+maintainer checker shares the schema and verifies the description snapshot;
+E4 must match source, media, build and signed catalogue together. The legacy
+publisher refuses these new source submissions until that migration exists.
+
+E3's author tools are provisionally accepted. Protected builds/signing and
+catalogue producer/consumer migration remain E4; store/connection UI and safe
+description rendering remain E5. Do not publish a final SDK or rely on a
 production marketplace based on this checkpoint.
 
 Focused checks:
 
 ```powershell
-cargo test --locked -p grain-ext-cli -p grain-extension-checks --lib
+cargo test --locked -p grain-sdk -p grain-ext-cli -p grain-extension-checks -p grain-registry-tools --all-targets
 powershell.exe -NoProfile -File tests/agent-harness/build.ps1
 node tests/agent-harness/author-contract.mjs
 node tests/agent-harness/run.mjs --suite extension-contract

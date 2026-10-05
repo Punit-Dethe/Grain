@@ -16,6 +16,105 @@ use grain_sdk::{
     DAEMON_EVENT_VARIANTS, GRAIN_API_VERSION,
 };
 
+pub mod listing;
+
+/// Strict bounded TOML shared by author CLI and maintainer checks.
+pub fn parse_submission(raw: &str) -> Result<grain_sdk::submission::SourceSubmission, String> {
+    if raw.len() > grain_sdk::submission::SUBMISSION_MAX_BYTES {
+        return Err("submission.toml exceeds its byte limit.".into());
+    }
+    let submission: grain_sdk::submission::SourceSubmission =
+        toml::from_str(raw).map_err(|e| format!("Invalid submission TOML: {e}"))?;
+    submission.validate()?;
+    Ok(submission)
+}
+
+pub fn serialize_submission(
+    submission: &grain_sdk::submission::SourceSubmission,
+) -> Result<String, String> {
+    submission.validate()?;
+    let raw = toml::to_string_pretty(submission).map_err(|e| e.to_string())?;
+    parse_submission(&raw)?;
+    Ok(raw)
+}
+
+pub fn read_submission(
+    root: &Path,
+    expected_id: &str,
+) -> Result<grain_sdk::submission::SourceSubmission, String> {
+    let root = root.canonicalize().map_err(|e| e.to_string())?;
+    let path = safe_project_file(&root, "submission.toml", "submission")?;
+    if fs::symlink_metadata(root.join("submission.toml"))
+        .map_err(|e| e.to_string())?
+        .file_type()
+        .is_symlink()
+    {
+        return Err("submission.toml must not be a symbolic link.".into());
+    }
+    let raw = read_bounded_utf8(
+        &path,
+        grain_sdk::submission::SUBMISSION_MAX_BYTES as u64,
+        "submission.toml",
+    )?;
+    let submission = parse_submission(&raw)?;
+    if submission.id != expected_id {
+        return Err("Submission id must match its registry folder.".into());
+    }
+    listing::verify_submission_listing(&root, &submission)?;
+    Ok(submission)
+}
+
+pub struct ProjectIdentity {
+    pub kind: grain_sdk::distribution::ArtifactKind,
+    pub id: String,
+    pub version: String,
+    pub grain_api: String,
+    pub summary: String,
+}
+
+/// Use bounded/contained metadata reads after doctor, not a second unbounded
+/// manifest read from author-controlled source paths.
+pub fn project_identity(root: &Path) -> Result<ProjectIdentity, String> {
+    if is_mcp_project(root)? {
+        let descriptor = read_mcp_descriptor(root)?;
+        return Ok(ProjectIdentity {
+            kind: grain_sdk::distribution::ArtifactKind::McpDescriptor,
+            id: descriptor.id,
+            version: descriptor.version,
+            grain_api: descriptor.grain_api,
+            summary: descriptor.description,
+        });
+    }
+    let root = root.canonicalize().map_err(|e| e.to_string())?;
+    let path = safe_project_file(&root, "manifest.json", "manifest")?;
+    let raw = read_bounded_utf8(&path, MAX_MANIFEST_BYTES, "manifest.json")?;
+    let project: ExtensionProjectManifest =
+        serde_json::from_str(&raw).map_err(|e| e.to_string())?;
+    check_project_identity(&project)?;
+    let manifest = project.manifest;
+    Ok(ProjectIdentity {
+        kind: grain_sdk::distribution::ArtifactKind::Native,
+        id: manifest.id,
+        version: manifest.version,
+        grain_api: manifest.grain_api,
+        summary: if manifest.description.is_empty() {
+            manifest.name
+        } else {
+            manifest.description
+        },
+    })
+}
+
+fn check_project_identity(project: &ExtensionProjectManifest) -> Result<(), String> {
+    let mut manifest = project.manifest.clone();
+    manifest.entry_source = "// source submitted for a separate reviewed build".into();
+    GrainPack {
+        manifest,
+        payloads: PackPayloads::default(),
+    }
+    .validate()
+}
+
 pub const MAX_MANIFEST_BYTES: u64 = 1024 * 1024;
 pub const MAX_PROJECT_FILE_BYTES: u64 = 5 * 1024 * 1024;
 pub const MAX_ENTRY_BYTES: u64 = MAX_PROJECT_FILE_BYTES;
@@ -202,6 +301,13 @@ pub fn doctor(root: &Path) -> DoctorReport {
     };
 
     scan_submitted_files(&root, &mut report);
+    if root.join("DESCRIPTION.md").exists() || root.join("media").exists() {
+        if let Err(error) = listing::read_listing(&root) {
+            report
+                .findings
+                .push(Finding::project("E_LISTING", "DESCRIPTION.md", error));
+        }
+    }
     match is_mcp_project(&root) {
         Ok(true) => {
             if let Err(error) = read_mcp_descriptor(&root) {
@@ -925,6 +1031,37 @@ fn sort_findings(findings: &mut [Finding]) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn typed_submission_serialization_is_exact_strict_and_bounded() {
+        use grain_sdk::submission::*;
+        let submission = SourceSubmission {
+            schema: 1,
+            artifact_kind: grain_sdk::distribution::ArtifactKind::Native,
+            id: "com.example.tools".into(),
+            version: "1.0.0".into(),
+            grain_api: "^1.0".into(),
+            source_repo: "https://github.com/example/tools".into(),
+            tag: "v1.0.0".into(),
+            commit: "1".repeat(40),
+            summary: "Say \"hello\" from C:\\tools".into(),
+            categories: vec!["tools".into()],
+            license: "MIT".into(),
+            contact: "a@example.com".into(),
+            description_sha256: "a".repeat(64),
+            description_size: 10,
+            media: Vec::new(),
+        };
+        let raw = serialize_submission(&submission).unwrap();
+        assert_eq!(parse_submission(&raw).unwrap().summary, submission.summary);
+        assert!(parse_submission(&(raw.clone() + "\ntrust = 'core'\n")).is_err());
+        assert!(parse_submission(&(raw.clone() + "\nid = 'com.other.tools'\n")).is_err());
+        assert!(parse_submission(&" ".repeat(SUBMISSION_MAX_BYTES + 1)).is_err());
+        assert!(parse_submission(
+            "id = 'com.example.legacy'\nsource_repo = 'https://github.com/example/legacy'\n"
+        )
+        .is_err());
+    }
 
     #[test]
     fn mcp_doctor_uses_host_admission_and_bounds_without_native_requirements() {
