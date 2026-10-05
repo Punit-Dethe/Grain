@@ -112,6 +112,20 @@ impl ConnectionRecord {
     pub fn definition(&self) -> &RemoteMcpConnection {
         &self.definition
     }
+
+    pub fn revocation_state(
+        &self,
+        revocations: &grain_sdk::Revocations,
+    ) -> Option<grain_sdk::RevocationState> {
+        match self.identity.source() {
+            ConnectionSource::Store {
+                extension_id,
+                version,
+                ..
+            } => revocations.state_for(extension_id, version),
+            _ => None,
+        }
+    }
 }
 
 /// In-process optimistic ownership. Not serializable or accepted from JSON.
@@ -410,6 +424,78 @@ impl ConnectionRegistry {
         })
     }
 
+    /// Publish only against the exact acquired owner. Account identity survives
+    /// metadata-only changes; endpoint/auth changes allocate a fresh namespace.
+    /// The host must cancel work/disable and retire the old grant before calling
+    /// this when the destination changes. No credential I/O occurs here.
+    pub fn replace_store(
+        &self,
+        lease: &ConnectionLease,
+        admitted: StoreDescriptor,
+    ) -> Result<Option<ConnectionRecord>, RegistryError> {
+        self.mutate(|records| {
+            self.check_lease(records, lease)?;
+            let old = &lease.record;
+            let ConnectionSource::Store { extension_id, .. } = old.identity.source() else {
+                return Err(RegistryError::Conflict);
+            };
+            let metadata = admitted.descriptor().descriptor();
+            if extension_id != &metadata.id {
+                return Err(RegistryError::Conflict);
+            }
+            let artifact = StoreArtifact {
+                artifact: admitted.artifact().into(),
+                sha256: admitted.sha256().into(),
+            };
+            if old.store_artifact.as_ref() == Some(&artifact) {
+                return Ok(None);
+            }
+            let revision = old
+                .revision
+                .checked_add(1)
+                .ok_or(RegistryError::RevisionExhausted)?;
+            let definition = RemoteMcpConnection {
+                name: metadata.name.clone(),
+                url: admitted.descriptor().endpoint().into(),
+                authentication: metadata.authentication,
+            };
+            let changed_account = old.definition.url != definition.url
+                || old.definition.authentication != definition.authentication;
+            let account = if changed_account {
+                new_id()
+            } else {
+                old.identity.account_id().into()
+            };
+            if changed_account
+                && records
+                    .values()
+                    .any(|row| row.identity.account_id() == account)
+            {
+                return Err(RegistryError::InvalidState);
+            }
+            let identity = ConnectionIdentity::new(
+                old.identity.connection_id(),
+                &account,
+                ConnectionSource::Store {
+                    extension_id: metadata.id.clone(),
+                    version: metadata.version.clone(),
+                    artifact_sha256: admitted.sha256().into(),
+                },
+            )
+            .map_err(|_| RegistryError::InvalidState)?;
+            records.insert(
+                old.identity.connection_id().into(),
+                ConnectionRecord {
+                    identity,
+                    revision,
+                    definition,
+                    store_artifact: Some(artifact),
+                },
+            );
+            Ok(changed_account.then(|| old.clone()))
+        })
+    }
+
     fn check_lease(
         &self,
         records: &BTreeMap<String, ConnectionRecord>,
@@ -563,6 +649,166 @@ mod tests {
             verified.entries[0].clone(),
             include_bytes!("../tests/fixtures/mcp-store/descriptor.json"),
         )
+    }
+
+    fn store_change(mode: &str) -> StoreDescriptor {
+        let (mut entry, bytes) = store_entry();
+        let mut descriptor: Value = serde_json::from_slice(bytes).unwrap();
+        descriptor["version"] = json!("2.0.0");
+        entry.version = "2.0.0".into();
+        match mode {
+            "metadata" => {
+                descriptor["description"] = json!("Updated listing.");
+                entry.description = "Updated listing.".into();
+            }
+            "endpoint" => {
+                descriptor["transport"]["url"] = json!("https://other.example.com/mcp");
+            }
+            "authentication" => {
+                descriptor["authentication"]["type"] = json!("none");
+            }
+            "identity" => {
+                descriptor["id"] = json!("com.example.other");
+                entry.id = "com.example.other".into();
+            }
+            _ => panic!("unknown case"),
+        }
+        let bytes = serde_json::to_vec(&descriptor).unwrap();
+        entry.size = bytes.len() as u64;
+        entry.sha256 = crate::trust::sha256_hex(&bytes);
+        StoreDescriptor::admit(&entry, &bytes).unwrap()
+    }
+
+    #[test]
+    fn verified_store_updates_preserve_or_rotate_accounts_and_invalidate_old_leases() {
+        for mode in ["metadata", "endpoint", "authentication"] {
+            let dir = tempfile::tempdir().unwrap();
+            let registry = ConnectionRegistry::load(dir.path()).unwrap();
+            let (entry, bytes) = store_entry();
+            let original = registry
+                .insert_store(StoreDescriptor::admit(&entry, bytes).unwrap())
+                .unwrap();
+            let lease = registry.lease(original.identity().connection_id()).unwrap();
+            let disk = super::tests::bytes(dir.path());
+            assert_eq!(
+                registry
+                    .replace_store(&lease, StoreDescriptor::admit(&entry, bytes).unwrap())
+                    .unwrap(),
+                None
+            );
+            assert_eq!(super::tests::bytes(dir.path()), disk);
+            assert!(registry.is_current(&lease));
+            let retired = registry.replace_store(&lease, store_change(mode)).unwrap();
+            let next = registry.lease(original.identity().connection_id()).unwrap();
+            assert_eq!(next.record().revision(), 2);
+            assert!(!registry.is_current(&lease));
+            if mode == "metadata" {
+                assert!(retired.is_none());
+                assert_eq!(
+                    next.record().identity().vault_account(),
+                    original.identity().vault_account()
+                );
+            } else {
+                assert_eq!(retired.unwrap(), original);
+                assert_ne!(
+                    next.record().identity().vault_account(),
+                    original.identity().vault_account()
+                );
+            }
+            assert_eq!(
+                registry.replace_store(&lease, store_change(mode)),
+                Err(RegistryError::Conflict)
+            );
+            let reloaded = ConnectionRegistry::load(dir.path()).unwrap();
+            assert_eq!(reloaded.list().unwrap(), registry.list().unwrap());
+        }
+    }
+
+    #[test]
+    fn failed_or_wrong_owner_store_updates_preserve_prior_state() {
+        let dir = tempfile::tempdir().unwrap();
+        let registry = ConnectionRegistry::load(dir.path()).unwrap();
+        let (entry, artifact) = store_entry();
+        let store = registry
+            .insert_store(StoreDescriptor::admit(&entry, artifact).unwrap())
+            .unwrap();
+        let direct = registry.insert(definition(&wire())).unwrap();
+        let lease = registry.lease(store.identity().connection_id()).unwrap();
+        let disk = bytes(dir.path());
+        let prior = registry.list().unwrap();
+        assert_eq!(
+            registry.replace_store(&lease, store_change("identity")),
+            Err(RegistryError::Conflict)
+        );
+        assert_eq!(
+            registry.replace_store(
+                &registry.lease(direct.identity().connection_id()).unwrap(),
+                store_change("metadata")
+            ),
+            Err(RegistryError::Conflict)
+        );
+        let lock = File::options()
+            .read(true)
+            .write(true)
+            .open(dir.path().join(LOCK_NAME))
+            .unwrap();
+        lock.try_lock().unwrap();
+        assert_eq!(
+            registry.replace_store(&lease, store_change("endpoint")),
+            Err(RegistryError::Conflict)
+        );
+        assert_eq!(registry.list().unwrap(), prior);
+        assert_eq!(bytes(dir.path()), disk);
+        drop(lock);
+        registry.remove(&lease).unwrap();
+        registry
+            .insert_store(StoreDescriptor::admit(&entry, artifact).unwrap())
+            .unwrap();
+        assert_eq!(
+            registry.replace_store(&lease, store_change("metadata")),
+            Err(RegistryError::Conflict)
+        );
+    }
+
+    #[test]
+    fn revocations_match_store_source_and_version_only() {
+        let dir = tempfile::tempdir().unwrap();
+        let registry = ConnectionRegistry::load(dir.path()).unwrap();
+        let (entry, artifact) = store_entry();
+        let record = registry
+            .insert_store(StoreDescriptor::admit(&entry, artifact).unwrap())
+            .unwrap();
+        let direct = registry.insert(definition(&wire())).unwrap();
+        for (id, version, state, expected) in [
+            (
+                "com.example.calendar",
+                None,
+                "revoked",
+                Some(grain_sdk::RevocationState::Revoked),
+            ),
+            (
+                "com.example.calendar",
+                Some("1.0.0"),
+                "revoked",
+                Some(grain_sdk::RevocationState::Revoked),
+            ),
+            ("com.example.calendar", Some("2.0.0"), "revoked", None),
+            ("com.example.other", None, "revoked", None),
+            (
+                "com.example.calendar",
+                None,
+                "deprecated",
+                Some(grain_sdk::RevocationState::Deprecated),
+            ),
+        ] {
+            let revocations = serde_json::from_value(
+                json!({"spec":1,"version":2,"expires":"2099-01-01T00:00:00Z",
+                "entries":[{"id":id,"version":version,"state":state,"reason":"test"}]}),
+            )
+            .unwrap();
+            assert_eq!(record.revocation_state(&revocations), expected);
+            assert_eq!(direct.revocation_state(&revocations), None);
+        }
     }
 
     #[test]

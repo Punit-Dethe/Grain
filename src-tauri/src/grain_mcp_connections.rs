@@ -26,6 +26,7 @@ pub(super) struct RuntimeOwner {
     lease: ConnectionLease,
     control: Arc<super::session::Control>,
     provider_id: String,
+    store: Option<Arc<crate::grain_store::StoreState>>,
 }
 
 impl RuntimeOwner {
@@ -59,6 +60,13 @@ impl RuntimeOwner {
 
     pub(super) fn current(&self) -> bool {
         self.registry.is_current(&self.lease)
+            && match self.lease.record().identity().source() {
+                grain_core::mcp::ConnectionSource::Store { .. } => self
+                    .store
+                    .as_ref()
+                    .is_some_and(|store| store.mcp_record_allowed(self.lease.record())),
+                _ => true,
+            }
     }
 
     pub(super) fn invalidate(&self, app: &AppHandle) -> Result<super::session::Ticket, String> {
@@ -115,10 +123,19 @@ impl State {
         &self,
         registry: Arc<ConnectionRegistry>,
         lease: ConnectionLease,
+        store: Option<Arc<crate::grain_store::StoreState>>,
     ) -> Result<RuntimeOwner, String> {
         if !registry.is_current(&lease) {
             return Err(RegistryError::Conflict.to_string());
         }
+        let store = if matches!(
+            lease.record().identity().source(),
+            grain_core::mcp::ConnectionSource::Store { .. }
+        ) {
+            store
+        } else {
+            None
+        };
         let id = lease.record().identity().connection_id().to_string();
         let mut controls = self
             .controls
@@ -129,6 +146,7 @@ impl State {
                 owner.control.invalidate();
                 owner.lease = lease;
             }
+            owner.store = store;
             return Ok(owner.clone());
         }
         if controls.len() >= grain_core::mcp_connections::MAX_CONNECTIONS {
@@ -139,6 +157,7 @@ impl State {
             lease,
             control: super::session::Control::new(),
             provider_id: format!("configured-{id}"),
+            store,
         };
         controls.insert(id, owner.clone());
         Ok(owner)
@@ -155,7 +174,10 @@ impl State {
             .map_err(|_| RegistryError::InvalidState.to_string())?;
         let registry = self.registry(app)?;
         let lease = registry.lease(id).map_err(|error| error.to_string())?;
-        let owner = self.owner(registry, lease)?;
+        let store = app
+            .try_state::<Arc<crate::grain_store::StoreState>>()
+            .map(|store| store.inner().clone());
+        let owner = self.owner(registry, lease, store)?;
         // Metadata and cancellation generation are captured under the same
         // mutation lock. A delayed caller must never borrow a newer generation
         // for an older endpoint/account/revision snapshot.
@@ -199,6 +221,89 @@ impl State {
         );
         *slot = Some(registry.clone());
         Ok(registry)
+    }
+
+    pub(crate) fn commit_store_update(
+        &self,
+        app: &AppHandle,
+        registry: &ConnectionRegistry,
+        lease: &ConnectionLease,
+        admitted: grain_core::mcp::StoreDescriptor,
+    ) -> Result<ConnectionRecord, String> {
+        let _operation = self
+            .operation
+            .lock()
+            .map_err(|_| RegistryError::InvalidState.to_string())?;
+        super::require_developer_mode(app)?;
+        let grain_core::mcp::ConnectionSource::Store {
+            extension_id,
+            artifact_sha256,
+            ..
+        } = lease.record().identity().source()
+        else {
+            return Err(RegistryError::Conflict.to_string());
+        };
+        if !registry.is_current(lease) || extension_id != &admitted.descriptor().descriptor().id {
+            return Err(RegistryError::Conflict.to_string());
+        }
+        if artifact_sha256 == admitted.sha256() {
+            return Ok(lease.record().clone());
+        }
+        if lease.record().revision() == u64::MAX {
+            return Err(RegistryError::RevisionExhausted.to_string());
+        }
+        let id = lease.record().identity().connection_id();
+        self.invalidate(id)?;
+        prune_enabled(app, id, None)?;
+        let changed_account = lease.record().definition().url != admitted.descriptor().endpoint()
+            || lease.record().definition().authentication
+                != admitted.descriptor().descriptor().authentication;
+        if changed_account {
+            retire_account(lease.record())?;
+            prune_client_ids(app, id)?;
+        }
+        registry
+            .replace_store(lease, admitted)
+            .map_err(|error| error.to_string())?;
+        Ok(registry
+            .lease(id)
+            .map_err(|error| error.to_string())?
+            .record()
+            .clone())
+    }
+
+    /// Cancel first, then persist disablement. Grants/data remain for explicit
+    /// removal; runtime/vault freshness consults the signed state independently
+    /// so a settings-save failure cannot authorize a revoked owner.
+    pub(crate) fn enforce_store_revocations(
+        &self,
+        app: &AppHandle,
+        store: &crate::grain_store::StoreState,
+    ) -> Result<(), String> {
+        let _operation = self
+            .operation
+            .lock()
+            .map_err(|_| RegistryError::InvalidState.to_string())?;
+        let registry = self.registry(app)?;
+        let mut failure = None;
+        for record in registry.list().map_err(|error| error.to_string())? {
+            if matches!(
+                record.identity().source(),
+                grain_core::mcp::ConnectionSource::Store { .. }
+            ) && !store.mcp_record_allowed(&record)
+            {
+                let id = record.identity().connection_id();
+                // One failed settings save must not prevent cancellation of
+                // another revoked owner. Runtime freshness also fails closed.
+                if let Err(error) = self
+                    .invalidate(id)
+                    .and_then(|()| prune_enabled(app, id, None))
+                {
+                    failure.get_or_insert(error);
+                }
+            }
+        }
+        failure.map_or(Ok(()), Err)
     }
 }
 
@@ -416,7 +521,7 @@ pub async fn mcp_connection_connect(
         owner.lease.record().identity().source(),
         grain_core::mcp::ConnectionSource::Store { .. }
     ) {
-        return Err("Store MCP activation awaits catalogue revocation integration.".into());
+        return Err("Store MCP activation awaits the full store acceptance checkpoint.".into());
     }
     super::connect_flow(
         &app,
@@ -536,7 +641,7 @@ fn revision(value: &str) -> Result<u64, String> {
     Ok(parsed)
 }
 
-fn expected_lease(
+pub(crate) fn expected_lease(
     registry: &ConnectionRegistry,
     id: &str,
     expected: &str,
@@ -727,16 +832,20 @@ pub async fn mcp_connection_set_enabled(
         .ok_or("Application context is unavailable.")?
         .inner()
         .clone();
+    let view_app = app.clone();
     storage(app, move |state, registry| {
         let lease = expected_lease(registry, &id, &expected_revision)?;
-        let owner = state.owner(registry.clone(), lease)?;
+        let store = view_app
+            .try_state::<Arc<crate::grain_store::StoreState>>()
+            .map(|store| store.inner().clone());
+        let owner = state.owner(registry.clone(), lease, store)?;
         if enabled
             && matches!(
                 owner.lease.record().identity().source(),
                 grain_core::mcp::ConnectionSource::Store { .. }
             )
         {
-            return Err("Store MCP activation awaits catalogue revocation integration.".into());
+            return Err("Store MCP activation awaits the full store acceptance checkpoint.".into());
         }
         if enabled
             && super::requires_account(&owner.spec())
@@ -817,6 +926,134 @@ pub(super) fn directory(
 mod tests {
     use super::*;
 
+    fn store_descriptor() -> grain_core::mcp::StoreDescriptor {
+        let entry = serde_json::from_slice::<grain_sdk::Index>(include_bytes!(
+            "../../crates/grain-core/tests/fixtures/mcp-store/index.json"
+        ))
+        .unwrap()
+        .entries
+        .remove(0);
+        grain_core::mcp::StoreDescriptor::admit(
+            &entry,
+            include_bytes!("../../crates/grain-core/tests/fixtures/mcp-store/descriptor.json"),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn store_revocation_denies_vault_io_before_generation_or_settings_cleanup() {
+        for (id, version, status, allowed) in [
+            ("com.example.calendar", Some("1.0.0"), "revoked", false),
+            ("com.example.calendar", None, "revoked", false),
+            ("com.example.other", None, "revoked", true),
+            ("com.example.calendar", Some("2.0.0"), "revoked", true),
+            ("com.example.calendar", None, "deprecated", true),
+        ] {
+            let data = tempfile::tempdir().unwrap();
+            let registry = Arc::new(ConnectionRegistry::load(data.path()).unwrap());
+            let record = registry.insert_store(store_descriptor()).unwrap();
+            let lease = registry.lease(record.identity().connection_id()).unwrap();
+            let state = State::default();
+            assert!(
+                !state
+                    .owner(registry.clone(), lease.clone(), None)
+                    .unwrap()
+                    .current(),
+                "Store ownership without a revocation policy must fail closed"
+            );
+            let policy = Arc::new(crate::grain_store::StoreState::init(data.path()));
+            let owner = state
+                .owner(registry.clone(), lease, Some(policy.clone()))
+                .unwrap();
+            assert!(owner.current());
+            let ticket = owner.ticket();
+            let vault = super::super::VaultCredentialStore {
+                account: owner.account(),
+                ticket: ticket.clone(),
+                _operation: None,
+                current: Some(owner.clone()),
+            };
+            policy.set_test_revocations(serde_json::from_value(serde_json::json!({
+                "spec":1,"version":100,"expires":"2099-01-01T00:00:00Z",
+                "entries":[{"id":id,"version":version,"state":status,"reason":"component fixture"}]
+            })).unwrap());
+            assert_eq!(owner.current(), allowed);
+            assert!(
+                ticket.commit(|| ()).is_ok(),
+                "No generation cancellation has occurred"
+            );
+            let mut executed = false;
+            assert_eq!(
+                vault
+                    .commit(|| {
+                        executed = true;
+                        Ok(())
+                    })
+                    .is_ok(),
+                allowed
+            );
+            assert_eq!(executed, allowed, "Revoked account performed vault IO");
+            state.invalidate(record.identity().connection_id()).unwrap();
+            assert!(ticket.commit(|| ()).is_err());
+            policy.close();
+        }
+    }
+
+    #[test]
+    fn store_updates_invalidate_copied_approvals_and_use_only_owned_retirement_keys() {
+        let data = tempfile::tempdir().unwrap();
+        let registry = Arc::new(ConnectionRegistry::load(data.path()).unwrap());
+        let record = registry.insert_store(store_descriptor()).unwrap();
+        let lease = registry.lease(record.identity().connection_id()).unwrap();
+        let state = State::default();
+        let policy = Arc::new(crate::grain_store::StoreState::init(data.path()));
+        let owner = state
+            .owner(registry.clone(), lease.clone(), Some(policy.clone()))
+            .unwrap();
+        let approval = owner.bind("tools");
+        let ticket = owner.ticket();
+        let mut artifact: serde_json::Value = serde_json::from_slice(include_bytes!(
+            "../../crates/grain-core/tests/fixtures/mcp-store/descriptor.json"
+        ))
+        .unwrap();
+        artifact["version"] = "2.0.0".into();
+        artifact["transport"]["url"] = "https://other.example.com/mcp".into();
+        let bytes = serde_json::to_vec(&artifact).unwrap();
+        let mut entry = serde_json::from_slice::<grain_sdk::Index>(include_bytes!(
+            "../../crates/grain-core/tests/fixtures/mcp-store/index.json"
+        ))
+        .unwrap()
+        .entries
+        .remove(0);
+        entry.version = "2.0.0".into();
+        entry.size = bytes.len() as u64;
+        entry.sha256 = grain_core::trust::sha256_hex(&bytes);
+        let update = grain_core::mcp::StoreDescriptor::admit(&entry, &bytes).unwrap();
+        let mut deleted = 0;
+        retire_with(&record, |_, account| {
+            assert_eq!(account, owner.account());
+            assert!(account.starts_with("mcp:v1:store:com.example.calendar:"));
+            deleted += 1;
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(deleted, 3);
+        registry.replace_store(&lease, update).unwrap();
+        assert!(!owner.current());
+        let next = state
+            .owner(
+                registry.clone(),
+                registry.lease(record.identity().connection_id()).unwrap(),
+                Some(policy.clone()),
+            )
+            .unwrap();
+        assert_ne!(owner.account(), next.account());
+        assert!(next.unbind(&approval).is_err());
+        assert!(ticket.commit(|| ()).is_err());
+        assert_eq!(next.spec().endpoint, "https://other.example.com/mcp");
+        policy.close();
+    }
+
     #[test]
     fn external_metadata_change_denies_vault_io_without_a_generation_notification() {
         let data = tempfile::tempdir().unwrap();
@@ -825,7 +1062,7 @@ mod tests {
         let record = registry.insert(input).unwrap();
         let lease = registry.lease(record.identity().connection_id()).unwrap();
         let state = State::default();
-        let owner = state.owner(registry.clone(), lease.clone()).unwrap();
+        let owner = state.owner(registry.clone(), lease.clone(), None).unwrap();
         let ticket = owner.ticket();
         let store = super::super::VaultCredentialStore {
             account: owner.account(),
@@ -894,11 +1131,12 @@ mod tests {
         let second = registry.insert(definition).unwrap();
         let state = State::default();
         let lease = registry.lease(first.identity().connection_id()).unwrap();
-        let one = state.owner(registry.clone(), lease.clone()).unwrap();
+        let one = state.owner(registry.clone(), lease.clone(), None).unwrap();
         let two = state
             .owner(
                 registry.clone(),
                 registry.lease(second.identity().connection_id()).unwrap(),
+                None,
             )
             .unwrap();
         let approval = one.bind("same-tools");
@@ -912,6 +1150,7 @@ mod tests {
             .owner(
                 registry.clone(),
                 registry.lease(first.identity().connection_id()).unwrap(),
+                None,
             )
             .unwrap();
         assert!(Arc::ptr_eq(&one.control, &current.control));
@@ -930,13 +1169,14 @@ mod tests {
         let record = registry.insert(definition).unwrap();
         let state = State::default();
         let lease = registry.lease(record.identity().connection_id()).unwrap();
-        let old = state.owner(registry.clone(), lease.clone()).unwrap();
+        let old = state.owner(registry.clone(), lease.clone(), None).unwrap();
         let replacement = ConnectionDefinition::parse(br#"{"name":"Server","url":"https://other.example.com/mcp","authentication":{"type":"oauth"}}"#).unwrap();
         registry.replace(&lease, replacement).unwrap();
         let next = state
             .owner(
                 registry.clone(),
                 registry.lease(record.identity().connection_id()).unwrap(),
+                None,
             )
             .unwrap();
         assert_ne!(old.enable_key(), next.enable_key());

@@ -142,6 +142,13 @@ fn trust_str(t: grain_sdk::Trust) -> &'static str {
 }
 
 impl StoreState {
+    // Component-test fixture only. Production revocations enter through the
+    // existing signed cache/refresh verifier, never through this setter.
+    #[cfg(test)]
+    pub(crate) fn set_test_revocations(&self, revocations: Revocations) {
+        *self.revocations.write().unwrap() = revocations;
+    }
+
     /// Fixed test trust anchor and loopback transport, compiled only into the
     /// guarded isolated acceptance host. Root rotation is intentionally excluded.
     #[cfg(feature = "agent-harness")]
@@ -240,6 +247,17 @@ impl StoreState {
     /// revocation list. Enforced at enable time, before any worker spawns.
     pub fn revocation_state(&self, id: &str, version: &str) -> Option<RevocationState> {
         self.revocations.read().unwrap().state_for(id, version)
+    }
+
+    /// Uses the resident signed kill switch even with the store closed. No
+    /// catalogue/tools/network cache is retained to make this decision.
+    pub(crate) fn mcp_record_allowed(
+        &self,
+        record: &grain_core::mcp_connections::ConnectionRecord,
+    ) -> bool {
+        self.revocations.read().is_ok_and(|revocations| {
+            record.revocation_state(&revocations) != Some(RevocationState::Revoked)
+        })
     }
 
     /// Drop the parsed index when the Extensions store UI closes. Roots and
@@ -778,6 +796,25 @@ async fn acquire_mcp_entry_with_clock(
     now: impl Fn() -> i64 + Sync,
     authorize: impl Fn() -> Result<(), String> + Sync,
 ) -> Result<grain_core::mcp_connections::ConnectionRecord, String> {
+    commit_mcp_entry_with_clock(state, client, id, version, now, authorize, |admitted| {
+        registry
+            .insert_store(admitted)
+            .map_err(|error| error.to_string())
+    })
+    .await
+}
+
+async fn commit_mcp_entry_with_clock(
+    state: &StoreState,
+    client: &reqwest::Client,
+    id: &str,
+    version: &str,
+    now: impl Fn() -> i64 + Sync,
+    authorize: impl Fn() -> Result<(), String> + Sync,
+    commit: impl FnOnce(
+        grain_core::mcp::StoreDescriptor,
+    ) -> Result<grain_core::mcp_connections::ConnectionRecord, String>,
+) -> Result<grain_core::mcp_connections::ConnectionRecord, String> {
     let (entry, revision, changed, bases) = {
         let owner = state.ownership.lock().unwrap();
         let index = state.index.read().unwrap();
@@ -849,13 +886,55 @@ async fn acquire_mcp_entry_with_clock(
         return Err("MCP catalogue entry is revoked or deprecated".into());
     }
     authorize()?;
-    registry
-        .insert_store(admitted)
-        .map_err(|error| error.to_string())
+    commit(admitted)
 }
 
-/// Development-gated acquisition only. E2's next slice supplies verified
-/// update/revocation handling before store accounts can be activated.
+/// Exact-revision verified update. It uses the same download/verification and
+/// final ownership gate as acquisition, never user-supplied descriptor JSON.
+#[tauri::command]
+#[specta::specta]
+pub async fn store_mcp_update(
+    app: AppHandle,
+    window: tauri::WebviewWindow,
+    connection_id: String,
+    expected_revision: String,
+    version: String,
+) -> Result<(), String> {
+    crate::grain_commands::require_main_window(&window)?;
+    crate::grain_mcp::require_developer_mode(&app)?;
+    let connections = app
+        .try_state::<crate::grain_mcp::connections::State>()
+        .ok_or("MCP registry unavailable")?;
+    let registry = connections.registry(&app)?;
+    let lease = crate::grain_mcp::connections::expected_lease(
+        &registry,
+        &connection_id,
+        &expected_revision,
+    )?;
+    let grain_core::mcp::ConnectionSource::Store { extension_id, .. } =
+        lease.record().identity().source()
+    else {
+        return Err("This connection did not come from the store.".into());
+    };
+    let state = store_state(&app)?;
+    let client = app
+        .try_state::<reqwest::Client>()
+        .ok_or("http client unavailable")?;
+    commit_mcp_entry_with_clock(
+        &state,
+        &client,
+        extension_id,
+        &version,
+        now_unix,
+        || crate::grain_mcp::require_developer_mode(&app),
+        |admitted| connections.commit_store_update(&app, &registry, &lease, admitted),
+    )
+    .await?;
+    Ok(())
+}
+
+/// Development-gated acquisition only. Store accounts stay inactive until the
+/// combined acquisition/update/revocation real-app checkpoint is accepted.
 #[tauri::command]
 #[specta::specta]
 pub async fn store_mcp_install(
@@ -907,7 +986,11 @@ pub async fn store_browse(app: AppHandle) -> Result<StoreView, String> {
         .try_state::<reqwest::Client>()
         .map(|c| c.inner().clone())
         .ok_or("http client unavailable")?;
-    Ok(refresh(&state, &client).await)
+    let view = refresh(&state, &client).await;
+    if let Some(connections) = app.try_state::<crate::grain_mcp::connections::State>() {
+        connections.enforce_store_revocations(&app, &state)?;
+    }
+    Ok(view)
 }
 
 /// Close the Extensions store UI: drop the parsed index so idle footprint
@@ -1520,6 +1603,100 @@ mod tests {
                     assert!(registry.list().unwrap().is_empty());
                     assert!(!data.path().join("mcp-connections.json").exists());
                 }
+                drop(writer); state.close();
+            }
+        });
+    }
+
+    #[test]
+    fn mcp_update_download_cannot_overwrite_changed_or_reacquired_ownership() {
+        use grain_core::mcp::StoreDescriptor;
+        use grain_core::mcp_connections::ConnectionRegistry;
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            for mode in ["valid", "stale", "removed", "reacquired", "cleanup", "writer"] {
+                let data = tempfile::tempdir().unwrap();
+                let state = StoreState::init(data.path());
+                state.ownership.lock().unwrap().can_install = true;
+                let mut entry = serde_json::from_slice::<Index>(include_bytes!(
+                    "../../crates/grain-core/tests/fixtures/mcp-store/index.json")).unwrap().entries.remove(0);
+                let original = StoreDescriptor::admit(&entry, include_bytes!(
+                    "../../crates/grain-core/tests/fixtures/mcp-store/descriptor.json")).unwrap();
+                let registry = ConnectionRegistry::load(data.path()).unwrap();
+                let record = registry.insert_store(original.clone()).unwrap();
+                let lease = registry.lease(record.identity().connection_id()).unwrap();
+                let mut artifact: serde_json::Value = serde_json::from_str(original.artifact()).unwrap();
+                artifact["version"] = "2.0.0".into();
+                let body = serde_json::to_vec(&artifact).unwrap();
+                entry.version = "2.0.0".into(); entry.size = body.len() as u64;
+                entry.sha256 = trust::sha256_hex(&body);
+                let update = StoreDescriptor::admit(&entry, &body).unwrap();
+                let hash = entry.sha256.clone();
+                *state.index.write().unwrap() = Some(Index {
+                    spec:1, version:100, expires:"2099-01-01T00:00:00Z".into(), entries:vec![entry],
+                });
+                let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+                {
+                    let mut roots = state.roots.write().unwrap();
+                    roots.base_urls = vec![format!("http://{}/", listener.local_addr().unwrap())];
+                    roots.mirrors.clear();
+                }
+                let mut writer = None;
+                if mode == "writer" {
+                    let lock = std::fs::File::options().read(true).write(true).create(true).truncate(false)
+                        .open(data.path().join(".mcp-connections.lock")).unwrap();
+                    lock.try_lock().unwrap(); writer = Some(lock);
+                }
+                let disk_before = std::fs::read(data.path().join("mcp-connections.json")).unwrap();
+                let server = async {
+                    let (mut socket, _) = listener.accept().await.unwrap();
+                    let mut request = [0; 2048]; let mut count = 0;
+                    while !request[..count].windows(4).any(|part| part == b"\r\n\r\n") {
+                        assert!(count < request.len());
+                        let read = socket.read(&mut request[count..]).await.unwrap();
+                        assert_ne!(read, 0); count += read;
+                    }
+                    assert!(String::from_utf8_lossy(&request[..count]).starts_with(
+                        &format!("GET /blob/{hash}.mcp.json HTTP/1.1")));
+                    match mode {
+                        "stale" => { registry.replace_store(&lease, update.clone()).unwrap(); }
+                        "removed" | "reacquired" => {
+                            registry.remove(&lease).unwrap();
+                            if mode == "reacquired" { registry.insert_store(original.clone()).unwrap(); }
+                        }
+                        _ => {}
+                    }
+                    socket.write_all(format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len()).as_bytes()).await.unwrap();
+                    socket.write_all(&body).await.unwrap();
+                };
+                let client = reqwest::Client::builder().timeout(std::time::Duration::from_secs(2)).build().unwrap();
+                // Test the shared production download/final-gate/core publication.
+                // The Tauri/vault cleanup adapter is separately gated for app acceptance.
+                let download = commit_mcp_entry_with_clock(&state, &client, "com.example.calendar", "2.0.0",
+                    now_unix, || Ok(()), |admitted| {
+                        if mode == "cleanup" { return Err("account cleanup failed".into()); }
+                        registry.replace_store(&lease, admitted).map_err(|error| error.to_string())?;
+                        Ok(registry.lease(record.identity().connection_id()).unwrap().record().clone())
+                    });
+                let (_, result) = tokio::time::timeout(std::time::Duration::from_secs(3),
+                    async { tokio::join!(server, download) }).await.unwrap();
+                if mode == "valid" {
+                    let next = result.unwrap(); assert_eq!(next.revision(), 2);
+                    assert_eq!(next.identity().account_id(), record.identity().account_id());
+                } else {
+                    let error = result.unwrap_err();
+                    assert!(error.contains(if mode == "cleanup" { "cleanup" } else { "changed" }), "{mode}: {error}");
+                    let records = registry.list().unwrap();
+                    match mode {
+                        "removed" => assert!(records.is_empty()),
+                        "stale" => assert_eq!(records[0].revision(), 2),
+                        "reacquired" => assert_ne!(records[0].identity().connection_id(), record.identity().connection_id()),
+                        _ => { assert_eq!(records, vec![record]);
+                            assert_eq!(std::fs::read(data.path().join("mcp-connections.json")).unwrap(), disk_before); }
+                    }
+                }
+                assert_eq!(ConnectionRegistry::load(data.path()).unwrap().list().unwrap(), registry.list().unwrap());
                 drop(writer); state.close();
             }
         });
