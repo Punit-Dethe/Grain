@@ -135,6 +135,10 @@ pub struct IndexEntry {
     /// its detail page. Empty = none. Fetched lazily on open, dropped on close.
     #[serde(default)]
     pub readme: String,
+    /// Explicit user-facing DESCRIPTION document. Missing preserves legacy
+    /// README catalogues; present listings never fall back to README.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub listing: Option<ListingDocument>,
     /// Screenshots / GIFs for the detail page (DISTRIBUTION-PLAN §2.3). Media
     /// blobs referenced by hash, loaded lazily — never during browse.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -172,9 +176,50 @@ impl ArtifactKind {
 }
 
 impl IndexEntry {
+    /// Validate the new listing profile without narrowing legacy catalogues.
+    pub fn validate_listing(&self) -> Result<(), String> {
+        let Some(document) = &self.listing else {
+            return Ok(());
+        };
+        if !self.readme.is_empty() || self.media.len() > crate::submission::LISTING_MEDIA_MAX_COUNT
+        {
+            return Err(
+                "Explicit DESCRIPTION listings cannot mix legacy README or excess media.".into(),
+            );
+        }
+        if self
+            .media
+            .iter()
+            .any(|asset| !matches!(asset.kind.as_str(), "webp" | "gif") || asset.sha256.len() != 64)
+        {
+            return Err("Invalid listing media digest/kind.".into());
+        }
+        let media = self
+            .media
+            .iter()
+            .enumerate()
+            .map(|(index, asset)| crate::submission::ListingAsset {
+                // Original filenames are author/review metadata. Catalogue blobs
+                // are addressed only by digest, in the reviewed presentation order.
+                name: format!("image{index}.{}", asset.kind),
+                sha256: asset.sha256.clone(),
+                size: asset.size,
+                kind: asset.kind.clone(),
+            })
+            .collect::<Vec<_>>();
+        crate::submission::validate_listing_metadata(&document.sha256, document.size, &media)
+    }
+
+    pub fn detail_document_hash(&self) -> &str {
+        self.listing
+            .as_ref()
+            .map_or(self.readme.as_str(), |document| document.sha256.as_str())
+    }
+
     /// Cheap catalogue eligibility check, before any artifact or media fetch.
     /// Signed metadata does not replace validation of the downloaded manifest.
     pub fn validate_tool_only(&self) -> Result<(), String> {
+        self.validate_listing()?;
         if self.artifact_kind != ArtifactKind::Native {
             return Err("MCP descriptors require the MCP acquisition path.".into());
         }
@@ -222,6 +267,7 @@ impl IndexEntry {
 
     /// MCP metadata cannot declare native permissions or host contributions.
     pub fn validate_mcp_installable(&self) -> Result<(), String> {
+        self.validate_listing()?;
         if self.artifact_kind != ArtifactKind::McpDescriptor
             || self.tier != Tier::Scripted
             || !matches!(self.trust, Trust::Verified | Trust::Core)
@@ -266,6 +312,14 @@ pub const CATEGORIES: &[(&str, &str)] = &[
 /// True when `c` is one of [`CATEGORIES`].
 pub fn is_category(c: &str) -> bool {
     CATEGORIES.iter().any(|(name, _)| *name == c)
+}
+
+/// A separately reviewed user-facing DESCRIPTION, stored in media/<sha256>.md.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ListingDocument {
+    pub sha256: String,
+    pub size: u64,
 }
 
 /// One screenshot or GIF in `media/<sha256>.<ext>` (DISTRIBUTION-PLAN §2.3).
@@ -389,6 +443,107 @@ mod tool_catalogue_tests {
             "categories": ["tools"]
         }))
         .unwrap()
+    }
+
+    #[test]
+    fn explicit_listing_preserves_legacy_wire_and_validates_both_artifact_kinds() {
+        let mut entry = tool_entry();
+        entry.readme = "legacy-document".into();
+        assert_eq!(entry.detail_document_hash(), "legacy-document");
+        assert!(serde_json::to_value(&entry)
+            .unwrap()
+            .get("listing")
+            .is_none());
+        entry.readme.clear();
+        entry.listing = Some(ListingDocument {
+            sha256: "a".repeat(64),
+            size: 20,
+        });
+        entry.media.push(MediaRef {
+            sha256: "b".repeat(64),
+            size: 30,
+            kind: "webp".into(),
+        });
+        entry.validate_installable().unwrap();
+        assert_eq!(entry.detail_document_hash(), "a".repeat(64));
+        entry.artifact_kind = ArtifactKind::McpDescriptor;
+        entry.capabilities.clear();
+        entry.sha256 = "c".repeat(64);
+        entry.size = 500;
+        entry.min_grain_api = "1.0".into();
+        entry.validate_mcp_installable().unwrap();
+        let roundtrip: IndexEntry =
+            serde_json::from_value(serde_json::to_value(&entry).unwrap()).unwrap();
+        assert_eq!(
+            roundtrip.detail_document_hash(),
+            entry.detail_document_hash()
+        );
+        assert_eq!(roundtrip.media[0].size, 30);
+        for mcp in [false, true] {
+            let mut invalid = entry.clone();
+            invalid.artifact_kind = if mcp {
+                ArtifactKind::McpDescriptor
+            } else {
+                ArtifactKind::Native
+            };
+            invalid.readme = "cannot-fallback".into();
+            let error = if mcp {
+                invalid.validate_mcp_installable()
+            } else {
+                invalid.validate_tool_only()
+            };
+            assert!(error.unwrap_err().contains("README"));
+        }
+    }
+
+    #[test]
+    fn explicit_listing_refuses_invalid_description_media_and_total_budgets() {
+        let mut valid = tool_entry();
+        valid.listing = Some(ListingDocument {
+            sha256: "a".repeat(64),
+            size: 20,
+        });
+        for size in [0, crate::submission::DESCRIPTION_MAX_BYTES as u64 + 1] {
+            let mut invalid = valid.clone();
+            invalid.listing.as_mut().unwrap().size = size;
+            assert!(invalid.validate_listing().is_err());
+        }
+        for hash in ["bad".into(), "A".repeat(64)] {
+            let mut invalid = valid.clone();
+            invalid.listing.as_mut().unwrap().sha256 = hash;
+            assert!(invalid.validate_listing().is_err());
+        }
+        let image = MediaRef {
+            sha256: "b".repeat(64),
+            kind: "gif".into(),
+            size: 4 * 1024 * 1024,
+        };
+        for media in [
+            vec![MediaRef {
+                kind: "svg".into(),
+                ..image.clone()
+            }],
+            vec![MediaRef {
+                size: 0,
+                ..image.clone()
+            }],
+            vec![MediaRef {
+                size: u64::MAX,
+                ..image.clone()
+            }],
+            vec![image.clone(); 4], // Four maximum images plus DESCRIPTION exceed total.
+            vec![MediaRef { size: 1, ..image }; 7],
+        ] {
+            let mut invalid = valid.clone();
+            invalid.media = media;
+            assert!(invalid.validate_listing().is_err());
+        }
+        assert!(
+            serde_json::from_value::<ListingDocument>(serde_json::json!({
+                "sha256": "a".repeat(64), "size": 20, "approved": true
+            }))
+            .is_err()
+        );
     }
 
     #[test]

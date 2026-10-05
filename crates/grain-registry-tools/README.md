@@ -91,6 +91,40 @@ media remain metadata. This is not an OS snapshot or a transferable approval
 ticket. The future publisher must use immutable owned input and verify media bytes
 again while copying; a successful earlier check cannot authorize changed files.
 
+## Unsigned catalogue candidates
+
+After receiving validation, stage content-addressed catalogue inputs with the
+same independent pins and a new output directory outside both input trees:
+
+```powershell
+grain-registry prepare-catalogue --submission registry/extensions/com.example.tools --prepared prepared-tools --receipt-sha256 $reviewedReceiptSha256 --producer-sha256 $trustedBuilderSha256 --out catalogue-candidate
+```
+
+This reuses `verify-prepared`, uses the checked artifact/description bytes and
+rehashes each bounded image while copying. Output contains `blob/<hash>.grainpack`
+or `blob/<hash>.mcp.json`, `media/<hash>.md`, image blobs and a final `candidate.json`.
+The candidate declares `unsigned-catalogue-candidate/not-reviewed`, uses `dev`
+trust, and leaves author/review dates/commit empty. Source commit and reviewed
+listing metadata are retained; the numeric catalogue API minimum is derived from
+the admitted artifact requirement. There is no `index.json`, signature, upload,
+key access or extension execution. Existing output refuses without overwrite;
+failed staging removes only its newly created directory on a best-effort basis.
+Keep owned inputs and output immutable; this is not an OS snapshot or crash-proof
+transaction. Retained files are candidates, not publishable approval evidence.
+
+New signed catalogue entries carry `listing: { sha256, size }` for DESCRIPTION
+and existing sized `media` references in presentation order. `readme` must be
+empty in this profile; absent `listing` preserves legacy catalogue compatibility.
+The application uses DESCRIPTION through its existing detail-document command
+and enforces its signed byte size when that metadata is available. The frontend
+wire name remains `readme` until E5; there is no README fallback for explicit
+listings. MCP cards/management UI remain E5 work.
+
+The later trusted signer must independently authorize review/CI/source and bind
+the complete candidate plus all copied blob bytes before setting trust/review
+fields and signing the catalogue. Neither this command nor its pins implement
+cryptographic CI provenance verification. The legacy publication guard remains.
+
 ## Receipt is evidence, not approval
 
 The schema-1 receipt declares `local-preparation/unsigned-not-reviewed`. It
@@ -104,8 +138,8 @@ human review, trusted CI identity or reproducibility. A trusted signing job
 must independently bind the approved submission/source, trusted workflow/run,
 toolchain/build and exact artifact/listing digests. It must not run author code
 or promote a receipt merely because its JSON parses. Cryptographic CI/review
-verification and signing authority remain outside this local byte verifier. That handoff, catalogue
-DESCRIPTION/media migration, complete serving paths, protections and key custody
+verification and signing authority remain outside these local byte/staging tools.
+Signed catalogue deployment, complete serving paths, protections and key custody
 are the remaining E4 work. New schema-1 source submissions still refuse the
 legacy README-based publisher. Prepared receipt folders also refuse that publisher,
 even without `--media-src`, before key reads or output writes. No new publication

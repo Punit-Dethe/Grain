@@ -52,6 +52,16 @@ export function storeHandlers(ctx) {
     assert.equal(view.can_install, true);
     assert.equal(view.entries.length, 1);
     assert.equal(view.entries[0].id, ID);
+    assert.equal(view.entries[0].readme, store().listingHash);
+    assert.equal(
+      await invoke("store_readme", { sha256: store().listingHash }),
+      store().listingText,
+    );
+    observations.push({
+      stage: "explicit-description",
+      status: "Pass",
+      sha256: store().listingHash,
+    });
   }
   async function setup() {
     await store().configure();

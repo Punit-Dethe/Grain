@@ -74,7 +74,8 @@ pub struct StoreEntry {
     /// Popularity signal shown on the card and detail page. Read straight from
     /// the signed index — the client never counts or queries per card.
     pub installs: u64,
-    /// README media hash (empty = none). The detail page fetches it lazily.
+    /// Detail document hash (DESCRIPTION for new listings; legacy README
+    /// otherwise). Keep the existing frontend wire name until E5 UI migration.
     pub readme: String,
     /// Screenshots / GIFs for the detail page, loaded lazily — never in browse.
     pub media: Vec<StoreMedia>,
@@ -374,7 +375,7 @@ fn project_entries(entries: &[IndexEntry], revocations: &Revocations) -> Vec<Sto
             reviewed_commit: e.reviewed_commit.clone(),
             stars: e.stars,
             installs: e.installs,
-            readme: e.readme.clone(),
+            readme: e.detail_document_hash().into(),
             media: e
                 .media
                 .iter()
@@ -1032,6 +1033,54 @@ fn base64_encode(data: &[u8]) -> String {
 /// then the base URLs. Content-addressed blobs are immutable, so the on-disk
 /// cache never goes stale and a hit avoids the network entirely (low-RAM: no
 /// resident media, and the webview drops the bytes when the detail closes).
+fn listing_blob_size(entries: &[IndexEntry], hash: &str, ext: &str) -> Result<Option<u64>, String> {
+    let mut expected = None;
+    for entry in entries {
+        let Some(document) = &entry.listing else {
+            continue;
+        };
+        let mut sizes = (ext == "md" && document.sha256 == hash)
+            .then_some(document.size)
+            .into_iter()
+            .chain(entry.media.iter().filter(|asset| asset.sha256 == hash && asset.kind == ext).map(|asset| asset.size));
+        let Some(first) = sizes.next() else { continue; };
+        entry.validate_listing()?;
+        for size in std::iter::once(first).chain(sizes) {
+            if expected.is_some_and(|previous| previous != size) {
+                return Err("Conflicting signed listing sizes".into());
+            }
+            expected = Some(size);
+        }
+    }
+    Ok(expected)
+}
+
+fn signed_listing_blob_size(
+    state: &StoreState,
+    hash: &str,
+    ext: &str,
+) -> Result<Option<u64>, String> {
+    let index = state.index.read().map_err(|_| "store index unavailable")?;
+    if let Some(index) = &*index {
+        return listing_blob_size(&index.entries, hash, ext);
+    }
+    drop(index);
+    let roots = state
+        .roots
+        .read()
+        .map_err(|_| "store roots unavailable")?
+        .clone();
+    let floor = *state
+        .stored_version
+        .read()
+        .map_err(|_| "store floor unavailable")?;
+    // Lazy detail loading does not keep a catalogue resident after store close.
+    match load_cached_index(&state.cache_dir, &roots, floor, now_unix()) {
+        Ok((index, _)) => listing_blob_size(&index.entries, hash, ext),
+        Err(_) => Ok(None), // Existing legacy hash-only requests retain their limit.
+    }
+}
+
 async fn fetch_media(app: &AppHandle, sha256: &str, ext: &str) -> Result<Vec<u8>, String> {
     if sha256.len() != 64
         || !sha256
@@ -1041,10 +1090,13 @@ async fn fetch_media(app: &AppHandle, sha256: &str, ext: &str) -> Result<Vec<u8>
         return Err("invalid media hash".into());
     }
     let state = store_state(app)?;
+    let expected_size = signed_listing_blob_size(&state, sha256, ext)?;
+    let budget = expected_size.unwrap_or(STORE_MEDIA_MAX_BYTES);
     let name = format!("media/{sha256}.{ext}");
     let cache_path = state.cache_dir.join(format!("{sha256}.{ext}"));
-    if let Some(bytes) = read_bounded_file(&cache_path, STORE_MEDIA_MAX_BYTES) {
-        if grain_core::trust::sha256_hex(&bytes) == sha256 {
+    if let Some(bytes) = read_bounded_file(&cache_path, budget) {
+        if expected_size.is_none_or(|size| bytes.len() as u64 == size)
+            && grain_core::trust::sha256_hex(&bytes) == sha256 {
             return Ok(bytes);
         }
     }
@@ -1062,9 +1114,10 @@ async fn fetch_media(app: &AppHandle, sha256: &str, ext: &str) -> Result<Vec<u8>
             .collect()
     };
     for base in &bases {
-        if let Some(bytes) = fetch(&client, base, &name, STORE_MEDIA_MAX_BYTES).await {
+        if let Some(bytes) = fetch(&client, base, &name, budget).await {
             // Content integrity: the bytes MUST hash to the requested id.
-            if grain_core::trust::sha256_hex(&bytes) != sha256 {
+            if expected_size.is_some_and(|size| bytes.len() as u64 != size)
+                || grain_core::trust::sha256_hex(&bytes) != sha256 {
                 continue;
             }
             let _ = std::fs::create_dir_all(&state.cache_dir);
@@ -1180,8 +1233,8 @@ pub async fn store_media(app: AppHandle, sha256: String, kind: String) -> Result
     Ok(format!("data:{mime};base64,{}", base64_encode(&bytes)))
 }
 
-/// An extension's full README (markdown text), by its media hash. Lazy, and
-/// integrity-checked. Rendered on the detail page.
+/// An extension's detail Markdown (new DESCRIPTION or legacy README), by its
+/// media hash. Lazy, hash-checked and size-bound for explicit signed listings.
 #[tauri::command]
 #[specta::specta]
 pub async fn store_readme(app: AppHandle, sha256: String) -> Result<String, String> {
@@ -1258,6 +1311,60 @@ pub fn store_revocation_banners(app: AppHandle) -> Result<Vec<RevocationBanner>,
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn explicit_description_projects_and_binds_both_kind_media_without_legacy_fallback() {
+        let mut entry: IndexEntry = serde_json::from_value(serde_json::json!({
+            "id": "com.example.listing", "name": "Listing", "version": "1.0.0",
+            "tier": "scripted", "trust": "verified", "sha256": "a".repeat(64),
+            "size": 500, "categories": ["tools"], "min_grain_api": "1.0",
+            "listing": {"sha256": "b".repeat(64), "size": 30},
+            "media": [{"sha256": "c".repeat(64), "size": 100, "kind": "webp"}]
+        }))
+        .unwrap();
+        let revocations = Revocations {
+            spec: 1,
+            version: 1,
+            expires: String::new(),
+            entries: Vec::new(),
+        };
+        assert_eq!(
+            project_entries(&[entry.clone()], &revocations)[0].readme,
+            "b".repeat(64)
+        );
+        for kind in [
+            grain_sdk::distribution::ArtifactKind::Native,
+            grain_sdk::distribution::ArtifactKind::McpDescriptor,
+        ] {
+            entry.artifact_kind = kind;
+            assert_eq!(
+                listing_blob_size(&[entry.clone()], &"b".repeat(64), "md").unwrap(),
+                Some(30)
+            );
+            assert_eq!(
+                listing_blob_size(&[entry.clone()], &"c".repeat(64), "webp").unwrap(),
+                Some(100)
+            );
+            let mut bad = entry.clone();
+            bad.listing.as_mut().unwrap().size = 0;
+            assert!(listing_blob_size(&[bad], &"b".repeat(64), "md").is_err());
+            let mut conflicting = entry.clone();
+            conflicting.listing.as_mut().unwrap().size = 31;
+            assert!(listing_blob_size(&[entry.clone(), conflicting], &"b".repeat(64), "md").is_err());
+        }
+        entry.artifact_kind = grain_sdk::distribution::ArtifactKind::Native;
+        entry.readme = "legacy".into();
+        assert!(project_entries(&[entry.clone()], &revocations).is_empty());
+        entry.listing = None;
+        assert_eq!(
+            project_entries(&[entry.clone()], &revocations)[0].readme,
+            "legacy"
+        );
+        assert_eq!(
+            listing_blob_size(&[entry], &"c".repeat(64), "webp").unwrap(),
+            None
+        );
+    }
 
     fn tmp_data(label: &str) -> PathBuf {
         use std::sync::atomic::{AtomicU64, Ordering};

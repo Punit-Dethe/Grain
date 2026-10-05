@@ -222,7 +222,7 @@ fn verify_checkout(root: &Path, source: &SourceSubmission) -> Result<()> {
     Ok(())
 }
 
-fn new_output(out: &Path, roots: &[&Path]) -> Result<PathBuf> {
+pub(super) fn new_output(out: &Path, roots: &[&Path]) -> Result<PathBuf> {
     let parent = out
         .parent()
         .filter(|p| !p.as_os_str().is_empty())
@@ -255,7 +255,7 @@ pub(super) fn write_artifact(src: &Path, out: &Path, bytes: &[u8]) -> Result<()>
     Ok(())
 }
 
-struct OwnedOutput(PathBuf, bool);
+pub(super) struct OwnedOutput(pub PathBuf, pub bool);
 impl Drop for OwnedOutput {
     fn drop(&mut self) {
         if !self.1 {
@@ -862,5 +862,98 @@ mod tests {
         )
         .unwrap();
         receive_refused(&f, &pins, "byte budget");
+    }
+
+    #[test]
+    fn catalogue_stages_both_kinds_with_exact_listing_bytes_and_no_trust_or_signatures() {
+        for mcp in [false, true] {
+            let f = fixture(mcp, true);
+            prepare(f.submission.clone(), f.src.clone(), f.out.clone()).unwrap();
+            let pins = receipt_pins(&f);
+            let out = f.out.parent().unwrap().join("catalogue");
+            crate::catalogue::prepare(&f.submission, &f.out, &pins.0, &pins.1, &out).unwrap();
+            let candidate: serde_json::Value =
+                serde_json::from_slice(&fs::read(out.join("candidate.json")).unwrap()).unwrap();
+            assert_eq!(
+                candidate["evidence_class"],
+                "unsigned-catalogue-candidate/not-reviewed"
+            );
+            let mut entry: grain_sdk::IndexEntry =
+                serde_json::from_value(candidate["entry"].clone()).unwrap();
+            assert_eq!(entry.trust, grain_sdk::Trust::Dev);
+            assert!(
+                entry.readme.is_empty()
+                    && entry.reviewed_at.is_empty()
+                    && entry.reviewed_commit.is_empty()
+            );
+            assert_eq!(entry.min_grain_api, "1.0");
+            assert_eq!(entry.source_commit, f.value.commit);
+            assert_eq!(entry.categories, ["tools"]);
+            let suffix = if mcp { "mcp.json" } else { "grainpack" };
+            assert_eq!(
+                fs::read(
+                    out.join("blob")
+                        .join(format!("{}.{}", entry.sha256, suffix))
+                )
+                .unwrap(),
+                receive(&f, &pins).unwrap().artifact
+            );
+            assert_eq!(
+                fs::read(
+                    out.join("media")
+                        .join(format!("{}.md", entry.detail_document_hash()))
+                )
+                .unwrap(),
+                fs::read(f.out.join("DESCRIPTION.md")).unwrap()
+            );
+            for (asset, original) in entry.media.iter().zip(&f.value.media) {
+                assert_eq!(
+                    fs::read(
+                        out.join("media")
+                            .join(format!("{}.{}", asset.sha256, asset.kind))
+                    )
+                    .unwrap(),
+                    fs::read(f.out.join("media").join(&original.name)).unwrap()
+                );
+            }
+            assert!(!out.join("index.json").exists() && !out.join("index.json.minisig").exists());
+            if mcp {
+                assert!(entry.validate_mcp_installable().is_err());
+            }
+            // Test only: model a separately authorized signed catalogue's trust
+            // field to prove the candidate's shape fits the host admission.
+            entry.trust = grain_sdk::Trust::Verified;
+            if mcp {
+                entry.validate_mcp_installable().unwrap();
+            } else {
+                entry.validate_installable().unwrap();
+            }
+        }
+    }
+
+    #[test]
+    fn catalogue_refuses_bad_pins_input_overwrite_and_existing_output_without_clobber() {
+        let f = fixture(true, false);
+        prepare(f.submission.clone(), f.src.clone(), f.out.clone()).unwrap();
+        let pins = receipt_pins(&f);
+        let out = f.out.parent().unwrap().join("catalogue");
+        assert!(
+            crate::catalogue::prepare(&f.submission, &f.out, &"1".repeat(64), &pins.1, &out)
+                .is_err()
+        );
+        assert!(!out.exists());
+        assert!(crate::catalogue::prepare(
+            &f.submission,
+            &f.out,
+            &pins.0,
+            &pins.1,
+            &f.out.join("nested")
+        )
+        .is_err());
+        assert!(!f.out.join("nested").exists());
+        crate::catalogue::prepare(&f.submission, &f.out, &pins.0, &pins.1, &out).unwrap();
+        let marker = fs::read(out.join("candidate.json")).unwrap();
+        assert!(crate::catalogue::prepare(&f.submission, &f.out, &pins.0, &pins.1, &out).is_err());
+        assert_eq!(fs::read(out.join("candidate.json")).unwrap(), marker);
     }
 }

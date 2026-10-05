@@ -603,6 +603,7 @@ mod tests {
             description: String::new(),
             installs: 0,
             readme: String::new(),
+            listing: None,
             media: Vec::new(),
             categories: Vec::new(),
             extends: Vec::new(),

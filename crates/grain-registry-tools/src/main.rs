@@ -18,6 +18,7 @@ use std::path::PathBuf;
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use minisign::{KeyPair, PublicKeyBox, SecretKeyBox};
+mod catalogue;
 mod prepare;
 mod receive;
 
@@ -203,6 +204,21 @@ enum Cmd {
         /// Expected builder executable digest from trusted build policy.
         #[arg(long)]
         producer_sha256: String,
+    },
+    /// Stage an unsigned catalogue candidate from checked bytes. No trust,
+    /// index update, signing or publication is performed.
+    PrepareCatalogue {
+        #[arg(long)]
+        submission: PathBuf,
+        #[arg(long)]
+        prepared: PathBuf,
+        #[arg(long)]
+        receipt_sha256: String,
+        #[arg(long)]
+        producer_sha256: String,
+        /// New directory outside both input trees, with an existing parent.
+        #[arg(long)]
+        out: PathBuf,
     },
 }
 
@@ -419,6 +435,19 @@ fn main() -> Result<()> {
             );
             Ok(())
         }
+        Cmd::PrepareCatalogue {
+            submission,
+            prepared,
+            receipt_sha256,
+            producer_sha256,
+            out,
+        } => catalogue::prepare(
+            &submission,
+            &prepared,
+            &receipt_sha256,
+            &producer_sha256,
+            &out,
+        ),
     }
 }
 
@@ -841,6 +870,7 @@ fn publish(
         stars,
         installs,
         readme,
+        listing: None,
         media,
         categories,
         extends,

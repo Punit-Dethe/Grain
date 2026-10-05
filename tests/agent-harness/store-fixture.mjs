@@ -40,6 +40,12 @@ export async function startStore(here) {
   const sockets = new Set(),
     held = new Set(),
     journal = [];
+  const listingDocument = Buffer.from(
+    "# Owned DESCRIPTION\n\nUser-facing listing, distinct from developer README.\n",
+  );
+  const listingHash = createHash("sha256")
+    .update(listingDocument)
+    .digest("hex");
   let version = 100,
     pack,
     bytes,
@@ -50,6 +56,7 @@ export async function startStore(here) {
     offline = false,
     badSignature = false,
     corruptBlob = false,
+    corruptListing = false,
     holdPath = null;
   function respond(response, path) {
     if (response.destroyed) return;
@@ -62,7 +69,10 @@ export async function startStore(here) {
     else if (path === "/revocations.json" && revocations) body = revocations;
     else if (path === "/revocations.json.minisig" && revocations)
       body = Buffer.from(signStoreBytes(revocations, badSignature));
-    else if (path === `/blob/${hash}.${artifactSuffix}`) {
+    else if (path === `/media/${listingHash}.md`) {
+      body = Buffer.from(listingDocument);
+      if (corruptListing) body[body.length - 2] ^= 1;
+    } else if (path === `/blob/${hash}.${artifactSuffix}`) {
       body = Buffer.from(bytes);
       if (corruptBlob) body[body.length - 2] ^= 1;
     } else code = 404;
@@ -107,6 +117,12 @@ export async function startStore(here) {
     get hash() {
       return hash;
     },
+    get listingHash() {
+      return listingHash;
+    },
+    get listingText() {
+      return listingDocument.toString("utf8");
+    },
     async configure(revision = "store-one", packageVersion = "0.1.0") {
       assert.equal(held.size, 0, "Previous store request still held");
       pack = await fixturePackage(here, revision);
@@ -131,6 +147,7 @@ export async function startStore(here) {
               sha256: hash,
               size: bytes.length,
               min_grain_api: "0.0.0",
+              listing: { sha256: listingHash, size: listingDocument.length },
             },
           ],
         }),
@@ -189,6 +206,7 @@ export async function startStore(here) {
               sha256: hash,
               size: bytes.length,
               min_grain_api: "1.0.0",
+              listing: { sha256: listingHash, size: listingDocument.length },
             },
           ],
         }),
@@ -231,6 +249,9 @@ export async function startStore(here) {
     },
     corruptBlob(value = true) {
       corruptBlob = value;
+    },
+    corruptListing(value = true) {
+      corruptListing = value;
     },
     hold(path) {
       assert.equal(held.size, 0);

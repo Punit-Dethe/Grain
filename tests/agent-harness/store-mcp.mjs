@@ -200,6 +200,19 @@ export function storeMcpHandlers(ctx) {
             );
           const bytes = await readFile(join(project, `${ID}-1.0.0.mcp.json`));
           await publish({ descriptorBytes: bytes });
+          ctx.store().corruptListing();
+          await assert.rejects(
+            ctx.invoke("store_readme", { sha256: ctx.store().listingHash }),
+            /media not reachable/,
+          );
+          ctx.store().corruptListing(false);
+          assert.equal(
+            await ctx.invoke("store_readme", {
+              sha256: ctx.store().listingHash,
+            }),
+            ctx.store().listingText,
+            "Signed MCP DESCRIPTION was not consumed",
+          );
           evidence.push({
             stage: "cli-authored-artifact",
             status: "Pass",
