@@ -92,7 +92,7 @@ upload, create a pull request, sign or publish anything.
 From the project root, with an existing local registry checkout:
 
 ```powershell
-grain-ext submit --registry C:\path\to\registry --repo https://github.com/owner/repository --tag v1.0.0 --commit <full-lowercase-40-character-commit> --summary "What these tools do" --license MIT --contact "Maintainer contact"
+grain-ext submit --registry C:\path\to\registry --repo https://github.com/owner/repository --tag v1.0.0 --commit <full-lowercase-40-character-commit> --license MIT --contact "Maintainer contact"
 grain-registry check-submission --dir C:\path\to\registry
 ```
 
@@ -102,6 +102,8 @@ source pointer, listing hashes/sizes and maintainer text. TOML uses structured
 serialization, including quotes and backslashes. Unknown fields and duplicate
 singleton CLI flags refuse. Category defaults to, and must be exactly, `tools`.
 License/contact are bounded text, not verified SPDX identifiers or identities.
+Summary comes from the project's description (or native name when absent), not
+a separate CLI flag.
 
 The current source profile accepts canonical `https://github.com/owner/repository`
 URLs without credentials, query, fragment or `.git` suffix; a bounded literal

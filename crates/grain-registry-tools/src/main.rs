@@ -18,6 +18,7 @@ use std::path::PathBuf;
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use minisign::{KeyPair, PublicKeyBox, SecretKeyBox};
+mod prepare;
 
 #[derive(Parser)]
 #[command(
@@ -172,6 +173,19 @@ enum Cmd {
         #[arg(long)]
         src: PathBuf,
         /// Output `.grainpack.json` path.
+        #[arg(long)]
+        out: PathBuf,
+    },
+    /// Prepare a no-signing artifact/listing snapshot from a locally pinned
+    /// source checkout. The receipt is unsigned and is NOT review authority.
+    PrepareArtifact {
+        /// Registry extensions/<id> folder with submission.toml and DESCRIPTION.
+        #[arg(long)]
+        submission: PathBuf,
+        /// Standalone source checkout; native build must already be complete.
+        #[arg(long)]
+        src: PathBuf,
+        /// New output directory; existing output is never overwritten.
         #[arg(long)]
         out: PathBuf,
     },
@@ -367,6 +381,11 @@ fn main() -> Result<()> {
         Cmd::CheckSubmission { dir } => check_submission(dir),
         Cmd::SiteGen { v1, out } => site_gen(v1, out),
         Cmd::BuildPack { src, out } => build_pack(src, out),
+        Cmd::PrepareArtifact {
+            submission,
+            src,
+            out,
+        } => prepare::prepare(submission, src, out),
     }
 }
 
@@ -374,36 +393,11 @@ fn main() -> Result<()> {
 /// `manifest.json` + the entry file → `entry_source`. The result is what the
 /// runtime loads directly, and what `publish` then hashes/signs.
 fn build_pack(src: PathBuf, out: PathBuf) -> Result<()> {
-    let manifest_raw = fs::read_to_string(src.join("manifest.json"))
-        .with_context(|| format!("read {}/manifest.json", src.display()))?;
-    // Parse loosely as JSON so we can rewrite fields without pinning the schema.
-    let mut manifest: serde_json::Value =
-        serde_json::from_str(&manifest_raw).context("parse manifest.json")?;
-
-    // Inline the entry file → entry_source, drop the project-only `entry` path.
-    if let Some(entry) = manifest
-        .get("entry")
-        .and_then(|v| v.as_str())
-        .map(String::from)
-    {
-        let js = fs::read_to_string(src.join(&entry))
-            .with_context(|| format!("read entry file {entry}"))?;
-        manifest["entry_source"] = serde_json::Value::String(js);
-        manifest.as_object_mut().unwrap().remove("entry");
-    }
-
-    let pack: grain_sdk::GrainPack = serde_json::from_value(serde_json::json!({
-        "manifest": manifest,
-        "payloads": {}
-    }))
-    .context("project does not parse as a GrainPack")?;
-    pack.validate_trusted()
-        .map_err(|error| anyhow::anyhow!("invalid extension: {error}"))?;
-    let json = format!("{}\n", serde_json::to_string_pretty(&pack)?);
-    if let Some(parent) = out.parent() {
-        fs::create_dir_all(parent).ok();
-    }
-    fs::write(&out, json).with_context(|| format!("write {}", out.display()))?;
+    // No compilation occurs in maintainer tooling: untrusted author builds
+    // must finish in a separate no-secret job before this shared boundary.
+    let pack = grain_extension_checks::build_pack(&src).map_err(anyhow::Error::msg)?;
+    let bytes = serde_json::to_vec(&pack)?;
+    prepare::write_artifact(&src, &out, &bytes)?;
     println!(
         "built {} ({} bytes)",
         out.display(),
@@ -701,9 +695,12 @@ fn publish(
     v1: PathBuf,
     media_src: Option<PathBuf>,
 ) -> Result<()> {
-    if media_src
-        .as_ref()
-        .is_some_and(|src| src.join("submission.toml").exists())
+    if pack
+        .parent()
+        .is_some_and(|src| src.join("receipt.json").exists())
+        || media_src.as_ref().is_some_and(|src| {
+            src.join("submission.toml").exists() || src.join("receipt.json").exists()
+        })
     {
         anyhow::bail!("Source-pointer publication requires the E4 reviewed-build and DESCRIPTION/media migration; use check-submission for author metadata only.");
     }
@@ -1078,21 +1075,27 @@ mod submission_tests {
     }
     #[test]
     fn schema_one_sources_cannot_enter_the_legacy_signing_pipeline() {
-        let root = tempfile::tempdir().unwrap();
-        fs::write(root.path().join("submission.toml"), "schema = 1").unwrap();
-        let error = publish(
-            root.path().join("missing.key"),
-            root.path().join("missing.grainpack"),
-            "verified".into(),
-            String::new(),
-            String::new(),
-            String::new(),
-            30,
-            root.path().join("v1"),
-            Some(root.path().into()),
-        )
-        .unwrap_err();
-        assert!(error.to_string().contains("E4"));
-        assert!(!root.path().join("v1").exists());
+        for (marker, media) in [
+            ("submission.toml", true),
+            ("receipt.json", true),
+            ("receipt.json", false),
+        ] {
+            let root = tempfile::tempdir().unwrap();
+            fs::write(root.path().join(marker), "schema = 1").unwrap();
+            let error = publish(
+                root.path().join("missing.key"),
+                root.path().join("missing.grainpack"),
+                "verified".into(),
+                String::new(),
+                String::new(),
+                String::new(),
+                30,
+                root.path().join("v1"),
+                media.then(|| root.path().into()),
+            )
+            .unwrap_err();
+            assert!(error.to_string().contains("E4"));
+            assert!(!root.path().join("v1").exists());
+        }
     }
 }
