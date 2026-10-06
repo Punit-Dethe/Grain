@@ -1,5 +1,10 @@
 # Historical version reservation and selected snapshot export — E4d
 
+**6 October follow-up:** [E4e hosting-bundle audit](EXTENSION-HOSTING-BUNDLE-AUDIT.md)
+adds a separate archive-complete producer/verifier for retained native/MCP assets
+and signed historical proofs. The single-snapshot export documented below stays
+unchanged. Actual hosted activation and protected release governance remain gated.
+
 6 October 2026. This follows the [E4c local serving audit](EXTENSION-SERVING-PROMOTION-AUDIT.md).
 The historical reservation/export primitive is accepted within the local
 operator-owned store boundary. **E4 and production hosted publication remain
