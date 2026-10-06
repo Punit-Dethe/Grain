@@ -24,6 +24,8 @@ const DOCS: [&str; 6] = [
 ];
 const MAX_FILES: usize = 8192;
 const MAX_TOTAL: u64 = 1024 * 1024 * 1024;
+const MAX_HISTORY: usize = 4096;
+const MAX_HISTORY_DOCS: u64 = 128 * 1024 * 1024;
 type Anchor<'a> = dyn Fn(&[u8], &str) -> Result<Roots> + 'a;
 
 #[derive(Clone)]
@@ -362,6 +364,30 @@ fn check(path: &Path, anchor: &Anchor<'_>, require_fresh: bool) -> Result<Tree> 
     Ok(tree)
 }
 
+fn immutable_versions(old: &Index, new: &Index) -> Result<()> {
+    let published = new
+        .entries
+        .iter()
+        .map(|v| ((v.id.as_str(), v.version.as_str()), v))
+        .collect::<BTreeMap<_, _>>();
+    for entry in &old.entries {
+        if let Some(next) = published.get(&(entry.id.as_str(), entry.version.as_str())) {
+            if next.sha256 != entry.sha256
+                || next.artifact_kind != entry.artifact_kind
+                || next.detail_document_hash() != entry.detail_document_hash()
+                || !next
+                    .media
+                    .iter()
+                    .map(|m| (&m.sha256, &m.kind))
+                    .eq(entry.media.iter().map(|m| (&m.sha256, &m.kind)))
+            {
+                bail!("Published extension version cannot change artifact/listing bytes");
+            }
+        }
+    }
+    Ok(())
+}
+
 fn transition(old: &Tree, new: &Tree, require_change: bool) -> Result<()> {
     for (old_version, new_version, old_hash, new_hash) in [
         (
@@ -387,27 +413,7 @@ fn transition(old: &Tree, new: &Tree, require_change: bool) -> Result<()> {
             bail!("Serving metadata rollback or same-version replacement");
         }
     }
-    let published = new
-        .index
-        .entries
-        .iter()
-        .map(|v| ((v.id.as_str(), v.version.as_str()), v))
-        .collect::<BTreeMap<_, _>>();
-    for entry in &old.index.entries {
-        if let Some(next) = published.get(&(entry.id.as_str(), entry.version.as_str())) {
-            if next.sha256 != entry.sha256
-                || next.artifact_kind != entry.artifact_kind
-                || next.detail_document_hash() != entry.detail_document_hash()
-                || !next
-                    .media
-                    .iter()
-                    .map(|m| (&m.sha256, &m.kind))
-                    .eq(entry.media.iter().map(|m| (&m.sha256, &m.kind)))
-            {
-                bail!("Published extension version cannot change artifact/listing bytes");
-            }
-        }
-    }
+    immutable_versions(&old.index, &new.index)?;
     let strength = |state| {
         if state == RevocationState::Revoked {
             2u8
@@ -631,6 +637,7 @@ fn install(tree: &Tree, store: &Path, anchor: &Anchor<'_>) -> Result<()> {
         bail!("Copied serving snapshot differs");
     }
     fs::rename(v1, final_path)?;
+    drop(stage);
     sync_dir(&snapshots)?;
     Ok(()) // Crash leftovers remain unreferenced until a verified pointer commit.
 }
@@ -657,6 +664,102 @@ pub(super) fn promote(assembly: &Path, store: &Path, pin: &str) -> Result<()> {
     promote_with(assembly, store, pin, &app_anchor)
 }
 
+// The operator-owned store is append-only. Reserve identities even in a fully
+// verified but not yet selected snapshot: after an interrupted operation there
+// may already be external readers. No mutable second history database is needed.
+fn historical_versions(store: &Path, next: &Tree, anchor: &Anchor<'_>) -> Result<()> {
+    let mut count = 0;
+    let mut bytes = 0u64;
+    let snapshots = directory(&store.join("snapshots"))?;
+    for item in fs::read_dir(&snapshots)? {
+        let item = item?;
+        let name = item.file_name();
+        let name = name.to_str().context("Non-UTF8 snapshot history path")?;
+        directory(&item.path())?;
+        if name.starts_with(".tmp") {
+            // tempfile staging left by a crash was never installed. Do not read
+            // its unsigned bytes, select it, reserve its versions or delete it.
+            continue;
+        }
+        if !hex(name) {
+            bail!("Unexpected snapshot history path");
+        }
+        count += 1;
+        if count > MAX_HISTORY {
+            bail!("Snapshot history exceeds count budget; audited archival required");
+        }
+        // Authenticate one bounded catalogue at a time; do not reread all old
+        // packages or retain historical catalogues in memory.
+        let historical = metadata(&item.path(), anchor, false)?;
+        if historical.state.snapshot != name {
+            bail!("Snapshot history identity differs from its signed metadata");
+        }
+        bytes += historical
+            .docs
+            .values()
+            .map(|v| v.len() as u64)
+            .sum::<u64>();
+        if bytes > MAX_HISTORY_DOCS {
+            bail!("Snapshot history exceeds metadata budget; audited archival required");
+        }
+        immutable_versions(&historical.index, &next.index)?;
+    }
+    if count == MAX_HISTORY && !snapshots.join(&next.state.snapshot).try_exists()? {
+        bail!("Snapshot history count budget exhausted; audited archival required");
+    }
+    Ok(())
+}
+
+fn selected(store: &Path, pin: &str, anchor: &Anchor<'_>, fresh: bool) -> Result<Tree> {
+    if !hex(pin) {
+        bail!("Independent current-pointer digest required");
+    }
+    let raw = crate::review::read(&store.join("current.json"), 8192)?;
+    if digest(&raw) != pin {
+        bail!("Current serving pointer changed; rebase before promotion/export");
+    }
+    let state: State = serde_json::from_slice(&raw)?;
+    if state.schema != 1 || !hex(&state.snapshot) {
+        bail!("Malformed serving pointer");
+    }
+    let tree = check(
+        &directory(&store.join("snapshots"))?.join(&state.snapshot),
+        anchor,
+        fresh,
+    )?;
+    if tree.state != state {
+        bail!("Current serving snapshot mismatch");
+    }
+    Ok(tree)
+}
+
+pub(super) fn export(store: &Path, out: &Path, pin: &str) -> Result<()> {
+    export_with(store, out, pin, &app_anchor)
+}
+
+fn export_with(store: &Path, out: &Path, pin: &str, anchor: &Anchor<'_>) -> Result<()> {
+    let store = directory(store)?;
+    let out = new_output(out, &[&store])?;
+    let _lock = lock(&store)?;
+    let tree = selected(&store, pin, anchor, true)?;
+    fs::create_dir(&out)?;
+    let mut owned = OwnedOutput(out.clone(), false);
+    copy(&tree, &out.join("v1"))?;
+    if check(&out.join("v1"), anchor, true)?.state != tree.state {
+        bail!("Exported serving snapshot differs");
+    }
+    write(
+        &out.join("snapshot.json"),
+        &serde_json::to_vec(&serde_json::json!({
+            "schema": 1, "current_sha256": pin, "selected": tree.state
+        }))?,
+    )?;
+    sync_dir(&out)?;
+    owned.1 = true;
+    println!("Verified selected snapshot exported; unsigned receipt is not approval; hosting not changed");
+    Ok(())
+}
+
 fn promote_with(assembly: &Path, store: &Path, pin: &str, anchor: &Anchor<'_>) -> Result<()> {
     if !hex(pin) {
         bail!("Independent current-pointer digest required");
@@ -681,23 +784,12 @@ fn promote_with(assembly: &Path, store: &Path, pin: &str, anchor: &Anchor<'_>) -
     )?)?;
     let next = check(&assembly.join("v1"), anchor, true)?;
     let _lock = lock(&store)?;
-    let raw = crate::review::read(&store.join("current.json"), 8192)?;
-    if digest(&raw) != pin {
-        bail!("Current serving pointer changed; rebase before promotion");
-    }
-    let current: State = serde_json::from_slice(&raw)?;
-    if current.schema != 1 || !hex(&current.snapshot) {
-        bail!("Malformed serving pointer");
-    }
-    let old = check(
-        &directory(&store.join("snapshots"))?.join(&current.snapshot),
-        anchor,
-        false,
-    )?;
-    if old.state != current || !parent.matches(&current) {
+    let old = selected(&store, pin, anchor, false)?;
+    if !parent.matches(&old.state) {
         bail!("Serving assembly parent or current snapshot mismatch");
     }
     transition(&old, &next, true)?;
+    historical_versions(&store, &next, anchor)?;
     install(&next, &store, anchor)?;
     // All store writers must honor the lock and leave installed snapshots intact.
     // This operator-owned local store is not a sandbox against external mutation.

@@ -483,6 +483,224 @@ fn removed_entries_leave_prior_snapshot_assets_untouched() {
     assert_eq!(check(&base, &f.anchor(), true).unwrap().assets.len(), 5);
 }
 
+#[test]
+fn withdrawn_version_cannot_return_with_changed_bytes_but_exact_restore_can() {
+    let f = Fixture::new();
+    let base = f.tree("base", 1, false);
+    let store = f.root.path().join("store");
+    initialize_with(&base, &store, &f.anchor()).unwrap();
+    let original: State =
+        serde_json::from_slice(&fs::read(store.join("current.json")).unwrap()).unwrap();
+    let removal = f.root.path().join("removal");
+    fs::create_dir(&removal).unwrap();
+    let mut index = f.json(&base, "index.json");
+    index["version"] = json!(2);
+    index["entries"] = json!([]);
+    f.signed(&removal, "index.json", &index, "publisher");
+    let empty = f.root.path().join("empty");
+    assemble_with(&base, &removal, &empty, &f.anchor()).unwrap();
+    let before = fs::read(store.join("current.json")).unwrap();
+    promote_with(&empty, &store, &digest(&before), &f.anchor()).unwrap();
+    let withdrawn = fs::read(store.join("current.json")).unwrap();
+    let replacement = f.tree("replacement", 3, false);
+    let mut replaced = f.json(&replacement, "index.json");
+    let old_hash = replaced["entries"][0]["sha256"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let bytes = b"changed code after withdrawal";
+    replaced["entries"][0]["sha256"] = json!(digest(bytes));
+    replaced["entries"][0]["size"] = json!(bytes.len());
+    fs::remove_file(replacement.join(format!("blob/{old_hash}.grainpack"))).unwrap();
+    fs::write(
+        replacement.join(format!("blob/{}.grainpack", digest(bytes))),
+        bytes,
+    )
+    .unwrap();
+    f.signed(&replacement, "index.json", &replaced, "publisher");
+    let changed = f.root.path().join("changed");
+    assemble_with(&empty.join("v1"), &replacement, &changed, &f.anchor()).unwrap();
+    assert!(
+        promote_with(&changed, &store, &digest(&withdrawn), &f.anchor())
+            .unwrap_err()
+            .to_string()
+            .contains("cannot change")
+    );
+    assert_eq!(fs::read(store.join("current.json")).unwrap(), withdrawn);
+    let restore = f.tree("restore", 3, false);
+    let restored = f.root.path().join("restored");
+    assemble_with(&empty.join("v1"), &restore, &restored, &f.anchor()).unwrap();
+    promote_with(&restored, &store, &digest(&withdrawn), &f.anchor()).unwrap();
+    assert!(store.join("snapshots").join(original.snapshot).exists());
+    assert_eq!(
+        selected(
+            &store,
+            &digest(&fs::read(store.join("current.json")).unwrap()),
+            &f.anchor(),
+            true
+        )
+        .unwrap()
+        .index
+        .entries
+        .len(),
+        1
+    );
+}
+
+#[test]
+fn historical_listing_media_and_artifact_kind_are_reserved_even_in_installed_orphans() {
+    let f = Fixture::new();
+    let base = f.tree("base", 1, false);
+    let store = f.root.path().join("store");
+    initialize_with(&base, &store, &f.anchor()).unwrap();
+    let orphan = f.tree("orphan", 2, true);
+    let reserved = check(&orphan, &f.anchor(), true).unwrap();
+    install(&reserved, &store, &f.anchor()).unwrap();
+    let before = fs::read(store.join("current.json")).unwrap();
+    let next = f.tree("next", 3, true);
+    let original = f.json(&next, "index.json");
+    for (pointer, value) in [
+        ("/entries/1/listing/sha256", json!("a".repeat(64))),
+        ("/entries/1/media/0/sha256", json!("b".repeat(64))),
+        ("/entries/1/artifact_kind", json!("native")),
+    ] {
+        let mut changed = original.clone();
+        *changed.pointer_mut(pointer).unwrap() = value;
+        f.signed(&next, "index.json", &changed, "publisher");
+        let proposal = metadata(&next, &f.anchor(), true).unwrap();
+        assert!(historical_versions(&store, &proposal, &f.anchor())
+            .unwrap_err()
+            .to_string()
+            .contains("cannot change"));
+        assert_eq!(fs::read(store.join("current.json")).unwrap(), before);
+    }
+    let mut new_version = original;
+    new_version["entries"][1]["version"] = json!("2.0.0");
+    new_version["entries"][1]["sha256"] = json!("c".repeat(64));
+    f.signed(&next, "index.json", &new_version, "publisher");
+    historical_versions(
+        &store,
+        &metadata(&next, &f.anchor(), true).unwrap(),
+        &f.anchor(),
+    )
+    .unwrap();
+}
+
+#[test]
+fn historical_signature_and_directory_identity_refuse_without_changing_current() {
+    let f = Fixture::new();
+    let base = f.tree("base", 1, false);
+    let next = f.tree("next", 2, true);
+    let store = f.root.path().join("store");
+    initialize_with(&base, &store, &f.anchor()).unwrap();
+    let before = fs::read(store.join("current.json")).unwrap();
+    let state: State = serde_json::from_slice(&before).unwrap();
+    let dir = store.join("snapshots").join(&state.snapshot);
+    let tree = check(&next, &f.anchor(), true).unwrap();
+    let file = dir.join("index.json");
+    let raw = fs::read(&file).unwrap();
+    fs::write(&file, b"invalid history").unwrap();
+    assert!(historical_versions(&store, &tree, &f.anchor()).is_err());
+    fs::write(&file, raw).unwrap();
+    let renamed = store.join("snapshots").join("a".repeat(64));
+    fs::rename(&dir, &renamed).unwrap();
+    assert!(historical_versions(&store, &tree, &f.anchor())
+        .unwrap_err()
+        .to_string()
+        .contains("identity differs"));
+    fs::rename(renamed, dir).unwrap();
+    // Unsigned abandoned staging is not publication history.
+    let abandoned = store.join("snapshots/.tmp-abandoned");
+    fs::create_dir(&abandoned).unwrap();
+    fs::write(abandoned.join("index.json"), b"not signed").unwrap();
+    historical_versions(&store, &tree, &f.anchor()).unwrap();
+    assert!(abandoned.exists());
+    let unexpected = store.join("snapshots/not-a-snapshot");
+    fs::create_dir(&unexpected).unwrap();
+    assert!(historical_versions(&store, &tree, &f.anchor()).is_err());
+    assert_eq!(fs::read(store.join("current.json")).unwrap(), before);
+}
+
+#[test]
+fn export_pins_one_fresh_complete_snapshot_and_retains_it_after_promotion() {
+    let f = Fixture::new();
+    let base = f.tree("base", 1, false);
+    let next = f.tree("next", 2, true);
+    let store = f.root.path().join("store");
+    initialize_with(&base, &store, &f.anchor()).unwrap();
+    let before = fs::read(store.join("current.json")).unwrap();
+    let out = f.root.path().join("export");
+    let held = lock(&store).unwrap();
+    assert!(export_with(&store, &out, &digest(&before), &f.anchor())
+        .unwrap_err()
+        .to_string()
+        .contains("lock"));
+    drop(held);
+    assert!(!out.exists());
+    assert!(export_with(&store, &store.join("inside"), &digest(&before), &f.anchor()).is_err());
+    assert!(export_with(&store, &out, &"a".repeat(64), &f.anchor()).is_err());
+    assert!(!out.exists());
+    export_with(&store, &out, &digest(&before), &f.anchor()).unwrap();
+    let exported = check(&out.join("v1"), &f.anchor(), true).unwrap();
+    let receipt: Value =
+        serde_json::from_slice(&fs::read(out.join("snapshot.json")).unwrap()).unwrap();
+    assert_eq!(receipt["current_sha256"], digest(&before));
+    assert_eq!(receipt["selected"]["snapshot"], exported.state.snapshot);
+    assert_eq!(
+        exported.docs["index.json"],
+        fs::read(base.join("index.json")).unwrap()
+    );
+    assert!(export_with(&store, &out, &digest(&before), &f.anchor()).is_err());
+    let assembly = f.root.path().join("assembly");
+    assemble_with(&base, &next, &assembly, &f.anchor()).unwrap();
+    promote_with(&assembly, &store, &digest(&before), &f.anchor()).unwrap();
+    let after = fs::read(store.join("current.json")).unwrap();
+    assert_eq!(
+        check(&out.join("v1"), &f.anchor(), true).unwrap().state,
+        exported.state
+    );
+    let fresh = f.root.path().join("fresh-export");
+    assert!(export_with(&store, &fresh, &digest(&before), &f.anchor()).is_err());
+    assert!(!fresh.exists());
+    export_with(&store, &fresh, &digest(&after), &f.anchor()).unwrap();
+    assert_eq!(
+        check(&fresh.join("v1"), &f.anchor(), true)
+            .unwrap()
+            .index
+            .entries
+            .len(),
+        2
+    );
+}
+
+#[test]
+fn export_refuses_expired_or_corrupt_selection_without_publishing_output() {
+    let f = Fixture::new();
+    let base = f.tree("base", 1, false);
+    let store = f.root.path().join("store");
+    initialize_with(&base, &store, &f.anchor()).unwrap();
+    let original = fs::read(store.join("current.json")).unwrap();
+    let state: State = serde_json::from_slice(&original).unwrap();
+    let selected_path = store.join("snapshots").join(state.snapshot);
+    let index_file = selected_path.join("index.json");
+    let index_raw = fs::read(&index_file).unwrap();
+    fs::write(&index_file, b"corrupt").unwrap();
+    let out = f.root.path().join("export");
+    assert!(export_with(&store, &out, &digest(&original), &f.anchor()).is_err());
+    assert!(!out.exists());
+    fs::write(index_file, index_raw).unwrap();
+    let mut expired = f.json(&base, "index.json");
+    expired["expires"] = json!((Utc::now() - chrono::Duration::days(2)).to_rfc3339());
+    f.signed(&base, "index.json", &expired, "publisher");
+    let aged = check(&base, &f.anchor(), false).unwrap();
+    copy(&aged, &store.join("snapshots").join(&aged.state.snapshot)).unwrap();
+    pointer(&store, &aged.state, false).unwrap();
+    let before = fs::read(store.join("current.json")).unwrap();
+    assert!(export_with(&store, &out, &digest(&before), &f.anchor()).is_err());
+    assert!(!out.exists());
+    assert_eq!(fs::read(store.join("current.json")).unwrap(), before);
+}
+
 #[cfg(unix)]
 #[test]
 fn symlinked_assets_and_snapshot_directories_are_rejected() {

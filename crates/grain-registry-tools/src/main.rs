@@ -37,6 +37,15 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Cmd {
+    /// Export one verified selected snapshot without deploying or changing it.
+    ExportServingSnapshot {
+        #[arg(long)]
+        store: PathBuf,
+        #[arg(long)]
+        out: PathBuf,
+        #[arg(long)]
+        expected_current_sha256: String,
+    },
     /// Verify the app-pinned trust chain and every referenced serving asset.
     VerifyServingTree {
         #[arg(long)]
@@ -447,6 +456,11 @@ fn edit_distance(a: &str, b: &str) -> usize {
 
 fn main() -> Result<()> {
     match Cli::parse().cmd {
+        Cmd::ExportServingSnapshot {
+            store,
+            out,
+            expected_current_sha256,
+        } => serving::export(&store, &out, &expected_current_sha256),
         Cmd::VerifyServingTree { v1 } => serving::verify(&v1),
         Cmd::AssembleServingTree { base, update, out } => serving::assemble(&base, &update, &out),
         Cmd::InitializeServingStore { v1, out } => serving::initialize(&v1, &out),

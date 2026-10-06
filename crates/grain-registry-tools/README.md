@@ -322,6 +322,44 @@ is used only as a real pinned-root CLI fixture; disposable signing anchors in Ru
 component tests never reach the public CLI or the app's trust configuration.
 
 [Scoped serving audit](../../docs/Extensions%202.0/EXTENSION-SERVING-PROMOTION-AUDIT.md)
-records Windows/Linux acceptance and operational limits. Version identity checks
-compare the immediate base and next catalogue; withdrawn then reintroduced
-versions still require a protected historical publication policy before release.
+records the original Windows/Linux acceptance and operational limits. The
+historical reservation/export follow-up below strengthens that checkpoint.
+
+## Historical version reservation and selected snapshot export (E4d)
+
+Promotion also authenticates retained snapshot metadata under the same store lock.
+A withdrawn extension cannot return with changed artifact kind, package/descriptor,
+description or media under its old `(id, version)`. Identical restoration and a new
+version are allowed. Fully verified installed snapshots reserve identities even
+if a crash prevented selecting them. Unsigned `.tmp*` staging is ignored, never
+selected or deleted. Invalid signed history, a mismatched content-addressed
+directory, links or unexpected names refuse promotion.
+
+One bounded historical catalogue is inspected at a time; old package bytes are
+not reread for this identity check. Bounds are 4,096 installed snapshots and
+128 MiB combined signed metadata per operation. Exhaustion refuses and requires
+an audited archival design that preserves identities; deleting old snapshots or
+initializing a replacement store is not a safe way to bypass it. The store must
+stay append-only and operator-protected. Bootstrap checks only the supplied signed
+catalogue; it cannot reconstruct missing history from another deployment. No new
+database, service, signing authority or public contract was introduced.
+
+```powershell
+grain-registry export-serving-snapshot --store local-serving-store --out fresh-export --expected-current-sha256 '<independently captured current.json SHA256>'
+grain-registry verify-serving-tree --v1 fresh-export/v1
+```
+
+Export locks the same store, verifies the independently captured pointer and its
+strictly fresh selected snapshot, then copies and rechecks exact signed metadata
+and all addressed files using existing streaming bounds. Output must be fresh and
+outside the store. `snapshot.json` records the selected state and current-pointer
+digest; it is an unsigned operational receipt, not review/deployment authority.
+Failure removes only owned unfinished output; old exports remain stable after a
+later promotion. Export does not select a snapshot, sign, access keys or publish.
+
+The export is one complete `v1/` snapshot. It does not aggregate old withdrawn
+assets, solve distributed deployment, rewrite signed base URLs or activate hosting.
+A future hosting adapter must preserve historical addressed assets and support
+conditional activation/coherent roots, with protected approval/key custody and
+operational renewal/revocation. [History/export audit](../../docs/Extensions%202.0/EXTENSION-SERVING-HISTORY-EXPORT-AUDIT.md)
+records verification and the remaining gates.
