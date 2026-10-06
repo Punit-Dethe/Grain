@@ -170,23 +170,42 @@ not TOML bytes or arbitrarily reformatted JSON.
 
 | Policy field | Trusted meaning |
 | --- | --- |
-| `schema` | Integer `1` |
+| `schema` | Integer `2`; schema-1 policies are refused by the current signer |
 | `candidate_sha256`, `submission_sha256`, `receipt_sha256` | Exact approved candidate, complete structured source submission and preparation receipt |
 | `producer_sha256`, `verifier_sha256` | Independently approved registry builder and official `gh` executable bytes |
 | `registry_repo` | GitHub `owner/repo` whose CI provenance must verify |
 | `registry_commit`, `registry_ref` | Exact registry commit and `refs/heads/<branch>`; scoped branch names are allowed, ambiguous/invalid components refuse |
 | `signer_workflow`, `signer_commit` | Same-repository `owner/repo/.github/workflows/<file>.yml` or `.yaml` and immutable workflow commit; reusable workflow identity is the signer |
 | `reviewer`, `submitter` | Protected review record's reviewer and submitting GitHub account; only submitter becomes catalogue `author` |
+| `review_pull_request`, `review_head`, `review_id` | Nonzero merged registry PR number, exact full reviewed PR head and nonzero latest effective approving GitHub review ID |
 | `approved_at`, `expires_at` | RFC3339 approval window: not future-dated, still valid and at most seven days; rechecked before opening the key |
 | `publishing_public_key` | Independently approved base64 minisign publishing public key |
 | `previous_index_sha256`, `previous_index_version` | Exact currently signed index bytes and monotonic version to extend |
 
 Keep the policy, its expected digest, verifier executable and publishing key in
 immutable operator-owned locations outside author/build workspaces. A digest
-copied from an untrusted policy does **not** establish review. The command verifies
-the supplied protected record; it does not independently query GitHub reviews or
-configure branch/environment protections. Those belong to the next CI activation
-checkpoint. Do not generate this record in an author-execution job.
+copied from an untrusted policy does **not** establish review. The current signer
+also queries GitHub through the pinned official CLI before any key access. The PR
+must be merged into the approved repository/branch at `registry_commit`, with the
+exact `review_head` and submitter. The merged submission and DESCRIPTION must
+match the prepared request. The protected reviewer must be a different account,
+and their latest effective review must still approve this head at `review_id`.
+Dismissed, superseded, changes-requested and future-dated reviews refuse. Comments
+do not revoke an approval. Review pages are bounded (100/page, at most ten); an
+exhausted history refuses rather than trusting a partial result. GitHub availability
+is required; there is no offline approval bypass. Production branch/environment
+protections and reviewer eligibility remain separate deployment requirements.
+Do not generate this policy in an author-execution job.
+
+`verify-source-review` takes `--submission`, `--policy`, `--policy-sha256` and `--gh`
+to check this same gate without a key. `inspect-submission --submission <ID-dir>
+--out <fresh-file>` emits the shared strict structured source request for CI; it
+confers no approval. For review reads only, the child inherits the operator's
+GitHub CLI authentication/configuration or a read-only `GH_TOKEN`/`GITHUB_TOKEN`
+with contents/pull-requests access. Never place publishing credentials in those
+variables. Requests are fixed GETs to github.com, no shell or author arguments;
+each child is bounded to 60 seconds and 1 MiB or a smaller content limit, and is
+killed/reaped on monitor failure. Raw API responses and credentials are not logged.
 
 The signer reuses received-byte validation, binds the complete approved submission,
 and stages one owned snapshot. It compares every candidate file against that

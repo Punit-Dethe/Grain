@@ -32,6 +32,9 @@ pub(super) struct Policy {
     pub signer_commit: String,
     pub reviewer: String,
     pub submitter: String,
+    pub review_pull_request: u64,
+    pub review_head: String,
+    pub review_id: u64,
     pub approved_at: String,
     pub expires_at: String,
     pub publishing_public_key: String,
@@ -93,10 +96,14 @@ impl Policy {
             &self.verifier_sha256,
             &self.previous_index_sha256,
         ];
-        if self.schema != 1
+        if self.schema != 2
             || hashes.iter().any(|v| !hex(v, 64))
             || !hex(&self.registry_commit, 40)
             || !hex(&self.signer_commit, 40)
+            || !hex(&self.review_head, 40)
+            || self.review_pull_request == 0
+            || self.review_id == 0
+            || self.reviewer.eq_ignore_ascii_case(&self.submitter)
         {
             bail!("Unsupported review policy or malformed digest");
         }
@@ -205,7 +212,7 @@ pub(super) fn same_tree(expected: &Path, received: &Path, depth: usize) -> Resul
     Ok(())
 }
 
-fn verifier(path: &Path, pin: &str) -> Result<PathBuf> {
+pub(super) fn verifier(path: &Path, pin: &str) -> Result<PathBuf> {
     if !path.is_absolute() {
         bail!("GitHub verifier must have an absolute path");
     }
@@ -294,7 +301,7 @@ fn verification_command(gh: &Path, policy: &Policy, scratch: &Path) -> Command {
     command
 }
 
-fn wait_verifier(
+pub(super) fn wait_verifier(
     child: &mut Child,
     output: &fs::File,
     deadline: Duration,
@@ -304,7 +311,7 @@ fn wait_verifier(
     let status = (|| -> Result<_> {
         loop {
             if output.metadata()?.len() > max || start.elapsed() > deadline {
-                bail!("GitHub attestation verifier exceeded its output/time budget");
+                bail!("GitHub reader/verifier exceeded its output/time budget");
             }
             if let Some(status) = child.try_wait()? {
                 return Ok(status);
@@ -503,6 +510,8 @@ pub(super) fn sign(input: Inputs<'_>) -> Result<()> {
     if digest(&serde_json::to_vec(&checked.receipt.submission)?) != policy.submission_sha256 {
         bail!("Prepared submission differs from approved source review");
     }
+    let gh = verifier(input.gh, &policy.verifier_sha256)?;
+    let reviewed_source = checked.receipt.submission.clone();
     let scratch = tempfile::tempdir()?;
     let snapshot = scratch.path().join("snapshot");
     crate::catalogue::stage(
@@ -519,12 +528,13 @@ pub(super) fn sign(input: Inputs<'_>) -> Result<()> {
     }
     same_tree(&snapshot, &candidate, 1)?;
     let index = previous(&policy, &prior)?;
-    let gh = verifier(input.gh, &policy.verifier_sha256)?;
     fs::write(
         scratch.path().join("attestation.jsonl"),
         read(input.attestation, 16 * 1024 * 1024)?,
     )?;
     verify_attestation(&gh, &policy, scratch.path())?;
+    // Query mutable review state last, immediately before the delayed key gate.
+    crate::approval::verify(&gh, &policy, &reviewed_source)?;
     write_signed(&policy, index, &snapshot, input.key, &out)?;
     println!(
         "signed catalogue update at {}; not uploaded or a complete hosted registry",
@@ -534,7 +544,7 @@ pub(super) fn sign(input: Inputs<'_>) -> Result<()> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     #[test]
@@ -595,9 +605,9 @@ mod tests {
         }
     }
 
-    fn policy() -> Policy {
+    pub(crate) fn policy() -> Policy {
         Policy {
-            schema: 1,
+            schema: 2,
             candidate_sha256: "a".repeat(64),
             submission_sha256: "b".repeat(64),
             receipt_sha256: "c".repeat(64),
@@ -610,6 +620,9 @@ mod tests {
             signer_commit: "b".repeat(40),
             reviewer: "reviewer".into(),
             submitter: "example".into(),
+            review_pull_request: 1,
+            review_head: "c".repeat(40),
+            review_id: 2,
             approved_at: (Utc::now() - Days::minutes(1)).to_rfc3339(),
             expires_at: (Utc::now() + Days::days(1)).to_rfc3339(),
             publishing_public_key: grain_core::trust::ROOT_PUBKEY_A.into(),
@@ -622,6 +635,17 @@ mod tests {
     fn strict_policy_refuses_bad_pins_identities_and_approval_times() {
         let now = Utc::now().timestamp();
         policy().validate(now).unwrap();
+        for field in ["review_pull_request", "review_id"] {
+            let mut value = serde_json::to_value(policy()).unwrap();
+            value[field] = serde_json::json!(0);
+            assert!(serde_json::from_value::<Policy>(value)
+                .unwrap()
+                .validate(now)
+                .is_err());
+        }
+        let mut same_account = policy();
+        same_account.reviewer = same_account.submitter.to_ascii_uppercase();
+        assert!(same_account.validate(now).is_err());
         for field in [
             "schema",
             "candidate_sha256",
@@ -636,12 +660,13 @@ mod tests {
             "signer_commit",
             "reviewer",
             "submitter",
+            "review_head",
             "publishing_public_key",
             "previous_index_sha256",
         ] {
             let mut value = serde_json::to_value(policy()).unwrap();
             value[field] = if field == "schema" {
-                serde_json::json!(2)
+                serde_json::json!(1)
             } else {
                 serde_json::json!("invalid/input")
             };

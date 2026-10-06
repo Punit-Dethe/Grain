@@ -4,7 +4,7 @@
 //! *verifying* side. It never ships in Grain. Three jobs:
 //!
 //! - `keygen`  — generate a minisign keypair (root or publishing) and print the
-//!               base64 public-key line to pin in the app.
+//!   base64 public-key line to pin in the app.
 //! - `sign`    — produce a detached `<file>.minisig` for a JSON document.
 //! - `publine` — print the base64 public-key line from a `.pub` file.
 //!
@@ -18,6 +18,7 @@ use std::path::PathBuf;
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use minisign::{KeyPair, PublicKeyBox, SecretKeyBox};
+mod approval;
 mod catalogue;
 mod prepare;
 mod receive;
@@ -35,6 +36,24 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Cmd {
+    /// Emit a strict bounded source request for isolated CI. Grants no approval.
+    InspectSubmission {
+        #[arg(long)]
+        submission: PathBuf,
+        #[arg(long)]
+        out: PathBuf,
+    },
+    /// Confirm current GitHub source approval without reading a signing key.
+    VerifySourceReview {
+        #[arg(long)]
+        submission: PathBuf,
+        #[arg(long)]
+        policy: PathBuf,
+        #[arg(long)]
+        policy_sha256: String,
+        #[arg(long)]
+        gh: PathBuf,
+    },
     /// Sign a new catalogue update only after pinned review and GitHub provenance.
     /// Produces an update fragment, never uploads or mutates the served registry.
     SignReviewedCandidate {
@@ -397,6 +416,13 @@ fn edit_distance(a: &str, b: &str) -> usize {
 
 fn main() -> Result<()> {
     match Cli::parse().cmd {
+        Cmd::InspectSubmission { submission, out } => approval::inspect(&submission, &out),
+        Cmd::VerifySourceReview {
+            submission,
+            policy,
+            policy_sha256,
+            gh,
+        } => approval::check(&submission, &policy, &policy_sha256, &gh),
         Cmd::SignReviewedCandidate {
             submission,
             prepared,
