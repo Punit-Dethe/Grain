@@ -1,6 +1,8 @@
 //! Real signatures/Git history; no public trust override or author execution.
 use super::*;
 use crate::serving::legacy::{capture_with, Manifest};
+#[path = "migration_tests.rs"]
+mod migration_tests;
 
 struct Legacy {
     f: Fixture,

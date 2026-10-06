@@ -3,13 +3,13 @@
 use super::*;
 use capture::Blob;
 
-const LEGACY_DOCS: [&str; 4] = [
+pub(super) const LEGACY_DOCS: [&str; 4] = [
     "roots.json",
     "roots.json.minisig",
     "index.json",
     "index.json.minisig",
 ];
-const MAX_COMMITS: usize = 128;
+pub(super) const MAX_COMMITS: usize = 128;
 
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -20,7 +20,7 @@ pub(super) struct Manifest {
     pub commits: Vec<String>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Proof {
     commit: String,
@@ -32,7 +32,7 @@ struct Proof {
     recovered_assets: Vec<String>,
 }
 
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Identity {
     id: String,
@@ -43,7 +43,7 @@ struct Identity {
     media: Vec<(String, String)>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Reservation {
     identity: Identity,
@@ -64,6 +64,337 @@ pub(super) struct Receipt {
     assets: BTreeMap<String, String>,
     asset_sources: BTreeMap<String, String>,
     bytes: u64,
+}
+
+pub(super) struct Archive {
+    pub path: PathBuf,
+    pub assets: BTreeMap<String, Asset>,
+    pub reserved: BTreeSet<(String, String)>,
+    pub repository: String,
+    pub tip: String,
+    pub max_index: u64,
+    pub max_roots: u64,
+    pub latest_docs: BTreeMap<String, Vec<u8>>,
+    pub data_bytes: u64,
+}
+
+pub(super) fn inspect(path: &Path, pin: &str, anchor: &Anchor<'_>) -> Result<Archive> {
+    if !hex(pin) {
+        bail!("Independent legacy receipt digest required");
+    }
+    let path = directory(path)?;
+    for item in fs::read_dir(&path)? {
+        let item = item?;
+        if !["legacy-history.json", "manifest.json", "proofs", "assets"]
+            .contains(&item.file_name().to_str().unwrap_or(""))
+            || item.file_type()?.is_symlink()
+        {
+            bail!("Unexpected or linked legacy archive input");
+        }
+    }
+    let raw = crate::review::read(&path.join("legacy-history.json"), 8 * 1024 * 1024)?;
+    if digest(&raw) != pin {
+        bail!("Legacy receipt differs from independent pin");
+    }
+    let receipt: Receipt = serde_json::from_slice(&raw)?;
+    let manifest_raw = crate::review::read(&path.join("manifest.json"), 256 * 1024)?;
+    let manifest: Manifest = serde_json::from_slice(&manifest_raw)?;
+    publication::repository_url(&receipt.repository)?;
+    if receipt.schema != 1
+        || receipt.evidence_class
+            != "authenticated-legacy-history-not-release-approval-no-revocation-proof"
+        || manifest.schema != 1
+        || manifest.commits.is_empty()
+        || manifest.commits.len() > MAX_COMMITS
+        || !publication::oid(&manifest.tip_commit)
+        || manifest.commits.iter().any(|c| !publication::oid(c))
+        || manifest.commits.iter().collect::<BTreeSet<_>>().len() != manifest.commits.len()
+        || receipt.tip_commit != manifest.tip_commit
+        || receipt.manifest_sha256 != digest(&manifest_raw)
+        || receipt.proofs.iter().map(|p| &p.commit).collect::<Vec<_>>()
+            != manifest.commits.iter().collect::<Vec<_>>()
+    {
+        bail!("Malformed legacy archive or manifest binding");
+    }
+    let proofs = directory(&path.join("proofs"))?;
+    super::inventory(&proofs, &manifest.commits.iter().cloned().collect(), true)?;
+    let mut assets = BTreeMap::new();
+    let mut versions: BTreeMap<Identity, Vec<String>> = BTreeMap::new();
+    let mut variants: BTreeMap<(String, String), BTreeSet<Identity>> = BTreeMap::new();
+    let mut metadata_bytes = 0_u64;
+    let mut refs = 0_usize;
+    let mut max_index = 0;
+    let mut max_roots = 0;
+    let mut latest_docs = BTreeMap::new();
+    for proof in &receipt.proofs {
+        let dir = directory(&proofs.join(&proof.commit))?;
+        super::inventory(
+            &dir,
+            &LEGACY_DOCS.iter().map(|n| n.to_string()).collect(),
+            false,
+        )?;
+        let (docs, roots, index) = proof_metadata(&dir, anchor)?;
+        metadata_bytes += docs.values().map(|d| d.len() as u64).sum::<u64>();
+        if metadata_bytes > MAX_HISTORY_DOCS {
+            bail!("Legacy history exceeds metadata budget");
+        }
+        let referenced = index_assets(&index, false)?;
+        if proof.documents != docs.iter().map(|(n, d)| (n.clone(), digest(d))).collect()
+            || proof.roots_version != roots.version
+            || proof.index_version != index.version
+            || proof.index_expires != index.expires
+            || proof.assets != referenced.keys().cloned().collect::<Vec<_>>()
+            || proof.recovered_assets.windows(2).any(|v| v[0] >= v[1])
+            || proof
+                .recovered_assets
+                .iter()
+                .any(|n| !referenced.contains_key(n))
+        {
+            bail!("Legacy proof receipt differs from authenticated documents");
+        }
+        for (name, value) in referenced {
+            if let Some(old) = assets.get(&name) {
+                let old: &Asset = old;
+                if old.size.is_some() && value.size.is_some() && old.size != value.size {
+                    bail!("Legacy signed asset sizes conflict");
+                }
+                if old.size.is_some() || value.size.is_none() {
+                    continue;
+                }
+            }
+            assets.insert(name, value);
+            if assets.len() > MAX_FILES {
+                bail!("Legacy asset pool exceeds budget");
+            }
+        }
+        for entry in &index.entries {
+            refs += 1;
+            if refs > MAX_FILES * 16 {
+                bail!("Legacy reservation reference budget exceeded");
+            }
+            let value = identity(entry);
+            variants
+                .entry((entry.id.clone(), entry.version.clone()))
+                .or_default()
+                .insert(value.clone());
+            versions
+                .entry(value)
+                .or_default()
+                .push(proof.commit.clone());
+            if versions.len() > MAX_FILES {
+                bail!("Legacy version reservation budget exceeded");
+            }
+        }
+        max_index = max_index.max(index.version);
+        max_roots = max_roots.max(roots.version);
+        latest_docs = docs;
+    }
+    let reserved = variants.keys().cloned().collect();
+    let expected_versions: Vec<_> = versions
+        .into_iter()
+        .map(|(identity, commits)| Reservation { identity, commits })
+        .collect();
+    let expected_conflicts: Vec<_> = variants
+        .into_iter()
+        .filter_map(|(k, v)| (v.len() > 1).then_some(k))
+        .collect();
+    if receipt.reservations != expected_versions
+        || receipt.conflicted_versions != expected_conflicts
+        || receipt.assets
+            != assets
+                .iter()
+                .map(|(n, a)| (n.clone(), a.hash.clone()))
+                .collect()
+        || receipt.asset_sources.keys().collect::<Vec<_>>() != assets.keys().collect::<Vec<_>>()
+        || receipt
+            .asset_sources
+            .values()
+            .any(|c| !manifest.commits.contains(c))
+    {
+        bail!("Legacy reservations or asset sources differ from authenticated history");
+    }
+    let asset_root = directory(&path.join("assets"))?;
+    super::inventory(
+        &asset_root,
+        &BTreeSet::from(["blob".into(), "media".into()]),
+        true,
+    )?;
+    for folder in ["blob", "media"] {
+        let dir = directory(&asset_root.join(folder))?;
+        let names = assets
+            .keys()
+            .filter_map(|n| n.strip_prefix(&format!("{folder}/")).map(str::to_owned))
+            .collect();
+        super::inventory(&dir, &names, false)?;
+    }
+    let mut bytes = metadata_bytes + manifest_raw.len() as u64;
+    for (name, value) in &assets {
+        bytes += stream(&asset_root.join(name), value, None)?;
+        if bytes > MAX_TOTAL {
+            bail!("Legacy history exceeds byte budget");
+        }
+    }
+    if receipt.bytes != bytes {
+        bail!("Legacy byte receipt differs from captured data");
+    }
+    Ok(Archive {
+        path,
+        assets,
+        reserved,
+        repository: receipt.repository,
+        tip: receipt.tip_commit,
+        max_index,
+        max_roots,
+        latest_docs,
+        data_bytes: bytes + raw.len() as u64,
+    })
+}
+
+pub(super) fn copy_archive(
+    archive: &Archive,
+    pin: &str,
+    out: &Path,
+    anchor: &Anchor<'_>,
+) -> Result<()> {
+    fs::create_dir(out)?;
+    for dir in ["proofs", "assets", "assets/blob", "assets/media"] {
+        fs::create_dir(out.join(dir))?;
+    }
+    for (name, bound) in [
+        ("legacy-history.json", 8 * 1024 * 1024),
+        ("manifest.json", 256 * 1024),
+    ] {
+        write(
+            &out.join(name),
+            &crate::review::read(&archive.path.join(name), bound)?,
+        )?;
+    }
+    let manifest: Manifest = serde_json::from_slice(&fs::read(out.join("manifest.json"))?)?;
+    if manifest.commits.len() > MAX_COMMITS || manifest.commits.iter().any(|c| !publication::oid(c))
+    {
+        bail!("Copied legacy manifest paths are invalid");
+    }
+    for commit in manifest.commits {
+        let dir = out.join("proofs").join(&commit);
+        fs::create_dir(&dir)?;
+        let (docs, _, _) = proof_metadata(&archive.path.join("proofs").join(commit), anchor)?;
+        for (name, raw) in docs {
+            write(&dir.join(name), &raw)?;
+        }
+        sync_dir(&dir)?;
+    }
+    for (name, value) in &archive.assets {
+        stream(
+            &archive.path.join("assets").join(name),
+            value,
+            Some(&out.join("assets").join(name)),
+        )?;
+    }
+    inspect(out, pin, anchor)?;
+    for dir in ["proofs", "assets/blob", "assets/media", "assets", ""] {
+        sync_dir(&out.join(dir))?;
+    }
+    Ok(())
+}
+
+pub(super) fn enforce(archive: &Archive, tree: &Tree) -> Result<()> {
+    for entry in &tree.index.entries {
+        if archive
+            .reserved
+            .contains(&(entry.id.clone(), entry.version.clone()))
+        {
+            bail!("Legacy extension versions are permanently reserved; publish a new tool-only version");
+        }
+    }
+    for (id, version) in &archive.reserved {
+        if !tree.revocations.entries.iter().any(|r| {
+            r.id == *id
+                && r.version.as_ref().is_none_or(|v| v == version)
+                && r.state == RevocationState::Revoked
+        }) {
+            bail!("Migrated metadata must retain every legacy version revocation");
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn verify(path: &Path, pin: &str) -> Result<()> {
+    let archive = inspect(path, pin, &app_anchor)?;
+    println!("Authenticated legacy archive verified: {} reserved versions; historical evidence, no activation", archive.reserved.len());
+    Ok(())
+}
+
+fn proof_metadata(
+    path: &Path,
+    anchor: &Anchor<'_>,
+) -> Result<(BTreeMap<String, Vec<u8>>, Roots, Index)> {
+    let mut documents = BTreeMap::new();
+    for name in LEGACY_DOCS {
+        documents.insert(
+            name.to_owned(),
+            crate::review::read(
+                &path.join(name),
+                if name.ends_with(".minisig") {
+                    8192
+                } else if name == "roots.json" {
+                    64 * 1024
+                } else {
+                    4 * 1024 * 1024
+                },
+            )?,
+        );
+    }
+    let roots = anchor(
+        &documents["roots.json"],
+        std::str::from_utf8(&documents["roots.json.minisig"])?,
+    )?;
+    grain_core::trust::verify_publisher_signature(
+        &roots,
+        &documents["index.json"],
+        std::str::from_utf8(&documents["index.json.minisig"])?,
+    )?;
+    // Historical view only; keep the authenticated raw bytes exactly unchanged.
+    let mut view: serde_json::Value = serde_json::from_slice(&documents["index.json"])?;
+    if let Some(entries) = view
+        .get_mut("entries")
+        .and_then(serde_json::Value::as_array_mut)
+    {
+        for entry in entries {
+            if entry.get("tier").and_then(serde_json::Value::as_str) == Some("builtin") {
+                entry["tier"] = serde_json::Value::String("pack".into());
+            }
+        }
+    }
+    let index: Index = serde_json::from_value(view)?;
+    if roots.spec != 1 || roots.version == 0 || index.spec != 1 || index.version == 0 {
+        bail!("Unsupported legacy roots/index version/spec");
+    }
+    if let Some(expires) = &roots.expires {
+        expiry(expires, false)?;
+    }
+    expiry(&index.expires, false)?;
+    Ok((documents, roots, index))
+}
+
+fn identity(entry: &grain_sdk::distribution::IndexEntry) -> Identity {
+    Identity {
+        id: entry.id.clone(),
+        version: entry.version.clone(),
+        artifact_kind: match entry.artifact_kind {
+            ArtifactKind::Native => "native",
+            ArtifactKind::McpDescriptor => "mcp-descriptor",
+        }
+        .into(),
+        artifact_sha256: entry.sha256.clone(),
+        document_sha256: entry.detail_document_hash().into(),
+        media: entry
+            .media
+            .iter()
+            .map(|m| (m.sha256.clone(), m.kind.clone()))
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect(),
+    }
 }
 
 fn inventory(root: &Path, commit: &str) -> Result<BTreeMap<String, Blob>> {
@@ -262,53 +593,7 @@ pub(super) fn capture_with(
         if metadata_bytes > MAX_HISTORY_DOCS || receipt.bytes > MAX_TOTAL {
             bail!("Legacy history exceeds byte budget");
         }
-        let mut documents = BTreeMap::new();
-        for name in LEGACY_DOCS {
-            documents.insert(
-                name,
-                crate::review::read(
-                    &proof.join(name),
-                    if name.ends_with(".minisig") {
-                        8192
-                    } else if name == "roots.json" {
-                        64 * 1024
-                    } else {
-                        4 * 1024 * 1024
-                    },
-                )?,
-            );
-        }
-        let roots = anchor(
-            &documents["roots.json"],
-            std::str::from_utf8(&documents["roots.json.minisig"])?,
-        )?;
-        grain_core::trust::verify_publisher_signature(
-            &roots,
-            &documents["index.json"],
-            std::str::from_utf8(&documents["index.json.minisig"])?,
-        )?;
-        // `builtin` was a retired presentation tier, not an executable format.
-        // Only this authenticated archival view maps it for shared asset parsing.
-        // Raw signed bytes retain it; active SDK/client admission stays unchanged.
-        let mut view: serde_json::Value = serde_json::from_slice(&documents["index.json"])?;
-        if let Some(entries) = view
-            .get_mut("entries")
-            .and_then(serde_json::Value::as_array_mut)
-        {
-            for entry in entries {
-                if entry.get("tier").and_then(serde_json::Value::as_str) == Some("builtin") {
-                    entry["tier"] = serde_json::Value::String("pack".into());
-                }
-            }
-        }
-        let index: Index = serde_json::from_value(view)?;
-        if roots.spec != 1 || roots.version == 0 || index.spec != 1 || index.version == 0 {
-            bail!("Unsupported legacy roots/index version/spec");
-        }
-        if let Some(expires) = &roots.expires {
-            expiry(expires, false)?;
-        }
-        expiry(&index.expires, false)?;
+        let (documents, roots, index) = proof_metadata(&proof, anchor)?;
         let assets = index_assets(&index, false)?;
         let mut selected = BTreeMap::new();
         let mut recovered_assets = vec![];
@@ -350,24 +635,7 @@ pub(super) fn capture_with(
             if reservation_refs > MAX_FILES * 16 {
                 bail!("Legacy reservation reference budget exceeded");
             }
-            let identity = Identity {
-                id: entry.id.clone(),
-                version: entry.version.clone(),
-                artifact_kind: match entry.artifact_kind {
-                    ArtifactKind::Native => "native",
-                    ArtifactKind::McpDescriptor => "mcp-descriptor",
-                }
-                .into(),
-                artifact_sha256: entry.sha256.clone(),
-                document_sha256: entry.detail_document_hash().into(),
-                media: entry
-                    .media
-                    .iter()
-                    .map(|m| (m.sha256.clone(), m.kind.clone()))
-                    .collect::<BTreeSet<_>>()
-                    .into_iter()
-                    .collect(),
-            };
+            let identity = identity(entry);
             variant_counts
                 .entry((entry.id.clone(), entry.version.clone()))
                 .or_default()

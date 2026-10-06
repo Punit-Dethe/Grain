@@ -1,5 +1,18 @@
 # Local extension registry: source and publishing audit
 
+**E4j migration implementation, 7 October:** [Migration audit](EXTENSION-LEGACY-MIGRATION-AUDIT.md)
+records the connected archive verifier, genuine-key empty-baseline signer,
+sticky signed version reservations through store/update/renewal/hosting, and
+distinct first Git migration handoff. The actual legacy archive still preserves
+all 109 files; active old versions remain retired. Windows **95 maintainer /
+9 core trust / 25 public CLI checks**, build/strict Clippy and scoped audit pass.
+Linux checkpoint is Pending. No production key was accessed and no production
+baseline was signed, approved or activated. E4 remains open for protected
+signing/authorization, conditional GitHub activation, operational controls and
+actual hosted-client coherence; **five E4–E8 stages retain work**. No new manual
+batch or Agent harness expansion; existing foundation/forward/inventory counts,
+parked website and physical-removal hold are unchanged.
+
 **E4i historical evidence, 7 October:** [Archive audit](EXTENSION-LEGACY-HISTORY-AUDIT.md)
 captures all 18 signed catalogue-changing ancestors through pinned `af6e244...`
 without using the dirty worktree. Real data has 27 content variants for 13 version

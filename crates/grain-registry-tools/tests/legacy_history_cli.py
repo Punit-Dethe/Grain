@@ -126,6 +126,70 @@ for label, replacement, error in [
     run(label, command, error)
     assert not refused.exists()
 assert len(results) == 12
+run('migration-cli-default-stack-help', ['--help'])
+receipt_pin = digest(receipt_raw)
+verify = ['verify-legacy-history', '--archive', archive,
+    '--expected-receipt-sha256', receipt_pin]
+run('migration-real-archive-reauthenticated', verify)
+attempt = verify.copy()
+attempt[-1] = '0' * 64
+run('migration-archive-pin-mismatch', attempt, 'independent pin')
+receipt_file = archive / 'legacy-history.json'
+forged = json.dumps({**receipt, 'reservations': []}).encode()
+receipt_file.write_bytes(forged)
+attempt = verify.copy()
+attempt[-1] = digest(forged)
+try:
+    run('migration-forged-reservations', attempt, 'authenticated history')
+finally:
+    receipt_file.write_bytes(receipt_raw)
+proof_file = archive / 'proofs' / receipt['proofs'][0]['commit'] / 'index.json'
+proof_raw = proof_file.read_bytes()
+proof_file.write_bytes(proof_raw + b' ')
+try:
+    run('migration-modified-signed-proof', verify, 'signature does not verify')
+finally:
+    proof_file.write_bytes(proof_raw)
+asset_file = archive / 'assets' / next(iter(receipt['assets']))
+asset_raw = asset_file.read_bytes()
+asset_file.write_bytes(b'corrupted')
+try:
+    run('migration-modified-retained-asset', verify, 'bytes differ from signed hash/size')
+finally:
+    asset_file.write_bytes(asset_raw)
+extra = archive / 'unreviewed.json'
+extra.write_bytes(b'{}')
+try:
+    run('migration-unreviewed-archive-file', verify, 'Unexpected')
+finally:
+    extra.unlink()
+sign = ['sign-legacy-migration', '--archive', archive,
+    '--expected-receipt-sha256', receipt_pin, '--key', output / 'never-created.key',
+    '--expires-days', '30', '--out', refused]
+for label, flag, value, error in [
+    ('migration-lifetime-refused-before-key', '--expires-days', '0', 'one through thirty'),
+    ('migration-contained-output-before-key', '--out', archive / 'never-created', 'outside'),
+    ('migration-explicit-protected-key-required', '--expires-days', '30', 'Read protected migration publishing key'),
+]:
+    attempt = sign.copy()
+    attempt[attempt.index(flag) + 1] = value
+    run(label, attempt, error)
+    assert not refused.exists()
+migrate = ['prepare-github-migration', '--checkout', output / 'never-open-checkout',
+    '--repository', repository, '--branch', 'main', '--expected-base-commit', '1' * 40,
+    '--candidate-commit', '2' * 40, '--legacy-archive', archive,
+    '--expected-legacy-receipt-sha256', receipt_pin, '--bundle', output / 'never-open-bundle',
+    '--expected-receipt-sha256', '1' * 64, '--out', refused]
+for label, flag, value, error in [
+    ('migration-handoff-repository-admission', '--repository', 'https://elsewhere.invalid/repo', 'OWNER/REPO'),
+    ('migration-handoff-commit-admission', '--candidate-commit', 'bad', 'full Git SHA1'),
+    ('migration-handoff-branch-admission', '--branch', 'main:other', 'branch is malformed'),
+]:
+    attempt = migrate.copy()
+    attempt[attempt.index(flag) + 1] = value
+    run(label, attempt, error)
+    assert not refused.exists()
+assert len(results) == 25
 assert (archive / 'legacy-history.json').read_bytes() == receipt_raw
 assert git(['rev-parse', 'HEAD']) == head_before
 assert git(['status', '--porcelain=v1', '-z', '--untracked-files=normal']) == status_before
@@ -134,6 +198,7 @@ report = {'commands': results, 'git_pids': git_pids, 'manifest_sha256': manifest
     'receipt_sha256': digest(receipt_raw), 'proofs': len(receipt['proofs']),
     'identity_variants': len(receipt['reservations']), 'conflicts': len(receipt['conflicted_versions']),
     'verified_files': verified_files, 'tool_sha256': digest(tool.read_bytes()),
-    'keys_created': 0, 'hosting_changed': False, 'source_unchanged': True}
+    'keys_created': 0, 'production_signing_performed': False,
+    'hosting_changed': False, 'source_unchanged': True}
 (output / 'report.json').write_text(json.dumps(report, indent=2) + '\n', encoding='utf-8')
 print(json.dumps({k: v for k, v in report.items() if k not in ['commands', 'git_pids']}))

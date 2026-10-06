@@ -40,7 +40,11 @@ fn reserve(versions: &mut Versions, tree: &Tree) -> Result<()> {
 }
 
 fn merge(pool: &mut Pool, tree: &Tree) -> Result<()> {
-    for (name, value) in &tree.assets {
+    merge_assets(pool, &tree.assets, &tree.path)
+}
+
+fn merge_assets(pool: &mut Pool, assets: &BTreeMap<String, Asset>, root: &Path) -> Result<()> {
+    for (name, value) in assets {
         if let Some((old, _)) = pool.get(name) {
             if old.size.is_some() && value.size.is_some() && old.size != value.size {
                 bail!("Historical asset sizes conflict");
@@ -49,7 +53,7 @@ fn merge(pool: &mut Pool, tree: &Tree) -> Result<()> {
                 continue;
             }
         }
-        pool.insert(name.clone(), (value.clone(), tree.path.join(name)));
+        pool.insert(name.clone(), (value.clone(), root.join(name)));
         if pool.len() > MAX_FILES {
             bail!("Hosting asset pool exceeds file budget");
         }
@@ -96,6 +100,7 @@ pub(super) fn inspect(
             "current.json".into(),
             "v1".into(),
             "history".into(),
+            "legacy".into(),
         ]),
     )?;
     let raw = crate::review::read(&bundle.join("bundle.json"), RECEIPT_MAX)?;
@@ -132,11 +137,21 @@ pub(super) fn inspect(
     inventory(&history, &receipt.history.iter().cloned().collect(), true)?;
     let mut pool = Pool::new();
     merge(&mut pool, &current)?;
+    let legacy = retained_legacy(&bundle, &current, anchor)?;
+    if let Some(archive) = &legacy {
+        merge_assets(&mut pool, &archive.assets, &archive.path.join("assets"))?;
+    }
     let mut versions = Versions::new();
     reserve(&mut versions, &current)?;
     let mut metadata_bytes: u64 = current.docs.values().map(|v| v.len() as u64).sum();
     for id in &receipt.history {
         let historical = metadata(&history.join(id), anchor, false)?;
+        if historical.legacy_pin != current.legacy_pin {
+            bail!("Hosting history cannot change its legacy archive binding");
+        }
+        if let Some(archive) = &legacy {
+            legacy::enforce(archive, &historical)?;
+        }
         inventory(&historical.path, &proof_names(), false)?;
         if &historical.state.snapshot != id {
             bail!("Hosting history identity differs from signed proof");
@@ -162,6 +177,10 @@ pub(super) fn inspect(
         inventory(&dir, &allowed, false)?;
     }
     let mut bytes = metadata_bytes + raw.len() as u64 + pointer.len() as u64;
+    bytes += legacy.as_ref().map_or(0, |a| a.data_bytes);
+    if bytes > MAX_TOTAL {
+        bail!("Hosting bundle exceeds total byte budget");
+    }
     for (name, (asset, _)) in &pool {
         bytes += stream(&v1.join(name), asset, None)?;
         if bytes > MAX_TOTAL {
@@ -192,6 +211,16 @@ pub(super) fn export(store: &Path, out: &Path, pin: &str, anchor: &Anchor<'_>) -
     }
     let mut pool = Pool::new();
     merge(&mut pool, &current)?;
+    let legacy = retained_legacy(&store, &current, anchor)?;
+    if let Some(archive) = &legacy {
+        merge_assets(&mut pool, &archive.assets, &archive.path.join("assets"))?;
+        legacy::copy_archive(
+            archive,
+            current.legacy_pin.as_ref().unwrap(),
+            &out.join("legacy"),
+            anchor,
+        )?;
+    }
     let mut versions = Versions::new();
     reserve(&mut versions, &current)?;
     let mut receipt = Receipt {
@@ -202,6 +231,12 @@ pub(super) fn export(store: &Path, out: &Path, pin: &str, anchor: &Anchor<'_>) -
     };
     let mut metadata_bytes: u64 = current.docs.values().map(|v| v.len() as u64).sum();
     visit_history(&store, anchor, |historical| {
+        if historical.legacy_pin != current.legacy_pin {
+            bail!("Hosting history cannot change its legacy archive binding");
+        }
+        if let Some(archive) = &legacy {
+            legacy::enforce(archive, &historical)?;
+        }
         if historical.state.snapshot == current.state.snapshot {
             return Ok(());
         }
@@ -225,6 +260,10 @@ pub(super) fn export(store: &Path, out: &Path, pin: &str, anchor: &Anchor<'_>) -
         bail!("Hosting receipt exceeds byte budget");
     }
     let mut bytes = metadata_bytes + raw.len() as u64 + pointer.len() as u64;
+    bytes += legacy.as_ref().map_or(0, |a| a.data_bytes);
+    if bytes > MAX_TOTAL {
+        bail!("Hosting bundle exceeds total byte budget");
+    }
     for (name, (asset, source)) in &pool {
         bytes += stream(source, asset, Some(&v1.join(name)))?;
         if bytes > MAX_TOTAL {

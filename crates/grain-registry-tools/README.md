@@ -583,14 +583,84 @@ python crates/grain-registry-tools/tests/legacy_history_cli.py \
 ```
 
 This is a maintainer command checkpoint, separate from the Agent harness. It
-uses no private keys, checks 12 exact CLI verdicts and compares every archived
+uses no private keys, checks 25 exact CLI verdicts and compares every archived
 proof/asset to its actual Git source bytes. Its fixed expected manifest digest
 must be reviewed with the pinned test source. Keep it while this migration path
 is supported; it is not a second application or a temporary author execution lane.
 
-**Migration remains separate:** a protected consumer must reauthenticate the
-archive and enforce reservations/conflicts before creating a reviewed, genuinely
-signed six-document baseline. Do not flatten this archive into `v1/`, fabricate
-historical revocations, reapprove legacy capabilities, reuse reserved versions or
-interpret its unsigned receipt as permission to release. Conditional publication
-and hosted client coherence remain required.
+## Legacy migration and retained reservations (E4j)
+
+The protected archive consumer now reauthenticates every original signature,
+asset hash/size and reservation. It recomputes identities/conflicts from signed
+documents rather than trusting unsigned receipt claims. Commit/source labels
+remain independently pinned operational claims until the initial Git handoff
+recaptures the entire archive from the original Git ancestry.
+
+```text
+grain-registry verify-legacy-history --archive ARCHIVE \
+  --expected-receipt-sha256 INDEPENDENT_ARCHIVE_RECEIPT_SHA256
+grain-registry sign-legacy-migration --archive ARCHIVE \
+  --expected-receipt-sha256 INDEPENDENT_ARCHIVE_RECEIPT_SHA256 \
+  --key EXPLICIT_PROTECTED_PUBLISHER_KEY --expires-days 30 --out NEW_MIGRATION
+grain-registry verify-serving-tree --v1 NEW_MIGRATION/v1
+grain-registry initialize-serving-store --v1 NEW_MIGRATION/v1 --out NEW_STORE
+```
+
+Signing requires the genuine existing publisher key after public-input checks;
+the resulting signatures must verify against unchanged app-authenticated roots.
+This signer uses the existing unencrypted minisign key format: an approved
+protected runner must supply/custody the key; this command neither discovers
+keys nor provides a production authorization policy. Lifetime is 1–30 days.
+Expired roots and version exhaustion refuse before reading the key.
+
+The initial active index is empty and advances above **every historical index
+version**. Current signed revocations explicitly retire every archived `(id,
+version)`. The app's signed revocation seed is authenticated, preserved and
+advanced above its existing version. For the pinned real archive, that means
+index **40**, revocations **2**, and **13 reserved version identities**; no such
+production baseline has been signed by these tests. These are new retirements,
+never fabricated past revocation history.
+
+Both current signed documents bind the original receipt with
+`legacy_history_sha256`. Initialization stores the reverified archive once in
+`STORE/legacy/`. Promotion, renewal, snapshot export, hosting export/verification,
+raw Git capture and later publication retain that binding and reject reused
+legacy versions or erased/weakened retirements. New tool-only versions still
+need ordinary source review/signing. Hosting retains all old content-addressed
+asset routes and original proofs; the empty current index does not list old
+extensions or reactivate their privileges. Clients do not download this archive.
+Hosting's 1 GiB total budget includes the archive and retained public copies.
+
+Standalone assembly/renewal `v1/` outputs refer to the existing archive. Verify
+them with `verify-serving-tree --v1 UPDATE/v1 --legacy-archive STORE/legacy`.
+Store initialization expects a complete sibling `legacy/` archive; ordinary
+promotion uses the selected store's existing verified archive.
+
+For the **first** migration only, prepare a candidate whose sole parent is the
+independently chosen archived tip. Commit the complete bundle's `v1/` under
+`v1/`, and its `bundle.json`, `current.json`, `history/`, `legacy/` under
+`.registry-publication/`. Reproduce empty folders during capture. Then:
+
+```text
+grain-registry prepare-github-migration --checkout PROTECTED_CANDIDATE_CHECKOUT \
+  --repository Punit-Dethe/Grain-Extention --branch main \
+  --expected-base-commit PINNED_LEGACY_TIP --candidate-commit EXACT_CANDIDATE \
+  --legacy-archive ARCHIVE --expected-legacy-receipt-sha256 ARCHIVE_RECEIPT_SHA256 \
+  --bundle VERIFIED_BUNDLE --expected-receipt-sha256 BUNDLE_RECEIPT_SHA256 \
+  --out NEW_HANDOFF
+```
+
+The gate independently recaptures old Git proofs, validates the empty migration
+baseline and compares every candidate file to committed bytes. It rejects an
+invented earlier six-document history and emits a distinct initial-migration
+handoff with an explicit expected-base lease. It never authenticates/pushes.
+Subsequent releases use ordinary `prepare-github-publication` with the complete
+previous/current bundles and unchanged legacy binding.
+
+Production key custody, human review, remote membership/protection, authorized
+conditional execution and actual hosted-client coherence remain release gates.
+Do not activate the legacy `publish`/`retire` writers: they do not implement this
+complete retained-history contract. Their physical removal stays on hold.
+[Migration audit](../../docs/Extensions%202.0/EXTENSION-LEGACY-MIGRATION-AUDIT.md)
+records this checkpoint and remaining work. The command regression script stays
+while the migration is supported; it is not a new Agent harness/application.

@@ -16,7 +16,7 @@ use std::io::Cursor;
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
-use clap::{Parser, Subcommand};
+use clap::{Args, Parser, Subcommand};
 use minisign::{KeyPair, PublicKeyBox, SecretKeyBox};
 mod approval;
 mod catalogue;
@@ -35,8 +35,118 @@ struct Cli {
     cmd: Cmd,
 }
 
+#[derive(Args)]
+struct PrepareGithubMigrationArgs {
+    #[arg(long)]
+    checkout: PathBuf,
+    #[arg(long)]
+    repository: String,
+    #[arg(long)]
+    branch: String,
+    #[arg(long)]
+    expected_base_commit: String,
+    #[arg(long)]
+    candidate_commit: String,
+    #[arg(long)]
+    legacy_archive: PathBuf,
+    #[arg(long)]
+    expected_legacy_receipt_sha256: String,
+    #[arg(long)]
+    bundle: PathBuf,
+    #[arg(long)]
+    expected_receipt_sha256: String,
+    #[arg(long)]
+    out: PathBuf,
+}
+
+#[derive(Args)]
+struct VerifyLegacyHistoryArgs {
+    #[arg(long)]
+    archive: PathBuf,
+    #[arg(long)]
+    expected_receipt_sha256: String,
+}
+
+#[derive(Args)]
+struct SignLegacyMigrationArgs {
+    #[arg(long)]
+    archive: PathBuf,
+    #[arg(long)]
+    expected_receipt_sha256: String,
+    #[arg(long)]
+    key: PathBuf,
+    #[arg(long, default_value_t = 30)]
+    expires_days: u32,
+    #[arg(long)]
+    out: PathBuf,
+}
+
+#[derive(Args)]
+struct PrepareGithubPublicationArgs {
+    #[arg(long)]
+    checkout: PathBuf,
+    /// Independently expected GitHub OWNER/REPO, without .git.
+    #[arg(long)]
+    repository: String,
+    #[arg(long)]
+    branch: String,
+    #[arg(long)]
+    expected_base_commit: String,
+    #[arg(long)]
+    candidate_commit: String,
+    #[arg(long)]
+    previous: PathBuf,
+    #[arg(long)]
+    previous_receipt_sha256: String,
+    #[arg(long)]
+    bundle: PathBuf,
+    #[arg(long)]
+    expected_receipt_sha256: String,
+    /// Fresh directory for the conditional push handoff, not a deploy.
+    #[arg(long)]
+    out: PathBuf,
+}
+
+#[derive(Args)]
+struct SignReviewedCandidateArgs {
+    #[arg(long)]
+    submission: PathBuf,
+    #[arg(long)]
+    prepared: PathBuf,
+    #[arg(long)]
+    candidate: PathBuf,
+    /// Operator-owned review policy, outside author-controlled workspaces.
+    #[arg(long)]
+    policy: PathBuf,
+    /// Independent digest of the protected, approved policy document.
+    #[arg(long)]
+    policy_sha256: String,
+    /// Absolute path to the independently pinned official GitHub CLI binary.
+    #[arg(long)]
+    gh: PathBuf,
+    /// GitHub/Sigstore attestation bundle for candidate.json.
+    #[arg(long)]
+    attestation: PathBuf,
+    /// Previously signed index.json and index.json.minisig directory.
+    #[arg(long)]
+    previous: PathBuf,
+    #[arg(long)]
+    key: PathBuf,
+    /// New update directory; complete hosting/roots/revocations are separate.
+    #[arg(long)]
+    out: PathBuf,
+}
+
 #[derive(Subcommand)]
-enum Cmd {
+enum LegacyCmd {
+    /// Bind the first signed empty migration to exact legacy/candidate Git commits.
+    /// Rechecks original history; emits a distinct conditional handoff, never pushes.
+    PrepareGithubMigration(PrepareGithubMigrationArgs),
+    /// Reauthenticate a protected receipt-pinned historical archive; never activates.
+    VerifyLegacyHistory(VerifyLegacyHistoryArgs),
+    /// Sign an empty current catalogue retiring every preserved legacy version.
+    /// Uses the existing publisher key; no root rotation, approval or deployment.
+    SignLegacyMigration(SignLegacyMigrationArgs),
     /// Preserve all four-document legacy catalogue proofs through a pinned tip.
     /// An independently pinned manifest is required. No activation or signing.
     CaptureLegacyHistory {
@@ -51,6 +161,14 @@ enum Cmd {
         #[arg(long)]
         out: PathBuf,
     },
+}
+
+#[derive(Subcommand)]
+enum Cmd {
+    // Separate argument builders keep Windows debug stack use bounded.
+    // Flatten preserves all public command names without another command level.
+    #[command(flatten)]
+    Legacy(LegacyCmd),
     /// Capture authenticated previous publication proof from an exact Git commit.
     /// Never reads the working tree, activates metadata, authenticates or pushes.
     CaptureGithubPublication {
@@ -67,30 +185,7 @@ enum Cmd {
         out: PathBuf,
     },
     /// Bind verified current/history bundles to exact Git commits; never pushes.
-    PrepareGithubPublication {
-        #[arg(long)]
-        checkout: PathBuf,
-        /// Independently expected GitHub OWNER/REPO, without .git.
-        #[arg(long)]
-        repository: String,
-        #[arg(long)]
-        branch: String,
-        #[arg(long)]
-        expected_base_commit: String,
-        #[arg(long)]
-        candidate_commit: String,
-        #[arg(long)]
-        previous: PathBuf,
-        #[arg(long)]
-        previous_receipt_sha256: String,
-        #[arg(long)]
-        bundle: PathBuf,
-        #[arg(long)]
-        expected_receipt_sha256: String,
-        /// Fresh directory for the conditional push handoff, not a deploy.
-        #[arg(long)]
-        out: PathBuf,
-    },
+    PrepareGithubPublication(PrepareGithubPublicationArgs),
     /// Renew signed catalogue/revocation expiry without changing entries or hosting.
     RenewServingMetadata {
         #[arg(long)]
@@ -136,6 +231,9 @@ enum Cmd {
     VerifyServingTree {
         #[arg(long)]
         v1: PathBuf,
+        /// Explicit retained archive for an assembly/renewal outside its store.
+        #[arg(long)]
+        legacy_archive: Option<PathBuf>,
     },
     /// Assemble a full serving tree from a signed base and signed update fragment.
     AssembleServingTree {
@@ -182,34 +280,7 @@ enum Cmd {
     },
     /// Sign a new catalogue update only after pinned review and GitHub provenance.
     /// Produces an update fragment, never uploads or mutates the served registry.
-    SignReviewedCandidate {
-        #[arg(long)]
-        submission: PathBuf,
-        #[arg(long)]
-        prepared: PathBuf,
-        #[arg(long)]
-        candidate: PathBuf,
-        /// Operator-owned review policy, outside author-controlled workspaces.
-        #[arg(long)]
-        policy: PathBuf,
-        /// Independent digest of the protected, approved policy document.
-        #[arg(long)]
-        policy_sha256: String,
-        /// Absolute path to the independently pinned official GitHub CLI binary.
-        #[arg(long)]
-        gh: PathBuf,
-        /// GitHub/Sigstore attestation bundle for candidate.json.
-        #[arg(long)]
-        attestation: PathBuf,
-        /// Previously signed index.json and index.json.minisig directory.
-        #[arg(long)]
-        previous: PathBuf,
-        #[arg(long)]
-        key: PathBuf,
-        /// New update directory; complete hosting/roots/revocations are separate.
-        #[arg(long)]
-        out: PathBuf,
-    },
+    SignReviewedCandidate(SignReviewedCandidateArgs),
     /// Generate a minisign keypair. Writes <name>.pub and <name>.key into --out,
     /// and prints the base64 public-key line to pin in the binary.
     Keygen {
@@ -540,9 +611,45 @@ fn edit_distance(a: &str, b: &str) -> usize {
     prev[b.len()]
 }
 
-fn main() -> Result<()> {
-    match Cli::parse().cmd {
-        Cmd::CaptureLegacyHistory {
+fn legacy_command(cmd: LegacyCmd) -> Result<()> {
+    match cmd {
+        LegacyCmd::PrepareGithubMigration(PrepareGithubMigrationArgs {
+            checkout,
+            repository,
+            branch,
+            expected_base_commit,
+            candidate_commit,
+            legacy_archive,
+            expected_legacy_receipt_sha256,
+            bundle,
+            expected_receipt_sha256,
+            out,
+        }) => serving::publication::prepare_migration(&serving::publication::Request {
+            checkout: &checkout,
+            repository: &repository,
+            branch: &branch,
+            base_commit: &expected_base_commit,
+            candidate_commit: &candidate_commit,
+            previous: &legacy_archive,
+            previous_pin: &expected_legacy_receipt_sha256,
+            bundle: &bundle,
+            bundle_pin: &expected_receipt_sha256,
+            out: &out,
+        }),
+        LegacyCmd::VerifyLegacyHistory(VerifyLegacyHistoryArgs {
+            archive,
+            expected_receipt_sha256,
+        }) => serving::legacy::verify(&archive, &expected_receipt_sha256),
+        LegacyCmd::SignLegacyMigration(SignLegacyMigrationArgs {
+            archive,
+            expected_receipt_sha256,
+            key,
+            expires_days,
+            out,
+        }) => {
+            serving::migration::sign(&archive, &expected_receipt_sha256, &key, expires_days, &out)
+        }
+        LegacyCmd::CaptureLegacyHistory {
             checkout,
             repository,
             manifest,
@@ -555,6 +662,12 @@ fn main() -> Result<()> {
             &expected_manifest_sha256,
             &out,
         ),
+    }
+}
+
+fn main() -> Result<()> {
+    match Cli::parse().cmd {
+        Cmd::Legacy(cmd) => legacy_command(cmd),
         Cmd::CaptureGithubPublication {
             checkout,
             repository,
@@ -568,7 +681,7 @@ fn main() -> Result<()> {
             &expected_receipt_sha256,
             &out,
         ),
-        Cmd::PrepareGithubPublication {
+        Cmd::PrepareGithubPublication(PrepareGithubPublicationArgs {
             checkout,
             repository,
             branch,
@@ -579,7 +692,7 @@ fn main() -> Result<()> {
             bundle,
             expected_receipt_sha256,
             out,
-        } => serving::publication::prepare(&serving::publication::Request {
+        }) => serving::publication::prepare(&serving::publication::Request {
             checkout: &checkout,
             repository: &repository,
             branch: &branch,
@@ -612,7 +725,9 @@ fn main() -> Result<()> {
             out,
             expected_current_sha256,
         } => serving::export(&store, &out, &expected_current_sha256),
-        Cmd::VerifyServingTree { v1 } => serving::verify(&v1),
+        Cmd::VerifyServingTree { v1, legacy_archive } => {
+            serving::verify(&v1, legacy_archive.as_deref())
+        }
         Cmd::AssembleServingTree { base, update, out } => serving::assemble(&base, &update, &out),
         Cmd::InitializeServingStore { v1, out } => serving::initialize(&v1, &out),
         Cmd::PromoteServingTree {
@@ -627,7 +742,7 @@ fn main() -> Result<()> {
             policy_sha256,
             gh,
         } => approval::check(&submission, &policy, &policy_sha256, &gh),
-        Cmd::SignReviewedCandidate {
+        Cmd::SignReviewedCandidate(SignReviewedCandidateArgs {
             submission,
             prepared,
             candidate,
@@ -638,7 +753,7 @@ fn main() -> Result<()> {
             previous,
             key,
             out,
-        } => review::sign(review::Inputs {
+        }) => review::sign(review::Inputs {
             submission: &submission,
             prepared: &prepared,
             candidate: &candidate,

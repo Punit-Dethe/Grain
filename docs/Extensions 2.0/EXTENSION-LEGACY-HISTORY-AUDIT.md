@@ -1,5 +1,9 @@
 # E4i: authenticated legacy catalogue history preservation
 
+**7 October follow-up:** [E4j migration audit](EXTENSION-LEGACY-MIGRATION-AUDIT.md)
+records the completed archive consumer/reservation implementation. Protected
+production signing/approval, activation and hosted-client checks remain open.
+
 7 October 2026. Bounded maintainer implementation and scoped audit; **not a
 production migration, independent release approval or activation**.
 

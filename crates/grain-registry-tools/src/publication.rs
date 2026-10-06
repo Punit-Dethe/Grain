@@ -104,7 +104,7 @@ pub(super) fn checkout(root: &Path, url: &str, expected_head: Option<&str>) -> R
 // unrelated checkout files or rely on its index/worktree/attributes for bytes.
 fn files(bundle: &Path) -> Result<BTreeMap<String, PathBuf>> {
     fn visit(dir: &Path, prefix: &str, out: &mut BTreeMap<String, PathBuf>) -> Result<()> {
-        if prefix.split('/').count() > 3 {
+        if prefix.split('/').count() > 5 {
             bail!("Unexpected publication directory depth");
         }
         for item in fs::read_dir(dir)? {
@@ -119,7 +119,9 @@ fn files(bundle: &Path) -> Result<BTreeMap<String, PathBuf>> {
                 visit(&item.path(), &name, out)?;
             } else if kind.is_file() {
                 out.insert(name, item.path());
-                if out.len() > MAX_FILES + MAX_HISTORY * DOCS.len() + 8 {
+                if out.len()
+                    > MAX_FILES * 2 + MAX_HISTORY * DOCS.len() + legacy::MAX_COMMITS * 4 + 10
+                {
                     bail!("Publication file inventory exceeds budget");
                 }
             } else {
@@ -141,6 +143,13 @@ fn files(bundle: &Path) -> Result<BTreeMap<String, PathBuf>> {
         &format!("{PROOFS}/history"),
         &mut out,
     )?;
+    if bundle.join("legacy").try_exists()? {
+        visit(
+            &bundle.join("legacy"),
+            &format!("{PROOFS}/legacy"),
+            &mut out,
+        )?;
+    }
     Ok(out)
 }
 
@@ -228,6 +237,93 @@ pub(crate) fn prepare(request: &Request<'_>) -> Result<()> {
 }
 
 pub(super) fn prepare_with(r: &Request<'_>, anchor: &Anchor<'_>) -> Result<()> {
+    let (url, root) = candidate(r)?;
+    let previous = directory(r.previous)?;
+    let bundle = directory(r.bundle)?;
+    let out = new_output(r.out, &[&root, &previous, &bundle])?;
+    let old = hosting::inspect(&previous, r.previous_pin, anchor, false)?;
+    let next = hosting::inspect(&bundle, r.bundle_pin, anchor, true)?;
+    let required: BTreeSet<_> = old
+        .history
+        .iter()
+        .chain(std::iter::once(&old.selected.snapshot))
+        .collect();
+    if required.iter().any(|id| !next.history.contains(id)) {
+        bail!("Publication must retain every previous signed history proof");
+    }
+    transition(
+        &metadata(&previous.join("v1"), anchor, false)?,
+        &metadata(&bundle.join("v1"), anchor, true)?,
+        true,
+    )?;
+    committed(&root, r.base_commit, &previous)?;
+    committed(&root, r.candidate_commit, &bundle)?;
+    // Recheck authenticated inputs after batch hashing. Inputs are protected
+    // operator-owned immutable captures, not an arbitrary same-account sandbox.
+    if hosting::inspect(&previous, r.previous_pin, anchor, false)?.selected != old.selected
+        || hosting::inspect(&bundle, r.bundle_pin, anchor, true)?.selected != next.selected
+    {
+        bail!("Publication inputs changed during inspection");
+    }
+    emit(
+        r,
+        url,
+        next.selected.snapshot,
+        &out,
+        "verified-git-publication-handoff-not-release-approval",
+    )
+}
+
+fn emit(r: &Request<'_>, url: String, snapshot: String, out: &Path, class: &str) -> Result<()> {
+    let reference = format!("refs/heads/{}", r.branch);
+    let handoff = Handoff {
+        schema: 1,
+        evidence_class: class.into(),
+        repository: r.repository.into(),
+        branch: r.branch.into(),
+        expected_base_commit: r.base_commit.into(),
+        candidate_commit: r.candidate_commit.into(),
+        previous_receipt_sha256: r.previous_pin.into(),
+        candidate_receipt_sha256: r.bundle_pin.into(),
+        snapshot,
+        push_args: vec![
+            "--no-replace-objects".into(),
+            "-c".into(),
+            "push.followTags=false".into(),
+            "-c".into(),
+            "push.recurseSubmodules=no".into(),
+            "push".into(),
+            "--porcelain".into(),
+            "--no-verify".into(),
+            format!("--force-with-lease={reference}:{}", r.base_commit),
+            url,
+            format!("{}:{reference}", r.candidate_commit),
+        ],
+        remove_environment_prefix: "GIT_".into(),
+        environment: BTreeMap::from([
+            ("GIT_CONFIG_NOSYSTEM".into(), "1".into()),
+            (
+                "GIT_CONFIG_GLOBAL".into(),
+                if cfg!(windows) { "NUL" } else { "/dev/null" }.into(),
+            ),
+            ("GIT_TERMINAL_PROMPT".into(), "0".into()),
+            ("GIT_NO_LAZY_FETCH".into(), "1".into()),
+        ]),
+    };
+    let raw = serde_json::to_vec_pretty(&handoff)?;
+    fs::create_dir(out)?;
+    let mut owned = OwnedOutput(out.to_path_buf(), false);
+    write(&out.join("publication.json"), &raw)?;
+    sync_dir(out)?;
+    owned.1 = true;
+    println!(
+        "Verified publication handoff SHA256 {}; no remote changed and no release approval granted",
+        digest(&raw)
+    );
+    Ok(())
+}
+
+fn candidate(r: &Request<'_>) -> Result<(String, PathBuf)> {
     let url = repository_url(r.repository)?;
     if !oid(r.base_commit) || !oid(r.candidate_commit) || r.base_commit == r.candidate_commit {
         bail!("Independent distinct full Git SHA1 base/candidate commits required");
@@ -243,9 +339,6 @@ pub(super) fn prepare_with(r: &Request<'_>, anchor: &Anchor<'_>) -> Result<()> {
         bail!("Expected publication branch is malformed");
     }
     let root = directory(r.checkout)?;
-    let previous = directory(r.previous)?;
-    let bundle = directory(r.bundle)?;
-    let out = new_output(r.out, &[&root, &previous, &bundle])?;
     let reference = format!("refs/heads/{}", r.branch);
     git(&root, &["check-ref-format", &reference], false)?;
     checkout(&root, &url, Some(r.candidate_commit))?;
@@ -283,73 +376,58 @@ pub(super) fn prepare_with(r: &Request<'_>, anchor: &Anchor<'_>) -> Result<()> {
     {
         bail!("Publication candidate changes unrelated repository paths");
     }
-    let old = hosting::inspect(&previous, r.previous_pin, anchor, false)?;
+    Ok((url, root))
+}
+
+pub(crate) fn prepare_migration(r: &Request<'_>) -> Result<()> {
+    prepare_migration_with(r, &app_anchor)
+}
+
+pub(super) fn prepare_migration_with(r: &Request<'_>, anchor: &Anchor<'_>) -> Result<()> {
+    let (url, root) = candidate(r)?;
+    let archive = legacy::inspect(r.previous, r.previous_pin, anchor)?;
+    let bundle = directory(r.bundle)?;
+    let out = new_output(r.out, &[&root, &archive.path, &bundle])?;
+    if archive.repository != r.repository || archive.tip != r.base_commit {
+        bail!("Migration base/repository differs from pinned legacy archive");
+    }
     let next = hosting::inspect(&bundle, r.bundle_pin, anchor, true)?;
-    let required: BTreeSet<_> = old
-        .history
-        .iter()
-        .chain(std::iter::once(&old.selected.snapshot))
-        .collect();
-    if required.iter().any(|id| !next.history.contains(id)) {
-        bail!("Publication must retain every previous signed history proof");
+    let tree = metadata(&bundle.join("v1"), anchor, true)?;
+    migration::validate_baseline(&tree, &archive, r.previous_pin)?;
+    if !next.history.is_empty() {
+        bail!("Initial migration cannot invent earlier six-document history");
     }
-    transition(
-        &metadata(&previous.join("v1"), anchor, false)?,
-        &metadata(&bundle.join("v1"), anchor, true)?,
-        true,
+    // Rebuild old evidence from actual Git ancestry/raw objects. Offline receipt
+    // checks alone cannot authenticate its Git commit/source labels.
+    let scratch = tempfile::tempdir()?;
+    let recaptured = scratch.path().join("archive");
+    let manifest = archive.path.join("manifest.json");
+    let manifest_pin = digest(&crate::review::read(&manifest, 256 * 1024)?);
+    legacy::capture_with(
+        &root,
+        r.repository,
+        &manifest,
+        &manifest_pin,
+        &recaptured,
+        anchor,
     )?;
-    committed(&root, r.base_commit, &previous)?;
-    committed(&root, r.candidate_commit, &bundle)?;
-    // Recheck authenticated inputs after batch hashing. Inputs are protected
-    // operator-owned immutable captures, not an arbitrary same-account sandbox.
-    if hosting::inspect(&previous, r.previous_pin, anchor, false)?.selected != old.selected
-        || hosting::inspect(&bundle, r.bundle_pin, anchor, true)?.selected != next.selected
+    if digest(&crate::review::read(
+        &recaptured.join("legacy-history.json"),
+        8 * 1024 * 1024,
+    )?) != r.previous_pin
     {
-        bail!("Publication inputs changed during inspection");
+        bail!("Migration legacy archive differs from pinned Git source history");
     }
-    let handoff = Handoff {
-        schema: 1,
-        evidence_class: "verified-git-publication-handoff-not-release-approval".into(),
-        repository: r.repository.into(),
-        branch: r.branch.into(),
-        expected_base_commit: r.base_commit.into(),
-        candidate_commit: r.candidate_commit.into(),
-        previous_receipt_sha256: r.previous_pin.into(),
-        candidate_receipt_sha256: r.bundle_pin.into(),
-        snapshot: next.selected.snapshot,
-        push_args: vec![
-            "--no-replace-objects".into(),
-            "-c".into(),
-            "push.followTags=false".into(),
-            "-c".into(),
-            "push.recurseSubmodules=no".into(),
-            "push".into(),
-            "--porcelain".into(),
-            "--no-verify".into(),
-            format!("--force-with-lease={reference}:{}", r.base_commit),
-            url,
-            format!("{}:{reference}", r.candidate_commit),
-        ],
-        remove_environment_prefix: "GIT_".into(),
-        environment: BTreeMap::from([
-            ("GIT_CONFIG_NOSYSTEM".into(), "1".into()),
-            (
-                "GIT_CONFIG_GLOBAL".into(),
-                if cfg!(windows) { "NUL" } else { "/dev/null" }.into(),
-            ),
-            ("GIT_TERMINAL_PROMPT".into(), "0".into()),
-            ("GIT_NO_LAZY_FETCH".into(), "1".into()),
-        ]),
-    };
-    let raw = serde_json::to_vec_pretty(&handoff)?;
-    fs::create_dir(&out)?;
-    let mut owned = OwnedOutput(out.clone(), false);
-    write(&out.join("publication.json"), &raw)?;
-    sync_dir(&out)?;
-    owned.1 = true;
-    println!(
-        "Verified publication handoff SHA256 {}; no remote changed and no release approval granted",
-        digest(&raw)
-    );
-    Ok(())
+    committed(&root, r.candidate_commit, &bundle)?;
+    legacy::inspect(&archive.path, r.previous_pin, anchor)?;
+    if hosting::inspect(&bundle, r.bundle_pin, anchor, true)?.selected != next.selected {
+        bail!("Migration bundle changed during inspection");
+    }
+    emit(
+        r,
+        url,
+        next.selected.snapshot,
+        &out,
+        "verified-git-legacy-migration-handoff-not-release-approval",
+    )
 }
