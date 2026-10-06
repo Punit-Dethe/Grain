@@ -1,5 +1,12 @@
 # Genuine registry CI provenance checkpoint — E4b3
 
+**Historical schema-1 fixture checkpoint.** The [6 October remote source/review
+audit](EXTENSION-SOURCE-REVIEW-BUILD-AUDIT.md) supersedes the current signer policy:
+schema 2 requires actual merged GitHub source/latest independent approval. Earlier
+two positive fixture signings below remain valid evidence for their recorded
+version, not live positive acceptance of the new review gate. Real remote source/
+build and both attestation paths now pass; protected production review remains Pending.
+
 **6 October 2026: controlled native/MCP CI-to-signing cryptographic checkpoint
 passes. Protected production human review, real author builds and release
 governance remain Pending.** This closes the previous missing genuine positive

@@ -1,5 +1,11 @@
 # Reviewed catalogue signing boundary — E4b3
 
+**Historical local boundary.** The [6 October remote source/review audit](EXTENSION-SOURCE-REVIEW-BUILD-AUDIT.md)
+adds mandatory schema-2 policy fields and actual GitHub merged-source/latest-review
+reads after provenance and before keys. Schema-1 policies described below are no
+longer accepted by the current signer. Historical local/component evidence remains;
+live positive protected review-to-signing is still Pending.
+
 **6 October follow-up:** [Genuine CI checkpoint](EXTENSION-CI-PROVENANCE-AUDIT.md)
 now passes both-kind positive signing and eight identity refusals with the actual
 registry's GitHub bundle. Scoped branch names are supported. Protected production

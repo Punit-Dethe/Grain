@@ -267,7 +267,7 @@ mod tests {
     fn review_requires_latest_effective_approval_and_exact_head() {
         let (p, _, review) = fixtures();
         let now = Utc::now().timestamp();
-        validate_reviews(&[review.clone()], &p, now).unwrap();
+        validate_reviews(std::slice::from_ref(&review), &p, now).unwrap();
         for (field, value) in [
             ("state", json!("DISMISSED")),
             ("state", json!("CHANGES_REQUESTED")),
@@ -292,6 +292,9 @@ mod tests {
         let mut other = review.clone();
         other["user"]["login"] = json!(p.submitter);
         assert!(validate_reviews(&[other], &p, now).is_err());
+        let mut bot = review.clone();
+        bot["user"]["type"] = json!("Bot");
+        assert!(validate_reviews(&[bot], &p, now).is_err());
         assert!(validate_reviews(&[], &p, now).is_err());
     }
 }

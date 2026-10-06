@@ -241,9 +241,12 @@ root deployment. Crash leftovers are not publishable merely because files exist;
 future promotion must verify the whole fragment. Key custody still follows the
 existing development-key arrangement, not a production KMS claim.
 
-The separate registry branch now has a pinned preparation/attestation checkpoint
-for controlled native/MCP data. Next: real pinned author-source build isolation and
-protected review-derived signing policy. Author builds must have no publishing credentials
-or privileged attestation step. Follow [GitHub's trusted-builder guidance](https://docs.github.com/en/actions/how-tos/secure-your-work/use-artifact-attestations/increase-security-rating)
+The separate registry branch now has a real pinned public author-source/build lane,
+with native execution isolated from fresh preparation and data-only attestation.
+[Source/review audit](../../docs/Extensions%202.0/EXTENSION-SOURCE-REVIEW-BUILD-AUDIT.md)
+records both kinds' genuine CI success and unapproved-signing refusals. Protected
+positive review, complete serving/promotion and production governance remain
+Pending. Author builds have no publishing credentials or privileged attestation
+step. Follow [GitHub's trusted-builder guidance](https://docs.github.com/en/actions/how-tos/secure-your-work/use-artifact-attestations/increase-security-rating)
 and [secure workflow guidance](https://docs.github.com/en/actions/reference/security/secure-use).
 Do not activate the current nested registry's incomplete legacy publisher.
