@@ -23,6 +23,7 @@ mod catalogue;
 mod prepare;
 mod receive;
 mod review;
+mod serving;
 
 #[derive(Parser)]
 #[command(
@@ -36,6 +37,36 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Cmd {
+    /// Verify the app-pinned trust chain and every referenced serving asset.
+    VerifyServingTree {
+        #[arg(long)]
+        v1: PathBuf,
+    },
+    /// Assemble a full serving tree from a signed base and signed update fragment.
+    AssembleServingTree {
+        #[arg(long)]
+        base: PathBuf,
+        #[arg(long)]
+        update: PathBuf,
+        #[arg(long)]
+        out: PathBuf,
+    },
+    /// Initialize a new local immutable snapshot store. Does not deploy hosting.
+    InitializeServingStore {
+        #[arg(long)]
+        v1: PathBuf,
+        #[arg(long)]
+        out: PathBuf,
+    },
+    /// Serialize local promotion against an independently pinned current pointer.
+    PromoteServingTree {
+        #[arg(long)]
+        assembly: PathBuf,
+        #[arg(long)]
+        store: PathBuf,
+        #[arg(long)]
+        expected_current_sha256: String,
+    },
     /// Emit a strict bounded source request for isolated CI. Grants no approval.
     InspectSubmission {
         #[arg(long)]
@@ -416,6 +447,14 @@ fn edit_distance(a: &str, b: &str) -> usize {
 
 fn main() -> Result<()> {
     match Cli::parse().cmd {
+        Cmd::VerifyServingTree { v1 } => serving::verify(&v1),
+        Cmd::AssembleServingTree { base, update, out } => serving::assemble(&base, &update, &out),
+        Cmd::InitializeServingStore { v1, out } => serving::initialize(&v1, &out),
+        Cmd::PromoteServingTree {
+            assembly,
+            store,
+            expected_current_sha256,
+        } => serving::promote(&assembly, &store, &expected_current_sha256),
         Cmd::InspectSubmission { submission, out } => approval::inspect(&submission, &out),
         Cmd::VerifySourceReview {
             submission,

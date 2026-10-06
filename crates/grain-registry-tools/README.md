@@ -250,3 +250,72 @@ Pending. Author builds have no publishing credentials or privileged attestation
 step. Follow [GitHub's trusted-builder guidance](https://docs.github.com/en/actions/how-tos/secure-your-work/use-artifact-attestations/increase-security-rating)
 and [secure workflow guidance](https://docs.github.com/en/actions/reference/security/secure-use).
 Do not activate the current nested registry's incomplete legacy publisher.
+
+## Complete serving assembly and local promotion (E4c)
+
+These commands **never sign, open a key, execute author code or deploy hosting**.
+They verify roots against the actual keys pinned in `grain-core`, then index and
+revocations against the root-authorized publishing key. No custom-anchor CLI flag
+exists. `verify-serving-tree` additionally checks every referenced native/MCP blob,
+DESCRIPTION/legacy README and media file, and refuses missing, altered, linked or
+extra inputs. Package semantics remain the existing preparation/receiving/host
+responsibility. Old signed catalogues can retain retired entries while the host's
+eligibility rules continue to reject them; this is not capability reactivation.
+
+```powershell
+grain-registry assemble-serving-tree --base current-v1 --update reviewed-signed-fragment --out complete-assembly
+grain-registry verify-serving-tree --v1 complete-assembly/v1
+grain-registry initialize-serving-store --v1 current-v1 --out local-serving-store
+grain-registry promote-serving-tree --assembly complete-assembly --store local-serving-store --expected-current-sha256 '<independently captured current.json SHA256>'
+```
+
+Assembly writes `v1/` with all six signed metadata/signature files, `blob/`, `media/`
+and only assets referenced by the authenticated next index. Signed bytes and
+forward-compatible fields are preserved. Optional signed roots/revocation updates
+in the fragment replace base documents; unchanged documents/assets come from the
+base. Output must be fresh and outside inputs. Its bounded `promotion.json` pins
+the exact base index/roots/revocation JSON digests. This unsigned parent record
+prevents a mismatched handoff; it **does not establish review or signature trust**.
+
+Snapshots have 8,192 unique asset and 1 GiB total budgets, with existing package /
+descriptor bounds, 64 KiB documents and 4 MiB pictures. Assets are streamed in
+64 KiB buffers, verified while copying and synchronized before pointer selection.
+Shared addressed files cannot disagree on signed size. Unsupported specs, duplicate
+extension versions, dev/experimental trust, malformed references and expired new
+metadata refuse. There is no seed/clock-skew exemption for a new serving snapshot.
+Authenticated expired history can be used as the base for a fresh renewal.
+
+The local store has `snapshots/<complete-file-inventory SHA256>/`, `current.json`
+and a persistent empty `promotion.lock`. Promotion obtains a nonblocking exclusive
+standard OS file lock, compares the caller's expected **entire current pointer**
+digest, revalidates its selected snapshot and matches the assembly's exact base.
+It refuses metadata rollback or different JSON at the same version, changed
+artifact/listing bytes for an existing extension version, weaker/erased revocation
+rules and no-op repetition. A root-authorized publishing-key rotation requires new
+documents' signatures to verify with that key. No key rotation/signing is performed
+by these commands.
+
+A full snapshot is copied into owned staging, verified again and renamed into
+the content-addressed directory before an atomic temporary-file replacement of
+`current.json`. Lock handles/temporary state drop at completion/failure; **never
+unlink the lock file** to force progress. Other writers must honor this same lock
+and leave installed snapshots untouched. Paths are operator-owned immutable inputs;
+this is not a sandbox against another same-account writer. Old snapshots are kept,
+including withdrawn assets. Incomplete/crash leftovers cannot become current simply
+because a directory exists; a reused snapshot is reverified. There is no automatic
+retry or garbage collector.
+
+Files are synchronized and Unix directories are synchronized. Windows provides
+the atomic pointer replacement tested here, but this is not a cross-platform
+power-loss durability certification. A failure after pointer commit explicitly
+requires inspecting `current.json` before retrying. Readers/hosting adapters must
+capture one pointer, verify it, and serve its immutable snapshot. Independent
+machines/network filesystems need a hosting-specific conditional promotion gate;
+this local lock is not distributed coordination.
+
+Production hosting still needs coherent metadata/root rotation, stable availability
+of historical content hashes, verified base URLs/root deployment, actual protected
+review/key custody and renewal/revocation operations. Do not substitute this local
+store for those gates or merge the incomplete legacy publisher. The empty app seed
+is used only as a real pinned-root CLI fixture; disposable signing anchors in Rust
+component tests never reach the public CLI or the app's trust configuration.
