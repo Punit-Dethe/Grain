@@ -37,6 +37,31 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Cmd {
+    /// Bind verified current/history bundles to exact Git commits; never pushes.
+    PrepareGithubPublication {
+        #[arg(long)]
+        checkout: PathBuf,
+        /// Independently expected GitHub OWNER/REPO, without .git.
+        #[arg(long)]
+        repository: String,
+        #[arg(long)]
+        branch: String,
+        #[arg(long)]
+        expected_base_commit: String,
+        #[arg(long)]
+        candidate_commit: String,
+        #[arg(long)]
+        previous: PathBuf,
+        #[arg(long)]
+        previous_receipt_sha256: String,
+        #[arg(long)]
+        bundle: PathBuf,
+        #[arg(long)]
+        expected_receipt_sha256: String,
+        /// Fresh directory for the conditional push handoff, not a deploy.
+        #[arg(long)]
+        out: PathBuf,
+    },
     /// Renew signed catalogue/revocation expiry without changing entries or hosting.
     RenewServingMetadata {
         #[arg(long)]
@@ -488,6 +513,29 @@ fn edit_distance(a: &str, b: &str) -> usize {
 
 fn main() -> Result<()> {
     match Cli::parse().cmd {
+        Cmd::PrepareGithubPublication {
+            checkout,
+            repository,
+            branch,
+            expected_base_commit,
+            candidate_commit,
+            previous,
+            previous_receipt_sha256,
+            bundle,
+            expected_receipt_sha256,
+            out,
+        } => serving::publication::prepare(&serving::publication::Request {
+            checkout: &checkout,
+            repository: &repository,
+            branch: &branch,
+            base_commit: &expected_base_commit,
+            candidate_commit: &candidate_commit,
+            previous: &previous,
+            previous_pin: &previous_receipt_sha256,
+            bundle: &bundle,
+            bundle_pin: &expected_receipt_sha256,
+            out: &out,
+        }),
         Cmd::RenewServingMetadata {
             v1,
             expected_snapshot_sha256,

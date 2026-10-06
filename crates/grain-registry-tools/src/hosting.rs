@@ -5,11 +5,11 @@ const RECEIPT_MAX: u64 = 384 * 1024;
 
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct Receipt {
-    schema: u8,
-    current_sha256: String,
-    selected: State,
-    history: Vec<String>,
+pub(super) struct Receipt {
+    pub(super) schema: u8,
+    pub(super) current_sha256: String,
+    pub(super) selected: State,
+    pub(super) history: Vec<String>,
 }
 
 type Pool = BTreeMap<String, (Asset, PathBuf)>;
@@ -74,6 +74,17 @@ fn proof_names() -> BTreeSet<String> {
 }
 
 pub(super) fn verify(bundle: &Path, pin: &str, anchor: &Anchor<'_>) -> Result<State> {
+    Ok(inspect(bundle, pin, anchor, true)?.selected)
+}
+
+// Only the authenticated previous publication may be expired. A new candidate
+// and the public verify-hosting-bundle entry point always require freshness.
+pub(super) fn inspect(
+    bundle: &Path,
+    pin: &str,
+    anchor: &Anchor<'_>,
+    fresh: bool,
+) -> Result<Receipt> {
     if !hex(pin) {
         bail!("Independent hosting receipt digest required");
     }
@@ -110,7 +121,7 @@ pub(super) fn verify(bundle: &Path, pin: &str, anchor: &Anchor<'_>) -> Result<St
         bail!("Hosting current pointer differs from pinned receipt");
     }
     let v1 = directory(&bundle.join("v1"))?;
-    let current = metadata(&v1, anchor, true)?;
+    let current = metadata(&v1, anchor, fresh)?;
     if current.state != receipt.selected {
         bail!("Hosting selected metadata differs from pinned receipt");
     }
@@ -157,7 +168,7 @@ pub(super) fn verify(bundle: &Path, pin: &str, anchor: &Anchor<'_>) -> Result<St
             bail!("Hosting bundle exceeds total byte budget");
         }
     }
-    Ok(current.state)
+    Ok(receipt)
 }
 
 pub(super) fn export(store: &Path, out: &Path, pin: &str, anchor: &Anchor<'_>) -> Result<()> {

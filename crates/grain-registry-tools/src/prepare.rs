@@ -36,6 +36,19 @@ pub(super) fn digest(bytes: &[u8]) -> String {
 // Fixed local Git operations only. No shell, fetch, checkout, build or hooks.
 // Bound temporary output and wall time; drop its file and reap only this child.
 fn git(root: &Path, args: &[&str], absent_allowed: bool) -> Result<String> {
+    git_input(root, args, absent_allowed, None, GIT_OUTPUT_MAX)
+}
+
+// Publication inspects large, pinned Git trees and hashes already verified
+// operator-owned files in one batch. Input is a temporary file, never a pipe
+// that could block the caller before the child deadline can be enforced.
+pub(super) fn git_input(
+    root: &Path,
+    args: &[&str],
+    absent_allowed: bool,
+    input: Option<&[u8]>,
+    output_max: u64,
+) -> Result<String> {
     let mut command = Command::new("git");
     for (name, _) in std::env::vars_os() {
         if name
@@ -66,6 +79,12 @@ fn git(root: &Path, args: &[&str], absent_allowed: bool) -> Result<String> {
         .current_dir(root)
         .stdin(Stdio::null())
         .stderr(Stdio::null());
+    if let Some(input) = input {
+        let mut input_file = tempfile::tempfile()?;
+        input_file.write_all(input)?;
+        input_file.seek(SeekFrom::Start(0))?;
+        command.stdin(Stdio::from(input_file.try_clone()?));
+    }
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
@@ -78,8 +97,7 @@ fn git(root: &Path, args: &[&str], absent_allowed: bool) -> Result<String> {
     let status = loop {
         // On every error path, reap our own child before returning.
         let observed = (|| -> Result<_> {
-            if output.metadata()?.len() > GIT_OUTPUT_MAX
-                || started.elapsed() > Duration::from_secs(30)
+            if output.metadata()?.len() > output_max || started.elapsed() > Duration::from_secs(30)
             {
                 bail!("Local Git inspection exceeded its output/time budget");
             }
@@ -100,8 +118,8 @@ fn git(root: &Path, args: &[&str], absent_allowed: bool) -> Result<String> {
     }
     output.seek(SeekFrom::Start(0))?;
     let mut bytes = Vec::new();
-    output.take(GIT_OUTPUT_MAX + 1).read_to_end(&mut bytes)?;
-    if bytes.len() as u64 > GIT_OUTPUT_MAX {
+    output.take(output_max + 1).read_to_end(&mut bytes)?;
+    if bytes.len() as u64 > output_max {
         bail!("Local Git inspection exceeded its output budget");
     }
     String::from_utf8(bytes).context("Git inspection returned invalid UTF-8")

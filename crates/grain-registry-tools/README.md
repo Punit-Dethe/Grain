@@ -439,3 +439,50 @@ confirmed registry host; optional OAuth website preparation is parked.
 [Renewal audit](../../docs/Extensions%202.0/EXTENSION-METADATA-RENEWAL-AUDIT.md)
 records signed regression evidence, command-line admission checks and remaining
 operational/release gates.
+
+## Commit-bound GitHub publication handoff (E4g)
+
+```powershell
+grain-registry prepare-github-publication --checkout OPERATOR_CHECKOUT --repository OWNER/REPO --branch RELEASE_BRANCH --expected-base-commit INDEPENDENT_BASE_COMMIT --candidate-commit INDEPENDENT_CANDIDATE_COMMIT --previous PROTECTED_PREVIOUS_BUNDLE --previous-receipt-sha256 PREVIOUS_RECEIPT_PIN --bundle PROTECTED_CANDIDATE_BUNDLE --expected-receipt-sha256 CANDIDATE_RECEIPT_PIN --out FRESH_HANDOFF
+```
+
+This is an offline publication gate, not a deploy command. Place the hosting
+bundle's `v1/` at the repository's `v1/`; place `bundle.json`, `current.json` and
+`history/` under `.registry-publication/`. Both the expected base and candidate
+must already contain that layout. The initial migration of the legacy repository
+requires a separate protected procedure; a missing baseline is never bypassed.
+Git does not track empty directories; reconstruct the known empty bundle folders
+when capturing a bundle from a Git commit.
+
+Supply independently protected full 40-character Git SHA1 commits and receipt
+SHA256 pins. The candidate must be HEAD, have the base as its sole actual parent,
+and change only the two publication directories. Both committed inventories and
+raw blob identities must match the verified bundles, with no filters or newline
+conversion. Dirty worktree bytes are not publication authority. All previous
+signed history, including the previous selection and withdrawn addressed files,
+must remain; existing monotonicity, immutable version and revocation checks apply.
+An authentic expired previous publication can recover; a candidate must be fresh.
+
+Use a complete standalone, protected operator checkout and immutable operator
+bundle captures. Includes, filters, URL redirects, alternate/promisor objects,
+shallow ancestry and grafts refuse. This is not a same-account filesystem sandbox.
+The new directory contains unsigned `publication.json` and its printed digest;
+it records the exact candidate, expected base, bundle pins, environment isolation
+and fixed GitHub push argument vector. No shell command is executed. Its explicit
+`--force-with-lease=refs/heads/BRANCH:EXPECTED_BASE` binds the remote update to that
+base, and the verified single parent makes the intended update a fast-forward.
+No broad force, plus refspec, implicit tracking-ref lease, tag or submodule push
+is used. A disposable bare-remote test exercises success and stale-writer refusal.
+
+The unsigned handoff grants no source approval, signing or GitHub authorization.
+Do not execute an untrusted received argument vector. The later protected runner
+must regenerate/verify the handoff and freshness immediately before activation,
+bind its own fixed repository/branch/policy, provide scoped noninteractive GitHub
+authentication and preserve server-side release protections. Existing global Git
+credential configuration is intentionally disabled by the recorded environment;
+the protected runner must provide its own credential path. There is no credential
+helper, secret, network operation, persistent Git configuration change, deletion
+or new dependency in this command. Production branch/protection behavior and
+coherent multi-request client reads remain unverified here.
+[Publication audit](../../docs/Extensions%202.0/EXTENSION-GITHUB-PUBLICATION-AUDIT.md)
+records evidence and the next protected activation checkpoint.

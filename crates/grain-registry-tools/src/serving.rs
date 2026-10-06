@@ -16,6 +16,8 @@ use sha2::{Digest, Sha256};
 use crate::prepare::{digest, new_output, OwnedOutput};
 #[path = "hosting.rs"]
 mod hosting;
+#[path = "publication.rs"]
+pub(crate) mod publication;
 #[path = "renewal.rs"]
 mod renewal;
 
