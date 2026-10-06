@@ -1,5 +1,21 @@
 # Extension implementation: progress, changes and user testing
 
+**E4g GitHub publication handoff, 6 October:** [Focused audit](EXTENSION-GITHUB-PUBLICATION-AUDIT.md)
+records a maintainer CLI gate that binds the verified current/history bundles to
+exact Git commits, requires a single expected parent, retains old proofs/assets
+and emits an explicit expected-base conditional push handoff. A real disposable
+Git remote accepts the exact base and rejects a stale writer while preserving
+the winner. Final Windows **62/62 maintainer tests**, four production CLI admission
+checks, locked build/strict Clippy/format and focused review pass. Pinned Linux
+[checkpoint 37450479331](https://github.com/Punit-Dethe/Grain-Extention/actions/runs/37450479331)
+passes **63/63 full maintainer tests and 50 actual CLI verdicts**. Downloaded evidence
+matches source and all 46 earlier CLI verdicts, with four new precise refusals.
+The command itself does not authenticate or publish. Protected GitHub execution,
+initial legacy-history migration and coherent hosted client reads remain next.
+No Agent harness source/scenario or manual batch. Five E4–E8 stages retain work;
+baseline **52 Pass / 1 Deferred (12)**, forward **71**, full **56 Pending**, inventory
+**108 / 93 / 81**, parked website and physical-removal hold remain unchanged.
+
 **E4f renewal block, 6 October:** Stay on the confirmed GitHub registry host; the
 optional OAuth website PR is parked. [Renewal audit/evidence](EXTENSION-METADATA-RENEWAL-AUDIT.md)
 records metadata-only renewal and preservation of native/MCP files, entries,
@@ -128,7 +144,7 @@ checkpoints do not close the hosted/protected release requirements.
 | E1 — Contract | Native tools or remote MCP descriptors with a smaller tool-only author interface | Provisionally accepted. Extensions cannot use the retired screen/context/prompt privileges. Physical obsolete-code deletion is held. |
 | E2 — Connections | Direct remote JSON connections and signed-store MCPs use the same host-owned account/auth/runtime rules | Provisionally accepted through actual-app checkpoints. MCP SDK and native OAuth library reuse are integrated; provider/production certification remains separate. |
 | E3 — SDK/CLI | Authors create, check, package and draft native/MCP submissions, with separate DESCRIPTION/media | Provisionally accepted. Public API freeze and official extension publishing are later. |
-| **E4 — Publishing, current** | Checked source/build/provenance, independently guarded signing, complete signed snapshots, conditional local promotion, historical identity reservation, exports/hosting bundles and metadata-only renewal | Local boundaries audited/verified; GitHub hosting confirmed. Hosted coherence/conditional activation, prior-history migration, protected real review/protections/key custody, scheduled renewal and emergency revocation operations remain. |
+| **E4 — Publishing, current** | Checked source/build/provenance, independently guarded signing, complete signed snapshots, conditional local promotion, historical identity reservation, hosting bundles, metadata-only renewal and commit-bound conditional GitHub handoffs | Local boundaries audited/verified; GitHub hosting confirmed. Protected remote execution and hosted coherence, prior-history migration, protected real review/protections/key custody, scheduled renewal and emergency revocation operations remain. |
 | E5 — Store and management UI | Clear native/MCP/custom connection, setup, login and lifecycle flows with defined listing content | Remaining. UI 2.0 branch isolation and user visual approval apply. |
 | E6 — Agent recovery modules | Reviewed automatic-read rules, bounded metadata reuse/freshness, auth continuation and crash/orphan recovery | Remaining as separate implementation blocks. |
 | E7 — Measurements and reference integrations | Mixed native/MCP/custom tools, larger catalogues and measured selection/model/resource quality | Remaining. Includes the official reference extensions after infrastructure acceptance. |

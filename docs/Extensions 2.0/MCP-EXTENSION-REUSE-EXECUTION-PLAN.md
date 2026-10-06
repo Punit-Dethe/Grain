@@ -1,5 +1,23 @@
 # Extension platform: audit, reuse and execution plan
 
+**Current E4g GitHub publication handoff — 6 October:** [Publication audit](EXTENSION-GITHUB-PUBLICATION-AUDIT.md)
+records the no-secret commit-binding gate, exact base/candidate parent and signed
+history retention, plus explicit-lease handoff tested against a disposable Git
+remote. Windows **62/62 full maintainer tests**, four actual CLI admission checks,
+locked build/strict Clippy/format and scoped review pass. Source
+`7557c0d722e8ab1a23afe62c2710c65b3b5a298e` is pushed; pinned read-only Linux
+[checkpoint 37450479331](https://github.com/Punit-Dethe/Grain-Extention/actions/runs/37450479331)
+passes **63/63 full maintainer tests and 50 actual CLI verdicts**, with downloaded
+source identity and all 46 earlier precise verdicts independently checked.
+This checkpoint prepares and verifies a handoff; protected remote execution is
+separate. Next E4: protected first history migration/capture and authenticated
+conditional GitHub activation, actual hosted client coherence, independent
+review/key custody and operational renewal/revocation. Keep the legacy publisher
+and held files intact. GitHub remains confirmed; optional website work is parked.
+E5–E8 follow; five stages retain work. No new Agent harness source/scenario or
+human batch, baseline/forward/inventory inflation, public OAuth activation or
+obsolete-code deletion.
+
 **Current E4f renewal block — 6 October:** The user reconfirmed **GitHub as the
 registry host** and asked to park optional website work. [Renewal audit](EXTENSION-METADATA-RENEWAL-AUDIT.md)
 records a narrow command that renews signed catalogue/revocation expiry without

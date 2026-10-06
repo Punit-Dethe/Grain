@@ -124,8 +124,27 @@ inspection covers the new files. This is a focused implementation audit, not an
 independent reviewer or final release certification. Full regressions cover the
 shared helper/freshness refactors, and the unrelated bindings hash is unchanged.
 No maintained Agent runner/source scenario was added; disposable command probes
-are ignored evidence only. Linux acceptance is recorded below after the pinned
-read-only checkpoint; until then it is Pending.
+are ignored evidence only.
+
+Pinned read-only [Linux checkpoint 37450479331](https://github.com/Punit-Dethe/Grain-Extention/actions/runs/37450479331)
+passes **63/63 full maintainer tests** (one additional Unix symlink guard), locked
+CLI build and **50/50 actual CLI verdicts**: the earlier 46 serving/promotion/
+history/bundle/renewal checks plus four new publication admission refusals. The
+workflow has contents-read permission only; it accesses no release key, OIDC,
+author build or GitHub write. Source is exactly
+`7557c0d722e8ab1a23afe62c2710c65b3b5a298e`; registry workflow is exactly
+`c4d0d2cb30cc4937ef877a246f863cba95d28e0c`. Linux CLI SHA256:
+`f924649ce84ba3ba9b18ff35b16ce540e38aa16977d10743cda866d754ed8e5d`.
+Artifact `11406841507` has reported archive SHA256
+`12a68b791c416425b8e1426974831fddc43883d28b429bd30d7f20c444dc5ca6`
+and seven-day retention. Downloaded report/log/public fixture evidence is in
+`tests/agent-harness/.runs/e4g-git-publication-linux-01/`; it was read, not executed.
+Inspection checks exact source, test/count totals, all 46 prior label/exit/oracle
+triples preserved, four specific new nonzero refusals, unchanged selection and
+no retained private-key files. Four recorded Windows CLI PIDs have zero matching
+remaining processes under independent CIM inspection. Component private keys
+are disposable TempDir fixtures; zero-key counters describe the public CLI lane,
+not a claim that real-signature component tests avoided key generation.
 
 ## Primary references and remaining gates
 
