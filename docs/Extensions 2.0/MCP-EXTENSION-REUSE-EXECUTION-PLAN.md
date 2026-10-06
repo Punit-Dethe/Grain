@@ -4,9 +4,11 @@
 registry host** and asked to park optional website work. [Renewal audit](EXTENSION-METADATA-RENEWAL-AUDIT.md)
 records a narrow command that renews signed catalogue/revocation expiry without
 changing extensions, rules, roots, future fields or addressed bytes, then feeds
-the existing locked promotion/archive path. Final **54 Windows Rust / 7 actual
-CLI admission verdicts**, locked build/strict Clippy/format and scoped audit pass;
-pinned Linux certification follows. No Agent harness expansion or manual batch.
+the existing locked promotion/archive path. Final **54 Windows / 55 Linux full
+maintainer Rust tests**, **7 Windows / 46 Linux actual CLI verdicts**, locked
+build/strict Clippy/format and scoped audit pass. Linux CI `37425315653` accepts
+the exact pinned source; its failed bookkeeping candidate earns no acceptance.
+No Agent harness expansion or manual batch.
 Public OAuth identity remains disabled/full 56 Pending; the website PR remains
 open/unmerged. E4 hosted GitHub coherence/activation, protected earlier history,
 independent review/key custody and renewal/revocation operations remain; E5–E8

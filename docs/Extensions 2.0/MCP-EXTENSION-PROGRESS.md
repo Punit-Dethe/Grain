@@ -4,9 +4,11 @@
 optional OAuth website PR is parked. [Renewal audit/evidence](EXTENSION-METADATA-RENEWAL-AUDIT.md)
 records metadata-only renewal and preservation of native/MCP files, entries,
 unknown fields, roots and revocation rules. Fresh candidates use the existing
-stale-parent-safe promotion and retained-history export. Final **54 Windows Rust /
-7 actual CLI admission verdicts**, locked build/strict Clippy/format and scoped
-audit pass; Linux certification follows. No Agent harness expansion, desktop or
+stale-parent-safe promotion and retained-history export. Final **54 Windows / 55
+Linux full maintainer Rust tests**, **7 Windows / 46 Linux actual CLI verdicts**,
+locked build/strict Clippy/format and scoped audit pass. Successful pinned Linux
+CI `37425315653` records final source; failed candidate `37424961867` receives no
+acceptance credit. No Agent harness expansion, desktop or
 new manual batch. E4 deployment/coherence, protected history/review/key custody
 and operational renewal/revocation remain. **Five E4–E8 stages retain work**;
 forward **71**, baseline **52 Pass / 1 Deferred (12)**, full **56 Pending**,
@@ -126,7 +128,7 @@ checkpoints do not close the hosted/protected release requirements.
 | E1 — Contract | Native tools or remote MCP descriptors with a smaller tool-only author interface | Provisionally accepted. Extensions cannot use the retired screen/context/prompt privileges. Physical obsolete-code deletion is held. |
 | E2 — Connections | Direct remote JSON connections and signed-store MCPs use the same host-owned account/auth/runtime rules | Provisionally accepted through actual-app checkpoints. MCP SDK and native OAuth library reuse are integrated; provider/production certification remains separate. |
 | E3 — SDK/CLI | Authors create, check, package and draft native/MCP submissions, with separate DESCRIPTION/media | Provisionally accepted. Public API freeze and official extension publishing are later. |
-| **E4 — Publishing, current** | Checked source/build/provenance, independently guarded signing, complete signed snapshots, conditional local promotion, historical identity reservation, selected export and archive-complete hosting bundles | Local boundaries audited/verified. Canonical hosted routes/conditional activation, prior-history migration, protected real review/protections/key custody and operational renewal/revocation remain. |
+| **E4 — Publishing, current** | Checked source/build/provenance, independently guarded signing, complete signed snapshots, conditional local promotion, historical identity reservation, exports/hosting bundles and metadata-only renewal | Local boundaries audited/verified; GitHub hosting confirmed. Hosted coherence/conditional activation, prior-history migration, protected real review/protections/key custody, scheduled renewal and emergency revocation operations remain. |
 | E5 — Store and management UI | Clear native/MCP/custom connection, setup, login and lifecycle flows with defined listing content | Remaining. UI 2.0 branch isolation and user visual approval apply. |
 | E6 — Agent recovery modules | Reviewed automatic-read rules, bounded metadata reuse/freshness, auth continuation and crash/orphan recovery | Remaining as separate implementation blocks. |
 | E7 — Measurements and reference integrations | Mixed native/MCP/custom tools, larger catalogues and measured selection/model/resource quality | Remaining. Includes the official reference extensions after infrastructure acceptance. |

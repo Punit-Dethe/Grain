@@ -115,8 +115,39 @@ copied public seed. Component keypairs belong to temporary fixture directories.
 The script is disposable evidence support, not a maintained harness scenario.
 Retained evidence is not file-deletion acceptance. Independent owned-process
 inspection confirms zero remaining owned CLI processes across seven recorded PID
-references; Linux results will be appended when complete. The generated bindings
+references. The generated bindings
 retain their pre-existing SHA256 `2bd7fc3f77443d7317375fdff8441cac2733f228aa1c6aafe844ffd21809bac`.
+
+Candidate Linux run `37424961867` is **failed, not acceptance**: the full signed
+maintainer tests and locked CLI build passed, and the CLI block reached its final
+count assertion, but that assertion still expected the old 39 commands instead
+of 46. The report also retained the old source pin. The checkpoint now expects
+exactly 46 and captures actual checkout HEAD through bounded read-only Git, so
+recorded source identity cannot silently remain stale. The complete pinned run
+must pass again before Linux acceptance; no error oracle or application behavior
+was loosened.
+
+Final [Linux run 37425315653](https://github.com/Punit-Dethe/Grain-Extention/actions/runs/37425315653)
+is **successful** at registry checkpoint
+`32010b2acee84203e310751ea6f0768c79ad3d8c`, building exact application source
+`ac965830befecbb27a85e4a4d8051ef8730e4889`. All required steps pass: **55/55 full
+maintainer Rust tests** (the extra Unix serving symlink case), exact locked CLI
+build, and **46/46 actual CLI verdicts** including the seven distinct renewal
+refusals plus the existing 39 serving/history/bundle/independent-lock cases.
+Downloaded report source pin, count, renewal labels/nonzero expected refusals,
+zero key creation and unchanged current/input observations were independently
+checked; downloaded files were read only and never executed.
+
+Linux CLI SHA256:
+`944b17afb0bacf92aa745caf8487648bbf497406357a66e8d64df040bcba35a3`.
+Evidence artifact `11395211309`, SHA256
+`9dec8b7e339acd0867837ae52f75684bb0c0680a99435383991d0e5110e6a980`,
+has seven-day retention. Ignored `.runs/e4f-renewal-linux-01/` retains those
+nonsecret reports/logs/public seed snapshots as disposable evidence. The read-only
+checkpoint has no OIDC, signing/release credential, author build or publishing
+operation. Only this lane is accepted; the existing legacy missing-helper PR
+check and actual protected release acceptance remain separate failed/pending
+gates. Registry PR 1 stays draft/unmerged; no main/admin/key change.
 
 Graph/source review found a maintainer-only blast radius; graph zero impacted
 flows is not execution acceptance. Audit checked key-read ordering, raw-field
@@ -127,8 +158,8 @@ fresh verification; no application or workflow permission was relaxed.
 
 ## Remaining delivery work and sources
 
-This closes the renewal producer within the documented maintainer scope, once
-final checks are recorded. Hosted GitHub activation/coherence, earlier protected
+This closes the renewal producer within the documented maintainer scope.
+Hosted GitHub activation/coherence, earlier protected
 history migration, actual independent source approval-to-signing and enforced
 repository/workflow/key custody remain E4 prerequisites. Scheduled/protected
 renewal execution, emergency revocation issuance/deployment and root-expiry/key
