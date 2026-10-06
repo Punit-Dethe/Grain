@@ -40,27 +40,6 @@ Today, Flow supports all configured speech models through Grain's generic rollin
 
 All three modes get their own configurable shortcut, so switching is a keypress, not a trip to Settings. Pick your favorite and ignore the rest, or assign all three and switch by task.
 
-### Planned Flow architecture
-
-Flow is currently model-agnostic for compatibility, but that is not the long-term architecture.
-
-The planned version of Flow will become a **curated, model-specific dictation engine** rather than a generic rolling layer that attempts to support every speech model. Grain will optimize Flow around a small set of models whose chunking, decoder state, punctuation, long-session behaviour, and stop latency can be tested and tuned as one complete system.
-
-The first planned Flow-supported models are:
-
-- **Parakeet TDT v2** — the primary English-only Flow model.
-- **Parakeet TDT v3** — the multilingual Flow model.
-
-Once that architecture replaces the current generic backend, other speech models will no longer automatically receive Flow support. They can continue to be available through **Batch** or **ASR/live transcription** where supported.
-
-This deliberately gives the three modes different responsibilities:
-
-- **Batch** prioritizes model compatibility and maximum final accuracy.
-- **Flow** is Grain's curated, optimized default dictation experience.
-- **ASR** is for models and workflows designed around realtime transcription.
-
-New models may be added to Flow later, but only when Grain has a dedicated implementation and has validated their accuracy, punctuation, latency, and long-session behaviour rather than relying on a generic fallback.
-
 ## Feature overview
 
 - **Turn This Into… (Prompt Record).** Keeps what you say and what you want done with it as two separate spoken parts. Finish dictating your content as normal, then trigger Prompt Record and speak an instruction — Grain treats the first part as material and the second as the prompt, and runs the whole thing through AI automatically. _Say the facts of a bug out loud, then say "turn this into a GitHub issue" — Grain uses the first part as content and the second as the instruction._
