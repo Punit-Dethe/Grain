@@ -244,9 +244,10 @@ existing development-key arrangement, not a production KMS claim.
 The separate registry branch now has a real pinned public author-source/build lane,
 with native execution isolated from fresh preparation and data-only attestation.
 [Source/review audit](../../docs/Extensions%202.0/EXTENSION-SOURCE-REVIEW-BUILD-AUDIT.md)
-records both kinds' genuine CI success and unapproved-signing refusals. Protected
-positive review, complete serving/promotion and production governance remain
-Pending. Author builds have no publishing credentials or privileged attestation
+records both kinds' genuine CI success and unapproved-signing refusals. Complete
+local serving/promotion is implemented below; protected positive review, hosted
+delivery and production governance remain Pending. Author builds have no
+publishing credentials or privileged attestation
 step. Follow [GitHub's trusted-builder guidance](https://docs.github.com/en/actions/how-tos/secure-your-work/use-artifact-attestations/increase-security-rating)
 and [secure workflow guidance](https://docs.github.com/en/actions/reference/security/secure-use).
 Do not activate the current nested registry's incomplete legacy publisher.
@@ -319,3 +320,8 @@ review/key custody and renewal/revocation operations. Do not substitute this loc
 store for those gates or merge the incomplete legacy publisher. The empty app seed
 is used only as a real pinned-root CLI fixture; disposable signing anchors in Rust
 component tests never reach the public CLI or the app's trust configuration.
+
+[Scoped serving audit](../../docs/Extensions%202.0/EXTENSION-SERVING-PROMOTION-AUDIT.md)
+records Windows/Linux acceptance and operational limits. Version identity checks
+compare the immediate base and next catalogue; withdrawn then reintroduced
+versions still require a protected historical publication policy before release.
