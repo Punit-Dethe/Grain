@@ -1,5 +1,19 @@
 # Extension platform: audit, reuse and execution plan
 
+**Current E4f renewal block — 6 October:** The user reconfirmed **GitHub as the
+registry host** and asked to park optional website work. [Renewal audit](EXTENSION-METADATA-RENEWAL-AUDIT.md)
+records a narrow command that renews signed catalogue/revocation expiry without
+changing extensions, rules, roots, future fields or addressed bytes, then feeds
+the existing locked promotion/archive path. Final **54 Windows Rust / 7 actual
+CLI admission verdicts**, locked build/strict Clippy/format and scoped audit pass;
+pinned Linux certification follows. No Agent harness expansion or manual batch.
+Public OAuth identity remains disabled/full 56 Pending; the website PR remains
+open/unmerged. E4 hosted GitHub coherence/activation, protected earlier history,
+independent review/key custody and renewal/revocation operations remain; E5–E8
+follow. Five stages retain work, with acceptance/deferred/inventory counts and
+physical-removal hold unchanged. Earlier Vercel registry recommendations are
+superseded; no host migration is being performed.
+
 **Current hosting decision — 6 October:** The user permits provisional use of the
 existing Vercel website. [Host decision and transition procedure](EXTENSION-HOSTING-DECISION.md)
 separates GitHub source/review/build evidence, the candidate public OAuth document

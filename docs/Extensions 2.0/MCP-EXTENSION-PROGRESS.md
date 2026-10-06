@@ -1,5 +1,18 @@
 # Extension implementation: progress, changes and user testing
 
+**E4f renewal block, 6 October:** Stay on the confirmed GitHub registry host; the
+optional OAuth website PR is parked. [Renewal audit/evidence](EXTENSION-METADATA-RENEWAL-AUDIT.md)
+records metadata-only renewal and preservation of native/MCP files, entries,
+unknown fields, roots and revocation rules. Fresh candidates use the existing
+stale-parent-safe promotion and retained-history export. Final **54 Windows Rust /
+7 actual CLI admission verdicts**, locked build/strict Clippy/format and scoped
+audit pass; Linux certification follows. No Agent harness expansion, desktop or
+new manual batch. E4 deployment/coherence, protected history/review/key custody
+and operational renewal/revocation remain. **Five E4–E8 stages retain work**;
+forward **71**, baseline **52 Pass / 1 Deferred (12)**, full **56 Pending**,
+inventory **108 / 93 / 81** and physical-removal hold unchanged. Earlier Vercel
+registry recommendations are superseded by the user's GitHub confirmation.
+
 **Provisional hosting decision, 6 October:** [Decision and evidence](EXTENSION-HOSTING-DECISION.md)
 records the user's authorization to use the experimental Vercel site, source/review
 on GitHub and separately controlled static registry staging. Public OAuth JSON and

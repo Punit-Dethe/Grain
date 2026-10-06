@@ -37,6 +37,22 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Cmd {
+    /// Renew signed catalogue/revocation expiry without changing entries or hosting.
+    RenewServingMetadata {
+        #[arg(long)]
+        v1: PathBuf,
+        /// Independent digest of the complete previously signed snapshot.
+        #[arg(long)]
+        expected_snapshot_sha256: String,
+        #[arg(long)]
+        key: PathBuf,
+        /// Renewal lifetime, from one through thirty days.
+        #[arg(long, default_value_t = 30)]
+        expires_days: u32,
+        /// Fresh assembly directory; never overwrites the source or deploys it.
+        #[arg(long)]
+        out: PathBuf,
+    },
     /// Export selected metadata and all retained addressed assets for static hosting.
     ExportHostingBundle {
         #[arg(long)]
@@ -472,6 +488,13 @@ fn edit_distance(a: &str, b: &str) -> usize {
 
 fn main() -> Result<()> {
     match Cli::parse().cmd {
+        Cmd::RenewServingMetadata {
+            v1,
+            expected_snapshot_sha256,
+            key,
+            expires_days,
+            out,
+        } => serving::renew(&v1, &expected_snapshot_sha256, &key, expires_days, &out),
         Cmd::ExportHostingBundle {
             store,
             out,

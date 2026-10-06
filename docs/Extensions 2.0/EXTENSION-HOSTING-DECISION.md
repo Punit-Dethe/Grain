@@ -2,6 +2,16 @@
 
 Date: 6 October 2026. Application branch: `extensions/tool-only-retirement`.
 
+**Course correction, 6 October:** The user reconfirmed GitHub as the registry
+host and asked to defer optional website work. GitHub remains the existing signed
+registry base; no Vercel registry project will be provisioned. The public OAuth
+document PR stays open/unmerged and activation stays Pending until needed for
+that separate auth delivery gate. The Vercel registry recommendation and staging
+steps below are historical proposals, superseded by this decision. Continue E4
+publishing/maintenance against GitHub, including hosted coherence, protected
+history migration, release approval/key custody and operations. No more website
+work is required for the current renewal block.
+
 ## Decision and boundaries
 
 The user authorized the existing experimental Vercel free-tier website for

@@ -1,4 +1,5 @@
-//! Complete local serving snapshots. No key access, author execution or hosting.
+//! Complete local serving snapshots. No author execution or hosting.
+//! Renewal signing is isolated in the maintainer-only renewal child module.
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
@@ -15,6 +16,8 @@ use sha2::{Digest, Sha256};
 use crate::prepare::{digest, new_output, OwnedOutput};
 #[path = "hosting.rs"]
 mod hosting;
+#[path = "renewal.rs"]
+mod renewal;
 
 const DOCS: [&str; 6] = [
     "roots.json",
@@ -493,6 +496,10 @@ pub(super) fn verify(path: &Path) -> Result<()> {
         tree.state.index_version, tree.state.snapshot
     );
     Ok(())
+}
+
+pub(super) fn renew(v1: &Path, pin: &str, key: &Path, days: u32, out: &Path) -> Result<()> {
+    renewal::renew_with(v1, pin, key, days, out, &app_anchor)
 }
 
 pub(super) fn assemble(base: &Path, update: &Path, out: &Path) -> Result<()> {

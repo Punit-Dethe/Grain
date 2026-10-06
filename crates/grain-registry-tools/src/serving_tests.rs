@@ -1,6 +1,8 @@
 //! Real signatures and filesystem operations; disposable anchors are test-only.
 #[path = "hosting_tests.rs"]
 mod hosting_tests;
+#[path = "renewal_tests.rs"]
+mod renewal_tests;
 use super::*;
 use serde_json::{json, Value};
 

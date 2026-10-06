@@ -411,3 +411,31 @@ Do not flatten paths into legacy GitHub Release assets or assume a local lock
 coordinates independent machines. Production hosting/history migration, review,
 key custody and renewal/revocation remain gated. [Hosting bundle audit](../../docs/Extensions%202.0/EXTENSION-HOSTING-BUNDLE-AUDIT.md)
 records evidence and limitations.
+
+## Metadata-only renewal (E4f)
+
+```powershell
+grain-registry renew-serving-metadata --v1 SELECTED_SNAPSHOT --expected-snapshot-sha256 '<independently protected snapshot digest>' --key OPERATOR_PUBLISHING_KEY --expires-days 30 --out FRESH_RENEWAL
+grain-registry verify-serving-tree --v1 FRESH_RENEWAL/v1
+grain-registry promote-serving-tree --assembly FRESH_RENEWAL --store PROTECTED_STORE --expected-current-sha256 '<independently protected current.json digest>'
+```
+
+Renewal preserves every extension, revocation rule, future JSON field and addressed
+file. Only index/revocation versions and expirations change; roots remain exact.
+Lifetimes are 1–30 days and must extend both expirations. Authentic expired index/
+revocations can recover, but expired roots need root-authorized recovery. The
+2099 bootstrap seed deliberately refuses shortening. Input identity/signatures,
+complete assets, counters and output containment are checked before the bounded
+key read; both new signatures must verify under existing roots before output.
+
+The result is a fresh complete `v1/` plus the previous parent for existing locked
+promotion. It does not access GitHub, deploy, schedule work, reapprove sources,
+alter revocation states or delete files. Key custody and protected release
+authorization are external prerequisites; the command uses the existing
+unencrypted maintainer key format and does not certify secure-memory erasure.
+Use the protected selected snapshot pin, not a hash supplied by an author. Keep
+normal source publication on `sign-reviewed-candidate`. GitHub remains the
+confirmed registry host; optional OAuth website preparation is parked.
+[Renewal audit](../../docs/Extensions%202.0/EXTENSION-METADATA-RENEWAL-AUDIT.md)
+records signed regression evidence, command-line admission checks and remaining
+operational/release gates.
