@@ -1,5 +1,22 @@
 # Extension implementation: progress, changes and user testing
 
+**E4h committed publication capture, 6 October:** [Capture audit](EXTENSION-GITHUB-CAPTURE-AUDIT.md)
+records a maintainer CLI command that reconstructs exact signed history/files
+directly from a pinned Git commit, including empty folders, without reading dirty
+checkout bytes or changing HEAD. Captured previous/current bundles feed the
+existing conditional publication gate. Final Windows **69/69 full maintainer
+tests and 12 actual CLI verdicts**, locked build/strict Clippy/format and scoped
+audit pass; the real app-pinned positive CLI path and actual legacy baseline
+refusal are verified. Read-only [Linux checkpoint 37502693151](https://github.com/Punit-Dethe/Grain-Extention/actions/runs/37502693151)
+passes **70/70 full maintainer tests and 60 actual CLI verdicts**. Downloaded evidence
+matches the exact source and preserves all 50 prior label/exit/oracle triples.
+The legacy registry lacks signed revocations/new publication
+proof, so first migration remains Pending; missing authority is never fabricated.
+Protected migration/activation and actual hosted client coherence remain next.
+No Agent harness source/scenario or manual batch. Five E4–E8 stages retain work;
+baseline **52 Pass / 1 Deferred (12)**, forward **71**, full **56 Pending**, inventory
+**108 / 93 / 81**, parked website and physical-removal hold are unchanged.
+
 **E4g GitHub publication handoff, 6 October:** [Focused audit](EXTENSION-GITHUB-PUBLICATION-AUDIT.md)
 records a maintainer CLI gate that binds the verified current/history bundles to
 exact Git commits, requires a single expected parent, retains old proofs/assets
@@ -144,7 +161,7 @@ checkpoints do not close the hosted/protected release requirements.
 | E1 — Contract | Native tools or remote MCP descriptors with a smaller tool-only author interface | Provisionally accepted. Extensions cannot use the retired screen/context/prompt privileges. Physical obsolete-code deletion is held. |
 | E2 — Connections | Direct remote JSON connections and signed-store MCPs use the same host-owned account/auth/runtime rules | Provisionally accepted through actual-app checkpoints. MCP SDK and native OAuth library reuse are integrated; provider/production certification remains separate. |
 | E3 — SDK/CLI | Authors create, check, package and draft native/MCP submissions, with separate DESCRIPTION/media | Provisionally accepted. Public API freeze and official extension publishing are later. |
-| **E4 — Publishing, current** | Checked source/build/provenance, independently guarded signing, complete signed snapshots, conditional local promotion, historical identity reservation, hosting bundles, metadata-only renewal and commit-bound conditional GitHub handoffs | Local boundaries audited/verified; GitHub hosting confirmed. Protected remote execution and hosted coherence, prior-history migration, protected real review/protections/key custody, scheduled renewal and emergency revocation operations remain. |
+| **E4 — Publishing, current** | Checked source/build/provenance, independently guarded signing, complete signed snapshots, conditional local promotion, historical identity reservation, hosting bundles, renewal, raw committed captures and conditional GitHub handoffs | Local boundaries audited/verified; GitHub hosting confirmed. Initial legacy migration needs complete signed revocations/history proof; protected remote execution and hosted coherence, real review/protections/key custody, scheduled renewal and emergency revocation remain. |
 | E5 — Store and management UI | Clear native/MCP/custom connection, setup, login and lifecycle flows with defined listing content | Remaining. UI 2.0 branch isolation and user visual approval apply. |
 | E6 — Agent recovery modules | Reviewed automatic-read rules, bounded metadata reuse/freshness, auth continuation and crash/orphan recovery | Remaining as separate implementation blocks. |
 | E7 — Measurements and reference integrations | Mixed native/MCP/custom tools, larger catalogues and measured selection/model/resource quality | Remaining. Includes the official reference extensions after infrastructure acceptance. |

@@ -128,7 +128,27 @@ This is a focused implementation audit, not an independent reviewer or final
 release audit. Unrelated bindings retain SHA256
 `2bd7fc3f77443d7317375fdff8441cac2733f228aa1c6aafe844ffd21809bac`.
 Disposable probes remain ignored evidence, not maintained Agent harness machinery.
-Linux acceptance is Pending until the exact source-pinned lane completes.
+Pinned read-only [Linux checkpoint 37502693151](https://github.com/Punit-Dethe/Grain-Extention/actions/runs/37502693151)
+passes **70/70 full maintainer tests** (one additional Unix symlink guard), locked
+CLI build and **60/60 actual CLI verdicts**. The 50 prior label/exit/oracle triples
+remain identical; ten capture verdicts add two real-root success cases, seven
+specific refusals and actual incomplete legacy-baseline refusal. A second pinned
+read-only registry checkout uses full history to exercise that real baseline;
+no author code, signing key, OIDC or GitHub write is used. Both checkout steps
+disable persisted credentials. Component tests generate ephemeral private test
+keys as before; the public CLI lane creates none.
+
+Application source is exactly `ee558607e7f6a8999bc659ac09ab51eed3416d5a`; registry
+workflow source is `43a32211d4204f81ab6927922bea29f82b2163f3`; real legacy source is
+`af6e24425d0eba1f667913f8a5403e9a6fb7ce76`. Linux CLI SHA256:
+`bd26e305008835d2bcdf3a2eb3d8f41fc2c1902519daafb131bd24ab59fa3181`.
+Artifact `11430117473` has reported archive SHA256
+`a0a8183b0385efd872b150d382c1c973eabff7ae4d5b96161a29b14e56c9fc3c`
+and seven-day retention. Downloaded report/log/public fixtures are at
+`tests/agent-harness/.runs/e4h-commit-capture-linux-01/`; they were read, not executed.
+Inspection checks exact source/counts, all prior specific verdicts, eight exact
+captured files/source receipt, no retained private-key files, unchanged selected
+pointer and no hosting changes. No candidate CI failure/optional skip earns credit.
 
 ## References and next delivery
 

@@ -1,5 +1,16 @@
 # Local extension registry: source and publishing audit
 
+**E4h boundary rechecked, 6 October:** [Committed capture audit](EXTENSION-GITHUB-CAPTURE-AUDIT.md)
+records actual production-CLI refusal of the pinned legacy `af6e244...` catalogue:
+its signed roots/index and addressed files do not include signed revocations or
+the new publication receipt/history layout. The current development branch's v1
+still shares that legacy layout. No signature, empty past revocation state or
+release approval was invented. New raw-Git capture supports a complete authenticated
+publication baseline; protected first migration remains Pending. The working edits
+and two historical deletions below are preserved exactly; no registry artifacts,
+current signatures, main publisher or production hosting changed. The original
+dated audit below remains historical source evidence.
+
 **Date:** 3 October 2026. **Application baseline:** `f305a745`, branch `extensions/tool-only-retirement`. **Registry:** `C:/Projects/Grain/grain/grain-extensions`, separate Git repository on `main`, HEAD `af6e24425d0eba1f667913f8a5403e9a6fb7ce76` (7 September). Its actual remote is [Punit-Dethe/Grain-Extention](https://github.com/Punit-Dethe/Grain-Extention). GitHub's current `main` matches that HEAD at inspection time.
 
 **Scope:** source/metadata audit and release planning. No registry files, GitHub settings, workflows, credentials, signatures or artifacts were changed. No source build, extension execution, signing or publication was attempted. Companion: [ecosystem audit](EXTENSION-ECOSYSTEM-BLAST-RADIUS-AUDIT.md) and [forward execution order](MCP-EXTENSION-REUSE-EXECUTION-PLAN.md).

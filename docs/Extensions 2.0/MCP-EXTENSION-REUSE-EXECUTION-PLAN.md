@@ -1,5 +1,23 @@
 # Extension platform: audit, reuse and execution plan
 
+**Current E4h committed publication capture — 6 October:** [Capture audit](EXTENSION-GITHUB-CAPTURE-AUDIT.md)
+records exact raw-Git reconstruction, empty-directory recovery, authenticated
+previous history and reuse in the conditional publication gate. Windows **69/69
+full maintainer tests and 12 actual CLI verdicts**, strict Clippy/format/build and
+focused audit pass. Actual app-pinned capture succeeds independently of dirty
+checkout bytes; the actual incomplete legacy baseline deliberately refuses.
+Source `ee558607e7f6a8999bc659ac09ab51eed3416d5a` is pushed; pinned read-only Linux
+[checkpoint 37502693151](https://github.com/Punit-Dethe/Grain-Extention/actions/runs/37502693151)
+passes **70/70 full maintainer tests and 60 actual CLI verdicts**; downloaded source,
+eight-file real-root capture and all 50 prior verdicts are independently checked.
+Next E4: inventory and protect earlier four-document legacy proof/version identities
+without inventing historical revocations; establish a genuinely reviewed/signed
+complete migration baseline, then scoped authorized conditional GitHub activation,
+actual hosted client coherence and operational controls. New capture does not
+close that first migration or enable production publishing. Legacy files/workflow
+and physical-removal hold remain intact. Five E4–E8 stages retain work; optional
+website stays parked and foundation/forward/inventory counts are unchanged.
+
 **Current E4g GitHub publication handoff — 6 October:** [Publication audit](EXTENSION-GITHUB-PUBLICATION-AUDIT.md)
 records the no-secret commit-binding gate, exact base/candidate parent and signed
 history retention, plus explicit-lease handoff tested against a disposable Git
