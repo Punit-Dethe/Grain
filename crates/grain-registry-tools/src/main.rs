@@ -37,6 +37,22 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Cmd {
+    /// Export selected metadata and all retained addressed assets for static hosting.
+    ExportHostingBundle {
+        #[arg(long)]
+        store: PathBuf,
+        #[arg(long)]
+        out: PathBuf,
+        #[arg(long)]
+        expected_current_sha256: String,
+    },
+    /// Verify an independently receipt-pinned static hosting bundle. Never deploys.
+    VerifyHostingBundle {
+        #[arg(long)]
+        bundle: PathBuf,
+        #[arg(long)]
+        expected_receipt_sha256: String,
+    },
     /// Export one verified selected snapshot without deploying or changing it.
     ExportServingSnapshot {
         #[arg(long)]
@@ -456,6 +472,15 @@ fn edit_distance(a: &str, b: &str) -> usize {
 
 fn main() -> Result<()> {
     match Cli::parse().cmd {
+        Cmd::ExportHostingBundle {
+            store,
+            out,
+            expected_current_sha256,
+        } => serving::export_hosting_bundle(&store, &out, &expected_current_sha256),
+        Cmd::VerifyHostingBundle {
+            bundle,
+            expected_receipt_sha256,
+        } => serving::verify_hosting_bundle(&bundle, &expected_receipt_sha256),
         Cmd::ExportServingSnapshot {
             store,
             out,

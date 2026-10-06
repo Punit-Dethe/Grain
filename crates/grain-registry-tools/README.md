@@ -363,3 +363,51 @@ A future hosting adapter must preserve historical addressed assets and support
 conditional activation/coherent roots, with protected approval/key custody and
 operational renewal/revocation. [History/export audit](../../docs/Extensions%202.0/EXTENSION-SERVING-HISTORY-EXPORT-AUDIT.md)
 records verification and the remaining gates.
+
+## Static hosting bundle with retained assets (E4e)
+
+```powershell
+grain-registry export-hosting-bundle --store local-serving-store --out fresh-hosting-bundle --expected-current-sha256 '<independently captured current.json SHA256>'
+grain-registry verify-hosting-bundle --bundle fresh-hosting-bundle --expected-receipt-sha256 '<independently captured bundle.json SHA256>'
+```
+
+The exporter prints the receipt digest. Capture it through the protected handoff;
+do not establish independent trust by hashing an untrusted received receipt.
+These commands use the actual app-pinned trust chain, never a CLI override key.
+They do not sign, deploy, alter the pointer, execute author code or grant approval.
+
+The bundle contains exact `current.json`, bounded unsigned `bundle.json`, `v1/`
+and `history/<snapshot-digest>/` signed metadata proofs. `v1/` has the fresh selected
+six metadata/signature files and the union of retained addressed `blob/` and
+`media/` files. Only the selected index is active; historical catalogues are proof,
+not active listings. Shared addressed files are copied once, with agreeing explicit
+sizes. All retained installed snapshots are included; unsigned temporary staging
+is inert. Conflicting historical `(id, version)` artifact/listing identities refuse
+even when neither version remains selected.
+
+The existing `verify-serving-tree` intentionally checks a single snapshot; use
+`verify-hosting-bundle` for a bundle's archive-aware layout. Its independently
+pinned receipt fixes the selected state and sorted exact history membership.
+Verification binds exact pointer bytes to that state, authenticates all proofs
+and their content-addressed identities, reconstructs the addressed file union,
+and streams every actual file. Missing, changed, linked, duplicate, unsafe or
+unexpected files/proofs/pointer/receipt fields refuse. Strict expiry applies to
+active metadata; old signed proofs can be expired without activating them. Old
+proofs retain their own signed roots when the current publishing key rotates.
+
+This maintainer profile bounds the union to 8,192 unique assets and version
+identities, 1 GiB total, 4,096 snapshots including selected, 128 MiB signed metadata
+and a 384 KiB receipt. Individual existing file bounds still apply. One catalogue
+and one 64 KiB file buffer are processed at a time; only bounded path/hash maps
+are retained. There is no permanent resource/cache or new registry server.
+Exhaustion refuses and needs audited archival that preserves identities/references.
+Owned incomplete output is removed on failure; previous inputs/exports stay intact.
+
+This prepares an offline static-host handoff, not an activated hosting adapter.
+Signed base URLs and bootstrap remain unchanged. Future deployment must preserve
+the `blob/`/`media/` route structure, retain immutable hashes, activate metadata
+coherently and apply the host's own conditional-write/protected release policy.
+Do not flatten paths into legacy GitHub Release assets or assume a local lock
+coordinates independent machines. Production hosting/history migration, review,
+key custody and renewal/revocation remain gated. [Hosting bundle audit](../../docs/Extensions%202.0/EXTENSION-HOSTING-BUNDLE-AUDIT.md)
+records evidence and limitations.

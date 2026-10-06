@@ -13,6 +13,8 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::prepare::{digest, new_output, OwnedOutput};
+#[path = "hosting.rs"]
+mod hosting;
 
 const DOCS: [&str; 6] = [
     "roots.json",
@@ -667,7 +669,11 @@ pub(super) fn promote(assembly: &Path, store: &Path, pin: &str) -> Result<()> {
 // The operator-owned store is append-only. Reserve identities even in a fully
 // verified but not yet selected snapshot: after an interrupted operation there
 // may already be external readers. No mutable second history database is needed.
-fn historical_versions(store: &Path, next: &Tree, anchor: &Anchor<'_>) -> Result<()> {
+fn visit_history(
+    store: &Path,
+    anchor: &Anchor<'_>,
+    mut visit: impl FnMut(Tree) -> Result<()>,
+) -> Result<usize> {
     let mut count = 0;
     let mut bytes = 0u64;
     let snapshots = directory(&store.join("snapshots"))?;
@@ -702,11 +708,31 @@ fn historical_versions(store: &Path, next: &Tree, anchor: &Anchor<'_>) -> Result
         if bytes > MAX_HISTORY_DOCS {
             bail!("Snapshot history exceeds metadata budget; audited archival required");
         }
-        immutable_versions(&historical.index, &next.index)?;
+        visit(historical)?;
     }
+    Ok(count)
+}
+
+fn historical_versions(store: &Path, next: &Tree, anchor: &Anchor<'_>) -> Result<()> {
+    let count = visit_history(store, anchor, |historical| {
+        immutable_versions(&historical.index, &next.index)
+    })?;
+    let snapshots = directory(&store.join("snapshots"))?;
     if count == MAX_HISTORY && !snapshots.join(&next.state.snapshot).try_exists()? {
         bail!("Snapshot history count budget exhausted; audited archival required");
     }
+    Ok(())
+}
+
+pub(super) fn export_hosting_bundle(store: &Path, out: &Path, pin: &str) -> Result<()> {
+    hosting::export(store, out, pin, &app_anchor)
+}
+
+pub(super) fn verify_hosting_bundle(bundle: &Path, pin: &str) -> Result<()> {
+    hosting::verify(bundle, pin, &app_anchor)?;
+    println!(
+        "Hosting bundle verified against pinned receipt and app roots; not deployment approval"
+    );
     Ok(())
 }
 
