@@ -82,7 +82,23 @@ Windows executable SHA256:
 Local evidence: `tests/agent-harness/.runs/e4j-legacy-migration-01/`, final
 `cli-03/report.json`, full-tests/core-trust/clippy/build logs. Earlier `cli-01`
 and `cli-02` failures are retained as diagnostic evidence, not accepted results.
-Linux source-pinned verification is Pending until its run completes.
+[Read-only Linux checkpoint 37525774777](https://github.com/Punit-Dethe/Grain-Extention/actions/runs/37525774777)
+passes **96/96 maintainer / 9/9 core trust / 85/85 public CLI checks**. Source
+`8b2d40c19b4a902d3bf9282dea5c96eab9bd5249`, workflow commit
+`4a07f8e6e3e0794a1e3a51dfa1c3119208750060`, and actual legacy tip
+`af6e24425d0eba1f667913f8a5403e9a6fb7ce76` are independently checked. All 60
+previous Linux CLI verdicts and all 12 previous archival verdicts are unchanged;
+all 25 extended verdicts equal Windows. The complete receipt and all 109 archived
+proof/asset bytes are identical. Linux's extra test covers Unix file guards.
+Downloaded evidence is inspected, never executed. No keys occur in the artifact.
+Linux executable SHA256:
+`e78d3b1b3e162c0573241d5d02666130e142d20c0254d36592fdeddfae176fe7`.
+
+Artifact `serving-tree-evidence` ID `11441364464`; GitHub-reported archive digest
+`c9dcc01dd0c19523175cfed54b0f1f5683452ad332eabec52b41ff29e91037c3`;
+seven-day retention. It is test evidence, not durable production archival storage.
+Local cross-platform comparison is `e4j-legacy-migration-01/verify_linux.py` and
+`linux-verification.json`; downloaded evidence is `e4j-legacy-migration-linux-01/`.
 
 ## Operator order and what remains
 

@@ -6,8 +6,11 @@ sticky signed version reservations through store/update/renewal/hosting, and
 distinct first Git migration handoff. The actual legacy archive still preserves
 all 109 files; active old versions remain retired. Windows **95 maintainer /
 9 core trust / 25 public CLI checks**, build/strict Clippy and scoped audit pass.
-Linux checkpoint is Pending. No production key was accessed and no production
-baseline was signed, approved or activated. E4 remains open for protected
+[Pinned Linux checkpoint](https://github.com/Punit-Dethe/Grain-Extention/actions/runs/37525774777)
+passes **96 maintainer / 9 core trust / 85 CLI checks**. Exact source, all 60
+earlier Linux verdicts, all 12 earlier archive verdicts and all 109 identical
+archive files are independently verified. No production key was accessed and
+no production baseline was signed, approved or activated. E4 remains open for protected
 signing/authorization, conditional GitHub activation, operational controls and
 actual hosted-client coherence; **five E4–E8 stages retain work**. No new manual
 batch or Agent harness expansion; existing foundation/forward/inventory counts,
