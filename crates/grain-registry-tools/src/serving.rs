@@ -18,6 +18,8 @@ use crate::prepare::{digest, new_output, OwnedOutput};
 pub(crate) mod capture;
 #[path = "hosting.rs"]
 mod hosting;
+#[path = "legacy.rs"]
+pub(crate) mod legacy;
 #[path = "publication.rs"]
 pub(crate) mod publication;
 #[path = "renewal.rs"]
@@ -259,6 +261,44 @@ fn metadata(path: &Path, anchor: &Anchor<'_>, require_fresh: bool) -> Result<Tre
     }
     expiry(&index.expires, require_fresh)?;
     expiry(&revocations.expires, require_fresh)?;
+    let assets = index_assets(&index, true)?;
+    for entry in &revocations.entries {
+        grain_sdk::validate_extension_id(&entry.id).map_err(anyhow::Error::msg)?;
+        if let Some(version) = &entry.version {
+            grain_sdk::validate_extension_version(version).map_err(anyhow::Error::msg)?;
+        }
+    }
+    let mut hashes = docs
+        .iter()
+        .map(|(name, bytes)| (name.clone(), digest(bytes)))
+        .collect::<BTreeMap<_, _>>();
+    hashes.extend(
+        assets
+            .iter()
+            .map(|(name, value)| (name.clone(), value.hash.clone())),
+    );
+    let state = State {
+        schema: 1,
+        snapshot: digest(&serde_json::to_vec(&hashes)?),
+        index_sha256: digest(&docs["index.json"]),
+        index_version: index.version,
+        roots_sha256: digest(&docs["roots.json"]),
+        roots_version: roots.version,
+        revocations_sha256: digest(&docs["revocations.json"]),
+        revocations_version: revocations.version,
+    };
+    Ok(Tree {
+        path,
+        docs,
+        assets,
+        state,
+        index,
+        revocations,
+    })
+}
+
+// Historical archival shares address/size checks, but grants no publishing trust.
+fn index_assets(index: &Index, publishable: bool) -> Result<BTreeMap<String, Asset>> {
     let mut identities = BTreeSet::new();
     let mut assets = BTreeMap::new();
     for entry in &index.entries {
@@ -267,10 +307,12 @@ fn metadata(path: &Path, anchor: &Anchor<'_>, require_fresh: bool) -> Result<Tre
         if !identities.insert((&entry.id, &entry.version)) {
             bail!("Duplicate serving extension version");
         }
-        if matches!(
-            entry.trust,
-            grain_sdk::Trust::Dev | grain_sdk::Trust::Experimental
-        ) {
+        if publishable
+            && matches!(
+                entry.trust,
+                grain_sdk::Trust::Dev | grain_sdk::Trust::Experimental
+            )
+        {
             bail!("Unpublishable serving trust level");
         }
         entry.validate_listing().map_err(anyhow::Error::msg)?;
@@ -306,39 +348,7 @@ fn metadata(path: &Path, anchor: &Anchor<'_>, require_fresh: bool) -> Result<Tre
             )?;
         }
     }
-    for entry in &revocations.entries {
-        grain_sdk::validate_extension_id(&entry.id).map_err(anyhow::Error::msg)?;
-        if let Some(v) = &entry.version {
-            grain_sdk::validate_extension_version(v).map_err(anyhow::Error::msg)?;
-        }
-    }
-    let mut hashes = docs
-        .iter()
-        .map(|(name, bytes)| (name.clone(), digest(bytes)))
-        .collect::<BTreeMap<_, _>>();
-    hashes.extend(
-        assets
-            .iter()
-            .map(|(name, value)| (name.clone(), value.hash.clone())),
-    );
-    let state = State {
-        schema: 1,
-        snapshot: digest(&serde_json::to_vec(&hashes)?),
-        index_sha256: digest(&docs["index.json"]),
-        index_version: index.version,
-        roots_sha256: digest(&docs["roots.json"]),
-        roots_version: roots.version,
-        revocations_sha256: digest(&docs["revocations.json"]),
-        revocations_version: revocations.version,
-    };
-    Ok(Tree {
-        path,
-        docs,
-        assets,
-        state,
-        index,
-        revocations,
-    })
+    Ok(assets)
 }
 
 fn check(path: &Path, anchor: &Anchor<'_>, require_fresh: bool) -> Result<Tree> {

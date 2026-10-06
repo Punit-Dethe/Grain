@@ -135,6 +135,18 @@ pub fn verify_roots(roots_json: &[u8], sig_text: &str) -> Result<Roots, TrustErr
     serde_json::from_slice(roots_json).map_err(|e| TrustError::BadJson(e.to_string()))
 }
 
+/// Authenticate raw historical publisher metadata with already verified roots.
+/// This grants no schema, expiry, rollback, revocation or installation approval.
+/// Maintainer archival uses this before parsing retired document shapes; clients
+/// must continue using `verify_index` / `verify_revocations` for active metadata.
+pub fn verify_publisher_signature(
+    roots: &Roots,
+    data: &[u8],
+    sig_text: &str,
+) -> Result<(), TrustError> {
+    verify_with_key(&roots.publishing_key, data, sig_text)
+}
+
 /// **Step 2.** Verify and parse `index.json` against the publishing key named in
 /// a *verified* [`Roots`], applying the rollback and expiry rules in order.
 ///

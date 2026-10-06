@@ -1,5 +1,15 @@
 # Local extension registry: source and publishing audit
 
+**E4i historical evidence, 7 October:** [Archive audit](EXTENSION-LEGACY-HISTORY-AUDIT.md)
+captures all 18 signed catalogue-changing ancestors through pinned `af6e244...`
+without using the dirty worktree. Real data has 27 content variants for 13 version
+identities, eight conflicts, 37 addressed assets and one package recovered from
+a later pinned catalogue tree. The old `builtin` tier is raw historical data,
+not new active SDK admission. All 109 proof/asset files are compared with exact
+Git source bytes. Signed revocation evidence is still absent; protected complete
+migration/publication remains gated. Existing dirty source/deleted-file state,
+legacy publisher, main, trust anchors and physical-removal hold are retained.
+
 **E4h boundary rechecked, 6 October:** [Committed capture audit](EXTENSION-GITHUB-CAPTURE-AUDIT.md)
 records actual production-CLI refusal of the pinned legacy `af6e244...` catalogue:
 its signed roots/index and addressed files do not include signed revocations or

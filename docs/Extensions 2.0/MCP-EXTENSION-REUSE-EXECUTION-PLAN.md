@@ -1,5 +1,24 @@
 # Extension platform: audit, reuse and execution plan
 
+**Current E4i legacy history preservation — 7 October:** [Archive audit](EXTENSION-LEGACY-HISTORY-AUDIT.md)
+accepts the bounded manifest-pinned historical capture implementation locally:
+**80/80 Windows maintainer tests, 9/9 core trust tests, 12/12 actual public CLI
+verdicts**, build/strict Clippy/format and focused audit Pass. The real pinned
+legacy history yields **18 signed proofs / 27 content variants / 8 conflicted
+version identities / 37 assets**; all **109 proof/asset files** match exact Git
+source bytes. One early missing asset is recovered from a later pinned commit
+with its original signed hash/size and explicit source record. Retired `builtin`
+is recognized only in an authenticated archival view, never active SDK admission.
+No fake revocations, keys, activation, capability reapproval or physical removal.
+Linux source-pinned checkpoint and final acceptance record follow in the audit.
+Next E4: protected archive reauthentication/reservation enforcement in the complete
+migration/hosting contract, genuinely reviewed/signed six-document baseline,
+authorized conditional GitHub activation, actual hosted client coherence and
+operational protection/key controls. E4 remains open; five E4–E8 stages retain
+work. No new Agent scenario or manual test batch; website stays parked and
+foundation/forward/inventory counts are unchanged. Earlier checkpoints below
+are historical.
+
 **Current E4h committed publication capture — 6 October:** [Capture audit](EXTENSION-GITHUB-CAPTURE-AUDIT.md)
 records exact raw-Git reconstruction, empty-directory recovery, authenticated
 previous history and reuse in the conditional publication gate. Windows **69/69

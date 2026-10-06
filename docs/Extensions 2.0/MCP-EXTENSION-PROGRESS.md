@@ -1,5 +1,21 @@
 # Extension implementation: progress, changes and user testing
 
+**E4i legacy history preservation, 7 October:** [Archive audit](EXTENSION-LEGACY-HISTORY-AUDIT.md)
+records a maintainer command that saves the original signed catalogue records
+and referenced files without making the old extensions installable. Real history:
+**18 proofs / 37 files / 27 content variants / 8 conflicted version identities**.
+Every one of the **109 proof/asset files** is checked against committed bytes.
+An early package added after its catalogue is explicitly recovered and attributed;
+expired proof and retired presentation tier stay historical only. **80 Windows
+maintainer tests / 9 core trust tests / 12 public CLI verdicts**, scoped audit,
+strict Clippy/format/build Pass; pinned Linux evidence follows in the audit.
+No Agent harness expansion, new manual batch, website work, old-file deletion or
+production activation. This completes history capture, not migration or release.
+Next enforce archive reservations in protected migration/hosting, establish a
+genuinely signed/reviewed baseline, then conditional hosted activation and client
+coherence. **Five E4–E8 stages retain work**; E4 remains open and existing
+foundation/deferred/forward/inventory totals are unchanged.
+
 **E4h committed publication capture, 6 October:** [Capture audit](EXTENSION-GITHUB-CAPTURE-AUDIT.md)
 records a maintainer CLI command that reconstructs exact signed history/files
 directly from a pinned Git commit, including empty folders, without reading dirty

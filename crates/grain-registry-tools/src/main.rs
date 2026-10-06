@@ -37,6 +37,20 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Cmd {
+    /// Preserve all four-document legacy catalogue proofs through a pinned tip.
+    /// An independently pinned manifest is required. No activation or signing.
+    CaptureLegacyHistory {
+        #[arg(long)]
+        checkout: PathBuf,
+        #[arg(long)]
+        repository: String,
+        #[arg(long)]
+        manifest: PathBuf,
+        #[arg(long)]
+        expected_manifest_sha256: String,
+        #[arg(long)]
+        out: PathBuf,
+    },
     /// Capture authenticated previous publication proof from an exact Git commit.
     /// Never reads the working tree, activates metadata, authenticates or pushes.
     CaptureGithubPublication {
@@ -528,6 +542,19 @@ fn edit_distance(a: &str, b: &str) -> usize {
 
 fn main() -> Result<()> {
     match Cli::parse().cmd {
+        Cmd::CaptureLegacyHistory {
+            checkout,
+            repository,
+            manifest,
+            expected_manifest_sha256,
+            out,
+        } => serving::legacy::capture(
+            &checkout,
+            &repository,
+            &manifest,
+            &expected_manifest_sha256,
+            &out,
+        ),
         Cmd::CaptureGithubPublication {
             checkout,
             repository,

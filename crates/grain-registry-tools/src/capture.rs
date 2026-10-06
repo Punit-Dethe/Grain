@@ -16,9 +16,9 @@ pub(super) struct Receipt {
     pub bytes: u64,
 }
 
-struct Blob {
-    oid: String,
-    size: u64,
+pub(super) struct Blob {
+    pub(super) oid: String,
+    pub(super) size: u64,
 }
 
 fn document_limit(name: &str) -> Option<u64> {
@@ -44,7 +44,7 @@ fn addressed_limit(name: &str, kinds: &[(&str, u64)]) -> Option<u64> {
 
 // Every path is an allowlisted relative file before any directories are made.
 // Git empty directories are absent; reconstruction creates only known folders.
-fn destination(name: &str) -> Result<(PathBuf, u64)> {
+pub(super) fn destination(name: &str) -> Result<(PathBuf, u64)> {
     let parts: Vec<_> = name.split('/').collect();
     let limit = match parts.as_slice() {
         ["v1", doc] => document_limit(doc),
@@ -160,7 +160,11 @@ fn header(reader: &mut impl Read) -> Result<String> {
     }
 }
 
-fn materialize(root: &Path, blobs: &BTreeMap<PathBuf, Blob>, bundle: &Path) -> Result<u64> {
+pub(super) fn materialize(
+    root: &Path,
+    blobs: &BTreeMap<PathBuf, Blob>,
+    bundle: &Path,
+) -> Result<u64> {
     let mut input = Vec::with_capacity(blobs.len() * 41);
     for blob in blobs.values() {
         input.extend(blob.oid.as_bytes());

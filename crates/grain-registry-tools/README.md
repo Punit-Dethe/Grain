@@ -527,3 +527,70 @@ to the capture, bounded by the 1 GiB profile plus Git framing. Git's existing
 owned output is cleaned, while pre-existing outputs and legacy files stay intact.
 [Capture audit](../../docs/Extensions%202.0/EXTENSION-GITHUB-CAPTURE-AUDIT.md)
 records verification and the outstanding legacy migration/activation work.
+## Legacy history preservation (E4i)
+
+`capture-legacy-history` preserves authenticated four-document catalogue history
+as **historical evidence**, never an active serving tree. Use an operator-reviewed
+manifest whose raw SHA256 is independently pinned:
+
+```text
+grain-registry capture-legacy-history --checkout PROTECTED_COMPLETE_CHECKOUT \
+  --repository Punit-Dethe/Grain-Extention \
+  --manifest fixtures/legacy-history-af6e244.json \
+  --expected-manifest-sha256 6cad006f21b54e7041921dd68db0f8acf30932c0a8617a82a3b671a04a1b56f3 \
+  --out NEW_ARCHIVE
+```
+
+The checked-in manifest names all 18 catalogue-changing ancestors through the
+independently chosen `af6e24425d0eba1f667913f8a5403e9a6fb7ce76` tip. The command
+compares its entire ordered commit list to bounded `rev-list --full-history
+--topo-order --reverse` output for signed documents, including signature-only
+changes. It refuses omissions, reordering, shallow/grafted/borrowed history,
+redirecting Git configuration, wrong origin, linked/nonregular/executable files
+and existing revocation documents that this legacy-only format cannot preserve.
+No checkout bytes, author commands, private keys, network or remote writes.
+
+Output contains `manifest.json`, `proofs/<commit>/` with the four **original**
+signed files, a deduplicated `assets/blob/` and `assets/media/` pool, and unsigned
+`legacy-history.json`. Raw root/index signatures use the existing app-pinned
+trust chain. Expired historical proof is allowed; active freshness policy is
+unchanged. Only the authenticated archival parsing view recognizes the retired
+`builtin` presentation tier; original bytes retain it and active SDK admission
+still rejects it. Old capabilities are preserved as evidence, never enabled.
+
+The receipt records every immutable content variant for each `(id, version)`,
+all conflicting versions, exact document digests and each asset's actual source
+commit. An asset missing from an earlier tree may be recovered from these same
+pinned catalogue snapshots **only if its signed hash/size verifies**. Recovery
+is explicit; absent bytes or changed bytes under one address fail. Extra
+unreferenced committed assets are not copied, and the source repository is never
+modified. This manifest is bounded historical coverage of this chosen tip, not
+proof of remote approval, all repository refs or future history.
+
+Limits: 128 catalogue commits, 8,192 pooled addressed files/content variants,
+131,072 reservation references, 128 MiB metadata, 1 GiB capture data plus at most
+8 MiB receipt. Existing per-document/artifact and bounded, reaped Git child
+limits apply. RAM holds bounded metadata/inventories; artifact copies stream.
+Failed owned output is removed; preexisting input/output is retained.
+
+Reproducible actual public-CLI verification (Python standard library only):
+
+```text
+python crates/grain-registry-tools/tests/legacy_history_cli.py \
+  --tool /ABSOLUTE/PATH/TO/grain-registry \
+  --checkout /ABSOLUTE/PATH/TO/COMPLETE_LEGACY_CHECKOUT \
+  --output /ABSOLUTE/PATH/TO/NEW_EVIDENCE
+```
+
+This is a maintainer command checkpoint, separate from the Agent harness. It
+uses no private keys, checks 12 exact CLI verdicts and compares every archived
+proof/asset to its actual Git source bytes. Its fixed expected manifest digest
+must be reviewed with the pinned test source. Keep it while this migration path
+is supported; it is not a second application or a temporary author execution lane.
+
+**Migration remains separate:** a protected consumer must reauthenticate the
+archive and enforce reservations/conflicts before creating a reviewed, genuinely
+signed six-document baseline. Do not flatten this archive into `v1/`, fabricate
+historical revocations, reapprove legacy capabilities, reuse reserved versions or
+interpret its unsigned receipt as permission to release. Conditional publication
+and hosted client coherence remain required.
