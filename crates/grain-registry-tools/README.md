@@ -155,7 +155,9 @@ release acceptance.
 `sign-reviewed-candidate` produces a **signed catalogue update fragment**, without
 uploading, executing author code, modifying the previous catalogue or activating
 the old registry workflow. This command is maintainer-only and never ships in Grain.
-Positive trusted registry CI provenance and production governance remain unaccepted.
+The [controlled registry CI checkpoint](../../docs/Extensions%202.0/EXTENSION-CI-PROVENANCE-AUDIT.md)
+now verifies genuine provenance through this command; production human review and
+governance remain unaccepted.
 
 ```powershell
 grain-registry sign-reviewed-candidate --submission registry/extensions/com.example.tools --prepared prepared-tools --candidate catalogue-candidate --policy protected-review/approved.json --policy-sha256 '<independent policy SHA256>' --gh 'C:\Program Files\GitHub CLI\gh.exe' --attestation candidate-attestation.jsonl --previous previous-v1 --key protected-keys/publishing.key --out signed-update
@@ -172,7 +174,7 @@ not TOML bytes or arbitrarily reformatted JSON.
 | `candidate_sha256`, `submission_sha256`, `receipt_sha256` | Exact approved candidate, complete structured source submission and preparation receipt |
 | `producer_sha256`, `verifier_sha256` | Independently approved registry builder and official `gh` executable bytes |
 | `registry_repo` | GitHub `owner/repo` whose CI provenance must verify |
-| `registry_commit`, `registry_ref` | Exact registry commit and `refs/heads/<branch>` (single branch component in this profile) |
+| `registry_commit`, `registry_ref` | Exact registry commit and `refs/heads/<branch>`; scoped branch names are allowed, ambiguous/invalid components refuse |
 | `signer_workflow`, `signer_commit` | Same-repository `owner/repo/.github/workflows/<file>.yml` or `.yaml` and immutable workflow commit; reusable workflow identity is the signer |
 | `reviewer`, `submitter` | Protected review record's reviewer and submitting GitHub account; only submitter becomes catalogue `author` |
 | `approved_at`, `expires_at` | RFC3339 approval window: not future-dated, still valid and at most seven days; rechecked before opening the key |
@@ -220,8 +222,9 @@ root deployment. Crash leftovers are not publishable merely because files exist;
 future promotion must verify the whole fragment. Key custody still follows the
 existing development-key arrangement, not a production KMS claim.
 
-Next: a pinned, isolated trusted builder/review/signing workflow and positive
-candidate attestation checkpoint. Author builds must have no publishing credentials
+The separate registry branch now has a pinned preparation/attestation checkpoint
+for controlled native/MCP data. Next: real pinned author-source build isolation and
+protected review-derived signing policy. Author builds must have no publishing credentials
 or privileged attestation step. Follow [GitHub's trusted-builder guidance](https://docs.github.com/en/actions/how-tos/secure-your-work/use-artifact-attestations/increase-security-rating)
 and [secure workflow guidance](https://docs.github.com/en/actions/reference/security/secure-use).
 Do not activate the current nested registry's incomplete legacy publisher.

@@ -1,5 +1,12 @@
 # Reviewed catalogue signing boundary — E4b3
 
+**6 October follow-up:** [Genuine CI checkpoint](EXTENSION-CI-PROVENANCE-AUDIT.md)
+now passes both-kind positive signing and eight identity refusals with the actual
+registry's GitHub bundle. Scoped branch names are supported. Protected production
+review and real author-build/release governance remain gated. The 5 October local
+evidence and limitations below are historical; its missing genuine positive
+attestation requirement is closed within controlled-fixture scope.
+
 **5 October 2026: local maintainer signing boundary implemented and audited.
 Positive trusted registry CI/review-to-signing acceptance is still Pending.**
 Forward 71 remains the latest accepted product checkpoint; E4 is not complete.

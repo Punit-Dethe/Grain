@@ -69,6 +69,20 @@ fn name(value: &str) -> bool {
         && value != ".."
 }
 
+fn branch_ref(value: &str) -> bool {
+    value.len() <= 1024
+        && value.strip_prefix("refs/heads/").is_some_and(|branch| {
+            !branch.starts_with('-')
+                && branch.split('/').all(|component| {
+                    name(component)
+                        && !component.starts_with('.')
+                        && !component.ends_with('.')
+                        && !component.ends_with(".lock")
+                        && !component.contains("..")
+                })
+        })
+}
+
 impl Policy {
     pub(super) fn validate(&self, now: i64) -> Result<()> {
         let hashes = [
@@ -93,10 +107,7 @@ impl Policy {
         if repo.len() != 2
             || repo.iter().any(|v| !name(v))
             || !workflow.is_some_and(|v| name(v) && (v.ends_with(".yml") || v.ends_with(".yaml")))
-            || !self
-                .registry_ref
-                .strip_prefix("refs/heads/")
-                .is_some_and(name)
+            || !branch_ref(&self.registry_ref)
             || !name(&self.reviewer)
             || !name(&self.submitter)
         {
@@ -525,6 +536,30 @@ pub(super) fn sign(input: Inputs<'_>) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn branch_policy_accepts_scoped_git_refs_and_refuses_ambiguous_components() {
+        let mut p = policy();
+        p.registry_ref = "refs/heads/registry/trusted-provenance".into();
+        p.validate(Utc::now().timestamp()).unwrap();
+        for branch in [
+            "refs/tags/v1",
+            "refs/heads/",
+            "refs/heads//main",
+            "refs/heads/a/../b",
+            "refs/heads/.hidden",
+            "refs/heads/a.lock",
+            "refs/heads/a.",
+            "refs/heads/a..b",
+            "refs/heads/a@{b}",
+            "refs/heads/a b",
+            "refs/heads/a\\b",
+            "refs/heads/-inject/ok",
+        ] {
+            // A leading dash is a valid component except at branch start; refuse it there below.
+            assert!(!branch_ref(branch), "{branch}");
+        }
+    }
 
     #[test]
     fn verifier_output_and_deadline_failures_reap_the_owned_child() {
