@@ -1,7 +1,7 @@
 # Extension platform: audit, reuse and execution plan
 
 **Current E4i legacy history preservation — 7 October:** [Archive audit](EXTENSION-LEGACY-HISTORY-AUDIT.md)
-accepts the bounded manifest-pinned historical capture implementation locally:
+accepts the bounded manifest-pinned historical capture implementation:
 **80/80 Windows maintainer tests, 9/9 core trust tests, 12/12 actual public CLI
 verdicts**, build/strict Clippy/format and focused audit Pass. The real pinned
 legacy history yields **18 signed proofs / 27 content variants / 8 conflicted
@@ -10,7 +10,10 @@ source bytes. One early missing asset is recovered from a later pinned commit
 with its original signed hash/size and explicit source record. Retired `builtin`
 is recognized only in an authenticated archival view, never active SDK admission.
 No fake revocations, keys, activation, capability reapproval or physical removal.
-Linux source-pinned checkpoint and final acceptance record follow in the audit.
+[Pinned Linux checkpoint 37516026483](https://github.com/Punit-Dethe/Grain-Extention/actions/runs/37516026483)
+passes **81/81 maintainer / 9/9 core trust / 72 actual CLI checks**. Exact source
+`ae79f10a3af5ec823ec23726cafa44245faa39db`, all 60 earlier verdicts and all 109
+archive files are independently checked; receipt is identical across platforms.
 Next E4: protected archive reauthentication/reservation enforcement in the complete
 migration/hosting contract, genuinely reviewed/signed six-document baseline,
 authorized conditional GitHub activation, actual hosted client coherence and

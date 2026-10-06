@@ -115,6 +115,47 @@ asset/tier refusals prompted the documented fixes. No failed attempt is counted
 as an accepted verdict. Linux source-pinned checkpoint is recorded below after
 successful execution and independent artifact/source verification.
 
+### Accepted cross-platform checkpoint
+
+Source implementation `223614dd274b6568435dd9e1bf43ec92b28acce5` is committed;
+tested/pushed combined source `ae79f10a3af5ec823ec23726cafa44245faa39db` preserves
+the concurrent remote README-only commit `69968d74` by normal merge, no force.
+Registry workflow `a2436fd5ca4295aad56602bef93ff83e5724d780` pins that exact Grain
+source and complete legacy tip; no GitHub write/OIDC/keys, credentials persisted,
+author build or main activation in this read-only lane.
+
+[Successful Linux run 37516026483](https://github.com/Punit-Dethe/Grain-Extention/actions/runs/37516026483)
+passes **81/81 full maintainer tests / 9/9 core trust tests / 72 actual CLI
+verdicts** (all 60 prior checks unchanged plus 12 legacy checks). Locked build
+and each job step succeed. Independently downloaded artifact `11436209611`,
+reported archive SHA256
+`80588a5c3a7b5417e78b18fe842ec5d9b357fa5f457c78c6534209f3a2bb8f93`,
+has seven-day retention. Downloaded contents are read, never executed.
+
+Actual source pin, all previous 60 label/exit/oracle triples and new 12 triples
+are independently compared with accepted Linux/Windows reports. Every one of
+109 legacy files and the entire receipt are identical across platforms, with
+all recorded SHA256 digests checked; one explicit recovery, all eight conflicts
+and zero `.key` files verified. Linux evidence:
+`tests/agent-harness/.runs/e4i-legacy-history-linux-01/`; independent verification
+report `e4i-legacy-history-01/linux-verification.json`.
+
+Windows CLI SHA256
+`684ea5d050edc97343aaf507c9c286d6a31ab825452876b4884ff90ac7b0f5c1`;
+Linux CLI SHA256
+`c6018685b7c9c58799c406ea390fd4468d1a05d51df1b429ae10a42859f8b9e5`.
+Independent final CIM snapshot checks **125 Windows CLI/Git PID references**:
+zero remaining owned children. Earlier transient numeric PID matches are not
+treated as owned processes or killed; final `process-check.json` has no matches.
+User/generated bindings SHA256 remains
+`2bd7fc3f77443d7317375fdff8441cac2733f228aa1c6aafe844ffd21809bac`;
+nested held edits/deletions/untracked source remain exact. The draft PR is
+updated without merge, administrative changes or physical cleanup.
+
+The generated local/CI archive is reproducible evidence, not yet a protected
+durable production archive or signed migration baseline. Its short-lived CI
+artifact retention must not be mistaken for the production retention policy.
+
 Graph-first minimal/query/impact/detect/review used. New archival files were
 unindexed and graph test links were stale; zero impact is **not** an audit claim.
 Direct review follows signatures before historical normalization, exact manifest

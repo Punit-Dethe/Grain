@@ -8,7 +8,9 @@ Every one of the **109 proof/asset files** is checked against committed bytes.
 An early package added after its catalogue is explicitly recovered and attributed;
 expired proof and retired presentation tier stay historical only. **80 Windows
 maintainer tests / 9 core trust tests / 12 public CLI verdicts**, scoped audit,
-strict Clippy/format/build Pass; pinned Linux evidence follows in the audit.
+strict Clippy/format/build Pass. [Pinned Linux run](https://github.com/Punit-Dethe/Grain-Extention/actions/runs/37516026483)
+passes **81 maintainer / 9 core trust / 72 CLI checks**; source, all prior 60
+verdicts and all 109 identical archive files are independently checked.
 No Agent harness expansion, new manual batch, website work, old-file deletion or
 production activation. This completes history capture, not migration or release.
 Next enforce archive reservations in protected migration/hosting, establish a
@@ -177,7 +179,7 @@ checkpoints do not close the hosted/protected release requirements.
 | E1 — Contract | Native tools or remote MCP descriptors with a smaller tool-only author interface | Provisionally accepted. Extensions cannot use the retired screen/context/prompt privileges. Physical obsolete-code deletion is held. |
 | E2 — Connections | Direct remote JSON connections and signed-store MCPs use the same host-owned account/auth/runtime rules | Provisionally accepted through actual-app checkpoints. MCP SDK and native OAuth library reuse are integrated; provider/production certification remains separate. |
 | E3 — SDK/CLI | Authors create, check, package and draft native/MCP submissions, with separate DESCRIPTION/media | Provisionally accepted. Public API freeze and official extension publishing are later. |
-| **E4 — Publishing, current** | Checked source/build/provenance, independently guarded signing, complete signed snapshots, conditional local promotion, historical identity reservation, hosting bundles, renewal, raw committed captures and conditional GitHub handoffs | Local boundaries audited/verified; GitHub hosting confirmed. Initial legacy migration needs complete signed revocations/history proof; protected remote execution and hosted coherence, real review/protections/key custody, scheduled renewal and emergency revocation remain. |
+| **E4 — Publishing, current** | Checked source/build/provenance, independently guarded signing, complete signed snapshots, conditional local promotion, historical identity reservation, hosting bundles, renewal, raw committed captures, authenticated legacy history and conditional GitHub handoffs | Local boundaries audited/verified; GitHub hosting confirmed. Legacy archive now preserves 18 proofs/37 assets and records eight version conflicts. Migration must reauthenticate/reserve that history and establish a genuinely signed current revocation baseline; protected remote execution/hosted coherence, real review/protections/key custody, scheduled renewal and emergency revocation remain. |
 | E5 — Store and management UI | Clear native/MCP/custom connection, setup, login and lifecycle flows with defined listing content | Remaining. UI 2.0 branch isolation and user visual approval apply. |
 | E6 — Agent recovery modules | Reviewed automatic-read rules, bounded metadata reuse/freshness, auth continuation and crash/orphan recovery | Remaining as separate implementation blocks. |
 | E7 — Measurements and reference integrations | Mixed native/MCP/custom tools, larger catalogues and measured selection/model/resource quality | Remaining. Includes the official reference extensions after infrastructure acceptance. |
