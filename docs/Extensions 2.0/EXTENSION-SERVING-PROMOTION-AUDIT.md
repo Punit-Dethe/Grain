@@ -1,5 +1,12 @@
 # Complete serving snapshots and serialized local promotion — E4c
 
+**6 October follow-up:** [E4d history/export audit](EXTENSION-SERVING-HISTORY-EXPORT-AUDIT.md)
+adds retained signed-catalogue version reservation across withdrawal/restoration
+and independently pinned selected-snapshot export. The immediate-base limitation
+recorded below is superseded within that append-only local store scope. Hosted
+delivery, complete prior-history migration and protected production governance
+remain gated. E4c evidence and original limits below are historical checkpoint data.
+
 6 October 2026. Local assembly/promotion is implemented and verified. **This is
 not production hosting, approved publication or completion of E4.** Latest numbered
 forward acceptance remains 71; five E4–E8 delivery stages retain work. Existing
