@@ -486,3 +486,44 @@ or new dependency in this command. Production branch/protection behavior and
 coherent multi-request client reads remain unverified here.
 [Publication audit](../../docs/Extensions%202.0/EXTENSION-GITHUB-PUBLICATION-AUDIT.md)
 records evidence and the next protected activation checkpoint.
+
+## Capture previous publication from pinned Git objects (E4h)
+
+```powershell
+grain-registry capture-github-publication --checkout PROTECTED_STANDALONE_CHECKOUT --repository OWNER/REPO --expected-commit INDEPENDENT_FULL_COMMIT --expected-receipt-sha256 INDEPENDENT_BUNDLE_RECEIPT_PIN --out FRESH_CAPTURE
+grain-registry verify-hosting-bundle --bundle FRESH_CAPTURE/bundle --expected-receipt-sha256 INDEPENDENT_BUNDLE_RECEIPT_PIN
+```
+
+Capture reconstructs the committed `v1/` and `.registry-publication/` layout into
+`bundle/`, including known empty blob/media/history directories. It reads raw Git
+objects in one bounded binary batch, never checkout/index bytes, attributes,
+checkout filters, author programs or credentials. Full commits and independent
+receipt pins are required; local origin is checked against the expected GitHub
+repository. This local check does not prove remote commit membership or approval.
+The selected commit can precede HEAD, so a candidate checkout can capture its
+previous baseline without a checkout/reset. Capture changes neither Git nor input
+files. Each file's safe destination, mode, size and total inventory are checked
+before output; existing signed bundle/history verification and raw committed-byte
+comparison run before a successful handoff is emitted.
+
+Capture authenticates previous publication proof, so expired signed metadata can
+be preserved. It does not make that metadata active/fresh or authorize a release;
+the separate verifier above requires freshness, and publication independently
+checks the new candidate. Missing legacy revocations or publication receipt are
+never fabricated. The current legacy registry is deliberately refused until an
+explicit protected migration establishes its complete signed baseline/history.
+
+Output includes unsigned `capture.json` with source commit, receipt pin, snapshot
+and captured file/byte counts; its printed digest is operational evidence only.
+Use `FRESH_CAPTURE/bundle` in the existing `prepare-github-publication` handoff.
+The protected runner must independently pin the repository/commit/receipt and
+verify remote membership, review/authorization and freshness before activation.
+
+The maintainer-only path streams artifact bytes through an owned temporary file
+and disk capture; it does not retain artifacts in RAM or add a service, dependency,
+cache or Agent harness. Temporary disk can approach one bundle size in addition
+to the capture, bounded by the 1 GiB profile plus Git framing. Git's existing
+30-second child deadline remains; oversized/slow/malformed inputs refuse. Partial
+owned output is cleaned, while pre-existing outputs and legacy files stay intact.
+[Capture audit](../../docs/Extensions%202.0/EXTENSION-GITHUB-CAPTURE-AUDIT.md)
+records verification and the outstanding legacy migration/activation work.

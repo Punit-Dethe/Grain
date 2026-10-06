@@ -37,6 +37,21 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Cmd {
+    /// Capture authenticated previous publication proof from an exact Git commit.
+    /// Never reads the working tree, activates metadata, authenticates or pushes.
+    CaptureGithubPublication {
+        #[arg(long)]
+        checkout: PathBuf,
+        #[arg(long)]
+        repository: String,
+        #[arg(long)]
+        expected_commit: String,
+        #[arg(long)]
+        expected_receipt_sha256: String,
+        /// Fresh directory containing bundle/ and an unsigned capture receipt.
+        #[arg(long)]
+        out: PathBuf,
+    },
     /// Bind verified current/history bundles to exact Git commits; never pushes.
     PrepareGithubPublication {
         #[arg(long)]
@@ -513,6 +528,19 @@ fn edit_distance(a: &str, b: &str) -> usize {
 
 fn main() -> Result<()> {
     match Cli::parse().cmd {
+        Cmd::CaptureGithubPublication {
+            checkout,
+            repository,
+            expected_commit,
+            expected_receipt_sha256,
+            out,
+        } => serving::capture::capture(
+            &checkout,
+            &repository,
+            &expected_commit,
+            &expected_receipt_sha256,
+            &out,
+        ),
         Cmd::PrepareGithubPublication {
             checkout,
             repository,

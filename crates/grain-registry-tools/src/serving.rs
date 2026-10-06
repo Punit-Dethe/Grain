@@ -14,6 +14,8 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::prepare::{digest, new_output, OwnedOutput};
+#[path = "capture.rs"]
+pub(crate) mod capture;
 #[path = "hosting.rs"]
 mod hosting;
 #[path = "publication.rs"]

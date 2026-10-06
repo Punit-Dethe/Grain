@@ -2,8 +2,8 @@
 //! fetches, signs, changes the checkout, authenticates or updates a remote.
 use super::*;
 
-const GIT_MAX: u64 = 8 * 1024 * 1024;
-const PROOFS: &str = ".registry-publication";
+pub(super) const GIT_MAX: u64 = 8 * 1024 * 1024;
+pub(super) const PROOFS: &str = ".registry-publication";
 
 pub(crate) struct Request<'a> {
     pub checkout: &'a Path,
@@ -35,14 +35,14 @@ pub(super) struct Handoff {
     pub environment: BTreeMap<String, String>,
 }
 
-fn oid(value: &str) -> bool {
+pub(super) fn oid(value: &str) -> bool {
     value.len() == 40
         && value
             .bytes()
             .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 
-fn repository_url(repository: &str) -> Result<String> {
+pub(super) fn repository_url(repository: &str) -> Result<String> {
     let parts: Vec<_> = repository.split('/').collect();
     if parts.len() != 2
         || parts.iter().any(|part| {
@@ -60,11 +60,11 @@ fn repository_url(repository: &str) -> Result<String> {
     Ok(format!("https://github.com/{repository}.git"))
 }
 
-fn git(root: &Path, args: &[&str], absent: bool) -> Result<String> {
+pub(super) fn git(root: &Path, args: &[&str], absent: bool) -> Result<String> {
     crate::prepare::git_input(root, args, absent, None, GIT_MAX)
 }
 
-fn checkout(root: &Path, url: &str, candidate: &str) -> Result<()> {
+pub(super) fn checkout(root: &Path, url: &str, expected_head: Option<&str>) -> Result<()> {
     directory(&root.join(".git"))?;
     crate::review::read(&root.join(".git/config"), 256 * 1024)?;
     for name in ["shallow", "info/grafts", "objects/info/alternates"] {
@@ -72,16 +72,16 @@ fn checkout(root: &Path, url: &str, candidate: &str) -> Result<()> {
             bail!("Publication requires complete unmodified local Git ancestry");
         }
     }
-    if Path::new(git(root, &["rev-parse", "--show-toplevel"], false)?.trim()).canonicalize()?
-        != root
-    {
-        bail!("Publication requires the standalone repository root");
-    }
     if !git(root, &[
         "config", "--local", "--no-includes", "--get-regexp",
         "^(include\\.|includeif\\.|extensions\\.|url\\.|filter\\.|remote\\..*\\.(promisor|pushurl)$)",
     ], true)?.is_empty() {
         bail!("Publication Git config must not redirect, include, filter or borrow objects");
+    }
+    if Path::new(git(root, &["rev-parse", "--show-toplevel"], false)?.trim()).canonicalize()?
+        != root
+    {
+        bail!("Publication requires the standalone repository root");
     }
     let origin = git(
         root,
@@ -91,8 +91,10 @@ fn checkout(root: &Path, url: &str, candidate: &str) -> Result<()> {
     if origin.trim() != url && origin.trim() != url.trim_end_matches(".git") {
         bail!("Publication origin differs from independently expected GitHub repository");
     }
-    if git(root, &["rev-parse", "--verify", "HEAD^{commit}"], false)?.trim() != candidate {
-        bail!("Publication HEAD differs from pinned candidate commit");
+    if let Some(candidate) = expected_head {
+        if git(root, &["rev-parse", "--verify", "HEAD^{commit}"], false)?.trim() != candidate {
+            bail!("Publication HEAD differs from pinned candidate commit");
+        }
     }
     Ok(())
 }
@@ -142,7 +144,7 @@ fn files(bundle: &Path) -> Result<BTreeMap<String, PathBuf>> {
     Ok(out)
 }
 
-fn committed(root: &Path, commit: &str, bundle: &Path) -> Result<()> {
+pub(super) fn committed(root: &Path, commit: &str, bundle: &Path) -> Result<()> {
     let expected = files(bundle)?;
     let listing = git(
         root,
@@ -246,7 +248,7 @@ pub(super) fn prepare_with(r: &Request<'_>, anchor: &Anchor<'_>) -> Result<()> {
     let out = new_output(r.out, &[&root, &previous, &bundle])?;
     let reference = format!("refs/heads/{}", r.branch);
     git(&root, &["check-ref-format", &reference], false)?;
-    checkout(&root, &url, r.candidate_commit)?;
+    checkout(&root, &url, Some(r.candidate_commit))?;
     // Read actual commit headers, not a traversal that grafts could reinterpret.
     let commit = git(&root, &["cat-file", "-p", r.candidate_commit], false)?;
     let header = commit

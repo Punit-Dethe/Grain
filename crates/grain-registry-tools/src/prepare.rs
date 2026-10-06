@@ -49,6 +49,24 @@ pub(super) fn git_input(
     input: Option<&[u8]>,
     output_max: u64,
 ) -> Result<String> {
+    let output = git_file(root, args, absent_allowed, input, output_max)?;
+    let mut bytes = Vec::new();
+    output.take(output_max + 1).read_to_end(&mut bytes)?;
+    if bytes.len() as u64 > output_max {
+        bail!("Local Git inspection exceeded its output budget");
+    }
+    String::from_utf8(bytes).context("Git inspection returned invalid UTF-8")
+}
+
+// Binary history capture reuses the same bounded/reaped child, then streams its
+// owned temporary output. Never allocate the combined artifact bytes in RAM.
+pub(super) fn git_file(
+    root: &Path,
+    args: &[&str],
+    absent_allowed: bool,
+    input: Option<&[u8]>,
+    output_max: u64,
+) -> Result<fs::File> {
     let mut command = Command::new("git");
     for (name, _) in std::env::vars_os() {
         if name
@@ -117,12 +135,10 @@ pub(super) fn git_input(
         bail!("Local Git inspection failed; require a complete standalone checkout");
     }
     output.seek(SeekFrom::Start(0))?;
-    let mut bytes = Vec::new();
-    output.take(output_max + 1).read_to_end(&mut bytes)?;
-    if bytes.len() as u64 > output_max {
+    if output.metadata()?.len() > output_max {
         bail!("Local Git inspection exceeded its output budget");
     }
-    String::from_utf8(bytes).context("Git inspection returned invalid UTF-8")
+    Ok(output)
 }
 
 fn verify_checkout(root: &Path, source: &SourceSubmission) -> Result<()> {
