@@ -2,6 +2,17 @@
 
 Date: 3 October 2026. Branch: `extensions/tool-only-retirement`.
 
+**6 October hosting amendment:** The user now authorizes the existing experimental
+Vercel site for provisional use. [Hosting decision and scoped evidence](EXTENSION-HOSTING-DECISION.md)
+records a public document prepared on website branch `oauth/public-client-metadata`
+for `https://usegrain.vercel.app/oauth/client.json`. Website PR 1 is open/unmerged;
+the actual successful preview is SSO-protected, while the canonical document still
+returns 404. Local validation passes; public response/provider activation and full
+criterion 56 remain Pending. `CLIENT_METADATA_URL` stays `None`. The older
+prohibition below is superseded for this authorized preparation only. Changing
+the exact URL later changes client identity and can require new consent; static
+hosting portability does not imply transparent grant migration.
+
 ## Scope and plan
 
 Implement the remaining B5 client metadata seam using exact official `rmcp` 3.5.0. Native OAuth remains exact `oauth2` 5.0.0. Keep host ownership, bounded HTTPS, issuer-bound grants, PKCE, explicit consent, callback validation, approval and uncertain-action no-replay. No new auth engine, arbitrary MCP configuration, discovery-policy change, registry publication, UI redesign or obsolete-code deletion.

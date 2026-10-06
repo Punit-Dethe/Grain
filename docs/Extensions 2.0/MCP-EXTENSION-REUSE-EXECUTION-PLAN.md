@@ -1,5 +1,18 @@
 # Extension platform: audit, reuse and execution plan
 
+**Current hosting decision — 6 October:** The user permits provisional use of the
+existing Vercel website. [Host decision and transition procedure](EXTENSION-HOSTING-DECISION.md)
+separates GitHub source/review/build evidence, the candidate public OAuth document
+at `usegrain.vercel.app/oauth/client.json`, and a recommended separate static
+registry staging deployment. The reviewed website branch/PR is pushed, local
+checks pass and actual Vercel preview deployment succeeds, but preview SSO and
+canonical 404 leave public acceptance Pending. No Grain client identity, signed
+registry base, production deployment or trust key changes. E4 still requires
+actual publication coordination/coherence, old history/migration and protected
+approval/key/renewal operations; E5–E8 follow. Five stages retain work; baseline,
+forward/deferred/full-56 counts and inventory are unchanged. Earlier hosting
+prohibitions are superseded only within this provisional authorization.
+
 **Current checkpoint — 6 October, E4e archive-complete handoff:** [Audit/evidence](EXTENSION-HOSTING-BUNDLE-AUDIT.md) accepts bounded static hosting-bundle preparation and independent receipt-pinned verification of exact selected state plus signed historical asset proofs. **21 Windows / 22 Linux affected Rust / 39 CLI verdicts per platform**, locked build/format/strict Clippy and scoped audit Pass. No new Agent harness or desktop/user batch. Local withdrawn-content preparation is closed; actual canonical hosting/conditional activation, protected migration of earlier history, real independent approval/protections/key custody and renewal/revocation remain E4 gates. Do not invent an official host, flatten signed routes, merge the draft into the incomplete legacy publisher or activate production from these local tests. Existing root/base URLs, user edits, physical-removal hold and no-release decision remain. **Five E4–E8 stages retain work**, with baseline/forward/deferred/full-56/inventory unchanged. Earlier dated checkpoint entries are historical.
 
 **Current checkpoint — 6 October, E4d historical reservation/export:** [Audit/evidence](EXTENSION-SERVING-HISTORY-EXPORT-AUDIT.md) records append-only retained signed-catalogue identity checks and independently pinned complete snapshot export. **15 affected Windows Rust / 25 CLI verdicts**, successful pinned Linux **16 Rust / 25 CLI verdicts**, locked build/format/strict Clippy and scoped audit pass. No new Agent harness/desktop batch. The E4c immediate-base history limitation is resolved within the protected local store; bootstrap/migration completeness and bounded archival remain explicit deployment limits. Next coherent E4 work: conditional hosted activation/coherent metadata and retained historical hashes, protected prior-history migration, real protected review/governance/key custody and renewal/revocation. No invented hosting identity, legacy publisher activation, public freeze, physical removal or new user tests. **Five E4–E8 stages retain work**; baseline/deferred expiry/public-hosting/forward counts and inventory remain unchanged. Earlier entries are historical.

@@ -1,5 +1,20 @@
 # Extension implementation: progress, changes and user testing
 
+**Provisional hosting decision, 6 October:** [Decision and evidence](EXTENSION-HOSTING-DECISION.md)
+records the user's authorization to use the experimental Vercel site, source/review
+on GitHub and separately controlled static registry staging. Public OAuth JSON and
+one-path headers are pushed on website branch `oauth/public-client-metadata`;
+[website PR 1](https://github.com/Punit-Dethe/Grain-Website/pull/1) is open/unmerged.
+Local document validation and three existing tests pass; actual Vercel preview
+deployment succeeds but unauthenticated access redirects to SSO. Canonical JSON
+still returns 404; no public/provider acceptance or production activation is
+claimed. The document holds public client identity only, and URL replacement can
+require fresh consent. No Agent harness source/scenario or manual batch was added.
+E4 hosted coherence/coordination, history migration, protected review/key custody
+and renewal/revocation remain. **Five E4–E8 stages retain work**, forward **71**,
+baseline **52 Pass / 1 Deferred (12)**, full **56 Pending**, inventory **108 / 93 / 81**
+and physical-removal hold unchanged. Previous entries are historical.
+
 **E4e archive-complete hosting handoff, 6 October:** [Scoped audit/evidence](EXTENSION-HOSTING-BUNDLE-AUDIT.md) records static bundle production and independent receipt-pinned verification. Fresh selected metadata and all retained native/MCP/document/media hashes are preserved with signed historical proofs; conflicting old version identities, altered/missing/extra files and stale/corrupt pointers/receipts refuse. **21 Windows / 22 Linux affected Rust**, **39 actual CLI verdicts per platform**, locked build/format/strict Clippy, scoped audit and owned-process checks Pass. No Agent harness source/scenario, desktop or human batch. This closes local archive preparation, not hosted activation: canonical routes/conditional deployment, protected prior-history migration, real independent release review/protections/key custody and renewal/revocation remain E4 work. **Five E4–E8 stages retain work**; forward **71**, baseline **52 Pass / 1 Deferred (12)**, full **56 Pending** and inventory **108 / 93 / 81** unchanged. No production/main/admin/key activation, legacy publisher change or held physical deletion; existing edits remain preserved. Earlier entries are historical.
 
 **E4d historical reservation/export checkpoint, 6 October:** [Scoped audit/evidence](EXTENSION-SERVING-HISTORY-EXPORT-AUDIT.md) records retained signed-version identity checks across withdrawal/restoration and the new independently pinned selected-snapshot export. Changed code/description/media/type cannot return under an old version; valid installed orphans reserve identity while unsigned staging remains inert. Fresh complete exports retain exact bytes after later promotion. **15 affected Windows Rust / 25 actual CLI verdicts**, successful pinned Linux **16 Rust / 25 CLI verdicts**, locked build/format/strict Clippy and scoped audit pass. No Agent harness source/scenario, desktop rebuild or human batch. The local store remains append-only/operator-protected with explicit history budgets; deployment/history migration/protected review/key custody and renewal/revocation remain E4 gates. **Five E4–E8 stages retain work**; forward **71**, baseline **52 Pass / 1 Deferred (12)**, full **56 Pending**, inventory **108 / 93 / 81** unchanged. Existing edits and physical-removal/public-hosting/release holds remain. Earlier checkpoint entries are historical.
