@@ -1,5 +1,38 @@
 # Extension platform: audit, reuse and execution plan
 
+## Current policy: unreleased platform, clean break — 7 October
+
+The user confirms Grain is **before pre-alpha, unpublished to users, with no
+deployed consumers**. This supersedes earlier old-extension/settings migration,
+carry-forward, archive preservation and physical-removal hold requirements in
+this document and linked historical audits. Breaking old Grain contracts is
+allowed. Provider/protocol interoperability and current security are still needed.
+
+1. Stop extending E4i/E4j legacy capture/migration. Their completed test results
+   remain historical evidence; they are not shipping requirements or gates.
+2. Remove compatibility-only archive consumers, sticky legacy bindings, old
+   version reservations, first-migration handoffs and their exclusive tests/CLI
+   documentation in a coherent cleanup block. First trace callers to retain
+   current signing, source review, hosting integrity and ordinary publication.
+   Do not replace this with another migration framework or archive scheme.
+3. Initialize the new tool-only catalogue directly with app/hosted trust metadata
+   that agrees. No old-extension upgrade, old settings migration, historical
+   addressed-route retention or inherited legacy versions need acceptance.
+4. Keep the current security, authentication, cancellation, cleanup, result and
+   source/build/signature checks. Keep explicit publisher authorization/key custody
+   appropriate to the new platform; do not treat historical continuity as security.
+5. Continue E4 publishing, E5 management UI, E6 Agent modules, E7 measured
+   integration and E8 eventual release readiness with the smaller scope. Retire
+   exclusive old capability paths when useful, preserving Agent-owned context,
+   dictation/audio and required shared brokers. Preserve unrelated working edits.
+
+This is a **scope correction**, not new implementation/test acceptance. Already
+built compatibility-only code is cleanup debt, not a platform requirement.
+No runtime deletion, settings reset or catalogue activation occurs in this
+documentation update. Earlier dated handoffs/counts below are historical; apply
+this policy whenever they conflict. Five E4–E8 stages retain work, with legacy
+migration and upgrade preservation removed from their required scope.
+
 **E4j migration implementation, 7 October:** [Migration audit](EXTENSION-LEGACY-MIGRATION-AUDIT.md)
 records the connected archive verifier, genuine-key empty-baseline signer,
 sticky signed version reservations through store/update/renewal/hosting, and
@@ -399,7 +432,7 @@ The scoped compatibility change is accepted in the linked 3 October audit. Recor
 
 **B5b native OAuth — scoped reuse accepted, 3 October:** [focused evidence and remaining limits](NATIVE-OAUTH-REUSE-AUDIT.md). Original execution requirements: replace URL/PKCE/exchange/refresh building blocks with `oauth2` plus the bounded host HTTP adapter. Keep vault/account serialization or use an explicit migration with rollback fixtures. Remove the replaced implementation in the same slice; no dual production auth path. Repeat checks 41–45/50/51/53 and native workflow cases. Reconfirm one real native provider and refresh behavior if changed.
 
-**B5c physical retirement — ON HOLD:** retain the removal inventory without executing it. The user requires confidence in the platform before deletion. A future separately approved unit would trace exclusive retired branches, preserve shared audio/context/UI and refusal/archive data, repeat migration/boundary/core/lifecycle checks, and receive a focused audit. B5a/B5b do not authorize this removal.
+**B5c physical retirement — authorized, updated 7 October:** the unreleased-platform decision supersedes the earlier hold. Trace exclusive retired branches and remove them as a coherent unit when useful. Preserve current first-party audio/context/UI and required shared brokers; run affected boundary/core/lifecycle checks and a scoped audit. Old extension data/settings migrations, refusal tombstones and inert archives are not required.
 
 **Gate per refactor:** scoped diff, dependency/build/license review, relevant Rust/frontend/CLI checks, repeated affected real-app acceptance, negative oracle and focused audit with all findings resolved or explicitly gated. Store before/after LOC/dependency/idle-resource/latency results; do not claim savings from file counts alone. Once accepted, use one implementation and retain test coverage, not a dormant fallback framework.
 
@@ -410,7 +443,7 @@ After accepted baseline and scoped reuse, use the [ecosystem delivery lanes and 
 1. **E1 provisional contract — accepted:** native author API/results (57), strict MCP descriptor/host instance/account/source identity (58) and compatibility/configuration/version/error ownership rules (59) are complete within provisional scope. Follow the [compatibility/configuration matrix](EXTENSION-COMPATIBILITY-CONFIGURATION-AUDIT.md) in E2; no custom runtime/network/import path is certified by metadata validation. Own-service setup must not restore retired extension UI/settings or weaken endpoint/account approval. Keep refusal tombstones and public freeze at E8.
 2. **E2 connection model — accepted within provisional remote scope (66):** custom remote MCP via bounded nonsecret JSON and host commands, plus verified store descriptors through the same owned auth/lifecycle/approval boundary. No package is required for a custom server; no automatic subprocess launch. E2i recertifies store/configured management, runtime, account changes and revocation; UI polish/listing is E5, publishing is E4 and supported public/live/platform/release coverage stays gated.
 3. **E3 SDK/CLI — provisionally accepted (67/68):** [E3a authoring](EXTENSION-AUTHORING-CLI-AUDIT.md) and [E3b submission/listing](EXTENSION-SUBMISSION-LISTING-AUDIT.md) accept native generated-contract parity, MCP descriptor init/doctor/pack, shared structured source submissions, bounded DESCRIPTION/media metadata and author documentation. Actual CLI/maintainer/host checkpoints and focused audits pass. Local source drafting is available; verified pinned source/media/build and signed catalog producer/consumer rollout remain E4. This refines existing tools; public API freeze remains E8.
-4. **E4 publishing:** rework the identified `Grain-Extention` repository and signed catalog producer/consumer together, with source ownership, canonical packaging, protected build/signing, compatibility, updates/revocation and key custody. Resolve the [REG-01–REG-12 findings](LOCAL-EXTENSION-REGISTRY-AUDIT.md#4-concrete-delivery-findings), including bootstrap/serving mismatch, missing helper/CLI drift, provenance and absent release protections. Repository deletion is not authorized; source is accessible, successful production publishing is not certified.
+4. **E4 publishing:** rework the identified `Grain-Extention` repository and signed catalog producer/consumer for the new tool-only contract, with source ownership, canonical packaging, protected build/signing, current updates/revocation and key custody. Resolve applicable [REG-01–REG-12 findings](LOCAL-EXTENSION-REGISTRY-AUDIT.md#4-concrete-delivery-findings), including bootstrap/serving mismatch, missing helper/CLI drift, provenance and absent release protections. Establish a clean new catalogue; old extension/registry/settings compatibility is not required. Preserve unrelated local working edits. Publishing is not yet certified.
 5. **E5 management/store:** both acquisition paths, honest enablement/auth state, optional own-service configuration, defined listing content and verified bounded assets. Do not restore retired core settings or author UI. UI 2.0 work stays on `ui/grain-2.0` and requires real-app visual approval.
 6. **E6 remaining runtime modules:** implement host-reviewed automatic-read policy; bounded metadata reuse and selected-tool freshness; bounded authentication continuation; orphan credential/artifact reconciliation and interrupted-mutation recovery. Each remains a separate tested/audited unit. Unknown or consequential effects require exact approval, idle runtimes/grants are not cached, and uncertain writes are never replayed.
 

@@ -1,5 +1,13 @@
 # Grain registry tools — provisional maintainer workflow
 
+**7 October scope correction:** Grain is unreleased, before pre-alpha, with no
+deployed users. Legacy archive/migration/reservation commands documented below
+remain implemented but are superseded compatibility-only work, scheduled for
+removal. New publishing will initialize the tool-only catalogue directly; do not
+extend the carry-forward path. Current source review, signing, hosting integrity
+and account/runtime correctness remain required. See the
+[clean-break execution plan](../../docs/Extensions%202.0/MCP-EXTENSION-REUSE-EXECUTION-PLAN.md).
+
 These tools do not ship in the application. E4 publishing is in progress;
 production signing/deployment and public SDK freeze are not certified.
 

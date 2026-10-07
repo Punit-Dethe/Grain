@@ -33,6 +33,17 @@ Prefer `code-review-graph` MCP tools over Grep/Glob/Read when exploring, reviewi
 
 <quality_standards>
 
+**Release status / clean breaks (user decision, 2026-10-07):** Grain is unreleased,
+before pre-alpha, with no deployed users. Do not spend effort preserving old
+Grain extensions, settings, formats, registry history or upgrade migrations.
+Retire obsolete paths and use the new contract directly; no compatibility-only
+fallbacks, tombstones, archives or version reservations are required. Earlier
+legacy-removal holds are superseded. Retain current security/correctness checks,
+needed provider/protocol support, first-party behavior and the upstream boundary
+above. Preserve unrelated local working changes; this is not an instruction to
+discard them. Record cleanup of already-built compatibility-only code in the
+execution plan instead of extending it.
+
 1. **Destroy if not in use:** Do not hold resources, listeners, state, or services alive beyond their required lifetime. Explicit cleanup is mandatory.
 2. **Low RAM / Low Overhead:** Reject approaches that trade memory for marginal convenience. We prioritize edge-device performance.
 3. **Optimization Priority:** Correctness → Efficiency (RAM/CPU) → Maintainability.

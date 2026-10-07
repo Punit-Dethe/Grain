@@ -1,5 +1,12 @@
 # E4j: archive-bound empty migration and continuing publication
 
+**Superseded scope, 7 October:** the user confirms Grain has no deployed users
+and is before pre-alpha. Legacy compatibility, archive carry-forward, version
+reservations and old settings/extension migrations are no longer requirements.
+The implementation/evidence below is historical; its exclusive machinery is
+scheduled for removal under the [clean-break execution policy](MCP-EXTENSION-REUSE-EXECUTION-PLAN.md#current-policy-unreleased-platform-clean-break--7-october).
+Current security, signing and hosting integrity remain required.
+
 7 October 2026. Maintainer implementation and scoped audit. Production signing,
 authorization, activation and hosted-client acceptance remain open.
 

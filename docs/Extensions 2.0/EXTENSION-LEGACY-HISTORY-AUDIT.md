@@ -1,5 +1,12 @@
 # E4i: authenticated legacy catalogue history preservation
 
+**Superseded scope, 7 October:** the user confirms Grain has no deployed users
+and is before pre-alpha. Legacy compatibility, archive carry-forward, version
+reservations and old settings/extension migrations are no longer requirements.
+The implementation/evidence below is historical; its exclusive machinery is
+scheduled for removal under the [clean-break execution policy](MCP-EXTENSION-REUSE-EXECUTION-PLAN.md#current-policy-unreleased-platform-clean-break--7-october).
+Current security, signing and hosting integrity remain required.
+
 **7 October follow-up:** [E4j migration audit](EXTENSION-LEGACY-MIGRATION-AUDIT.md)
 records the completed archive consumer/reservation implementation. Protected
 production signing/approval, activation and hosted-client checks remain open.

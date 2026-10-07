@@ -1,5 +1,12 @@
 # Local extension registry: source and publishing audit
 
+**Superseded scope, 7 October:** the user confirms Grain has no deployed users
+and is before pre-alpha. Legacy compatibility, archive carry-forward, version
+reservations and old settings/extension migrations are no longer requirements.
+The implementation/evidence below is historical; its exclusive machinery is
+scheduled for removal under the [clean-break execution policy](MCP-EXTENSION-REUSE-EXECUTION-PLAN.md#current-policy-unreleased-platform-clean-break--7-october).
+Current security, signing and hosting integrity remain required.
+
 **E4j migration implementation, 7 October:** [Migration audit](EXTENSION-LEGACY-MIGRATION-AUDIT.md)
 records the connected archive verifier, genuine-key empty-baseline signer,
 sticky signed version reservations through store/update/renewal/hosting, and

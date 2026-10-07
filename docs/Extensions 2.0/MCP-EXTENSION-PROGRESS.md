@@ -1,5 +1,18 @@
 # Extension implementation: progress, changes and user testing
 
+**Scope correction, 7 October — authoritative:** Grain is unreleased, before
+pre-alpha, with no deployed users. The user explicitly removes old-extension,
+old-settings and registry carry-forward requirements and supersedes the earlier
+physical-removal hold. No more compatibility-only migration/archive work.
+E4i/E4j's completed checks remain historical facts; their preservation machinery
+is now cleanup debt. Remove its exclusive consumers/bindings/reservations/CLI
+tests in one scoped block while retaining current source/signing/hosting safety.
+Build a clean new tool-only catalogue; old routes/versions/settings do not need
+support. Current authentication, protocol support, security, lifecycle, Agent
+context and dictation correctness still require verification. This turn updates
+policy/planning only; implementation has not yet been removed. See the
+[revised execution policy](MCP-EXTENSION-REUSE-EXECUTION-PLAN.md#current-policy-unreleased-platform-clean-break--7-october).
+
 **E4j migration implementation, 7 October:** [Migration audit](EXTENSION-LEGACY-MIGRATION-AUDIT.md)
 records the connected archive verifier, genuine-key empty-baseline signer,
 sticky signed version reservations through store/update/renewal/hosting, and
@@ -192,19 +205,19 @@ checkpoints do not close the hosted/protected release requirements.
 | Step | What the user gets | Current state |
 |---|---|---|
 | Foundation | Native/MCP execution, exact permission requests, cancellation, lifecycle, account isolation and honest uncertain results | 52 baseline requirements accepted; live expiry 12 explicitly deferred. Controlled and necessary real-provider/model checks are recorded separately. |
-| E1 — Contract | Native tools or remote MCP descriptors with a smaller tool-only author interface | Provisionally accepted. Extensions cannot use the retired screen/context/prompt privileges. Physical obsolete-code deletion is held. |
+| E1 — Contract | Native tools or remote MCP descriptors with a smaller tool-only author interface | Provisionally accepted. Extensions cannot use retired screen/context/prompt privileges. Exclusive obsolete paths may now be removed; old Grain contracts need no backward compatibility. |
 | E2 — Connections | Direct remote JSON connections and signed-store MCPs use the same host-owned account/auth/runtime rules | Provisionally accepted through actual-app checkpoints. MCP SDK and native OAuth library reuse are integrated; provider/production certification remains separate. |
 | E3 — SDK/CLI | Authors create, check, package and draft native/MCP submissions, with separate DESCRIPTION/media | Provisionally accepted. Public API freeze and official extension publishing are later. |
-| **E4 — Publishing, current** | Checked source/build/provenance, independently guarded signing, complete signed snapshots, conditional local promotion, historical identity reservation, hosting bundles, renewal, raw committed captures, authenticated legacy history and conditional GitHub handoffs | Local boundaries audited/verified; GitHub hosting confirmed. Legacy archive now preserves 18 proofs/37 assets and records eight version conflicts. Migration must reauthenticate/reserve that history and establish a genuinely signed current revocation baseline; protected remote execution/hosted coherence, real review/protections/key custody, scheduled renewal and emergency revocation remain. |
+| **E4 — Publishing, current** | Checked source/build/provenance, guarded signing, a clean tool-only catalogue, current hosting/update/revocation and GitHub publication | Local boundaries audited/verified; GitHub hosting confirmed. Remove compatibility-only E4i/E4j machinery and establish the new catalogue directly. Current signing/key custody, remote execution/hosted coherence and applicable operational controls remain; old catalogue migration, historical routes and version reservations are no longer requirements. |
 | E5 — Store and management UI | Clear native/MCP/custom connection, setup, login and lifecycle flows with defined listing content | Remaining. UI 2.0 branch isolation and user visual approval apply. |
 | E6 — Agent recovery modules | Reviewed automatic-read rules, bounded metadata reuse/freshness, auth continuation and crash/orphan recovery | Remaining as separate implementation blocks. |
 | E7 — Measurements and reference integrations | Mixed native/MCP/custom tools, larger catalogues and measured selection/model/resource quality | Remaining. Includes the official reference extensions after infrastructure acceptance. |
-| E8 — Release certification | Final public contract, upgrade/security/platform/resource evidence and controlled release enablement | Remaining. Passing local test counts never activates production. |
+| E8 — Release certification | Final public contract, current security/platform/resource evidence and controlled release enablement | Remaining. No pre-release settings/extension upgrade acceptance is required. Passing local test counts never activates production. |
 
 **What you need to test now:** no new manual batch for the current maintainer-only
 work. Live token expiry remains deferred and permanent public OAuth hosting remains
 pending. Future user batches are reserved for actual account consent, ordinary
-upgrade behavior and UI approval when those blocks are ready.
+current installation/account behavior and UI approval when those blocks are ready.
 
 **Earlier foundation checkpoint notes (historical):** the dated entries below keep
 their original counts and limits. Use the current roadmap above and latest audit
