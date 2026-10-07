@@ -65,7 +65,25 @@ Evidence: `tests/agent-harness/.runs/e4-clean-break-01/` component/core-trust,
 build/Clippy logs and `cli-report.json`. The public executable verifies current
 app trust, rejects the four removed commands and refuses invalid lifetime or
 missing explicit bootstrap key. Nothing is hosted or activated. Linux
-source-pinned checkpoint remains Pending until its evidence is verified.
+[source-pinned checkpoint 37561458613](https://github.com/Punit-Dethe/Grain-Extention/actions/runs/37561458613)
+passes **73/73 maintainer / 9/9 core trust / 67/67 CLI checks**. Independently
+inspected downloaded evidence matches Grain source
+`35ccedff43cc651f4dae2a9f3b94d7e59efe806d`, workflow source
+`e0090989175d9ef1276952d3bcf2ae308534b235`, all 59 retained previous CLI verdicts
+and all eight new Windows/Linux verdicts. The obsolete old-registry check and
+archival suite were deliberately removed. No archive checkout/output or keys
+occur in this artifact. Linux's extra component test covers Unix guards.
+
+Windows CLI SHA256 `5613523f99c14548bf5bf04133860ee450cdbed05895d5f060ee9d575dc16f30`;
+Linux `3b196b894d2674df08aba5a54c0b8e97cde9a1a896b7a10f5c9442dc389a7a3f`.
+Artifact ID `11457276463`, GitHub-reported digest
+`cffc3c46b099a7ac370a9d7298bcca72cec0570ebfd7cd381a37f65553ce75e8`;
+seven-day retention. Evidence is inspected as data, never executed. Comparison
+record: `e4-clean-break-01/linux-verification.json`.
+
+Use a fresh isolated development profile for the new catalogue acceptance.
+Old experimental cached versions/settings need no migration; existing
+rollback/signature safeguards should not be weakened to accept that old cache.
 
 ## Next implementation
 

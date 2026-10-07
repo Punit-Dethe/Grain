@@ -145,8 +145,8 @@ legacy README-based publisher. Prepared receipt folders also refuse that publish
 even without `--media-src`, before key reads or output writes. No new publication
 command is activated here. The controlled signer below is a separate boundary.
 
-Existing legacy key/sign/catalogue commands remain development tools under the
-physical-removal hold. They are not a production deployment procedure. Do not
+Old catalogue writers remain outside the new publishing path and are eligible
+for removal; there is no physical-removal hold. They are not a deployment procedure. Do not
 interpret the existence of a signature, local receipt or passing doctor as
 release acceptance.
 
@@ -400,7 +400,8 @@ identities, 1 GiB total, 4,096 snapshots including selected, 128 MiB signed meta
 and a 384 KiB receipt. Individual existing file bounds still apply. One catalogue
 and one 64 KiB file buffer are processed at a time; only bounded path/hash maps
 are retained. There is no permanent resource/cache or new registry server.
-Exhaustion refuses and needs audited archival that preserves identities/references.
+Exhaustion refuses. During unreleased development, use a clean bootstrap rather
+than adding a historical archival/migration system.
 Owned incomplete output is removed on failure; previous inputs/exports stay intact.
 
 This prepares an offline static-host handoff, not an activated hosting adapter.
@@ -408,7 +409,7 @@ Signed base URLs and bootstrap remain unchanged. Future deployment must preserve
 the `blob/`/`media/` route structure, retain immutable hashes, activate metadata
 coherently and apply the host's own conditional-write/protected release policy.
 Do not flatten paths into legacy GitHub Release assets or assume a local lock
-coordinates independent machines. Production hosting/history migration, review,
+coordinates independent machines. Current hosting activation, review,
 key custody and renewal/revocation remain gated. [Hosting bundle audit](../../docs/Extensions%202.0/EXTENSION-HOSTING-BUNDLE-AUDIT.md)
 records evidence and limitations.
 
@@ -523,9 +524,10 @@ and disk capture; it does not retain artifacts in RAM or add a service, dependen
 cache or Agent harness. Temporary disk can approach one bundle size in addition
 to the capture, bounded by the 1 GiB profile plus Git framing. Git's existing
 30-second child deadline remains; oversized/slow/malformed inputs refuse. Partial
-owned output is cleaned, while pre-existing outputs and legacy files stay intact.
+owned output is cleaned, while pre-existing inputs/outputs stay intact.
 [Capture audit](../../docs/Extensions%202.0/EXTENSION-GITHUB-CAPTURE-AUDIT.md)
-records verification and the outstanding legacy migration/activation work.
+records historical verification. The clean first-publication/activation work is
+tracked in the clean-break audit below; old registry migration is not required.
 ## Clean catalogue bootstrap (unreleased platform)
 
 Grain has no deployed users; there is no old-registry migration or archive lane.
