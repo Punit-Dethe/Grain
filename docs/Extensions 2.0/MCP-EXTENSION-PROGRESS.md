@@ -9,8 +9,12 @@ previous proof and refuses an already-established publication base. The publishe
 runs pinned trusted code, never author builds/signing keys, and uses a single
 expected-base conditional push with remote confirmation and no ambiguous retry.
 Windows **76 Rust / 4 publisher / 9 core trust / 12 real CLI checks** pass,
-alongside locked build, scoped strict Clippy, rustfmt and scoped audit. Linux
-checkpoint evidence is tracked in the audit. No live catalogue/main activation,
+alongside locked build, scoped strict Clippy, rustfmt and scoped audit. Verified
+[Linux checkpoint](https://github.com/Punit-Dethe/Grain-Extention/actions/runs/37662540187)
+passes **77 Rust / 4 publisher / 9 core trust / 79 CLI checks**; all 67 retained
+and 12 shared verdicts match downloaded evidence. The actual native/MCP source
+builder [checkpoint](https://github.com/Punit-Dethe/Grain-Extention/actions/runs/37662540836)
+also passes with both exact producer pins. No live catalogue/main activation,
 new manual batch or Agent harness framework. E4 remains current for actual signed
 activation and HTTP/app coherence; E5–E8 follow. Existing product acceptance
 counts and deferred live expiry are unchanged. Earlier dated sections below are

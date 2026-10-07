@@ -74,8 +74,29 @@ Windows evidence: `tests/agent-harness/.runs/e4-first-publication-01/`, includin
 logs and `windows-initial-cli/report.json`. Focused shared CLI checks are maintained
 under registry tooling, not added to the Agent harness. No browser replica,
 Agent test engine, additional manual batch or compatibility machinery is built.
-Linux source-pinned checkpoint and actionlint verification are recorded below
-once independently inspected. Workflow/action pins are full SHAs; actionlint
+Linux [checkpoint 37662540187](https://github.com/Punit-Dethe/Grain-Extention/actions/runs/37662540187)
+passes **77 Rust / 4 publisher / 9 core trust / 79 CLI checks** (67 retained plus
+12 shared new verdicts). Downloaded evidence independently matches Grain source
+`ed55bf1df86dcd994fb43cecdb8f1abf033de8d7` and registry workflow source
+`66e23eef7c1a3b364367f2067c01e74b291b1e55`. Every previous 67 CLI verdict and all
+12 Windows/Linux shared verdicts match; no hosting/key activation occurred.
+Linux's extra Rust test covers Unix guards. Comparison record is
+`tests/agent-harness/.runs/e4-first-publication-01/linux-verification.json`.
+Artifact ID `11500638272`; GitHub-reported archive digest
+`8b182522e619c1983fa10fd796f099e140ea664070f9a4c4a5510606e3226f84`.
+Windows CLI SHA256
+`907afc95668494433e808ef21faf1d9ef4c5641c2ca9ce0c9218eec998dd140e`;
+Linux CLI SHA256
+`fcbc36729919bf42ded55af6e80e2ebde3b030d077529fdf084477817d63084f`.
+The native/MCP [source-build checkpoint 37662540836](https://github.com/Punit-Dethe/Grain-Extention/actions/runs/37662540836)
+also passes: both downloaded producer documents match the exact Grain commit and
+Linux executable digest, native author build stays isolated, MCP skips it, and
+both enter fresh preparation/data-only attestation. Artifacts are inspected as
+data, never executed. Four candidate/producer attestations were independently
+verified with the official GitHub CLI against the exact reusable signer workflow
+and registry commit, with self-hosted runners denied. JSON verification evidence
+is retained beside the comparison record. This does not approve source or
+authorize publication. Workflow/action pins are full SHAs; actionlint
 1.7.12 was checksum-verified from its official release. Workflow schema lint
 passes; shellcheck/pyflakes are not installed in this local lint invocation.
 
