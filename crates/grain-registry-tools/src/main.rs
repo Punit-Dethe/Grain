@@ -46,6 +46,26 @@ struct BootstrapServingTreeArgs {
 }
 
 #[derive(Args)]
+struct PrepareInitialGithubPublicationArgs {
+    #[arg(long)]
+    checkout: PathBuf,
+    #[arg(long)]
+    repository: String,
+    #[arg(long)]
+    branch: String,
+    #[arg(long)]
+    expected_base_commit: String,
+    #[arg(long)]
+    candidate_commit: String,
+    #[arg(long)]
+    bundle: PathBuf,
+    #[arg(long)]
+    expected_receipt_sha256: String,
+    #[arg(long)]
+    out: PathBuf,
+}
+
+#[derive(Args)]
 struct PrepareGithubPublicationArgs {
     #[arg(long)]
     checkout: PathBuf,
@@ -122,6 +142,9 @@ enum Cmd {
     },
     /// Bind verified current/history bundles to exact Git commits; never pushes.
     PrepareGithubPublication(PrepareGithubPublicationArgs),
+    /// Verify a clean seed-derived first publication, with no previous bundle.
+    /// Emits an exact-base conditional handoff; never authenticates or pushes.
+    PrepareInitialGithubPublication(PrepareInitialGithubPublicationArgs),
     /// Renew signed catalogue/revocation expiry without changing entries or hosting.
     RenewServingMetadata {
         #[arg(long)]
@@ -564,6 +587,27 @@ fn main() -> Result<()> {
             &expected_receipt_sha256,
             &out,
         ),
+        Cmd::PrepareInitialGithubPublication(PrepareInitialGithubPublicationArgs {
+            checkout,
+            repository,
+            branch,
+            expected_base_commit,
+            candidate_commit,
+            bundle,
+            expected_receipt_sha256,
+            out,
+        }) => serving::publication::prepare_initial(&serving::publication::InitialRequest {
+            commit: serving::publication::Commit {
+                checkout: &checkout,
+                repository: &repository,
+                branch: &branch,
+                base_commit: &expected_base_commit,
+                candidate_commit: &candidate_commit,
+            },
+            bundle: &bundle,
+            bundle_pin: &expected_receipt_sha256,
+            out: &out,
+        }),
         Cmd::PrepareGithubPublication(PrepareGithubPublicationArgs {
             checkout,
             repository,

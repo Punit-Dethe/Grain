@@ -2,6 +2,11 @@
 use super::*;
 
 pub(crate) fn create(key: &Path, days: u32, out: &Path) -> Result<()> {
+    let seed = seed()?;
+    create_with(seed.path(), key, days, out, &app_anchor)
+}
+
+pub(super) fn seed() -> Result<tempfile::TempDir> {
     let seed = tempfile::tempdir()?;
     for folder in ["blob", "media"] {
         fs::create_dir(seed.path().join(folder))?;
@@ -19,7 +24,7 @@ pub(crate) fn create(key: &Path, days: u32, out: &Path) -> Result<()> {
     ] {
         write(&seed.path().join(name), raw.as_bytes())?;
     }
-    create_with(seed.path(), key, days, out, &app_anchor)
+    Ok(seed)
 }
 
 pub(super) fn create_with(

@@ -2,6 +2,8 @@
 //! public CLI trust override, author code or new Agent harness is involved.
 #[path = "capture_tests.rs"]
 mod capture_tests;
+#[path = "initial_publication_tests.rs"]
+mod initial_publication_tests;
 use super::*;
 use publication::{Handoff, Request};
 use std::process::{Command, Output};

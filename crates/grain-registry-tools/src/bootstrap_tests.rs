@@ -1,6 +1,6 @@
 use super::*;
 
-fn empty_seed(f: &Fixture) -> PathBuf {
+pub(super) fn empty_seed(f: &Fixture) -> PathBuf {
     let seed = f.tree("current seed", 1, false);
     let mut index = f.json(&seed, "index.json");
     index["entries"] = json!([]);

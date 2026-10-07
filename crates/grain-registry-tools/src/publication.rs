@@ -5,6 +5,21 @@ use super::*;
 pub(super) const GIT_MAX: u64 = 8 * 1024 * 1024;
 pub(super) const PROOFS: &str = ".registry-publication";
 
+pub(crate) struct Commit<'a> {
+    pub checkout: &'a Path,
+    pub repository: &'a str,
+    pub branch: &'a str,
+    pub base_commit: &'a str,
+    pub candidate_commit: &'a str,
+}
+
+pub(crate) struct InitialRequest<'a> {
+    pub commit: Commit<'a>,
+    pub bundle: &'a Path,
+    pub bundle_pin: &'a str,
+    pub out: &'a Path,
+}
+
 pub(crate) struct Request<'a> {
     pub checkout: &'a Path,
     pub repository: &'a str,
@@ -18,6 +33,18 @@ pub(crate) struct Request<'a> {
     pub out: &'a Path,
 }
 
+impl Request<'_> {
+    fn commit(&self) -> Commit<'_> {
+        Commit {
+            checkout: self.checkout,
+            repository: self.repository,
+            branch: self.branch,
+            base_commit: self.base_commit,
+            candidate_commit: self.candidate_commit,
+        }
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct Handoff {
@@ -27,7 +54,8 @@ pub(super) struct Handoff {
     pub branch: String,
     pub expected_base_commit: String,
     pub candidate_commit: String,
-    pub previous_receipt_sha256: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub previous_receipt_sha256: Option<String>,
     pub candidate_receipt_sha256: String,
     pub snapshot: String,
     pub push_args: Vec<String>,
@@ -228,7 +256,8 @@ pub(crate) fn prepare(request: &Request<'_>) -> Result<()> {
 }
 
 pub(super) fn prepare_with(r: &Request<'_>, anchor: &Anchor<'_>) -> Result<()> {
-    let (url, root) = candidate(r)?;
+    let commit = r.commit();
+    let (url, root) = candidate(&commit)?;
     let previous = directory(r.previous)?;
     let bundle = directory(r.bundle)?;
     let out = new_output(r.out, &[&root, &previous, &bundle])?;
@@ -257,7 +286,8 @@ pub(super) fn prepare_with(r: &Request<'_>, anchor: &Anchor<'_>) -> Result<()> {
         bail!("Publication inputs changed during inspection");
     }
     emit(
-        r,
+        &commit,
+        (Some(r.previous_pin), r.bundle_pin),
         url,
         next.selected.snapshot,
         &out,
@@ -265,7 +295,94 @@ pub(super) fn prepare_with(r: &Request<'_>, anchor: &Anchor<'_>) -> Result<()> {
     )
 }
 
-fn emit(r: &Request<'_>, url: String, snapshot: String, out: &Path, class: &str) -> Result<()> {
+pub(crate) fn prepare_initial(r: &InitialRequest<'_>) -> Result<()> {
+    let seed = bootstrap::seed()?;
+    prepare_initial_with(r, seed.path(), &app_anchor)
+}
+
+pub(super) fn prepare_initial_with(
+    r: &InitialRequest<'_>,
+    seed: &Path,
+    anchor: &Anchor<'_>,
+) -> Result<()> {
+    let (url, root) = candidate(&r.commit)?;
+    if !git(
+        &root,
+        &[
+            "ls-tree",
+            "-r",
+            "--name-only",
+            r.commit.base_commit,
+            "--",
+            PROOFS,
+        ],
+        false,
+    )?
+    .is_empty()
+    {
+        bail!("First publication base already contains publication proof; use the ordinary update gate");
+    }
+    let bundle = directory(r.bundle)?;
+    let seed = check(seed, anchor, true)?;
+    let out = new_output(r.out, &[&root, &bundle, &seed.path])?;
+    let next = hosting::inspect(&bundle, r.bundle_pin, anchor, true)?;
+    let tree = check(&bundle.join("v1"), anchor, true)?;
+    if !next.history.is_empty() || !tree.index.entries.is_empty() || !tree.assets.is_empty() {
+        bail!("First publication requires an empty bootstrap with no inherited history or assets");
+    }
+    for name in ["roots.json", "roots.json.minisig"] {
+        if tree.docs[name] != seed.docs[name] {
+            bail!("First publication must retain exact current app seed roots");
+        }
+    }
+    let mut deadlines = Vec::new();
+    for name in ["index.json", "revocations.json"] {
+        let mut expected: serde_json::Value = serde_json::from_slice(&seed.docs[name])?;
+        let mut actual: serde_json::Value = serde_json::from_slice(&tree.docs[name])?;
+        let version = expected["version"]
+            .as_u64()
+            .and_then(|v| v.checked_add(1))
+            .context("First publication seed version exhausted")?;
+        expected["version"] = version.into();
+        let deadline = DateTime::parse_from_rfc3339(
+            actual["expires"]
+                .as_str()
+                .context("First publication expiry missing")?,
+        )?;
+        if deadline > Utc::now() + chrono::Duration::days(30) {
+            bail!("First publication lifetime must not exceed thirty days");
+        }
+        deadlines.push(deadline);
+        actual["expires"] = expected["expires"].clone();
+        if actual != expected {
+            bail!("First publication must use the current seed policy and next metadata versions");
+        }
+    }
+    if deadlines[0] != deadlines[1] {
+        bail!("First publication metadata must share one expiry");
+    }
+    committed(&root, r.commit.candidate_commit, &bundle)?;
+    if hosting::inspect(&bundle, r.bundle_pin, anchor, true)?.selected != next.selected {
+        bail!("First publication input changed during inspection");
+    }
+    emit(
+        &r.commit,
+        (None, r.bundle_pin),
+        url,
+        next.selected.snapshot,
+        &out,
+        "verified-git-initial-publication-handoff-not-release-approval",
+    )
+}
+
+fn emit(
+    r: &Commit<'_>,
+    pins: (Option<&str>, &str),
+    url: String,
+    snapshot: String,
+    out: &Path,
+    class: &str,
+) -> Result<()> {
     let reference = format!("refs/heads/{}", r.branch);
     let handoff = Handoff {
         schema: 1,
@@ -274,8 +391,8 @@ fn emit(r: &Request<'_>, url: String, snapshot: String, out: &Path, class: &str)
         branch: r.branch.into(),
         expected_base_commit: r.base_commit.into(),
         candidate_commit: r.candidate_commit.into(),
-        previous_receipt_sha256: r.previous_pin.into(),
-        candidate_receipt_sha256: r.bundle_pin.into(),
+        previous_receipt_sha256: pins.0.map(str::to_owned),
+        candidate_receipt_sha256: pins.1.into(),
         snapshot,
         push_args: vec![
             "--no-replace-objects".into(),
@@ -314,7 +431,7 @@ fn emit(r: &Request<'_>, url: String, snapshot: String, out: &Path, class: &str)
     Ok(())
 }
 
-fn candidate(r: &Request<'_>) -> Result<(String, PathBuf)> {
+fn candidate(r: &Commit<'_>) -> Result<(String, PathBuf)> {
     let url = repository_url(r.repository)?;
     if !oid(r.base_commit) || !oid(r.candidate_commit) || r.base_commit == r.candidate_commit {
         bail!("Independent distinct full Git SHA1 base/candidate commits required");

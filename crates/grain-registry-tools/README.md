@@ -555,8 +555,71 @@ operator output is never overwritten and unfinished owned output is cleaned.
 
 A local bootstrap is preparation, not release approval or GitHub activation.
 The existing ordinary Git publication gate requires a complete previous
-new-contract publication. **The clean first-publication gate is the next E4
-unit**; do not fake a previous bundle to pass the ordinary gate. Source review,
+new-contract publication. The separate `prepare-initial-github-publication` gate handles that first
+publication; do not fake a previous bundle to pass the ordinary gate. Source review,
 key ownership, current hosting integrity and app/hosted metadata coherence still
 apply. Routine signed updates/renewal use the existing current-contract path.
 See [clean-break audit](../../docs/Extensions%202.0/EXTENSION-CLEAN-BREAK-AUDIT.md).
+
+
+## Clean first publication and manual GitHub activation
+
+```text
+grain-registry prepare-initial-github-publication --checkout STANDALONE_CHECKOUT \
+  --repository OWNER/REPO --branch main --expected-base-commit FULL_BASE_SHA \
+  --candidate-commit FULL_CANDIDATE_SHA --bundle VERIFIED_CAPTURE/bundle \
+  --expected-receipt-sha256 INDEPENDENT_RECEIPT_SHA256 --out NEW_HANDOFF
+```
+
+The candidate must be a single publication-only commit directly above the
+independently reviewed current `main` commit. That base must not already contain
+`.registry-publication/` proof: after initialization, use the ordinary update
+gate. Experimental `v1/` data can be replaced without migration; unrelated
+repository paths cannot change. Committed bytes must exactly match the signed,
+receipt-pinned bundle, irrespective of a dirty checkout. Origin, ancestry,
+config, file modes, output separation and existing budgets remain checked.
+
+Initial metadata must preserve exact embedded seed roots and seed policy, use
+the next index/revocation versions (currently 2/2), contain no extensions/assets
+or inherited history, and share a fresh expiry at most thirty days ahead.
+The 2099 development seed is not a publishable bootstrap. No key is read by the
+gate. The unsigned handoff has a distinct initial evidence class and omits the
+previous receipt instead of fabricating one. It remains preparation, not approval.
+
+The registry's `build-and-check` manual workflow now reuses the isolated source
+builder. Native author execution has no OIDC/publishing key; trusted preparation
+and data-only attestation run in separate jobs. MCP descriptors skip native
+execution. A trusted registry branch and existing source review/producer policy
+are required; merge/fork events do not automatically attest or publish.
+
+The registry's `publish` manual workflow builds a full-SHA-pinned Grain verifier,
+captures candidate bytes directly from Git, and uses the initial or ordinary
+gate as selected. Its runner is `ci/publish_github.py` in that pinned Grain tree;
+no candidate scripts execute and no publisher signing key is configured there.
+The `publish` environment and repository rules remain external operator setup.
+The job needs only `contents: write`, no OIDC or signing secret. Inputs reach
+Python as environment values and argv, never executable shell fragments.
+
+Only final Git children receive the scoped workflow token through an owned
+askpass helper; no token is written into the helper, URL, argv or catalogue.
+The runner checks the complete handoff against the independent tuple, verifies
+remote `main`, pushes once with the explicit expected-base lease, and checks the
+resulting reference. A race, timeout or uncertain postcondition never causes an
+automatic retry. Temporary captures/helper files are cleaned on every outcome.
+Repository protections are never changed or bypassed. Remote confirmation does
+not certify raw HTTP delivery or real-app install coherence; those are the next
+acceptance boundary. Landing the workflows does not activate the catalogue.
+
+Focused checkpoint commands (no GitHub writes):
+
+```powershell
+cargo test --locked -p grain-registry-tools -- --test-threads=2
+cargo clippy --locked -p grain-registry-tools --all-targets --no-deps -- -D warnings
+python -m unittest discover -s crates/grain-registry-tools/ci -p test_publish_github.py -v
+python crates/grain-registry-tools/ci/check_initial_cli.py --tool C:/t/debug/grain-registry.exe --evidence NEW_EVIDENCE_DIRECTORY
+```
+
+The public CLI checkpoint verifies actual app-pinned trust and refusal behavior;
+positive first-publication signatures use disposable component keys, never a
+public CLI trust override. See the [first-publication audit](../../docs/Extensions%202.0/EXTENSION-FIRST-PUBLICATION-AUDIT.md)
+for verification, operational prerequisites and remaining work.

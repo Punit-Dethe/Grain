@@ -85,7 +85,11 @@ Use a fresh isolated development profile for the new catalogue acceptance.
 Old experimental cached versions/settings need no migration; existing
 rollback/signature safeguards should not be weakened to accept that old cache.
 
-## Next implementation
+## Next implementation (historical handoff)
+
+The clean first-publication gate and replacement workflows are now implemented
+in the [following block](EXTENSION-FIRST-PUBLICATION-AUDIT.md). Its remaining
+acceptance boundary is signed activation and HTTP/app coherence.
 
 Prepare the **clean first-publication GitHub gate** against exact expected base
 and candidate commits, with current signed bootstrap/bundle and no previous

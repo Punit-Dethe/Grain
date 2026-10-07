@@ -1,6 +1,22 @@
 # Extension platform: audit, reuse and execution plan
 
-**Current clean-break block, 7 October:** [Cleanup/bootstrap audit](EXTENSION-CLEAN-BREAK-AUDIT.md)
+**Current first-publication/workflow block, 7 October:**
+[Audit](EXTENSION-FIRST-PUBLICATION-AUDIT.md) records the clean initial Git gate,
+manual current-contract source build and already-signed publication workflows.
+The initial route preserves current seed trust/policy, requires fresh empty
+metadata with next versions, verifies exact committed bytes, omits fabricated
+previous proof and refuses an already-established publication base. The publisher
+runs pinned trusted code, never author builds/signing keys, and uses a single
+expected-base conditional push with remote confirmation and no ambiguous retry.
+Windows **76 Rust / 4 publisher / 9 core trust / 12 real CLI checks** pass,
+alongside locked build, scoped strict Clippy, rustfmt and scoped audit. Linux
+checkpoint evidence is tracked in the audit. No live catalogue/main activation,
+new manual batch or Agent harness framework. E4 remains current for actual signed
+activation and HTTP/app coherence; E5–E8 follow. Existing product acceptance
+counts and deferred live expiry are unchanged. Earlier dated sections below are
+historical and do not override the current clean-break scope.
+
+**Previous clean-break block, 7 October:** [Cleanup/bootstrap audit](EXTENSION-CLEAN-BREAK-AUDIT.md)
 records physical removal of E4i/E4j archive/migration commands, consumers,
 legacy bindings/reservations and their exclusive fixtures/tests. The new
 `bootstrap-serving-tree` creates an empty signed catalogue from current app
