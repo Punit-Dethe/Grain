@@ -8,7 +8,7 @@ import {
   writeFile,
   rename,
 } from "node:fs/promises";
-import { randomUUID } from "node:crypto";
+import { randomUUID, createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join, resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -2695,6 +2695,13 @@ test("owned store transport preserves byte length and releases a held request", 
     await store.configure();
     const base = `http://127.0.0.1:${store.port}`;
     const index = await (await fetch(`${base}/index.json`)).json();
+    const revocations = Buffer.from(
+      await (await fetch(`${base}/revocations.json`)).arrayBuffer(),
+    );
+    assert.equal(
+      index.generation.revocations_sha256,
+      createHash("sha256").update(revocations).digest("hex"),
+    );
     const blob = await (
       await fetch(`${base}/blob/${store.hash}.grainpack`)
     ).arrayBuffer();

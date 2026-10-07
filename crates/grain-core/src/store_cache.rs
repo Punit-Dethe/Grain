@@ -1,6 +1,7 @@
 //! One bounded cache file containing exact signed bytes. Authentication remains
 //! the store client's responsibility. Atomic replacement prevents torn pairs
-//! and mixed local generations; this is not a network snapshot signature.
+//! and mixed local selections. Hosted generation binding is verified separately
+//! through the signed index; a policy-only cache update may remain offline.
 
 use std::io::{Read, Write};
 use std::path::Path;

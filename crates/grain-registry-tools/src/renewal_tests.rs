@@ -16,12 +16,14 @@ fn renewable(f: &Fixture, name: &str, expired: bool) -> PathBuf {
             "future_envelope":{"retained":true}}),
         "publisher",
     );
+    f.bind(&path, "publisher");
     path
 }
 
 fn without_freshness(value: &mut Value) {
     value.as_object_mut().unwrap().remove("version");
     value.as_object_mut().unwrap().remove("expires");
+    value.as_object_mut().unwrap().remove("generation");
 }
 
 #[test]
@@ -189,16 +191,19 @@ fn renewal_rejects_expired_roots_and_version_exhaustion_before_key_access() {
         let mut value = saved.clone();
         value["version"] = u64::MAX.into();
         f.signed(&base, name, &value, "publisher");
+        f.bind(&base, "publisher");
         let pin = check(&base, &f.anchor(), false).unwrap().state.snapshot;
         assert!(renew_with(&base, &pin, &key, 30, &out, &f.anchor())
             .unwrap_err()
             .to_string()
             .contains("version exhausted"));
         f.signed(&base, name, &saved, "publisher");
+        f.bind(&base, "publisher");
     }
     let mut roots = f.json(&base, "roots.json");
     roots["expires"] = "2020-01-01T00:00:00Z".into();
     f.signed(&base, "roots.json", &roots, "root");
+    f.bind(&base, "publisher");
     let pin = check(&base, &f.anchor(), false).unwrap().state.snapshot;
     assert!(renew_with(&base, &pin, &key, 30, &out, &f.anchor())
         .unwrap_err()

@@ -226,6 +226,15 @@ fn inventory(path: &Path, allowed: &BTreeSet<String>, folders: bool) -> Result<(
 }
 
 fn metadata(path: &Path, anchor: &Anchor<'_>, require_fresh: bool) -> Result<Tree> {
+    metadata_with_seed(path, anchor, require_fresh, false)
+}
+
+fn metadata_with_seed(
+    path: &Path,
+    anchor: &Anchor<'_>,
+    require_fresh: bool,
+    allow_seed: bool,
+) -> Result<Tree> {
     let path = directory(path)?;
     let docs = documents(&path)?;
     let roots = anchor(
@@ -251,6 +260,18 @@ fn metadata(path: &Path, anchor: &Anchor<'_>, require_fresh: bool) -> Result<Tre
         &docs["revocations.json"],
         std::str::from_utf8(&docs["revocations.json.minisig"])?,
     )?;
+    // The exact embedded seed is bootstrap input only. Arbitrary unbound signed
+    // catalogues are not serving generations, even when empty or expired.
+    let embedded_seed = docs["roots.json"] == grain_core::trust::SEED_ROOTS.as_bytes()
+        && docs["index.json"] == grain_core::trust::SEED_INDEX.as_bytes()
+        && docs["revocations.json"] == grain_core::trust::SEED_REVOCATIONS.as_bytes();
+    if !(allow_seed && embedded_seed) {
+        grain_core::trust::verify_metadata_generation(
+            &index,
+            &docs["roots.json"],
+            &docs["revocations.json"],
+        )?;
+    }
     if index.spec != 1
         || index.version == 0
         || (require_fresh && status != grain_core::trust::IndexStatus::Fresh)
@@ -352,7 +373,16 @@ fn index_assets(index: &Index, publishable: bool) -> Result<BTreeMap<String, Ass
 }
 
 fn check(path: &Path, anchor: &Anchor<'_>, require_fresh: bool) -> Result<Tree> {
-    let tree = metadata(path, anchor, require_fresh)?;
+    check_with_seed(path, anchor, require_fresh, false)
+}
+
+fn check_with_seed(
+    path: &Path,
+    anchor: &Anchor<'_>,
+    require_fresh: bool,
+    allow_seed: bool,
+) -> Result<Tree> {
+    let tree = metadata_with_seed(path, anchor, require_fresh, allow_seed)?;
     let path = &tree.path;
     let mut top = DOCS.iter().map(|v| v.to_string()).collect::<BTreeSet<_>>();
     top.extend(["blob".into(), "media".into()]);

@@ -880,56 +880,9 @@ against a pinned key; this site is a shop window only.</footer>
 /// Run the client's own verification against a `v1/` tree, using the pinned root
 /// keys compiled into `grain-core`. Fails loudly on any mismatch.
 fn verify(v1: PathBuf) -> Result<()> {
-    let roots_doc = fs::read(v1.join("roots.json")).context("read roots.json")?;
-    let roots_sig = fs::read_to_string(v1.join("roots.json.minisig")).context("read roots sig")?;
-    let roots = grain_core::trust::verify_roots(&roots_doc, &roots_sig)
-        .map_err(|e| anyhow::anyhow!("roots verification failed (pinned key): {e}"))?;
-    println!(
-        "roots.json OK — publishing key {}",
-        &roots.publishing_key[..16.min(roots.publishing_key.len())]
-    );
-
-    let idx_doc = fs::read(v1.join("index.json")).context("read index.json")?;
-    let idx_sig = fs::read_to_string(v1.join("index.json.minisig")).context("read index sig")?;
-    let now = chrono::Utc::now().timestamp();
-    let (index, status) =
-        grain_core::trust::verify_index(&roots, &idx_doc, &idx_sig, None, now, false)
-            .map_err(|e| anyhow::anyhow!("index verification failed: {e}"))?;
-    println!(
-        "index.json OK — {} entrie(s), status {:?}",
-        index.entries.len(),
-        status
-    );
-    for e in &index.entries {
-        println!(
-            "  · {} {} [{}] {}",
-            e.id,
-            e.version,
-            tier_dbg(&e.tier),
-            e.sha256
-        );
-    }
-
-    let rev_path = v1.join("revocations.json");
-    if rev_path.exists() {
-        let doc = fs::read(&rev_path)?;
-        let sig = fs::read_to_string(v1.join("revocations.json.minisig"))?;
-        let rev = grain_core::trust::verify_revocations(&roots, &doc, &sig)
-            .map_err(|e| anyhow::anyhow!("revocations verification failed: {e}"))?;
-        println!("revocations.json OK — {} entrie(s)", rev.entries.len());
-    }
-    println!("VERIFIED");
-    Ok(())
+    // One current verifier: no optional policy or signature-only success path.
+    serving::verify(&v1)
 }
-
-fn tier_dbg(t: &grain_sdk::Tier) -> &'static str {
-    match t {
-        grain_sdk::Tier::Pack => "pack",
-        grain_sdk::Tier::Scripted => "scripted",
-        grain_sdk::Tier::Native => "native",
-    }
-}
-
 /// Sign `bytes` into a detached `.minisig` string with a secret-key file.
 fn sign_bytes(key: &std::path::Path, bytes: &[u8]) -> Result<String> {
     let sk_str = fs::read_to_string(key).with_context(|| format!("read {}", key.display()))?;
@@ -1094,6 +1047,7 @@ fn publish(
     {
         anyhow::bail!("Source-pointer publication requires the E4 reviewed-build and DESCRIPTION/media migration; use check-submission for author metadata only.");
     }
+    let generation = current_generation(&v1)?;
     let bytes = fs::read(&pack).with_context(|| format!("read {}", pack.display()))?;
     let (manifest, extends) = manifest_of(&bytes)?;
     let sha256 = grain_core::trust::sha256_hex(&bytes);
@@ -1120,6 +1074,7 @@ fn publish(
             spec: 1,
             version: 0,
             expires: String::new(),
+            generation: None,
             entries: Vec::new(),
         }
     };
@@ -1209,6 +1164,7 @@ fn publish(
         .entries
         .retain(|e| !(e.id == entry.id && e.version == entry.version));
     index.entries.push(entry);
+    index.generation = Some(generation);
     index.version += 1;
     index.expires = (today + chrono::Duration::days(expires_days))
         .format("%Y-%m-%dT%H:%M:%SZ")
@@ -1235,10 +1191,12 @@ fn publish(
 /// the step that publishes those totals into the signed document the client
 /// reads. Ids not present in the index are reported and skipped.
 fn set_installs(key: PathBuf, sets: Vec<String>, expires_days: i64, v1: PathBuf) -> Result<()> {
+    let generation = current_generation(&v1)?;
     let index_path = v1.join("index.json");
     let mut index: grain_sdk::Index =
         serde_json::from_slice(&fs::read(&index_path).context("read index.json")?)
             .context("parse index.json")?;
+    index.generation = Some(generation);
 
     for pair in &sets {
         let (id, count) = pair
@@ -1281,10 +1239,12 @@ fn set_installs(key: PathBuf, sets: Vec<String>, expires_days: i64, v1: PathBuf)
 /// and deleting by the retired entry's hash list alone would pull a file still
 /// under a surviving card.
 fn retire(key: PathBuf, ids: Vec<String>, expires_days: i64, v1: PathBuf) -> Result<()> {
+    let generation = current_generation(&v1)?;
     let index_path = v1.join("index.json");
     let mut index: grain_sdk::Index =
         serde_json::from_slice(&fs::read(&index_path).context("read index.json")?)
             .context("parse index.json")?;
+    index.generation = Some(generation);
 
     let before = index.entries.len();
     let mut dropped: Vec<grain_sdk::IndexEntry> = Vec::new();
@@ -1352,6 +1312,23 @@ fn remove_if_present(path: &std::path::Path) -> Result<()> {
         println!("  deleted {}", path.display());
     }
     Ok(())
+}
+
+fn current_generation(v1: &std::path::Path) -> Result<grain_sdk::distribution::MetadataGeneration> {
+    let roots = review::read(&v1.join("roots.json"), 64 * 1024)?;
+    let root_sig = String::from_utf8(review::read(&v1.join("roots.json.minisig"), 8192)?)?;
+    let trusted = grain_core::trust::verify_roots(&roots, &root_sig)?;
+    let revocations = review::read(&v1.join("revocations.json"), 4 * 1024 * 1024)?;
+    let rev_sig = String::from_utf8(review::read(&v1.join("revocations.json.minisig"), 8192)?)?;
+    let policy = grain_core::trust::verify_revocations(&trusted, &revocations, &rev_sig)?;
+    let now = chrono::Utc::now().timestamp();
+    if grain_core::trust::roots_status(&trusted, now)? != grain_core::trust::IndexStatus::Fresh
+        || grain_core::trust::revocations_status(&policy, now)?
+            != grain_core::trust::IndexStatus::Fresh
+    {
+        anyhow::bail!("Publication requires fresh signed roots and revocations");
+    }
+    Ok(grain_core::trust::metadata_generation(&roots, &revocations))
 }
 
 fn keygen(out: PathBuf, name: String) -> Result<()> {

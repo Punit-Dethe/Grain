@@ -22,6 +22,7 @@ fn clean_bootstrap_signs_empty_catalogue_and_uses_normal_store_renewal_hosting()
     revocations["entries"] =
         json!([{"id":"com.example.current-policy","state":"revoked","reason":"Current seed rule"}]);
     f.signed(&seed, "revocations.json", &revocations, "publisher");
+    f.bind(&seed, "publisher");
     let out = f.root.path().join("clean bootstrap");
     bootstrap::create_with(
         &seed,

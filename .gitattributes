@@ -94,3 +94,4 @@ crates/grain-core/seed/** -text -diff
 # [GRAIN] Phase 5B signed store fixtures — verified over exact bytes; never
 # line-ending convert or the committed signatures stop matching.
 src-tauri/tests/fixtures/store/** -text -diff
+src-tauri/tests/fixtures/store-generation/** -text -diff

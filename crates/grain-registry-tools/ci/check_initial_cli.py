@@ -1,4 +1,4 @@
-"""Shared Windows/Linux public-CLI checks with real app trust and owned Git.
+"""Shared Windows/Linux public-CLI boundary checks with real app trust.
 
 No trust override, production key, remote write or additional Agent harness.
 """
@@ -58,49 +58,19 @@ def main():
         source = Path(__file__).resolve().parents[2] / "grain-core/seed"
         for name in ["roots", "index", "revocations"]:
             for suffix in [".json", ".json.minisig"]: shutil.copyfile(source / (name + suffix), seed / (name + suffix))
-        run("initial-current-app-trust-chain", ["verify-serving-tree", "--v1", seed])
+        unbound = "missing metadata generation binding"
+        run("unbound-seed-not-serving-generation", ["verify-serving-tree", "--v1", seed], unbound)
+        run("signature-only-verify-route-retired", ["verify", "--v1", seed], unbound)
         store = root / "store"
-        run("initial-current-seed-store", ["initialize-serving-store", "--v1", seed, "--out", store])
-        pointer = hashlib.sha256((store / "current.json").read_bytes()).hexdigest()
-        bundle = root / "bundle"
-        run("initial-current-seed-hosting", ["export-hosting-bundle", "--store", store,
-            "--expected-current-sha256", pointer, "--out", bundle])
-        pin = hashlib.sha256((bundle / "bundle.json").read_bytes()).hexdigest()
-        repo = root / "repo"; repo.mkdir()
-        def git(argv):
-            result = subprocess.run(["git", *[str(v) for v in argv]], cwd=repo, env=env,
-                                    capture_output=True, text=True, check=True, timeout=30)
-            return result.stdout.strip()
-        git(["init", "--initial-branch=main"])
-        for key, value in [("user.name", "Fixture"), ("user.email", "fixture@example.invalid"),
-                           ("commit.gpgSign", "false"), ("core.autocrlf", "false"),
-                           ("remote.origin.url", "https://github.com/example/registry.git")]:
-            git(["config", "--local", key, value])
-        (repo / "README.md").write_text("preserve unrelated source")
-        git(["add", "."]); git(["commit", "-m", "base"]); base = git(["rev-parse", "HEAD"])
-        shutil.copytree(bundle / "v1", repo / "v1")
-        proof = repo / ".registry-publication"; proof.mkdir()
-        for name in ["bundle.json", "current.json"]: shutil.copyfile(bundle / name, proof / name)
-        git(["add", "."]); git(["commit", "-m", "seed candidate"]); candidate = git(["rev-parse", "HEAD"])
-        capture = root / "capture"
-        run("initial-committed-app-trust-capture", ["capture-github-publication", "--checkout", repo,
-            "--repository", "example/registry", "--expected-commit", candidate,
-            "--expected-receipt-sha256", pin, "--out", capture])
-        gate = [common[0], "--checkout", repo, "--repository", "example/registry", "--branch", "main",
-                "--expected-base-commit", base, "--candidate-commit", candidate, "--bundle", capture / "bundle",
-                "--expected-receipt-sha256", pin, "--out", root / "refused"]
-        run("initial-seed-cannot-be-published-with-bootstrap-exemption", gate, "thirty days")
-        runner_env = {**env, "PUBLICATION_REPOSITORY": "example/registry", "PUBLICATION_BASE": base,
-                      "PUBLICATION_CANDIDATE": candidate, "PUBLICATION_RECEIPT": pin,
-                      "PUBLICATION_MODE": "initial", "PUBLICATION_PREVIOUS_RECEIPT": ""}
-        result = subprocess.run([os.sys.executable, str(Path(__file__).with_name("publish_github.py")),
-                                "--tool", str(tool), "--checkout", str(repo)], cwd=root, env=runner_env,
-                                stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=90)
-        assert result.returncode != 0 and "prepare-initial-github-publication" in result.stderr
-        commands.append({"label": "initial-publication-runner-refuses-seed-without-network-or-write", "exit": result.returncode, "expected": "verified gate refusal"})
-        (evidence / "initial-runner-refusal.log").write_text(result.stdout + result.stderr, encoding="utf-8")
-        assert git(["rev-parse", "HEAD"]) == candidate and not (root / "refused").exists()
-    assert len(commands) == 12
+        run("unbound-seed-cannot-initialize", ["initialize-serving-store", "--v1", seed, "--out", store], unbound)
+        run("unbound-seed-cannot-assemble", ["assemble-serving-tree", "--base", seed, "--update", seed, "--out", root / "assembly"], unbound)
+        run("unbound-seed-cannot-renew", ["renew-serving-metadata", "--v1", seed, "--expected-snapshot-sha256", "0" * 64,
+            "--key", root / "never.key", "--out", root / "renewed"], unbound)
+        run("bootstrap-lifetime-refused", ["bootstrap-serving-tree", "--key", root / "never.key", "--expires-days", "0", "--out", root / "bootstrap"], "one through thirty")
+        run("bootstrap-explicit-key-required", ["bootstrap-serving-tree", "--key", root / "never.key", "--out", root / "bootstrap"], "Read explicit bootstrap publisher key")
+        for name in ["store", "assembly", "renewed", "bootstrap", "never.key"]:
+            assert not (root / name).exists(), name
+    assert len(commands) == 13
     report = {"tool_sha256": hashlib.sha256(tool.read_bytes()).hexdigest(), "commands": commands,
               "production_keys": 0, "remote_writes": 0}
     (evidence / "report.json").write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")

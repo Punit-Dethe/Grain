@@ -1,5 +1,21 @@
 # Extension platform: audit, reuse and execution plan
 
+**Current hosted-generation block, 8 October:** [Scoped audit](EXTENSION-METADATA-GENERATION-AUDIT.md)
+records exact root/revocation JSON hashes inside the existing signed catalogue,
+connected bootstrap/renewal/review, hosting/capture/publication and app acquisition
+checks. Mixed/unbound publications cannot authorize installs; authenticated
+negative policy still applies. No new service, signing role or metadata request.
+Windows **300 core / 85 SDK / 77 maintainer / 11 backend store / 13 public CLI /
+4 publisher / 78 runner / 6 real-app store** checks pass. Scoped strict lint,
+real-app build and formatting pass; SDK all-target lint separately retains two
+unchanged test warnings. One live-network test remains ignored. The obsolete
+unbound-seed CI shell lane is retired; positive signed product coverage remains.
+No new Agent scenario/framework/manual batch. E4 remains current for operator
+signing/publication custody and actual signed public HTTP/app activation; E5–E8
+follow. Foundation **52 Pass / 1 Deferred**, forward **71**, OAuth identity **56
+Pending**, inventory **108 / 93 / 81** and parked website stay unchanged.
+Earlier dated entries are historical; Linux pinned verification follows below.
+
 **Current atomic app cache block, 8 October:** [Scoped audit](EXTENSION-STORE-CACHE-AUDIT.md)
 records one bounded six-piece cache, reuse of the existing atomic writer,
 monotonic/exact signed version identity, persistence failure refusal and restored

@@ -391,6 +391,7 @@ fn previous_publication_can_be_expired_but_candidate_verification_stays_fresh() 
         value["expires"] = "2000-01-01T00:00:00Z".into();
         p.f.signed(&v1, name, &value, "publisher");
     }
+    p.f.bind(&v1, "publisher");
     let expired = metadata(&v1, &p.f.anchor(), false).unwrap();
     let pointer = serde_json::to_vec(&expired.state).unwrap();
     fs::write(p.previous.join("current.json"), &pointer).unwrap();

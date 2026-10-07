@@ -323,7 +323,7 @@ pub(super) fn prepare_initial_with(
         bail!("First publication base already contains publication proof; use the ordinary update gate");
     }
     let bundle = directory(r.bundle)?;
-    let seed = check(seed, anchor, true)?;
+    let seed = check_with_seed(seed, anchor, true, true)?;
     let out = new_output(r.out, &[&root, &bundle, &seed.path])?;
     let next = hosting::inspect(&bundle, r.bundle_pin, anchor, true)?;
     let tree = check(&bundle.join("v1"), anchor, true)?;
@@ -354,6 +354,12 @@ pub(super) fn prepare_initial_with(
         }
         deadlines.push(deadline);
         actual["expires"] = expected["expires"].clone();
+        if name == "index.json" {
+            expected["generation"] = serde_json::to_value(grain_core::trust::metadata_generation(
+                &tree.docs["roots.json"],
+                &tree.docs["revocations.json"],
+            ))?;
+        }
         if actual != expected {
             bail!("First publication must use the current seed policy and next metadata versions");
         }

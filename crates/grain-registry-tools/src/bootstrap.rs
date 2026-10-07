@@ -37,7 +37,7 @@ pub(super) fn create_with(
     if !(1..=30).contains(&days) {
         bail!("Bootstrap lifetime must be one through thirty days");
     }
-    let mut tree = check(seed, anchor, true)?;
+    let mut tree = check_with_seed(seed, anchor, true, true)?;
     if !tree.index.entries.is_empty() {
         bail!("Bootstrap requires an empty current app seed");
     }
@@ -59,6 +59,17 @@ pub(super) fn create_with(
         }
         pending.insert(name, raw);
     }
+    let generation = grain_core::trust::metadata_generation(
+        &tree.docs["roots.json"],
+        &pending["revocations.json"],
+    );
+    let mut index: serde_json::Value = serde_json::from_slice(&pending["index.json"])?;
+    index["generation"] = serde_json::to_value(generation)?;
+    let bytes = serde_json::to_vec(&index)?;
+    if bytes.len() > 4 * 1024 * 1024 {
+        bail!("Bootstrap metadata exceeds bound");
+    }
+    pending.insert("index.json", bytes);
     // Current trust seed only; no old registry, archive, settings or key discovery.
     let key_text = String::from_utf8(
         crate::review::read(key, 8192).context("Read explicit bootstrap publisher key")?,

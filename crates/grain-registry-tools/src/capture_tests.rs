@@ -244,6 +244,7 @@ fn capture_accepts_expired_previous_proof_without_making_it_a_fresh_candidate() 
         value["expires"] = "2000-01-01T00:00:00Z".into();
         p.f.signed(&v1, name, &value, "publisher");
     }
+    p.f.bind(&v1, "publisher");
     p.pin = refresh_receipt(&p);
     Publication::install(&p.bundle, &p.repo);
     p.amend();

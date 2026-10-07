@@ -196,6 +196,7 @@ fn first_publication_refuses_policy_versions_roots_and_excessive_lifetime() {
             _ => value["expires"] = json!((Utc::now() + chrono::Duration::days(2)).to_rfc3339()),
         }
         p.f.signed(&dir, name, &value, key);
+        p.f.bind(&dir, "publisher");
         p.export("changed");
         p.refused(match mode {
             "roots" => "exact current app seed roots",

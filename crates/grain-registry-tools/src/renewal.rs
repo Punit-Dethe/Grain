@@ -51,6 +51,17 @@ pub(super) fn renew_with(
         }
         pending.insert(name.to_owned(), bytes);
     }
+    let generation = grain_core::trust::metadata_generation(
+        &tree.docs["roots.json"],
+        &pending["revocations.json"],
+    );
+    let mut index: serde_json::Value = serde_json::from_slice(&pending["index.json"])?;
+    index["generation"] = serde_json::to_value(generation)?;
+    let bytes = serde_json::to_vec(&index)?;
+    if bytes.len() > 4 * 1024 * 1024 {
+        bail!("Renewed document exceeds metadata size limit");
+    }
+    pending.insert("index.json".into(), bytes);
     // Read the bounded non-linked key only after every public-input precondition.
     // Existing maintainer signing supports its unencrypted key format; production
     // key custody/authorization is an external release gate, not granted here.

@@ -8,6 +8,8 @@ import {
   createHash,
 } from "node:crypto";
 import { fixturePackage } from "./installation.mjs";
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
 
 const keyId = Buffer.from("grain-h1");
 const privateKey = createPrivateKey({
@@ -37,6 +39,9 @@ export function signStoreBytes(bytes, corrupt = false) {
 }
 
 export async function startStore(here) {
+  const roots = await readFile(
+    join(here, "../../crates/grain-core/seed/roots.json"),
+  );
   const sockets = new Set(),
     held = new Set(),
     journal = [];
@@ -58,6 +63,17 @@ export async function startStore(here) {
     corruptBlob = false,
     corruptListing = false,
     holdPath = null;
+  function bindIndex() {
+    const value = JSON.parse(index);
+    value.version = version;
+    value.generation = {
+      roots_sha256: createHash("sha256").update(roots).digest("hex"),
+      revocations_sha256: createHash("sha256")
+        .update(revocations)
+        .digest("hex"),
+    };
+    index = Buffer.from(JSON.stringify(value));
+  }
   function respond(response, path) {
     if (response.destroyed) return;
     let body,
@@ -159,6 +175,7 @@ export async function startStore(here) {
           entries: [],
         }),
       );
+      bindIndex();
       offline = badSignature = corruptBlob = false;
       holdPath = null;
     },
@@ -226,6 +243,7 @@ export async function startStore(here) {
           entries: [],
         }),
       );
+      bindIndex();
       offline = badSignature = corruptBlob = false;
       holdPath = null;
     },
@@ -247,6 +265,7 @@ export async function startStore(here) {
           })),
         }),
       );
+      bindIndex();
     },
     offline(value = true) {
       offline = value;

@@ -623,3 +623,33 @@ The public CLI checkpoint verifies actual app-pinned trust and refusal behavior;
 positive first-publication signatures use disposable component keys, never a
 public CLI trust override. See the [first-publication audit](../../docs/Extensions%202.0/EXTENSION-FIRST-PUBLICATION-AUDIT.md)
 for verification, operational prerequisites and remaining work.
+
+## Signed metadata generation
+
+Every hosted `index.json` now includes `generation.roots_sha256` and
+`generation.revocations_sha256`: SHA-256 of the exact companion **JSON bytes**,
+covered by the index's existing minisign signature. The roots and revocation
+signatures are still independently required. Detached signature comments are
+not publication identity; formatting changes to JSON require a new binding and
+index version. No fourth signing role, network file or service is added.
+
+Bootstrap creates the revocation bytes first and binds them before index
+signing; renewal rebuilds the binding after both versions/expirations advance.
+Reviewed source publication preserves the authenticated prior binding when
+companions are unchanged. Root/policy changes must be bound by a new signed
+catalogue. Assembly, hosting verification, committed Git capture and both
+publication gates share this check. They refuse mixed generations, including
+when each component has a valid signature.
+
+The exact embedded empty seed is accepted only as bootstrap/initial-gate input.
+It cannot initialize a serving store, renew, assemble, export or authorize app
+network installs without binding. The CLI checkpoint's former unbound-seed
+publication examples are retired; genuine signed component tests cover positive
+bootstrap/renewal/hosting/capture/conditional publication and public CLI checks
+cover refusal boundaries. There is no public CLI trust override.
+
+On a mismatched refresh, Grain stays offline for acquisitions. Authenticated
+current-publisher kill switches can still strengthen cached negative policy;
+that safety update never grants a mixed publication installation authority.
+Offline browsing preserves the catalogue/version floor until a matching fresh
+generation is accepted. See the [generation audit](../../docs/Extensions%202.0/EXTENSION-METADATA-GENERATION-AUDIT.md).

@@ -15,7 +15,8 @@
 //!   the binary; this file is verified against them.
 //! - [`Index`] — the whole catalogue, signed by the **publishing** key named in
 //!   [`Roots`]. One signature over the whole file gives rollback, freeze and
-//!   mix-and-match protection.
+//!   catalogue integrity. Its [`MetadataGeneration`] binds exact companion JSON
+//!   bytes; new hosted acquisitions require a matching authenticated generation.
 //! - [`Revocations`] — the signed kill switch, also publishing-key-signed.
 //!
 //! Unknown JSON fields are ignored on read (forward compatibility): a client
@@ -75,8 +76,19 @@ pub struct Index {
     /// offline, refuse *new* installs. The seed shipped in the app is exempt
     /// until the first successful refresh.
     pub expires: String,
+    /// Exact companion document hashes covered by the catalogue signature.
+    /// Required for hosted acquisition; only the embedded offline seed omits it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub generation: Option<MetadataGeneration>,
     #[serde(default)]
     pub entries: Vec<IndexEntry>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct MetadataGeneration {
+    pub roots_sha256: String,
+    pub revocations_sha256: String,
 }
 
 /// One published extension version (DISTRIBUTION-PLAN §2.1).

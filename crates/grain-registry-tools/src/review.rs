@@ -403,6 +403,9 @@ fn write_signed(
     policy.validate(Utc::now().timestamp())?;
     let candidate: crate::catalogue::Candidate =
         serde_json::from_slice(&read(&snapshot.join("candidate.json"), 65536)?)?;
+    if previous.index.generation.is_none() {
+        bail!("Reviewed publication requires a bound prior catalogue; bootstrap first");
+    }
     let mut entry = candidate.entry;
     entry.trust = grain_sdk::Trust::Verified;
     entry.author = policy.submitter.clone();
@@ -797,6 +800,10 @@ pub(crate) mod tests {
                 spec: 1,
                 version: 7,
                 expires: (Utc::now() + Days::days(2)).to_rfc3339(),
+                generation: Some(grain_core::trust::metadata_generation(
+                    b"controlled roots",
+                    b"controlled policy",
+                )),
                 entries: Vec::new(),
             };
             let mut prior_document = serde_json::to_value(&prior).unwrap();

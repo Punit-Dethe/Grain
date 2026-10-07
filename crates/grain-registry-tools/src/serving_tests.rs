@@ -57,13 +57,27 @@ impl Fixture {
         }
     }
     fn signed(&self, dir: &Path, name: &str, value: &Value, key: &str) {
-        let raw = serde_json::to_vec(value).unwrap();
+        let mut value = value.clone();
+        if name == "index.json"
+            && dir.join("roots.json").is_file()
+            && dir.join("revocations.json").is_file()
+        {
+            value["generation"] = serde_json::to_value(grain_core::trust::metadata_generation(
+                &fs::read(dir.join("roots.json")).unwrap(),
+                &fs::read(dir.join("revocations.json")).unwrap(),
+            ))
+            .unwrap();
+        }
+        let raw = serde_json::to_vec(&value).unwrap();
         fs::write(dir.join(name), &raw).unwrap();
         fs::write(
             dir.join(format!("{name}.minisig")),
             crate::sign_bytes(&self.root.path().join(format!("keys/{key}.key")), &raw).unwrap(),
         )
         .unwrap();
+    }
+    fn bind(&self, dir: &Path, key: &str) {
+        self.signed(dir, "index.json", &self.json(dir, "index.json"), key);
     }
     fn tree(&self, name: &str, version: u64, mcp: bool) -> PathBuf {
         let dir = self.root.path().join(name);
@@ -127,6 +141,57 @@ impl Fixture {
         }
         out
     }
+}
+
+#[test]
+fn authentic_companions_from_different_publications_and_unbound_catalogues_refuse() {
+    let f = Fixture::new();
+    let base = f.tree("base", 1, true);
+    let original = check(&base, &f.anchor(), true).unwrap();
+    let store = f.root.path().join("store");
+    initialize_with(&base, &store, &f.anchor()).unwrap();
+    let selected = fs::read(store.join("current.json")).unwrap();
+    for name in ["roots.json", "revocations.json"] {
+        let mut value = f.json(&base, name);
+        value["version"] = json!(2);
+        f.signed(
+            &base,
+            name,
+            &value,
+            if name == "roots.json" {
+                "root"
+            } else {
+                "publisher"
+            },
+        );
+        // Each companion is genuinely signed by its authorized role. Binding,
+        // not a bad signature, must reject this mixed publication.
+        assert!(metadata(&base, &f.anchor(), true)
+            .err()
+            .unwrap()
+            .to_string()
+            .contains("hash mismatch"));
+        let out = f.root.path().join("refused");
+        assert!(assemble_with(&base, &base, &out, &f.anchor()).is_err());
+        assert!(!out.exists());
+        fs::write(base.join(name), &original.docs[name]).unwrap();
+        fs::write(
+            base.join(format!("{name}.minisig")),
+            &original.docs[&format!("{name}.minisig")],
+        )
+        .unwrap();
+    }
+    let mut value = f.json(&base, "index.json");
+    value.as_object_mut().unwrap().remove("generation");
+    let raw = serde_json::to_vec(&value).unwrap();
+    fs::write(base.join("index.json"), &raw).unwrap();
+    fs::write(
+        base.join("index.json.minisig"),
+        crate::sign_bytes(&f.root.path().join("keys/publisher.key"), &raw).unwrap(),
+    )
+    .unwrap();
+    assert!(check(&base, &f.anchor(), true).is_err());
+    assert_eq!(fs::read(store.join("current.json")).unwrap(), selected);
 }
 
 #[test]
@@ -232,6 +297,7 @@ fn trust_chain_specs_and_exact_expiry_are_mandatory_without_seed_exemption() {
         let mut bad = original.clone();
         bad["expires"] = json!((Utc::now() - chrono::Duration::seconds(1)).to_rfc3339());
         f.signed(&dir, name, &bad, key);
+        f.bind(&dir, "publisher");
         assert!(check(&dir, &anchor, true).is_err());
         check(&dir, &anchor, false).unwrap();
         f.signed(
@@ -242,6 +308,7 @@ fn trust_chain_specs_and_exact_expiry_are_mandatory_without_seed_exemption() {
         );
         assert!(check(&dir, &anchor, true).is_err());
         f.signed(&dir, name, &original, key);
+        f.bind(&dir, "publisher");
     }
 }
 
@@ -366,6 +433,7 @@ fn revocation_strength_is_retained_including_all_version_rules() {
     let mut old = f.json(&base, "revocations.json");
     old["entries"] = json!([{"id":"com.example.native","state":"revoked","reason":"test"}]);
     f.signed(&base, "revocations.json", &old, "publisher");
+    f.bind(&base, "publisher");
     let old = check(&base, &f.anchor(), true).unwrap();
     for entries in [
         json!([]),
@@ -376,11 +444,13 @@ fn revocation_strength_is_retained_including_all_version_rules() {
         revoked["version"] = json!(2);
         revoked["entries"] = entries;
         f.signed(&next, "revocations.json", &revoked, "publisher");
+        f.bind(&next, "publisher");
         assert!(transition(&old, &check(&next, &f.anchor(), true).unwrap(), true).is_err());
     }
     let mut revoked = f.json(&base, "revocations.json");
     revoked["version"] = json!(2);
     f.signed(&next, "revocations.json", &revoked, "publisher");
+    f.bind(&next, "publisher");
     transition(&old, &check(&next, &f.anchor(), true).unwrap(), true).unwrap();
 }
 
@@ -415,6 +485,8 @@ fn expired_history_can_be_renewed_but_never_initialized_as_fresh() {
             },
         );
     }
+    f.bind(&base, "publisher");
+    f.bind(&full, "publisher");
     let store = f.root.path().join("store");
     assert!(initialize_with(&base, &store, &f.anchor()).is_err());
     // Model a previously initialized snapshot after its metadata has aged out.
@@ -461,6 +533,7 @@ fn root_authorized_publishing_key_rotation_requires_matching_new_signatures() {
         value["version"] = json!(2);
         f.signed(&next, name, &value, "rotated");
     }
+    f.bind(&next, "rotated");
     transition(
         &check(&base, &f.anchor(), true).unwrap(),
         &check(&next, &f.anchor(), true).unwrap(),

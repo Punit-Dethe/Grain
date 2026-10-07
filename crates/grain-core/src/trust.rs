@@ -20,12 +20,47 @@
 //!    refuse *new* installs (**indefinite freeze**). The seed is exempt until
 //!    the first successful refresh.
 //! 4. One signature covers the whole catalogue (**mix-and-match**).
+//!    Hosted acquisition also requires `verify_metadata_generation` over the
+//!    exact authenticated roots and revocations; signature validity alone is
+//!    insufficient to select an installable publication.
 
 use chrono::DateTime;
 use grain_sdk::distribution::{Index, Revocations, Roots, EXPIRY_CLOCK_SKEW_SECS};
 use grain_sdk::DISTRIBUTION_SPEC;
 use minisign_verify::{PublicKey, Signature};
 use sha2::{Digest, Sha256};
+
+/// Construct the document binding before signing an index. Detached signature
+/// text is deliberately excluded: companion signatures are verified separately.
+pub fn metadata_generation(
+    roots: &[u8],
+    revocations: &[u8],
+) -> grain_sdk::distribution::MetadataGeneration {
+    grain_sdk::distribution::MetadataGeneration {
+        roots_sha256: sha256_hex(roots),
+        revocations_sha256: sha256_hex(revocations),
+    }
+}
+
+/// Call after authenticating all three documents. No seed/network exemption:
+/// acquisition requires exact companions authorized by the signed catalogue.
+pub fn verify_metadata_generation(
+    index: &Index,
+    roots: &[u8],
+    revocations: &[u8],
+) -> Result<(), TrustError> {
+    let generation = index
+        .generation
+        .as_ref()
+        .ok_or_else(|| TrustError::BadJson("missing metadata generation binding".into()))?;
+    for (expected, bytes) in [
+        (&generation.roots_sha256, roots),
+        (&generation.revocations_sha256, revocations),
+    ] {
+        verify_artifact(bytes, expected)?;
+    }
+    Ok(())
+}
 
 /// Root public key **A**, pinned in the binary. Development key (custody
 /// decision, PHASE5A §Step 1); replaced by a passphrase-encrypted key on
@@ -289,6 +324,47 @@ fn parse_rfc3339(s: &str) -> Result<i64, TrustError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn generation_requires_exact_companions_and_never_exempts_unbound_seed() {
+        let roots = verify_roots(SEED_ROOTS.as_bytes(), SEED_ROOTS_SIG).unwrap();
+        let (mut index, _) =
+            verify_index(&roots, SEED_INDEX.as_bytes(), SEED_INDEX_SIG, None, 0, true).unwrap();
+        assert!(verify_metadata_generation(
+            &index,
+            SEED_ROOTS.as_bytes(),
+            SEED_REVOCATIONS.as_bytes()
+        )
+        .is_err());
+        index.generation = Some(metadata_generation(
+            SEED_ROOTS.as_bytes(),
+            SEED_REVOCATIONS.as_bytes(),
+        ));
+        assert!(verify_metadata_generation(
+            &index,
+            SEED_ROOTS.as_bytes(),
+            SEED_REVOCATIONS.as_bytes()
+        )
+        .is_ok());
+        assert!(verify_metadata_generation(
+            &index,
+            b"different signed roots",
+            SEED_REVOCATIONS.as_bytes()
+        )
+        .is_err());
+        let mut formatted = SEED_REVOCATIONS.as_bytes().to_vec();
+        formatted.push(b'\n');
+        assert!(verify_metadata_generation(&index, SEED_ROOTS.as_bytes(), &formatted).is_err());
+        for bad in ["", "sha256", "abc", &"0".repeat(64)] {
+            index.generation.as_mut().unwrap().revocations_sha256 = bad.into();
+            assert!(verify_metadata_generation(
+                &index,
+                SEED_ROOTS.as_bytes(),
+                SEED_REVOCATIONS.as_bytes()
+            )
+            .is_err());
+        }
+    }
 
     // The embedded seed must verify with the pinned keys as shipped — otherwise
     // the app boots with a dead store.

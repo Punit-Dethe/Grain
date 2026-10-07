@@ -748,9 +748,21 @@ async fn refresh_owned(
         if replace_revs && same_publisher && revs.spec == 1 {
             *state.revocations.write().unwrap() = revs.clone();
         }
+        let generation_matches = trust::verify_metadata_generation(
+            &index,
+            roots_update
+                .as_ref()
+                .map_or(cache.roots.document.as_slice(), |(doc, _)| doc.as_slice()),
+            if replace_revs {
+                &vdoc
+            } else {
+                &cache.revocations.document
+            },
+        )
+        .is_ok();
         // An older response cannot replace resident policy. A changed publisher
         // cannot borrow policy authenticated only by its predecessor's key.
-        if (!replace_revs && !same_publisher) || !metadata_fresh {
+        if (!replace_revs && !same_publisher) || !metadata_fresh || !generation_matches {
             if replace_revs && same_publisher && revs.spec == 1 {
                 cache.revocations = SignedDocument {
                     document: vdoc,
@@ -1771,6 +1783,7 @@ mod tests {
                     &state.revocations.read().unwrap()).len(), 1);
                 *state.index.write().unwrap() = Some(grain_sdk::Index {
                     spec: 1, version: 1, expires: "2099-01-01T00:00:00Z".into(),
+                    generation: None,
                     entries: vec![entry],
                 });
                 let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -1882,6 +1895,7 @@ mod tests {
                 let hash = entry.sha256.clone();
                 *state.index.write().unwrap() = Some(grain_sdk::Index {
                     spec: 1, version: 100, expires: "2099-01-01T00:00:00Z".into(), entries: vec![entry],
+                    generation: None,
                 });
                 let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
                 {
@@ -1977,6 +1991,7 @@ mod tests {
                 let hash = entry.sha256.clone();
                 *state.index.write().unwrap() = Some(Index {
                     spec:1, version:100, expires:"2099-01-01T00:00:00Z".into(), entries:vec![entry],
+                    generation: None,
                 });
                 let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
                 {
@@ -2057,6 +2072,7 @@ mod tests {
             .unwrap();
             *state.index.write().unwrap() = Some(Index {
                 spec: if mode == "newer-client" { u32::MAX } else { 1 },
+                generation: None,
                 version: 1,
                 expires: if mode == "expired" {
                     "2000-01-01T00:00:00Z"
@@ -2166,7 +2182,12 @@ mod tests {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async {
-            let mut modes = vec!["fresh", "expiry", "rollback", "revocation_rollback", "cache_failure", "root_equivocation", "index_equivocation", "missing_index", "bad_index", "missing_revocations", "bad_revocations"];
+            const TEST_PUBLISHER: &str = "RWRncmFpbi1oMeKKiXB1MzK9cv70E+awsu8bSq3aeqLBQfIzcSpodrNR";
+            const INDEX: &str = include_str!("../tests/fixtures/store-generation/index.json");
+            const INDEX_SIG: &str = include_str!("../tests/fixtures/store-generation/index.json.minisig");
+            const REVS: &str = include_str!("../tests/fixtures/store-generation/revocations.json");
+            const REVS_SIG: &str = include_str!("../tests/fixtures/store-generation/revocations.json.minisig");
+            let mut modes = vec!["fresh", "expiry", "rollback", "revocation_rollback", "cache_failure", "root_equivocation", "index_equivocation", "missing_index", "bad_index", "missing_revocations", "bad_revocations", "mixed_policy", "unbound_index"];
             #[cfg(windows)]
             modes.push("persist_failure");
             for mode in modes {
@@ -2175,10 +2196,21 @@ mod tests {
                     std::fs::create_dir(data.join("store")).unwrap();
                     Metadata::seed().write(&data.join("store")).unwrap();
                 }
+                if matches!(mode, "expiry" | "mixed_policy") {
+                    let cache_dir = data.join("store");
+                    std::fs::create_dir(&cache_dir).unwrap();
+                    let mut cache = Metadata::seed();
+                    cache.index = SignedDocument { document: INDEX.as_bytes().into(), signature: INDEX_SIG.into() };
+                    cache.revocations = SignedDocument { document: REVS.as_bytes().into(), signature: REVS_SIG.into() };
+                    cache.write(&cache_dir).unwrap();
+                }
                 let cache_guard = if mode == "persist_failure" {
                     let cache_dir = data.join("store");
                     std::fs::create_dir(&cache_dir).unwrap();
-                    Metadata::seed().write(&cache_dir).unwrap();
+                    let mut cache = Metadata::seed();
+                    cache.index = SignedDocument { document: INDEX.as_bytes().into(), signature: INDEX_SIG.into() };
+                    cache.revocations = SignedDocument { document: REVS.as_bytes().into(), signature: REVS_SIG.into() };
+                    cache.write(&cache_dir).unwrap();
                     #[cfg(windows)]
                     {
                         use std::os::windows::fs::OpenOptionsExt;
@@ -2188,7 +2220,13 @@ mod tests {
                     #[cfg(not(windows))]
                     { None::<std::fs::File> }
                 } else { None };
-                let state = StoreState::init(&data);
+                let mut state = StoreState::init(&data);
+                let genuine_identity_case = matches!(mode, "root_equivocation" | "index_equivocation" | "unbound_index");
+                if !genuine_identity_case {
+                    state.roots.write().unwrap().publishing_key = TEST_PUBLISHER.into();
+                    state.cache_unavailable = false;
+                    if matches!(mode, "persist_failure" | "expiry" | "mixed_policy") { *state.stored_version.write().unwrap() = Some(1); }
+                }
                 // A stronger resident policy without durable signed proof must
                 // not be serialized as forged metadata or forgotten on restart.
                 if mode == "revocation_rollback" { state.revocations.write().unwrap().version = 999; }
@@ -2203,8 +2241,8 @@ mod tests {
                 let server = async {
                     let responses = [
                         ("roots.json", trust::SEED_ROOTS), ("roots.json.minisig", trust::SEED_ROOTS_SIG),
-                        ("index.json", trust::SEED_INDEX), ("index.json.minisig", trust::SEED_INDEX_SIG),
-                        ("revocations.json", trust::SEED_REVOCATIONS), ("revocations.json.minisig", trust::SEED_REVOCATIONS_SIG),
+                        ("index.json", if genuine_identity_case { trust::SEED_INDEX } else { INDEX }), ("index.json.minisig", if genuine_identity_case { trust::SEED_INDEX_SIG } else { INDEX_SIG }),
+                        ("revocations.json", if genuine_identity_case { trust::SEED_REVOCATIONS } else { REVS }), ("revocations.json.minisig", if genuine_identity_case { trust::SEED_REVOCATIONS_SIG } else { REVS_SIG }),
                     ];
                     let count = if matches!(mode, "rollback" | "missing_index" | "bad_index") { 4 } else { 6 };
                     for (name, body) in responses.into_iter().take(count) {
@@ -2233,10 +2271,12 @@ mod tests {
                             ("root_equivocation", "roots.json.minisig") => include_str!("../tests/fixtures/store/roots.json.minisig"),
                             ("index_equivocation", "index.json") => include_str!("../tests/fixtures/store/index.json"),
                             ("index_equivocation", "index.json.minisig") => include_str!("../tests/fixtures/store/index.json.minisig"),
+                            ("mixed_policy", "revocations.json") => include_str!("../tests/fixtures/store-generation/mixed-revocations.json"),
+                            ("mixed_policy", "revocations.json.minisig") => include_str!("../tests/fixtures/store-generation/mixed-revocations.json.minisig"),
                             _ if bad => "tampered",
                             _ => body,
                         };
-                        let status = if missing { "404 Not Found" } else { "200 OK" };
+                        let status = if missing || (!genuine_identity_case && name.starts_with("roots.json")) { "404 Not Found" } else { "200 OK" };
                         socket.write_all(format!("HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len()).as_bytes()).await.unwrap();
                         socket.write_all(body.as_bytes()).await.unwrap();
                     }
@@ -2245,21 +2285,29 @@ mod tests {
                 let (_, view) = tokio::time::timeout(std::time::Duration::from_secs(3), async {
                     tokio::join!(server, refresh_with_clock(&state, &client, || clock.load(std::sync::atomic::Ordering::SeqCst)))
                 }).await.unwrap();
-                assert_eq!(state.revocations.read().unwrap().version, if mode == "revocation_rollback" { 999 } else { 1 });
-                assert_eq!(view.can_install, mode == "fresh");
+                assert_eq!(state.revocations.read().unwrap().version, match mode { "revocation_rollback" => 999, "mixed_policy" => 2, _ => 1 });
+                if mode == "mixed_policy" {
+                    assert_eq!(state.revocations.read().unwrap().state_for("com.example.current-policy", "1.0.0"), Some(RevocationState::Revoked));
+                }
+                assert_eq!(view.can_install, mode == "fresh", "{mode}");
                 assert_eq!(state.ownership.lock().unwrap().can_install, mode == "fresh");
-                assert_eq!(*state.stored_version.read().unwrap(), match mode { "fresh" | "persist_failure" | "root_equivocation" | "index_equivocation" => Some(1), "rollback" => Some(2), _ => None });
+                assert_eq!(*state.stored_version.read().unwrap(), match mode { "fresh" | "persist_failure" | "root_equivocation" | "index_equivocation" | "expiry" | "mixed_policy" => Some(1), "rollback" => Some(2), _ => None });
                 assert!(!state.cache_dir.join("index.json").exists());
                 assert!(!state.cache_dir.join("roots.json").exists());
-                assert_eq!(state.cache_dir.join(store_cache::FILE_NAME).is_file(), matches!(mode, "fresh" | "expiry" | "persist_failure" | "root_equivocation" | "index_equivocation"));
+                assert_eq!(state.cache_dir.join(store_cache::FILE_NAME).is_file(), matches!(mode, "fresh" | "expiry" | "persist_failure" | "root_equivocation" | "index_equivocation" | "mixed_policy" | "unbound_index"));
                 if matches!(mode, "persist_failure" | "root_equivocation" | "index_equivocation") {
-                    assert_eq!(Metadata::read(&state.cache_dir).unwrap().unwrap().index.document, trust::SEED_INDEX.as_bytes());
+                    assert_eq!(Metadata::read(&state.cache_dir).unwrap().unwrap().index.document, if mode == "persist_failure" { INDEX.as_bytes() } else { trust::SEED_INDEX.as_bytes() });
                     assert_eq!(std::fs::read_dir(&state.cache_dir).unwrap().count(), 1);
                 }
                 if mode == "fresh" {
                     let restarted = StoreState::init(&data);
-                    assert!(!restarted.cache_unavailable);
-                    assert_eq!(*restarted.stored_version.read().unwrap(), Some(1));
+                    // Fixture publisher override exists only in this test. The
+                    // ordinary public client must reject its signatures.
+                    assert!(restarted.cache_unavailable);
+                    assert_eq!(*restarted.stored_version.read().unwrap(), None);
+                    let mut fixture_roots = restarted.roots.read().unwrap().clone();
+                    fixture_roots.publishing_key = TEST_PUBLISHER.into();
+                    assert_eq!(load_cached_index(&state.cache_dir, &fixture_roots, None, now_unix()).unwrap().0.version, 1);
                     assert_eq!(restarted.revocations.read().unwrap().version, 1);
                     assert!(restarted.index.read().unwrap().is_none());
                     assert!(!restarted.ownership.lock().unwrap().can_install);
@@ -2267,7 +2315,7 @@ mod tests {
                 if mode != "fresh" {
                     assert_eq!(state.roots.read().unwrap().base_urls, vec![format!("http://{}/", listener.local_addr().unwrap())]);
                 }
-                assert_eq!(state.index.read().unwrap().is_some(), mode != "rollback");
+                assert_eq!(state.index.read().unwrap().is_some(), matches!(mode, "fresh" | "expiry" | "mixed_policy" | "persist_failure" | "root_equivocation" | "index_equivocation" | "unbound_index"), "{mode}");
                 state.close();
                 drop(cache_guard);
                 drop(listener);

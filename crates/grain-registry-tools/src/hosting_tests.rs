@@ -291,6 +291,8 @@ fn rotated_current_key_accepts_expired_history_but_expired_active_metadata_refus
             },
         );
     }
+    f.bind(&base, "publisher");
+    f.bind(&next, "rotated");
     let store = f.root.path().join("store");
     initialize_with(&next, &store, &f.anchor()).unwrap();
     let historical = check(&base, &f.anchor(), false).unwrap();
