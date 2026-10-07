@@ -8,8 +8,10 @@ disabled; independently valid signed policy/floors are retained. Windows **299
 core / 11 backend store / 6 real-app store** checks, strict core lint, build and
 formatting pass, including actual sharing-lock refusal and genuine signed
 same-version replacement. One existing live-network test remains ignored.
-No harness source/scenario/framework or manual batch. Linux verification is
-next through the existing pinned read-only checkpoint. E4 remains current for
+No harness source/scenario/framework or manual batch. Verified [Linux checkpoint](https://github.com/Punit-Dethe/Grain-Extention/actions/runs/37674003172)
+passes **5 cache / 11 trust / 77 maintainer / 4 publisher / 79 CLI checks**;
+downloaded evidence matches both source pins and all retained verdicts.
+E4 remains current for
 hosted generation contract, operator signing/publication custody and actual
 signed HTTP/app activation; E5–E8 follow. Foundation **52 Pass / 1 Deferred**,
 forward **71**, OAuth identity **56 Pending**, inventory **108 / 93 / 81** and

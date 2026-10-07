@@ -106,8 +106,25 @@ No Agent harness source, scenario, fixture, framework, visual replica or manual
 batch was added. Inventory remains **108 / 93 / 81**. Existing ignored logs,
 reports/screenshots/profiles are disposable evidence; retention is not file
 deletion Pass. Product cache tests remain maintained under core/backend tests.
-Linux verification will use the existing pinned read-only registry checkpoint;
-this initial handoff does not yet credit a new Linux result.
+The existing read-only [Linux checkpoint 37674003172](https://github.com/Punit-Dethe/Grain-Extention/actions/runs/37674003172)
+passes **5 cache / 11 trust / 77 maintainer / 4 publisher / 79 actual CLI checks**.
+Downloaded logs/reports independently match Grain source
+`f98d872a453f08135a64aa38af539de74dda56e5` and registry workflow source
+`86747c6a9000c8de906d18fc8e74b34feac365a0`. All 67 retained and 12 shared CLI
+verdicts match the preceding accepted checkpoint; reported keys created and
+hosting changes remain zero/false. Linux evidence and comparison record are
+`tests/agent-harness/.runs/e4-atomic-cache-linux-01/verification.json`.
+Artifact ID `11506216288`; GitHub-reported archive SHA256
+`c5f5afd8f0eca82407c017489020cc521a212bd75244c3d46abde00aed8e5b48`.
+The Linux CLI SHA256 is
+`8260cef56a0a707f86c2dc6613ddec74bec151bda202c80078787b4844c00475`.
+The five cache test groups execute against the real Linux filesystem primitive;
+they do not certify the Windows sharing-lock case on Linux or a Linux GUI host.
+The branch checkpoint wrapper remains temporary until maintained product CI
+owns this coverage; retain the core/backend product tests. Workflow syntax lint
+passes with the previously checksum-verified actionlint 1.7.12; shellcheck and
+pyflakes are disabled in this local invocation. Publisher/source-builder pins
+remain unchanged; only this read-only checkpoint selects the new Grain source.
 
 ## Reproduction
 
