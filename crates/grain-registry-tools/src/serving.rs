@@ -638,7 +638,19 @@ fn assemble_with(base: &Path, update: &Path, out: &Path, anchor: &Anchor<'_>) ->
     Ok(())
 }
 
-fn lock(store: &Path) -> Result<fs::File> {
+struct StoreLock(fs::File);
+
+impl Drop for StoreLock {
+    fn drop(&mut self) {
+        // Unix flock belongs to the open file description. A concurrent fork
+        // may inherit it until exec even with CLOEXEC, so closing just our file
+        // can leave the lock briefly held by that child. Release explicitly at
+        // the end of this owner scope; retain close-on-drop as the fallback.
+        let _ = self.0.unlock();
+    }
+}
+
+fn lock(store: &Path) -> Result<StoreLock> {
     let path = store.join("promotion.lock");
     if let Ok(meta) = fs::symlink_metadata(&path) {
         if !meta.is_file() || meta.file_type().is_symlink() || meta.len() != 0 {
@@ -651,10 +663,10 @@ fn lock(store: &Path) -> Result<fs::File> {
         .create(true)
         .truncate(false)
         .open(path)?;
-    file.try_lock().map_err(|_| {
-        anyhow::anyhow!("Another promotion owns the store lock, or locking is unavailable")
+    file.try_lock().map_err(|error| {
+        anyhow::anyhow!("Another promotion owns the store lock, or locking is unavailable: {error}")
     })?;
-    Ok(file) // Released on drop. Never unlink a lock inode that another caller may hold.
+    Ok(StoreLock(file)) // Never unlink an inode that another caller may hold.
 }
 
 fn pointer(store: &Path, state: &State, initial: bool) -> Result<String> {

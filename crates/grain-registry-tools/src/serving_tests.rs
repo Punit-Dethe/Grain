@@ -400,6 +400,36 @@ fn contention_and_unreferenced_crash_snapshot_do_not_change_current() {
     lock(&store).unwrap(); // Persistent lock file is reusable after process/handle exit.
 }
 
+#[cfg(unix)]
+#[test]
+fn owner_releases_lock_even_when_a_child_or_duplicate_retains_the_description() {
+    let store = tempfile::tempdir().unwrap();
+    let file = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create_new(true)
+        .open(store.path().join("promotion.lock"))
+        .unwrap();
+    file.try_lock().unwrap();
+    let inherited = file.try_clone().unwrap();
+    drop(file);
+    // Deterministically reproduce the old close-only release failure: dup and
+    // fork share Unix flock's open file description. No child/timing is needed.
+    assert!(lock(store.path()).is_err());
+    inherited.unlock().unwrap();
+    drop(inherited);
+
+    let owner = lock(store.path()).unwrap();
+    let inherited = owner.0.try_clone().unwrap();
+    assert!(lock(store.path()).is_err()); // Actual owner still excludes writers.
+    drop(owner);
+    let successor = lock(store.path()).unwrap(); // Copy can no longer delay release.
+    drop(inherited);
+    assert!(lock(store.path()).is_err()); // Old copy cannot unlock a new owner.
+    drop(successor);
+    lock(store.path()).unwrap();
+}
+
 #[test]
 fn rollback_same_version_replacement_and_extension_bytes_cannot_be_reissued() {
     let f = Fixture::new();
