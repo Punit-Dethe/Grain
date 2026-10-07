@@ -497,6 +497,21 @@ fn closed_view() -> StoreView {
     }
 }
 
+fn ensure_metadata_fresh(state: &StoreState, now: i64) -> Result<(), String> {
+    if trust::roots_status(&state.roots.read().unwrap(), now).map_err(|e| e.to_string())?
+        != IndexStatus::Fresh
+        || trust::revocations_status(&state.revocations.read().unwrap(), now)
+            .map_err(|e| e.to_string())?
+            != IndexStatus::Fresh
+    {
+        return Err(
+            "store roots or revocations are expired or unsupported; refresh before installing"
+                .into(),
+        );
+    }
+    Ok(())
+}
+
 async fn refresh_with_clock(
     state: &StoreState,
     client: &reqwest::Client,
@@ -539,7 +554,10 @@ async fn refresh_owned(
     };
 
     for base in &bases {
-        // roots.json — verified against pinned keys; adopt if newer.
+        // Verify pending roots without publishing them. A later signature,
+        // download failure or cancelled refresh must leave current trust intact.
+        let mut roots = state.roots.read().unwrap().clone();
+        let mut roots_update = None;
         if let (Some(rdoc), Some(rsig)) = (
             fetch(client, base, "roots.json", STORE_DOCUMENT_MAX_BYTES).await,
             fetch_text(
@@ -551,18 +569,16 @@ async fn refresh_owned(
             .await,
         ) {
             if let Ok(new_roots) = trust::verify_roots(&rdoc, &rsig) {
-                let Ok(_owner) = state.current(revision) else {
-                    return closed_view();
-                };
-                let adopt = new_roots.version >= state.roots.read().unwrap().version;
-                if adopt {
-                    write_pair(&state.cache_dir, "roots.json", &rdoc, &rsig);
-                    *state.roots.write().unwrap() = new_roots;
+                if new_roots.version >= roots.version {
+                    roots = new_roots;
+                    roots_update = Some((rdoc, rsig));
                 }
             }
         }
 
-        let roots = state.roots.read().unwrap().clone();
+        if trust::roots_status(&roots, now()) != Ok(IndexStatus::Fresh) {
+            continue;
+        }
         let stored = *state.stored_version.read().unwrap();
 
         let (Some(idoc), Some(isig)) = (
@@ -581,8 +597,9 @@ async fn refresh_owned(
             continue;
         };
 
-        // revocations.json — verify and apply; missing is not fatal.
-        let revocation_update = if let (Some(vdoc), Some(vsig)) = (
+        // A fresh index alone cannot authorize installation. Require a signed
+        // current revocation response, including for an empty initial catalogue.
+        let (Some(vdoc), Some(vsig)) = (
             fetch(client, base, "revocations.json", STORE_DOCUMENT_MAX_BYTES).await,
             fetch_text(
                 client,
@@ -591,12 +608,11 @@ async fn refresh_owned(
                 STORE_SIGNATURE_MAX_BYTES,
             )
             .await,
-        ) {
-            trust::verify_revocations(&roots, &vdoc, &vsig)
-                .ok()
-                .map(|revs| (revs, vdoc, vsig))
-        } else {
-            None
+        ) else {
+            continue;
+        };
+        let Ok(revs) = trust::verify_revocations(&roots, &vdoc, &vsig) else {
+            continue;
         };
 
         let Ok(mut owner) = state.current(revision) else {
@@ -609,12 +625,25 @@ async fn refresh_owned(
         let Ok(status) = trust::index_status(&index, now()) else {
             continue;
         };
-        if let Some((revs, vdoc, vsig)) = revocation_update {
-            // A valid signature must not roll back a previously accepted kill switch.
-            if revs.spec == 1 && revs.version >= state.revocations.read().unwrap().version {
-                write_pair(&state.cache_dir, "revocations.json", &vdoc, &vsig);
-                *state.revocations.write().unwrap() = revs;
-            }
+        let current_revs = state.revocations.read().unwrap();
+        let replace_revs = revs.version >= current_revs.version;
+        let selected_revs = if replace_revs { &revs } else { &*current_revs };
+        let same_publisher = roots.publishing_key == state.roots.read().unwrap().publishing_key;
+        let metadata_fresh = trust::roots_status(&roots, now()) == Ok(IndexStatus::Fresh)
+            && trust::revocations_status(&revs, now()) == Ok(IndexStatus::Fresh)
+            && trust::revocations_status(selected_revs, now()) == Ok(IndexStatus::Fresh);
+        drop(current_revs);
+        let mut revocation_update = Some(revs);
+        // Keep enforcing authenticated current-key negative policy even when
+        // acquisition must stay offline. Never borrow it across key rotation.
+        if replace_revs && same_publisher && revocation_update.as_ref().unwrap().spec == 1 {
+            write_pair(&state.cache_dir, "revocations.json", &vdoc, &vsig);
+            *state.revocations.write().unwrap() = revocation_update.take().unwrap();
+        }
+        // An older response cannot replace resident policy. A changed publisher
+        // cannot borrow policy authenticated only by its predecessor's key.
+        if (!replace_revs && !same_publisher) || !metadata_fresh {
+            continue;
         }
 
         match status {
@@ -627,6 +656,16 @@ async fn refresh_owned(
                 };
             }
             IndexStatus::Fresh => {
+                if let Some((rdoc, rsig)) = roots_update {
+                    write_pair(&state.cache_dir, "roots.json", &rdoc, &rsig);
+                    *state.roots.write().unwrap() = roots;
+                }
+                if replace_revs {
+                    if let Some(revs) = revocation_update {
+                        write_pair(&state.cache_dir, "revocations.json", &vdoc, &vsig);
+                        *state.revocations.write().unwrap() = revs;
+                    }
+                }
                 write_pair(&state.cache_dir, "index.json", &idoc, &isig);
                 *state.stored_version.write().unwrap() = Some(index.version);
                 let revocations = state.revocations.read().unwrap();
@@ -685,6 +724,7 @@ async fn install_entry_with_clock(
 ) -> Result<PathBuf, String> {
     let (entry, revision, changed) = {
         let owner = state.ownership.lock().unwrap();
+        ensure_metadata_fresh(state, now())?;
         // Revocation gate: never install a revoked (id, version).
         if let Some(RevocationState::Revoked) = state.revocation_state(id, version) {
             return Err(format!("{id} {version} has been revoked"));
@@ -746,6 +786,7 @@ async fn install_entry_with_clock(
 
     // Keep the bounded synchronous install and its final checks in one commit.
     let owner = state.current(revision)?;
+    ensure_metadata_fresh(state, now())?;
     if !owner.can_install
         || state
             .index
@@ -827,6 +868,7 @@ async fn commit_mcp_entry_with_clock(
             .cloned()
             .ok_or("MCP entry is not in the verified catalogue")?;
         entry.validate_mcp_installable()?;
+        ensure_metadata_fresh(state, now())?;
         if !owner.can_install
             || trust::index_status(index, now()).map_err(|error| error.to_string())?
                 != IndexStatus::Fresh
@@ -870,6 +912,7 @@ async fn commit_mcp_entry_with_clock(
     // Close/refresh/revocation and the bounded registry commit are serialized.
     // No lock spans a network await; failed save cannot publish a connection.
     let _owner = state.current(revision)?;
+    ensure_metadata_fresh(state, now())?;
     if !_owner.can_install
         || state
             .index
@@ -1042,8 +1085,16 @@ fn listing_blob_size(entries: &[IndexEntry], hash: &str, ext: &str) -> Result<Op
         let mut sizes = (ext == "md" && document.sha256 == hash)
             .then_some(document.size)
             .into_iter()
-            .chain(entry.media.iter().filter(|asset| asset.sha256 == hash && asset.kind == ext).map(|asset| asset.size));
-        let Some(first) = sizes.next() else { continue; };
+            .chain(
+                entry
+                    .media
+                    .iter()
+                    .filter(|asset| asset.sha256 == hash && asset.kind == ext)
+                    .map(|asset| asset.size),
+            );
+        let Some(first) = sizes.next() else {
+            continue;
+        };
         entry.validate_listing()?;
         for size in std::iter::once(first).chain(sizes) {
             if expected.is_some_and(|previous| previous != size) {
@@ -1096,7 +1147,8 @@ async fn fetch_media(app: &AppHandle, sha256: &str, ext: &str) -> Result<Vec<u8>
     let cache_path = state.cache_dir.join(format!("{sha256}.{ext}"));
     if let Some(bytes) = read_bounded_file(&cache_path, budget) {
         if expected_size.is_none_or(|size| bytes.len() as u64 == size)
-            && grain_core::trust::sha256_hex(&bytes) == sha256 {
+            && grain_core::trust::sha256_hex(&bytes) == sha256
+        {
             return Ok(bytes);
         }
     }
@@ -1117,7 +1169,8 @@ async fn fetch_media(app: &AppHandle, sha256: &str, ext: &str) -> Result<Vec<u8>
         if let Some(bytes) = fetch(&client, base, &name, budget).await {
             // Content integrity: the bytes MUST hash to the requested id.
             if expected_size.is_some_and(|size| bytes.len() as u64 != size)
-                || grain_core::trust::sha256_hex(&bytes) != sha256 {
+                || grain_core::trust::sha256_hex(&bytes) != sha256
+            {
                 continue;
             }
             let _ = std::fs::create_dir_all(&state.cache_dir);
@@ -1350,7 +1403,9 @@ mod tests {
             assert!(listing_blob_size(&[bad], &"b".repeat(64), "md").is_err());
             let mut conflicting = entry.clone();
             conflicting.listing.as_mut().unwrap().size = 31;
-            assert!(listing_blob_size(&[entry.clone(), conflicting], &"b".repeat(64), "md").is_err());
+            assert!(
+                listing_blob_size(&[entry.clone(), conflicting], &"b".repeat(64), "md").is_err()
+            );
         }
         entry.artifact_kind = grain_sdk::distribution::ArtifactKind::Native;
         entry.readme = "legacy".into();
@@ -1518,7 +1573,7 @@ mod tests {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async {
-            for mode in ["tool", "hash", "expiry", "close", "replace", "revoke", "disable_record", "remove_record", "replace_record"] {
+            for mode in ["tool", "hash", "expiry", "root_expiry", "revocation_expiry", "close", "replace", "revoke", "disable_record", "remove_record", "replace_record"] {
                 let corrupt = mode == "hash";
                 let data = tmp_data(mode);
                 let state = StoreState::init(&data);
@@ -1571,6 +1626,8 @@ mod tests {
                         .starts_with(&format!("GET /blob/{hash}.grainpack HTTP/1.1")));
                     match mode {
                         "expiry" => { clock.store(i64::MAX, std::sync::atomic::Ordering::SeqCst); }
+                        "root_expiry" => { state.roots.write().unwrap().expires = Some("2000-01-01T00:00:00Z".into()); }
+                        "revocation_expiry" => { state.revocations.write().unwrap().expires = "2000-01-01T00:00:00Z".into(); }
                         "close" => { state.close(); return; }
                         "replace" => { let _ = state.begin_refresh(); return; }
                         "revoke" => {
@@ -1605,7 +1662,7 @@ mod tests {
                 if mode != "tool" {
                     let expected = match mode {
                         "hash" => "artifact verification failed",
-                        "expiry" => "expired",
+                        "expiry" | "root_expiry" | "revocation_expiry" => "expired",
                         "revoke" => "revoked",
                         "disable_record" | "remove_record" | "replace_record" => "changed",
                         _ => "superseded",
@@ -1636,7 +1693,7 @@ mod tests {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async {
-            for mode in ["valid", "hash", "identity", "size", "expiry", "close", "refresh", "revoke", "consent", "writer"] {
+            for mode in ["valid", "hash", "identity", "size", "expiry", "root_expiry", "revocation_expiry", "close", "refresh", "revoke", "consent", "writer"] {
                 let data = tempfile::tempdir().unwrap();
                 let state = StoreState::init(data.path());
                 state.ownership.lock().unwrap().can_install = true;
@@ -1675,6 +1732,8 @@ mod tests {
                     assert!(String::from_utf8_lossy(&request[..count]).starts_with(&format!("GET /blob/{hash}.mcp.json HTTP/1.1")));
                     match mode {
                         "expiry" => { clock.store(i64::MAX, std::sync::atomic::Ordering::SeqCst); }
+                        "root_expiry" => { state.roots.write().unwrap().expires = Some("2000-01-01T00:00:00Z".into()); }
+                        "revocation_expiry" => { state.revocations.write().unwrap().expires = "2000-01-01T00:00:00Z".into(); }
                         "close" => { state.close(); return; }
                         "refresh" => { state.begin_refresh(); return; }
                         "revoke" => {
@@ -1703,7 +1762,7 @@ mod tests {
                 } else {
                     let expected = match mode {
                         "hash" => "hash", "identity" => "identity", "size" => "size",
-                        "expiry" => "expired", "revoke" => "revoked", "consent" => "consent",
+                        "expiry" | "root_expiry" | "revocation_expiry" => "expired", "revoke" => "revoked", "consent" => "consent",
                         "writer" => "changed", _ => "superseded",
                     };
                     let error = result.unwrap_err(); assert!(error.contains(expected), "{mode}: {error}");
@@ -1931,7 +1990,7 @@ mod tests {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async {
-            for mode in ["fresh", "expiry", "rollback"] {
+            for mode in ["fresh", "expiry", "rollback", "missing_index", "bad_index", "missing_revocations", "bad_revocations"] {
                 let data = tmp_data(mode);
                 let state = StoreState::init(&data);
                 // Preserve this newer kill switch against an actually signed older response.
@@ -1950,7 +2009,7 @@ mod tests {
                         ("index.json", trust::SEED_INDEX), ("index.json.minisig", trust::SEED_INDEX_SIG),
                         ("revocations.json", trust::SEED_REVOCATIONS), ("revocations.json.minisig", trust::SEED_REVOCATIONS_SIG),
                     ];
-                    let count = if mode == "rollback" { 4 } else { 6 };
+                    let count = if matches!(mode, "rollback" | "missing_index" | "bad_index") { 4 } else { 6 };
                     for (name, body) in responses.into_iter().take(count) {
                         let (mut socket, _) = listener.accept().await.unwrap();
                         let mut request = [0; 2048];
@@ -1965,7 +2024,13 @@ mod tests {
                         if mode == "expiry" && name == "revocations.json.minisig" {
                             clock.store(i64::MAX, std::sync::atomic::Ordering::SeqCst);
                         }
-                        socket.write_all(format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len()).as_bytes()).await.unwrap();
+                        let missing = (mode == "missing_index" && name == "index.json")
+                            || (mode == "missing_revocations" && name == "revocations.json");
+                        let bad = (mode == "bad_index" && name == "index.json")
+                            || (mode == "bad_revocations" && name == "revocations.json");
+                        let body = if bad { "tampered" } else { body };
+                        let status = if missing { "404 Not Found" } else { "200 OK" };
+                        socket.write_all(format!("HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len()).as_bytes()).await.unwrap();
                         socket.write_all(body.as_bytes()).await.unwrap();
                     }
                 };
@@ -1978,6 +2043,10 @@ mod tests {
                 assert_eq!(state.ownership.lock().unwrap().can_install, mode == "fresh");
                 assert_eq!(*state.stored_version.read().unwrap(), match mode { "fresh" => Some(1), "rollback" => Some(2), _ => None });
                 assert_eq!(state.cache_dir.join("index.json").exists(), mode == "fresh");
+                assert_eq!(state.cache_dir.join("roots.json").exists(), mode == "fresh");
+                if mode != "fresh" {
+                    assert_eq!(state.roots.read().unwrap().base_urls, vec![format!("http://{}/", listener.local_addr().unwrap())]);
+                }
                 assert_eq!(state.index.read().unwrap().is_some(), mode != "rollback");
                 state.close();
                 drop(listener);

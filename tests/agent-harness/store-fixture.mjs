@@ -130,7 +130,6 @@ export async function startStore(here) {
       bytes = Buffer.from(JSON.stringify(pack));
       hash = createHash("sha256").update(bytes).digest("hex");
       artifactSuffix = "grainpack";
-      revocations = null;
       index = Buffer.from(
         JSON.stringify({
           spec: 1,
@@ -150,6 +149,14 @@ export async function startStore(here) {
               listing: { sha256: listingHash, size: listingDocument.length },
             },
           ],
+        }),
+      );
+      revocations = Buffer.from(
+        JSON.stringify({
+          spec: 1,
+          version,
+          expires: new Date(Date.now() + 7 * 86400000).toISOString(),
+          entries: [],
         }),
       );
       offline = badSignature = corruptBlob = false;

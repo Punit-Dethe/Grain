@@ -1,6 +1,22 @@
 # Extension platform: audit, reuse and execution plan
 
-**Current first-publication/workflow block, 7 October:**
+**Current app freshness block, 8 October:** [Scoped audit](EXTENSION-STORE-FRESHNESS-AUDIT.md)
+records the corrected signed-seed GitHub host, pending root adoption only after
+verified fresh catalogue/revocations, mandatory authenticated fresh revocation
+responses and root/revocation expiry checks before download and final native/MCP
+commit. Cached signed kill switches remain enforced offline. Windows **294 core /
+76 maintainer / 11 backend store / 6 real-app store / 78 runner tests** pass;
+strict scoped Clippy, real-app build and formatting pass. One existing live
+store-network test is ignored. The first native desktop run correctly refused a
+fixture's missing revocations; a signed empty list repairs the existing fixture,
+then both complete suites pass. No new scenario/framework or manual batch.
+E4 remains current. Next address atomic durable cache selection/write failure,
+restart floors and metadata-generation identity, then authorized signed public
+activation/HTTP/app acceptance. E5–E8 follow. Foundation **52 Pass / 1 Deferred**,
+forward **71**, permanent OAuth identity **56 Pending**, inventory **108 / 93 / 81**
+and parked website remain unchanged. Existing lower dated sections are history.
+
+**Previous first-publication/workflow block, 7 October:**
 [Audit](EXTENSION-FIRST-PUBLICATION-AUDIT.md) records the clean initial Git gate,
 manual current-contract source build and already-signed publication workflows.
 The initial route preserves current seed trust/policy, requires fresh empty

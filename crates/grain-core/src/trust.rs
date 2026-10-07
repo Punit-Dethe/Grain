@@ -40,7 +40,7 @@ pub const ROOT_PUBKEY_B: &str = "RWSBLR8dz4PCQU/GDLkq4LC08RH6ei6mfQTjIOSDt8D/VoB
 /// and no cached copy exists. Absolute bases normally come from the signed
 /// `roots.json`, so moving hosts is a signed-file change, not an app release.
 pub const BOOTSTRAP_BASE_URL: &str =
-    "https://github.com/Punit-Dethe/grain-extensions/releases/download/v1/";
+    "https://raw.githubusercontent.com/Punit-Dethe/Grain-Extention/main/v1/";
 
 // ---- The seed, embedded in the binary (DISTRIBUTION-PLAN §5.3) ------------
 // First open is instant and offline works. The seed index is expiry-exempt
@@ -197,10 +197,39 @@ pub fn verify_index(
 /// Recheck an already verified catalog at use time, without a seed exemption.
 /// Signature verification remains the caller's responsibility.
 pub fn index_status(index: &Index, now_unix: i64) -> Result<IndexStatus, TrustError> {
-    if index.spec > DISTRIBUTION_SPEC {
+    metadata_status(index.spec, Some(&index.expires), now_unix)
+}
+
+/// Use only after authenticating roots. Expired roots may still authenticate
+/// cached revocations, but cannot authorize a new install.
+pub fn roots_status(roots: &Roots, now_unix: i64) -> Result<IndexStatus, TrustError> {
+    metadata_status(roots.spec, roots.expires.as_deref(), now_unix)
+}
+
+/// Keep enforcing an expired signed kill switch; freshness gates acquisition,
+/// not revocation of already-installed extensions.
+pub fn revocations_status(
+    revocations: &Revocations,
+    now_unix: i64,
+) -> Result<IndexStatus, TrustError> {
+    metadata_status(revocations.spec, Some(&revocations.expires), now_unix)
+}
+
+fn metadata_status(
+    spec: u32,
+    expires: Option<&str>,
+    now_unix: i64,
+) -> Result<IndexStatus, TrustError> {
+    if spec > DISTRIBUTION_SPEC {
         return Ok(IndexStatus::NeedsNewerClient);
     }
-    let expires = parse_rfc3339(&index.expires)?;
+    if spec != DISTRIBUTION_SPEC {
+        return Err(TrustError::BadJson("unsupported metadata spec".into()));
+    }
+    let Some(expires) = expires else {
+        return Ok(IndexStatus::Fresh);
+    };
+    let expires = parse_rfc3339(expires)?;
     Ok(
         if now_unix > expires.saturating_add(EXPIRY_CLOCK_SKEW_SECS) {
             IndexStatus::Expired
@@ -392,5 +421,47 @@ mod tests {
             verify_artifact(bytes, "deadbeef"),
             Err(TrustError::HashMismatch { .. })
         ));
+    }
+
+    #[test]
+    fn bootstrap_host_matches_the_genuine_signed_seed() {
+        let roots = verify_roots(SEED_ROOTS.as_bytes(), SEED_ROOTS_SIG).unwrap();
+        assert_eq!(roots.base_urls, vec![BOOTSTRAP_BASE_URL]);
+    }
+
+    #[test]
+    fn roots_and_revocations_share_freshness_spec_and_clock_skew_rules() {
+        let mut roots = verify_roots(SEED_ROOTS.as_bytes(), SEED_ROOTS_SIG).unwrap();
+        let mut revs =
+            verify_revocations(&roots, SEED_REVOCATIONS.as_bytes(), SEED_REVOCATIONS_SIG).unwrap();
+        roots.expires = Some(revs.expires.clone());
+        let expiry = parse_rfc3339(&revs.expires).unwrap();
+        for (now, expected) in [
+            (expiry + EXPIRY_CLOCK_SKEW_SECS, IndexStatus::Fresh),
+            (expiry + EXPIRY_CLOCK_SKEW_SECS + 1, IndexStatus::Expired),
+        ] {
+            assert_eq!(roots_status(&roots, now).unwrap(), expected);
+            assert_eq!(revocations_status(&revs, now).unwrap(), expected);
+        }
+        roots.spec = u32::MAX;
+        revs.spec = u32::MAX;
+        assert_eq!(
+            roots_status(&roots, 0).unwrap(),
+            IndexStatus::NeedsNewerClient
+        );
+        assert_eq!(
+            revocations_status(&revs, 0).unwrap(),
+            IndexStatus::NeedsNewerClient
+        );
+        roots.spec = 0;
+        revs.spec = 0;
+        assert!(roots_status(&roots, 0).is_err() && revocations_status(&revs, 0).is_err());
+        roots.spec = 1;
+        roots.expires = Some("invalid".into());
+        revs.spec = 1;
+        revs.expires = "invalid".into();
+        assert!(roots_status(&roots, 0).is_err() && revocations_status(&revs, 0).is_err());
+        roots.expires = None;
+        assert_eq!(roots_status(&roots, i64::MAX).unwrap(), IndexStatus::Fresh);
     }
 }
