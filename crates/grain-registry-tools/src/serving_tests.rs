@@ -1,4 +1,6 @@
 //! Real signatures and filesystem operations; disposable anchors are test-only.
+#[path = "bootstrap_tests.rs"]
+mod bootstrap_tests;
 #[path = "hosting_tests.rs"]
 mod hosting_tests;
 #[path = "publication_tests.rs"]

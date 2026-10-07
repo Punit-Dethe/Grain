@@ -119,9 +119,7 @@ fn files(bundle: &Path) -> Result<BTreeMap<String, PathBuf>> {
                 visit(&item.path(), &name, out)?;
             } else if kind.is_file() {
                 out.insert(name, item.path());
-                if out.len()
-                    > MAX_FILES * 2 + MAX_HISTORY * DOCS.len() + legacy::MAX_COMMITS * 4 + 10
-                {
+                if out.len() > MAX_FILES + MAX_HISTORY * DOCS.len() + 2 {
                     bail!("Publication file inventory exceeds budget");
                 }
             } else {
@@ -143,13 +141,6 @@ fn files(bundle: &Path) -> Result<BTreeMap<String, PathBuf>> {
         &format!("{PROOFS}/history"),
         &mut out,
     )?;
-    if bundle.join("legacy").try_exists()? {
-        visit(
-            &bundle.join("legacy"),
-            &format!("{PROOFS}/legacy"),
-            &mut out,
-        )?;
-    }
     Ok(out)
 }
 
@@ -377,57 +368,4 @@ fn candidate(r: &Request<'_>) -> Result<(String, PathBuf)> {
         bail!("Publication candidate changes unrelated repository paths");
     }
     Ok((url, root))
-}
-
-pub(crate) fn prepare_migration(r: &Request<'_>) -> Result<()> {
-    prepare_migration_with(r, &app_anchor)
-}
-
-pub(super) fn prepare_migration_with(r: &Request<'_>, anchor: &Anchor<'_>) -> Result<()> {
-    let (url, root) = candidate(r)?;
-    let archive = legacy::inspect(r.previous, r.previous_pin, anchor)?;
-    let bundle = directory(r.bundle)?;
-    let out = new_output(r.out, &[&root, &archive.path, &bundle])?;
-    if archive.repository != r.repository || archive.tip != r.base_commit {
-        bail!("Migration base/repository differs from pinned legacy archive");
-    }
-    let next = hosting::inspect(&bundle, r.bundle_pin, anchor, true)?;
-    let tree = metadata(&bundle.join("v1"), anchor, true)?;
-    migration::validate_baseline(&tree, &archive, r.previous_pin)?;
-    if !next.history.is_empty() {
-        bail!("Initial migration cannot invent earlier six-document history");
-    }
-    // Rebuild old evidence from actual Git ancestry/raw objects. Offline receipt
-    // checks alone cannot authenticate its Git commit/source labels.
-    let scratch = tempfile::tempdir()?;
-    let recaptured = scratch.path().join("archive");
-    let manifest = archive.path.join("manifest.json");
-    let manifest_pin = digest(&crate::review::read(&manifest, 256 * 1024)?);
-    legacy::capture_with(
-        &root,
-        r.repository,
-        &manifest,
-        &manifest_pin,
-        &recaptured,
-        anchor,
-    )?;
-    if digest(&crate::review::read(
-        &recaptured.join("legacy-history.json"),
-        8 * 1024 * 1024,
-    )?) != r.previous_pin
-    {
-        bail!("Migration legacy archive differs from pinned Git source history");
-    }
-    committed(&root, r.candidate_commit, &bundle)?;
-    legacy::inspect(&archive.path, r.previous_pin, anchor)?;
-    if hosting::inspect(&bundle, r.bundle_pin, anchor, true)?.selected != next.selected {
-        bail!("Migration bundle changed during inspection");
-    }
-    emit(
-        r,
-        url,
-        next.selected.snapshot,
-        &out,
-        "verified-git-legacy-migration-handoff-not-release-approval",
-    )
 }

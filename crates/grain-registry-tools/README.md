@@ -1,12 +1,4 @@
-# Grain registry tools — provisional maintainer workflow
-
-**7 October scope correction:** Grain is unreleased, before pre-alpha, with no
-deployed users. Legacy archive/migration/reservation commands documented below
-remain implemented but are superseded compatibility-only work, scheduled for
-removal. New publishing will initialize the tool-only catalogue directly; do not
-extend the carry-forward path. Current source review, signing, hosting integrity
-and account/runtime correctness remain required. See the
-[clean-break execution plan](../../docs/Extensions%202.0/MCP-EXTENSION-REUSE-EXECUTION-PLAN.md).
+# Grain registry tools â€” provisional maintainer workflow
 
 These tools do not ship in the application. E4 publishing is in progress;
 production signing/deployment and public SDK freeze are not certified.
@@ -430,7 +422,7 @@ grain-registry promote-serving-tree --assembly FRESH_RENEWAL --store PROTECTED_S
 
 Renewal preserves every extension, revocation rule, future JSON field and addressed
 file. Only index/revocation versions and expirations change; roots remain exact.
-Lifetimes are 1–30 days and must extend both expirations. Authentic expired index/
+Lifetimes are 1â€“30 days and must extend both expirations. Authentic expired index/
 revocations can recover, but expired roots need root-authorized recovery. The
 2099 bootstrap seed deliberately refuses shortening. Input identity/signatures,
 complete assets, counters and output containment are checked before the bounded
@@ -457,7 +449,7 @@ grain-registry prepare-github-publication --checkout OPERATOR_CHECKOUT --reposit
 This is an offline publication gate, not a deploy command. Place the hosting
 bundle's `v1/` at the repository's `v1/`; place `bundle.json`, `current.json` and
 `history/` under `.registry-publication/`. Both the expected base and candidate
-must already contain that layout. The initial migration of the legacy repository
+must already contain that layout. The first publication of the new catalogue
 requires a separate protected procedure; a missing baseline is never bypassed.
 Git does not track empty directories; reconstruct the known empty bundle folders
 when capturing a bundle from a Git commit.
@@ -517,9 +509,8 @@ comparison run before a successful handoff is emitted.
 Capture authenticates previous publication proof, so expired signed metadata can
 be preserved. It does not make that metadata active/fresh or authorize a release;
 the separate verifier above requires freshness, and publication independently
-checks the new candidate. Missing legacy revocations or publication receipt are
-never fabricated. The current legacy registry is deliberately refused until an
-explicit protected migration establishes its complete signed baseline/history.
+checks the new candidate. Incomplete publication proof is refused; initialize the new catalogue directly
+rather than importing old registry data.
 
 Output includes unsigned `capture.json` with source commit, receipt pin, snapshot
 and captured file/byte counts; its printed digest is operational evidence only.
@@ -535,140 +526,35 @@ to the capture, bounded by the 1 GiB profile plus Git framing. Git's existing
 owned output is cleaned, while pre-existing outputs and legacy files stay intact.
 [Capture audit](../../docs/Extensions%202.0/EXTENSION-GITHUB-CAPTURE-AUDIT.md)
 records verification and the outstanding legacy migration/activation work.
-## Legacy history preservation (E4i)
+## Clean catalogue bootstrap (unreleased platform)
 
-`capture-legacy-history` preserves authenticated four-document catalogue history
-as **historical evidence**, never an active serving tree. Use an operator-reviewed
-manifest whose raw SHA256 is independently pinned:
-
-```text
-grain-registry capture-legacy-history --checkout PROTECTED_COMPLETE_CHECKOUT \
-  --repository Punit-Dethe/Grain-Extention \
-  --manifest fixtures/legacy-history-af6e244.json \
-  --expected-manifest-sha256 6cad006f21b54e7041921dd68db0f8acf30932c0a8617a82a3b671a04a1b56f3 \
-  --out NEW_ARCHIVE
-```
-
-The checked-in manifest names all 18 catalogue-changing ancestors through the
-independently chosen `af6e24425d0eba1f667913f8a5403e9a6fb7ce76` tip. The command
-compares its entire ordered commit list to bounded `rev-list --full-history
---topo-order --reverse` output for signed documents, including signature-only
-changes. It refuses omissions, reordering, shallow/grafted/borrowed history,
-redirecting Git configuration, wrong origin, linked/nonregular/executable files
-and existing revocation documents that this legacy-only format cannot preserve.
-No checkout bytes, author commands, private keys, network or remote writes.
-
-Output contains `manifest.json`, `proofs/<commit>/` with the four **original**
-signed files, a deduplicated `assets/blob/` and `assets/media/` pool, and unsigned
-`legacy-history.json`. Raw root/index signatures use the existing app-pinned
-trust chain. Expired historical proof is allowed; active freshness policy is
-unchanged. Only the authenticated archival parsing view recognizes the retired
-`builtin` presentation tier; original bytes retain it and active SDK admission
-still rejects it. Old capabilities are preserved as evidence, never enabled.
-
-The receipt records every immutable content variant for each `(id, version)`,
-all conflicting versions, exact document digests and each asset's actual source
-commit. An asset missing from an earlier tree may be recovered from these same
-pinned catalogue snapshots **only if its signed hash/size verifies**. Recovery
-is explicit; absent bytes or changed bytes under one address fail. Extra
-unreferenced committed assets are not copied, and the source repository is never
-modified. This manifest is bounded historical coverage of this chosen tip, not
-proof of remote approval, all repository refs or future history.
-
-Limits: 128 catalogue commits, 8,192 pooled addressed files/content variants,
-131,072 reservation references, 128 MiB metadata, 1 GiB capture data plus at most
-8 MiB receipt. Existing per-document/artifact and bounded, reaped Git child
-limits apply. RAM holds bounded metadata/inventories; artifact copies stream.
-Failed owned output is removed; preexisting input/output is retained.
-
-Reproducible actual public-CLI verification (Python standard library only):
+Grain has no deployed users; there is no old-registry migration or archive lane.
+The four legacy capture/migration commands and their exclusive implementations,
+fixtures and CLI checkpoint have been removed.
 
 ```text
-python crates/grain-registry-tools/tests/legacy_history_cli.py \
-  --tool /ABSOLUTE/PATH/TO/grain-registry \
-  --checkout /ABSOLUTE/PATH/TO/COMPLETE_LEGACY_CHECKOUT \
-  --output /ABSOLUTE/PATH/TO/NEW_EVIDENCE
+grain-registry bootstrap-serving-tree --key EXPLICIT_PUBLISHER_KEY \
+  --expires-days 30 --out NEW_BOOTSTRAP
+grain-registry verify-serving-tree --v1 NEW_BOOTSTRAP/v1
+grain-registry initialize-serving-store --v1 NEW_BOOTSTRAP/v1 --out NEW_STORE
+grain-registry export-hosting-bundle --store NEW_STORE \
+  --expected-current-sha256 INDEPENDENT_CURRENT_POINTER_SHA256 --out NEW_BUNDLE
 ```
 
-This is a maintainer command checkpoint, separate from the Agent harness. It
-uses no private keys, checks 25 exact CLI verdicts and compares every archived
-proof/asset to its actual Git source bytes. Its fixed expected manifest digest
-must be reviewed with the pinned test source. Keep it while this migration path
-is supported; it is not a second application or a temporary author execution lane.
+Bootstrap authenticates the **embedded current app seed**, preserves its genuine
+roots/current revocation rules, and signs a fresh empty index and revocations
+with versions advanced above that seed (currently 2/2). Lifetime is 1–30 days.
+This uses the current signer's unencrypted minisign format and an explicitly
+supplied key; missing/wrong keys refuse. Root trust, seed freshness, empty
+catalogue, version/size bounds and output separation are checked before signing.
+There is no old checkout, legacy identity reservation, archive binding, recovered
+file route, invented historical revocation or settings migration. Existing
+operator output is never overwritten and unfinished owned output is cleaned.
 
-## Legacy migration and retained reservations (E4j)
-
-The protected archive consumer now reauthenticates every original signature,
-asset hash/size and reservation. It recomputes identities/conflicts from signed
-documents rather than trusting unsigned receipt claims. Commit/source labels
-remain independently pinned operational claims until the initial Git handoff
-recaptures the entire archive from the original Git ancestry.
-
-```text
-grain-registry verify-legacy-history --archive ARCHIVE \
-  --expected-receipt-sha256 INDEPENDENT_ARCHIVE_RECEIPT_SHA256
-grain-registry sign-legacy-migration --archive ARCHIVE \
-  --expected-receipt-sha256 INDEPENDENT_ARCHIVE_RECEIPT_SHA256 \
-  --key EXPLICIT_PROTECTED_PUBLISHER_KEY --expires-days 30 --out NEW_MIGRATION
-grain-registry verify-serving-tree --v1 NEW_MIGRATION/v1
-grain-registry initialize-serving-store --v1 NEW_MIGRATION/v1 --out NEW_STORE
-```
-
-Signing requires the genuine existing publisher key after public-input checks;
-the resulting signatures must verify against unchanged app-authenticated roots.
-This signer uses the existing unencrypted minisign key format: an approved
-protected runner must supply/custody the key; this command neither discovers
-keys nor provides a production authorization policy. Lifetime is 1–30 days.
-Expired roots and version exhaustion refuse before reading the key.
-
-The initial active index is empty and advances above **every historical index
-version**. Current signed revocations explicitly retire every archived `(id,
-version)`. The app's signed revocation seed is authenticated, preserved and
-advanced above its existing version. For the pinned real archive, that means
-index **40**, revocations **2**, and **13 reserved version identities**; no such
-production baseline has been signed by these tests. These are new retirements,
-never fabricated past revocation history.
-
-Both current signed documents bind the original receipt with
-`legacy_history_sha256`. Initialization stores the reverified archive once in
-`STORE/legacy/`. Promotion, renewal, snapshot export, hosting export/verification,
-raw Git capture and later publication retain that binding and reject reused
-legacy versions or erased/weakened retirements. New tool-only versions still
-need ordinary source review/signing. Hosting retains all old content-addressed
-asset routes and original proofs; the empty current index does not list old
-extensions or reactivate their privileges. Clients do not download this archive.
-Hosting's 1 GiB total budget includes the archive and retained public copies.
-
-Standalone assembly/renewal `v1/` outputs refer to the existing archive. Verify
-them with `verify-serving-tree --v1 UPDATE/v1 --legacy-archive STORE/legacy`.
-Store initialization expects a complete sibling `legacy/` archive; ordinary
-promotion uses the selected store's existing verified archive.
-
-For the **first** migration only, prepare a candidate whose sole parent is the
-independently chosen archived tip. Commit the complete bundle's `v1/` under
-`v1/`, and its `bundle.json`, `current.json`, `history/`, `legacy/` under
-`.registry-publication/`. Reproduce empty folders during capture. Then:
-
-```text
-grain-registry prepare-github-migration --checkout PROTECTED_CANDIDATE_CHECKOUT \
-  --repository Punit-Dethe/Grain-Extention --branch main \
-  --expected-base-commit PINNED_LEGACY_TIP --candidate-commit EXACT_CANDIDATE \
-  --legacy-archive ARCHIVE --expected-legacy-receipt-sha256 ARCHIVE_RECEIPT_SHA256 \
-  --bundle VERIFIED_BUNDLE --expected-receipt-sha256 BUNDLE_RECEIPT_SHA256 \
-  --out NEW_HANDOFF
-```
-
-The gate independently recaptures old Git proofs, validates the empty migration
-baseline and compares every candidate file to committed bytes. It rejects an
-invented earlier six-document history and emits a distinct initial-migration
-handoff with an explicit expected-base lease. It never authenticates/pushes.
-Subsequent releases use ordinary `prepare-github-publication` with the complete
-previous/current bundles and unchanged legacy binding.
-
-Production key custody, human review, remote membership/protection, authorized
-conditional execution and actual hosted-client coherence remain release gates.
-Do not activate the legacy `publish`/`retire` writers: they do not implement this
-complete retained-history contract. Their physical removal stays on hold.
-[Migration audit](../../docs/Extensions%202.0/EXTENSION-LEGACY-MIGRATION-AUDIT.md)
-records this checkpoint and remaining work. The command regression script stays
-while the migration is supported; it is not a new Agent harness/application.
+A local bootstrap is preparation, not release approval or GitHub activation.
+The existing ordinary Git publication gate requires a complete previous
+new-contract publication. **The clean first-publication gate is the next E4
+unit**; do not fake a previous bundle to pass the ordinary gate. Source review,
+key ownership, current hosting integrity and app/hosted metadata coherence still
+apply. Routine signed updates/renewal use the existing current-contract path.
+See [clean-break audit](../../docs/Extensions%202.0/EXTENSION-CLEAN-BREAK-AUDIT.md).

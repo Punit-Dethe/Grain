@@ -432,5 +432,3 @@ fn publication_rejects_missing_baseline_and_reinterpreted_ancestry() {
     p.refused("unmodified local Git ancestry");
     // A wrong expected parent is tested separately; a graft must never make it pass.
 }
-#[path = "legacy_tests.rs"]
-mod legacy_tests;

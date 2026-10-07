@@ -66,19 +66,6 @@ pub(super) fn destination(name: &str) -> Result<(PathBuf, u64)> {
         [publication::PROOFS, "bundle.json"] => Some(384 * 1024),
         [publication::PROOFS, "current.json"] => Some(8192),
         [publication::PROOFS, "history", id, doc] if hex(id) => document_limit(doc),
-        [publication::PROOFS, "legacy", "legacy-history.json"] => Some(8 * 1024 * 1024),
-        [publication::PROOFS, "legacy", "manifest.json"] => Some(256 * 1024),
-        [publication::PROOFS, "legacy", "proofs", id, doc]
-            if publication::oid(id) && legacy::LEGACY_DOCS.contains(doc) =>
-        {
-            document_limit(doc)
-        }
-        [publication::PROOFS, "legacy", "assets", folder, file]
-            if ["blob", "media"].contains(folder) =>
-        {
-            let (_, limit) = destination(&format!("v1/{folder}/{file}"))?;
-            Some(limit)
-        }
         _ => None,
     }
     .context("Unexpected committed publication path")?;
@@ -141,7 +128,7 @@ fn inventory(root: &Path, commit: &str) -> Result<BTreeMap<PathBuf, Blob>> {
         {
             bail!("Duplicate committed publication path");
         }
-        if blobs.len() > MAX_FILES * 2 + MAX_HISTORY * DOCS.len() + legacy::MAX_COMMITS * 4 + 10 {
+        if blobs.len() > MAX_FILES + MAX_HISTORY * DOCS.len() + 8 {
             bail!("Publication capture exceeds file budget");
         }
     }
@@ -152,7 +139,7 @@ fn inventory(root: &Path, commit: &str) -> Result<BTreeMap<PathBuf, Blob>> {
         .chain(["bundle.json".into(), "current.json".into()])
     {
         if !blobs.contains_key(Path::new(&name)) {
-            bail!("Incomplete publication baseline: missing {name}; protected legacy migration required");
+            bail!("Incomplete publication baseline: missing {name}; complete signed publication proof required");
         }
     }
     Ok(blobs)
@@ -277,16 +264,6 @@ pub(super) fn capture_with(
         fs::create_dir(dir)?;
     }
     let bytes = materialize(&root, &blobs, &bundle)?;
-    if blobs.contains_key(Path::new("legacy/legacy-history.json")) {
-        for dir in [
-            "legacy/proofs",
-            "legacy/assets",
-            "legacy/assets/blob",
-            "legacy/assets/media",
-        ] {
-            fs::create_dir_all(bundle.join(dir))?;
-        }
-    }
     // Expired authentic previous proof is recoverable, never made active here.
     // Publishing/ordinary hosting verification independently requires freshness.
     let selected = hosting::inspect(&bundle, pin, anchor, false)?.selected;

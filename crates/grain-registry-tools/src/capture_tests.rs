@@ -227,7 +227,7 @@ fn capture_refuses_unsafe_paths_modes_oversize_and_missing_baseline_before_outpu
                 "extra" => "Unexpected committed",
                 "executable" => "regular non-executable",
                 "oversize" => "byte bound",
-                _ => "protected legacy migration required",
+                _ => "complete signed publication proof required",
             }),
             "{error}"
         );

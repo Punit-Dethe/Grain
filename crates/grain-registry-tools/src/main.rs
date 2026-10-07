@@ -36,43 +36,7 @@ struct Cli {
 }
 
 #[derive(Args)]
-struct PrepareGithubMigrationArgs {
-    #[arg(long)]
-    checkout: PathBuf,
-    #[arg(long)]
-    repository: String,
-    #[arg(long)]
-    branch: String,
-    #[arg(long)]
-    expected_base_commit: String,
-    #[arg(long)]
-    candidate_commit: String,
-    #[arg(long)]
-    legacy_archive: PathBuf,
-    #[arg(long)]
-    expected_legacy_receipt_sha256: String,
-    #[arg(long)]
-    bundle: PathBuf,
-    #[arg(long)]
-    expected_receipt_sha256: String,
-    #[arg(long)]
-    out: PathBuf,
-}
-
-#[derive(Args)]
-struct VerifyLegacyHistoryArgs {
-    #[arg(long)]
-    archive: PathBuf,
-    #[arg(long)]
-    expected_receipt_sha256: String,
-}
-
-#[derive(Args)]
-struct SignLegacyMigrationArgs {
-    #[arg(long)]
-    archive: PathBuf,
-    #[arg(long)]
-    expected_receipt_sha256: String,
+struct BootstrapServingTreeArgs {
     #[arg(long)]
     key: PathBuf,
     #[arg(long, default_value_t = 30)]
@@ -138,37 +102,9 @@ struct SignReviewedCandidateArgs {
 }
 
 #[derive(Subcommand)]
-enum LegacyCmd {
-    /// Bind the first signed empty migration to exact legacy/candidate Git commits.
-    /// Rechecks original history; emits a distinct conditional handoff, never pushes.
-    PrepareGithubMigration(PrepareGithubMigrationArgs),
-    /// Reauthenticate a protected receipt-pinned historical archive; never activates.
-    VerifyLegacyHistory(VerifyLegacyHistoryArgs),
-    /// Sign an empty current catalogue retiring every preserved legacy version.
-    /// Uses the existing publisher key; no root rotation, approval or deployment.
-    SignLegacyMigration(SignLegacyMigrationArgs),
-    /// Preserve all four-document legacy catalogue proofs through a pinned tip.
-    /// An independently pinned manifest is required. No activation or signing.
-    CaptureLegacyHistory {
-        #[arg(long)]
-        checkout: PathBuf,
-        #[arg(long)]
-        repository: String,
-        #[arg(long)]
-        manifest: PathBuf,
-        #[arg(long)]
-        expected_manifest_sha256: String,
-        #[arg(long)]
-        out: PathBuf,
-    },
-}
-
-#[derive(Subcommand)]
 enum Cmd {
-    // Separate argument builders keep Windows debug stack use bounded.
-    // Flatten preserves all public command names without another command level.
-    #[command(flatten)]
-    Legacy(LegacyCmd),
+    /// Create an empty signed catalogue from current app trust, without old data.
+    BootstrapServingTree(BootstrapServingTreeArgs),
     /// Capture authenticated previous publication proof from an exact Git commit.
     /// Never reads the working tree, activates metadata, authenticates or pushes.
     CaptureGithubPublication {
@@ -231,9 +167,6 @@ enum Cmd {
     VerifyServingTree {
         #[arg(long)]
         v1: PathBuf,
-        /// Explicit retained archive for an assembly/renewal outside its store.
-        #[arg(long)]
-        legacy_archive: Option<PathBuf>,
     },
     /// Assemble a full serving tree from a signed base and signed update fragment.
     AssembleServingTree {
@@ -611,63 +544,13 @@ fn edit_distance(a: &str, b: &str) -> usize {
     prev[b.len()]
 }
 
-fn legacy_command(cmd: LegacyCmd) -> Result<()> {
-    match cmd {
-        LegacyCmd::PrepareGithubMigration(PrepareGithubMigrationArgs {
-            checkout,
-            repository,
-            branch,
-            expected_base_commit,
-            candidate_commit,
-            legacy_archive,
-            expected_legacy_receipt_sha256,
-            bundle,
-            expected_receipt_sha256,
-            out,
-        }) => serving::publication::prepare_migration(&serving::publication::Request {
-            checkout: &checkout,
-            repository: &repository,
-            branch: &branch,
-            base_commit: &expected_base_commit,
-            candidate_commit: &candidate_commit,
-            previous: &legacy_archive,
-            previous_pin: &expected_legacy_receipt_sha256,
-            bundle: &bundle,
-            bundle_pin: &expected_receipt_sha256,
-            out: &out,
-        }),
-        LegacyCmd::VerifyLegacyHistory(VerifyLegacyHistoryArgs {
-            archive,
-            expected_receipt_sha256,
-        }) => serving::legacy::verify(&archive, &expected_receipt_sha256),
-        LegacyCmd::SignLegacyMigration(SignLegacyMigrationArgs {
-            archive,
-            expected_receipt_sha256,
+fn main() -> Result<()> {
+    match Cli::parse().cmd {
+        Cmd::BootstrapServingTree(BootstrapServingTreeArgs {
             key,
             expires_days,
             out,
-        }) => {
-            serving::migration::sign(&archive, &expected_receipt_sha256, &key, expires_days, &out)
-        }
-        LegacyCmd::CaptureLegacyHistory {
-            checkout,
-            repository,
-            manifest,
-            expected_manifest_sha256,
-            out,
-        } => serving::legacy::capture(
-            &checkout,
-            &repository,
-            &manifest,
-            &expected_manifest_sha256,
-            &out,
-        ),
-    }
-}
-
-fn main() -> Result<()> {
-    match Cli::parse().cmd {
-        Cmd::Legacy(cmd) => legacy_command(cmd),
+        }) => serving::bootstrap::create(&key, expires_days, &out),
         Cmd::CaptureGithubPublication {
             checkout,
             repository,
@@ -725,9 +608,7 @@ fn main() -> Result<()> {
             out,
             expected_current_sha256,
         } => serving::export(&store, &out, &expected_current_sha256),
-        Cmd::VerifyServingTree { v1, legacy_archive } => {
-            serving::verify(&v1, legacy_archive.as_deref())
-        }
+        Cmd::VerifyServingTree { v1 } => serving::verify(&v1),
         Cmd::AssembleServingTree { base, update, out } => serving::assemble(&base, &update, &out),
         Cmd::InitializeServingStore { v1, out } => serving::initialize(&v1, &out),
         Cmd::PromoteServingTree {

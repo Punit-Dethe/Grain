@@ -1,5 +1,16 @@
 # Extension platform: audit, reuse and execution plan
 
+**Current clean-break block, 7 October:** [Cleanup/bootstrap audit](EXTENSION-CLEAN-BREAK-AUDIT.md)
+records physical removal of E4i/E4j archive/migration commands, consumers,
+legacy bindings/reservations and their exclusive fixtures/tests. The new
+`bootstrap-serving-tree` creates an empty signed catalogue from current app
+trust without reading old registry data. Windows **72 maintainer / 9 core trust /
+8 public CLI checks**, locked build/strict Clippy and scoped audit pass. Linux
+checkpoint is Pending. Next implement the clean first-publication GitHub gate
+(no previous legacy bundle), then current hosted/app coherence and publishing.
+Five E4–E8 stages retain work; no new manual batch or Agent harness framework.
+Other exclusive old paths may be retired in their own coherent blocks.
+
 ## Current policy: unreleased platform, clean break — 7 October
 
 The user confirms Grain is **before pre-alpha, unpublished to users, with no

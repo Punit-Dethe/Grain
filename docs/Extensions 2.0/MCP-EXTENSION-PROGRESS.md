@@ -1,5 +1,16 @@
 # Extension implementation: progress, changes and user testing
 
+**Current clean-break block, 7 October:** [Cleanup/bootstrap audit](EXTENSION-CLEAN-BREAK-AUDIT.md)
+records physical removal of E4i/E4j archive/migration commands, consumers,
+legacy bindings/reservations and their exclusive fixtures/tests. The new
+`bootstrap-serving-tree` creates an empty signed catalogue from current app
+trust without reading old registry data. Windows **72 maintainer / 9 core trust /
+8 public CLI checks**, locked build/strict Clippy and scoped audit pass. Linux
+checkpoint is Pending. Next implement the clean first-publication GitHub gate
+(no previous legacy bundle), then current hosted/app coherence and publishing.
+Five E4–E8 stages retain work; no new manual batch or Agent harness framework.
+Other exclusive old paths may be retired in their own coherent blocks.
+
 **Scope correction, 7 October — authoritative:** Grain is unreleased, before
 pre-alpha, with no deployed users. The user explicitly removes old-extension,
 old-settings and registry carry-forward requirements and supersedes the earlier
@@ -208,7 +219,7 @@ checkpoints do not close the hosted/protected release requirements.
 | E1 — Contract | Native tools or remote MCP descriptors with a smaller tool-only author interface | Provisionally accepted. Extensions cannot use retired screen/context/prompt privileges. Exclusive obsolete paths may now be removed; old Grain contracts need no backward compatibility. |
 | E2 — Connections | Direct remote JSON connections and signed-store MCPs use the same host-owned account/auth/runtime rules | Provisionally accepted through actual-app checkpoints. MCP SDK and native OAuth library reuse are integrated; provider/production certification remains separate. |
 | E3 — SDK/CLI | Authors create, check, package and draft native/MCP submissions, with separate DESCRIPTION/media | Provisionally accepted. Public API freeze and official extension publishing are later. |
-| **E4 — Publishing, current** | Checked source/build/provenance, guarded signing, a clean tool-only catalogue, current hosting/update/revocation and GitHub publication | Local boundaries audited/verified; GitHub hosting confirmed. Remove compatibility-only E4i/E4j machinery and establish the new catalogue directly. Current signing/key custody, remote execution/hosted coherence and applicable operational controls remain; old catalogue migration, historical routes and version reservations are no longer requirements. |
+| **E4 — Publishing, current** | Checked source/build/provenance, guarded signing, a clean tool-only catalogue, current hosting/update/revocation and GitHub publication | Local boundaries audited/verified; GitHub hosting confirmed. Compatibility-only E4i/E4j machinery is removed; clean signed bootstrap is implemented. The first-publication gate is next. Current signing/key custody, remote execution/hosted coherence and applicable operational controls remain; old catalogue migration, historical routes and version reservations are no longer requirements. |
 | E5 — Store and management UI | Clear native/MCP/custom connection, setup, login and lifecycle flows with defined listing content | Remaining. UI 2.0 branch isolation and user visual approval apply. |
 | E6 — Agent recovery modules | Reviewed automatic-read rules, bounded metadata reuse/freshness, auth continuation and crash/orphan recovery | Remaining as separate implementation blocks. |
 | E7 — Measurements and reference integrations | Mixed native/MCP/custom tools, larger catalogues and measured selection/model/resource quality | Remaining. Includes the official reference extensions after infrastructure acceptance. |

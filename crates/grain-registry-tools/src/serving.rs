@@ -14,14 +14,12 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::prepare::{digest, new_output, OwnedOutput};
+#[path = "bootstrap.rs"]
+pub(crate) mod bootstrap;
 #[path = "capture.rs"]
 pub(crate) mod capture;
 #[path = "hosting.rs"]
 mod hosting;
-#[path = "legacy.rs"]
-pub(crate) mod legacy;
-#[path = "migration.rs"]
-pub(crate) mod migration;
 #[path = "publication.rs"]
 pub(crate) mod publication;
 #[path = "renewal.rs"]
@@ -94,45 +92,6 @@ struct Tree {
     state: State,
     index: Index,
     revocations: Revocations,
-    legacy_pin: Option<String>,
-}
-
-fn legacy_binding(docs: &BTreeMap<String, Vec<u8>>) -> Result<Option<String>> {
-    let mut pins = Vec::new();
-    for name in ["index.json", "revocations.json"] {
-        let value: serde_json::Value = serde_json::from_slice(&docs[name])?;
-        let pin = value
-            .get("legacy_history_sha256")
-            .map(|v| {
-                v.as_str()
-                    .filter(|s| hex(s))
-                    .map(str::to_owned)
-                    .context("Malformed signed legacy history binding")
-            })
-            .transpose()?;
-        pins.push(pin);
-    }
-    if pins[0] != pins[1] {
-        bail!("Index and revocations must bind the same legacy archive");
-    }
-    Ok(pins.remove(0))
-}
-
-fn retained_legacy(
-    base: &Path,
-    tree: &Tree,
-    anchor: &Anchor<'_>,
-) -> Result<Option<legacy::Archive>> {
-    if let Some(pin) = &tree.legacy_pin {
-        let archive = legacy::inspect(&base.join("legacy"), pin, anchor)?;
-        legacy::enforce(&archive, tree)?;
-        Ok(Some(archive))
-    } else {
-        if fs::symlink_metadata(base.join("legacy")).is_ok() {
-            bail!("Unsigned legacy archive cannot enter a serving store or bundle");
-        }
-        Ok(None)
-    }
 }
 
 fn hex(value: &str) -> bool {
@@ -328,7 +287,6 @@ fn metadata(path: &Path, anchor: &Anchor<'_>, require_fresh: bool) -> Result<Tre
         revocations_sha256: digest(&docs["revocations.json"]),
         revocations_version: revocations.version,
     };
-    let legacy_pin = legacy_binding(&docs)?;
     Ok(Tree {
         path,
         docs,
@@ -336,7 +294,6 @@ fn metadata(path: &Path, anchor: &Anchor<'_>, require_fresh: bool) -> Result<Tre
         state,
         index,
         revocations,
-        legacy_pin,
     })
 }
 
@@ -451,9 +408,6 @@ fn immutable_versions(old: &Index, new: &Index) -> Result<()> {
 }
 
 fn transition(old: &Tree, new: &Tree, require_change: bool) -> Result<()> {
-    if old.legacy_pin != new.legacy_pin {
-        bail!("Promotion cannot remove or replace signed legacy archive binding");
-    }
     for (old_version, new_version, old_hash, new_hash) in [
         (
             old.state.index_version,
@@ -549,19 +503,8 @@ fn copy(tree: &Tree, out: &Path) -> Result<()> {
     sync_dir(out)
 }
 
-pub(super) fn verify(path: &Path, archive: Option<&Path>) -> Result<()> {
+pub(super) fn verify(path: &Path) -> Result<()> {
     let tree = check(path, &app_anchor, true)?;
-    if let Some(pin) = &tree.legacy_pin {
-        let inferred = tree
-            .path
-            .parent()
-            .context("Serving v1 parent")?
-            .join("legacy");
-        let legacy = legacy::inspect(archive.unwrap_or(&inferred), pin, &app_anchor)?;
-        legacy::enforce(&legacy, &tree)?;
-    } else if archive.is_some() {
-        bail!("Legacy archive supplied without signed binding");
-    }
     println!(
         "Complete pinned-root serving tree verified: index {}, snapshot {}",
         tree.state.index_version, tree.state.snapshot
@@ -728,32 +671,11 @@ pub(super) fn initialize(v1: &Path, out: &Path) -> Result<()> {
 
 fn initialize_with(v1: &Path, out: &Path, anchor: &Anchor<'_>) -> Result<()> {
     let tree = check(v1, anchor, true)?;
-    let archive = if tree.legacy_pin.is_some() {
-        retained_legacy(
-            tree.path.parent().context("Migration v1 parent")?,
-            &tree,
-            anchor,
-        )?
-    } else {
-        None
-    };
-    let mut inputs = vec![tree.path.as_path()];
-    if let Some(archive) = &archive {
-        inputs.push(archive.path.as_path());
-    }
-    let out = new_output(out, &inputs)?;
+    let out = new_output(out, &[&tree.path])?;
     fs::create_dir(&out)?;
     let mut owned = OwnedOutput(out.clone(), false);
     let _lock = lock(&out)?;
     fs::create_dir(out.join("snapshots"))?;
-    if let Some(archive) = archive {
-        legacy::copy_archive(
-            &archive,
-            tree.legacy_pin.as_ref().unwrap(),
-            &out.join("legacy"),
-            anchor,
-        )?;
-    }
     install(&tree, &out, anchor)?;
     let pin = pointer(&out, &tree.state, true)?;
     owned.1 = true;
@@ -813,14 +735,7 @@ fn visit_history(
 }
 
 fn historical_versions(store: &Path, next: &Tree, anchor: &Anchor<'_>) -> Result<()> {
-    let archive = retained_legacy(store, next, anchor)?;
     let count = visit_history(store, anchor, |historical| {
-        if historical.legacy_pin != next.legacy_pin {
-            bail!("Snapshot history cannot change its legacy archive binding");
-        }
-        if let Some(archive) = &archive {
-            legacy::enforce(archive, &historical)?;
-        }
         immutable_versions(&historical.index, &next.index)
     })?;
     let snapshots = directory(&store.join("snapshots"))?;
@@ -862,7 +777,6 @@ fn selected(store: &Path, pin: &str, anchor: &Anchor<'_>, fresh: bool) -> Result
     if tree.state != state {
         bail!("Current serving snapshot mismatch");
     }
-    retained_legacy(store, &tree, anchor)?;
     Ok(tree)
 }
 
@@ -878,14 +792,6 @@ fn export_with(store: &Path, out: &Path, pin: &str, anchor: &Anchor<'_>) -> Resu
     fs::create_dir(&out)?;
     let mut owned = OwnedOutput(out.clone(), false);
     copy(&tree, &out.join("v1"))?;
-    if let Some(archive) = retained_legacy(&store, &tree, anchor)? {
-        legacy::copy_archive(
-            &archive,
-            tree.legacy_pin.as_ref().unwrap(),
-            &out.join("legacy"),
-            anchor,
-        )?;
-    }
     if check(&out.join("v1"), anchor, true)?.state != tree.state {
         bail!("Exported serving snapshot differs");
     }

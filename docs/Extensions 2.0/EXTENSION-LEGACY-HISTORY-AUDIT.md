@@ -1,5 +1,9 @@
 # E4i: authenticated legacy catalogue history preservation
 
+**Implementation retired, 7 October:** the exclusive commands, modules and tests
+below have been removed. See [clean-break audit](EXTENSION-CLEAN-BREAK-AUDIT.md).
+The following record preserves historical evidence only.
+
 **Superseded scope, 7 October:** the user confirms Grain has no deployed users
 and is before pre-alpha. Legacy compatibility, archive carry-forward, version
 reservations and old settings/extension migrations are no longer requirements.
