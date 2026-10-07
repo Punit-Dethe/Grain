@@ -23,6 +23,8 @@ pub mod capture;
 pub mod settings;
 // [GRAIN] Phase 5A: pinned-key verification of the signed extension catalogue.
 pub mod trust;
+// Bounded, atomic local storage of the signed store metadata; no service.
+pub mod store_cache;
 // [GRAIN] Phase 5A: pack format v2 detection + path-safe archive extraction.
 pub mod pack;
 // [GRAIN] Phase 5A: install/update/remove transaction + the trust invariant.

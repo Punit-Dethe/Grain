@@ -1,6 +1,21 @@
 # Local extension registry: source and publishing audit
 
-**Current app freshness block, 8 October:** [Scoped audit](EXTENSION-STORE-FRESHNESS-AUDIT.md)
+**Current atomic app cache block, 8 October:** [Scoped audit](EXTENSION-STORE-CACHE-AUDIT.md)
+records one bounded six-piece cache, reuse of the existing atomic writer,
+monotonic/exact signed version identity, persistence failure refusal and restored
+restart floors with no resident idle catalogue. Corrupt cache acquisition stays
+disabled; independently valid signed policy/floors are retained. Windows **299
+core / 11 backend store / 6 real-app store** checks, strict core lint, build and
+formatting pass, including actual sharing-lock refusal and genuine signed
+same-version replacement. One existing live-network test remains ignored.
+No harness source/scenario/framework or manual batch. Linux verification is
+next through the existing pinned read-only checkpoint. E4 remains current for
+hosted generation contract, operator signing/publication custody and actual
+signed HTTP/app activation; E5–E8 follow. Foundation **52 Pass / 1 Deferred**,
+forward **71**, OAuth identity **56 Pending**, inventory **108 / 93 / 81** and
+parked website remain unchanged. Older dated sections are historical.
+
+**Previous app freshness block, 8 October:** [Scoped audit](EXTENSION-STORE-FRESHNESS-AUDIT.md)
 records the corrected signed-seed GitHub host, pending root adoption only after
 verified fresh catalogue/revocations, mandatory authenticated fresh revocation
 responses and root/revocation expiry checks before download and final native/MCP

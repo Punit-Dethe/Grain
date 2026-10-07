@@ -21,12 +21,13 @@ use std::sync::{Mutex, MutexGuard, RwLock};
 
 use grain_core::install::{self, InstallError};
 use grain_core::pack::ExtractLimits;
+use grain_core::store_cache::{self, Metadata, SignedDocument};
 use grain_core::trust::{self, IndexStatus, TrustError};
 use grain_sdk::distribution::{Index, IndexEntry, RevocationState, Revocations, Roots};
 use serde::Serialize;
 
-const STORE_DOCUMENT_MAX_BYTES: u64 = 4 * 1024 * 1024;
-const STORE_SIGNATURE_MAX_BYTES: u64 = 64 * 1024;
+const STORE_DOCUMENT_MAX_BYTES: u64 = store_cache::DOCUMENT_MAX_BYTES;
+const STORE_SIGNATURE_MAX_BYTES: u64 = store_cache::SIGNATURE_MAX_BYTES;
 const STORE_MEDIA_MAX_BYTES: u64 = 16 * 1024 * 1024;
 const STORE_OPERATION_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 
@@ -43,6 +44,8 @@ struct StoreOwnership {
 pub struct StoreState {
     ownership: Mutex<StoreOwnership>,
     cache_dir: PathBuf,
+    /// An unreadable/untrusted selection cannot silently reset rollback floors.
+    cache_unavailable: bool,
     roots: RwLock<Roots>,
     revocations: RwLock<Revocations>,
     index: RwLock<Option<Index>>,
@@ -176,6 +179,29 @@ impl StoreState {
                     entries: Vec::new(),
                 });
             *state.roots.get_mut().unwrap() = roots;
+            // The existing guarded host uses a fixed fixture publisher instead
+            // of public roots. Verify its entire selected index/policy here.
+            state.cache_unavailable = match Metadata::read(&state.cache_dir) {
+                Ok(None) => false,
+                Ok(Some(cache)) => {
+                    trust::verify_index(
+                        state.roots.get_mut().unwrap(),
+                        &cache.index.document,
+                        &cache.index.signature,
+                        None,
+                        now_unix(),
+                        false,
+                    )
+                    .is_err()
+                        || trust::verify_revocations(
+                            state.roots.get_mut().unwrap(),
+                            &cache.revocations.document,
+                            &cache.revocations.signature,
+                        )
+                        .is_err()
+                }
+                Err(_) => true,
+            };
         }
         state
     }
@@ -197,38 +223,46 @@ impl StoreState {
         let cache_dir = data_dir.join("store");
         let _ = std::fs::create_dir_all(&cache_dir);
 
-        // Roots: cache first (verified against the pinned keys), else seed.
-        let roots = load_cached_roots(&cache_dir)
-            .or_else(|| {
-                trust::verify_roots(trust::SEED_ROOTS.as_bytes(), trust::SEED_ROOTS_SIG).ok()
-            })
-            .unwrap_or_else(|| {
-                // The seed is embedded and signed at build time; this cannot
-                // fail unless the binary is corrupt.
-                panic!("embedded seed roots failed to verify — corrupt binary");
-            });
-
-        // Revocations: cache first, else seed.
-        let revocations = load_cached_revocations(&cache_dir, &roots)
-            .or_else(|| {
-                trust::verify_revocations(
-                    &roots,
-                    trust::SEED_REVOCATIONS.as_bytes(),
-                    trust::SEED_REVOCATIONS_SIG,
-                )
-                .ok()
-            })
-            .unwrap_or_else(|| Revocations {
-                spec: 1,
-                version: 0,
-                expires: String::new(),
-                entries: Vec::new(),
-            });
-
-        // Rollback floor from any cached index (verify, read version, drop).
-        let stored_version = load_cached_index(&cache_dir, &roots, None, now_unix())
-            .ok()
-            .map(|(idx, _)| idx.version);
+        // Authenticate one complete selection, never independent disk pairs.
+        // Absence bootstraps; corruption cannot be interpreted as a fresh user.
+        let cached = Metadata::read(&cache_dir);
+        let mut cache_unavailable = cached.is_err();
+        let mut roots = trust::verify_roots(trust::SEED_ROOTS.as_bytes(), trust::SEED_ROOTS_SIG)
+            .expect("embedded seed roots failed to verify");
+        let mut revocations = trust::verify_revocations(
+            &roots,
+            trust::SEED_REVOCATIONS.as_bytes(),
+            trust::SEED_REVOCATIONS_SIG,
+        )
+        .expect("embedded seed revocations failed to verify");
+        let mut stored_version = None;
+        if let Ok(Some(cache)) = cached {
+            match trust::verify_roots(&cache.roots.document, &cache.roots.signature) {
+                Ok(verified) => roots = verified,
+                Err(_) => cache_unavailable = true,
+            }
+            // Catalogue corruption must not discard an independently valid
+            // signed kill switch. Invalid roots never select an untrusted key.
+            match trust::verify_revocations(
+                &roots,
+                &cache.revocations.document,
+                &cache.revocations.signature,
+            ) {
+                Ok(verified) => revocations = verified,
+                Err(_) => cache_unavailable = true,
+            }
+            match trust::verify_index(
+                &roots,
+                &cache.index.document,
+                &cache.index.signature,
+                None,
+                now_unix(),
+                false,
+            ) {
+                Ok((index, _)) => stored_version = Some(index.version),
+                Err(_) => cache_unavailable = true,
+            }
+        }
 
         StoreState {
             ownership: Mutex::new(StoreOwnership {
@@ -237,6 +271,7 @@ impl StoreState {
                 changed: tokio::sync::watch::channel(0).0,
             }),
             cache_dir,
+            cache_unavailable,
             roots: RwLock::new(roots),
             revocations: RwLock::new(revocations),
             index: RwLock::new(None),
@@ -412,13 +447,14 @@ fn now_unix() -> i64 {
 // ── Cache helpers (all verify before returning) ────────────────────────────
 
 fn read_pair(dir: &Path, name: &str) -> Option<(Vec<u8>, String)> {
-    let doc = read_bounded_file(&dir.join(name), STORE_DOCUMENT_MAX_BYTES)?;
-    let sig = String::from_utf8(read_bounded_file(
-        &dir.join(format!("{name}.minisig")),
-        STORE_SIGNATURE_MAX_BYTES,
-    )?)
-    .ok()?;
-    Some((doc, sig))
+    let cache = Metadata::read(dir).ok()??;
+    let pair = match name {
+        "roots.json" => cache.roots,
+        "index.json" => cache.index,
+        "revocations.json" => cache.revocations,
+        _ => return None,
+    };
+    Some((pair.document, pair.signature))
 }
 
 fn read_bounded_file(path: &Path, max: u64) -> Option<Vec<u8>> {
@@ -430,16 +466,7 @@ fn read_bounded_file(path: &Path, max: u64) -> Option<Vec<u8>> {
     (bytes.len() as u64 <= max).then_some(bytes)
 }
 
-fn write_pair(dir: &Path, name: &str, doc: &[u8], sig: &str) {
-    let _ = std::fs::write(dir.join(name), doc);
-    let _ = std::fs::write(dir.join(format!("{name}.minisig")), sig);
-}
-
-fn load_cached_roots(dir: &Path) -> Option<Roots> {
-    let (doc, sig) = read_pair(dir, "roots.json")?;
-    trust::verify_roots(&doc, &sig).ok()
-}
-
+#[cfg(feature = "agent-harness")]
 fn load_cached_revocations(dir: &Path, roots: &Roots) -> Option<Revocations> {
     let (doc, sig) = read_pair(dir, "revocations.json")?;
     trust::verify_revocations(roots, &doc, &sig).ok()
@@ -498,6 +525,11 @@ fn closed_view() -> StoreView {
 }
 
 fn ensure_metadata_fresh(state: &StoreState, now: i64) -> Result<(), String> {
+    if state.cache_unavailable {
+        return Err(
+            "store metadata cache is unreadable or untrusted; reset it before installing".into(),
+        );
+    }
     if trust::roots_status(&state.roots.read().unwrap(), now).map_err(|e| e.to_string())?
         != IndexStatus::Fresh
         || trust::revocations_status(&state.revocations.read().unwrap(), now)
@@ -543,6 +575,12 @@ async fn refresh_owned(
     revision: u64,
     now: &(impl Fn() -> i64 + Sync),
 ) -> StoreView {
+    if state.cache_unavailable {
+        return match state.current(revision) {
+            Ok(_owner) => state.offline_view(),
+            Err(_) => closed_view(),
+        };
+    }
     let bases: Vec<String> = {
         let roots = state.roots.read().unwrap();
         roots
@@ -633,17 +671,129 @@ async fn refresh_owned(
             && trust::revocations_status(&revs, now()) == Ok(IndexStatus::Fresh)
             && trust::revocations_status(selected_revs, now()) == Ok(IndexStatus::Fresh);
         drop(current_revs);
-        let mut revocation_update = Some(revs);
-        // Keep enforcing authenticated current-key negative policy even when
-        // acquisition must stay offline. Never borrow it across key rotation.
-        if replace_revs && same_publisher && revocation_update.as_ref().unwrap().spec == 1 {
-            write_pair(&state.cache_dir, "revocations.json", &vdoc, &vsig);
-            *state.revocations.write().unwrap() = revocation_update.take().unwrap();
+        let (mut cache, had_cache) = match Metadata::read(&state.cache_dir) {
+            Ok(Some(cache)) => (cache, true),
+            Ok(None) => (Metadata::seed(), false),
+            Err(_) => continue,
+        };
+        // Authenticate prior bytes before using their identity or preserving
+        // them in another snapshot. A newer disk selection also keeps its floor
+        // if a previous operation could not report successful persistence.
+        let resident_roots = state.roots.read().unwrap().clone();
+        let Ok(previous_roots) = trust::verify_roots(&cache.roots.document, &cache.roots.signature)
+        else {
+            continue;
+        };
+        if let Some((rdoc, _)) = &roots_update {
+            if store_cache::check_identity(
+                previous_roots.version,
+                &cache.roots.document,
+                roots.version,
+                rdoc,
+            )
+            .is_err()
+            {
+                continue;
+            }
+        }
+        if had_cache {
+            let Ok((previous_index, _)) = trust::verify_index(
+                &resident_roots,
+                &cache.index.document,
+                &cache.index.signature,
+                stored,
+                now(),
+                false,
+            ) else {
+                continue;
+            };
+            if store_cache::check_identity(
+                previous_index.version,
+                &cache.index.document,
+                index.version,
+                &idoc,
+            )
+            .is_err()
+            {
+                continue;
+            }
+            let Ok(previous_revs) = trust::verify_revocations(
+                &resident_roots,
+                &cache.revocations.document,
+                &cache.revocations.signature,
+            ) else {
+                continue;
+            };
+            if replace_revs
+                && store_cache::check_identity(
+                    previous_revs.version,
+                    &cache.revocations.document,
+                    revs.version,
+                    &vdoc,
+                )
+                .is_err()
+            {
+                continue;
+            }
+            if !replace_revs && previous_revs.version != state.revocations.read().unwrap().version {
+                continue;
+            }
+        } else if !replace_revs {
+            // No authenticated durable proof exists for the stronger resident
+            // policy; do not serialize a forged document or forget that floor.
+            continue;
+        }
+        // Current-key negative policy takes effect even when persistence or
+        // acquisition fails. Only a successful cache commit grants installs.
+        if replace_revs && same_publisher && revs.spec == 1 {
+            *state.revocations.write().unwrap() = revs.clone();
         }
         // An older response cannot replace resident policy. A changed publisher
         // cannot borrow policy authenticated only by its predecessor's key.
         if (!replace_revs && !same_publisher) || !metadata_fresh {
+            if replace_revs && same_publisher && revs.spec == 1 {
+                cache.revocations = SignedDocument {
+                    document: vdoc,
+                    signature: vsig,
+                };
+                // Preserve the prior trusted catalogue and its rollback floor.
+                if trust::verify_index(
+                    &resident_roots,
+                    &cache.index.document,
+                    &cache.index.signature,
+                    stored,
+                    now(),
+                    false,
+                )
+                .is_ok()
+                {
+                    if let Err(error) = cache.write(&state.cache_dir) {
+                        log::warn!("store revocation cache persistence failed: {error}");
+                    }
+                }
+            }
             continue;
+        }
+
+        if status != IndexStatus::Fresh && replace_revs && same_publisher && revs.spec == 1 {
+            cache.revocations = SignedDocument {
+                document: vdoc.clone(),
+                signature: vsig.clone(),
+            };
+            if trust::verify_index(
+                &resident_roots,
+                &cache.index.document,
+                &cache.index.signature,
+                stored,
+                now(),
+                false,
+            )
+            .is_ok()
+            {
+                if let Err(error) = cache.write(&state.cache_dir) {
+                    log::warn!("store revocation cache persistence failed: {error}");
+                }
+            }
         }
 
         match status {
@@ -657,24 +807,45 @@ async fn refresh_owned(
             }
             IndexStatus::Fresh => {
                 if let Some((rdoc, rsig)) = roots_update {
-                    write_pair(&state.cache_dir, "roots.json", &rdoc, &rsig);
-                    *state.roots.write().unwrap() = roots;
+                    cache.roots = SignedDocument {
+                        document: rdoc,
+                        signature: rsig,
+                    };
                 }
                 if replace_revs {
-                    if let Some(revs) = revocation_update {
-                        write_pair(&state.cache_dir, "revocations.json", &vdoc, &vsig);
-                        *state.revocations.write().unwrap() = revs;
-                    }
+                    cache.revocations = SignedDocument {
+                        document: vdoc,
+                        signature: vsig,
+                    };
                 }
-                write_pair(&state.cache_dir, "index.json", &idoc, &isig);
+                cache.index = SignedDocument {
+                    document: idoc,
+                    signature: isig,
+                };
+                if let Err(error) = cache.write(&state.cache_dir) {
+                    log::warn!("store metadata cache persistence failed: {error}");
+                    continue;
+                }
+                *state.roots.write().unwrap() = roots;
+                if replace_revs {
+                    *state.revocations.write().unwrap() = revs;
+                }
                 *state.stored_version.write().unwrap() = Some(index.version);
                 let revocations = state.revocations.read().unwrap();
                 let entries = project_entries(&index.entries, &revocations);
                 *state.index.write().unwrap() = Some(index);
-                owner.can_install = true;
+                owner.can_install = ensure_metadata_fresh(state, now()).is_ok()
+                    && state.index.read().unwrap().as_ref().is_some_and(|index| {
+                        trust::index_status(index, now()) == Ok(IndexStatus::Fresh)
+                    });
                 return StoreView {
-                    status: "fresh".into(),
-                    can_install: true,
+                    status: if owner.can_install {
+                        "fresh"
+                    } else {
+                        "offline"
+                    }
+                    .into(),
+                    can_install: owner.can_install,
                     entries,
                 };
             }
@@ -1460,42 +1631,47 @@ mod tests {
         let _ = std::fs::remove_dir_all(&data);
     }
 
-    // End-to-end client path against a REAL signed catalogue (the committed
-    // fixture produced by `grain-registry publish`): cache load → verify roots
-    // against the PINNED keys → verify index against the publishing key →
-    // project entries. Proves the producer (5B) and verifier (5A) agree, and
-    // that signature verification does not grant retired runtime capabilities.
     #[test]
-    fn verified_fixture_catalogue_loads_from_cache() {
-        let data = tmp_data("fixture");
-        let store = data.join("store");
-        std::fs::create_dir_all(&store).unwrap();
-        let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("tests")
-            .join("fixtures")
-            .join("store");
-        for f in [
-            "roots.json",
-            "roots.json.minisig",
-            "index.json",
-            "index.json.minisig",
+    fn verified_selection_restores_floors_but_corrupt_cache_cannot_rebootstrap() {
+        for mode in [
+            "valid",
+            "truncated",
+            "root_signature",
+            "index_signature",
+            "revocation_signature",
         ] {
-            std::fs::copy(fixture.join(f), store.join(f))
-                .unwrap_or_else(|e| panic!("copy fixture {f}: {e}"));
+            let data = tempfile::tempdir().unwrap();
+            let cache_dir = data.path().join("store");
+            std::fs::create_dir(&cache_dir).unwrap();
+            let mut cache = Metadata::seed();
+            match mode {
+                "root_signature" => cache.roots.signature = "bad".into(),
+                "index_signature" => cache.index.signature = "bad".into(),
+                "revocation_signature" => cache.revocations.signature = "bad".into(),
+                _ => {}
+            }
+            cache.write(&cache_dir).unwrap();
+            if mode == "truncated" {
+                std::fs::write(cache_dir.join(store_cache::FILE_NAME), b"partial").unwrap();
+            }
+            let state = StoreState::init(data.path());
+            assert_eq!(state.cache_unavailable, mode != "valid", "{mode}");
+            assert_eq!(
+                *state.stored_version.read().unwrap(),
+                if matches!(mode, "valid" | "root_signature" | "revocation_signature") {
+                    Some(1)
+                } else {
+                    None
+                }
+            );
+            assert!(state.index.read().unwrap().is_none());
+            assert!(!state.ownership.lock().unwrap().can_install);
+            if mode != "valid" {
+                assert!(ensure_metadata_fresh(&state, now_unix())
+                    .unwrap_err()
+                    .contains("cache"));
+            }
         }
-        let state = StoreState::init(&data);
-        let view = state.view_from_resident();
-        assert!(
-            view.entries.is_empty(),
-            "signed retired entries stay hidden"
-        );
-        let index = state.index.read().unwrap();
-        let entry = &index.as_ref().expect("verified cached index").entries[0];
-        assert_eq!(entry.id, "com.example.hello");
-        assert_eq!(entry.trust, grain_sdk::Trust::Verified);
-        assert_eq!(entry.capabilities, vec!["transform:transcript"]);
-        drop(index);
-        let _ = std::fs::remove_dir_all(&data);
     }
 
     fn fixture_dir() -> PathBuf {
@@ -1990,11 +2166,32 @@ mod tests {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async {
-            for mode in ["fresh", "expiry", "rollback", "missing_index", "bad_index", "missing_revocations", "bad_revocations"] {
+            let mut modes = vec!["fresh", "expiry", "rollback", "revocation_rollback", "cache_failure", "root_equivocation", "index_equivocation", "missing_index", "bad_index", "missing_revocations", "bad_revocations"];
+            #[cfg(windows)]
+            modes.push("persist_failure");
+            for mode in modes {
                 let data = tmp_data(mode);
+                if matches!(mode, "root_equivocation" | "index_equivocation") {
+                    std::fs::create_dir(data.join("store")).unwrap();
+                    Metadata::seed().write(&data.join("store")).unwrap();
+                }
+                let cache_guard = if mode == "persist_failure" {
+                    let cache_dir = data.join("store");
+                    std::fs::create_dir(&cache_dir).unwrap();
+                    Metadata::seed().write(&cache_dir).unwrap();
+                    #[cfg(windows)]
+                    {
+                        use std::os::windows::fs::OpenOptionsExt;
+                        Some(std::fs::OpenOptions::new().read(true).share_mode(1)
+                            .open(cache_dir.join(store_cache::FILE_NAME)).unwrap())
+                    }
+                    #[cfg(not(windows))]
+                    { None::<std::fs::File> }
+                } else { None };
                 let state = StoreState::init(&data);
-                // Preserve this newer kill switch against an actually signed older response.
-                state.revocations.write().unwrap().version = 999;
+                // A stronger resident policy without durable signed proof must
+                // not be serialized as forged metadata or forgotten on restart.
+                if mode == "revocation_rollback" { state.revocations.write().unwrap().version = 999; }
                 if mode == "rollback" { *state.stored_version.write().unwrap() = Some(2); }
                 let clock = std::sync::atomic::AtomicI64::new(now_unix());
                 let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -2024,11 +2221,21 @@ mod tests {
                         if mode == "expiry" && name == "revocations.json.minisig" {
                             clock.store(i64::MAX, std::sync::atomic::Ordering::SeqCst);
                         }
+                        if mode == "cache_failure" && name == "revocations.json.minisig" {
+                            std::fs::create_dir(state.cache_dir.join(store_cache::FILE_NAME)).unwrap();
+                        }
                         let missing = (mode == "missing_index" && name == "index.json")
                             || (mode == "missing_revocations" && name == "revocations.json");
                         let bad = (mode == "bad_index" && name == "index.json")
                             || (mode == "bad_revocations" && name == "revocations.json");
-                        let body = if bad { "tampered" } else { body };
+                        let body = match (mode, name) {
+                            ("root_equivocation", "roots.json") => include_str!("../tests/fixtures/store/roots.json"),
+                            ("root_equivocation", "roots.json.minisig") => include_str!("../tests/fixtures/store/roots.json.minisig"),
+                            ("index_equivocation", "index.json") => include_str!("../tests/fixtures/store/index.json"),
+                            ("index_equivocation", "index.json.minisig") => include_str!("../tests/fixtures/store/index.json.minisig"),
+                            _ if bad => "tampered",
+                            _ => body,
+                        };
                         let status = if missing { "404 Not Found" } else { "200 OK" };
                         socket.write_all(format!("HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len()).as_bytes()).await.unwrap();
                         socket.write_all(body.as_bytes()).await.unwrap();
@@ -2038,17 +2245,31 @@ mod tests {
                 let (_, view) = tokio::time::timeout(std::time::Duration::from_secs(3), async {
                     tokio::join!(server, refresh_with_clock(&state, &client, || clock.load(std::sync::atomic::Ordering::SeqCst)))
                 }).await.unwrap();
-                assert_eq!(state.revocations.read().unwrap().version, 999);
+                assert_eq!(state.revocations.read().unwrap().version, if mode == "revocation_rollback" { 999 } else { 1 });
                 assert_eq!(view.can_install, mode == "fresh");
                 assert_eq!(state.ownership.lock().unwrap().can_install, mode == "fresh");
-                assert_eq!(*state.stored_version.read().unwrap(), match mode { "fresh" => Some(1), "rollback" => Some(2), _ => None });
-                assert_eq!(state.cache_dir.join("index.json").exists(), mode == "fresh");
-                assert_eq!(state.cache_dir.join("roots.json").exists(), mode == "fresh");
+                assert_eq!(*state.stored_version.read().unwrap(), match mode { "fresh" | "persist_failure" | "root_equivocation" | "index_equivocation" => Some(1), "rollback" => Some(2), _ => None });
+                assert!(!state.cache_dir.join("index.json").exists());
+                assert!(!state.cache_dir.join("roots.json").exists());
+                assert_eq!(state.cache_dir.join(store_cache::FILE_NAME).is_file(), matches!(mode, "fresh" | "expiry" | "persist_failure" | "root_equivocation" | "index_equivocation"));
+                if matches!(mode, "persist_failure" | "root_equivocation" | "index_equivocation") {
+                    assert_eq!(Metadata::read(&state.cache_dir).unwrap().unwrap().index.document, trust::SEED_INDEX.as_bytes());
+                    assert_eq!(std::fs::read_dir(&state.cache_dir).unwrap().count(), 1);
+                }
+                if mode == "fresh" {
+                    let restarted = StoreState::init(&data);
+                    assert!(!restarted.cache_unavailable);
+                    assert_eq!(*restarted.stored_version.read().unwrap(), Some(1));
+                    assert_eq!(restarted.revocations.read().unwrap().version, 1);
+                    assert!(restarted.index.read().unwrap().is_none());
+                    assert!(!restarted.ownership.lock().unwrap().can_install);
+                }
                 if mode != "fresh" {
                     assert_eq!(state.roots.read().unwrap().base_urls, vec![format!("http://{}/", listener.local_addr().unwrap())]);
                 }
                 assert_eq!(state.index.read().unwrap().is_some(), mode != "rollback");
                 state.close();
+                drop(cache_guard);
                 drop(listener);
                 let _ = std::fs::remove_dir_all(data);
             }

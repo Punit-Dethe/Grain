@@ -3531,7 +3531,10 @@ pub(crate) fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {
     })
 }
 
-fn atomic_write_with(path: &Path, write: impl FnOnce(&mut fs::File) -> Result<()>) -> Result<()> {
+pub(crate) fn atomic_write_with(
+    path: &Path,
+    write: impl FnOnce(&mut fs::File) -> Result<()>,
+) -> Result<()> {
     let parent = path.parent().unwrap_or_else(|| Path::new("."));
     let mut file = tempfile::Builder::new()
         .prefix(".grain-extension-")
