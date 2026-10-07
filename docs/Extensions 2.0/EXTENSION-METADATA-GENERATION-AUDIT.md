@@ -100,13 +100,38 @@ Windows product checks:
 - Locked real-app build, TypeScript, Vite and scoped Rust/JS formatting pass.
   The build retains the existing 12 backend warnings.
 
-Both existing real-app suites pass **3/3 each**: native/store
-`run-AVIaCm` and store/MCP `run-wnB2Ha` under
+Both existing real-app suites pass **3/3 each** on final source commit
+`9c6e15df47932fddc688ad503dbb8173b6b36f8e`: native/store
+`run-VMfX26` and store/MCP `run-wDUY1i` under
 `tests/agent-harness/.runs/`, with distinct case verdicts and cleanup Pass.
 Independent inspection finds no remaining owned host among their 12 PID
 references and no listener on either owned store port. Ordinary profiles,
 settings and the unrelated `src/app/bindings.ts` bytes remain untouched.
-Linux source-pinned verification is recorded below once finished.
+Both reports use host SHA-256
+`615000e2380af9efaf29866a71558bd5f487a5407567c05d04ca4709e36473f6`
+and source fingerprint
+`970d8b82563fe3a3b826fed432b43b7b9f1e283589912099590c5126a1ef7de5`.
+Earlier `run-AVIaCm` / `run-wnB2Ha` also passed; these final runs follow the
+exclusive old verifier cleanup and record the committed source explicitly.
+Verified [Linux checkpoint 37681876972](https://github.com/Punit-Dethe/Grain-Extention/actions/runs/37681876972)
+uses workflow commit `11049e5a1c21ee24bb34c09910b46f85a32593bf` and exact Grain
+source `9c6e15df47932fddc688ad503dbb8173b6b36f8e`. Downloaded evidence under
+`tests/agent-harness/.runs/e4-generation-linux-01/` confirms **78 maintainer /
+12 core trust / 5 cache / 4 publisher / 13 public CLI** checks. All 13 CLI
+label/exit/expected verdicts match Windows. Checkout logs record the actual
+source SHA; `verification.json` records the independent comparison.
+Linux tool SHA-256 is
+`5951415995ee1c7dc01fe22c5cfd5a5b3aebe116016aa0a99dffc46842811944`.
+Artifact ID is `11509850623`; the service-reported archive digest is
+`f1223ae3c67538d08ada2755338d74e037ffa15b52668bf19a83726077112708`.
+This certifies product/CLI behavior on Linux, not Linux desktop GUI acceptance.
+
+The draft registry branch's publication verifier and read-only checkpoint are
+pinned to this source; actionlint passes. The isolated source builder remains
+on its independently verified `ed55bf1df86dcd994fb43cecdb8f1abf033de8d7` producer
+pin because source preparation/build/attestation contracts are unchanged. It
+does not sign or publish catalogues. No publisher job, key, main merge,
+protection/environment change or public activation was performed.
 
 Earlier failed development runs remain recorded. They found missing new fields
 in synthetic test constructors, stale signed fixtures after companion mutation,

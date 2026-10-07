@@ -14,7 +14,7 @@ No new Agent scenario/framework/manual batch. E4 remains current for operator
 signing/publication custody and actual signed public HTTP/app activation; E5–E8
 follow. Foundation **52 Pass / 1 Deferred**, forward **71**, OAuth identity **56
 Pending**, inventory **108 / 93 / 81** and parked website stay unchanged.
-Earlier dated entries are historical; Linux pinned verification follows below.
+Verified [Linux checkpoint](https://github.com/Punit-Dethe/Grain-Extention/actions/runs/37681876972) passes **78 maintainer / 12 trust / 5 cache / 4 publisher / 13 CLI** checks; downloaded source pins and all 13 Windows/Linux verdicts match. Publication/checkpoint verifier pins are updated; the unchanged isolated source builder retains its independently verified producer pin. Earlier dated entries are historical.
 
 **Current atomic app cache block, 8 October:** [Scoped audit](EXTENSION-STORE-CACHE-AUDIT.md)
 records one bounded six-piece cache, reuse of the existing atomic writer,
