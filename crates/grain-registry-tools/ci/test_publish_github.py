@@ -1,8 +1,13 @@
 """Focused publisher boundary tests; real Git races, no GitHub/token/signing key."""
 import os
+from contextlib import redirect_stdout
+import io
+import json
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -86,6 +91,54 @@ class PublisherTests(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, "No automatic retry"):
                     publisher.activate(Path("."), handoff, url, base, candidate, {})
                 self.assertEqual(sum("push" in call.args[0] for call in run.call_args_list), 1)
+
+    def test_post_push_http_failure_keeps_confirmed_git_outcome_and_owned_cleanup(self):
+        values = ["example/registry", "1" * 40, "2" * 40, "3" * 64, "initial", ""]
+        url = publisher.identity(*values)
+        handoff = {"schema": 1, "evidence_class": "verified-git-initial-publication-handoff-not-release-approval",
+                   "repository": values[0], "branch": "main", "expected_base_commit": values[1],
+                   "candidate_commit": values[2], "candidate_receipt_sha256": values[3],
+                   "snapshot": "5" * 64, "push_args": publisher.push_args(url, *values[1:3]),
+                   "remove_environment_prefix": "GIT_", "environment": publisher.git_environment({})}
+        with tempfile.TemporaryDirectory(prefix="grain-publisher-http-test-") as owned:
+            root = Path(owned); tool = root / "tool"; tool.write_text("never executed")
+            checkout = root / "checkout"; checkout.mkdir()
+            env = dict(zip(["PUBLICATION_REPOSITORY", "PUBLICATION_BASE", "PUBLICATION_CANDIDATE", "PUBLICATION_RECEIPT",
+                            "PUBLICATION_MODE", "PUBLICATION_PREVIOUS_RECEIPT"], values))
+            env["PUBLICATION_TOKEN"] = "fixture-secret"
+            captures = []
+            def verifier(args, cwd, child_env):
+                self.assertNotIn("PUBLICATION_TOKEN", child_env)
+                destination = Path(args[args.index("--out") + 1]); destination.mkdir()
+                if args[1] == "capture-github-publication":
+                    captures.append(destination.parent)
+                    (destination / "bundle").mkdir()
+                else:
+                    (destination / "publication.json").write_text(json.dumps(handoff))
+                return "verified"
+            def activate(checkout, actual, endpoint, base, candidate, child_env):
+                self.assertEqual((endpoint, base, candidate), (url, values[1], values[2]))
+                helper = Path(child_env["GIT_ASKPASS"])
+                self.assertNotIn("fixture-secret", helper.read_text())
+                self.assertEqual(child_env["PUBLICATION_TOKEN"], "fixture-secret")
+            argv = ["publish_github.py", "--tool", str(tool), "--checkout", str(checkout), "--publish", "--check-http"]
+            for failure in [None, RuntimeError("stale HTTP")]:
+                output = io.StringIO()
+                with self.subTest(failure=failure), patch.object(sys, "argv", argv), \
+                     redirect_stdout(output), \
+                     patch.object(publisher, "os", SimpleNamespace(name="posix", environ=env, devnull=os.devnull)), \
+                     patch.object(publisher, "run", side_effect=verifier), \
+                     patch.object(publisher, "activate", side_effect=activate) as push, \
+                     patch("check_hosted_github.check_delivery", side_effect=failure, return_value={"status": "Pass"}) as http:
+                    if failure:
+                        with self.assertRaisesRegex(RuntimeError, "Git publication confirmed.*Rerun only the read-only check"):
+                            publisher.main()
+                    else:
+                        publisher.main()
+                    push.assert_called_once(); http.assert_called_once()
+                    self.assertNotIn("PUBLICATION_TOKEN", http.call_args.args[-1])
+                    self.assertFalse(captures[-1].exists())
+                self.assertIn("Remote main confirmed", output.getvalue())
 
 
 if __name__ == "__main__":

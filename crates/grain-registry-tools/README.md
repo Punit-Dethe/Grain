@@ -653,3 +653,87 @@ current-publisher kill switches can still strengthen cached negative policy;
 that safety update never grants a mixed publication installation authority.
 Offline browsing preserves the catalogue/version floor until a matching fresh
 generation is accepted. See the [generation audit](../../docs/Extensions%202.0/EXTENSION-METADATA-GENERATION-AUDIT.md).
+
+## Public HTTP delivery and operator activation
+
+After an authorized publication, run this **read-only** command from the pinned
+Grain tool checkout, using a standalone registry checkout that contains the
+reviewed full commit and the independently recorded bundle receipt:
+
+```text
+python crates/grain-registry-tools/ci/check_hosted_github.py \
+  --tool PATH_TO_PINNED_GRAIN_REGISTRY --checkout REGISTRY_CHECKOUT \
+  --repository Punit-Dethe/Grain-Extention --expected-commit FULL_PUBLISHED_SHA \
+  --expected-receipt-sha256 INDEPENDENT_BUNDLE_RECEIPT_SHA256
+```
+
+The tool captures committed bytes with the existing Rust CLI and verifies the
+complete signed, fresh hosting bundle before making public HTTP requests. Signed
+roots must identify the checked repository's raw `main/v1/` URL as Grain's
+primary host. It streams every metadata, addressed asset and retained publication
+proof from both the exact commit and `main`, comparing exact lengths and SHA256.
+At the end it rereads the six live metadata files, rechecks signed freshness and
+confirms remote `main` still names the expected commit. JSON evidence includes
+the expected commit/receipt, primary app URL, each file hash/length and timestamps.
+There is no author execution, signature implementation, deployment or app trust
+override in this Python tool; the existing Rust verifier remains authoritative.
+
+HTTP uses Python's standard TLS client with the fixed raw GitHub host, normal
+certificate verification, no credentials, cookies, environment proxies or
+redirect following. Only full status-200 identity-encoded responses are accepted;
+missing/partial/stale/truncated/oversized/mismatched files refuse. Body reads use
+64KiB chunks, an inactivity timeout of at most ten seconds, elapsed checks of
+thirty seconds per file and ten minutes per scan, with no retry. These are
+inactivity/elapsed checks around blocking operations, not a hard real-time
+deadline for trickled headers or chunk framing. The publishing workflow retains
+its twenty-minute job limit. The existing 1GiB capture budget applies to the
+expected bundle; checking commit and live routes reads that bundle twice, plus
+the final metadata recheck. No whole artifact body is held in RAM.
+
+The manual publisher now accepts `--publish --check-http` to do this immediately
+after a confirmed Git push. A failed HTTP check means **Git publication confirmed,
+delivery acceptance failed**: inspect the evidence and rerun only the read-only
+command above. Never replay publication to repair CDN latency or a failed check.
+An unknown Git outcome still requires remote inspection and never starts this
+post-push check. This verifier cannot certify all CDN locations, simultaneous
+snapshot consistency, mirror availability, real-app install behavior or release
+approval. A changing/stale view fails rather than mixing generations.
+
+### Operator sequence before live activation
+
+1. Review the pinned publishing workflow/tool source and GitHub dispatch access.
+   Configure/review the `publish` environment's approval/deployment controls and
+   `main` rules appropriate to the authorized publisher; verify they actually
+   exist. A name in YAML alone is not a protected environment. Review whether
+   the scoped Actions token can make the one authorized fast-forward; never
+   remove protections to make a failed push succeed.
+2. Keep offline root custody separate from the publishing signer. Review the
+   existing public key against the operator's actual key; no development key
+   discovered on disk supplies that authority. Use an explicit key outside
+   source/author/build workspaces; these tools currently accept an unencrypted
+   minisign key, so protect storage/access and backup operationally. No signing
+   key goes into the author builder, attester, publisher or app.
+3. Bootstrap the fresh empty generation, independently record its selected
+   snapshot/receipt pins, and export it with the existing commands. For later
+   native/MCP submissions, use the current independent source review/provenance
+   signer. Produce a publication-only candidate directly above the reviewed
+   `main` base. Verify the initial/update handoff before authorized dispatch.
+4. After the single conditional push, require the public HTTP evidence above.
+   If Git is confirmed but HTTP fails, recheck reads only. If Git is unconfirmed,
+   inspect remote `main` first. Neither condition authorizes replay or a bypass.
+5. Verify the published generation in an isolated real Grain profile: refresh,
+   install a reviewed native package and MCP descriptor when available, then
+   check ownership/authentication/removal using existing acceptance procedures.
+   The empty first bootstrap alone cannot prove real extension installation.
+6. Assign an operator to renew metadata before its 1–30 day deadline and publish
+   the bound generation through the ordinary update gate. Revocation changes
+   also need a freshly bound signed index. Preserve receipts/source pins and
+   meaningful evidence outside the seven-day workflow artifact retention.
+   Establish incident/key-rotation/revocation ownership before releasing.
+
+Read-only inspection on 8 October found the current `publish` environment with
+**no protection rules** and `main` returning **Branch not protected**. No controls
+were changed, no production key was read, and no catalogue was activated. Actual
+signing custody, operator authorization, public bound publication and fresh-profile
+app acceptance remain E4 gates. This operator tool does not turn those into Pass.
+See the [HTTP delivery audit](../../docs/Extensions%202.0/EXTENSION-HTTP-DELIVERY-AUDIT.md).

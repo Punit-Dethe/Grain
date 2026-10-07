@@ -12,11 +12,16 @@ import subprocess
 import tempfile
 
 
-def identity(repository, base, candidate, receipt, mode, previous):
+def repository_url(repository):
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*", repository):
         raise ValueError("Expected GitHub OWNER/REPO")
     if any(part.endswith((".", "-")) for part in repository.split("/")) or repository.endswith(".git"):
         raise ValueError("Expected GitHub OWNER/REPO")
+    return f"https://github.com/{repository}.git"
+
+
+def identity(repository, base, candidate, receipt, mode, previous):
+    url = repository_url(repository)
     if not all(re.fullmatch(r"[0-9a-f]{40}", value) for value in [base, candidate]) or base == candidate:
         raise ValueError("Distinct full base/candidate commits required")
     if not re.fullmatch(r"[0-9a-f]{64}", receipt):
@@ -27,7 +32,7 @@ def identity(repository, base, candidate, receipt, mode, previous):
         raise ValueError("Independent previous receipt digest required for update")
     if mode == "initial" and previous:
         raise ValueError("Initial publication has no previous receipt")
-    return f"https://github.com/{repository}.git"
+    return url
 
 
 def git_environment(source):
@@ -72,18 +77,20 @@ def validate_handoff(handoff, repository, base, candidate, receipt, mode, previo
     return url
 
 
+def remote_head(checkout, url, env):
+    rows = run(["git", "--no-replace-objects", "ls-remote", "--exit-code", "--refs",
+                url, "refs/heads/main"], checkout, env).strip().splitlines()
+    if len(rows) != 1 or not re.fullmatch(r"[0-9a-f]{40}\trefs/heads/main", rows[0]):
+        raise ValueError("Ambiguous remote main reference")
+    return rows[0].split("\t")[0]
+
+
 def activate(checkout, handoff, url, base, candidate, env):
-    def head():
-        rows = run(["git", "--no-replace-objects", "ls-remote", "--exit-code", "--refs",
-                    url, "refs/heads/main"], checkout, env).strip().splitlines()
-        if len(rows) != 1 or not re.fullmatch(r"[0-9a-f]{40}\trefs/heads/main", rows[0]):
-            raise ValueError("Ambiguous remote main reference")
-        return rows[0].split("\t")[0]
-    if head() != base:
+    if remote_head(checkout, url, env) != base:
         raise ValueError("Remote main changed; reprepare and review the candidate")
     try:
         run(["git", *handoff["push_args"]], checkout, env)
-        if head() != candidate:
+        if remote_head(checkout, url, env) != candidate:
             raise ValueError("Remote main differs from candidate after push")
     except (subprocess.SubprocessError, ValueError) as error:
         # The push might have succeeded despite a lost response. Never replay it.
@@ -95,7 +102,10 @@ def main():
     parser.add_argument("--tool", required=True, type=Path)
     parser.add_argument("--checkout", required=True, type=Path)
     parser.add_argument("--publish", action="store_true", help="Activate only after offline verification")
+    parser.add_argument("--check-http", action="store_true", help="After a confirmed push, check anonymous public delivery without retrying publication")
     args = parser.parse_args()
+    if args.check_http and not args.publish:
+        parser.error("--check-http requires --publish; use check_hosted_github.py for read-only checks")
     values = [os.environ.get(name, "") for name in ["PUBLICATION_REPOSITORY", "PUBLICATION_BASE",
               "PUBLICATION_CANDIDATE", "PUBLICATION_RECEIPT", "PUBLICATION_MODE", "PUBLICATION_PREVIOUS_RECEIPT"]]
     repository, base, candidate, receipt, mode, previous = values
@@ -136,6 +146,13 @@ def main():
         publish_env = {**env, "GIT_ASKPASS": str(helper), "PUBLICATION_TOKEN": token}
         activate(checkout, handoff, url, base, candidate, publish_env)
         print(f"Remote main confirmed at {candidate}; HTTP/app coherence is a separate acceptance check")
+        if args.check_http:
+            from check_hosted_github import check_delivery
+            try:
+                result = check_delivery(tool, checkout, bundle / "bundle", repository, candidate, receipt, env)
+            except Exception as error:
+                raise RuntimeError(f"Git publication confirmed at {candidate}, but HTTP acceptance failed. Rerun only the read-only check; do not replay publication.") from error
+            print(json.dumps(result, sort_keys=True))
 
 
 if __name__ == "__main__":
