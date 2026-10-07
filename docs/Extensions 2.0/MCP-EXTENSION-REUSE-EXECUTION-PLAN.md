@@ -1,5 +1,27 @@
 # Extension platform: audit, reuse and execution plan
 
+**Current E4 HTTP-delivery block, 8 October:** [Scoped audit](EXTENSION-HTTP-DELIVERY-AUDIT.md)
+records the read-only committed-bundle/anonymous-HTTP checker and post-push
+workflow handoff. Exact commit/live files, final metadata, signed freshness and
+remote head must agree; HTTP failure never retries publication. Windows **77 maintainer / 17
+publisher-transport / 13 actual public CLI checks** pass, plus a real
+anonymous HTTPS byte comparison and refusal of the incomplete public baseline.
+No app/runtime/SDK/UI or Agent harness changes; no new manual batch. Read-only
+GitHub inspection found **no publish-environment protection rules** and **main
+not branch-protected**; configure/review actual operator controls and key custody
+before activation. The initial Linux run exposed a close-only lock lifetime race; explicit owner
+release and a deterministic Unix retained-descriptor regression address it.
+Verified [Linux checkpoint 37685777643](https://github.com/Punit-Dethe/Grain-Extention/actions/runs/37685777643)
+passes **79 maintainer / 12 trust / 5 cache / 17 publisher-transport / 13 CLI**
+checks against Grain `0105abd7124d9eeb3c14ea8e14edde73c808ba01` and registry
+`e33adb8060ee2141367c9fb1fad8583b299ba9e6`. Downloaded source pins, all 17
+Python verdicts and all 13 public CLI verdicts match Windows.
+E4's remaining acceptance is operator custody/authorization, the actual bound
+public publication and fresh-profile app acceptance. E5 management UI, E6 Agent
+modules, E7 measured integration and E8 release readiness follow. Foundation
+**52 Pass / 1 Deferred**, forward **71**, identity **56 Pending**, inventory
+**108 / 93 / 81** and parked website remain unchanged. Earlier entries are history.
+
 **Current hosted-generation block, 8 October:** [Scoped audit](EXTENSION-METADATA-GENERATION-AUDIT.md)
 records exact root/revocation JSON hashes inside the existing signed catalogue,
 connected bootstrap/renewal/review, hosting/capture/publication and app acquisition
