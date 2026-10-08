@@ -1,5 +1,24 @@
 # Local extension registry: source and publishing audit
 
+**Current E4 signing-key tooling block, 8 October:** [Scoped custody audit](EXTENSION-SIGNING-KEY-CUSTODY-AUDIT.md)
+records explicit protected Minisign generation/unlocking across bootstrap,
+renewal and independently reviewed native/MCP signing. Missing/wrong passwords,
+redirected prompts, unsafe names and existing key outputs refuse; current
+public review/metadata gates still precede key access. Windows **82 maintainer /
+17 publisher-transport / 13 initial CLI / 12 credential CLI** pass with locked
+build, strict scoped Clippy and formatting. No app, SDK, UI or Agent harness
+source changes. The existing Linux checkpoint is pinned to Grain
+`84a579ff3b7f04ee8f3bd0dcb2019d977e37eb13`, registry
+`2a074adbd1d062b23210f6a635a119352383228e`. Verified [Linux checkpoint 37758436225](https://github.com/Punit-Dethe/Grain-Extention/actions/runs/37758436225)
+passes **85 maintainer / 12 trust / 5 cache / 17 publisher-transport / 25 CLI**.
+Downloaded actual checkout evidence and all 25 CLI verdicts match Windows.
+Actual production custody/authorization, GitHub controls, bound public
+publication and fresh-profile app acceptance remain E4 gates. E5 management UI,
+E6 Agent modules, E7 measured integration and E8 release readiness follow.
+Foundation **52 Pass / 1 Deferred**, forward **71**, identity **56 Pending**,
+inventory **108 / 93 / 81** and parked website remain unchanged. No new manual
+batch or legacy compatibility work. Earlier entries are history.
+
 **Current E4 HTTP-delivery block, 8 October:** [Scoped audit](EXTENSION-HTTP-DELIVERY-AUDIT.md)
 records the read-only committed-bundle/anonymous-HTTP checker and post-push
 workflow handoff. Exact commit/live files, final metadata, signed freshness and
