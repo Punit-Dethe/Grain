@@ -877,6 +877,22 @@ async storeCovers(ids: string[]) : Promise<Result<StoreCover[], string>> {
  * Install (or update to) a specific verified `(id, version)`. In-app click
  * only — a link may open the store but never trigger this.
  */
+async storeMcpInstall(id: string, version: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("store_mcp_install", { id, version }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async storeMcpUpdate(connectionId: string, expectedRevision: string, version: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("store_mcp_update", { connectionId, expectedRevision, version }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async storeInstall(id: string, version: string) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("store_install", { id, version }) };
@@ -3039,7 +3055,7 @@ key_down: number; key_up: number; flags_changed: number; mouse: number; duration
 export type KeyboardImplementation = "tauri" | "handy_keys"
 export type LLMPrompt = { id: string; name: string; prompt: string }
 export type LogLevel = "trace" | "debug" | "info" | "warn" | "error"
-export type ConnectionView = { id: string; source: string; revision: string; name: string; url: string; authentication: string; state: string }
+export type ConnectionView = { id: string; source: string; extensionId: string | null; version: string | null; revision: string; name: string; url: string; authentication: string; state: string }
 export type McpDiscoveryResult = { provider_id: string; provider_name: string; tool_count: number; tools: string[]; tool_set_digest: string }
 export type McpProviderStatus = { id: string; name: string; description: string; endpoint: string; setup_url: string; requires_client_credentials: boolean; client_id_configured: boolean; connected: boolean; enabled: boolean;
 /**
@@ -3358,7 +3374,7 @@ export type StoreCover = { id: string; sha256: string; kind: string }
  * One card's data for the store UI (a specta-friendly projection of
  * [`IndexEntry`]; the index type itself lives in the crypto-free leaf).
  */
-export type StoreEntry = { id: string; name: string; version: string; tier: string; trust: string; capabilities: string[];
+export type StoreEntry = { kind: string; id: string; name: string; version: string; tier: string; trust: string; capabilities: string[];
 /**
  * One-line summary shown under the name on the card.
  */

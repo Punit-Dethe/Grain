@@ -2,6 +2,7 @@
 import {
   useCallback,
   useEffect,
+  useId,
   useRef,
   useState,
   type FormEvent,
@@ -22,7 +23,20 @@ type AccountStatus = Pick<
 type Row = Connection & { account?: AccountStatus; statusError?: string };
 const owner = (row: Connection) => [row.id, row.revision] as const;
 
-export function McpConnections({ query }: { query: string }) {
+export function McpConnections({
+  query,
+  source = "configured",
+  connectionId,
+  onChange,
+  onDetails,
+}: {
+  query: string;
+  source?: "configured" | "store";
+  connectionId?: string;
+  onChange?: () => Promise<void>;
+  onDetails?: (connection: ConnectionView) => void;
+}) {
+  const titleId = useId();
   const [rows, setRows] = useState<Row[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -58,7 +72,10 @@ export function McpConnections({ query }: { query: string }) {
     const records = unwrapResult(await commands.mcpConnectionsList());
     const next = await Promise.all(
       records
-        .filter((row) => row.source === "configured")
+        .filter(
+          (row) =>
+            row.source === source && (!connectionId || row.id === connectionId),
+        )
         .map(async (row): Promise<Row> => {
           try {
             return {
@@ -73,7 +90,7 @@ export function McpConnections({ query }: { query: string }) {
         }),
     );
     if (live.current && serial === request.current) setRows(next);
-  }, []);
+  }, [source, connectionId]);
 
   useEffect(() => {
     live.current = true;
@@ -107,6 +124,10 @@ export function McpConnections({ query }: { query: string }) {
           (reason) =>
             live.current && setError((current) => current ?? String(reason)),
         );
+        if (live.current)
+          await onChange?.().catch(
+            (reason) => live.current && setError(String(reason)),
+          );
         if (live.current) setBusy(null);
       }
       active.current = false;
@@ -198,20 +219,25 @@ export function McpConnections({ query }: { query: string }) {
     `${row.name} ${row.url}`.toLowerCase().includes(query.toLowerCase().trim()),
   );
   return (
-    <section
-      className="mcp-connections"
-      aria-labelledby="mcp-connections-title"
-    >
+    <section className="mcp-connections" aria-labelledby={titleId}>
       <header className="mcp-connections-heading">
         <div>
-          <h2 id="mcp-connections-title">Your MCP connections</h2>
+          <h2 id={titleId}>
+            {source === "store"
+              ? connectionId
+                ? "MCP connection"
+                : "Installed MCP extensions"
+              : "Your MCP connections"}
+          </h2>
           <p>
-            Connect a remote tool server directly. No extension package is
-            needed.
+            {source === "store"
+              ? "Manage the account and tools for your installed MCP extensions."
+              : "Connect a remote tool server directly. No extension package is needed."}
           </p>
         </div>
         <div className="mcp-connection-actions">
           <button
+            ref={source === "store" ? addButton : undefined}
             type="button"
             className="button ghost"
             disabled={busy !== null || loading}
@@ -219,15 +245,17 @@ export function McpConnections({ query }: { query: string }) {
           >
             Refresh
           </button>
-          <button
-            ref={addButton}
-            type="button"
-            className="button"
-            disabled={busy !== null}
-            onClick={(event) => openForm(null, event.currentTarget)}
-          >
-            Add MCP
-          </button>
+          {source === "configured" && (
+            <button
+              ref={addButton}
+              type="button"
+              className="button"
+              disabled={busy !== null}
+              onClick={(event) => openForm(null, event.currentTarget)}
+            >
+              Add MCP
+            </button>
+          )}
         </div>
       </header>
       {error && (
@@ -365,13 +393,16 @@ export function McpConnections({ query }: { query: string }) {
         <p>
           {rows.length
             ? "No MCP connections match your search."
-            : "Add your first MCP to make its tools available to the Agent."}
+            : source === "store"
+              ? "No MCP extensions installed yet. Browse the Store to add one."
+              : "Add your first MCP to make its tools available to the Agent."}
         </p>
       ) : (
         matching.map((row) => (
           <article className="mcp-connection-row" key={row.id}>
             <div className="mcp-connection-copy">
               <h3>{row.name}</h3>
+              {row.version && <p>Version {row.version}</p>}
               <p className="mcp-connection-url">{row.url}</p>
               <p>
                 {row.statusError ??
@@ -449,14 +480,26 @@ export function McpConnections({ query }: { query: string }) {
                       Sign out
                     </button>
                   )}
-                  <button
-                    className="button ghost"
-                    type="button"
-                    disabled={busy !== null}
-                    onClick={(event) => openForm(row, event.currentTarget)}
-                  >
-                    Edit
-                  </button>
+                  {source === "configured" && (
+                    <button
+                      className="button ghost"
+                      type="button"
+                      disabled={busy !== null}
+                      onClick={(event) => openForm(row, event.currentTarget)}
+                    >
+                      Edit
+                    </button>
+                  )}
+                  {onDetails && (
+                    <button
+                      className="button ghost"
+                      type="button"
+                      disabled={busy !== null}
+                      onClick={() => onDetails(row)}
+                    >
+                      Details
+                    </button>
+                  )}
                   <button
                     className="button ghost"
                     type="button"

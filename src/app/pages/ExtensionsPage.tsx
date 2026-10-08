@@ -22,6 +22,7 @@ import {
 } from "lucide-react";
 import {
   commands,
+  type ConnectionView,
   type ExtensionCard,
   type ExtensionDeveloperStatus,
   type ExtensionSettingField,
@@ -101,6 +102,7 @@ function adaptSettingRow(row: ExtensionSettingRow): SettingRow {
 
 interface InstalledController {
   cards: ExtensionCard[];
+  connections: ConnectionView[];
   sections: ExtensionSettingsSection[];
   covers: Record<string, StoreMedia>;
   loading: boolean;
@@ -116,6 +118,7 @@ interface InstalledController {
 function useInstalledExtensions(): InstalledController {
   const { refreshSettings } = useSettings();
   const [cards, setCards] = useState<ExtensionCard[]>([]);
+  const [connections, setConnections] = useState<ConnectionView[]>([]);
   const [sections, setSections] = useState<ExtensionSettingsSection[]>([]);
   const [covers, setCovers] = useState<Record<string, StoreMedia>>({});
   const [loading, setLoading] = useState(true);
@@ -130,10 +133,14 @@ function useInstalledExtensions(): InstalledController {
   } | null>(null);
 
   const refresh = useCallback(async () => {
-    const [overview, nextSections] = await Promise.all([
+    const [overview, nextSections, remote] = await Promise.all([
       commands.extensionsOverview().then(unwrapResult),
       commands
         .extensionSettingsSections()
+        .then(unwrapResult)
+        .catch(() => []),
+      commands
+        .mcpConnectionsList()
         .then(unwrapResult)
         .catch(() => []),
     ]);
@@ -145,6 +152,7 @@ function useInstalledExtensions(): InstalledController {
           .catch(() => [])
       : [];
     setCards(nextCards);
+    setConnections(remote.filter((row) => row.source === "store"));
     setSections(nextSections);
     setCovers(
       Object.fromEntries(
@@ -351,6 +359,7 @@ function useInstalledExtensions(): InstalledController {
 
   return {
     cards,
+    connections,
     sections,
     covers,
     loading,
@@ -366,7 +375,14 @@ function useInstalledExtensions(): InstalledController {
 
 type DetailSelection =
   | { source: "installed"; card: ExtensionCard }
-  | { source: "store"; entry: StoreEntry };
+  | { source: "store" | "mcp"; entry: StoreEntry };
+
+interface StoreController {
+  view: StoreView | null;
+  installing: string | null;
+  error: string | null;
+  install: (entry: StoreEntry) => Promise<void>;
+}
 
 type StoreEntryWithOptionalStars = StoreEntry & { stars?: number };
 
@@ -495,6 +511,7 @@ function ExtensionDetail({
   onInstall,
   installing,
   canInstall,
+  installError,
 }: {
   selection: DetailSelection;
   controller: InstalledController;
@@ -502,9 +519,10 @@ function ExtensionDetail({
   onInstall: (entry: StoreEntry) => Promise<void>;
   installing: string | null;
   canInstall: boolean;
+  installError: string | null;
 }) {
   const [catalogueEntry, setCatalogueEntry] = useState<StoreEntry | null>(
-    selection.source === "store" ? selection.entry : null,
+    selection.source !== "installed" ? selection.entry : null,
   );
   const [mediaIndex, setMediaIndex] = useState(0);
   const [readme, setReadme] = useState<string | null>(null);
@@ -557,7 +575,7 @@ function ExtensionDetail({
     controller.cards.find((candidate) => candidate.id === selectionId) ??
     selectedCard;
   const entry =
-    selection.source === "store"
+    selection.source !== "installed"
       ? selection.entry
       : catalogueEntry?.id === selection.card.id
         ? catalogueEntry
@@ -570,9 +588,14 @@ function ExtensionDetail({
       ? [controller.covers[card.id]]
       : [];
   const capabilities = entry?.capabilities ?? card?.capabilities ?? [];
-  const installedVersion = controller.cards.find(
-    (candidate) => candidate.id === (card?.id ?? entry?.id),
-  )?.version;
+  const installedMcp = controller.connections.find(
+    (row) => row.extensionId === entry?.id,
+  );
+  const installedVersion =
+    installedMcp?.version ??
+    controller.cards.find(
+      (candidate) => candidate.id === (card?.id ?? entry?.id),
+    )?.version;
   const current = !!entry && installedVersion === entry.version;
   const destination = card
     ? extensionDestination(card, controller.sections)
@@ -690,7 +713,7 @@ function ExtensionDetail({
                 className="button primary"
                 type="button"
                 disabled={
-                  installing === entry.id ||
+                  installing !== null ||
                   entry.revocation === "revoked" ||
                   !canInstall
                 }
@@ -734,6 +757,19 @@ function ExtensionDetail({
         </header>
 
         <div className="extension-detail-sections">
+          {installError && (
+            <div className="extension-inline-error" role="alert">
+              {installError}
+            </div>
+          )}
+          {installedMcp && (
+            <McpConnections
+              source="store"
+              query=""
+              connectionId={installedMcp.id}
+              onChange={controller.refresh}
+            />
+          )}
           <DetailDisclosure
             id="extension-information"
             title="Information"
@@ -838,19 +874,19 @@ function ExtensionDetail({
             aria-labelledby="extension-readme-title"
           >
             <header className="extension-detail-readme-heading">
-              <strong id="extension-readme-title">README</strong>
-              <span>Documentation supplied by the extension author</span>
+              <strong id="extension-readme-title">About this extension</strong>
+              <span>DESCRIPTION.md supplied by the extension author</span>
             </header>
             <div className="extension-detail-readme">
               {readmeLoading ? (
                 <div className="extension-detail-muted" role="status">
-                  Loading README…
+                  Loading description…
                 </div>
               ) : readme ? (
                 <Markdown markdown={readme} softBreaks />
               ) : (
                 <div className="extension-detail-muted">
-                  README is not available for this extension.
+                  A description document is not available for this extension.
                 </div>
               )}
             </div>
@@ -902,6 +938,7 @@ function InstalledList({
         Loading installed extensions…
       </div>
     );
+  if (!entries.length && controller.connections.length) return null;
   if (!entries.length && query)
     return (
       <div className="extension-state">
@@ -1048,21 +1085,20 @@ function StoreGrid({
   controller,
   onPreview,
   onStoreChange,
+  developerEnabled,
 }: {
   query: string;
   controller: InstalledController;
   onPreview: (selection: DetailSelection) => void;
-  onStoreChange: (state: {
-    view: StoreView | null;
-    installing: string | null;
-    install: (entry: StoreEntry) => Promise<void>;
-  }) => void;
+  developerEnabled: boolean;
+  onStoreChange: (state: StoreController) => void;
 }) {
   const [view, setView] = useState<StoreView | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [category, setCategory] = useState("all");
   const [installing, setInstalling] = useState<string | null>(null);
+  const installActive = useRef(false);
   const refreshInstalled = controller.refresh;
 
   const load = useCallback(async () => {
@@ -1083,27 +1119,49 @@ function StoreGrid({
 
   const install = useCallback(
     async (entry: StoreEntry) => {
+      if (installActive.current) return;
+      installActive.current = true;
       setInstalling(entry.id);
       setError(null);
       try {
-        unwrapResult(await commands.storeInstall(entry.id, entry.version));
+        const existing = controller.connections.find(
+          (row) => row.extensionId === entry.id,
+        );
+        unwrapResult(
+          await (entry.kind === "mcp"
+            ? existing
+              ? commands.storeMcpUpdate(
+                  existing.id,
+                  existing.revision,
+                  entry.version,
+                )
+              : commands.storeMcpInstall(entry.id, entry.version)
+            : commands.storeInstall(entry.id, entry.version)),
+        );
         await Promise.all([load(), refreshInstalled()]);
       } catch (reason) {
         setError(String(reason));
       } finally {
+        installActive.current = false;
         setInstalling(null);
       }
     },
-    [load, refreshInstalled],
+    [load, refreshInstalled, controller.connections],
   );
 
   useEffect(() => {
-    onStoreChange({ view, installing, install });
-  }, [install, installing, onStoreChange, view]);
+    onStoreChange({ view, installing, error, install });
+  }, [install, installing, error, onStoreChange, view]);
 
   const installed = useMemo(
-    () => new Map(controller.cards.map((card) => [card.id, card.version])),
-    [controller.cards],
+    () =>
+      new Map([
+        ...controller.cards.map((card) => [card.id, card.version] as const),
+        ...controller.connections.map(
+          (row) => [row.extensionId!, row.version!] as const,
+        ),
+      ]),
+    [controller.cards, controller.connections],
   );
   const categories = useMemo(
     () =>
@@ -1132,7 +1190,11 @@ function StoreGrid({
             : "Offline — showing the last verified catalogue. Installs are paused."}
         </div>
       )}
-      {error && <div className="extension-inline-error">{error}</div>}
+      {error && (
+        <div className="extension-inline-error" role="alert">
+          {error}
+        </div>
+      )}
       <div className="store-intro polished-store-intro">
         <div>
           <strong>Extension store</strong>
@@ -1164,7 +1226,11 @@ function StoreGrid({
               entry={entry}
               installedVersion={installed.get(entry.id)}
               busy={installing === entry.id}
-              canInstall={Boolean(view?.can_install)}
+              canInstall={
+                Boolean(view?.can_install) &&
+                installing === null &&
+                (entry.kind !== "mcp" || developerEnabled)
+              }
               onInstall={(target) => void install(target)}
               onPreview={(target) =>
                 onPreview({ source: "store", entry: target })
@@ -1185,6 +1251,7 @@ export function ExtensionsPage({ view }: { view: ExtensionViewId }) {
   });
   const [detail, setDetail] = useState<DetailSelection | null>(null);
   const detailOriginRef = useRef<HTMLElement | null>(null);
+  const installedTabRef = useRef<HTMLButtonElement>(null);
   const [developer, setDeveloper] = useState<ExtensionDeveloperStatus | null>(
     null,
   );
@@ -1192,16 +1259,22 @@ export function ExtensionsPage({ view }: { view: ExtensionViewId }) {
   const [developerBusy, setDeveloperBusy] = useState(false);
   const [importBusy, setImportBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
-  const [storeState, setStoreState] = useState<{
-    view: StoreView | null;
-    installing: string | null;
-    install: (entry: StoreEntry) => Promise<void>;
-  }>({ view: null, installing: null, install: async () => {} });
+  const [storeState, setStoreState] = useState<StoreController>({
+    view: null,
+    installing: null,
+    error: null,
+    install: async () => {},
+  });
 
   useEffect(() => {
     setDetail(null);
     detailOriginRef.current = null;
-    setStoreState({ view: null, installing: null, install: async () => {} });
+    setStoreState({
+      view: null,
+      installing: null,
+      error: null,
+      install: async () => {},
+    });
   }, [view]);
 
   useEffect(() => {
@@ -1229,6 +1302,7 @@ export function ExtensionsPage({ view }: { view: ExtensionViewId }) {
         }));
       }
       setDeveloperOpen(true);
+      await controller.refresh();
     } catch (reason) {
       setNotice(String(reason));
     } finally {
@@ -1272,11 +1346,7 @@ export function ExtensionsPage({ view }: { view: ExtensionViewId }) {
   };
 
   const onStoreChange = useCallback(
-    (next: {
-      view: StoreView | null;
-      installing: string | null;
-      install: (entry: StoreEntry) => Promise<void>;
-    }) => setStoreState(next),
+    (next: StoreController) => setStoreState(next),
     [],
   );
   const openDetail = useCallback((selection: DetailSelection) => {
@@ -1290,6 +1360,7 @@ export function ExtensionsPage({ view }: { view: ExtensionViewId }) {
     setDetail(null);
     requestAnimationFrame(() => {
       if (origin?.isConnected) origin.focus();
+      else installedTabRef.current?.focus();
     });
   }, []);
 
@@ -1306,7 +1377,13 @@ export function ExtensionsPage({ view }: { view: ExtensionViewId }) {
             onBack={closeDetail}
             onInstall={storeState.install}
             installing={storeState.installing}
-            canInstall={storeState.view?.can_install ?? false}
+            installError={storeState.error}
+            canInstall={
+              Boolean(storeState.view?.can_install) &&
+              (detail.source === "installed" ||
+                detail.entry.kind !== "mcp" ||
+                developer?.enabled === true)
+            }
           />
         )}
         <div className="extensions-browse-view" hidden={detail !== null}>
@@ -1315,8 +1392,8 @@ export function ExtensionsPage({ view }: { view: ExtensionViewId }) {
               <div className="eyebrow">Capability management</div>
               <h1>Extensions</h1>
               <p className="page-subtitle">
-                Install, enable, update, and remove focused additions. Settings
-                stay beside the capability each extension extends.
+                Install native or MCP extensions to give the Agent tools.
+                Connect your own MCP server alongside your installed extensions.
               </p>
             </div>
             <div className="header-actions">
@@ -1350,6 +1427,7 @@ export function ExtensionsPage({ view }: { view: ExtensionViewId }) {
           <div className="extension-toolbar">
             <div className="segmented" aria-label="Extension collection">
               <button
+                ref={installedTabRef}
                 className={view === "installed" ? "active" : ""}
                 type="button"
                 onClick={() => {
@@ -1359,7 +1437,10 @@ export function ExtensionsPage({ view }: { view: ExtensionViewId }) {
                   }).slice(1);
                 }}
               >
-                Installed <span>{controller.cards.length}</span>
+                Installed{" "}
+                <span>
+                  {controller.cards.length + controller.connections.length}
+                </span>
               </button>
               <button
                 className={view === "store" ? "active" : ""}
@@ -1399,10 +1480,33 @@ export function ExtensionsPage({ view }: { view: ExtensionViewId }) {
                   }).slice(1);
                 }}
               />
-              {developer?.enabled && <McpConnections query={query} />}
+              {developer?.enabled && detail === null && (
+                <>
+                  <McpConnections
+                    source="store"
+                    query={query}
+                    onChange={controller.refresh}
+                    onDetails={(row) => {
+                      void commands
+                        .storeEntry(row.extensionId!)
+                        .then(unwrapResult)
+                        .then((entry) => {
+                          if (entry) openDetail({ source: "mcp", entry });
+                          else
+                            setNotice(
+                              "The verified store details are unavailable. You can still manage this connection here.",
+                            );
+                        })
+                        .catch((reason) => setNotice(String(reason)));
+                    }}
+                  />
+                  <McpConnections query={query} />
+                </>
+              )}
             </>
           ) : (
             <StoreGrid
+              developerEnabled={developer?.enabled ?? false}
               query={query}
               controller={controller}
               onPreview={openDetail}

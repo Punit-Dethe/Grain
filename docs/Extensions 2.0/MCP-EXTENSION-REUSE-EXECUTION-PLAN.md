@@ -10,16 +10,19 @@ the first two or three extensions is acceptable. Existing security checks stay.
 Do not expand the harness, build more publication infrastructure, or wait for
 production operator setup before implementing the missing application flow.
 
-1. **Custom MCP management (current block):** put “Your MCP connections” alongside
+1. **Custom MCP management (implemented):** put “Your MCP connections” alongside
    Installed extensions. Reuse the existing registry, official-SDK runtime,
    account ownership, vault and Tauri commands. Support form/JSON import, editing,
    sign-in/cancellation, enable/disable, sign-out, removal and optional OAuth app
    credentials. Keep the existing Developer Mode release gate until launch.
-2. **Finish the ordinary extension journey:** review the existing native/MCP
-   install and detail pages against the small contract, then make the current
-   GitHub author/publish path understandable. Reuse implemented tooling; add only
-   a missing requirement for publishing and installing the first extensions.
-3. **Launch acceptance:** run native + configured/store MCP through the real
+2. **Ordinary extension journey (implemented, visual approval pending):** verified
+   store cards distinguish native/MCP; MCP install/update use existing commands.
+   Installed MCPs expose account and enablement controls, with read-only store
+   definitions and signed DESCRIPTION content on detail pages. Existing CLI and
+   GitHub submission guides now describe both kinds and direct MCP connections.
+   No new publisher, runtime or authentication layer was built. Catalogue
+   activation remains a separate operator gate.
+3. **Launch acceptance (next):** run native + configured/store MCP through the real
    Agent, retain attributable failures, audit the changed boundaries, and obtain
    user UI approval. Address actual defects before release activation.
 

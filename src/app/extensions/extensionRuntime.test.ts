@@ -73,6 +73,7 @@ const sections = (anchor: string | null): ExtensionSettingsSection[] => [
 
 const entry = (overrides: Partial<StoreEntry> = {}): StoreEntry => ({
   id: "example.pack",
+  kind: "native",
   name: "Example Pack",
   version: "1.0.0",
   tier: "scripted",

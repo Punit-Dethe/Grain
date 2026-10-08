@@ -1,5 +1,32 @@
 # Extension implementation: progress, changes and user testing
 
+**Current store MCP journey, 8 October:** the reduced launch plan's ordinary
+extension journey is implemented; user visual acceptance remains pending.
+Verified store cards now include MCP descriptors and distinguish native/MCP.
+Install/update route through the existing secure store commands. Installed MCPs
+show version, account status, sign-in/cancel, enable/disable, sign-out and confirmed
+removal; detail pages reuse those controls. Store endpoint/auth definitions stay
+read-only. The app labels the signed DESCRIPTION document **About this extension**.
+The [author entry point](../Extension%20Platform/AUTHORING.md) and existing
+[CLI guide](../../crates/grain-ext-cli/README.md) describe native/MCP authoring,
+direct connections and the current GitHub submission/maintainer workflow.
+No new publisher, authentication layer, runtime or harness framework was added.
+Existing acceptance cases were extended for real UI installation, updating,
+OAuth cancellation/sign-in, search and detail removal. Scoped review found stale
+browse rows after detail actions and a misleading native-only search message;
+both are fixed and regression-verified. Verification: **19 backend / 26 frontend
+unit / 16 real-app MCP checkpoint / 3 real-app native-store Pass**, cleanup Pass,
+typecheck, scoped lint, formatting and frontend/native build. One existing live
+network backend test remains ignored. Evidence: ignored
+`tests/agent-harness/.runs/store-mcp-ui-final-02/run-jka49U/evidence` and
+`tests/agent-harness/.runs/store-mcp-ui-native-store/run-CvXknf/evidence`.
+These runs use the real application with scripted model/owned providers; they
+do not certify live-provider or genuine-model behavior. Next: launch acceptance
+against the configured model and first native/MCP extensions, plus user UI approval.
+Public catalogue activation/signing custody remain operator gates. Live Linear
+actual expiry and permanent OAuth identity remain explicit follow-ups. Unrelated
+local bindings formatting and nested registry changes are preserved.
+
 **Current launch MCP management UI, 8 October:** follows the reduced
 [launch scope](MCP-EXTENSION-REUSE-EXECUTION-PLAN.md#launch-scope-reset--8-october-2026).
 `McpConnections.tsx` and `mcp-connections.css` add Your MCP connections to the

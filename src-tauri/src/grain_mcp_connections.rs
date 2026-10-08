@@ -310,6 +310,8 @@ impl State {
 pub struct ConnectionView {
     id: String,
     source: String,
+    extension_id: Option<String>,
+    version: Option<String>,
     revision: String,
     name: String,
     url: String,
@@ -320,6 +322,14 @@ pub struct ConnectionView {
 impl From<ConnectionRecord> for ConnectionView {
     fn from(record: ConnectionRecord) -> Self {
         let definition = record.definition();
+        let (extension_id, version) = match record.identity().source() {
+            grain_core::mcp::ConnectionSource::Store {
+                extension_id,
+                version,
+                ..
+            } => (Some(extension_id.clone()), Some(version.clone())),
+            _ => (None, None),
+        };
         Self {
             id: record.identity().connection_id().into(),
             source: match record.identity().source() {
@@ -328,6 +338,8 @@ impl From<ConnectionRecord> for ConnectionView {
                 grain_core::mcp::ConnectionSource::DevelopmentCatalog { .. } => "catalogue",
             }
             .into(),
+            extension_id,
+            version,
             revision: record.revision().to_string(),
             name: definition.name.clone(),
             url: definition.url.clone(),
@@ -935,7 +947,9 @@ mod tests {
             let view = serde_json::to_value(ConnectionView::from(record)).unwrap();
             assert_eq!(view["source"], source);
             assert!(view["revision"].is_string());
-            assert_eq!(view.as_object().unwrap().len(), 7);
+            assert_eq!(view.as_object().unwrap().len(), 9);
+            assert_eq!(view["extensionId"].is_null(), source == "configured");
+            assert_eq!(view["version"].is_null(), source == "configured");
             assert!(view.get("accountId").is_none());
             assert!(view.get("identity").is_none());
         }

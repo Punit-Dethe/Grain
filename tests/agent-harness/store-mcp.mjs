@@ -58,7 +58,8 @@ export function storeMcpHandlers(ctx) {
     const view = await ctx.invoke("store_browse");
     assert.equal(view.status, "fresh");
     assert.equal(view.can_install, true);
-    assert.equal(view.entries.length, 0, "MCP cards require the later E5 UI");
+    assert.equal(view.entries.length, 1);
+    assert.equal(view.entries[0].kind, "mcp");
   }
   async function publish(options = {}) {
     ctx.store().configureMcp(options);
@@ -228,7 +229,89 @@ export function storeMcpHandlers(ctx) {
           await assert.rejects(install(), /hash/);
           assert.deepEqual(await list(), []);
           ctx.store().corruptBlob(false);
-          record = await install();
+          const page = ctx.main();
+          await page.evaluate(() => {
+            window.location.hash = "#/extensions/store";
+          });
+          const card = page.getByRole("button", {
+            name: "Preview Store MCP harness",
+            exact: true,
+          });
+          await card.click();
+          const detail = page.getByRole("article", {
+            name: "Store MCP harness",
+            exact: true,
+          });
+          await detail
+            .getByRole("heading", { name: "Owned DESCRIPTION", exact: true })
+            .waitFor();
+          await detail
+            .getByText("About this extension", { exact: true })
+            .waitFor();
+          await detail
+            .getByRole("button", { name: "Install", exact: true })
+            .click();
+          await detail
+            .getByRole("button", { name: "Installed", exact: true })
+            .waitFor();
+          [record] = await list();
+          assert.equal(record.extensionId, ID);
+          assert.equal(record.version, "1.0.0");
+          await detail
+            .getByRole("region", { name: "MCP connection", exact: true })
+            .waitFor();
+          await page.keyboard.press("Escape");
+          await page.evaluate(() => {
+            window.location.hash = "#/extensions/installed";
+          });
+          const installed = page.getByRole("region", {
+            name: "Installed MCP extensions",
+            exact: true,
+          });
+          await installed
+            .getByRole("heading", { name: "Store MCP harness", exact: true })
+            .waitFor();
+          const search = page.getByPlaceholder("Search installed extensions", {
+            exact: true,
+          });
+          await search.fill("Store MCP harness");
+          assert.equal(
+            await page
+              .getByText("No installed extensions match your search.", {
+                exact: true,
+              })
+              .count(),
+            0,
+          );
+          await search.fill("");
+          assert.equal(
+            await installed
+              .getByRole("button", { name: "Edit", exact: true })
+              .count(),
+            0,
+          );
+          assert.equal(
+            await installed
+              .getByRole("button", { name: "Add MCP", exact: true })
+              .count(),
+            0,
+          );
+          await installed
+            .getByRole("button", { name: "Details", exact: true })
+            .click();
+          await detail
+            .getByRole("region", { name: "MCP connection", exact: true })
+            .waitFor();
+          await page.screenshot({
+            path: join(ctx.root, "store-mcp-detail.png"),
+          });
+          await detail
+            .getByRole("region", { name: "MCP connection", exact: true })
+            .scrollIntoViewIfNeeded();
+          await page.screenshot({
+            path: join(ctx.root, "store-mcp-controls.png"),
+          });
+          await page.keyboard.press("Escape");
           assert.equal(record.state, "inactive");
           assert.equal(
             ctx.provider().journal.length,
@@ -236,6 +319,7 @@ export function storeMcpHandlers(ctx) {
             "Install contacted MCP endpoint",
           );
           assert.ok((await row(record)).storeArtifact);
+          await browse();
           await assert.rejects(install(), /already|changed/);
           await assert.rejects(
             ctx.invoke("mcp_connection_replace", {
@@ -248,6 +332,7 @@ export function storeMcpHandlers(ctx) {
             }),
             /verified catalogue/,
           );
+          await ctx.invoke("store_close");
           await enable(record);
           await read(record, async (page) => {
             await assert.rejects(
@@ -310,6 +395,38 @@ export function storeMcpHandlers(ctx) {
             });
           },
         );
+        await stage("store-ui-update", async () => {
+          const before = await row(record);
+          await publish({
+            version: "2.1.0",
+            description: "Updated through the store UI.",
+          });
+          const page = ctx.main();
+          await page.evaluate(() => {
+            window.location.hash = "#/extensions/store";
+          });
+          const card = page.getByRole("button", {
+            name: "Preview Store MCP harness",
+            exact: true,
+          });
+          await card
+            .getByRole("button", { name: "Update", exact: true })
+            .click();
+          await card
+            .getByRole("button", { name: "Installed", exact: true })
+            .waitFor();
+          [record] = await list();
+          assert.equal(record.version, "2.1.0");
+          assert.equal(record.state, "inactive");
+          assert.equal((await row(record)).accountId, before.accountId);
+          await page.evaluate(() => {
+            window.location.hash = "#/extensions/installed";
+          });
+          await ctx.waitFor(
+            "Updated store released catalogue",
+            async () => !(await ctx.status()).store.indexResident,
+          );
+        });
         await stage("failed-publication-preserves-old-descriptor", async () => {
           await publish({ version: "3.0.0" });
           const before = await row(record);
@@ -350,7 +467,50 @@ export function storeMcpHandlers(ctx) {
           await enable(next);
           await ctx.restartHost();
           await read(next);
-          await remove(next);
+          const page = ctx.main();
+          await page.evaluate(() => {
+            window.location.hash = "#/extensions/installed";
+          });
+          const installed = page.getByRole("region", {
+            name: "Installed MCP extensions",
+            exact: true,
+          });
+          await installed
+            .getByRole("button", { name: "Details", exact: true })
+            .click();
+          const detail = page.getByRole("article", {
+            name: "Store MCP harness",
+            exact: true,
+          });
+          const account = detail.getByRole("region", {
+            name: "MCP connection",
+            exact: true,
+          });
+          await account
+            .getByRole("button", { name: "Remove", exact: true })
+            .click();
+          await account
+            .getByRole("button", { name: "Remove connection", exact: true })
+            .click();
+          await account.waitFor({ state: "hidden" });
+          await page.keyboard.press("Escape");
+          await installed
+            .getByText(
+              "No MCP extensions installed yet. Browse the Store to add one.",
+              { exact: true },
+            )
+            .waitFor();
+          assert.equal(
+            await installed
+              .getByRole("heading", { name: "Store MCP harness", exact: true })
+              .count(),
+            0,
+          );
+          await page
+            .locator(".segmented button.active")
+            .and(page.locator(":focus"))
+            .waitFor();
+          assert.deepEqual(await list(), []);
         });
         await reset();
       },
@@ -367,7 +527,57 @@ export function storeMcpHandlers(ctx) {
             clientId: MCP_CLIENTS.confidential,
             clientSecret: MCP_CLIENT_SECRETS[0],
           });
-          await connect(record);
+          const page = ctx.main();
+          await page.evaluate(() => {
+            window.location.hash = "#/extensions/installed";
+          });
+          const installed = page.getByRole("region", {
+            name: "Installed MCP extensions",
+            exact: true,
+          });
+          const postponeUpdate = page.getByRole("button", {
+            name: "Not now",
+            exact: true,
+          });
+          if (await postponeUpdate.isVisible()) await postponeUpdate.click();
+          await installed
+            .getByRole("button", { name: "Refresh", exact: true })
+            .click();
+          const signIn = installed.getByRole("button", {
+            name: "Sign in & enable",
+            exact: true,
+          });
+          await signIn.click();
+          const oldUrl = await ctx.waitFor("UI sign-in consent", () =>
+            ctx.invoke("agent_harness_configured_consent", {
+              id: `configured-${record.id}`,
+            }),
+          );
+          await installed
+            .getByRole("button", { name: "Cancel sign-in", exact: true })
+            .click();
+          await ctx.waitFor("UI cancelled sign-in restored control", () =>
+            signIn.isEnabled(),
+          );
+          assert.equal((await state(record)).connected, false);
+          await signIn.click();
+          const url = await ctx.waitFor(
+            "Fresh UI sign-in consent",
+            async () => {
+              const current = await ctx.invoke(
+                "agent_harness_configured_consent",
+                { id: `configured-${record.id}` },
+              );
+              return current !== oldUrl && current;
+            },
+          );
+          assert.equal(
+            (await oauth().callback(await oauth().authorize(url))).status,
+            200,
+          );
+          await installed
+            .getByRole("button", { name: "Sign out", exact: true })
+            .waitFor();
           for (const flags of [
             [false, false],
             [true, false],

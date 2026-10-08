@@ -186,12 +186,14 @@ export function configuredMcpHandlers(ctx) {
             assert.equal(view.state, "inactive");
             assert.deepEqual(Object.keys(view).sort(), [
               "authentication",
+              "extensionId",
               "id",
               "name",
               "revision",
               "source",
               "state",
               "url",
+              "version",
             ]);
           }
           const saved = await disk();

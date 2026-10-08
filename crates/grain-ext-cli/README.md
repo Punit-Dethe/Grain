@@ -76,11 +76,13 @@ and account consent. Failed validation preserves an existing artifact. Built
 output cannot replace either project definition.
 
 `dev` refuses MCP projects because there is no Grain worker to reload.
-The signed test-store path has been verified against the real application;
-direct local descriptor import and public store listing are not promised by
-this CLI block. Direct user-configured MCPs use the
-host's separate credential-free connection definition and do not require an
-extension package.
+In Grain, open **Extensions → Installed → Developer** to load a native project.
+Close that drawer to manage **Installed MCP extensions** and **Your MCP connections**.
+Direct MCP connections use the form or credential-free JSON and need no package.
+Store MCPs are installed from verified catalogue descriptors; their URL/auth
+definition is changed through a verified store update, not the custom editor.
+Installation leaves the connection inactive. Sign in and enable it separately.
+These application flows retain the Developer Mode release gate.
 
 ## Listing and publishing status
 
@@ -109,7 +111,7 @@ The current source profile accepts canonical `https://github.com/owner/repositor
 URLs without credentials, query, fragment or `.git` suffix; a bounded literal
 ASCII Git tag; and a nonzero lowercase 40-character commit. This validates the
 pointer's shape, not repository ownership or whether that tag resolves to that
-commit. E4 must verify the pinned source and build.
+commit. The maintainer workflow verifies the pinned source and build.
 
 Submission requires nonempty UTF-8 `DESCRIPTION.md` (maximum 64 KiB); README is
 never a fallback. Optional `media/` contains at most six flat `.webp`/`.gif`
@@ -125,13 +127,16 @@ last as its completion marker. Existing submission directories are never
 overwritten; updating a prior submission is not yet supported by this command.
 Media remains at the source pointer with hashes/sizes in the submission. The
 maintainer checker shares the schema and verifies the description snapshot;
-E4 must match source, media, build and signed catalogue together. The legacy
-publisher refuses these new source submissions until that migration exists.
+The current maintainer workflow matches source, media, build and signed
+catalogue together. See [registry tooling](../grain-registry-tools/README.md)
+for source review, isolated build, signing and publication. A local submission
+draft has not been uploaded: commit its submission directory on a registry
+branch and open a pull request to the registry after publishing the source/tag.
 
-E3's author tools are provisionally accepted. Protected builds/signing and
-catalogue producer/consumer migration remain E4; store/connection UI and safe
-description rendering remain E5. Do not publish a final SDK or rely on a
-production marketplace based on this checkpoint.
+Source authoring, packaging and submission tooling are available. Production
+catalogue activation and signing custody remain separate operator decisions;
+the public SDK is not frozen. README is source documentation; the app renders
+the signed DESCRIPTION document as **About this extension**.
 
 Focused checks:
 

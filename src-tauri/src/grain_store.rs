@@ -58,6 +58,7 @@ pub struct StoreState {
 #[derive(Clone, Serialize, specta::Type)]
 pub struct StoreEntry {
     pub id: String,
+    pub kind: String,
     pub name: String,
     pub version: String,
     pub tier: String,
@@ -77,8 +78,7 @@ pub struct StoreEntry {
     /// Popularity signal shown on the card and detail page. Read straight from
     /// the signed index — the client never counts or queries per card.
     pub installs: u64,
-    /// Detail document hash (DESCRIPTION for new listings; legacy README
-    /// otherwise). Keep the existing frontend wire name until E5 UI migration.
+    /// User-facing DESCRIPTION document hash.
     pub readme: String,
     /// Screenshots / GIFs for the detail page, loaded lazily — never in browse.
     pub media: Vec<StoreMedia>,
@@ -394,9 +394,19 @@ impl StoreState {
 fn project_entries(entries: &[IndexEntry], revocations: &Revocations) -> Vec<StoreEntry> {
     entries
         .iter()
-        .filter(|entry| entry.validate_tool_only().is_ok())
+        .filter(|entry| match entry.artifact_kind {
+            grain_sdk::distribution::ArtifactKind::Native => entry.validate_tool_only().is_ok(),
+            grain_sdk::distribution::ArtifactKind::McpDescriptor => {
+                entry.validate_mcp_installable().is_ok()
+            }
+        })
         .map(|e| StoreEntry {
             id: e.id.clone(),
+            kind: match e.artifact_kind {
+                grain_sdk::distribution::ArtifactKind::Native => "native",
+                grain_sdk::distribution::ArtifactKind::McpDescriptor => "mcp",
+            }
+            .into(),
             name: e.name.clone(),
             version: e.version.clone(),
             tier: tier_str(&e.tier).into(),
@@ -1573,6 +1583,20 @@ mod tests {
             grain_sdk::distribution::ArtifactKind::McpDescriptor,
         ] {
             entry.artifact_kind = kind;
+            let projected = project_entries(std::slice::from_ref(&entry), &revocations);
+            assert_eq!(projected.len(), 1);
+            assert_eq!(
+                projected[0].kind,
+                if kind == grain_sdk::distribution::ArtifactKind::McpDescriptor {
+                    "mcp"
+                } else {
+                    "native"
+                }
+            );
+            assert_eq!(projected[0].readme, "b".repeat(64));
+            let mut privileged = entry.clone();
+            privileged.capabilities = vec!["capture:screen-image".into()];
+            assert!(project_entries(&[privileged], &revocations).is_empty());
             assert_eq!(
                 listing_blob_size(&[entry.clone()], &"b".repeat(64), "md").unwrap(),
                 Some(30)

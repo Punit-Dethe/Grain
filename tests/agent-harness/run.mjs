@@ -1602,6 +1602,7 @@ const configuredAuthSuite = configuredAuthHandlers({
 Object.assign(handlers, configuredAuthSuite.handlers);
 const storeMcpSuite = storeMcpHandlers({
   root,
+  main: () => main,
   here,
   cli: () => cliIdentity,
   invoke,
