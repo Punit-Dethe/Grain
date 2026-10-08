@@ -26,15 +26,21 @@ production operator setup before implementing the missing application flow.
    Agent, retain attributable failures, audit the changed boundaries, and obtain
    user UI approval. Address actual defects before release activation.
 
-   Current checkpoint: configured-model native read/write/verify **Pass**;
+   Current checkpoint: configured-model native **and MCP** read/write/verify **Pass**;
    eight real-app controlled interruption/failure cases **Pass**, cleanup Pass.
-   Genuine MCP workflow remains **Pending** after two configured-provider
-   60-second request timeouts; failed evidence is retained. The existing live
-   oracle now admits the same single non-dispatched argument correction in
+   The genuine MCP repeat confirms three dispatched actions, one write and one
+   corrected, non-dispatched invalid argument attempt. Earlier failed evidence is
+   retained. The existing live oracle admits the same single non-dispatched argument correction in
    ordinary and interruption workflows, preserving exact receipts/write counts.
-   Five focused oracle/privacy/cancellation tests pass. Further genuine-model
-   interruption cases were not run after the provider failures. UI approval and
-   public catalogue activation remain outstanding; no release activation occurred.
+   Five focused oracle/privacy/cancellation tests pass. Additional genuine-model
+   interruption acceptance remains open: native timed out at 120 seconds; MCP
+   passed decline/independent verification but the later task ended before writing.
+   These whole-case results remain Fail, not accepted. The relay now matches Grain's
+   existing 120-second request deadline; live stage waits allow up to four required
+   model turns. Production deadlines, action limits and receipt checks did not change.
+   UI approval and public catalogue activation remain outstanding; no release
+   activation occurred. Live failure-recovery completion needs a responsive model
+   that continues the prescribed task; do not add another harness or silently pass it.
 
 Use fast affected checks while developing and one existing real-app checkpoint
 per completed block. The deferred live Linear token-expiry check and permanent

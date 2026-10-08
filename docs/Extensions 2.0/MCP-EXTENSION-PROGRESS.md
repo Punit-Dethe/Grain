@@ -1,7 +1,7 @@
 # Extension implementation: progress, changes and user testing
 
 **Current launch acceptance, 8 October:** step **3 of the reduced three-step
-launch plan** is current. Configured-model native read/one approved write/independent
+launch plan** is current. Configured-model native **and MCP** read/one approved write/independent
 verification **Pass**. The existing eight-case real-app interruption batch
 **Pass**, cleanup Pass: native/MCP declines, actual approval expiry/restart,
 closing pending/running work, post-write model failure and unknown-outcome
@@ -11,13 +11,27 @@ The first genuine MCP run exposed a test-only refusal to let the model correct
 invalid arguments. The existing single non-dispatched correction allowance now
 also applies to ordinary workflows; attempts are recorded separately from
 receipts, with exact action order, three dispatches and one write still required.
-Two subsequent isolated MCP attempts hit the configured model's 60-second
-request deadline. Genuine MCP acceptance stays **Pending**, with failures retained;
-no deadline was relaxed and no further provider retries were made. Genuine-model
-interruption cases were not run. Evidence is under ignored
+Two earlier isolated MCP attempts hit the relay's 60-second request cap; failures
+are retained. The next genuine MCP run **Pass**, cleanup Pass: nine model requests,
+three actual dispatches, one write and one corrected, non-dispatched read attempt.
+Production deadlines and application code did not change. The test relay's prior
+60-second cap was shorter than Grain's 120 seconds (`agent.rs` and
+`grain_llm_client.rs`). The existing relay now matches 120 seconds; live stage
+waits account for search/load/call and one refused-argument correction. Action,
+approval, exact receipt/write counts and cancellation checks remain unchanged.
+Five focused oracle/privacy/cancellation checks pass again. Additional genuine-model
+interruption acceptance remains open: native **Fail** at 120 seconds; MCP's decline
+stage **Pass** (zero writes, independent verification, consumed-approval refusal),
+but its later task ended before writing, so the whole MCP case is still **Fail**.
+Both remain unaccepted; cleanup Pass on all attempts. No retries were made after
+those production-matched failures. Evidence is under ignored
 `tests/agent-harness/.runs/launch-agent-acceptance-01/run-ifDUg4/evidence`,
-`launch-agent-mcp-02/run-tEvphc/evidence`, `launch-agent-mcp-03/run-iRVG1b/evidence`
-and `launch-agent-failure-safety-02/run-TJjapr/evidence` in the same `.runs` root.
+`launch-agent-mcp-02/run-tEvphc/evidence`, `launch-agent-mcp-03/run-iRVG1b/evidence`,
+`launch-agent-failure-safety-02/run-TJjapr/evidence`,
+`launch-agent-mcp-04/run-65kZ7G/evidence` and
+`launch-agent-interruption-live-01/run-03vWQk/evidence`,
+`launch-agent-interruption-live-02/run-s6qVqI/evidence` and
+`launch-agent-mcp-interruption-01/run-2CvBSw/evidence` in the same `.runs` root.
 The first interruption batch passed its behavior checks but failed source identity
 because a comment was edited during execution; the unchanged repeat above is the
 accepted checkpoint. User UI approval and public catalogue activation remain;

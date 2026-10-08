@@ -8,6 +8,8 @@ import { assertWithin } from "./support.mjs";
 
 const NATIVE_ID = "com.grain.harness.lifecycle";
 const MCP_ID = "mcp.grain-harness";
+// Search/load/call plus one refused-argument correction can precede approval.
+const LIVE_STAGE_TIMEOUT_MS = 4 * 120000;
 export const WORKFLOW_VALUE = "disposable Grain workflow value";
 export const WORKFLOW_IDS = ["wf_read", "wf_verify", "wf_write"];
 export const BULK_IDS = Array.from(
@@ -502,7 +504,9 @@ export function workflowHandlers(ctx) {
         ctx.model().journal.length > start &&
         !(await ctx.status()).agent.active &&
         !(await ctx.status()).agent.pendingApproval,
-      { timeoutMs: expected === "live-complete" ? 120000 : 20000 },
+      {
+        timeoutMs: expected === "live-complete" ? LIVE_STAGE_TIMEOUT_MS : 20000,
+      },
     );
     const entries = ctx.model().journal.slice(start);
     assert.equal(
@@ -632,13 +636,13 @@ export function workflowHandlers(ctx) {
     const start = ctx.model().journal.length,
       before = await count(mcp);
     const page = await ctx.request(mcp ? "mcp_workflow" : "native_workflow", {
-      timeoutMs: 120000,
+      timeoutMs: LIVE_STAGE_TIMEOUT_MS,
     });
     assert.equal(await count(mcp), before, "Live tool escaped approval");
     for (let i = 0; i < 3; i++) {
       const token = await capture();
       await approve(page);
-      if (i < 2) await nextApproval(token, 120000);
+      if (i < 2) await nextApproval(token, LIVE_STAGE_TIMEOUT_MS);
     }
     await completed(start, "live-complete", page);
     assert.equal(
@@ -702,23 +706,26 @@ export function workflowHandlers(ctx) {
     const start = ctx.model().journal.length,
       before = await count(mcp);
     const page = await ctx.request(mcp ? "mcp_workflow" : "native_workflow", {
-      timeoutMs: live ? 120000 : 20000,
+      timeoutMs: live ? LIVE_STAGE_TIMEOUT_MS : 20000,
     });
     assert.equal(await count(mcp), before);
     const read = await capture();
     await approve(page);
-    const write = await nextApproval(read, live ? 120000 : 20000);
+    const write = await nextApproval(
+      read,
+      live ? LIVE_STAGE_TIMEOUT_MS : 20000,
+    );
     assert.equal(await count(mcp), before + 1, "Write escaped approval");
     return { start, before, page, write };
   }
-  async function release() {
+  async function release(live = false) {
     await ctx.waitFor(
       "Interrupted run release",
       async () => {
         const s = await ctx.status();
         return !s.agent.active && !s.agent.pendingApproval;
       },
-      { timeoutMs: 120000 },
+      { timeoutMs: live ? LIVE_STAGE_TIMEOUT_MS : 120000 },
     );
   }
   async function lateFailure(mcp, live = false) {
@@ -733,7 +740,7 @@ export function workflowHandlers(ctx) {
       live,
     );
     await approve(page);
-    await release();
+    await release(live);
     const entries = ctx.model().journal.slice(start);
     assert.equal(
       entries.filter(
@@ -777,7 +784,7 @@ export function workflowHandlers(ctx) {
     if (mode === "denial" && ctx.fault !== "skip-workflow-denial")
       await ctx.activate(page.locator(".agc-confirm-actions .agc-cancel-btn"));
     else await approve(page);
-    await nextApproval(write, live ? 120000 : 20000);
+    await nextApproval(write, live ? LIVE_STAGE_TIMEOUT_MS : 20000);
     assert.equal(
       await count(mcp),
       before + (mode === "denial" ? 1 : 2),

@@ -73,7 +73,8 @@ export function liveModelAdapter(config, sockets, timers) {
     receipts = [],
     searched = new Set(),
     current;
-  const limits = { body: 1024 * 1024, timeout: 60000 };
+  // Match Grain's per-request model deadline; this relay must not truncate it.
+  const limits = { body: 1024 * 1024, timeout: 120000 };
   function post(body, frontend) {
     return new Promise((resolve, reject) => {
       if (frontend?.destroyed)
@@ -148,7 +149,7 @@ export function liveModelAdapter(config, sockets, timers) {
         () =>
           done(
             new Error(
-              "Configured model exceeded its 60-second request deadline",
+              `Configured model exceeded its ${limits.timeout / 1000}-second request deadline`,
             ),
           ),
         limits.timeout,
