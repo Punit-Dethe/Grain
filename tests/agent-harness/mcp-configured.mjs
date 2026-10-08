@@ -65,6 +65,117 @@ export function configuredMcpHandlers(ctx) {
     handlers: {
       async "mcp.configured-ownership"() {
         await empty();
+        await stage("custom-connection-ui", async () => {
+          const page = ctx.main();
+          await page.evaluate(() => {
+            window.location.hash = "#/extensions/installed";
+          });
+          const panel = page.getByRole("region", {
+            name: "Your MCP connections",
+          });
+          const focused = (locator) =>
+            locator.and(page.locator(":focus")).waitFor();
+          const editedName = `MCP ${"x".repeat(100)}`;
+          await panel
+            .getByRole("button", { name: "Add MCP", exact: true })
+            .click();
+          await panel.getByLabel("Name", { exact: true }).fill("UI custom MCP");
+          await panel
+            .getByLabel("MCP server URL")
+            .fill("https://example.com/mcp");
+          await panel.getByLabel("Authentication").selectOption("none");
+          await panel.getByRole("button", { name: "Save connection" }).click();
+          await panel
+            .getByRole("heading", { name: "UI custom MCP", exact: true })
+            .waitFor();
+          const row = panel.locator("article").filter({
+            has: page.getByRole("heading", {
+              name: "UI custom MCP",
+              exact: true,
+            }),
+          });
+          const [record] = await list();
+          assert.equal(record.source, "configured");
+          assert.equal(record.state, "inactive");
+          await focused(
+            panel.getByRole("button", { name: "Add MCP", exact: true }),
+          );
+          await row.getByRole("button", { name: "Edit", exact: true }).click();
+          await panel
+            .getByRole("button", { name: "Cancel", exact: true })
+            .click();
+          await focused(row.getByRole("button", { name: "Edit", exact: true }));
+          await row
+            .getByRole("button", { name: "Enable", exact: true })
+            .click();
+          await row
+            .getByRole("button", { name: "Disable", exact: true })
+            .waitFor();
+          assert.equal(
+            (
+              await ctx.invoke("mcp_connection_status", {
+                id: record.id,
+                expectedRevision: record.revision,
+              })
+            ).enabled,
+            true,
+          );
+          await row
+            .getByRole("button", { name: "Disable", exact: true })
+            .click();
+          await row
+            .getByRole("button", { name: "Enable", exact: true })
+            .waitFor();
+          await page.screenshot({
+            path: join(ctx.root, "custom-mcp-ui.png"),
+          });
+          await row.getByRole("button", { name: "Edit", exact: true }).click();
+          await panel.getByLabel("Name", { exact: true }).fill(editedName);
+          await panel.getByLabel("Enter JSON instead").check();
+          await panel
+            .getByLabel("Connection JSON")
+            .fill(definition(editedName, "http://example.com/mcp"));
+          await panel.getByRole("button", { name: "Save connection" }).click();
+          await panel.getByRole("alert").waitFor();
+          assert.equal((await list())[0].name, "UI custom MCP");
+          await panel
+            .getByLabel("Connection JSON")
+            .fill(definition(editedName, "https://example.com/mcp", "oauth"));
+          await panel.getByRole("button", { name: "Save connection" }).click();
+          await row
+            .getByRole("heading", { name: "UI custom MCP", exact: true })
+            .waitFor({ state: "hidden" });
+          const renamed = panel.locator("article").filter({
+            has: page.getByRole("heading", {
+              name: editedName,
+              exact: true,
+            }),
+          });
+          await focused(
+            renamed.getByRole("button", { name: "Edit", exact: true }),
+          );
+          await renamed.locator("summary").click();
+          await renamed
+            .getByText("http://127.0.0.1:31938/mcp/oauth/callback", {
+              exact: true,
+            })
+            .waitFor();
+          await renamed.scrollIntoViewIfNeeded();
+          await page.screenshot({
+            path: join(ctx.root, "custom-mcp-ui-reviewed.png"),
+          });
+          await renamed
+            .getByRole("button", { name: "Remove", exact: true })
+            .click();
+          await renamed
+            .getByRole("button", { name: "Remove connection", exact: true })
+            .click();
+          await renamed.waitFor({ state: "hidden" });
+          await focused(
+            panel.getByRole("button", { name: "Add MCP", exact: true }),
+          );
+          assert.equal((await list()).length, 0);
+        });
         let first, second;
         await stage("inactive-independent-imports", async () => {
           [first, second] = await Promise.all([add(), add()]);
@@ -78,6 +189,7 @@ export function configuredMcpHandlers(ctx) {
               "id",
               "name",
               "revision",
+              "source",
               "state",
               "url",
             ]);

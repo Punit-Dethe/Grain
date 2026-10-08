@@ -1406,6 +1406,7 @@ const foundationSuite = foundationHandlers({
 Object.assign(handlers, foundationSuite.handlers);
 const configuredMcpSuite = configuredMcpHandlers({
   root,
+  main: () => main,
   invoke,
   status,
   restartHost,

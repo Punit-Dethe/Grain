@@ -1061,6 +1061,86 @@ async mcpDisconnectProvider(id: string) : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+async mcpConnectionsList() : Promise<Result<ConnectionView[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("mcp_connections_list") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async mcpConnectionImport(definitionJson: string) : Promise<Result<ConnectionView, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("mcp_connection_import", { definitionJson }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async mcpConnectionReplace(id: string, expectedRevision: string, definitionJson: string) : Promise<Result<ConnectionView, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("mcp_connection_replace", { id, expectedRevision, definitionJson }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async mcpConnectionRemove(id: string, expectedRevision: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("mcp_connection_remove", { id, expectedRevision }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async mcpConnectionSetEnabled(id: string, expectedRevision: string, enabled: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("mcp_connection_set_enabled", { id, expectedRevision, enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async mcpConnectionConnect(id: string, expectedRevision: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("mcp_connection_connect", { id, expectedRevision }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async mcpConnectionStatus(id: string, expectedRevision: string) : Promise<Result<McpProviderStatus, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("mcp_connection_status", { id, expectedRevision }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async mcpConnectionDisconnect(id: string, expectedRevision: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("mcp_connection_disconnect", { id, expectedRevision }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async mcpConnectionSetClientCredentials(id: string, expectedRevision: string, clientId: string, clientSecret: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("mcp_connection_set_client_credentials", { id, expectedRevision, clientId, clientSecret }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async mcpConnectionClearClientCredentials(id: string, expectedRevision: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("mcp_connection_clear_client_credentials", { id, expectedRevision }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async mcpTestProvider(id: string) : Promise<Result<McpDiscoveryResult, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("mcp_test_provider", { id }) };
@@ -2959,6 +3039,7 @@ key_down: number; key_up: number; flags_changed: number; mouse: number; duration
 export type KeyboardImplementation = "tauri" | "handy_keys"
 export type LLMPrompt = { id: string; name: string; prompt: string }
 export type LogLevel = "trace" | "debug" | "info" | "warn" | "error"
+export type ConnectionView = { id: string; source: string; revision: string; name: string; url: string; authentication: string; state: string }
 export type McpDiscoveryResult = { provider_id: string; provider_name: string; tool_count: number; tools: string[]; tool_set_digest: string }
 export type McpProviderStatus = { id: string; name: string; description: string; endpoint: string; setup_url: string; requires_client_credentials: boolean; client_id_configured: boolean; connected: boolean; enabled: boolean;
 /**

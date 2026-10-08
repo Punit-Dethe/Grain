@@ -1,5 +1,34 @@
 # Extension platform: audit, reuse and execution plan
 
+## Launch scope reset — 8 October 2026
+
+The user's current launch target supersedes the earlier E4–E8 sequencing below:
+native and remote MCP extensions, authentication, directly configured MCPs,
+basic Agent tool execution, management UI and a usable GitHub publication route.
+Advanced tool discovery and efficiency work is deferred; exposing all tools for
+the first two or three extensions is acceptable. Existing security checks stay.
+Do not expand the harness, build more publication infrastructure, or wait for
+production operator setup before implementing the missing application flow.
+
+1. **Custom MCP management (current block):** put “Your MCP connections” alongside
+   Installed extensions. Reuse the existing registry, official-SDK runtime,
+   account ownership, vault and Tauri commands. Support form/JSON import, editing,
+   sign-in/cancellation, enable/disable, sign-out, removal and optional OAuth app
+   credentials. Keep the existing Developer Mode release gate until launch.
+2. **Finish the ordinary extension journey:** review the existing native/MCP
+   install and detail pages against the small contract, then make the current
+   GitHub author/publish path understandable. Reuse implemented tooling; add only
+   a missing requirement for publishing and installing the first extensions.
+3. **Launch acceptance:** run native + configured/store MCP through the real
+   Agent, retain attributable failures, audit the changed boundaries, and obtain
+   user UI approval. Address actual defects before release activation.
+
+Use fast affected checks while developing and one existing real-app checkpoint
+per completed block. The deferred live Linear token-expiry check and permanent
+OAuth client identity remain explicit follow-ups; neither is claimed passed.
+Earlier dated entries below record implementation history, not additional
+mandatory infrastructure milestones for this reduced launch.
+
 **Current E4 signing-key tooling block, 8 October:** [Scoped custody audit](EXTENSION-SIGNING-KEY-CUSTODY-AUDIT.md)
 records explicit protected Minisign generation/unlocking across bootstrap,
 renewal and independently reviewed native/MCP signing. Missing/wrong passwords,

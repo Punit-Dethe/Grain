@@ -1,5 +1,28 @@
 # Extension implementation: progress, changes and user testing
 
+**Current launch MCP management UI, 8 October:** follows the reduced
+[launch scope](MCP-EXTENSION-REUSE-EXECUTION-PLAN.md#launch-scope-reset--8-october-2026).
+`McpConnections.tsx` and `mcp-connections.css` add Your MCP connections to the
+Installed view in Developer Mode. The surface inherits Grain's existing
+buttons, theme colors and hairline rows; fields have visible keyboard focus,
+actions wrap, long names/URLs wrap, and closing forms restores trigger focus.
+Remote HTTPS MCPs support form/strict JSON import, editing, browser sign-in,
+cancellation, enable/disable, sign-out and confirmed removal. Pending sign-in
+is cancelled when leaving. Optional OAuth app credentials use the system vault;
+the callback URI is shown. Generated typed Tauri commands retain
+configured/store/catalogue ownership; account IDs are not displayed.
+Verification passed **8 backend tests**, typecheck, scoped lint and the real-app
+frontend/native build. The final existing configured suite is **3 Pass, cleanup
+Pass**, including UI add, enable/disable, strict JSON refusal, edit, removal and
+keyboard focus. Scoped review closed callback instructions, long-name wrapping,
+focus restoration and text encoding. Only the existing ownership case was extended.
+Ignored local evidence: `tests/agent-harness/.runs/mcp-management-ui-01` and
+`tests/agent-harness/.runs/mcp-management-ui-reviewed/run-ZwhrGg/evidence`. No live sign-in was
+tested in this block; user visual confirmation remains outstanding. Live Linear
+actual-expiry verification is deferred; permanent public OAuth identity is undecided.
+Next: finish the existing native/MCP install/detail and GitHub author/publishing
+journey, then basic real-Agent acceptance under the reduced launch plan.
+
 **Current E4 signing-key tooling block, 8 October:** [Scoped custody audit](EXTENSION-SIGNING-KEY-CUSTODY-AUDIT.md)
 records explicit protected Minisign generation/unlocking across bootstrap,
 renewal and independently reviewed native/MCP signing. Missing/wrong passwords,

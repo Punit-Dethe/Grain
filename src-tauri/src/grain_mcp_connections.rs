@@ -309,6 +309,7 @@ impl State {
 #[serde(rename_all = "camelCase")]
 pub struct ConnectionView {
     id: String,
+    source: String,
     revision: String,
     name: String,
     url: String,
@@ -321,6 +322,12 @@ impl From<ConnectionRecord> for ConnectionView {
         let definition = record.definition();
         Self {
             id: record.identity().connection_id().into(),
+            source: match record.identity().source() {
+                grain_core::mcp::ConnectionSource::Configured => "configured",
+                grain_core::mcp::ConnectionSource::Store { .. } => "store",
+                grain_core::mcp::ConnectionSource::DevelopmentCatalog { .. } => "catalogue",
+            }
+            .into(),
             revision: record.revision().to_string(),
             name: definition.name.clone(),
             url: definition.url.clone(),
@@ -917,6 +924,22 @@ pub(super) fn directory(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn connection_views_distinguish_sources_without_exposing_account_identity() {
+        let data = tempfile::tempdir().unwrap();
+        let registry = ConnectionRegistry::load(data.path()).unwrap();
+        let configured = registry.insert(ConnectionDefinition::parse(br#"{"name":"Custom tools","url":"https://example.com/mcp","authentication":{"type":"none"}}"#).unwrap()).unwrap();
+        let store = registry.insert_store(store_descriptor()).unwrap();
+        for (record, source) in [(configured, "configured"), (store, "store")] {
+            let view = serde_json::to_value(ConnectionView::from(record)).unwrap();
+            assert_eq!(view["source"], source);
+            assert!(view["revision"].is_string());
+            assert_eq!(view.as_object().unwrap().len(), 7);
+            assert!(view.get("accountId").is_none());
+            assert!(view.get("identity").is_none());
+        }
+    }
 
     fn store_descriptor() -> grain_core::mcp::StoreDescriptor {
         let entry = serde_json::from_slice::<grain_sdk::Index>(include_bytes!(

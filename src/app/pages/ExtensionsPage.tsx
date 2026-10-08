@@ -32,6 +32,7 @@ import {
   type StoreView,
 } from "@/bindings";
 import { MediaArtwork, StoreCard } from "../extensions/StoreCard";
+import { McpConnections } from "../extensions/McpConnections";
 import { Markdown } from "@/components/markdown/Markdown";
 import "@/components/markdown/markdown.css";
 import { DeveloperSection } from "@/components/settings/experimentations/DeveloperSection";
@@ -1386,17 +1387,20 @@ export function ExtensionsPage({ view }: { view: ExtensionViewId }) {
           </div>
 
           {view === "installed" ? (
-            <InstalledList
-              controller={controller}
-              query={query}
-              onPreview={openDetail}
-              onBrowseStore={() => {
-                window.location.hash = hashForRoute({
-                  page: "extensions",
-                  view: "store",
-                }).slice(1);
-              }}
-            />
+            <>
+              <InstalledList
+                controller={controller}
+                query={query}
+                onPreview={openDetail}
+                onBrowseStore={() => {
+                  window.location.hash = hashForRoute({
+                    page: "extensions",
+                    view: "store",
+                  }).slice(1);
+                }}
+              />
+              {developer?.enabled && <McpConnections query={query} />}
+            </>
           ) : (
             <StoreGrid
               query={query}
