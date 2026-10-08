@@ -905,6 +905,7 @@ dependencies = [
  "grain-sdk",
  "image",
  "minisign",
+ "rpassword",
  "serde",
  "serde_json",
  "sha2",

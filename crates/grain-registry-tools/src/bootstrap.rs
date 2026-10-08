@@ -1,9 +1,9 @@
 //! Clean unpublished catalogue initialization from the app's current trust seed.
 use super::*;
 
-pub(crate) fn create(key: &Path, days: u32, out: &Path) -> Result<()> {
+pub(crate) fn create(key: &Path, days: u32, out: &Path, unlock: &crate::Unlock) -> Result<()> {
     let seed = seed()?;
-    create_with(seed.path(), key, days, out, &app_anchor)
+    create_with(seed.path(), key, days, out, &app_anchor, unlock)
 }
 
 pub(super) fn seed() -> Result<tempfile::TempDir> {
@@ -33,6 +33,7 @@ pub(super) fn create_with(
     days: u32,
     out: &Path,
     anchor: &Anchor<'_>,
+    unlock: &crate::Unlock,
 ) -> Result<()> {
     if !(1..=30).contains(&days) {
         bail!("Bootstrap lifetime must be one through thirty days");
@@ -71,17 +72,17 @@ pub(super) fn create_with(
     }
     pending.insert("index.json", bytes);
     // Current trust seed only; no old registry, archive, settings or key discovery.
-    let key_text = String::from_utf8(
-        crate::review::read(key, 8192).context("Read explicit bootstrap publisher key")?,
-    )?;
-    for (name, raw) in pending {
-        let sig = crate::sign_text(&key_text, &raw)?;
-        grain_core::trust::verify_publisher_signature(&roots, &raw, &sig)?;
-        tree.docs
-            .insert(format!("{name}.minisig"), sig.into_bytes());
-        tree.docs.insert(name.into(), raw);
+    {
+        let signing_key = crate::signing_key::load(key, unlock)
+            .context("Read explicit bootstrap publisher key")?;
+        for (name, raw) in pending {
+            let sig = crate::signing_key::sign(&signing_key, &raw)?;
+            grain_core::trust::verify_publisher_signature(&roots, &raw, &sig)?;
+            tree.docs
+                .insert(format!("{name}.minisig"), sig.into_bytes());
+            tree.docs.insert(name.into(), raw);
+        }
     }
-    drop(key_text);
     fs::create_dir(&out)?;
     let mut owned = OwnedOutput(out.clone(), false);
     copy(&tree, &out.join("v1"))?;

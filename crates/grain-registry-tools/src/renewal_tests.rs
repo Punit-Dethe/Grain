@@ -40,6 +40,7 @@ fn renewal_recovers_expired_metadata_preserving_rules_assets_and_future_fields()
         30,
         &out,
         &f.anchor(),
+        &crate::Unlock::development(),
     )
     .unwrap();
     let next = check(&out.join("v1"), &f.anchor(), true).unwrap();
@@ -106,6 +107,7 @@ fn renewal_uses_existing_stale_parent_promotion_guard_for_fresh_sources() {
         30,
         &out,
         &f.anchor(),
+        &crate::Unlock::development(),
     )
     .unwrap();
     promote_with(&out, &store, &pin, &f.anchor()).unwrap();
@@ -130,12 +132,18 @@ fn renewal_refuses_stale_pins_and_lifetime_errors_before_key_access() {
         (old.state.snapshot.as_str(), 31, "one to thirty"),
         ("a".repeat(64).as_str(), 30, "snapshot changed"),
     ] {
-        assert!(
-            renew_with(&base, pin, &missing_key, days, &out, &f.anchor())
-                .unwrap_err()
-                .to_string()
-                .contains(error)
-        );
+        assert!(renew_with(
+            &base,
+            pin,
+            &missing_key,
+            days,
+            &out,
+            &f.anchor(),
+            &crate::Unlock::development()
+        )
+        .unwrap_err()
+        .to_string()
+        .contains(error));
         assert!(!out.exists());
     }
     let mut altered = f.json(&base, "index.json");
@@ -147,7 +155,8 @@ fn renewal_refuses_stale_pins_and_lifetime_errors_before_key_access() {
         &missing_key,
         30,
         &out,
-        &f.anchor()
+        &f.anchor(),
+        &crate::Unlock::development()
     )
     .unwrap_err()
     .to_string()
@@ -167,16 +176,25 @@ fn renewal_refuses_wrong_or_oversized_keys_without_emitting_output() {
         &f.root.path().join("keys/rotated.key"),
         30,
         &out,
-        &f.anchor()
+        &f.anchor(),
+        &crate::Unlock::development()
     )
     .is_err());
     assert!(!out.exists());
     let key = f.root.path().join("oversized.key");
     fs::write(&key, vec![b'x'; 8193]).unwrap();
-    assert!(renew_with(&base, &pin, &key, 30, &out, &f.anchor())
-        .unwrap_err()
-        .to_string()
-        .contains("oversized"));
+    assert!(renew_with(
+        &base,
+        &pin,
+        &key,
+        30,
+        &out,
+        &f.anchor(),
+        &crate::Unlock::development()
+    )
+    .unwrap_err()
+    .to_string()
+    .contains("oversized"));
     assert!(!out.exists());
 }
 
@@ -193,10 +211,18 @@ fn renewal_rejects_expired_roots_and_version_exhaustion_before_key_access() {
         f.signed(&base, name, &value, "publisher");
         f.bind(&base, "publisher");
         let pin = check(&base, &f.anchor(), false).unwrap().state.snapshot;
-        assert!(renew_with(&base, &pin, &key, 30, &out, &f.anchor())
-            .unwrap_err()
-            .to_string()
-            .contains("version exhausted"));
+        assert!(renew_with(
+            &base,
+            &pin,
+            &key,
+            30,
+            &out,
+            &f.anchor(),
+            &crate::Unlock::development()
+        )
+        .unwrap_err()
+        .to_string()
+        .contains("version exhausted"));
         f.signed(&base, name, &saved, "publisher");
         f.bind(&base, "publisher");
     }
@@ -205,10 +231,18 @@ fn renewal_rejects_expired_roots_and_version_exhaustion_before_key_access() {
     f.signed(&base, "roots.json", &roots, "root");
     f.bind(&base, "publisher");
     let pin = check(&base, &f.anchor(), false).unwrap().state.snapshot;
-    assert!(renew_with(&base, &pin, &key, 30, &out, &f.anchor())
-        .unwrap_err()
-        .to_string()
-        .contains("root-authorized"));
+    assert!(renew_with(
+        &base,
+        &pin,
+        &key,
+        30,
+        &out,
+        &f.anchor(),
+        &crate::Unlock::development()
+    )
+    .unwrap_err()
+    .to_string()
+    .contains("root-authorized"));
     assert!(!out.exists());
 }
 
@@ -218,19 +252,33 @@ fn renewal_does_not_shorten_expiry_or_overwrite_and_nest_output() {
     let base = renewable(&f, "base", true);
     let pin = check(&base, &f.anchor(), false).unwrap().state.snapshot;
     let key = f.root.path().join("key-must-not-be-opened");
-    assert!(
-        renew_with(&base, &pin, &key, 30, &base.join("nested"), &f.anchor())
-            .unwrap_err()
-            .to_string()
-            .contains("outside")
-    );
+    assert!(renew_with(
+        &base,
+        &pin,
+        &key,
+        30,
+        &base.join("nested"),
+        &f.anchor(),
+        &crate::Unlock::development()
+    )
+    .unwrap_err()
+    .to_string()
+    .contains("outside"));
     let out = f.root.path().join("existing");
     fs::create_dir(&out).unwrap();
     fs::write(out.join("keep"), "owned by someone else").unwrap();
-    assert!(renew_with(&base, &pin, &key, 30, &out, &f.anchor())
-        .unwrap_err()
-        .to_string()
-        .contains("already exists"));
+    assert!(renew_with(
+        &base,
+        &pin,
+        &key,
+        30,
+        &out,
+        &f.anchor(),
+        &crate::Unlock::development()
+    )
+    .unwrap_err()
+    .to_string()
+    .contains("already exists"));
     assert_eq!(
         fs::read(out.join("keep")).unwrap(),
         b"owned by someone else"
@@ -238,10 +286,18 @@ fn renewal_does_not_shorten_expiry_or_overwrite_and_nest_output() {
     let future = f.tree("far-future", 1, true);
     let pin = check(&future, &f.anchor(), false).unwrap().state.snapshot;
     let refuse = f.root.path().join("refused");
-    assert!(renew_with(&future, &pin, &key, 30, &refuse, &f.anchor())
-        .unwrap_err()
-        .to_string()
-        .contains("extend both"));
+    assert!(renew_with(
+        &future,
+        &pin,
+        &key,
+        30,
+        &refuse,
+        &f.anchor(),
+        &crate::Unlock::development()
+    )
+    .unwrap_err()
+    .to_string()
+    .contains("extend both"));
     assert!(!refuse.exists());
 }
 
@@ -256,15 +312,30 @@ fn renewal_refuses_corrupt_assets_and_untrusted_roots_before_signing() {
     let path = base.join(name);
     let before = fs::read(&path).unwrap();
     fs::write(&path, "changed").unwrap();
-    assert!(
-        renew_with(&base, &old.state.snapshot, &key, 30, &out, &f.anchor())
-            .unwrap_err()
-            .to_string()
-            .contains("signed hash/size")
-    );
+    assert!(renew_with(
+        &base,
+        &old.state.snapshot,
+        &key,
+        30,
+        &out,
+        &f.anchor(),
+        &crate::Unlock::development()
+    )
+    .unwrap_err()
+    .to_string()
+    .contains("signed hash/size"));
     fs::write(path, before).unwrap();
     let roots = f.json(&base, "roots.json");
     f.signed(&base, "roots.json", &roots, "rotated");
-    assert!(renew_with(&base, &old.state.snapshot, &key, 30, &out, &f.anchor()).is_err());
+    assert!(renew_with(
+        &base,
+        &old.state.snapshot,
+        &key,
+        30,
+        &out,
+        &f.anchor(),
+        &crate::Unlock::development()
+    )
+    .is_err());
     assert!(!out.exists());
 }

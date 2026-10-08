@@ -19,7 +19,12 @@ impl Fixture {
     fn new() -> Self {
         let root = tempfile::tempdir().unwrap();
         for name in ["root", "publisher", "rotated"] {
-            crate::keygen(root.path().join("keys"), name.into()).unwrap();
+            crate::keygen(
+                root.path().join("keys"),
+                name.into(),
+                &crate::Unlock::development(),
+            )
+            .unwrap();
         }
         let root_pub = Self::public(root.path(), "root");
         Self { root, root_pub }
@@ -72,7 +77,12 @@ impl Fixture {
         fs::write(dir.join(name), &raw).unwrap();
         fs::write(
             dir.join(format!("{name}.minisig")),
-            crate::sign_bytes(&self.root.path().join(format!("keys/{key}.key")), &raw).unwrap(),
+            crate::sign_bytes(
+                &self.root.path().join(format!("keys/{key}.key")),
+                &raw,
+                &crate::Unlock::development(),
+            )
+            .unwrap(),
         )
         .unwrap();
     }
@@ -187,7 +197,12 @@ fn authentic_companions_from_different_publications_and_unbound_catalogues_refus
     fs::write(base.join("index.json"), &raw).unwrap();
     fs::write(
         base.join("index.json.minisig"),
-        crate::sign_bytes(&f.root.path().join("keys/publisher.key"), &raw).unwrap(),
+        crate::sign_bytes(
+            &f.root.path().join("keys/publisher.key"),
+            &raw,
+            &crate::Unlock::development(),
+        )
+        .unwrap(),
     )
     .unwrap();
     assert!(check(&base, &f.anchor(), true).is_err());

@@ -8,6 +8,7 @@ pub(super) fn renew_with(
     days: u32,
     out: &Path,
     anchor: &Anchor<'_>,
+    unlock: &crate::Unlock,
 ) -> Result<()> {
     if !hex(pin) || !(1..=30).contains(&days) {
         bail!("Renewal needs an independent snapshot digest and one to thirty days");
@@ -63,31 +64,30 @@ pub(super) fn renew_with(
     }
     pending.insert("index.json".into(), bytes);
     // Read the bounded non-linked key only after every public-input precondition.
-    // Existing maintainer signing supports its unencrypted key format; production
-    // key custody/authorization is an external release gate, not granted here.
-    let key_text = String::from_utf8(crate::review::read(key, 8192)?)?;
-    for (name, bytes) in pending {
-        let signature = crate::sign_text(&key_text, &bytes)?;
-        if name == "index.json" {
-            let (_, status) = grain_core::trust::verify_index(
-                &roots,
-                &bytes,
-                &signature,
-                None,
-                Utc::now().timestamp(),
-                false,
-            )?;
-            if status != grain_core::trust::IndexStatus::Fresh {
-                bail!("Renewed index is not fresh");
+    {
+        let signing_key = crate::signing_key::load(key, unlock)?;
+        for (name, bytes) in pending {
+            let signature = crate::signing_key::sign(&signing_key, &bytes)?;
+            if name == "index.json" {
+                let (_, status) = grain_core::trust::verify_index(
+                    &roots,
+                    &bytes,
+                    &signature,
+                    None,
+                    Utc::now().timestamp(),
+                    false,
+                )?;
+                if status != grain_core::trust::IndexStatus::Fresh {
+                    bail!("Renewed index is not fresh");
+                }
+            } else {
+                grain_core::trust::verify_revocations(&roots, &bytes, &signature)?;
             }
-        } else {
-            grain_core::trust::verify_revocations(&roots, &bytes, &signature)?;
+            tree.docs
+                .insert(format!("{name}.minisig"), signature.into_bytes());
+            tree.docs.insert(name, bytes);
         }
-        tree.docs
-            .insert(format!("{name}.minisig"), signature.into_bytes());
-        tree.docs.insert(name, bytes);
     }
-    drop(key_text);
     fs::create_dir(&out)?;
     let mut owned = OwnedOutput(out.clone(), false);
     copy(&tree, &out.join("v1"))?;

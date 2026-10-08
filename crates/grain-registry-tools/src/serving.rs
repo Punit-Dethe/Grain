@@ -542,8 +542,15 @@ pub(super) fn verify(path: &Path) -> Result<()> {
     Ok(())
 }
 
-pub(super) fn renew(v1: &Path, pin: &str, key: &Path, days: u32, out: &Path) -> Result<()> {
-    renewal::renew_with(v1, pin, key, days, out, &app_anchor)
+pub(super) fn renew(
+    v1: &Path,
+    pin: &str,
+    key: &Path,
+    days: u32,
+    out: &Path,
+    unlock: &crate::Unlock,
+) -> Result<()> {
+    renewal::renew_with(v1, pin, key, days, out, &app_anchor, unlock)
 }
 
 pub(super) fn assemble(base: &Path, update: &Path, out: &Path) -> Result<()> {

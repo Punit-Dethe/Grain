@@ -52,6 +52,7 @@ pub(super) struct Inputs<'a> {
     pub attestation: &'a Path,
     pub previous: &'a Path,
     pub key: &'a Path,
+    pub unlock: &'a crate::Unlock,
     pub out: &'a Path,
 }
 
@@ -399,6 +400,7 @@ fn write_signed(
     snapshot: &Path,
     key: &Path,
     out: &Path,
+    unlock: &crate::Unlock,
 ) -> Result<()> {
     policy.validate(Utc::now().timestamp())?;
     let candidate: crate::catalogue::Candidate =
@@ -452,8 +454,10 @@ fn write_signed(
         bail!("Next index exceeds size limit");
     }
     // Only now can the key be opened, after all public-route admission gates.
-    let key_text = String::from_utf8(read(key, 8192)?)?;
-    let signature = crate::sign_text(&key_text, &bytes)?;
+    let signature = {
+        let signing_key = crate::signing_key::load(key, unlock)?;
+        crate::signing_key::sign(&signing_key, &bytes)?
+    };
     let (_, status) = grain_core::trust::verify_index(
         &policy.roots(),
         &bytes,
@@ -538,7 +542,10 @@ pub(super) fn sign(input: Inputs<'_>) -> Result<()> {
     verify_attestation(&gh, &policy, scratch.path())?;
     // Query mutable review state last, immediately before the delayed key gate.
     crate::approval::verify(&gh, &policy, &reviewed_source)?;
-    write_signed(&policy, index, &snapshot, input.key, &out)?;
+    input
+        .unlock
+        .outside(input.key, &[&submission, &prepared, &candidate, &prior])?;
+    write_signed(&policy, index, &snapshot, input.key, &out, input.unlock)?;
     println!(
         "signed catalogue update at {}; not uploaded or a complete hosted registry",
         out.display()
@@ -787,7 +794,11 @@ pub(crate) mod tests {
             )
             .unwrap();
             let keydir = root.join("keys");
-            crate::keygen(keydir.clone(), "test".into()).unwrap();
+            let unlock = crate::signing_key::password_file(
+                &root.join("operator-password"),
+                "controlled review signing password",
+            );
+            crate::keygen(keydir.clone(), "test".into(), &unlock).unwrap();
             let mut p = policy();
             p.publishing_public_key = minisign::PublicKeyBox::from_string(
                 &fs::read_to_string(keydir.join("test.pub")).unwrap(),
@@ -823,7 +834,7 @@ pub(crate) mod tests {
             fs::write(previous_dir.join("index.json"), &old).unwrap();
             fs::write(
                 previous_dir.join("index.json.minisig"),
-                crate::sign_bytes(&keydir.join("test.key"), &old).unwrap(),
+                crate::sign_bytes(&keydir.join("test.key"), &old, &unlock).unwrap(),
             )
             .unwrap();
             p.previous_index_sha256 = digest(&old);
@@ -835,6 +846,7 @@ pub(crate) mod tests {
                 &snapshot,
                 &keydir.join("test.key"),
                 &output,
+                &unlock,
             )
             .unwrap();
             let bytes = fs::read(output.join("index.json")).unwrap();
@@ -870,7 +882,8 @@ pub(crate) mod tests {
                 },
                 &snapshot,
                 &root.join("missing.key"),
-                &refused
+                &refused,
+                &unlock
             )
             .unwrap_err()
             .to_string()
@@ -883,7 +896,8 @@ pub(crate) mod tests {
                 previous,
                 &snapshot,
                 &keydir.join("test.key"),
-                &refused
+                &refused,
+                &unlock
             )
             .is_err());
             assert!(!refused.exists());

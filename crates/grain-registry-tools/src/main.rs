@@ -12,12 +12,13 @@
 //! trusts (C-10), and verify against `minisign-verify` in `grain-core`.
 
 use std::fs;
-use std::io::Cursor;
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 use clap::{Args, Parser, Subcommand};
-use minisign::{KeyPair, PublicKeyBox, SecretKeyBox};
+use minisign::{KeyPair, PublicKeyBox};
+mod signing_key;
+use signing_key::Unlock;
 mod approval;
 mod catalogue;
 mod prepare;
@@ -33,6 +34,8 @@ mod serving;
 struct Cli {
     #[command(subcommand)]
     cmd: Cmd,
+    #[command(flatten)]
+    unlock: Unlock,
 }
 
 #[derive(Args)]
@@ -568,12 +571,30 @@ fn edit_distance(a: &str, b: &str) -> usize {
 }
 
 fn main() -> Result<()> {
-    match Cli::parse().cmd {
+    let cli = Cli::parse();
+    let unlock = &cli.unlock;
+    if unlock.requested()
+        && !matches!(
+            &cli.cmd,
+            Cmd::BootstrapServingTree(_)
+                | Cmd::RenewServingMetadata { .. }
+                | Cmd::SignReviewedCandidate(_)
+                | Cmd::Keygen { .. }
+                | Cmd::Sign { .. }
+                | Cmd::Roots { .. }
+                | Cmd::Publish { .. }
+                | Cmd::SetInstalls { .. }
+                | Cmd::Retire { .. }
+        )
+    {
+        anyhow::bail!("Credential options apply only to key generation/signing commands");
+    }
+    match cli.cmd {
         Cmd::BootstrapServingTree(BootstrapServingTreeArgs {
             key,
             expires_days,
             out,
-        }) => serving::bootstrap::create(&key, expires_days, &out),
+        }) => serving::bootstrap::create(&key, expires_days, &out, unlock),
         Cmd::CaptureGithubPublication {
             checkout,
             repository,
@@ -637,7 +658,14 @@ fn main() -> Result<()> {
             key,
             expires_days,
             out,
-        } => serving::renew(&v1, &expected_snapshot_sha256, &key, expires_days, &out),
+        } => serving::renew(
+            &v1,
+            &expected_snapshot_sha256,
+            &key,
+            expires_days,
+            &out,
+            unlock,
+        ),
         Cmd::ExportHostingBundle {
             store,
             out,
@@ -689,16 +717,17 @@ fn main() -> Result<()> {
             previous: &previous,
             key: &key,
             out: &out,
+            unlock,
         }),
-        Cmd::Keygen { out, name } => keygen(out, name),
-        Cmd::Sign { key, input, out } => sign(key, input, out),
+        Cmd::Keygen { out, name } => keygen(out, name, unlock),
+        Cmd::Sign { key, input, out } => sign(key, input, out, unlock),
         Cmd::Publine { pubkey } => publine(pubkey),
         Cmd::Roots {
             root_key,
             publishing_pub,
             base_urls,
             v1,
-        } => roots(root_key, publishing_pub, base_urls, v1),
+        } => roots(root_key, publishing_pub, base_urls, v1, unlock),
         Cmd::Publish {
             key,
             pack,
@@ -719,19 +748,20 @@ fn main() -> Result<()> {
             expires_days,
             v1,
             media_src,
+            unlock,
         ),
         Cmd::SetInstalls {
             key,
             sets,
             expires_days,
             v1,
-        } => set_installs(key, sets, expires_days, v1),
+        } => set_installs(key, sets, expires_days, v1, unlock),
         Cmd::Retire {
             key,
             ids,
             expires_days,
             v1,
-        } => retire(key, ids, expires_days, v1),
+        } => retire(key, ids, expires_days, v1, unlock),
         Cmd::Verify { v1 } => verify(v1),
         Cmd::CheckSubmission { dir } => check_submission(dir),
         Cmd::SiteGen { v1, out } => site_gen(v1, out),
@@ -884,25 +914,8 @@ fn verify(v1: PathBuf) -> Result<()> {
     serving::verify(&v1)
 }
 /// Sign `bytes` into a detached `.minisig` string with a secret-key file.
-fn sign_bytes(key: &std::path::Path, bytes: &[u8]) -> Result<String> {
-    let sk_str = fs::read_to_string(key).with_context(|| format!("read {}", key.display()))?;
-    sign_text(&sk_str, bytes)
-}
-
-fn sign_text(sk_str: &str, bytes: &[u8]) -> Result<String> {
-    let sk_box = SecretKeyBox::from_string(sk_str).context("parse secret key")?;
-    let sk = sk_box
-        .into_secret_key(Some(String::new()))
-        .context("decode secret key (unencrypted dev key)")?;
-    let sig_box = minisign::sign(
-        None,
-        &sk,
-        Cursor::new(bytes),
-        Some("grain registry signed document"),
-        Some("grain-registry"),
-    )
-    .context("sign")?;
-    Ok(sig_box.into_string())
+fn sign_bytes(key: &std::path::Path, bytes: &[u8], unlock: &Unlock) -> Result<String> {
+    signing_key::sign(&signing_key::load(key, unlock)?, bytes)
 }
 
 fn roots(
@@ -910,6 +923,7 @@ fn roots(
     publishing_pub: String,
     base_urls: Vec<String>,
     v1: PathBuf,
+    unlock: &Unlock,
 ) -> Result<()> {
     fs::create_dir_all(&v1).ok();
     let roots = grain_sdk::Roots {
@@ -922,7 +936,7 @@ fn roots(
     };
     let json = format!("{}\n", serde_json::to_string_pretty(&roots)?);
     let doc = json.into_bytes();
-    let sig = sign_bytes(&root_key, &doc)?;
+    let sig = sign_bytes(&root_key, &doc, unlock)?;
     fs::write(v1.join("roots.json"), &doc)?;
     fs::write(v1.join("roots.json.minisig"), sig)?;
     println!("wrote {}/roots.json (+ .minisig)", v1.display());
@@ -1037,6 +1051,7 @@ fn publish(
     expires_days: i64,
     v1: PathBuf,
     media_src: Option<PathBuf>,
+    unlock: &Unlock,
 ) -> Result<()> {
     if pack
         .parent()
@@ -1172,7 +1187,7 @@ fn publish(
 
     let json = format!("{}\n", serde_json::to_string_pretty(&index)?);
     let doc = json.into_bytes();
-    let sig = sign_bytes(&key, &doc)?;
+    let sig = sign_bytes(&key, &doc, unlock)?;
     fs::write(&index_path, &doc)?;
     fs::write(v1.join("index.json.minisig"), sig)?;
 
@@ -1190,7 +1205,13 @@ fn publish(
 /// server-side (the CDN/download endpoint aggregates artifact fetches); this is
 /// the step that publishes those totals into the signed document the client
 /// reads. Ids not present in the index are reported and skipped.
-fn set_installs(key: PathBuf, sets: Vec<String>, expires_days: i64, v1: PathBuf) -> Result<()> {
+fn set_installs(
+    key: PathBuf,
+    sets: Vec<String>,
+    expires_days: i64,
+    v1: PathBuf,
+    unlock: &Unlock,
+) -> Result<()> {
     let generation = current_generation(&v1)?;
     let index_path = v1.join("index.json");
     let mut index: grain_sdk::Index =
@@ -1224,7 +1245,7 @@ fn set_installs(key: PathBuf, sets: Vec<String>, expires_days: i64, v1: PathBuf)
         .to_string();
     let json = format!("{}\n", serde_json::to_string_pretty(&index)?);
     let doc = json.into_bytes();
-    let sig = sign_bytes(&key, &doc)?;
+    let sig = sign_bytes(&key, &doc, unlock)?;
     fs::write(&index_path, &doc)?;
     fs::write(v1.join("index.json.minisig"), sig)?;
     println!("index re-signed (version {})", index.version);
@@ -1238,7 +1259,13 @@ fn set_installs(key: PathBuf, sets: Vec<String>, expires_days: i64, v1: PathBuf)
 /// keyed off the retired one: two entries can legitimately share a media blob,
 /// and deleting by the retired entry's hash list alone would pull a file still
 /// under a surviving card.
-fn retire(key: PathBuf, ids: Vec<String>, expires_days: i64, v1: PathBuf) -> Result<()> {
+fn retire(
+    key: PathBuf,
+    ids: Vec<String>,
+    expires_days: i64,
+    v1: PathBuf,
+    unlock: &Unlock,
+) -> Result<()> {
     let generation = current_generation(&v1)?;
     let index_path = v1.join("index.json");
     let mut index: grain_sdk::Index =
@@ -1294,7 +1321,7 @@ fn retire(key: PathBuf, ids: Vec<String>, expires_days: i64, v1: PathBuf) -> Res
         .format("%Y-%m-%dT%H:%M:%SZ")
         .to_string();
     let doc = format!("{}\n", serde_json::to_string_pretty(&index)?).into_bytes();
-    let sig = sign_bytes(&key, &doc)?;
+    let sig = sign_bytes(&key, &doc, unlock)?;
     fs::write(&index_path, &doc)?;
     fs::write(v1.join("index.json.minisig"), sig)?;
     println!(
@@ -1331,16 +1358,29 @@ fn current_generation(v1: &std::path::Path) -> Result<grain_sdk::distribution::M
     Ok(grain_core::trust::metadata_generation(&roots, &revocations))
 }
 
-fn keygen(out: PathBuf, name: String) -> Result<()> {
-    fs::create_dir_all(&out).with_context(|| format!("create {}", out.display()))?;
-    // Development keys are encrypted with an EMPTY passphrase (custody decision,
-    // PHASE5A §Step 1): the box round-trips deterministically with no prompt,
-    // and the final migration to real passphrases on removable media is a
-    // re-pin + re-sign, not a redesign. `to_box`/`into_secret_key` must agree on
-    // the passphrase, hence a generated-encrypted key rather than an
-    // unencrypted one whose box the crate still wraps in scrypt.
+fn keygen(out: PathBuf, name: String, unlock: &Unlock) -> Result<()> {
+    if name.is_empty()
+        || name.len() > 80
+        || !name
+            .bytes()
+            .all(|v| v.is_ascii_alphanumeric() || v == b'-' || v == b'_')
+    {
+        anyhow::bail!("Key name must contain only letters, digits, hyphen or underscore");
+    }
+    if let Ok(meta) = fs::symlink_metadata(&out) {
+        if !meta.is_dir() || meta.file_type().is_symlink() {
+            anyhow::bail!("Key output must be a real directory");
+        }
+    }
+    for suffix in ["pub", "key"] {
+        if fs::symlink_metadata(out.join(format!("{name}.{suffix}"))).is_ok() {
+            anyhow::bail!("Key output already exists; never overwrite a keypair");
+        }
+    }
+    let password = unlock.password(true)?;
     let KeyPair { pk, sk } =
-        KeyPair::generate_encrypted_keypair(Some(String::new())).context("generate keypair")?;
+        KeyPair::generate_encrypted_keypair(Some(password)).context("Generate keypair")?;
+    fs::create_dir_all(&out).with_context(|| format!("create {}", out.display()))?;
 
     let pk_box = pk.to_box().context("encode public key")?;
     let sk_box = sk
@@ -1349,10 +1389,18 @@ fn keygen(out: PathBuf, name: String) -> Result<()> {
 
     let pub_path = out.join(format!("{name}.pub"));
     let key_path = out.join(format!("{name}.key"));
-    fs::write(&pub_path, pk_box.to_string())
-        .with_context(|| format!("write {}", pub_path.display()))?;
-    fs::write(&key_path, sk_box.to_string())
-        .with_context(|| format!("write {}", key_path.display()))?;
+    use std::io::Write;
+    // Owner-only staging files are removed on every unfinished outcome. Commit
+    // each complete file without clobbering another operator's output.
+    let mut secret = tempfile::NamedTempFile::new_in(&out)?;
+    secret.write_all(sk_box.to_string().as_bytes())?;
+    secret.as_file().sync_all()?;
+    let mut public = tempfile::NamedTempFile::new_in(&out)?;
+    public.write_all(pk_box.to_string().as_bytes())?;
+    public.as_file().sync_all()?;
+    secret.persist_noclobber(&key_path).map_err(|e| e.error)?;
+    public.persist_noclobber(&pub_path).map_err(|e| e.error)
+        .context("Secret key saved; public key output failed: retain the key and inspect outputs before retrying")?;
 
     println!("wrote {}", pub_path.display());
     println!("wrote {}  (SECRET — never commit)", key_path.display());
@@ -1362,34 +1410,16 @@ fn keygen(out: PathBuf, name: String) -> Result<()> {
     Ok(())
 }
 
-fn sign(key: PathBuf, input: PathBuf, out: Option<PathBuf>) -> Result<()> {
-    let sk_str = fs::read_to_string(&key).with_context(|| format!("read {}", key.display()))?;
-    let sk_box = SecretKeyBox::from_string(&sk_str).context("parse secret key")?;
-    // Pass an empty password rather than `None`: the minisign crate prompts on
-    // stdin whenever the password is `None` (even for an unencrypted key), which
-    // would hang non-interactive signing. Our development keys are unencrypted,
-    // so an empty password is ignored by the (absent) KDF.
-    let sk = sk_box
-        .into_secret_key(Some(String::new()))
-        .context("decode secret key (unencrypted dev key)")?;
-
+fn sign(key: PathBuf, input: PathBuf, out: Option<PathBuf>, unlock: &Unlock) -> Result<()> {
     let data = fs::read(&input).with_context(|| format!("read {}", input.display()))?;
-    let sig_box = minisign::sign(
-        None,
-        &sk,
-        Cursor::new(&data),
-        Some("grain registry signed document"),
-        Some("grain-registry"),
-    )
-    .context("sign")?;
+    let signature = sign_bytes(&key, &data, unlock)?;
 
     let sig_path = out.unwrap_or_else(|| {
         let mut p = input.clone().into_os_string();
         p.push(".minisig");
         PathBuf::from(p)
     });
-    fs::write(&sig_path, sig_box.into_string())
-        .with_context(|| format!("write {}", sig_path.display()))?;
+    fs::write(&sig_path, signature).with_context(|| format!("write {}", sig_path.display()))?;
     println!("wrote {}", sig_path.display());
     Ok(())
 }
@@ -1460,6 +1490,7 @@ mod submission_tests {
                 30,
                 root.path().join("v1"),
                 media.then(|| root.path().into()),
+                &Unlock::development(),
             )
             .unwrap_err();
             assert!(error.to_string().contains("E4"));

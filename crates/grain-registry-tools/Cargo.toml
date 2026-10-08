@@ -23,6 +23,7 @@ serde_json = { workspace = true }
 # dependency of the app — signing is a maintainer/registry concern (5B), and the
 # app verifies with the lightweight `minisign-verify` crate instead.
 minisign = "0.7"
+rpassword = "7.5.4"
 clap = { version = "4", features = ["derive"] }
 sha2 = "0.10"
 chrono = { version = "0.4", default-features = false, features = ["alloc", "clock"] }

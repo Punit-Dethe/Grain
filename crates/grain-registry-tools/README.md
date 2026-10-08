@@ -14,6 +14,48 @@ Use `cargo metadata --format-version 1 --no-deps` to locate the configured targe
 directory. The binaries are `debug/grain-ext` and `debug/grain-registry` (`.exe`
 on Windows). Authors use the [CLI guide](../grain-ext-cli/README.md).
 
+## Explicit signing-key credentials
+
+Every key generation/signing command requires one explicit unlock mode:
+`--prompt-key-password`, `--key-password-file OPERATOR_PASSWORD_FILE`, or
+`--dev-empty-key-password` for disposable development keys only. There is no
+default empty password, implicit terminal/stdin prompt, password argument,
+password environment variable or automatic key discovery. Verification and
+preparation reject credential options and never need a secret key.
+
+```powershell
+grain-registry keygen --out OPERATOR_KEY_DIRECTORY --name publishing --prompt-key-password
+grain-registry sign --key OPERATOR_KEY_DIRECTORY/publishing.key --input DOCUMENT --prompt-key-password
+```
+
+The prompt needs attached stdin/stderr terminals, does not echo, and confirms
+the password during generation. For controlled noninteractive operator use,
+select a private UTF-8 password file instead. The file is bounded to 1024 bytes,
+must contain a nonempty line, and may end with one LF or CRLF; spaces are
+significant. Secret keys are bounded to 8192 bytes. Linked/nonregular files
+refuse. On Unix, protected-mode keys and password files must have owner-only
+permissions (for example `chmod 600`); generated files are mode 600. On Windows,
+restrict the operator directory's ACL: this tool does not verify Windows ACLs.
+Never put credentials in source/build/serving trees or attach them to evidence.
+Reviewed-source signing also checks that the selected key/password paths are
+outside its author and serving input trees after the public review gates.
+
+Nonempty-password key generation uses the existing locked Minisign library's
+encryption/KDF; signature verification and the app's trust pins are unchanged.
+Bootstrap and renewal unlock once per operation and finish verifying signatures
+before creating output. Reviewed signing opens credentials after the existing
+policy, provenance and approval checks. Passwords/unlocked keys are scoped to
+the operation; **secure-memory erasure is not certified** by this library.
+No credentials go into author builders, attesters, publishing jobs or the app.
+
+Generation refuses unsafe names and existing public/secret output paths before
+unlocking, then stages and syncs complete files with no-clobber persistence.
+The two-file pair is not an atomic transaction: if the secret was persisted and
+public persistence fails, retain that complete key and inspect the outputs.
+Never delete it and regenerate automatically. Actual production key identity,
+offline-root separation, protected storage, backup and release authorization
+remain operator gates. See the [custody audit](../../docs/Extensions%202.0/EXTENSION-SIGNING-KEY-CUSTODY-AUDIT.md).
+
 ## Source preparation, without signing
 
 The unprivileged build job obtains a fresh standalone source checkout at the
@@ -160,7 +202,7 @@ now verifies genuine provenance through this command; production human review an
 governance remain unaccepted.
 
 ```powershell
-grain-registry sign-reviewed-candidate --submission registry/extensions/com.example.tools --prepared prepared-tools --candidate catalogue-candidate --policy protected-review/approved.json --policy-sha256 '<independent policy SHA256>' --gh 'C:\Program Files\GitHub CLI\gh.exe' --attestation candidate-attestation.jsonl --previous previous-v1 --key protected-keys/publishing.key --out signed-update
+grain-registry sign-reviewed-candidate --submission registry/extensions/com.example.tools --prepared prepared-tools --candidate catalogue-candidate --policy protected-review/approved.json --policy-sha256 '<independent policy SHA256>' --gh 'C:\Program Files\GitHub CLI\gh.exe' --attestation candidate-attestation.jsonl --previous previous-v1 --key protected-keys/publishing.key --prompt-key-password --out signed-update
 ```
 
 The strict policy has these required fields. All digests are lowercase hexadecimal;
@@ -416,7 +458,7 @@ records evidence and limitations.
 ## Metadata-only renewal (E4f)
 
 ```powershell
-grain-registry renew-serving-metadata --v1 SELECTED_SNAPSHOT --expected-snapshot-sha256 '<independently protected snapshot digest>' --key OPERATOR_PUBLISHING_KEY --expires-days 30 --out FRESH_RENEWAL
+grain-registry renew-serving-metadata --v1 SELECTED_SNAPSHOT --expected-snapshot-sha256 '<independently protected snapshot digest>' --key OPERATOR_PUBLISHING_KEY --prompt-key-password --expires-days 30 --out FRESH_RENEWAL
 grain-registry verify-serving-tree --v1 FRESH_RENEWAL/v1
 grain-registry promote-serving-tree --assembly FRESH_RENEWAL --store PROTECTED_STORE --expected-current-sha256 '<independently protected current.json digest>'
 ```
@@ -432,8 +474,8 @@ key read; both new signatures must verify under existing roots before output.
 The result is a fresh complete `v1/` plus the previous parent for existing locked
 promotion. It does not access GitHub, deploy, schedule work, reapprove sources,
 alter revocation states or delete files. Key custody and protected release
-authorization are external prerequisites; the command uses the existing
-unencrypted maintainer key format and does not certify secure-memory erasure.
+authorization are external prerequisites; the command supports explicitly
+unlocked password-protected keys and does not certify secure-memory erasure.
 Use the protected selected snapshot pin, not a hash supplied by an author. Keep
 normal source publication on `sign-reviewed-candidate`. GitHub remains the
 confirmed registry host; optional OAuth website preparation is parked.
@@ -536,7 +578,7 @@ fixtures and CLI checkpoint have been removed.
 
 ```text
 grain-registry bootstrap-serving-tree --key EXPLICIT_PUBLISHER_KEY \
-  --expires-days 30 --out NEW_BOOTSTRAP
+  --prompt-key-password --expires-days 30 --out NEW_BOOTSTRAP
 grain-registry verify-serving-tree --v1 NEW_BOOTSTRAP/v1
 grain-registry initialize-serving-store --v1 NEW_BOOTSTRAP/v1 --out NEW_STORE
 grain-registry export-hosting-bundle --store NEW_STORE \
@@ -546,8 +588,8 @@ grain-registry export-hosting-bundle --store NEW_STORE \
 Bootstrap authenticates the **embedded current app seed**, preserves its genuine
 roots/current revocation rules, and signs a fresh empty index and revocations
 with versions advanced above that seed (currently 2/2). Lifetime is 1–30 days.
-This uses the current signer's unencrypted minisign format and an explicitly
-supplied key; missing/wrong keys refuse. Root trust, seed freshness, empty
+This uses the current Minisign signer and an explicitly unlocked key;
+missing/wrong keys or passwords refuse. Root trust, seed freshness, empty
 catalogue, version/size bounds and output separation are checked before signing.
 There is no old checkout, legacy identity reservation, archive binding, recovered
 file route, invented historical revocation or settings migration. Existing
@@ -710,8 +752,8 @@ approval. A changing/stale view fails rather than mixing generations.
 2. Keep offline root custody separate from the publishing signer. Review the
    existing public key against the operator's actual key; no development key
    discovered on disk supplies that authority. Use an explicit key outside
-   source/author/build workspaces; these tools currently accept an unencrypted
-   minisign key, so protect storage/access and backup operationally. No signing
+   source/author/build workspaces with explicit password-protected unlocking.
+   Protect storage/access, password custody and backup operationally. No signing
    key goes into the author builder, attester, publisher or app.
 3. Bootstrap the fresh empty generation, independently record its selected
    snapshot/receipt pins, and export it with the existing commands. For later

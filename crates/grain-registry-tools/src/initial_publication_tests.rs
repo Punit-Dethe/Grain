@@ -24,6 +24,7 @@ impl Initial {
             1,
             &tree,
             &f.anchor(),
+            &crate::Unlock::development(),
         )
         .unwrap();
         let repo = f.root.path().join("checkout");
