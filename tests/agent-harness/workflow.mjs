@@ -660,7 +660,9 @@ export function workflowHandlers(ctx) {
       trace
         .flatMap((entry) => entry.returnedTools)
         .filter((id) => id.startsWith("wf_")),
-      ["wf_read", "wf_write", "wf_verify"],
+      ["wf_read", "wf_write", "wf_verify"].flatMap((id) =>
+        trace.at(-1).invalidArgumentRefusals.includes(id) ? [id, id] : [id],
+      ),
     );
     assert.deepEqual(trace.at(-1).receipts, [
       "wf_read",
@@ -690,6 +692,7 @@ export function workflowHandlers(ctx) {
       actualDispatches: 3,
       writes: 1,
       preservedSchemas: true,
+      invalidArgumentRefusals: trace.at(-1).invalidArgumentRefusals,
       batchEmission: trace.some((entry) => entry.batchEmission),
       continuedSameTask: true,
     });

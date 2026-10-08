@@ -226,10 +226,7 @@ export function liveModelAdapter(config, sockets, timers) {
         }
         if (!call.function.name.startsWith("act__")) continue;
         const name = schemas.get(call.function.name)?.id;
-        if (
-          mode !== "normal" &&
-          result.content.startsWith("The action arguments are invalid: ")
-        ) {
+        if (result.content.startsWith("The action arguments are invalid: ")) {
           assert.equal(
             name,
             ["wf_read", "wf_write", "wf_verify"][receipts.length],

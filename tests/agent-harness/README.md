@@ -689,6 +689,11 @@ Use `--scenario agent.live-native-workflow --live-configured` or its MCP counter
 
 The real model receives a fixed disposable-object task through Grain's real Agent/model boundary and chooses the calls itself. The trace checks metadata before schemas, incremental 0/1/2/3 exposure, unchanged earlier definitions, exact returned object/write count and a single approved write. Reports preserve bounded action/schema/receipt metadata, no raw model prompts or credentials, and identify the configured model evidence class. Batch emission is recorded as observed; deterministic batch-withholding remains covered by the controlled cases.
 
+Both ordinary and interruption live workflows permit one invalid-argument
+correction only after the host refuses dispatch. That refusal is recorded as an
+attempt, never a receipt; action order, exact dispatch/write counts and independent
+verification remain required. A second refusal or generic provider failure fails.
+
 The live adapter has 1 MiB request/response limits, a 60-second upstream request deadline, no redirect or idle-pool reuse and owned socket/timer/frontend cancellation. Harness waits permit 120 seconds for genuine-model stages; production budgets/deadlines are not changed. Closing it drops credential references, not a JavaScript zeroization guarantee. Both `agent-live` cases are excluded from `all`; the live flag is refused in ordinary suites. Genuine runs do not replace SDK OAuth/account testing or check 48's denial/expiry/Stop/failure observations. See the [focused audit](../../docs/Extensions%202.0/AGENT-WORKFLOW-AUDIT.md) and the retention inventory before removing debug-only observation/relay hooks.
 
 ## Controlled MCP expiry and refresh recovery

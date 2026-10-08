@@ -2362,7 +2362,7 @@ test("live model admission requires explicit opt-in and refuses the flag in ordi
   }
 });
 
-test("genuine interruption permits one exact non-dispatched argument correction without inventing a receipt", async () => {
+test("genuine workflows permit one exact non-dispatched argument correction without inventing a receipt", async () => {
   const { createServer } = await import("node:http");
   const { liveModelAdapter } = await import("./live-model.mjs");
   let calls = 0;
@@ -2429,47 +2429,52 @@ test("genuine interruption permits one exact non-dispatched argument correction 
     ],
   };
   try {
-    adapter.configure("denial");
-    await adapter.reply({
-      ...frame,
-      tools: [],
-      messages: frame.messages.slice(0, 1),
-    });
-    await adapter.reply(frame);
-    frame.messages.push(
-      {
-        role: "assistant",
-        tool_calls: [{ id: "bad-read", function: { name: "act__read" } }],
-      },
-      {
-        role: "tool",
-        tool_call_id: "bad-read",
-        content:
-          "The action arguments are invalid: action arguments contain an undeclared parameter.",
-      },
-    );
-    const reply = await adapter.reply(frame);
-    assert.deepEqual(reply.liveModel.receipts, []);
-    assert.deepEqual(reply.liveModel.invalidArgumentRefusals, ["wf_read"]);
-    frame.messages.push(
-      {
-        role: "assistant",
-        tool_calls: [
-          { id: "another-bad-read", function: { name: "act__read" } },
-        ],
-      },
-      {
-        role: "tool",
-        tool_call_id: "another-bad-read",
-        content:
-          "The action arguments are invalid: another undeclared parameter.",
-      },
-    );
-    await assert.rejects(
-      adapter.reply(frame),
-      /one non-dispatched argument correction/,
-    );
-    assert.equal(calls, 3);
+    for (const mode of ["normal", "denial"]) {
+      const before = calls;
+      adapter.configure(mode);
+      frame.messages.splice(3);
+      await adapter.reply({
+        ...frame,
+        tools: [],
+        messages: frame.messages.slice(0, 1),
+      });
+      await adapter.reply(frame);
+      frame.messages.push(
+        {
+          role: "assistant",
+          tool_calls: [{ id: "bad-read", function: { name: "act__read" } }],
+        },
+        {
+          role: "tool",
+          tool_call_id: "bad-read",
+          content:
+            "The action arguments are invalid: action arguments contain an undeclared parameter.",
+        },
+      );
+      const reply = await adapter.reply(frame);
+      assert.deepEqual(reply.liveModel.receipts, []);
+      assert.deepEqual(reply.liveModel.invalidArgumentRefusals, ["wf_read"]);
+      frame.messages.push(
+        {
+          role: "assistant",
+          tool_calls: [
+            { id: "another-bad-read", function: { name: "act__read" } },
+          ],
+        },
+        {
+          role: "tool",
+          tool_call_id: "another-bad-read",
+          content:
+            "The action arguments are invalid: another undeclared parameter.",
+        },
+      );
+      await assert.rejects(
+        adapter.reply(frame),
+        /one non-dispatched argument correction/,
+      );
+      assert.equal(calls, before + 3);
+    }
+    const beforeFailure = calls;
     adapter.configure("model-failure");
     frame.messages.splice(3);
     await adapter.reply({
@@ -2495,7 +2500,7 @@ test("genuine interruption permits one exact non-dispatched argument correction 
     );
     assert.equal(
       calls,
-      5,
+      beforeFailure + 2,
       "Generic failure was silently accepted as a non-dispatched correction",
     );
   } finally {

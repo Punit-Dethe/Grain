@@ -22,9 +22,19 @@ production operator setup before implementing the missing application flow.
    GitHub submission guides now describe both kinds and direct MCP connections.
    No new publisher, runtime or authentication layer was built. Catalogue
    activation remains a separate operator gate.
-3. **Launch acceptance (next):** run native + configured/store MCP through the real
+3. **Launch acceptance (current, partially verified):** run native + configured/store MCP through the real
    Agent, retain attributable failures, audit the changed boundaries, and obtain
    user UI approval. Address actual defects before release activation.
+
+   Current checkpoint: configured-model native read/write/verify **Pass**;
+   eight real-app controlled interruption/failure cases **Pass**, cleanup Pass.
+   Genuine MCP workflow remains **Pending** after two configured-provider
+   60-second request timeouts; failed evidence is retained. The existing live
+   oracle now admits the same single non-dispatched argument correction in
+   ordinary and interruption workflows, preserving exact receipts/write counts.
+   Five focused oracle/privacy/cancellation tests pass. Further genuine-model
+   interruption cases were not run after the provider failures. UI approval and
+   public catalogue activation remain outstanding; no release activation occurred.
 
 Use fast affected checks while developing and one existing real-app checkpoint
 per completed block. The deferred live Linear token-expiry check and permanent
