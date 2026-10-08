@@ -22,7 +22,7 @@ production operator setup before implementing the missing application flow.
    GitHub submission guides now describe both kinds and direct MCP connections.
    No new publisher, runtime or authentication layer was built. Catalogue
    activation remains a separate operator gate.
-3. **Launch acceptance (current, partially verified):** run native + configured/store MCP through the real
+3. **Launch acceptance (current, automated checkpoint complete; release gates remain):** run native + configured/store MCP through the real
    Agent, retain attributable failures, audit the changed boundaries, and obtain
    user UI approval. Address actual defects before release activation.
 
@@ -32,21 +32,58 @@ production operator setup before implementing the missing application flow.
    corrected, non-dispatched invalid argument attempt. Earlier failed evidence is
    retained. The existing live oracle admits the same single non-dispatched argument correction in
    ordinary and interruption workflows, preserving exact receipts/write counts.
-   Five focused oracle/privacy/cancellation tests pass. Additional genuine-model
-   interruption acceptance remains open: native timed out at 120 seconds; MCP
-   passed decline/independent verification but the later task ended before writing.
-   These whole-case results remain Fail, not accepted. The relay now matches Grain's
-   existing 120-second request deadline; live stage waits allow up to four required
-   model turns. Production deadlines, action limits and receipt checks did not change.
+   Five focused oracle/privacy/cancellation tests pass. Genuine native and MCP
+   interruption cases now both **Pass** on the confirmed idle desktop, cleanup
+   Pass: each verifies zero writes after decline and preserves the completed write
+   receipt/unfinished notice after a model outage. Accepted evidence is under
+   `tests/agent-harness/.runs/launch-native-recovery-idle/run-NDheTo/evidence` and
+   `launch-mcp-recovery-idle/run-vfG0s8/evidence` in the same `.runs` root.
+   Earlier timeout, premature completion and Escape-interrupted attempts remain
+   failed evidence. The relay matches Grain's existing 120-second request deadline;
+   live stage waits allow up to four required model turns. Production deadlines,
+   action limits, receipt checks and harness source did not change in these repeats.
    UI approval and public catalogue activation remain outstanding; no release
-   activation occurred. Live failure-recovery completion needs a responsive model
-   that continues the prescribed task; do not add another harness or silently pass it.
+   activation occurred. This accepts the prescribed owned-tool workflows with
+   the configured model, not every model/provider, microphone or OS capture path.
 
 Use fast affected checks while developing and one existing real-app checkpoint
 per completed block. The deferred live Linear token-expiry check and permanent
 OAuth client identity remain explicit follow-ups; neither is claimed passed.
 Earlier dated entries below record implementation history, not additional
 mandatory infrastructure milestones for this reduced launch.
+
+### Remaining launch work — use this checklist, not the historical counts
+
+| Area | Current position | Remaining acceptance |
+| --- | --- | --- |
+| Custom MCPs and accounts | Form/JSON, SDK transport, OAuth, vault and lifecycle implemented; controlled real-app checks and earlier user Linear checks passed | Actual issued Linear token expiry remains deferred |
+| Native/MCP extension journey | Installation, updates, account controls, DESCRIPTION and author/submission tools implemented; existing local/store checkpoints passed | User visual approval; installation from the actual activated public catalogue |
+| Basic Agent execution | Genuine configured-model native and MCP read/write/verify and both recovery cases passed; eight controlled failure cases passed | No open genuine-model case in this launch checkpoint; public-provider acceptance remains separate |
+| Public availability | Existing GitHub build/sign/publication route implemented and tested with recorded evidence | Operator signing custody/authorization, repository controls, reviewed initial entries, bound public publication and fresh-profile acceptance |
+
+Both recovery cases completed on the confirmed idle desktop without changing
+receipt, approval or deadline checks. The preceding 8 October native repeat at
+`tests/agent-harness/.runs/launch-native-recovery-final/run-4Y6tmv/evidence`
+received the global Escape shortcut while waiting for the first tool approval:
+the Agent window closed and the upstream request was cancelled. Cleanup passed;
+this attempt supplies no recovery acceptance and does not establish a crash.
+Confirm desktop availability before future interactive runs; do not treat
+unrelated keyboard input as a passing scenario or an application defect.
+
+For visual acceptance, run `npm run dev:asr`, enable Developer Mode, and review
+**Extensions → Installed → Installed MCP extensions / Your MCP connections**.
+Review names/URLs, account controls, Add MCP form/JSON and detail-page navigation.
+No new sign-in or credential sharing is needed for this layout review.
+AGENTS.md requires user visual approval before release activation.
+
+After acceptance, use the existing
+[operator sequence](../../crates/grain-registry-tools/README.md#operator-sequence-before-live-activation)
+for actual GitHub catalogue activation and fresh-profile native/MCP installation.
+Do not generate substitute production keys, change GitHub administrative controls
+or remove the development release gate merely to close this checklist. Public
+activation is an operator handoff, not a new implementation framework. Permanent
+OAuth client hosting and advanced discovery remain separate follow-ups; the
+website is not needed for current Linear or explicitly configured-client routes.
 
 **Current E4 signing-key tooling block, 8 October:** [Scoped custody audit](EXTENSION-SIGNING-KEY-CUSTODY-AUDIT.md)
 records explicit protected Minisign generation/unlocking across bootstrap,

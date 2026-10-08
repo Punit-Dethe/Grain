@@ -1,6 +1,37 @@
 # Extension implementation: progress, changes and user testing
 
-**Current launch acceptance, 8 October:** step **3 of the reduced three-step
+**Current launch acceptance, 8 October:** steps **1 and 2 implemented; step 3's
+automated checkpoint complete, release gates remain**. The two remaining genuine
+configured-model recovery cases now **Pass**, each with cleanup Pass:
+native `launch-native-recovery-idle/run-NDheTo/evidence` and MCP
+`launch-mcp-recovery-idle/run-vfG0s8/evidence`, under ignored
+`tests/agent-harness/.runs/`. Each case records two accepted stages: declining
+the write leads to zero writes, independent verification and consumed-approval
+refusal; an outage after the approved write preserves its actual receipt and
+shows an unfinished-task notice without repeating it. Normal genuine native/MCP
+read/write/verify and the eight controlled failure cases remain accepted. No
+application or harness source, timeout, approval or receipt check changed in
+these repeats. Recorded host PIDs no longer exist after both runs.
+
+The plan now has one compact
+[remaining-work checklist](MCP-EXTENSION-REUSE-EXECUTION-PLAN.md#remaining-launch-work--use-this-checklist-not-the-historical-counts)
+separating application completion, accepted genuine-model recovery cases, user
+visual approval and actual public catalogue activation. Older phase/inventory
+counts do not add new launch milestones. No application or harness source changed
+in this clarification. One fresh native recovery attempt received global Escape
+before its first tool approval; the Agent closed and its model request was
+cancelled. Its case remains Fail, cleanup Pass, with evidence retained at ignored
+`tests/agent-harness/.runs/launch-native-recovery-final/run-4Y6tmv/evidence`.
+This is an interrupted attempt, not demonstrated crash or recovery acceptance.
+The user then confirmed desktop availability and both fresh repeats passed.
+Confirm availability again for future interactive work. User
+visual review needs `npm run dev:asr` and Extensions → Installed with Developer
+Mode enabled; no credentials need to be shared. Signing custody, GitHub operator
+controls, first reviewed entries, public delivery and fresh-profile acceptance
+remain release gates under the existing maintainer runbook. Deferred Linear
+expiry and permanent OAuth identity remain explicit follow-ups.
+
+**Previous launch acceptance, 8 October (superseded by the accepted repeats above):** step **3 of the reduced three-step
 launch plan** is current. Configured-model native **and MCP** read/one approved write/independent
 verification **Pass**. The existing eight-case real-app interruption batch
 **Pass**, cleanup Pass: native/MCP declines, actual approval expiry/restart,
