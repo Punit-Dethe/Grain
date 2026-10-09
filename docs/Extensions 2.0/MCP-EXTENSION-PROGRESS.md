@@ -27,6 +27,14 @@ GitHub login tests. The CI installer build and signed public extension catalogue
 delivery are the next checkpoints; no installer or provider action is accepted
 from these local checks alone.
 
+[First alpha CI build](https://github.com/Punit-Dethe/Grain/actions/runs/37926347284)
+was dispatched at `2aa54d0aabd067adb343aeac360a87de3930aab5`. GitHub accepted the
+reusable workflow and skipped the ordinary matrix. Checkout and the actual
+registration-input preflight passed without retrieving/displaying secret values.
+The installer build was still running at handoff; compilation/upload and actual
+OAuth credential validity are not yet accepted. Stopping a local status watcher
+does not cancel the GitHub Actions job.
+
 **Tester-only GitHub identity, 9 October:** the user authorized proceeding under
 the existing account and accepts reconnect/reinstall when experimental branding,
 repositories or registrations change. The existing beta without extensions and
