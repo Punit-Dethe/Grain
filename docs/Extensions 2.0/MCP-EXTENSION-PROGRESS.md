@@ -1,5 +1,32 @@
 # Extension implementation: progress, changes and user testing
 
+**Registered GitHub alpha build wiring, 9 October:** the user supplied
+[Grain GitHub Development](https://github.com/apps/grain-github-development).
+The app page exists and currently reports private visibility. Both required
+Actions secret names are present on `Punit-Dethe/Grain`; no values were retrieved
+or logged. Registration exists, but callback/permissions/expiry settings and
+credential correctness still require actual account acceptance. Private
+visibility supports owner-account testing; other tester accounts need Any account.
+
+Reused Build Test and the existing reusable build workflow with one explicit
+alpha toggle: Windows only, compile-time GitHub credentials only for this build,
+early static-value validation, installer artifact upload and no release ID.
+The alpha config uses its own product name/app identifier and empty updater
+endpoints, with updater artifact generation off. No beta release/tag workflow,
+signing key, Agent tool loader or harness was changed. Installers are not
+Authenticode signed; updater checks cannot use the beta feed. Alpha replacements
+are manual until a separate alpha update delivery is chosen.
+
+Focused checks pass: workflow YAML/routing/secret scoping and beta-vs-alpha
+configuration assertions, merged Tauri schema (validator ignores unrelated
+numeric-format annotations), five actual PowerShell preflight cases including
+missing/malformed inputs and refusal of release publication/wrong platform,
+credential-output assertions, formatting and scoped diff checks. Existing MCP
+backend acceptance is unchanged; these are build-configuration checks, not live
+GitHub login tests. The CI installer build and signed public extension catalogue
+delivery are the next checkpoints; no installer or provider action is accepted
+from these local checks alone.
+
 **Tester-only GitHub identity, 9 October:** the user authorized proceeding under
 the existing account and accepts reconnect/reinstall when experimental branding,
 repositories or registrations change. The existing beta without extensions and

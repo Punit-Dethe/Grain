@@ -89,8 +89,13 @@ public desktop credential/PKCE approach and remaining real-provider acceptance.
 Build-supplied registration now resolves only for the current verified GitHub
 store owner and exact GitHub resource/issuer/exchange endpoints. Explicit
 per-connection registrations retain their existing vault binding. No new OAuth
-server, catalogue engine or Agent harness was added. Actual app registration,
-sign-in, signed store activation and alpha packaging remain pending.
+server, catalogue engine or Agent harness was added. The user has registered
+Grain GitHub Development; its public page and both Actions secret names are
+verified without reading values. Build Test now offers an isolated Windows alpha
+artifact job reusing the existing builder, with a separate application identifier
+and disabled updater endpoints/artifacts. Actual CI packaging, sign-in and signed
+store activation remain pending. The app is currently private; owner-account
+testing can proceed, and other testers require Any account installation visibility.
 
 **GitHub candidate checkpoint, 9 October:** source is published at
 [grain-github-extension](https://github.com/Punit-Dethe/grain-github-extension),

@@ -1,9 +1,16 @@
 name: "Build Test"
 
-on: workflow_dispatch
+on:
+  workflow_dispatch:
+    inputs:
+      github-extension-alpha:
+        description: "Build only the isolated Windows extension alpha with the registered GitHub client"
+        type: boolean
+        default: false
 
 jobs:
   build-test:
+    if: ${{ !inputs.github-extension-alpha }}
     permissions:
       contents: write
     strategy:
@@ -41,4 +48,18 @@ jobs:
       asset-prefix: "handy-test"
       upload-artifacts: true
       is-debug-build: ${{ contains(matrix.args, '--debug') }}
+    secrets: inherit
+
+  extension-alpha:
+    if: ${{ inputs.github-extension-alpha }}
+    permissions:
+      contents: write
+    uses: ./.github/workflows/build.yml
+    with:
+      platform: windows-latest
+      target: x86_64-pc-windows-msvc
+      github-extension-alpha: true
+      asset-prefix: grain-extensions-alpha
+      upload-artifacts: true
+      sign-binaries: false
     secrets: inherit

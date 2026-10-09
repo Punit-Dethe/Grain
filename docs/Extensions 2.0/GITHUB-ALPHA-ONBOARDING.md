@@ -66,9 +66,29 @@ do not paste them into tracked files or command lines that will be logged.
 Absent/incomplete/invalid values do not enable the built-in registration. Rust's
 `option_env!` tracks these compile-time inputs for rebuilds. Changing runtime
 environment variables after compilation does not change an installed build.
-The current release workflows do not inject them yet. Alpha packaging and its
-separate release/updater channel remain a delivery step; do not send this alpha
-through the beta's existing latest-release feed.
+The existing **Build Test** workflow now has a `github-extension-alpha` option.
+When enabled, only its Windows alpha job runs, reusing `build.yml`. Save these
+two names as Actions repository secrets on `Punit-Dethe/Grain`. The job validates
+their presence/grammar without logging values and passes them only to the alpha
+build; ordinary build/release paths do not receive this registration.
+
+Run the workflow on `extensions/tool-only-retirement` with the alpha option
+enabled. The resulting `grain-extensions-alpha-x86_64-pc-windows-msvc` artifact
+contains an NSIS installer. It is not Authenticode signed; Windows may warn on
+installation. This job creates no GitHub Release, publishes no updater manifest
+and does not access updater signing keys. The alpha has its own product name and
+app identifier/profile, with no updater endpoints or updater artifacts. For now
+testers install replacements manually; a future alpha updater feed is a separate
+delivery decision. Beta configuration and release/tag workflows are unchanged.
+This application installer does not activate or sign the extension catalogue.
+
+The user's registered app is
+[Grain GitHub Development](https://github.com/apps/grain-github-development).
+Both Actions secret names were verified without reading values. The public app
+page currently says **private**: testing on its owner's account can proceed,
+but other tester accounts require installation availability **Any account**.
+Live account consent, repository permission settings and credential correctness
+are verified by actual provider acceptance, not by secret-name checks.
 
 Automatic resolution is restricted to a current, host-verified store connection
 for `com.grain.github`, OAuth authentication, and exactly

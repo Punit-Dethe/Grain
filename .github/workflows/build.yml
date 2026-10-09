@@ -43,6 +43,10 @@ on:
         required: false
         type: boolean
         default: false
+      github-extension-alpha:
+        required: false
+        type: boolean
+        default: false
 
 env:
   TSC_VERSION: "0.9.0"
@@ -75,6 +79,28 @@ jobs:
           VERSION=$(grep -o '"version": "[^"]*"' src-tauri/tauri.conf.json | cut -d'"' -f4)
           echo "Application version from tauri.conf.json: $VERSION"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Validate GitHub extension alpha registration
+        if: inputs.github-extension-alpha
+        shell: pwsh
+        env:
+          GRAIN_GITHUB_OAUTH_CLIENT_ID: ${{ secrets.GRAIN_GITHUB_OAUTH_CLIENT_ID }}
+          GRAIN_GITHUB_OAUTH_CLIENT_SECRET: ${{ secrets.GRAIN_GITHUB_OAUTH_CLIENT_SECRET }}
+          ALPHA_PLATFORM: ${{ inputs.platform }}
+          ALPHA_RELEASE_ID: ${{ inputs.release-id }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($env:ALPHA_PLATFORM -ne 'windows-latest' -or $env:ALPHA_RELEASE_ID) {
+            throw 'The extension alpha is a Windows artifact build, not a release publication'
+          }
+          foreach ($name in @('GRAIN_GITHUB_OAUTH_CLIENT_ID', 'GRAIN_GITHUB_OAUTH_CLIENT_SECRET')) {
+            $value = [Environment]::GetEnvironmentVariable($name)
+            $limit = if ($name.EndsWith('_ID')) { 512 } else { 4096 }
+            if ([string]::IsNullOrWhiteSpace($value) -or $value.Length -gt $limit -or $value -ne $value.Trim() -or $value -match '[\x00-\x1f\x7f-\x9f]') {
+              throw "$name is missing or malformed"
+            }
+          }
+          Write-Host 'GitHub alpha build inputs are present; values are not logged'
 
       - name: Determine build profile
         id: build-profile
@@ -382,6 +408,10 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # This dedicated desktop client is public/extractable in the binary.
+          # Never supply account tokens or an app private key here.
+          GRAIN_GITHUB_OAUTH_CLIENT_ID: ${{ inputs.github-extension-alpha && secrets.GRAIN_GITHUB_OAUTH_CLIENT_ID || '' }}
+          GRAIN_GITHUB_OAUTH_CLIENT_SECRET: ${{ inputs.github-extension-alpha && secrets.GRAIN_GITHUB_OAUTH_CLIENT_SECRET || '' }}
           APPLE_ID: ${{ inputs.sign-binaries && secrets.APPLE_ID || '' }}
           APPLE_ID_PASSWORD: ${{ inputs.sign-binaries && secrets.APPLE_ID_PASSWORD || '' }}
           APPLE_PASSWORD: ${{ inputs.sign-binaries && secrets.APPLE_PASSWORD || '' }}
@@ -408,7 +438,7 @@ jobs:
           releaseName: ${{ inputs.release-id && format('v{0}', steps.get-version.outputs.version) || '' }}
           releaseId: ${{ inputs.release-id }}
           assetNamePattern: ${{ steps.patch-release-name.outputs.platform }}
-          args: ${{ inputs.build-args }}
+          args: ${{ inputs.github-extension-alpha && '--bundles nsis --config src-tauri/tauri.extensions-alpha.conf.json' || inputs.build-args }}
 
       - name: Verify macOS dylib bundling
         if: inputs.target == 'x86_64-apple-darwin'
