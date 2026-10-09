@@ -233,7 +233,7 @@ export default function Onboarding({
   };
   return (
     <OnboardingLayout
-      step={2}
+      step={1}
       footer={
         <>
           <button

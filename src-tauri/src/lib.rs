@@ -1026,8 +1026,6 @@ pub fn run(cli_args: CliArgs) {
         ))
         .manage(cli_args.clone())
         .manage(grain_update::UpdateState::default())
-        .manage(grain_onboarding::OnboardingMicrophoneTest::default())
-        .manage(grain_onboarding::OnboardingTranscriptionTest::default())
         .setup(move |app| {
             specta_builder.mount_events(app);
 
@@ -1228,9 +1226,6 @@ pub fn run(cli_args: CliArgs) {
         })
         .on_window_event(|window, event| match event {
             tauri::WindowEvent::CloseRequested { .. } => {
-                if window.label() == "main" {
-                    grain_onboarding::close_onboarding_tests(window.app_handle());
-                }
                 // [GRAIN] The Agent panel is the only Agent webview (the summon
                 // input is native, in the pill process). On its close, release
                 // the transient Enter/Escape shortcuts — unless the native input
@@ -1368,11 +1363,6 @@ fn command_bindings() -> Builder<tauri::Wry> {
             grain_onboarding::resolve_onboarding_state,
             grain_onboarding::onboarding_step_after_permissions,
             grain_onboarding::get_onboarding_model_defaults,
-            grain_onboarding::start_onboarding_microphone_test,
-            grain_onboarding::stop_onboarding_microphone_test,
-            grain_onboarding::start_onboarding_transcription_test,
-            grain_onboarding::stop_onboarding_transcription_test,
-            grain_onboarding::cancel_onboarding_transcription_test,
             grain_theme::get_theme,
             grain_theme::set_theme_mode,
             shortcut::change_experimental_enabled_setting,
@@ -1577,7 +1567,6 @@ fn command_bindings() -> Builder<tauri::Wry> {
             grain_events::RecordingError,
             grain_events::PasteError,
             grain_events::ExtensionRecommendation,
-            grain_onboarding::OnboardingMicrophoneLevel,
             grain_theme::ThemeChanged,
         ])
 }

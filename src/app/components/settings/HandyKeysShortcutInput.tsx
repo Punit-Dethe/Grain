@@ -14,6 +14,7 @@ interface HandyKeysShortcutInputProps {
   grouped?: boolean;
   shortcutId: string;
   disabled?: boolean;
+  onRecordingChange?: (shortcutId: string, recording: boolean) => void;
   /** Render only the keycap control (no label row) — for hosts that supply
    * their own name/description, e.g. the capture-mode cards. */
   bare?: boolean;
@@ -32,6 +33,7 @@ export const HandyKeysShortcutInput: React.FC<HandyKeysShortcutInputProps> = ({
   shortcutId,
   disabled = false,
   bare = false,
+  onRecordingChange,
 }) => {
   const { t } = useTranslation();
   const { getSetting, updateBinding, resetBinding, isUpdating, isLoading } =
@@ -46,6 +48,19 @@ export const HandyKeysShortcutInput: React.FC<HandyKeysShortcutInputProps> = ({
   const osType = useOsType();
 
   const bindings = getSetting("bindings") || {};
+
+  const [isStarting, setIsStarting] = useState(false);
+  const mountedRef = useRef(false);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+  useEffect(() => {
+    onRecordingChange?.(shortcutId, isStarting || isRecording);
+    return () => onRecordingChange?.(shortcutId, false);
+  }, [shortcutId, isStarting, isRecording, onRecordingChange]);
 
   // Handle cancellation
   const cancelRecording = useCallback(async () => {
@@ -133,6 +148,10 @@ export const HandyKeysShortcutInput: React.FC<HandyKeysShortcutInputProps> = ({
         },
       );
 
+      if (cleanup) {
+        unlisten();
+        return;
+      }
       unlistenRef.current = unlisten;
     };
 
@@ -175,22 +194,30 @@ export const HandyKeysShortcutInput: React.FC<HandyKeysShortcutInputProps> = ({
 
   // Start recording a new shortcut
   const startRecording = async () => {
-    if (isRecording) return;
+    if (isStarting || isRecording) return;
 
+    setIsStarting(true);
     // Store the original binding to restore if canceled
     setOriginalBinding(bindings[shortcutId]?.current_binding || "");
 
     // Start backend recording
     try {
       await commands.startHandyKeysRecording(shortcutId);
+      if (!mountedRef.current) {
+        await commands.stopHandyKeysRecording().catch(console.error);
+        return;
+      }
       setIsRecording(true);
       setCurrentKeys("");
       currentKeysRef.current = "";
     } catch (error) {
+      if (!mountedRef.current) return;
       console.error("Failed to start recording:", error);
       toast.error(
         t("settings.general.shortcut.errors.set", { error: String(error) }),
       );
+    } finally {
+      if (mountedRef.current) setIsStarting(false);
     }
   };
 
@@ -283,7 +310,9 @@ export const HandyKeysShortcutInput: React.FC<HandyKeysShortcutInputProps> = ({
           className="px-2.5 py-1 text-sm font-mono font-semibold text-ink bg-paper-raised border border-line rounded-[5.5px] cursor-pointer tabular-nums transition-[background-color,border-color,box-shadow] duration-150 hover:bg-[var(--accent-tint)] hover:border-accent disabled:cursor-not-allowed disabled:opacity-50"
           style={{ boxShadow: "var(--shadow-hair)" }}
           onClick={startRecording}
-          disabled={disabled || isUpdating(`binding_${shortcutId}`)}
+          disabled={
+            disabled || isStarting || isUpdating(`binding_${shortcutId}`)
+          }
           aria-label={translatedName}
         >
           {formatKeyCombination(binding.current_binding, osType)}
@@ -291,7 +320,7 @@ export const HandyKeysShortcutInput: React.FC<HandyKeysShortcutInputProps> = ({
       )}
       <ResetButton
         onClick={() => resetBinding(shortcutId)}
-        disabled={disabled || isUpdating(`binding_${shortcutId}`)}
+        disabled={disabled || isStarting || isUpdating(`binding_${shortcutId}`)}
       />
     </div>
   );

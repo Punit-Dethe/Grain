@@ -52,106 +52,39 @@
       "brand": "Grain",
       "label": "SETUP",
       "progress": "Setup progress",
-      "skipTest": "Skip test",
       "continue": "Continue",
       "steps": {
         "microphone": "Microphone",
-        "modes": "Modes",
         "models": "Models",
-        "try": "Try",
         "shortcuts": "Shortcuts"
       },
       "microphone": {
-        "title": "Check your microphone",
-        "description": "Choose an input, then speak for five seconds.",
+        "title": "Choose your microphone",
+        "description": "Select the input Grain will use for dictation.",
         "inputLabel": "Input device",
         "checking": "Checking microphone access…",
-        "test": "Test microphone",
-        "testDetail": "A five-second check for a clear, balanced level",
-        "testAction": "Test microphone",
-        "retest": "Test microphone again",
-        "starting": "Opening microphone…",
-        "startingDetail": "Connecting to the selected input",
-        "listening": "Listening…",
-        "listeningDetail": "Keep speaking at your usual distance",
-        "success": "Microphone sounds good",
-        "successDetail": "Your voice is clear and the level is balanced",
-        "tooQuiet": "Microphone is a little quiet",
-        "tooQuietDetail": "Move closer or raise the microphone input level",
-        "tooLoud": "Microphone is too loud",
-        "tooLoudDetail": "Move farther away or lower the microphone input level",
-        "noSignal": "No voice detected",
-        "noSignalDetail": "Speak continuously, check the selected input, and try again",
-        "error": "Microphone could not start",
-        "errorDetail": "Choose another input or try again",
-        "checkingInput_one": "Checking level · {{count}} second left",
-        "checkingInput_other": "Checking level · {{count}} seconds left",
-        "quiet": "Quiet",
-        "balanced": "Balanced",
-        "loud": "Loud",
         "allow": "Allow microphone",
         "waitingPermission": "Waiting for permission…",
         "enableShortcuts": "Enable shortcuts",
         "shortcutsTitle": "Enable global shortcuts",
         "shortcutsDescription": "Accessibility access lets Grain start capture and paste text in other apps.",
-        "footerHint": "Local check. Audio isn’t saved.",
+        "footerHint": "You can change your microphone in Settings.",
         "errors": {
           "continue": "Microphone setup could not finish. Please try again."
-        }
+        },
+        "refresh": "Refresh",
+        "systemDefault": "System default"
       },
-      "modes": {
-        "title": "See how your words arrive",
-        "description": "Play a preview. Try your microphone on the next steps.",
-        "skip": "Skip preview",
-        "back": "Back",
-        "chooseModels": "Choose models",
+      "models": {
+        "title": "Download your models",
+        "description": "Choose Standard, Streaming, or both. You can add more later.",
         "standard": {
           "title": "Standard",
-          "takeaway": "One shortcut · Parakeet TDT v2/v3 uses Flow automatically; other models transcribe after you stop."
-        },
-        "flow": {
-          "title": "Standard · Flow",
-          "takeaway": "Same Standard shortcut · Parakeet TDT v2/v3 works while you speak."
+          "description": "Dictate with your selected speech model."
         },
         "streaming": {
           "title": "Streaming",
-          "takeaway": "ASR model · words appear live while you speak."
-        },
-        "preview": {
-          "label": "Illustrative preview",
-          "play": "Play",
-          "replay": "Replay",
-          "next": "Next",
-          "phrase": "Let’s move tomorrow’s meeting to eleven.",
-          "placeholder": "Watch what happens when you speak.",
-          "waitingText": "Your words are being recorded.",
-          "finishingText": "Preparing your transcript…",
-          "ready": "Choose Play to see this mode.",
-          "complete": "Recording stopped · transcript ready",
-          "standard": {
-            "recording": "Recording · the model waits",
-            "finishing": "Recording stopped · transcribing"
-          },
-          "flow": {
-            "recording": "Recording · the model is working",
-            "finishing": "Recording stopped · finishing"
-          },
-          "streaming": {
-            "recording": "Recording · words arrive live",
-            "finishing": "Recording stopped · finalizing"
-          }
-        }
-      },
-      "models": {
-        "title": "Choose your models",
-        "description": "Install either family or both. You can add more later.",
-        "standard": {
-          "title": "Batch model",
-          "description": "One Standard shortcut. Supported Parakeet models use Flow automatically."
-        },
-        "streaming": {
-          "title": "Streaming ASR",
-          "description": "Live words in Streaming mode."
+          "description": "See words appear as you speak."
         },
         "resolving": "Choosing recommended model…",
         "selected_one": "{{count}} model selected",
@@ -164,7 +97,7 @@
         "verifying": "Verifying",
         "extracting": "Preparing",
         "installed": "Installed",
-        "install": "Install selected",
+        "install": "Download and continue",
         "installing": "Installing…",
         "cancel": "Cancel installation",
         "back": "Back",
@@ -183,45 +116,9 @@
         "standardOnly": "Transcribes after you stop",
         "cancelling": "Cancelling…"
       },
-      "try": {
-        "title": "Give your voice a first run",
-        "description": "Try your models here. Nothing is pasted into other apps.",
-        "modeLabel": "Test capture mode",
-        "placeholder": "Your test transcription will appear here.",
-        "ready": "Ready",
-        "opening": "Opening microphone…",
-        "listening": "Listening",
-        "processing": "Transcribing…",
-        "complete": "Transcription complete",
-        "failed": "Test needs attention",
-        "start": "Start test",
-        "stop": "Stop and transcribe",
-        "again": "Test again",
-        "skip": "Skip test",
-        "back": "Back",
-        "continue": "Continue",
-        "modes": {
-          "flow": {
-            "title": "Standard",
-            "speed": "Batch model check",
-            "hint": "Check your dictation model here. After setup, Alt+Space uses Flow automatically with this Parakeet model."
-          },
-          "standard": {
-            "title": "Standard",
-            "speed": "After you stop",
-            "hint": "Record a complete thought, then stop to transcribe."
-          },
-          "streaming": {
-            "title": "Streaming",
-            "speed": "Live text",
-            "hint": "Words appear live."
-          }
-        },
-        "emptyResult": "No speech was recognized. Speak for a few seconds and try again."
-      },
       "shortcuts": {
         "title": "Set your shortcuts",
-        "description": "Click a shortcut, then press the keys you want.",
+        "description": "Choose the keys you will use to start dictation.",
         "settingsNote": "Change these later in Settings → Capture.",
         "back": "Back",
         "finish": "Open Grain"

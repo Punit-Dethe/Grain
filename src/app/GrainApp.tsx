@@ -13,9 +13,7 @@ import { HistorySettings } from "@/components/settings/history/HistorySettings";
 import { AudioPlayerGroup } from "@/components/ui/AudioPlayer";
 import Onboarding, {
   AccessibilityOnboarding,
-  ModesOnboarding,
   ShortcutsOnboarding,
-  TryOnboarding,
 } from "@/components/onboarding";
 import { commands, type OnboardingStep } from "@/bindings";
 import { ThemeProvider, useTheme } from "@/contexts/ThemeContext";
@@ -23,7 +21,7 @@ import { useSettings } from "@/hooks/useSettings";
 import { useModelStore } from "@/stores/modelStore";
 import {
   createOnboardingDraft,
-  onboardingModes,
+  onboardingShortcutIds,
 } from "./components/onboarding/onboardingState";
 import { OnboardingLayout } from "./components/onboarding/OnboardingLayout";
 import {
@@ -624,20 +622,7 @@ function NextShell() {
     );
   };
 
-  const availableModes = onboardingModes(
-    {
-      ...modelDraft,
-      selectedModels: {
-        standard:
-          modelDraft.selectedModels.standard || settings?.selected_model || "",
-        streaming:
-          modelDraft.selectedModels.streaming ||
-          settings?.selected_asr_model ||
-          "",
-      },
-    },
-    settings?.translate_to_english,
-  );
+  const shortcutIds = onboardingShortcutIds(modelDraft);
 
   if (onboardingStep === null)
     return (
@@ -655,37 +640,14 @@ function NextShell() {
       </>
     );
   }
-  if (onboardingStep === "modes") {
-    return (
-      <>
-        <ModesOnboarding
-          onBack={() => setOnboardingStep("accessibility")}
-          onComplete={() => setOnboardingStep("model")}
-        />
-        <Toaster theme={isDark ? "dark" : "light"} />
-      </>
-    );
-  }
   if (onboardingStep === "model") {
     return (
       <>
         <Onboarding
           draft={modelDraft}
           onDraftChange={setModelDraft}
-          onBack={() => setOnboardingStep("modes")}
-          onModelSelected={() => setOnboardingStep("try")}
-        />
-        <Toaster theme={isDark ? "dark" : "light"} />
-      </>
-    );
-  }
-  if (onboardingStep === "try") {
-    return (
-      <>
-        <TryOnboarding
-          availableModes={availableModes}
-          onBack={() => setOnboardingStep("model")}
-          onComplete={() => setOnboardingStep("shortcuts")}
+          onBack={() => setOnboardingStep("accessibility")}
+          onModelSelected={() => setOnboardingStep("shortcuts")}
         />
         <Toaster theme={isDark ? "dark" : "light"} />
       </>
@@ -695,8 +657,8 @@ function NextShell() {
     return (
       <>
         <ShortcutsOnboarding
-          availableModes={availableModes}
-          onBack={() => setOnboardingStep("try")}
+          shortcutIds={shortcutIds}
+          onBack={() => setOnboardingStep("model")}
           onComplete={() => setOnboardingStep("done")}
         />
         <Toaster theme={isDark ? "dark" : "light"} />
