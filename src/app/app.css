@@ -418,25 +418,6 @@ html[data-theme="light"] .theme-toggle .moon-icon {
   background: transparent;
 }
 
-.nav-section {
-  margin-top: 3px;
-}
-
-.sidebar > .nav-section:first-of-type {
-  margin-top: 0;
-}
-
-/* 11px inline, like the nav item and the wordmark: one left axis down the
-   whole rail. */
-.nav-label {
-  padding: 9px 11px 7px;
-  color: var(--text-4);
-  font-size: 10px;
-  font-weight: 650;
-  letter-spacing: 0.09em;
-  text-transform: uppercase;
-}
-
 .nav-list {
   display: grid;
   gap: 3px;
@@ -600,7 +581,8 @@ html[data-theme="light"] .theme-toggle .moon-icon {
   color: var(--text-4);
 }
 
-.update-notice-cta {
+/* Keep the accent foreground above generic button resets in the shell. */
+.grain-root .update-notice-cta {
   width: calc(100% - 20px);
   min-height: 29px;
   margin: 0 10px 10px;
@@ -2276,7 +2258,6 @@ html[data-theme="light"] .overview-cta-arrow {
   display: none;
 }
 
-.app[data-global-rail="compact"] .nav-label,
 .app[data-global-rail="compact"] .nav-item > span,
 .app[data-global-rail="compact"] .model-status,
 .app[data-global-rail="compact"] .update-notice,
@@ -2842,10 +2823,6 @@ html[data-theme="light"] .theme-toggle {
   color: #625f59;
 }
 
-html[data-theme="light"] .nav-label {
-  color: #6b675f;
-}
-
 html[data-theme="light"] .nav-item,
 html[data-theme="light"] .quick-panel-button {
   color: #625f59;
@@ -3118,7 +3095,6 @@ html[data-theme="light"] .next-settings-content .app-select__control {
     display: none;
   }
 
-  .sidebar .nav-label,
   .sidebar .nav-item > span,
   .sidebar .model-status,
   .sidebar .quick-panel-button span,

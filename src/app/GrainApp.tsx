@@ -233,37 +233,27 @@ function IconSprite() {
   );
 }
 
-const NAV_GROUPS = [
+const NAV_ITEMS = [
+  { page: "overview", label: "Overview", icon: "home", href: "#/overview" },
+  { page: "history", label: "History", icon: "clock", href: "#/history" },
   {
-    label: "Workspace",
-    items: [
-      { page: "overview", label: "Overview", icon: "home", href: "#/overview" },
-      { page: "history", label: "History", icon: "clock", href: "#/history" },
-      {
-        page: "tools",
-        label: "Personalize",
-        icon: "zap",
-        href: "#/tools/dictionary",
-      },
-      { page: "agent", label: "Agent", icon: "agent", href: "#/agent" },
-    ],
+    page: "tools",
+    label: "Personalize",
+    icon: "zap",
+    href: "#/tools/dictionary",
+  },
+  { page: "agent", label: "Agent", icon: "agent", href: "#/agent" },
+  {
+    page: "extensions",
+    label: "Extensions",
+    icon: "box",
+    href: "#/extensions/installed",
   },
   {
-    label: "Configure",
-    items: [
-      {
-        page: "extensions",
-        label: "Extensions",
-        icon: "box",
-        href: "#/extensions/installed",
-      },
-      {
-        page: "settings",
-        label: "Settings",
-        icon: "sliders",
-        href: "#/settings/capture",
-      },
-    ],
+    page: "settings",
+    label: "Settings",
+    icon: "sliders",
+    href: "#/settings/capture",
   },
 ] as const;
 
@@ -310,39 +300,32 @@ function Sidebar({
           <strong aria-hidden="true">{PROTOTYPE_COPY.brand}</strong>
         </div>
       </div>
-      {NAV_GROUPS.map((group) => (
-        <nav className="nav-section" key={group.label}>
-          <div className="nav-label">{group.label}</div>
-          <div className="nav-list">
-            {group.items.map((item) => {
-              if (!import.meta.env.DEV && item.page === "extensions")
-                return null;
-              const active =
-                item.page === route.page ||
-                (item.page === "extensions" &&
-                  route.page === "extension-settings");
-              const href = "href" in item ? item.href : undefined;
-              return (
-                <button
-                  key={item.page}
-                  type="button"
-                  className={`nav-item${active ? " active" : ""}`}
-                  data-page={item.page}
-                  title={item.label}
-                  disabled={!href}
-                  aria-current={active ? "page" : undefined}
-                  onClick={() => {
-                    if (href) window.location.hash = href.slice(1);
-                  }}
-                >
-                  <Icon name={item.icon} />
-                  <span>{item.label}</span>
-                </button>
-              );
-            })}
-          </div>
-        </nav>
-      ))}
+      <nav className="nav-list">
+        {NAV_ITEMS.map((item) => {
+          if (!import.meta.env.DEV && item.page === "extensions") return null;
+          const active =
+            item.page === route.page ||
+            (item.page === "extensions" && route.page === "extension-settings");
+          const href = "href" in item ? item.href : undefined;
+          return (
+            <button
+              key={item.page}
+              type="button"
+              className={`nav-item${active ? " active" : ""}`}
+              data-page={item.page}
+              title={item.label}
+              disabled={!href}
+              aria-current={active ? "page" : undefined}
+              onClick={() => {
+                if (href) window.location.hash = href.slice(1);
+              }}
+            >
+              <Icon name={item.icon} />
+              <span>{item.label}</span>
+            </button>
+          );
+        })}
+      </nav>
       <div className="sidebar-spacer" />
       <UpdateNotice />
       <div className="model-status">
