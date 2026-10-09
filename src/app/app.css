@@ -1,6 +1,6 @@
 @import "tailwindcss";
 
-/* Dark surfaces step inward from a brighter charcoal shell to darker cards.
+/* Dark surfaces step inward from a darker charcoal shell to lighter cards.
    The hero switcher compares neutral and warm palettes; light keeps its paper. */
 @theme {
   --color-paper: var(--bg-1);
@@ -29,15 +29,15 @@
 
 :root {
   color-scheme: dark;
-  --bg-0: #303030;
-  --bg-1: #252525;
-  --bg-2: #202020;
-  --bg-3: #171717;
-  --bg-4: #222222;
+  --bg-0: #171717;
+  --bg-1: #202020;
+  --bg-2: #252525;
+  --bg-3: #303030;
+  --bg-4: #383838;
   --text-1: #f1f1ef;
   --text-2: #d2d2cf;
   --text-3: #b0b0ad;
-  --text-4: #a0a09c;
+  --text-4: #aaaaa6;
   --hairline: rgba(255, 255, 255, 0.065);
   --hairline-soft: rgba(255, 255, 255, 0.035);
   --accent: #e4e4df;
@@ -67,7 +67,7 @@
   --ease-soft: cubic-bezier(0.2, 0.75, 0.25, 1);
   --shadow-float:
     0 22px 70px rgba(0, 0, 0, 0.42), 0 2px 10px rgba(0, 0, 0, 0.3);
-  --glass-fill: rgba(23, 23, 23, 0.86);
+  --glass-fill: rgba(48, 48, 48, 0.86);
   --glass-highlight: rgba(255, 255, 255, 0.06);
   /* Toggle OFF-track color. The only knob the settings switch needs from CSS;
      everything else (geometry, thumb, ON-track = --color-accent) lives in the
@@ -76,15 +76,15 @@
 }
 
 html[data-theme="dark"][data-dark-palette="warm"] {
-  --bg-0: #34312d;
-  --bg-1: #292622;
-  --bg-2: #211f1b;
-  --bg-3: #191714;
-  --bg-4: #26231f;
+  --bg-0: #191714;
+  --bg-1: #211f1b;
+  --bg-2: #292622;
+  --bg-3: #34312d;
+  --bg-4: #3d3933;
   --text-1: #f3ede3;
   --text-2: #d5cec2;
   --text-3: #b9b0a3;
-  --text-4: #aba399;
+  --text-4: #b3ab9f;
   --accent: #e9dec9;
   --accent-strong: #fff4df;
   --accent-hover: #fff4df;
@@ -95,7 +95,7 @@ html[data-theme="dark"][data-dark-palette="warm"] {
   --accent-ink: #191714;
   --lilac: #c9c0b2;
   --sky: #b9b0a3;
-  --glass-fill: rgba(25, 23, 20, 0.86);
+  --glass-fill: rgba(52, 49, 45, 0.86);
   --toggle-off: #696158;
 }
 

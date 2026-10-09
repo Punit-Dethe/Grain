@@ -1,13 +1,13 @@
 :root {
   color-scheme: dark;
-  --ev-bg: #252525;
-  --ev-raised: #171717;
-  --ev-sunken: #202020;
-  --ev-hover: #222222;
+  --ev-bg: #202020;
+  --ev-raised: #303030;
+  --ev-sunken: #252525;
+  --ev-hover: #383838;
   --ev-text: #f1f1ef;
   --ev-soft: #d2d2cf;
   --ev-muted: #b0b0ad;
-  --ev-faint: #a0a09c;
+  --ev-faint: #aaaaa6;
   --ev-line: rgba(255, 255, 255, 0.075);
   --ev-line-strong: rgba(255, 255, 255, 0.13);
   --ev-accent: #e4e4df;
