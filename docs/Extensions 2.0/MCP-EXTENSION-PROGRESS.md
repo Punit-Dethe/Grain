@@ -35,11 +35,34 @@ additional application rebuild is required.
 
 Created the private disposable `Punit-Dethe/grain-github-alpha-test` repository
 with README for the user's provider checks. Actual store install, App installation,
-GitHub account consent, Agent read/write and restart/disconnect remain **Pending**,
+GitHub account consent, Agent read/write and restart/disconnect were initially **Pending**,
 with the five-step batch in [onboarding](GITHUB-ALPHA-ONBOARDING.md#current-user-test-batch).
 Generic earlier tests do not certify these live-provider actions. Catalogue
 renewal before 8 November and secure alpha key backup remain maintainer operations;
 permanent production governance/branding and deferred Linear expiry remain separate.
+
+**User GitHub acceptance update, 9 October:** the user reports successful Store
+installation and GitHub sign-in/connection in the installed alpha. Agent does not
+open there, while it opens in development. Selective inspection of the alpha's
+own settings found `agent_enabled: false`; its log contains no Agent shortcut
+registration. The first diagnosis incorrectly treated this as a missed setup
+step. After the user confirmed using the switch, source tracing identified an
+application regression: the switch still called `extension_set_enabled`, which
+rejects the retired core-feature IDs, and the settings store ignored the
+structured error. Agent and Snippets now use dedicated core settings commands;
+both switches roll back backend rejection, and Agent registers/unregisters its
+shortcut outside the extension registry. Existing pre-initialization behavior
+is preserved: save the setting and let normal shortcut initialization register
+it. No retired extension capability was restored. Four frontend regression
+cases and the two existing capture shortcut conflict cases pass; TypeScript
+checking and compilation of the normal Tauri commands pass. The original
+harness enables Agent directly, so its earlier runtime checks did not cover
+this settings UI path. No harness changes were made. A corrected alpha build
+and real-user Agent acceptance remain required. Agent read/write and
+restart/disconnect tests remain Pending until verified. Ordinary development
+builds also need the compile-time GitHub OAuth
+registration supplied separately; successful alpha sign-in does not configure
+the development profile/build. No account credentials were inspected.
 
 **Alpha catalogue identity prepared, 9 October:** the first Windows build
 [37926347284](https://github.com/Punit-Dethe/Grain/actions/runs/37926347284) succeeded

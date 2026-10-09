@@ -182,16 +182,18 @@ const settingUpdaters: {
   debug_mode: (value) => commands.changeDebugModeSetting(value as boolean),
   custom_words: (value) => commands.updateCustomWords(value as string[]),
   snippets: (value) => commands.updateSnippets(value as Snippet[]),
-  // [GRAIN] Snippets and Agent are built-in extensions: their enabled bit lives
-  // in settings, but the ONLY backend path that persists it (and bumps toggle
-  // order, and for the Agent registers/unregisters the summon shortcut) is
-  // `extension_set_enabled`. There is no dedicated change_* command for them, so
-  // without these two entries the master toggle updated the UI and silently
-  // never reached the backend — it reverted on the next refetch or restart.
-  snippets_enabled: (value) =>
-    commands.extensionSetEnabled("grain.snippets", value as boolean),
-  agent_enabled: (value) =>
-    commands.extensionSetEnabled("grain.agent", value as boolean),
+  // Core feature toggles must not use the retired built-in extension route.
+  // Bindings return structured errors; throw them so the optimistic UI rolls back.
+  snippets_enabled: async (value) => {
+    const result = await commands.changeSnippetsEnabledSetting(
+      value as boolean,
+    );
+    if (result.status === "error") throw new Error(result.error);
+  },
+  agent_enabled: async (value) => {
+    const result = await commands.changeAgentEnabledSetting(value as boolean);
+    if (result.status === "error") throw new Error(result.error);
+  },
   // [GRAIN] The AI shortcut's idle start mode. Runtime-only — every capture
   // mode is always registered, so this writes a flag without touching hotkeys.
   capture_ai_start_mode: (value) =>

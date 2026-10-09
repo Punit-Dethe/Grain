@@ -1427,6 +1427,8 @@ fn command_bindings() -> Builder<tauri::Wry> {
             grain_commands::change_capture_end_with_ai_setting,
             grain_commands::change_capture_always_ai_setting,
             grain_commands::change_context_awareness_enabled_setting,
+            grain_commands::change_agent_enabled_setting,
+            grain_commands::change_snippets_enabled_setting,
             grain_commands::change_agent_autocopy_setting,
             grain_commands::change_agent_quick_enabled_setting,
             grain_commands::change_agent_context_mode_setting,

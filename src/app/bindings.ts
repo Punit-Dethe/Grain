@@ -622,6 +622,28 @@ async changeContextAwarenessEnabledSetting(enabled: boolean) : Promise<Result<nu
 }
 },
 /**
+ * Enable the core Agent and reconcile its summon shortcut independently of extensions.
+ */
+async changeAgentEnabledSetting(enabled: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_agent_enabled_setting", { enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e as any };
+}
+},
+/**
+ * Enable core snippet matching independently of extensions.
+ */
+async changeSnippetsEnabledSetting(enabled: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_snippets_enabled_setting", { enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e as any };
+}
+},
+/**
  * [GRAIN] Agent auto-copy policy (off / first reply / all replies).
  */
 async changeAgentAutocopySetting(mode: AgentAutocopy) : Promise<Result<null, string>> {

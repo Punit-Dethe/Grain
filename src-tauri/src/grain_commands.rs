@@ -512,6 +512,52 @@ pub fn change_paste_catch_enabled_setting(app: AppHandle, enabled: bool) -> Resu
     Ok(())
 }
 
+/// Enable the core Agent and reconcile its summon shortcut independently of extensions.
+#[tauri::command]
+#[specta::specta]
+pub fn change_agent_enabled_setting(
+    app: AppHandle,
+    window: tauri::WebviewWindow,
+    enabled: bool,
+) -> Result<(), String> {
+    require_main_window(&window)?;
+    let mut settings = settings::get_settings(&app);
+    if settings.agent_enabled == enabled {
+        return Ok(());
+    }
+    // Before onboarding initializes shortcuts, saving the setting is enough:
+    // initialization will register the enabled Agent alongside the other keys.
+    if app
+        .try_state::<crate::commands::ShortcutsInitialized>()
+        .is_some()
+    {
+        let binding = settings::get_stored_binding(&app, "summon_agent")?;
+        if enabled {
+            crate::shortcut::register_shortcut(&app, binding)?;
+        } else {
+            crate::shortcut::unregister_shortcut(&app, binding)?;
+        }
+    }
+    settings.agent_enabled = enabled;
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
+/// Enable core snippet matching independently of extensions.
+#[tauri::command]
+#[specta::specta]
+pub fn change_snippets_enabled_setting(
+    app: AppHandle,
+    window: tauri::WebviewWindow,
+    enabled: bool,
+) -> Result<(), String> {
+    require_main_window(&window)?;
+    let mut settings = settings::get_settings(&app);
+    settings.snippets_enabled = enabled;
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
 /// [GRAIN] Agent auto-copy policy (off / first reply / all replies).
 #[tauri::command]
 #[specta::specta]
@@ -1184,9 +1230,8 @@ impl Default for PackFacts {
     }
 }
 
-/// Flip an extension on/off (SPEC §5.1 inline toggle). Built-ins write their
-/// settings flag + bump toggle order; packs write the registry. The Agent
-/// toggle re-registers its binding so the change is zero-overhead-when-off.
+/// Flip a tool extension on/off. Core Agent, Snippets and context settings use
+/// their own commands and cannot be enabled through the extension registry.
 #[tauri::command]
 #[specta::specta]
 pub fn extension_set_enabled(

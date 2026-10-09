@@ -140,10 +140,23 @@ earliest 8 November expiry using the existing renewal/update route.
 
 ### Current user test batch
 
-All five procedures remain Pending until the user reports results:
+The user reports that Store installation and GitHub browser sign-in/connection
+work in the installed alpha. Agent read/write and restart/disconnect acceptance
+remain Pending. On 9 October, follow-up debugging confirmed that enabling Agent
+in the UI still used the retired built-in extension command, which rejected the
+request. The frontend ignored its structured error and could display a switch
+that was on without saving the setting or registering its shortcut. This was an
+application defect, not a missed user setup step. Agent and Snippets now have
+dedicated core settings commands; their switches check backend errors and roll
+back rejected changes. Agent shortcut registration failures are returned before
+the enabled setting is changed. A replacement alpha build is required; run
+37932435112 predates this fix. Live Agent acceptance remains Pending.
 
 1. Quit the running Grain, install the replacement alpha above and configure the
-   Agent model in its separate profile if needed. Open Extensions, click Developer
+   Agent model in its separate profile if needed. Open **Agent** in the sidebar,
+   turn on the switch beside **Grain Agent**, and use the shortcut displayed below
+   it. Development settings do not enable Agent in the alpha profile. Open
+   Extensions, click Developer
    once to enable the alpha gate, then close the drawer without turning it off.
 2. In the usual GitHub browser, install/configure **Grain GitHub Development** on
    only `Punit-Dethe/grain-github-alpha-test` (private disposable repo with README).
