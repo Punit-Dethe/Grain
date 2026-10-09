@@ -11,6 +11,12 @@ extension feature, authentication framework or acceptance scenario.
 - Shared ancestor: `076c8d7918c99f950a2ca6af0cd5248ed9045bbd`.
 - Safety checkpoint branch: `extensions/checkpoint-before-main-20261010`.
 - Isolated checkout: `C:\Projects\Grain\grain-main-integration-20261010`.
+- Published merge: `4556eae5110b15bfac1ad868ebda08d977b01194`.
+- Post-merge ancestry: **149 ahead / 0 behind** the main snapshot above.
+- Integrated tester alpha build:
+  [37977984049](https://github.com/Punit-Dethe/Grain/actions/runs/37977984049),
+  dispatched for that merge. **In progress** at handoff; no installer success
+  is claimed yet. Only the Windows alpha job runs; the normal matrix is skipped.
 
 The original `C:\Projects\Grain\grain` checkout and its preexisting local changes
 are preserved. Continue integrated development in the integration checkout;
@@ -82,7 +88,9 @@ revocation, socket cleanup and retired host-API checks remain.
 | `store-mcp` | 3 Pass | `tests/agent-harness/.runs/run-6CQlwG/evidence/report.md` |
 
 Reports identify the pre-merge HEAD and the dirty source/build fingerprints;
-they were run before the merge commit. Generated reports, profiles and build
+they were run before the merge commit. Final whitespace formatting and raw
+binding regeneration were followed by a fresh TypeScript/production build check.
+Generated reports, profiles and build
 outputs remain ignored disposable evidence. Do not commit or grow that material.
 
 ## Installed-alpha acceptance still required
