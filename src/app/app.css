@@ -1685,6 +1685,18 @@ html[data-theme="light"] .overview-card--interactive:hover {
   box-shadow: 0 3px 10px rgba(26, 26, 26, 0.06);
 }
 
+.grain-root[data-theme="dark"] .overview-start-tray {
+  background: var(--bg-3);
+}
+
+.grain-root[data-theme="dark"] .overview-card {
+  background: var(--bg-2);
+}
+
+.grain-root[data-theme="dark"] .overview-card--interactive:hover {
+  background: var(--bg-1);
+}
+
 /* Card Header */
 .overview-card-header {
   display: flex;
