@@ -1,5 +1,23 @@
 # Extension implementation: progress, changes and user testing
 
+**Continuation handoff, 10 October:** the user confirms the corrected installed
+alpha works after the Agent-start fix. Record **Agent opening: user-tested Pass**;
+GitHub installation/sign-in were already user-confirmed. Specific GitHub
+read/write/restart/disconnect procedures remain Pending unless separately
+reported; no blanket provider acceptance is inferred. Corrected installer:
+build [37955644860](https://github.com/Punit-Dethe/Grain/actions/runs/37955644860)
+at `a2215c73ad08f8394b76006045a74645cc25aacc`, successful and downloaded.
+
+The [current platform handoff](EXTENSION-PLATFORM-HANDOFF.md) consolidates user
+and developer experience, native/MCP contracts, OAuth ownership and third-party
+onboarding limitations, publishing/hosting, verified results, deferred work and
+the next integration checkpoint. After fetching app `origin/main`, the pre-doc
+snapshot is **147 ahead / 57 behind**, with **21 intersecting changed paths**.
+Main's WebView recording overlay, Agent and onboarding changes need semantic
+integration. No merge/rebase or application code changes were made in this
+documentation step. Continue by integrating main, not by expanding the harness
+or interpreting historical phase/test counts as the current backlog.
+
 **First GitHub catalogue publication accepted, 9 October:** implemented the
 user-authorized explicit maintainer approval in the existing signer, scoped to
 the exact GitHub 0.1.0 submission digest, registry/owner and alpha publisher.

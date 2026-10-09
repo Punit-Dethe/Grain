@@ -119,11 +119,12 @@ Its first attempt caught the old native-only test assumption; that was corrected
 not a runtime permission or validation bypass. Maintainer suite: 83 Pass;
 affected final approval/review checks and strict maintainer Clippy/build Pass.
 
-Use the accepted replacement alpha installer from run **37932435112**:
-`C:\Projects\Grain\grain-github-alpha-build-37932435112\nsis\Grain Extensions Alpha_0.0.6_x64-setup.exe`.
-SHA256: `0ffaf0d3121cc635a8de1d70e5762421cec930519b47ce4e7b55fce3294f4658`.
-The older run **37926347284** has the previous trust pins and is superseded.
-Subsequent approval/tooling and test-only changes do not require another app build.
+Use the corrected alpha installer from run **37955644860**:
+`C:\Projects\Grain\grain-github-alpha-build-37955644860\nsis\Grain Extensions Alpha_0.0.6_x64-setup.exe`.
+SHA256: `2559126b2da43ba197be0ad615eadc7caceedc637a8f3a65255d8d2d2228dd73`.
+The user confirms Agent opens in this replacement on 10 October. Run
+**37932435112** had the updated trust pins but the broken core-feature switch;
+**37926347284** also had the previous trust pins. Both are superseded.
 
 The operator-held approval policy records the user's explicit 9 October decision;
 SHA256 `7ce6a84b6acf8dc778069c8acdf5466339de85e3a250a812aa283a2c0d8641c9`.
@@ -149,19 +150,26 @@ that was on without saving the setting or registering its shortcut. This was an
 application defect, not a missed user setup step. Agent and Snippets now have
 dedicated core settings commands; their switches check backend errors and roll
 back rejected changes. Agent shortcut registration failures are returned before
-the enabled setting is changed. A replacement alpha build is required; run
-37932435112 predates this fix. Live Agent acceptance remains Pending.
+the enabled setting is changed. Run 37932435112 predates this fix. The replacement
+below is built/installed and the user confirms Agent opening works on 10 October.
+Specific GitHub tool-action and account-recovery acceptance remain Pending.
 
 The fix is pushed at `a2215c73ad08f8394b76006045a74645cc25aacc`. Replacement
 [alpha build 37955644860](https://github.com/Punit-Dethe/Grain/actions/runs/37955644860)
-was dispatched with the existing registered GitHub client. It is not yet an
-accepted installer: wait for successful build/artifact delivery, then test the
-Agent switch and shortcut in that replacement. Do not repeat this procedure
+completed successfully with the existing registered GitHub client. Its corrected
+installer was downloaded to
+`C:\Projects\Grain\grain-github-alpha-build-37955644860\nsis\Grain Extensions Alpha_0.0.6_x64-setup.exe`.
+Use this replacement instead of run 37932435112. The user has now confirmed the
+Agent-start fix works. Build completion does not automatically update the
+installed app. Do not repeat this procedure
 on the old installer and expect the code fix to be present. The four frontend
 regressions exercise the real generated command bindings, mocking only Tauri
 IPC; the production frontend bundle and TypeScript check pass. The existing
-two capture shortcut conflict tests also pass. Native installed-window behavior
-still requires verification with the corrected build.
+two capture shortcut conflict tests also pass. Agent opening is user-tested Pass;
+the remaining provider procedures are not inferred from this startup result.
+
+For the consolidated understanding and next main-branch integration, read
+[the current platform handoff](EXTENSION-PLATFORM-HANDOFF.md).
 
 1. Quit the running Grain, install the replacement alpha above and configure the
    Agent model in its separate profile if needed. Open **Agent** in the sidebar,

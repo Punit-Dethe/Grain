@@ -1,5 +1,22 @@
 # Extension platform: audit, reuse and execution plan
 
+## Current continuation point — 10 October 2026
+
+Read [EXTENSION-PLATFORM-HANDOFF.md](EXTENSION-PLATFORM-HANDOFF.md) before
+continuing. It records the current user/developer/OAuth/publishing decisions and
+limitations, source ownership and the verified alpha checkpoint. The user
+confirms the corrected installed Agent opens; store GitHub installation/sign-in
+were already confirmed. GitHub read/write/restart/disconnect and deferred issued
+Linear token expiry are not newly claimed passed.
+
+The next block is to bring the extension branch up to date with app `main`.
+Fetched main is `bbae21ccadc4c6e8d65263e207d644db41ab74ad`: at the pre-handoff-doc
+snapshot the branch is 57 commits behind, with 21 intersecting changed paths.
+Reconcile main's newer WebView recording/Agent/onboarding changes with the
+extension runtime and independent core settings commands. Run affected checks
+and one integrated alpha checkpoint; do not add another harness/framework.
+This documentation step does not perform that integration.
+
 ## Launch scope reset — 8 October 2026
 
 The user's current launch target supersedes the earlier E4–E8 sequencing below:
@@ -58,9 +75,9 @@ mandatory infrastructure milestones for this reduced launch.
 | Area | Current position | Remaining acceptance |
 | --- | --- | --- |
 | Custom MCPs and accounts | Form/JSON, SDK transport, OAuth, vault and lifecycle implemented; controlled real-app checks and earlier user Linear checks passed | Actual issued Linear token expiry remains deferred |
-| Native/MCP extension journey | Installation, updates, account controls, DESCRIPTION and author/submission tools implemented; existing local/store checkpoints passed; current layout approved 9 October | First-party provider onboarding; installation from the actual activated public catalogue |
+| Native/MCP extension journey | Installation, updates, account controls, DESCRIPTION and author/submission tools implemented; existing local/store checkpoints passed; current layout approved 9 October; real GitHub store install/sign-in user-confirmed | Specific first-party GitHub actions/recovery and integrated-alpha acceptance |
 | Basic Agent execution | Genuine configured-model native and MCP read/write/verify and both recovery cases passed; eight controlled failure cases passed | No open genuine-model case in this launch checkpoint; public-provider acceptance remains separate |
-| Public availability | First-party GitHub alpha catalogue signed and active; public HTTP and normal Grain store backend checks passed | Real-user GitHub installation/OAuth/actions; alpha distribution and permanent production governance remain separate |
+| Public availability | First-party GitHub alpha catalogue signed and active; public HTTP/store backend checks passed; real installation/sign-in user-confirmed; corrected installed Agent opening confirmed 10 October | Specific GitHub actions/recovery; integration with main; permanent production governance and broader distribution remain separate |
 
 Both recovery cases completed on the confirmed idle desktop without changing
 receipt, approval or deadline checks. The preceding 8 October native repeat at
