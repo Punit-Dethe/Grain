@@ -149,9 +149,9 @@ const ModelCard: React.FC<ModelCardProps> = ({
               <Badge variant="primary">{t("onboarding.recommended")}</Badge>
             )}
             {showFlowSupport && (
-              <span className="inline-flex items-center rounded-md border border-line bg-paper-sunken/60 px-2 py-0.5 text-xs font-medium leading-none text-ink-soft">
+              <Badge variant="secondary" className="flow-support-badge">
                 {t("modelSelector.capabilities.supportsFlow")}
-              </span>
+              </Badge>
             )}
             {status === "active" && (
               <Badge variant="primary">

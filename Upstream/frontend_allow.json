@@ -23,7 +23,6 @@
     "src/app/components/settings/MuteWhileRecording.tsx",
     "src/app/components/settings/OutputDeviceSelector.tsx",
     "src/app/components/settings/PasteMethod.tsx",
-    "src/app/components/settings/PostProcessingToggle.tsx",
     "src/app/components/settings/PushToTalk.tsx",
     "src/app/components/settings/RecordingRetentionPeriod.tsx",
     "src/app/components/settings/ShortcutInput.tsx",

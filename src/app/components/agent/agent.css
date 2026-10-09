@@ -1033,7 +1033,7 @@
   text-align: right;
 }
 .agc-markdown a {
-  color: #9fc1ff;
+  color: var(--agc-ink);
   text-decoration: underline;
   text-underline-offset: 2px;
 }

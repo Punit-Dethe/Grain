@@ -9,8 +9,8 @@ interface SwitchProps {
 }
 
 // [GRAIN] Bare toggle (no label/row) — the same switch as ToggleSwitch, for
-// inline use in custom headers. Same geometry and colors: --toggle-off track
-// OFF, accent track ON, white thumb that slides 16px.
+// inline use in custom headers. Theme-aware track and thumb colors,
+// with the same 16px thumb travel.
 export const Switch: React.FC<SwitchProps> = ({
   checked,
   onChange,
@@ -33,7 +33,7 @@ export const Switch: React.FC<SwitchProps> = ({
         aria-label={ariaLabel}
         onChange={(e) => onChange(e.target.checked)}
       />
-      <div className="relative w-9 h-5 rounded-full bg-[var(--toggle-off)] transition-colors duration-200 peer-checked:bg-[var(--color-accent)] peer-focus-visible:outline-none peer-focus-visible:ring-2 peer-focus-visible:ring-[var(--accent-focus)] peer-disabled:opacity-50 after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:h-4 after:w-4 after:rounded-full after:bg-white after:shadow-[0_1px_2px_rgba(0,0,0,0.28)] after:transition-transform after:duration-200 peer-checked:after:translate-x-4 rtl:peer-checked:after:-translate-x-4" />
+      <div className="relative w-9 h-5 rounded-full bg-[var(--toggle-off)] transition-colors duration-200 peer-checked:bg-[var(--toggle-on)] peer-focus-visible:outline-none peer-focus-visible:ring-2 peer-focus-visible:ring-[var(--accent-focus)] peer-disabled:opacity-50 after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:h-4 after:w-4 after:rounded-full after:bg-[var(--toggle-thumb-off)] peer-checked:after:bg-[var(--toggle-thumb-on)] after:shadow-[0_1px_2px_rgba(0,0,0,0.28)] after:transition-transform after:duration-200 peer-checked:after:translate-x-4 rtl:peer-checked:after:-translate-x-4" />
     </label>
   );
 };

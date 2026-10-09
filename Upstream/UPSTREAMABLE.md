@@ -26,4 +26,4 @@ Behaviour-preserving hooks that would let forks stop patching Handy's files:
 
 ## Deliberately NOT upstreamable
 
-ONNX/transcribe-rs removal, multi-provider routers, native pill, grain-core settings, all `grain_*` modules. Product decisions, not fixes.
+ONNX/transcribe-rs removal, ordered LLM fallback, recording-pill presentation, grain-core settings, all `grain_*` modules. Product decisions, not fixes.

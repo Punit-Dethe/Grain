@@ -9,13 +9,14 @@ confirms the corrected installed Agent opens; store GitHub installation/sign-in
 were already confirmed. GitHub read/write/restart/disconnect and deferred issued
 Linear token expiry are not newly claimed passed.
 
-The next block is to bring the extension branch up to date with app `main`.
-Fetched main is `bbae21ccadc4c6e8d65263e207d644db41ab74ad`: at the pre-handoff-doc
-snapshot the branch is 57 commits behind, with 21 intersecting changed paths.
-Reconcile main's newer WebView recording/Agent/onboarding changes with the
-extension runtime and independent core settings commands. Run affected checks
-and one integrated alpha checkpoint; do not add another harness/framework.
-This documentation step does not perform that integration.
+Main integration is implemented on `extensions/main-integration-20261010`,
+using `bbae21ccadc4c6e8d65263e207d644db41ab74ad` (app 0.0.8).
+The [integration checkpoint](MAIN-INTEGRATION-CHECKPOINT.md) records the actual
+three-way merge, source decisions and 24 passing real-app cases. Installed-alpha
+Agent/shortcut/dictation and live GitHub acceptance remain the next checkpoint;
+earlier 0.0.6 results are not silently carried forward. No new harness/framework
+or legacy compatibility layer was added. After that checkpoint, resume the
+provider/publisher onboarding and concrete UX work recorded in the handoff.
 
 ## Launch scope reset — 8 October 2026
 

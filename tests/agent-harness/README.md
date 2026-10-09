@@ -1,5 +1,15 @@
 # Grain Agent acceptance harness
 
+**App-main integration (10 October):** see the
+[integration checkpoint](../../docs/Extensions%202.0/MAIN-INTEGRATION-CHECKPOINT.md).
+The existing `extension-contract`, `agent-workflow`, `mcp-configured` and
+`store-mcp` suites passed 24/24 with owned cleanup. Fresh-checkout stamping uses
+the tracked Bun lock (optional local npm lock), includes recording HTML and
+embedded seeds, and creates its output directory. Main's removed settings are
+not restored in fixture setup. No scenario/peer/runner was added. Ignored build
+outputs, profiles and reports are disposable evidence; installed-alpha
+shortcut/dictation and live GitHub approval remain separate acceptance.
+
 **App store freshness checkpoint (8 October):** [Scoped audit](../../docs/Extensions%202.0/EXTENSION-STORE-FRESHNESS-AUDIT.md) records 294 core / 76 maintainer / 11 normal backend store tests and both existing real-app store suites (6/6), with owned cleanup. The first native attempt correctly refused its fixture's missing revocation response; only `store-fixture.mjs` changed to serve a fresh signed empty list, then both suites pass. No new runner/scenario/bridge or visual replica. Inventory **108 / 93 / 81** unchanged; 78 runner self-tests were executed separately. Reuse `--suite store` and `--suite store-mcp` after the stamped build. Ignored `logic-8B7WSG`, failed `run-f1KdxL`, accepted `run-xdYnHT` and `run-HHVnfk` retain disposable evidence; retention is not file-deletion Pass. Cache crash-atomicity and live publication remain open; no new human batch.
 
 **E4e hosting handoff (6 October):** [Audit/evidence](../../docs/Extensions%202.0/EXTENSION-HOSTING-BUNDLE-AUDIT.md) records **21 Windows / 22 Linux Rust / 39 actual CLI verdicts per platform**. Product maintainer CLI/component tests changed; no Agent runner/scenario/bridge/model/desktop source. Inventory **108 / 93 / 81** unchanged. `.runs/e4e-hosting-bundle-01/` and `-linux-01/` retain disposable nonsecret scripts/reports/snapshots; 39 Windows PID references are independently clean and no acceptance keys/accounts/listeners remain. Retention is not deletion Pass. Keep focused product tests and retire the branch-only wrapper when supported maintainer CI owns them. No new manual batch or hosting activation.

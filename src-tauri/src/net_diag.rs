@@ -1,14 +1,8 @@
 //! [GRAIN] Shared reqwest transport-error diagnostics.
 //!
 //! Ported from upstream Handy #1823 ("preserve HTTP transport error causes")
-//! and shared across Grain's multi-provider cloud clients — the LLM client
-//! ([`crate::grain_llm_client`]) and the cloud STT client
-//! ([`crate::stt_client`]). Both previously formatted only the top-level
-//! `reqwest::Error`, whose `Display` intentionally omits the nested cause, so a
-//! certificate failure / connection reset / proxy error surfaced as a useless
-//! "request failed". Upstream's fix lives in its single-provider `llm_client`;
-//! Grain's STT client is a Grain-only parallel path the merge can never reach,
-//! so the same helper is applied to both here.
+//! and applied to Grain's multi-provider LLM client (`grain_llm_client`).
+//! It preserves transport causes without exposing request or response payloads.
 //!
 //! Every function is written to never leak payload data: URLs are sanitized of
 //! credentials/query tokens, and decode errors keep only their classification

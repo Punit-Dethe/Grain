@@ -3,7 +3,6 @@ import { subscribeWithSelector } from "zustand/middleware";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
   AgentAutocopy,
-  AgentContextMode,
   AgentPanelPosition,
   AppSettings as Settings,
   AudioDevice,
@@ -176,9 +175,24 @@ const settingUpdaters: {
     commands.changeSelectedLanguageSetting(value as string),
   overlay_position: (value) =>
     commands.changeOverlayPositionSetting(value as string),
-  pill_skin: (value) => commands.changePillSkinSetting(value as string),
-  pill_show_app_icon: (value) =>
-    commands.changePillShowAppIconSetting(value as boolean),
+  overlay_style: async (value) => {
+    const result = await commands.changeOverlayStyleSetting(
+      value as "none" | "minimal" | "live",
+    );
+    if (result.status === "error") throw new Error(result.error);
+  },
+  pill_show_app_icon: async (value) => {
+    const result = await commands.changePillShowAppIconSetting(
+      value as boolean,
+    );
+    if (result.status === "error") throw new Error(result.error);
+  },
+  pill_hide_close_button: async (value) => {
+    const result = await commands.changePillHideCloseButtonSetting(
+      value as boolean,
+    );
+    if (result.status === "error") throw new Error(result.error);
+  },
   debug_mode: (value) => commands.changeDebugModeSetting(value as boolean),
   custom_words: (value) => commands.updateCustomWords(value as string[]),
   snippets: (value) => commands.updateSnippets(value as Snippet[]),
@@ -210,12 +224,8 @@ const settingUpdaters: {
     commands.changeAgentAutocopySetting(value as AgentAutocopy),
   agent_quick_enabled: (value) =>
     commands.changeAgentQuickEnabledSetting(value as boolean),
-  agent_context_mode: (value) =>
-    commands.changeAgentContextModeSetting(value as AgentContextMode),
   agent_screen_image: (value) =>
     commands.changeAgentScreenImageSetting(value as boolean),
-  agent_input_type_to_expand: (value) =>
-    commands.changeAgentInputTypeToExpandSetting(value as boolean),
   agent_panel_position: (value) =>
     commands.changeAgentPanelPositionSetting(value as AgentPanelPosition),
   word_correction_threshold: (value) =>
@@ -242,8 +252,6 @@ const settingUpdaters: {
   history_limit: (value) => commands.updateHistoryLimit(value as number),
   model_unload_timeout: (value) =>
     commands.setModelUnloadTimeout(value as ModelUnloadTimeout),
-  post_process_enabled: (value) =>
-    commands.changePostProcessEnabledSetting(value as boolean),
   post_process_selected_prompt_id: (value) =>
     commands.setPostProcessSelectedPrompt(value as string),
   mute_while_recording: (value) =>

@@ -17,6 +17,7 @@ interface GlobalShortcutInputProps {
   grouped?: boolean;
   shortcutId: string;
   disabled?: boolean;
+  onRecordingChange?: (shortcutId: string, recording: boolean) => void;
   /** Render only the keycap control (no label row) — for hosts that supply
    * their own name/description, e.g. the capture-mode cards. */
   bare?: boolean;
@@ -28,6 +29,7 @@ export const GlobalShortcutInput: React.FC<GlobalShortcutInputProps> = ({
   shortcutId,
   disabled = false,
   bare = false,
+  onRecordingChange,
 }) => {
   const { t } = useTranslation();
   const { getSetting, updateBinding, resetBinding, isUpdating, isLoading } =
@@ -43,6 +45,19 @@ export const GlobalShortcutInput: React.FC<GlobalShortcutInputProps> = ({
   const osType = useOsType();
 
   const bindings = getSetting("bindings") || {};
+
+  const [isStarting, setIsStarting] = useState(false);
+  const mountedRef = useRef(false);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+  useEffect(() => {
+    onRecordingChange?.(shortcutId, isStarting || editingShortcutId !== null);
+    return () => onRecordingChange?.(shortcutId, false);
+  }, [shortcutId, isStarting, editingShortcutId, onRecordingChange]);
 
   useEffect(() => {
     editingShortcutIdRef.current = editingShortcutId;
@@ -197,10 +212,16 @@ export const GlobalShortcutInput: React.FC<GlobalShortcutInputProps> = ({
 
   // Start recording a new shortcut
   const startRecording = async (id: string) => {
-    if (editingShortcutId === id) return; // Already editing this shortcut
+    if (isStarting || editingShortcutId === id) return; // Already editing this shortcut
 
+    setIsStarting(true);
     // Suspend current binding to avoid firing while recording
     await commands.suspendBinding(id).catch(console.error);
+    if (!mountedRef.current) {
+      await commands.resumeBinding(id).catch(console.error);
+      return;
+    }
+    setIsStarting(false);
 
     // Store the original binding to restore if canceled
     setOriginalBinding(bindings[id]?.current_binding || "");
@@ -307,7 +328,9 @@ export const GlobalShortcutInput: React.FC<GlobalShortcutInputProps> = ({
           className="px-2.5 py-1 text-sm font-mono font-semibold text-ink bg-paper-raised border border-line rounded-[5.5px] cursor-pointer tabular-nums transition-[background-color,border-color,box-shadow,transform] duration-150 hover:bg-[var(--accent-tint)] hover:border-accent active:translate-y-px active:shadow-none active:bg-[var(--accent-tint)] disabled:cursor-not-allowed disabled:opacity-50"
           style={{ boxShadow: "var(--shadow-hair)" }}
           onClick={() => startRecording(shortcutId)}
-          disabled={disabled || isUpdating(`binding_${shortcutId}`)}
+          disabled={
+            disabled || isStarting || isUpdating(`binding_${shortcutId}`)
+          }
           aria-label={translatedName}
         >
           {formatKeyCombination(binding.current_binding, osType)}
@@ -315,7 +338,7 @@ export const GlobalShortcutInput: React.FC<GlobalShortcutInputProps> = ({
       )}
       <ResetButton
         onClick={() => resetBinding(shortcutId)}
-        disabled={disabled || isUpdating(`binding_${shortcutId}`)}
+        disabled={disabled || isStarting || isUpdating(`binding_${shortcutId}`)}
       />
     </div>
   );

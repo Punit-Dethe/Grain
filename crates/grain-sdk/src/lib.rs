@@ -2,13 +2,13 @@
 //!
 //! The **dependency leaf** of the workspace (SPEC §7.3): this crate depends
 //! only on `serde`/`specta`, and everything that speaks Grain's protocol —
-//! `grain-core`, `grain-pill`, the Tauri shell, and eventually third-party
+//! `grain-core`, the Tauri shell, and third-party
 //! extensions — depends on *it*, never the reverse. That direction is what
 //! lets the contract be versioned independently of Grain's internals.
 //!
 //! Contents:
 //! - [`event`] — the typed [`DaemonEvent`] stream the core broadcasts, and the
-//!   [`PillAction`] reverse channel.
+//!   legacy [`PillAction`] wire types (the native reverse handler is retired).
 //! - [`protocol`] — the authenticated-connection handshake for the local
 //!   WebSocket ([`ClientHello`] / [`ServerWelcome`], SPEC §7.1): identity is
 //!   bound to the *channel* by a per-client token presented in the first
@@ -27,7 +27,6 @@ pub mod event;
 pub mod flagged;
 pub mod manifest;
 pub mod mcp;
-pub mod pill_skin;
 pub mod protocol;
 pub mod settings_schema;
 pub mod submission;
@@ -50,7 +49,6 @@ pub use manifest::{
     ShortcutDecl, Tier, ANCHORS, ICON_MASTER_DIM, ICON_MAX_BYTES, KNOWN_CAPABILITIES, KNOWN_SLOTS,
     PACK_ENTRY_MAX_BYTES, PACK_MAX_BYTES, PROMPT_CONTEXT_SLOT, PROMPT_MAIN_SLOT, SURFACE_PROMPTS,
 };
-pub use pill_skin::PillSkin;
 pub use protocol::{
     ClientHello, ClientRequest, DevControlFrame, DevReloadResult, HostCall, HostCallResult,
     HostFrame, ServerResponse, ServerWelcome, GRAIN_API_VERSION,

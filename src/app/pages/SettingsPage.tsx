@@ -3,14 +3,12 @@ import { useTranslation } from "react-i18next";
 import { AboutSettings } from "@/components/settings/about/AboutSettings";
 import { DebugSettings } from "@/components/settings/debug/DebugSettings";
 import { PostProcessingSettings } from "@/components/settings/post-processing/PostProcessingSettings";
-import { SpeechToTextSettings } from "@/components/settings/speech-to-text/SpeechToTextSettings";
 import { ApplicationPane } from "../settings/panes/ApplicationPane";
 import { AudioPane } from "../settings/panes/AudioPane";
 import { CapturePane } from "../settings/panes/CapturePane";
 import { OutputPane } from "../settings/panes/OutputPane";
 import { useSettings } from "@/hooks/useSettings";
 import { initPpPool } from "@/stores/ppPoolStore";
-import { initSttPool } from "@/stores/sttPoolStore";
 import { hashForRoute, type SettingsSectionId } from "../navigation";
 import {
   isSettingsSectionEnabled,
@@ -23,7 +21,6 @@ const sectionComponents: Record<SettingsSectionId, ComponentType> = {
   audio: AudioPane,
   output: OutputPane,
   application: ApplicationPane,
-  "speech-to-text": SpeechToTextSettings,
   "post-processing": PostProcessingSettings,
   debug: DebugSettings,
   about: AboutSettings,
@@ -59,12 +56,7 @@ export function SettingsPage({ section }: SettingsPageProps) {
   useEffect(() => {
     if (isLoading || activeSection !== section) return;
 
-    const initialize =
-      activeSection === "speech-to-text"
-        ? initSttPool
-        : activeSection === "post-processing"
-          ? initPpPool
-          : null;
+    const initialize = activeSection === "post-processing" ? initPpPool : null;
 
     if (initialize) {
       void initialize().catch((error) => {
@@ -145,15 +137,12 @@ export function SettingsPage({ section }: SettingsPageProps) {
             <div ref={scrollRef} className="settings-scroll">
               <div className="settings-content">
                 <header className="settings-main-heading">
-                  <h1 id="next-settings-title">{t("ui2.settings.title")}</h1>
-                  <div className="settings-current-copy">
-                    <strong>
-                      {t(`ui2.settings.sections.${activeSection}.label`)}
-                    </strong>
-                    <span>
-                      {t(`ui2.settings.sections.${activeSection}.description`)}
-                    </span>
-                  </div>
+                  <h1 id="next-settings-title">
+                    {t(`ui2.settings.sections.${activeSection}.label`)}
+                  </h1>
+                  <p>
+                    {t(`ui2.settings.sections.${activeSection}.description`)}
+                  </p>
                 </header>
 
                 {isLoading ? (

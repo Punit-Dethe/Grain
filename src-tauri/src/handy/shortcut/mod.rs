@@ -186,10 +186,16 @@ pub fn change_binding(
     // shares one answer; a dynamic binding registered globally here would squat
     // on the user's keys for a surface that is not on screen.
     if grain_core::capture::is_dynamic_binding(&id) {
+        // [GRAIN] Validate dynamic edits before saving, just like global keys.
+        validate_shortcut_for_implementation(&binding, settings.keyboard_implementation)?;
         if let Some(mut b) = settings.bindings.get(&id).cloned() {
             b.current_binding = binding;
             settings.bindings.insert(id.clone(), b.clone());
             settings::write_settings(&app, settings);
+            if id == "prompt_record" {
+                // [GRAIN] Finish editing and retire the previous capture chord.
+                crate::prompt_record::set_shortcut_suspended(&app, false);
+            }
             crate::secure_input::reconcile_fallback(&app);
             return Ok(BindingResponse {
                 success: true,
@@ -221,7 +227,7 @@ pub fn change_binding(
 
     // [GRAIN] Persist edits to an unavailable feature without claiming its
     // accelerator. It will be registered when the feature becomes available.
-    if crate::grain_flow_availability::shortcut_should_hold(&app, &settings, &id) {
+    if grain_core::capture::shortcut_holds_hotkey(&settings, &id) {
         if let Err(e) = register_shortcut(&app, updated_binding.clone()) {
             let error_msg = format!("Failed to register shortcut: {}", e);
             error!("change_binding error: {}", error_msg);
@@ -253,10 +259,9 @@ pub fn change_binding(
 /// Best-effort re-register of the previous binding after a failed change,
 /// so a failure leaves the user's shortcut working exactly as before.
 fn restore_registration(app: &AppHandle, binding: &ShortcutBinding) {
-    // [GRAIN] A failed editor operation must not re-arm an unavailable Flow
-    // key (or any other currently gated binding).
+    // [GRAIN] A failed editor operation must not re-arm a gated binding.
     let settings = get_settings(app);
-    if !crate::grain_flow_availability::shortcut_should_hold(app, &settings, &binding.id) {
+    if !grain_core::capture::shortcut_holds_hotkey(&settings, &binding.id) {
         return;
     }
     if let Err(e) = register_shortcut(app, binding.clone()) {
@@ -279,8 +284,10 @@ pub fn reset_binding(app: AppHandle, id: String) -> Result<BindingResponse, Stri
 /// mid-capture. The "cancel" binding is untouched: it is managed dynamically
 /// by the recording lifecycle.
 pub fn suspend_all_shortcuts(app: &AppHandle) {
+    crate::prompt_record::set_shortcut_suspended(app, true); // [GRAIN] Capture key shares editor suspension.
     for (id, binding) in settings::get_bindings(app) {
-        if id == "cancel" {
+        if id == "cancel" || id == "prompt_record" {
+            // [GRAIN] The owned hook suspends Prompt Record.
             continue;
         }
         if let Err(e) = unregister_shortcut(app, binding) {
@@ -297,6 +304,11 @@ pub fn suspend_all_shortcuts(app: &AppHandle) {
 #[tauri::command]
 #[specta::specta]
 pub fn suspend_binding(app: AppHandle, id: String) -> Result<(), String> {
+    if id == "prompt_record" {
+        // [GRAIN] No idle OS registration to unregister.
+        crate::prompt_record::set_shortcut_suspended(&app, true);
+        return Ok(());
+    }
     if let Some(b) = settings::get_bindings(&app).get(&id).cloned() {
         if let Err(e) = unregister_shortcut(&app, b.clone()) {
             error!("suspend_binding error for id '{}': {}", id, e);
@@ -315,13 +327,14 @@ pub fn resume_all_shortcuts(app: &AppHandle) {
     for (id, binding) in &settings.bindings {
         // [GRAIN] The same gate used at both initialization paths also applies
         // after the shortcut editor releases its temporary suspension.
-        if !crate::grain_flow_availability::shortcut_should_hold(app, &settings, id) {
+        if !grain_core::capture::shortcut_holds_hotkey(&settings, id) {
             continue;
         }
         if let Err(e) = register_shortcut(app, binding.clone()) {
             debug!("resume_all_shortcuts: could not register '{}': {}", id, e);
         }
     }
+    crate::prompt_record::set_shortcut_suspended(app, false); // [GRAIN] Restore the capture-only key after editing.
 }
 
 /// Temporarily unregister all bindings while the user is recording a
@@ -345,11 +358,15 @@ pub fn resume_all_bindings(app: AppHandle) -> Result<(), String> {
 #[tauri::command]
 #[specta::specta]
 pub fn resume_binding(app: AppHandle, id: String) -> Result<(), String> {
+    if id == "prompt_record" {
+        // [GRAIN] Restore only if a dictation capture still owns the key.
+        crate::prompt_record::set_shortcut_suspended(&app, false);
+        return Ok(());
+    }
     if let Some(b) = settings::get_bindings(&app).get(&id).cloned() {
-        // [GRAIN] Editing/resuming a disabled Flow key must not bypass the
-        // model-specific registration gate.
+        // [GRAIN] Resuming a binding must not bypass the feature gate.
         let settings = get_settings(&app);
-        if !crate::grain_flow_availability::shortcut_should_hold(&app, &settings, &id) {
+        if !grain_core::capture::shortcut_holds_hotkey(&settings, &id) {
             return Ok(());
         }
         if let Err(e) = register_shortcut(&app, b.clone()) {
@@ -423,6 +440,7 @@ pub fn change_keyboard_implementation_setting(
         // Shortcuts already registered during init.
         crate::extension_shortcuts::sync(&app); // [GRAIN]
         crate::secure_input::reconcile_fallback(&app);
+        crate::prompt_record::reconcile_shortcut(&app); // [GRAIN] Move a live capture key to the new backend.
         return Ok(ImplementationChangeResult {
             success: true,
             reset_bindings: vec![],
@@ -431,6 +449,7 @@ pub fn change_keyboard_implementation_setting(
 
     // Register all shortcuts with new implementation, resetting invalid ones
     let reset_bindings = register_all_shortcuts_for_implementation(&app, new_impl);
+    crate::prompt_record::reconcile_shortcut(&app); // [GRAIN] Move a live capture key to the new backend.
     crate::extension_shortcuts::sync(&app); // [GRAIN]
     crate::secure_input::reconcile_fallback(&app);
 
@@ -533,7 +552,7 @@ fn register_all_shortcuts_for_implementation(
         // skipped only the post-processing key, so switching Tauri↔HandyKeys
         // silently gave disabled features (Agent) global hotkeys
         // and re-armed every capture mode. One shared predicate closes that gap.
-        if !crate::grain_flow_availability::shortcut_should_hold(app, &current_settings, id) {
+        if !grain_core::capture::shortcut_holds_hotkey(&current_settings, id) {
             continue;
         }
 
@@ -658,11 +677,9 @@ pub fn change_sound_theme_setting(app: AppHandle, theme: String) -> Result<(), S
 #[tauri::command]
 #[specta::specta]
 pub fn change_translate_to_english_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
-    let was_flow_available = crate::grain_flow_availability::is_available(&app); // [GRAIN]
     let mut settings = settings::get_settings(&app);
     settings.translate_to_english = enabled;
     settings::write_settings(&app, settings);
-    crate::grain_flow_availability::reconcile_after_change(&app, was_flow_available); // [GRAIN]
     Ok(())
 }
 
@@ -680,10 +697,8 @@ pub fn change_selected_language_setting(app: AppHandle, language: String) -> Res
 pub fn change_overlay_position_setting(app: AppHandle, position: String) -> Result<(), String> {
     let mut settings = settings::get_settings(&app);
     let parsed = match position.as_str() {
-        "none" => OverlayPosition::None,
         "top" => OverlayPosition::Top,
         "bottom" => OverlayPosition::Bottom,
-        "center" => OverlayPosition::Center,
         other => {
             warn!("Invalid overlay position '{}', defaulting to bottom", other);
             OverlayPosition::Bottom
@@ -692,9 +707,10 @@ pub fn change_overlay_position_setting(app: AppHandle, position: String) -> Resu
     settings.overlay_position = parsed;
     settings::write_settings(&app, settings);
 
-    // [GRAIN] Drive the single pill: tell it the new anchor (None = hide). A live
-    // pill repositions/hides on the next frame; an idle pill picks it up at the
-    // next session start (which re-emits OverlayConfig).
+    // [GRAIN] Reposition the shared Handy WebView.
+    crate::overlay::update_overlay_position(&app);
+    // [GRAIN] Publish Top/Bottom to the owned renderer. Visibility is controlled
+    // separately by overlay_style; an idle renderer hydrates from its snapshot.
     crate::bridge::emit(
         &app,
         grain_core::DaemonEvent::OverlayConfig { position: parsed },
@@ -958,6 +974,7 @@ pub fn change_auto_submit_key_setting(app: AppHandle, key: String) -> Result<(),
 
 #[tauri::command]
 #[specta::specta]
+#[allow(dead_code)] // [GRAIN] Handy compatibility only; Grain keeps processing enabled and does not expose this command.
 pub fn change_post_process_enabled_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
     let mut settings = settings::get_settings(&app);
     settings.post_process_enabled = enabled;

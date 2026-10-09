@@ -13,7 +13,7 @@ use super::text::{
 ///
 /// This is the single place every transcription path converges on so the
 /// behavior is identical regardless of backend (local batch, rolling window,
-/// or cloud STT). Run it ONCE on the finished transcript — never per rolling
+/// or Agent). Run it ONCE on the finished transcript — never per rolling
 /// chunk, which would corrupt words across chunk seams and repeat the work.
 ///
 /// # Arguments
@@ -29,7 +29,7 @@ use super::text::{
 ///   removal (upstream #1738; defaults on).
 /// * `skip_custom_words` - when `true`, skip the fuzzy custom-word correction.
 ///   The local Whisper batch path sets this because it already biases the model
-///   via `initial_prompt`; paths with no such biasing (rolling, cloud, Agent)
+///   via `initial_prompt`; paths with no such biasing (rolling, Agent)
 ///   pass `false` so the dictionary is honored.
 /// * `snippets` - the user's voice snippets; expanded LAST so triggers match
 ///   the corrected/filtered text (may be empty).
@@ -66,7 +66,7 @@ pub fn finalize_transcript(
         apply_custom_words(text, custom_words, word_correction_threshold)
     };
     // [GRAIN] #1738: filler removal is language-evidence-gated. These paths
-    // (rolling, cloud, Agent) carry the transcription language intent, not audio
+    // (rolling, Agent) carry the transcription language intent, not audio
     // LID, so a concrete selection is UserSelected evidence and "auto"/empty is
     // Unknown (universal-tier fillers only — never a gated real word).
     let evidence = if output_language.is_empty() || output_language == "auto" {
@@ -154,7 +154,7 @@ mod tests {
 /// the last reset phrase is discarded and the rest of the pipeline (custom
 /// words, fillers) only sees the kept remainder; snippet expansion runs LAST on
 /// the corrected/filtered text. Covers the local batch and stream-finalize
-/// paths — rolling and cloud STT expand via [`finalize_transcript`] instead.
+/// paths — rolling and Agent expand via [`finalize_transcript`] instead.
 pub fn finalize_batch_text(
     raw: String,
     settings: &crate::settings::AppSettings,

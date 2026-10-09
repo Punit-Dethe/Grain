@@ -20,6 +20,7 @@ pub mod mcp_connections;
 // this alias keeps every `grain_core::event::X` path compiling unchanged.
 pub use grain_sdk as event;
 pub mod capture;
+pub mod providers;
 pub mod settings;
 // [GRAIN] Phase 5A: pinned-key verification of the signed extension catalogue.
 pub mod trust;
@@ -89,7 +90,4 @@ pub mod eval;
 
 pub use context::{settings_file_exists, AppContext};
 pub use grain_sdk::{DaemonEvent, PillAction, RecommendCandidate, SessionMode};
-pub use settings::{
-    AppSettings, PostProcessProvider, SecretMap, SttProvider, SttProviderKind,
-    STT_LOCAL_PROVIDER_ID,
-};
+pub use settings::{AppSettings, PostProcessProvider, SecretMap};

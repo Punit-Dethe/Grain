@@ -99,11 +99,9 @@ impl std::error::Error for ExtStorageError {}
 
 type StorageResult<T> = Result<T, ExtStorageError>;
 
-/// Does this identity hold `cap`? `All` (the pill) holds everything; a worker
-/// holds exactly its granted `Named` set.
+/// Does this identity hold `cap`? Workers hold exactly their granted named set.
 pub fn has_capability(identity: &ClientIdentity, cap: &str) -> bool {
     match &identity.caps {
-        CapabilitySet::All => true,
         CapabilitySet::Named(set) => set.contains(cap),
     }
 }
@@ -1682,7 +1680,12 @@ mod tests {
             ClientIdentity {
                 id: "com.example.old".into(),
                 role: crate::events_auth::ClientRole::Worker,
-                caps: CapabilitySet::All,
+                caps: CapabilitySet::Named(
+                    grain_sdk::KNOWN_CAPABILITIES
+                        .iter()
+                        .map(|cap| (*cap).to_owned())
+                        .collect(),
+                ),
             },
         ];
         for method in [

@@ -95,10 +95,9 @@ pub struct TranscriptionCoordinator {
 pub fn is_transcribe_binding(id: &str) -> bool {
     id == "transcribe"
         || id == "transcribe_with_post_process"
-        || id == "transcribe_realtime"
         || id == "transcribe_send_to_ai"
         || id == "transcribe_native_asr"
-    // ^ [GRAIN] real-time + Native ASR bindings share the serialized
+    // ^ [GRAIN] Dictation + Native ASR bindings share the serialized
     // record/transcribe lifecycle, so they can never overlap each other or
     // Batch. Agent input uses a separate dictation lease.
 }
@@ -314,9 +313,8 @@ fn start(app: &AppHandle, stage: &mut Stage, binding_id: &str, hotkey_string: &s
         debug!("Ignoring press for '{binding_id}': another capture mode is active");
         return;
     }
-    // [GRAIN] Includes the host-side Flow installation gate for a stale AI
-    // start-mode preference.
-    let action_id = crate::grain_flow_availability::action_id_for(app, binding_id);
+    // [GRAIN] Resolve Dictation by model; retain the action for stop/release.
+    let action_id = crate::grain_dictation_routing::action_id_for(app, binding_id);
     let Some(action) = ACTION_MAP.get(action_id.as_str()) else {
         warn!("No action in ACTION_MAP for '{action_id}'");
         return;
@@ -340,7 +338,7 @@ fn stop(app: &AppHandle, stage: &mut Stage, binding_id: &str, hotkey_string: &st
     let ai = grain_core::capture::should_route_to_ai(&get_settings(app), binding_id);
     let action_id = recorded_action_id(stage, binding_id)
         .map(str::to_owned)
-        .unwrap_or_else(|| crate::grain_flow_availability::action_id_for(app, binding_id));
+        .unwrap_or_else(|| crate::grain_dictation_routing::action_id_for(app, binding_id));
     stop_with_intent(app, stage, &action_id, hotkey_string, ai);
 }
 
@@ -372,14 +370,14 @@ mod tests {
     #[test]
     fn stop_uses_the_engine_resolved_when_recording_started() {
         let stage = Stage::Recording {
-            binding_id: "transcribe_send_to_ai".into(),
-            action_id: "transcribe".into(),
+            binding_id: "transcribe".into(),
+            action_id: "transcribe_realtime".into(),
         };
         assert_eq!(
-            recorded_action_id(&stage, "transcribe_send_to_ai"),
-            Some("transcribe")
+            recorded_action_id(&stage, "transcribe"),
+            Some("transcribe_realtime")
         );
-        assert_eq!(recorded_action_id(&stage, "transcribe_realtime"), None);
+        assert_eq!(recorded_action_id(&stage, "transcribe_native_asr"), None);
     }
 
     #[test]

@@ -2,9 +2,9 @@
 //! single-provider path upstream keeps in `actions.rs` (Handy Isolation phase 6).
 //!
 //! Grain's version differs structurally, not cosmetically: it layers context
-//! awareness and spoken Prompt Record instructions onto the base prompt, can fan out across providers via
-//! [`crate::post_process_router`], takes the shared `reqwest::Client` from Tauri
-//! state, and reports rate limits as [`CallOutcome`] so the router can fail over.
+//! awareness and spoken Prompt Record instructions onto the base prompt, tries
+//! providers in saved order via [`crate::grain_llm_fallback`], and takes the shared
+//! `reqwest::Client` from Tauri state.
 //!
 //! Upstream's original `post_process_transcription` stays in `actions.rs`,
 //! un-called, so upstream changes to it still merge cleanly and can be read
@@ -15,8 +15,8 @@ use crate::actions::{
 };
 #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 use crate::apple_intelligence;
+use crate::grain_llm_fallback::ProviderOutcome;
 use crate::llm_client::LlmError;
-use crate::rotation_state::CallOutcome;
 use crate::settings::{AppSettings, APPLE_INTELLIGENCE_PROVIDER_ID};
 use grain_core::PostProcessProvider;
 use log::{debug, error, warn};
@@ -69,13 +69,14 @@ pub(crate) async fn post_process_transcription(
     spoken_prompt: Option<&str>,
     stop_context: Option<&crate::context_detect::StopContext>,
 ) -> Option<String> {
+    crate::grain_overlay::show_processing(app);
     if is_blank_transcription(transcription) {
         debug!("Post-processing skipped because the transcription is empty");
         return None;
     }
 
     // Resolve the selected prompt body once — shared by both the single-provider
-    // and the rotation paths.
+    // and the fallback paths.
     let selected_prompt_id = match &settings.post_process_selected_prompt_id {
         Some(id) => id.clone(),
         None => {
@@ -154,11 +155,9 @@ pub(crate) async fn post_process_transcription(
     ensure_legacy_context_input(&mut prompt, caret.is_some());
     let input = model_input(transcription, caret);
 
-    // [GRAIN] Smart rotation: fan out across ENABLED post-process providers
-    // (round-robin + per-provider daily quota + failover). Independent of STT —
-    // post-processing keeps its own provider list.
-    let result = if settings.post_process_smart_rotation {
-        crate::post_process_router::post_process_rotated(app, &prompt, &input).await
+    // [GRAIN] Optional sequential fallback through enabled providers in saved order.
+    let result = if settings.post_process_fallback_enabled {
+        crate::grain_llm_fallback::post_process_with_fallback(app, settings, &prompt, &input).await
     } else {
         run_single_provider(app, settings, &prompt, &input).await
     };
@@ -233,7 +232,7 @@ mod stop_context_tests {
 }
 
 /// The default single-provider path, shared by ordinary post-processing and
-/// smart-rotation fallback.
+/// extension completions.
 async fn run_single_provider(
     app: &AppHandle,
     settings: &AppSettings,
@@ -280,8 +279,8 @@ async fn run_single_provider(
     };
     let http_client = http_client.inner().clone();
 
-    // Single-provider path: no rotation, so the tracker isn't consulted/updated.
-    match crate::post_process_router::run_one_provider_with_timeout(
+    // Fallback off: only the selected provider is attempted.
+    match crate::grain_llm_fallback::run_one_provider_with_timeout(
         &http_client,
         &provider,
         model,
@@ -291,7 +290,7 @@ async fn run_single_provider(
     )
     .await
     {
-        CallOutcome::Ok { text, .. } => Some(text),
+        ProviderOutcome::Ok { text, .. } => Some(text),
         _ => None,
     }
 }
@@ -299,7 +298,7 @@ async fn run_single_provider(
 /// Run ONE post-process provider with already-resolved model/key/prompt. Returns
 /// the processed text, or None on any failure/empty result (so callers can fail
 /// over to the next provider or fall back to the raw transcript).
-/// [GRAIN] pub(crate): driven by post_process_router's timeout wrapper.
+/// [GRAIN] pub(crate): driven by grain_llm_fallback's timeout wrapper.
 pub(crate) async fn run_one_provider(
     client: &reqwest::Client,
     provider: &PostProcessProvider,
@@ -307,7 +306,7 @@ pub(crate) async fn run_one_provider(
     api_key: String,
     prompt: &str,
     transcription: &str,
-) -> CallOutcome {
+) -> ProviderOutcome {
     // Disable reasoning for providers where post-processing rarely benefits from it.
     // - custom: top-level reasoning_effort (works for local OpenAI-compat servers)
     // - openrouter: nested reasoning object; exclude:true also keeps reasoning text
@@ -344,7 +343,7 @@ pub(crate) async fn run_one_provider(
                     debug!(
                         "Apple Intelligence selected but not currently available on this device"
                     );
-                    return CallOutcome::Failed;
+                    return ProviderOutcome::Failed;
                 }
 
                 let token_limit = model.trim().parse::<i32>().unwrap_or(0);
@@ -354,26 +353,21 @@ pub(crate) async fn run_one_provider(
                     token_limit,
                 ) {
                     Ok(result) => {
+                        let result = strip_invisible_chars(&result);
                         if result.trim().is_empty() {
                             debug!("Apple Intelligence returned an empty response");
-                            CallOutcome::Failed
+                            ProviderOutcome::Failed
                         } else {
-                            let result = strip_invisible_chars(&result);
                             debug!(
                                 "Apple Intelligence post-processing succeeded. Output length: {} chars",
                                 result.len()
                             );
-                            CallOutcome::Ok {
-                                text: result,
-                                remaining_requests: None,
-                                remaining_tokens: None,
-                                total_tokens: None,
-                            }
+                            ProviderOutcome::Ok { text: result }
                         }
                     }
                     Err(err) => {
                         error!("Apple Intelligence post-processing failed: {}", err);
-                        CallOutcome::Failed
+                        ProviderOutcome::Failed
                     }
                 };
             }
@@ -381,7 +375,7 @@ pub(crate) async fn run_one_provider(
             #[cfg(not(all(target_os = "macos", target_arch = "aarch64")))]
             {
                 debug!("Apple Intelligence provider selected on unsupported platform");
-                return CallOutcome::Failed;
+                return ProviderOutcome::Failed;
             }
         }
 
@@ -433,26 +427,24 @@ pub(crate) async fn run_one_provider(
                         provider.id,
                         text.len()
                     );
-                    return CallOutcome::Ok {
-                        text,
-                        remaining_requests: success.remaining_requests,
-                        remaining_tokens: success.remaining_tokens,
-                        total_tokens: success.total_tokens,
-                    };
+                    if text.trim().is_empty() {
+                        return ProviderOutcome::Failed;
+                    }
+                    return ProviderOutcome::Ok { text };
                 }
                 None => {
                     error!("LLM API response has no content");
-                    return CallOutcome::Failed;
+                    return ProviderOutcome::Failed;
                 }
             },
             // A 429 means this provider is rate-limited — don't retry it in legacy
-            // mode; surface the cooldown so the router moves on.
-            Err(LlmError::RateLimited { retry_after_s }) => {
+            // mode; advance to the next provider.
+            Err(LlmError::RateLimited) => {
                 warn!(
                     "Structured output rate-limited for provider '{}'",
                     provider.id
                 );
-                return CallOutcome::RateLimited { retry_after_s };
+                return ProviderOutcome::RateLimited;
             }
             Err(LlmError::Other(e)) => {
                 warn!(
@@ -482,36 +474,34 @@ pub(crate) async fn run_one_provider(
         Ok(success) => match success.content {
             Some(content) => {
                 let text = strip_invisible_chars(&content);
+                if text.trim().is_empty() {
+                    return ProviderOutcome::Failed;
+                }
                 debug!(
                     "LLM post-processing succeeded for provider '{}'. Output length: {} chars",
                     provider.id,
                     text.len()
                 );
-                CallOutcome::Ok {
-                    text,
-                    remaining_requests: success.remaining_requests,
-                    remaining_tokens: success.remaining_tokens,
-                    total_tokens: success.total_tokens,
-                }
+                ProviderOutcome::Ok { text }
             }
             None => {
                 error!("LLM API response has no content");
-                CallOutcome::Failed
+                ProviderOutcome::Failed
             }
         },
-        Err(LlmError::RateLimited { retry_after_s }) => {
+        Err(LlmError::RateLimited) => {
             warn!(
                 "LLM post-processing rate-limited for provider '{}'",
                 provider.id
             );
-            CallOutcome::RateLimited { retry_after_s }
+            ProviderOutcome::RateLimited
         }
         Err(LlmError::Other(e)) => {
             error!(
                 "LLM post-processing failed for provider '{}': {e}. Falling back to original transcription.",
                 provider.id
             );
-            CallOutcome::Failed
+            ProviderOutcome::Failed
         }
     }
 }
@@ -520,7 +510,7 @@ pub(crate) async fn run_one_provider(
 /// arbitrary prompt through the user's ACTIVE post-process provider. The
 /// extension supplies only the text — the provider id, model, and API key are
 /// resolved here and never cross the WS boundary. Reuses the single-provider
-/// resolution + timeout wrapper (no rotation; extensions are `background`
+/// resolution + timeout wrapper (selected provider; extensions are `background`
 /// priority by default, SPEC §3.4).
 pub(crate) async fn complete_for_extension(
     app: &tauri::AppHandle,
@@ -551,7 +541,7 @@ pub(crate) async fn complete_for_extension(
         .inner()
         .clone();
     // The extension's text is the USER message; no system prompt.
-    match crate::post_process_router::run_one_provider_with_timeout(
+    match crate::grain_llm_fallback::run_one_provider_with_timeout(
         &http_client,
         &provider,
         model,
@@ -561,7 +551,7 @@ pub(crate) async fn complete_for_extension(
     )
     .await
     {
-        CallOutcome::Ok { text, .. } => Ok(text),
+        ProviderOutcome::Ok { text, .. } => Ok(text),
         _ => Err("the LLM call failed or returned nothing".into()),
     }
 }

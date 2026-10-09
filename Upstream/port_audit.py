@@ -1,20 +1,20 @@
 #!/usr/bin/env python3
 """Port audit — the guard the ratchet and the faithfulness diff cannot be.
 
-Grain keeps Handy's STT core byte-identical inside `src-tauri/src/handy/`, so a
+Grain keeps Handy's local speech core inside `src-tauri/src/handy/`, so a
 plain diff against `upstream/main` reliably proves the *shared* surface is on
 par with Handy. That check has one structural blind spot, and it is exactly the
 one that bites:
 
   * Some upstream files are **inert** in Grain — byte-identical to upstream but
-    UNCOMPILED (`llm_client.rs`, `settings.rs`, `overlay.rs`). They merge
+    UNCOMPILED (`llm_client.rs`, `settings.rs`). They merge
     cleanly and match upstream perfectly, so a diff reports "in sync" — while
-    the code that actually runs (`grain_llm_client.rs`, grain-core settings,
-    the native pill) is a SEPARATE file with no upstream counterpart to diff.
+    the code that actually runs (`grain_llm_client.rs`, grain-core settings) is
+    a SEPARATE file with no upstream counterpart to diff.
   * Some logic was **relocated** out of an otherwise-merged file
     (`post_process_transcription` → `grain_post_process.rs`).
   * Some subsystems are **parallel** Grain-only implementations that share a
-    bug class with upstream but have no upstream file at all (`stt_client.rs`,
+    bug class with upstream but have no upstream file at all (`rolling.rs`,
     the rolling engine).
 
 For all three, an upstream fix can merge "successfully" and never reach the
@@ -43,6 +43,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
 
@@ -110,12 +111,24 @@ def requires_structured_audit(sha: str) -> bool:
     ).returncode != 0
 
 
-def valid_port_records(verdict: dict, touched: list[str]) -> tuple[bool, list[str]]:
+def deferred_commit_ids() -> set[str]:
+    """Only queue rows count; historical prose must not authorize a deferral."""
+    with open(os.path.join(HERE, "DEFERRED-PORTS.md"), encoding="utf-8") as handle:
+        rows = [line.split("|")[1] for line in handle if line.startswith("|")]
+    return set(re.findall(r"\b[0-9a-f]{40}\b", "\n".join(rows)))
+
+
+def valid_port_records(
+    verdict: dict, touched: list[str], *, deferred_tracked: bool = False
+) -> tuple[bool, list[str]]:
     ports = verdict.get("ports") or {}
     missing = []
     for source in touched:
         record = ports.get(source) or {}
-        if record.get("outcome") not in {"ported", "not-applicable"} or not str(
+        outcomes = {"ported", "not-applicable"}
+        if deferred_tracked:
+            outcomes.add("deferred")
+        if record.get("outcome") not in outcomes or not str(
             record.get("evidence", "")
         ).strip():
             missing.append(source)
@@ -170,6 +183,7 @@ def main() -> int:
     relocations = load_relocations()
     verdicts = load_verdicts()
     sources = set(relocations)
+    deferred = deferred_commit_ids()
 
     flagged = commits_touching(sources)
 
@@ -182,9 +196,14 @@ def main() -> int:
         verdict = verdicts.get(sha, {})
         note = (verdict.get("notes") or "").strip()
         status = verdict.get("status")
-        structured = requires_structured_audit(sha)
-        ports_ok, missing_ports = valid_port_records(verdict, touched)
-        acknowledged_port = ports_ok if structured else bool(note or status == "Ignored")
+        structured = requires_structured_audit(sha) or any(
+            record.get("outcome") == "deferred"
+            for record in (verdict.get("ports") or {}).values()
+        )
+        ports_ok, missing_ports = valid_port_records(
+            verdict, touched, deferred_tracked=sha in deferred
+        )
+        acknowledged_port = ports_ok or (not structured and bool(note or status == "Ignored"))
         entry = (sha, subject, touched, note, status, missing_ports, structured)
         if not merged:
             pending.append(entry)
@@ -199,6 +218,10 @@ def main() -> int:
         for src in touched:
             dests = ", ".join(relocations[src]["grain"])
             print(f"            {src}  [{relocations[src]['kind']}] -> verify: {dests}")
+        for src in touched:
+            record = verdicts.get(sha, {}).get("ports", {}).get(src, {})
+            if record.get("outcome") == "deferred":
+                print(f"            DEFERRED: {record.get('evidence', '')[:180]}")
         if note:
             print(f"            note: {note[:100]}")
         elif status:
@@ -218,7 +241,7 @@ def main() -> int:
 
     if not pending_only:
         if acknowledged:
-            print(f"\n  acknowledged ({len(acknowledged)}) — a verdict note records the port:")
+            print(f"\n  acknowledged ({len(acknowledged)}) — recorded port/deferral decisions:")
             for e in acknowledged:
                 render(e)
         if review:
@@ -226,7 +249,7 @@ def main() -> int:
                 f"\n  !! REVIEW ({len(review)}) -- merged, but NO required evidence records whether the "
                 f"fix reached the Grain destination. Verify each, then record it:\n"
                 f"      python Upstream/verdict.py <sha> --port <source> "
-                f"<ported|not-applicable> \"test/review evidence\""
+                f"<ported|not-applicable|deferred> \"test/review evidence\""
             )
             for e in review:
                 render(e)

@@ -203,12 +203,12 @@ fn sync_now(app: &AppHandle) {
 
     let mut settings = settings::get_settings(app);
 
-    // Chords already spoken for. Core first and unconditionally — a core
-    // binding is never displaced by an extension.
+    // Chords already spoken for. Core bindings are never displaced by an
+    // extension, except withheld features whose saved keys must remain free.
     let core_chords: HashMap<String, String> = settings
         .bindings
         .iter()
-        .filter(|(id, _)| !id.starts_with(PREFIX))
+        .filter(|(id, _)| !id.starts_with(PREFIX) && !grain_core::capture::shortcut_is_withheld(id))
         .map(|(_, b)| (b.current_binding.clone(), b.name.clone()))
         .filter(|(chord, _)| !chord.trim().is_empty())
         .collect();

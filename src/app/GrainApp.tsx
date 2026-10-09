@@ -13,9 +13,7 @@ import { HistorySettings } from "@/components/settings/history/HistorySettings";
 import { AudioPlayerGroup } from "@/components/ui/AudioPlayer";
 import Onboarding, {
   AccessibilityOnboarding,
-  ModesOnboarding,
   ShortcutsOnboarding,
-  TryOnboarding,
 } from "@/components/onboarding";
 import { commands, type OnboardingStep } from "@/bindings";
 import { ThemeProvider, useTheme } from "@/contexts/ThemeContext";
@@ -23,7 +21,7 @@ import { useSettings } from "@/hooks/useSettings";
 import { useModelStore } from "@/stores/modelStore";
 import {
   createOnboardingDraft,
-  onboardingModes,
+  onboardingShortcutIds,
 } from "./components/onboarding/onboardingState";
 import { OnboardingLayout } from "./components/onboarding/OnboardingLayout";
 import {
@@ -43,6 +41,7 @@ import {
   type HistoryController,
 } from "./history/useHistoryController";
 import { OverviewCards } from "./overview/OverviewCards";
+import { getModelIndicatorStatus } from "./lib/modelIndicator";
 import overviewHeroOption2 from "./overview/overview-hero-option-2.webp";
 import overviewHeroOption4 from "./overview/studio-feature-agent.webp";
 import grainMark from "./branding/grain-mark.png";
@@ -232,37 +231,27 @@ function IconSprite() {
   );
 }
 
-const NAV_GROUPS = [
+const NAV_ITEMS = [
+  { page: "overview", label: "Overview", icon: "home", href: "#/overview" },
+  { page: "history", label: "History", icon: "clock", href: "#/history" },
   {
-    label: "Workspace",
-    items: [
-      { page: "overview", label: "Overview", icon: "home", href: "#/overview" },
-      { page: "history", label: "History", icon: "clock", href: "#/history" },
-      {
-        page: "tools",
-        label: "Personalize",
-        icon: "zap",
-        href: "#/tools/dictionary",
-      },
-      { page: "agent", label: "Agent", icon: "agent", href: "#/agent" },
-    ],
+    page: "tools",
+    label: "Personalize",
+    icon: "zap",
+    href: "#/tools/dictionary",
+  },
+  { page: "agent", label: "Agent", icon: "agent", href: "#/agent" },
+  {
+    page: "extensions",
+    label: "Extensions",
+    icon: "box",
+    href: "#/extensions/installed",
   },
   {
-    label: "Configure",
-    items: [
-      {
-        page: "extensions",
-        label: "Extensions",
-        icon: "box",
-        href: "#/extensions/installed",
-      },
-      {
-        page: "settings",
-        label: "Settings",
-        icon: "sliders",
-        href: "#/settings/capture",
-      },
-    ],
+    page: "settings",
+    label: "Settings",
+    icon: "sliders",
+    href: "#/settings/capture",
   },
 ] as const;
 
@@ -279,29 +268,15 @@ function Sidebar({
   const loading = useModelStore((state) => state.loading);
   const isModelLoaded = useModelStore((state) => state.isModelLoaded);
   const { settings } = useSettings();
-  // Cloud STT rotation replaces the local model entirely: when it is on there
-  // is no resident model, so we say "Cloud" and stop — name and load state only
-  // mean something for a local model.
-  const cloudStt = settings?.stt_smart_rotation === true;
-
   const modelStatus = useMemo(() => {
-    if (cloudStt) return { title: "Cloud model", subtitle: "Cloud" };
-    // The manager holds ONE resident model across Standard/Live/Batch. When a
-    // model is loaded, show exactly that (so a Live/Batch switch is reflected,
-    // not just the Standard slot). When nothing is resident, show the selected
-    // Standard model so a fresh switch appears immediately, before it loads.
-    const activeId =
-      isModelLoaded && loadedModelId ? loadedModelId : currentModel;
-    if (loading && !activeId)
-      return { title: "Checking model", subtitle: "Checking" };
-    const name =
-      models.find((model) => model.id === activeId)?.name ?? activeId;
-    if (!name) return { title: "No model", subtitle: "Not loaded" };
-    return {
-      title: name,
-      subtitle: `${isModelLoaded ? "Loaded" : "Unloaded"} · Local`,
-    };
-  }, [cloudStt, loading, currentModel, loadedModelId, models, isModelLoaded]);
+    return getModelIndicatorStatus({
+      loading,
+      currentModel,
+      loadedModelId,
+      models,
+      isModelLoaded,
+    });
+  }, [loading, currentModel, loadedModelId, models, isModelLoaded]);
 
   return (
     <aside aria-label="Primary navigation" className="sidebar">
@@ -323,39 +298,32 @@ function Sidebar({
           <strong aria-hidden="true">{PROTOTYPE_COPY.brand}</strong>
         </div>
       </div>
-      {NAV_GROUPS.map((group) => (
-        <nav className="nav-section" key={group.label}>
-          <div className="nav-label">{group.label}</div>
-          <div className="nav-list">
-            {group.items.map((item) => {
-              if (!import.meta.env.DEV && item.page === "extensions")
-                return null;
-              const active =
-                item.page === route.page ||
-                (item.page === "extensions" &&
-                  route.page === "extension-settings");
-              const href = "href" in item ? item.href : undefined;
-              return (
-                <button
-                  key={item.page}
-                  type="button"
-                  className={`nav-item${active ? " active" : ""}`}
-                  data-page={item.page}
-                  title={item.label}
-                  disabled={!href}
-                  aria-current={active ? "page" : undefined}
-                  onClick={() => {
-                    if (href) window.location.hash = href.slice(1);
-                  }}
-                >
-                  <Icon name={item.icon} />
-                  <span>{item.label}</span>
-                </button>
-              );
-            })}
-          </div>
-        </nav>
-      ))}
+      <nav className="nav-list">
+        {NAV_ITEMS.map((item) => {
+          if (!import.meta.env.DEV && item.page === "extensions") return null;
+          const active =
+            item.page === route.page ||
+            (item.page === "extensions" && route.page === "extension-settings");
+          const href = "href" in item ? item.href : undefined;
+          return (
+            <button
+              key={item.page}
+              type="button"
+              className={`nav-item${active ? " active" : ""}`}
+              data-page={item.page}
+              title={item.label}
+              disabled={!href}
+              aria-current={active ? "page" : undefined}
+              onClick={() => {
+                if (href) window.location.hash = href.slice(1);
+              }}
+            >
+              <Icon name={item.icon} />
+              <span>{item.label}</span>
+            </button>
+          );
+        })}
+      </nav>
       <div className="sidebar-spacer" />
       <UpdateNotice />
       <div className="model-status">
@@ -654,20 +622,7 @@ function NextShell() {
     );
   };
 
-  const availableModes = onboardingModes(
-    {
-      ...modelDraft,
-      selectedModels: {
-        standard:
-          modelDraft.selectedModels.standard || settings?.selected_model || "",
-        streaming:
-          modelDraft.selectedModels.streaming ||
-          settings?.selected_asr_model ||
-          "",
-      },
-    },
-    settings?.translate_to_english,
-  );
+  const shortcutIds = onboardingShortcutIds(modelDraft);
 
   if (onboardingStep === null)
     return (
@@ -685,37 +640,14 @@ function NextShell() {
       </>
     );
   }
-  if (onboardingStep === "modes") {
-    return (
-      <>
-        <ModesOnboarding
-          onBack={() => setOnboardingStep("accessibility")}
-          onComplete={() => setOnboardingStep("model")}
-        />
-        <Toaster theme={isDark ? "dark" : "light"} />
-      </>
-    );
-  }
   if (onboardingStep === "model") {
     return (
       <>
         <Onboarding
           draft={modelDraft}
           onDraftChange={setModelDraft}
-          onBack={() => setOnboardingStep("modes")}
-          onModelSelected={() => setOnboardingStep("try")}
-        />
-        <Toaster theme={isDark ? "dark" : "light"} />
-      </>
-    );
-  }
-  if (onboardingStep === "try") {
-    return (
-      <>
-        <TryOnboarding
-          availableModes={availableModes}
-          onBack={() => setOnboardingStep("model")}
-          onComplete={() => setOnboardingStep("shortcuts")}
+          onBack={() => setOnboardingStep("accessibility")}
+          onModelSelected={() => setOnboardingStep("shortcuts")}
         />
         <Toaster theme={isDark ? "dark" : "light"} />
       </>
@@ -725,8 +657,8 @@ function NextShell() {
     return (
       <>
         <ShortcutsOnboarding
-          availableModes={availableModes}
-          onBack={() => setOnboardingStep("try")}
+          shortcutIds={shortcutIds}
+          onBack={() => setOnboardingStep("model")}
           onComplete={() => setOnboardingStep("done")}
         />
         <Toaster theme={isDark ? "dark" : "light"} />

@@ -266,7 +266,6 @@ pub fn configure(app: &AppHandle) -> Result<(), String> {
     settings.start_hidden = false;
     settings.agent_enabled = true;
     settings.agent_autocopy = crate::settings::AgentAutocopy::Off;
-    settings.agent_context_mode = crate::settings::AgentContextMode::Off;
     settings.agent_screen_image = false;
     settings.agent_quick_enabled = false;
     settings.agent_panel_position = crate::settings::AgentPanelPosition::Center;
@@ -328,8 +327,7 @@ pub fn configure(app: &AppHandle) -> Result<(), String> {
                 && id == crate::grain_agent_harness_mcp::PEER_CLIENT_PROVIDER_ID)
     });
     settings.post_process_api_keys.0.clear();
-    settings.stt_api_keys.0.clear();
-    settings.post_process_smart_rotation = false;
+    settings.post_process_fallback_enabled = false;
     settings.post_process_provider_id = "custom".into();
     settings.post_process_providers = vec![crate::settings::PostProcessProvider {
         id: "custom".into(),
@@ -339,8 +337,6 @@ pub fn configure(app: &AppHandle) -> Result<(), String> {
         models_endpoint: None,
         supports_structured_output: false,
         enabled: true,
-        quota_limit: None,
-        quota_used_today: 0,
     }];
     settings.post_process_models.clear();
     settings

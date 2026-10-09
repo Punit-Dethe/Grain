@@ -43,11 +43,12 @@ export default defineConfig(async ({ mode }) => ({
 
   // Entry points: the main settings window, plus the hidden extension-host
   // supervisor page (SPEC §3.1) — a real route Tauri loads as its own webview.
-  // The recording overlay is retired — grain-pill (native) is the only overlay.
+  // Grain presentation hosted by Handy's shared recording window.
   build: {
     rollupOptions: {
       input: {
         main: resolve(__dirname, "index.html"),
+        recordingOverlay: resolve(__dirname, "recording-overlay.html"),
         extensionHost: resolve(__dirname, "extension-host.html"),
         // Grain-owned recommendation, progress, and result surface.
         extensionView: resolve(__dirname, "extension-view.html"),

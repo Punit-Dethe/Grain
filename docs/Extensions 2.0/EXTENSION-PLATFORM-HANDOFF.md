@@ -1,7 +1,9 @@
 # Extension platform: current understanding and integration handoff
 
-**Updated: 10 October 2026.** This is the current continuation document before
-bringing `extensions/tool-only-retirement` up to date with Grain's `main`.
+**Updated: 10 October 2026.** Main integration is implemented on
+`extensions/main-integration-20261010`; see the
+[integration checkpoint](MAIN-INTEGRATION-CHECKPOINT.md) for reconciled boundaries,
+automated results and the remaining installed-alpha acceptance.
 It records decisions and observed results, not a frozen SDK or a production
 readiness certificate. Read this first, then the linked implementation guides
 and focused evidence when working on a particular area. Earlier phase numbers
@@ -359,9 +361,10 @@ Suggested integration sequence when the user starts that work:
    where relevant; no new harness or blanket rerun of historical scenarios is
    required merely because the commit count is large.
 
-No merge, rebase, history rewrite, registry republishing or application change was
-performed for this documentation handoff. The next work is integration with main,
-not another authentication framework or an expanded phase/test inventory.
+The snapshot and sequence above describe the pre-integration handoff. The
+subsequent implementation merged this main snapshot in an isolated checkout;
+see [MAIN-INTEGRATION-CHECKPOINT.md](MAIN-INTEGRATION-CHECKPOINT.md). Registry and
+OAuth identities were preserved. No original dirty checkout was reset.
 
 ## 9. What comes after integration
 

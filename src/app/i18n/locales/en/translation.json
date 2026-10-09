@@ -52,106 +52,39 @@
       "brand": "Grain",
       "label": "SETUP",
       "progress": "Setup progress",
-      "skipTest": "Skip test",
       "continue": "Continue",
       "steps": {
         "microphone": "Microphone",
-        "modes": "Modes",
         "models": "Models",
-        "try": "Try",
         "shortcuts": "Shortcuts"
       },
       "microphone": {
-        "title": "Check your microphone",
-        "description": "Choose an input, then speak for five seconds.",
+        "title": "Choose your microphone",
+        "description": "Select the input Grain will use for dictation.",
         "inputLabel": "Input device",
         "checking": "Checking microphone access…",
-        "test": "Test microphone",
-        "testDetail": "A five-second check for a clear, balanced level",
-        "testAction": "Test microphone",
-        "retest": "Test microphone again",
-        "starting": "Opening microphone…",
-        "startingDetail": "Connecting to the selected input",
-        "listening": "Listening…",
-        "listeningDetail": "Keep speaking at your usual distance",
-        "success": "Microphone sounds good",
-        "successDetail": "Your voice is clear and the level is balanced",
-        "tooQuiet": "Microphone is a little quiet",
-        "tooQuietDetail": "Move closer or raise the microphone input level",
-        "tooLoud": "Microphone is too loud",
-        "tooLoudDetail": "Move farther away or lower the microphone input level",
-        "noSignal": "No voice detected",
-        "noSignalDetail": "Speak continuously, check the selected input, and try again",
-        "error": "Microphone could not start",
-        "errorDetail": "Choose another input or try again",
-        "checkingInput_one": "Checking level · {{count}} second left",
-        "checkingInput_other": "Checking level · {{count}} seconds left",
-        "quiet": "Quiet",
-        "balanced": "Balanced",
-        "loud": "Loud",
         "allow": "Allow microphone",
         "waitingPermission": "Waiting for permission…",
         "enableShortcuts": "Enable shortcuts",
         "shortcutsTitle": "Enable global shortcuts",
         "shortcutsDescription": "Accessibility access lets Grain start capture and paste text in other apps.",
-        "footerHint": "Local check. Audio isn’t saved.",
+        "footerHint": "You can change your microphone in Settings.",
         "errors": {
           "continue": "Microphone setup could not finish. Please try again."
-        }
+        },
+        "refresh": "Refresh",
+        "systemDefault": "System default"
       },
-      "modes": {
-        "title": "See how your words arrive",
-        "description": "Play a preview. Try your microphone on the next steps.",
-        "skip": "Skip preview",
-        "back": "Back",
-        "chooseModels": "Choose models",
+      "models": {
+        "title": "Download your models",
+        "description": "Choose Standard, Streaming, or both. You can add more later.",
         "standard": {
           "title": "Standard",
-          "takeaway": "Batch model · records first, transcribes after you stop."
-        },
-        "flow": {
-          "title": "Flow",
-          "takeaway": "Batch model · works while you speak, finishes after you stop."
+          "description": "Dictate with your selected speech model."
         },
         "streaming": {
           "title": "Streaming",
-          "takeaway": "ASR model · words appear live while you speak."
-        },
-        "preview": {
-          "label": "Illustrative preview",
-          "play": "Play",
-          "replay": "Replay",
-          "next": "Next",
-          "phrase": "Let’s move tomorrow’s meeting to eleven.",
-          "placeholder": "Watch what happens when you speak.",
-          "waitingText": "Your words are being recorded.",
-          "finishingText": "Preparing your transcript…",
-          "ready": "Choose Play to see this mode.",
-          "complete": "Recording stopped · transcript ready",
-          "standard": {
-            "recording": "Recording · the model waits",
-            "finishing": "Recording stopped · transcribing"
-          },
-          "flow": {
-            "recording": "Recording · the model is working",
-            "finishing": "Recording stopped · finishing"
-          },
-          "streaming": {
-            "recording": "Recording · words arrive live",
-            "finishing": "Recording stopped · finalizing"
-          }
-        }
-      },
-      "models": {
-        "title": "Choose your models",
-        "description": "Install either family or both. You can add more later.",
-        "standard": {
-          "title": "Batch model",
-          "description": "Standard + Flow with supported Parakeet models."
-        },
-        "streaming": {
-          "title": "Streaming ASR",
-          "description": "Live words in Streaming mode."
+          "description": "See words appear as you speak."
         },
         "resolving": "Choosing recommended model…",
         "selected_one": "{{count}} model selected",
@@ -164,7 +97,7 @@
         "verifying": "Verifying",
         "extracting": "Preparing",
         "installed": "Installed",
-        "install": "Install selected",
+        "install": "Download and continue",
         "installing": "Installing…",
         "cancel": "Cancel installation",
         "back": "Back",
@@ -180,48 +113,12 @@
         "defaultsFallback": "Recommendations could not load. You can still choose from the available models below.",
         "unavailable": "No model available",
         "chooseAlternative": "Choose another family or retry the recommendations.",
-        "standardOnly": "Standard only · Flow needs a supported Parakeet model",
+        "standardOnly": "Transcribes after you stop",
         "cancelling": "Cancelling…"
-      },
-      "try": {
-        "title": "Give your voice a first run",
-        "description": "Try your models here. Nothing is pasted into other apps.",
-        "modeLabel": "Test capture mode",
-        "placeholder": "Your test transcription will appear here.",
-        "ready": "Ready",
-        "opening": "Opening microphone…",
-        "listening": "Listening",
-        "processing": "Transcribing…",
-        "complete": "Transcription complete",
-        "failed": "Test needs attention",
-        "start": "Start test",
-        "stop": "Stop and transcribe",
-        "again": "Test again",
-        "skip": "Skip test",
-        "back": "Back",
-        "continue": "Continue",
-        "modes": {
-          "flow": {
-            "title": "Flow",
-            "speed": "Batch model check",
-            "hint": "Check your batch model here. After setup, the Flow shortcut starts rolling capture."
-          },
-          "standard": {
-            "title": "Standard",
-            "speed": "After you stop",
-            "hint": "Record a complete thought, then stop to transcribe."
-          },
-          "streaming": {
-            "title": "Streaming",
-            "speed": "Live text",
-            "hint": "Words appear live."
-          }
-        },
-        "emptyResult": "No speech was recognized. Speak for a few seconds and try again."
       },
       "shortcuts": {
         "title": "Set your shortcuts",
-        "description": "Click a shortcut, then press the keys you want.",
+        "description": "Choose the keys you will use to start dictation.",
         "settingsNote": "Change these later in Settings → Capture.",
         "back": "Back",
         "finish": "Open Grain"
@@ -395,27 +292,15 @@
         "bindings": {
           "transcribe": {
             "name": "Standard",
-            "description": "Record your voice and paste the plain transcript."
-          },
-          "transcribe_realtime": {
-            "name": "Flow",
-            "description": "Stream words as you speak, using the rolling window."
+            "description": "Speak, then paste text when you stop."
           },
           "transcribe_native_asr": {
             "name": "Streaming",
-            "description": "Native real-time dictation with live streaming text in the Studio Window."
+            "description": "See text live as you speak."
           },
           "cancel": {
             "name": "Cancel",
             "description": "Stop and discard the current recording."
-          },
-          "prompt_prev": {
-            "name": "Previous Prompt",
-            "description": "Switch the active AI prompt to the previous one."
-          },
-          "prompt_next": {
-            "name": "Next Prompt",
-            "description": "Switch the active AI prompt to the next one."
           },
           "summon_agent": {
             "name": "Summon Agent",
@@ -424,6 +309,10 @@
           "transcribe_send_to_ai": {
             "name": "AI Dictation",
             "description": "One key for AI: press it to start an AI dictation, or press it during any dictation to end that one and send it to AI."
+          },
+          "prompt_record": {
+            "name": "Prompt Record",
+            "description": "During dictation, press this key, then speak an AI instruction. Stop dictation with its original shortcut to apply it."
           }
         },
         "errors": {
@@ -448,7 +337,6 @@
     "models": {
       "title": "Transcription Models",
       "description": "Select a transcription model or download additional models. Different models offer varying levels of accuracy and speed.",
-      "cloudActiveBanner": "Cloud transcription is on, so the local model is inactive. Manage cloud providers in the Speech to Text tab, or turn cloud transcription off to use a local model.",
       "yourModels": "Downloaded Models",
       "availableModels": "Available to Download",
       "downloaded": "Downloaded",
@@ -551,25 +439,32 @@
       },
       "overlay": {
         "title": "Pill Position",
-        "description": "Display visual feedback overlay during recording and transcription. On Linux 'None' is recommended.",
+        "description": "Choose whether recording pills appear at the top or bottom of the screen.",
+        "display": {
+          "title": "Recording pill",
+          "description": "None hides the pill in every mode. Compact uses a compact pill in every mode. Live preview shows text only with the Streaming shortcut; Standard stays compact.",
+          "options": {
+            "none": "None",
+            "compact": "Compact",
+            "live": "Live preview"
+          }
+        },
         "options": {
           "none": "None",
           "bottom": "Bottom",
           "top": "Top",
-          "center": "Center"
-        }
-      },
-      "pillSkin": {
-        "title": "Pill Style",
-        "description": "How the pill visualizes your voice while recording.",
-        "options": {
-          "wave": "Waveform",
-          "matrix": "Dot Matrix"
+          "center": "Center",
+          "minimal": "Minimal",
+          "live": "Live preview"
         }
       },
       "pillAppIcon": {
         "label": "Show app icon in pill",
         "description": "Show the icon of the app you're dictating into, in place of the pill's status dot."
+      },
+      "pillCloseButton": {
+        "label": "Hide close button on compact pill",
+        "description": "Remove the close button and its space from compact recording and processing pills. Expanded live previews keep their close button."
       },
       "pasteMethod": {
         "title": "Paste Method",
@@ -640,22 +535,14 @@
     },
     "speechToText": {
       "title": "Transcription",
-      "description": "Choose how speech is transcribed: the local on-device model, or your own cloud providers with smart rotation.",
+      "description": "Choose on-device models for Standard and Streaming.",
       "groups": {
-        "engine": "On-device models",
-        "routing": "Transcription routing",
-        "providers": "Cloud providers"
-      },
-      "flowUnavailable": {
-        "model": "Select and download Parakeet TDT v2 or v3 in Transcription settings to use Flow.",
-        "translation": "Turn off Translate to English to use Flow.",
-        "modelAndTranslation": "Select and download Parakeet TDT v2 or v3 in Transcription settings, then turn off Translate to English to use Flow."
+        "engine": "On-device models"
       },
       "localModel": {
         "title": "Standard model",
         "none": "No model selected",
         "activeHint": "Active · used for on-device transcription",
-        "disabledByCloud": "Disabled — cloud transcription is handling this",
         "browse": "Browse models",
         "showLess": "Show less"
       },
@@ -665,65 +552,15 @@
         "activeHint": "Active · used for live streaming dictation",
         "noneHint": "Pick a model to enable live streaming dictation"
       },
-      "rotationNoProvider": "No provider is configured yet. Add a cloud provider before enabling cloud transcription.",
-      "smartRotation": {
-        "label": "Cloud transcription",
-        "short": "Enable cloud providers",
-        "description": "Disables the local model and uses your cloud providers. Rotates automatically if multiple are enabled."
-      },
-      "localActive": {
-        "title": "Local on-device model",
-        "descriptionActive": "Active. Speech is transcribed locally with no network. Choose the model in the Models tab.",
-        "descriptionDisabled": "Disabled while cloud transcription is on. The cloud providers below are used instead."
-      },
-      "emptyPoolWarning": "Cloud transcription is on, but no provider has an API key yet. Add a key below, or turn cloud transcription off to use the local model.",
-      "noProviders": "No cloud providers yet. Add one to transcribe in the cloud.",
-      "rotateLabel": "Rotate",
-      "rotateTooltip": "Include this provider in smart rotation.",
-      "keySet": "Key set",
-      "noKey": "No key",
-      "quotaUsed": "{{used}} / {{limit}} today",
-      "quotaUnlimited": "{{used}} used today",
-      "edit": "Edit",
-      "remove": "Remove",
-      "removeConfirm": "Remove provider \"{{name}}\"? Its API key will be deleted.",
-      "addProvider": "Add Provider",
-      "form": {
-        "addTitle": "Add cloud provider",
-        "editTitle": "Edit provider",
-        "name": "Name",
-        "namePlaceholder": "e.g. My OpenAI key",
-        "kind": "Type",
-        "kindOpenai": "OpenAI-compatible",
-        "kindDeepgram": "Deepgram",
-        "kindAssemblyai": "AssemblyAI",
-        "baseUrl": "Base URL",
-        "baseUrlPlaceholder": "https://api.openai.com/v1",
-        "model": "Model",
-        "modelPlaceholder": "e.g. whisper-1",
-        "apiKey": "API Key",
-        "apiKeyPlaceholder": "sk-...",
-        "apiKeyKeepPlaceholder": "Leave blank to keep current key",
-        "quotaLimit": "Daily request limit",
-        "quotaLimitPlaceholder": "Unlimited",
-        "save": "Save",
-        "cancel": "Cancel",
-        "nameRequired": "Name is required.",
-        "baseUrlRequired": "Base URL is required.",
-        "multiKeyTip": "Tip: add the same Base URL twice with different names and keys to rotate across multiple keys for one provider."
-      },
       "picker": {
         "title": "Models",
         "empty": "No model selected",
         "choose": "Choose a model",
         "change": "Change",
-        "unavailable": "Handled in the cloud",
         "standard": {
           "label": "Standard",
-          "purpose": "Used by Standard captures",
-          "purposeFlow": "Used by Standard and Flow captures",
-          "purposeCloud": "Saved for Standard while cloud providers are active",
-          "purposeFlowCloud": "Used by Flow; Standard currently uses cloud providers"
+          "purpose": "Transcribes after you stop",
+          "purposeFlow": "Processes while you speak, pastes after you stop"
         },
         "streaming": {
           "label": "Streaming",
@@ -770,21 +607,13 @@
         }
       },
       "pool": {
-        "smartRotation": {
-          "label": "Smart rotation",
-          "description": "When on, post-processing rotates across the enabled providers below, each with its own daily quota and automatic failover. When off, the single selected provider (the filled dot) is used."
-        },
         "routingTitle": "Routing",
         "addTitle": "Add provider",
         "yourProvidersTitle": "Your providers",
         "selectHintSingle": "Select the provider to use.",
-        "selectHintRotation": "Select the providers to rotate across.",
         "noConfigured": "No API keys added yet. Choose a provider above and add a key.",
-        "emptyPoolWarning": "Smart rotation is on, but none of your providers are selected. Tick at least one above, or turn smart rotation off.",
-        "rotateTooltip": "Include this provider in smart rotation.",
+        "emptyPoolWarning": "No providers are enabled for fallback. Select one below.",
         "setActive": "Use this provider.",
-        "quotaUsed": "{{used}} / {{limit}} today",
-        "quotaUnlimited": "{{used}} used today",
         "edit": "Edit",
         "remove": "Remove",
         "removeConfirm": "Remove provider \"{{name}}\"? Its API key will be deleted.",
@@ -817,15 +646,22 @@
           "apiKey": "API Key",
           "apiKeyPlaceholder": "sk-...",
           "apiKeyKeepPlaceholder": "Leave blank to keep current key",
-          "quotaLimit": "Daily request limit",
-          "quotaLimitPlaceholder": "Unlimited",
           "save": "Save",
           "cancel": "Cancel",
-          "multiKeyTip": "Tip: add the same Base URL twice with different names and keys to rotate across multiple keys for one provider."
+          "multiKeyTip": "Add multiple entries for one endpoint with separate keys, then order them for fallback."
         },
         "addProvider": "Add provider",
-        "rotationNoProvider": "No provider is configured yet. Add a provider before turning on smart rotation.",
-        "providersTitle": "Providers"
+        "providersTitle": "Providers",
+        "fallback": {
+          "label": "Fallback",
+          "description": "Try enabled providers from top to bottom until one succeeds. When off, use only the selected provider."
+        },
+        "fallbackNoProvider": "Add a provider before enabling fallback.",
+        "fallbackProviderTooltip": "Include this provider in fallback.",
+        "reorder": "Reorder {{name}}. Drag or use Up and Down arrow keys.",
+        "orderStatus": "{{name}} is priority {{position}}.",
+        "saveOrderError": "Could not save provider order. Try again.",
+        "priority": "Priority {{position}}"
       },
       "prompts": {
         "title": "Prompt",
@@ -1161,8 +997,8 @@
       "loading": "Loading settings",
       "sections": {
         "capture": {
-          "label": "Capture",
-          "description": "How a recording starts, is held, and ends — including what the AI key does."
+          "label": "Transcription",
+          "description": "Models, recording shortcuts and AI processing."
         },
         "audio": {
           "label": "Audio",
@@ -1176,13 +1012,9 @@
           "label": "Application",
           "description": "Appearance, startup, the tray, what Grain keeps on disk, and experiments."
         },
-        "speech-to-text": {
-          "label": "Speech to Text",
-          "description": "Local and native models, rolling preview, unload behavior, and cloud transcription providers."
-        },
         "post-processing": {
           "label": "Post-processing",
-          "description": "Provider rotation and the prompts used to refine completed transcriptions."
+          "description": "Provider fallback and prompts for refining completed transcriptions."
         },
         "debug": {
           "label": "Debug",
@@ -1232,18 +1064,12 @@
       }
     },
     "capture": {
-      "group": "Capture",
-      "set": {
-        "title": "Capture modes",
-        "description": "Grain has three ways to capture. Keeping one means one shortcut to remember; the other modes stay available, they just stop holding a hotkey. Switch to all three whenever you want them back.",
-        "single": "One mode",
-        "all": "All three"
-      },
+      "group": "Configure",
       "ai": {
-        "group": "AI",
+        "group": "AI processing",
         "always": {
           "title": "Send every capture to AI",
-          "description": "Every capture is post-processed, whichever key started it. With this on there is exactly one shortcut to remember for the whole product."
+          "description": "Every capture is post-processed, whichever key started it."
         },
         "end": {
           "title": "Finish with AI",
@@ -1251,12 +1077,13 @@
         },
         "startMode": {
           "title": "AI shortcut starts",
-          "description": "Which capture mode the AI shortcut uses when you press it to begin. With one mode live it necessarily uses that one."
+          "description": "Choose Standard or Streaming for the AI shortcut."
         }
       }
     }
   },
   "overlay": {
+    "askFollowup": "Ask follow-up",
     "transcribing": "Transcribing...",
     "processing": "Processing..."
   },

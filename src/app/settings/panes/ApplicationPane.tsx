@@ -8,7 +8,7 @@ import { EmbeddingSettings } from "@/components/settings/EmbeddingSettings";
 import { HistoryLimit } from "@/components/settings/HistoryLimit";
 import { LazyStreamClose } from "@/components/settings/LazyStreamClose";
 import { PillAppIcon } from "@/components/settings/PillAppIcon";
-import { PillSkinSelector } from "@/components/settings/PillSkinSelector";
+import { PillCloseButton } from "@/components/settings/PillCloseButton";
 import { RecordingRetentionPeriodSelector } from "@/components/settings/RecordingRetentionPeriod";
 import { ShowOverlay } from "@/components/settings/ShowOverlay";
 import { ShowTrayIcon } from "@/components/settings/ShowTrayIcon";
@@ -41,8 +41,8 @@ export function ApplicationPane() {
         <AppearanceMode />
         <DefaultPanel grouped />
         <ShowOverlay descriptionMode="tooltip" grouped />
-        <PillSkinSelector descriptionMode="tooltip" grouped />
         <PillAppIcon descriptionMode="tooltip" grouped />
+        <PillCloseButton />
       </SettingsGroup>
 
       <SettingsGroup

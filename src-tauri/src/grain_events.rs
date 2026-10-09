@@ -8,19 +8,10 @@
 //! | Bus | Transport | Audience |
 //! | --- | --- | --- |
 //! | Tauri events (this file) | in-process event bus | Grain's own webviews |
-//! | [`grain_core::DaemonEvent`] | authenticated local WebSocket | the native pill, extensions |
+//! | [`grain_core::DaemonEvent`] | authenticated local WebSocket | extensions, developer control |
 //!
-//! [`crate::bridge`] states the reason: the winit pill is a *separate native
-//! surface* and cannot receive Tauri webview events at all, so it subscribes to
-//! `DaemonEvent` on the core's broadcast bus instead. That bus is
-//! capability-filtered per client (`events_auth::allows_event`) because
-//! **untrusted extension code is on it**. Grain's own window is not untrusted
-//! and is not out of process, so routing the app's UI notifications through a
-//! socket + handshake + capability map would buy nothing and cost a connection.
-//!
-//! `DaemonEvent`'s "replaces `model-state-changed`" comments mean *the pill
-//! learns model state this way instead of the way a webview would* — not that
-//! the webview surface is going away.
+//! The public SDK bus remains capability-filtered for untrusted extensions.
+//! Grain WebViews use typed Tauri events and commands without a socket client.
 //!
 //! # What this module is
 //!
@@ -47,6 +38,22 @@
 
 use serde::{Deserialize, Serialize};
 use specta::Type;
+
+// Handy's raw overlay event names, typed without changing their wire payloads.
+#[derive(Clone, Debug, Serialize, Deserialize, Type, tauri_specta::Event)]
+pub struct ShowOverlay(pub String);
+#[derive(Clone, Debug, Serialize, Deserialize, Type, tauri_specta::Event)]
+pub struct HideOverlay;
+#[derive(Clone, Debug, Serialize, Deserialize, Type, tauri_specta::Event)]
+pub struct RecordingReady;
+#[derive(Clone, Debug, Serialize, Deserialize, Type, tauri_specta::Event)]
+pub struct MicLevel(pub Vec<f32>);
+#[derive(Clone, Serialize, Deserialize, Type, tauri_specta::Event)]
+pub struct GrainOverlayContext(pub crate::grain_overlay::OverlayPresentation);
+#[derive(Clone, Debug, Serialize, Deserialize, Type, tauri_specta::Event)]
+pub struct GrainOverlayPosition(pub crate::settings::OverlayPosition);
+#[derive(Clone, Debug, Serialize, Deserialize, Type, tauri_specta::Event)]
+pub struct GrainOverlayCompactCloseHidden(pub bool);
 
 /// A model was selected, started loading, finished loading, or failed.
 /// Mirrors `managers::transcription::ModelStateEvent`.
@@ -164,6 +171,16 @@ mod tests {
     /// break — the UI would subscribe to an event nothing sends.
     #[test]
     fn event_names() {
+        assert_eq!(ShowOverlay::NAME, "show-overlay");
+        assert_eq!(HideOverlay::NAME, "hide-overlay");
+        assert_eq!(RecordingReady::NAME, "recording-ready");
+        assert_eq!(MicLevel::NAME, "mic-level");
+        assert_eq!(GrainOverlayContext::NAME, "grain-overlay-context");
+        assert_eq!(GrainOverlayPosition::NAME, "grain-overlay-position");
+        assert_eq!(
+            GrainOverlayCompactCloseHidden::NAME,
+            "grain-overlay-compact-close-hidden"
+        );
         assert_eq!(ModelStateChanged::NAME, "model-state-changed");
         assert_eq!(ModelDownloadProgress::NAME, "model-download-progress");
         assert_eq!(ModelDownloadComplete::NAME, "model-download-complete");
@@ -191,6 +208,18 @@ mod tests {
     /// retypes fails here rather than in a user's window.
     #[test]
     fn shapes_match() {
+        assert_eq!(
+            serde_json::to_value(ShowOverlay("streaming".into())).unwrap(),
+            serde_json::json!("streaming")
+        );
+        assert_eq!(
+            serde_json::to_value(MicLevel(vec![0.25, 0.5])).unwrap(),
+            serde_json::json!([0.25, 0.5])
+        );
+        assert_eq!(
+            serde_json::to_value(HideOverlay).unwrap(),
+            serde_json::Value::Null
+        );
         let upstream = crate::managers::transcription::ModelStateEvent {
             event_type: "loading_failed".into(),
             model_id: Some("parakeet".into()),

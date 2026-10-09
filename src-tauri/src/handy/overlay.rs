@@ -54,7 +54,8 @@ const OVERLAY_STREAM_WIDTH: f64 = 400.0;
 const OVERLAY_STREAM_HEIGHT: f64 = 120.0;
 
 /// Overlay window size (logical) for a given UI state.
-fn overlay_dimensions(state: &str) -> (f64, f64) {
+// [GRAIN] Report shared window bounds in the owned overlay snapshot.
+pub(crate) fn overlay_dimensions(state: &str) -> (f64, f64) {
     if state == "streaming" {
         (OVERLAY_STREAM_WIDTH, OVERLAY_STREAM_HEIGHT)
     } else {
@@ -71,10 +72,10 @@ const OVERLAY_TOP_OFFSET: f64 = 46.0;
 const OVERLAY_TOP_OFFSET: f64 = 4.0;
 
 #[cfg(target_os = "macos")]
-const OVERLAY_BOTTOM_OFFSET: f64 = 15.0;
+const OVERLAY_BOTTOM_OFFSET: f64 = 15.0 + crate::grain_overlay::BOTTOM_RAISE; // [GRAIN] visual clearance
 
 #[cfg(any(target_os = "windows", target_os = "linux"))]
-const OVERLAY_BOTTOM_OFFSET: f64 = 40.0;
+const OVERLAY_BOTTOM_OFFSET: f64 = 40.0 + crate::grain_overlay::BOTTOM_RAISE; // [GRAIN] visual clearance
 
 /// Configures the edge and offset of a GTK layer surface. gtk-layer-shell
 /// commits anchor and margin changes itself, including while the surface is
@@ -404,7 +405,8 @@ pub fn create_recording_overlay(app_handle: &AppHandle) {
     let mut builder = WebviewWindowBuilder::new(
         app_handle,
         "recording_overlay",
-        tauri::WebviewUrl::App("src/overlay/index.html".into()),
+        // [GRAIN] Owned presentation; shared window lifecycle.
+        tauri::WebviewUrl::App("recording-overlay.html".into()),
     )
     .title("Recording")
     .resizable(false)
@@ -454,7 +456,8 @@ pub fn create_recording_overlay(app_handle: &AppHandle) {
         // PanelBuilder creates a Tauri window then converts it to NSPanel.
         // The window remains registered, so get_webview_window() still works.
         match PanelBuilder::<_, RecordingOverlayPanel>::new(app_handle, "recording_overlay")
-            .url(WebviewUrl::App("src/overlay/index.html".into()))
+            // [GRAIN] Owned presentation; shared window lifecycle.
+            .url(WebviewUrl::App("recording-overlay.html".into()))
             .title("Recording")
             .position(tauri::Position::Logical(tauri::LogicalPosition { x, y }))
             .level(PanelLevel::Status)
@@ -485,7 +488,8 @@ pub fn create_recording_overlay(app_handle: &AppHandle) {
     }
 }
 
-fn show_overlay_state(app_handle: &AppHandle, state: &str) {
+// [GRAIN] Clipboard and follow-up presentation reuse the same lifecycle.
+pub(crate) fn show_overlay_state(app_handle: &AppHandle, state: &str) {
     // Whether the overlay shows at all is governed by overlay_style; position
     // only chooses Top vs Bottom placement. Checked here (off the main thread)
     // so the common overlay-disabled case never pays for a main-thread hop.
@@ -621,6 +625,7 @@ pub fn show_streaming_overlay(app_handle: &AppHandle) {
 }
 
 /// Shows the transcribing overlay window
+#[allow(dead_code)] // [GRAIN] Retain Handy's API; owned presentation calls show_overlay_state.
 pub fn show_transcribing_overlay(app_handle: &AppHandle) {
     show_overlay_state(app_handle, "transcribing");
 }
@@ -728,6 +733,8 @@ pub fn update_overlay_enabled_cache(enabled: bool) {
 }
 
 pub fn emit_levels(app_handle: &AppHandle, levels: &[f32]) {
+    // [GRAIN] Extensions receive bounded audio events even with overlays disabled.
+    crate::grain_overlay::emit_public_levels(app_handle, levels);
     // Skip emission when the overlay is disabled. The recording_overlay
     // window is created at boot regardless of overlay_style, so without this
     // guard a hidden overlay's WebKit subprocess still
@@ -824,7 +831,7 @@ mod tests {
                 OVERLAY_HEIGHT,
                 OverlayPosition::Bottom,
             ),
-            (3648, 2025, 384, 75)
+            (3648, 2001, 384, 75) // [GRAIN] 16 logical pixels higher, scaled by destination DPI
         );
         assert_eq!(
             windows_overlay_bounds(
@@ -853,7 +860,7 @@ mod tests {
                 OVERLAY_STREAM_HEIGHT,
                 OverlayPosition::Bottom,
             ),
-            (-1530, 1040, 500, 150)
+            (-1530, 1020, 500, 150) // [GRAIN] visual clearance
         );
     }
 
@@ -873,9 +880,9 @@ mod tests {
             OverlayPosition::Bottom,
         );
         // 400x120 logical at 1.25 DPI x 1.1 text, still centered horizontally.
-        assert_eq!((x, y, width, height), (-1555, 1025, 550, 165));
-        // Bottom edge unchanged from the 1.0 case above (1040 + 150).
-        assert_eq!(y + height, 1190);
+        // [GRAIN] Visual clearance; bottom edge unchanged from 1.0 above (1020 + 150).
+        assert_eq!((x, y, width, height), (-1555, 1005, 550, 165));
+        assert_eq!(y + height, 1170);
 
         let (_, top_y, _, _) = windows_overlay_bounds(
             monitor_position,

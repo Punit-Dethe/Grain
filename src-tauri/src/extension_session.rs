@@ -10,7 +10,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 use tauri::{AppHandle, Emitter, Manager};
 
-use crate::audio_feedback::{play_feedback_sound, play_feedback_sound_blocking, SoundType};
+use crate::audio_feedback::{play_feedback_sound, SoundType};
 use crate::audio_toolkit::VadPolicy;
 use crate::managers::audio::AudioRecordingManager;
 use crate::managers::history::HistoryManager;
@@ -72,6 +72,7 @@ fn declared_session(
 /// Enter the one recording-session code path used by both API and shortcut.
 pub fn start(app: &AppHandle, ext_id: &str, mode_id: &str) -> Result<u64, StartError> {
     let (ext_name, mode_id) = declared_session(app, ext_id, mode_id)?;
+    let _start_guard = crate::grain_actions::capture_start_guard();
     let recording = Arc::clone(&app.state::<Arc<AudioRecordingManager>>());
     let transcription = Arc::clone(&app.state::<Arc<TranscriptionManager>>());
     let mut slot = active().lock().unwrap();
@@ -79,9 +80,7 @@ pub fn start(app: &AppHandle, ext_id: &str, mode_id: &str) -> Result<u64, StartE
         return Err(StartError::Busy);
     }
 
-    if !crate::stt_router::will_route_to_cloud(app) {
-        transcription.initiate_model_load();
-    }
+    transcription.initiate_model_load();
     {
         let recording = Arc::clone(&recording);
         std::thread::spawn(move || {
@@ -91,35 +90,21 @@ pub fn start(app: &AppHandle, ext_id: &str, mode_id: &str) -> Result<u64, StartE
 
     let generation = NEXT_GENERATION.fetch_add(1, Ordering::Relaxed);
     let binding_id = format!("ext-session:{ext_id}:{mode_id}:{generation}");
-    let always_on = crate::settings::get_settings(app).always_on_microphone;
-    if always_on {
-        let recording_for_sound = Arc::clone(&recording);
-        let app_for_sound = app.clone();
-        std::thread::spawn(move || {
-            play_feedback_sound_blocking(&app_for_sound, SoundType::Start);
-            recording_for_sound.apply_mute();
-        });
-    }
-    recording
+    let overlay_generation =
+        crate::grain_overlay::show_capture(app, grain_core::SessionMode::Batch);
+    let readiness = recording
         .try_start_recording(&binding_id, VadPolicy::Offline)
         .map_err(|error| {
+            crate::grain_overlay::hide_failed_capture(app, overlay_generation);
             if error == "Already recording" {
                 StartError::Busy
             } else {
                 StartError::Unavailable(error)
             }
         })?;
-    if !always_on {
-        let recording_for_sound = Arc::clone(&recording);
-        let app_for_sound = app.clone();
-        std::thread::spawn(move || {
-            std::thread::sleep(std::time::Duration::from_millis(100));
-            play_feedback_sound_blocking(&app_for_sound, SoundType::Start);
-            recording_for_sound.apply_mute();
-        });
-    }
 
     let session_id = crate::grain_actions::extension_session_started(app, &ext_name);
+    crate::grain_capture::announce_ready(app, &recording, readiness, true);
     *slot = Some(ActiveSession {
         generation,
         session_id,

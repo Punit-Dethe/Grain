@@ -211,7 +211,10 @@ fn load_settings(data_dir: &Path) -> Result<(AppSettings, SecretMap)> {
     let mut salvaged = false;
     let mut settings = if path.exists() {
         let raw = fs::read_to_string(&path).with_context(|| format!("read {}", path.display()))?;
-        match serde_json::from_str::<AppSettings>(&raw) {
+        let mut value: serde_json::Value =
+            serde_json::from_str(&raw).with_context(|| format!("parse {}", path.display()))?;
+        salvaged = crate::settings::migrate_overlay_settings(&mut value);
+        match serde_json::from_value::<AppSettings>(value.clone()) {
             Ok(settings) => settings,
             Err(e) => {
                 // One bad field must not reset the user's whole configuration
@@ -219,8 +222,6 @@ fn load_settings(data_dir: &Path) -> Result<(AppSettings, SecretMap)> {
                 // individually-valid field. If the file isn't even JSON, err
                 // out to the caller's defaults fallback.
                 log::warn!("Failed to parse stored settings ({e}); salvaging valid fields");
-                let value: serde_json::Value = serde_json::from_str(&raw)
-                    .with_context(|| format!("parse {}", path.display()))?;
                 salvaged = true;
                 salvage_settings(&value)
             }
@@ -235,9 +236,6 @@ fn load_settings(data_dir: &Path) -> Result<(AppSettings, SecretMap)> {
     let secrets = load_secrets(data_dir)?;
     for (id, key) in secrets.post_process_api_keys.0 {
         settings.post_process_api_keys.insert(id, key);
-    }
-    for (id, key) in secrets.stt_api_keys.0 {
-        settings.stt_api_keys.insert(id, key);
     }
 
     // Provider/key migrations. A salvaged store is persisted here too — only
@@ -319,8 +317,6 @@ struct StoredSecrets {
     #[serde(default)]
     post_process_api_keys: SecretMap,
     #[serde(default)]
-    stt_api_keys: SecretMap,
-    #[serde(default)]
     extension_secrets: SecretMap,
 }
 
@@ -334,14 +330,13 @@ fn load_secrets(data_dir: &Path) -> Result<StoredSecrets> {
         serde_json::from_str(&raw).with_context(|| format!("parse {}", path.display()))?;
     // New format has the named sub-maps; anything else is a legacy bare map of
     // post-process keys.
-    if value.get("post_process_api_keys").is_some() || value.get("stt_api_keys").is_some() {
+    if value.get("post_process_api_keys").is_some() || value.get("extension_secrets").is_some() {
         serde_json::from_value(value).with_context(|| format!("parse {}", path.display()))
     } else {
         let legacy: SecretMap = serde_json::from_value(value)
             .with_context(|| format!("parse legacy {}", path.display()))?;
         Ok(StoredSecrets {
             post_process_api_keys: legacy,
-            stt_api_keys: SecretMap::default(),
             extension_secrets: SecretMap::default(),
         })
     }
@@ -361,7 +356,6 @@ fn save_settings(
     let mut sanitized = settings.clone();
     let secrets = StoredSecrets {
         post_process_api_keys: std::mem::take(&mut sanitized.post_process_api_keys),
-        stt_api_keys: std::mem::take(&mut sanitized.stt_api_keys),
         extension_secrets: extension_secrets.clone(),
     };
 
@@ -399,6 +393,49 @@ mod tests {
         // update checks ship ON.
         assert!(!ctx.settings().push_to_talk);
         assert!(ctx.settings().update_checks_enabled);
+    }
+
+    #[test]
+    fn retired_cloud_settings_cannot_override_local_routing_or_rewrite_credentials() {
+        let dir = tempfile::tempdir().unwrap();
+        let data = dir.path().join("data");
+        fs::create_dir_all(&data).unwrap();
+        let mut stored = serde_json::to_value(AppSettings::default()).unwrap();
+        stored["selected_model"] = serde_json::json!(
+            "handy-computer/parakeet-tdt-0.6b-v3-gguf/parakeet-tdt-0.6b-v3-Q8_0.gguf"
+        );
+        stored["stt_smart_rotation"] = serde_json::json!(true);
+        stored["stt_providers"] = serde_json::json!([{"id": "openai", "enabled": true}]);
+        fs::write(data.join(SETTINGS_FILE), stored.to_string()).unwrap();
+        fs::write(
+            data.join(SECRETS_FILE),
+            serde_json::json!({
+                "post_process_api_keys": {"openai": "text-key"},
+                "extension_secrets": {"ext.example.api_key": "extension-key"},
+                "stt_api_keys": {"openai": "retired-audio-key"}
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        let ctx = AppContext::new(dir.path().join("res"), &data);
+        assert_eq!(
+            crate::capture::action_id_for(&ctx.settings(), "transcribe"),
+            "transcribe_realtime"
+        );
+        ctx.update_settings(|s| s.paste_delay_ms = 60).unwrap();
+        let saved: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(data.join(SETTINGS_FILE)).unwrap()).unwrap();
+        assert!(saved.get("stt_smart_rotation").is_none());
+        assert!(saved.get("stt_providers").is_none());
+        let secrets: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(data.join(SECRETS_FILE)).unwrap()).unwrap();
+        assert!(secrets.get("stt_api_keys").is_none());
+        assert_eq!(secrets["post_process_api_keys"]["openai"], "text-key");
+        assert_eq!(
+            secrets["extension_secrets"]["ext.example.api_key"],
+            "extension-key"
+        );
     }
 
     #[test]
@@ -495,7 +532,7 @@ mod tests {
         .unwrap();
         fs::write(
             data.join(SECRETS_FILE),
-            r#"{"post_process_api_keys":{"openai":"sk-keepme"},"stt_api_keys":{}}"#,
+            r#"{"post_process_api_keys":{"openai":"sk-keepme"}}"#,
         )
         .unwrap();
 
@@ -619,6 +656,195 @@ mod tests {
         // Fresh context reads the same value back from disk.
         let ctx2 = AppContext::new("res", &data);
         assert_eq!(ctx2.settings().selected_model, "parakeet-v3");
+    }
+
+    #[test]
+    fn pill_preferences_default_for_legacy_settings_and_survive_reload() {
+        let dir = tempfile::tempdir().unwrap();
+        let data = dir.path().join("data");
+        fs::create_dir_all(&data).unwrap();
+        let mut legacy = serde_json::to_value(AppSettings::default()).unwrap();
+        legacy
+            .as_object_mut()
+            .unwrap()
+            .remove("pill_hide_close_button");
+        legacy["selected_language"] = serde_json::json!("fr");
+        fs::write(
+            data.join(SETTINGS_FILE),
+            serde_json::to_vec(&legacy).unwrap(),
+        )
+        .unwrap();
+        let ctx = AppContext::new("res", &data);
+        assert!(!ctx.settings().pill_hide_close_button);
+        drop(ctx);
+        for hidden in [true, false] {
+            let ctx = AppContext::new("res", &data);
+            ctx.update_settings(|s| {
+                s.pill_hide_close_button = hidden;
+                s.pill_show_app_icon = !hidden;
+                s.overlay_position = if hidden {
+                    crate::settings::OverlayPosition::Top
+                } else {
+                    crate::settings::OverlayPosition::Bottom
+                };
+                s.overlay_style = if hidden {
+                    crate::settings::OverlayStyle::None
+                } else {
+                    crate::settings::OverlayStyle::Minimal
+                };
+            })
+            .unwrap();
+            drop(ctx);
+            let reloaded = AppContext::new("res", &data);
+            assert_eq!(reloaded.settings().pill_hide_close_button, hidden);
+            assert_eq!(reloaded.settings().pill_show_app_icon, !hidden);
+            assert_eq!(
+                reloaded.settings().overlay_position,
+                if hidden {
+                    crate::settings::OverlayPosition::Top
+                } else {
+                    crate::settings::OverlayPosition::Bottom
+                }
+            );
+            assert_eq!(
+                reloaded.settings().overlay_style,
+                if hidden {
+                    crate::settings::OverlayStyle::None
+                } else {
+                    crate::settings::OverlayStyle::Minimal
+                }
+            );
+            assert_eq!(reloaded.settings().selected_language, "fr");
+        }
+    }
+
+    #[test]
+    fn retired_pill_skin_is_removed_from_disk_without_resetting_preferences() {
+        for skin in ["matrix", "wave"] {
+            let dir = tempfile::tempdir().unwrap();
+            let data = dir.path().join("data");
+            fs::create_dir_all(&data).unwrap();
+            let mut legacy = serde_json::to_value(AppSettings::default()).unwrap();
+            legacy["pill_skin"] = serde_json::json!(skin);
+            legacy["selected_language"] = serde_json::json!("fr");
+            legacy["pill_hide_close_button"] = serde_json::json!(true);
+            legacy["pill_show_app_icon"] = serde_json::json!(false);
+            fs::write(
+                data.join(SETTINGS_FILE),
+                serde_json::to_vec(&legacy).unwrap(),
+            )
+            .unwrap();
+            // Loading must persist the cleanup without requiring a later edit.
+            let ctx = AppContext::new("res", &data);
+            assert_eq!(ctx.settings().selected_language, "fr");
+            assert!(ctx.settings().pill_hide_close_button);
+            assert!(!ctx.settings().pill_show_app_icon);
+            drop(ctx);
+            let saved: serde_json::Value =
+                serde_json::from_str(&fs::read_to_string(data.join(SETTINGS_FILE)).unwrap())
+                    .unwrap();
+            assert!(saved.get("pill_skin").is_none());
+            let reloaded = AppContext::new("res", &data);
+            assert_eq!(reloaded.settings().selected_language, "fr");
+            assert!(reloaded.settings().pill_hide_close_button);
+            assert!(!reloaded.settings().pill_show_app_icon);
+        }
+    }
+
+    #[test]
+    fn retired_agent_text_context_does_not_reset_retained_settings() {
+        for mode in ["off", "unique", "full", "screen"] {
+            let dir = tempfile::tempdir().unwrap();
+            let data = dir.path().join("data");
+            fs::create_dir_all(&data).unwrap();
+            let mut legacy = serde_json::to_value(AppSettings::default()).unwrap();
+            legacy["agent_context_mode"] = serde_json::json!(mode);
+            legacy["context_awareness_enabled"] = serde_json::json!(true);
+            legacy["agent_screen_image"] = serde_json::json!(true);
+            legacy["agent_quick_enabled"] = serde_json::json!(true);
+            legacy["selected_language"] = serde_json::json!("fr");
+            fs::write(
+                data.join(SETTINGS_FILE),
+                serde_json::to_vec(&legacy).unwrap(),
+            )
+            .unwrap();
+            let ctx = AppContext::new("res", &data);
+            ctx.update_settings(|s| s.agent_enabled = true).unwrap();
+            drop(ctx);
+            let reloaded = AppContext::new("res", &data);
+            let settings = reloaded.settings();
+            assert!(settings.context_awareness_enabled);
+            assert!(settings.agent_screen_image);
+            assert!(settings.agent_quick_enabled);
+            assert!(settings.agent_enabled);
+            assert_eq!(settings.selected_language, "fr");
+            let saved: serde_json::Value =
+                serde_json::from_str(&fs::read_to_string(data.join(SETTINGS_FILE)).unwrap())
+                    .unwrap();
+            assert!(saved.get("agent_context_mode").is_none());
+        }
+    }
+
+    #[test]
+    fn fallback_and_provider_priority_persist_without_rotation_metadata() {
+        let dir = tempfile::tempdir().unwrap();
+        let data = dir.path().join("data");
+        fs::create_dir_all(&data).unwrap();
+        let mut legacy = serde_json::to_value(AppSettings::default()).unwrap();
+        legacy["post_process_smart_rotation"] = serde_json::json!(true);
+        legacy["post_process_quota_reset_date"] = serde_json::json!("2026-10-04");
+        legacy["post_process_providers"][0]["quota_limit"] = serde_json::json!(10);
+        legacy["post_process_providers"][0]["quota_used_today"] = serde_json::json!(9);
+        fs::write(
+            data.join(SETTINGS_FILE),
+            serde_json::to_vec(&legacy).unwrap(),
+        )
+        .unwrap();
+        let ctx = AppContext::new("res", &data);
+        assert!(!ctx.settings().post_process_fallback_enabled);
+        let ids: Vec<_> = ctx
+            .settings()
+            .post_process_providers
+            .iter()
+            .rev()
+            .map(|p| p.id.clone())
+            .collect();
+        ctx.update_settings(|s| {
+            s.post_process_fallback_enabled = true;
+            crate::providers::reorder(s, &ids).unwrap();
+            s.post_process_provider_id = "groq".into();
+            s.post_process_models
+                .insert("groq".into(), "test-model".into());
+            s.post_process_api_keys
+                .insert("groq".into(), "test-key".into());
+        })
+        .unwrap();
+        drop(ctx);
+        let reloaded = AppContext::new("res", &data);
+        let settings = reloaded.settings();
+        assert!(settings.post_process_fallback_enabled);
+        assert_eq!(
+            settings
+                .post_process_providers
+                .iter()
+                .map(|p| p.id.clone())
+                .collect::<Vec<_>>(),
+            ids
+        );
+        assert_eq!(settings.post_process_provider_id, "groq");
+        assert_eq!(settings.post_process_models["groq"], "test-model");
+        assert_eq!(
+            settings.post_process_api_keys.get("groq").unwrap(),
+            "test-key"
+        );
+        let saved: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(data.join(SETTINGS_FILE)).unwrap()).unwrap();
+        assert!(saved.get("post_process_smart_rotation").is_none());
+        assert!(saved.get("post_process_quota_reset_date").is_none());
+        for provider in saved["post_process_providers"].as_array().unwrap() {
+            assert!(provider.get("quota_limit").is_none());
+            assert!(provider.get("quota_used_today").is_none());
+        }
     }
 
     #[test]

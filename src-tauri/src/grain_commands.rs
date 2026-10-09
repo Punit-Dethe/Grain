@@ -10,11 +10,11 @@
 //! path in `lib.rs`'s `collect_commands!` differs.
 
 use crate::settings;
-use crate::settings::{DefaultPanel, PillSkin};
+use crate::settings::DefaultPanel;
 use log::warn;
 use tauri::{AppHandle, Manager};
 
-/// The five capture/Agent keys reserve their saved chords even while a feature
+/// Capture, Agent and Prompt Record keys reserve their saved chords even while a feature
 /// is disabled and its OS shortcut is unregistered. Other bindings are outside
 /// this policy.
 pub(crate) fn capture_shortcut_conflicts(
@@ -24,10 +24,10 @@ pub(crate) fn capture_shortcut_conflicts(
 ) -> bool {
     const IDS: [&str; 5] = [
         "transcribe",
-        "transcribe_realtime",
         "transcribe_native_asr",
         "summon_agent",
         "transcribe_send_to_ai",
+        "prompt_record",
     ];
     if !IDS.contains(&id) {
         return false;
@@ -42,13 +42,22 @@ pub(crate) fn capture_shortcut_conflicts(
         let Ok(candidate) = candidate.parse::<T>() else {
             return false; // The existing validator reports malformed shortcuts.
         };
-        ids.iter().filter(|other| **other != id).any(|other| {
-            settings
-                .bindings
-                .get(*other)
-                .and_then(|binding| binding.current_binding.parse::<T>().ok())
-                .is_some_and(|stored| stored == candidate)
-        })
+        settings
+            .bindings
+            .iter()
+            .filter(|(other, _)| {
+                other.as_str() != id
+                    && (ids.contains(&other.as_str())
+                        || (id == "prompt_record"
+                            && !grain_core::capture::shortcut_is_withheld(other)))
+            })
+            .any(|(_, binding)| {
+                binding
+                    .current_binding
+                    .parse::<T>()
+                    .ok()
+                    .is_some_and(|stored| stored == candidate)
+            })
     }
 
     match settings.keyboard_implementation {
@@ -66,13 +75,30 @@ mod capture_shortcut_conflict_tests {
     use super::*;
 
     #[test]
+    fn streaming_default_is_supported_by_both_shortcut_backends() {
+        let settings = settings::get_default_settings();
+        let raw = &settings.bindings["transcribe_native_asr"].current_binding;
+        assert_eq!(raw, "ctrl+space");
+        assert!(crate::shortcut::tauri_impl::validate_shortcut(raw).is_ok());
+        assert!(raw
+            .parse::<tauri_plugin_global_shortcut::Shortcut>()
+            .is_ok());
+        assert!(raw.parse::<handy_keys::Hotkey>().unwrap().key.is_some());
+        assert!(!capture_shortcut_conflicts(
+            &settings,
+            "transcribe_native_asr",
+            raw
+        ));
+    }
+
+    #[test]
     fn every_capture_and_agent_pair_conflicts_even_when_features_are_off() {
         let ids = [
             "transcribe",
-            "transcribe_realtime",
             "transcribe_native_asr",
             "summon_agent",
             "transcribe_send_to_ai",
+            "prompt_record",
         ];
         for implementation in [
             settings::KeyboardImplementation::Tauri,
@@ -116,18 +142,44 @@ mod capture_shortcut_conflict_tests {
             ));
             assert!(!capture_shortcut_conflicts(
                 &settings,
-                "prompt_next",
+                "agent_followup",
                 &settings.bindings["transcribe"].current_binding
             ));
             settings
                 .bindings
-                .get_mut("prompt_next")
+                .get_mut("agent_followup")
                 .unwrap()
                 .current_binding = "alt+ctrl+f9".into();
             assert!(!capture_shortcut_conflicts(
                 &settings,
                 "summon_agent",
                 "ctrl+alt+f9"
+            ));
+        }
+    }
+
+    #[test]
+    fn prompt_record_default_is_supported_and_cannot_override_cancel() {
+        for implementation in [
+            settings::KeyboardImplementation::Tauri,
+            settings::KeyboardImplementation::HandyKeys,
+        ] {
+            let mut settings = settings::get_default_settings();
+            settings.keyboard_implementation = implementation;
+            let chord = &settings.bindings["prompt_record"].current_binding;
+            assert!(chord
+                .parse::<tauri_plugin_global_shortcut::Shortcut>()
+                .is_ok());
+            assert!(chord.parse::<handy_keys::Hotkey>().is_ok());
+            assert!(!capture_shortcut_conflicts(
+                &settings,
+                "prompt_record",
+                chord
+            ));
+            assert!(capture_shortcut_conflicts(
+                &settings,
+                "prompt_record",
+                &settings.bindings["cancel"].current_binding
             ));
         }
     }
@@ -445,6 +497,9 @@ pub fn update_snippets(app: AppHandle, snippets: Vec<settings::Snippet>) -> Resu
 #[tauri::command]
 #[specta::specta]
 pub fn change_capture_ai_start_mode_setting(app: AppHandle, mode: String) -> Result<(), String> {
+    if !grain_core::capture::is_capture_mode(&mode) {
+        return Err("AI start mode must be Dictation or Streaming".into());
+    }
     let mut settings = settings::get_settings(&app);
     settings.capture_ai_start_mode = mode;
     settings::write_settings(&app, settings);
@@ -581,19 +636,6 @@ pub fn change_agent_quick_enabled_setting(app: AppHandle, enabled: bool) -> Resu
     Ok(())
 }
 
-/// [GRAIN] Agent context awareness mode (off / unique terms / full field text).
-#[tauri::command]
-#[specta::specta]
-pub fn change_agent_context_mode_setting(
-    app: AppHandle,
-    mode: settings::AgentContextMode,
-) -> Result<(), String> {
-    let mut settings = settings::get_settings(&app);
-    settings.agent_context_mode = mode;
-    settings::write_settings(&app, settings);
-    Ok(())
-}
-
 /// [GRAIN] Agent screen vision: send a picture of the summoned-from window with
 /// the instruction. OFF by default; see `Settings::agent_screen_image`.
 #[tauri::command]
@@ -601,19 +643,6 @@ pub fn change_agent_context_mode_setting(
 pub fn change_agent_screen_image_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
     let mut settings = settings::get_settings(&app);
     settings.agent_screen_image = enabled;
-    settings::write_settings(&app, settings);
-    Ok(())
-}
-
-/// [GRAIN] Toggle "type to expand" on the native agent input.
-#[tauri::command]
-#[specta::specta]
-pub fn change_agent_input_type_to_expand_setting(
-    app: AppHandle,
-    enabled: bool,
-) -> Result<(), String> {
-    let mut settings = settings::get_settings(&app);
-    settings.agent_input_type_to_expand = enabled;
     settings::write_settings(&app, settings);
     Ok(())
 }
@@ -662,40 +691,16 @@ pub fn change_default_panel_setting(app: AppHandle, panel: String) -> Result<(),
     Ok(())
 }
 
-/// [GRAIN] Which built-in look the collapsed pill wears. Unlike a pill *theme*
-/// (an extension's colours), a skin changes the pill's geometry — so the pill
-/// resizes its own window on receipt. An unknown name resolves to the default
-/// rather than erroring: the user must never end up with no pill.
-#[tauri::command]
-#[specta::specta]
-pub fn change_pill_skin_setting(app: AppHandle, skin: String) -> Result<(), String> {
-    let parsed = PillSkin::from_wire(&skin);
-    if parsed.as_wire() != skin {
-        warn!(
-            "Invalid pill skin '{}', defaulting to {}",
-            skin,
-            parsed.as_wire()
-        );
-    }
-    let mut settings = settings::get_settings(&app);
-    settings.pill_skin = parsed;
-    settings::write_settings(&app, settings);
-
-    // Drive the live pill: it re-sizes and re-centers on the next frame. An idle
-    // pill picks the skin up from its welcome frame on the next connect.
-    crate::pill_skin::broadcast(&app, parsed);
-    Ok(())
-}
-
 /// [GRAIN] Pill identity: show the icon of the app being dictated into in place
 /// of the pill's state dot. Takes effect on the next session — the icon is
 /// resolved at record-start, never held between sessions.
 #[tauri::command]
 #[specta::specta]
 pub fn change_pill_show_app_icon_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
-    let mut settings = settings::get_settings(&app);
-    settings.pill_show_app_icon = enabled;
-    settings::write_settings(&app, settings);
+    app.state::<std::sync::Arc<grain_core::AppContext>>()
+        .update_settings(|settings| settings.pill_show_app_icon = enabled)
+        .map_err(|error| error.to_string())?;
+    crate::grain_overlay::set_app_icon_enabled(&app, enabled);
     Ok(())
 }
 
@@ -828,9 +833,10 @@ pub fn grain_action_listen(app: AppHandle, phase: String) -> Result<bool, String
     match phase.as_str() {
         "start" => match action_session::start(&app) {
             Ok(()) => Ok(true),
-            // Not an error the user needs shown: something else already owns the
-            // microphone, or nothing is installed that could answer.
-            Err(action_session::StartError::Busy)
+            // Quiet refusal: the build withholds the feature, something else
+            // owns the microphone, or nothing installed could answer.
+            Err(action_session::StartError::Disabled)
+            | Err(action_session::StartError::Busy)
             | Err(action_session::StartError::NothingInstalled) => Ok(false),
             Err(action_session::StartError::Unavailable(why)) => Err(why),
         },

@@ -11,7 +11,7 @@ driven three different ways:
 
   * by **name** — ``updateSetting("paste_method", …)``;
   * by a **dedicated command** — the provider pools never touch
-    ``stt_providers`` by name, they call ``sttUpsertProvider``;
+    ``post_process_providers`` by name, they call ``ppUpsertProvider``;
   * by a **raw invoke** — the extension platform calls
     ``invoke("extension_set_developer_mode")`` rather than the typed binding.
 
@@ -95,7 +95,7 @@ def app_settings_fields(src: str) -> list:
 def commands(src: str) -> list:
     """Generated command functions, as (camelCase, snake_case) pairs."""
     out = []
-    for camel in sorted(set(re.findall(r"^async (\w+)\(", src, re.M))):
+    for camel in sorted(set(re.findall(r"^\s*async (\w+)\(", src, re.M))):
         snake = re.sub(r"([A-Z])", lambda m: "_" + m.group(1).lower(), camel)
         out.append((camel, snake))
     return out
@@ -106,8 +106,8 @@ def tokens(name: str) -> set:
 
     `pp` and `stt` are the pool commands' shorthand for the settings prefixes
     `post_process` and `stt`, so they are folded together; without that,
-    `pp_set_smart_rotation` would not be seen to cover
-    `post_process_smart_rotation`.
+    `pp_set_fallback_enabled` would not be seen to cover
+    `post_process_fallback_enabled`.
     """
     parts = []
     for p in name.split("_"):
@@ -225,11 +225,11 @@ def gate(tree: str) -> int:
     for field in fields:
         if field in blob:
             continue
-        # A dedicated command that covers the field counts: pp_set_smart_rotation
-        # reaches post_process_smart_rotation, and extension_set_developer_mode
+        # A dedicated command that covers the field counts: pp_set_fallback_enabled
+        # reaches post_process_fallback_enabled, and extension_set_developer_mode
         # reaches extension_developer_mode, without either spelling the field.
         # Matched on word tokens (singularised) rather than substrings, so
-        # `stt_providers` pairs with `stt_upsert_provider`.
+        # `post_process_providers` pairs with `pp_upsert_provider`.
         if any(covers(field, snake) for snake in called):
             continue
         unreachable.append(field)

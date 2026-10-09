@@ -107,7 +107,6 @@ const NAV_DEFS: NavDef[] = [
 type Gate = (settings: AppSettings | null) => boolean;
 
 const experimentalOn: Gate = (s) => s?.experimental_enabled === true;
-const postProcessOn: Gate = (s) => s?.post_process_enabled === true;
 const debugOn: Gate = (s) => s?.debug_mode === true;
 
 interface SettingDef {
@@ -150,12 +149,27 @@ const SETTING_DEFS: SettingDef[] = [
     titleKey: "ui2.capture.ai.end.title",
     section: "capture",
     keywords: ["ai after recording", "refine on end"],
+    enabled: (s) => !s?.capture_always_ai && !s?.push_to_talk,
   },
   {
     id: "ai-start-mode",
     titleKey: "ui2.capture.ai.startMode.title",
     section: "capture",
     keywords: ["ai start mode"],
+    enabled: (s) => !s?.capture_always_ai,
+  },
+  {
+    id: "ai-dictation",
+    titleKey: "settings.general.shortcut.bindings.transcribe_send_to_ai.name",
+    section: "capture",
+    keywords: ["ai shortcut", "ai key", "cleanup"],
+    enabled: (s) => !s?.capture_always_ai,
+  },
+  {
+    id: "prompt-record",
+    titleKey: "settings.general.shortcut.bindings.prompt_record.name",
+    section: "capture",
+    keywords: ["spoken instruction", "prompt record", "f8"],
   },
   {
     id: "language",
@@ -319,19 +333,18 @@ const SETTING_DEFS: SettingDef[] = [
     keywords: ["stream close", "latency"],
     enabled: experimentalOn,
   },
-  // speech-to-text --------------------------------------------------------
+  // transcription models -------------------------------------------------
   {
     id: "stt",
-    titleKey: "settings.speechToText.title",
-    section: "speech-to-text",
-    keywords: [
-      "model",
-      "asr",
-      "whisper",
-      "parakeet",
-      "transcription engine",
-      "cloud provider",
-    ],
+    titleKey: "settings.speechToText.picker.title",
+    section: "capture",
+    keywords: ["model", "asr", "whisper", "parakeet", "transcription engine"],
+  },
+  {
+    id: "model-unload",
+    titleKey: "settings.advanced.modelUnload.title",
+    section: "capture",
+    keywords: ["unload model", "memory", "ram", "timeout"],
   },
   // post-processing (gated) ----------------------------------------------
   {
@@ -339,7 +352,6 @@ const SETTING_DEFS: SettingDef[] = [
     titleKey: "settings.postProcessing.prompts.title",
     section: "post-processing",
     keywords: ["ai prompt", "refine", "cleanup prompt", "llm"],
-    enabled: postProcessOn,
   },
   // debug (gated) ---------------------------------------------------------
   {

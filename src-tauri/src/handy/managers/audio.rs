@@ -13,7 +13,7 @@ use crate::utils;
 use log::{debug, error, info, trace, warn};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{mpsc, Arc, Mutex};
 use std::time::{Duration, Instant};
 use tauri::{Emitter, Manager};
 
@@ -350,6 +350,27 @@ fn create_audio_recorder(
 
 /* ──────────────────────────────────────────────────────────────── */
 
+/// One session's first real microphone sample acknowledgement (Handy contract).
+pub struct RecordingReadiness {
+    receiver: mpsc::Receiver<()>,
+    generation: u64,
+}
+
+impl RecordingReadiness {
+    #[allow(dead_code)] // [GRAIN] Keep Handy's API; owned callers use cancellable wait_timeout.
+    pub fn wait(self) -> bool {
+        self.receiver.recv().is_ok()
+    }
+    pub fn generation(&self) -> u64 {
+        self.generation
+    }
+    // [GRAIN] Let a cancelled caller release its worker even if a broken device
+    // never delivers another chunk to process the recorder's Stop command.
+    pub(crate) fn wait_timeout(&self, timeout: Duration) -> Result<(), mpsc::RecvTimeoutError> {
+        self.receiver.recv_timeout(timeout)
+    }
+}
+
 #[derive(Clone)]
 pub struct AudioRecordingManager {
     /// Never assign through this directly — route every write through
@@ -364,9 +385,10 @@ pub struct AudioRecordingManager {
     mute_state: Arc<Mutex<MuteState>>,
     close_generation: Arc<AtomicU64>,
     cancel_generation: Arc<AtomicU64>,
+    capture_generation: Arc<AtomicU64>,
     stream_router: Arc<StreamRouter>,
-    /// [GRAIN] Prompt Record split mark: the sample index where the user clicked
-    /// the pill mid-recording to switch from dictating CONTENT to dictating an AI
+    /// [GRAIN] Prompt Record split mark: the sample index where the user pressed
+    /// the shortcut mid-recording to switch from dictating CONTENT to dictating an AI
     /// INSTRUCTION. `Some(n)` once armed (one-way per session); `None` otherwise.
     /// Snapshotted from the recorder's live length so it indexes the buffer
     /// `stop_recording` returns. Reset at the start of every recording.
@@ -411,6 +433,7 @@ impl AudioRecordingManager {
             mute_state: Arc::new(Mutex::new(MuteState::default())),
             close_generation: Arc::new(AtomicU64::new(0)),
             cancel_generation: Arc::new(AtomicU64::new(0)),
+            capture_generation: Arc::new(AtomicU64::new(0)),
             stream_router,
             prompt_mark: Arc::new(Mutex::new(None)), // [GRAIN]
             recording_active: Arc::new(AtomicBool::new(false)),
@@ -728,6 +751,7 @@ impl AudioRecordingManager {
     }
 
     pub fn stop_microphone_stream(&self) {
+        self.invalidate_recording_readiness();
         let mut open_flag = self.is_open.lock().unwrap();
         if !*open_flag {
             return;
@@ -798,7 +822,7 @@ impl AudioRecordingManager {
         &self,
         binding_id: &str,
         vad_policy: VadPolicy,
-    ) -> Result<(), String> {
+    ) -> Result<RecordingReadiness, String> {
         self.try_start_recording_with_retention(binding_id, vad_policy, true)
     }
 
@@ -808,7 +832,7 @@ impl AudioRecordingManager {
         &self,
         binding_id: &str,
         vad_policy: VadPolicy,
-    ) -> Result<(), String> {
+    ) -> Result<RecordingReadiness, String> {
         self.try_start_recording_with_retention(binding_id, vad_policy, false)
     }
 
@@ -817,7 +841,7 @@ impl AudioRecordingManager {
         binding_id: &str,
         vad_policy: VadPolicy,
         retain_full_audio: bool,
-    ) -> Result<(), String> {
+    ) -> Result<RecordingReadiness, String> {
         let mut state = self.state.lock().unwrap();
 
         if let RecordingState::Idle = *state {
@@ -836,21 +860,25 @@ impl AudioRecordingManager {
             }
 
             if let Some(rec) = self.recorder.lock().unwrap().as_ref() {
-                if rec
-                    .start_with_retention(vad_policy, retain_full_audio)
-                    .is_ok()
-                {
-                    *self.is_recording.lock().unwrap() = true;
-                    // [GRAIN] Fresh Prompt Record baseline: no split marked yet.
-                    *self.prompt_mark.lock().unwrap() = None;
-                    self.set_state(
-                        &mut state,
-                        RecordingState::Recording {
-                            binding_id: binding_id.to_string(),
-                        },
-                    );
-                    debug!("Recording started for binding {binding_id}");
-                    return Ok(());
+                match rec.start_with_retention(vad_policy, retain_full_audio) {
+                    Ok(receiver) => {
+                        let generation = self.capture_generation.fetch_add(1, Ordering::AcqRel) + 1;
+                        *self.is_recording.lock().unwrap() = true;
+                        // [GRAIN] Fresh Prompt Record baseline: no split marked yet.
+                        *self.prompt_mark.lock().unwrap() = None;
+                        self.set_state(
+                            &mut state,
+                            RecordingState::Recording {
+                                binding_id: binding_id.to_string(),
+                            },
+                        );
+                        debug!("Recording started for binding {binding_id}");
+                        return Ok(RecordingReadiness {
+                            receiver,
+                            generation,
+                        });
+                    }
+                    Err(error) => return Err(format!("Failed to start recorder: {error}")),
                 }
             }
             Err("Recorder not available".to_string())
@@ -860,13 +888,20 @@ impl AudioRecordingManager {
     }
 
     /// [GRAIN] Prompt Record: mark the current audio position as the
-    /// content→instruction split point (the user clicked the pill). One-way per
+    /// content→instruction split point (the user pressed the shortcut). One-way per
     /// session — a second call while already armed is a no-op. Returns `true` only
-    /// when it newly armed (so the caller knows to flip the pill blue), `false`
-    /// when not recording or already armed. The mark is snapshotted from the
+    /// when it newly armed, `false` when not dictating or already armed.
+    /// The mark is snapshotted from the
     /// recorder's live length, so it indexes the buffer `stop_recording` returns.
     pub fn arm_prompt_record(&self) -> bool {
-        if !self.is_recording() {
+        // [GRAIN] Serialize marking with Stop/Cancel/start so an old key event
+        // cannot leave a mark after teardown. Agent/extensions do not consume it.
+        let Ok(state) = self.state.try_lock() else {
+            return false; // Never block a shortcut callback on slow microphone startup.
+        };
+        if !matches!(&*state, RecordingState::Recording { binding_id }
+            if grain_core::capture::supports_prompt_record(binding_id))
+        {
             return false;
         }
         let mut mark = self.prompt_mark.lock().unwrap();
@@ -877,6 +912,9 @@ impl AudioRecordingManager {
             Some(rec) => rec.recorded_len(),
             None => return false,
         };
+        if len == 0 {
+            return false;
+        }
         *mark = Some(len);
         debug!("Prompt Record armed at sample {len}");
         true
@@ -947,11 +985,20 @@ impl AudioRecordingManager {
         self.cancel_generation.load(Ordering::Acquire)
     }
 
+    pub fn invalidate_recording_readiness(&self) {
+        self.capture_generation.fetch_add(1, Ordering::AcqRel);
+    }
+
+    pub fn is_recording_readiness_current(&self, generation: u64) -> bool {
+        self.capture_generation.load(Ordering::Acquire) == generation
+    }
+
     pub fn was_cancelled_since(&self, generation: u64) -> bool {
         self.cancel_generation.load(Ordering::Acquire) != generation
     }
 
     pub fn stop_recording(&self, binding_id: &str, cancel_generation: u64) -> Option<Vec<f32>> {
+        self.invalidate_recording_readiness();
         let mut state = self.state.lock().unwrap();
 
         match *state {
@@ -1042,6 +1089,7 @@ impl AudioRecordingManager {
 
     /// Cancel any ongoing recording without returning audio samples
     pub fn cancel_recording(&self) {
+        self.invalidate_recording_readiness();
         self.cancel_generation.fetch_add(1, Ordering::AcqRel);
         let mut state = self.state.lock().unwrap();
 

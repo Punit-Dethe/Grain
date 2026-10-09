@@ -252,19 +252,30 @@ async changeOverlayPositionSetting(position: string) : Promise<Result<null, stri
     else return { status: "error", error: e  as any };
 }
 },
-/**
- * [GRAIN] Which built-in look the collapsed pill wears. Unlike a pill *theme*
- * (an extension's colours), a skin changes the pill's geometry — so the pill
- * resizes its own window on receipt. An unknown name resolves to the default
- * rather than erroring: the user must never end up with no pill.
- */
-async changePillSkinSetting(skin: string) : Promise<Result<null, string>> {
+async changeOverlayStyleSetting(style: OverlayStyle) : Promise<Result<null, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("change_pill_skin_setting", { skin }) };
+    return { status: "ok", data: await TAURI_INVOKE("change_overlay_style_setting", { style }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
+},
+async changePillHideCloseButtonSetting(hidden: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_pill_hide_close_button_setting", { hidden }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async overlaySnapshot() : Promise<OverlaySnapshot> {
+    return await TAURI_INVOKE("overlay_snapshot");
+},
+async overlayCancel() : Promise<void> {
+    await TAURI_INVOKE("overlay_cancel");
+},
+async overlayFollowup() : Promise<void> {
+    await TAURI_INVOKE("overlay_followup");
 },
 /**
  * [GRAIN] Pill identity: show the icon of the app being dictated into in place
@@ -378,14 +389,6 @@ async changeAutoSubmitKeySetting(key: string) : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
-async changePostProcessEnabledSetting(enabled: boolean) : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("change_post_process_enabled_setting", { enabled }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
 /**
  * Resolve a locale tag onto a shipped catalogue. `None` in, or nothing
  * matching, means the caller should use its fallback language.
@@ -406,7 +409,7 @@ async resolveOnboardingState() : Promise<Result<OnboardingState, string>> {
 },
 /**
  * Where "permissions granted" leads. A returning user already has a model, so
- * the remaining setup would be a dead path; a new user first sees the modes.
+ * the remaining setup would be a dead path; a new user downloads models next.
  */
 async onboardingStepAfterPermissions(isReturningUser: boolean) : Promise<OnboardingStep> {
     return await TAURI_INVOKE("onboarding_step_after_permissions", { isReturningUser });
@@ -417,52 +420,6 @@ async onboardingStepAfterPermissions(isReturningUser: boolean) : Promise<Onboard
 async getOnboardingModelDefaults() : Promise<Result<OnboardingModelDefaults, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("get_onboarding_model_defaults") };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * Open the selected input just long enough to verify that it carries speech.
- */
-async startOnboardingMicrophoneTest(deviceName: string) : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("start_onboarding_microphone_test", { deviceName }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * Stop the onboarding probe and release the device immediately.
- */
-async stopOnboardingMicrophoneTest() : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("stop_onboarding_microphone_test") };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async startOnboardingTranscriptionTest(mode: OnboardingTestMode) : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("start_onboarding_transcription_test", { mode }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async stopOnboardingTranscriptionTest() : Promise<Result<string, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("stop_onboarding_transcription_test") };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async cancelOnboardingTranscriptionTest() : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("cancel_onboarding_transcription_test") };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -629,7 +586,7 @@ async changeAgentEnabledSetting(enabled: boolean) : Promise<Result<null, string>
     return { status: "ok", data: await TAURI_INVOKE("change_agent_enabled_setting", { enabled }) };
 } catch (e) {
     if(e instanceof Error) throw e;
-    else return { status: "error", error: e as any };
+    else return { status: "error", error: e  as any };
 }
 },
 /**
@@ -640,7 +597,7 @@ async changeSnippetsEnabledSetting(enabled: boolean) : Promise<Result<null, stri
     return { status: "ok", data: await TAURI_INVOKE("change_snippets_enabled_setting", { enabled }) };
 } catch (e) {
     if(e instanceof Error) throw e;
-    else return { status: "error", error: e as any };
+    else return { status: "error", error: e  as any };
 }
 },
 /**
@@ -666,34 +623,12 @@ async changeAgentQuickEnabledSetting(enabled: boolean) : Promise<Result<null, st
 }
 },
 /**
- * [GRAIN] Agent context awareness mode (off / unique terms / full field text).
- */
-async changeAgentContextModeSetting(mode: AgentContextMode) : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("change_agent_context_mode_setting", { mode }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
  * [GRAIN] Agent screen vision: send a picture of the summoned-from window with
  * the instruction. OFF by default; see `Settings::agent_screen_image`.
  */
 async changeAgentScreenImageSetting(enabled: boolean) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("change_agent_screen_image_setting", { enabled }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * [GRAIN] Toggle "type to expand" on the native agent input.
- */
-async changeAgentInputTypeToExpandSetting(enabled: boolean) : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("change_agent_input_type_to_expand_setting", { enabled }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -852,8 +787,8 @@ async storeMedia(sha256: string, kind: string) : Promise<Result<string, string>>
 }
 },
 /**
- * An extension's full README (markdown text), by its media hash. Lazy, and
- * integrity-checked. Rendered on the detail page.
+ * An extension's detail Markdown (new DESCRIPTION or legacy README), by its
+ * media hash. Lazy, hash-checked and size-bound for explicit signed listings.
  */
 async storeReadme(sha256: string) : Promise<Result<string, string>> {
     try {
@@ -899,22 +834,6 @@ async storeCovers(ids: string[]) : Promise<Result<StoreCover[], string>> {
  * Install (or update to) a specific verified `(id, version)`. In-app click
  * only — a link may open the store but never trigger this.
  */
-async storeMcpInstall(id: string, version: string) : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("store_mcp_install", { id, version }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async storeMcpUpdate(connectionId: string, expectedRevision: string, version: string) : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("store_mcp_update", { connectionId, expectedRevision, version }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
 async storeInstall(id: string, version: string) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("store_install", { id, version }) };
@@ -936,9 +855,8 @@ async storeRevocationBanners() : Promise<Result<RevocationBanner[], string>> {
 }
 },
 /**
- * Flip an extension on/off (SPEC §5.1 inline toggle). Built-ins write their
- * settings flag + bump toggle order; packs write the registry. The Agent
- * toggle re-registers its binding so the change is zero-overhead-when-off.
+ * Flip a tool extension on/off. Core Agent, Snippets and context settings use
+ * their own commands and cannot be enabled through the extension registry.
  */
 async extensionSetEnabled(id: string, enabled: boolean) : Promise<Result<null, string>> {
     try {
@@ -1099,6 +1017,14 @@ async mcpDisconnectProvider(id: string) : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+async mcpTestProvider(id: string) : Promise<Result<McpDiscoveryResult, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("mcp_test_provider", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async mcpConnectionsList() : Promise<Result<ConnectionView[], string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("mcp_connections_list") };
@@ -1110,6 +1036,30 @@ async mcpConnectionsList() : Promise<Result<ConnectionView[], string>> {
 async mcpConnectionImport(definitionJson: string) : Promise<Result<ConnectionView, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("mcp_connection_import", { definitionJson }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Development-gated acquisition only. Store accounts stay inactive until the
+ * combined acquisition/update/revocation real-app checkpoint is accepted.
+ */
+async storeMcpInstall(id: string, version: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("store_mcp_install", { id, version }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Exact-revision verified update. It uses the same download/verification and
+ * final ownership gate as acquisition, never user-supplied descriptor JSON.
+ */
+async storeMcpUpdate(connectionId: string, expectedRevision: string, version: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("store_mcp_update", { connectionId, expectedRevision, version }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1174,14 +1124,6 @@ async mcpConnectionSetClientCredentials(id: string, expectedRevision: string, cl
 async mcpConnectionClearClientCredentials(id: string, expectedRevision: string) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("mcp_connection_clear_client_credentials", { id, expectedRevision }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async mcpTestProvider(id: string) : Promise<Result<McpDiscoveryResult, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("mcp_test_provider", { id }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1265,6 +1207,8 @@ async extensionCaptureApp(id: string) : Promise<Result<string | null, string>> {
 }
 },
 /**
+ * Resolve a declaration list against what is stored. Split out so
+ * [`extension_settings_sections`] reads each pack once rather than twice.
  * The live state of one extension's contributed shortcuts (SPEC §3.3), so the
  * settings section can show a chord that is registered — and name the holder
  * of one that isn't, rather than leaving a dead hotkey unexplained.
@@ -1658,8 +1602,8 @@ async agentCopy(text: string) : Promise<Result<null, string>> {
 /**
  * Run the conversation against the configured AI and return the assistant reply.
  * Uses the post-processing provider config: a single provider, or the smart
- * rotation pool (round-robin + daily quota + health-ordered failover). The
- * focused-field context captured at summon (if any) is injected backend-side.
+ * fallback pool (enabled providers in saved order). The
+ * Explicitly selected text is supplied as the subject of the instruction.
  */
 async agentRun(messages: AgentMessage[], context: string | null) : Promise<Result<AgentReply, string>> {
     try {
@@ -1762,43 +1706,6 @@ async getAppSettings() : Promise<Result<AppSettings, string>> {
     else return { status: "error", error: e  as any };
 }
 },
-async sttGetPool() : Promise<Result<SttPoolView, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("stt_get_pool") };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async sttSetSmartRotation(enabled: boolean) : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("stt_set_smart_rotation", { enabled }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * Add or update a cloud provider (matched by `id`), optionally setting its API
- * key (written to grain.secrets.json). The local provider is managed
- * automatically and cannot be created/edited here.
- */
-async sttUpsertProvider(provider: SttProvider, apiKey: string | null) : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("stt_upsert_provider", { provider, apiKey }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async sttRemoveProvider(id: string) : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("stt_remove_provider", { id }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
 async ppGetPool() : Promise<Result<PpPoolView, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("pp_get_pool") };
@@ -1807,9 +1714,9 @@ async ppGetPool() : Promise<Result<PpPoolView, string>> {
     else return { status: "error", error: e  as any };
 }
 },
-async ppSetSmartRotation(enabled: boolean) : Promise<Result<null, string>> {
+async ppSetFallbackEnabled(enabled: boolean) : Promise<Result<null, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("pp_set_smart_rotation", { enabled }) };
+    return { status: "ok", data: await TAURI_INVOKE("pp_set_fallback_enabled", { enabled }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1819,7 +1726,7 @@ async ppSetSmartRotation(enabled: boolean) : Promise<Result<null, string>> {
  * Add or update a post-process provider (matched by `id`), optionally setting its
  * API key (→ grain.secrets.json) and model (→ `post_process_models`). Two entries
  * with the same `base_url` but different `id`s = two keys for one endpoint, which
- * is how multi-key rotation is expressed.
+ * is how multiple fallback entries are expressed.
  */
 async ppUpsertProvider(provider: PostProcessProvider, apiKey: string | null, model: string | null) : Promise<Result<null, string>> {
     try {
@@ -1832,6 +1739,17 @@ async ppUpsertProvider(provider: PostProcessProvider, apiKey: string | null, mod
 async ppRemoveProvider(id: string) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("pp_remove_provider", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Commit an exact permutation of provider ids, atomically with other settings writes.
+ */
+async ppReorderProviders(ids: string[]) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("pp_reorder_providers", { ids }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2258,7 +2176,12 @@ grainEmbedModelCancelled: GrainEmbedModelCancelled,
 grainEmbedModelComplete: GrainEmbedModelComplete,
 grainEmbedModelError: GrainEmbedModelError,
 grainEmbedModelProgress: GrainEmbedModelProgress,
+grainOverlayCompactCloseHidden: GrainOverlayCompactCloseHidden,
+grainOverlayContext: GrainOverlayContext,
+grainOverlayPosition: GrainOverlayPosition,
+hideOverlay: HideOverlay,
 historyUpdatePayload: HistoryUpdatePayload,
+micLevel: MicLevel,
 modelDeleted: ModelDeleted,
 modelDownloadCancelled: ModelDownloadCancelled,
 modelDownloadComplete: ModelDownloadComplete,
@@ -2268,9 +2191,10 @@ modelExtractionStarted: ModelExtractionStarted,
 modelStateChanged: ModelStateChanged,
 modelVerificationCompleted: ModelVerificationCompleted,
 modelVerificationStarted: ModelVerificationStarted,
-onboardingMicrophoneLevel: OnboardingMicrophoneLevel,
 pasteError: PasteError,
 recordingError: RecordingError,
+recordingReady: RecordingReady,
+showOverlay: ShowOverlay,
 streamPhaseEvent: StreamPhaseEvent,
 streamTextEvent: StreamTextEvent,
 themeChanged: ThemeChanged,
@@ -2282,7 +2206,12 @@ grainEmbedModelCancelled: "grain-embed-model-cancelled",
 grainEmbedModelComplete: "grain-embed-model-complete",
 grainEmbedModelError: "grain-embed-model-error",
 grainEmbedModelProgress: "grain-embed-model-progress",
+grainOverlayCompactCloseHidden: "grain-overlay-compact-close-hidden",
+grainOverlayContext: "grain-overlay-context",
+grainOverlayPosition: "grain-overlay-position",
+hideOverlay: "hide-overlay",
 historyUpdatePayload: "history-update-payload",
+micLevel: "mic-level",
 modelDeleted: "model-deleted",
 modelDownloadCancelled: "model-download-cancelled",
 modelDownloadComplete: "model-download-complete",
@@ -2292,9 +2221,10 @@ modelExtractionStarted: "model-extraction-started",
 modelStateChanged: "model-state-changed",
 modelVerificationCompleted: "model-verification-completed",
 modelVerificationStarted: "model-verification-started",
-onboardingMicrophoneLevel: "onboarding-microphone-level",
 pasteError: "paste-error",
 recordingError: "recording-error",
+recordingReady: "recording-ready",
+showOverlay: "show-overlay",
 streamPhaseEvent: "stream-phase-event",
 streamTextEvent: "stream-text-event",
 themeChanged: "theme-changed",
@@ -2406,25 +2336,6 @@ export type AgentConfirm = { token: string; title: string; summary: string; deta
  */
 export type AgentConfirmField = { label: string; value: string }
 /**
- * [GRAIN] Agent context awareness: what (if anything) is read from the focused
- * field at summon and handed to the LLM as background. `Unique` reuses the
- * unique-term extractor (high-signal identifiers/names only); `Full` sends the
- * capped raw field text. OFF by default — reading field content is opt-in.
- */
-export type AgentContextMode = "off" | "unique" | "full" |
-/**
- * The whole foreground window's visible text, from its accessibility tree.
- *
- * The rung above `Full`: `Full` sends the field being typed into, this
- * sends what surrounds it. It is what makes "reply saying I can't make
- * Thursday" answerable — the thread being replied to lives outside the
- * compose box, so no amount of field context reaches it.
- *
- * Never a screenshot: no screen-recording permission, no image, and only
- * the foreground window is ever read.
- */
-"screen"
-/**
  * One conversation turn from the frontend.
  */
 export type AgentMessage = {
@@ -2465,9 +2376,8 @@ default_panel?: DefaultPanel;
  */
 theme?: ThemeMode;
 /**
- * [GRAIN] Which mode the AI shortcut starts when pressed from idle. All
- * three capture modes are always live, so this is a free choice among
- * `CAPTURE_MODE_IDS`.
+ * [GRAIN] Which capture binding the AI shortcut borrows from idle:
+ * Dictation (model-selected Standard/Flow) or Streaming.
  */
 capture_ai_start_mode?: string;
 /**
@@ -2492,53 +2402,27 @@ selected_asr_model?: string; always_on_microphone?: boolean; selected_microphone
  * Which input channel to use on the selected microphone device.
  * None means "average all channels" (original behavior).
  */
-selected_channel?: number | null; clamshell_microphone?: string | null; selected_output_device?: string | null; translate_to_english?: boolean; selected_language?: string; overlay_position?: OverlayPosition;
-/**
- * [GRAIN] Which built-in look the collapsed pill wears (form, not colour —
- * see `PillSkin`). Defaults to the smooth waveform.
- */
-pill_skin?: PillSkin;
+selected_channel?: number | null; clamshell_microphone?: string | null; selected_output_device?: string | null; translate_to_english?: boolean; selected_language?: string; overlay_position?: OverlayPosition; overlay_style?: OverlayStyle;
 /**
  * [GRAIN] Show the icon of the app being dictated into, in place of the
  * pill's state dot. ON while the behaviour is being developed; it will
  * later be folded into Context Awareness and shown only for surfaces Grain
  * actually differentiates.
  */
-pill_show_app_icon?: boolean; debug_mode?: boolean; log_level?: LogLevel; custom_words?: string[];
+pill_show_app_icon?: boolean;
+/**
+ * Hide only the compact recording/working pill's close control.
+ */
+pill_hide_close_button?: boolean; debug_mode?: boolean; log_level?: LogLevel; custom_words?: string[];
 /**
  * [GRAIN] Voice snippets (Experimentations tab): trigger phrase → expansion.
  */
 snippets?: Snippet[]; model_unload_timeout?: ModelUnloadTimeout; word_correction_threshold?: number; history_limit?: number; recording_retention_period?: RecordingRetentionPeriod; paste_method?: PasteMethod; clipboard_handling?: ClipboardHandling; auto_submit?: boolean; auto_submit_key?: AutoSubmitKey; post_process_enabled?: boolean; post_process_provider_id?: string; post_process_providers?: PostProcessProvider[]; post_process_api_keys?: SecretMap;
 /**
- * [GRAIN] When true, post-processing routes among ENABLED post-process
- * providers (round-robin + per-provider daily quota + failover). When false
- * (default), the single `post_process_provider_id` is used — today's behavior.
- * Independent of STT rotation: each side has its OWN provider list.
+ * [GRAIN] Try enabled, configured providers in their saved order on failure.
+ * When false, use only the selected provider.
  */
-post_process_smart_rotation?: boolean;
-/**
- * [GRAIN] Local date (YYYY-MM-DD) the post-process daily quotas last reset on.
- */
-post_process_quota_reset_date?: string;
-/**
- * [GRAIN] STT routing pool (local + remote OpenAI-compatible providers).
- */
-stt_providers?: SttProvider[];
-/**
- * [GRAIN] When true, transcription routes among enabled CLOUD providers
- * (round-robin + quota + failover); the LOCAL model is excluded. When false
- * (default), the local in-process model is used — never a surprise spike.
- */
-stt_smart_rotation?: boolean;
-/**
- * [GRAIN] STT provider API keys, by pool-entry id. Split into grain.secrets.json.
- */
-stt_api_keys?: SecretMap;
-/**
- * [GRAIN] Local date (YYYY-MM-DD) the STT daily quotas were last reset on.
- * When today differs, quotas roll back to 0 (checked lazily at routing time).
- */
-stt_quota_reset_date?: string; post_process_models?: Partial<{ [key in string]: string }>; post_process_prompts?: LLMPrompt[]; post_process_selected_prompt_id?: string | null; mute_while_recording?: boolean; append_trailing_space?: boolean;
+post_process_fallback_enabled?: boolean; post_process_models?: Partial<{ [key in string]: string }>; post_process_prompts?: LLMPrompt[]; post_process_selected_prompt_id?: string | null; mute_while_recording?: boolean; append_trailing_space?: boolean;
 /**
  * [GRAIN] Extension Mode Auto-send (`docs/Extensions V1/PLAN.md` §5). The
  * global opt-in, **off by default** and beta-gated (only active while
@@ -2654,23 +2538,10 @@ agent_autocopy?: AgentAutocopy;
  */
 agent_quick_enabled?: boolean;
 /**
- * [GRAIN] Agent context awareness: read the focused field at summon and pass
- * it to the AI as background (`unique` = high-signal terms only, `full` =
- * capped raw text). OFF by default.
- */
-agent_context_mode?: AgentContextMode;
-/**
  * [GRAIN] Agent screen vision: when on, summoning the Agent also photographs
  * the window you were in and sends that frame with your instruction, so it
  * can answer about what is actually on screen — a chart, a diff, an error
  * dialog, a page that has no accessibility text at all.
- *
- * Deliberately a separate switch from [`AgentContextMode::Screen`] rather
- * than a fifth rung on it. That mode reads the window's accessibility TEXT;
- * this one takes a picture. They cost different things, they fail in
- * different ways, and a model that cannot see images still handles the text
- * one — folding them together would make choosing "read my window" silently
- * start uploading screenshots.
  *
  * OFF by default and off is free: no capture, no permission, no bytes.
  */
@@ -2710,6 +2581,11 @@ export type AutoSubmitKey = "enter" | "ctrl_enter" | "cmd_enter"
 export type AvailableAccelerators = { transcribe: string[]; gpu_devices: GpuDeviceOption[] }
 export type BindingResponse = { success: boolean; binding: ShortcutBinding | null; error: string | null }
 export type ClipboardHandling = "dont_modify" | "copy_to_clipboard"
+/**
+ * Host UI projection, deliberately omitting vault/account IDs and numeric u64
+ * revisions (JavaScript numbers cannot represent all supported revisions).
+ */
+export type ConnectionView = { id: string; source: string; extensionId: string | null; version: string | null; revision: string; name: string; url: string; authentication: string; state: string }
 /**
  * [GRAIN] One context-awareness profile, as the settings UI needs it.
  *
@@ -2990,6 +2866,8 @@ fields: ExtensionSettingField[];
  */
 item_label: string | null }
 /**
+ * Flatten a declaration into its renderer schema (no value). Shared by
+ * top-level rows and nested list fields.
  * One row of an extension's settings section: the declaration flattened into
  * exactly what a control needs, plus the value to show.
  *
@@ -3037,6 +2915,10 @@ export type GrainEmbedModelCancelled = null
 export type GrainEmbedModelComplete = null
 export type GrainEmbedModelError = string
 export type GrainEmbedModelProgress = { downloaded: number; total: number; percentage: number }
+export type GrainOverlayCompactCloseHidden = boolean
+export type GrainOverlayContext = OverlayPresentation
+export type GrainOverlayPosition = OverlayPosition
+export type HideOverlay = null
 export type HistoryEntry = { id: number; file_name: string; timestamp: number; saved: boolean; title: string; transcription_text: string; post_processed_text: string | null; post_process_prompt: string | null; post_process_requested: boolean }
 export type HistoryUpdatePayload = { action: "added"; entry: HistoryEntry } | { action: "updated"; entry: HistoryEntry } | { action: "deleted"; id: number } | { action: "toggled"; id: number }
 /**
@@ -3077,13 +2959,15 @@ key_down: number; key_up: number; flags_changed: number; mouse: number; duration
 export type KeyboardImplementation = "tauri" | "handy_keys"
 export type LLMPrompt = { id: string; name: string; prompt: string }
 export type LogLevel = "trace" | "debug" | "info" | "warn" | "error"
-export type ConnectionView = { id: string; source: string; extensionId: string | null; version: string | null; revision: string; name: string; url: string; authentication: string; state: string }
 export type McpDiscoveryResult = { provider_id: string; provider_name: string; tool_count: number; tools: string[]; tool_set_digest: string }
 export type McpProviderStatus = { id: string; name: string; description: string; endpoint: string; setup_url: string; requires_client_credentials: boolean; client_id_configured: boolean; connected: boolean; enabled: boolean;
 /**
- * `ready` | `needs_client_credentials` | `disconnected` | `unavailable`
+ * Stored credentials are not a live health check.
+ * Storage inventory plus the last generation-owned recovery observation.
+ * Recovery is cleared on restart/invalidation; this never polls a provider.
  */
 state: string }
+export type MicLevel = number[]
 /**
  * The model's files were removed.
  */
@@ -3149,10 +3033,6 @@ export type ModelVerificationCompleted = string
  */
 export type ModelVerificationStarted = string
 /**
- * Live level measurements from the short-lived onboarding microphone probe.
- */
-export type OnboardingMicrophoneLevel = { levels: number[]; rms_dbfs: number; peak_dbfs: number }
-/**
  * The single editorially "best" model in each onboarding family.
  *
  * These are full registry IDs (repo + default quant filename), ready to pass
@@ -3182,18 +3062,9 @@ export type OnboardingStep =
  */
 "accessibility" |
 /**
- * Short demonstration of Standard, Flow, and Streaming for a new user.
- */
-"modes" |
-/**
- * Model picker. Only ever reached by a genuinely new user, and only after
- * the capture-mode tour.
+ * Choose and download the models for a new user.
  */
 "model" |
-/**
- * Real capture against the models installed during onboarding.
- */
-"try" |
 /**
  * Choose the everyday capture mode and configure its real global shortcut.
  */
@@ -3202,19 +3073,18 @@ export type OnboardingStep =
  * Nothing in the way; show the app.
  */
 "done"
-export type OnboardingTestMode = "standard" | "flow" | "streaming"
 /**
- * Where the single pill anchors on screen (`None` = never show). Lives in the
+ * Where the recording pill anchors on screen. Visibility is OverlayStyle. Lives in the
  * SDK because it crosses the wire inside [`DaemonEvent::OverlayConfig`]; it is
  * also the persisted `overlay_position` setting (grain-core re-exports it).
  */
-export type OverlayPosition = "none" | "top" | "bottom" |
+export type OverlayPosition = "top" | "bottom"
+export type OverlayPresentation = { visible: boolean; state: string; ready: boolean; session_id: number; agent: boolean; prompt_recording: boolean; app_icon_enabled: boolean; owner: string | null; icon: string | null; notice: string | null; followup: string | null; committed: string; tentative: string; working: boolean; work_kind: string }
+export type OverlaySnapshot = { presentation: OverlayPresentation; position: OverlayPosition; pill_hide_close_button: boolean; theme: ThemeState; streaming_width: number; streaming_height: number }
 /**
- * [GRAIN] Vertically centered — the Native ASR Studio Window's natural home
- * (a tall content box reads poorly hugging an edge); also selectable for
- * the small pill.
+ * Handy's presentation contract. Position only selects an edge.
  */
-"center"
+export type OverlayStyle = "none" | "minimal" | "live"
 export type PaginatedHistory = { entries: HistoryEntry[]; has_more: boolean }
 /**
  * The transcript could not be pasted. Carries no payload — the technical
@@ -3223,37 +3093,17 @@ export type PaginatedHistory = { entries: HistoryEntry[]; has_more: boolean }
 export type PasteError = null
 export type PasteMethod = "ctrl_v" | "direct" | "none" | "shift_insert" | "ctrl_shift_v" | "external_script"
 export type PermissionAccess = "allowed" | "denied" | "unknown"
-/**
- * The collapsed pill's body look. Adding a variant here is the ONLY thing a new
- * pill look must touch in the protocol; the renderer owns everything else.
- */
-export type PillSkin =
-/**
- * **Default.** A compact capsule with a smooth, centre-mirrored waveform —
- * the quiet, professional look. 20% smaller than [`PillSkin::Matrix`].
- */
-"wave" |
-/**
- * The original dot-matrix aura: an 25x8 grid of dots whose density tracks
- * the voice. Kept as a selectable look, no longer the default.
- */
-"matrix"
 export type PostProcessProvider = { id: string; label: string; base_url: string; allow_base_url_edit?: boolean; models_endpoint?: string | null; supports_structured_output?: boolean;
 /**
- * [GRAIN] Included in smart rotation when true. Defaults true so existing
- * configs (and the manual single-provider path) behave exactly as before.
+ * [GRAIN] Included in ordered fallback when true.
  */
-enabled?: boolean;
-/**
- * [GRAIN] Daily request cap for rotation; `None` = unlimited.
- */
-quota_limit?: number | null; quota_used_today?: number }
+enabled?: boolean }
 /**
  * A read-only view of the post-process pool. API keys are NEVER returned — only
  * the set of provider ids that currently have a key stored, plus the per-provider
  * model map (model names are not secret).
  */
-export type PpPoolView = { smart_rotation: boolean; providers: PostProcessProvider[]; selected_provider_id: string; providers_with_keys: string[]; models: Partial<{ [key in string]: string }> }
+export type PpPoolView = { fallback_enabled: boolean; providers: PostProcessProvider[]; selected_provider_id: string; configured_provider_ids: string[]; providers_with_keys: string[]; models: Partial<{ [key in string]: string }> }
 /**
  * [GRAIN] One contributed prompt layer, as every surface that shows one needs
  * it: the approval sheet, the extension card, and the prompt-stack view.
@@ -3306,6 +3156,7 @@ signal: string; score: number }
  * `actions::RecordingErrorEvent`.
  */
 export type RecordingError = { error_type: string; detail: string | null }
+export type RecordingReady = null
 export type RecordingRetentionPeriod = "never" | "preserve_limit" | "days_3" | "weeks_2" | "months_3"
 /**
  * [GRAIN] What to actually paint — the user's `theme` preference already
@@ -3380,6 +3231,7 @@ active: boolean;
  * Who holds the chord, when inactive.
  */
 conflicts_with: string | null }
+export type ShowOverlay = string
 /**
  * [GRAIN] A voice snippet: when the (normalized) trigger phrase appears in a
  * final transcript, it is replaced by the expansion text verbatim. Matching is
@@ -3396,7 +3248,7 @@ export type StoreCover = { id: string; sha256: string; kind: string }
  * One card's data for the store UI (a specta-friendly projection of
  * [`IndexEntry`]; the index type itself lives in the crypto-free leaf).
  */
-export type StoreEntry = { kind: string; id: string; name: string; version: string; tier: string; trust: string; capabilities: string[];
+export type StoreEntry = { id: string; kind: string; name: string; version: string; tier: string; trust: string; capabilities: string[];
 /**
  * One-line summary shown under the name on the card.
  */
@@ -3416,7 +3268,7 @@ stars: number;
  */
 installs: number;
 /**
- * README media hash (empty = none). The detail page fetches it lazily.
+ * User-facing DESCRIPTION document hash.
  */
 readme: string;
 /**
@@ -3495,43 +3347,6 @@ export type StreamTextEvent = { committed: string; tentative: string }
  */
 export type StreamWorkKind = "transcribing" | "polishing"
 /**
- * A read-only view of the STT pool. API keys are NEVER returned — only the set
- * of provider ids that currently have a key stored.
- */
-export type SttPoolView = { smart_rotation: boolean; providers: SttProvider[]; providers_with_keys: string[] }
-/**
- * [GRAIN] One entry in the STT routing pool. Each entry carries its OWN key
- * (stored separately in `stt_api_keys` by `id`), so two entries with the same
- * `base_url` = two keys for one provider. Mirrors `provider_router::ProviderConfig`
- * plus the fields the HTTP client needs (`kind`, `model`).
- */
-export type SttProvider = { id: string; name: string; kind: SttProviderKind;
-/**
- * Ignored for `Local`.
- */
-base_url?: string;
-/**
- * Model/engine name sent to the provider (ignored for `Local`).
- */
-model?: string; enabled?: boolean;
-/**
- * Daily request cap; `None` = unlimited.
- */
-quota_limit?: number | null; quota_used_today?: number }
-/**
- * [GRAIN] Which transcription backend an STT pool entry talks to. `Local` is the
- * in-process transcribe-rs model; the rest are HTTP adapters (see `stt_client`).
- */
-export type SttProviderKind =
-/**
- * The in-process Parakeet/Whisper model (no network). Exactly one is implicit.
- */
-"local" |
-/**
- * Generic OpenAI-compatible `/v1/audio/transcriptions`.
- */
-"openai" | "deepgram" | "assemblyai"
-/**
  * Broadcast when the effective colour scheme changes — either because the user
  * picked a different mode, or because the OS flipped while on `System`.
  */
@@ -3543,9 +3358,8 @@ export type ThemeChanged = { mode: ThemeMode; resolved: ResolvedTheme }
  * against what the OS is currently doing. See `grain_theme` for that half.
  *
  * It lives in settings rather than `localStorage` because Grain paints more
- * surfaces than the settings window: the native pill, the switcher capsule,
- * the Agent and host-owned Extension Mode windows all need the same answer,
- * while the native surfaces cannot read a browser store.
+ * surfaces than the settings window: recording pills, Agent and host-owned
+ * Extension Mode windows all need the same authoritative preference.
  */
 export type ThemeMode = "system" | "light" | "dark"
 /**

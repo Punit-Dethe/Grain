@@ -6,18 +6,16 @@ import { WindowChrome } from "../WindowChrome";
 import grainMark from "../../branding/grain-mark.png";
 import "./onboarding.css";
 
-const STEPS = ["microphone", "modes", "models", "try", "shortcuts"] as const;
+const STEPS = ["microphone", "models", "shortcuts"] as const;
 
 export function OnboardingLayout({
   step,
   children,
   footer,
-  topAction,
 }: {
   step: number;
   children: ReactNode;
   footer?: ReactNode;
-  topAction?: ReactNode;
 }) {
   const { t } = useTranslation();
   const { isDark } = useTheme();
@@ -46,7 +44,7 @@ export function OnboardingLayout({
       data-theme={isDark ? "dark" : "light"}
     >
       <WindowChrome />
-      <aside
+      <header
         className="onboarding-journey"
         aria-label={t("onboarding.setup.progress")}
       >
@@ -54,43 +52,41 @@ export function OnboardingLayout({
           <img className="grain-mark" src={grainMark} alt="" />
           <strong>{t("onboarding.setup.brand")}</strong>
         </div>
-        <ol className="onboarding-stepper">
-          {STEPS.map((item, index) => (
-            <li
-              key={item}
-              className={
-                index === step ? "active" : index < step ? "done" : undefined
-              }
-              aria-current={index === step ? "step" : undefined}
-            >
-              <span className="onboarding-step-number" aria-hidden="true">
-                {index < step ? <Check /> : index + 1}
-              </span>
-              <span>{t(`onboarding.setup.steps.${item}`)}</span>
-            </li>
-          ))}
-        </ol>
-        <p className="onboarding-local-note">
-          <ShieldCheck aria-hidden="true" />
-          {t("onboarding.setup.localNote")}
-        </p>
-      </aside>
+        <nav
+          aria-label={t("onboarding.setup.stepCount", {
+            current: step + 1,
+            total: STEPS.length,
+          })}
+        >
+          <ol className="onboarding-stepper">
+            {STEPS.map((item, index) => (
+              <li
+                key={item}
+                className={
+                  index === step ? "active" : index < step ? "done" : undefined
+                }
+                aria-current={index === step ? "step" : undefined}
+              >
+                <span className="onboarding-step-number" aria-hidden="true">
+                  {index < step ? <Check /> : index + 1}
+                </span>
+                <span>{t(`onboarding.setup.steps.${item}`)}</span>
+              </li>
+            ))}
+          </ol>
+        </nav>
+      </header>
       <div className="onboarding-workbench">
-        <header className="onboarding-workbench-header">
-          <span>
-            {t("onboarding.setup.stepCount", {
-              current: step + 1,
-              total: STEPS.length,
-            })}
-          </span>
-          {topAction}
-        </header>
         <main className="onboarding-stage" ref={stageRef} tabIndex={0}>
           {children}
         </main>
         {footer && (
           <footer className="onboarding-footer">
             <div className="onboarding-footer-inner">{footer}</div>
+            <p className="onboarding-local-note">
+              <ShieldCheck aria-hidden="true" />
+              {t("onboarding.setup.localNote")}
+            </p>
           </footer>
         )}
       </div>

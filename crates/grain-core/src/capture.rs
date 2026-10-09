@@ -1,15 +1,25 @@
 //! [GRAIN] Capture-mode policy.
 //!
-//! Grain has three ways to start a capture — Standard, Flow and Live — and a
-//! fourth shortcut that routes a transcript to AI. Flow is intentionally
+//! Grain has two capture bindings — Dictation and Streaming — plus the AI key.
+//! Dictation selects Standard or Flow from the selected model. Flow is intentionally
 //! narrower: only the reviewed Parakeet TDT v2/v3 catalog artifacts can run it.
 //!
 //! This module is the single place that answers "what does the AI key do, and
 //! which shortcuts hold a global hotkey?". The Handy-derived shortcut backends
-//! and the coordinator both call `shortcut_holds_hotkey`, so the two keyboard
-//! implementations cannot drift apart on it.
+//! call `shortcut_holds_hotkey`; the coordinator calls `action_id_for`.
+//! Both keyboard implementations share the same gates and capture routing.
 
 use crate::settings::{AppSettings, CAPTURE_MODE_IDS};
+
+/// Extension Mode is withheld while its transition proceeds on another branch.
+/// Keep the implementation and saved preferences; claim no hotkey or capture
+/// resources in either production or the current development application.
+pub const EXTENSION_MODE_AVAILABLE: bool = false;
+
+/// Withheld bindings must not hold or reserve a chord in any host path.
+pub fn shortcut_is_withheld(id: &str) -> bool {
+    id == "extension_mode" && !EXTENSION_MODE_AVAILABLE
+}
 
 const REVIEWED_FLOW_QUANTIZATIONS: &[&str] = &["Q4_K_M", "Q5_K_M", "Q6_K", "Q8_0", "F16", "F32"];
 
@@ -38,15 +48,27 @@ pub fn flow_is_eligible(settings: &AppSettings) -> bool {
     !settings.translate_to_english && is_reviewed_flow_model(&settings.selected_model)
 }
 
-/// Is `id` one of the three capture-starting bindings?
+/// Is `id` one of the two capture-starting bindings?
 pub fn is_capture_mode(id: &str) -> bool {
     CAPTURE_MODE_IDS.contains(&id)
+}
+
+/// Only dictation actions consume a content/instruction audio split.
+pub fn supports_prompt_record(action_id: &str) -> bool {
+    matches!(
+        action_id,
+        "transcribe"
+            | "transcribe_with_post_process"
+            | "transcribe_realtime"
+            | "transcribe_native_asr"
+    )
 }
 
 /// Bindings that are registered **dynamically** — held only while the surface
 /// that owns them is live, never at init:
 ///
 /// - `cancel` — while a recording is running.
+/// - `prompt_record` — while a dictation recording is running.
 /// - `agent_followup` — while an Agent surface (panel / pill offer) is open.
 /// - `paste_catch_deliver` — while Grain is holding a transcript whose paste
 ///   missed the text field.
@@ -55,7 +77,10 @@ pub fn is_capture_mode(id: &str) -> bool {
 /// binding is a change here and nowhere else. Registering one of these globally
 /// would squat on the user's keys for a surface that is not on screen.
 pub fn is_dynamic_binding(id: &str) -> bool {
-    matches!(id, "cancel" | "agent_followup" | "paste_catch_deliver")
+    matches!(
+        id,
+        "cancel" | "prompt_record" | "agent_followup" | "paste_catch_deliver"
+    )
 }
 
 /// Whether a shortcut id should hold a global hotkey at registration time,
@@ -69,6 +94,9 @@ pub fn is_dynamic_binding(id: &str) -> bool {
 ///
 /// Dynamic bindings are never held here — see [`is_dynamic_binding`].
 pub fn shortcut_holds_hotkey(settings: &AppSettings, id: &str) -> bool {
+    if shortcut_is_withheld(id) {
+        return false;
+    }
     if is_dynamic_binding(id) {
         return false;
     }
@@ -86,7 +114,8 @@ pub fn shortcut_holds_hotkey(settings: &AppSettings, id: &str) -> bool {
     if id == "summon_agent" && !settings.agent_enabled {
         return false;
     }
-    if id == "transcribe_realtime" && !flow_is_eligible(settings) {
+    // Flow is an internal action, never a separately registered shortcut.
+    if id == "transcribe_realtime" {
         return false;
     }
     true
@@ -94,13 +123,9 @@ pub fn shortcut_holds_hotkey(settings: &AppSettings, id: &str) -> bool {
 
 /// Which mode the AI shortcut starts when pressed from idle.
 ///
-/// Falls back to Standard if the stored value is not a mode we ship, or if it
-/// names Flow while the selected model/settings cannot run Flow. The stored
-/// preference is left intact so selecting a reviewed model restores it.
+/// Falls back to Dictation if the stored value is not a binding we ship.
 pub fn ai_start_mode(settings: &AppSettings) -> &str {
-    if is_capture_mode(&settings.capture_ai_start_mode)
-        && (settings.capture_ai_start_mode != "transcribe_realtime" || flow_is_eligible(settings))
-    {
+    if is_capture_mode(&settings.capture_ai_start_mode) {
         &settings.capture_ai_start_mode
     } else {
         CAPTURE_MODE_IDS[0]
@@ -109,23 +134,27 @@ pub fn ai_start_mode(settings: &AppSettings) -> &str {
 
 /// The capture action a trigger key actually runs.
 ///
-/// Every key is its own action except the AI key, which has no capture engine
-/// of its own — it borrows whichever mode the user nominated. The session is
+/// The main key selects Flow for a reviewed model, otherwise Standard. The AI
+/// key borrows Dictation or Streaming. The session is
 /// still *staged* under the trigger key, so push-to-talk release matching and
 /// the tap-to-stop path keep working against the key the user is holding.
 pub fn action_id_for<'a>(settings: &'a AppSettings, binding_id: &'a str) -> &'a str {
-    if binding_id == "transcribe_send_to_ai" {
+    let capture_id = if binding_id == "transcribe_send_to_ai" {
         ai_start_mode(settings)
     } else {
         binding_id
+    };
+    if capture_id == "transcribe" && flow_is_eligible(settings) {
+        "transcribe_realtime"
+    } else {
+        capture_id
     }
 }
 
 /// Should the finished transcript go to AI, for a capture started by `id`?
 ///
-/// `capture_always_ai` makes every capture an AI capture, which collapses the
-/// product to a single key. Otherwise only the two shortcuts that mean AI by
-/// construction route there.
+/// `capture_always_ai` makes every capture an AI capture. Otherwise only the
+/// AI binding and legacy AI action route there.
 ///
 /// Gated on `post_process_enabled` throughout: routing to AI with no
 /// post-processing configured would drop the transcript into a pipeline that
@@ -167,6 +196,27 @@ mod tests {
         }
     }
 
+    #[test]
+    fn prompt_record_is_limited_to_dictation_actions() {
+        for id in [
+            "transcribe",
+            "transcribe_with_post_process",
+            "transcribe_realtime",
+            "transcribe_native_asr",
+        ] {
+            assert!(supports_prompt_record(id));
+        }
+        for id in [
+            "summon_agent",
+            "agent",
+            "extension_mode",
+            "ext:example:capture",
+            "",
+        ] {
+            assert!(!supports_prompt_record(id));
+        }
+    }
+
     fn with_reviewed_flow_model(mut settings: AppSettings) -> AppSettings {
         settings.selected_model =
             "handy-computer/parakeet-tdt-0.6b-v3-gguf/parakeet-tdt-0.6b-v3-Q8_0.gguf".into();
@@ -174,11 +224,12 @@ mod tests {
     }
 
     #[test]
-    fn flow_holds_a_key_only_when_eligible() {
+    fn flow_never_holds_a_separate_key() {
         let mut s = get_default_settings();
         assert!(!shortcut_holds_hotkey(&s, "transcribe_realtime"));
 
         s = with_reviewed_flow_model(s);
+        assert!(!shortcut_holds_hotkey(&s, "transcribe_realtime"));
         for id in CAPTURE_MODE_IDS {
             assert!(shortcut_holds_hotkey(&s, id));
         }
@@ -190,17 +241,20 @@ mod tests {
     }
 
     #[test]
-    fn ai_start_mode_uses_flow_only_when_eligible() {
+    fn dictation_routes_by_model_and_preserves_translation_gate() {
         let mut s = with_reviewed_flow_model(get_default_settings());
-        s.capture_ai_start_mode = "transcribe_realtime".to_string();
-        assert_eq!(ai_start_mode(&s), "transcribe_realtime");
+        assert_eq!(action_id_for(&s, "transcribe"), "transcribe_realtime");
+        assert_eq!(
+            action_id_for(&s, "transcribe_send_to_ai"),
+            "transcribe_realtime"
+        );
 
         s.selected_model = "openai/whisper/ggml-base.bin".into();
-        assert_eq!(ai_start_mode(&s), "transcribe");
+        assert_eq!(action_id_for(&s, "transcribe"), "transcribe");
 
         s = with_reviewed_flow_model(s);
         s.translate_to_english = true;
-        assert_eq!(ai_start_mode(&s), "transcribe");
+        assert_eq!(action_id_for(&s, "transcribe"), "transcribe");
     }
 
     #[test]
@@ -213,14 +267,23 @@ mod tests {
     }
 
     #[test]
-    fn the_ai_key_borrows_a_capture_engine_but_others_run_their_own() {
+    fn streaming_selection_does_not_change_dictation_routing() {
         let mut s = with_reviewed_flow_model(get_default_settings());
-        s.capture_ai_start_mode = "transcribe_realtime".to_string();
+        s.selected_asr_model = "unrelated-streaming-model".into();
         assert_eq!(
             action_id_for(&s, "transcribe_send_to_ai"),
             "transcribe_realtime"
         );
-        assert_eq!(action_id_for(&s, "transcribe"), "transcribe");
+        assert_eq!(
+            action_id_for(&s, "transcribe_native_asr"),
+            "transcribe_native_asr"
+        );
+        s.capture_ai_start_mode = "transcribe_native_asr".into();
+        assert_eq!(
+            action_id_for(&s, "transcribe_send_to_ai"),
+            "transcribe_native_asr"
+        );
+        assert_eq!(action_id_for(&s, "transcribe"), "transcribe_realtime");
         assert_eq!(action_id_for(&s, "summon_agent"), "summon_agent");
     }
 
@@ -248,12 +311,12 @@ mod tests {
     }
 
     #[test]
-    fn gate_hides_disabled_features_and_ineligible_flow() {
+    fn gate_hides_disabled_features_and_retired_flow_binding() {
         let mut s = with_reviewed_flow_model(get_default_settings());
         s.post_process_enabled = false;
         s.agent_enabled = false;
 
-        // Feature toggles do not affect the three eligible capture modes.
+        // Feature toggles do not affect the two capture bindings.
         for id in CAPTURE_MODE_IDS {
             assert!(shortcut_holds_hotkey(&s, id));
         }
@@ -267,7 +330,27 @@ mod tests {
         assert!(!shortcut_holds_hotkey(&s, "agent_followup"));
         assert!(!shortcut_holds_hotkey(&s, "paste_catch_deliver"));
         // An unrelated shortcut is untouched.
-        assert!(shortcut_holds_hotkey(&s, "prompt_next"));
+        assert!(shortcut_holds_hotkey(&s, "custom_binding"));
+    }
+
+    #[test]
+    fn withheld_extension_mode_never_claims_a_saved_chord() {
+        let mut settings = get_default_settings();
+        settings.experimental_enabled = true;
+        settings.agent_enabled = true;
+        settings.post_process_enabled = true;
+        for chord in ["alt_left+e", "ctrl+shift+e", "alt+shift+enter"] {
+            settings
+                .bindings
+                .get_mut("extension_mode")
+                .unwrap()
+                .current_binding = chord.into();
+            assert!(!shortcut_holds_hotkey(&settings, "extension_mode"));
+            // Withholding must not erase a preference used by the other branch.
+            assert_eq!(settings.bindings["extension_mode"].current_binding, chord);
+            assert!(shortcut_holds_hotkey(&settings, "transcribe"));
+            assert!(shortcut_holds_hotkey(&settings, "transcribe_native_asr"));
+        }
     }
 
     #[test]
@@ -279,11 +362,16 @@ mod tests {
         s.post_process_enabled = true;
         s.agent_enabled = true;
         s.paste_catch_enabled = true;
-        for id in ["cancel", "agent_followup", "paste_catch_deliver"] {
+        for id in [
+            "cancel",
+            "prompt_record",
+            "agent_followup",
+            "paste_catch_deliver",
+        ] {
             assert!(is_dynamic_binding(id));
             assert!(!shortcut_holds_hotkey(&s, id));
         }
-        assert!(!is_dynamic_binding("prompt_next"));
+        assert!(!is_dynamic_binding("custom_binding"));
     }
 
     #[test]

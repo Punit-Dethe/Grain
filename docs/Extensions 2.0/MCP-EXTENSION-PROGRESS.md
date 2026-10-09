@@ -1,5 +1,19 @@
 # Extension implementation: progress, changes and user testing
 
+**Main integration, 10 October:** implemented on
+`extensions/main-integration-20261010`, merging app main
+`bbae21ccadc4c6e8d65263e207d644db41ab74ad` into the extension platform. Main's
+WebView recording, selected-text Agent, local transcription, fallback and
+onboarding changes coexist with tool-only/native/MCP/store/account ownership
+and the dedicated Agent/Snippets controls. Original dirty checkout preserved.
+See [MAIN-INTEGRATION-CHECKPOINT.md](MAIN-INTEGRATION-CHECKPOINT.md) for the
+source review, small fresh-checkout repairs and exact acceptance limits.
+**24 real-app cases Pass**, with cleanup Pass across all four existing suites;
+720 normal-backend, 116 frontend and 81 runner/client-metadata tests Pass;
+the full Rust workspace and frontend build also Pass. The integrated
+installed-alpha shortcut/dictation/live GitHub batch remains Pending; issued
+Linear-token expiry remains Deferred. No blanket historical backlog is reopened.
+
 **Continuation handoff, 10 October:** the user confirms the corrected installed
 alpha works after the Agent-start fix. Record **Agent opening: user-tested Pass**;
 GitHub installation/sign-in were already user-confirmed. Specific GitHub

@@ -5,31 +5,70 @@
     "grain": [
       "src-tauri/src/grain_llm_client.rs",
       "src-tauri/src/net_diag.rs",
-      "src-tauri/src/stt_client.rs"
+      "src-tauri/src/grain_llm_fallback.rs",
+      "src-tauri/src/grain_post_process.rs",
+      "src-tauri/src/agent.rs"
     ],
-    "why": "Inert (no `mod llm_client;`). Grain's multi-provider LLM client is grain_llm_client.rs; shared reqwest diagnostics live in net_diag.rs; the SAME HTTP bug-class also lives in the parallel cloud STT client stt_client.rs. (#1823, #2211 both landed here and needed hand-porting.)"
+    "why": "Inert (no `mod llm_client;`). Grain uses grain_llm_client.rs and shared payload-safe reqwest diagnostics in net_diag.rs. Cloud speech-to-text was removed on 2026-10-04. LLM requests use optional stateless fallback in saved provider order. Review transport/response fixes against post-processing and Agent plain/image/tool paths; preserve per-attempt timeout and stop at first successful reply. See Upstream/LLM-FALLBACK.md."
   },
   "src-tauri/src/settings.rs": {
     "kind": "inert",
-    "grain": ["src-tauri/src/grain_settings.rs", "crates/grain-core/src/settings.rs"],
-    "why": "Inert (no `mod settings;`). Grain's settings are grain-core AppContext; a NEW upstream setting must be added there and to its Default, or `get_settings().<field>` in merged handy code fails to compile. (#1254 selected_channel needed this.)"
+    "grain": [
+      "src-tauri/src/grain_settings.rs",
+      "crates/grain-core/src/settings.rs",
+      "crates/grain-core/src/context.rs",
+      "src/app/components/settings/ShowOverlay.tsx",
+      "src/app/components/settings/PillCloseButton.tsx",
+      "src/app/components/settings/PillAppIcon.tsx",
+      "src/app/stores/settingsStore.ts",
+      "crates/grain-core/src/capture.rs",
+      "src-tauri/src/grain_dictation_routing.rs",
+      "src/app/components/settings/capture/CaptureModes.tsx",
+      "crates/grain-core/src/providers.rs",
+      "src-tauri/src/grain_provider_commands.rs",
+      "src/app/stores/ppPoolStore.ts",
+      "src/app/components/settings/post-processing/pool/PostProcessingPool.tsx",
+      "src/app/components/settings/experimentations/AgentSection.tsx"
+    ],
+    "why": "Inert (no `mod settings;`). Grain's settings are grain-core AppContext; a NEW upstream setting must be added there and to its Default, or `get_settings().<field>` in merged handy code fails to compile. (#1254 selected_channel needed this.) Provider participation and order are persisted through Grain commands; smart rotation and quotas are retired. Preserve the exact-permutation reorder validation and credential boundary in Upstream/LLM-FALLBACK.md. Automatic Agent text context was retired on 2026-10-04; do not restore agent_context_mode or field/unique/window background capture when porting settings. Dictation caret context and extension screenText remain active; see Upstream/AGENT-TEXT-CONTEXT.md."
   },
   "src-tauri/src/overlay.rs": {
-    "kind": "inert",
-    "grain": ["crates/grain-pill/src/lib.rs", "src-tauri/src/grain_overlay.rs"],
-    "why": "Inert (no `mod overlay;`). The native grain-pill replaces the webview overlay; mic-level fan-out is grain_overlay.rs. Overlay UX/perf fixes (e.g. #1445 stop animating while hidden) may have a pill analog to verify."
+    "kind": "relocated",
+    "grain": [
+      "src-tauri/src/handy/overlay.rs",
+      "src-tauri/src/grain_overlay.rs",
+      "src-tauri/src/grain_capture.rs",
+      "src/app/overlay/RecordingOverlay.tsx",
+      "src/app/overlay/wave.ts",
+      "src/app/overlay/overlay.css",
+      "src-tauri/src/grain_events.rs",
+      "recording-overlay.html",
+      "vite.config.ts",
+      "src-tauri/src/pill_icon.rs",
+      "src-tauri/src/surface_watch.rs",
+      "src/app/overlay/main.tsx",
+      "crates/grain-sdk/src/event.rs"
+    ],
+    "why": "Handy overlay.rs is compiled directly again: native window, platform geometry, nonactivation, readiness events, audio throttling and hide generations are shared. Grain capture modes/context/icon/clipboard/follow-up adapters and owned visual/waveform presentation are listed here; relevant behavior changes require checking these destinations while the frontend freeze remains in force. See Upstream/OVERLAY-MAINTENANCE.md for the event, settings, lifecycle and acceptance contract."
   },
   "src-tauri/src/actions.rs": {
     "kind": "relocated",
     "grain": [
       "src-tauri/src/grain_post_process.rs",
-      "src-tauri/src/grain_actions.rs"
+      "src-tauri/src/grain_actions.rs",
+      "src-tauri/src/grain_capture.rs",
+      "src-tauri/src/grain_overlay.rs",
+      "crates/grain-core/src/capture.rs",
+      "src-tauri/src/grain_dictation_routing.rs",
+      "src/app/components/settings/capture/CaptureModes.tsx"
     ],
-    "why": "Merged in handy/ for its shape, BUT post_process_transcription is relocated to grain_post_process.rs and Grain's action variants live in grain_actions.rs. A fix to post-processing or the finish/guard flow may need porting there (e.g. #1846 trim_freed_memory in FinishGuard::drop did not auto-merge into the diverged actions.rs)."
+    "why": "Merged in handy/ for its shape, BUT post_process_transcription is relocated to grain_post_process.rs and Grain's action variants live in grain_actions.rs. A fix to post-processing or the finish/guard flow may need porting there (e.g. #1846 trim_freed_memory in FinishGuard::drop did not auto-merge into the diverged actions.rs). Dictation now resolves Standard/Flow through grain-core capture policy and grain_dictation_routing at coordinator start, retaining the action through stop/PTT; upstream capture changes must preserve that seam."
   },
   "src-tauri/src/audio_toolkit/text.rs": {
     "kind": "relocated",
-    "grain": ["src-tauri/src/handy/audio_toolkit/grain_text.rs"],
+    "grain": [
+      "src-tauri/src/handy/audio_toolkit/grain_text.rs"
+    ],
     "why": "finalize_transcript relocated to grain_text.rs; final-text / word-boundary fixes may belong there rather than the merged handy text.rs."
   },
   "src-tauri/src/managers/transcription.rs": {
@@ -37,8 +76,33 @@
     "grain": [
       "src-tauri/src/rolling.rs",
       "src-tauri/src/tdt_flow.rs",
-      "crates/grain-tdt/src"
+      "crates/grain-tdt/src",
+      "src-tauri/src/grain_overlay.rs",
+      "src/app/overlay/RecordingOverlay.tsx",
+      "src-tauri/src/grain_transcription.rs"
     ],
-    "why": "Merged in handy/, but Parakeet TDT Flow has Grain-only capture scheduling, native adaptation, and window/token logic that upstream's batch/streaming fixes cannot reach. Check whether the fixed bug-class exists there too."
+    "why": "Merged in handy/, but Parakeet TDT Flow has Grain-only capture scheduling, native adaptation, and window/token logic that upstream's batch/streaming fixes cannot reach. Check whether the fixed bug-class exists there too. Local batch callers share Grain's grain_transcription adapter; it delegates loading, inference and final cleanup to the shared manager."
+  },
+  "src-tauri/src/audio_toolkit/audio/recorder.rs": {
+    "kind": "parallel",
+    "grain": [
+      "src-tauri/src/handy/managers/audio.rs",
+      "src-tauri/src/grain_capture.rs",
+      "src-tauri/src/grain_audio_journal.rs",
+      "src-tauri/src/grain_actions.rs"
+    ],
+    "why": "Shared bounded recorder differs from upstream callback/ring-buffer implementation. First-sample acknowledgements, no-sample cancellation, resampler tail and journal callbacks must still satisfy Grain capture callers; a successful merge alone cannot prove those adapters are correct."
+  },
+  "src-tauri/src/managers/audio.rs": {
+    "kind": "relocated",
+    "grain": [
+      "src-tauri/src/grain_capture.rs",
+      "src-tauri/src/grain_actions.rs",
+      "src-tauri/src/agent.rs",
+      "src-tauri/src/extension_session.rs",
+      "src-tauri/src/grain_action_session.rs",
+      "src-tauri/src/grain_onboarding.rs"
+    ],
+    "why": "Shared RecordingReadiness/capture-generation API is consumed by Grain startup, feedback, failure and cancellation adapters across every capture family. Review these callers when upstream changes stream startup, disconnect recovery, readiness, stop or mute."
   }
 }

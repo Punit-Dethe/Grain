@@ -268,7 +268,7 @@ export const SnippetsSection: React.FC<{
                   </span>
                 </div>
                 <label
-                  className={`inline-flex items-center shrink-0 transition-transform duration-100 active:scale-90 ${
+                  className={`snippet-row-toggle inline-flex items-center shrink-0 transition-transform duration-100 active:scale-90 ${
                     updating
                       ? "cursor-not-allowed active:scale-100"
                       : "cursor-pointer"
@@ -284,7 +284,7 @@ export const SnippetsSection: React.FC<{
                   />
                   {/* Same hardware toggle as ToggleSwitch, without the row chrome. */}
                   <div
-                    className="relative w-8 h-[18px] rounded-full transition-colors duration-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-[var(--focus)] peer-disabled:opacity-50 after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:h-[14px] after:w-[14px] after:rounded-full after:shadow-[0_1px_3px_rgba(0,0,0,0.35)] after:transition-all after:duration-200 peer-checked:after:translate-x-[14px] peer-checked:after:bg-[var(--color-accent)] after:bg-[#f0ebe3] rtl:peer-checked:after:-translate-x-[14px]"
+                    className="snippet-row-toggle-track relative w-8 h-[18px] rounded-full transition-colors duration-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-[var(--focus)] peer-disabled:opacity-50 after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:h-[14px] after:w-[14px] after:rounded-full after:shadow-[0_1px_3px_rgba(0,0,0,0.35)] after:transition-all after:duration-200 peer-checked:after:translate-x-[14px] peer-checked:after:bg-[var(--color-accent)] after:bg-[#f0ebe3] rtl:peer-checked:after:-translate-x-[14px]"
                     style={{ backgroundColor: "#0a0a0a" }}
                   ></div>
                 </label>

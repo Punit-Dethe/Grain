@@ -4,25 +4,22 @@
 //! Identity is bound to the **channel**: a connection is whoever the token in
 //! its first frame maps to in the server-side [`TokenRegistry`] — never what
 //! the hello's `client` label claims, and never anything asserted in later
-//! messages. Impersonating another client is therefore not expressible: to be
-//! the pill you must hold the pill's token, which only the pill's environment
-//! ever contains.
+//! messages. Workers hold scoped tokens; developer control has a separate role.
 //!
 //! This module is deliberately pure (no sockets, no Tauri) so the security
 //! properties are unit-tested directly: tokenless/unknown rejection, identity
-//! from the table, and per-capability event filtering.
+//! from the table, role preservation and token revocation. Public sockets no
+//! longer subscribe to the core event bus at all (`events_server`).
 
 use std::collections::{HashMap, HashSet};
 use std::sync::RwLock;
 
-use grain_core::DaemonEvent;
-use grain_sdk::{daemon_event_capability, ClientHello};
+use grain_sdk::ClientHello;
 
-/// What a connected client may receive/do. The pill is `All`; extension
-/// workers (Phase 2) get `Named` sets derived from user-granted manifests.
+/// What a connected client may receive/do. Extension workers get `Named` sets
+/// derived from user-granted manifests; developer control receives no events.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum CapabilitySet {
-    All,
     Named(HashSet<String>),
 }
 
@@ -30,7 +27,6 @@ pub enum CapabilitySet {
 /// prevents a developer client from ever being treated as a worker.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ClientRole {
-    Pill,
     Worker,
     DevControl,
 }
@@ -38,7 +34,7 @@ pub enum ClientRole {
 /// A resolved identity: the registry entry the presented token mapped to.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ClientIdentity {
-    /// Stable id ("pill", or an extension id). From the registry, never the wire.
+    /// Stable extension or developer id. From the registry, never the wire.
     pub id: String,
     pub role: ClientRole,
     pub caps: CapabilitySet,
@@ -100,60 +96,12 @@ impl TokenRegistry {
     }
 }
 
-/// The capability an event requires. Phase 0 granularity: transcript-bearing
-/// events, the high-frequency level feed, and everything else as session/UI
-/// signals. Refined in Phase 2 when `Named` consumers exist.
-fn required_capability(ev: &DaemonEvent) -> &'static str {
-    daemon_event_capability(ev.variant_name())
-        .expect("every DaemonEvent variant must have a capability mapping")
-}
-
-/// May this identity receive this event? (Filtered = never sent, not blanked.)
-pub fn allows_event(identity: &ClientIdentity, ev: &DaemonEvent) -> bool {
-    if identity.role != ClientRole::Pill {
-        return false;
-    }
-    // Recommendation ranking and the searchable pool are host UI state before
-    // the user has selected an owner. They are pill-only regardless of ordinary
-    // event grants; workers must not observe or spoof chooser lifecycle.
-    if matches!(
-        ev,
-        DaemonEvent::ExtensionRecommend { .. } | DaemonEvent::ExtensionRecommendClear
-    ) {
-        return identity.role == ClientRole::Pill;
-    }
-    match &identity.caps {
-        CapabilitySet::All => true,
-        CapabilitySet::Named(caps) => caps.contains(required_capability(ev)),
-    }
-}
-
-/// May this identity use the reverse channel (PillAction)? Pill-only surface;
-/// extensions get their own namespaced commands in Phase 2.
-pub fn allows_reverse(identity: &ClientIdentity) -> bool {
-    if identity.role != ClientRole::Pill {
-        return false;
-    }
-    match &identity.caps {
-        CapabilitySet::All => true,
-        CapabilitySet::Named(caps) => caps.contains("reverse:pill"),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn registry_with_pill_and_ext() -> TokenRegistry {
+    fn registry_with_ext() -> TokenRegistry {
         let reg = TokenRegistry::new();
-        reg.register(
-            "pill-secret".into(),
-            ClientIdentity {
-                id: "pill".into(),
-                role: ClientRole::Pill,
-                caps: CapabilitySet::All,
-            },
-        );
         reg.register(
             "ext-a-secret".into(),
             ClientIdentity {
@@ -167,7 +115,7 @@ mod tests {
 
     #[test]
     fn tokenless_and_unknown_clients_are_rejected() {
-        let reg = registry_with_pill_and_ext();
+        let reg = registry_with_ext();
         assert!(reg.authenticate("not json").is_none());
         assert!(reg.authenticate(r#"{"action":"prompt_record"}"#).is_none()); // an action, not a hello
         assert!(reg.authenticate(r#"{"token":""}"#).is_none());
@@ -176,85 +124,22 @@ mod tests {
 
     #[test]
     fn identity_comes_from_the_table_not_the_label() {
-        let reg = registry_with_pill_and_ext();
+        let reg = registry_with_ext();
         // SPEC §8 Phase 0: a client holding A's token cannot act as anyone
         // else — even while *claiming* to be the pill in its hello.
         let id = reg
             .authenticate(r#"{"token":"ext-a-secret","client":"pill"}"#)
             .unwrap();
         assert_eq!(id.id, "com.example.a");
-        assert_ne!(id.caps, CapabilitySet::All);
-    }
-
-    #[test]
-    fn capability_filter_gates_transcripts_and_levels() {
-        let reg = registry_with_pill_and_ext();
-        let ext = reg.authenticate(r#"{"token":"ext-a-secret"}"#).unwrap();
-        let pill = reg.authenticate(r#"{"token":"pill-secret"}"#).unwrap();
-
-        let transcript = DaemonEvent::TranscriptionComplete {
-            session_id: 1,
-            text: "secret words".into(),
-        };
-        let session = DaemonEvent::RecordingStopped { session_id: 1 };
-        let levels = DaemonEvent::AudioLevel { levels: vec![0.5] };
-
-        assert!(!allows_event(&ext, &transcript), "no transcript cap");
-        assert!(!allows_event(&ext, &levels), "no audio-levels cap");
-        assert!(
-            !allows_event(&ext, &session),
-            "legacy grants cannot restore event feeds"
+        assert_eq!(
+            id.caps,
+            CapabilitySet::Named(["events:sessions".to_string()].into_iter().collect())
         );
-        assert!(allows_event(&pill, &transcript) && allows_event(&pill, &levels));
-
-        assert!(!allows_reverse(&ext));
-        assert!(allows_reverse(&pill));
-    }
-
-    #[test]
-    fn extension_recommendations_are_pill_only_even_with_transcript_access() {
-        let event = DaemonEvent::ExtensionRecommend {
-            presentation_id: 7,
-            candidates: vec![],
-            name_only: false,
-        };
-        let worker = ClientIdentity {
-            id: "com.example.transcriber".into(),
-            role: ClientRole::Worker,
-            caps: CapabilitySet::Named(["events:transcripts".to_string()].into_iter().collect()),
-        };
-        let pill = ClientIdentity {
-            id: "pill".into(),
-            role: ClientRole::Pill,
-            caps: CapabilitySet::All,
-        };
-        assert!(!allows_event(&worker, &event));
-        assert!(allows_event(&pill, &event));
-    }
-
-    #[test]
-    fn even_all_capabilities_cannot_give_workers_an_event_feed() {
-        let worker = ClientIdentity {
-            id: "legacy".into(),
-            role: ClientRole::Worker,
-            caps: CapabilitySet::All,
-        };
-        for event in [
-            DaemonEvent::RecordingStopped { session_id: 1 },
-            DaemonEvent::TranscriptionComplete {
-                session_id: 1,
-                text: "private".into(),
-            },
-            DaemonEvent::AudioLevel { levels: vec![0.5] },
-        ] {
-            assert!(!allows_event(&worker, &event));
-        }
-        assert!(!allows_reverse(&worker));
     }
 
     #[test]
     fn revocation_kills_the_token() {
-        let reg = registry_with_pill_and_ext();
+        let reg = registry_with_ext();
         assert!(reg.authenticate(r#"{"token":"ext-a-secret"}"#).is_some());
         reg.revoke("ext-a-secret");
         assert!(reg.authenticate(r#"{"token":"ext-a-secret"}"#).is_none());
@@ -262,13 +147,12 @@ mod tests {
 
     #[test]
     fn authenticated_session_preserves_the_presented_token_and_role() {
-        let reg = registry_with_pill_and_ext();
+        let reg = registry_with_ext();
         let session = reg
             .authenticate_session(r#"{"token":"ext-a-secret","client":"pill"}"#)
             .unwrap();
         assert_eq!(session.token, "ext-a-secret");
         assert_eq!(session.identity.role, ClientRole::Worker);
-        assert_eq!(reg.len(), 2);
     }
 
     #[test]

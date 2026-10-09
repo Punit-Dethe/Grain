@@ -6,6 +6,12 @@ import {
 } from "./navigation";
 
 describe("UI 2.0 hash navigation", () => {
+  it("opens merged transcription settings from the former models route", () => {
+    expect(routeFromHash("#/settings/speech-to-text")).toEqual({
+      page: "settings",
+      section: "capture",
+    });
+  });
   it("falls back to overview for the removed Notes route", () => {
     expect(routeFromHash("#/notes")).toEqual({ page: "overview" });
   });
@@ -22,7 +28,6 @@ describe("UI 2.0 hash navigation", () => {
     "audio",
     "output",
     "application",
-    "speech-to-text",
     "post-processing",
     "debug",
     "about",

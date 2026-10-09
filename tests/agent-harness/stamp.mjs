@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { access, readdir, readFile, writeFile } from "node:fs/promises";
+import { access, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { resolve, join, relative, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execFile } from "node:child_process";
@@ -35,6 +35,7 @@ export async function sourceFingerprint() {
   await visit(join(repo, "src-tauri/capabilities"));
   await visit(join(repo, "src-tauri/resources"));
   await visit(join(repo, "public"));
+  await visit(join(repo, "crates/grain-core/seed"));
   for (const entry of await readdir(join(repo, "crates"), {
     withFileTypes: true,
   })) {
@@ -52,17 +53,18 @@ export async function sourceFingerprint() {
       "Cargo.toml",
       "Cargo.lock",
       "package.json",
-      "package-lock.json",
       "bun.lock",
       "tsconfig.json",
       "tsconfig.node.json",
       "vite.config.ts",
       "index.html",
+      "recording-overlay.html",
       "extension-host.html",
       "extension-view.html",
     ].map((path) => join(repo, path)),
   );
   for (const input of [
+    "package-lock.json", // Optional local npm install; bun.lock is authoritative.
     ".cargo/config.toml",
     ".cargo/config",
     ...paths
@@ -156,6 +158,7 @@ if (
   const commit = (
     await promisify(execFile)("git", ["rev-parse", "HEAD"], { cwd: repo })
   ).stdout.trim();
+  await mkdir(dirname(stampPath), { recursive: true });
   await writeFile(
     cli ? cliStampPath : stampPath,
     JSON.stringify(

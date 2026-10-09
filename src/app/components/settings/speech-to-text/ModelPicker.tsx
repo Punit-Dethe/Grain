@@ -3,7 +3,7 @@
  *
  * Grain needs two model slots: one local model and one Live streaming model.
  * Flow can use the local slot only when it contains a reviewed Parakeet TDT
- * artifact; Standard may use the slot or the cloud pool.
+ * artifact.
  * They were two visually identical collapsibles stacked on top of each other,
  * which asked the user to work out from their titles alone that these were
  * different registries serving different capture modes — and gave no answer at
@@ -25,19 +25,12 @@ import { getFlowAvailability } from "@/lib/flowAvailability";
 
 export type ModelRole = "standard" | "streaming";
 
-interface ModelPickerProps {
-  /** Standard capture is routed to cloud; Flow still needs the local slot. */
-  cloudActive?: boolean;
-}
-
 interface SlotProps {
   role: ModelRole;
   label: string;
   purpose: string;
   modelName: string | null;
   open: boolean;
-  disabled: boolean;
-  disabledNote?: string;
   onOpen: () => void;
 }
 
@@ -52,8 +45,6 @@ const ModelSlot: React.FC<SlotProps> = ({
   purpose,
   modelName,
   open,
-  disabled,
-  disabledNote,
   onOpen,
 }) => {
   const { t } = useTranslation();
@@ -64,35 +55,28 @@ const ModelSlot: React.FC<SlotProps> = ({
       type="button"
       className={`model-slot${filled ? " is-filled" : " is-empty"}${open ? " is-open" : ""}`}
       aria-expanded={open}
-      disabled={disabled}
       onClick={onOpen}
     >
       <span className="model-slot-role">{label}</span>
       <span className="model-slot-name">
-        {disabled
-          ? (disabledNote ?? t("settings.speechToText.picker.unavailable"))
-          : filled
-            ? modelName
-            : t("settings.speechToText.picker.empty")}
+        {filled ? modelName : t("settings.speechToText.picker.empty")}
       </span>
       <span className="model-slot-foot">
         <span className="model-slot-purpose">{purpose}</span>
-        {!disabled && (
-          <span className="model-slot-action">
-            {filled ? (
-              <>
-                <Check size={13} aria-hidden="true" />
-                {t("settings.speechToText.picker.change")}
-              </>
-            ) : (
-              <>
-                <Plus size={13} aria-hidden="true" />
-                {t("settings.speechToText.picker.choose")}
-              </>
-            )}
-            <ChevronRight size={13} aria-hidden="true" />
-          </span>
-        )}
+        <span className="model-slot-action">
+          {filled ? (
+            <>
+              <Check size={13} aria-hidden="true" />
+              {t("settings.speechToText.picker.change")}
+            </>
+          ) : (
+            <>
+              <Plus size={13} aria-hidden="true" />
+              {t("settings.speechToText.picker.choose")}
+            </>
+          )}
+          <ChevronRight size={13} aria-hidden="true" />
+        </span>
       </span>
       <span className="model-slot-id" aria-hidden="true">
         {role}
@@ -101,9 +85,7 @@ const ModelSlot: React.FC<SlotProps> = ({
   );
 };
 
-export const ModelPicker: React.FC<ModelPickerProps> = ({
-  cloudActive = false,
-}) => {
+export const ModelPicker: React.FC = () => {
   const { t } = useTranslation();
   const { getSetting } = useSettings();
   const { models: allModels, currentModel, initialize } = useModelStore();
@@ -142,13 +124,9 @@ export const ModelPicker: React.FC<ModelPickerProps> = ({
     getSetting("translate_to_english") ?? false,
   ).available;
   const standardPurpose = t(
-    cloudActive && flowAvailable
-      ? "settings.speechToText.picker.standard.purposeFlowCloud"
-      : cloudActive
-        ? "settings.speechToText.picker.standard.purposeCloud"
-        : flowAvailable
-          ? "settings.speechToText.picker.standard.purposeFlow"
-          : "settings.speechToText.picker.standard.purpose",
+    flowAvailable
+      ? "settings.speechToText.picker.standard.purposeFlow"
+      : "settings.speechToText.picker.standard.purpose",
   );
 
   // Close the library once a role's model actually changes — the question that
@@ -184,7 +162,6 @@ export const ModelPicker: React.FC<ModelPickerProps> = ({
             purpose={standardPurpose}
             modelName={standardName}
             open={openRole === "standard"}
-            disabled={false}
             onOpen={() => toggle("standard")}
           />
           <ModelSlot
@@ -193,7 +170,6 @@ export const ModelPicker: React.FC<ModelPickerProps> = ({
             purpose={t("settings.speechToText.picker.streaming.purpose")}
             modelName={streamingName}
             open={openRole === "streaming"}
-            disabled={false}
             onOpen={() => toggle("streaming")}
           />
         </div>

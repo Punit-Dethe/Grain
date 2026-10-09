@@ -1,7 +1,7 @@
 <div align="center">
   <img src="src-tauri/icons/128x128.png" alt="Grain logo" width="128" height="128" />
   <h1>Grain</h1>
-  <p><strong>Voice operating layer</strong></p>
+  <p><strong>Just Use Voice </strong></p>
   <p>
     <a href="https://github.com/Punit-Dethe/Grain/releases">Download</a> ·
     <a href="BUILD.md">Build from source</a> ·
@@ -39,6 +39,27 @@ Today, Flow supports all configured speech models through Grain's generic rollin
 | **Best for**                     | A short message you want perfect on the first try, like a client email | Everyday dictation — journaling, notes, drafts. The recommended default | Forms or live captions, where you need to watch every word land as you speak |
 
 All three modes get their own configurable shortcut, so switching is a keypress, not a trip to Settings. Pick your favorite and ignore the rest, or assign all three and switch by task.
+
+### Planned Flow architecture
+
+Flow is currently model-agnostic for compatibility, but that is not the long-term architecture.
+
+The planned version of Flow will become a **curated, model-specific dictation engine** rather than a generic rolling layer that attempts to support every speech model. Grain will optimize Flow around a small set of models whose chunking, decoder state, punctuation, long-session behaviour, and stop latency can be tested and tuned as one complete system.
+
+The first planned Flow-supported models are:
+
+- **Parakeet TDT v2** — the primary English-only Flow model.
+- **Parakeet TDT v3** — the multilingual Flow model.
+
+Once that architecture replaces the current generic backend, other speech models will no longer automatically receive Flow support. They can continue to be available through **Batch** or **ASR/live transcription** where supported.
+
+This deliberately gives the three modes different responsibilities:
+
+- **Batch** prioritizes model compatibility and maximum final accuracy.
+- **Flow** is Grain's curated, optimized default dictation experience.
+- **ASR** is for models and workflows designed around realtime transcription.
+
+New models may be added to Flow later, but only when Grain has a dedicated implementation and has validated their accuracy, punctuation, latency, and long-session behaviour rather than relying on a generic fallback.
 
 ## Feature overview
 
@@ -82,7 +103,7 @@ Grain can reach tools through two implementation paths:
 | Adapter | What it is | Intended use |
 | --- | --- | --- |
 | **MCP** | A remote HTTPS Model Context Protocol server discovered and called through the official MCP client stack. | External services and integrations that already expose MCP. |
-| **Native/direct** | A reviewed Grain-maintained provider implemented locally against the service or API. | First-party integrations where a direct implementation is simpler or gives a better desktop experience. |
+| **Native/direct** | A JavaScript tool extension using Grain's constrained SDK and host-brokered APIs. | First-party or third-party integrations that call a service directly instead of using MCP. |
 
 Both adapters normalize into the same host-owned contract:
 

@@ -28,11 +28,10 @@
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Mutex;
 
-use grain_core::AppContext;
 use grain_sdk::{DaemonEvent, PILL_ICON_PX};
-use tauri::{AppHandle, Manager};
+use tauri::AppHandle;
 
 /// Bytes in one icon: fixed, so a cache file needs no header and the wire
 /// payload needs no dimensions.
@@ -613,7 +612,7 @@ fn normalise_site_host(host: &str) -> Option<String> {
 /// wants premultiplied; a PNG in a webview is composited by the browser and
 /// wants straight alpha, so skipping this would darken every semi-transparent
 /// edge pixel — visible as a dirty halo on any rounded favicon.
-fn png_data_url(rgba: &[u8]) -> Option<String> {
+pub(crate) fn png_data_url(rgba: &[u8]) -> Option<String> {
     if rgba.len() != ICON_BYTES {
         return None;
     }
@@ -640,9 +639,7 @@ fn png_data_url(rgba: &[u8]) -> Option<String> {
 }
 
 fn emit(app: &AppHandle, rgba: Option<String>) {
-    if let Some(ctx) = app.try_state::<Arc<AppContext>>() {
-        ctx.emit(DaemonEvent::PillIcon { rgba });
-    }
+    crate::bridge::emit(app, DaemonEvent::PillIcon { rgba });
 }
 
 /// Box-filter straight-alpha RGBA (`w`×`h`) into the `PILL_ICON_PX` square of

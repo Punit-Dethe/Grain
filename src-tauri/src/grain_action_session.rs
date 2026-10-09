@@ -71,6 +71,8 @@ static NEXT_GENERATION: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum StartError {
+    /// This build withholds the feature before any resource acquisition.
+    Disabled,
     /// Something else already owns the microphone — a dictation, an extension
     /// session, or a request still being processed. One recording at a time is
     /// a hard singleton and this inherits it by going through the same
@@ -83,6 +85,15 @@ pub enum StartError {
 
 /// Begin listening for a request.
 pub fn start(app: &AppHandle) -> Result<(), StartError> {
+    let _start_guard = crate::grain_actions::capture_start_guard();
+    start_locked(app)
+}
+
+/// Shortcut coordinator already owns the shared capture-start gate.
+pub(crate) fn start_locked(app: &AppHandle) -> Result<(), StartError> {
+    if !grain_core::capture::EXTENSION_MODE_AVAILABLE {
+        return Err(StartError::Disabled);
+    }
     // Gate on the POOL, not on declared actions. A searchable extension may have
     // a `recommend` block and no command catalogue at all (a translator, §3.1);
     // gating on `action_vocabulary` here would refuse to start for exactly that
@@ -99,9 +110,12 @@ pub fn start(app: &AppHandle) -> Result<(), StartError> {
 
     let generation = NEXT_GENERATION.fetch_add(1, Ordering::Relaxed);
     let binding_id = format!("grain-action:{generation}");
-    recording
+    let overlay_generation =
+        crate::grain_overlay::show_capture(app, grain_core::SessionMode::Batch);
+    let readiness = recording
         .try_start_recording(&binding_id, VadPolicy::Offline)
         .map_err(|error| {
+            crate::grain_overlay::hide_failed_capture(app, overlay_generation);
             if error == "Already recording" {
                 StartError::Busy
             } else {
@@ -112,9 +126,7 @@ pub fn start(app: &AppHandle) -> Result<(), StartError> {
     // Only acquire model resources after the microphone reservation succeeds.
     // Their startup still hides behind capture, without warming anything for a
     // losing/failed start attempt.
-    if !crate::stt_router::will_route_to_cloud(app) {
-        transcription.initiate_model_load();
-    }
+    transcription.initiate_model_load();
     crate::grain_embed::touch_extension_mode(app);
 
     // Bias the recogniser with what the installed extensions actually say.
@@ -129,6 +141,7 @@ pub fn start(app: &AppHandle) -> Result<(), StartError> {
     supersede(app);
     crate::extension_view::capture_output_target(app);
     let pill_session_id = crate::grain_actions::extension_mode_started(app);
+    crate::grain_capture::announce_ready(app, &recording, readiness, false);
 
     let mut slot = active().lock().unwrap();
     *slot = Some(ActiveSession {
@@ -777,19 +790,8 @@ pub fn accept(app: &AppHandle, presentation_id: u64, extension_id: &str) -> Resu
     Ok(())
 }
 
-/// The user dismissed the recommendation surface without choosing (§8). Clears
-/// the pending request so a later stale click does nothing and hides the
-/// surface. No-op past the first dismissal.
-pub fn dismiss(app: &AppHandle, presentation_id: u64) {
-    if !dismiss_from_view(presentation_id) {
-        return;
-    }
-    crate::extension_view::destroy(app);
-    log::info!("[GRAIN] extension mode: surface dismissed");
-}
-
-/// Retire a chooser whose own host window is already closing. This is separate
-/// from [`dismiss`] to avoid recursively destroying the same native window.
+/// Retire a chooser whose own host window is already closing, without
+/// recursively destroying that same native window.
 pub fn dismiss_from_view(presentation_id: u64) -> bool {
     let _gate = request_gate().lock().unwrap();
     let dismissed = {
@@ -831,7 +833,7 @@ pub fn dismiss_request_from_view(request_id: u64) -> bool {
 }
 
 /// Invalidate Extension Mode because another capture has begun. Unlike
-/// [`dismiss`], this emits only when there was a chooser to withdraw; the epoch
+/// [`dismiss_from_view`], this emits only when there was a chooser to withdraw; the epoch
 /// still advances every time so a handed-off extension cannot decline back over
 /// a newer recording.
 pub fn supersede(app: &AppHandle) {

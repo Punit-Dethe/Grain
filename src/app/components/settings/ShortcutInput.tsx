@@ -8,6 +8,7 @@ interface ShortcutInputProps {
   grouped?: boolean;
   shortcutId: string;
   disabled?: boolean;
+  onRecordingChange?: (shortcutId: string, recording: boolean) => void;
   /** Render only the keycap control (no label row). */
   bare?: boolean;
 }

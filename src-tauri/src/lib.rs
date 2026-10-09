@@ -57,22 +57,22 @@ mod grain_events; // [GRAIN] typed payloads for the webview event surface (see t
                   // single-provider `llm_client.rs`. Upstream's file stays on disk untouched and
                   // UN-COMPILED (no `mod llm_client;`) so upstream merges land conflict-free;
                   // the alias keeps every `crate::llm_client::` path working.
-mod grain_flow_availability; // [GRAIN] model/install/settings gate + Flow shortcut reconciliation
+mod grain_capture; // [GRAIN] shared first-sample readiness for owned capture callers
+mod grain_dictation_routing; // [GRAIN] model-selected Dictation action resolution
+mod grain_embed;
 mod grain_llm_client;
 mod grain_locale; // [GRAIN] locale-tag resolution, owned in Rust (was duplicated in TS)
 mod grain_mcp; // [GRAIN] stateless hosted MCP development providers (2026-07-28 only)
 mod grain_onboarding; // [GRAIN] where a launching app lands: onboarding / permissions / app
-                      // [GRAIN] Native-pill mic-level fan-out — Grain's replacement for upstream's
-                      // webview `overlay.rs`, which likewise stays on disk un-compiled. The alias
-                      // keeps `crate::overlay::` paths (e.g. utils' re-export) working.
-mod grain_embed;
-mod grain_overlay;
-mod grain_post_process; // [GRAIN] multi-provider post-processing (rewrite of upstream's single-provider path)
-                        // [GRAIN] Settings facade over grain-core's owned AppContext — Grain's
-                        // replacement for upstream's tauri-plugin-store `settings.rs`, which stays on
-                        // disk UN-COMPILED (no `mod settings;`) so upstream's settings changes merge
-                        // cleanly; port anything relevant into `crates/grain-core`. The alias keeps
-                        // every `crate::settings::` path working.
+mod grain_overlay; // [GRAIN] presentation adapter; handy/overlay.rs owns native window lifecycle
+mod grain_post_process;
+#[cfg(windows)]
+mod grain_process; // [GRAIN] multi-provider post-processing (rewrite of upstream's single-provider path)
+                   // [GRAIN] Settings facade over grain-core's owned AppContext — Grain's
+                   // replacement for upstream's tauri-plugin-store `settings.rs`, which stays on
+                   // disk UN-COMPILED (no `mod settings;`) so upstream's settings changes merge
+                   // cleanly; port anything relevant into `crates/grain-core`. The alias keeps
+                   // every `crate::settings::` path working.
 mod grain_settings;
 mod grain_store; // [GRAIN] Phase 5A: signed-catalogue store client (verify, install, revoke)
 mod grain_theme; // [GRAIN] one resolved colour scheme for every surface (was localStorage)
@@ -85,7 +85,8 @@ mod host_api; // [GRAIN] extension host API router (SPEC 1.3) — capability-che
 mod input;
 mod paste_catch; // [GRAIN] safety net for a dictation paste that misses the text field
 pub(crate) use grain_llm_client as llm_client;
-pub(crate) use grain_overlay as overlay;
+#[path = "handy/overlay.rs"]
+mod overlay;
 pub(crate) use grain_settings as settings;
 #[cfg(feature = "agent-harness")]
 mod grain_agent_harness;
@@ -93,33 +94,30 @@ mod grain_agent_harness;
 mod grain_agent_harness_auth;
 #[cfg(feature = "agent-harness")]
 mod grain_agent_harness_mcp;
+mod grain_llm_fallback;
+mod grain_provider_commands;
+mod grain_transcription;
 #[path = "handy/managers/mod.rs"]
 mod managers;
-mod master_key; // [GRAIN] transient Alt+2 prompt-switcher chord + A/D navigation
 #[path = "handy/memory.rs"]
-mod memory; // upstream #1846 glibc allocator tuning; relocated into handy/ (upstream `mod overlay;` dropped — Grain aliases grain_overlay as overlay above)
-mod net_diag; // [GRAIN] shared reqwest transport-error diagnostics (upstream #1823, applied to both cloud clients)
+mod memory; // upstream #1846 glibc allocator tuning; compiled from handy/
+mod net_diag; // [GRAIN] shared reqwest transport-error diagnostics (upstream #1823)
 #[path = "handy/paste_tx/mod.rs"]
 mod paste_tx;
 mod pill_icon; // [GRAIN] pill identity — the foreground app's icon → pill
-mod pill_skin; // [GRAIN] pill skin delivery — the built-in look setting → pill
 #[path = "handy/portable.rs"]
 #[cfg(not(feature = "agent-harness"))]
 pub mod portable;
 #[cfg(feature = "agent-harness")]
 pub use grain_agent_harness::portable;
-mod post_process_router; // [GRAIN] post-process (LLM) dispatcher (single vs rotation)
-mod prompt_record; // [GRAIN] Prompt Record: split content vs spoken AI instruction at the pill-control mark
+mod prompt_record; // [GRAIN] Prompt Record: split content vs spoken AI instruction at the shortcut mark
 mod rolling; // [GRAIN] Parakeet TDT Flow capture and scheduling service
-mod rotation_state; // [GRAIN] smart-rotation trackers (cooldowns + headroom), shared by both routers
 #[path = "handy/secure_input.rs"]
 mod secure_input;
 #[path = "handy/shortcut/mod.rs"]
 mod shortcut;
 #[path = "handy/signal_handle.rs"]
 mod signal_handle;
-mod stt_client; // [GRAIN] S2: HTTP STT adapters (OpenAI / Deepgram / AssemblyAI)
-mod stt_router; // [GRAIN] S3: STT dispatcher (local vs cloud rotation)
 mod surface_watch; // [GRAIN] follow the foreground app mid-session
 mod tdt_flow; // [GRAIN] capability-gated stateless TDT window adapter/accumulator
 #[path = "handy/transcription_coordinator.rs"]
@@ -142,6 +140,7 @@ pub fn eval_requested() -> bool {
 }
 
 #[cfg(debug_assertions)]
+#[cfg(any(test, not(feature = "agent-harness")))]
 use specta_typescript::{BigIntExportBehavior, Typescript};
 use tauri_specta::{collect_commands, collect_events, Builder};
 
@@ -444,10 +443,12 @@ fn initialize_core_logic(app_handle: &AppHandle) {
         transcription_manager.clone(),
     ));
     app_handle.manage(rolling_transcriber);
-    // [GRAIN] smart-rotation health trackers (one per domain), shared by the STT
-    // and post-process routers for cooldown-aware provider ordering.
-    app_handle.manage(Arc::new(rotation_state::RotationTrackers::default()));
-    // [GRAIN] One shared reqwest::Client for ALL outbound HTTP calls (LLM + STT).
+    app_handle.manage(grain_overlay::OverlayContext::default());
+    overlay::update_overlay_enabled_cache(
+        settings::get_settings(&app_handle).overlay_style != settings::OverlayStyle::None,
+    );
+    overlay::create_recording_overlay(&app_handle);
+    // [GRAIN] One shared reqwest::Client for outbound AI text requests.
     // reqwest::Client is designed to be cloned/shared — it manages a connection pool,
     // TLS sessions, and keep-alive internally. Building one per request throws all of
     // that away. Centralising here means every provider call reuses connections.
@@ -469,11 +470,10 @@ fn initialize_core_logic(app_handle: &AppHandle) {
     // confirmed missed paste and the moment the clipboard is handed back.
     app_handle.manage(paste_catch::PasteCatchState::default());
 
-    // [GRAIN] Start the local WebSocket event transport. It launches the pill
-    // supervisor only after the listener owns its port, so rapid dev restarts
-    // cannot strand this app run without a pill.
+    // [GRAIN] Worker/developer requests use the authenticated loopback socket;
+    // recording and Agent UI events stay on the internal WebView bridge.
     if let Some(ctx) = app_handle.try_state::<Arc<grain_core::AppContext>>() {
-        events_server::start(ctx.inner().clone(), app_handle.clone());
+        events_server::start(app_handle.clone());
         // [GRAIN] extension worker lifecycle: activation dispatch + idle reaper.
         extension_host::start(app_handle.clone(), ctx.inner().clone());
         if get_settings(app_handle).extension_developer_mode {
@@ -630,10 +630,7 @@ fn initialize_core_logic(app_handle: &AppHandle) {
     #[cfg(not(feature = "agent-harness"))]
     autostart::apply_autostart(app_handle, settings.autostart_enabled);
 
-    // [GRAIN] The Handy webview recording overlay is retired — the winit
-    // grain-pill is now the SINGLE overlay surface for both batch and rolling
-    // (driven by DaemonEvents over the local WS). Nothing to create here; the
-    // event server launches the supervisor after its listener owns the port.
+    // Shared recording overlay is created once during main-thread setup.
 }
 
 #[tauri::command]
@@ -1059,8 +1056,6 @@ pub fn run(cli_args: CliArgs) {
         ))
         .manage(cli_args.clone())
         .manage(grain_update::UpdateState::default())
-        .manage(grain_onboarding::OnboardingMicrophoneTest::default())
-        .manage(grain_onboarding::OnboardingTranscriptionTest::default())
         .setup(move |app| {
             specta_builder.mount_events(app);
 
@@ -1267,9 +1262,6 @@ pub fn run(cli_args: CliArgs) {
         })
         .on_window_event(|window, event| match event {
             tauri::WindowEvent::CloseRequested { .. } => {
-                if window.label() == "main" {
-                    grain_onboarding::close_onboarding_tests(window.app_handle());
-                }
                 // [GRAIN] The Agent panel is the only Agent webview (the summon
                 // input is native, in the pill process). On its close, release
                 // the transient Enter/Escape shortcuts — unless the native input
@@ -1384,7 +1376,11 @@ fn command_bindings() -> Builder<tauri::Wry> {
             shortcut::change_translate_to_english_setting,
             shortcut::change_selected_language_setting,
             shortcut::change_overlay_position_setting,
-            grain_commands::change_pill_skin_setting,
+            grain_overlay::change_overlay_style_setting,
+            grain_overlay::change_pill_hide_close_button_setting,
+            grain_overlay::overlay_snapshot,
+            grain_overlay::overlay_cancel,
+            grain_overlay::overlay_followup,
             grain_commands::change_pill_show_app_icon_setting,
             shortcut::change_debug_mode_setting,
             shortcut::change_word_correction_threshold_setting,
@@ -1399,16 +1395,10 @@ fn command_bindings() -> Builder<tauri::Wry> {
             shortcut::change_clipboard_handling_setting,
             shortcut::change_auto_submit_setting,
             shortcut::change_auto_submit_key_setting,
-            shortcut::change_post_process_enabled_setting,
             grain_locale::resolve_app_locale,
             grain_onboarding::resolve_onboarding_state,
             grain_onboarding::onboarding_step_after_permissions,
             grain_onboarding::get_onboarding_model_defaults,
-            grain_onboarding::start_onboarding_microphone_test,
-            grain_onboarding::stop_onboarding_microphone_test,
-            grain_onboarding::start_onboarding_transcription_test,
-            grain_onboarding::stop_onboarding_transcription_test,
-            grain_onboarding::cancel_onboarding_transcription_test,
             grain_theme::get_theme,
             grain_theme::set_theme_mode,
             shortcut::change_experimental_enabled_setting,
@@ -1431,9 +1421,7 @@ fn command_bindings() -> Builder<tauri::Wry> {
             grain_commands::change_snippets_enabled_setting,
             grain_commands::change_agent_autocopy_setting,
             grain_commands::change_agent_quick_enabled_setting,
-            grain_commands::change_agent_context_mode_setting,
             grain_commands::change_agent_screen_image_setting,
-            grain_commands::change_agent_input_type_to_expand_setting,
             grain_commands::change_agent_panel_position_setting,
             grain_commands::change_scrap_that_enabled_setting,
             grain_commands::change_paste_catch_enabled_setting,
@@ -1538,14 +1526,11 @@ fn command_bindings() -> Builder<tauri::Wry> {
             commands::is_portable,
             commands::get_app_dir_path,
             commands::get_app_settings,
-            commands::stt::stt_get_pool,
-            commands::stt::stt_set_smart_rotation,
-            commands::stt::stt_upsert_provider,
-            commands::stt::stt_remove_provider,
-            commands::post_process::pp_get_pool,
-            commands::post_process::pp_set_smart_rotation,
-            commands::post_process::pp_upsert_provider,
-            commands::post_process::pp_remove_provider,
+            grain_provider_commands::pp_get_pool,
+            grain_provider_commands::pp_set_fallback_enabled,
+            grain_provider_commands::pp_upsert_provider,
+            grain_provider_commands::pp_remove_provider,
+            grain_provider_commands::pp_reorder_providers,
             commands::get_default_settings,
             commands::get_log_dir_path,
             commands::set_log_level,
@@ -1606,17 +1591,20 @@ fn command_bindings() -> Builder<tauri::Wry> {
             grain_update::UpdateAvailable,
             grain_update::UpdateDownloadProgress,
             managers::history::HistoryUpdatePayload,
-            // The Native ASR stream events MUST be registered even though Grain's
-            // webview doesn't render them (the native pill does, via the WS
-            // bridge): tauri-specta's Event::emit PANICS on an unregistered
-            // event, which killed the stream worker mid-lease (no pill text,
-            // engine dropped, batch fallback found nothing loaded).
+            // Typed live-caption events used by the recording WebView.
             managers::transcription::StreamPhaseEvent,
             managers::transcription::StreamTextEvent,
             // [GRAIN] The webview event surface, typed. Registration alone is
             // what puts these in bindings.ts; the emit sites are untouched (and
             // most are inside handy/, which must stay byte-identical). See
             // grain_events for why this bus and DaemonEvent are both correct.
+            grain_events::ShowOverlay,
+            grain_events::HideOverlay,
+            grain_events::RecordingReady,
+            grain_events::MicLevel,
+            grain_events::GrainOverlayContext,
+            grain_events::GrainOverlayPosition,
+            grain_events::GrainOverlayCompactCloseHidden,
             grain_events::ModelStateChanged,
             grain_events::ModelDownloadProgress,
             grain_events::ModelDownloadComplete,
@@ -1629,7 +1617,6 @@ fn command_bindings() -> Builder<tauri::Wry> {
             grain_events::RecordingError,
             grain_events::PasteError,
             grain_events::ExtensionRecommendation,
-            grain_onboarding::OnboardingMicrophoneLevel,
             grain_theme::ThemeChanged,
         ])
 }

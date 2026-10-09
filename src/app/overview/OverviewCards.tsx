@@ -2,8 +2,6 @@ import { ArrowRight, BookOpen, FileText, Keyboard } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { useSettings } from "@/hooks/useSettings";
 import { formatKeyPart } from "@/lib/utils/keyboard";
-import { getFlowAvailability } from "@/lib/flowAvailability";
-import { useModelStore } from "@/stores/modelStore";
 import { hashForRoute } from "../navigation";
 
 const COPY = {
@@ -22,8 +20,6 @@ const COPY = {
   },
   shortcuts: {
     title: "Shortcuts",
-    aiOff: "AI off",
-    flowOff: "Unavailable",
     none: "Not set",
   },
   agent: {
@@ -33,10 +29,8 @@ const COPY = {
   },
 };
 
-/** Where the AI key routes a transcript. Mirrors `CaptureModes`. */
-const AI_BINDING_ID = "transcribe_send_to_ai";
-/** Flow. In a three-key setup this is the capture the AI key pairs with. */
-const FLOW_BINDING_ID = "transcribe_realtime";
+const DICTATION_BINDING_ID = "transcribe";
+const STREAMING_BINDING_ID = "transcribe_native_asr";
 const AGENT_BINDING_ID = "summon_agent";
 
 function go(hash: string) {
@@ -67,11 +61,9 @@ function Keycap({ combination }: { combination: string }) {
 function ShortcutRow({
   label,
   combination,
-  offLabel,
 }: {
   label: string;
   combination: string | null;
-  offLabel?: string;
 }) {
   return (
     <div className="overview-shortcut-row">
@@ -79,9 +71,7 @@ function ShortcutRow({
       {combination ? (
         <Keycap combination={combination} />
       ) : (
-        <span className="overview-shortcut-off">
-          {offLabel ?? COPY.shortcuts.none}
-        </span>
+        <span className="overview-shortcut-off">{COPY.shortcuts.none}</span>
       )}
     </div>
   );
@@ -141,17 +131,10 @@ function ShortcutsCard() {
   const { t } = useTranslation();
   const { getSetting } = useSettings();
   const bindings = getSetting("bindings") ?? {};
-  const { models, currentModel } = useModelStore();
 
-  const captureId = FLOW_BINDING_ID;
+  const captureId = DICTATION_BINDING_ID;
+  const streaming = bindings[STREAMING_BINDING_ID];
   const capture = bindings[captureId];
-  const ai = bindings[AI_BINDING_ID];
-  const aiActive = (getSetting("post_process_enabled") ?? false) && Boolean(ai);
-  const flowAvailable = getFlowAvailability(
-    models,
-    currentModel,
-    getSetting("translate_to_english") ?? false,
-  ).available;
 
   const label = (id: string, fallback?: string) =>
     t(`settings.general.shortcut.bindings.${id}.name`, fallback ?? id);
@@ -165,13 +148,11 @@ function ShortcutsCard() {
       <div className="overview-shortcut-list">
         <ShortcutRow
           label={label(captureId, capture?.name)}
-          combination={flowAvailable ? capture?.current_binding || null : null}
-          offLabel={flowAvailable ? undefined : COPY.shortcuts.flowOff}
+          combination={capture?.current_binding || null}
         />
         <ShortcutRow
-          label={label(AI_BINDING_ID, ai?.name)}
-          combination={aiActive ? ai?.current_binding || null : null}
-          offLabel={aiActive ? undefined : COPY.shortcuts.aiOff}
+          label={label(STREAMING_BINDING_ID, streaming?.name)}
+          combination={streaming?.current_binding || null}
         />
       </div>
     </div>

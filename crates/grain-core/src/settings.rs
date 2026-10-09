@@ -183,28 +183,6 @@ impl Default for AgentAutocopy {
     }
 }
 
-/// [GRAIN] Agent context awareness: what (if anything) is read from the focused
-/// field at summon and handed to the LLM as background. `Unique` reuses the
-/// unique-term extractor (high-signal identifiers/names only); `Full` sends the
-/// capped raw field text. OFF by default — reading field content is opt-in.
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Type)]
-#[serde(rename_all = "snake_case")]
-pub enum AgentContextMode {
-    Off,
-    Unique,
-    Full,
-    /// The whole foreground window's visible text, from its accessibility tree.
-    ///
-    /// The rung above `Full`: `Full` sends the field being typed into, this
-    /// sends what surrounds it. It is what makes "reply saying I can't make
-    /// Thursday" answerable — the thread being replied to lives outside the
-    /// compose box, so no amount of field context reaches it.
-    ///
-    /// Never a screenshot: no screen-recording permission, no image, and only
-    /// the foreground window is ever read.
-    Screen,
-}
-
 /// [GRAIN] Where the Agent reply surface appears. `Side` (default) is the
 /// original bottom-right card that grows into a right-side conversation.
 /// `Center` is the sleek center-top panel that hugs its content and grows
@@ -222,12 +200,6 @@ impl Default for AgentPanelPosition {
     }
 }
 
-impl Default for AgentContextMode {
-    fn default() -> Self {
-        AgentContextMode::Off
-    }
-}
-
 #[derive(Serialize, Deserialize, Debug, Clone, Type)]
 pub struct PostProcessProvider {
     pub id: String,
@@ -239,124 +211,13 @@ pub struct PostProcessProvider {
     pub models_endpoint: Option<String>,
     #[serde(default)]
     pub supports_structured_output: bool,
-    /// [GRAIN] Included in smart rotation when true. Defaults true so existing
-    /// configs (and the manual single-provider path) behave exactly as before.
+    /// [GRAIN] Included in ordered fallback when true.
     #[serde(default = "default_pp_enabled")]
     pub enabled: bool,
-    /// [GRAIN] Daily request cap for rotation; `None` = unlimited.
-    #[serde(default)]
-    pub quota_limit: Option<i64>,
-    #[serde(default)]
-    pub quota_used_today: i64,
 }
 
 fn default_pp_enabled() -> bool {
     true
-}
-
-/// [GRAIN] Which transcription backend an STT pool entry talks to. `Local` is the
-/// in-process transcribe-rs model; the rest are HTTP adapters (see `stt_client`).
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Type)]
-#[serde(rename_all = "lowercase")]
-pub enum SttProviderKind {
-    /// The in-process Parakeet/Whisper model (no network). Exactly one is implicit.
-    Local,
-    /// Generic OpenAI-compatible `/v1/audio/transcriptions`.
-    Openai,
-    Deepgram,
-    Assemblyai,
-}
-
-/// [GRAIN] One entry in the STT routing pool. Each entry carries its OWN key
-/// (stored separately in `stt_api_keys` by `id`), so two entries with the same
-/// `base_url` = two keys for one provider. Mirrors `provider_router::ProviderConfig`
-/// plus the fields the HTTP client needs (`kind`, `model`).
-#[derive(Serialize, Deserialize, Debug, Clone, Type)]
-pub struct SttProvider {
-    pub id: String,
-    pub name: String,
-    pub kind: SttProviderKind,
-    /// Ignored for `Local`.
-    #[serde(default)]
-    pub base_url: String,
-    /// Model/engine name sent to the provider (ignored for `Local`).
-    #[serde(default)]
-    pub model: String,
-    #[serde(default = "default_stt_enabled")]
-    pub enabled: bool,
-    /// Daily request cap; `None` = unlimited.
-    #[serde(default)]
-    pub quota_limit: Option<i64>,
-    #[serde(default)]
-    pub quota_used_today: i64,
-}
-
-fn default_stt_enabled() -> bool {
-    true
-}
-
-/// The implicit, always-present local provider's pool id.
-pub const STT_LOCAL_PROVIDER_ID: &str = "local";
-
-/// Default STT pool: just the in-process local model. Remote entries are added
-/// by the user. Local is always first so single-provider behavior == today.
-pub fn default_stt_providers() -> Vec<SttProvider> {
-    vec![
-        SttProvider {
-            id: STT_LOCAL_PROVIDER_ID.to_string(),
-            name: "Local (on-device)".to_string(),
-            kind: SttProviderKind::Local,
-            base_url: String::new(),
-            model: String::new(),
-            enabled: true,
-            quota_limit: None,
-            quota_used_today: 0,
-        },
-        SttProvider {
-            id: "groq".to_string(),
-            name: "Groq STT".to_string(),
-            kind: SttProviderKind::Openai,
-            base_url: "https://api.groq.com/openai/v1".to_string(),
-            model: "whisper-large-v3".to_string(),
-            enabled: false,
-            quota_limit: None,
-            quota_used_today: 0,
-        },
-        SttProvider {
-            id: "openai".to_string(),
-            name: "OpenAI Whisper".to_string(),
-            kind: SttProviderKind::Openai,
-            base_url: "https://api.openai.com/v1".to_string(),
-            model: "whisper-1".to_string(),
-            enabled: false,
-            quota_limit: None,
-            quota_used_today: 0,
-        },
-        SttProvider {
-            id: "deepgram".to_string(),
-            name: "Deepgram".to_string(),
-            kind: SttProviderKind::Deepgram,
-            base_url: "https://api.deepgram.com".to_string(),
-            model: "nova-2".to_string(),
-            enabled: false,
-            quota_limit: None,
-            quota_used_today: 0,
-        },
-        SttProvider {
-            id: "assemblyai".to_string(),
-            name: "AssemblyAI".to_string(),
-            kind: SttProviderKind::Assemblyai,
-            base_url: "https://api.assemblyai.com".to_string(),
-            model: String::new(),
-            enabled: false,
-            quota_limit: None,
-            quota_used_today: 0,
-        },
-    ]
-}
-
-fn default_stt_api_keys() -> SecretMap {
-    SecretMap::default()
 }
 
 // OverlayPosition moved to grain-sdk (it crosses the wire in
@@ -364,10 +225,47 @@ fn default_stt_api_keys() -> SecretMap {
 // paths — and the generated bindings — are unchanged.
 pub use grain_sdk::OverlayPosition;
 
-// [GRAIN] PillSkin lives in grain-sdk (it crosses the wire in
-// DaemonEvent::PillSkin); re-exported here so it is a `settings::PillSkin` like
-// every other settings-visible enum, and so specta generates its binding.
-pub use grain_sdk::PillSkin;
+/// Handy's presentation contract. Position only selects an edge.
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, Copy, PartialEq, Eq, specta::Type)]
+#[serde(rename_all = "lowercase")]
+pub enum OverlayStyle {
+    None,
+    Minimal,
+    Live,
+}
+
+fn default_overlay_style() -> OverlayStyle {
+    if cfg!(target_os = "linux") {
+        OverlayStyle::None
+    } else {
+        OverlayStyle::Live
+    }
+}
+
+/// Normalize legacy placement and retire the removed pill renderer setting.
+pub fn migrate_overlay_settings(value: &mut serde_json::Value) -> bool {
+    let Some(map) = value.as_object_mut() else {
+        return false;
+    };
+    let mut changed = map.remove("pill_skin").is_some();
+    if !map.contains_key("overlay_style") {
+        let style = match map.get("overlay_position").and_then(|v| v.as_str()) {
+            Some("none") => OverlayStyle::None,
+            Some("top" | "bottom" | "center") => OverlayStyle::Live,
+            _ => default_overlay_style(),
+        };
+        map.insert("overlay_style".into(), serde_json::to_value(style).unwrap());
+        changed = true;
+    }
+    if matches!(
+        map.get("overlay_position").and_then(|v| v.as_str()),
+        Some("none" | "center")
+    ) {
+        map.insert("overlay_position".into(), serde_json::json!("bottom"));
+        changed = true;
+    }
+    changed
+}
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Type)]
 #[serde(rename_all = "snake_case")]
@@ -388,9 +286,8 @@ impl Default for DefaultPanel {
 /// against what the OS is currently doing. See `grain_theme` for that half.
 ///
 /// It lives in settings rather than `localStorage` because Grain paints more
-/// surfaces than the settings window: the native pill, the switcher capsule,
-/// the Agent and host-owned Extension Mode windows all need the same answer,
-/// while the native surfaces cannot read a browser store.
+/// surfaces than the settings window: recording pills, Agent and host-owned
+/// Extension Mode windows all need the same authoritative preference.
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Type)]
 #[serde(rename_all = "snake_case")]
 pub enum ThemeMode {
@@ -405,10 +302,9 @@ impl Default for ThemeMode {
     }
 }
 
-/// The three binding ids that start a capture. Order is the order they are
+/// The two binding ids that start a capture. Order is the order they are
 /// offered in the UI: least to most machinery.
-pub const CAPTURE_MODE_IDS: [&str; 3] =
-    ["transcribe", "transcribe_realtime", "transcribe_native_asr"];
+pub const CAPTURE_MODE_IDS: [&str; 2] = ["transcribe", "transcribe_native_asr"];
 
 pub fn default_capture_mode() -> String {
     "transcribe".to_string()
@@ -671,9 +567,8 @@ pub struct AppSettings {
     /// [GRAIN] Colour scheme preference for every Grain surface. See `ThemeMode`.
     #[serde(default)]
     pub theme: ThemeMode,
-    /// [GRAIN] Which mode the AI shortcut starts when pressed from idle. All
-    /// three capture modes are always live, so this is a free choice among
-    /// `CAPTURE_MODE_IDS`.
+    /// [GRAIN] Which capture binding the AI shortcut borrows from idle:
+    /// Dictation (model-selected Standard/Flow) or Streaming.
     #[serde(default = "default_capture_mode")]
     pub capture_ai_start_mode: String,
     /// [GRAIN] Whether the AI shortcut, pressed *during* a capture, ends it and
@@ -717,16 +612,17 @@ pub struct AppSettings {
     pub selected_language: String,
     #[serde(default = "default_overlay_position")]
     pub overlay_position: OverlayPosition,
-    /// [GRAIN] Which built-in look the collapsed pill wears (form, not colour —
-    /// see `PillSkin`). Defaults to the smooth waveform.
-    #[serde(default)]
-    pub pill_skin: PillSkin,
+    #[serde(default = "default_overlay_style")]
+    pub overlay_style: OverlayStyle,
     /// [GRAIN] Show the icon of the app being dictated into, in place of the
     /// pill's state dot. ON while the behaviour is being developed; it will
     /// later be folded into Context Awareness and shown only for surfaces Grain
     /// actually differentiates.
     #[serde(default = "default_pill_show_app_icon")]
     pub pill_show_app_icon: bool,
+    /// Hide only the compact recording/working pill's close control.
+    #[serde(default)]
+    pub pill_hide_close_button: bool,
     #[serde(default = "default_debug_mode")]
     pub debug_mode: bool,
     #[serde(default = "default_log_level")]
@@ -760,30 +656,10 @@ pub struct AppSettings {
     pub post_process_providers: Vec<PostProcessProvider>,
     #[serde(default = "default_post_process_api_keys")]
     pub post_process_api_keys: SecretMap,
-    /// [GRAIN] When true, post-processing routes among ENABLED post-process
-    /// providers (round-robin + per-provider daily quota + failover). When false
-    /// (default), the single `post_process_provider_id` is used — today's behavior.
-    /// Independent of STT rotation: each side has its OWN provider list.
+    /// [GRAIN] Try enabled, configured providers in their saved order on failure.
+    /// When false, use only the selected provider.
     #[serde(default)]
-    pub post_process_smart_rotation: bool,
-    /// [GRAIN] Local date (YYYY-MM-DD) the post-process daily quotas last reset on.
-    #[serde(default)]
-    pub post_process_quota_reset_date: String,
-    /// [GRAIN] STT routing pool (local + remote OpenAI-compatible providers).
-    #[serde(default = "default_stt_providers")]
-    pub stt_providers: Vec<SttProvider>,
-    /// [GRAIN] When true, transcription routes among enabled CLOUD providers
-    /// (round-robin + quota + failover); the LOCAL model is excluded. When false
-    /// (default), the local in-process model is used — never a surprise spike.
-    #[serde(default)]
-    pub stt_smart_rotation: bool,
-    /// [GRAIN] STT provider API keys, by pool-entry id. Split into grain.secrets.json.
-    #[serde(default = "default_stt_api_keys")]
-    pub stt_api_keys: SecretMap,
-    /// [GRAIN] Local date (YYYY-MM-DD) the STT daily quotas were last reset on.
-    /// When today differs, quotas roll back to 0 (checked lazily at routing time).
-    #[serde(default)]
-    pub stt_quota_reset_date: String,
+    pub post_process_fallback_enabled: bool,
     #[serde(default = "default_post_process_models")]
     pub post_process_models: HashMap<String, String>,
     #[serde(default = "default_post_process_prompts")]
@@ -919,22 +795,10 @@ pub struct AppSettings {
     /// of opening the reply panel. The pill then briefly offers "ask follow-up".
     #[serde(default)]
     pub agent_quick_enabled: bool,
-    /// [GRAIN] Agent context awareness: read the focused field at summon and pass
-    /// it to the AI as background (`unique` = high-signal terms only, `full` =
-    /// capped raw text). OFF by default.
-    #[serde(default)]
-    pub agent_context_mode: AgentContextMode,
     /// [GRAIN] Agent screen vision: when on, summoning the Agent also photographs
     /// the window you were in and sends that frame with your instruction, so it
     /// can answer about what is actually on screen — a chart, a diff, an error
     /// dialog, a page that has no accessibility text at all.
-    ///
-    /// Deliberately a separate switch from [`AgentContextMode::Screen`] rather
-    /// than a fifth rung on it. That mode reads the window's accessibility TEXT;
-    /// this one takes a picture. They cost different things, they fail in
-    /// different ways, and a model that cannot see images still handles the text
-    /// one — folding them together would make choosing "read my window" silently
-    /// start uploading screenshots.
     ///
     /// OFF by default and off is free: no capture, no permission, no bytes.
     #[serde(default)]
@@ -995,13 +859,57 @@ fn default_selected_language() -> String {
     "auto".to_string()
 }
 fn default_overlay_position() -> OverlayPosition {
-    #[cfg(target_os = "linux")]
-    return OverlayPosition::None;
-    #[cfg(not(target_os = "linux"))]
-    return OverlayPosition::Bottom;
+    OverlayPosition::Bottom
 }
 fn default_pill_show_app_icon() -> bool {
     true
+}
+
+#[cfg(test)]
+mod overlay_migration_tests {
+    use super::*;
+
+    #[test]
+    fn legacy_positions_keep_enabled_state_and_normalize_the_edge() {
+        for (old, position, style) in [
+            ("none", OverlayPosition::Bottom, OverlayStyle::None),
+            ("center", OverlayPosition::Bottom, OverlayStyle::Live),
+            ("top", OverlayPosition::Top, OverlayStyle::Live),
+            ("bottom", OverlayPosition::Bottom, OverlayStyle::Live),
+        ] {
+            let mut value = serde_json::json!({"overlay_position": old, "selected_language": "fr"});
+            assert!(migrate_overlay_settings(&mut value));
+            assert!(!migrate_overlay_settings(&mut value));
+            let settings: AppSettings = serde_json::from_value(value).unwrap();
+            assert_eq!(settings.overlay_position, position);
+            assert_eq!(settings.overlay_style, style);
+            assert_eq!(settings.selected_language, "fr");
+        }
+    }
+
+    #[test]
+    fn explicit_style_wins_and_retired_switcher_bindings_never_return() {
+        let mut value =
+            serde_json::json!({"overlay_position": "center", "overlay_style": "minimal"});
+        migrate_overlay_settings(&mut value);
+        let settings: AppSettings = serde_json::from_value(value).unwrap();
+        assert_eq!(settings.overlay_style, OverlayStyle::Minimal);
+        let mut settings = get_default_settings();
+        let mut binding = settings.bindings["transcribe"].clone();
+        binding.id = "prompt_next".into();
+        settings.bindings.insert(binding.id.clone(), binding);
+        assert!(apply_settings_migrations(&mut settings));
+        ensure_post_process_defaults(&mut settings);
+        for id in [
+            "prompt_next",
+            "prompt_prev",
+            "master_prompt_switch",
+            "switcher_prompt_next",
+            "switcher_prompt_prev",
+        ] {
+            assert!(!settings.bindings.contains_key(id));
+        }
+    }
 }
 fn default_debug_mode() -> bool {
     false
@@ -1068,7 +976,7 @@ fn default_post_process_provider_id() -> String {
 }
 
 pub fn default_post_process_providers() -> Vec<PostProcessProvider> {
-    // Local constructor so the rotation fields (enabled/quota) stay in one place
+    // Local constructor so the fallback participation field stays in one place
     // instead of being repeated across every built-in entry.
     fn p(
         id: &str,
@@ -1086,8 +994,6 @@ pub fn default_post_process_providers() -> Vec<PostProcessProvider> {
             models_endpoint: models_endpoint.map(|s| s.to_string()),
             supports_structured_output,
             enabled: true,
-            quota_limit: None,
-            quota_used_today: 0,
         }
     }
 
@@ -1329,7 +1235,22 @@ where
 /// Returns true exactly when the caller must rewrite the settings file.
 pub fn apply_settings_migrations(settings: &mut AppSettings) -> bool {
     let mut changed = false;
+    // AI processing remains available. Capture policy decides which recordings
+    // use it; the former master switch is no longer a user preference.
+    if !settings.post_process_enabled {
+        settings.post_process_enabled = true;
+        changed = true;
+    }
     let stored_version = settings.settings_schema_version;
+    for id in [
+        "prompt_next",
+        "prompt_prev",
+        "master_prompt_switch",
+        "switcher_prompt_next",
+        "switcher_prompt_prev",
+    ] {
+        changed |= settings.bindings.remove(id).is_some();
+    }
 
     if stored_version < 2 {
         settings.transcribe_gpu_device = None;
@@ -1416,16 +1337,15 @@ pub fn ensure_post_process_defaults(settings: &mut AppSettings) -> bool {
         changed = true;
     }
 
-    // [GRAIN] Seed the prompt-switcher + agent bindings for installs that predate them.
+    // [GRAIN] Seed Agent bindings for installs that predate them.
     let defaults = get_default_settings();
     for id in [
         "extension_mode",
-        "prompt_next",
-        "prompt_prev",
         "summon_agent",
         "agent_followup",
         "transcribe_send_to_ai",
         "transcribe_native_asr",
+        "prompt_record",
     ] {
         if !settings.bindings.contains_key(id) {
             if let Some(binding) = defaults.bindings.get(id) {
@@ -1446,8 +1366,17 @@ pub fn ensure_post_process_defaults(settings: &mut AppSettings) -> bool {
         // chord for a subset of another key's behaviour. The ACTION id lives on
         // for the CLI and SIGUSR1 -- it is only the binding that retires here.
         "transcribe_with_post_process",
+        // Flow remains an internal action selected by the Dictation model.
+        "transcribe_realtime",
     ] {
         if settings.bindings.remove(id).is_some() {
+            if id == "transcribe_realtime" {
+                // Development reset: retire Flow's chord and use the new
+                // Dictation default directly, without migrating custom keys.
+                settings
+                    .bindings
+                    .insert("transcribe".into(), defaults.bindings["transcribe"].clone());
+            }
             changed = true;
         }
     }
@@ -1507,21 +1436,18 @@ pub fn get_default_settings() -> AppSettings {
     //
     //   Space  = speak            Enter = speak to AI       letter = a surface
     //
-    // Alt (Option) is the Grain modifier: bare Alt+key is the least-contended
-    // global space on every platform. Modifiers then stack by how often a mode
-    // is used -- Flow, the everyday one, gets the bare chord; Standard, the
-    // rarest, carries the extra Ctrl.
+    // Standard uses Alt+Space (Option+Space on macOS); Streaming uses the
+    // user-requested Ctrl+Space chord. Both are supported by our shortcut backends.
     //
     // What we deliberately do NOT bind, because a global hotkey outranks the
     // focused app and would break these everywhere:
-    //   Ctrl+Space         IDE autocomplete; macOS "previous input source"
     //   Shift+Enter        newline in Slack, Discord, Teams, Gmail, Excel
     //   Ctrl+Shift+Arrow   extend-selection-by-word in every text field
     //   Alt+Arrow          Back/Forward in browsers and file managers
     #[cfg(target_os = "macos")]
-    let default_shortcut = "ctrl+option+space";
+    let default_shortcut = "option+space";
     #[cfg(not(target_os = "macos"))]
-    let default_shortcut = "ctrl+alt+space";
+    let default_shortcut = "alt+space";
 
     let mut bindings = HashMap::new();
     bindings.insert(
@@ -1529,7 +1455,7 @@ pub fn get_default_settings() -> AppSettings {
         ShortcutBinding {
             id: "transcribe".to_string(),
             name: "Standard".to_string(),
-            description: "Converts your speech into text.".to_string(),
+            description: "Speak, then paste text when you stop.".to_string(),
             default_binding: default_shortcut.to_string(),
             current_binding: default_shortcut.to_string(),
         },
@@ -1551,62 +1477,17 @@ pub fn get_default_settings() -> AppSettings {
         },
     );
 
-    // [GRAIN] dedicated Parakeet TDT Flow shortcut.
-    #[cfg(target_os = "macos")]
-    let default_realtime_shortcut = "option+space";
-    #[cfg(not(target_os = "macos"))]
-    let default_realtime_shortcut = "alt+space";
-    bindings.insert(
-        "transcribe_realtime".to_string(),
-        ShortcutBinding {
-            id: "transcribe_realtime".to_string(),
-            name: "Flow".to_string(),
-            description: "Fast Parakeet TDT transcription that processes as you speak.".to_string(),
-            default_binding: default_realtime_shortcut.to_string(),
-            current_binding: default_realtime_shortcut.to_string(),
-        },
-    );
-
-    // [GRAIN] Prompt switcher: cycle the active post-processing prompt; the new
-    // title shows in the pill. Tap shortcuts (not push-to-talk). Defaults use the
-    // arrow keys per the "control + arrows" idea — rebindable if the platform
-    // key parser names them differently.
-    bindings.insert(
-        "prompt_next".to_string(),
-        ShortcutBinding {
-            id: "prompt_next".to_string(),
-            name: "Next Prompt".to_string(),
-            description: "Switch to the next post-processing prompt.".to_string(),
-            default_binding: "alt+]".to_string(),
-            current_binding: "alt+]".to_string(),
-        },
-    );
-    bindings.insert(
-        "prompt_prev".to_string(),
-        ShortcutBinding {
-            id: "prompt_prev".to_string(),
-            name: "Previous Prompt".to_string(),
-            description: "Switch to the previous post-processing prompt.".to_string(),
-            default_binding: "alt+[".to_string(),
-            current_binding: "alt+[".to_string(),
-        },
-    );
-
     // [GRAIN] Native ASR: streaming dictation with live partial/committed text in
     // the Studio Window overlay. Push-to-talk like the other capture modes — the
     // engine loads/unloads automatically around the shortcut, never resident
-    // otherwise. Default mirrors the "+shift" relationship between
-    // transcribe_realtime and transcribe_with_post_process.
-    #[cfg(target_os = "macos")]
-    let default_native_asr_shortcut = "option+shift+space";
-    #[cfg(not(target_os = "macos"))]
-    let default_native_asr_shortcut = "alt+shift+space";
+    // otherwise. Ctrl+Space is supported by both shortcut implementations.
+    let default_native_asr_shortcut = "ctrl+space";
     bindings.insert(
         "transcribe_native_asr".to_string(),
         ShortcutBinding {
             id: "transcribe_native_asr".to_string(),
-            name: "Live".to_string(),
-            description: "Native real-time dictation with live streaming text.".to_string(),
+            name: "Streaming".to_string(),
+            description: "See text live as you speak.".to_string(),
             default_binding: default_native_asr_shortcut.to_string(),
             current_binding: default_native_asr_shortcut.to_string(),
         },
@@ -1711,6 +1592,18 @@ pub fn get_default_settings() -> AppSettings {
         },
     );
 
+    let default_prompt_record_shortcut = "f8";
+    bindings.insert(
+        "prompt_record".to_string(),
+        ShortcutBinding {
+            id: "prompt_record".to_string(),
+            name: "Prompt Record".to_string(),
+            description: "During dictation, press this key, then speak an AI instruction. Stop dictation with its original shortcut to apply it.".to_string(),
+            default_binding: default_prompt_record_shortcut.to_string(),
+            current_binding: default_prompt_record_shortcut.to_string(),
+        },
+    );
+
     AppSettings {
         settings_schema_version: CURRENT_SETTINGS_SCHEMA_VERSION,
         bindings,
@@ -1738,8 +1631,9 @@ pub fn get_default_settings() -> AppSettings {
         translate_to_english: false,
         selected_language: "auto".to_string(),
         overlay_position: default_overlay_position(),
-        pill_skin: PillSkin::default(),
+        overlay_style: default_overlay_style(),
         pill_show_app_icon: default_pill_show_app_icon(),
+        pill_hide_close_button: false,
         debug_mode: false,
         log_level: default_log_level(),
         custom_words: Vec::new(),
@@ -1756,12 +1650,7 @@ pub fn get_default_settings() -> AppSettings {
         post_process_provider_id: default_post_process_provider_id(),
         post_process_providers: default_post_process_providers(),
         post_process_api_keys: default_post_process_api_keys(),
-        post_process_smart_rotation: false,
-        post_process_quota_reset_date: String::new(),
-        stt_providers: default_stt_providers(),
-        stt_smart_rotation: false,
-        stt_api_keys: default_stt_api_keys(),
-        stt_quota_reset_date: String::new(),
+        post_process_fallback_enabled: false,
         post_process_models: default_post_process_models(),
         post_process_prompts: default_post_process_prompts(),
         post_process_selected_prompt_id: Some(DEFAULT_POST_PROCESS_PROMPT_ID.to_string()),
@@ -1799,7 +1688,6 @@ pub fn get_default_settings() -> AppSettings {
         mcp_oauth_client_ids: HashMap::new(),
         agent_autocopy: AgentAutocopy::default(),
         agent_quick_enabled: false,
-        agent_context_mode: AgentContextMode::default(),
         agent_screen_image: false,
         scrap_that_enabled: false,
         agent_input_type_to_expand: true,
@@ -1858,6 +1746,21 @@ mod retired_dictation_context_tests {
 #[cfg(test)]
 mod prompt_migration_tests {
     use super::*;
+
+    #[test]
+    fn ai_availability_is_enabled_without_changing_capture_policy() {
+        let mut settings = get_default_settings();
+        settings.post_process_enabled = false;
+        settings.capture_always_ai = false;
+        settings.capture_end_with_ai = false;
+        settings.capture_ai_start_mode = "transcribe_native_asr".into();
+        assert!(apply_settings_migrations(&mut settings));
+        assert!(settings.post_process_enabled);
+        assert!(!settings.capture_always_ai);
+        assert!(!settings.capture_end_with_ai);
+        assert_eq!(settings.capture_ai_start_mode, "transcribe_native_asr");
+        assert!(!apply_settings_migrations(&mut settings));
+    }
 
     fn prompt(id: &str, name: &str, body: &str) -> LLMPrompt {
         LLMPrompt {
@@ -2016,6 +1919,30 @@ mod transcribe_device_migration_tests {
     use super::*;
 
     #[test]
+    fn prompt_record_is_seeded_and_custom_binding_survives_save_reload() {
+        let mut settings = get_default_settings();
+        assert_eq!(settings.bindings["prompt_record"].current_binding, "f8");
+        settings.bindings.remove("prompt_record");
+        assert!(ensure_post_process_defaults(&mut settings));
+        assert_eq!(
+            settings.bindings["prompt_record"].current_binding,
+            get_default_settings().bindings["prompt_record"].current_binding
+        );
+        settings
+            .bindings
+            .get_mut("prompt_record")
+            .unwrap()
+            .current_binding = "ctrl+alt+p".into();
+        let encoded = serde_json::to_string(&settings).unwrap();
+        let mut restored: AppSettings = serde_json::from_str(&encoded).unwrap();
+        ensure_post_process_defaults(&mut restored);
+        assert_eq!(
+            restored.bindings["prompt_record"].current_binding,
+            "ctrl+alt+p"
+        );
+    }
+
+    #[test]
     fn legacy_integer_device_is_cleared_and_generic_gpu_becomes_auto() {
         let mut settings: AppSettings = serde_json::from_value(serde_json::json!({
             "settings_schema_version": 1,
@@ -2097,74 +2024,68 @@ mod binding_migration_tests {
     }
 
     #[test]
-    fn untouched_bindings_move_to_the_new_default() {
+    fn dictation_owns_alt_space_and_flow_has_no_binding() {
+        let settings = get_default_settings();
+        #[cfg(target_os = "macos")]
+        let expected = "option+space";
+        #[cfg(not(target_os = "macos"))]
+        let expected = "alt+space";
+        assert_eq!(settings.bindings["transcribe"].current_binding, expected);
+        assert_eq!(settings.bindings["transcribe"].default_binding, expected);
+        assert_eq!(CAPTURE_MODE_IDS, ["transcribe", "transcribe_native_asr"]);
+        assert!(!settings.bindings.contains_key("transcribe_realtime"));
+    }
+
+    #[test]
+    fn retired_flow_binding_is_dropped_without_preserving_its_chord() {
         let mut settings = get_default_settings();
-        let fresh = get_default_settings();
-        // Never customised: current still equals the old default.
+        let mut old_flow = settings.bindings["transcribe"].clone();
+        old_flow.id = "transcribe_realtime".into();
+        old_flow.current_binding = "f9".into();
+        settings.bindings.insert(old_flow.id.clone(), old_flow);
         stored_as(
             &mut settings,
-            "transcribe_realtime",
+            "transcribe",
             "ctrl+alt+space",
             "ctrl+alt+space",
         );
-
-        ensure_post_process_defaults(&mut settings);
-
-        let moved = &settings.bindings["transcribe_realtime"];
+        assert!(ensure_post_process_defaults(&mut settings));
+        assert!(!settings.bindings.contains_key("transcribe_realtime"));
         assert_eq!(
-            moved.current_binding,
-            fresh.bindings["transcribe_realtime"].current_binding
+            settings.bindings["transcribe"].current_binding,
+            get_default_settings().bindings["transcribe"].current_binding
         );
-        assert_eq!(
-            moved.default_binding,
-            fresh.bindings["transcribe_realtime"].default_binding
-        );
+        assert!(!ensure_post_process_defaults(&mut settings));
     }
 
     #[test]
     fn a_customised_binding_keeps_the_users_key() {
         let mut settings = get_default_settings();
-        let fresh = get_default_settings();
-        stored_as(&mut settings, "transcribe_realtime", "ctrl+alt+space", "f9");
-
+        stored_as(&mut settings, "summon_agent", "ctrl+shift+a", "f9");
         ensure_post_process_defaults(&mut settings);
-
-        let kept = &settings.bindings["transcribe_realtime"];
-        assert_eq!(kept.current_binding, "f9", "the user's key must survive");
-        // Reset should still offer the CURRENT default, not the retired one.
+        assert_eq!(settings.bindings["summon_agent"].current_binding, "f9");
         assert_eq!(
-            kept.default_binding,
-            fresh.bindings["transcribe_realtime"].default_binding
+            settings.bindings["summon_agent"].default_binding,
+            get_default_settings().bindings["summon_agent"].default_binding
         );
     }
 
     #[test]
     fn a_repoint_never_steals_a_chord_the_user_chose() {
         let mut settings = get_default_settings();
-        let fresh = get_default_settings();
-        let flow_target = fresh.bindings["transcribe_realtime"]
+        let target = get_default_settings().bindings["summon_agent"]
             .current_binding
             .clone();
-
-        // The user put Standard on exactly the chord Flow is about to adopt.
-        stored_as(&mut settings, "transcribe", "ctrl+space", &flow_target);
+        stored_as(&mut settings, "transcribe", "ctrl+space", &target);
         stored_as(
             &mut settings,
-            "transcribe_realtime",
-            "ctrl+alt+space",
-            "ctrl+alt+space",
+            "summon_agent",
+            "ctrl+shift+a",
+            "ctrl+shift+a",
         );
-
         ensure_post_process_defaults(&mut settings);
-
-        assert_eq!(
-            settings.bindings["transcribe"].current_binding, flow_target,
-            "the user's own choice outranks a new default"
-        );
-        assert_ne!(
-            settings.bindings["transcribe_realtime"].current_binding, flow_target,
-            "two actions must never end up on one chord"
-        );
+        assert_eq!(settings.bindings["transcribe"].current_binding, target);
+        assert_ne!(settings.bindings["summon_agent"].current_binding, target);
     }
 
     #[test]

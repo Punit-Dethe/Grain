@@ -1,4 +1,4 @@
-use crate::audio_feedback::{play_feedback_sound, play_feedback_sound_blocking, SoundType};
+use crate::audio_feedback::{play_feedback_sound, SoundType};
 use crate::audio_toolkit::{is_microphone_access_denied, is_no_input_device_error, VadPolicy};
 use crate::managers::audio::AudioRecordingManager;
 use crate::managers::history::HistoryManager;
@@ -125,16 +125,14 @@ where
     }
 }
 
-// [GRAIN] Upstream's `should_use_streaming_overlay` is not ported: it switches
-// on `OverlayStyle`, which Grain does not have. The webview overlay it drove
-// was replaced by the native pill, so nothing here could call it.
+// [GRAIN] Grain capture policy selects the shared WebView via grain_overlay.
 // [GRAIN] Upstream's `post_process_transcription` lived here. Grain's
 // replacement — multi-provider, context-aware, rotation-capable — is
 // `grain_post_process::post_process_transcription`, and the LLM call it drives
 // is `grain_post_process::run_one_provider`.
 //
-// Upstream's original is NOT kept inline the way `llm_client.rs`/`overlay.rs`
-// keep theirs: those are whole files left un-compiled, while anything inline
+// Upstream's original is NOT kept inline the way `llm_client.rs`
+// keeps its version: those are whole files left un-compiled, while anything inline
 // here must still typecheck — and upstream's version calls
 // `llm_client::send_chat_completion*` with upstream's signature, which Grain's
 // client no longer has. So this is a deliberate hole: expect a modify/delete
@@ -302,19 +300,8 @@ impl ShortcutAction for TranscribeAction {
         let tm = app.state::<Arc<TranscriptionManager>>();
         let rm = app.state::<Arc<AudioRecordingManager>>();
 
-        // [GRAIN] Only warm the local ASR model when this recording will be
-        // transcribed locally. When STT smart rotation routes batch to a cloud
-        // provider, loading the on-device model here is wasted work that sits
-        // resident in RAM until the idle/immediate unload fires. The cloud route
-        // never touches it; if rotation later finds no eligible provider,
-        // stt_router::local() loads the model on demand. VAD pre-load stays
-        // unconditional below — recording needs it for either backend.
         let kickoff_started = Instant::now();
-        if !crate::stt_router::will_route_to_cloud(app) {
-            tm.initiate_model_load();
-        } else {
-            debug!("[GRAIN] batch routes to cloud STT — skipping local model warm-up");
-        }
+        tm.initiate_model_load();
         let rm_clone = Arc::clone(&rm);
         std::thread::spawn(move || {
             if let Err(e) = rm_clone.preload_vad() {
@@ -350,48 +337,12 @@ impl ShortcutAction for TranscribeAction {
         // (upstream's setting was never ported) — VAD is always on.
         let vad_policy = VadPolicy::Offline;
 
+        let overlay_generation = crate::grain_overlay::show_capture(app, SessionMode::Batch);
         let mut recording_error: Option<String> = None;
-        if is_always_on {
-            // Always-on mode: Play audio feedback immediately, then apply mute after sound finishes
-            debug!("Always-on mode: Playing audio feedback immediately");
-            let rm_clone = Arc::clone(&rm);
-            let app_clone = app.clone();
-            // The blocking helper exits immediately if audio feedback is disabled,
-            // so we can always reuse this thread to ensure mute happens right after playback.
-            std::thread::spawn(move || {
-                play_feedback_sound_blocking(&app_clone, SoundType::Start);
-                rm_clone.apply_mute();
-            });
-
-            if let Err(e) = rm.try_start_recording(&binding_id, vad_policy) {
-                debug!("Recording failed: {}", e);
-                recording_error = Some(e);
-            }
-        } else {
-            // On-demand mode: Start recording first, then play audio feedback, then apply mute
-            // This allows the microphone to be activated before playing the sound
-            debug!("On-demand mode: Starting recording first, then audio feedback");
-            let recording_start_time = Instant::now();
-            match rm.try_start_recording(&binding_id, vad_policy) {
-                Ok(()) => {
-                    debug!("Recording started in {:?}", recording_start_time.elapsed());
-                    // Small delay to ensure microphone stream is active
-                    let app_clone = app.clone();
-                    let rm_clone = Arc::clone(&rm);
-                    std::thread::spawn(move || {
-                        std::thread::sleep(std::time::Duration::from_millis(100));
-                        debug!("Handling delayed audio feedback/mute sequence");
-                        // Helper handles disabled audio feedback by returning early, so we reuse it
-                        // to keep mute sequencing consistent in every mode.
-                        play_feedback_sound_blocking(&app_clone, SoundType::Start);
-                        rm_clone.apply_mute();
-                    });
-                }
-                Err(e) => {
-                    debug!("Failed to start recording: {}", e);
-                    recording_error = Some(e);
-                }
-            }
+        let mut readiness = None;
+        match rm.try_start_recording(&binding_id, vad_policy) {
+            Ok(ready) => readiness = Some(ready),
+            Err(error) => recording_error = Some(error),
         }
 
         if recording_error.is_none() {
@@ -399,11 +350,12 @@ impl ShortcutAction for TranscribeAction {
             crate::grain_actions::session_started(app, SessionMode::Batch);
             // Dynamically register the cancel shortcut in a separate task to avoid deadlock
             shortcut::register_cancel_shortcut(app);
-            // [GRAIN] master chords + send-to-AI, for this session only.
-            crate::grain_actions::register_session_shortcuts(app);
+            if let Some(readiness) = readiness {
+                crate::grain_capture::announce_ready(app, &rm, readiness, true);
+            }
         } else {
-            // Starting failed (e.g. blocked mic permissions). The pill was never
-            // shown (we only emit on success), so nothing to tear down here.
+            crate::grain_overlay::hide_failed_capture(app, overlay_generation);
+            // [GRAIN] Failed capture dismisses the arming presentation.
             change_tray_icon(app, TrayIconState::Idle);
             if let Some(err) = recording_error {
                 let error_type = if is_microphone_access_denied(&err) {
@@ -444,8 +396,6 @@ impl ShortcutAction for TranscribeAction {
         .unwrap_or_default();
         // Unregister the cancel shortcut when transcription stops
         shortcut::unregister_cancel_shortcut(app);
-        // [GRAIN] release the session-only shortcuts (chords + send-to-AI).
-        crate::grain_actions::unregister_session_shortcuts(app);
 
         let stop_time = Instant::now();
         debug!("TranscribeAction::stop called for binding: {}", binding_id);
@@ -742,8 +692,7 @@ pub static ACTION_MAP: Lazy<HashMap<String, Arc<dyn ShortcutAction>>> = Lazy::ne
         "test".to_string(),
         Arc::new(TestAction) as Arc<dyn ShortcutAction>,
     );
-    // [GRAIN] Grain's own actions (rolling, Native ASR, prompt switcher, master
-    // chords, Agent) register here — see grain_actions.rs.
+    // [GRAIN] Grain capture modes and Agent bindings register in grain_actions.
     crate::grain_actions::register(&mut map);
     map
 });

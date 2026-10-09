@@ -24,7 +24,7 @@ enum Cmd {
     /// Begin capturing. Carries the send timestamp so the consumer can log how
     /// long the command sat in the channel (and how much audio was dropped
     /// before it was seen).
-    Start(VadPolicy, Instant, bool), // [GRAIN] retain full-session RAM buffer
+    Start(VadPolicy, Instant, bool, mpsc::Sender<()>), // [GRAIN] retain full-session RAM buffer
     Stop(mpsc::Sender<Result<Vec<f32>, String>>),
     Shutdown,
 }
@@ -414,7 +414,10 @@ impl AudioRecorder {
         }
     }
 
-    pub fn start(&self, vad_policy: VadPolicy) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn start(
+        &self,
+        vad_policy: VadPolicy,
+    ) -> Result<mpsc::Receiver<()>, Box<dyn std::error::Error>> {
         self.start_with_retention(vad_policy, true)
     }
 
@@ -425,11 +428,19 @@ impl AudioRecorder {
         &self,
         vad_policy: VadPolicy,
         retain_full_audio: bool,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        if let Some(tx) = &self.cmd_tx {
-            tx.send(Cmd::Start(vad_policy, Instant::now(), retain_full_audio))?;
-        }
-        Ok(())
+    ) -> Result<mpsc::Receiver<()>, Box<dyn std::error::Error>> {
+        let tx = self
+            .cmd_tx
+            .as_ref()
+            .ok_or_else(|| Error::other("Recorder not open"))?;
+        let (ready_tx, ready_rx) = mpsc::channel();
+        tx.send(Cmd::Start(
+            vad_policy,
+            Instant::now(),
+            retain_full_audio,
+            ready_tx,
+        ))?;
+        Ok(ready_rx)
     }
 
     pub fn stop(&self) -> Result<Vec<f32>, Box<dyn std::error::Error>> {
@@ -737,6 +748,7 @@ mod tests {
                 VadPolicy::Disabled,
                 Instant::now(),
                 retain_full_audio,
+                mpsc::channel().0,
             ))
             .unwrap();
         let (reply_tx, reply_rx) = mpsc::channel();
@@ -811,7 +823,12 @@ mod tests {
         });
 
         cmd_tx
-            .send(Cmd::Start(VadPolicy::Disabled, Instant::now(), true))
+            .send(Cmd::Start(
+                VadPolicy::Disabled,
+                Instant::now(),
+                true,
+                mpsc::channel().0,
+            ))
             .unwrap();
         sample_tx
             .send(AudioChunk::Samples(vec![0.25; 600]))
@@ -895,6 +912,7 @@ fn run_consumer(
     let mut retain_full_audio = true; // [GRAIN]
     let mut captured_frames = 0usize; // [GRAIN] rolling Prompt Record timeline
     let mut capture_failed = false; // [GRAIN] current session exceeded queue bound
+    let mut capture_ready_tx: Option<mpsc::Sender<()>> = None;
 
     // ---------- latency instrumentation ---------------------------------- //
     // First-chunk arrival exposes the play()->samples-flowing gap; the
@@ -993,7 +1011,8 @@ fn run_consumer(
         };
         while let Ok(cmd) = cmd_rx.try_recv() {
             match cmd {
-                Cmd::Start(policy, sent_at, retain) => {
+                Cmd::Start(policy, sent_at, retain, ready_tx) => {
+                    capture_ready_tx = Some(ready_tx);
                     log::debug!(
                         "Cmd::Start processed {:?} after send; capture begins with the in-flight chunk",
                         sent_at.elapsed()
@@ -1022,6 +1041,7 @@ fn run_consumer(
                     }
                 }
                 Cmd::Stop(reply_tx) => {
+                    capture_ready_tx = None;
                     recording = false;
                     stop_flag.store(true, Ordering::Relaxed);
 
@@ -1176,6 +1196,11 @@ fn run_consumer(
                     cb(frame, speech);
                 }
             });
+            if !raw.is_empty() && !capture_failed {
+                if let Some(ready_tx) = capture_ready_tx.take() {
+                    let _ = ready_tx.send(());
+                }
+            }
         }
 
         if recording {
