@@ -4449,7 +4449,7 @@ html[data-theme="light"] .context-profile-mode {
   align-items: center;
   justify-content: center;
   gap: 5px;
-  color: #fff;
+  color: var(--accent-ink);
   background: var(--accent);
   font-size: 13px;
   font-weight: 640;
@@ -4467,7 +4467,7 @@ html[data-theme="light"] .context-profile-mode {
 .next-settings-content .dictionary-add-button,
 .next-settings-content .dictionary-save-button {
   border-radius: 999px !important;
-  color: #fff !important;
+  color: var(--accent-ink) !important;
 }
 
 .dictionary-add-button:active,
