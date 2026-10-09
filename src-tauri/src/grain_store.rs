@@ -2358,15 +2358,26 @@ mod tests {
         let rt = tokio::runtime::Runtime::new().unwrap();
         let view = rt.block_on(refresh(&state, &client));
         assert_eq!(view.status, "fresh", "live index verified + fresh");
+        assert!(view.can_install, "live publication must authorize acquisition");
+        assert!(
+            view.entries.iter().any(|entry| entry.id == "com.grain.github"),
+            "the first-party GitHub listing must be visible, not an empty catalogue"
+        );
         let index = state.index.read().unwrap();
         let raw = index.as_ref().expect("verified live index");
         for entry in &view.entries {
-            raw.entries
+            let original = raw
+                .entries
                 .iter()
                 .find(|candidate| candidate.id == entry.id && candidate.version == entry.version)
-                .unwrap()
-                .validate_tool_only()
                 .unwrap();
+            match original.artifact_kind {
+                grain_sdk::distribution::ArtifactKind::Native => original.validate_tool_only(),
+                grain_sdk::distribution::ArtifactKind::McpDescriptor => {
+                    original.validate_mcp_installable()
+                }
+            }
+            .unwrap();
         }
         drop(index);
         state.close();

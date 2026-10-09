@@ -60,7 +60,7 @@ mandatory infrastructure milestones for this reduced launch.
 | Custom MCPs and accounts | Form/JSON, SDK transport, OAuth, vault and lifecycle implemented; controlled real-app checks and earlier user Linear checks passed | Actual issued Linear token expiry remains deferred |
 | Native/MCP extension journey | Installation, updates, account controls, DESCRIPTION and author/submission tools implemented; existing local/store checkpoints passed; current layout approved 9 October | First-party provider onboarding; installation from the actual activated public catalogue |
 | Basic Agent execution | Genuine configured-model native and MCP read/write/verify and both recovery cases passed; eight controlled failure cases passed | No open genuine-model case in this launch checkpoint; public-provider acceptance remains separate |
-| Public availability | Existing GitHub build/sign/publication route implemented and tested with recorded evidence | Operator signing custody/authorization, repository controls, reviewed initial entries, bound public publication and fresh-profile acceptance |
+| Public availability | First-party GitHub alpha catalogue signed and active; public HTTP and normal Grain store backend checks passed | Real-user GitHub installation/OAuth/actions; alpha distribution and permanent production governance remain separate |
 
 Both recovery cases completed on the confirmed idle desktop without changing
 receipt, approval or deadline checks. The preceding 8 October native repeat at
@@ -78,6 +78,21 @@ complete to move to supported first-party extensions; no extra custom-connection
 framework is needed for that transition.
 
 ### Next delivery: one supported first-party extension, end to end
+
+**GitHub publication checkpoint, 9 October:** registry source/workflow PRs are
+merged; fresh source/provenance and real signing passed under the user-approved
+exact first-party alpha profile. Bootstrap and update workflows confirmed public
+delivery; `main` now names `ea7498aebc028e35579878f5af5f9b1c329c48a2`, index 3.
+17 exact files / 40 HTTP reads Pass. The normal backend live check confirms GitHub
+is visible/installable, after fixing its native-only test assumption. 83 maintainer
+tests, final affected repeats and strict maintainer Clippy/build Pass. Replacement
+alpha installer is accepted; no additional app build is needed for maintainer/test
+changes. No harness growth or third-party-review weakening. Temporary owner
+approval is bound to this one submission and documented for later removal.
+Actual user install/sign-in/Agent read-write/restart/disconnect are the next single
+batch in [onboarding](GITHUB-ALPHA-ONBOARDING.md#current-user-test-batch), using the
+private disposable test repo. Publication is accepted, live provider use remains
+Pending; permanent operator governance and deferred Linear expiry are separate.
 
 **Signing identity checkpoint, 9 October:** first alpha CI packaging succeeded.
 The available GitHub signing secret is for the app updater; the old catalogue

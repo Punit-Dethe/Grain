@@ -1,5 +1,46 @@
 # Extension implementation: progress, changes and user testing
 
+**First GitHub catalogue publication accepted, 9 October:** implemented the
+user-authorized explicit maintainer approval in the existing signer, scoped to
+the exact GitHub 0.1.0 submission digest, registry/owner and alpha publisher.
+No approving GitHub review was fabricated; the policy records review ID zero.
+Normal third-party review, merged source/head/listing, provenance/byte pins,
+expiry and delayed key checks remain. **83 maintainer tests Pass**, then the
+affected approval/review cases passed after the final source-binding check;
+strict maintainer Clippy/build Pass. This temporary approval profile and its
+regression must be retired/replaced with the permanent publishing policy.
+
+Registry PRs #2 and #1 are merged. Fresh source CI
+[37944954523](https://github.com/Punit-Dethe/Grain-Extention/actions/runs/37944954523)
+passed at `db6f4f31bd28668574239c655d4d66f256571194`. The real signer verified
+current merged source, recorded maintainer approval and cryptographic provenance
+before key access. Bootstrap
+[37945302910](https://github.com/Punit-Dethe/Grain-Extention/actions/runs/37945302910)
+and GitHub update
+[37945822859](https://github.com/Punit-Dethe/Grain-Extention/actions/runs/37945822859)
+both confirmed their single conditional push and public HTTP delivery.
+Current registry `main` is `ea7498aebc028e35579878f5af5f9b1c329c48a2`, signed
+index 3 with the sole GitHub entry. Exact public delivery checks **17 files / 40
+requests**, status Pass; retained evidence is
+`C:\Projects\Grain\grain-alpha-publication-20261009\evidence\github\publication.log`.
+
+The existing normal-build live store test now requires an installable, nonempty
+GitHub listing and uses each kind's actual validator. Its first run found a
+native-only test assumption; after correcting that test, the genuine network
+check **Pass** against the activated catalogue. Runtime store validation was
+already correct. No new harness, runtime feature, dependency or third-party
+approval relaxation. Replacement alpha build **37932435112** is accepted and
+downloaded; later changes affect maintainer tooling and test-only code, so no
+additional application rebuild is required.
+
+Created the private disposable `Punit-Dethe/grain-github-alpha-test` repository
+with README for the user's provider checks. Actual store install, App installation,
+GitHub account consent, Agent read/write and restart/disconnect remain **Pending**,
+with the five-step batch in [onboarding](GITHUB-ALPHA-ONBOARDING.md#current-user-test-batch).
+Generic earlier tests do not certify these live-provider actions. Catalogue
+renewal before 8 November and secure alpha key backup remain maintainer operations;
+permanent production governance/branding and deferred Linear expiry remain separate.
+
 **Alpha catalogue identity prepared, 9 October:** the first Windows build
 [37926347284](https://github.com/Punit-Dethe/Grain/actions/runs/37926347284) succeeded
 and its installer was downloaded. Publication inspection found only the old

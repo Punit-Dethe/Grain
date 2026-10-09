@@ -106,6 +106,64 @@ The existing installed-extension Connect/Disconnect controls are reused.
 
 ## Acceptance and remaining work
 
+### Published GitHub checkpoint, 9 October
+
+The public signed catalogue now contains GitHub 0.1.0, index version 3 at registry
+commit `ea7498aebc028e35579878f5af5f9b1c329c48a2`. Its hosting bundle receipt is
+`17c4e1a56e289256e07ea97a2f0f9c52232be54e434d57ac2de81dd4daffe964`.
+The initial/bootstrap and update workflows both passed; public delivery checks
+17 exact files with 40 requests across commit-pinned/current routes and the final
+metadata recheck. The normal Grain store backend's genuine live test confirms
+freshness, installability and visible GitHub membership, using the MCP validator.
+Its first attempt caught the old native-only test assumption; that was corrected,
+not a runtime permission or validation bypass. Maintainer suite: 83 Pass;
+affected final approval/review checks and strict maintainer Clippy/build Pass.
+
+Use the accepted replacement alpha installer from run **37932435112**:
+`C:\Projects\Grain\grain-github-alpha-build-37932435112\nsis\Grain Extensions Alpha_0.0.6_x64-setup.exe`.
+SHA256: `0ffaf0d3121cc635a8de1d70e5762421cec930519b47ce4e7b55fce3294f4658`.
+The older run **37926347284** has the previous trust pins and is superseded.
+Subsequent approval/tooling and test-only changes do not require another app build.
+
+The operator-held approval policy records the user's explicit 9 October decision;
+SHA256 `7ce6a84b6acf8dc778069c8acdf5466339de85e3a250a812aa283a2c0d8641c9`.
+No independent review is claimed. Source/provenance checks used registry merge
+`db6f4f31bd28668574239c655d4d66f256571194` and reviewed head
+`b3fa7e3ab9899e0a03f190a63731db796e5f17db`, with the original v0.1.0 source/tag
+unchanged. Publication verifier is Grain
+`7baaaab004dea55983e89e7742394f3c76be5e7f`. Signing credentials stay local;
+neither author CI nor publication workflows receive them. The bootstrap retired
+obsolete catalogue entries/assets directly, without carrying old extensions
+forward. Permanent production protections and offline/backup custody are not
+certified by this tester-alpha publication. Renew signed metadata before its
+earliest 8 November expiry using the existing renewal/update route.
+
+### Current user test batch
+
+All five procedures remain Pending until the user reports results:
+
+1. Quit the running Grain, install the replacement alpha above and configure the
+   Agent model in its separate profile if needed. Open Extensions, click Developer
+   once to enable the alpha gate, then close the drawer without turning it off.
+2. In the usual GitHub browser, install/configure **Grain GitHub Development** on
+   only `Punit-Dethe/grain-github-alpha-test` (private disposable repo with README).
+   In Grain's Store, GitHub should show its DESCRIPTION/artwork. Install it, then
+   connect from Installed and approve GitHub sign-in. No OAuth developer fields
+   or new app registration should be required.
+3. Ask the Agent: `Use GitHub to read the README in Punit-Dethe/grain-github-alpha-test.`
+   Expect the actual README, using GitHub rather than a local smoke tool.
+4. Ask: `Create exactly one issue in Punit-Dethe/grain-github-alpha-test titled
+   Grain alpha acceptance, with body Created through Grain for testing. Return
+   its link.` Approve the action and open the returned link to verify one issue.
+5. Restart the alpha, ask the Agent to read that same issue, then disconnect and
+   reconnect GitHub from Installed. Expect preserved login on restart, accurate
+   disconnected state and ordinary browser sign-in again without developer IDs.
+
+Owner account testing can use the current private GitHub App. Other testers need
+its installation visibility changed to Any account. GitHub's actual account
+permission settings, OAuth credentials and tool outcomes are certified by these
+provider checks, not by store publication or the generic test suite.
+
 ### Catalogue signing identity reset, 9 October
 
 The first Windows alpha build completed successfully at
