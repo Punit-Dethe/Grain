@@ -235,7 +235,7 @@ const FieldInput: React.FC<{
           aria-label={field.label}
           disabled={disabled}
           onClick={() => onChange(value !== true)}
-          className={`extension-field-toggle relative w-9 h-5 rounded-full transition-colors cursor-pointer shrink-0 ${
+          className={`relative w-9 h-5 rounded-full transition-colors cursor-pointer shrink-0 ${
             value === true ? "bg-accent" : "bg-paper-sunken border border-line"
           }`}
         >
@@ -465,7 +465,7 @@ const Control: React.FC<{
           aria-label={row.label}
           disabled={disabled}
           onClick={() => onCommit(row.value !== true)}
-          className={`extension-field-toggle relative w-9 h-5 rounded-full transition-colors cursor-pointer shrink-0 ${
+          className={`relative w-9 h-5 rounded-full transition-colors cursor-pointer shrink-0 ${
             row.value === true
               ? "bg-accent"
               : "bg-paper-sunken border border-line"

@@ -69,9 +69,10 @@
     0 22px 70px rgba(0, 0, 0, 0.42), 0 2px 10px rgba(0, 0, 0, 0.3);
   --glass-fill: rgba(48, 48, 48, 0.86);
   --glass-highlight: rgba(255, 255, 255, 0.06);
-  /* Dark toggle tracks stay dark in both states; thumb position shows state. */
-  --toggle-off: var(--bg-0);
-  --toggle-on: var(--toggle-off);
+  /* Toggle OFF-track color. The only knob the settings switch needs from CSS;
+     everything else (geometry, thumb, ON-track = --color-accent) lives in the
+     ToggleSwitch/Switch components. */
+  --toggle-off: #62625f;
 }
 
 /* The extension seam (PLAN.md §2.1): these eight names are the public
@@ -132,7 +133,6 @@ html[data-theme="light"] {
   --hairline: rgba(26, 26, 26, 0.1);
   --hairline-soft: rgba(26, 26, 26, 0.065);
   --toggle-off: #dad5cc;
-  --toggle-on: var(--accent);
   --accent: #1a1a1a;
   --accent-strong: #111111;
   --accent-hover: #333333;
@@ -1155,13 +1155,10 @@ h3 {
   transform: scale(0.975);
 }
 
-.button.primary {
+.button.primary,
+.toggle.on {
   color: var(--accent-ink) !important;
   background: var(--accent) !important;
-}
-
-.grain-root .toggle.on {
-  background: var(--toggle-on) !important;
 }
 
 .button.primary:hover {
@@ -1292,7 +1289,7 @@ h3 {
   top: var(--sw-inset);
   left: var(--sw-inset);
   border-radius: 50%;
-  background: #fff;
+  background: var(--text-3);
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
   transform: translateX(0);
   transition:
@@ -1302,6 +1299,7 @@ h3 {
 
 .grain-root .toggle.on span {
   transform: translateX(var(--sw-travel));
+  background: var(--accent-ink);
 }
 
 .icon-button {
@@ -2739,8 +2737,8 @@ html[data-theme="light"] .capture-mode-option {
 }
 
 /* The settings toggle is defined entirely by the ToggleSwitch/Switch
-   components (self-consistent geometry, --toggle-on and --toggle-off tracks).
-   No CSS override here — a prior `:has()` override forced `transform`
+   components (self-consistent geometry, accent track ON, --toggle-off track
+   OFF). No CSS override here — a prior `:has()` override forced `transform`
    with `!important`, which clobbered the component's own thumb translate and
    was the actual cause of the "thumb won't slide / overflows" bug. */
 
@@ -3447,20 +3445,6 @@ html[data-theme="light"] .next-settings-content .app-select__control {
 
 .tool-master-toggle input:checked + .tool-master-toggle-track {
   background: var(--accent);
-}
-
-html[data-theme="dark"] .tool-master-toggle-track,
-html[data-theme="dark"]
-  .tool-master-toggle
-  input:checked
-  + .tool-master-toggle-track,
-html[data-theme="dark"] .extension-field-toggle,
-html[data-theme="dark"] .studio-extension-enable-track {
-  background: var(--toggle-off);
-}
-
-html[data-theme="dark"] .extension-field-toggle > span {
-  background: #fff;
 }
 
 .tool-master-toggle input:checked + .tool-master-toggle-track::after {
