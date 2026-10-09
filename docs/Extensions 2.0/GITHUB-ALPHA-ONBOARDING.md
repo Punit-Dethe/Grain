@@ -152,6 +152,17 @@ back rejected changes. Agent shortcut registration failures are returned before
 the enabled setting is changed. A replacement alpha build is required; run
 37932435112 predates this fix. Live Agent acceptance remains Pending.
 
+The fix is pushed at `a2215c73ad08f8394b76006045a74645cc25aacc`. Replacement
+[alpha build 37955644860](https://github.com/Punit-Dethe/Grain/actions/runs/37955644860)
+was dispatched with the existing registered GitHub client. It is not yet an
+accepted installer: wait for successful build/artifact delivery, then test the
+Agent switch and shortcut in that replacement. Do not repeat this procedure
+on the old installer and expect the code fix to be present. The four frontend
+regressions exercise the real generated command bindings, mocking only Tauri
+IPC; the production frontend bundle and TypeScript check pass. The existing
+two capture shortcut conflict tests also pass. Native installed-window behavior
+still requires verification with the corrected build.
+
 1. Quit the running Grain, install the replacement alpha above and configure the
    Agent model in its separate profile if needed. Open **Agent** in the sidebar,
    turn on the switch beside **Grain Agent**, and use the shortcut displayed below
