@@ -106,6 +106,61 @@ The existing installed-extension Connect/Disconnect controls are reused.
 
 ## Acceptance and remaining work
 
+### Catalogue signing identity reset, 9 October
+
+The first Windows alpha build completed successfully at
+`2aa54d0aabd067adb343aeac360a87de3930aab5`. Its downloaded installer SHA256 is
+`d1fe19a00623be4435ffae0b87a9332555035a376d2a23a6b1651445665788a1`.
+It contains the previous catalogue trust pins and is superseded for the next
+public-catalogue acceptance. Do not tell testers that this installer alone makes
+the GitHub listing available.
+
+The user confirmed the only available GitHub signing secret was
+`TAURI_SIGNING_PRIVATE_KEY`. This is the application updater identity, not the
+catalogue publisher. No secret value was retrieved or reused. The registry has
+the old public catalogue key, but no catalogue signing secrets were listed in
+the repository or its `publish` environment.
+
+New encrypted tester-alpha root A, spare root B and publisher keys were generated
+using the existing maintainer CLI. They live outside all source/build trees at
+`C:\Users\watrm\AppData\Local\GrainSigning\extensions-alpha-20261009`, restricted
+to the current Windows account. Each role has its own key and random unlock file;
+neither contents nor passwords were displayed. This local arrangement is for
+the tester alpha, not a production KMS or independently backed-up offline root.
+The maintainer must retain a secure backup of this directory before distributing
+the alpha. Do not upload it, attach it to evidence, or put it in a repository.
+
+Public publisher key:
+`RWREj+hdLljbWOv3LCoTKEPv670pVG+P9knBUMWoR+V445yvdBwBuqj8`.
+The app pins both new roots, and its empty seed signatures have been regenerated.
+Existing genuine equivocation fixtures were re-signed; the independent public
+test fixture retains its own signer and only updates its seed-byte binding.
+No old settings, catalogue identities or extensions are migrated.
+
+The existing CLI created and verified an empty bound bootstrap (index/revocation
+version 2, thirty-day lifetime), local snapshot store and complete hosting bundle
+at `C:\Projects\Grain\grain-alpha-publication-20261009`. Independent recorded
+bundle receipt SHA256:
+`dadb8d3d0dee04e40fdffe0c42fa6c0c84f80daac739fe6d80bcd933d7e362cb`.
+Actual verification against each of the two pinned roots passed. These files are
+unpublished preparation; the GitHub extension has not been signed into them.
+
+Before activation, resolve the existing source-review gate: the current
+`sign-reviewed-candidate` route requires a merged PR and an approving human
+GitHub account different from the submitter. PR #2 has no review. Owner approval
+of a first-party tester-alpha submission would need an explicitly documented
+alternative; it must not be described as satisfying that independent-review gate.
+No review was fabricated, policy relaxed, public branch updated or protection
+bypassed in this identity reset. The publisher workflow's trusted verifier pin
+must also be updated to the new root-bearing Grain commit before deployment.
+
+Checks: 12 core trust, 4 bootstrap, 4 initial-publication and 11 normal backend
+store tests pass; store cleanup Pass (`logic-q1xTsS`). Fresh producer/candidate
+attestation verification and prepared GitHub byte verification pass. No new
+harness, signing service, runtime feature or dependency was added. Replacement
+alpha packaging, signed GitHub publication, public HTTP/store and live provider
+acceptance remain separate pending steps.
+
 Keep automated production tests and actual-provider acceptance separate:
 
 1. Normal backend MCP tests: exact resource/source/issuer binding, malformed build

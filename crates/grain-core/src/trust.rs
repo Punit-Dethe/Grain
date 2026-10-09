@@ -62,14 +62,13 @@ pub fn verify_metadata_generation(
     Ok(())
 }
 
-/// Root public key **A**, pinned in the binary. Development key (custody
-/// decision, PHASE5A §Step 1); replaced by a passphrase-encrypted key on
-/// removable media as the final migration step, which re-pins this constant.
-pub const ROOT_PUBKEY_A: &str = "RWS/IbxLWqqJLfHQWl6ZxD+Num5sgD55ozULy2TwgPuKgG0jZlE9GwjA";
+/// Tester-alpha root **A**, pinned in the binary. Its encrypted private key is
+/// held outside the source/build trees; production custody is a separate gate.
+pub const ROOT_PUBKEY_A: &str = "RWSnf9G+PTaCZbm0qNvNehMpaD4+n0nuv6d2/8TlCuQ36/qeXZ3qM5i6";
 
-/// Root public key **B**, the spare (DISTRIBUTION-PLAN §2.2). Pinned from day
-/// one so losing one root drive is an inconvenience, not a re-release.
-pub const ROOT_PUBKEY_B: &str = "RWSBLR8dz4PCQU/GDLkq4LC08RH6ei6mfQTjIOSDt8D/VoB8zbrSCbev";
+/// Tester-alpha spare root **B**. Independent offline storage and backups are
+/// operational responsibilities, not guarantees supplied by this constant.
+pub const ROOT_PUBKEY_B: &str = "RWThbjwKfwAb0SyZ1du5kjCuoqQAvYpaL3KPtf0uG9welYakY2HtS5vl";
 
 /// Last-resort bootstrap base URL, used only if `roots.json` cannot be fetched
 /// and no cached copy exists. Absolute bases normally come from the signed

@@ -79,6 +79,19 @@ framework is needed for that transition.
 
 ### Next delivery: one supported first-party extension, end to end
 
+**Signing identity checkpoint, 9 October:** first alpha CI packaging succeeded.
+The available GitHub signing secret is for the app updater; the old catalogue
+private key is unavailable. A separate encrypted tester-alpha identity is now
+prepared, with updated app pins/seed and existing fixture checks. An unpublished
+empty bootstrap/hosting bundle verifies with both roots. **12 trust / 4 bootstrap /
+4 initial-publication / 11 store tests Pass**, cleanup Pass. The old installer must
+be replaced; do not use it for new catalogue acceptance. No new harness/runtime.
+Before publication, resolve the existing distinct-account source-review gate
+for the first-party GitHub submission, update the pinned publisher verifier,
+then verify actual HTTP/store/install/OAuth/actions. Preserve updater credentials
+and third-party review semantics; do not invent an approving GitHub review.
+See [current onboarding](GITHUB-ALPHA-ONBOARDING.md#catalogue-signing-identity-reset-9-october).
+
 **Tester-only identity decision, 9 October:** continue in the current maintainer
 account and reuse the existing candidate repositories. Branding/account changes
 may require testers to reconnect or reinstall; the user accepts this. Do not add

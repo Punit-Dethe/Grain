@@ -1,5 +1,33 @@
 # Extension implementation: progress, changes and user testing
 
+**Alpha catalogue identity prepared, 9 October:** the first Windows build
+[37926347284](https://github.com/Punit-Dethe/Grain/actions/runs/37926347284) succeeded
+and its installer was downloaded. Publication inspection found only the old
+public catalogue key; registry repository/environment signing secrets are absent.
+The user clarified the available GitHub key is the updater's
+`TAURI_SIGNING_PRIVATE_KEY`; its value was not retrieved or reused.
+
+Prepared separate encrypted alpha root A, spare B and publisher using the
+existing CLI, with role-specific random unlock files in an account-restricted
+folder outside the repositories. Updated app public pins/empty seed signatures
+and the existing signed test fixtures. No migration, runtime/authentication
+feature, dependency or harness code was added. The completed old installer needs
+replacement to trust the new identity; key availability should have been checked
+before starting that build.
+
+The existing publisher produced and verified an unpublished bound empty
+bootstrap, local store and hosting bundle. Both genuine root signatures verify.
+**12 trust / 4 bootstrap / 4 initial-publication / 11 store tests Pass**, store
+cleanup Pass; report `tests/agent-harness/.runs/logic-q1xTsS/evidence/report.md`.
+Fresh CI producer/candidate attestations and GitHub prepared-byte checks Pass.
+Actual GitHub listing activation remains Pending. The current signer additionally
+requires approval by a different GitHub account; PR #2 has no reviews. Decide
+the first-party tester-alpha review route explicitly before signing, and update
+the publication verifier pin to the new Grain identity. No fabricated review,
+publication, protection change or private credential logging occurred.
+[Onboarding](GITHUB-ALPHA-ONBOARDING.md#catalogue-signing-identity-reset-9-october)
+records public pins, exact bundle hash, local custody/backup and remaining steps.
+
 **Registered GitHub alpha build wiring, 9 October:** the user supplied
 [Grain GitHub Development](https://github.com/apps/grain-github-development).
 The app page exists and currently reports private visibility. Both required
