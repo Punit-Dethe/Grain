@@ -1690,11 +1690,7 @@ html[data-theme="light"] .overview-card--interactive:hover {
 }
 
 .grain-root[data-theme="dark"] .overview-card {
-  background: var(--bg-2);
-}
-
-.grain-root[data-theme="dark"] .overview-card--interactive:hover {
-  background: var(--bg-1);
+  background: var(--bg-4);
 }
 
 /* Card Header */
