@@ -1,5 +1,21 @@
 # Extension implementation: progress, changes and user testing
 
+**Current delivery direction, 9 October:** the user approved the current Installed
+extension/configured-MCP layout and asked to move to supported first-party
+extensions. Custom MCP management is implemented and sufficiently complete for
+that move. The next block is one complete first-party store journey, using GitHub
+as the reference: listing/browsing, installation, straightforward account sign-in,
+usable state, real-provider Agent actions and account/update/removal controls.
+Existing descriptor, official-SDK runtime, vault, CLI and GitHub publishing routes
+are reused. GitHub-specific registration remains a concrete gap: current Grain
+expects caller-configured client credentials; ordinary users of the supported
+extension should not have to register OAuth apps or paste credentials/JSON.
+Provider desktop OAuth/secret handling must be decided and verified, not assumed
+solved by the generic connection tests. The public catalogue remains inactive;
+signing/operator setup and real published-extension acceptance remain outstanding.
+Current layout approval does not authorize future visual changes or release
+activation. No application/harness code changed in this planning update.
+
 **Current launch acceptance, 8 October:** steps **1 and 2 implemented; step 3's
 automated checkpoint complete, release gates remain**. The two remaining genuine
 configured-model recovery cases now **Pass**, each with cleanup Pass:

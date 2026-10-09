@@ -15,7 +15,7 @@ production operator setup before implementing the missing application flow.
    account ownership, vault and Tauri commands. Support form/JSON import, editing,
    sign-in/cancellation, enable/disable, sign-out, removal and optional OAuth app
    credentials. Keep the existing Developer Mode release gate until launch.
-2. **Ordinary extension journey (implemented, visual approval pending):** verified
+2. **Ordinary extension journey (implemented, current layout approved 9 October):** verified
    store cards distinguish native/MCP; MCP install/update use existing commands.
    Installed MCPs expose account and enablement controls, with read-only store
    definitions and signed DESCRIPTION content on detail pages. Existing CLI and
@@ -42,7 +42,8 @@ production operator setup before implementing the missing application flow.
    failed evidence. The relay matches Grain's existing 120-second request deadline;
    live stage waits allow up to four required model turns. Production deadlines,
    action limits, receipt checks and harness source did not change in these repeats.
-   UI approval and public catalogue activation remain outstanding; no release
+   The user approved the current Installed/configured-MCP layout on 9 October.
+   First-party provider onboarding and public catalogue activation remain; no release
    activation occurred. This accepts the prescribed owned-tool workflows with
    the configured model, not every model/provider, microphone or OS capture path.
 
@@ -57,7 +58,7 @@ mandatory infrastructure milestones for this reduced launch.
 | Area | Current position | Remaining acceptance |
 | --- | --- | --- |
 | Custom MCPs and accounts | Form/JSON, SDK transport, OAuth, vault and lifecycle implemented; controlled real-app checks and earlier user Linear checks passed | Actual issued Linear token expiry remains deferred |
-| Native/MCP extension journey | Installation, updates, account controls, DESCRIPTION and author/submission tools implemented; existing local/store checkpoints passed | User visual approval; installation from the actual activated public catalogue |
+| Native/MCP extension journey | Installation, updates, account controls, DESCRIPTION and author/submission tools implemented; existing local/store checkpoints passed; current layout approved 9 October | First-party provider onboarding; installation from the actual activated public catalogue |
 | Basic Agent execution | Genuine configured-model native and MCP read/write/verify and both recovery cases passed; eight controlled failure cases passed | No open genuine-model case in this launch checkpoint; public-provider acceptance remains separate |
 | Public availability | Existing GitHub build/sign/publication route implemented and tested with recorded evidence | Operator signing custody/authorization, repository controls, reviewed initial entries, bound public publication and fresh-profile acceptance |
 
@@ -70,11 +71,48 @@ this attempt supplies no recovery acceptance and does not establish a crash.
 Confirm desktop availability before future interactive runs; do not treat
 unrelated keyboard input as a passing scenario or an application defect.
 
-For visual acceptance, run `npm run dev:asr`, enable Developer Mode, and review
-**Extensions → Installed → Installed MCP extensions / Your MCP connections**.
-Review names/URLs, account controls, Add MCP form/JSON and detail-page navigation.
-No new sign-in or credential sharing is needed for this layout review.
-AGENTS.md requires user visual approval before release activation.
+The user approved the current **Extensions → Installed** layout on 9 October.
+This closes the current visual-review item, not approval of future onboarding
+design changes or public release activation. Custom MCP management is sufficiently
+complete to move to supported first-party extensions; no extra custom-connection
+framework is needed for that transition.
+
+### Next delivery: one supported first-party extension, end to end
+
+Use GitHub as the concrete reference integration. The platform can package its
+remote MCP endpoint through the current descriptor/store/SDK route; this does
+not yet certify a public first-party GitHub extension. Reuse the existing CLI,
+account lifecycle, store controls and publishing tools.
+
+1. Prepare a Grain-authored GitHub MCP descriptor and clear DESCRIPTION/store
+   listing: supported tasks, permissions, account prerequisites and provider
+   limitations. GitHub hosts its MCP server; Grain publishes the extension
+   definition/listing through the signed GitHub catalogue.
+2. Complete provider sign-in setup for the ordinary install/connect journey.
+   GitHub does not support dynamic client registration; current Grain stores
+   caller-configured OAuth client credentials in the vault. A supported extension
+   must resolve Grain's registered application and desktop token-exchange approach
+   without making every user register their own OAuth app. Check client-secret
+   handling against the provider's current requirements before implementation;
+   never place user tokens or private secrets in the public descriptor/listing.
+   References: [GitHub host integration](https://github.com/github/github-mcp-server/blob/main/docs/host-integration.md)
+   and [authentication discovery](https://docs.github.com/en/apps/github-authentication-discovery-endpoints).
+3. Finish the customer journey: browse/search, inspect description and permissions,
+   install, sign in and reach a clear usable state. Supported first-party setup
+   must not require Developer Mode, pasted JSON, client IDs or client secrets.
+   Include understandable cancellation, missing-access/reconnection errors,
+   account controls, updates and removal through the existing UI. Custom MCP
+   configuration remains a separate advanced route. Any new visual changes still
+   need user approval; the current layout approval is not blanket design approval.
+4. Verify one complete real-provider journey using a disposable repository:
+   install from the published catalogue, sign in, read, approve one write and
+   verify its result; check restart/reconnect and removal. Reuse existing tests
+   and test product changes at the block checkpoint; no additional harness engine.
+
+Only then repeat this provider-specific integration for Linear, Notion and
+Calendar. Shared MCP infrastructure is reusable; real account permissions,
+registration and provider behavior must be checked separately. The eight
+controlled and genuine-model workflow checks do not certify those providers.
 
 After acceptance, use the existing
 [operator sequence](../../crates/grain-registry-tools/README.md#operator-sequence-before-live-activation)
