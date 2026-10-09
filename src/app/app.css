@@ -1,7 +1,7 @@
 @import "tailwindcss";
 
-/* Dark surfaces step inward from a darker charcoal shell to lighter cards.
-   The hero switcher compares neutral and warm palettes; light keeps its paper. */
+/* Neutral dark surfaces step inward from a darker charcoal shell to lighter
+   cards. Light keeps its warm paper palette. */
 @theme {
   --color-paper: var(--bg-1);
   --color-paper-raised: var(--bg-3);
@@ -73,30 +73,6 @@
      everything else (geometry, thumb, ON-track = --color-accent) lives in the
      ToggleSwitch/Switch components. */
   --toggle-off: #62625f;
-}
-
-html[data-theme="dark"][data-dark-palette="warm"] {
-  --bg-0: #191714;
-  --bg-1: #211f1b;
-  --bg-2: #292622;
-  --bg-3: #34312d;
-  --bg-4: #3d3933;
-  --text-1: #f3ede3;
-  --text-2: #d5cec2;
-  --text-3: #b9b0a3;
-  --text-4: #b3ab9f;
-  --accent: #e9dec9;
-  --accent-strong: #fff4df;
-  --accent-hover: #fff4df;
-  --accent-soft: rgba(233, 222, 201, 0.08);
-  --accent-soft-hover: rgba(233, 222, 201, 0.14);
-  --accent-focus: rgba(233, 222, 201, 0.7);
-  --accent-glow: rgba(233, 222, 201, 0.06);
-  --accent-ink: #191714;
-  --lilac: #c9c0b2;
-  --sky: #b9b0a3;
-  --glass-fill: rgba(52, 49, 45, 0.86);
-  --toggle-off: #696158;
 }
 
 /* The extension seam (PLAN.md §2.1): these eight names are the public
@@ -1369,17 +1345,11 @@ html[data-theme="light"] .hero {
   object-fit: cover;
 }
 
-.hero-preview-controls {
+.hero-image-toggle {
   position: absolute;
   z-index: 1;
   top: 16px;
   right: 16px;
-  display: flex;
-  gap: 8px;
-}
-
-.hero-image-toggle,
-.hero-theme-toggle {
   display: grid;
   width: 36px;
   height: 36px;
@@ -1393,26 +1363,12 @@ html[data-theme="light"] .hero {
   cursor: pointer;
 }
 
-.grain-root .hero-theme-toggle {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 7px;
-  width: auto;
-  min-width: 94px;
-  padding: 0 11px;
-  font-size: 12px;
-  font-weight: 550;
-}
-
-.hero-image-toggle:hover,
-.hero-theme-toggle:hover {
+.hero-image-toggle:hover {
   border-color: rgba(255, 255, 255, 0.8);
   background: rgba(17, 17, 17, 0.85);
 }
 
-.hero-image-toggle:focus-visible,
-.hero-theme-toggle:focus-visible {
+.hero-image-toggle:focus-visible {
   outline: 2px solid #fff;
   outline-offset: 2px;
 }
@@ -3231,9 +3187,7 @@ html[data-theme="light"] .next-settings-content .app-select__control {
   display: flex;
   flex-direction: column;
   position: relative;
-  background: rgba(8, 10, 13, 0.48);
-  backdrop-filter: blur(16px) saturate(110%);
-  -webkit-backdrop-filter: blur(16px) saturate(110%);
+  background: var(--bg-2);
 }
 
 .tools-sidebar-pane::after {
@@ -3243,7 +3197,7 @@ html[data-theme="light"] .next-settings-content .app-select__control {
   top: 0;
   bottom: 0;
   width: 1px;
-  background: rgba(255, 255, 255, 0.045);
+  background: var(--hairline-soft);
 }
 
 .tools-pane-header {
@@ -3293,12 +3247,12 @@ html[data-theme="light"] .next-settings-content .app-select__control {
 
 .tools-nav button:hover {
   color: var(--text-1);
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--bg-2);
 }
 
 .tools-nav button.active {
   color: var(--text-1);
-  background: rgba(255, 255, 255, 0.07);
+  background: var(--bg-3);
 }
 
 .tools-canvas {
@@ -3642,7 +3596,7 @@ html[data-theme="light"] .next-settings-content .app-select__control {
 .context-profile-card {
   overflow: hidden;
   border-radius: 14px;
-  background: transparent;
+  background: var(--bg-3);
   box-shadow: inset 0 0 0 1px var(--hairline);
 }
 
@@ -3921,7 +3875,7 @@ html[data-theme="light"] .next-settings-content .app-select__control {
   gap: 15px;
   overflow: hidden;
   color: var(--text-1);
-  background: transparent;
+  background: var(--bg-3);
   box-shadow: inset 0 0 0 1px var(--hairline);
   text-align: left;
   cursor: pointer;
@@ -3937,7 +3891,7 @@ html[data-theme="light"] .next-settings-content .app-select__control {
 
 .context-custom-profile-card:hover,
 .context-custom-profile-card:focus-visible {
-  background: var(--bg-2);
+  background: var(--bg-4);
   box-shadow: inset 0 0 0 1px var(--accent-soft-hover);
 }
 
@@ -4355,7 +4309,12 @@ html[data-theme="light"] .next-settings-content .app-select__control {
 }
 
 html[data-theme="light"] .context-custom-profile-card {
-  background: #fcfcfb;
+  background: #f5f4f0;
+}
+
+html[data-theme="light"] .context-custom-profile-card:hover,
+html[data-theme="light"] .context-custom-profile-card:focus-visible {
+  background: #eeebe3;
 }
 
 html[data-theme="light"] .context-profile-tabs {
@@ -4375,7 +4334,7 @@ html[data-theme="light"] .context-profile-mode button {
 }
 
 html[data-theme="light"] .context-profile-card {
-  background: #fcfcfb;
+  background: #f5f4f0;
 }
 
 html[data-theme="light"] .context-profile-mode {
@@ -4538,7 +4497,7 @@ html[data-theme="light"] .context-profile-mode {
   position: relative;
   overflow: hidden;
   border-radius: 16px;
-  background: transparent;
+  background: var(--bg-3);
   box-shadow: inset 0 0 0 1px var(--hairline);
   transition:
     background 150ms ease,
@@ -4549,13 +4508,13 @@ html[data-theme="light"] .context-profile-mode {
 .dictionary-term-card:focus-within,
 .snippet-card:hover,
 .snippet-card:focus-within {
-  background: var(--bg-2);
+  background: var(--bg-4);
   box-shadow: inset 0 0 0 1px var(--accent-soft-hover);
 }
 
 html[data-theme="light"] .dictionary-term-card,
 html[data-theme="light"] .snippet-card {
-  background: #fcfcfb;
+  background: #f5f4f0;
   box-shadow: inset 0 0 0 1px #e8e6e1;
 }
 
@@ -4563,7 +4522,7 @@ html[data-theme="light"] .dictionary-term-card:hover,
 html[data-theme="light"] .dictionary-term-card:focus-within,
 html[data-theme="light"] .snippet-card:hover,
 html[data-theme="light"] .snippet-card:focus-within {
-  background: #f5f4f0;
+  background: #eeebe3;
   box-shadow: inset 0 0 0 1px #d9d7d1;
 }
 

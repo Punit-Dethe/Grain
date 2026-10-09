@@ -9,7 +9,6 @@ import { WindowChrome } from "./components/WindowChrome";
 import { platform } from "@tauri-apps/plugin-os";
 import { useTranslation } from "react-i18next";
 import { Toaster } from "sonner";
-import { Palette } from "lucide-react";
 import { HistorySettings } from "@/components/settings/history/HistorySettings";
 import { AudioPlayerGroup } from "@/components/ui/AudioPlayer";
 import Onboarding, {
@@ -390,19 +389,7 @@ const OVERVIEW_HERO_IMAGES = [
   },
 ] as const;
 
-type DarkPalette = "neutral" | "warm";
-
-const DARK_PALETTE_LABELS = { neutral: "Neutral", warm: "Warm" } as const;
-
-function OverviewPage({
-  history,
-  darkPalette,
-  onToggleDarkPalette,
-}: {
-  history: HistoryController;
-  darkPalette: DarkPalette | null;
-  onToggleDarkPalette: () => void;
-}) {
+function OverviewPage({ history }: { history: HistoryController }) {
   const [mode, setMode] = useState<HistoryViewMode>("original");
   const [heroImageIndex, setHeroImageIndex] = useState(0);
 
@@ -444,32 +431,17 @@ function OverviewPage({
             src={OVERVIEW_HERO_IMAGES[heroImageIndex].src}
             alt={OVERVIEW_HERO_IMAGES[heroImageIndex].alt}
           />
-          <div className="hero-preview-controls">
-            {darkPalette && (
-              <button
-                className="hero-theme-toggle"
-                type="button"
-                aria-label="Warm charcoal dark theme"
-                aria-pressed={darkPalette === "warm"}
-                title={`Switch to ${darkPalette === "warm" ? "neutral" : "warm"} charcoal`}
-                onClick={onToggleDarkPalette}
-              >
-                <Palette size={16} strokeWidth={1.8} aria-hidden="true" />
-                <span>{DARK_PALETTE_LABELS[darkPalette]}</span>
-              </button>
-            )}
-            <button
-              className="hero-image-toggle"
-              type="button"
-              aria-label={
-                heroImageIndex === 0 ? "Show hero image 4" : "Show hero image 2"
-              }
-              title="Switch hero image"
-              onClick={() => setHeroImageIndex((current) => 1 - current)}
-            >
-              <Icon name="refresh" small />
-            </button>
-          </div>
+          <button
+            className="hero-image-toggle"
+            type="button"
+            aria-label={
+              heroImageIndex === 0 ? "Show hero image 4" : "Show hero image 2"
+            }
+            title="Switch hero image"
+            onClick={() => setHeroImageIndex((current) => 1 - current)}
+          >
+            <Icon name="refresh" small />
+          </button>
           <div className="hero-content">
             <div className="hero-copy">
               <h2>{PROTOTYPE_COPY.heroTitle}</h2>
@@ -564,7 +536,6 @@ function NextShell() {
   const route = useHashRoute();
   const history = useHistoryController();
   const { isDark } = useTheme();
-  const [darkPalette, setDarkPalette] = useState<DarkPalette>("neutral");
   const [onboardingStep, setOnboardingStep] = useState<OnboardingStep | null>(
     null,
   );
@@ -581,15 +552,6 @@ function NextShell() {
       delete document.documentElement.dataset.theme;
     };
   }, [isDark]);
-
-  // Document scope also themes dialogs rendered through portals. Keep the
-  // comparison selected across navigation and release it with the shell.
-  useEffect(() => {
-    document.documentElement.dataset.darkPalette = darkPalette;
-    return () => {
-      delete document.documentElement.dataset.darkPalette;
-    };
-  }, [darkPalette]);
 
   useEffect(() => {
     let active = true;
@@ -767,15 +729,7 @@ function NextShell() {
         ) : route.page === "extension-settings" ? (
           <ExtensionSettingsPage extensionId={route.extensionId} />
         ) : (
-          <OverviewPage
-            history={history}
-            darkPalette={isDark ? darkPalette : null}
-            onToggleDarkPalette={() =>
-              setDarkPalette((current) =>
-                current === "neutral" ? "warm" : "neutral",
-              )
-            }
-          />
+          <OverviewPage history={history} />
         )}
       </main>
       <QuickPanel
