@@ -1,26 +1,26 @@
 :root {
   color-scheme: dark;
-  --ev-bg: #0e1013;
-  --ev-raised: #181c21;
-  --ev-sunken: #13161a;
-  --ev-hover: #20252b;
-  --ev-text: #f3f4f2;
-  --ev-soft: #b4b8b8;
-  --ev-muted: #7d8385;
-  --ev-faint: #5c6265;
+  --ev-bg: #252525;
+  --ev-raised: #171717;
+  --ev-sunken: #202020;
+  --ev-hover: #222222;
+  --ev-text: #f1f1ef;
+  --ev-soft: #d2d2cf;
+  --ev-muted: #b0b0ad;
+  --ev-faint: #a0a09c;
   --ev-line: rgba(255, 255, 255, 0.075);
   --ev-line-strong: rgba(255, 255, 255, 0.13);
-  --ev-accent: #8faaff;
-  --ev-accent-strong: #a8bcff;
-  --ev-accent-soft: rgba(143, 170, 255, 0.13);
-  --ev-accent-ink: #091126;
+  --ev-accent: #e4e4df;
+  --ev-accent-strong: #ffffff;
+  --ev-accent-soft: rgba(228, 228, 223, 0.08);
+  --ev-accent-ink: #171717;
   --ev-success: #a8c9a8;
   --ev-warning: #efad90;
   --ev-danger: #ff938a;
-  --ev-info: #8bbdcb;
+  --ev-info: #b0b0ad;
   font-family:
-    "IBM Plex Sans Variable", "Segoe UI Variable Text", "Segoe UI",
-    system-ui, sans-serif;
+    "IBM Plex Sans Variable", "Segoe UI Variable Text", "Segoe UI", system-ui,
+    sans-serif;
   font-synthesis: none;
 }
 

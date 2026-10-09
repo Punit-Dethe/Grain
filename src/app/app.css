@@ -1,26 +1,26 @@
 @import "tailwindcss";
 
-/* Dark-theme tokens retain the UI 2.0 base. The light-theme overrides below
-   use Grain's warm paper and charcoal experiment. */
+/* Dark surfaces step inward from a brighter charcoal shell to darker cards.
+   The hero switcher compares neutral and warm palettes; light keeps its paper. */
 @theme {
-  --color-paper: #0e1013;
-  --color-paper-raised: #181c21;
-  --color-paper-sunken: #13161a;
-  --color-ink: #f3f4f2;
-  --color-ink-soft: #7d8385;
-  --color-ink-faint: #5c6265;
-  --color-accent: #8faaff;
-  --color-line: rgba(255, 255, 255, 0.065);
-  --color-text: #f3f4f2;
-  --color-background: #0e1013;
-  --color-background-ui: #8faaff;
-  --color-logo-primary: #8faaff;
-  --color-mid-gray: #5c6265;
+  --color-paper: var(--bg-1);
+  --color-paper-raised: var(--bg-3);
+  --color-paper-sunken: var(--bg-2);
+  --color-ink: var(--text-1);
+  --color-ink-soft: var(--text-3);
+  --color-ink-faint: var(--text-4);
+  --color-accent: var(--accent);
+  --color-line: var(--hairline);
+  --color-text: var(--text-1);
+  --color-background: var(--bg-1);
+  --color-background-ui: var(--accent);
+  --color-logo-primary: var(--accent);
+  --color-mid-gray: var(--text-4);
   --color-status-ready: #a8c9a8;
-  --color-status-load: #aaa0e8;
+  --color-status-load: var(--lilac);
   --color-status-warn: #efad90;
   --color-status-error: #ff938a;
-  --color-status-info: #8bbdcb;
+  --color-status-info: var(--sky);
   --font-sans:
     "IBM Plex Sans Variable", "Segoe UI Variable Text", "Segoe UI",
     ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
@@ -29,30 +29,30 @@
 
 :root {
   color-scheme: dark;
-  --bg-0: #090a0c;
-  --bg-1: #0e1013;
-  --bg-2: #13161a;
-  --bg-3: #181c21;
-  --bg-4: #20252b;
-  --text-1: #f3f4f2;
-  --text-2: #b4b8b8;
-  --text-3: #7d8385;
-  --text-4: #5c6265;
+  --bg-0: #303030;
+  --bg-1: #252525;
+  --bg-2: #202020;
+  --bg-3: #171717;
+  --bg-4: #222222;
+  --text-1: #f1f1ef;
+  --text-2: #d2d2cf;
+  --text-3: #b0b0ad;
+  --text-4: #a0a09c;
   --hairline: rgba(255, 255, 255, 0.065);
   --hairline-soft: rgba(255, 255, 255, 0.035);
-  --accent: #8faaff;
-  --accent-strong: #a8bcff;
-  --accent-hover: #a8bcff;
-  --accent-soft: rgba(143, 170, 255, 0.13);
-  --accent-soft-hover: rgba(143, 170, 255, 0.19);
-  --accent-focus: rgba(143, 170, 255, 0.28);
-  --accent-glow: rgba(143, 170, 255, 0.22);
-  --accent-ink: #091126;
+  --accent: #e4e4df;
+  --accent-strong: #ffffff;
+  --accent-hover: #ffffff;
+  --accent-soft: rgba(228, 228, 223, 0.08);
+  --accent-soft-hover: rgba(228, 228, 223, 0.14);
+  --accent-focus: rgba(228, 228, 223, 0.7);
+  --accent-glow: rgba(228, 228, 223, 0.06);
+  --accent-ink: #171717;
   --on-accent: var(--accent-ink);
   --peach: #efad90;
-  --lilac: #aaa0e8;
+  --lilac: #c2c2ba;
   --sage: #a8c9a8;
-  --sky: #8bbdcb;
+  --sky: #b0b0ad;
   --danger: #ff938a;
   --radius-xs: 6px;
   --radius-sm: 9px;
@@ -67,26 +67,50 @@
   --ease-soft: cubic-bezier(0.2, 0.75, 0.25, 1);
   --shadow-float:
     0 22px 70px rgba(0, 0, 0, 0.42), 0 2px 10px rgba(0, 0, 0, 0.3);
-  --glass-fill: rgba(20, 24, 29, 0.62);
+  --glass-fill: rgba(23, 23, 23, 0.86);
   --glass-highlight: rgba(255, 255, 255, 0.06);
   /* Toggle OFF-track color. The only knob the settings switch needs from CSS;
      everything else (geometry, thumb, ON-track = --color-accent) lives in the
      ToggleSwitch/Switch components. */
-  --toggle-off: #444a52;
+  --toggle-off: #62625f;
+}
+
+html[data-theme="dark"][data-dark-palette="warm"] {
+  --bg-0: #34312d;
+  --bg-1: #292622;
+  --bg-2: #211f1b;
+  --bg-3: #191714;
+  --bg-4: #26231f;
+  --text-1: #f3ede3;
+  --text-2: #d5cec2;
+  --text-3: #b9b0a3;
+  --text-4: #aba399;
+  --accent: #e9dec9;
+  --accent-strong: #fff4df;
+  --accent-hover: #fff4df;
+  --accent-soft: rgba(233, 222, 201, 0.08);
+  --accent-soft-hover: rgba(233, 222, 201, 0.14);
+  --accent-focus: rgba(233, 222, 201, 0.7);
+  --accent-glow: rgba(233, 222, 201, 0.06);
+  --accent-ink: #191714;
+  --lilac: #c9c0b2;
+  --sky: #b9b0a3;
+  --glass-fill: rgba(25, 23, 20, 0.86);
+  --toggle-off: #696158;
 }
 
 /* The extension seam (PLAN.md §2.1): these eight names are the public
    contract, so they are re-pointed at the surfaces above rather than
    carrying a second, drifting palette of their own. */
 .grain-root[data-theme="dark"] {
-  --color-paper: #0e1013;
-  --color-paper-raised: #181c21;
-  --color-paper-sunken: #13161a;
-  --color-ink: #f3f4f2;
-  --color-ink-soft: #7d8385;
-  --color-ink-faint: #5c6265;
-  --color-accent: #8faaff;
-  --color-line: rgba(255, 255, 255, 0.065);
+  --color-paper: var(--bg-1);
+  --color-paper-raised: var(--bg-3);
+  --color-paper-sunken: var(--bg-2);
+  --color-ink: var(--text-1);
+  --color-ink-soft: var(--text-3);
+  --color-ink-faint: var(--text-4);
+  --color-accent: var(--accent);
+  --color-line: var(--hairline);
 }
 
 .grain-root[data-theme="light"] {
@@ -161,7 +185,7 @@ body,
 }
 
 body {
-  background: #050607;
+  background: var(--bg-0);
   color: var(--text-1);
   font-family: var(--font-sans);
   font-size: 14px;
@@ -257,20 +281,7 @@ html[data-theme="light"] body {
   grid-template-columns: var(--sidebar) minmax(0, 1fr);
   grid-template-rows: var(--titlebar) minmax(0, 1fr);
   color: var(--text-1);
-  background:
-    radial-gradient(
-      900px 520px at 28% -20%,
-      rgba(171, 160, 232, 0.055),
-      transparent 66%
-    ),
-    radial-gradient(
-      880px 600px at 100% 110%,
-      rgba(168, 201, 168, 0.045),
-      transparent 65%
-    ),
-    /* One step below the content bubble, so the bubble reads as a raised
-       plane rather than a border drawn on the same colour. */
-    var(--bg-0);
+  background: var(--bg-0);
   transition: grid-template-columns 0.32s var(--ease-out);
 }
 
@@ -304,8 +315,8 @@ html[data-theme="light"] body {
   -webkit-app-region: drag;
 }
 
-/* Lower the brand and navigation together while preserving the gap from the
-   wordmark to Workspace. Inline padding preserves the nav icon axis. */
+/* Lower the brand and navigation together. Inline padding preserves the
+   nav icon axis. */
 .sidebar-brand {
   flex: 0 0 auto;
   display: flex;
@@ -461,7 +472,7 @@ html[data-theme="light"] .theme-toggle .moon-icon {
 .nav-item:hover,
 .quick-panel-button:hover {
   color: var(--text-1);
-  background: #1b1c1f;
+  background: var(--bg-2);
 }
 
 .nav-item:active {
@@ -470,7 +481,7 @@ html[data-theme="light"] .theme-toggle .moon-icon {
 
 .nav-item.active {
   color: var(--text-1);
-  background: #252629;
+  background: var(--bg-3);
   box-shadow: inset 0 1px rgba(255, 255, 255, 0.035);
 }
 
@@ -486,7 +497,7 @@ html[data-theme="light"] .theme-toggle .moon-icon {
   margin: 10px 0 8px;
   padding: 12px;
   border-radius: 10px;
-  background: #151618;
+  background: var(--bg-2);
 }
 
 .status-row strong {
@@ -1150,7 +1161,7 @@ h3 {
   padding-inline: 13px;
   border-radius: 8px;
   color: var(--text-1);
-  background: #202124;
+  background: var(--bg-3);
   box-shadow: inset 0 1px rgba(255, 255, 255, 0.035);
   font-size: 13px;
   font-weight: 570;
@@ -1161,7 +1172,7 @@ h3 {
 }
 
 .button:hover {
-  background: #292a2d;
+  background: var(--bg-4);
 }
 
 .button:active {
@@ -1288,7 +1299,7 @@ h3 {
   position: relative;
   padding: 0;
   border-radius: 999px;
-  background: #34383d;
+  background: var(--toggle-off);
   cursor: pointer;
   transition: background 0.2s;
 }
@@ -1302,7 +1313,7 @@ h3 {
   top: var(--sw-inset);
   left: var(--sw-inset);
   border-radius: 50%;
-  background: #9a9ea0;
+  background: var(--text-3);
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
   transform: translateX(0);
   transition:
@@ -1358,11 +1369,17 @@ html[data-theme="light"] .hero {
   object-fit: cover;
 }
 
-.hero-image-toggle {
+.hero-preview-controls {
   position: absolute;
   z-index: 1;
   top: 16px;
   right: 16px;
+  display: flex;
+  gap: 8px;
+}
+
+.hero-image-toggle,
+.hero-theme-toggle {
   display: grid;
   width: 36px;
   height: 36px;
@@ -1371,17 +1388,31 @@ html[data-theme="light"] .hero {
   border: 1px solid rgba(255, 255, 255, 0.3);
   border-radius: 9px;
   color: #fff;
-  background: rgba(17, 19, 23, 0.14);
+  background: rgba(17, 17, 17, 0.7);
   backdrop-filter: blur(8px);
   cursor: pointer;
 }
 
-.hero-image-toggle:hover {
-  border-color: rgba(255, 255, 255, 0.8);
-  background: rgba(17, 19, 23, 0.3);
+.grain-root .hero-theme-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  width: auto;
+  min-width: 94px;
+  padding: 0 11px;
+  font-size: 12px;
+  font-weight: 550;
 }
 
-.hero-image-toggle:focus-visible {
+.hero-image-toggle:hover,
+.hero-theme-toggle:hover {
+  border-color: rgba(255, 255, 255, 0.8);
+  background: rgba(17, 17, 17, 0.85);
+}
+
+.hero-image-toggle:focus-visible,
+.hero-theme-toggle:focus-visible {
   outline: 2px solid #fff;
   outline-offset: 2px;
 }
@@ -1478,7 +1509,7 @@ html[data-theme="light"] .hero {
   position: relative;
   border-radius: 12px;
   color: var(--text-1);
-  background: #18191b;
+  background: var(--bg-3);
   text-align: left;
   cursor: pointer;
   transition:
@@ -1488,7 +1519,7 @@ html[data-theme="light"] .hero {
 }
 
 .quick-card:hover {
-  background: #1d1e21;
+  background: var(--bg-4);
   transform: translateY(-1px);
   box-shadow: 0 12px 30px rgba(0, 0, 0, 0.13);
 }
@@ -1498,7 +1529,7 @@ html[data-theme="light"] .hero {
   height: 40px;
   display: grid;
   place-items: center;
-  color: rgba(235, 239, 247, 0.78);
+  color: var(--text-2);
 }
 
 .action-svg {
@@ -1727,7 +1758,7 @@ html[data-theme="light"] .overview-card--interactive:hover {
 }
 
 .overview-card--interactive:hover .overview-card-icon {
-  color: var(--accent, #8faaff);
+  color: var(--accent);
 }
 
 html[data-theme="light"] .overview-card-icon {
@@ -1853,7 +1884,7 @@ html[data-theme="light"] .overview-shortcut-label {
 .overview-card-cta {
   font-size: 11px;
   font-weight: 550;
-  color: var(--accent, #8faaff);
+  color: var(--accent);
   transition: color 0.15s ease;
 }
 
@@ -1862,7 +1893,7 @@ html[data-theme="light"] .overview-card-cta {
 }
 
 .overview-cta-arrow {
-  color: var(--accent, #8faaff);
+  color: var(--accent);
   transition: transform 0.18s var(--ease-out);
 }
 
@@ -1920,7 +1951,7 @@ html[data-theme="light"] .overview-cta-arrow {
   gap: 2px;
   padding: 2px;
   border-radius: 7px;
-  background: rgba(255, 255, 255, 0.035);
+  background: var(--bg-2);
 }
 
 .view-switch button {
@@ -1939,7 +1970,7 @@ html[data-theme="light"] .overview-cta-arrow {
 
 .view-switch button.active {
   color: var(--text-1);
-  background: rgba(255, 255, 255, 0.075);
+  background: var(--bg-3);
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.13);
 }
 
@@ -1948,7 +1979,7 @@ html[data-theme="light"] .overview-cta-arrow {
   gap: 0;
   overflow: hidden;
   border-radius: 11px;
-  background: rgba(255, 255, 255, 0.024);
+  background: var(--bg-3);
 }
 
 .transcript-card {
@@ -1963,7 +1994,7 @@ html[data-theme="light"] .overview-cta-arrow {
 }
 
 .transcript-card:hover {
-  background: rgba(255, 255, 255, 0.026);
+  background: var(--bg-4);
 }
 
 .transcript-head {
@@ -2050,7 +2081,7 @@ html[data-theme="light"] .overview-cta-arrow {
 .transcript-body {
   max-width: 900px;
   margin: 0;
-  color: #d6d8d5;
+  color: var(--text-2);
   font-size: 13.5px;
   line-height: 1.62;
   white-space: pre-wrap;
@@ -2216,7 +2247,7 @@ html[data-theme="light"] .overview-cta-arrow {
 }
 
 .history-feed {
-  background: #18191b;
+  background: var(--bg-3);
 }
 
 .history-state {
@@ -2410,33 +2441,10 @@ html[data-theme="light"] .overview-cta-arrow {
   display: none;
 }
 
-/* Shared Badge geometry matches Active. Color pools blend along the bottom
-   and fade into the dark cap, including when the app uses its light theme. */
+/* A neutral badge stays legible in either theme. */
 .flow-support-badge {
-  color: #f3f4f2;
-  background:
-    linear-gradient(to top, transparent, #1f1f21 80%),
-    radial-gradient(
-      ellipse at 10% 100%,
-      rgb(59 130 246 / 42%),
-      transparent 65%
-    ),
-    radial-gradient(
-      ellipse at 35% 100%,
-      rgb(125 211 252 / 38%),
-      transparent 65%
-    ),
-    radial-gradient(
-      ellipse at 75% 100%,
-      rgb(251 146 60 / 38%),
-      transparent 65%
-    ),
-    radial-gradient(
-      ellipse at 100% 100%,
-      rgb(253 224 71 / 35%),
-      transparent 65%
-    ),
-    #1f1f21;
+  color: #e4e4df;
+  background: #242424;
 }
 
 .model-library-panel {
@@ -2544,9 +2552,7 @@ html[data-theme="light"] .capture-mode-option {
   min-width: 0;
   padding: 0 11px 18px;
   position: relative;
-  background: rgba(8, 10, 13, 0.48);
-  backdrop-filter: blur(16px) saturate(110%);
-  -webkit-backdrop-filter: blur(16px) saturate(110%);
+  background: var(--bg-2);
 }
 
 .settings-sidebar-pane::after {
@@ -2595,12 +2601,12 @@ html[data-theme="light"] .capture-mode-option {
 
 .settings-nav button:hover {
   color: var(--text-1);
-  background: #1b1c1f;
+  background: var(--bg-2);
 }
 
 .settings-nav button.active {
-  color: #f4f4f5;
-  background: #252629;
+  color: var(--text-1);
+  background: var(--bg-3);
   box-shadow: inset 0 1px rgba(255, 255, 255, 0.035);
 }
 
@@ -3329,7 +3335,7 @@ html[data-theme="light"] .next-settings-content .app-select__control {
   grid-template-rows: auto 1fr auto;
   column-gap: 24px;
   color: #fcfcfb;
-  background: #18191a;
+  background: var(--bg-3);
 }
 
 .studio-feature-image,
@@ -5571,7 +5577,7 @@ article.studio-extension-card {
   position: relative;
   overflow: hidden;
   isolation: isolate;
-  background-color: #151922;
+  background-color: var(--bg-3);
   background-image:
     linear-gradient(
       180deg,
@@ -5581,7 +5587,7 @@ article.studio-extension-card {
     ),
     radial-gradient(
       100% 120% at 12% 10%,
-      var(--art-a, #8ea8fd),
+      var(--art-a, #bcbcb6),
       transparent 54%
     ),
     radial-gradient(
@@ -5594,7 +5600,7 @@ article.studio-extension-card {
       var(--art-c, #e3a483),
       transparent 62%
     ),
-    linear-gradient(135deg, #202735, #0d1017 70%);
+    linear-gradient(135deg, #292929, #171717 70%);
 }
 
 .extension-artwork::before,
@@ -5629,7 +5635,7 @@ article.studio-extension-card {
   background: conic-gradient(
     from 180deg at 50% 50%,
     transparent,
-    var(--art-a, #8ea8fd),
+    var(--art-a, #bcbcb6),
     transparent,
     var(--art-b, #79c7bd),
     transparent
