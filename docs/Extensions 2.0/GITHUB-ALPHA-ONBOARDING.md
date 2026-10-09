@@ -145,14 +145,23 @@ bundle receipt SHA256:
 Actual verification against each of the two pinned roots passed. These files are
 unpublished preparation; the GitHub extension has not been signed into them.
 
-Before activation, resolve the existing source-review gate: the current
-`sign-reviewed-candidate` route requires a merged PR and an approving human
-GitHub account different from the submitter. PR #2 has no review. Owner approval
-of a first-party tester-alpha submission would need an explicitly documented
-alternative; it must not be described as satisfying that independent-review gate.
-No review was fabricated, policy relaxed, public branch updated or protection
-bypassed in this identity reset. The publisher workflow's trusted verifier pin
-must also be updated to the new root-bearing Grain commit before deployment.
+The user then authorized explicit maintainer approval for the first-party tester
+alpha. The existing signer now accepts an operator-held `alpha_maintainer_approval`
+reference only for the exact GitHub 0.1.0 submission digest, named registry/owner
+and dedicated alpha publisher. It uses `review_id: 0` and makes no claim of a
+GitHub approving review. Merged PR/head/source/DESCRIPTION, full byte/provenance
+pins, expiry, prior catalogue and delayed key checks remain required. Third-party
+submissions and changed versions retain independent review. This narrow exception
+is temporary maintainer tooling, to be removed when the permanent approval policy
+is established; it adds no application, SDK or harness feature.
+
+The replacement alpha build
+[37932435112](https://github.com/Punit-Dethe/Grain/actions/runs/37932435112) and
+Linux identity checkpoint
+[37932600938](https://github.com/Punit-Dethe/Grain-Extention/actions/runs/37932600938)
+passed. The app identity remains Grain `8d0acf414e31f4ee8d67e3be03116ab944a40772`;
+the approval change affects maintainer tooling only. Publication must use a trusted
+verifier commit including the new approval profile and alpha trust pins.
 
 Checks: 12 core trust, 4 bootstrap, 4 initial-publication and 11 normal backend
 store tests pass; store cleanup Pass (`logic-q1xTsS`). Fresh producer/candidate

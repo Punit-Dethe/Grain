@@ -220,6 +220,7 @@ not TOML bytes or arbitrarily reformatted JSON.
 | `signer_workflow`, `signer_commit` | Same-repository `owner/repo/.github/workflows/<file>.yml` or `.yaml` and immutable workflow commit; reusable workflow identity is the signer |
 | `reviewer`, `submitter` | Protected review record's reviewer and submitting GitHub account; only submitter becomes catalogue `author` |
 | `review_pull_request`, `review_head`, `review_id` | Nonzero merged registry PR number, exact full reviewed PR head and nonzero latest effective approving GitHub review ID |
+| `alpha_maintainer_approval` | Optional operator-held approval reference for the single authorized GitHub tester-alpha submission; this profile uses `review_id: 0`, never a fabricated GitHub review |
 | `approved_at`, `expires_at` | RFC3339 approval window: not future-dated, still valid and at most seven days; rechecked before opening the key |
 | `publishing_public_key` | Independently approved base64 minisign publishing public key |
 | `previous_index_sha256`, `previous_index_version` | Exact currently signed index bytes and monotonic version to extend |
@@ -238,6 +239,21 @@ exhausted history refuses rather than trusting a partial result. GitHub availabi
 is required; there is no offline approval bypass. Production branch/environment
 protections and reviewer eligibility remain separate deployment requirements.
 Do not generate this policy in an author-execution job.
+
+The maintainer authorized an explicit first-party tester-alpha exception on
+9 October 2026. It admits only the exact `com.grain.github` 0.1.0 submission
+digest, `Punit-Dethe/Grain-Extention`, the named maintainer as submitter/reviewer,
+and the dedicated alpha publisher. A nonempty bounded approval reference is
+required in the operator-owned policy. Current merged PR/head/source/DESCRIPTION,
+all candidate/receipt/producer pins, cryptographic CI provenance, approval expiry,
+prior catalogue and delayed key checks still apply. Only the independent GitHub
+review lookup is omitted, and no independent review is claimed. Other submissions
+and later versions retain the normal independent-review route.
+
+This narrow profile is temporary alpha maintainer tooling: remove its allowlist,
+optional field and regression when the permanent publishing approval policy is
+established. It is not an SDK/runtime API, author-controlled manifest option or
+new signing service. Never add the field automatically to downloaded artifacts.
 
 `verify-source-review` takes `--submission`, `--policy`, `--policy-sha256` and `--gh`
 to check this same gate without a key. `inspect-submission --submission <ID-dir>

@@ -39,7 +39,11 @@ pub(super) fn check(path: &Path, policy_path: &Path, pin: &str, gh: &Path) -> Re
     }
     let gh = crate::review::verifier(gh, &policy.verifier_sha256)?;
     verify(&gh, &policy, &source)?;
-    println!("Current GitHub source review matches the protected policy; no key accessed");
+    if policy.alpha_maintainer_approval.is_some() {
+        println!("Current GitHub source matches explicit alpha maintainer approval; no independent review claimed or key accessed");
+    } else {
+        println!("Current GitHub source review matches the protected policy; no key accessed");
+    }
     Ok(())
 }
 
@@ -179,6 +183,10 @@ fn validate_reviews(reviews: &[Value], policy: &Policy, now: i64) -> Result<()> 
 }
 
 pub(super) fn verify(gh: &Path, policy: &Policy, source: &SourceSubmission) -> Result<()> {
+    policy.validate(Utc::now().timestamp())?;
+    if digest(&serde_json::to_vec(source)?) != policy.submission_sha256 {
+        bail!("Source differs from the approved submission");
+    }
     let prefix = format!(
         "repos/{}/pulls/{}",
         policy.registry_repo, policy.review_pull_request
@@ -210,6 +218,11 @@ pub(super) fn verify(gh: &Path, policy: &Policy, source: &SourceSubmission) -> R
         || digest(&description) != source.description_sha256
     {
         bail!("Merged description differs from reviewed listing");
+    }
+    // Only the validated, exact first-party alpha profile can use the operator's
+    // explicit approval. Merge/head/author/source/listing were still checked live.
+    if policy.alpha_maintainer_approval.is_some() {
+        return Ok(());
     }
     let mut reviews = Vec::new();
     for page in 1..=10 {

@@ -35,6 +35,10 @@ pub(super) struct Policy {
     pub review_pull_request: u64,
     pub review_head: String,
     pub review_id: u64,
+    /// Explicit operator-held approval for the single tester-alpha GitHub
+    /// submission. This is not a GitHub review and never author-controlled data.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub alpha_maintainer_approval: Option<String>,
     pub approved_at: String,
     pub expires_at: String,
     pub publishing_public_key: String,
@@ -103,10 +107,28 @@ impl Policy {
             || !hex(&self.signer_commit, 40)
             || !hex(&self.review_head, 40)
             || self.review_pull_request == 0
-            || self.review_id == 0
-            || self.reviewer.eq_ignore_ascii_case(&self.submitter)
         {
             bail!("Unsupported review policy or malformed digest");
+        }
+        if let Some(reference) = &self.alpha_maintainer_approval {
+            // Temporary, exact-submission exception authorized by the alpha
+            // maintainer. Updates/other publishers still need independent review.
+            if reference.trim().is_empty()
+                || reference.len() > 1024
+                || reference.chars().any(char::is_control)
+                || self.registry_repo != "Punit-Dethe/Grain-Extention"
+                || !self.reviewer.eq_ignore_ascii_case("Punit-Dethe")
+                || !self.submitter.eq_ignore_ascii_case("Punit-Dethe")
+                || self.review_id != 0
+                || self.submission_sha256
+                    != "9d8f657c96869202902cc7ef167db964d9e02926dfd659f80e71d724bcbc1dbf"
+                || self.publishing_public_key
+                    != "RWREj+hdLljbWOv3LCoTKEPv670pVG+P9knBUMWoR+V445yvdBwBuqj8"
+            {
+                bail!("Alpha maintainer approval does not authorize this submission or publisher");
+            }
+        } else if self.review_id == 0 || self.reviewer.eq_ignore_ascii_case(&self.submitter) {
+            bail!("Independent GitHub source approval required");
         }
         let repo: Vec<_> = self.registry_repo.split('/').collect();
         let workflow = self
@@ -633,11 +655,61 @@ pub(crate) mod tests {
             review_pull_request: 1,
             review_head: "c".repeat(40),
             review_id: 2,
+            alpha_maintainer_approval: None,
             approved_at: (Utc::now() - Days::minutes(1)).to_rfc3339(),
             expires_at: (Utc::now() + Days::days(1)).to_rfc3339(),
             publishing_public_key: grain_core::trust::ROOT_PUBKEY_A.into(),
             previous_index_sha256: "f".repeat(64),
             previous_index_version: 7,
+        }
+    }
+
+    #[test]
+    fn alpha_owner_approval_is_explicit_and_cannot_authorize_other_submissions() {
+        let mut p = policy();
+        p.registry_repo = "Punit-Dethe/Grain-Extention".into();
+        p.signer_workflow =
+            "Punit-Dethe/Grain-Extention/.github/workflows/build-source-candidate.yml".into();
+        p.reviewer = "Punit-Dethe".into();
+        p.submitter = "Punit-Dethe".into();
+        p.review_id = 0;
+        p.submission_sha256 =
+            "9d8f657c96869202902cc7ef167db964d9e02926dfd659f80e71d724bcbc1dbf".into();
+        p.publishing_public_key = "RWREj+hdLljbWOv3LCoTKEPv670pVG+P9knBUMWoR+V445yvdBwBuqj8".into();
+        let now = Utc::now().timestamp();
+        assert!(p.validate(now).is_err());
+        p.alpha_maintainer_approval =
+            Some("Maintainer authorization, tester alpha, 2026-10-09".into());
+        p.validate(now).unwrap();
+        for (field, value) in [
+            ("alpha_maintainer_approval", serde_json::json!(" ")),
+            (
+                "alpha_maintainer_approval",
+                serde_json::json!("approval\nforged"),
+            ),
+            (
+                "alpha_maintainer_approval",
+                serde_json::json!("a".repeat(1025)),
+            ),
+            ("registry_repo", serde_json::json!("another/registry")),
+            ("submitter", serde_json::json!("another-author")),
+            ("reviewer", serde_json::json!("another-reviewer")),
+            ("review_id", serde_json::json!(1)),
+            ("submission_sha256", serde_json::json!("1".repeat(64))),
+            (
+                "publishing_public_key",
+                serde_json::json!(grain_core::trust::ROOT_PUBKEY_A),
+            ),
+        ] {
+            let mut bad = serde_json::to_value(&p).unwrap();
+            bad[field] = value;
+            assert!(
+                serde_json::from_value::<Policy>(bad)
+                    .unwrap()
+                    .validate(now)
+                    .is_err(),
+                "{field}"
+            );
         }
     }
 
