@@ -311,6 +311,72 @@ async fn expired_store(server: &TokenServer) -> InMemoryCredentialStore {
     store
 }
 
+#[tokio::test]
+async fn registered_desktop_client_uses_pkce_and_keeps_its_credential_for_refresh() {
+    let server = TokenServer::start("200 OK").await;
+    let store = InMemoryCredentialStore::new();
+    let mut metadata = server.metadata();
+    metadata.additional_fields.insert(
+        "token_endpoint_auth_methods_supported".into(),
+        json!(["client_secret_post"]),
+    );
+    let mut manager = server.manager(store.clone()).await;
+    manager.set_metadata(metadata.clone());
+    let oauth = AuthorizationSession::new(
+        manager,
+        AuthorizationRequest::new(&format!("http://{CALLBACK_ADDR}{CALLBACK_PATH}"))
+            .with_preregistered_client("desktop-client")
+            .with_client_secret("desktop-credential")
+            .with_application_type("native"),
+    )
+    .await
+    .map_err(|(_, error)| error)
+    .unwrap();
+    let url = reqwest_mcp::Url::parse(oauth.get_authorization_url()).unwrap();
+    let params: BTreeMap<_, _> = url.query_pairs().into_owned().collect();
+    assert_eq!(params["code_challenge_method"], "S256");
+    assert!(!params.contains_key("client_secret"));
+    oauth
+        .handle_callback_with_issuer("code", &params["state"], Some(&server.origin))
+        .await
+        .unwrap();
+    let stored = store.load().await.unwrap().unwrap();
+    store
+        .save(
+            StoredCredentials::new(
+                stored.client_id,
+                stored.token_response,
+                stored.granted_scopes,
+                Some(1),
+            )
+            .with_issuer(Some(server.origin.clone())),
+        )
+        .await
+        .unwrap();
+    let mut manager = server.manager(store).await;
+    manager.set_metadata(metadata);
+    assert!(manager.initialize_from_store().await.unwrap());
+    manager
+        .configure_client(
+            OAuthClientConfig::new(
+                "desktop-client",
+                format!("http://{CALLBACK_ADDR}{CALLBACK_PATH}"),
+            )
+            .with_client_secret("desktop-credential"),
+        )
+        .unwrap();
+    assert_eq!(manager.get_access_token().await.unwrap(), "new-token");
+    let requests = server.requests.lock().unwrap();
+    assert_eq!(requests.len(), 2);
+    assert_eq!(requests[0]["grant_type"], "authorization_code");
+    assert!(requests[0]["code_verifier"].len() >= 43);
+    assert_eq!(requests[1]["grant_type"], "refresh_token");
+    for request in requests.iter() {
+        assert_eq!(request["client_id"], "desktop-client");
+        assert_eq!(request["client_secret"], "desktop-credential");
+    }
+}
+
 async fn fresh_client_token(
     server: &TokenServer,
     store: InMemoryCredentialStore,

@@ -34,6 +34,9 @@ use zeroize::Zeroize;
 #[path = "grain_mcp_connections.rs"]
 pub mod connections;
 
+#[path = "grain_mcp_builtin.rs"]
+mod builtin;
+
 const VAULT_SERVICE: &str = "com.grain.mcp.oauth";
 const CLIENT_SECRET_SERVICE: &str = "com.grain.mcp.client-secret";
 const CLIENT_REGISTRATION_SERVICE: &str = "com.grain.mcp.client-registration";
@@ -914,11 +917,52 @@ fn client_id(app: &AppHandle, provider_id: &str) -> Option<String> {
 
 fn provider_client_id(app: &AppHandle, item: &Provider<'_>) -> Option<String> {
     client_id(app, &provider_account(item))
+        .or_else(|| builtin_client(app, item).map(|client| client.id.to_owned()))
+}
+
+fn builtin_client(app: &AppHandle, item: &Provider<'_>) -> Option<builtin::Client<'static>> {
+    // Explicit per-connection registrations retain their own issuer/vault binding.
+    if client_id(app, &provider_account(item)).is_some() || !requires_account(item) {
+        return None;
+    }
+    builtin::github(
+        item.ownership?.store_extension_id(),
+        item.endpoint,
+        option_env!("GRAIN_GITHUB_OAUTH_CLIENT_ID"),
+        option_env!("GRAIN_GITHUB_OAUTH_CLIENT_SECRET"),
+    )
 }
 
 fn preregistered(app: &AppHandle, item: &Provider<'_>) -> bool {
     item.registration == Registration::PreRegistered
         || (item.ownership.is_some() && provider_client_id(app, item).is_some())
+}
+
+async fn provider_client_secret(
+    app: &AppHandle,
+    item: &Provider<'_>,
+    store: VaultCredentialStore,
+    client_id: &str,
+    metadata: &AuthorizationMetadata,
+) -> Result<Option<String>, Recovery> {
+    if let Some(client) = builtin_client(app, item) {
+        if client.id != client_id
+            || !builtin::github_metadata(
+                metadata.issuer.as_deref(),
+                &metadata.authorization_endpoint,
+                &metadata.token_endpoint,
+            )
+        {
+            return Err(Recovery::Registration);
+        }
+        return Ok(Some(client.secret.to_owned()));
+    }
+    client_secret(
+        store,
+        client_id,
+        metadata.issuer.as_deref().ok_or(Recovery::Configuration)?,
+    )
+    .await
 }
 
 async fn client_secret(
@@ -1533,6 +1577,15 @@ async fn connect_oauth(
         .get("authorization_response_iss_parameter_supported")
         .and_then(serde_json::Value::as_bool)
         .unwrap_or(false);
+    let configured_secret = if pre_registered {
+        let configured_id = provider_client_id(app, item)
+            .ok_or("configure this provider's OAuth client ID in Settings first")?;
+        provider_client_secret(app, item, store, &configured_id, &resolution.metadata)
+            .await
+            .map_err(|recovery| recovery.message())?
+    } else {
+        None
+    };
     manager.set_metadata(resolution.metadata);
     let mut request = AuthorizationRequest::new(&redirect_uri)
         .with_client_name("Grain")
@@ -1549,15 +1602,6 @@ async fn connect_oauth(
     if pre_registered {
         let configured_id = provider_client_id(app, item)
             .ok_or("configure this provider's OAuth client ID in Settings first")?;
-        let configured_secret = client_secret(
-            store,
-            &configured_id,
-            expected_issuer
-                .as_deref()
-                .ok_or("OAuth issuer unavailable")?,
-        )
-        .await
-        .map_err(|recovery| recovery.message())?;
         request = request.with_preregistered_client(configured_id);
         if let Some(configured_secret) = configured_secret {
             request = request.with_client_secret(configured_secret);
@@ -1721,14 +1765,12 @@ async fn authorization_manager(
     validate_hosted_oauth_metadata(&resolution.metadata).map_err(|_| Recovery::Configuration)?;
     validate_oauth_destinations(item, &resolution.metadata).map_err(|_| Recovery::Configuration)?;
     let configured_secret = if pre_registered {
-        client_secret(
+        provider_client_secret(
+            app,
+            item,
             store,
             configured_id.as_deref().ok_or(Recovery::Registration)?,
-            resolution
-                .metadata
-                .issuer
-                .as_deref()
-                .ok_or(Recovery::Configuration)?,
+            &resolution.metadata,
         )
         .await?
     } else {

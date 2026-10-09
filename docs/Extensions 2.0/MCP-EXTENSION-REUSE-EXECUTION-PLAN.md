@@ -79,6 +79,19 @@ framework is needed for that transition.
 
 ### Next delivery: one supported first-party extension, end to end
 
+**Tester-only identity decision, 9 October:** continue in the current maintainer
+account and reuse the existing candidate repositories. Branding/account changes
+may require testers to reconnect or reinstall; the user accepts this. Do not add
+compatibility or migration machinery. The extension alpha and the existing beta
+without extensions are separate deliveries, including their updater feeds.
+[GitHub alpha onboarding](GITHUB-ALPHA-ONBOARDING.md) records the dedicated app,
+public desktop credential/PKCE approach and remaining real-provider acceptance.
+Build-supplied registration now resolves only for the current verified GitHub
+store owner and exact GitHub resource/issuer/exchange endpoints. Explicit
+per-connection registrations retain their existing vault binding. No new OAuth
+server, catalogue engine or Agent harness was added. Actual app registration,
+sign-in, signed store activation and alpha packaging remain pending.
+
 **GitHub candidate checkpoint, 9 October:** source is published at
 [grain-github-extension](https://github.com/Punit-Dethe/grain-github-extension),
 tag `v0.1.0`, commit `3d5e1ec25e083613aa7b76c088a93ce49c24ecb5`.
@@ -118,8 +131,11 @@ account using [GitHub's registration guide](https://docs.github.com/en/apps/crea
   this user OAuth test, and no secret belongs in chat/source/submissions.
 
 This is one-time maintainer setup, not a requirement for ordinary users to create
-their own app. Shipping Grain-owned sign-in still requires a reviewed desktop
-client-secret approach; a local test credential is not a public client policy.
+their own app. For the tester alpha, the build-supplied dedicated desktop
+registration and PKCE approach above supersede the earlier undecided secret
+arrangement. The bundled credential is public/extractable; user tokens and
+signing authority remain separate. Actual registration and provider sign-in
+must still be completed; backend verification is not provider acceptance.
 Do not count a Developer-provider login as acceptance of the installed store
 extension: account ownership stays separate. Complete actual installation and
 account acceptance once signed catalogue activation is authorized.

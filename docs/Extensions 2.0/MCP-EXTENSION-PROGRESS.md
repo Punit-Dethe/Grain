@@ -1,5 +1,43 @@
 # Extension implementation: progress, changes and user testing
 
+**Tester-only GitHub identity, 9 October:** the user authorized proceeding under
+the existing account and accepts reconnect/reinstall when experimental branding,
+repositories or registrations change. The existing beta without extensions and
+the extension alpha are separate deliveries; no compatibility/migration system
+is needed. Reused the already published source/draft submission rather than
+creating another repository. [Alpha onboarding](GITHUB-ALPHA-ONBOARDING.md)
+documents a dedicated registered desktop client with PKCE, following GitHub's
+official public/extractable desktop credential approach.
+
+The backend now resolves compile-time alpha client credentials for the current
+verified `com.grain.github` store owner and exact official resource. Exact issuer,
+authorization and token endpoints are checked before supplying that credential;
+custom MCPs, revoked owners and other packages cannot borrow it. Existing
+explicit registrations keep their vault binding. Account tokens, lifecycle,
+SDK transport and Connect/Disconnect controls are reused. No new OAuth service,
+runtime engine, UI, author contract or Agent harness code was added.
+
+The GitHub CLI is authenticated, but no signed-in browser session was available
+for app registration. Opened GitHub's actual registration/sign-in page and asked
+the user to sign in there, without sharing passwords/codes. Actual registration,
+live GitHub sign-in/tool execution, alpha packaging and public signed catalogue
+activation remain **Pending**. The unchanged unrelated Cargo/bindings edits are
+preserved.
+
+Checkpoint: the normal production MCP test group passed **80 tests**, with owned
+process cleanup passing; evidence is
+`tests/agent-harness/.runs/logic-9UlL44/evidence/report.md` and `mcp.log`.
+Coverage includes exact build-client/resource/metadata binding, revoked and
+custom owners, and a real SDK token exchange proving S256 PKCE and reuse of the
+registered desktop credential for refresh. Scoped Rust formatting and diff
+checks pass. Backend Clippy completed successfully with existing warnings; its
+first attempt hit the existing native-build temporary-directory issue, and the
+retry used the production runner's command-local Windows temp workaround.
+Scoped graph/diff review checked registration lookup, token destinations,
+reconnection and current store ownership; no claim of a platform-wide audit is
+made. Live GitHub metadata matches the pinned issuer/endpoints and advertises
+S256. These results do not certify actual GitHub sign-in or provider tool calls.
+
 **GitHub first-party candidate, 9 October:** created and published
 [source](https://github.com/Punit-Dethe/grain-github-extension) on
 `extensions/github-mcp`, tag `v0.1.0`, commit

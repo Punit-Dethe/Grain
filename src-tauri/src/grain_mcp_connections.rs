@@ -30,6 +30,16 @@ pub(super) struct RuntimeOwner {
 }
 
 impl RuntimeOwner {
+    pub(super) fn store_extension_id(&self) -> Option<&str> {
+        if !self.current() {
+            return None;
+        }
+        match self.lease.record().identity().source() {
+            grain_core::mcp::ConnectionSource::Store { extension_id, .. } => Some(extension_id),
+            _ => None,
+        }
+    }
+
     pub(super) fn spec(&self) -> super::Provider<'_> {
         let definition = self.lease.record().definition();
         super::Provider {
@@ -602,7 +612,8 @@ pub async fn mcp_connection_status(
             description: item.description.into(),
             endpoint: item.endpoint.into(),
             setup_url: item.setup_url.into(),
-            requires_client_credentials: super::preregistered(&app, &item),
+            requires_client_credentials: super::preregistered(&app, &item)
+                && super::builtin_client(&app, &item).is_none(),
             client_id_configured: super::provider_client_id(&app, &item).is_some(),
             connected,
             enabled: (!required || connected) && owner.enabled(&app),
@@ -995,6 +1006,7 @@ mod tests {
                 .owner(registry.clone(), lease, Some(policy.clone()))
                 .unwrap();
             assert!(owner.current());
+            assert_eq!(owner.store_extension_id(), Some("com.example.calendar"));
             let ticket = owner.ticket();
             let vault = super::super::VaultCredentialStore {
                 account: owner.account(),
@@ -1007,6 +1019,10 @@ mod tests {
                 "entries":[{"id":id,"version":version,"state":status,"reason":"component fixture"}]
             })).unwrap());
             assert_eq!(owner.current(), allowed);
+            assert_eq!(
+                owner.store_extension_id(),
+                allowed.then_some("com.example.calendar")
+            );
             assert!(
                 ticket.commit(|| ()).is_ok(),
                 "No generation cancellation has occurred"
@@ -1161,6 +1177,7 @@ mod tests {
         let state = State::default();
         let lease = registry.lease(first.identity().connection_id()).unwrap();
         let one = state.owner(registry.clone(), lease.clone(), None).unwrap();
+        assert!(one.store_extension_id().is_none());
         let two = state
             .owner(
                 registry.clone(),
