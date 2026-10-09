@@ -79,6 +79,51 @@ framework is needed for that transition.
 
 ### Next delivery: one supported first-party extension, end to end
 
+**GitHub candidate checkpoint, 9 October:** source is published at
+[grain-github-extension](https://github.com/Punit-Dethe/grain-github-extension),
+tag `v0.1.0`, commit `3d5e1ec25e083613aa7b76c088a93ce49c24ecb5`.
+It contains the official remote MCP descriptor, GitHub artwork, DESCRIPTION and
+maintainer notes; no native worker or new MCP/authentication engine. Doctor,
+pack, scoped submission inspection, exact source/tag preparation and prepared
+byte verification pass. [Draft registry PR #2](https://github.com/Punit-Dethe/Grain-Extention/pull/2)
+targets the existing implementation branch, not public `main`.
+[Actual source CI](https://github.com/Punit-Dethe/Grain-Extention/actions/runs/37887958577)
+passed at registry `7666249f0d808066f7672beb337ea49a14ef7dac`; native author build
+was correctly skipped. Downloaded descriptor, DESCRIPTION and media match local
+bytes; producer and candidate attestations verify against the actual branch/head
+and expected reusable signer. This is recorded build origin, not protected human
+review/signing authority. Registry DESCRIPTION/TOML checkout rules now preserve
+LF hashes; fresh Windows checkout confirms the current GitHub/source fixtures.
+The unchanged legacy `com.example.hello` sample still fails repository-wide
+submission validation; do not claim an overall Pass or expand this block into a
+legacy-registry rewrite. No public catalogue was signed/activated.
+
+Unauthenticated official-server preflight returns 401 and valid resource/issuer
+metadata, advertising S256 PKCE with no dynamic registration endpoint. Actual
+GitHub sign-in and tools remain pending: the user confirmed no app is registered.
+For the initial account test, register a dedicated GitHub App under the maintainer
+account using [GitHub's registration guide](https://docs.github.com/en/apps/creating-github-apps/registering-a-github-app/registering-a-github-app):
+
+- Homepage: `https://github.com/Punit-Dethe/grain-github-extension` (no separate
+  website is needed for this registration).
+- Callback: `http://127.0.0.1:31938/mcp/oauth/callback`, matching Grain's current
+  callback; confirm the URI displayed in Grain before saving credentials.
+- Disable webhooks, leave token expiration enabled, and leave installation-time
+  OAuth/device-flow/setup URL options unused for this browser-flow test.
+- Start with Contents read-only and Issues read/write; retain automatic Metadata
+  read-only. Install only on a disposable test repository under this account.
+  Wider PR/workflow permissions can follow their actual tests.
+- Record the **Client ID**, not App ID, and generate a client secret for entry
+  through Grain's existing vault controls. No private signing key is needed for
+  this user OAuth test, and no secret belongs in chat/source/submissions.
+
+This is one-time maintainer setup, not a requirement for ordinary users to create
+their own app. Shipping Grain-owned sign-in still requires a reviewed desktop
+client-secret approach; a local test credential is not a public client policy.
+Do not count a Developer-provider login as acceptance of the installed store
+extension: account ownership stays separate. Complete actual installation and
+account acceptance once signed catalogue activation is authorized.
+
 Use GitHub as the concrete reference integration. The platform can package its
 remote MCP endpoint through the current descriptor/store/SDK route; this does
 not yet certify a public first-party GitHub extension. Reuse the existing CLI,

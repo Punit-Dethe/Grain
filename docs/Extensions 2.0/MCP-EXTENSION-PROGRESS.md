@@ -1,5 +1,37 @@
 # Extension implementation: progress, changes and user testing
 
+**GitHub first-party candidate, 9 October:** created and published
+[source](https://github.com/Punit-Dethe/grain-github-extension) on
+`extensions/github-mcp`, tag `v0.1.0`, commit
+`3d5e1ec25e083613aa7b76c088a93ce49c24ecb5`. The 337-byte descriptor uses GitHub's
+official hosted MCP server and OAuth. Original GitHub integration marks, supported
+store media, DESCRIPTION, license exclusions and maintainer/verification notes
+are included; there is no native worker, Node build or new harness/runtime engine.
+Existing author doctor/pack, scoped submission inspection, source/tag preparation,
+prepared verification and unsigned catalogue staging pass.
+[Draft registry PR #2](https://github.com/Punit-Dethe/Grain-Extention/pull/2) carries
+the real source pin and a small LF checkout fix for signed listing hashes.
+A fresh Windows checkout validates the new GitHub and both current source
+fixtures; the unrelated obsolete `com.example.hello` sample still fails the
+repository-wide checker. No overall registry validation Pass is claimed.
+[Linux source CI](https://github.com/Punit-Dethe/Grain-Extention/actions/runs/37887958577)
+passed at registry `7666249f0d808066f7672beb337ea49a14ef7dac`, skipping native build.
+Downloaded descriptor, DESCRIPTION and artwork exactly match Windows bytes;
+producer/candidate attestation checks pass for that branch/head and expected signer.
+Those checks are build provenance, not human review or production authorization.
+
+Public endpoint preflight returned 401 with usable OAuth discovery and S256 PKCE;
+no automatic registration endpoint exists. The user confirmed no GitHub app is
+registered yet. The plan now includes exact initial app/callback/limited-repository
+setup. Actual sign-in, GitHub tool calls, supported end-user onboarding and signed
+public store installation remain **Pending**, not Pass. No catalogue activation,
+production signing key access, model/tool action or account data access occurred.
+Local nonsecret prepared/CI evidence is at sibling `grain-github-prepared`,
+`grain-github-catalogue-candidate` and `grain-github-ci-evidence`; the registry draft
+is in its own `grain-github-registry` worktree, preserving the original checkout's
+unrelated changes. No acceptance service/listener was created. The shared platform
+checkpoint remains accepted; this provider-specific block is now current.
+
 **Current delivery direction, 9 October:** the user approved the current Installed
 extension/configured-MCP layout and asked to move to supported first-party
 extensions. Custom MCP management is implemented and sufficiently complete for
