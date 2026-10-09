@@ -69,10 +69,11 @@
     0 22px 70px rgba(0, 0, 0, 0.42), 0 2px 10px rgba(0, 0, 0, 0.3);
   --glass-fill: rgba(48, 48, 48, 0.86);
   --glass-highlight: rgba(255, 255, 255, 0.06);
-  /* Toggle OFF-track color. The only knob the settings switch needs from CSS;
-     everything else (geometry, thumb, ON-track = --color-accent) lives in the
-     ToggleSwitch/Switch components. */
+  /* Dark switches swap the existing track and thumb colors when enabled. */
   --toggle-off: #62625f;
+  --toggle-thumb-off: #fff;
+  --toggle-on: var(--toggle-thumb-off);
+  --toggle-thumb-on: var(--toggle-off);
 }
 
 /* The extension seam (PLAN.md §2.1): these eight names are the public
@@ -133,6 +134,8 @@ html[data-theme="light"] {
   --hairline: rgba(26, 26, 26, 0.1);
   --hairline-soft: rgba(26, 26, 26, 0.065);
   --toggle-off: #dad5cc;
+  --toggle-on: var(--accent);
+  --toggle-thumb-on: var(--toggle-thumb-off);
   --accent: #1a1a1a;
   --accent-strong: #111111;
   --accent-hover: #333333;
@@ -1300,6 +1303,14 @@ h3 {
 .grain-root .toggle.on span {
   transform: translateX(var(--sw-travel));
   background: var(--accent-ink);
+}
+
+html[data-theme="dark"] .grain-root .toggle.on {
+  background: var(--text-3) !important;
+}
+
+html[data-theme="dark"] .grain-root .toggle.on span {
+  background: var(--toggle-off);
 }
 
 .icon-button {
@@ -2737,8 +2748,8 @@ html[data-theme="light"] .capture-mode-option {
 }
 
 /* The settings toggle is defined entirely by the ToggleSwitch/Switch
-   components (self-consistent geometry, accent track ON, --toggle-off track
-   OFF). No CSS override here — a prior `:has()` override forced `transform`
+   components (self-consistent geometry, theme-aware track and thumb colors).
+   No CSS override here — a prior `:has()` override forced `transform`
    with `!important`, which clobbered the component's own thumb translate and
    was the actual cause of the "thumb won't slide / overflows" bug. */
 
@@ -3445,6 +3456,42 @@ html[data-theme="light"] .next-settings-content .app-select__control {
 
 .tool-master-toggle input:checked + .tool-master-toggle-track {
   background: var(--accent);
+}
+
+html[data-theme="dark"]
+  .tool-master-toggle
+  input:checked
+  + .tool-master-toggle-track {
+  background: #fff;
+}
+
+html[data-theme="dark"]
+  .tool-master-toggle
+  input:checked
+  + .tool-master-toggle-track::after {
+  background: var(--bg-4);
+}
+
+html[data-theme="dark"] .extension-field-toggle[aria-checked="true"] {
+  background: var(--color-paper-raised);
+}
+
+html[data-theme="dark"] .extension-field-toggle[aria-checked="true"] > span {
+  background: var(--color-paper-sunken);
+}
+
+html[data-theme="dark"]
+  .snippet-row-toggle
+  input:checked
+  + .snippet-row-toggle-track {
+  background: #f0ebe3 !important;
+}
+
+html[data-theme="dark"]
+  .snippet-row-toggle
+  input:checked
+  + .snippet-row-toggle-track::after {
+  background: #0a0a0a;
 }
 
 .tool-master-toggle input:checked + .tool-master-toggle-track::after {
