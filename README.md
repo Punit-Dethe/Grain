@@ -14,18 +14,18 @@
 
 Grain is a desktop app that turns speech into text wherever your cursor is. Press a shortcut, talk, release it — your words land in the field you're already using. From there you can rewrite them, act on them, or save them for later, all without leaving the app you were in.
 
-It's built on [Handy](https://github.com/cjpais/handy), the most battle-tested open-source STT engine available. Grain keeps that foundation and adds the dictation modes and optional AI workflows described below. The full extension suite is reserved for the experimental Alpha release, rather than the main Beta app.
+It's built on [Handy](https://github.com/cjpais/handy), the most battle-tested open-source STT engine available. Grain keeps that foundation and adds the dictation modes and optional AI workflows described below. Beta includes the core app, while Alpha also includes the full extension suite.
 
 ## Beta and Alpha releases
 
-Grain has two release tracks so you can choose between the main app and experimental extension support:
+Grain has two release tracks with different feature sets:
 
-| Release track | What's included | Who it's for |
-| --- | --- | --- |
-| **Beta — main app** | The full Grain experience described here **except extensions**: dictation (Batch, Flow, ASR), AI workflows, Agent, Context Awareness, Snippets, Voice Actions, history, and the rest of the core app. | Anyone who wants Grain without the experimental extension system. |
-| **Alpha — experimental** | Everything in Beta **plus the full extension suite**, including Grain's native/direct and MCP-based tool integrations. | People who want to try the extension platform and help test it as it evolves. |
+| Release track | What's included |
+| --- | --- |
+| **Beta — main app** | All core Grain features: Batch, Flow, and ASR dictation; AI workflows; Agent; Context Awareness; Snippets; Voice Actions; history; and the rest of the main app. **Extensions are not included.** |
+| **Alpha — full extension suite** | Everything in Beta, **plus the full extension suite**, including native/direct integrations and MCP-based tools for the Agent. |
 
-**Extensions are Alpha-only.** The main Beta build does not include extension tools or integrations. The Alpha release will include the complete extension suite; availability will be shown on the [Releases page](https://github.com/Punit-Dethe/Grain/releases) when Alpha builds are published. Alpha features may change and are not guaranteed to be as stable as Beta.
+**The difference:** Beta includes the complete core app without extensions; Alpha includes the core app and extensions.
 
 ## Upstream tracking
 
@@ -92,7 +92,7 @@ _See [docs/grain-features.md](docs/grain-features.md) for the full breakdown, in
 
 ## Extensions: give the Agent tools (Alpha only)
 
-> **Release availability:** Extensions are excluded from the main **Beta** app. The experimental **Alpha** release is intended to include the **full extension suite**. The architecture below describes that Alpha extension platform; it is not a feature list for Beta.
+> **Alpha feature:** The full extension suite is included in **Alpha**, alongside every core Grain feature. **Beta** includes the core app without extensions. The architecture below describes the Alpha extension platform.
 
 Grain extensions are deliberately narrow.
 
@@ -241,7 +241,7 @@ A memory provider can expose ordinary store/search/retrieve tools. Grain does no
 
 ### Current development status
 
-The extension suite is being developed for **Alpha**; it is not included in **Beta**. The old broad extension platform is being retired in favor of this tool-only contract. Legacy declarations and privileged host APIs are being blocked, tested, and physically removed in stages while the new native/direct and MCP adapters are hardened against real lifecycle, authentication, permission, cancellation, and Agent-continuation cases.
+The extension suite is part of **Alpha**, while **Beta** includes the core app without extensions. The old broad extension platform is being retired in favor of this tool-only contract. Legacy declarations and privileged host APIs are being blocked, tested, and physically removed in stages while the new native/direct and MCP adapters are hardened against real lifecycle, authentication, permission, cancellation, and Agent-continuation cases.
 
 The current implementation plan and progress live in:
 
@@ -260,7 +260,7 @@ The reduced public authoring contract is still being finalized. Older Extension 
 
 First-run onboarding introduces Batch, Flow, and ASR, then guides you through model setup, a real transcription test, and shortcut setup.
 
-1. Download a **Beta** build from [Releases](https://github.com/Punit-Dethe/Grain/releases) for the main app, or an **Alpha** build when published if you want to test extensions.
+1. Choose **Beta** (core app) or **Alpha** (core app plus extensions) from [Releases](https://github.com/Punit-Dethe/Grain/releases).
 2. Grant microphone and accessibility/input permissions where your OS requires them.
 3. Pick a local model, or an OpenAI-compatible speech-to-text provider.
 4. Set a dictation shortcut (Batch, Flow, or ASR) and start speaking in any text field.
