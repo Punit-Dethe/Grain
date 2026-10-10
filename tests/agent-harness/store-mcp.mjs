@@ -258,19 +258,17 @@ export function storeMcpHandlers(ctx) {
           assert.equal(record.extensionId, ID);
           assert.equal(record.version, "1.0.0");
           await detail
-            .getByRole("region", { name: "MCP connection", exact: true })
+            .getByRole("region", { name: "Settings", exact: true })
             .waitFor();
           await page.keyboard.press("Escape");
           await page.evaluate(() => {
             window.location.hash = "#/extensions/installed";
           });
-          const installed = page.getByRole("region", {
-            name: "Installed MCP extensions",
+          const installed = page.getByRole("button", {
+            name: "Open Store MCP harness",
             exact: true,
           });
-          await installed
-            .getByRole("heading", { name: "Store MCP harness", exact: true })
-            .waitFor();
+          await installed.waitFor();
           const search = page.getByPlaceholder("Search installed extensions", {
             exact: true,
           });
@@ -297,16 +295,19 @@ export function storeMcpHandlers(ctx) {
             0,
           );
           await installed
-            .getByRole("button", { name: "Details", exact: true })
+            .getByRole("button", {
+              name: "Settings for Store MCP harness",
+              exact: true,
+            })
             .click();
           await detail
-            .getByRole("region", { name: "MCP connection", exact: true })
+            .getByRole("region", { name: "Settings", exact: true })
             .waitFor();
           await page.screenshot({
             path: join(ctx.root, "store-mcp-detail.png"),
           });
           await detail
-            .getByRole("region", { name: "MCP connection", exact: true })
+            .getByRole("region", { name: "Settings", exact: true })
             .scrollIntoViewIfNeeded();
           await page.screenshot({
             path: join(ctx.root, "store-mcp-controls.png"),
@@ -412,7 +413,8 @@ export function storeMcpHandlers(ctx) {
           await card
             .getByRole("button", { name: "Update", exact: true })
             .click();
-          await card
+          await page
+            .getByRole("article", { name: "Store MCP harness", exact: true })
             .getByRole("button", { name: "Installed", exact: true })
             .waitFor();
           [record] = await list();
@@ -471,41 +473,36 @@ export function storeMcpHandlers(ctx) {
           await page.evaluate(() => {
             window.location.hash = "#/extensions/installed";
           });
-          const installed = page.getByRole("region", {
-            name: "Installed MCP extensions",
+          const installed = page.getByRole("button", {
+            name: "Open Store MCP harness",
             exact: true,
           });
           await installed
-            .getByRole("button", { name: "Details", exact: true })
+            .getByRole("button", {
+              name: "Settings for Store MCP harness",
+              exact: true,
+            })
             .click();
           const detail = page.getByRole("article", {
             name: "Store MCP harness",
             exact: true,
           });
           const account = detail.getByRole("region", {
-            name: "MCP connection",
+            name: "Settings",
             exact: true,
           });
           await account
-            .getByRole("button", { name: "Remove", exact: true })
+            .getByRole("button", { name: "Uninstall", exact: true })
             .click();
           await account
-            .getByRole("button", { name: "Remove connection", exact: true })
+            .getByRole("button", { name: "Uninstall extension", exact: true })
             .click();
           await account.waitFor({ state: "hidden" });
           await page.keyboard.press("Escape");
-          await installed
-            .getByText(
-              "No MCP extensions installed yet. Browse the Store to add one.",
-              { exact: true },
-            )
+          await page
+            .getByText("No extensions installed yet", { exact: true })
             .waitFor();
-          assert.equal(
-            await installed
-              .getByRole("heading", { name: "Store MCP harness", exact: true })
-              .count(),
-            0,
-          );
+          assert.equal(await installed.count(), 0);
           await page
             .locator(".segmented button.active")
             .and(page.locator(":focus"))
@@ -527,12 +524,15 @@ export function storeMcpHandlers(ctx) {
             clientId: MCP_CLIENTS.confidential,
             clientSecret: MCP_CLIENT_SECRETS[0],
           });
+          // This case seeds installation through host IPC, outside the UI's
+          // install/refresh flow. Start the UI with that persisted inventory.
+          await ctx.restartHost();
           const page = ctx.main();
           await page.evaluate(() => {
             window.location.hash = "#/extensions/installed";
           });
-          const installed = page.getByRole("region", {
-            name: "Installed MCP extensions",
+          const installedCard = page.getByRole("button", {
+            name: "Open Store MCP harness",
             exact: true,
           });
           const postponeUpdate = page.getByRole("button", {
@@ -540,6 +540,10 @@ export function storeMcpHandlers(ctx) {
             exact: true,
           });
           if (await postponeUpdate.isVisible()) await postponeUpdate.click();
+          await installedCard.click();
+          const installed = page
+            .getByRole("article", { name: "Store MCP harness", exact: true })
+            .getByRole("region", { name: "Settings", exact: true });
           await installed
             .getByRole("button", { name: "Refresh", exact: true })
             .click();

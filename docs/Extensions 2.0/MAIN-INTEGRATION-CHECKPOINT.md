@@ -15,8 +15,10 @@ extension feature, authentication framework or acceptance scenario.
 - Post-merge ancestry: **149 ahead / 0 behind** the main snapshot above.
 - Integrated tester alpha build:
   [37977984049](https://github.com/Punit-Dethe/Grain/actions/runs/37977984049),
-  dispatched for that merge. **In progress** at handoff; no installer success
-  is claimed yet. Only the Windows alpha job runs; the normal matrix is skipped.
+  dispatched for that merge. **Succeeded**, installer downloaded to
+  `C:\Projects\Grain\grain-github-alpha-build-37977984049\nsis\Grain Extensions Alpha_0.0.8_x64-setup.exe`.
+  This installer predates the unified extension layout. Only the Windows alpha
+  job runs; the normal matrix is skipped. Build success is not user acceptance.
 
 The original `C:\Projects\Grain\grain` checkout and its preexisting local changes
 are preserved. Continue integrated development in the integration checkout;

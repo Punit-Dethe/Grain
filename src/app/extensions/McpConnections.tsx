@@ -28,13 +28,13 @@ export function McpConnections({
   source = "configured",
   connectionId,
   onChange,
-  onDetails,
+  onRemoved,
 }: {
   query: string;
   source?: "configured" | "store";
   connectionId?: string;
   onChange?: () => Promise<void>;
-  onDetails?: (connection: ConnectionView) => void;
+  onRemoved?: () => void;
 }) {
   const titleId = useId();
   const [rows, setRows] = useState<Row[]>([]);
@@ -223,15 +223,11 @@ export function McpConnections({
       <header className="mcp-connections-heading">
         <div>
           <h2 id={titleId}>
-            {source === "store"
-              ? connectionId
-                ? "MCP connection"
-                : "Installed MCP extensions"
-              : "Your MCP connections"}
+            {source === "store" ? "Settings" : "Your MCP connections"}
           </h2>
           <p>
             {source === "store"
-              ? "Manage the account and tools for your installed MCP extensions."
+              ? "Manage your account and whether this extension is enabled."
               : "Connect a remote tool server directly. No extension package is needed."}
           </p>
         </div>
@@ -388,29 +384,40 @@ export function McpConnections({
         </form>
       )}
       {loading ? (
-        <p role="status">Loading MCP connections...</p>
+        <p role="status">
+          {source === "store"
+            ? "Loading settings…"
+            : "Loading MCP connections…"}
+        </p>
       ) : matching.length === 0 ? (
         <p>
           {rows.length
             ? "No MCP connections match your search."
             : source === "store"
-              ? "No MCP extensions installed yet. Browse the Store to add one."
+              ? "This extension is no longer installed."
               : "Add your first MCP to make its tools available to the Agent."}
         </p>
       ) : (
         matching.map((row) => (
           <article className="mcp-connection-row" key={row.id}>
             <div className="mcp-connection-copy">
-              <h3>{row.name}</h3>
-              {row.version && <p>Version {row.version}</p>}
-              <p className="mcp-connection-url">{row.url}</p>
+              {source === "configured" && (
+                <>
+                  <h3>{row.name}</h3>
+                  <p className="mcp-connection-url">{row.url}</p>
+                </>
+              )}
               <p>
                 {row.statusError ??
                   (row.authentication === "none"
                     ? "No account needed"
                     : row.account?.state === "stored"
                       ? "Account saved"
-                      : row.account?.state.replace(/_/g, " "))}{" "}
+                      : row.account?.state === "needs_client_credentials"
+                        ? "App setup required"
+                        : row.account?.state === "disconnected"
+                          ? "Sign in to connect your account"
+                          : row.account?.state.replace(/_/g, " "))}{" "}
                 &middot;{" "}
                 {row.account?.enabled
                   ? "Enabled"
@@ -490,16 +497,6 @@ export function McpConnections({
                       Edit
                     </button>
                   )}
-                  {onDetails && (
-                    <button
-                      className="button ghost"
-                      type="button"
-                      disabled={busy !== null}
-                      onClick={() => onDetails(row)}
-                    >
-                      Details
-                    </button>
-                  )}
                   <button
                     className="button ghost"
                     type="button"
@@ -509,7 +506,7 @@ export function McpConnections({
                       setRemoving(row.id);
                     }}
                   >
-                    Remove
+                    {source === "store" ? "Uninstall" : "Remove"}
                   </button>
                 </>
               )}
@@ -517,8 +514,8 @@ export function McpConnections({
             {removing === row.id && (
               <div className="mcp-connection-confirm">
                 <p>
-                  Remove {row.name}? Its tools will be disabled and its saved
-                  account cleared.
+                  {source === "store" ? "Uninstall" : "Remove"} {row.name}? Its
+                  tools will be disabled and its saved account cleared.
                 </p>
                 <div className="mcp-connection-actions">
                   <button
@@ -531,10 +528,14 @@ export function McpConnections({
                           await commands.mcpConnectionRemove(...owner(row)),
                         );
                         if (live.current) setRemoving(null);
+                        if (onRemoved) await onChange?.();
+                        if (live.current) onRemoved?.();
                       })
                     }
                   >
-                    Remove connection
+                    {source === "store"
+                      ? "Uninstall extension"
+                      : "Remove connection"}
                   </button>
                   <button
                     type="button"
@@ -542,7 +543,7 @@ export function McpConnections({
                     disabled={busy !== null}
                     onClick={() => setRemoving(null)}
                   >
-                    Keep connection
+                    {source === "store" ? "Keep extension" : "Keep connection"}
                   </button>
                 </div>
               </div>
@@ -550,7 +551,9 @@ export function McpConnections({
             {row.authentication === "oauth" && (
               <details className="mcp-client-settings">
                 <summary>
-                  OAuth app credentials{" "}
+                  {source === "store"
+                    ? "Advanced connection settings"
+                    : "OAuth app credentials"}{" "}
                   {row.account?.client_id_configured
                     ? "(configured)"
                     : "(optional)"}
@@ -559,6 +562,9 @@ export function McpConnections({
                   Only needed if this server requires your own OAuth app.
                   Secrets go to the system vault.
                 </p>
+                {source === "store" && (
+                  <p className="mcp-connection-url">Server: {row.url}</p>
+                )}
                 <p className="mcp-connection-url">
                   Register redirect URI:{" "}
                   <code>http://127.0.0.1:31938/mcp/oauth/callback</code>

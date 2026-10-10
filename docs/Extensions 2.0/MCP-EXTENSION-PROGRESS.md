@@ -1,5 +1,29 @@
 # Extension implementation: progress, changes and user testing
 
+**Unified extension experience, 10 October:** native/MCP implementation is no
+longer displayed on store cards. Store-installed extensions share one Installed
+card layout, artwork, search, state, toggle and detail-page entry. Installation
+opens the common detail page; account/sign-in, advanced connection configuration
+and uninstall are managed there. Native enablement is also available on its
+detail page. Manually configured MCPs remain alongside installed extensions.
+Missing catalogue metadata does not hide the installed card or block account
+management. Original native IDs and MCP connection ID/revision owners are kept;
+transport, OAuth, vault, signed metadata and Developer Mode gates are unchanged.
+No runtime, publishing service or test framework was added. Existing store-MCP
+acceptance selectors follow the new flow; no scenario was added.
+
+Frontend unit tests **121 Pass**, targeted lint/type checks and frontend build
+Pass; existing runner self-tests **78 Pass**. Existing real-app store-MCP cases
+**3/3 Pass**, cleanup Pass (`.runs/run-HEzMRJ`): acquisition/update/removal,
+sign-in/cancellation/restart and revocation. Two earlier runs retain their
+failures: `run-jX8j0K` expected a hidden store card after automatic detail-page
+navigation; `run-1eWHkj` seeded installation through host IPC without refreshing
+the common Installed inventory. Both cleanup Pass; assertions now use the new
+detail journey and a restart after out-of-band seeding. Version, account/revision,
+provider-contact and revocation assertions remain. No production workaround or
+new case was added. User visual acceptance of this changed layout remains Pending.
+Historical acceptance below is retained with its original scope.
+
 **Main integration, 10 October:** implemented on
 `extensions/main-integration-20261010`, merging app main
 `bbae21ccadc4c6e8d65263e207d644db41ab74ad` into the extension platform. Main's

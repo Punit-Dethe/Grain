@@ -33,10 +33,13 @@ production operator setup before implementing the missing application flow.
    account ownership, vault and Tauri commands. Support form/JSON import, editing,
    sign-in/cancellation, enable/disable, sign-out, removal and optional OAuth app
    credentials. Keep the existing Developer Mode release gate until launch.
-2. **Ordinary extension journey (implemented, current layout approved 9 October):** verified
-   store cards distinguish native/MCP; MCP install/update use existing commands.
-   Installed MCPs expose account and enablement controls, with read-only store
-   definitions and signed DESCRIPTION content on detail pages. Existing CLI and
+2. **Ordinary extension journey (implemented; unified layout awaiting visual acceptance, 10 October):**
+   native and MCP are internal implementation choices, not public categories.
+   Store cards and the Installed collection share presentation and detail-page
+   navigation. Installation opens that page for setup; account, advanced connection
+   settings and uninstall live inside it. Read-only store definitions and signed
+   DESCRIPTION content remain. Custom MCP form/JSON connections stay alongside
+   installed extensions in their existing management area. Existing CLI and
    GitHub submission guides now describe both kinds and direct MCP connections.
    No new publisher, runtime or authentication layer was built. Catalogue
    activation remains a separate operator gate.
@@ -76,7 +79,7 @@ mandatory infrastructure milestones for this reduced launch.
 | Area | Current position | Remaining acceptance |
 | --- | --- | --- |
 | Custom MCPs and accounts | Form/JSON, SDK transport, OAuth, vault and lifecycle implemented; controlled real-app checks and earlier user Linear checks passed | Actual issued Linear token expiry remains deferred |
-| Native/MCP extension journey | Installation, updates, account controls, DESCRIPTION and author/submission tools implemented; existing local/store checkpoints passed; current layout approved 9 October; real GitHub store install/sign-in user-confirmed | Specific first-party GitHub actions/recovery and integrated-alpha acceptance |
+| Native/MCP extension journey | Installation, updates, account controls, DESCRIPTION and author/submission tools implemented; shared cards and detail-page settings updated 10 October; real GitHub store install/sign-in user-confirmed | Visual acceptance of the unified layout, specific first-party GitHub actions/recovery and integrated-alpha acceptance |
 | Basic Agent execution | Genuine configured-model native and MCP read/write/verify and both recovery cases passed; eight controlled failure cases passed | No open genuine-model case in this launch checkpoint; public-provider acceptance remains separate |
 | Public availability | First-party GitHub alpha catalogue signed and active; public HTTP/store backend checks passed; real installation/sign-in user-confirmed; corrected installed Agent opening confirmed 10 October | Specific GitHub actions/recovery; integration with main; permanent production governance and broader distribution remain separate |
 

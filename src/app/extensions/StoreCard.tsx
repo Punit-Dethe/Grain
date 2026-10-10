@@ -113,9 +113,6 @@ export function StoreCard({
           </button>
         </div>
         <p className="store-extension-blurb">{entry.description}</p>
-        <span>
-          {entry.kind === "mcp" ? "MCP extension" : "Native extension"}
-        </span>
       </div>
     </article>
   );

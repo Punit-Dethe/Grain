@@ -13,7 +13,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Code2,
-  Eye,
+  Settings2,
   PackageOpen,
   ShieldCheck,
   Trash2,
@@ -31,9 +31,11 @@ import {
   type StoreEntry,
   type StoreMedia,
   type StoreView,
+  type McpProviderStatus,
 } from "@/bindings";
 import { MediaArtwork, StoreCard } from "../extensions/StoreCard";
 import { McpConnections } from "../extensions/McpConnections";
+import { installedExtensionItems } from "../extensions/installedExtensions";
 import { Markdown } from "@/components/markdown/Markdown";
 import "@/components/markdown/markdown.css";
 import { DeveloperSection } from "@/components/settings/experimentations/DeveloperSection";
@@ -103,6 +105,8 @@ function adaptSettingRow(row: ExtensionSettingRow): SettingRow {
 interface InstalledController {
   cards: ExtensionCard[];
   connections: ConnectionView[];
+  accounts: Record<string, McpProviderStatus>;
+  listings: Record<string, StoreEntry>;
   sections: ExtensionSettingsSection[];
   covers: Record<string, StoreMedia>;
   loading: boolean;
@@ -110,7 +114,11 @@ interface InstalledController {
   busy: string | null;
   refresh: () => Promise<void>;
   toggle: (card: ExtensionCard) => Promise<void>;
-  uninstall: (card: ExtensionCard) => Promise<void>;
+  toggleConnection: (
+    connection: ConnectionView,
+    enabled: boolean,
+  ) => Promise<void>;
+  uninstall: (card: ExtensionCard) => Promise<boolean>;
   permissionDialog: React.ReactNode;
   conflictDialog: React.ReactNode;
 }
@@ -119,6 +127,10 @@ function useInstalledExtensions(): InstalledController {
   const { refreshSettings } = useSettings();
   const [cards, setCards] = useState<ExtensionCard[]>([]);
   const [connections, setConnections] = useState<ConnectionView[]>([]);
+  const [accounts, setAccounts] = useState<Record<string, McpProviderStatus>>(
+    {},
+  );
+  const [listings, setListings] = useState<Record<string, StoreEntry>>({});
   const [sections, setSections] = useState<ExtensionSettingsSection[]>([]);
   const [covers, setCovers] = useState<Record<string, StoreMedia>>({});
   const [loading, setLoading] = useState(true);
@@ -145,14 +157,47 @@ function useInstalledExtensions(): InstalledController {
         .catch(() => []),
     ]);
     const nextCards = sortExtensionCards(overview);
-    const nextCovers = nextCards.length
-      ? await commands
-          .storeCovers(nextCards.map((card) => card.id))
-          .then(unwrapResult)
-          .catch(() => [])
-      : [];
+    const nextConnections = remote.filter((row) => row.source === "store");
+    const ids = [
+      ...new Set([
+        ...nextCards.map((card) => card.id),
+        ...nextConnections.flatMap((row) =>
+          row.extensionId ? [row.extensionId] : [],
+        ),
+      ]),
+    ];
+    const [nextCovers, nextAccounts, nextListings] = await Promise.all([
+      ids.length
+        ? commands
+            .storeCovers(ids)
+            .then(unwrapResult)
+            .catch(() => [])
+        : [],
+      Promise.all(
+        nextConnections.map(async (row) => {
+          const status = await commands
+            .mcpConnectionStatus(row.id, row.revision)
+            .then(unwrapResult)
+            .catch(() => null);
+          return status ? [[row.id, status] as const] : [];
+        }),
+      ),
+      Promise.all(
+        nextConnections.map(async (row) => {
+          const entry = row.extensionId
+            ? await commands
+                .storeEntry(row.extensionId)
+                .then(unwrapResult)
+                .catch(() => null)
+            : null;
+          return entry ? [[entry.id, entry] as const] : [];
+        }),
+      ),
+    ]);
     setCards(nextCards);
-    setConnections(remote.filter((row) => row.source === "store"));
+    setConnections(nextConnections);
+    setAccounts(Object.fromEntries(nextAccounts.flat()));
+    setListings(Object.fromEntries(nextListings.flat()));
     setSections(nextSections);
     setCovers(
       Object.fromEntries(
@@ -211,12 +256,33 @@ function useInstalledExtensions(): InstalledController {
           `Uninstall "${card.name}"?\n\nIts saved data is kept for a future reinstall.`,
         )
       ) {
-        return;
+        return false;
       }
       setBusy(card.id);
       setError(null);
       try {
         unwrapResult(await commands.extensionUninstall(card.id, false));
+        await refresh();
+        return true;
+      } catch (reason) {
+        setError(String(reason));
+        return false;
+      } finally {
+        setBusy(null);
+      }
+    },
+    [refresh],
+  );
+
+  const toggleConnection = useCallback(
+    async (row: ConnectionView, enabled: boolean) => {
+      if (busy) return;
+      setBusy(row.id);
+      setError(null);
+      try {
+        unwrapResult(
+          await commands.mcpConnectionSetEnabled(row.id, row.revision, enabled),
+        );
         await refresh();
       } catch (reason) {
         setError(String(reason));
@@ -224,7 +290,7 @@ function useInstalledExtensions(): InstalledController {
         setBusy(null);
       }
     },
-    [refresh],
+    [busy, refresh],
   );
 
   const occupantName = useCallback(
@@ -360,6 +426,8 @@ function useInstalledExtensions(): InstalledController {
   return {
     cards,
     connections,
+    accounts,
+    listings,
     sections,
     covers,
     loading,
@@ -367,6 +435,7 @@ function useInstalledExtensions(): InstalledController {
     busy,
     refresh,
     toggle,
+    toggleConnection,
     uninstall,
     permissionDialog,
     conflictDialog,
@@ -375,7 +444,8 @@ function useInstalledExtensions(): InstalledController {
 
 type DetailSelection =
   | { source: "installed"; card: ExtensionCard }
-  | { source: "store" | "mcp"; entry: StoreEntry };
+  | { source: "connection"; connection: ConnectionView }
+  | { source: "store"; entry: StoreEntry };
 
 interface StoreController {
   view: StoreView | null;
@@ -522,7 +592,7 @@ function ExtensionDetail({
   installError: string | null;
 }) {
   const [catalogueEntry, setCatalogueEntry] = useState<StoreEntry | null>(
-    selection.source !== "installed" ? selection.entry : null,
+    selection.source === "store" ? selection.entry : null,
   );
   const [mediaIndex, setMediaIndex] = useState(0);
   const [readme, setReadme] = useState<string | null>(null);
@@ -551,10 +621,14 @@ function ExtensionDetail({
     setReadme(null);
     setInformationOpen(true);
     setAutoSendError(null);
-    if (selection.source === "installed") {
+    if (selection.source !== "store") {
       setCatalogueEntry(null);
       void commands
-        .storeEntry(selection.card.id)
+        .storeEntry(
+          selection.source === "installed"
+            ? selection.card.id
+            : (selection.connection.extensionId ?? ""),
+        )
         .then(unwrapResult)
         .then((entry) => alive && setCatalogueEntry(entry))
         .catch(() => alive && setCatalogueEntry(null));
@@ -570,17 +644,30 @@ function ExtensionDetail({
 
   const selectedCard = selection.source === "installed" ? selection.card : null;
   const selectionId =
-    selection.source === "installed" ? selection.card.id : selection.entry.id;
-  const card =
-    controller.cards.find((candidate) => candidate.id === selectionId) ??
-    selectedCard;
+    selection.source === "installed"
+      ? selection.card.id
+      : selection.source === "connection"
+        ? selection.connection.extensionId
+        : selection.entry.id;
+  const isConnection =
+    selection.source === "connection" ||
+    (selection.source === "store" && selection.entry.kind === "mcp");
+  const card = isConnection
+    ? null
+    : (controller.cards.find((candidate) => candidate.id === selectionId) ??
+      selectedCard);
   const entry =
-    selection.source !== "installed"
+    selection.source === "store"
       ? selection.entry
-      : catalogueEntry?.id === selection.card.id
+      : catalogueEntry?.id === selectionId
         ? catalogueEntry
         : null;
-  const name = card?.name ?? entry?.name ?? "Extension";
+  const name =
+    card?.name ??
+    entry?.name ??
+    (selection.source === "connection"
+      ? selection.connection.name
+      : "Extension");
   const description = card?.description ?? entry?.description ?? "";
   const media = entry?.media.length
     ? entry.media
@@ -588,14 +675,18 @@ function ExtensionDetail({
       ? [controller.covers[card.id]]
       : [];
   const capabilities = entry?.capabilities ?? card?.capabilities ?? [];
-  const installedMcp = controller.connections.find(
-    (row) => row.extensionId === entry?.id,
-  );
-  const installedVersion =
-    installedMcp?.version ??
-    controller.cards.find(
-      (candidate) => candidate.id === (card?.id ?? entry?.id),
-    )?.version;
+  const installedMcp = isConnection
+    ? controller.connections.find((row) =>
+        selection.source === "connection"
+          ? row.id === selection.connection.id
+          : row.extensionId === selectionId,
+      )
+    : undefined;
+  const installedVersion = isConnection
+    ? installedMcp?.version
+    : controller.cards.find(
+        (candidate) => candidate.id === (card?.id ?? entry?.id),
+      )?.version;
   const current = !!entry && installedVersion === entry.version;
   const destination = card
     ? extensionDestination(card, controller.sections)
@@ -747,7 +838,11 @@ function ExtensionDetail({
                 className="button danger"
                 type="button"
                 disabled={controller.busy === card.id}
-                onClick={() => void controller.uninstall(card)}
+                onClick={() =>
+                  void controller.uninstall(card).then((removed) => {
+                    if (removed) onBack();
+                  })
+                }
               >
                 <Trash2 size={14} />
                 Uninstall
@@ -757,6 +852,11 @@ function ExtensionDetail({
         </header>
 
         <div className="extension-detail-sections">
+          {controller.error && (
+            <div className="extension-inline-error" role="alert">
+              {controller.error}
+            </div>
+          )}
           {installError && (
             <div className="extension-inline-error" role="alert">
               {installError}
@@ -768,7 +868,27 @@ function ExtensionDetail({
               query=""
               connectionId={installedMcp.id}
               onChange={controller.refresh}
+              onRemoved={onBack}
             />
+          )}
+          {card && (
+            <section
+              className="mcp-connections"
+              aria-labelledby="extension-settings-title"
+            >
+              <header className="mcp-connections-heading">
+                <div>
+                  <h2 id="extension-settings-title">Settings</h2>
+                  <p>Choose whether this extension is enabled.</p>
+                </div>
+                <Switch
+                  checked={card.enabled}
+                  disabled={controller.busy !== null}
+                  ariaLabel={`${card.enabled ? "Disable" : "Enable"} ${card.name}`}
+                  onChange={() => void controller.toggle(card)}
+                />
+              </header>
+            </section>
           )}
           <DetailDisclosure
             id="extension-information"
@@ -795,7 +915,10 @@ function ExtensionDetail({
                   <div>
                     <dt>Version</dt>
                     <dd>
-                      {card?.version ?? entry?.version ?? "Not available"}
+                      {installedVersion ??
+                        card?.version ??
+                        entry?.version ??
+                        "Not available"}
                     </dd>
                   </div>
                   <div>
@@ -831,7 +954,9 @@ function ExtensionDetail({
                     ))
                   ) : (
                     <div className="extension-detail-muted">
-                      This extension declares no runtime permissions.
+                      {entry || card
+                        ? "This extension declares no runtime permissions."
+                        : "Permission details are unavailable. Your account controls remain available above."}
                     </div>
                   )}
                 </div>
@@ -931,14 +1056,21 @@ function InstalledList({
   onPreview: (selection: DetailSelection) => void;
   onBrowseStore: () => void;
 }) {
-  const entries = filterExtensions(controller.cards, query);
+  const entries = filterExtensions(
+    installedExtensionItems(
+      controller.cards,
+      controller.connections,
+      controller.accounts,
+      controller.listings,
+    ),
+    query,
+  );
   if (controller.loading)
     return (
       <div className="extension-state" role="status">
         Loading installed extensions…
       </div>
     );
-  if (!entries.length && controller.connections.length) return null;
   if (!entries.length && query)
     return (
       <div className="extension-state">
@@ -961,44 +1093,35 @@ function InstalledList({
 
   return (
     <div className="installed-extension-list">
-      {entries.map((card) => {
-        const destination = extensionDestination(card, controller.sections);
-        const openCard = async () => {
-          let resolvedDestination = destination;
-
-          // Disabled packs are intentionally absent from the aggregate anchor
-          // command. Read just this pack's schema before routing so its card
-          // still opens the tool/settings surface it contributes to.
-          if (
-            !card.enabled &&
-            card.has_detail &&
-            destination.kind === "extension-settings"
-          ) {
-            try {
-              const rows = unwrapResult(
-                await commands.extensionSettingsSchema(card.id),
+      {entries.map((item) => {
+        const openCard = () => {
+          if (item.card) onPreview({ source: "installed", card: item.card });
+          else if (item.connection)
+            onPreview({ source: "connection", connection: item.connection });
+        };
+        const toggle = () => {
+          if (item.card) void controller.toggle(item.card);
+          else if (item.connection) {
+            const account = controller.accounts[item.connection.id];
+            if (
+              !account ||
+              (item.connection.authentication === "oauth" && !account.connected)
+            )
+              openCard();
+            else
+              void controller.toggleConnection(
+                item.connection,
+                !account.enabled,
               );
-              resolvedDestination = extensionDestination(card, [
-                ...controller.sections,
-                { id: card.id, name: card.name, rows },
-              ]);
-            } catch {
-              // The standalone extension settings page presents the backend
-              // error if the pack itself is unreadable.
-            }
           }
-
-          if (resolvedDestination.kind === "preview")
-            onPreview({ source: "installed", card });
-          else routeToDestination(resolvedDestination);
         };
         return (
           <article
-            className={`extension-card installed-extension-card${card.enabled ? "" : " extension-disabled"}`}
-            key={card.id}
+            className={`extension-card installed-extension-card${item.enabled ? "" : " extension-disabled"}`}
+            key={item.connection?.id ?? item.id}
             tabIndex={0}
             role="button"
-            aria-label={`Open ${card.name}`}
+            aria-label={`Open ${item.name}`}
             onClick={() => void openCard()}
             onKeyDown={(event) => {
               if (event.target !== event.currentTarget) return;
@@ -1009,65 +1132,44 @@ function InstalledList({
             }}
           >
             <MediaArtwork
-              media={controller.covers[card.id]}
-              name={card.name}
+              media={controller.covers[item.id]}
+              icon={item.card?.icon}
+              name={item.name}
               className="extension-artwork"
             />
             <div className="installed-extension-copy">
               <div className="installed-extension-heading">
-                <strong>{card.name}</strong>
-                {card.trust === "dev" && <span>Dev</span>}
+                <strong>{item.name}</strong>
+                {item.card?.trust === "dev" && <span>Dev</span>}
               </div>
-              <p>{card.description}</p>
+              <p>{item.description}</p>
               {/* Whether an extension is actually doing anything is the first
                   thing this list is asked; a switch alone makes you decode it. */}
-              <span className="installed-extension-state">
-                {card.enabled ? "Enabled" : "Disabled"}
-              </span>
+              <span className="installed-extension-state">{item.status}</span>
             </div>
             <div className="installed-extension-actions">
               <button
                 className="icon-button extension-preview-button"
                 type="button"
-                title={`Preview ${card.name}`}
-                aria-label={`Preview ${card.name}`}
+                title={`Settings for ${item.name}`}
+                aria-label={`Settings for ${item.name}`}
                 onClick={(event) => {
                   event.stopPropagation();
-                  onPreview({ source: "installed", card });
+                  openCard();
                 }}
               >
-                <Eye size={16} />
+                <Settings2 size={16} />
               </button>
-              {/* Removing an extension was reachable only by opening its
-                  preview and scrolling to the footer, so the list you manage
-                  extensions from was the one place you could not remove one.
-                  A dev override is unloaded from the developer tools that
-                  loaded it, not uninstalled. */}
-              {card.trust !== "dev" && (
-                <button
-                  className="icon-button extension-uninstall-button"
-                  type="button"
-                  title={`Uninstall ${card.name}`}
-                  aria-label={`Uninstall ${card.name}`}
-                  disabled={controller.busy === card.id}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    void controller.uninstall(card);
-                  }}
-                >
-                  <Trash2 size={15} />
-                </button>
-              )}
               <button
-                className={`toggle${card.enabled ? " on" : ""}`}
+                className={`toggle${item.enabled ? " on" : ""}`}
                 type="button"
                 role="switch"
-                aria-checked={card.enabled}
-                aria-label={`${card.enabled ? "Disable" : "Enable"} ${card.name}`}
-                disabled={controller.busy === card.id}
+                aria-checked={item.enabled}
+                aria-label={`${item.enabled ? "Disable" : "Enable"} ${item.name}`}
+                disabled={controller.busy !== null}
                 onClick={(event) => {
                   event.stopPropagation();
-                  void controller.toggle(card);
+                  toggle();
                 }}
               >
                 <span />
@@ -1099,6 +1201,7 @@ function StoreGrid({
   const [category, setCategory] = useState("all");
   const [installing, setInstalling] = useState<string | null>(null);
   const installActive = useRef(false);
+  const live = useRef(false);
   const refreshInstalled = controller.refresh;
 
   const load = useCallback(async () => {
@@ -1107,11 +1210,13 @@ function StoreGrid({
 
   useEffect(() => {
     let alive = true;
+    live.current = true;
     void load()
       .catch((reason) => alive && setError(String(reason)))
       .finally(() => alive && setLoading(false));
     return () => {
       alive = false;
+      live.current = false;
       setView(null);
       void commands.storeClose();
     };
@@ -1139,6 +1244,7 @@ function StoreGrid({
             : commands.storeInstall(entry.id, entry.version)),
         );
         await Promise.all([load(), refreshInstalled()]);
+        if (live.current) onPreview({ source: "store", entry });
       } catch (reason) {
         setError(String(reason));
       } finally {
@@ -1146,7 +1252,7 @@ function StoreGrid({
         setInstalling(null);
       }
     },
-    [load, refreshInstalled, controller.connections],
+    [load, refreshInstalled, controller.connections, onPreview],
   );
 
   useEffect(() => {
@@ -1380,7 +1486,7 @@ export function ExtensionsPage({ view }: { view: ExtensionViewId }) {
             installError={storeState.error}
             canInstall={
               Boolean(storeState.view?.can_install) &&
-              (detail.source === "installed" ||
+              (detail.source !== "store" ||
                 detail.entry.kind !== "mcp" ||
                 developer?.enabled === true)
             }
@@ -1392,8 +1498,8 @@ export function ExtensionsPage({ view }: { view: ExtensionViewId }) {
               <div className="eyebrow">Capability management</div>
               <h1>Extensions</h1>
               <p className="page-subtitle">
-                Install native or MCP extensions to give the Agent tools.
-                Connect your own MCP server alongside your installed extensions.
+                Add tools to the Agent with extensions. Connect your own MCP
+                server alongside your installed extensions.
               </p>
             </div>
             <div className="header-actions">
@@ -1481,27 +1587,7 @@ export function ExtensionsPage({ view }: { view: ExtensionViewId }) {
                 }}
               />
               {developer?.enabled && detail === null && (
-                <>
-                  <McpConnections
-                    source="store"
-                    query={query}
-                    onChange={controller.refresh}
-                    onDetails={(row) => {
-                      void commands
-                        .storeEntry(row.extensionId!)
-                        .then(unwrapResult)
-                        .then((entry) => {
-                          if (entry) openDetail({ source: "mcp", entry });
-                          else
-                            setNotice(
-                              "The verified store details are unavailable. You can still manage this connection here.",
-                            );
-                        })
-                        .catch((reason) => setNotice(String(reason)));
-                    }}
-                  />
-                  <McpConnections query={query} />
-                </>
+                <McpConnections query={query} />
               )}
             </>
           ) : (

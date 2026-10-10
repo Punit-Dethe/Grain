@@ -86,7 +86,12 @@ form or credential-free JSON. Manage sign-in, enable/disable, edit, sign-out and
 removal there. Custom connections do not receive a store verification badge or
 borrow another extension's account/client identity.
 
-The current Installed layout was approved on 9 October. Keep the existing
+On 10 October the user clarified that native/MCP implementation must not be
+a public browsing category. Both now share the Installed cards and detail-page
+journey; account/configuration and uninstall sit inside the extension page.
+Install/update opens that page for setup. Visual acceptance of this revised
+layout remains Pending; the 9 October approval describes the earlier layout.
+Keep the existing
 Developer Mode release gate until a deliberate release decision; it currently
 also gates MCP acquisition/account controls. The developer drawer supports
 loading native projects. It is not the ordinary-user setup flow we ultimately
