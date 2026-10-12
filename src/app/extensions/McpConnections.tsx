@@ -7,6 +7,9 @@ import {
   useState,
   type FormEvent,
 } from "react";
+import { createPortal } from "react-dom";
+import { Trash2 } from "lucide-react";
+import { Switch } from "@/components/ui/Switch";
 import {
   commands,
   type ConnectionView,
@@ -29,12 +32,14 @@ export function McpConnections({
   connectionId,
   onChange,
   onRemoved,
+  actionsContainer,
 }: {
   query: string;
   source?: "configured" | "store";
   connectionId?: string;
   onChange?: () => Promise<void>;
   onRemoved?: () => void;
+  actionsContainer?: HTMLElement | null;
 }) {
   const titleId = useId();
   const [rows, setRows] = useState<Row[]>([]);
@@ -58,6 +63,11 @@ export function McpConnections({
   const cancelActive = useRef(false);
   const addButton = useRef<HTMLButtonElement>(null);
   const returnFocus = useRef<HTMLButtonElement | null>(null);
+  const confirmRemoval = useRef<HTMLButtonElement | null>(null);
+
+  useEffect(() => {
+    if (removing) confirmRemoval.current?.focus();
+  }, [removing]);
 
   useEffect(() => {
     if (!adding && !removing && !busy && returnFocus.current) {
@@ -218,6 +228,27 @@ export function McpConnections({
   const matching = rows.filter((row) =>
     `${row.name} ${row.url}`.toLowerCase().includes(query.toLowerCase().trim()),
   );
+  const uninstallControl = (row: Row) => {
+    const button = (
+      <button
+        className={`button ${source === "store" ? "danger" : "ghost"}`}
+        type="button"
+        disabled={busy !== null}
+        onClick={(event) => {
+          returnFocus.current = event.currentTarget;
+          setRemoving(row.id);
+        }}
+      >
+        {source === "store" && <Trash2 size={14} />}
+        {source === "store" ? "Uninstall" : "Remove"}
+      </button>
+    );
+    return source === "store"
+      ? actionsContainer
+        ? createPortal(button, actionsContainer, row.id)
+        : null
+      : button;
+  };
   return (
     <section className="mcp-connections" aria-labelledby={titleId}>
       <header className="mcp-connections-heading">
@@ -226,9 +257,8 @@ export function McpConnections({
             {source === "store" ? "Settings" : "Your MCP connections"}
           </h2>
           <p>
-            {source === "store"
-              ? "Manage your account and whether this extension is enabled."
-              : "Connect a remote tool server directly. No extension package is needed."}
+            {source === "configured" &&
+              "Connect a remote tool server directly. No extension package is needed."}
           </p>
         </div>
         <div className="mcp-connection-actions">
@@ -399,8 +429,12 @@ export function McpConnections({
         </p>
       ) : (
         matching.map((row) => (
-          <article className="mcp-connection-row" key={row.id}>
+          <article
+            className={`mcp-connection-row${source === "store" ? " extension-settings-group" : ""}`}
+            key={row.id}
+          >
             <div className="mcp-connection-copy">
+              {source === "store" && <h3>Account</h3>}
               {source === "configured" && (
                 <>
                   <h3>{row.name}</h3>
@@ -418,12 +452,16 @@ export function McpConnections({
                         : row.account?.state === "disconnected"
                           ? "Sign in to connect your account"
                           : row.account?.state.replace(/_/g, " "))}{" "}
-                &middot;{" "}
-                {row.account?.enabled
-                  ? "Enabled"
-                  : row.account
-                    ? "Disabled"
-                    : "Status unavailable"}
+                {source === "configured" && (
+                  <>
+                    &middot;{" "}
+                    {row.account?.enabled
+                      ? "Enabled"
+                      : row.account
+                        ? "Disabled"
+                        : "Status unavailable"}
+                  </>
+                )}
               </p>
             </div>
             <div className="mcp-connection-actions">
@@ -450,7 +488,8 @@ export function McpConnections({
                         : "Sign in & enable"}
                     </button>
                   )}
-                  {row.account &&
+                  {source === "configured" &&
+                    row.account &&
                     (row.authentication === "none" ||
                       row.account.connected) && (
                       <button
@@ -497,20 +536,37 @@ export function McpConnections({
                       Edit
                     </button>
                   )}
-                  <button
-                    className="button ghost"
-                    type="button"
-                    disabled={busy !== null}
-                    onClick={(event) => {
-                      returnFocus.current = event.currentTarget;
-                      setRemoving(row.id);
-                    }}
-                  >
-                    {source === "store" ? "Uninstall" : "Remove"}
-                  </button>
+                  {source === "configured" && uninstallControl(row)}
                 </>
               )}
             </div>
+            {source === "store" && (
+              <>
+                {uninstallControl(row)}
+                <div className="extension-setting-row">
+                  <div>
+                    <h3>Enabled</h3>
+                    <p>Make this extension’s tools available to the Agent.</p>
+                  </div>
+                  <Switch
+                    checked={row.account?.enabled ?? false}
+                    disabled={
+                      busy !== null ||
+                      !row.account ||
+                      (row.authentication === "oauth" && !row.account.connected)
+                    }
+                    ariaLabel={`${row.account?.enabled ? "Disable" : "Enable"} ${row.name}`}
+                    onChange={(enabled) =>
+                      void run(row.id, () =>
+                        commands
+                          .mcpConnectionSetEnabled(...owner(row), enabled)
+                          .then(unwrapResult),
+                      )
+                    }
+                  />
+                </div>
+              </>
+            )}
             {removing === row.id && (
               <div className="mcp-connection-confirm">
                 <p>
@@ -519,6 +575,7 @@ export function McpConnections({
                 </p>
                 <div className="mcp-connection-actions">
                   <button
+                    ref={confirmRemoval}
                     type="button"
                     className="button danger"
                     disabled={busy !== null}

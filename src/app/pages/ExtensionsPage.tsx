@@ -601,6 +601,8 @@ function ExtensionDetail({
   const [autoSendBusy, setAutoSendBusy] = useState(false);
   const [autoSendError, setAutoSendError] = useState<string | null>(null);
   const backButtonRef = useRef<HTMLButtonElement>(null);
+  const [connectionActions, setConnectionActions] =
+    useState<HTMLDivElement | null>(null);
 
   useEffect(() => {
     const frame = requestAnimationFrame(() => backButtonRef.current?.focus());
@@ -826,13 +828,10 @@ function ExtensionDetail({
                 Open settings
               </button>
             )}
-            {entry &&
-              current &&
-              (!destination || destination.kind === "preview") && (
-                <button className="button" type="button" disabled>
-                  Installed
-                </button>
-              )}
+            <div
+              className="extension-uninstall-slot"
+              ref={setConnectionActions}
+            />
             {card?.trust !== "dev" && card && (
               <button
                 className="button danger"
@@ -846,6 +845,11 @@ function ExtensionDetail({
               >
                 <Trash2 size={14} />
                 Uninstall
+              </button>
+            )}
+            {installedVersion && (
+              <button className="button" type="button" disabled>
+                Installed
               </button>
             )}
           </div>
@@ -869,6 +873,7 @@ function ExtensionDetail({
               connectionId={installedMcp.id}
               onChange={controller.refresh}
               onRemoved={onBack}
+              actionsContainer={connectionActions}
             />
           )}
           {card && (
@@ -879,7 +884,12 @@ function ExtensionDetail({
               <header className="mcp-connections-heading">
                 <div>
                   <h2 id="extension-settings-title">Settings</h2>
-                  <p>Choose whether this extension is enabled.</p>
+                </div>
+              </header>
+              <div className="extension-setting-row">
+                <div>
+                  <h3>Enabled</h3>
+                  <p>Make this extension’s tools available to the Agent.</p>
                 </div>
                 <Switch
                   checked={card.enabled}
@@ -887,7 +897,7 @@ function ExtensionDetail({
                   ariaLabel={`${card.enabled ? "Disable" : "Enable"} ${card.name}`}
                   onChange={() => void controller.toggle(card)}
                 />
-              </header>
+              </div>
             </section>
           )}
           <DetailDisclosure
@@ -996,12 +1006,8 @@ function ExtensionDetail({
 
           <section
             className="extension-detail-readme-section"
-            aria-labelledby="extension-readme-title"
+            aria-label={`${name} description`}
           >
-            <header className="extension-detail-readme-heading">
-              <strong id="extension-readme-title">About this extension</strong>
-              <span>DESCRIPTION.md supplied by the extension author</span>
-            </header>
             <div className="extension-detail-readme">
               {readmeLoading ? (
                 <div className="extension-detail-muted" role="status">

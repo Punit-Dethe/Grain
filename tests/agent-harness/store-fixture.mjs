@@ -51,6 +51,12 @@ export async function startStore(here) {
   const listingHash = createHash("sha256")
     .update(listingDocument)
     .digest("hex");
+  // Tiny public GIF: exercise actual signed artwork fetching, not a UI placeholder.
+  const artwork = Buffer.from(
+    "R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7",
+    "base64",
+  );
+  const artworkHash = createHash("sha256").update(artwork).digest("hex");
   let version = 100,
     pack,
     bytes,
@@ -88,6 +94,8 @@ export async function startStore(here) {
     else if (path === `/media/${listingHash}.md`) {
       body = Buffer.from(listingDocument);
       if (corruptListing) body[body.length - 2] ^= 1;
+    } else if (path === `/media/${artworkHash}.gif`) {
+      body = artwork;
     } else if (path === `/blob/${hash}.${artifactSuffix}`) {
       body = Buffer.from(bytes);
       if (corruptBlob) body[body.length - 2] ^= 1;
@@ -231,6 +239,9 @@ export async function startStore(here) {
               size: bytes.length,
               min_grain_api: "1.0.0",
               listing: { sha256: listingHash, size: listingDocument.length },
+              media: [
+                { sha256: artworkHash, size: artwork.length, kind: "gif" },
+              ],
             },
           ],
         }),

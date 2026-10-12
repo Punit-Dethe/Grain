@@ -1446,11 +1446,21 @@ pub fn store_covers(app: AppHandle, ids: Vec<String>) -> Result<Vec<StoreCover>,
     let Ok((index, _)) = loaded else {
         return Ok(Vec::new());
     };
+    Ok(project_covers(&index.entries, ids))
+}
+
+fn project_covers(entries: &[IndexEntry], ids: Vec<String>) -> Vec<StoreCover> {
     let mut covers: Vec<StoreCover> = Vec::new();
     for id in ids {
         // Newest published entry wins, matching `store_entry`.
-        if let Some(entry) = index.entries.iter().filter(|e| e.id == id).next_back() {
-            if entry.validate_tool_only().is_err() {
+        if let Some(entry) = entries.iter().filter(|e| e.id == id).next_back() {
+            let valid = match entry.artifact_kind {
+                grain_sdk::distribution::ArtifactKind::Native => entry.validate_tool_only(),
+                grain_sdk::distribution::ArtifactKind::McpDescriptor => {
+                    entry.validate_mcp_installable()
+                }
+            };
+            if valid.is_err() {
                 continue;
             }
             if let Some(m) = entry.media.first() {
@@ -1462,7 +1472,7 @@ pub fn store_covers(app: AppHandle, ids: Vec<String>) -> Result<Vec<StoreCover>,
             }
         }
     }
-    Ok(covers)
+    covers
 }
 
 /// A screenshot/GIF for the detail page, as a `data:` URL. Lazy — called only
@@ -1585,6 +1595,10 @@ mod tests {
             entry.artifact_kind = kind;
             let projected = project_entries(std::slice::from_ref(&entry), &revocations);
             assert_eq!(projected.len(), 1);
+            let covers = project_covers(std::slice::from_ref(&entry), vec![entry.id.clone()]);
+            assert_eq!(covers.len(), 1);
+            assert_eq!(covers[0].sha256, "c".repeat(64));
+            assert_eq!(covers[0].kind, "webp");
             assert_eq!(
                 projected[0].kind,
                 if kind == grain_sdk::distribution::ArtifactKind::McpDescriptor {
@@ -1596,6 +1610,11 @@ mod tests {
             assert_eq!(projected[0].readme, "b".repeat(64));
             let mut privileged = entry.clone();
             privileged.capabilities = vec!["capture:screen-image".into()];
+            assert!(project_covers(
+                std::slice::from_ref(&privileged),
+                vec![privileged.id.clone()]
+            )
+            .is_empty());
             assert!(project_entries(&[privileged], &revocations).is_empty());
             assert_eq!(
                 listing_blob_size(&[entry.clone()], &"b".repeat(64), "md").unwrap(),
@@ -2358,9 +2377,14 @@ mod tests {
         let rt = tokio::runtime::Runtime::new().unwrap();
         let view = rt.block_on(refresh(&state, &client));
         assert_eq!(view.status, "fresh", "live index verified + fresh");
-        assert!(view.can_install, "live publication must authorize acquisition");
         assert!(
-            view.entries.iter().any(|entry| entry.id == "com.grain.github"),
+            view.can_install,
+            "live publication must authorize acquisition"
+        );
+        assert!(
+            view.entries
+                .iter()
+                .any(|entry| entry.id == "com.grain.github"),
             "the first-party GitHub listing must be visible, not an empty catalogue"
         );
         let index = state.index.read().unwrap();

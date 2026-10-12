@@ -43,6 +43,7 @@ export function MediaArtwork({
     <div
       className={className}
       data-extension-icon={!media && Boolean(icon) ? "true" : "false"}
+      data-has-artwork={Boolean(url)}
     >
       {url && <img src={url} alt={`${name} ${media ? "preview" : "icon"}`} />}
     </div>

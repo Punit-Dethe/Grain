@@ -245,9 +245,20 @@ export function storeMcpHandlers(ctx) {
           await detail
             .getByRole("heading", { name: "Owned DESCRIPTION", exact: true })
             .waitFor();
-          await detail
-            .getByText("About this extension", { exact: true })
-            .waitFor();
+          assert.equal(
+            await detail
+              .getByText("About this extension", { exact: true })
+              .count(),
+            0,
+          );
+          assert.equal(
+            await detail
+              .getByText("DESCRIPTION.md supplied by the extension author", {
+                exact: true,
+              })
+              .count(),
+            0,
+          );
           await detail
             .getByRole("button", { name: "Install", exact: true })
             .click();
@@ -260,6 +271,25 @@ export function storeMcpHandlers(ctx) {
           await detail
             .getByRole("region", { name: "Settings", exact: true })
             .waitFor();
+          const uninstall = detail.getByRole("button", {
+            name: "Uninstall",
+            exact: true,
+          });
+          await uninstall.waitFor();
+          const [uninstallBounds, installedBounds] = await Promise.all([
+            uninstall.boundingBox(),
+            detail
+              .getByRole("button", { name: "Installed", exact: true })
+              .boundingBox(),
+          ]);
+          assert.ok(
+            uninstallBounds && installedBounds,
+            "Installation controls are visible",
+          );
+          assert.ok(
+            uninstallBounds.x + uninstallBounds.width <= installedBounds.x,
+            "Uninstall sits beside Installed",
+          );
           await page.keyboard.press("Escape");
           await page.evaluate(() => {
             window.location.hash = "#/extensions/installed";
@@ -269,6 +299,12 @@ export function storeMcpHandlers(ctx) {
             exact: true,
           });
           await installed.waitFor();
+          const artwork = installed.getByRole("img", {
+            name: "Store MCP harness preview",
+            exact: true,
+          });
+          await artwork.waitFor();
+          assert.match(await artwork.getAttribute("src"), /^data:image\/gif/);
           const search = page.getByPlaceholder("Search installed extensions", {
             exact: true,
           });
@@ -491,9 +527,13 @@ export function storeMcpHandlers(ctx) {
             name: "Settings",
             exact: true,
           });
-          await account
+          await detail
             .getByRole("button", { name: "Uninstall", exact: true })
             .click();
+          await account
+            .getByRole("button", { name: "Uninstall extension", exact: true })
+            .and(page.locator(":focus"))
+            .waitFor();
           await account
             .getByRole("button", { name: "Uninstall extension", exact: true })
             .click();

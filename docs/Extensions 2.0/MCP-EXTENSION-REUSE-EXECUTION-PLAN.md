@@ -1,6 +1,12 @@
 # Extension platform: audit, reuse and execution plan
 
-## Current continuation point — 10 October 2026
+## Current continuation point — 12 October 2026
+
+The user approves the unified extension direction. The current small UX block
+refines the common detail page (Uninstall beside Installed, labelled settings,
+direct unboxed DESCRIPTION) and fixes installed MCP artwork projection. See
+[progress](MCP-EXTENSION-PROGRESS.md) for its focused evidence. Visual acceptance
+of this refinement is separate from previous provider/Agent results.
 
 Read [EXTENSION-PLATFORM-HANDOFF.md](EXTENSION-PLATFORM-HANDOFF.md) before
 continuing. It records the current user/developer/OAuth/publishing decisions and

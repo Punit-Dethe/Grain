@@ -1,6 +1,6 @@
 # Extension platform: current understanding and integration handoff
 
-**Updated: 10 October 2026.** Main integration is implemented on
+**Updated: 12 October 2026.** Main integration is implemented on
 `extensions/main-integration-20261010`; see the
 [integration checkpoint](MAIN-INTEGRATION-CHECKPOINT.md) for reconciled boundaries,
 automated results and the remaining installed-alpha acceptance.
@@ -89,8 +89,12 @@ borrow another extension's account/client identity.
 On 10 October the user clarified that native/MCP implementation must not be
 a public browsing category. Both now share the Installed cards and detail-page
 journey; account/configuration and uninstall sit inside the extension page.
-Install/update opens that page for setup. Visual acceptance of this revised
-layout remains Pending; the 9 October approval describes the earlier layout.
+Install/update opens that page for setup. On 12 October the user approves the
+shared direction and requests detail-page refinement: Uninstall beside
+Installed, labelled settings rows, and unboxed author description without a
+host-generated header. That refinement awaits visual acceptance. The
+installed artwork path now accepts verified MCP descriptors as well as native
+packages and suppresses placeholder gradients when an image exists.
 Keep the existing
 Developer Mode release gate until a deliberate release decision; it currently
 also gates MCP acquisition/account controls. The developer drawer supports

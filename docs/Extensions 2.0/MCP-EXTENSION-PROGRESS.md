@@ -1,5 +1,32 @@
 # Extension implementation: progress, changes and user testing
 
+**Extension detail refinement, 12 October:** the user approves the shared
+extension direction and requests a simpler detail page. Uninstall now sits
+beside Installed for both implementations. Settings use labels/help on the
+left and controls on the right; account actions and enablement are separate
+rows, with advanced credentials still collapsed. Confirmation receives focus
+and cancellation returns focus to its triggering control. The author's
+DESCRIPTION renders directly, without the host's About/filename header,
+background, border or horizontal inset, in both themes.
+
+Fixed an actual artwork defect: `store_covers` applied native-only validation
+to MCP entries. It now validates each artifact kind correctly and still
+rejects privileged/invalid listings. Real artwork suppresses placeholder
+gradient/decorative layers. Extended the existing two-kind listing test and
+existing real-app store case; no new scenario/framework/runtime was added.
+Frontend unit tests **121 Pass**, focused store backend tests **11 Pass / 1
+network test intentionally ignored**, targeted lint/type/build and store Rust
+formatting Pass; runner self-tests **78 Pass**. Existing real-app store suite
+**3/3 Pass**, cleanup Pass (`.runs/run-Rz8zNq`), including actual signed image
+loading, Uninstall beside Installed, confirmation focus, sign-in/cancellation,
+removal and revocation. Earlier `run-2GyW8h` retains its failed artwork assertion
+and cleanup Pass: the test catalogue had no image. Its existing fixture now
+serves one tiny hash-bound public GIF; no test scenario was added. Visual
+acceptance of this refinement remains Pending. Whole-workspace formatting still reports
+preexisting unrelated audio-journal/rolling differences; those are untouched.
+Preexisting Cargo.toml and generated bindings working changes are preserved
+and excluded from this UI commit.
+
 **Unified extension experience, 10 October:** native/MCP implementation is no
 longer displayed on store cards. Store-installed extensions share one Installed
 card layout, artwork, search, state, toggle and detail-page entry. Installation

@@ -81,3 +81,66 @@
 .mcp-client-settings summary {
   cursor: pointer;
 }
+
+.extension-setting-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 16px 0;
+  border-top: 1px solid var(--hairline-soft);
+}
+.extension-setting-row > div {
+  min-width: 0;
+}
+.extension-setting-row p {
+  max-width: 560px;
+}
+.extension-setting-row > label {
+  flex-shrink: 0;
+}
+.extension-settings-group {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0 24px;
+  border-bottom: 0;
+  padding: 0;
+}
+.extension-settings-group > :is(.mcp-connection-copy, .mcp-connection-actions) {
+  padding: 16px 0;
+}
+.extension-settings-group > .mcp-connection-actions {
+  justify-content: flex-end;
+}
+.extension-settings-group
+  > :is(.extension-setting-row, .mcp-connection-confirm, .mcp-client-settings) {
+  grid-column: 1 / -1;
+}
+.extension-settings-group .mcp-client-settings {
+  border-top: 1px solid var(--hairline-soft);
+  padding: 16px 0;
+}
+.extension-settings-group .mcp-connection-form {
+  max-width: none;
+}
+.extension-settings-group .mcp-connection-form label {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  align-items: center;
+  gap: 24px;
+}
+.extension-settings-group .mcp-connection-form .mcp-connection-actions {
+  justify-content: flex-end;
+}
+@media (max-width: 700px) {
+  .extension-settings-group {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .extension-settings-group > .mcp-connection-actions {
+    justify-content: flex-start;
+    padding-top: 0;
+  }
+  .extension-settings-group .mcp-connection-form label {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 8px;
+  }
+}
