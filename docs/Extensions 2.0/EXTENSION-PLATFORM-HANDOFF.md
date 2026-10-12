@@ -1,6 +1,6 @@
 # Extension platform: current understanding and integration handoff
 
-**Updated: 12 October 2026.** Main integration is implemented on
+**Updated: 13 October 2026.** Main integration is implemented on
 `extensions/main-integration-20261010`; see the
 [integration checkpoint](MAIN-INTEGRATION-CHECKPOINT.md) for reconciled boundaries,
 automated results and the remaining installed-alpha acceptance.
@@ -92,7 +92,8 @@ journey; account/configuration and uninstall sit inside the extension page.
 Install/update opens that page for setup. On 12 October the user approves the
 shared direction and requests detail-page refinement: Uninstall beside
 Installed, labelled settings rows, and unboxed author description without a
-host-generated header. That refinement awaits visual acceptance. The
+host-generated header. On 13 October the user accepts the current design and
+asks to resume functional extension/MCP work; no further visual block is queued. The
 installed artwork path now accepts verified MCP descriptors as well as native
 packages and suppresses placeholder gradients when an image exists.
 Keep the existing

@@ -1,12 +1,16 @@
 # Extension platform: audit, reuse and execution plan
 
-## Current continuation point — 12 October 2026
+## Current continuation point — 13 October 2026
 
-The user approves the unified extension direction. The current small UX block
-refines the common detail page (Uninstall beside Installed, labelled settings,
-direct unboxed DESCRIPTION) and fixes installed MCP artwork projection. See
-[progress](MCP-EXTENSION-PROGRESS.md) for its focused evidence. Visual acceptance
-of this refinement is separate from previous provider/Agent results.
+The user accepts the current extension design and requests functional work.
+The detail/artwork block is complete with focused checks; no further visual
+refinement is queued. The next block is real supported GitHub Agent use and
+account recovery, with one focused audit/fix checkpoint. Follow the existing
+[GitHub batch](GITHUB-ALPHA-ONBOARDING.md#current-user-test-batch), not the historic
+test inventories. Then add Linear as the second supported provider through
+the same pipeline and address third-party publisher OAuth onboarding. See
+[progress](MCP-EXTENSION-PROGRESS.md) for scope and evidence; design approval
+does not establish live provider acceptance.
 
 Read [EXTENSION-PLATFORM-HANDOFF.md](EXTENSION-PLATFORM-HANDOFF.md) before
 continuing. It records the current user/developer/OAuth/publishing decisions and
@@ -39,7 +43,7 @@ production operator setup before implementing the missing application flow.
    account ownership, vault and Tauri commands. Support form/JSON import, editing,
    sign-in/cancellation, enable/disable, sign-out, removal and optional OAuth app
    credentials. Keep the existing Developer Mode release gate until launch.
-2. **Ordinary extension journey (implemented; unified layout awaiting visual acceptance, 10 October):**
+2. **Ordinary extension journey (implemented; current design accepted 13 October):**
    native and MCP are internal implementation choices, not public categories.
    Store cards and the Installed collection share presentation and detail-page
    navigation. Installation opens that page for setup; account, advanced connection
@@ -85,7 +89,7 @@ mandatory infrastructure milestones for this reduced launch.
 | Area | Current position | Remaining acceptance |
 | --- | --- | --- |
 | Custom MCPs and accounts | Form/JSON, SDK transport, OAuth, vault and lifecycle implemented; controlled real-app checks and earlier user Linear checks passed | Actual issued Linear token expiry remains deferred |
-| Native/MCP extension journey | Installation, updates, account controls, DESCRIPTION and author/submission tools implemented; shared cards and detail-page settings updated 10 October; real GitHub store install/sign-in user-confirmed | Visual acceptance of the unified layout, specific first-party GitHub actions/recovery and integrated-alpha acceptance |
+| Native/MCP extension journey | Installation, updates, account controls, DESCRIPTION and author/submission tools implemented; detail/artwork refinement verified and current design accepted 13 October; real GitHub store install/sign-in user-confirmed | Specific first-party GitHub actions/recovery and integrated-alpha acceptance |
 | Basic Agent execution | Genuine configured-model native and MCP read/write/verify and both recovery cases passed; eight controlled failure cases passed | No open genuine-model case in this launch checkpoint; public-provider acceptance remains separate |
 | Public availability | First-party GitHub alpha catalogue signed and active; public HTTP/store backend checks passed; real installation/sign-in user-confirmed; corrected installed Agent opening confirmed 10 October | Specific GitHub actions/recovery; integration with main; permanent production governance and broader distribution remain separate |
 

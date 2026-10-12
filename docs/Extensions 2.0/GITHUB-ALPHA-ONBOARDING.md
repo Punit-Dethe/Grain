@@ -171,7 +171,16 @@ the remaining provider procedures are not inferred from this startup result.
 For the consolidated understanding and next main-branch integration, read
 [the current platform handoff](EXTENSION-PLATFORM-HANDOFF.md).
 
-1. Quit the running Grain, install the replacement alpha above and configure the
+**Current functional checkpoint, 13 October:** use the integrated 0.0.8 alpha
+at `b0a0f397`, not the historical 0.0.6 startup-fix installer above.
+[Build 38286531636](https://github.com/Punit-Dethe/Grain/actions/runs/38286531636)
+succeeded; current installer:
+`C:\Projects\Grain\grain-github-alpha-build-38286531636\nsis\Grain Extensions Alpha_0.0.8_x64-setup.exe`.
+The user accepts the current design. Real GitHub action/recovery acceptance
+is still separate. Existing GitHub registration and alpha profile are reused;
+no new app registration is required for this checkpoint.
+
+1. Quit the running Grain, install the integrated 0.0.8 alpha above and configure the
    Agent model in its separate profile if needed. Open **Agent** in the sidebar,
    turn on the switch beside **Grain Agent**, and use the shortcut displayed below
    it. Development settings do not enable Agent in the alpha profile. Open
@@ -180,7 +189,8 @@ For the consolidated understanding and next main-branch integration, read
 2. In the usual GitHub browser, install/configure **Grain GitHub Development** on
    only `Punit-Dethe/grain-github-alpha-test` (private disposable repo with README).
    In Grain's Store, GitHub should show its DESCRIPTION/artwork. Install it, then
-   connect from Installed and approve GitHub sign-in. No OAuth developer fields
+   open the GitHub detail page from Installed, use Settings to sign in and approve
+   GitHub consent if needed. No OAuth developer fields
    or new app registration should be required.
 3. Ask the Agent: `Use GitHub to read the README in Punit-Dethe/grain-github-alpha-test.`
    Expect the actual README, using GitHub rather than a local smoke tool.

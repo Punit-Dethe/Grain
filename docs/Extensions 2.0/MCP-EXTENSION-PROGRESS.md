@@ -1,5 +1,19 @@
 # Extension implementation: progress, changes and user testing
 
+**Functional continuation, 13 October:** the user says the current design is
+fine and asks to resume actual extension/MCP work. Record the current design
+checkpoint as accepted; stop visual refinement. This does not certify new live
+GitHub tool or account-recovery results. The next bounded block is supported
+GitHub end-to-end use on the integrated alpha: real repository read, one
+explicitly approved disposable issue creation, restart/read and disconnect/
+reconnect. Keep exact action receipts and audit/fix that path before claiming
+provider acceptance. Reuse existing tests; no new harness or tool-discovery
+optimization block is needed. Build `38286531636` succeeded at `b0a0f397`.
+After this checkpoint, add a second supported provider (Linear is the already
+selected/tested account), then address publisher OAuth onboarding before
+inviting general third-party pre-registered MCP publishers. Permanent identity,
+broader distribution and deferred issued Linear expiry remain separate.
+
 **Extension detail refinement, 12 October:** the user approves the shared
 extension direction and requests a simpler detail page. Uninstall now sits
 beside Installed for both implementations. Settings use labels/help on the
