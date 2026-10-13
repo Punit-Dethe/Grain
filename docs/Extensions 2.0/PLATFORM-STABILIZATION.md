@@ -11,8 +11,13 @@ registry persistence and SDK transport. The runtime GitHub toolset branch is
 removed. The GitHub repository has a validated 0.1.1 candidate declaring
 `transport.headers: {"x-mcp-toolsets":"all"}`; no catalogue publication or new
 installer has occurred. Existing custom form/JSON edits preserve these options.
-Publisher pre-registered OAuth onboarding remains the next code task. Item 1 is
-not fully closed until that account contract and installed/package checkpoint.
+Publisher-public OAuth onboarding is now implemented in source too: optional
+`oauthClient` supplies a public ID and exact issuer, with required advertised
+`none` client authentication and existing S256 PKCE/SDK/vault ownership. Explicit
+connection setup retains precedence; no packaged secrets or new OAuth service.
+Client/issuer changes rotate account bindings. Normal sign-in/refresh and
+admission/ownership checks pass. Item 1's code is complete for this supported
+profile; live third-party and matching installed/package acceptance remain open.
 
 ## Outcome and scope
 
@@ -46,10 +51,11 @@ Two concrete contract gaps remain:
    validated public `headers`. GitHub toolset selection is package-owned rather
    than hardcoded in `transport_config`. Live candidate publication/acceptance
    remains separate; the current published package is unchanged.
-2. Generic MCP OAuth supports discovery/registration and explicit per-connection
-   client setup, but seamless publisher-supplied pre-registered client onboarding
-   is absent. The compiled GitHub client is restricted to one verified extension
-   and resource; it is not a general third-party client resolver.
+2. **Resolved for public clients in source:** publisher `oauthClient` metadata
+   reaches the shared SDK sign-in/refresh path with exact issuer and account
+   ownership checks. The compiled GitHub client remains restricted to its verified
+   extension/resource. Arbitrary confidential-client secrets and provider-specific
+   live acceptance are outside the new public-client contract, not claimed solved.
 
 Native authoring and publication have already been implemented and exercised in
 earlier checkpoints. They need an affected-contract review, not a second SDK or

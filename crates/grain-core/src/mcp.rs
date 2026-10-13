@@ -5,8 +5,8 @@ use std::fmt;
 
 use grain_sdk::manifest::network_capability_host;
 use grain_sdk::mcp::{
-    McpDescriptor, McpHeaders, McpTransport, RemoteMcpConnection, MCP_CONNECTION_MAX_BYTES,
-    MCP_DESCRIPTOR_MAX_BYTES, MCP_DESCRIPTOR_SCHEMA,
+    McpAuthentication, McpDescriptor, McpHeaders, McpPublicOAuthClient, McpTransport,
+    RemoteMcpConnection, MCP_CONNECTION_MAX_BYTES, MCP_DESCRIPTOR_MAX_BYTES, MCP_DESCRIPTOR_SCHEMA,
 };
 use grain_sdk::{validate_extension_id, validate_extension_version};
 use serde::Serialize;
@@ -22,6 +22,7 @@ pub enum ContractError {
     InvalidIdentity,
     InvalidHeaders,
     ConnectionTooLarge,
+    InvalidOAuthClient,
 }
 
 impl fmt::Display for ContractError {
@@ -36,6 +37,7 @@ impl fmt::Display for ContractError {
             Self::InvalidIdentity => "MCP connection/account/source identity is invalid.",
             Self::InvalidHeaders => "MCP headers must be bounded public provider options; authentication, routing and protocol headers belong to Grain.",
             Self::ConnectionTooLarge => "MCP connection metadata exceeds its 4 KiB limit.",
+            Self::InvalidOAuthClient => "MCP public OAuth clients require OAuth, a public client ID and an exact HTTPS issuer; secrets and endpoint overrides are not supported.",
         })
     }
 }
@@ -122,6 +124,7 @@ impl ValidatedDescriptor {
         let McpTransport::StreamableHttp { url, headers } = &mut descriptor.transport;
         *url = canonical_endpoint(url)?;
         validate_headers(headers)?;
+        validate_oauth_client(descriptor.authentication, descriptor.oauth_client.as_ref())?;
         if serde_json::to_vec(&descriptor)
             .map_err(|_| ContractError::InvalidJson)?
             .len()
@@ -160,8 +163,32 @@ impl ValidatedDescriptor {
             url: self.endpoint().into(),
             authentication: self.0.authentication,
             headers: self.headers().clone(),
+            oauth_client: self.0.oauth_client.clone(),
         }
     }
+}
+
+pub fn validate_oauth_client(
+    authentication: McpAuthentication,
+    client: Option<&McpPublicOAuthClient>,
+) -> Result<(), ContractError> {
+    if let Some(client) = client {
+        if authentication != (McpAuthentication::OAuth {})
+            || !display_text(&client.client_id, 512)
+            || canonical_endpoint(&client.issuer).is_err()
+        {
+            return Err(ContractError::InvalidOAuthClient);
+        }
+        // Issuers are exact OAuth identifiers, including trailing slash/path.
+        // Validate destination shape but never normalize their identity.
+    }
+    Ok(())
+}
+
+pub fn account_binding_changed(old: &RemoteMcpConnection, new: &RemoteMcpConnection) -> bool {
+    old.url != new.url
+        || old.authentication != new.authentication
+        || old.oauth_client != new.oauth_client
 }
 
 /// Header names are lower-case to avoid case aliases. Values are public package
@@ -440,6 +467,47 @@ mod tests {
             admit(&value).unwrap().descriptor().authentication,
             McpAuthentication::None {}
         );
+    }
+
+    #[test]
+    fn public_oauth_client_is_exact_issuer_metadata_not_secret_configuration() {
+        let mut value = wire();
+        value["oauthClient"] =
+            json!({"clientId":"publisher-client", "issuer":"https://issuer.example/tenant/"});
+        let accepted = admit(&value).unwrap();
+        assert_eq!(
+            accepted.connection().oauth_client.as_ref().unwrap().issuer,
+            "https://issuer.example/tenant/"
+        );
+        assert_eq!(serde_json::to_value(accepted.descriptor()).unwrap(), value);
+        for field in [
+            "clientSecret",
+            "redirectUri",
+            "authorizationEndpoint",
+            "tokenEndpoint",
+            "scopes",
+        ] {
+            let mut bad = value.clone();
+            bad["oauthClient"][field] = json!("forbidden");
+            assert_eq!(admit(&bad), Err(ContractError::InvalidJson));
+        }
+        for id in ["", " padded", "line\nline", "hidden\u{202e}text"] {
+            let mut bad = value.clone();
+            bad["oauthClient"]["clientId"] = json!(id);
+            assert_eq!(admit(&bad), Err(ContractError::InvalidOAuthClient));
+        }
+        for issuer in [
+            "http://issuer.example",
+            "https://localhost",
+            "https://issuer.example?token=secret",
+            "https://issuer.example/#issuer",
+        ] {
+            let mut bad = value.clone();
+            bad["oauthClient"]["issuer"] = json!(issuer);
+            assert_eq!(admit(&bad), Err(ContractError::InvalidOAuthClient));
+        }
+        value["authentication"]["type"] = json!("none");
+        assert_eq!(admit(&value), Err(ContractError::InvalidOAuthClient));
     }
 
     #[test]

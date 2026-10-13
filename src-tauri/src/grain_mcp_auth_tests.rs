@@ -261,10 +261,22 @@ async fn read_form(stream: &mut TcpStream) -> String {
 async fn public_client_uses_pkce_resource_and_validates_before_token_exchange() {
     let server = TokenServer::start("200 OK").await;
     let store = InMemoryCredentialStore::new();
+    let declared = grain_sdk::mcp::McpPublicOAuthClient {
+        client_id: "public-client".into(),
+        issuer: server.origin.clone(),
+    };
+    let mut metadata = server.metadata();
+    metadata.additional_fields.insert(
+        "token_endpoint_auth_methods_supported".into(),
+        json!(["none"]),
+    );
+    let config = public_client_config(&declared, &metadata).unwrap();
+    let mut manager = server.manager(store.clone()).await;
+    manager.set_metadata(metadata.clone());
     let oauth = AuthorizationSession::new(
-        server.manager(store.clone()).await,
-        AuthorizationRequest::new(&format!("http://{CALLBACK_ADDR}{CALLBACK_PATH}"))
-            .with_preregistered_client("public-client")
+        manager,
+        AuthorizationRequest::new(&config.redirect_uri)
+            .with_preregistered_client(config.client_id)
             .with_application_type("native"),
     )
     .await
@@ -301,6 +313,74 @@ async fn public_client_uses_pkce_resource_and_validates_before_token_exchange() 
         .unwrap()
         .token_response
         .is_some());
+    let stored = store.load().await.unwrap().unwrap();
+    store
+        .save(
+            StoredCredentials::new(
+                stored.client_id,
+                stored.token_response,
+                stored.granted_scopes,
+                Some(1),
+            )
+            .with_issuer(Some(server.origin.clone())),
+        )
+        .await
+        .unwrap();
+    let mut manager = server.manager(store).await;
+    manager.set_metadata(metadata.clone());
+    assert!(manager.initialize_from_store().await.unwrap());
+    manager
+        .configure_client(public_client_config(&declared, &metadata).unwrap())
+        .unwrap();
+    assert_eq!(manager.get_access_token().await.unwrap(), "new-token");
+    let requests = server.requests.lock().unwrap();
+    assert_eq!(requests.len(), 2);
+    assert_eq!(requests[1]["grant_type"], "refresh_token");
+    for request in requests.iter() {
+        assert_eq!(request["client_id"], "public-client");
+        assert!(!request.contains_key("client_secret"));
+    }
+}
+
+#[test]
+fn declared_public_client_requires_exact_issuer_and_advertised_none_authentication() {
+    let client = grain_sdk::mcp::McpPublicOAuthClient {
+        client_id: "publisher-client".into(),
+        issuer: "https://issuer.example/tenant".into(),
+    };
+    let mut metadata = AuthorizationMetadata::default();
+    metadata.issuer = Some(client.issuer.clone());
+    metadata.additional_fields.insert(
+        "token_endpoint_auth_methods_supported".into(),
+        json!(["none", "client_secret_basic"]),
+    );
+    assert!(public_client_config(&client, &metadata).is_ok());
+    for issuer in [
+        None,
+        Some("https://other.example".into()),
+        Some("https://issuer.example/tenant/".into()),
+    ] {
+        let mut wrong = metadata.clone();
+        wrong.issuer = issuer;
+        assert!(matches!(
+            public_client_config(&client, &wrong),
+            Err(Recovery::Registration)
+        ));
+    }
+    for methods in [
+        serde_json::Value::Null,
+        json!(["client_secret_basic"]),
+        json!(["client_secret_post"]),
+        json!("none"),
+    ] {
+        metadata
+            .additional_fields
+            .insert("token_endpoint_auth_methods_supported".into(), methods);
+        assert!(matches!(
+            public_client_config(&client, &metadata),
+            Err(Recovery::Configuration)
+        ));
+    }
 }
 
 async fn expired_store(server: &TokenServer) -> InMemoryCredentialStore {

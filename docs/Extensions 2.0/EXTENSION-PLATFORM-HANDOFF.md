@@ -179,17 +179,21 @@ The actual issued Linear token-expiry check remains deferred, not passed.
 - An MCP author packages endpoint/authentication metadata, not user credentials.
   The descriptor supports bounded public `transport.headers` provider options,
   with authentication/routing/MCP control headers reserved for Grain. It rejects
-  tokens as an authentication mechanism, client IDs/secrets, host-owned account
+  tokens as an authentication mechanism, client secrets, host-owned account
   IDs and trust flags. Grain discovers the server's actual tools and manages its
   connection/account itself.
 - Custom/pre-registered MCP users can configure OAuth app credentials through
   the existing account controls. Secret values belong in the vault, not JSON,
   source, chat or the signed descriptor.
-- The built-in no-client-fields GitHub setup is specifically a first-party host
-  integration. We have **not** built a general publisher-supplied OAuth client
-  onboarding contract for every third-party pre-registered MCP. Decide that
-  policy before promising seamless third-party installation; do not add secrets
-  to descriptors or silently reuse Grain's GitHub identity as a workaround.
+- Publisher-public OAuth onboarding is implemented in source: optional
+  `oauthClient` declares `clientId` and exact `issuer`, using the fixed Grain
+  callback, discovered endpoints/scopes and S256 PKCE. The server must advertise
+  public-client authentication (`none`). Explicit connection client setup takes
+  precedence. These declarations never read a saved or compiled client secret;
+  they do not replace GitHub's existing first-party setup. Client/issuer changes
+  rotate account ownership and invalidate old grants/approvals. Confidential-only
+  services still need supported host integration or explicit vault configuration.
+  Normal SDK sign-in/refresh checks pass; live third-party acceptance is pending.
 - A permanent public OAuth client document/domain was considered for servers
   supporting that identity mechanism. It is deferred. The experimental Vercel
   site is not a verified permanent client identity and is not needed by the

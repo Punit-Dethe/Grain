@@ -55,6 +55,8 @@ export function McpConnections({
   const [url, setUrl] = useState("");
   const [authentication, setAuthentication] = useState("oauth");
   const [headers, setHeaders] = useState<Connection["headers"]>({});
+  const [oauthClient, setOAuthClient] =
+    useState<Connection["oauthClient"]>(null);
   const [json, setJson] = useState("");
   const [removing, setRemoving] = useState<string | null>(null);
   const live = useRef(false);
@@ -180,6 +182,7 @@ export function McpConnections({
     setUrl(row?.url ?? "");
     setAuthentication(row?.authentication ?? "oauth");
     setHeaders(row?.headers ?? {});
+    setOAuthClient(row?.oauthClient ?? null);
     setJson(
       JSON.stringify(
         {
@@ -189,6 +192,7 @@ export function McpConnections({
           ...(Object.keys(row?.headers ?? {}).length
             ? { headers: row?.headers }
             : {}),
+          ...(row?.oauthClient ? { oauthClient: row.oauthClient } : {}),
         },
         null,
         2,
@@ -206,6 +210,7 @@ export function McpConnections({
           url,
           authentication: { type: authentication },
           ...(Object.keys(headers).length ? { headers } : {}),
+          ...(oauthClient ? { oauthClient } : {}),
         });
     void run("form", async () => {
       unwrapResult(
@@ -316,6 +321,7 @@ export function McpConnections({
                         url,
                         authentication: { type: authentication },
                         ...(Object.keys(headers).length ? { headers } : {}),
+                        ...(oauthClient ? { oauthClient } : {}),
                       },
                       null,
                       2,
@@ -326,10 +332,12 @@ export function McpConnections({
                     const value = JSON.parse(json);
                     if (
                       !value ||
-                      ![
-                        "authentication,name,url",
-                        "authentication,headers,name,url",
-                      ].includes(Object.keys(value).sort().join()) ||
+                      Object.keys(value)
+                        .filter(
+                          (key) => !["headers", "oauthClient"].includes(key),
+                        )
+                        .sort()
+                        .join() !== "authentication,name,url" ||
                       typeof value.name !== "string" ||
                       typeof value.url !== "string" ||
                       !value.authentication ||
@@ -341,7 +349,12 @@ export function McpConnections({
                           Array.isArray(value.headers) ||
                           Object.values(value.headers).some(
                             (item) => typeof item !== "string",
-                          )))
+                          ))) ||
+                      (value.oauthClient != null &&
+                        (Object.keys(value.oauthClient).sort().join() !==
+                          "clientId,issuer" ||
+                          typeof value.oauthClient.clientId !== "string" ||
+                          typeof value.oauthClient.issuer !== "string"))
                     )
                       throw new Error(
                         "Use name, url and authentication.type before switching to the form.",
@@ -350,6 +363,7 @@ export function McpConnections({
                     setUrl(value.url);
                     setAuthentication(value.authentication.type);
                     setHeaders(value.headers ?? {});
+                    setOAuthClient(value.oauthClient ?? null);
                   } catch (reason) {
                     setError(String(reason));
                     return;
@@ -375,8 +389,8 @@ export function McpConnections({
               />
               <small>
                 Use name, url and authentication.type (oauth or none). Optional
-                headers are public provider options; credentials are entered
-                separately.
+                headers and oauthClient are public provider configuration;
+                credentials are entered separately.
               </small>
             </label>
           ) : (
@@ -410,7 +424,10 @@ export function McpConnections({
                 <select
                   value={authentication}
                   disabled={busy !== null}
-                  onChange={(event) => setAuthentication(event.target.value)}
+                  onChange={(event) => {
+                    setAuthentication(event.target.value);
+                    if (event.target.value === "none") setOAuthClient(null);
+                  }}
                 >
                   <option value="oauth">Browser sign-in (OAuth)</option>
                   <option value="none">No authentication</option>

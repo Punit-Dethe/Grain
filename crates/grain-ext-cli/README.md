@@ -83,8 +83,43 @@ cannot prove an arbitrary provider value is non-secret; publisher review must
 enforce that policy. Options go only to the MCP resource transport, not OAuth
 metadata/registration/token endpoints. `doctor` and `pack` use the host validator.
 
+For a server using a pre-registered **public** OAuth client, the author can add:
+
+```json
+"authentication": { "type": "oauth" },
+"oauthClient": {
+  "clientId": "public-client-registered-with-the-provider",
+  "issuer": "https://auth.example.com/tenant"
+}
+```
+
+The publisher registers that public/native client once, with redirect URI
+`http://127.0.0.1:31938/mcp/oauth/callback`. Users then sign in through Grain;
+they do not need to create their own developer application for this supported
+route. The client ID is public metadata, not an API key. The issuer must match
+discovered metadata exactly, including path/trailing slash. Grain requires S256
+PKCE and advertised `token_endpoint_auth_methods_supported` containing `none`.
+Client IDs are bounded to 512 bytes and issuers use the existing HTTPS destination
+rules. No secret, scope, authorization/token endpoint or redirect override is
+accepted here. Auth endpoints/scopes remain provider-discovered; grants remain
+connection-owned vault data. Changing/removing the declaration requires sign-in
+again and invalidates old approvals.
+
+Explicit per-connection client setup takes precedence over the declaration.
+Without one, the declaration is used; otherwise existing host-supported clients,
+client metadata registration and DCR retain their existing paths. A declared
+client failure never silently falls back to a different registration. Providers
+requiring a secret are outside this publisher-public-client profile; use supported
+host integration or explicit vault setup, never a packaged secret. GitHub's
+existing built-in tester identity is unchanged. This source contract is verified
+with normal SDK tests; live third-party acceptance is not yet claimed.
+
+Direct connection JSON uses the same optional `oauthClient`, alongside name,
+url, authentication and public headers. Custom management remains hidden in
+release/alpha while its backend and development editor remain usable.
+
 The descriptor is limited to 8 KiB and its connection projection to 4 KiB.
-Secrets, client IDs, host
+Secrets, host
 connection IDs, accounts, trust flags, enablement and subprocess commands are
 not descriptor fields. Both `manifest.json` and `mcp.json` in one root are an
 error; the CLI never guesses which kind to build.

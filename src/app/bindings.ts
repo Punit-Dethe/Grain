@@ -2585,7 +2585,8 @@ export type ClipboardHandling = "dont_modify" | "copy_to_clipboard"
  * Host UI projection, deliberately omitting vault/account IDs and numeric u64
  * revisions (JavaScript numbers cannot represent all supported revisions).
  */
-export type ConnectionView = { id: string; source: string; extensionId: string | null; version: string | null; revision: string; name: string; url: string; authentication: string; headers: { [key in string]?: string }; state: string }
+export type ConnectionView = { id: string; source: string; extensionId: string | null; version: string | null; revision: string; name: string; url: string; authentication: string; headers: { [key in string]?: string }; oauthClient: McpPublicOAuthClient | null; state: string }
+export type McpPublicOAuthClient = { clientId: string; issuer: string }
 /**
  * [GRAIN] One context-awareness profile, as the settings UI needs it.
  *

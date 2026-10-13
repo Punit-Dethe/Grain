@@ -1,5 +1,45 @@
 # Extension implementation: progress, changes and user testing
 
+**Publisher public-client OAuth, 14 October:** implemented optional `oauthClient`
+with public `clientId` and exact HTTPS `issuer` for MCP descriptors and direct
+connection JSON. Other client fields, secrets and endpoint/scope/callback overrides
+are rejected. The current SDK owns authorization requests, S256 PKCE, code
+exchange and refresh; Grain owns metadata/destination validation, callback checks,
+per-connection vault namespace, enablement and approvals. No proxy, permanent
+website, new authentication engine or harness API was added.
+
+Client selection is explicit connection setup → publisher declaration → existing
+host-supported identity/registration paths. A publisher declaration must match
+discovered issuer exactly and the provider must advertise client authentication
+`none`. Its path returns without reading manual or compiled client secrets;
+unsupported/mismatched declarations do not fall back silently. GitHub's candidate
+has no declaration and retains its restricted built-in identity. Supported public
+client publishers register the fixed loopback callback once; users sign in normally.
+Confidential-only integrations and live third-party acceptance remain separate.
+
+Adding/changing/removing a declaration rotates account ownership and retires the
+old grant; endpoint/auth/public-client comparisons now share one core helper.
+Signed store projections refuse unsigned client overrides at reload. Custom
+form/JSON edits preserve metadata; choosing no authentication in the form removes
+the incompatible declaration. Public-client status does not ask ordinary users
+to supply client credentials. Only the related binding/type changes are staged;
+unrelated local formatting and Cargo.toml changes stay untouched.
+
+Checks: **320 core, 14 CLI, 28 authoring-check, 83 MCP runtime and 123 frontend
+tests Pass**, plus types, targeted lint/format and scoped source review. Existing
+SDK public-client tests now validate the declaration gate, exact callback/state/
+issuer/resource/S256, code exchange and refresh without a secret. Wrong issuer,
+secret-only/missing client-auth metadata, account rotation and persisted store
+tampering have focused coverage. The earlier projection count assertion was
+updated from 10 to 11 public fields; no private vault identity is exposed.
+This is normal/local SDK evidence, not a live provider or issued 24-hour expiry
+certificate. No catalogue activation, installer or external-account action.
+
+Stabilization item 1's supported package/public-account source contract is now
+implemented. Next: attribute the recorded Agent routing failures, then one
+batched matching install/publication checkpoint and affected-boundary audit.
+Live publisher-public-client acceptance stays explicit; Notion remains deferred.
+
 **Package-owned transport options, 14 October:** implemented optional public
 `transport.headers` for MCP descriptors and top-level `headers` for direct
 connection JSON. Shared validation uses the existing HTTP parser, bounds

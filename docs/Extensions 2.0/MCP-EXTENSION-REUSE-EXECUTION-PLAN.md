@@ -2,12 +2,16 @@
 
 ## Current continuation point — 14 October 2026
 
-**Current source delivery:** package-owned public transport options are
-implemented and the GitHub 0.1.1 candidate validates/packs. Its catalogue
+**Current source delivery:** package-owned public transport options and
+issuer-bound publisher-public OAuth client declarations are implemented. The
+GitHub 0.1.1 candidate validates/packs and keeps its existing built-in sign-in.
+Its catalogue
 publication and matching installed-alpha acceptance are pending. Grain no
 longer hardcodes the GitHub toolset request. Custom JSON/form editing preserves
-options; release/alpha custom management remains hidden. Next is the shared
-publisher pre-registered OAuth contract; item 1 is not fully closed yet.
+options/client metadata; release/alpha custom management remains hidden.
+Next is diagnosis of the recorded Agent routing failures. Item 1's source
+contract is complete for public PKCE clients, with live provider/package
+acceptance still pending; arbitrary confidential registrations are not promised.
 
 **Active order: shared platform first.** Follow
 [PLATFORM-STABILIZATION.md](PLATFORM-STABILIZATION.md). The user explicitly
@@ -18,7 +22,7 @@ Notion follows as a second-provider check; no new provider batches now.
 
 Native tools, store MCPs and custom MCPs already have shared execution/account
 foundations. Package-owned transport options now have a shared implementation;
-publisher pre-registered OAuth onboarding remains the concrete contract gap.
+publisher-public OAuth onboarding now has the shared SDK/issuer/ownership path.
 They are audited in the stabilization document with source anchors,
 implementation scope and completion gates. Do not build another runtime,
 marketplace or harness engine. Custom MCP management remains hidden in release

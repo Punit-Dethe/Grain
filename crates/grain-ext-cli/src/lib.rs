@@ -253,6 +253,7 @@ pub fn init_mcp_project(
             "none" => McpAuthentication::None {},
             _ => bail!("--authentication must be oauth or none"),
         },
+        oauth_client: None,
     };
     let root = cwd.join(&slug);
     fs::create_dir(&root)
@@ -1133,6 +1134,7 @@ mod tests {
         let mut descriptor: serde_json::Value =
             serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
         descriptor["transport"]["headers"] = serde_json::json!({"x-mcp-toolsets":"all"});
+        descriptor["oauthClient"] = serde_json::json!({"clientId":"publisher-client", "issuer":"https://issuer.example/tenant"});
         fs::write(&path, serde_json::to_vec(&descriptor).unwrap()).unwrap();
         run(["pack".into()], &root).unwrap();
         let artifact = root.join("com.example.options-0.1.0.mcp.json");

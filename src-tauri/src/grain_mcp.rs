@@ -315,6 +315,9 @@ fn provider_endpoint<'a>(item: &'a Provider<'_>) -> Result<std::borrow::Cow<'a, 
 }
 
 impl Provider<'_> {
+    fn oauth_client(&self) -> Option<&grain_sdk::mcp::McpPublicOAuthClient> {
+        self.ownership.and_then(|owner| owner.oauth_client())
+    }
     fn headers(&self) -> grain_sdk::mcp::McpHeaders {
         self.ownership
             .map(|owner| owner.headers().clone())
@@ -343,6 +346,7 @@ impl Provider<'_> {
             } else {
                 McpAuthentication::None {}
             },
+            oauth_client: self.oauth_client().cloned(),
         })
     }
 }
@@ -924,12 +928,48 @@ fn client_id(app: &AppHandle, provider_id: &str) -> Option<String> {
 
 fn provider_client_id(app: &AppHandle, item: &Provider<'_>) -> Option<String> {
     client_id(app, &provider_account(item))
+        .or_else(|| item.oauth_client().map(|client| client.client_id.clone()))
         .or_else(|| builtin_client(app, item).map(|client| client.id.to_owned()))
+}
+
+fn package_client<'a>(
+    app: &AppHandle,
+    item: &'a Provider<'_>,
+) -> Option<&'a grain_sdk::mcp::McpPublicOAuthClient> {
+    if client_id(app, &provider_account(item)).is_some() {
+        None
+    } else {
+        item.oauth_client()
+    }
+}
+
+fn public_client_config(
+    client: &grain_sdk::mcp::McpPublicOAuthClient,
+    metadata: &AuthorizationMetadata,
+) -> Result<OAuthClientConfig, Recovery> {
+    if metadata.issuer.as_deref() != Some(client.issuer.as_str()) {
+        return Err(Recovery::Registration);
+    }
+    if !metadata
+        .additional_fields
+        .get("token_endpoint_auth_methods_supported")
+        .and_then(serde_json::Value::as_array)
+        .is_some_and(|methods| methods.iter().any(|method| method.as_str() == Some("none")))
+    {
+        return Err(Recovery::Configuration);
+    }
+    Ok(OAuthClientConfig::new(
+        &client.client_id,
+        format!("http://{CALLBACK_ADDR}{CALLBACK_PATH}"),
+    ))
 }
 
 fn builtin_client(app: &AppHandle, item: &Provider<'_>) -> Option<builtin::Client<'static>> {
     // Explicit per-connection registrations retain their own issuer/vault binding.
-    if client_id(app, &provider_account(item)).is_some() || !requires_account(item) {
+    if client_id(app, &provider_account(item)).is_some()
+        || item.oauth_client().is_some()
+        || !requires_account(item)
+    {
         return None;
     }
     builtin::github(
@@ -952,6 +992,14 @@ async fn provider_client_secret(
     client_id: &str,
     metadata: &AuthorizationMetadata,
 ) -> Result<Option<String>, Recovery> {
+    if let Some(client) = package_client(app, item) {
+        if client.client_id != client_id {
+            return Err(Recovery::Registration);
+        }
+        public_client_config(client, metadata)?;
+        // Public registrations never read another registration's vault secret.
+        return Ok(None);
+    }
     if let Some(client) = builtin_client(app, item) {
         if client.id != client_id
             || !builtin::github_metadata(
@@ -1771,6 +1819,9 @@ async fn authorization_manager(
     }
     validate_hosted_oauth_metadata(&resolution.metadata).map_err(|_| Recovery::Configuration)?;
     validate_oauth_destinations(item, &resolution.metadata).map_err(|_| Recovery::Configuration)?;
+    let public_config = package_client(app, item)
+        .map(|client| public_client_config(client, &resolution.metadata))
+        .transpose()?;
     let configured_secret = if pre_registered {
         provider_client_secret(
             app,
@@ -1792,10 +1843,14 @@ async fn authorization_manager(
         return Err(Recovery::Reconnect);
     }
     if pre_registered {
-        let mut config = OAuthClientConfig::new(
-            configured_id.ok_or(Recovery::Registration)?,
-            format!("http://{CALLBACK_ADDR}{CALLBACK_PATH}"),
-        );
+        let mut config = if let Some(config) = public_config {
+            config
+        } else {
+            OAuthClientConfig::new(
+                configured_id.ok_or(Recovery::Registration)?,
+                format!("http://{CALLBACK_ADDR}{CALLBACK_PATH}"),
+            )
+        };
         if let Some(secret) = configured_secret {
             config = config.with_client_secret(secret);
         }

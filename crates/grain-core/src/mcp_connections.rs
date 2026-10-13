@@ -14,8 +14,9 @@ use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use crate::mcp::{
-    canonical_endpoint, display_text, validate_headers, ConnectionIdentity, ConnectionSource,
-    ContractError, StoreDescriptor, ValidatedDescriptor,
+    account_binding_changed, canonical_endpoint, display_text, validate_headers,
+    validate_oauth_client, ConnectionIdentity, ConnectionSource, ContractError, StoreDescriptor,
+    ValidatedDescriptor,
 };
 
 const FILE_NAME: &str = "mcp-connections.json";
@@ -42,6 +43,8 @@ impl ConnectionDefinition {
         }
         input.url = canonical_endpoint(&input.url).map_err(RegistryError::InvalidInput)?;
         validate_headers(&input.headers).map_err(RegistryError::InvalidInput)?;
+        validate_oauth_client(input.authentication, input.oauth_client.as_ref())
+            .map_err(RegistryError::InvalidInput)?;
         if serde_json::to_vec(&input)
             .map_err(|_| RegistryError::InvalidState)?
             .len()
@@ -213,6 +216,7 @@ impl ConnectionRegistry {
                         if row.definition.name != metadata.name
                             || row.definition.url != descriptor.endpoint()
                             || row.definition.headers != *descriptor.headers()
+                            || row.definition.oauth_client != metadata.oauth_client
                             || row.definition.authentication != metadata.authentication
                         {
                             return Err(RegistryError::InvalidState);
@@ -339,8 +343,7 @@ impl ConnectionRegistry {
                 .revision
                 .checked_add(1)
                 .ok_or(RegistryError::RevisionExhausted)?;
-            let account_changed = old.definition.url != definition.0.url
-                || old.definition.authentication != definition.0.authentication;
+            let account_changed = account_binding_changed(&old.definition, &definition.0);
             let account = if account_changed {
                 new_id()
             } else {
@@ -460,8 +463,7 @@ impl ConnectionRegistry {
                 .checked_add(1)
                 .ok_or(RegistryError::RevisionExhausted)?;
             let definition = admitted.descriptor().connection();
-            let changed_account = old.definition.url != definition.url
-                || old.definition.authentication != definition.authentication;
+            let changed_account = account_binding_changed(&old.definition, &definition);
             let account = if changed_account {
                 new_id()
             } else {
@@ -658,6 +660,10 @@ mod tests {
         descriptor["version"] = json!("2.0.0");
         entry.version = "2.0.0".into();
         match mode {
+            "oauth-client" => {
+                descriptor["oauthClient"] =
+                    json!({"clientId":"published-client", "issuer":"https://issuer.example"});
+            }
             "headers" => {
                 descriptor["transport"]["headers"] = json!({"x-mcp-toolsets":"all"});
             }
@@ -685,7 +691,13 @@ mod tests {
 
     #[test]
     fn verified_store_updates_preserve_or_rotate_accounts_and_invalidate_old_leases() {
-        for mode in ["metadata", "headers", "endpoint", "authentication"] {
+        for mode in [
+            "metadata",
+            "headers",
+            "endpoint",
+            "authentication",
+            "oauth-client",
+        ] {
             let dir = tempfile::tempdir().unwrap();
             let registry = ConnectionRegistry::load(dir.path()).unwrap();
             let (entry, bytes) = store_entry();
@@ -1184,6 +1196,58 @@ mod tests {
                 .definition(),
             next.record.definition()
         );
+    }
+
+    #[test]
+    fn public_client_changes_retire_accounts_and_persist_only_bound_metadata() {
+        let dir = tempfile::tempdir().unwrap();
+        let registry = ConnectionRegistry::load(dir.path()).unwrap();
+        let mut input = wire();
+        input["authentication"]["type"] = json!("oauth");
+        let original = registry.insert(definition(&input)).unwrap();
+        let id = original.identity.connection_id();
+        for client in [
+            json!({"clientId":"one", "issuer":"https://issuer.example"}),
+            json!({"clientId":"two", "issuer":"https://issuer.example"}),
+            json!({"clientId":"two", "issuer":"https://other.example"}),
+            serde_json::Value::Null,
+        ] {
+            let lease = registry.lease(id).unwrap();
+            input["oauthClient"] = client;
+            let retired = registry
+                .replace(&lease, definition(&input))
+                .unwrap()
+                .unwrap();
+            let next = registry.lease(id).unwrap();
+            assert_ne!(
+                retired.identity.account_id(),
+                next.record.identity.account_id()
+            );
+            assert!(!registry.is_current(&lease));
+            assert_eq!(
+                ConnectionRegistry::load(dir.path())
+                    .unwrap()
+                    .list()
+                    .unwrap()[0]
+                    .definition(),
+                next.record.definition()
+            );
+        }
+        let store_dir = tempfile::tempdir().unwrap();
+        let store = ConnectionRegistry::load(store_dir.path()).unwrap();
+        let row = store.insert_store(store_change("oauth-client")).unwrap();
+        assert_eq!(
+            row.definition().oauth_client.as_ref().unwrap().client_id,
+            "published-client"
+        );
+        let path = store_dir.path().join(FILE_NAME);
+        let mut data: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        data["connections"][0]["definition"]["oauthClient"]["clientId"] = json!("unsigned");
+        fs::write(&path, serde_json::to_vec(&data).unwrap()).unwrap();
+        assert!(matches!(
+            ConnectionRegistry::load(store_dir.path()),
+            Err(RegistryError::InvalidState)
+        ));
     }
 
     #[test]

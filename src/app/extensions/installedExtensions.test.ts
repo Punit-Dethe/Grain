@@ -25,6 +25,7 @@ const connection: ConnectionView = {
   url: "https://example.com/mcp",
   authentication: "oauth",
   headers: {},
+  oauthClient: null,
   state: "inactive",
 };
 const account = (

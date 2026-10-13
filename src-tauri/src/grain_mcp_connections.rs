@@ -44,6 +44,10 @@ impl RuntimeOwner {
         &self.lease.record().definition().headers
     }
 
+    pub(super) fn oauth_client(&self) -> Option<&grain_sdk::mcp::McpPublicOAuthClient> {
+        self.lease.record().definition().oauth_client.as_ref()
+    }
+
     pub(super) fn spec(&self) -> super::Provider<'_> {
         let definition = self.lease.record().definition();
         super::Provider {
@@ -265,9 +269,10 @@ impl State {
         let id = lease.record().identity().connection_id();
         self.invalidate(id)?;
         prune_enabled(app, id, None)?;
-        let changed_account = lease.record().definition().url != admitted.descriptor().endpoint()
-            || lease.record().definition().authentication
-                != admitted.descriptor().descriptor().authentication;
+        let changed_account = grain_core::mcp::account_binding_changed(
+            lease.record().definition(),
+            &admitted.descriptor().connection(),
+        );
         if changed_account {
             retire_account(lease.record())?;
             prune_client_ids(app, id)?;
@@ -331,6 +336,7 @@ pub struct ConnectionView {
     url: String,
     authentication: String,
     headers: grain_sdk::mcp::McpHeaders,
+    oauth_client: Option<grain_sdk::mcp::McpPublicOAuthClient>,
     state: String,
 }
 
@@ -359,6 +365,7 @@ impl From<ConnectionRecord> for ConnectionView {
             name: definition.name.clone(),
             url: definition.url.clone(),
             headers: definition.headers.clone(),
+            oauth_client: definition.oauth_client.clone(),
             authentication: match definition.authentication {
                 McpAuthentication::OAuth {} => "oauth",
                 McpAuthentication::None {} => "none",
@@ -619,7 +626,8 @@ pub async fn mcp_connection_status(
             endpoint: item.endpoint.into(),
             setup_url: item.setup_url.into(),
             requires_client_credentials: super::preregistered(&app, &item)
-                && super::builtin_client(&app, &item).is_none(),
+                && super::builtin_client(&app, &item).is_none()
+                && super::package_client(&app, &item).is_none(),
             client_id_configured: super::provider_client_id(&app, &item).is_some(),
             connected,
             enabled: (!required || connected) && owner.enabled(&app),
@@ -790,8 +798,10 @@ pub async fn mcp_connection_replace(
         if lease.record().definition() != definition.definition() {
             state.invalidate(&id)?;
         }
-        let account_changed = lease.record().definition().url != definition.definition().url
-            || lease.record().definition().authentication != definition.definition().authentication;
+        let account_changed = grain_core::mcp::account_binding_changed(
+            lease.record().definition(),
+            definition.definition(),
+        );
         if account_changed {
             if !registry.is_current(&lease) {
                 return Err(RegistryError::Conflict.to_string());
@@ -958,13 +968,21 @@ mod tests {
     fn connection_views_distinguish_sources_without_exposing_account_identity() {
         let data = tempfile::tempdir().unwrap();
         let registry = ConnectionRegistry::load(data.path()).unwrap();
-        let configured = registry.insert(ConnectionDefinition::parse(br#"{"name":"Custom tools","url":"https://example.com/mcp","authentication":{"type":"none"},"headers":{"x-provider-profile":"test"}}"#).unwrap()).unwrap();
+        let configured = registry.insert(ConnectionDefinition::parse(br#"{"name":"Custom tools","url":"https://example.com/mcp","authentication":{"type":"oauth"},"headers":{"x-provider-profile":"test"},"oauthClient":{"clientId":"publisher-client","issuer":"https://issuer.example"}}"#).unwrap()).unwrap();
         let store = registry.insert_store(store_descriptor()).unwrap();
         for (record, source) in [(configured, "configured"), (store, "store")] {
             let view = serde_json::to_value(ConnectionView::from(record)).unwrap();
             assert_eq!(view["source"], source);
             assert!(view["revision"].is_string());
-            assert_eq!(view.as_object().unwrap().len(), 10);
+            assert_eq!(view.as_object().unwrap().len(), 11);
+            assert_eq!(
+                view["oauthClient"],
+                if source == "configured" {
+                    serde_json::json!({"clientId":"publisher-client", "issuer":"https://issuer.example"})
+                } else {
+                    serde_json::Value::Null
+                }
+            );
             assert_eq!(
                 view["headers"],
                 if source == "configured" {

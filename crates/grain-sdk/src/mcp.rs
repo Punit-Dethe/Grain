@@ -7,6 +7,15 @@ use std::collections::BTreeMap;
 /// Public provider configuration, never account credentials or protocol state.
 pub type McpHeaders = BTreeMap<String, String>;
 
+/// Publisher-owned public registration. Grain discovers endpoints and keeps
+/// account tokens; this never supplies a client secret or callback override.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct McpPublicOAuthClient {
+    pub client_id: String,
+    pub issuer: String,
+}
+
 fn deserialize_headers<'de, D: serde::Deserializer<'de>>(
     deserializer: D,
 ) -> Result<McpHeaders, D::Error> {
@@ -51,6 +60,12 @@ pub struct RemoteMcpConnection {
         skip_serializing_if = "BTreeMap::is_empty"
     )]
     pub headers: McpHeaders,
+    #[serde(
+        rename = "oauthClient",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub oauth_client: Option<McpPublicOAuthClient>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -64,6 +79,8 @@ pub struct McpDescriptor {
     pub grain_api: String,
     pub transport: McpTransport,
     pub authentication: McpAuthentication,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub oauth_client: Option<McpPublicOAuthClient>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
