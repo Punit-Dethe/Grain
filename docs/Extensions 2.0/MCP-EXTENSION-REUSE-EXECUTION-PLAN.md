@@ -1,52 +1,46 @@
 # Extension platform: audit, reuse and execution plan
 
-## Current continuation point — 13 October 2026
+## Current continuation point — 14 October 2026
 
-**Latest scope:** the next provider is now **Notion**, chosen by the user.
-Follow [GitHub-to-Notion delivery](GITHUB-NOTION-DELIVERY.md): hide custom MCP
-surfaces in release/alpha while retaining development code, request all GitHub
-toolsets, finish broader grants and verify representative capability families,
-then review that path and run Notion acceptance. Preparation can overlap;
-provider verdicts stay separate. No fresh release is requested until needed to
-exercise changed installed behavior. Full-toolset GitHub source is verified,
-but the existing installed binary still advertises its old 49-tool default set.
+**Active order: shared platform first.** Follow
+[PLATFORM-STABILIZATION.md](PLATFORM-STABILIZATION.md). The user explicitly
+supersedes GitHub breadth → Notion: retain GitHub as the existing reference,
+close shared package/account gaps, resolve observed Agent routing faults, then
+verify the publication/install journey and audit the affected boundaries.
+Notion follows as a second-provider check; no new provider batches now.
 
-The user accepts the current extension design and requests functional work.
-The detail/artwork block is complete with focused checks; no further visual
-refinement is queued. The next block is real supported GitHub Agent use and
-account recovery, with one focused audit/fix checkpoint. Follow the existing
-[GitHub batch](GITHUB-ALPHA-ONBOARDING.md#current-user-test-batch), not the historic
-test inventories. Notion is the second supported provider; after its acceptance,
-address third-party publisher OAuth onboarding. See
-[progress](MCP-EXTENSION-PROGRESS.md) for scope and evidence; design approval
-does not establish live provider acceptance.
+Native tools, store MCPs and custom MCPs already have shared execution/account
+foundations. The concrete contract gaps are package-owned transport options
+(current GitHub header special case) and publisher pre-registered OAuth
+onboarding. They are audited in the stabilization document with source anchors,
+implementation scope and completion gates. Do not build another runtime,
+marketplace or harness engine. Custom MCP management remains hidden in release
+and alpha; preserve its shared validation, registry and account isolation.
 
-**Current GitHub results:** after the user updated the GitHub App installation
-access, real Agent private README read and account/read after restart passed
-on the installed alpha (`github-alpha-iuyNiW`, 4/4 including preflight, cleanup
-Pass). These use a focused production-IPC script in `tests/agent-harness/`,
-as the user explicitly requested no Computer Use. No writes are enabled in
-that script. The next two distinct checks are one disposable issue creation
-and disconnect/reconnect. A scoped sidebar/build-mode fix also makes Extensions
-visible in alpha builds; ordinary beta builds retain their existing hidden
-entry point. Rebuilt-alpha entry-point verification remains separate.
+The accepted UI design needs no further refinement in this block. Ordinary
+beta still hides Extensions; alpha source shows it. Custom management and old
+hosted-provider validation are hidden in release/alpha source builds. These
+are presentation gates, not deletion or backend authorization boundaries.
 
-Read [EXTENSION-PLATFORM-HANDOFF.md](EXTENSION-PLATFORM-HANDOFF.md) before
-continuing. It records the current user/developer/OAuth/publishing decisions and
-limitations, source ownership and the verified alpha checkpoint. The user
-confirms the corrected installed Agent opens; store GitHub installation/sign-in
-were already confirmed. GitHub write/disconnect/reconnect and deferred issued
-Linear token expiry remain pending/deferred respectively; the read/restart
-results above now supersede that portion of the earlier handoff.
+**Live GitHub evidence:** installed private README read and read after restart
+Pass; supported default catalogue contains 49 tools. Issue creation and branch
+creation independently Pass. Issue update/close Fail with cause unresolved;
+file creation Fail after the model proposed another branch action and the exact
+scope guard refused it. Both write runs cleaned up the owned host and restored
+log settings. No failed write was replayed. The older binary cannot establish
+new all-toolset behavior or model-boundary trace. Retained report IDs and object
+identities are in the stabilization document; do not turn partial success into
+full GitHub acceptance.
 
-Main integration is implemented on `extensions/main-integration-20261010`,
-using `bbae21ccadc4c6e8d65263e207d644db41ab74ad` (app 0.0.8).
-The [integration checkpoint](MAIN-INTEGRATION-CHECKPOINT.md) records the actual
-three-way merge, source decisions and 24 passing real-app cases. Installed-alpha
-Agent/shortcut/dictation and live GitHub acceptance remain the next checkpoint;
-earlier 0.0.6 results are not silently carried forward. No new harness/framework
-or legacy compatibility layer was added. After that checkpoint, resume the
-provider/publisher onboarding and concrete UX work recorded in the handoff.
+Read [EXTENSION-PLATFORM-HANDOFF.md](EXTENSION-PLATFORM-HANDOFF.md) for source,
+account and publication ownership. Main integration remains on
+`extensions/main-integration-20261010` against
+`bbae21ccadc4c6e8d65263e207d644db41ab74ad` (0.0.8); see
+[MAIN-INTEGRATION-CHECKPOINT.md](MAIN-INTEGRATION-CHECKPOINT.md). Earlier plans
+and counts below record history rather than additional infrastructure gates.
+Deferred live Linear token expiry is not passed. No additional installer or
+production release is dispatched for this audit. Continue independent source
+work instead of watching the pending tester build.
 
 ## Launch scope reset — 8 October 2026
 

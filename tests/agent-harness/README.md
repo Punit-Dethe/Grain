@@ -2,6 +2,13 @@
 
 ## Installed GitHub alpha checkpoint (13 October)
 
+**14 October work order:** shared platform stabilization comes first; see
+[the active plan](../../docs/Extensions%202.0/PLATFORM-STABILIZATION.md). Do not
+run another provider/write batch automatically. The temporary `--files` mode
+used for independent branch/file diagnostics is removed; preserve its report.
+Failure diagnostics contain types/counts and fixed keyword markers, not raw
+model replies, arguments, provider payloads or credentials.
+
 Run from the repository root on Windows:
 
 ```powershell
@@ -54,8 +61,13 @@ Agent/MCP command path, not physical shortcuts or visual interaction.
 After the user updated GitHub App repository access, `github-alpha-iuyNiW`
 passed preflight, private README read, persisted account after restart and a
 second verified read, with cleanup Pass. Earlier 404 and guard-refusal runs
-remain failed evidence. Real issue creation and disconnect/reconnect remain
-separate pending acceptance; never infer them from a successful read.
+remain failed evidence. `github-alpha-F01z0v` independently verified issue #1
+creation, then update/close Fail; the issue remained open with its original body.
+The independent `github-alpha-OwevZN` run verified branch creation, then refused
+a proposed second branch action during the file check. File creation Fail, not
+Pass. Both runs cleaned up and restored logging. Actual full-toolset exposure,
+the update failure's root cause and disconnect/reconnect remain separate from
+these results. Never automatically replay failed writes.
 
 **App-main integration (10 October):** see the
 [integration checkpoint](../../docs/Extensions%202.0/MAIN-INTEGRATION-CHECKPOINT.md).

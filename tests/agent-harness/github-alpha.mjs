@@ -260,6 +260,19 @@ export async function runInstalledGitHub(mode) {
             ? error.message
             : "Check failed; no automatic retry or acceptance credit",
         diagnostic: error.diagnostic ?? {
+          type: error?.name ?? typeof error,
+          assertion:
+            error?.code === "ERR_ASSERTION"
+              ? {
+                  operator: error.operator,
+                  actual:
+                    typeof error.actual === "number" ? error.actual : undefined,
+                  expected:
+                    typeof error.expected === "number"
+                      ? error.expected
+                      : undefined,
+                }
+              : undefined,
           markers: [
             "401",
             "403",
@@ -504,11 +517,29 @@ export async function runInstalledGitHub(mode) {
         300000,
       );
     }
-    assert.equal(
-      writes,
-      1,
-      "Require one host-approved action, not a model claim",
-    );
+    if (writes !== 1) {
+      const error = new Error(
+        "Require one host-approved action, not a model claim",
+      );
+      error.diagnostic = {
+        approvedWrites: writes,
+        approvedReads: reads,
+        replyBytes: Buffer.byteLength(reply.text),
+        markers: [
+          "401",
+          "403",
+          "404",
+          "permission",
+          "not found",
+          "budget",
+          "unknown",
+          "error",
+          "failed",
+          "confirmation",
+        ].filter((marker) => reply.text.toLowerCase().includes(marker)),
+      };
+      throw error;
+    }
     return {
       approvedWrites: writes,
       approvedReads: reads,

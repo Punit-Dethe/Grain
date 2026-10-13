@@ -1,6 +1,8 @@
 # Extension platform: current understanding and integration handoff
 
-**Updated: 13 October 2026.** Main integration is implemented on
+**Updated: 14 October 2026.** Follow the active
+[platform stabilization order](PLATFORM-STABILIZATION.md) before starting more
+provider-specific testing or Notion. Main integration is implemented on
 `extensions/main-integration-20261010`; see the
 [integration checkpoint](MAIN-INTEGRATION-CHECKPOINT.md) for reconciled boundaries,
 automated results and the remaining installed-alpha acceptance.
@@ -70,7 +72,7 @@ clients. Their broader feature sets are references, not our launch requirements.
 
 ## 3. User experience we have converged on
 
-**Store:** browse a listing, understand whether it is native or MCP, install it,
+**Store:** browse a listing, understand its tools/account requirements, install it,
 then enable it and authorize an account when required. Installation, enablement
 and account connection are separate states. A successful install is not proof
 that a remote server is reachable or that its tools work with the user's account.

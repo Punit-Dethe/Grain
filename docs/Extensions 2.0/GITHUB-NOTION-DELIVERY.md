@@ -3,6 +3,14 @@
 Current checkpoint: 13 October 2026. This supplements the execution plan;
 it does not reopen historical acceptance inventories or introduce more phases.
 
+**Superseded work order, 14 October:** follow
+[shared platform stabilization](PLATFORM-STABILIZATION.md) first. GitHub remains
+the live reference; Notion and further provider-family batches are deferred.
+The earlier sequence and preparation below remain context, not the active queue.
+The contract-refactor hold applied to that previous testing block and is lifted
+by this platform-first instruction. Live successes/failures and the pending
+all-toolset/trace checkpoint are recorded in the stabilization document.
+
 ## Decisions
 
 - Keep the Extensions tab available in the tester alpha. Hide custom MCP

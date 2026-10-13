@@ -1,5 +1,32 @@
 # Extension implementation: progress, changes and user testing
 
+**Platform-first reset, 14 October:** the user's latest instruction supersedes
+the GitHub breadth → Notion sequence below. Audited the shared descriptor,
+registry/runtime ownership, authoring/publication and client resolver boundaries;
+recorded the bounded work order in [PLATFORM-STABILIZATION.md](PLATFORM-STABILIZATION.md).
+The shared native/store/custom foundations already exist. Package-owned provider
+options and generic publisher pre-registered OAuth onboarding are actual remaining
+contract gaps, not reasons to add more provider-specific code or another engine.
+No new provider package, production contract change or live batch in this reset.
+
+Latest installed-alpha results are retained separately: `github-alpha-F01z0v`
+created issue #1 with independently verified title/body, then update/close Fail;
+the issue remained open with its original body. `github-alpha-OwevZN` created
+and independently verified `grain-check-d7acad35`, then file-create Fail because
+the model proposed another Create branch action and the exact guard refused it.
+Both owned-host cleanup and original log-level restoration Pass. No failed write
+was replayed. Root cause of the update failure remains unresolved; the older
+binary has no new tool trace. Full-toolset/model-exposure acceptance remains
+Pending, not inferred from the 49-tool default inventory.
+
+Removed the temporary `--files` mode after its diagnostic run instead of growing
+the maintained harness. Retained small metadata-only failure diagnostics so
+future failed checks report assertion type/counts and approved-action counts
+without dumping prompts, arguments, results or secrets. Existing two approval
+guard tests are the affected check; no repeated full suite/build is warranted
+for documentation and test diagnostics. Another LLM account is unnecessary now;
+independent read-only contract review is a later parallel opportunity.
+
 **Bounded GitHub workflow preparation, 13 October:** the user confirms expanded
 grants and authorizes real disposable GitHub work plus observing model exposure.
 Added ordinary, metadata-only tool diagnostics at the actual model boundary
