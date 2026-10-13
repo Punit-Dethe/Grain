@@ -24,6 +24,39 @@ it does not reopen historical acceptance inventories or introduce more phases.
 
 ## What we observed, and what changes
 
+### Provider/package boundary and the bounded live batch
+
+The user confirms expanded GitHub grants and authorizes real disposable test
+writes. They ask why GitHub changes required editing Grain. The current
+descriptor only declares a transport URL; it cannot declare request options.
+The `X-MCP-Toolsets: all` host special case is therefore a temporary configuration
+gap, not a pattern to repeat for Notion or every new provider. Ordinary endpoint,
+listing/artwork and provider option changes should belong in package repositories.
+Record removal of that special case when the shared descriptor/connection contract
+can carry validated, non-credential transport options; account secrets and protected
+auth/protocol headers must stay host-owned. Do not start that contract refactor
+while this user-requested testing block is running. Shared platform fixes and
+diagnostics legitimately remain in Grain.
+
+The bounded live batch reuses the existing installed-alpha script: create one
+uniquely marked issue, update/close it, create one temporary branch and write one
+synthetic file there. Actual approval arguments must match the exact test scope;
+independent CLI reads verify effects and that main stays unchanged. No unrelated
+account settings, source repository, automatic write replay or new fixture server.
+Retain the closed issue/branch as inspectable test objects rather than deleting
+them blindly. Normal Agent/capability tests cover broad cancellation, unknown
+outcomes, schema loading and budgets; do not reproduce their whole matrix live.
+
+Grain now logs small `agent-tool-trace` metadata at the real model boundary:
+offered tool names/counts, selected offered names and a loaded-name-to-canonical-ID
+map. Arguments, prompts, results, approval tokens and credentials are excluded;
+unoffered model names are redacted. The script consumes only those new log entries
+and restores the original log level. This uses ordinary diagnostics, not another
+testing API/framework. Actual exposure cannot be inferred from tests or the old
+binary: missing trace is a distinct Blocked result, even if writes passed.
+One batched tester build is necessary for live all-toolset/trace acceptance;
+do not create a production release or repeated per-case installers.
+
 The installed binary successfully read the private test README before and after
 restart (`github-alpha-iuyNiW`, four stages Pass, cleanup Pass). After the user
 closed the app, `github-alpha-yTL7At` discovered **49 supported tools**, including

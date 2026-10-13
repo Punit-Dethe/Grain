@@ -8,6 +8,7 @@ Run from the repository root on Windows:
 node tests/agent-harness/github-alpha.mjs --preflight
 node tests/agent-harness/github-alpha.mjs --catalogue
 node tests/agent-harness/github-alpha.mjs --read
+node tests/agent-harness/github-alpha.mjs --workflow
 node --test tests/agent-harness/github-alpha.test.mjs
 ```
 
@@ -22,13 +23,24 @@ WebView2 through loopback CDP and invokes production Tauri Agent commands. It
 does not use Computer Use, screenshots, simulated clicks, fixtures or a model
 relay. `--read` approves only the test repository's README getter, verifies the
 returned content independently, restarts the owned app, then repeats the read.
-No writes or account connect/disconnect actions are enabled. Existing account
+The preflight/catalogue/read modes perform no writes. Existing account
 credentials remain in Grain; no profile copying or token extraction is used.
 `--catalogue` invokes the real host's SDK discovery and records supported public
 tool names/count/digest without executing any tool. The current installed binary
 returned 49 default-catalogue tools in `github-alpha-yTL7At`, cleanup Pass. This
 does not prove those tools can execute or certify the new all-toolset source
 change before it is built into an installed alpha.
+
+`--workflow` is an explicitly authorized write checkpoint on the disposable
+`Punit-Dethe/grain-github-alpha-test` repository: one marked issue, update/close,
+one marked branch and a synthetic file. Exact argument/title guards refuse other
+actions and repeated writes. Independent CLI reads verify each effect and main's
+unchanged commit. Test objects are retained in the report for inspection; failed
+or uncertain work must not be replayed automatically. No account connect or
+disconnect is automated by this mode. Its final exposure check needs an alpha
+with `agent-tool-trace` diagnostics; an older binary may pass effects while that
+distinct check remains Blocked. New log entries contain tool identities/counts
+only; the original log level is restored even when the batch fails.
 
 Reports record the installed binary hash and per-stage verdicts under ignored
 `.runs/github-alpha-*/evidence/`; subsequent runs also stamp this script. Only

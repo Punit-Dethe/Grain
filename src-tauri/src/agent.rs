@@ -3982,6 +3982,16 @@ async fn run_agent_once_tools(
         }
     }
 
+    info!(
+        "[GRAIN] agent-tool-trace {}",
+        serde_json::json!({
+            "phase": "offered",
+            "provider": provider.id,
+            "model": model,
+            "count": tools.len(),
+            "names": tools.iter().map(|tool| tool.name.as_str()).collect::<Vec<_>>()
+        })
+    );
     let response = tokio::time::timeout(
         AGENT_LLM_TIMEOUT,
         crate::llm_client::send_chat_with_tools(
@@ -4008,6 +4018,21 @@ async fn run_agent_once_tools(
             (ProviderOutcome::Failed, empty_reply())
         }
         Ok(Ok(result)) => {
+            info!(
+                "[GRAIN] agent-tool-trace {}",
+                serde_json::json!({
+                    "phase": "selected",
+                    "provider": provider.id,
+                    "model": model,
+                    "names": result.tool_calls.iter().map(|call| {
+                        if tools.iter().any(|tool| tool.name == call.name) {
+                            call.name.as_str()
+                        } else {
+                            "<unoffered>"
+                        }
+                    }).collect::<Vec<_>>()
+                })
+            );
             let content = result.content.unwrap_or_default();
             let has_output = !content.trim().is_empty() || !result.tool_calls.is_empty();
             if has_output {

@@ -1,5 +1,30 @@
 # Extension implementation: progress, changes and user testing
 
+**Bounded GitHub workflow preparation, 13 October:** the user confirms expanded
+grants and authorizes real disposable GitHub work plus observing model exposure.
+Added ordinary, metadata-only tool diagnostics at the actual model boundary
+and loaded-schema map; no new testing IPC, fixtures, model relay or screenshot
+automation. Only public tool names/counts, provider/model identifiers and loaded
+canonical IDs are logged; prompts/arguments/results/credentials are excluded and
+unoffered model names are redacted. Existing normal Agent tests **19 Pass** and
+capability tests **5 Pass**; focused approval guards **2 Pass**.
+
+The existing installed-alpha script has one bounded `--workflow` mode for a
+marked issue create/update/close and one branch/file write. Exact approvals,
+independent GitHub CLI reads, default-branch preservation, no automatic write
+replay, owned-host teardown and original log-level restoration are required.
+An initial attempt (`github-alpha-b2JtMW`) was Blocked because the user's alpha
+was open; no action or settings change was made. Live workflow/exposure verdicts
+remain Pending here. The old binary cannot establish the new all-toolset/trace
+behavior; one batched tester build is necessary, without a production release.
+
+Recorded the provider/package boundary in the delivery roadmap: the current
+GitHub header special case is a temporary descriptor-option gap to replace with
+shared validated transport options, not a pattern for new providers. Do not
+start that contract refactor during this testing block. Ordinary provider package
+changes belong in extension repos; runtime/diagnostics/client registration remain
+platform responsibilities. Notion stays the next provider after this checkpoint.
+
 **GitHub breadth and Notion sequencing, 13 October:** the user chooses Notion
 next and requests broad provider capabilities before its live tests. Added
 [the bounded delivery/ownership roadmap](GITHUB-NOTION-DELIVERY.md), separating

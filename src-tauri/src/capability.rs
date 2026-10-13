@@ -123,7 +123,19 @@ pub async fn dispatch(
                 "load_extension was not available in this model round.".to_string(),
             ));
         }
-        return Some(ToolResult::Text(handle_catalog(app, call, session).await));
+        let result = handle_catalog(app, call, session).await;
+        if call.name == LOAD_EXTENSION {
+            // Public tool identities only: never arguments, results or account credentials.
+            log::info!(
+                "[GRAIN] agent-tool-trace {}",
+                serde_json::json!({
+                    "phase": "loaded",
+                    "tools": session.actions.iter().map(|(id, action)|
+                        (action.spec.name.clone(), id.clone())).collect::<BTreeMap<_, _>>()
+                })
+            );
+        }
+        return Some(ToolResult::Text(result));
     }
     // An action tool resolves through the session's exposure map — the
     // authoritative reverse of `tool_name`. An undisclosed or invented name

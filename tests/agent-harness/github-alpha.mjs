@@ -4,7 +4,14 @@ import assert from "node:assert/strict";
 import { spawn, execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { createServer } from "node:net";
-import { mkdtemp, mkdir, realpath } from "node:fs/promises";
+import {
+  mkdtemp,
+  mkdir,
+  realpath,
+  readdir,
+  stat,
+  open,
+} from "node:fs/promises";
 import { join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
@@ -13,6 +20,37 @@ import { waitFor, writeReport, Blocked } from "./support.mjs";
 import { hashFile } from "./stamp.mjs";
 
 export const repository = "Punit-Dethe/grain-github-alpha-test";
+export function approvedGitHubAction(confirm, titles, required, optional = {}) {
+  if (
+    required.owner !== "Punit-Dethe" ||
+    required.repo !== "grain-github-alpha-test" ||
+    !confirm?.token ||
+    typeof confirm.token !== "string" ||
+    !titles.includes(confirm.title) ||
+    !Array.isArray(confirm.details) ||
+    !confirm.details.every(
+      (field) =>
+        field &&
+        typeof field.label === "string" &&
+        typeof field.value === "string",
+    )
+  )
+    return false;
+  const fields = new Map(
+    confirm.details.map((field) => [field.label, field.value]),
+  );
+  return (
+    fields.size === confirm.details.length &&
+    Object.entries(required).every(
+      ([key, value]) => fields.get(key) === value,
+    ) &&
+    [...fields].every(
+      ([key, value]) =>
+        Object.hasOwn(required, key) ||
+        (Object.hasOwn(optional, key) && optional[key] === value),
+    )
+  );
+}
 export function approvedGitHubRead(confirm) {
   if (
     !confirm ||
@@ -40,8 +78,8 @@ export function approvedGitHubRead(confirm) {
 
 export async function runInstalledGitHub(mode) {
   assert.ok(
-    ["--preflight", "--catalogue", "--read"].includes(mode),
-    "Use --preflight, --catalogue or --read; no writes are enabled",
+    ["--preflight", "--catalogue", "--read", "--workflow"].includes(mode),
+    "Use --preflight, --catalogue, --read or --workflow",
   );
   const here = dirname(fileURLToPath(import.meta.url));
   const root = await mkdtemp(join(here, ".runs/github-alpha-"));
@@ -61,6 +99,38 @@ export async function runInstalledGitHub(mode) {
   };
   const exec = promisify(execFile);
   let child, browser, main;
+  let previousLogLevel;
+  let logDirectory;
+  const logOffsets = new Map();
+  const trace = async () => {
+    const events = [];
+    if (!logDirectory) return events;
+    for (const name of (await readdir(logDirectory)).filter((name) =>
+      /^handy.*\.log$/.test(name),
+    )) {
+      const path = join(logDirectory, name);
+      const size = (await stat(path)).size;
+      const offset = Math.max(logOffsets.get(name) ?? 0, size - 128 * 1024);
+      logOffsets.set(name, size);
+      if (offset >= size) continue;
+      const handle = await open(path, "r");
+      try {
+        const buffer = Buffer.alloc(size - offset);
+        await handle.read(buffer, 0, buffer.length, offset);
+        for (const line of buffer.toString("utf8").split(/\r?\n/)) {
+          const marker = "[GRAIN] agent-tool-trace ";
+          const start = line.indexOf(marker);
+          if (start < 0) continue;
+          const event = JSON.parse(line.slice(start + marker.length));
+          if (["offered", "selected", "loaded"].includes(event.phase))
+            events.push(event);
+        }
+      } finally {
+        await handle.close();
+      }
+    }
+    return events;
+  };
   const invoke = async (command, args = {}, timeout = 30000) => {
     let timer;
     try {
@@ -372,10 +442,258 @@ export async function runInstalledGitHub(mode) {
       connectionRevision: connection.revision,
     };
   };
+  const action = async (
+    prompt,
+    required,
+    titles,
+    optional = {},
+    readApproval,
+  ) => {
+    let writes = 0,
+      reads = 0;
+    let reply = await invoke(
+      "agent_run",
+      {
+        messages: [
+          {
+            role: "user",
+            content: `${prompt} The repository is already known. Do not search repositories or fetch account information. Use only the installed GitHub extension. Perform this operation once; do not repeat it if the result is uncertain. After the requested action, summarize its result and stop.`,
+          },
+        ],
+        context: null,
+      },
+      300000,
+    );
+    while (reply.confirm_action) {
+      const confirm = reply.confirm_action;
+      const write =
+        writes === 0 &&
+        approvedGitHubAction(confirm, titles, required, optional);
+      const read =
+        reads === 0 &&
+        readApproval &&
+        approvedGitHubAction(
+          confirm,
+          readApproval.titles,
+          readApproval.required,
+          readApproval.optional,
+        );
+      if (!write && !read) {
+        console.log(
+          JSON.stringify({
+            refusedAction: {
+              title: confirm.title,
+              labels: confirm.details?.map((field) => field.label),
+            },
+          }),
+        );
+        await invoke(
+          "agent_confirm_action",
+          { token: confirm.token, approve: false },
+          300000,
+        );
+        throw new Error(
+          "Workflow requested an action outside its exact test scope",
+        );
+      }
+      if (write) writes++;
+      else reads++;
+      reply = await invoke(
+        "agent_confirm_action",
+        { token: confirm.token, approve: true },
+        300000,
+      );
+    }
+    assert.equal(
+      writes,
+      1,
+      "Require one host-approved action, not a model claim",
+    );
+    return {
+      approvedWrites: writes,
+      approvedReads: reads,
+      replyBytes: Buffer.byteLength(reply.text),
+    };
+  };
   try {
     await mkdir(join(root, "webview"));
     await launch();
     await check("github.installed-preflight", preflight);
+    if (mode === "--workflow") {
+      previousLogLevel = await main.evaluate(
+        async () =>
+          (await window.__TAURI_INTERNALS__.invoke("get_app_settings"))
+            .log_level,
+      );
+      assert.ok(
+        ["trace", "debug", "info", "warn", "error"].includes(previousLogLevel),
+        "Require a restorable log level before changing it",
+      );
+      await invoke("set_log_level", { level: "info" });
+      logDirectory = await invoke("get_log_dir_path");
+      for (const name of (await readdir(logDirectory)).filter((name) =>
+        /^handy.*\.log$/.test(name),
+      ))
+        logOffsets.set(name, (await stat(join(logDirectory, name))).size);
+      const api = async (path) =>
+        JSON.parse(
+          (
+            await exec("gh", ["api", `repos/${repository}/${path}`], {
+              windowsHide: true,
+              maxBuffer: 128 * 1024,
+            })
+          ).stdout,
+        );
+      const marker = report.runId.slice(0, 8);
+      report.testObjects = {
+        repository,
+        marker,
+        branch: `grain-check-${marker}`,
+        path: "grain-agent-check.txt",
+      };
+      const title = `Grain Agent check ${marker}`;
+      const body = `Disposable Grain acceptance ${marker}.`;
+      const issueTitles = [
+        "issue_write",
+        "Create or update issue/pull request",
+      ];
+      const scope = { owner: "Punit-Dethe", repo: "grain-github-alpha-test" };
+      const emptyArrays = { labels: "[]", assignees: "[]" };
+      let number;
+      await check("github.issue-create", async () => {
+        let result, failure;
+        try {
+          result = await action(
+            `Create an issue in ${repository} with exactly title "${title}" and body "${body}". Do not add labels, assignees or other fields.`,
+            { ...scope, method: "create", title, body },
+            issueTitles,
+            emptyArrays,
+          );
+        } catch (error) {
+          failure = error;
+        }
+        const matches = (await api("issues?state=all&per_page=100")).filter(
+          (issue) => issue.title === title && !issue.pull_request,
+        );
+        assert.equal(
+          matches.length,
+          1,
+          "Independently require one issue; never replay an uncertain write",
+        );
+        assert.equal(matches[0].body, body);
+        number = matches[0].number;
+        report.testObjects.issueNumber = number;
+        if (failure) {
+          failure.diagnostic = { effectObserved: true, issueNumber: number };
+          throw failure;
+        }
+        return {
+          ...result,
+          issueNumber: number,
+          effectVerified: true,
+          trace: await trace(),
+        };
+      });
+      await check("github.issue-update-close", async () => {
+        const updated = `Updated Grain acceptance ${marker}.`;
+        const result = await action(
+          `In ${repository}, update issue #${number} to exactly body "${updated}" and close it as completed. Keep its title, labels and assignees unchanged.`,
+          {
+            ...scope,
+            method: "update",
+            issue_number: String(number),
+            body: updated,
+            state: "closed",
+          },
+          issueTitles,
+          { title, state_reason: "completed" },
+          {
+            titles: ["issue_read", "Get issue information"],
+            required: { ...scope, method: "get", issue_number: String(number) },
+          },
+        );
+        const issue = await api(`issues/${number}`);
+        assert.equal(issue.body, updated);
+        assert.equal(issue.state, "closed");
+        assert.equal(issue.title, title);
+        return { ...result, effectVerified: true, trace: await trace() };
+      });
+      const branch = `grain-check-${marker}`;
+      const mainSha = (await api("git/ref/heads/main")).object.sha;
+      await check("github.branch-create", async () => {
+        const result = await action(
+          `Create branch "${branch}" from main in ${repository}. Do not modify files or create a pull request.`,
+          { ...scope, branch },
+          ["create_branch", "Create branch"],
+          { from_branch: "main" },
+        );
+        const ref = await api(`git/ref/heads/${branch}`);
+        assert.equal(ref.ref, `refs/heads/${branch}`);
+        assert.equal(ref.object.sha, mainSha);
+        report.testObjects.branch = branch;
+        return { ...result, effectVerified: true, trace: await trace() };
+      });
+      await check("github.file-create", async () => {
+        const path = "grain-agent-check.txt";
+        const content = `Grain check ${marker}\n`;
+        const message = "Add Grain acceptance file";
+        const result = await action(
+          `Create ${path} on branch "${branch}" in ${repository}. Its exact text is "Grain check ${marker}" followed by one newline. Commit message must be "${message}". Do not change main or any other file.`,
+          {
+            ...scope,
+            branch,
+            path,
+            message,
+            content: Buffer.from(content).toString("base64"),
+          },
+          ["create_or_update_file", "Create or update file"],
+        );
+        const file = await api(`contents/${path}?ref=${branch}`);
+        assert.equal(
+          Buffer.from(file.content, "base64").toString("utf8"),
+          content,
+        );
+        assert.equal(
+          (await api("git/ref/heads/main")).object.sha,
+          mainSha,
+          "The default branch must stay unchanged",
+        );
+        report.testObjects.path = path;
+        return { ...result, effectVerified: true, trace: await trace() };
+      });
+      await check("github.model-exposure-observed", async () => {
+        const events = report.results.flatMap(
+          (result) => result.evidence?.trace ?? [],
+        );
+        const offered = events.filter((event) => event.phase === "offered");
+        if (!offered.length)
+          throw new Blocked(
+            "This installed binary predates tool tracing; do not infer real model exposure from source tests",
+          );
+        assert.ok(
+          offered.some(
+            (event) =>
+              event.count === 2 &&
+              event.names.includes("search_tools") &&
+              event.names.includes("load_extension"),
+          ),
+        );
+        assert.ok(offered.some((event) => event.count > 2));
+        assert.ok(
+          events.some(
+            (event) =>
+              event.phase === "loaded" && Object.keys(event.tools).length > 0,
+          ),
+        );
+        return {
+          initialSchemaCount: offered[0].count,
+          schemaCounts: offered.map((event) => event.count),
+          selected: events
+            .filter((event) => event.phase === "selected")
+            .map((event) => event.names),
+        };
+      });
+    }
     if (mode === "--catalogue") {
       await check("github.catalogue", async () => {
         const discovered = await invoke(
@@ -426,9 +744,20 @@ export async function runInstalledGitHub(mode) {
     );
     process.exitCode = 1;
   } finally {
+    let restorationFailed = false;
+    if (previousLogLevel) {
+      try {
+        await invoke("set_log_level", { level: previousLogLevel });
+        report.logLevelRestored = true;
+      } catch {
+        restorationFailed = true;
+        report.logLevelRestored = false;
+      }
+    }
     try {
       await stop();
-      report.cleanup.status = "Pass";
+      report.cleanup.status = restorationFailed ? "Fail" : "Pass";
+      if (restorationFailed) process.exitCode = 1;
     } catch {
       report.cleanup.status = "Fail";
       process.exitCode = 1;
