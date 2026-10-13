@@ -63,7 +63,28 @@ watcher or server process. Implement the server using a standard MCP SDK.
 `mcp.json` uses descriptor schema 1 and Grain API `^1.0`, with an explicit
 `streamable-http` HTTPS endpoint and `oauth` or `none` authentication. The shared
 host validator checks identity/version/display bounds and canonicalizes the
-endpoint. The file is limited to 8 KiB. Headers, secrets, client IDs, host
+endpoint. Optional `transport.headers` declares public provider options:
+
+```json
+"transport": {
+  "type": "streamable-http",
+  "url": "https://api.githubcopilot.com/mcp/",
+  "headers": { "x-mcp-toolsets": "all" }
+}
+```
+
+Names must be lower-case valid HTTP names, at most 64 bytes each; values must
+be trimmed printable ASCII, at most 512 bytes each. There are at most 16 options
+and 2 KiB of combined name/value bytes. Duplicate names are refused. Authentication,
+cookie, routing and MCP session/protocol headers are reserved for Grain.
+These values are public package metadata: never include tokens, API keys or
+secrets, and do not expect environment substitution or vault lookup. Validation
+cannot prove an arbitrary provider value is non-secret; publisher review must
+enforce that policy. Options go only to the MCP resource transport, not OAuth
+metadata/registration/token endpoints. `doctor` and `pack` use the host validator.
+
+The descriptor is limited to 8 KiB and its connection projection to 4 KiB.
+Secrets, client IDs, host
 connection IDs, accounts, trust flags, enablement and subprocess commands are
 not descriptor fields. Both `manifest.json` and `mcp.json` in one root are an
 error; the CLI never guesses which kind to build.

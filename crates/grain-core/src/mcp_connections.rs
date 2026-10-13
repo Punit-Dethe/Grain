@@ -14,8 +14,8 @@ use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use crate::mcp::{
-    canonical_endpoint, display_text, ConnectionIdentity, ConnectionSource, ContractError,
-    StoreDescriptor, ValidatedDescriptor,
+    canonical_endpoint, display_text, validate_headers, ConnectionIdentity, ConnectionSource,
+    ContractError, StoreDescriptor, ValidatedDescriptor,
 };
 
 const FILE_NAME: &str = "mcp-connections.json";
@@ -41,6 +41,14 @@ impl ConnectionDefinition {
             return Err(RegistryError::InvalidInput(ContractError::InvalidMetadata));
         }
         input.url = canonical_endpoint(&input.url).map_err(RegistryError::InvalidInput)?;
+        validate_headers(&input.headers).map_err(RegistryError::InvalidInput)?;
+        if serde_json::to_vec(&input)
+            .map_err(|_| RegistryError::InvalidState)?
+            .len()
+            > MCP_CONNECTION_MAX_BYTES
+        {
+            return Err(RegistryError::Limit);
+        }
         Ok(Self(input))
     }
 
@@ -204,6 +212,7 @@ impl ConnectionRegistry {
                         }
                         if row.definition.name != metadata.name
                             || row.definition.url != descriptor.endpoint()
+                            || row.definition.headers != *descriptor.headers()
                             || row.definition.authentication != metadata.authentication
                         {
                             return Err(RegistryError::InvalidState);
@@ -409,11 +418,7 @@ impl ConnectionRegistry {
             let record = ConnectionRecord {
                 identity,
                 revision: 1,
-                definition: RemoteMcpConnection {
-                    name: metadata.name.clone(),
-                    url: admitted.descriptor().endpoint().into(),
-                    authentication: metadata.authentication,
-                },
+                definition: admitted.descriptor().connection(),
                 store_artifact: Some(StoreArtifact {
                     artifact: admitted.artifact().into(),
                     sha256: admitted.sha256().into(),
@@ -454,11 +459,7 @@ impl ConnectionRegistry {
                 .revision
                 .checked_add(1)
                 .ok_or(RegistryError::RevisionExhausted)?;
-            let definition = RemoteMcpConnection {
-                name: metadata.name.clone(),
-                url: admitted.descriptor().endpoint().into(),
-                authentication: metadata.authentication,
-            };
+            let definition = admitted.descriptor().connection();
             let changed_account = old.definition.url != definition.url
                 || old.definition.authentication != definition.authentication;
             let account = if changed_account {
@@ -657,6 +658,9 @@ mod tests {
         descriptor["version"] = json!("2.0.0");
         entry.version = "2.0.0".into();
         match mode {
+            "headers" => {
+                descriptor["transport"]["headers"] = json!({"x-mcp-toolsets":"all"});
+            }
             "metadata" => {
                 descriptor["description"] = json!("Updated listing.");
                 entry.description = "Updated listing.".into();
@@ -681,7 +685,7 @@ mod tests {
 
     #[test]
     fn verified_store_updates_preserve_or_rotate_accounts_and_invalidate_old_leases() {
-        for mode in ["metadata", "endpoint", "authentication"] {
+        for mode in ["metadata", "headers", "endpoint", "authentication"] {
             let dir = tempfile::tempdir().unwrap();
             let registry = ConnectionRegistry::load(dir.path()).unwrap();
             let (entry, bytes) = store_entry();
@@ -702,7 +706,7 @@ mod tests {
             let next = registry.lease(original.identity().connection_id()).unwrap();
             assert_eq!(next.record().revision(), 2);
             assert!(!registry.is_current(&lease));
-            if mode == "metadata" {
+            if mode == "metadata" || mode == "headers" {
                 assert!(retired.is_none());
                 assert_eq!(
                     next.record().identity().vault_account(),
@@ -722,6 +726,29 @@ mod tests {
             let reloaded = ConnectionRegistry::load(dir.path()).unwrap();
             assert_eq!(reloaded.list().unwrap(), registry.list().unwrap());
         }
+    }
+
+    #[test]
+    fn store_header_options_survive_reload_and_refuse_unsigned_overrides() {
+        let dir = tempfile::tempdir().unwrap();
+        let registry = ConnectionRegistry::load(dir.path()).unwrap();
+        let record = registry.insert_store(store_change("headers")).unwrap();
+        assert_eq!(record.definition().headers["x-mcp-toolsets"], "all");
+        let reloaded = ConnectionRegistry::load(dir.path()).unwrap();
+        assert_eq!(
+            reloaded.list().unwrap()[0].definition(),
+            record.definition()
+        );
+        let path = dir.path().join(FILE_NAME);
+        let mut disk: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        disk["connections"][0]["definition"]["headers"]["x-mcp-toolsets"] = json!("issues");
+        let tampered = serde_json::to_vec(&disk).unwrap();
+        fs::write(&path, &tampered).unwrap();
+        assert!(matches!(
+            ConnectionRegistry::load(dir.path()),
+            Err(RegistryError::InvalidState)
+        ));
+        assert_eq!(fs::read(&path).unwrap(), tampered);
     }
 
     #[test]
@@ -1130,6 +1157,33 @@ mod tests {
         assert_eq!(current.record.definition.name, "Renamed calendar");
         assert!(!registry.is_current(&lease));
         assert!(registry.is_current(&current));
+    }
+
+    #[test]
+    fn custom_option_edits_invalidate_leases_but_keep_the_account() {
+        let dir = tempfile::tempdir().unwrap();
+        let registry = ConnectionRegistry::load(dir.path()).unwrap();
+        let record = registry.insert(definition(&wire())).unwrap();
+        let lease = registry.lease(record.identity.connection_id()).unwrap();
+        let mut changed = wire();
+        changed["headers"] = json!({"x-mcp-toolsets":"all"});
+        assert_eq!(
+            registry.replace(&lease, definition(&changed)).unwrap(),
+            None
+        );
+        let next = registry.lease(record.identity.connection_id()).unwrap();
+        assert!(!registry.is_current(&lease));
+        assert_eq!(next.record.identity, record.identity);
+        assert_eq!(next.record.revision, record.revision + 1);
+        assert_eq!(next.record.definition.headers["x-mcp-toolsets"], "all");
+        assert_eq!(
+            ConnectionRegistry::load(dir.path())
+                .unwrap()
+                .list()
+                .unwrap()[0]
+                .definition(),
+            next.record.definition()
+        );
     }
 
     #[test]

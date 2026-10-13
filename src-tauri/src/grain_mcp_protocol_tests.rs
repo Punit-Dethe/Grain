@@ -11,8 +11,9 @@ use std::sync::{
 };
 
 #[test]
-fn github_requests_all_toolsets_without_changing_auth_or_other_servers() {
-    let github = transport_config("https://api.githubcopilot.com/mcp/");
+fn package_options_are_explicit_and_cannot_replace_auth_or_protocol() {
+    let options = [("x-mcp-toolsets".into(), "all".into())].into();
+    let github = transport_config("https://api.githubcopilot.com/mcp/", &options).unwrap();
     assert_eq!(
         github.custom_headers[&reqwest_mcp::header::HeaderName::from_static("x-mcp-toolsets")],
         "all"
@@ -24,7 +25,30 @@ fn github_requests_all_toolsets_without_changing_auth_or_other_servers() {
         "https://example.com/mcp/",
         "https://api.githubcopilot.com.evil.example/mcp/",
     ] {
-        assert!(transport_config(endpoint).custom_headers.is_empty());
+        assert!(transport_config(endpoint, &Default::default())
+            .unwrap()
+            .custom_headers
+            .is_empty());
+        assert_eq!(
+            transport_config(endpoint, &options)
+                .unwrap()
+                .custom_headers
+                .len(),
+            1
+        );
+    }
+    for name in [
+        "authorization",
+        "mcp-session-id",
+        "mcp-protocol-version",
+        "host",
+        "cookie",
+    ] {
+        assert!(transport_config(
+            "https://mcp.example.com",
+            &[(name.into(), "forbidden".into())].into()
+        )
+        .is_err());
     }
 }
 
@@ -71,6 +95,14 @@ impl Fixture {
     }
 
     async fn start_with_tool(behavior: Behavior, tool: Value) -> Self {
+        Self::start_with_options(behavior, tool, Default::default()).await
+    }
+
+    async fn start_with_options(
+        behavior: Behavior,
+        tool: Value,
+        options: grain_sdk::mcp::McpHeaders,
+    ) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let endpoint = format!("http://{}/mcp", listener.local_addr().unwrap());
         let calls = Arc::new(AtomicUsize::new(0));
@@ -87,10 +119,12 @@ impl Fixture {
         );
         let task = tokio::spawn(async move {
             while let Ok((mut stream, _)) = listener.accept().await {
-                let request =
-                    tokio::time::timeout(Duration::from_secs(3), read_request(&mut stream))
-                        .await
-                        .unwrap();
+                let request = tokio::time::timeout(
+                    Duration::from_secs(3),
+                    read_request(&mut stream, &options),
+                )
+                .await
+                .unwrap();
                 if request["method"] == "server/discover" {
                     counters.3.fetch_add(1, Ordering::SeqCst);
                 }
@@ -263,11 +297,19 @@ impl Fixture {
     }
 
     async fn service(&self, http: reqwest_mcp::Client) -> McpService {
+        self.service_with_options(http, &Default::default()).await
+    }
+
+    async fn service_with_options(
+        &self,
+        http: reqwest_mcp::Client,
+        options: &grain_sdk::mcp::McpHeaders,
+    ) -> McpService {
         let client = bounded_http::BoundedClient::new(http);
         let legacy_probe = client.legacy_probe();
         serve_http(
             client,
-            &self.endpoint,
+            transport_config(&self.endpoint, options).unwrap(),
             tokio::time::Instant::now() + Duration::from_secs(3),
             legacy_probe,
             None,
@@ -280,6 +322,34 @@ impl Fixture {
     async fn stop(mut self) {
         self.task.abort();
         let _ = (&mut self.task).await;
+    }
+}
+
+#[tokio::test]
+async fn sdk_forwards_package_options_through_modern_and_legacy_negotiation() {
+    for behavior in [
+        Behavior::Complete(json!({"content":[]})),
+        Behavior::CompleteLegacyHttpRejection(json!({"content":[]})),
+    ] {
+        let options: grain_sdk::mcp::McpHeaders = [
+            ("x-mcp-toolsets".into(), "all".into()),
+            ("x-provider-profile".into(), "test".into()),
+        ]
+        .into();
+        let fixture = Fixture::start_with_options(behavior, tool_json(), options.clone()).await;
+        let service = fixture
+            .service_with_options(McpHttpClient::local_test_client(), &options)
+            .await;
+        let tools = discover_on_service(
+            &service,
+            tokio::time::Instant::now() + Duration::from_secs(3),
+        )
+        .await
+        .unwrap();
+        assert_eq!(tools.len(), 1);
+        assert_eq!(fixture.calls.load(Ordering::SeqCst), 0);
+        close_service(service).await;
+        fixture.stop().await;
     }
 }
 
@@ -352,7 +422,7 @@ impl Drop for Fixture {
 
 // A deliberately tiny HTTP fixture reader, with hard bounds. It accepts only
 // the Content-Length requests sent by the real reqwest client in these tests.
-async fn read_request(stream: &mut TcpStream) -> Value {
+async fn read_request(stream: &mut TcpStream, options: &grain_sdk::mcp::McpHeaders) -> Value {
     let mut bytes = Vec::new();
     let header_end = loop {
         let mut chunk = [0u8; 1024];
@@ -364,6 +434,16 @@ async fn read_request(stream: &mut TcpStream) -> Value {
         }
     };
     let headers = std::str::from_utf8(&bytes[..header_end]).unwrap();
+    for (name, value) in options {
+        assert!(
+            headers
+                .lines()
+                .any(|line| line.split_once(':').is_some_and(|(key, actual)| key
+                    .eq_ignore_ascii_case(name)
+                    && actual.trim() == value)),
+            "missing public option {name}"
+        );
+    }
     assert!(
         headers.starts_with("POST "),
         "no idle GET/session request is expected: {headers}"

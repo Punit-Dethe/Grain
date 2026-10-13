@@ -315,6 +315,12 @@ fn provider_endpoint<'a>(item: &'a Provider<'_>) -> Result<std::borrow::Cow<'a, 
 }
 
 impl Provider<'_> {
+    fn headers(&self) -> grain_sdk::mcp::McpHeaders {
+        self.ownership
+            .map(|owner| owner.headers().clone())
+            .unwrap_or_default()
+    }
+
     fn descriptor(
         &self,
     ) -> Result<grain_core::mcp::ValidatedDescriptor, grain_core::mcp::ContractError> {
@@ -330,6 +336,7 @@ impl Provider<'_> {
             grain_api: format!("^{}", grain_sdk::GRAIN_API_VERSION),
             transport: McpTransport::StreamableHttp {
                 url: self.endpoint.into(),
+                headers: self.headers(),
             },
             authentication: if requires_account(self) {
                 McpAuthentication::OAuth {}
@@ -1799,21 +1806,25 @@ async fn authorization_manager(
     Ok(manager)
 }
 
-fn transport_config(endpoint: &str) -> StreamableHttpClientTransportConfig {
+fn transport_config(
+    endpoint: &str,
+    headers: &grain_sdk::mcp::McpHeaders,
+) -> Result<StreamableHttpClientTransportConfig, ExecutionFailure> {
+    grain_core::mcp::validate_headers(headers).map_err(|_| Recovery::Configuration.failure())?;
     let mut config = StreamableHttpClientTransportConfig::with_uri(endpoint)
         .max_sse_event_size(MAX_SSE_EVENT_BYTES)
         .reinit_on_expired_session(false);
     config.channel_buffer_capacity = 8;
     config.allow_stateless = true;
-    // Ask GitHub for its complete tool catalogue without changing its OAuth
-    // resource/client binding. Provider permissions still govern each call.
-    if endpoint == "https://api.githubcopilot.com/mcp/" {
+    for (name, value) in headers {
         config.custom_headers.insert(
-            reqwest_mcp::header::HeaderName::from_static("x-mcp-toolsets"),
-            reqwest_mcp::header::HeaderValue::from_static("all"),
+            reqwest_mcp::header::HeaderName::from_bytes(name.as_bytes())
+                .map_err(|_| Recovery::Configuration.failure())?,
+            reqwest_mcp::header::HeaderValue::from_str(value)
+                .map_err(|_| Recovery::Configuration.failure())?,
         );
     }
-    config
+    Ok(config)
 }
 
 pub(crate) async fn list_tools(app: &AppHandle, provider_id: &str) -> Result<McpToolSet, String> {
@@ -1874,7 +1885,7 @@ async fn open_service(
         let legacy_probe = client.legacy_probe();
         return serve_http(
             client,
-            &endpoint,
+            transport_config(&endpoint, &item.headers())?,
             deadline,
             legacy_probe,
             None,
@@ -1891,7 +1902,15 @@ async fn open_service(
             provider_destination_policy(item).map_err(|_| Recovery::Configuration.failure())?,
         );
         let legacy_probe = client.legacy_probe();
-        return serve_http(client, &endpoint, deadline, legacy_probe, None, None).await;
+        return serve_http(
+            client,
+            transport_config(&endpoint, &item.headers())?,
+            deadline,
+            legacy_probe,
+            None,
+            None,
+        )
+        .await;
     }
     ticket.observe_recovery(None);
     let manager = tokio::time::timeout_at(
@@ -1913,9 +1932,12 @@ async fn open_service(
     let cleanup = client.clone();
     serve_http(
         AuthClient::new(client, manager),
-        provider_endpoint(item)
-            .map_err(|_| before_dispatch(FailureClass::Network, "MCP endpoint unavailable."))?
-            .as_ref(),
+        transport_config(
+            provider_endpoint(item)
+                .map_err(|_| before_dispatch(FailureClass::Network, "MCP endpoint unavailable."))?
+                .as_ref(),
+            &item.headers(),
+        )?,
         deadline,
         legacy_probe,
         Some(cleanup),
@@ -1926,7 +1948,7 @@ async fn open_service(
 
 async fn serve_http<C: rmcp::transport::streamable_http_client::StreamableHttpClient + Sync>(
     client: C,
-    endpoint: &str,
+    config: StreamableHttpClientTransportConfig,
     deadline: tokio::time::Instant,
     legacy_probe: std::sync::Arc<std::sync::atomic::AtomicBool>,
     cleanup: Option<bounded_http::BoundedClient>,
@@ -1934,7 +1956,7 @@ async fn serve_http<C: rmcp::transport::streamable_http_client::StreamableHttpCl
 ) -> Result<McpService, ExecutionFailure> {
     let first = serve_http_once(
         client.clone(),
-        endpoint,
+        config.clone(),
         deadline,
         hosted_lifecycle(),
         cleanup.clone(),
@@ -1955,7 +1977,7 @@ async fn serve_http<C: rmcp::transport::streamable_http_client::StreamableHttpCl
         // Ordinary JSON-RPC correlation is never relaxed or rewritten.
         return serve_http_once(
             client,
-            endpoint,
+            config,
             deadline,
             ClientLifecycleMode::Initialize,
             cleanup,
@@ -1970,7 +1992,7 @@ async fn serve_http_once<
     C: rmcp::transport::streamable_http_client::StreamableHttpClient + Sync,
 >(
     client: C,
-    endpoint: &str,
+    config: StreamableHttpClientTransportConfig,
     deadline: tokio::time::Instant,
     lifecycle: ClientLifecycleMode,
     cleanup: Option<bounded_http::BoundedClient>,
@@ -1981,7 +2003,7 @@ async fn serve_http_once<
         cancellable_http::CancellableClient::new(client, receiver)
             .with_authenticated_cleanup(cleanup)
             .with_auth_observer(ticket.clone()),
-        transport_config(endpoint),
+        config,
     );
     let info = if lifecycle == ClientLifecycleMode::Initialize {
         client_info().with_protocol_version(ProtocolVersion::V_2025_11_25)

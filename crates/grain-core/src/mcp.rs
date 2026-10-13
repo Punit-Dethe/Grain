@@ -5,7 +5,8 @@ use std::fmt;
 
 use grain_sdk::manifest::network_capability_host;
 use grain_sdk::mcp::{
-    McpDescriptor, McpTransport, MCP_DESCRIPTOR_MAX_BYTES, MCP_DESCRIPTOR_SCHEMA,
+    McpDescriptor, McpHeaders, McpTransport, RemoteMcpConnection, MCP_CONNECTION_MAX_BYTES,
+    MCP_DESCRIPTOR_MAX_BYTES, MCP_DESCRIPTOR_SCHEMA,
 };
 use grain_sdk::{validate_extension_id, validate_extension_version};
 use serde::Serialize;
@@ -19,6 +20,8 @@ pub enum ContractError {
     InvalidMetadata,
     InvalidEndpoint,
     InvalidIdentity,
+    InvalidHeaders,
+    ConnectionTooLarge,
 }
 
 impl fmt::Display for ContractError {
@@ -31,6 +34,8 @@ impl fmt::Display for ContractError {
             Self::InvalidMetadata => "MCP descriptor identity, version or display metadata is invalid.",
             Self::InvalidEndpoint => "MCP endpoint must be HTTPS on a DNS host without local names, embedded credentials, query or fragment.",
             Self::InvalidIdentity => "MCP connection/account/source identity is invalid.",
+            Self::InvalidHeaders => "MCP headers must be bounded public provider options; authentication, routing and protocol headers belong to Grain.",
+            Self::ConnectionTooLarge => "MCP connection metadata exceeds its 4 KiB limit.",
         })
     }
 }
@@ -114,8 +119,9 @@ impl ValidatedDescriptor {
         {
             return Err(ContractError::InvalidMetadata);
         }
-        let McpTransport::StreamableHttp { url } = &mut descriptor.transport;
+        let McpTransport::StreamableHttp { url, headers } = &mut descriptor.transport;
         *url = canonical_endpoint(url)?;
+        validate_headers(headers)?;
         if serde_json::to_vec(&descriptor)
             .map_err(|_| ContractError::InvalidJson)?
             .len()
@@ -123,7 +129,15 @@ impl ValidatedDescriptor {
         {
             return Err(ContractError::TooLarge);
         }
-        Ok(Self(descriptor))
+        let accepted = Self(descriptor);
+        if serde_json::to_vec(&accepted.connection())
+            .map_err(|_| ContractError::InvalidJson)?
+            .len()
+            > MCP_CONNECTION_MAX_BYTES
+        {
+            return Err(ContractError::ConnectionTooLarge);
+        }
+        Ok(accepted)
     }
 
     pub fn descriptor(&self) -> &McpDescriptor {
@@ -131,9 +145,103 @@ impl ValidatedDescriptor {
     }
 
     pub fn endpoint(&self) -> &str {
-        let McpTransport::StreamableHttp { url } = &self.0.transport;
+        let McpTransport::StreamableHttp { url, .. } = &self.0.transport;
         url
     }
+
+    pub fn headers(&self) -> &McpHeaders {
+        let McpTransport::StreamableHttp { headers, .. } = &self.0.transport;
+        headers
+    }
+
+    pub fn connection(&self) -> RemoteMcpConnection {
+        RemoteMcpConnection {
+            name: self.0.name.clone(),
+            url: self.endpoint().into(),
+            authentication: self.0.authentication,
+            headers: self.headers().clone(),
+        }
+    }
+}
+
+/// Header names are lower-case to avoid case aliases. Values are public package
+/// metadata: no environment substitution, vault lookup or credential injection.
+pub fn validate_headers(headers: &McpHeaders) -> Result<(), ContractError> {
+    if headers.len() > 16
+        || headers
+            .iter()
+            .map(|(k, v)| k.len() + v.len())
+            .sum::<usize>()
+            > 2048
+    {
+        return Err(ContractError::InvalidHeaders);
+    }
+    for (name, value) in headers {
+        if name.is_empty()
+            || name.len() > 64
+            || name != &name.to_ascii_lowercase()
+            || http::header::HeaderName::from_bytes(name.as_bytes()).is_err()
+            || value.is_empty()
+            || value.len() > 512
+            || value != value.trim()
+            || !value.bytes().all(|b| (32..=126).contains(&b))
+            || http::header::HeaderValue::from_str(value).is_err()
+            || [
+                "authorization",
+                "proxy-authorization",
+                "cookie",
+                "set-cookie",
+                "host",
+                "connection",
+                "content-length",
+                "content-type",
+                "content-encoding",
+                "content-range",
+                "range",
+                "accept",
+                "accept-encoding",
+                "transfer-encoding",
+                "te",
+                "trailer",
+                "upgrade",
+                "origin",
+                "referer",
+                "user-agent",
+                "forwarded",
+                "via",
+                "last-event-id",
+                "expect",
+            ]
+            .contains(&name.as_str())
+            || [
+                "mcp-",
+                "sec-",
+                "proxy-",
+                "x-forwarded-",
+                "x-original-",
+                "x-rewrite-",
+                "x-http-method",
+                "x-method-override",
+                "if-",
+            ]
+            .iter()
+            .any(|p| name.starts_with(p))
+            || [
+                "auth",
+                "token",
+                "secret",
+                "api-key",
+                "apikey",
+                "password",
+                "credential",
+            ]
+            .iter()
+            .any(|p| name.contains(p))
+        {
+            return Err(ContractError::InvalidHeaders);
+        }
+    }
+    Ok(())
 }
 
 pub(crate) fn display_text(value: &str, max: usize) -> bool {
@@ -332,6 +440,84 @@ mod tests {
             admit(&value).unwrap().descriptor().authentication,
             McpAuthentication::None {}
         );
+    }
+
+    #[test]
+    fn public_headers_are_bounded_and_cannot_override_host_controls() {
+        let mut value = wire();
+        value["transport"]["headers"] =
+            json!({"x-mcp-toolsets":"all", "notion-version":"2025-09-03"});
+        let accepted = admit(&value).unwrap();
+        assert_eq!(accepted.headers()["x-mcp-toolsets"], "all");
+        assert_eq!(serde_json::to_value(accepted.descriptor()).unwrap(), value);
+        for name in [
+            "Authorization",
+            "authorization",
+            "cookie",
+            "proxy-authorization",
+            "host",
+            "origin",
+            "content-type",
+            "content-length",
+            "accept",
+            "connection",
+            "last-event-id",
+            "mcp-session-id",
+            "mcp-protocol-version",
+            "mcp-method",
+            "mcp-param-tenant",
+            "sec-fetch-site",
+            "x-forwarded-host",
+            "x-api-key",
+            "x-access-token",
+            "bad name",
+        ] {
+            value["transport"]["headers"] = json!({name:"private"});
+            assert_eq!(admit(&value), Err(ContractError::InvalidHeaders), "{name}");
+        }
+        for bad in ["", " padded", "line\r\ninjected: yes", "\t", "\u{7f}", "é"] {
+            value["transport"]["headers"] = json!({"x-option":bad});
+            assert_eq!(admit(&value), Err(ContractError::InvalidHeaders));
+        }
+        value["transport"]["headers"] = json!({"x-option":"x".repeat(513)});
+        assert_eq!(admit(&value), Err(ContractError::InvalidHeaders));
+        value["transport"]["headers"] = serde_json::to_value(
+            (0..17)
+                .map(|n| (format!("x-option-{n}"), "value".to_owned()))
+                .collect::<McpHeaders>(),
+        )
+        .unwrap();
+        assert_eq!(admit(&value), Err(ContractError::InvalidHeaders));
+        value["transport"]["headers"] = serde_json::to_value(
+            (0..5)
+                .map(|n| (format!("x-option-{n}"), "x".repeat(512)))
+                .collect::<McpHeaders>(),
+        )
+        .unwrap();
+        assert_eq!(admit(&value), Err(ContractError::InvalidHeaders));
+    }
+
+    #[test]
+    fn header_json_rejects_duplicates_and_store_projection_overflow() {
+        let mut value = wire();
+        value["transport"]["headers"] = json!({"x-option":"one"});
+        let raw = serde_json::to_string(&value).unwrap().replace(
+            "\"x-option\":\"one\"",
+            "\"x-option\":\"one\",\"x-option\":\"two\"",
+        );
+        assert_eq!(
+            ValidatedDescriptor::parse(raw.as_bytes()),
+            Err(ContractError::InvalidJson)
+        );
+        value["transport"]["url"] = json!(format!("https://mcp.example.com/{}", "p".repeat(1900)));
+        value["transport"]["headers"] = serde_json::to_value(
+            (0..4)
+                .map(|n| (format!("x-opt-{n}"), "\"".repeat(500)))
+                .collect::<McpHeaders>(),
+        )
+        .unwrap();
+        assert!(serde_json::to_vec(&value).unwrap().len() < MCP_DESCRIPTOR_MAX_BYTES);
+        assert_eq!(admit(&value), Err(ContractError::ConnectionTooLarge));
     }
 
     #[test]

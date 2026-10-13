@@ -54,6 +54,7 @@ export function McpConnections({
   const [name, setName] = useState("");
   const [url, setUrl] = useState("");
   const [authentication, setAuthentication] = useState("oauth");
+  const [headers, setHeaders] = useState<Connection["headers"]>({});
   const [json, setJson] = useState("");
   const [removing, setRemoving] = useState<string | null>(null);
   const live = useRef(false);
@@ -178,12 +179,16 @@ export function McpConnections({
     setName(row?.name ?? "");
     setUrl(row?.url ?? "");
     setAuthentication(row?.authentication ?? "oauth");
+    setHeaders(row?.headers ?? {});
     setJson(
       JSON.stringify(
         {
           name: row?.name ?? "",
           url: row?.url ?? "",
           authentication: { type: row?.authentication ?? "oauth" },
+          ...(Object.keys(row?.headers ?? {}).length
+            ? { headers: row?.headers }
+            : {}),
         },
         null,
         2,
@@ -196,7 +201,12 @@ export function McpConnections({
     event.preventDefault();
     const definitionJson = jsonMode
       ? json
-      : JSON.stringify({ name, url, authentication: { type: authentication } });
+      : JSON.stringify({
+          name,
+          url,
+          authentication: { type: authentication },
+          ...(Object.keys(headers).length ? { headers } : {}),
+        });
     void run("form", async () => {
       unwrapResult(
         await (editing
@@ -301,7 +311,12 @@ export function McpConnections({
                 if (event.target.checked)
                   setJson(
                     JSON.stringify(
-                      { name, url, authentication: { type: authentication } },
+                      {
+                        name,
+                        url,
+                        authentication: { type: authentication },
+                        ...(Object.keys(headers).length ? { headers } : {}),
+                      },
                       null,
                       2,
                     ),
@@ -311,13 +326,22 @@ export function McpConnections({
                     const value = JSON.parse(json);
                     if (
                       !value ||
-                      Object.keys(value).sort().join() !==
-                        "authentication,name,url" ||
+                      ![
+                        "authentication,name,url",
+                        "authentication,headers,name,url",
+                      ].includes(Object.keys(value).sort().join()) ||
                       typeof value.name !== "string" ||
                       typeof value.url !== "string" ||
                       !value.authentication ||
                       Object.keys(value.authentication).join() !== "type" ||
-                      !["oauth", "none"].includes(value.authentication.type)
+                      !["oauth", "none"].includes(value.authentication.type) ||
+                      (value.headers !== undefined &&
+                        (!value.headers ||
+                          typeof value.headers !== "object" ||
+                          Array.isArray(value.headers) ||
+                          Object.values(value.headers).some(
+                            (item) => typeof item !== "string",
+                          )))
                     )
                       throw new Error(
                         "Use name, url and authentication.type before switching to the form.",
@@ -325,6 +349,7 @@ export function McpConnections({
                     setName(value.name);
                     setUrl(value.url);
                     setAuthentication(value.authentication.type);
+                    setHeaders(value.headers ?? {});
                   } catch (reason) {
                     setError(String(reason));
                     return;
@@ -349,8 +374,9 @@ export function McpConnections({
                 rows={7}
               />
               <small>
-                Use name, url and authentication.type (oauth or none).
-                Credentials are entered separately.
+                Use name, url and authentication.type (oauth or none). Optional
+                headers are public provider options; credentials are entered
+                separately.
               </small>
             </label>
           ) : (

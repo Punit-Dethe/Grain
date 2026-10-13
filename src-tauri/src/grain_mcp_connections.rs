@@ -40,6 +40,10 @@ impl RuntimeOwner {
         }
     }
 
+    pub(super) fn headers(&self) -> &grain_sdk::mcp::McpHeaders {
+        &self.lease.record().definition().headers
+    }
+
     pub(super) fn spec(&self) -> super::Provider<'_> {
         let definition = self.lease.record().definition();
         super::Provider {
@@ -326,6 +330,7 @@ pub struct ConnectionView {
     name: String,
     url: String,
     authentication: String,
+    headers: grain_sdk::mcp::McpHeaders,
     state: String,
 }
 
@@ -353,6 +358,7 @@ impl From<ConnectionRecord> for ConnectionView {
             revision: record.revision().to_string(),
             name: definition.name.clone(),
             url: definition.url.clone(),
+            headers: definition.headers.clone(),
             authentication: match definition.authentication {
                 McpAuthentication::OAuth {} => "oauth",
                 McpAuthentication::None {} => "none",
@@ -952,13 +958,21 @@ mod tests {
     fn connection_views_distinguish_sources_without_exposing_account_identity() {
         let data = tempfile::tempdir().unwrap();
         let registry = ConnectionRegistry::load(data.path()).unwrap();
-        let configured = registry.insert(ConnectionDefinition::parse(br#"{"name":"Custom tools","url":"https://example.com/mcp","authentication":{"type":"none"}}"#).unwrap()).unwrap();
+        let configured = registry.insert(ConnectionDefinition::parse(br#"{"name":"Custom tools","url":"https://example.com/mcp","authentication":{"type":"none"},"headers":{"x-provider-profile":"test"}}"#).unwrap()).unwrap();
         let store = registry.insert_store(store_descriptor()).unwrap();
         for (record, source) in [(configured, "configured"), (store, "store")] {
             let view = serde_json::to_value(ConnectionView::from(record)).unwrap();
             assert_eq!(view["source"], source);
             assert!(view["revision"].is_string());
-            assert_eq!(view.as_object().unwrap().len(), 9);
+            assert_eq!(view.as_object().unwrap().len(), 10);
+            assert_eq!(
+                view["headers"],
+                if source == "configured" {
+                    serde_json::json!({"x-provider-profile":"test"})
+                } else {
+                    serde_json::json!({})
+                }
+            );
             assert_eq!(view["extensionId"].is_null(), source == "configured");
             assert_eq!(view["version"].is_null(), source == "configured");
             assert!(view.get("accountId").is_none());

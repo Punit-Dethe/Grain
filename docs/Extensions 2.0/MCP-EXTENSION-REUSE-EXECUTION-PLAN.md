@@ -2,6 +2,13 @@
 
 ## Current continuation point — 14 October 2026
 
+**Current source delivery:** package-owned public transport options are
+implemented and the GitHub 0.1.1 candidate validates/packs. Its catalogue
+publication and matching installed-alpha acceptance are pending. Grain no
+longer hardcodes the GitHub toolset request. Custom JSON/form editing preserves
+options; release/alpha custom management remains hidden. Next is the shared
+publisher pre-registered OAuth contract; item 1 is not fully closed yet.
+
 **Active order: shared platform first.** Follow
 [PLATFORM-STABILIZATION.md](PLATFORM-STABILIZATION.md). The user explicitly
 supersedes GitHub breadth → Notion: retain GitHub as the existing reference,
@@ -10,9 +17,9 @@ verify the publication/install journey and audit the affected boundaries.
 Notion follows as a second-provider check; no new provider batches now.
 
 Native tools, store MCPs and custom MCPs already have shared execution/account
-foundations. The concrete contract gaps are package-owned transport options
-(current GitHub header special case) and publisher pre-registered OAuth
-onboarding. They are audited in the stabilization document with source anchors,
+foundations. Package-owned transport options now have a shared implementation;
+publisher pre-registered OAuth onboarding remains the concrete contract gap.
+They are audited in the stabilization document with source anchors,
 implementation scope and completion gates. Do not build another runtime,
 marketplace or harness engine. Custom MCP management remains hidden in release
 and alpha; preserve its shared validation, registry and account isolation.

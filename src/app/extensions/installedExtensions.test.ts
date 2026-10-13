@@ -24,6 +24,7 @@ const connection: ConnectionView = {
   name: "GitHub",
   url: "https://example.com/mcp",
   authentication: "oauth",
+  headers: {},
   state: "inactive",
 };
 const account = (

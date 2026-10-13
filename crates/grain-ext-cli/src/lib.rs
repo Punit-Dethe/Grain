@@ -244,7 +244,10 @@ pub fn init_mcp_project(
         description: format!("Tools provided by {name}"),
         version: "0.1.0".into(),
         grain_api: grain_sdk::compatibility::EXTENSION_API_REQUIREMENT.into(),
-        transport: McpTransport::StreamableHttp { url: url.into() },
+        transport: McpTransport::StreamableHttp {
+            url: url.into(),
+            headers: Default::default(),
+        },
         authentication: match authentication {
             "oauth" => McpAuthentication::OAuth {},
             "none" => McpAuthentication::None {},
@@ -1027,7 +1030,8 @@ mod tests {
         assert_eq!(
             descriptor.transport,
             grain_sdk::mcp::McpTransport::StreamableHttp {
-                url: "https://tools.example/mcp".into()
+                url: "https://tools.example/mcp".into(),
+                headers: Default::default()
             }
         );
         assert!(run(["doctor".into()], &root)
@@ -1111,6 +1115,38 @@ mod tests {
             .contains("E_PROJECT_KIND"));
         assert!(run(["pack".into()], root).is_err());
         assert_eq!(fs::read(&artifact).unwrap(), original);
+    }
+
+    #[test]
+    fn mcp_pack_preserves_public_options_and_refuses_credential_headers() {
+        let temp = tempfile::tempdir().unwrap();
+        init_mcp_project(
+            temp.path(),
+            "Options",
+            Some("com.example.options"),
+            "https://tools.example/mcp",
+            "oauth",
+        )
+        .unwrap();
+        let root = temp.path().join("options");
+        let path = root.join("mcp.json");
+        let mut descriptor: serde_json::Value =
+            serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        descriptor["transport"]["headers"] = serde_json::json!({"x-mcp-toolsets":"all"});
+        fs::write(&path, serde_json::to_vec(&descriptor).unwrap()).unwrap();
+        run(["pack".into()], &root).unwrap();
+        let artifact = root.join("com.example.options-0.1.0.mcp.json");
+        let good = fs::read(&artifact).unwrap();
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&good).unwrap(),
+            descriptor
+        );
+        descriptor["transport"]["headers"] =
+            serde_json::json!({"authorization":"Bearer forbidden"});
+        fs::write(&path, serde_json::to_vec(&descriptor).unwrap()).unwrap();
+        assert!(run(["doctor".into()], &root).is_err());
+        assert!(run(["pack".into()], &root).is_err());
+        assert_eq!(fs::read(&artifact).unwrap(), good);
     }
 
     #[test]

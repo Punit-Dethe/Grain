@@ -1,5 +1,42 @@
 # Extension implementation: progress, changes and user testing
 
+**Package-owned transport options, 14 October:** implemented optional public
+`transport.headers` for MCP descriptors and top-level `headers` for direct
+connection JSON. Shared validation uses the existing HTTP parser, bounds
+name/value/count/total bytes, refuses duplicate names and reserves credential,
+routing and MCP protocol/session controls. Values are public metadata, not a
+secret mechanism or environment/vault substitution. Publisher review remains
+responsible for values; validation cannot recognize every possible secret.
+
+Options survive CLI doctor/pack, signed-artifact projection, registry reload,
+store updates and the maintained SDK transport, including legacy negotiation.
+Unsigned persisted store overrides are refused. Option-only custom/store updates
+retain account ownership while invalidating old revision leases and tool stamps.
+Also enforced the serialized connection size at descriptor admission, avoiding
+a package that installs successfully but exceeds the registry's 4 KiB limit at
+restart. Custom form/JSON edits preserve existing options and remain hidden in
+release/alpha. Native contracts and first-party OAuth URL/client binding unchanged.
+
+Removed the GitHub-specific toolset branch from Grain. Prepared the GitHub
+repository's 0.1.1 candidate with `x-mcp-toolsets: all` in its descriptor; doctor
+reports 0 findings and pack succeeds. No signed catalogue update, new installer,
+account mutation or live test batch was dispatched. Published/installed evidence
+is not carried forward as acceptance of this candidate.
+
+Focused verification: **318 core, 14 CLI, 28 authoring-check and 123 frontend
+tests Pass**; type checking, targeted lint/format checks Pass. The new runtime
+tests exercise actual SDK header forwarding for modern and legacy negotiation,
+without tool writes or a new harness. An initial native compile needed an explicit
+test-map type; an existing UI-projection assertion also required updating from
+9 to 10 public fields. The corrected MCP suite passes 82 cases; final checks
+are recorded at the commit checkpoint. Unrelated generated-binding formatting
+and Cargo.toml working changes are preserved and excluded from this commit.
+
+This closes the transport-options source task, not all of stabilization item 1.
+General publisher pre-registered OAuth onboarding is next, then the observed
+Agent routing failures and a batched install/publication checkpoint plus focused
+audit. GitHub remains the single live reference; Notion remains deferred.
+
 **Platform-first reset, 14 October:** the user's latest instruction supersedes
 the GitHub breadth → Notion sequence below. Audited the shared descriptor,
 registry/runtime ownership, authoring/publication and client resolver boundaries;

@@ -177,7 +177,9 @@ The actual issued Linear token-expiry check remains deferred, not passed.
   extension's account through the broker. Provider-specific acceptance is still
   required. This is not arbitrary confidential-client or multi-account support.
 - An MCP author packages endpoint/authentication metadata, not user credentials.
-  The descriptor rejects headers, tokens, client IDs/secrets, host-owned account
+  The descriptor supports bounded public `transport.headers` provider options,
+  with authentication/routing/MCP control headers reserved for Grain. It rejects
+  tokens as an authentication mechanism, client IDs/secrets, host-owned account
   IDs and trust flags. Grain discovers the server's actual tools and manages its
   connection/account itself.
 - Custom/pre-registered MCP users can configure OAuth app credentials through

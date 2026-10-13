@@ -551,6 +551,7 @@ dependencies = [
  "anyhow",
  "chrono",
  "grain-sdk",
+ "http",
  "jsonschema",
  "log",
  "minisign-verify",

@@ -2,8 +2,17 @@
 
 Updated 14 October 2026. This is the active work order, supplementing the
 [execution plan](MCP-EXTENSION-REUSE-EXECUTION-PLAN.md). It supersedes the earlier
-GitHub breadth → Notion sequence. It is an audit and implementation plan, not
-a claim that the following changes are implemented.
+GitHub breadth → Notion sequence. Source implementation and outstanding live
+acceptance are distinguished below.
+
+**14 October source checkpoint:** bounded public request headers now pass from
+descriptor/direct JSON through validation, CLI packing, store artifact ownership,
+registry persistence and SDK transport. The runtime GitHub toolset branch is
+removed. The GitHub repository has a validated 0.1.1 candidate declaring
+`transport.headers: {"x-mcp-toolsets":"all"}`; no catalogue publication or new
+installer has occurred. Existing custom form/JSON edits preserve these options.
+Publisher pre-registered OAuth onboarding remains the next code task. Item 1 is
+not fully closed until that account contract and installed/package checkpoint.
 
 ## Outcome and scope
 
@@ -33,9 +42,10 @@ No new marketplace, authentication service, testing engine or legacy migration.
 
 Two concrete contract gaps remain:
 
-1. `McpTransport::StreamableHttp` only carries `url`. GitHub's
-   `x-mcp-toolsets: all` is consequently hardcoded in `transport_config`.
-   Do not copy this pattern for each provider.
+1. **Resolved in source:** `McpTransport::StreamableHttp` carries URL and optional
+   validated public `headers`. GitHub toolset selection is package-owned rather
+   than hardcoded in `transport_config`. Live candidate publication/acceptance
+   remains separate; the current published package is unchanged.
 2. Generic MCP OAuth supports discovery/registration and explicit per-connection
    client setup, but seamless publisher-supplied pre-registered client onboarding
    is absent. The compiled GitHub client is restricted to one verified extension
@@ -129,6 +139,9 @@ Absence of an observed mutation is not proof of every internal dispatch outcome.
 Actual all-toolset exposure remains unverified until a matching binary is used.
 Tester build [38446169856](https://github.com/Punit-Dethe/Grain/actions/runs/38446169856)
 was dispatched from `7d7b96f2`; no additional build/release is required for this audit.
+That build predates the package-header contract and cannot accept the 0.1.1
+candidate. Batch a matching tester build after the shared account contract is
+ready; do not publish the candidate to the current catalogue prematurely.
 
 ## Testing effort and parallel work
 
