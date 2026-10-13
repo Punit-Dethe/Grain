@@ -6,6 +6,7 @@ Run from the repository root on Windows:
 
 ```powershell
 node tests/agent-harness/github-alpha.mjs --preflight
+node tests/agent-harness/github-alpha.mjs --catalogue
 node tests/agent-harness/github-alpha.mjs --read
 node --test tests/agent-harness/github-alpha.test.mjs
 ```
@@ -23,6 +24,11 @@ relay. `--read` approves only the test repository's README getter, verifies the
 returned content independently, restarts the owned app, then repeats the read.
 No writes or account connect/disconnect actions are enabled. Existing account
 credentials remain in Grain; no profile copying or token extraction is used.
+`--catalogue` invokes the real host's SDK discovery and records supported public
+tool names/count/digest without executing any tool. The current installed binary
+returned 49 default-catalogue tools in `github-alpha-yTL7At`, cleanup Pass. This
+does not prove those tools can execute or certify the new all-toolset source
+change before it is built into an installed alpha.
 
 Reports record the installed binary hash and per-stage verdicts under ignored
 `.runs/github-alpha-*/evidence/`; subsequent runs also stamp this script. Only

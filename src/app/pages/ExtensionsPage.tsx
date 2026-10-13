@@ -49,7 +49,11 @@ import {
   type SettingsSection,
 } from "@/components/settings/experimentations/ExtensionSettings";
 import { useSettings } from "@/hooks/useSettings";
-import { hashForRoute, type ExtensionViewId } from "../navigation";
+import {
+  hashForRoute,
+  customMcpManagementVisible,
+  type ExtensionViewId,
+} from "../navigation";
 import { ExtensionApprovalDetails } from "../extensions/ExtensionApprovalDetails";
 import {
   capabilityLabel,
@@ -1592,9 +1596,12 @@ export function ExtensionsPage({ view }: { view: ExtensionViewId }) {
                   }).slice(1);
                 }}
               />
-              {developer?.enabled && detail === null && (
-                <McpConnections query={query} />
-              )}
+              {customMcpManagementVisible(
+                import.meta.env.MODE,
+                import.meta.env.DEV,
+              ) &&
+                developer?.enabled &&
+                detail === null && <McpConnections query={query} />}
             </>
           ) : (
             <StoreGrid

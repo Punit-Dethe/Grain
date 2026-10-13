@@ -1805,6 +1805,14 @@ fn transport_config(endpoint: &str) -> StreamableHttpClientTransportConfig {
         .reinit_on_expired_session(false);
     config.channel_buffer_capacity = 8;
     config.allow_stateless = true;
+    // Ask GitHub for its complete tool catalogue without changing its OAuth
+    // resource/client binding. Provider permissions still govern each call.
+    if endpoint == "https://api.githubcopilot.com/mcp/" {
+        config.custom_headers.insert(
+            reqwest_mcp::header::HeaderName::from_static("x-mcp-toolsets"),
+            reqwest_mcp::header::HeaderValue::from_static("all"),
+        );
+    }
     config
 }
 

@@ -2,14 +2,22 @@
 
 ## Current continuation point — 13 October 2026
 
+**Latest scope:** the next provider is now **Notion**, chosen by the user.
+Follow [GitHub-to-Notion delivery](GITHUB-NOTION-DELIVERY.md): hide custom MCP
+surfaces in release/alpha while retaining development code, request all GitHub
+toolsets, finish broader grants and verify representative capability families,
+then review that path and run Notion acceptance. Preparation can overlap;
+provider verdicts stay separate. No fresh release is requested until needed to
+exercise changed installed behavior. Full-toolset GitHub source is verified,
+but the existing installed binary still advertises its old 49-tool default set.
+
 The user accepts the current extension design and requests functional work.
 The detail/artwork block is complete with focused checks; no further visual
 refinement is queued. The next block is real supported GitHub Agent use and
 account recovery, with one focused audit/fix checkpoint. Follow the existing
 [GitHub batch](GITHUB-ALPHA-ONBOARDING.md#current-user-test-batch), not the historic
-test inventories. The second supported provider is undecided (the user
-explicitly excludes assuming Linear); choose it after the GitHub block,
-then address third-party publisher OAuth onboarding. See
+test inventories. Notion is the second supported provider; after its acceptance,
+address third-party publisher OAuth onboarding. See
 [progress](MCP-EXTENSION-PROGRESS.md) for scope and evidence; design approval
 does not establish live provider acceptance.
 

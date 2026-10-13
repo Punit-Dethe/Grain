@@ -4,9 +4,17 @@ import {
   routeFromHash,
   routeUsesCompactGlobalRail,
   extensionsNavigationVisible,
+  customMcpManagementVisible,
 } from "./navigation";
 
 describe("UI 2.0 hash navigation", () => {
+  it("keeps custom MCP management out of alpha and ordinary releases even while extensions are visible", () => {
+    expect(customMcpManagementVisible("production", false)).toBe(false);
+    expect(customMcpManagementVisible("extensions-alpha", false)).toBe(false);
+    expect(customMcpManagementVisible("agent-harness", false)).toBe(true);
+    expect(customMcpManagementVisible("development", true)).toBe(true);
+    expect(customMcpManagementVisible("unrecognized", false)).toBe(false);
+  });
   it("exposes extensions in alpha, development and real acceptance builds while keeping ordinary releases hidden", () => {
     expect(extensionsNavigationVisible("production", false)).toBe(false);
     expect(extensionsNavigationVisible("extensions-alpha", false)).toBe(true);

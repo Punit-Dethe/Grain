@@ -40,8 +40,8 @@ export function approvedGitHubRead(confirm) {
 
 export async function runInstalledGitHub(mode) {
   assert.ok(
-    ["--preflight", "--read"].includes(mode),
-    "Use --preflight or --read; no writes are enabled",
+    ["--preflight", "--catalogue", "--read"].includes(mode),
+    "Use --preflight, --catalogue or --read; no writes are enabled",
   );
   const here = dirname(fileURLToPath(import.meta.url));
   const root = await mkdtemp(join(here, ".runs/github-alpha-"));
@@ -376,6 +376,30 @@ export async function runInstalledGitHub(mode) {
     await mkdir(join(root, "webview"));
     await launch();
     await check("github.installed-preflight", preflight);
+    if (mode === "--catalogue") {
+      await check("github.catalogue", async () => {
+        const discovered = await invoke(
+          "mcp_test_provider",
+          {
+            id: `configured-${connection.id}`,
+          },
+          120000,
+        );
+        assert.equal(discovered.provider_id, `configured-${connection.id}`);
+        assert.equal(discovered.tool_count, discovered.tools.length);
+        assert.ok(discovered.tool_count > 0);
+        assert.ok(discovered.tools.includes("get_file_contents"));
+        assert.ok(discovered.tools.includes("issue_write"));
+        const evidence = {
+          connectionRevision: connection.revision,
+          count: discovered.tool_count,
+          tools: discovered.tools,
+          digest: discovered.tool_set_digest,
+        };
+        console.log(JSON.stringify({ catalogue: evidence }));
+        return evidence;
+      });
+    }
     if (mode === "--read") {
       const result = JSON.parse(
         (

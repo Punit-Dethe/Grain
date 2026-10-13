@@ -30,6 +30,14 @@ export function extensionsNavigationVisible(
   return development || mode === "extensions-alpha" || mode === "agent-harness";
 }
 
+/** Direct MCP configuration stays in development until its release checkpoint. */
+export function customMcpManagementVisible(
+  mode: string,
+  development: boolean,
+): boolean {
+  return development || mode === "agent-harness";
+}
+
 export type ExtensionViewId = (typeof EXTENSION_VIEW_IDS)[number];
 
 export type AppRoute =

@@ -1,5 +1,44 @@
 # Extension implementation: progress, changes and user testing
 
+**GitHub breadth and Notion sequencing, 13 October:** the user chooses Notion
+next and requests broad provider capabilities before its live tests. Added
+[the bounded delivery/ownership roadmap](GITHUB-NOTION-DELIVERY.md), separating
+provider catalogue, account permissions and Agent schema selection. Current
+installed GitHub discovery advertises **49 supported tools**, including writes
+outside the two previously exercised actions (`github-alpha-yTL7At`, preflight
+and catalogue Pass, cleanup Pass). An earlier open-app attempt was Blocked and
+left the user's process alone. No writes occurred in this inventory check.
+
+The SDK transport now requests `X-MCP-Toolsets: all` only for GitHub's exact
+official endpoint, preserving the URL/OAuth binding. Existing catalogue bounds
+are unchanged; live all-toolset discovery remains Pending until the binary
+contains this change. The user is updating App grants. The supplied screenshot
+confirms Actions/Discussions/Issues/Pull requests read/write but still shows
+Contents read-only and Workflows/security permissions No access; completion
+and installation acceptance were requested. Do not mark broad execution passed.
+
+Custom MCP management and the old hosted-provider validation panel are hidden
+in production and alpha source builds, retained for development/agent-harness.
+Installed extension/account controls remain; these presentation gates do not
+delete saved connections or disable their backend execution. **123 frontend
+unit tests, 81 focused MCP Rust tests and the existing read-approval guard Pass**;
+targeted lint, formatting, ordinary/alpha frontend builds and scoped review Pass.
+The Rust header test checks the exact SDK configuration; the existing wire test
+also verifies the header survives the bounded transport. Initial Windows test
+attempts used the wrong cache/omitted the maintained manifest runner; the first
+new assertion also used an unsuitable string lookup for a HeaderName-keyed map.
+Correcting test setup/typed lookup yielded the final passing MCP suite; no
+production bypass or runtime-library change was needed. Unrelated dirty files
+remain untouched. No fresh release/installer workflow was dispatched.
+
+Notion package preparation may overlap GitHub work; live Notion acceptance
+follows broader GitHub checks. Its official hosted OAuth metadata advertises
+dynamic registration, S256 and refresh support, verified without account access.
+No Notion package, sign-in or live tool use is claimed complete yet. First-party
+hosted extensions are small descriptor/listing packages; providers own their MCP
+servers. Community package maintenance and Grain's shared runtime/OAuth client
+registration responsibilities are documented in the roadmap.
+
 **Live GitHub read/restart checkpoint, 13 October:** the user requested no
 Computer Use. Added a focused installed-alpha script using existing Playwright
 and production Tauri IPC instead of screenshot/click automation. No new

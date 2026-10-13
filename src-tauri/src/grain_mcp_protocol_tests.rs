@@ -10,6 +10,24 @@ use std::sync::{
     Arc,
 };
 
+#[test]
+fn github_requests_all_toolsets_without_changing_auth_or_other_servers() {
+    let github = transport_config("https://api.githubcopilot.com/mcp/");
+    assert_eq!(
+        github.custom_headers[&reqwest_mcp::header::HeaderName::from_static("x-mcp-toolsets")],
+        "all"
+    );
+    assert_eq!(github.custom_headers.len(), 1);
+    assert!(github.auth_header.is_none());
+    for endpoint in [
+        "https://mcp.notion.com/mcp",
+        "https://example.com/mcp/",
+        "https://api.githubcopilot.com.evil.example/mcp/",
+    ] {
+        assert!(transport_config(endpoint).custom_headers.is_empty());
+    }
+}
+
 #[derive(Clone)]
 enum Behavior {
     CatalogPages(Vec<Vec<Value>>),
@@ -571,6 +589,7 @@ async fn bounded_binding_preserves_auth_protocol_headers_and_http_outcomes() {
                 "mcp-protocol-version: 2026-07-28",
                 "mcp-method: tools/list",
                 "mcp-param-example: projected",
+                "x-mcp-toolsets: all",
             ] {
                 assert!(headers.contains(expected), "missing {expected}");
             }
@@ -588,6 +607,7 @@ async fn bounded_binding_preserves_auth_protocol_headers_and_http_outcomes() {
             ("mcp-protocol-version", "2026-07-28"),
             ("mcp-method", "tools/list"),
             ("mcp-param-example", "projected"),
+            ("x-mcp-toolsets", "all"),
         ] {
             headers.insert(
                 reqwest_mcp::header::HeaderName::from_static(name),

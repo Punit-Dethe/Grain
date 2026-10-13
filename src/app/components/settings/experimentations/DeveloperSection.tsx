@@ -9,6 +9,12 @@ import React, {
 import { invoke } from "@tauri-apps/api/core";
 import { ExternalLink, FolderOpen, Network, X } from "lucide-react";
 import { LiveLogViewer, type LiveLogFilterChip } from "../debug/LiveLogViewer";
+import { customMcpManagementVisible } from "@/navigation";
+
+const showHostedValidation = customMcpManagementVisible(
+  import.meta.env.MODE,
+  import.meta.env.DEV,
+);
 
 interface DeveloperExtension {
   id: string;
@@ -389,7 +395,9 @@ export const DeveloperSection: React.FC<{
   const refresh = useCallback(async () => {
     const [status, providers] = await Promise.all([
       invoke<ExtensionDeveloperStatus>("extension_developer_status"),
-      invoke<McpProviderStatus[]>("mcp_provider_status"),
+      showHostedValidation
+        ? invoke<McpProviderStatus[]>("mcp_provider_status")
+        : Promise.resolve([]),
     ]);
     setLoaded(status.loaded);
     setMcpProviders(providers);
@@ -498,7 +506,9 @@ export const DeveloperSection: React.FC<{
           </div>
         )}
         {loader}
-        <McpProviders providers={mcpProviders} refresh={refresh} />
+        {showHostedValidation && (
+          <McpProviders providers={mcpProviders} refresh={refresh} />
+        )}
         <div className="rounded-xl border border-line bg-paper-raised p-5 text-sm text-ink-soft">
           {EMPTY_MESSAGE}
         </div>
@@ -514,7 +524,9 @@ export const DeveloperSection: React.FC<{
         </div>
       )}
       {loader}
-      <McpProviders providers={mcpProviders} refresh={refresh} />
+      {showHostedValidation && (
+        <McpProviders providers={mcpProviders} refresh={refresh} />
+      )}
       <div className="flex flex-wrap items-end justify-between gap-3 rounded-xl border border-line bg-paper-raised p-4">
         <div className="min-w-0">
           <div className="text-sm font-medium text-ink">
