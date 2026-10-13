@@ -7,17 +7,29 @@ The detail/artwork block is complete with focused checks; no further visual
 refinement is queued. The next block is real supported GitHub Agent use and
 account recovery, with one focused audit/fix checkpoint. Follow the existing
 [GitHub batch](GITHUB-ALPHA-ONBOARDING.md#current-user-test-batch), not the historic
-test inventories. Then add Linear as the second supported provider through
-the same pipeline and address third-party publisher OAuth onboarding. See
+test inventories. The second supported provider is undecided (the user
+explicitly excludes assuming Linear); choose it after the GitHub block,
+then address third-party publisher OAuth onboarding. See
 [progress](MCP-EXTENSION-PROGRESS.md) for scope and evidence; design approval
 does not establish live provider acceptance.
+
+**Current GitHub results:** after the user updated the GitHub App installation
+access, real Agent private README read and account/read after restart passed
+on the installed alpha (`github-alpha-iuyNiW`, 4/4 including preflight, cleanup
+Pass). These use a focused production-IPC script in `tests/agent-harness/`,
+as the user explicitly requested no Computer Use. No writes are enabled in
+that script. The next two distinct checks are one disposable issue creation
+and disconnect/reconnect. A scoped sidebar/build-mode fix also makes Extensions
+visible in alpha builds; ordinary beta builds retain their existing hidden
+entry point. Rebuilt-alpha entry-point verification remains separate.
 
 Read [EXTENSION-PLATFORM-HANDOFF.md](EXTENSION-PLATFORM-HANDOFF.md) before
 continuing. It records the current user/developer/OAuth/publishing decisions and
 limitations, source ownership and the verified alpha checkpoint. The user
 confirms the corrected installed Agent opens; store GitHub installation/sign-in
-were already confirmed. GitHub read/write/restart/disconnect and deferred issued
-Linear token expiry are not newly claimed passed.
+were already confirmed. GitHub write/disconnect/reconnect and deferred issued
+Linear token expiry remain pending/deferred respectively; the read/restart
+results above now supersede that portion of the earlier handoff.
 
 Main integration is implemented on `extensions/main-integration-20261010`,
 using `bbae21ccadc4c6e8d65263e207d644db41ab74ad` (app 0.0.8).

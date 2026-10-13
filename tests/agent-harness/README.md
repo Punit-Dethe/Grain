@@ -1,5 +1,44 @@
 # Grain Agent acceptance harness
 
+## Installed GitHub alpha checkpoint (13 October)
+
+Run from the repository root on Windows:
+
+```powershell
+node tests/agent-harness/github-alpha.mjs --preflight
+node tests/agent-harness/github-alpha.mjs --read
+node --test tests/agent-harness/github-alpha.test.mjs
+```
+
+Close the installed **Grain Extensions Alpha** first. It must already have
+Agent enabled, its model configured, extension Developer Mode enabled, and
+the verified GitHub extension installed, enabled and signed in. Disable other
+extension tools for this provider-specific batch. GitHub CLI needs independent
+read access to `Punit-Dethe/grain-github-alpha-test/README.md` for verification.
+
+This focused script starts the actual installed alpha, attaches to its owned
+WebView2 through loopback CDP and invokes production Tauri Agent commands. It
+does not use Computer Use, screenshots, simulated clicks, fixtures or a model
+relay. `--read` approves only the test repository's README getter, verifies the
+returned content independently, restarts the owned app, then repeats the read.
+No writes or account connect/disconnect actions are enabled. Existing account
+credentials remain in Grain; no profile copying or token extraction is used.
+
+Reports record the installed binary hash and per-stage verdicts under ignored
+`.runs/github-alpha-*/evidence/`; subsequent runs also stamp this script. Only
+the spawned host is stopped, with cleanup reported independently. Disposable
+WebView directories and evidence can be removed after review; process cleanup
+does not claim file deletion. Retain this small installed-alpha checkpoint
+until the standard runner can target installed alphas directly, then consolidate
+it there rather than building another testing framework. This verifies the real
+Agent/MCP command path, not physical shortcuts or visual interaction.
+
+After the user updated GitHub App repository access, `github-alpha-iuyNiW`
+passed preflight, private README read, persisted account after restart and a
+second verified read, with cleanup Pass. Earlier 404 and guard-refusal runs
+remain failed evidence. Real issue creation and disconnect/reconnect remain
+separate pending acceptance; never infer them from a successful read.
+
 **App-main integration (10 October):** see the
 [integration checkpoint](../../docs/Extensions%202.0/MAIN-INTEGRATION-CHECKPOINT.md).
 The existing `extension-contract`, `agent-workflow`, `mcp-configured` and

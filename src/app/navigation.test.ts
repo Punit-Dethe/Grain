@@ -3,9 +3,17 @@ import {
   hashForRoute,
   routeFromHash,
   routeUsesCompactGlobalRail,
+  extensionsNavigationVisible,
 } from "./navigation";
 
 describe("UI 2.0 hash navigation", () => {
+  it("exposes extensions in alpha, development and real acceptance builds while keeping ordinary releases hidden", () => {
+    expect(extensionsNavigationVisible("production", false)).toBe(false);
+    expect(extensionsNavigationVisible("extensions-alpha", false)).toBe(true);
+    expect(extensionsNavigationVisible("agent-harness", false)).toBe(true);
+    expect(extensionsNavigationVisible("development", true)).toBe(true);
+    expect(extensionsNavigationVisible("unrecognized", false)).toBe(false);
+  });
   it("opens merged transcription settings from the former models route", () => {
     expect(routeFromHash("#/settings/speech-to-text")).toEqual({
       page: "settings",

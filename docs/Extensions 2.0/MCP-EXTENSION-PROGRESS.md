@@ -1,5 +1,38 @@
 # Extension implementation: progress, changes and user testing
 
+**Live GitHub read/restart checkpoint, 13 October:** the user requested no
+Computer Use. Added a focused installed-alpha script using existing Playwright
+and production Tauri IPC instead of screenshot/click automation. No new
+framework, fixture server, model relay or production testing seam. It launches
+only its owned installed alpha, confines approval to the test repository's
+README getter and independently compares the returned private file with GitHub
+CLI. Credentials stay in Grain and the configured model is used.
+
+Initial actual GitHub calls returned 404 even though the separate CLI account
+could read the file. The user updated the GitHub App installation/repository
+access and supplied a screenshot showing code read, issues read/write and all
+repositories. After that change, `.runs/github-alpha-iuyNiW` passed installed
+preflight, real Agent README read, account persistence after restart and real
+Agent read after restart; **4/4 Pass, cleanup Pass**, one narrowly approved
+getter per read. Both returned the independently observed README. Installed
+binary SHA-256: `425610fd66921c14c9c26ebddc21b757b8d7c15419a8029aec567f7c0e72d3c2`.
+Earlier guard refusals and observed 404 failures remain retained, not accepted.
+This is command-path acceptance, not a physical shortcut/UI test. **Remaining
+in this GitHub block: one disposable issue creation and disconnect/reconnect.**
+No write has been dispatched by this script; no further sign-in is needed for
+the now-passing read. Second provider remains undecided, not assumed Linear.
+
+Also fixed an alpha-specific entry-point defect: the sidebar hid Extensions
+in every non-development build. Explicit `extensions-alpha` and existing
+`agent-harness` build modes now expose the entry point; ordinary production
+builds still hide it. Alpha configuration selects that frontend mode; backend
+Developer Mode and account gates are unchanged. Scoped review, **122 frontend
+unit tests**, the approval-guard unit test, targeted lint and ordinary/alpha
+frontend builds passed. The installed binary used for the read predates this
+navigation fix; a rebuilt alpha still needs installed entry-point verification.
+Unrelated Cargo.toml/generated bindings changes are preserved. Usage,
+limitations and consolidation/cleanup conditions are in the harness README.
+
 **Functional continuation, 13 October:** the user says the current design is
 fine and asks to resume actual extension/MCP work. Record the current design
 checkpoint as accepted; stop visual refinement. This does not certify new live
@@ -9,8 +42,8 @@ explicitly approved disposable issue creation, restart/read and disconnect/
 reconnect. Keep exact action receipts and audit/fix that path before claiming
 provider acceptance. Reuse existing tests; no new harness or tool-discovery
 optimization block is needed. Build `38286531636` succeeded at `b0a0f397`.
-After this checkpoint, add a second supported provider (Linear is the already
-selected/tested account), then address publisher OAuth onboarding before
+After this checkpoint, choose a second supported provider; the user clarified
+it may not be Linear. Then address publisher OAuth onboarding before
 inviting general third-party pre-registered MCP publishers. Permanent identity,
 broader distribution and deferred issued Linear expiry remain separate.
 
