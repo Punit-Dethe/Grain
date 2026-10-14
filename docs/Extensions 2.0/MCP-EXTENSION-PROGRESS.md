@@ -1,5 +1,17 @@
 # Extension implementation: progress, changes and user testing
 
+**Gateway restored, 14 October:** user approved applying the verified backport
+and restarting 9router. The installed 0.5.65 chunk now matches fixed SHA256
+`0185b1685d655c957cbb63fee0226f224612be79ffd11cf98a409544a496488c`.
+Stopping the original child did not restore the endpoint within 30 seconds;
+automatic approval review then blocked launcher-restart and direct-server-start
+commands, so no success was claimed. After the user quit 9router and explicitly
+requested a launch, the normal CLI started hidden with `--skip-update --no-browser
+--tray`; its owned server restored port 20128 and `/v1/models` returned HTTP 200.
+Gateway startup is confirmed, not genuine model/GitHub write acceptance. No
+account database, provider selection or app build was changed. The original
+chunk and guarded rollback remain in the separate repair folder.
+
 **Gateway repair prepared, 14 October:** 9router fix lives separately at
 `C:/Projects/9router-grain-fix-20261014`, with source PR
 [decolua/9router#4831](https://github.com/decolua/9router/pull/4831).
