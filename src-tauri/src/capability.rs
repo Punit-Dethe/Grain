@@ -82,6 +82,8 @@ struct Catalog {
 }
 
 const SHORTLIST_SIZE: usize = 6;
+// Preserve room for combined recovery without evicting tools already offered.
+const INITIAL_SCHEMA_BYTES: usize = 24 * 1024;
 const EAGER_TOOL_COUNT: usize = 8;
 const PREFETCH_BUDGET: Duration = Duration::from_secs(3);
 const MAX_TASK_CATALOG_BYTES: usize = 8 * 1024 * 1024;
@@ -334,13 +336,18 @@ pub async fn prepare(
             )
             <= capability_agent::MAX_SCHEMA_BYTES;
     let ids = ranked_ids(session, queries, None, eager);
-    let report = publish_ranked(
+    let report = publish_ranked_with_budget(
         session,
         ids,
         if eager {
             EAGER_TOOL_COUNT
         } else {
             SHORTLIST_SIZE
+        },
+        if eager {
+            capability_agent::MAX_SCHEMA_BYTES
+        } else {
+            INITIAL_SCHEMA_BYTES
         },
     );
     log::info!(
@@ -434,11 +441,25 @@ fn publish_ranked(
     ids: Vec<String>,
     limit: usize,
 ) -> serde_json::Value {
+    publish_ranked_with_budget(session, ids, limit, capability_agent::MAX_SCHEMA_BYTES)
+}
+
+fn publish_ranked_with_budget(
+    session: &mut CapabilitySession,
+    ids: Vec<String>,
+    limit: usize,
+    byte_budget: usize,
+) -> serde_json::Value {
+    let byte_budget = byte_budget.min(capability_agent::MAX_SCHEMA_BYTES);
+    let mut bytes = specs(session).iter().map(schema_bytes).sum::<usize>();
     let mut loaded = Vec::new();
     let mut skipped = Vec::new();
     for id in ids {
         if loaded.len() == limit {
             break;
+        }
+        if session.actions.contains_key(&id) {
+            continue;
         }
         let selected = session.catalogs.iter().find_map(|(extension_id, catalog)| {
             catalog
@@ -456,13 +477,20 @@ fn publish_ranked(
         let Some((extension_id, digest, candidate)) = selected else {
             continue;
         };
+        let additional = schema_bytes(&candidate.1.spec);
+        if bytes.saturating_add(additional) > byte_budget {
+            skipped.push(serde_json::json!({"tool_id":id,"reason":"selected schema exceeds this publication budget"}));
+            continue;
+        }
         match publish_selected(session, &extension_id, &digest, vec![candidate]) {
-            Ok(_) => loaded.push(id),
+            Ok(_) => { bytes += additional; loaded.push(id); },
             Err(error) => skipped.push(serde_json::json!({"tool_id": id, "reason": capability_agent::sanitize(&error, 160)})),
         }
     }
     serde_json::json!({
         "loaded": loaded, "skipped": skipped,
+        "schema_bytes": bytes, "schema_budget": byte_budget,
+        "remaining_schema_bytes": capability_agent::MAX_SCHEMA_BYTES.saturating_sub(bytes),
         "instruction": "Loaded actions are callable on the next model round. Use already-offered tools directly. Nothing was executed.",
         "coverage": "Lexical candidates under the task schema budget; a miss does not prove absence."
     })
@@ -982,6 +1010,69 @@ mod tests {
             },
         );
         assert_eq!(hot.entries[0].action_id, "notion-search");
+    }
+
+    #[test]
+    fn initial_shortlist_reserves_space_for_one_combined_recovery() {
+        let mut session = session();
+        let extension = "com.example.github";
+        let ids: Vec<_> = (0..5).map(|n| format!("{extension}:tool_{n}")).collect();
+        remember_catalog(
+            &mut session,
+            extension.into(),
+            Catalog {
+                digest: "digest".into(),
+                entries: (0..5)
+                    .map(|n| {
+                        let (mut action, selected) = candidate(&format!("tool_{n}"), 7000);
+                        action.aliases = vec![format!("tool_{n}")];
+                        (action, selected)
+                    })
+                    .collect(),
+            },
+        )
+        .unwrap();
+        let first = publish_ranked_with_budget(&mut session, ids, 6, INITIAL_SCHEMA_BYTES);
+        assert_eq!(first["loaded"].as_array().unwrap().len(), 3);
+        assert!(first["remaining_schema_bytes"].as_u64().unwrap() >= 8 * 1024);
+        let prior: Vec<_> = specs(&session)
+            .into_iter()
+            .map(|spec| (spec.name, spec.parameters))
+            .collect();
+        let request = capability_agent::parse_search_request(
+            r#"{"queries":["tool_3"],"extension_id":"com.example.github"}"#,
+        )
+        .unwrap();
+        let ranked = ranked_ids(
+            &mut session,
+            &request.queries,
+            request.extension_id.as_deref(),
+            false,
+        );
+        let recovered = publish_ranked(&mut session, ranked, 1);
+        assert_eq!(
+            recovered["loaded"],
+            serde_json::json!(["com.example.github:tool_3"])
+        );
+        let next = specs(&session);
+        for (name, parameters) in prior {
+            assert!(next
+                .iter()
+                .any(|spec| spec.name == name && spec.parameters == parameters));
+        }
+        assert_eq!(session.exposure.loaded_canonical_ids().len(), 4);
+        let saturated = publish_ranked(&mut session, vec!["com.example.github:tool_4".into()], 1);
+        assert!(saturated["loaded"].as_array().unwrap().is_empty());
+        assert_eq!(saturated["skipped"].as_array().unwrap().len(), 1);
+        assert_eq!(session.actions.len(), 4);
+        assert!(
+            specs(&session).iter().map(schema_bytes).sum::<usize>()
+                <= capability_agent::MAX_SCHEMA_BYTES
+        );
+        // Repeated IDs do not consume slots or double-count already offered bytes.
+        let repeat = publish_ranked(&mut session, vec!["com.example.github:tool_3".into()], 1);
+        assert!(repeat["loaded"].as_array().unwrap().is_empty());
+        assert_eq!(repeat["schema_bytes"], saturated["schema_bytes"]);
     }
 
     #[test]

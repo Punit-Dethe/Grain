@@ -1,7 +1,7 @@
 # Fast tool execution: lexical-first execution plan
 
 Status: lexical source checkpoint and terminal MCP read verified; actual-catalogue
-quality gate fails, controlled real-Agent comparison pending. Updated 14 October 2026.
+quality gate fails, controlled real-Agent comparison pending. Updated 15 October 2026.
 
 This is the next bounded work order within
 [platform stabilization](PLATFORM-STABILIZATION.md). It turns the user's supplied
@@ -12,6 +12,21 @@ No embedding model, model download, inference runtime or semantic benchmark is
 part of this work order. Reconsider those only after reviewing lexical results.
 
 ## Current checkpoint
+
+15 October: reserve 8 KiB for recovery by capping a non-eager initial publication
+at 24 KiB; recovery/eager publication retain the 32 KiB total. Report remaining
+capacity and preserve already-offered tools. A second genuine Notion read used
+search then fetch without discovery or duplicates, full-page result at 13.80 s
+and answer at 18.38 s. This did not exercise live recovery or prove a speedup.
+On 24 fresh requests, K=6 complete-set coverage remains 17/24 under either budget;
+the adoption gate stays open. Purpose-only projection/clause/ranking trials were
+rejected and reverted rather than retaining unproven complexity. Sources for the
+trial: [Elastic field weighting](https://www.elastic.co/docs/reference/query-languages/query-dsl/full-text-filter-tutorial)
+and [Meilisearch ranking rules](https://specs.meilisearch.dev/specifications/text/0123-ranking-rules-setting-api.html).
+These inform retrieval principles, not measured Grain gains or a dependency choice.
+Notion's exported fetch tool documents its Markdown resource fallback; test that
+before claiming a resource reader is required. Use prerequisite-complete write
+labels in future comparisons. Full results and limitations are in the progress record.
 
 Latest evidence: the terminal-only debug probe exported 55 supported Notion tools
 and ran one configured-model read with six action schemas plus recovery, zero
@@ -180,7 +195,9 @@ Development batches share this checkpoint rather than testing every minor edit.
 3. If the whole eligible surface is small (initial heuristic: at most 8 actions
    and all definitions fit), publish it eagerly. Otherwise select approximately
    6 ranked actions, evaluating K=4/6/8 under the existing 32 KiB budget. Budget
-   packing must continue past a candidate that does not fit, not silently stop
+   Non-eager initial publication is now capped at 24 KiB, leaving at least 8 KiB
+   for recovery without eviction; recovery/eager publication can use the full
+   32 KiB task budget. Packing must continue past a candidate that does not fit, not silently stop
    at its rank. Report missing required tools caused by byte limits explicitly.
 4. Reuse `publish_selected`, canonical identity mapping and source/account/digest
    validation. Cross-provider publication must leave each provider's map/specs

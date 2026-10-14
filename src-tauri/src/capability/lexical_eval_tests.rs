@@ -103,7 +103,7 @@ fn exported_catalogue_required_sets_under_schema_budget() {
                 .unwrap();
             }
             let ids = ranked_ids(&mut session, &[case.query.clone()], None, false);
-            let selection = publish_ranked(&mut session, ids, k);
+            let selection = publish_ranked_with_budget(&mut session, ids, k, INITIAL_SCHEMA_BYTES);
             let canonical: Vec<_> = session.actions.keys().cloned().collect();
             let offered: Vec<_> = canonical
                 .iter()

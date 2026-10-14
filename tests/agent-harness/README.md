@@ -69,6 +69,11 @@ shared names; bare names must resolve uniquely or the test rejects the case.
 The test runs production
 projection, ranking and schema publication at K=4/6/8 and records actual packed
 coverage. No model or provider calls occur. It does not replace live task checks.
+Non-eager initial publication now uses 24 KiB, reserving 8 KiB within the total
+32 KiB for recovery. The adapter measures that initial budget; it does not run a
+model recovery journey. Record the budget alongside results when comparing older
+32 KiB reports. Label required provider prerequisites, such as Notion fetching
+Markdown guidance before writing content, rather than only the final write tool.
 Runner Pass does not mean retrieval quality Pass. Cases inspected while tuning
 are regression evidence; reserve fresh cases for an independent adoption gate.
 

@@ -1,5 +1,55 @@
 # Extension implementation: progress, changes and user testing
 
+**Recovery-capacity checkpoint, 15 October (latest):** the first lexical shortlist
+now uses at most 24 KiB of the existing 32 KiB task schema budget, retaining at
+least 8 KiB for combined recovery. Tiny catalogues that fit are still offered
+eagerly under 32 KiB. Recovery can use the full task budget; earlier tools stay
+stable. Publication reports bytes/budget/remaining capacity, skips definitions
+that do not fit, and ignores repeated already-offered IDs without double-counting.
+This fixes recovery starvation, not semantic ranking or every possible large-tool
+combination. A focused test verifies incremental recovery, saturation, unchanged
+prior schemas/name mappings, and duplicate-ID accounting.
+
+Rejected trials: shorter purpose-only descriptions, clause views and prioritizing
+literal matches in high-weight fields did not improve aggregate regression
+coverage and introduced other misses. All trial production changes were reverted;
+no parser, additional ranking tier or provider-specific rules remain. Inspiration
+was checked against Elastic field-weighting and Meilisearch ranking documentation;
+see the plan. Disposable reports remain ignored, not new maintained suites.
+
+Before these trials, froze 24 fresh Notion requests with actual prerequisite
+labels (including fetch for provider Markdown guidance before writing content).
+Same 55-tool supported snapshot: complete-set coverage at K=4/6/8 was 14/17/18 out
+of 24 with the prior 32 KiB publication, versus 14/17/17 under the new 24 KiB initial
+budget. **Quality gate still fails; no retrieval improvement claimed.** Fresh-case
+SHA-256: `bd3a5fb6ad2506b2e74bf97391a175efa3371b02a79a32fb27902dab18f25061`.
+They were evaluated after the final reserve change; no subsequent tuning used them.
+The earlier corpus's single create-page label omits that provider prerequisite,
+so it understates complete workflow requirements and is not an adoption gate.
+
+Real configured-model terminal check: find/read a Grain Notion page, one search
+and one fetch, **zero discovery calls and zero duplicates**, both outcomes succeed.
+First result 9.20 s, full-page result 13.80 s, final answer 18.38 s from backend
+start. Initial definitions: six actions plus recovery, 23,603 bytes, 9,165 bytes
+remaining. Both needed tools were initially offered, so this is ordinary-path
+acceptance, not a live recovery or matched speedup comparison. No writes, account
+changes, browser, installer or retained process. Task `809999ea-5f01-4b51-91b0-98e34790fac2`;
+ignored evidence: `tests/agent-harness/.runs/lexical-multistep-20261015/`.
+
+Correction to the prior resource note: the actual exported `notion-fetch`
+description explicitly accepts `notion://docs/*` URIs as a tool fallback. Grain
+has no general resource reader, but that alone is **not evidence** of a Notion
+write blocker; this fallback still needs live verification. Neither read check
+validates writes. Next work remains required-operation selection, actual model
+recovery and a bounded paired comparison. Embeddings remain deferred.
+
+Scoped audit checked both publication budgets, stable exposure, schema accounting,
+execution freshness and unknown-outcome handling. Ten backend capability tests,
+29 MCP protocol tests and eight continuation tests pass, as does normal backend
+Clippy correctness (existing warnings). Graph coverage flags were checked against
+the focused tests and the genuine preparation/Agent run; no whole-platform audit
+or release-readiness claim is made.
+
 **Terminal lexical checkpoint, 14 October (latest):** added a debug-only one-shot
 MCP probe through the existing headless app path. It requires the alpha identity,
 explicit execution, bounded input and a three-minute deadline; it starts no

@@ -50,6 +50,12 @@ holdout, below the adoption gate; multi-step/mixed-language misses remain. Fresh
 quality cases and a matched model latency comparison are still pending. Browser
 control remains off; no embedding model, live write or installer build.
 
+15 October checkpoint: initial lexical publication reserves 8 KiB for recovery
+within the existing 32 KiB total. A real Notion find/read used two actions and no
+discovery/duplicates; fresh K=6 required-set coverage is still 17/24, below the
+gate. Rejected lexical trials were reverted. Improve operation coverage and verify
+model recovery before adoption; no embeddings or platform release from this evidence.
+
 **14 October Agent policy correction (latest user decision):** native and MCP
 tool calls execute automatically after ordinary extension enablement/account
 consent. Per-call approval dialogs are removed from capability dispatch, while
