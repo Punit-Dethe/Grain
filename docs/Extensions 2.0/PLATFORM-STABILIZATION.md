@@ -16,9 +16,46 @@ See [exact evidence and limits](MCP-EXTENSION-PROGRESS.md).
 Notion is the next compatibility checkpoint: explicitly approved 0.1.0 is signed
 and published at catalogue index 5, with independent public delivery Pass. It
 uses the existing SDK/DCR path. Disposable-workspace install/sign-in and actual
-tool/cross-provider acceptance remain pending. No new alpha build is required.
+tool/cross-provider acceptance remain pending. Publication alone requires no new
+alpha build; the subsequent Agent runtime change below does require an updated
+runtime, currently verified in the development app.
 Earlier dated descriptions below preserve the development history and do not
 override this current gate. Custom MCP management remains hidden in alpha/release.
+
+**14 October Agent policy correction (latest user decision):** native and MCP
+tool calls execute automatically after ordinary extension enablement/account
+consent. Per-call approval dialogs are removed from capability dispatch, while
+schema, source/account ownership, digest, availability and cancellation checks
+remain. Conservative write/risk classification is retained; automatic approval
+does not reclassify writes as safe reads. Unconfirmed outcomes still prevent
+automatic replay of that tool in the same request.
+
+The observation ceiling is now **50 tool rounds / 200 requested calls**, replacing
+8 / 24. Duplicate requests execute normally after confirmed success and are
+counted, not suppressed. Existing context/result/schema limits and timeouts are
+independent. Per-task diagnostic events record round, offered count, requested
+tool, repeat occurrence, automatic approval, outcome and elapsed time. They do
+not contain raw arguments, results, credentials or argument fingerprints.
+Finalization explicitly sends `tool_choice: none` and instructs the model to
+summarize received results. A model ignoring finalization cannot execute more
+tools; actual receipts survive model/continuation errors.
+
+Focused normal-build verification: 25 tests pass across tool continuation,
+execution, capability and LLM transport. Real dev-app IPC on the configured
+`ag/gemini-3.8-flash` also passes one installed Notion read: empty search becomes
+a normal final answer without confirmation (5 tool rounds, 5 calls, 0 duplicates,
+1 automatic approval, ~32 seconds). No installer/release was built. This is one
+read checkpoint, not full Notion write or cross-provider acceptance. Evidence:
+`tests/agent-harness/.runs/notion-auto-20261014/`. The disposable IPC probe and
+dev launcher belong to that ignored evidence folder, not the maintained harness.
+
+Follow-up cleanup: dormant confirmation/continuation APIs and existing harness
+procedures that exercise the former approval policy remain for now; they are not
+the current Agent policy. Update/retire those procedures at the next checkpoint
+before treating their old approval assertions as current acceptance criteria.
+Separate observed provider limitation: `notion-query-data-sources` exceeds the
+existing 64 KiB schema admission limit and is excluded. Do not claim full Notion
+tool coverage or silently expand that contract in this approval/budget fix.
 
 **14 October source checkpoint:** bounded public request headers now pass from
 descriptor/direct JSON through validation, CLI packing, store artifact ownership,

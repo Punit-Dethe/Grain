@@ -24,7 +24,7 @@
 //! local transcription helper (`grain_transcription`) and the shared LLM client, and never assumes a UI is alive.
 
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     sync::{
         atomic::{AtomicBool, AtomicU64, Ordering},
         Arc, Mutex,
@@ -2857,11 +2857,11 @@ fn outcome_to_reply(outcome: grain_core::execution::ActionOutcome) -> AgentReply
     AgentReply::plain(grain_core::interaction::to_markdown(&interaction))
 }
 
-/// How many tool hops one turn may take before it is made to answer. Small on
-/// purpose: search → maybe read one in full → answer is the shape of nearly every
-/// real request, and an unbounded loop is a bill.
-const MAX_AGENT_TOOL_HOPS: usize = 8;
-const MAX_AGENT_TOOL_CALLS: usize = 24;
+/// Generous observation ceiling requested for the tester workflow. Discovery
+/// and action rounds count alike; duplicates are observed, not suppressed.
+/// Cancellation, per-request timeouts and bounded context remain independent.
+const MAX_AGENT_TOOL_HOPS: usize = 50;
+const MAX_AGENT_TOOL_CALLS: usize = 200;
 
 const MAX_TOOL_TRANSCRIPT_BYTES: usize = 256 * 1024;
 const MAX_TOOL_RESULT_BYTES: usize = 16 * 1024;
@@ -2876,6 +2876,9 @@ struct ToolTurn {
     calls: usize,
     seen_ids: HashSet<String>,
     blocked_tools: HashSet<String>,
+    trace_id: String,
+    call_occurrences: HashMap<[u8; 32], usize>,
+    receipts: Vec<String>,
 }
 
 struct PendingToolTurn {
@@ -2929,6 +2932,49 @@ fn transcript_bytes(entries: &[crate::llm_client::ChatEntry]) -> usize {
 }
 
 impl ToolTurn {
+    fn observe_call(&mut self, call: &crate::llm_client::ToolCallOut) -> usize {
+        use sha2::{Digest, Sha256};
+        // Normalize object key ordering/whitespace, but never record arguments
+        // or their fingerprint in logs. Only occurrence counts leave this task.
+        let arguments = serde_json::from_str::<serde_json::Value>(&call.arguments)
+            .map(|value| value.to_string())
+            .unwrap_or_else(|_| call.arguments.clone());
+        let mut digest = Sha256::new();
+        digest.update(call.name.as_bytes());
+        digest.update([0]);
+        digest.update(arguments.as_bytes());
+        let count = self
+            .call_occurrences
+            .entry(digest.finalize().into())
+            .or_default();
+        *count += 1;
+        *count
+    }
+
+    fn completed(
+        &mut self,
+        call: &crate::llm_client::ToolCallOut,
+        outcome: grain_core::execution::ActionOutcome,
+    ) {
+        if !matches!(outcome, grain_core::execution::ActionOutcome::Succeeded(_)) {
+            // Automatic approval must not replay an uncertain effect. A fresh
+            // explicit request is required, as in the former confirmation path.
+            self.blocked_tools.insert(call.name.clone());
+        }
+        self.result(call.id.clone(), outcome.model_summary());
+        let receipt = outcome_to_reply(outcome).text;
+        self.receipts
+            .push(grain_core::execution::bounded_result_text(&receipt, MAX_TOOL_RESULT_BYTES).text);
+    }
+
+    fn failure(&self, error: String) -> Result<AgentReply, String> {
+        if self.receipts.is_empty() {
+            Err(error)
+        } else {
+            continuation_reply(self.receipts.join("\n\n"), Err(error))
+        }
+    }
+
     fn admit_frame(&mut self, calls: &[crate::llm_client::ToolCallOut]) -> Result<(), String> {
         let mut seen = HashSet::new();
         if calls.is_empty() || calls.len() > MAX_CALLS_PER_FRAME {
@@ -3088,6 +3134,9 @@ async fn run_with_tools(
             calls: 0,
             seen_ids: HashSet::new(),
             blocked_tools: HashSet::new(),
+            trace_id: uuid::Uuid::new_v4().to_string(),
+            call_occurrences: HashMap::new(),
+            receipts: Vec::new(),
         },
         image,
         run,
@@ -3124,6 +3173,9 @@ mod tool_continuation_tests {
             calls: 0,
             seen_ids: HashSet::new(),
             blocked_tools: HashSet::new(),
+            trace_id: "fixture-task".into(),
+            call_occurrences: HashMap::new(),
+            receipts: Vec::new(),
         }
     }
 
@@ -3388,7 +3440,106 @@ mod tool_continuation_tests {
                 )
                 .await
                 .unwrap()
-                .is_err());
+                .is_ok());
+        }
+    }
+
+    #[tokio::test]
+    async fn automatic_calls_continue_past_old_limit_and_observe_duplicates() {
+        let control = AgentRunControl::default();
+        let (run, registration) = control.begin().unwrap();
+        let dispatch_count = Arc::new(AtomicU64::new(0));
+        let observed = dispatch_count.clone();
+        let mut round = 0;
+        let reply = run
+            .wait(
+                registration,
+                drive_tool_turn_with(
+                    turn(),
+                    &run,
+                    move |_, tools| {
+                        assert_eq!(tools.len(), 4);
+                        round += 1;
+                        let response = if round <= 12 {
+                            frame(vec![
+                                call(&format!("read-{round}"), "read"),
+                                call(&format!("write-{round}"), "write"),
+                            ])
+                        } else {
+                            LlmToolReply {
+                                content: "Finished 24 calls".into(),
+                                tool_calls: vec![],
+                            }
+                        };
+                        Box::pin(async move { Ok(response) })
+                    },
+                    move |_, _, _| {
+                        observed.fetch_add(1, Ordering::SeqCst);
+                        Box::pin(async {
+                            Some(crate::capability::ToolResult::Completed(success()))
+                        })
+                    },
+                    |_| panic!("automatic calls must not arm a confirmation"),
+                ),
+            )
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(dispatch_count.load(Ordering::SeqCst), 24);
+        assert_eq!(reply.text, "Finished 24 calls");
+        assert!(reply.confirm_action.is_none());
+        assert!(control.state.lock().unwrap().pending_action.is_none());
+
+        let mut observed = turn();
+        let mut first = call("first", "write");
+        first.arguments = r#"{"title":"private", "body":"text"}"#.into();
+        let mut second = call("second", "write");
+        second.arguments = r#"{ "body": "text", "title": "private" }"#.into();
+        assert_eq!(observed.observe_call(&first), 1);
+        assert_eq!(observed.observe_call(&second), 2);
+        second.arguments = r#"{"title":"changed"}"#.into();
+        assert_eq!(observed.observe_call(&second), 1);
+    }
+
+    #[tokio::test]
+    async fn automatic_uncertain_call_is_not_replayed_and_receipt_survives_model_error() {
+        for outcome in [
+            ActionOutcome::UnknownOutcome {
+                message: "May have written".into(),
+            },
+            ActionOutcome::ResultUnavailable {
+                message: "Unsupported result".into(),
+            },
+            ActionOutcome::ToolReportedError {
+                message: "Partial effects possible".into(),
+            },
+        ] {
+            let mut task = turn();
+            let original = call("original", "write");
+            task.admit_frame(&[original.clone()]).unwrap();
+            task.completed(&original, outcome);
+            let control = AgentRunControl::default();
+            let (run, registration) = control.begin().unwrap();
+            let mut round = 0;
+            let reply = run.wait(registration, drive_tool_turn_with(
+                task, &run,
+                move |entries, _| {
+                    round += 1;
+                    if round == 1 {
+                        Box::pin(async { Ok(frame(vec![call("retry", "write"), call("verify", "read")])) })
+                    } else {
+                        assert!(entries.iter().any(|entry| matches!(entry, ChatEntry::ToolResult { call_id, content } if call_id == "retry" && content.contains("cannot run again"))));
+                        Box::pin(async { Err("Model unavailable".into()) })
+                    }
+                },
+                |call, _, _| {
+                    assert_eq!(call.id, "verify");
+                    Box::pin(async { Some(crate::capability::ToolResult::Completed(success())) })
+                }, |_| panic!("automatic calls must not ask"),
+            )).await.unwrap().unwrap();
+            assert!(reply.text.contains("Created issue 42"));
+            assert!(reply.text.contains("Model unavailable"));
+            assert!(reply.confirm_action.is_none());
         }
     }
 
@@ -3503,14 +3654,54 @@ async fn drive_tool_turn_with<'a>(
             crate::capability::specs(&turn.session)
         };
         let offered: HashSet<_> = tools.iter().map(|tool| tool.name.clone()).collect();
-        let reply = request(turn.entries.clone(), tools).await?;
+        let mut entries = turn.entries.clone();
+        if exhausted {
+            entries.push(crate::llm_client::ChatEntry::System(
+                "Tool execution is finished for this request. No tools are available. Give a concise final answer from the results already received: distinguish completed work, empty results and unfinished work. Do not request more tools, claim unperformed work succeeded, or repeat completed actions.".into(),
+            ));
+        }
+        info!(
+            "[GRAIN] agent-tool-trace {}",
+            serde_json::json!({
+                "phase": "round", "task": turn.trace_id, "round": turn.hops + 1,
+                "calls": turn.calls, "offered_count": tools.len(), "finalizing": exhausted,
+            })
+        );
+        let reply = match request(entries, tools).await {
+            Ok(reply) => reply,
+            Err(error) => return turn.failure(error),
+        };
         if reply.tool_calls.is_empty() {
+            info!(
+                "[GRAIN] agent-tool-trace {}",
+                serde_json::json!({
+                    "phase": "finished", "task": turn.trace_id,
+                    "rounds": turn.hops, "calls": turn.calls,
+                    "duplicate_calls": turn.call_occurrences.values().map(|count| count - 1).sum::<usize>(),
+                    "limit_reached": exhausted,
+                })
+            );
             return Ok(AgentReply::plain(reply.content));
         }
         if exhausted {
-            return Err("The model requested more tools after the task budget ended. Completed actions must not be repeated automatically.".into());
+            let notice = "Grain reached this request's tool limit. The model still requested tools despite being asked to finish; those extra calls were not executed. Completed actions must not be repeated automatically.";
+            info!(
+                "[GRAIN] agent-tool-trace {}",
+                serde_json::json!({
+                    "phase": "stopped", "task": turn.trace_id, "reason": "tool-limit",
+                    "rounds": turn.hops, "calls": turn.calls,
+                })
+            );
+            // A noncompliant model cannot erase the results already obtained.
+            return Ok(AgentReply::plain(if turn.receipts.is_empty() {
+                notice.into()
+            } else {
+                format!("{}\n\n{notice}", turn.receipts.join("\n\n"))
+            }));
         }
-        turn.admit_frame(&reply.tool_calls)?;
+        if let Err(error) = turn.admit_frame(&reply.tool_calls) {
+            return turn.failure(error);
+        }
         let mut withheld = None;
         for call in &reply.tool_calls {
             if withheld.is_some() {
@@ -3525,11 +3716,68 @@ async fn drive_tool_turn_with<'a>(
                 continue;
             }
             turn.calls += 1;
+            let occurrence = turn.observe_call(call);
+            // Unknown model-supplied names are not allowed to write arbitrary
+            // text into diagnostics. Arguments/results never enter this trace.
+            let trace_name = if offered.contains(&call.name) {
+                call.name.as_str()
+            } else {
+                "<unoffered>"
+            };
+            info!(
+                "[GRAIN] agent-tool-trace {}",
+                serde_json::json!({
+                    "phase": "call", "task": turn.trace_id, "round": turn.hops,
+                    "call": turn.calls, "tool": trace_name, "occurrence": occurrence,
+                    "duplicate": occurrence > 1,
+                })
+            );
             if turn.blocked_tools.contains(&call.name) {
+                info!(
+                    "[GRAIN] agent-tool-trace {}",
+                    serde_json::json!({
+                        "phase": "outcome", "task": turn.trace_id, "call": turn.calls,
+                        "tool": trace_name, "status": "blocked-after-unconfirmed-outcome",
+                    })
+                );
                 turn.result(call.id.clone(), "This tool was declined or did not return a confirmed success. It cannot run again in this task; use a different verification tool or make a fresh explicit request.".into());
                 continue;
             }
-            match dispatch(call, &mut turn.session, &offered).await {
+            let started = Instant::now();
+            let dispatched = dispatch(call, &mut turn.session, &offered).await;
+            let status = match &dispatched {
+                Some(crate::capability::ToolResult::Completed(outcome)) => match outcome {
+                    grain_core::execution::ActionOutcome::Succeeded(_) => "succeeded",
+                    grain_core::execution::ActionOutcome::Failed { .. } => "failed",
+                    grain_core::execution::ActionOutcome::Cancelled => "cancelled",
+                    grain_core::execution::ActionOutcome::UnknownOutcome { .. } => {
+                        "unknown-outcome"
+                    }
+                    grain_core::execution::ActionOutcome::ResultUnavailable { .. } => {
+                        "result-unavailable"
+                    }
+                    grain_core::execution::ActionOutcome::ToolReportedError { .. } => {
+                        "tool-reported-error"
+                    }
+                    grain_core::execution::ActionOutcome::NeedsInteraction(_) => {
+                        "needs-interaction"
+                    }
+                },
+                Some(crate::capability::ToolResult::Text(_)) => "feedback",
+                Some(crate::capability::ToolResult::Confirm(_)) => "awaiting-confirmation",
+                None => "unavailable",
+            };
+            info!(
+                "[GRAIN] agent-tool-trace {}",
+                serde_json::json!({
+                    "phase": "outcome", "task": turn.trace_id, "call": turn.calls,
+                    "tool": trace_name, "status": status, "elapsed_ms": started.elapsed().as_millis(),
+                })
+            );
+            match dispatched {
+                Some(crate::capability::ToolResult::Completed(outcome)) => {
+                    turn.completed(call, outcome);
+                }
                 Some(crate::capability::ToolResult::Confirm(confirm)) => {
                     withheld = Some((confirm, call.id.clone(), call.name.clone()));
                 }

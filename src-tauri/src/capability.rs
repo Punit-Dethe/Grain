@@ -20,11 +20,12 @@ use grain_core::capability_agent::{
 use grain_core::execution::{RiskClass, SideEffect};
 use tauri::AppHandle;
 
-/// The result of dispatching one capability tool call: either text to feed back
-/// to the model, or a risky action withheld pending the user's approval (surfaced
-/// on `AgentReply.confirm_action`, not fed to the model as if it ran).
+/// Discovery feedback, a typed execution outcome, or a legacy held confirmation.
+/// Current Agent execution returns Completed without a per-call dialog.
 pub enum ToolResult {
     Text(String),
+    Completed(grain_core::execution::ActionOutcome),
+    #[allow(dead_code)]
     Confirm(crate::agent::AgentConfirm),
 }
 
@@ -60,7 +61,6 @@ enum ActionOrigin {
         provider_id: String,
         provider_name: String,
         tool_name: String,
-        title: String,
     },
 }
 
@@ -248,7 +248,6 @@ async fn handle_catalog(
                     provider_id: catalog.provider_id.clone(),
                     provider_name: catalog.provider_name.clone(),
                     tool_name: tool.name.to_string(),
-                    title: action.title.clone(),
                 },
             }
         } else {
@@ -347,8 +346,8 @@ fn mcp_action_input(
         when_not_to_use: String::new(),
         description: capability_agent::sanitize(description, 1_200),
         provider_context: Vec::new(),
-        // MCP annotations are explicitly untrusted hints. The execution path
-        // applies Confirm regardless of this placeholder.
+        // MCP annotations are untrusted hints. Keep conservative classification
+        // independently of the host's current automatic-approval policy.
         risk: ActionRisk::Confirm,
         enabled: true,
         platform_ok: true,
@@ -356,8 +355,8 @@ fn mcp_action_input(
     }
 }
 
-/// Prepare one resolved action for exact host approval. Both adapters use the
-/// conservative Confirm floor; declarations/annotations cannot authorize reads.
+/// Prepare and automatically execute one resolved action under the current
+/// Agent policy. Conservative classification and time-of-use checks remain.
 async fn execute_action(
     app: &AppHandle,
     session: &CapabilitySession,
@@ -372,7 +371,6 @@ async fn execute_action(
         provider_id,
         provider_name,
         tool_name,
-        title,
     } = &session_action.origin
     {
         let arguments = match parse_mcp_arguments(arguments_json, &session_action.spec.parameters) {
@@ -392,12 +390,9 @@ async fn execute_action(
             SideEffect::Write,
             loaded_manifest_digest,
         );
-        return match crate::action_exec::run_or_confirm(app, prepared, title).await {
-            crate::action_exec::Dispatch::Ran(outcome) => ToolResult::Text(outcome.model_summary()),
-            crate::action_exec::Dispatch::AwaitConfirm(interaction) => {
-                ToolResult::Confirm(crate::action_exec::to_agent_confirm(interaction))
-            }
-        };
+        return ToolResult::Completed(
+            crate::action_exec::run_agent_call(Some(app), prepared).await,
+        );
     }
 
     let Some(action) = crate::extension_host::capability_action_meta(canonical) else {
@@ -410,8 +405,7 @@ async fn execute_action(
         }
     };
 
-    // Native declarations cannot grant automatic execution. A host-reviewed
-    // read policy remains separate work; the current floor treats all as writes.
+    // Automatic approval is a host policy, not a claim that these are reads.
     let risk = RiskClass::Confirm;
     let side_effect = SideEffect::Write;
     let digest =
@@ -439,15 +433,7 @@ async fn execute_action(
         &digest,
     );
 
-    match crate::action_exec::run_or_confirm(app, prepared, &action.title).await {
-        crate::action_exec::Dispatch::Ran(outcome) => ToolResult::Text(outcome.model_summary()),
-        // The confirmation is held host-side by token and surfaced on
-        // `AgentReply.confirm_action` for the user to approve (§2.5). It is never
-        // fed to the model as if it ran.
-        crate::action_exec::Dispatch::AwaitConfirm(interaction) => {
-            ToolResult::Confirm(crate::action_exec::to_agent_confirm(interaction))
-        }
-    }
+    ToolResult::Completed(crate::action_exec::run_agent_call(Some(app), prepared).await)
 }
 
 fn parse_mcp_arguments(raw: &str, schema: &serde_json::Value) -> Result<serde_json::Value, String> {
@@ -606,7 +592,6 @@ mod tests {
             provider_id: "fixture".into(),
             provider_name: "Fixture".into(),
             tool_name: "nested".into(),
-            title: "Nested".into(),
         };
         let metadata = capability_agent::search_metadata(std::slice::from_ref(&input), "", 0);
         assert!(!metadata.to_string().contains("properties"));

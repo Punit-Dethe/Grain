@@ -644,8 +644,17 @@ pub async fn send_chat_with_tools(
         response_format: None,
         reasoning_effort,
         reasoning,
+        // A finalization request retains tool history, but must explicitly
+        // disable new calls. `auto` with no tools let gateways infer old tools.
+        tool_choice: Some(
+            if wire_tools.is_empty() {
+                "none"
+            } else {
+                "auto"
+            }
+            .to_string(),
+        ),
         tools: (!wire_tools.is_empty()).then_some(wire_tools),
-        tool_choice: Some("auto".to_string()),
     };
 
     send_request_with_tools(client, &url, headers, &request_body).await
@@ -919,6 +928,95 @@ pub async fn fetch_models(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn finalization_wire_disables_calls_but_preserves_tool_history() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        for offer_tools in [false, true] {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let address = listener.local_addr().unwrap();
+            let server = tokio::spawn(async move {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let mut received = Vec::new();
+                let body = loop {
+                    let mut bytes = [0; 4096];
+                    let count = stream.read(&mut bytes).await.unwrap();
+                    assert!(count > 0);
+                    received.extend_from_slice(&bytes[..count]);
+                    if let Some(end) = received.windows(4).position(|bytes| bytes == b"\r\n\r\n") {
+                        let headers = String::from_utf8_lossy(&received[..end]).to_lowercase();
+                        let length: usize = headers
+                            .lines()
+                            .find_map(|line| line.strip_prefix("content-length:"))
+                            .unwrap()
+                            .trim()
+                            .parse()
+                            .unwrap();
+                        if received.len() >= end + 4 + length {
+                            break serde_json::from_slice::<Value>(
+                                &received[end + 4..end + 4 + length],
+                            )
+                            .unwrap();
+                        }
+                    }
+                };
+                assert_eq!(
+                    body["tool_choice"],
+                    if offer_tools { "auto" } else { "none" }
+                );
+                assert_eq!(body.get("tools").is_some(), offer_tools);
+                assert_eq!(body["messages"][1]["tool_calls"][0]["id"], "completed");
+                assert_eq!(body["messages"][2]["tool_call_id"], "completed");
+                let response = r#"{"choices":[{"message":{"content":"Finished"}}]}"#;
+                stream.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{response}", response.len()).as_bytes()).await.unwrap();
+            });
+            let provider = PostProcessProvider {
+                id: "fixture".into(),
+                label: "Fixture".into(),
+                base_url: format!("http://{address}"),
+                allow_base_url_edit: false,
+                models_endpoint: None,
+                supports_structured_output: false,
+                enabled: true,
+            };
+            let history = vec![
+                ChatEntry::User("Read and finish".into()),
+                ChatEntry::AssistantToolCalls(vec![ToolCallOut {
+                    id: "completed".into(),
+                    name: "read".into(),
+                    arguments: "{}".into(),
+                }]),
+                ChatEntry::ToolResult {
+                    call_id: "completed".into(),
+                    content: "No matches".into(),
+                },
+            ];
+            let tools = if offer_tools {
+                vec![ToolSpec {
+                    name: "read".into(),
+                    description: "Read".into(),
+                    parameters: serde_json::json!({"type":"object"}),
+                }]
+            } else {
+                vec![]
+            };
+            let response = send_chat_with_tools(
+                &reqwest::Client::new(),
+                &provider,
+                String::new(),
+                "fixture",
+                history,
+                tools,
+                None,
+                None,
+                None,
+            )
+            .await
+            .unwrap_or_else(|_| panic!("fixture completion request failed"));
+            assert_eq!(response.content.as_deref(), Some("Finished"));
+            server.await.unwrap();
+        }
+    }
 
     fn body_with_reasoning() -> Value {
         serde_json::json!({

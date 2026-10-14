@@ -1,5 +1,41 @@
 # Extension implementation: progress, changes and user testing
 
+**Agent automatic execution and observation, 14 October (latest):** user asked
+to remove repeated tool confirmations and permit substantially longer requests.
+Native/MCP capability calls now auto-approve through the existing revalidated
+executor; extension enablement, OAuth consent, schema/identity/account checks and
+unknown-outcome replay protection remain. Tool ceilings change from 8 rounds /
+24 calls to 50 / 200; these are generous finite observation limits, not unlimited
+execution. Duplicate calls after success are allowed and counted. Structured
+`agent-tool-trace` records task, rounds, call/duplicate counts, names, approval,
+outcome and timing without raw arguments/results/secrets. Terminal inspection:
+`Get-Content "$env:LOCALAPPDATA\com.grain.extensions.alpha\logs\handy.log" -Tail 200 | Select-String 'agent-tool-trace'`.
+
+Root evidence: earlier live logs show repeated discovery/search/list calls using
+the eight-round ceiling. At exhaustion Grain offered zero tools but still sent
+`tool_choice: auto`; the model requested an unoffered tool and the continuation
+returned the reported budget error. Finalization now sends explicit `none` with
+a final-answer instruction; noncompliant requests cannot run and retained action
+results survive model errors. This fixes host policy/finalization; it does not
+claim every earlier repeat has the same cause or that an empty Notion result is
+an authentication failure.
+
+**Verification:** 25 focused Rust tests pass (8 continuation, 5 executor,
+5 capability, 7 LLM-client). One real development-app Agent check passes with
+the configured `ag/gemini-3.8-flash`, installed/connected store Notion, no approval
+dialog and no writes: “No pages matching 'Grain' were found in Notion.” Trace:
+5 tool rounds, 5 calls, 0 duplicates, 1 auto-approval; ~32 seconds. Owned app
+exit requested. No installer/release or maintained harness feature added.
+Ignored evidence/probe: `tests/agent-harness/.runs/notion-auto-20261014/`.
+Initial probe used a wrong IPC command and stopped before model/tool execution;
+correcting the probe to existing `mcp_connections_list` produced the passing run.
+Longer user tasks, Notion writes and cross-provider workflows remain unverified.
+
+**Deferred:** old confirmation acceptance procedures need updating/retiring;
+the current native/MCP runtime does not emit them. The provider's
+`notion-query-data-sources` schema is excluded by the existing 64 KiB limit;
+this is separate from the approval/budget fix. See the active stabilization plan.
+
 **Notion publication complete, 14 October:** human maintainer explicitly approved
 the exact 0.1.0 tester candidate, source `401f784ec986c4bf183594549dd75eedb057cb9d`.
 Registry PR 4 merged at `baba3bef97a7099393ce457b081a5940e21a1b3d`, head

@@ -153,6 +153,29 @@ pub async fn run_or_confirm(app: &AppHandle, prepared: PreparedCall, title: &str
     run_or_confirm_opt(Some(app), prepared, title).await
 }
 
+/// Current Agent policy: enabling a tool extension authorizes its calls without
+/// per-call dialogs. Keep risk/side-effect classification and every execution
+/// revalidation; this policy does not make writes into reads or bypass consent.
+pub(crate) async fn run_agent_call(
+    app: Option<&AppHandle>,
+    prepared: PreparedCall,
+) -> ActionOutcome {
+    log::info!(
+        "[GRAIN] agent-tool-trace {}",
+        serde_json::json!({
+            "phase": "auto-approved", "tool": prepared.canonical_id,
+            "risk": prepared.risk, "side_effect": prepared.side_effect,
+        })
+    );
+    match app {
+        Some(app) => execute_revalidated(app, &prepared).await,
+        None => failed(
+            FailureClass::Internal,
+            "App handle required for Agent execution",
+        ),
+    }
+}
+
 /// Approve (or decline) a held confirmation and run the *exact* call. Revalidates
 /// at time-of-use; a stale call is refused rather than run behind the user's back.
 pub async fn resume(app: &AppHandle, token: &str, approve: bool) -> ActionOutcome {
@@ -584,6 +607,24 @@ mod tests {
             SideEffect::Write,
             "approved-digest",
         )
+    }
+
+    #[tokio::test]
+    async fn agent_policy_never_stores_a_per_call_confirmation() {
+        let prepared = third_party_call();
+        let token = prepared.token.clone();
+        assert!(prepared.risk.needs_confirmation());
+        assert_eq!(prepared.side_effect, SideEffect::Write);
+        let outcome = run_agent_call(None, prepared).await;
+        // No host means no execution, even though policy permits the call.
+        assert!(matches!(
+            outcome,
+            ActionOutcome::Failed {
+                class: FailureClass::Internal,
+                ..
+            }
+        ));
+        assert!(!discard(&token));
     }
 
     #[test]
