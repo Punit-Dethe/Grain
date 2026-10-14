@@ -121,7 +121,7 @@ impl Policy {
                 || !self.submitter.eq_ignore_ascii_case("Punit-Dethe")
                 || self.review_id != 0
                 || self.submission_sha256
-                    != "9d8f657c96869202902cc7ef167db964d9e02926dfd659f80e71d724bcbc1dbf"
+                    != "d667ca2fab05aae393497efb46ced148740957f2e443814ab6206aa91523375b"
                 || self.publishing_public_key
                     != "RWREj+hdLljbWOv3LCoTKEPv670pVG+P9knBUMWoR+V445yvdBwBuqj8"
             {
@@ -674,12 +674,12 @@ pub(crate) mod tests {
         p.submitter = "Punit-Dethe".into();
         p.review_id = 0;
         p.submission_sha256 =
-            "9d8f657c96869202902cc7ef167db964d9e02926dfd659f80e71d724bcbc1dbf".into();
+            "d667ca2fab05aae393497efb46ced148740957f2e443814ab6206aa91523375b".into();
         p.publishing_public_key = "RWREj+hdLljbWOv3LCoTKEPv670pVG+P9knBUMWoR+V445yvdBwBuqj8".into();
         let now = Utc::now().timestamp();
         assert!(p.validate(now).is_err());
         p.alpha_maintainer_approval =
-            Some("Maintainer authorization, tester alpha, 2026-10-09".into());
+            Some("Maintainer authorization, tester GitHub 0.1.1, 2026-10-14".into());
         p.validate(now).unwrap();
         for (field, value) in [
             ("alpha_maintainer_approval", serde_json::json!(" ")),
@@ -696,6 +696,12 @@ pub(crate) mod tests {
             ("reviewer", serde_json::json!("another-reviewer")),
             ("review_id", serde_json::json!(1)),
             ("submission_sha256", serde_json::json!("1".repeat(64))),
+            (
+                "submission_sha256",
+                serde_json::json!(
+                    "9d8f657c96869202902cc7ef167db964d9e02926dfd659f80e71d724bcbc1dbf"
+                ),
+            ),
             (
                 "publishing_public_key",
                 serde_json::json!(grain_core::trust::ROOT_PUBKEY_A),

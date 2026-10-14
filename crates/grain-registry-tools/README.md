@@ -241,7 +241,8 @@ protections and reviewer eligibility remain separate deployment requirements.
 Do not generate this policy in an author-execution job.
 
 The maintainer authorized an explicit first-party tester-alpha exception on
-9 October 2026. It admits only the exact `com.grain.github` 0.1.0 submission
+9 October 2026, renewed for the reviewed tester update on 14 October. It now
+admits only the exact `com.grain.github` 0.1.1 submission
 digest, `Punit-Dethe/Grain-Extention`, the named maintainer as submitter/reviewer,
 and the dedicated alpha publisher. A nonempty bounded approval reference is
 required in the operator-owned policy. Current merged PR/head/source/DESCRIPTION,
@@ -249,6 +250,7 @@ all candidate/receipt/producer pins, cryptographic CI provenance, approval expir
 prior catalogue and delayed key checks still apply. Only the independent GitHub
 review lookup is omitted, and no independent review is claimed. Other submissions
 and later versions retain the normal independent-review route.
+The former 0.1.0 exception is replaced, not retained as a second allowlist entry.
 
 This narrow profile is temporary alpha maintainer tooling: remove its allowlist,
 optional field and regression when the permanent publishing approval policy is
