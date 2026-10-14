@@ -1,4 +1,17 @@
 {
+  "overview": {
+    "shortcuts": {
+      "standard": "Standard",
+      "streaming": "Streaming",
+      "agent": "Agent",
+      "notSet": "Not set",
+      "off": "Off",
+      "configure": "Configure {{mode}} shortcut: {{shortcut}}",
+      "infoTitle": "Make it yours.",
+      "infoDescription": "Adjust your keys in Settings to fit your workflow.",
+      "infoAction": "Shortcut settings"
+    }
+  },
   "agent": {
     "brand": "Grain Assist",
     "selectionChip": "SELECTION · {{count}} CHARS",

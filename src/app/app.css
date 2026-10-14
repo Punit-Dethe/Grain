@@ -1529,376 +1529,232 @@ html[data-theme="light"] .hero {
   line-height: 1.45;
 }
 
-/* ---------------------------------------------------------------------------
- * Overview cards (Start here)
- *
- * A compact tray groups the introduction and four essentials. Tiles expand
- * across wide windows and remain scrollable when the app is narrow.
- * ------------------------------------------------------------------------- */
-
-.overview-start-tray {
-  display: flex;
-  gap: 12px;
+/* Start Here: three equal shortcut columns and a quiet settings note. */
+.overview-shortcut-strip {
   min-width: 0;
-  padding: 10px;
+  padding: 20px 24px;
   border: 1px solid var(--hairline);
   border-radius: var(--radius-lg);
   background: var(--bg-2);
+  container-type: inline-size;
 }
-
-.overview-start-intro {
-  flex: 0 0 190px;
+.overview-shortcut-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 180px;
+  align-items: center;
+  gap: 24px;
+}
+.overview-shortcuts {
   min-width: 0;
-  padding: 5px 4px 3px 6px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+.overview-shortcut {
+  min-width: 0;
   display: flex;
   flex-direction: column;
-  justify-content: space-between;
   gap: 12px;
+  padding-inline: 20px;
 }
-
-.overview-start-intro strong {
-  display: block;
-  color: var(--text-1);
-  font-size: 14px;
-  font-weight: 620;
-  line-height: 1.25;
-  letter-spacing: -0.015em;
+.overview-shortcut:first-child {
+  padding-inline-start: 0;
 }
-
-.overview-start-intro p {
-  margin: 5px 0 0;
-  color: var(--text-3);
-  font-size: 11.5px;
-  line-height: 1.4;
+.overview-shortcut:last-child {
+  padding-inline-end: 0;
 }
-
-.grain-root .overview-start-button {
-  min-height: 31px;
-  width: 100%;
-  padding: 0 11px;
+.overview-shortcut + .overview-shortcut {
+  border-inline-start: 1px solid var(--hairline);
+}
+.overview-shortcut-heading {
   display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 7px;
-  border: 1px solid color-mix(in srgb, var(--text-1) 22%, transparent);
-  border-radius: 8px;
-  color: var(--text-2);
-  background: transparent;
-  font: inherit;
-  font-size: 11.5px;
-  font-weight: 620;
-  cursor: pointer;
-  transition: background 0.16s ease;
-}
-
-.grain-root .overview-start-button:hover {
-  background: var(--accent-soft);
-}
-
-.overview-start-button:focus-visible,
-.overview-grid:focus-visible,
-button.overview-card:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-}
-
-button.overview-card:focus-visible {
-  outline-offset: -2px;
-}
-
-.overview-grid {
-  flex: 1;
-  display: flex;
-  gap: 8px;
-  min-width: 0;
-  align-items: stretch;
-  overflow-x: auto;
-  overflow-y: hidden;
-  scrollbar-width: thin;
-  scrollbar-color: var(--text-4) transparent;
-}
-
-.overview-grid::-webkit-scrollbar {
-  height: 5px;
-}
-
-.overview-grid::-webkit-scrollbar-thumb {
-  border-radius: 5px;
-  background: var(--text-4);
-}
-
-.overview-card {
-  flex: 1 0 154px;
-  min-width: 0;
-  min-height: 130px;
-  padding: 11px 12px;
-  display: flex;
-  flex-direction: column;
-  position: relative;
-  border-radius: 11px;
-  border: 1px solid var(--hairline);
-  background: var(--bg-3);
-  color: var(--text-1);
-  text-align: left;
-  box-sizing: border-box;
-  font-family: inherit;
-  transition:
-    background 0.18s ease,
-    border-color 0.18s ease,
-    transform 0.2s var(--ease-out),
-    box-shadow 0.2s ease;
-}
-
-button.overview-card {
-  border: 1px solid var(--hairline);
-  cursor: pointer;
-}
-
-.overview-card--shortcuts {
-  flex-basis: 210px;
-}
-
-.overview-card--interactive {
-  cursor: pointer;
-}
-
-.overview-card--interactive:hover {
-  background: var(--bg-4);
-  border-color: var(--accent-soft-hover);
-  transform: translateY(-1px);
-}
-
-.overview-card--static {
-  cursor: default;
-}
-
-html[data-theme="light"] .overview-card,
-html[data-theme="light"] button.overview-card {
-  border: 1px solid var(--hairline-soft);
-  background: #fcfcfb;
-  box-shadow: none;
-}
-
-html[data-theme="light"] .overview-card--interactive:hover {
-  background: #ffffff;
-  border-color: var(--hairline);
-  box-shadow: 0 3px 10px rgba(26, 26, 26, 0.06);
-}
-
-/* Card Header */
-.overview-card-header {
-  display: flex;
-  align-items: flex-start;
-  flex-direction: column;
-  gap: 6px;
-  min-width: 0;
-  margin-top: 0;
-  margin-bottom: 2px;
-}
-
-.overview-card--shortcuts .overview-card-header {
-  flex-direction: row;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
 }
-
-.overview-card-icon {
-  flex: none;
-  color: var(--text-2, #b4b8b8);
-  transition: color 0.18s ease;
-}
-
-.overview-agent-svg {
-  width: 18px;
-  height: 18px;
-  display: block;
-  fill: none;
-  stroke: currentColor;
-  stroke-width: 1.8;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-}
-
-.overview-agent-svg circle {
-  fill: currentColor;
-  stroke: none;
-}
-
-.overview-card--interactive:hover .overview-card-icon {
-  color: var(--accent);
-}
-
-html[data-theme="light"] .overview-card-icon {
-  color: #625f59;
-}
-
-html[data-theme="light"] .overview-card--interactive:hover .overview-card-icon {
-  color: #1a1a1a;
-}
-
-.overview-card-title {
-  display: block;
+.overview-shortcut-heading h3 {
+  margin: 0;
+  color: var(--text-1);
   font-size: 13px;
   font-weight: 600;
-  color: var(--text-1);
-  letter-spacing: -0.01em;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  line-height: 1.35;
 }
-
-html[data-theme="light"] .overview-card-title {
-  color: #1a1a1a;
-}
-
-/* Card Footer / Accessory */
-.overview-card-footer {
-  margin-top: auto;
-  padding-top: 7px;
-  display: flex;
-  align-items: center;
-  min-width: 0;
-}
-
-/* -- Shortcuts list -- */
-.overview-shortcut-list {
-  margin-top: auto;
-  padding-top: 6px;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.overview-shortcut-list > .overview-shortcut-row + .overview-shortcut-row {
-  border-top: 1px solid var(--hairline);
-  padding-top: 10px;
-}
-
-.overview-shortcut-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  min-width: 0;
-}
-
-.overview-shortcut-label {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  color: var(--text-3, #7d8385);
+.overview-shortcut-status {
+  color: var(--text-3);
   font-size: 10.5px;
-  font-weight: 450;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  line-height: 1.4;
 }
-
-html[data-theme="light"] .overview-shortcut-label {
-  color: #625f59;
-}
-
-.overview-shortcut-off {
-  flex: none;
-  color: var(--text-4, #5c6265);
-  font-size: 10px;
-}
-
-/* A chord reads as text, with deliberate space around each plus. */
-.overview-card .overview-keys {
-  flex: 0 1 auto;
+.grain-root .overview-shortcut-trigger {
   min-width: 0;
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  justify-content: flex-end;
-  padding: 0;
-  border: 0;
-  border-radius: 0;
-  box-shadow: none;
-  color: var(--text-2);
-  background: transparent;
-  font-family: inherit;
-  font-size: 12px;
-  font-weight: 620;
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-}
-
-.overview-key-part {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-}
-
-.overview-key-separator {
-  color: var(--text-4);
-  font-weight: 450;
-}
-
-/* -- Agent row & CTA row -- */
-.overview-agent-row {
-  width: 100%;
-}
-
-.overview-cta-row {
+  min-height: 40px;
+  padding: 2px 0;
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  width: 100%;
+  align-self: flex-start;
+  max-width: 100%;
+  border: 0;
+  border-radius: var(--radius-xs);
+  color: var(--text-1);
+  background: transparent;
+  text-align: start;
+  cursor: pointer;
+}
+.overview-shortcut-keys {
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 550;
+  line-height: 1.35;
+}
+.overview-shortcut-key-part {
+  min-width: 0;
+  max-width: 100%;
+  display: inline-flex;
+  align-items: center;
   gap: 6px;
 }
-
-.overview-card-cta {
+.overview-shortcut-key {
+  min-width: 36px;
+  min-height: 34px;
+  padding: 6px 10px;
+  display: inline-flex;
+  justify-content: center;
+  align-items: center;
+  border: 1px solid color-mix(in srgb, var(--text-1) 18%, transparent);
+  border-radius: var(--radius-xs);
+  background: var(--bg-3);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.18);
+  overflow-wrap: anywhere;
+  text-align: center;
+  transition:
+    background 0.16s ease,
+    border-color 0.16s ease;
+}
+.overview-shortcut-plus {
+  flex: none;
+  color: var(--text-3);
+  font-family: var(--font-sans);
   font-size: 11px;
+  font-weight: 450;
+}
+.overview-shortcut-trigger:hover .overview-shortcut-key {
+  border-color: var(--accent-focus);
+  background: var(--bg-4);
+}
+.overview-shortcut-empty {
+  color: var(--text-3);
+  font-size: 12px;
+}
+.overview-shortcut-info {
+  min-width: 0;
+  padding-inline-start: 24px;
+  border-inline-start: 1px solid var(--hairline);
+}
+.overview-shortcut-info strong {
+  color: var(--text-1);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.35;
+}
+.overview-shortcut-info p {
+  margin: 6px 0;
+  color: var(--text-3);
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+.grain-root .overview-shortcut-settings {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 28px;
+  padding: 2px 0;
+  border: 0;
+  border-radius: 3px;
+  color: var(--text-2);
+  background: transparent;
+  font-size: 11.5px;
   font-weight: 550;
-  color: var(--accent);
-  transition: color 0.15s ease;
+  text-align: start;
+  cursor: pointer;
 }
-
-html[data-theme="light"] .overview-card-cta {
-  color: #1a1a1a;
+.grain-root .overview-shortcut-settings:hover {
+  color: var(--text-1);
+  text-decoration: underline;
+  text-underline-offset: 3px;
 }
-
-.overview-cta-arrow {
-  color: var(--accent);
-  transition: transform 0.18s var(--ease-out);
+.grain-root .overview-shortcut-trigger:focus-visible,
+.grain-root .overview-shortcut-settings:focus-visible {
+  outline: 2px solid var(--text-2);
+  outline-offset: 3px;
 }
-
-html[data-theme="light"] .overview-cta-arrow {
-  color: #1a1a1a;
+html[data-theme="light"] .overview-shortcut-key {
+  background: #fcfcfb;
+  box-shadow: 0 1px 2px rgba(26, 26, 26, 0.08);
 }
-
-.overview-card--interactive:hover .overview-cta-arrow {
-  transform: translateX(3px);
+html[data-theme="light"]
+  .overview-shortcut-trigger:hover
+  .overview-shortcut-key {
+  background: #ffffff;
+  border-color: var(--text-3);
 }
-
-@media (max-width: 700px) {
-  .overview-start-tray {
-    flex-direction: column;
+@container (max-width: 640px) {
+  .overview-shortcut-layout {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 20px;
   }
-
-  .overview-start-intro {
+  .overview-shortcut-info {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 20px;
+    padding-inline-start: 0;
+    padding-block-start: 16px;
+    border-inline-start: 0;
+    border-block-start: 1px solid var(--hairline);
+  }
+  .overview-shortcut-info p {
+    margin-bottom: 0;
+  }
+  .overview-shortcut-settings {
     flex: none;
+  }
+}
+@container (max-width: 480px) {
+  .overview-shortcuts {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .overview-shortcut {
     flex-direction: row;
     align-items: center;
-    padding: 3px 4px;
+    justify-content: space-between;
+    padding: 12px 0;
   }
-
-  .overview-start-button {
-    flex: 0 0 auto;
-    width: auto;
-    min-width: 120px;
+  .overview-shortcut + .overview-shortcut {
+    border-inline-start: 0;
+    border-block-start: 1px solid var(--hairline);
+  }
+  .overview-shortcut-heading {
+    flex: 1;
+  }
+  .overview-shortcut-trigger {
+    flex: 0 1 65%;
+    justify-content: flex-end;
+  }
+  .overview-shortcut-keys {
+    justify-content: flex-end;
+  }
+  .overview-shortcut-info {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
   }
 }
-
-@media (max-width: 460px) {
-  .overview-start-intro {
-    align-items: stretch;
-    flex-direction: column;
-  }
-
-  .overview-start-button {
-    width: 100%;
+@media (prefers-reduced-motion: reduce) {
+  .overview-shortcut-key {
+    transition: none;
   }
 }
 
