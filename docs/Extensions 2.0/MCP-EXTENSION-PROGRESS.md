@@ -1,5 +1,15 @@
 # Extension implementation: progress, changes and user testing
 
+**Agent submitted-message UX, 14 October:** the first typed/transcribed request
+now enters visible React conversation state before the Agent command awaits its
+model/tool work. Both side and center layouts show it above the loading dots and
+keep it visible with the reply/error. Selected source text remains separate;
+retries replace the initial request instead of duplicating it. Voice text appears
+once transcription supplies it. TypeScript, scoped ESLint/format checks and source
+review pass. The design detector reports only the unchanged typing-dot animation.
+User visual confirmation remains pending; no app restart, installer build,
+Computer Use or new harness test was performed while the user tests Notion.
+
 **Agent automatic execution and observation, 14 October (latest):** user asked
 to remove repeated tool confirmations and permit substantially longer requests.
 Native/MCP capability calls now auto-approve through the existing revalidated
