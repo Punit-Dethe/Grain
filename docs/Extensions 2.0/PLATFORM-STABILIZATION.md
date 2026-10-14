@@ -13,10 +13,14 @@ The stale issue-list check and obsolete base64 fixture expectation are attribute
 and corrected without replaying writes. Update/branch traces directly show tiered
 2 → 4 / 2 → 3 exposure; the separate file trace is still missing, not claimed Pass.
 See [exact evidence and limits](MCP-EXTENSION-PROGRESS.md).
-Notion is the next compatibility checkpoint: explicitly approved 0.1.0 is signed
-and published at catalogue index 5, with independent public delivery Pass. It
-uses the existing SDK/DCR path. Disposable-workspace install/sign-in and actual
-tool/cross-provider acceptance remain pending. Publication alone requires no new
+Notion 0.1.0 is signed and published at catalogue index 5, with independent public
+delivery Pass. It uses the existing SDK/DCR path. The user has connected it and
+exercised page retrieval/create/update; three completed traces show 7 successful
+Notion executions, no identical repeated calls and no limit exhaustion. Full
+provider/cross-provider acceptance remains pending, including the oversized
+database-query schema. Discovery latency is the next identified improvement:
+15 of 22 calls are search/load rather than actual Notion execution. See the
+latest trace review in the progress document. Publication alone requires no new
 alpha build; the subsequent Agent runtime change below does require an updated
 runtime, currently verified in the development app.
 Earlier dated descriptions below preserve the development history and do not

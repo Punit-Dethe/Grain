@@ -1,5 +1,45 @@
 # Extension implementation: progress, changes and user testing
 
+**User Notion trace review, 14 October (latest):** user confirms the submitted
+message now appears correctly and reports trying note retrieval, creation and
+updates. Reviewed the three subsequent completed Agent tasks in the local alpha
+log; excluded our earlier 20:43 read probe. Times below are Asia/Calcutta (IST).
+
+| Start | Observed workflow | Tool rounds / model requests | All calls | Discovery calls | Notion executions | Exact repeats | Elapsed |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 20:49:32 | List recent and private pages | 5 / 6 | 6 | 4 | 2 succeeded | 0 | ~43 s |
+| 20:51:52 | Fetch, then create pages | 8 / 9 | 8 | 6 | 2 succeeded | 0 | ~58 s |
+| 20:55:52 | Search, fetch, update page | 8 / 9 | 8 | 5 | 3 succeeded | 0 | ~50 s |
+
+Across these requests: 22 calls, 15 discovery calls, 7 automatic approvals and
+7 provider-reported successful executions. All tasks have `finished` events;
+none reaches a limit, returns a traced execution error or blocks a retry.
+Duplicate detection means the same tool plus normalized identical arguments
+within one task, not semantic equivalence or duplicates across conversations.
+The creation/update tools each execute once. Traces show only 2 discovery schemas
+initially, then 5 schemas (the same 2 plus 3 selected Notion tools); no full tool
+catalogue is exposed to the model. These are observed/user-reported basic flows,
+not independent persisted-content verification or complete provider acceptance.
+
+**Findings:** 68% of calls are discovery. Each task performs 3–5 separate
+`search_tools` rounds before a single selected load. About 141 of the combined
+151 seconds fall between model-request/response events (timestamps have only
+second precision); dispatch durations total ~11.2 seconds. Reducing unnecessary
+model discovery rounds is the main latency opportunity, rather than raising
+limits again. Current logs omit query text and match/page counts, so they do not
+prove which searches were necessary, empty, paginated or semantically redundant.
+Source review confirms each metadata search/load obtains a fresh short-lived MCP
+catalogue; task-local metadata reuse is a possible secondary improvement, with
+execution-time ownership/digest revalidation retained. Do not add a persistent
+connection/cache engine or change selection policy without a bounded checkpoint.
+
+Separate concrete gap: `notion-query-data-sources` is repeatedly excluded because
+its schema exceeds 64 KiB. The basic page workflows above do not cover database
+queries. Inspect the actual schema/size and provider contract before changing
+admission/context limits; no assumption that a larger arbitrary cap solves it.
+No runtime/UI/harness changes or new actions performed during this review.
+Nonsecret captured trace analysis: `tests/agent-harness/.runs/notion-review-20261014/analysis.json`.
+
 **Agent submitted-message UX, 14 October:** the first typed/transcribed request
 now enters visible React conversation state before the Agent command awaits its
 model/tool work. Both side and center layouts show it above the loading dots and
@@ -7,7 +47,7 @@ keep it visible with the reply/error. Selected source text remains separate;
 retries replace the initial request instead of duplicating it. Voice text appears
 once transcription supplies it. TypeScript, scoped ESLint/format checks and source
 review pass. The design detector reports only the unchanged typing-dot animation.
-User visual confirmation remains pending; no app restart, installer build,
+User visual confirmation now passes; no app restart, installer build,
 Computer Use or new harness test was performed while the user tests Notion.
 
 **Agent automatic execution and observation, 14 October (latest):** user asked
