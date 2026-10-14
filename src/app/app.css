@@ -1537,6 +1537,7 @@ html[data-theme="light"] .hero {
   border-radius: var(--radius-lg);
   background: var(--bg-2);
   container-type: inline-size;
+  container-name: overview-strip;
 }
 .overview-shortcut-layout {
   display: grid;
@@ -1585,6 +1586,7 @@ html[data-theme="light"] .hero {
 }
 .grain-root .overview-shortcut-trigger {
   min-width: 0;
+  width: 100%;
   min-height: 40px;
   padding: 2px 0;
   display: flex;
@@ -1597,40 +1599,46 @@ html[data-theme="light"] .hero {
   background: transparent;
   text-align: start;
   cursor: pointer;
+  container-type: inline-size;
 }
 .overview-shortcut-keys {
   min-width: 0;
-  display: flex;
-  flex-wrap: wrap;
+  max-width: 100%;
+  display: inline-flex;
+  flex-wrap: nowrap;
   align-items: center;
-  gap: 6px;
-  font-family: var(--font-sans);
+  gap: 0.48em;
+  font-family: var(--font-mono);
   font-size: 12.5px;
   font-weight: 600;
   line-height: 1.35;
 }
+.overview-shortcut-keys[data-adaptive="true"] {
+  font-size: min(
+    12.5px,
+    calc((100cqi - var(--shortcut-border-width)) / var(--shortcut-em-width))
+  );
+}
 .overview-shortcut-key-part {
-  min-width: 0;
-  max-width: 100%;
+  flex: none;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 0.48em;
 }
 .overview-shortcut-keys .overview-shortcut-key {
-  min-width: 48px;
-  min-height: 36px;
-  padding: 6px 12px;
+  min-width: 3.84em;
+  min-height: 2.88em;
+  padding: 0.48em 0.96em;
   display: inline-flex;
   justify-content: center;
   align-items: center;
-  border: 1px solid color-mix(in srgb, var(--text-1) 40%, transparent);
-  border-radius: var(--radius-xs);
+  border: 1px solid var(--hairline);
+  border-radius: 5.5px;
   color: var(--text-1);
-  background: var(--bg-3);
-  box-shadow: 0 2px 2px rgba(0, 0, 0, 0.14);
+  background: var(--color-paper-raised);
+  box-shadow: var(--shadow-hair, 0 1px 1px rgba(0, 0, 0, 0.12));
   font: inherit;
-  white-space: normal;
-  overflow-wrap: anywhere;
+  white-space: nowrap;
   text-align: center;
   transition: border-color 0.16s ease;
 }
@@ -1638,13 +1646,13 @@ html[data-theme="light"] .hero {
   flex: none;
   color: var(--text-3);
   font-family: var(--font-sans);
-  font-size: 11px;
+  font-size: 0.9em;
   font-weight: 450;
 }
 .overview-shortcut-trigger:hover
   .overview-shortcut-keys
   .overview-shortcut-key {
-  border-color: var(--text-2);
+  border-color: var(--accent-focus);
 }
 .overview-shortcut-empty {
   color: var(--text-3);
@@ -1694,11 +1702,10 @@ html[data-theme="light"] .hero {
   box-shadow: none !important;
 }
 html[data-theme="light"] .overview-shortcut-keys .overview-shortcut-key {
-  border-color: var(--text-3);
-  background: #ffffff;
-  box-shadow: 0 2px 2px rgba(26, 26, 26, 0.12);
+  background: var(--color-paper-raised);
+  box-shadow: var(--shadow-hair, 0 1px 1px rgba(26, 26, 26, 0.08));
 }
-@container (max-width: 640px) {
+@container overview-strip (max-width: 640px) {
   .overview-shortcut-layout {
     grid-template-columns: minmax(0, 1fr);
     gap: 20px;
@@ -1720,7 +1727,7 @@ html[data-theme="light"] .overview-shortcut-keys .overview-shortcut-key {
     flex: none;
   }
 }
-@container (max-width: 480px) {
+@container overview-strip (max-width: 480px) {
   .overview-shortcuts {
     grid-template-columns: minmax(0, 1fr);
   }
@@ -2006,6 +2013,14 @@ html[data-theme="light"] .overview-shortcut-keys .overview-shortcut-key {
 }
 
 /* History */
+.page[data-page-panel="history"] {
+  background: var(--bg-0);
+}
+
+html[data-theme="light"] .page[data-page-panel="history"] {
+  background: var(--bg-1);
+}
+
 .history-page-wrap {
   width: min(1040px, 100%);
 }

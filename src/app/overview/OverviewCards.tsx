@@ -1,4 +1,5 @@
 import { ArrowRight } from "lucide-react";
+import type { CSSProperties } from "react";
 import { useTranslation } from "react-i18next";
 import { useSettings } from "@/hooks/useSettings";
 import { formatKeyPart } from "@/lib/utils/keyboard";
@@ -18,9 +19,26 @@ function go(hash: string) {
 
 function ShortcutKeys({ combination }: { combination: string }) {
   const keys = combination.split("+").map(formatKeyPart).filter(Boolean);
+  // Budget glyphs, key padding and separators in ems so the entire chord
+  // scales to its available width without measuring or wrapping individual keys.
+  const emWidth =
+    keys.reduce(
+      (width, key) => width + Math.max(3.84, key.length * 0.66 + 1.92),
+      0,
+    ) +
+    Math.max(0, keys.length - 1) * 1.5;
   // Shared kbd styles belong to individual keys, never to the entire chord.
   return (
-    <span className="overview-shortcut-keys">
+    <span
+      className="overview-shortcut-keys"
+      data-adaptive={keys.length > 2 ? "true" : undefined}
+      style={
+        {
+          "--shortcut-em-width": Math.max(1, emWidth),
+          "--shortcut-border-width": `${keys.length * 2}px`,
+        } as CSSProperties
+      }
+    >
       {keys.map((key, index) => (
         <span className="overview-shortcut-key-part" key={`${key}-${index}`}>
           {index > 0 && <span className="overview-shortcut-plus">+</span>}
