@@ -1540,7 +1540,7 @@ html[data-theme="light"] .hero {
   container-name: overview-strip;
 }
 .grain-root[data-theme="dark"] .overview-shortcut-strip {
-  background: var(--bg-3);
+  background: #292929;
 }
 .grain-root[data-theme="dark"]
   .overview-shortcut-strip
