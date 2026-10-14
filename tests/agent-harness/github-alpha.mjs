@@ -76,10 +76,14 @@ export function approvedGitHubRead(confirm) {
   );
 }
 
-export async function runInstalledGitHub(mode) {
+export async function runInstalledGitHub(mode, updateVersion) {
   assert.ok(
     ["--preflight", "--catalogue", "--read", "--workflow"].includes(mode),
     "Use --preflight, --catalogue, --read or --workflow",
+  );
+  assert.ok(
+    updateVersion === undefined || /^\d+\.\d+\.\d+$/.test(updateVersion),
+    "An explicit store update requires a release version",
   );
   const here = dirname(fileURLToPath(import.meta.url));
   const root = await mkdtemp(join(here, ".runs/github-alpha-"));
@@ -257,9 +261,6 @@ export async function runInstalledGitHub(mode) {
       report.results.push({ id, status: "Pass", evidence });
       console.log(`PASS ${id}`);
     } catch (error) {
-      if (logDirectory && !error.diagnostic?.trace) {
-        error.diagnostic = { ...error.diagnostic, trace: await trace() };
-      }
       report.results.push({
         id,
         status: error instanceof Blocked ? "Blocked" : "Fail",
@@ -299,6 +300,8 @@ export async function runInstalledGitHub(mode) {
           ),
         },
       });
+      const diagnostic = report.results.at(-1).diagnostic;
+      if (logDirectory && !diagnostic.trace) diagnostic.trace = await trace();
       throw error;
     }
   };
@@ -580,6 +583,40 @@ export async function runInstalledGitHub(mode) {
     await mkdir(join(root, "webview"));
     await launch();
     await check("github.installed-preflight", preflight);
+    if (updateVersion) {
+      await check("github.package-update", async () => {
+        const previous = connection;
+        assert.notEqual(
+          previous.version,
+          updateVersion,
+          "Require an actual update",
+        );
+        try {
+          await invoke("store_browse", {}, 120000);
+          await invoke(
+            "store_mcp_update",
+            {
+              connectionId: previous.id,
+              expectedRevision: previous.revision,
+              version: updateVersion,
+            },
+            120000,
+          );
+        } finally {
+          await invoke("store_close");
+        }
+        const status = await preflight();
+        assert.equal(connection.id, previous.id);
+        assert.equal(connection.version, updateVersion);
+        assert.notEqual(connection.revision, previous.revision);
+        assert.equal(connection.headers["x-mcp-toolsets"], "all");
+        return {
+          ...status,
+          previousVersion: previous.version,
+          version: connection.version,
+        };
+      });
+    }
     if (mode === "--workflow" || mode === "--read") {
       previousLogLevel = await main.evaluate(
         async () =>
@@ -838,5 +875,11 @@ export async function runInstalledGitHub(mode) {
 if (
   process.argv[1] &&
   resolve(process.argv[1]) === fileURLToPath(import.meta.url)
-)
-  await runInstalledGitHub(process.argv[2]);
+) {
+  const update = process.argv[3]?.match(/^--update-version=(\d+\.\d+\.\d+)$/);
+  assert.ok(
+    process.argv.length <= 4 && (!process.argv[3] || update),
+    "Unexpected arguments",
+  );
+  await runInstalledGitHub(process.argv[2], update?.[1]);
+}

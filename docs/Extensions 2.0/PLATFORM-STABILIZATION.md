@@ -19,6 +19,16 @@ Client/issuer changes rotate account bindings. Normal sign-in/refresh and
 admission/ownership checks pass. Item 1's code is complete for this supported
 profile; live third-party and matching installed/package acceptance remain open.
 
+**Later 14 October publication checkpoint:** human approval of registry PR 3
+replaces the exact first-party tester exception with the 0.1.1 submission;
+other packages still require independent review. Genuine preparation/attestation,
+signing, publication and independent public HTTP delivery pass. Catalogue index 4
+at registry commit `36704a63fd14bcabb28a4bc5a4f349fed2010ddc` carries tag `v0.1.1`,
+source `394176037b46ecbfde34d7af0996a505b3352400`. The matching runtime artifact
+build `38547281600` is in progress; installed update/account/Agent acceptance is
+pending. Earlier references to an unpublished candidate describe the source
+checkpoint before this publication. No production application release or Notion.
+
 ## Outcome and scope
 
 An author should add a supported native or remote MCP extension by publishing

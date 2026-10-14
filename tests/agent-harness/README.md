@@ -16,6 +16,8 @@ node tests/agent-harness/github-alpha.mjs --preflight
 node tests/agent-harness/github-alpha.mjs --catalogue
 node tests/agent-harness/github-alpha.mjs --read
 node tests/agent-harness/github-alpha.mjs --workflow
+# Only for an explicitly authorized real package-update checkpoint:
+node tests/agent-harness/github-alpha.mjs --workflow --update-version=0.1.1
 node --test tests/agent-harness/github-alpha.test.mjs
 ```
 
@@ -30,13 +32,23 @@ WebView2 through loopback CDP and invokes production Tauri Agent commands. It
 does not use Computer Use, screenshots, simulated clicks, fixtures or a model
 relay. `--read` approves only the test repository's README getter, verifies the
 returned content independently, restarts the owned app, then repeats the read.
-The preflight/catalogue/read modes perform no writes. Existing account
+Without the explicit update option, preflight/catalogue/read perform no writes. Existing account
 credentials remain in Grain; no profile copying or token extraction is used.
 `--catalogue` invokes the real host's SDK discovery and records supported public
 tool names/count/digest without executing any tool. The current installed binary
 returned 49 default-catalogue tools in `github-alpha-yTL7At`, cleanup Pass. This
 does not prove those tools can execute or certify the new all-toolset source
 change before it is built into an installed alpha.
+
+The trace-capable `7d7b96f2` build later discovers 100 supported tools and passes
+read/restart/read with two discovery schemas then three including the getter.
+It predates package-owned headers. The explicit update option uses the real
+signed Store update command before Agent work; it requires an actual version
+change, retained connection/account, revised lease and GitHub's public toolset
+option. It does not inject JSON, copy credentials or authorize a provider write.
+If it has already updated the package, do not repeat the update option; run the
+separate desired check. Consolidate this checkpoint with normal store acceptance
+when the standard runner supports installed alphas; do not grow another runner.
 
 `--workflow` is an explicitly authorized write checkpoint on the disposable
 `Punit-Dethe/grain-github-alpha-test` repository: one marked issue, update/close,

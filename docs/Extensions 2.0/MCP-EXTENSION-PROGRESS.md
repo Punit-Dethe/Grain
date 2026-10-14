@@ -1,5 +1,29 @@
 # Extension implementation: progress, changes and user testing
 
+**GitHub 0.1.1 publication, 14 October:** human maintainer explicitly approved
+the exact tester update in registry PR 3. The temporary signer exception now
+binds submission `d667ca2fab05aae393497efb46ced148740957f2e443814ab6206aa91523375b`;
+the former 0.1.0 exception is refused rather than retained. Eight affected review
+tests pass. Independent-review requirements for other submissions are unchanged.
+Registry CI builder/verifier pins now use shared contract `14ba2903`; genuine
+source preparation/attestation run `38548315482` and publication run `38548884112`
+pass. Source tag `v0.1.1` is pinned to `394176037b46ecbfde34d7af0996a505b3352400`.
+
+Public catalogue index 4 at registry commit `36704a63fd14bcabb28a4bc5a4f349fed2010ddc`
+contains the signed package-owned all-toolset descriptor. Full local hosting
+verification and independent commit-pinned/mutable-URL HTTP delivery pass
+(54 requests). Listing, artwork, MCP URL, account client identity, root and
+publisher keys are unchanged. Operator approval/unlock files remain outside
+repositories; no credentials were copied into artifacts, reports or chat.
+
+Matching alpha artifact run `38547281600` builds runtime source `0461eb2c`;
+the later maintainer-only exception change does not affect its runtime. Installed
+update/account/Agent acceptance remains pending. The existing GitHub runner has
+one explicit `--update-version=0.1.1` option for this real signed update before
+the bounded workflow; no new engine or mode. Publication does not certify writes,
+live public-client OAuth or the original update/close failure. Notion remains next
+after the GitHub/shared-platform checkpoint.
+
 **GitHub execution diagnosis, 14 October:** the trace-capable installed alpha
 from source `7d7b96f2` discovers 100 supported GitHub tools (`github-alpha-Oq3oFk`).
 Private README read, persisted-account restart and read again pass all four
