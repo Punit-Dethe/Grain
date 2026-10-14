@@ -1532,12 +1532,15 @@ html[data-theme="light"] .hero {
 /* Start Here: three equal shortcut columns and a quiet settings note. */
 .overview-shortcut-strip {
   min-width: 0;
-  padding: 12px 0;
+  padding: 20px 24px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-lg);
+  background: var(--bg-2);
   container-type: inline-size;
 }
 .overview-shortcut-layout {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 180px;
+  grid-template-columns: 180px minmax(0, 1fr);
   align-items: center;
   gap: 24px;
 }
@@ -1613,16 +1616,20 @@ html[data-theme="light"] .hero {
   align-items: center;
   gap: 6px;
 }
-.overview-shortcut-key {
+.overview-shortcut-keys .overview-shortcut-key {
   min-width: 48px;
   min-height: 36px;
   padding: 6px 12px;
   display: inline-flex;
   justify-content: center;
   align-items: center;
-  border: 1px solid color-mix(in srgb, var(--text-1) 36%, transparent);
+  border: 1px solid color-mix(in srgb, var(--text-1) 40%, transparent);
   border-radius: var(--radius-xs);
-  background: transparent;
+  color: var(--text-1);
+  background: var(--bg-3);
+  box-shadow: 0 2px 2px rgba(0, 0, 0, 0.14);
+  font: inherit;
+  white-space: normal;
   overflow-wrap: anywhere;
   text-align: center;
   transition: border-color 0.16s ease;
@@ -1634,7 +1641,9 @@ html[data-theme="light"] .hero {
   font-size: 11px;
   font-weight: 450;
 }
-.overview-shortcut-trigger:hover .overview-shortcut-key {
+.overview-shortcut-trigger:hover
+  .overview-shortcut-keys
+  .overview-shortcut-key {
   border-color: var(--text-2);
 }
 .overview-shortcut-empty {
@@ -1643,7 +1652,8 @@ html[data-theme="light"] .hero {
 }
 .overview-shortcut-info {
   min-width: 0;
-  padding-inline-start: 24px;
+  padding-inline-end: 24px;
+  border-inline-end: 1px solid var(--hairline);
 }
 .overview-shortcut-info strong {
   color: var(--text-1);
@@ -1683,8 +1693,10 @@ html[data-theme="light"] .hero {
   outline-offset: 3px;
   box-shadow: none !important;
 }
-html[data-theme="light"] .overview-shortcut-key {
+html[data-theme="light"] .overview-shortcut-keys .overview-shortcut-key {
   border-color: var(--text-3);
+  background: #ffffff;
+  box-shadow: 0 2px 2px rgba(26, 26, 26, 0.12);
 }
 @container (max-width: 640px) {
   .overview-shortcut-layout {
@@ -1696,8 +1708,10 @@ html[data-theme="light"] .overview-shortcut-key {
     align-items: center;
     justify-content: space-between;
     gap: 20px;
-    padding-inline-start: 0;
-    padding-block-start: 16px;
+    padding-inline-end: 0;
+    padding-block-end: 16px;
+    border-inline-end: 0;
+    border-block-end: 1px solid var(--hairline);
   }
   .overview-shortcut-info p {
     margin-bottom: 0;
@@ -1737,7 +1751,7 @@ html[data-theme="light"] .overview-shortcut-key {
   }
 }
 @media (prefers-reduced-motion: reduce) {
-  .overview-shortcut-key {
+  .overview-shortcut-keys .overview-shortcut-key {
     transition: none;
   }
 }

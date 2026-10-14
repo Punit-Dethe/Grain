@@ -18,15 +18,16 @@ function go(hash: string) {
 
 function ShortcutKeys({ combination }: { combination: string }) {
   const keys = combination.split("+").map(formatKeyPart).filter(Boolean);
+  // Shared kbd styles belong to individual keys, never to the entire chord.
   return (
-    <kbd className="overview-shortcut-keys">
+    <span className="overview-shortcut-keys">
       {keys.map((key, index) => (
         <span className="overview-shortcut-key-part" key={`${key}-${index}`}>
           {index > 0 && <span className="overview-shortcut-plus">+</span>}
-          <span className="overview-shortcut-key">{key}</span>
+          <kbd className="overview-shortcut-key">{key}</kbd>
         </span>
       ))}
-    </kbd>
+    </span>
   );
 }
 
@@ -39,6 +40,20 @@ export function OverviewCards() {
   return (
     <div className="overview-shortcut-strip">
       <div className="overview-shortcut-layout">
+        <aside className="overview-shortcut-info">
+          <div>
+            <strong>{t("overview.shortcuts.infoTitle")}</strong>
+            <p>{t("overview.shortcuts.infoDescription")}</p>
+          </div>
+          <button
+            className="overview-shortcut-settings"
+            type="button"
+            onClick={() => go(CAPTURE_SETTINGS)}
+          >
+            {t("overview.shortcuts.infoAction")}
+            <ArrowRight size={13} aria-hidden="true" />
+          </button>
+        </aside>
         <div className="overview-shortcuts">
           {SHORTCUTS.map(({ mode, bindingId }) => {
             const label = t(`overview.shortcuts.${mode}`);
@@ -92,20 +107,6 @@ export function OverviewCards() {
             );
           })}
         </div>
-        <aside className="overview-shortcut-info">
-          <div>
-            <strong>{t("overview.shortcuts.infoTitle")}</strong>
-            <p>{t("overview.shortcuts.infoDescription")}</p>
-          </div>
-          <button
-            className="overview-shortcut-settings"
-            type="button"
-            onClick={() => go(CAPTURE_SETTINGS)}
-          >
-            {t("overview.shortcuts.infoAction")}
-            <ArrowRight size={13} aria-hidden="true" />
-          </button>
-        </aside>
       </div>
     </div>
   );
