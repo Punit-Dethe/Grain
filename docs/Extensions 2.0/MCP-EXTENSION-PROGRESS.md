@@ -1,5 +1,17 @@
 # Extension implementation: progress, changes and user testing
 
+**Lexical-first execution plan, 14 October (latest):** reviewed the user's supplied
+deeper research and mapped it to the source. User chose no embeddings for the
+first implementation/comparison. The [new work order](FAST-TOOL-EXECUTION-PLAN.md)
+reuses existing BM25/rank-fusion code, adds parameter-aware projection and
+complete-required-set evaluation, then publishes first-round callable tools with
+combined search/load recovery. Bounded dev-app checks compare correct persisted
+effects, discovery rounds and request-to-confirmed-action latency. Later receipts
+and transport optimizations are separate measured follow-ups. SDK cache hints
+exist but Grain currently drops them; existing dispatch digest revalidation stays.
+Notion queued async writes must not count as completed actions. Planning only;
+no new test Pass, runtime change, embedding dependency, provider action or build.
+
 **Request-to-action research, 14 October (latest):** user clarified the goal as
 submit-to-confirmed-action latency. Expanded the existing research document with
 voice/action systems (LiveKit/Composio), host-side semantic filters, Model2Vec,

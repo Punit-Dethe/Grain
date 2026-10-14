@@ -3,6 +3,12 @@
 Research date: 14 October 2026. Recommendation only; no runtime change, provider
 action, model switch, new harness or application build performed in this review.
 
+**Execution decision:** the user supplied a deeper architecture review and then
+explicitly chose to test without embeddings first. See the
+[lexical-first execution plan](FAST-TOOL-EXECUTION-PLAN.md) for code reuse,
+first-round tools, combined recovery, measurement and adoption gates. Semantic
+candidates below are research context, not dependencies in this work order.
+
 ## Second pass: request-to-action latency (latest direction)
 
 The user clarified that Grain's main product is executing requests accurately
