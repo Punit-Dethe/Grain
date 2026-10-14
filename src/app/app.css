@@ -1532,10 +1532,7 @@ html[data-theme="light"] .hero {
 /* Start Here: three equal shortcut columns and a quiet settings note. */
 .overview-shortcut-strip {
   min-width: 0;
-  padding: 20px 24px;
-  border: 1px solid var(--hairline);
-  border-radius: var(--radius-lg);
-  background: var(--bg-2);
+  padding: 12px 0;
   container-type: inline-size;
 }
 .overview-shortcut-layout {
@@ -1604,9 +1601,9 @@ html[data-theme="light"] .hero {
   flex-wrap: wrap;
   align-items: center;
   gap: 6px;
-  font-family: var(--font-mono);
-  font-size: 12px;
-  font-weight: 550;
+  font-family: var(--font-sans);
+  font-size: 12.5px;
+  font-weight: 600;
   line-height: 1.35;
 }
 .overview-shortcut-key-part {
@@ -1617,21 +1614,18 @@ html[data-theme="light"] .hero {
   gap: 6px;
 }
 .overview-shortcut-key {
-  min-width: 36px;
-  min-height: 34px;
-  padding: 6px 10px;
+  min-width: 48px;
+  min-height: 36px;
+  padding: 6px 12px;
   display: inline-flex;
   justify-content: center;
   align-items: center;
-  border: 1px solid color-mix(in srgb, var(--text-1) 18%, transparent);
+  border: 1px solid color-mix(in srgb, var(--text-1) 36%, transparent);
   border-radius: var(--radius-xs);
-  background: var(--bg-3);
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.18);
+  background: transparent;
   overflow-wrap: anywhere;
   text-align: center;
-  transition:
-    background 0.16s ease,
-    border-color 0.16s ease;
+  transition: border-color 0.16s ease;
 }
 .overview-shortcut-plus {
   flex: none;
@@ -1641,8 +1635,7 @@ html[data-theme="light"] .hero {
   font-weight: 450;
 }
 .overview-shortcut-trigger:hover .overview-shortcut-key {
-  border-color: var(--accent-focus);
-  background: var(--bg-4);
+  border-color: var(--text-2);
 }
 .overview-shortcut-empty {
   color: var(--text-3);
@@ -1651,7 +1644,6 @@ html[data-theme="light"] .hero {
 .overview-shortcut-info {
   min-width: 0;
   padding-inline-start: 24px;
-  border-inline-start: 1px solid var(--hairline);
 }
 .overview-shortcut-info strong {
   color: var(--text-1);
@@ -1689,15 +1681,9 @@ html[data-theme="light"] .hero {
 .grain-root .overview-shortcut-settings:focus-visible {
   outline: 2px solid var(--text-2);
   outline-offset: 3px;
+  box-shadow: none !important;
 }
 html[data-theme="light"] .overview-shortcut-key {
-  background: #fcfcfb;
-  box-shadow: 0 1px 2px rgba(26, 26, 26, 0.08);
-}
-html[data-theme="light"]
-  .overview-shortcut-trigger:hover
-  .overview-shortcut-key {
-  background: #ffffff;
   border-color: var(--text-3);
 }
 @container (max-width: 640px) {
@@ -1712,8 +1698,6 @@ html[data-theme="light"]
     gap: 20px;
     padding-inline-start: 0;
     padding-block-start: 16px;
-    border-inline-start: 0;
-    border-block-start: 1px solid var(--hairline);
   }
   .overview-shortcut-info p {
     margin-bottom: 0;
