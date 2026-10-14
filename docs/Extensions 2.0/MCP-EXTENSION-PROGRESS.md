@@ -1,5 +1,16 @@
 # Extension implementation: progress, changes and user testing
 
+**Tool-discovery research, 14 October:** compared released/pinned Codex, Goose
+and OpenCode source plus OpenAI, Anthropic and Cloudflare primary documentation.
+No published per-task average search count found. Identified Grain's mandatory
+separate search/load decision, simple ranking, repeated remote metadata fetches
+and rediscovery on new Agent calls. Recommendation: one search that ranks and
+publishes matching schemas, task-local catalogue reuse and bounded measurement;
+small eager inventories/conversation reuse are a follow-up comparison, Code Mode
+is deferred. Findings, version distinctions and proposed checkpoint are in
+[TOOL-DISCOVERY-RESEARCH.md](TOOL-DISCOVERY-RESEARCH.md). Research/documentation only;
+no application/harness changes, actions, model switch or build.
+
 **User Notion trace review, 14 October (latest):** user confirms the submitted
 message now appears correctly and reports trying note retrieval, creation and
 updates. Reviewed the three subsequent completed Agent tasks in the local alpha

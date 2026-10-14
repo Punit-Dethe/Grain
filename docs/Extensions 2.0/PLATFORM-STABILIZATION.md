@@ -26,6 +26,12 @@ runtime, currently verified in the development app.
 Earlier dated descriptions below preserve the development history and do not
 override this current gate. Custom MCP management remains hidden in alpha/release.
 
+**Discovery research checkpoint:** [the comparison and proposed correction](TOOL-DISCOVERY-RESEARCH.md)
+now cover released/pinned Codex, Goose and OpenCode plus provider documentation.
+Recommended next implementation is combined search/schema publication with better
+lexical ranking and task-local metadata reuse, measured against the recorded
+Notion flows. No runtime change has been made from this recommendation yet.
+
 **14 October Agent policy correction (latest user decision):** native and MCP
 tool calls execute automatically after ordinary extension enablement/account
 consent. Per-call approval dialogs are removed from capability dispatch, while
