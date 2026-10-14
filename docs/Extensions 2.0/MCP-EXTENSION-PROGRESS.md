@@ -1,5 +1,32 @@
 # Extension implementation: progress, changes and user testing
 
+**Notion publication complete, 14 October:** human maintainer explicitly approved
+the exact 0.1.0 tester candidate, source `401f784ec986c4bf183594549dd75eedb057cb9d`.
+Registry PR 4 merged at `baba3bef97a7099393ce457b081a5940e21a1b3d`, head
+`9ac4c9e445db5463461114627d71e7460a979207`. The maintainer-only signer admits exact
+Notion submission digest `c9eaad5d89f26d5439d6a9a1e91a3533370aa576953e62ef9e85a5a63d0a36f3`
+alongside the approved GitHub digest; registry/human/publisher identity, bounded
+operator-held approval/expiry and merged-source/listing/provenance checks remain
+required before key access. Ten affected tests and focused diff review pass.
+The exact alpha exceptions remain temporary; retire them with permanent policy.
+
+CI preparation/attestation `38579878509` and publication `38580862065` succeed.
+Receiving/source review pass before signing. Existing tools assemble, conditionally
+promote and export the complete signed update. Registry commit
+`4c857307435099e5a97d24bac985c0bd1d224496` publishes catalogue **5**, retaining GitHub.
+Independent public delivery passes **72 requests**, verifying exact signed metadata,
+packages, description/artwork and retained proof at pinned/mutable URLs, with
+remote main checked before/after. Bundle receipt:
+`158eaf37c8ba765be31aa0af5447ad20bd8c699f23dee2247be8a52494cfb488`.
+No app build/release, runtime provider branch, signing key in CI or new test engine.
+Nonsecret evidence is at `C:/Projects/Grain/grain-notion-publication-20261014/`;
+operator approval/unlock stay outside repositories under `GrainSigning`.
+
+**Next live gate:** install Notion in the existing alpha, approve browser sign-in
+with the authorized disposable workspace, then verify its catalogue, bounded page
+read/create/edit/restart and GitHub/Notion selection. Actual Notion account/tool
+acceptance is not claimed yet; package/listing delivery is a separate result.
+
 **GitHub representative checkpoint accepted / Notion prepared, 14 October:**
 the configured `ag/gemini-3.8-flash` through repaired 9router created issue #2 with
 exact title/body (`github-alpha-hU7Agp`). Its immediate issue-list check remained

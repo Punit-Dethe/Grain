@@ -13,9 +13,10 @@ The stale issue-list check and obsolete base64 fixture expectation are attribute
 and corrected without replaying writes. Update/branch traces directly show tiered
 2 → 4 / 2 → 3 exposure; the separate file trace is still missing, not claimed Pass.
 See [exact evidence and limits](MCP-EXTENSION-PROGRESS.md).
-Notion is the next compatibility checkpoint: candidate 0.1.0 and registry PR 4
-are prepared using the existing SDK/DCR path. Source/maintainer publication
-approval and disposable-workspace sign-in/tool acceptance remain pending.
+Notion is the next compatibility checkpoint: explicitly approved 0.1.0 is signed
+and published at catalogue index 5, with independent public delivery Pass. It
+uses the existing SDK/DCR path. Disposable-workspace install/sign-in and actual
+tool/cross-provider acceptance remain pending. No new alpha build is required.
 Earlier dated descriptions below preserve the development history and do not
 override this current gate. Custom MCP management remains hidden in alpha/release.
 
