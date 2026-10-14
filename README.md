@@ -14,7 +14,18 @@
 
 Grain is a desktop app that turns speech into text wherever your cursor is. Press a shortcut, talk, release it — your words land in the field you're already using. From there you can rewrite them, act on them, or save them for later, all without leaving the app you were in.
 
-It's built on [Handy](https://github.com/cjpais/handy), the most battle-tested open-source STT engine available. Grain keeps that foundation and adds the modes, AI workflows, and extension platform described below — all opt-in, all off unless you turn them on.
+It's built on [Handy](https://github.com/cjpais/handy), the most battle-tested open-source STT engine available. Grain keeps that foundation and adds the dictation modes and optional AI workflows described below. Beta includes the core app, while Alpha also includes the full extension suite.
+
+## Beta and Alpha releases
+
+Grain has two release tracks with different feature sets:
+
+| Release track | What's included |
+| --- | --- |
+| **Beta — main app** | All core Grain features: Batch, Flow, and ASR dictation; AI workflows; Agent; Context Awareness; Snippets; Voice Actions; history; and the rest of the main app. **Extensions are not included.** |
+| **Alpha — full extension suite** | Everything in Beta, **plus the full extension suite**, including native/direct integrations and MCP-based tools for the Agent. |
+
+**The difference:** Beta includes the complete core app without extensions; Alpha includes the core app and extensions.
 
 ## Upstream tracking
 
@@ -65,21 +76,20 @@ New models may be added to Flow later, but only when Grain has a dedicated imple
 
 - **Turn This Into… (Prompt Record).** Keeps what you say and what you want done with it as two separate spoken parts. Finish dictating your content as normal, then trigger Prompt Record and speak an instruction — Grain treats the first part as material and the second as the prompt, and runs the whole thing through AI automatically. _Say the facts of a bug out loud, then say "turn this into a GitHub issue" — Grain uses the first part as content and the second as the instruction._
 - **Decide on AI after you're done talking.** You don't have to decide up front whether a recording should go through AI. Start dictating with any shortcut, and only once you're finished, choose the AI shortcut to have Grain rewrite the transcript, or a normal stop to keep your raw words. _You ramble through messy meeting notes, then decide at the last second to finish with the AI shortcut and get a clean summary instead._
-- **Mid-speech prompt switching.** Press one shortcut and a small switcher opens on the pill. Use the arrow keys to step to the prompt you want, then stop — that's it, no menu to close, no need to restart the recording. _You're dictating a casual Slack reply and realize it should read like a support ticket — press the shortcut, arrow over to "support ticket," and keep talking._
 - **Agent.** Select some text (or none at all), speak or type an instruction, and trigger the shortcut. The result appears first in a small window in the corner of the screen, where you can accept it with Enter, dismiss it, retry it, or expand it into a full chat panel to keep the conversation going. With nothing selected, Agent works as a plain voice-friendly chatbox. _Ask "summarize this whole document" with nothing selected, check the summary in the corner window, then expand to chat and ask "now shorten it to two sentences."_
 - **Quick Agent.** The instant version of Agent: select some text, speak or type an instruction, and press the shortcut. The result replaces your selection immediately — no popup window, no extra step to accept it. _Highlight a clunky paragraph, say "make this sound more confident," and the rewrite drops in right where the paragraph was._
 - **Snippets.** Assign a spoken keyword to a piece of text you use often — a URL, an address, a block of boilerplate. Say the keyword, and Grain pastes the saved text in its place. _Say "my address" and your street address appears wherever your cursor is._
-- **Voice Actions.** Assign a spoken keyword to an action instead of text — opening an app, a file, or a website you've approved. One keyword can trigger several actions at once, so a single phrase can kick off a whole routine. _Say "start my day" and it opens your email, calendar, and Slack together._
 - **Context awareness.** Grain notices which app or supported website you're dictating into and adjusts tone and formatting to match, even if you switch destinations mid-dictation. It can also use the text already in the field to understand what you've written so far. The built-in Work, Email, Technical, Casual, and AI Chat profiles are editable, while custom profiles can target one or more apps or sites and override the defaults. _Dictate in Gmail and it sounds like an email; switch to your IDE and it follows you with the right profile — no manual prompt switching._
 - **A pill that follows your context.** The default pill pairs a smooth, responsive waveform with the active app's icon or a supported site's favicon, and updates as your context changes. Prefer the previous pill? It remains available in Settings.
 - **Lost Text recovery.** If a transcription finishes without a usable text field, Grain copies the result to your clipboard and notifies you, so you can paste it when you're ready.
 - **"Scrap That" voice cancel.** A spoken undo. Say "scrap that" at any point mid-dictation and everything you said before that moment — audio and transcribed text alike — is discarded, while the recording keeps running so you can pick the thought back up. _You trail off mid-sentence, say "scrap that," and keep going without touching a key._
 - **Full history.** Grain keeps a record of both what you actually said (the raw transcript) and what the AI turned it into (the processed result) for every session, plus a dictionary of words you've taught it to transcribe correctly from now on. _You paste the AI-cleaned version, then realize you need your exact original wording — it's still there._
-- **Quick Panel and model status.** A searchable command palette gathers the settings you're likely to touch day-to-day — shortcuts, models, providers, prompts, and history — while the main sidebar reports the active model, its load state, and whether it runs locally or in the cloud. _Need to swap models before a call? Search once instead of hunting across settings tabs._
 
 _See [docs/grain-features.md](docs/grain-features.md) for the full breakdown, including model routing and smart key rotation for cloud providers._
 
-## Extensions: give the Agent tools
+## Extensions: give the Agent tools (Alpha only)
+
+> **Alpha feature:** The full extension suite is included in **Alpha**, alongside every core Grain feature. **Beta** includes the core app without extensions. The architecture below describes the Alpha extension platform.
 
 Grain extensions are deliberately narrow.
 
@@ -228,7 +238,7 @@ A memory provider can expose ordinary store/search/retrieve tools. Grain does no
 
 ### Current development status
 
-The old broad extension platform is being retired in favor of this tool-only contract. Legacy declarations and privileged host APIs are being blocked, tested, and physically removed in stages while the new native/direct and MCP adapters are hardened against real lifecycle, authentication, permission, cancellation, and Agent-continuation cases.
+The extension suite is part of **Alpha**, while **Beta** includes the core app without extensions. The old broad extension platform is being retired in favor of this tool-only contract. Legacy declarations and privileged host APIs are being blocked, tested, and physically removed in stages while the new native/direct and MCP adapters are hardened against real lifecycle, authentication, permission, cancellation, and Agent-continuation cases.
 
 The current implementation plan and progress live in:
 
@@ -247,11 +257,11 @@ The reduced public authoring contract is still being finalized. Older Extension 
 
 First-run onboarding introduces Batch, Flow, and ASR, then guides you through model setup, a real transcription test, and shortcut setup.
 
-1. Download the latest build from [Releases](https://github.com/Punit-Dethe/Grain/releases).
+1. Choose **Beta** (core app) or **Alpha** (core app plus extensions) from [Releases](https://github.com/Punit-Dethe/Grain/releases).
 2. Grant microphone and accessibility/input permissions where your OS requires them.
 3. Pick a local model, or an OpenAI-compatible speech-to-text provider.
 4. Set a dictation shortcut (Batch, Flow, or ASR) and start speaking in any text field.
-5. Enable only the extensions and workflows you want — everything else stays off.
+5. Enable the optional AI workflows you want. If you're using an **Alpha** build, you can also configure and enable extensions; **Beta does not include extensions**.
 
 Grain targets Windows, macOS, and Linux. Linux text insertion may require `wtype` or `dotool` under Wayland.
 On Debian or Ubuntu, install the downloaded `.deb` with `sudo apt install ./Grain_*.deb` so APT resolves its dependencies.
