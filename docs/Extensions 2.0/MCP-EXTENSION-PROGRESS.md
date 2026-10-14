@@ -1,5 +1,19 @@
 # Extension implementation: progress, changes and user testing
 
+**Gateway repair prepared, 14 October:** 9router fix lives separately at
+`C:/Projects/9router-grain-fix-20261014`, with source PR
+[decolua/9router#4831](https://github.com/decolua/9router/pull/4831).
+Schema passes visit subschemas instead of field-name dictionaries; no Grain MCP
+argument rename or provider branch is introduced. The 17 regression cases include
+12 failures before the fix; all pass afterward, alongside 10 existing keyword
+tests. All 17 also pass against the installed-version 0.5.65 source backport and
+prepared compiled module. Version/hash guards, original-file backup and rollback
+are prepared, with maintenance/retirement notes in that folder's `LOCAL-INSTALL.md`.
+The running/shared gateway has not been changed; apply/restart timing is requested
+from the user because other applications' active requests may be interrupted.
+Live configured-Gemini GitHub write acceptance is still pending. No new Grain
+build, harness engine or full gateway rewrite is needed for this repair.
+
 **Matching installed checkpoint and gateway diagnosis, 14 October:** artifact
 `38547281600` succeeded and the isolated alpha was updated without an application
 release. Installed binary SHA256 is
