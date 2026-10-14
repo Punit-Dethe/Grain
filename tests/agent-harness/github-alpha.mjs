@@ -645,6 +645,7 @@ export async function runInstalledGitHub(mode, updateVersion) {
           (await window.__TAURI_INTERNALS__.invoke("get_app_settings"))
             .log_level,
       );
+      report.previousLogLevel = previousLogLevel;
       assert.ok(
         ["trace", "debug", "info", "warn", "error"].includes(previousLogLevel),
         "Require a restorable log level before changing it",
@@ -734,7 +735,11 @@ export async function runInstalledGitHub(mode, updateVersion) {
           issueTitles,
           { title, state_reason: "completed" },
           {
-            titles: ["issue_read", "Get issue information"],
+            titles: [
+              "issue_read",
+              "Get issue information",
+              "Get issue details",
+            ],
             required: { ...scope, method: "get", issue_number: String(number) },
           },
         );
@@ -873,6 +878,12 @@ export async function runInstalledGitHub(mode, updateVersion) {
     let restorationFailed = false;
     if (previousLogLevel) {
       try {
+        // If the user closed this owned host, restart only to restore settings.
+        // This does not resume or repeat any Agent/MCP action.
+        if (child && child.exitCode !== null) {
+          await stop();
+          await launch();
+        }
         await invoke("set_log_level", { level: previousLogLevel });
         report.logLevelRestored = true;
       } catch {

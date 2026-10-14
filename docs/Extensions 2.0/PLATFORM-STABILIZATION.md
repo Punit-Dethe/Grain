@@ -31,6 +31,19 @@ checkpoint before this publication. No production application release or Notion.
 
 ## Outcome and scope
 
+**Current live frontier:** matching alpha/package signed update and retained
+account pass (`github-alpha-kgOwRL`, followed by user interruption before a write).
+The matching package exposes 100 supported tools (`github-alpha-dQ3MHw`), and
+read/restart/read passes with cleanup/restoration (`github-alpha-vbh65Q`). Fresh
+issue creation still omits `title` (`github-alpha-3JahkO`), with no approved write
+or matching issue. Offline execution of the actual local 9router 0.5.65 converter
+proves it deletes the `title` property; downloaded published 0.5.99 does the same,
+including required-list removal. Do not attribute this omission to a Grain alias
+bug or solve it by renaming MCP parameters. The failed generic instruction
+candidate is reverted in source. Further writes need user approval of another
+model route or a separately approved gateway fix; the shared gateway is untouched.
+The cause of the earlier update/close failure is not retrospectively proven.
+
 An author should add a supported native or remote MCP extension by publishing
 its own package, without adding a provider branch to Grain. Users browse,
 install, configure an account and use tools through the same extension journey.

@@ -2,6 +2,16 @@
 
 ## Current continuation point — 14 October 2026
 
+**Latest installed checkpoint:** GitHub 0.1.1 is published and its real signed
+update/account checks pass. Matching app/package discovery exposes 100 tools;
+private read/restart/read passes. Issue creation remains blocked by the configured
+local 9router/Gemini route: offline checks of installed 0.5.65 and published 0.5.99
+prove deletion of a parameter named `title`. No approved provider write or new
+issue exists. A different model route requires the user's choice; do not modify
+or restart the shared gateway, rename MCP fields, or blindly upgrade it. See
+[current evidence](MCP-EXTENSION-PROGRESS.md). Notion follows after GitHub writes
+and the affected checkpoint audit; no new provider or test engine now.
+
 **Current source delivery:** package-owned public transport options and
 issuer-bound publisher-public OAuth client declarations are implemented. The
 GitHub 0.1.1 candidate validates/packs and keeps its existing built-in sign-in.

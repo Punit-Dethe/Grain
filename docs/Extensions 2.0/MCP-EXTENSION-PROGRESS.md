@@ -1,5 +1,43 @@
 # Extension implementation: progress, changes and user testing
 
+**Matching installed checkpoint and gateway diagnosis, 14 October:** artifact
+`38547281600` succeeded and the isolated alpha was updated without an application
+release. Installed binary SHA256 is
+`5d830826565169568cfc00fe7c22fc6e483c0f72a87916fd60fa21057e055fe4`.
+`github-alpha-kgOwRL` passes real signed 0.1.0 → 0.1.1 update, unchanged connection,
+retained account, revised lease, disabled-before-explicit-enable behavior and
+package-owned toolset option. The user accidentally closed the app during tool
+discovery; no issue was created. That interrupted run's logging restoration and
+cleanup are Fail, not rewritten as acceptance. Subsequent runs record the prior
+log level and can relaunch an exited owned host solely to restore it, never to
+resume or replay a tool. No old unrecorded log-level value is guessed.
+
+On the matching app/package, `github-alpha-dQ3MHw` discovers 100 supported tools;
+`github-alpha-vbh65Q` passes all four private-read/restart/read stages with cleanup
+and logging restoration Pass. The fresh write run `github-alpha-3JahkO` still
+omits `title`; zero provider writes are approved, no matching issue exists, and
+cleanup/restoration Pass. The earlier generic prompt candidate did not fix this
+and is reverted in source; the installed artifact still contains it until a later
+batched build. No second build was dispatched merely to remove an inert instruction.
+
+The configured model routes through local **9router 0.5.65**. Executing only its
+installed pure schema converter offline reproduces removal of a real parameter
+named `title`, leaving method/owner/repo/body. The current published **0.5.99**
+converter also deletes `title`, even removing it from a required-fields array.
+This identifies a gateway schema-corruption defect consistent with the live
+omission; it does not prove the cause of every older update/file failure. Neither
+gateway was modified or restarted, no credentials/model requests/tools were used
+by the offline check, and downloaded package code is only disposable diagnosis.
+Evidence is outside the app at `C:/Projects/Grain/grain-github-options-review-20261014/`
+(`gateway-schema.json`, `gateway-schema-0.5.99.json`); retire downloaded archives/
+extracted chunks after the gateway issue is resolved, keep the small verdicts.
+
+Remaining write acceptance needs approval for an alternate model route or a
+separately approved gateway fix. Do not rename MCP arguments, weaken approvals,
+upgrade 9router blindly or credit the failed write as Pass. The current official
+GitHub read-tool title `Get issue details` is admitted alongside its stable tool
+name with the same exact read scope. Notion remains deferred until GitHub is okay.
+
 **GitHub 0.1.1 publication, 14 October:** human maintainer explicitly approved
 the exact tester update in registry PR 3. The temporary signer exception now
 binds submission `d667ca2fab05aae393497efb46ced148740957f2e443814ab6206aa91523375b`;
