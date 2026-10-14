@@ -1676,24 +1676,7 @@ html[data-theme="light"] .hero {
   line-height: 1.5;
 }
 .grain-root .overview-shortcut-settings {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  min-height: 28px;
-  padding: 2px 0;
-  border: 0;
-  border-radius: 3px;
-  color: var(--text-2);
-  background: transparent;
   font-size: 11.5px;
-  font-weight: 550;
-  text-align: start;
-  cursor: pointer;
-}
-.grain-root .overview-shortcut-settings:hover {
-  color: var(--text-1);
-  text-decoration: underline;
-  text-underline-offset: 3px;
 }
 .grain-root .overview-shortcut-trigger:focus-visible,
 .grain-root .overview-shortcut-settings:focus-visible {
@@ -1807,7 +1790,7 @@ html[data-theme="light"] .overview-shortcut-keys .overview-shortcut-key {
   gap: 0;
   overflow: hidden;
   border-radius: 11px;
-  background: var(--bg-3);
+  background: var(--bg-0);
 }
 
 .transcript-card {
@@ -1822,7 +1805,7 @@ html[data-theme="light"] .overview-shortcut-keys .overview-shortcut-key {
 }
 
 .transcript-card:hover {
-  background: var(--bg-4);
+  background: var(--bg-2);
 }
 
 .transcript-head {
@@ -2013,14 +1996,6 @@ html[data-theme="light"] .overview-shortcut-keys .overview-shortcut-key {
 }
 
 /* History */
-.page[data-page-panel="history"] {
-  background: var(--bg-0);
-}
-
-html[data-theme="light"] .page[data-page-panel="history"] {
-  background: var(--bg-1);
-}
-
 .history-page-wrap {
   width: min(1040px, 100%);
 }
@@ -2083,7 +2058,7 @@ html[data-theme="light"] .page[data-page-panel="history"] {
 }
 
 .history-feed {
-  background: var(--bg-3);
+  background: var(--bg-0);
 }
 
 .history-state {
@@ -2763,7 +2738,7 @@ html[data-theme="light"] .transcript-feed {
 /* History and Home recents share one quiet reading surface. */
 html[data-theme="light"] :is(.history-feed, .recent-feed) {
   border: 1px solid #e8e6e1;
-  background: #fcfcfb;
+  background: var(--bg-1);
 }
 
 html[data-theme="light"] :is(.history-feed, .recent-feed) .transcript-card {
@@ -2817,7 +2792,7 @@ html[data-theme="light"] .transcript-card + .transcript-card {
 }
 
 html[data-theme="light"] .transcript-card:hover {
-  background: #f5f4f0;
+  background: var(--bg-3);
 }
 
 html[data-theme="light"] .transcript-body {

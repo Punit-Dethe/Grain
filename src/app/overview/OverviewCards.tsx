@@ -64,7 +64,7 @@ export function OverviewCards() {
             <p>{t("overview.shortcuts.infoDescription")}</p>
           </div>
           <button
-            className="overview-shortcut-settings"
+            className="button overview-shortcut-settings"
             type="button"
             onClick={() => go(CAPTURE_SETTINGS)}
           >
