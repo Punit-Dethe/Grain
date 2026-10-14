@@ -13,6 +13,21 @@ part of this work order. Reconsider those only after reviewing lexical results.
 
 ## Current checkpoint
 
+Latest bounded experiment: scoring purpose/prose separately did not improve the
+72-case K=6 regression coverage (57/72 baseline, 54/72 separate fields, 56/72 with
+purpose enrichment); all scoring/projection changes were reverted. A debug-only
+`GRAIN_AGENT_DEFERRED_HINTS=1` trial now gives the model at most 8 KiB of inert
+deferred IDs/purpose hints, without their schemas. It can request exact missing
+tools through existing combined recovery. Default/release behavior is unchanged.
+Inspired by [Anthropic's deferred discovery](https://www.anthropic.com/engineering/advanced-tool-use)
+and [OpenAI's namespace descriptions](https://developers.openai.com/api/docs/guides/tools-tool-search);
+Grain's bounded per-tool hints are our experiment, not an implementation claim
+about either vendor. These sources do not establish a Grain performance gain.
+The live recovery check is blocked by local 9router connection refusal before
+any model/tool action; a normal launcher attempt was policy-rejected. Once the
+user opens 9router, compare the same request with hints off/on in one binary.
+Retire the debug switch at that decision. The quality gate remains open.
+
 15 October: reserve 8 KiB for recovery by capping a non-eager initial publication
 at 24 KiB; recovery/eager publication retain the 32 KiB total. Report remaining
 capacity and preserve already-offered tools. A second genuine Notion read used

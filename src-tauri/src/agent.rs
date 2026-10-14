@@ -3131,10 +3131,19 @@ async fn run_with_tools(
         );
     }
     crate::capability::prepare(app, &mut opened.session, &queries, &trace_id).await;
+    // Temporary debug experiment: compare both paths using the same binary.
+    // Do not adopt extra model context until live quality/latency is verified.
+    #[cfg(debug_assertions)]
+    let deferred_hints = (std::env::var("GRAIN_AGENT_DEFERRED_HINTS").as_deref() == Ok("1"))
+        .then(|| crate::capability::deferred_tool_context(&opened.session))
+        .flatten();
+    #[cfg(not(debug_assertions))]
+    let deferred_hints: Option<String> = None;
     log::info!(
         "[GRAIN] agent-tool-trace {}",
         serde_json::json!({
             "phase": "preparation-finished", "task": trace_id,
+            "deferred_hint_bytes": deferred_hints.as_ref().map_or(0, String::len),
             "elapsed_ms": preparation_started.elapsed().as_millis()
         })
     );
@@ -3146,7 +3155,11 @@ async fn run_with_tools(
             _ => ChatEntry::User(content),
         })
         .collect();
-    if let Some(directory) = opened.directory_context {
+    if let Some(mut directory) = opened.directory_context {
+        if let Some(hints) = deferred_hints {
+            directory.push('\n');
+            directory.push_str(&hints);
+        }
         let position = entries
             .iter()
             .take_while(|entry| matches!(entry, ChatEntry::System(_)))

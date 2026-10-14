@@ -56,6 +56,12 @@ discovery/duplicates; fresh K=6 required-set coverage is still 17/24, below the
 gate. Rejected lexical trials were reverted. Improve operation coverage and verify
 model recovery before adoption; no embeddings or platform release from this evidence.
 
+Precise-recovery follow-up: additional field-scoring trials were rejected. A
+debug-only opt-in compact deferred catalogue is ready for a same-binary control
+comparison, with default/release behavior unchanged. Live verification is blocked
+until the configured local 9router is running; no model action occurred. Keep this
+experiment out of adoption claims and retire its switch after comparison.
+
 **14 October Agent policy correction (latest user decision):** native and MCP
 tool calls execute automatically after ordinary extension enablement/account
 consent. Per-call approval dialogs are removed from capability dispatch, while

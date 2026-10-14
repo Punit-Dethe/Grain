@@ -23,6 +23,8 @@ the ordinary app identity: use a debug build with the alpha configuration.
 Close the alpha first; the probe borrows its saved accounts/model without changing
 provider selection. Keep request/output files in ignored `.runs/` evidence; never
 commit account-bound catalogue snapshots or credentials.
+Validate the JSON report/error and trace, not only the parent GUI process exit
+code: a returned `error` never counts as an Agent Pass.
 
 ```powershell
 # From src-tauri/, build once after source changes (no installer or Vite server).
@@ -60,6 +62,17 @@ the actual reply and logs offered schemas/call rounds through normal diagnostics
 This exercises **MCP/backend** behavior; frontend display, speech and native worker
 acceptance remain separate. Retire this probe if a maintained direct CLI later
 provides the same coverage; disposable request/analysis files are not new suites.
+
+**15 October precise-recovery experiment:** a debug acceptance process can set
+`GRAIN_AGENT_DEFERRED_HINTS=1` to add at most 8 KiB of inert deferred tool IDs and
+brief purpose metadata to the Agent's context. Their schemas remain unloaded;
+the model must use ordinary `search_tools` to publish them. Default/release behavior
+does not use these hints. Use the same binary/request/profile with the variable
+unset for a control; compare actual completed actions, recovery calls and timing.
+This adds no server, runner or alternate Agent loop. Retire the temporary switch
+and decide the context policy when evidence is sufficient. Current live acceptance
+is blocked by the local 9router listener being unavailable; no provider action
+from those failed attempts is a passing test. Keep reports in ignored `.runs/`.
 
 For an offline catalogue comparison, use the opt-in backend test, not another
 ranker implementation. Its JSON case array has `id`, `split`, `query`, and

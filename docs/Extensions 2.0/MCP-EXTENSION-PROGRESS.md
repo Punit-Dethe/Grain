@@ -1,5 +1,59 @@
 # Extension implementation: progress, changes and user testing
 
+**Precise-recovery experiment, 15 October (latest):** separated purpose/prose
+statistics and purpose-paragraph enrichment were tried against the same 72-case
+catalogue corpus. At K=6 the existing path covered 57/72 complete required sets,
+separate-field scoring 54/72, and scoring plus purpose enrichment 56/72. Both
+trials were rejected and reverted; the retriever and production projection remain
+unchanged. Reports and the temporary diagnostic trace are ignored evidence only;
+no additional ranking engine, parser, dependency or diagnostic code was retained.
+
+Prepared a smaller **debug-only opt-in** experiment: an inert deferred-tool
+catalogue in model context, capped at 8 KiB including its host instructions. It
+contains exact action IDs and short author-supplied purpose hints, grouped by
+enabled/prepared provider with round-robin fairness and explicit listing counts/
+truncation. Already-offered and statically ineligible tools are omitted. Metadata
+is marked untrusted, contains no argument schemas, and grants no call authority.
+The model can batch exact missing IDs through existing `search_tools`; normal
+schema publication, source/account/digest and same-frame dispatch checks remain.
+The experiment reuses the existing Agent loop, not a second model or service.
+
+Set `GRAIN_AGENT_DEFERRED_HINTS=1` only for a debug acceptance process. Default
+and release behavior is unchanged. The switch allows matched control/experiment
+journeys using one binary; retire it at the adoption decision rather than adding
+settings, SDK flags or a long-lived experiment framework. Tests cover the 8 KiB
+bound, provider fairness, UTF-8/control sanitization, truncation, loaded/quarantined
+exclusion, empty/eager catalogues and unchanged exposed schemas/name mappings.
+
+The genuine recovery prompt started with Notion search available and fetch
+missing, six actions plus recovery, 20,974 schema bytes and 11,794 bytes free.
+The hints fit in 7,524 bytes. **Live acceptance is Blocked, not Pass:** both
+attempts failed before any tool call because local 9router on port 20128 refused
+the connection. The client-facing "Gemini could not produce a response" is not
+evidence of a Gemini inference/auth failure. One retry was safe because traces
+confirm no dispatched action. Both probe processes exited. Launching the existing
+9router CLI was rejected by automatic approval review as "blocked by policy";
+no startup, configuration change, reinstall or bypass occurred. User was asked
+to open the existing app normally. Evidence: ignored
+`tests/agent-harness/.runs/lexical-fields-20261015/` (first task
+`cfda5b75-d60a-473b-b0a9-594bada76f19`). These attempts preceded the final debug
+opt-in guard/static-eligibility filter; no actual model behavior is claimed.
+
+Next: after 9router is available, run the exact same read-only request with hints
+off and on; verify one combined recovery, actual search/fetch, duplicates and
+confirmed result timing. Then decide whether to retain the extra context. No
+offline quality/latency improvement or release adoption is claimed. Embeddings
+remain deferred; the initial required-set quality gate remains open.
+
+Final source checks: 11 capability, eight continuation and 29 MCP protocol tests
+pass, plus normal backend Clippy correctness (existing warnings), format/diff
+checks and a debug alpha build. Audit covered context bytes/fairness, inert
+metadata, eligibility/source scope, preserved schema authority, same-frame
+exposure, unknown-outcome handling and debug/release guards. It found and fixed
+static-ineligibility filtering; the new helper also compiles for release tests
+without enabling the experiment in a release app. This is a scoped source audit,
+not completed model acceptance or whole-platform release certification.
+
 **Recovery-capacity checkpoint, 15 October (latest):** the first lexical shortlist
 now uses at most 24 KiB of the existing 32 KiB task schema budget, retaining at
 least 8 KiB for combined recovery. Tiny catalogues that fit are still offered
