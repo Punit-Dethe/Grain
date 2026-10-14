@@ -1,5 +1,54 @@
 # Extension implementation: progress, changes and user testing
 
+**Terminal lexical checkpoint, 14 October (latest):** added a debug-only one-shot
+MCP probe through the existing headless app path. It requires the alpha identity,
+explicit execution, bounded input and a three-minute deadline; it starts no
+browser, audio stack, native worker listener or test service. The first run
+revealed normal tray keep-alive retaining the process; intentional exit now
+releases it after reporting. Unknown request fields are rejected. This is
+MCP/backend acceptance, not frontend, speech or native-worker certification.
+
+The saved alpha profile enabled only Notion. Its actual supported catalogue
+contained 55 tools (~158 KiB of raw schemas); `notion-query-data-sources` remains
+excluded by the existing 64 KiB per-schema limit. One genuine read used the
+unchanged `ag/gemini-3.8-flash` model through 9router: six action schemas plus
+`search_tools` (~30 KiB), direct `notion-search`, **zero discovery calls**, one
+execution and no duplicates. Preparation took 1.36 s, confirmed provider outcome
+9.28 s and final answer 17.10 s from backend preparation start. The process exited.
+This precedes the later lexical corrections below; it proves the fast path works,
+not a controlled speedup or complete provider support. No live write or installer.
+
+The opt-in Rust experiment reuses production projection/ranking/schema packing
+against the exported catalogue, with 24 tuning and 24 initially withheld requests.
+Baseline K=6 covered every required tool for 22/24 tuning and 16/24 holdout cases.
+Added a small generic operation vocabulary, reduced fuzzy near-word dominance
+when a literal query term exists, and indexed exact MCP tool names for recovery.
+Latest **regression** complete-set coverage under the actual schema budget:
+
+| Offered actions | Tuning | Former holdout |
+| --- | --- | --- |
+| 4 | 21/24 | 18/24 |
+| 6 | 22/24 | 19/24 |
+| 8 | 23/24 | 20/24 |
+
+The 95% adoption gate **does not pass**. Multi-step find/read/edit and mixed-language
+requests still miss required tools. Those cases were inspected during corrections,
+so they no longer constitute independent holdout evidence. This is one provider,
+not the planned multi-provider/negative/ambiguous corpus or end-to-end accuracy.
+Keep embeddings deferred; next inspect operation coverage, schema-budget packing
+and combined recovery, then use fresh cases and a matched real-Agent comparison.
+Write descriptions also reference Notion Markdown resources: Grain's tool-only
+surface does not yet expose a resource reader; record this separate compatibility
+gap before claiming broader Notion write coverage.
+
+Focused core/backend/continuation/protocol/probe/guard tests and normal backend
+Clippy correctness checks pass (existing warnings). The experiment passing means
+the runner worked, **not** that retrieval passed its quality gate. Local evidence
+is ignored at `tests/agent-harness/.runs/lexical-terminal-20261014/`; case SHA-256
+is `58EA04674FFF0AD8EDC21B6F125845B2F1568809050B3E8BA26EF559AC0168F1`.
+Keep raw account-bound exports out of commits. The harness README documents
+commands, scope and probe retirement if a maintained direct CLI replaces it.
+
 **Lexical source checkpoint, 14 October (latest):** first-round lexical tool
 publication and combined search/schema recovery are implemented using the
 existing `CapabilityIndex`; no embedding/runtime dependency. MCP and native

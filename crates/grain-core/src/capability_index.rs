@@ -782,12 +782,21 @@ impl CapabilityIndex {
                 let idf = self.idf.get(token).copied().unwrap_or(0.0);
                 let saturated = weighted_tf * (K1 + 1.0)
                     / (weighted_tf + K1 * (1.0 - B + B * doc.length / avg));
-                let component = idf * saturated;
+                // ASR tolerance must not let a rare near-word (find/kind,
+                // read/head) outweigh a literal query term already present in
+                // the catalogue. Unknown spellings retain normal fuzzy recall.
+                let literal_available = self.idf.contains_key(q);
+                let fuzzy_discount = if literal_available && q != token {
+                    0.2
+                } else {
+                    1.0
+                };
+                let component = idf * saturated * fuzzy_discount;
                 if component > best {
                     best = component;
                 }
                 let df_fraction = self.doc_freq.get(token).copied().unwrap_or(0) as f32 / n;
-                if df_fraction <= MAX_DF_FRACTION {
+                if df_fraction <= MAX_DF_FRACTION && (!literal_available || q == token) {
                     matched_rare = true;
                 }
             }
@@ -1067,6 +1076,19 @@ pub fn actions_from_manifest(ext: &ExtensionManifest, enabled: bool) -> Vec<Acti
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rare_fuzzy_parameter_cannot_outweigh_literal_operation() {
+        let mut noise = action("com.example.service", "modify");
+        noise.description = "kind kind kind kind kind kind kind kind".into();
+        let index = CapabilityIndex::build(vec![
+            action("com.example.service", "search").phrases(&["find"]),
+            noise,
+        ]);
+        let (c, a) = empty_ctx();
+        let hot = index.retrieve("find on service", &ctx(&c, &a, None), transcript(2));
+        assert_eq!(hot.entries[0].canonical_id, "service.search");
+    }
 
     /// Minimal fluent builder so tests read as intent, not field soup.
     fn action(extension: &str, id: &str) -> ActionInput {

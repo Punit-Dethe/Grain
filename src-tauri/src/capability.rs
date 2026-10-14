@@ -568,7 +568,7 @@ fn publish_selected(
     Ok(status)
 }
 
-fn mcp_action_input(
+pub(crate) fn mcp_action_input(
     extension_id: &str,
     provider_name: &str,
     tool: &rmcp::model::Tool,
@@ -591,11 +591,11 @@ fn mcp_action_input(
         canonical_id: format!("{extension_id}:{tool_name}"),
         provider_name: provider_name.to_string(),
         title: capability_agent::sanitize(title, 160),
-        aliases: vec![provider_name.to_string()],
+        aliases: vec![provider_name.to_string(), tool_name.clone()],
         namespaces: Vec::new(),
         tags: Vec::new(),
         examples: Vec::new(),
-        phrases: Vec::new(),
+        phrases: capability_agent::tool_search_phrases(&tool_name),
         params: Vec::new(),
         when_to_use: String::new(),
         when_not_to_use: String::new(),
@@ -955,6 +955,36 @@ mod tests {
     }
 
     #[test]
+    fn recovery_can_name_an_exact_mcp_tool_without_its_connection_uuid() {
+        let tool: rmcp::model::Tool = serde_json::from_value(serde_json::json!({
+            "name":"notion-search", "description":"Search workspace content",
+            "inputSchema":{"type":"object","properties":{"query":{"type":"string"}}}
+        }))
+        .unwrap();
+        let action = mcp_action_input("mcp.configured-1234", "Notion", &tool);
+        let mut distractor = action.clone();
+        distractor.action_id = "notion-memory-search".into();
+        distractor.canonical_id = "mcp.configured-1234:notion-memory-search".into();
+        distractor.title = "Search memory".into();
+        distractor.aliases = vec!["Notion".into(), "notion-memory-search".into()];
+        let index = CapabilityIndex::build(vec![distractor, action]);
+        let empty = HashSet::new();
+        let hot = index.retrieve(
+            "notion-search",
+            &RetrievalContext {
+                dense: None,
+                context_ineligible: &empty,
+                auth_missing: &empty,
+            },
+            RetrievalParams {
+                source: QuerySource::Agent,
+                k: 1,
+            },
+        );
+        assert_eq!(hot.entries[0].action_id, "notion-search");
+    }
+
+    #[test]
     fn selected_publication_is_incremental_and_budget_failure_is_atomic() {
         let mut session = session();
         let id = "com.example.github";
@@ -1037,3 +1067,6 @@ mod tests {
         assert!(parse_mcp_arguments("[]", &schema).is_err());
     }
 }
+
+#[cfg(test)]
+mod lexical_eval_tests;

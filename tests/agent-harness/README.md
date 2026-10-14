@@ -7,10 +7,78 @@ procedures in `model.mjs`, `workflow.mjs`, `mcp-live.mjs`, `mcp-hf-live.mjs`, an
 old GitHub two-tool trace assertion encode the former search/load policy. They
 are **not current acceptance evidence** until adapted/retired at the comparison
 checkpoint. Do not add a compatibility path to make those fixtures pass.
-Use focused core/backend tests for this source batch; the real-catalogue and
-configured-model comparison remains pending in
+Use focused core/backend tests for source changes. A terminal Notion read passed;
+actual-catalogue complete-set coverage remains below the adoption gate, and the
+controlled configured-model comparison remains pending in
 [the lexical-first plan](../../docs/Extensions%202.0/FAST-TOOL-EXECUTION-PLAN.md).
 No new harness suite or testing engine was added for this work.
+
+### Terminal-only MCP probe (development alpha)
+
+The debug app recognizes `GRAIN_AGENT_PROBE_FILE` as a one-shot request file.
+This reuses its headless setup and production MCP/Agent functions. It creates no
+browser, microphone, native worker server or testing service. Release builds and
+the separate `agent-harness` binary do not contain this entry point. It refuses
+the ordinary app identity: use a debug build with the alpha configuration.
+Close the alpha first; the probe borrows its saved accounts/model without changing
+provider selection. Keep request/output files in ignored `.runs/` evidence; never
+commit account-bound catalogue snapshots or credentials.
+
+```powershell
+# From src-tauri/, build once after source changes (no installer or Vite server).
+# Use the same short-target environment as scripts/run-tauri.ts on Windows,
+# restoring the calling shell afterwards.
+$taskOldLocal = $env:LOCALAPPDATA
+$taskOldTemp = $env:TEMP
+$taskOldConfig = $env:TAURI_CONFIG
+try {
+  $env:LOCALAPPDATA = $null
+  $env:TEMP = $null
+  $env:TAURI_CONFIG = Get-Content tauri.extensions-alpha.conf.json -Raw
+  cargo build --bin handy
+} finally {
+  $env:LOCALAPPDATA = $taskOldLocal
+  $env:TEMP = $taskOldTemp
+  $env:TAURI_CONFIG = $taskOldConfig
+}
+
+# Create request.json with UTF-8 encoding in your owned .runs/ folder.
+# Catalogue only: {"mode":"catalog"}
+# Agent: {"mode":"agent","execute":true,"prompt":"Use Notion to search for Grain. Do not create, edit or delete anything."}
+$env:GRAIN_AGENT_PROBE_FILE = 'C:\absolute\owned-run\request.json'
+$env:RUST_LOG = 'handy_app_lib::agent=info,handy_app_lib::capability=info,warn'
+& 'C:\gt\debug\handy.exe' > report.json 2> trace.log
+Remove-Item Env:GRAIN_AGENT_PROBE_FILE
+```
+
+Run serially. Requests are bounded, live Agent execution is explicit and the
+process exits after its report or a three-minute deadline. A timeout is not proof
+of non-execution; never retry a possible write automatically. `catalog` exports
+supported schemas and the exact production lexical projection, plus coverage;
+it does not prove that every provider capability was admitted. `agent` returns
+the actual reply and logs offered schemas/call rounds through normal diagnostics.
+This exercises **MCP/backend** behavior; frontend display, speech and native worker
+acceptance remain separate. Retire this probe if a maintained direct CLI later
+provides the same coverage; disposable request/analysis files are not new suites.
+
+For an offline catalogue comparison, use the opt-in backend test, not another
+ranker implementation. Its JSON case array has `id`, `split`, `query`, and
+`requires` (all groups required; IDs within each group are alternatives). Tool
+labels must exist in the exported supported catalogue. Use canonical IDs for
+shared names; bare names must resolve uniquely or the test rejects the case.
+The test runs production
+projection, ranking and schema publication at K=4/6/8 and records actual packed
+coverage. No model or provider calls occur. It does not replace live task checks.
+Runner Pass does not mean retrieval quality Pass. Cases inspected while tuning
+are regression evidence; reserve fresh cases for an independent adoption gate.
+
+```powershell
+# From src-tauri/, after the probe process exits (shared Windows DLLs).
+$env:GRAIN_LEXICAL_CATALOG = 'C:\absolute\owned-run\catalog.json'
+$env:GRAIN_LEXICAL_CASES = 'C:\absolute\owned-run\cases.json'
+$env:GRAIN_LEXICAL_REPORT = 'C:\absolute\owned-run\retrieval.json'
+cargo --config 'target.x86_64-pc-windows-msvc.runner=["powershell.exe","-NoProfile","-File","C:/absolute/repo/scripts/run-rust-test.ps1"]' test --lib exported_catalogue_required_sets_under_schema_budget -- --ignored
+```
 
 ## Installed GitHub alpha checkpoint (13 October)
 

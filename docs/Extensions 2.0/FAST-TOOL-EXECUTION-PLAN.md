@@ -1,7 +1,7 @@
 # Fast tool execution: lexical-first execution plan
 
-Status: lexical source checkpoint implemented; real-catalogue and real-Agent
-comparison pending. Updated 14 October 2026.
+Status: lexical source checkpoint and terminal MCP read verified; actual-catalogue
+quality gate fails, controlled real-Agent comparison pending. Updated 14 October 2026.
 
 This is the next bounded work order within
 [platform stabilization](PLATFORM-STABILIZATION.md). It turns the user's supplied
@@ -12,6 +12,18 @@ No embedding model, model download, inference runtime or semantic benchmark is
 part of this work order. Reconsider those only after reviewing lexical results.
 
 ## Current checkpoint
+
+Latest evidence: the terminal-only debug probe exported 55 supported Notion tools
+and ran one configured-model read with six action schemas plus recovery, zero
+discovery calls, one execution and no duplicates. Confirmed outcome at 9.28 s,
+answer at 17.10 s from backend preparation start; no matched baseline speedup claim.
+The 48-case offline experiment uses production ranking and schema packing.
+After vocabulary/fuzzy-scoring/exact-name corrections, K=6 complete-set coverage
+is 22/24 tuning and 19/24 former holdout; K=8 is 23/24 and 20/24. **Below 95%.**
+Inspected cases are now regression evidence; use fresh cases for adoption.
+Multi-step and mixed-language misses remain. The live read preceded these later
+offline corrections. No embeddings, live writes, browser or installer. See the
+[progress record](MCP-EXTENSION-PROGRESS.md) and terminal commands in the harness README.
 
 First-round lexical publication and combined recovery now exist in source.
 The existing ranker is reused without dense scores. Catalogue definitions are
@@ -48,8 +60,8 @@ No production adoption claim, new installer, model switch or live writes.
 Verification at this source boundary: 92 focused/core/protocol/old-benchmark tests
 Pass, plus normal backend Clippy correctness checks (existing warnings). The
 user reiterated no browser control. The attempted dev browser-IPC probe ended
-before an Agent/provider request, and its owned app was closed. For Block 3, add
-only a thin debug one-shot probe to the existing headless setup: MCP catalogue
+before an Agent/provider request, and its owned app was closed. Block 3 now uses
+a thin debug one-shot probe in the existing headless setup: MCP catalogue
 export or configured Agent request, bounded request file/output, alpha identity
 check, no browser, audio stack, native worker listener or testing service. This
 checks MCP execution; native real-app acceptance remains separate. Keep the probe

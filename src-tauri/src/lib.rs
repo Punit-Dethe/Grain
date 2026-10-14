@@ -139,6 +139,9 @@ pub fn eval_requested() -> bool {
     grain_actions::eval::requested().is_some()
 }
 
+#[cfg(all(debug_assertions, not(feature = "agent-harness")))]
+mod grain_agent_probe;
+
 #[cfg(debug_assertions)]
 #[cfg(any(test, not(feature = "agent-harness")))]
 use specta_typescript::{BigIntExportBehavior, Typescript};
@@ -960,10 +963,15 @@ pub fn run(cli_args: CliArgs) {
     // [GRAIN] `--eval <golden.json>` (Extensions V1 P3) is a headless subcommand
     // too — read straight from the args so the upstream CliArgs never learns it.
     let eval_request = crate::grain_actions::eval::requested();
+    #[cfg(all(debug_assertions, not(feature = "agent-harness")))]
+    let agent_probe = std::env::var_os("GRAIN_AGENT_PROBE_FILE").map(std::path::PathBuf::from);
+    #[cfg(not(all(debug_assertions, not(feature = "agent-harness"))))]
+    let agent_probe: Option<std::path::PathBuf> = None;
     let headless_mode = cli_args.transcribe_file.is_some()
         || cli_args.list_devices
         || cli_args.list_models
-        || eval_request.is_some();
+        || eval_request.is_some()
+        || agent_probe.is_some();
 
     #[allow(unused_mut)]
     let mut builder = tauri::Builder::default()
@@ -1069,6 +1077,11 @@ pub fn run(cli_args: CliArgs) {
             // (initialize_core_logic) sets up.
             if headless_mode {
                 let app_handle = app.handle().clone();
+                #[cfg(all(debug_assertions, not(feature = "agent-harness")))]
+                if agent_probe.is_some() {
+                    grain_agent_probe::check_identity(&app_handle)
+                        .map_err(std::io::Error::other)?;
+                }
                 // [GRAIN] AppContext must be staged before the managers — the
                 // ModelManager reads settings during construction.
                 {
@@ -1100,6 +1113,11 @@ pub fn run(cli_args: CliArgs) {
                 }
                 // Register transcribe-cpp compute backends (required for both
                 // --list-devices and any GGUF model load).
+                #[cfg(all(debug_assertions, not(feature = "agent-harness")))]
+                if let Some(path) = agent_probe.clone() {
+                    grain_agent_probe::launch(app_handle, path);
+                    return Ok(());
+                }
                 managers::transcription::init_transcribe_backend();
                 let model_manager = Arc::new(
                     ModelManager::new(&app_handle).expect("Failed to initialize model manager"),
@@ -1316,7 +1334,7 @@ pub fn run(cli_args: CliArgs) {
         .invoke_handler(invoke_handler)
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
-        .run(|app, event| {
+        .run(move |app, event| {
             #[cfg(target_os = "macos")]
             if let tauri::RunEvent::Reopen { .. } = &event {
                 show_main_window(app);
@@ -1338,7 +1356,10 @@ pub fn run(cli_args: CliArgs) {
             }
             if let tauri::RunEvent::Exit = &event {
                 extension_companion::stop_all();
-                if let Some(ctx) = app.try_state::<Arc<grain_core::AppContext>>() {
+                if let Some(ctx) = app
+                    .try_state::<Arc<grain_core::AppContext>>()
+                    .filter(|_| !headless_mode)
+                {
                     events_server::disable_dev_control(&ctx.data_dir);
                 }
             }

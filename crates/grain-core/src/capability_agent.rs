@@ -379,6 +379,34 @@ pub fn schema_search_text(schema: &Value) -> String {
     sanitize(&out, 2048)
 }
 
+/// Small lexical vocabulary for declared operations, not a router or an intent
+/// classifier. Phrases affect candidate retrieval only; schemas/arguments and
+/// authorization remain unchanged. No provider or language-specific branches.
+pub fn tool_search_phrases(name: &str) -> Vec<String> {
+    let name = name.to_ascii_lowercase();
+    let words: std::collections::BTreeSet<_> = name.split(['_', '-', '.']).collect();
+    let vocabulary = [
+        ("search", "find locate look up"),
+        ("fetch", "read open retrieve contents"),
+        ("create", "make draft jot new"),
+        ("update", "edit change append replace"),
+        ("restore", "recover bring back untrash"),
+        ("move", "relocate"),
+        ("duplicate", "copy"),
+        ("favorite", "starred bookmarked"),
+        ("favourite", "starred bookmarked"),
+        ("page", "note document"),
+        ("pages", "notes documents"),
+        ("comment", "feedback discussion"),
+        ("comments", "feedback discussions"),
+    ];
+    vocabulary
+        .into_iter()
+        .filter(|(word, _)| words.contains(word))
+        .map(|(_, phrase)| phrase.to_string())
+        .collect()
+}
+
 /// Simple deterministic lexical retrieval, with exact tool names ranked first.
 /// Exhaustive browsing remains available; a zero match never proves absence.
 pub fn search_metadata(actions: &[ActionInput], query: &str, offset: usize) -> Value {
@@ -694,6 +722,19 @@ mod tests {
         assert!(!text.contains("https://"));
         assert_eq!(schema, original);
         assert!(schema_search_text(&json!({"description":"é".repeat(10_000)})).len() <= 2048);
+    }
+
+    #[test]
+    fn search_vocabulary_is_operation_scoped_and_preserves_word_boundaries() {
+        assert_eq!(
+            tool_search_phrases("service-fetch"),
+            ["read open retrieve contents"]
+        );
+        assert!(tool_search_phrases("service-research").is_empty());
+        let phrases = tool_search_phrases("SERVICE_CREATE_PAGES");
+        assert!(phrases.iter().any(|phrase| phrase.contains("jot")));
+        assert!(phrases.iter().any(|phrase| phrase.contains("notes")));
+        assert!(!phrases.iter().any(|phrase| phrase.contains("edit")));
     }
     use grain_sdk::manifest::ActionRisk;
 
