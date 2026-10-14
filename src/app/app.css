@@ -1542,6 +1542,11 @@ html[data-theme="light"] .hero {
 .grain-root[data-theme="dark"] .overview-shortcut-strip {
   background: var(--bg-3);
 }
+.grain-root[data-theme="dark"]
+  .overview-shortcut-strip
+  :is(.overview-shortcut-key, .overview-shortcut-settings) {
+  background: var(--bg-4);
+}
 .overview-shortcut-layout {
   display: grid;
   grid-template-columns: 180px minmax(0, 1fr);
