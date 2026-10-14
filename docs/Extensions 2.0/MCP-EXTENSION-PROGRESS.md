@@ -24,6 +24,15 @@ the bounded workflow; no new engine or mode. Publication does not certify writes
 live public-client OAuth or the original update/close failure. Notion remains next
 after the GitHub/shared-platform checkpoint.
 
+The affected-boundary source review confirms header-only updates preserve the
+account identity while invalidating the operation owner and revision leases.
+`commit_store_update` deliberately removes enablement on any package change;
+the real checkpoint now verifies retained sign-in plus disabled tools, then
+explicitly enables the new revision. Public-client declarations require the
+exact issuer/`none` method and return before reading another client's secrets;
+public options reach only the MCP resource SDK transport. This is a focused
+source review, not completion of the post-acceptance audit or live guarantees.
+
 **GitHub execution diagnosis, 14 October:** the trace-capable installed alpha
 from source `7d7b96f2` discovers 100 supported GitHub tools (`github-alpha-Oq3oFk`).
 Private README read, persisted-account restart and read again pass all four

@@ -45,7 +45,9 @@ read/restart/read with two discovery schemas then three including the getter.
 It predates package-owned headers. The explicit update option uses the real
 signed Store update command before Agent work; it requires an actual version
 change, retained connection/account, revised lease and GitHub's public toolset
-option. It does not inject JSON, copy credentials or authorize a provider write.
+option. Updates deliberately disable tools; the checkpoint verifies that state,
+then explicitly enables the new revision. It does not inject JSON, copy
+credentials or authorize a provider write.
 If it has already updated the package, do not repeat the update option; run the
 separate desired check. Consolidate this checkpoint with normal store acceptance
 when the standard runner supports installed alphas; do not grow another runner.

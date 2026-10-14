@@ -605,6 +605,27 @@ export async function runInstalledGitHub(mode, updateVersion) {
         } finally {
           await invoke("store_close");
         }
+        const updated = (await invoke("mcp_connections_list")).find(
+          (row) => row.id === previous.id,
+        );
+        assert.ok(updated, "Update must retain the connection");
+        assert.equal(updated.version, updateVersion);
+        assert.notEqual(updated.revision, previous.revision);
+        const account = await invoke("mcp_connection_status", {
+          id: updated.id,
+          expectedRevision: updated.revision,
+        });
+        assert.equal(account.connected, true, "Update must retain sign-in");
+        assert.equal(
+          account.enabled,
+          false,
+          "Update requires explicit enablement",
+        );
+        await invoke("mcp_connection_set_enabled", {
+          id: updated.id,
+          expectedRevision: updated.revision,
+          enabled: true,
+        });
         const status = await preflight();
         assert.equal(connection.id, previous.id);
         assert.equal(connection.version, updateVersion);
@@ -614,6 +635,7 @@ export async function runInstalledGitHub(mode, updateVersion) {
           ...status,
           previousVersion: previous.version,
           version: connection.version,
+          disabledBeforeExplicitEnablement: true,
         };
       });
     }
