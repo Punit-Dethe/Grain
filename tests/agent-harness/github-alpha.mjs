@@ -695,9 +695,21 @@ export async function runInstalledGitHub(mode, updateVersion) {
         } catch (error) {
           failure = error;
         }
-        const matches = (await api("issues?state=all&per_page=100")).filter(
-          (issue) => issue.title === title && !issue.pull_request,
-        );
+        const findMatches = async () =>
+          (await api("issues?state=all&per_page=100")).filter(
+            (issue) => issue.title === title && !issue.pull_request,
+          );
+        if (result) report.issueCreateAttempt = result;
+        const matches = failure
+          ? await findMatches()
+          : await waitFor(
+              "Created issue visible to independent reads",
+              async () => {
+                const found = await findMatches();
+                return found.length ? found : null;
+              },
+              { timeoutMs: 15000, intervalMs: 1000 },
+            );
         if (failure) {
           failure.diagnostic = {
             ...failure.diagnostic,
@@ -775,7 +787,7 @@ export async function runInstalledGitHub(mode, updateVersion) {
             branch,
             path,
             message,
-            content: Buffer.from(content).toString("base64"),
+            content,
           },
           ["create_or_update_file", "Create or update file"],
         );
@@ -799,7 +811,7 @@ export async function runInstalledGitHub(mode, updateVersion) {
         const offered = events.filter((event) => event.phase === "offered");
         if (!offered.length)
           throw new Blocked(
-            "This installed binary predates tool tracing; do not infer real model exposure from source tests",
+            "No model-boundary trace was captured for this run; do not infer exposure from source tests",
           );
         assert.ok(
           offered.some(

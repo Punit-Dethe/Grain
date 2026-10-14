@@ -2,6 +2,15 @@
 
 ## Current continuation point — 14 October 2026
 
+**Latest gate:** representative GitHub writes now pass with the configured Gemini
+model through the repaired gateway, using independently verified issue/branch/file
+effects and no replay. Focused changed-contract audit is complete; fixture mistakes
+and stale CLI guidance are corrected. Notion's package and registry source PR 4
+are prepared; reviewed/signed publication and the authorized disposable-workspace
+sign-in/read/create/edit/restart checkpoint are next. Existing SDK, authentication,
+runtime and store routes are reused. No application release or extra test engine.
+See [current evidence](MCP-EXTENSION-PROGRESS.md); older dated statuses are history.
+
 **Latest installed checkpoint:** GitHub 0.1.1 is published and its real signed
 update/account checks pass. Matching app/package discovery exposes 100 tools;
 private read/restart/read passes. Issue creation remains blocked by the configured

@@ -83,3 +83,27 @@ test("installed GitHub read approval is confined to the test README and host con
   unexpected.details.push({ label: "content", value: "must not write" });
   assert.equal(approvedGitHubRead(unexpected), false);
 });
+
+test("GitHub MCP file approval requires literal content, not REST base64 encoding", () => {
+  const required = {
+    owner: "Punit-Dethe",
+    repo: "grain-github-alpha-test",
+    branch: "grain-check-test",
+    path: "grain-agent-check.txt",
+    message: "Add Grain acceptance file",
+    content: "Grain check test\n",
+  };
+  const confirm = {
+    token: "test-token",
+    title: "Create or update file",
+    details: Object.entries(required).map(([label, value]) => ({
+      label,
+      value,
+    })),
+  };
+  assert.equal(approvedGitHubAction(confirm, [confirm.title], required), true);
+  const encoded = structuredClone(confirm);
+  encoded.details.find((field) => field.label === "content").value =
+    Buffer.from(required.content).toString("base64");
+  assert.equal(approvedGitHubAction(encoded, [confirm.title], required), false);
+});

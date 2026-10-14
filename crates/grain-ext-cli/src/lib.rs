@@ -264,7 +264,7 @@ pub fn init_mcp_project(
     let descriptor =
         grain_extension_checks::read_mcp_descriptor(&root).map_err(anyhow::Error::msg)?;
     write_json(&root.join("mcp.json"), &descriptor)?;
-    write_text(&root.join("README.md"), &format!("# {name}\n\nMCP extension `{}`. Edit `mcp.json`, run `grain-ext doctor`, then `grain-ext pack`.\n\nGrain owns connection identities, enablement and OAuth consent. Never put credentials, client IDs, headers or server-launch commands in this descriptor. No Grain JavaScript SDK or Node build is required. `grain-ext dev` applies only to native tool projects. Store publishing remains provisional.\n", descriptor.id))?;
+    write_text(&root.join("README.md"), &format!("# {name}\n\nMCP extension `{}`. Edit `mcp.json`, run `grain-ext doctor`, then `grain-ext pack`.\n\nGrain owns connection identities, enablement and OAuth consent. Never put credentials, secrets or server-launch commands in this descriptor. Bounded public transport headers and issuer-bound public `oauthClient` metadata are supported; see the CLI author guide for their restrictions. No Grain JavaScript SDK or Node build is required. `grain-ext dev` applies only to native tool projects. Store publishing remains provisional.\n", descriptor.id))?;
     write_text(
         &root.join("DESCRIPTION.md"),
         &format!("# {name}\n\n{}\n", descriptor.description),

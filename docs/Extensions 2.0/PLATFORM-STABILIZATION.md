@@ -5,6 +5,20 @@ Updated 14 October 2026. This is the active work order, supplementing the
 GitHub breadth → Notion sequence. Source implementation and outstanding live
 acceptance are distinguished below.
 
+**Current gate:** the changed package/account contract and its focused audit
+are accepted for the supported source profile. The matching GitHub signed update,
+retained account, 100-tool discovery and read/restart already pass; repaired
+9router now supports verified issue create/update/close and branch/file creation.
+The stale issue-list check and obsolete base64 fixture expectation are attributed
+and corrected without replaying writes. Update/branch traces directly show tiered
+2 → 4 / 2 → 3 exposure; the separate file trace is still missing, not claimed Pass.
+See [exact evidence and limits](MCP-EXTENSION-PROGRESS.md).
+Notion is the next compatibility checkpoint: candidate 0.1.0 and registry PR 4
+are prepared using the existing SDK/DCR path. Source/maintainer publication
+approval and disposable-workspace sign-in/tool acceptance remain pending.
+Earlier dated descriptions below preserve the development history and do not
+override this current gate. Custom MCP management remains hidden in alpha/release.
+
 **14 October source checkpoint:** bounded public request headers now pass from
 descriptor/direct JSON through validation, CLI packing, store artifact ownership,
 registry persistence and SDK transport. The runtime GitHub toolset branch is

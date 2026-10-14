@@ -1,5 +1,55 @@
 # Extension implementation: progress, changes and user testing
 
+**GitHub representative checkpoint accepted / Notion prepared, 14 October:**
+the configured `ag/gemini-3.8-flash` through repaired 9router created issue #2 with
+exact title/body (`github-alpha-hU7Agp`). Its immediate issue-list check remained
+Fail because the new issue was not visible in that response; subsequent independent
+reads verify it. `github-alpha-M3F0FS` independently verifies the existing issue,
+then passes update/close and creation of `grain-check-feb200ee`. File approval
+was refused because our fixture wrongly required REST base64 encoding; current
+[GitHub MCP source](https://github.com/github/github-mcp-server/blob/main/pkg/github/repositories.go)
+requires literal content and encodes it server-side. `github-alpha-IHmv7r` then
+passes exact file creation on that existing branch, with main unchanged. No
+completed write was replayed; all three runs restore logging and clean up.
+
+Tiered routing is directly observed in the update/branch run: two initial
+discovery tools, four after loading issue read/write or three after loading the
+branch tool, with canonical IDs/selected aliases matching the verified actions.
+The successful file continuation captures no trace; its exposure verdict stays
+Blocked, not retrospectively converted to Pass or blamed on an old binary.
+Prior catalogue/read/restart/signed-update evidence remains valid. This accepts
+representative GitHub use, not execution of all 100 tools or all account grants.
+
+Only a 15-second read-only verification poll, action-attempt receipt and corrected
+plain-text guard are retained. Temporary continuation switches are removed;
+the exact used script is saved under ignored `IHmv7r/evidence/runner.used.mjs`,
+matching the recorded SHA, for review and later disposal. No new harness engine.
+
+Focused contract audit covered descriptor/header admission, signed artifact
+reload, revision invalidation, account/client/issuer rotation, explicit OAuth
+precedence, no-secret public-client setup, SDK PKCE/refresh and CLI packing.
+Normal checks pass: 35 core MCP, 4 CLI MCP, 2 public-client auth, 2 package-option
+and 3 approval regressions. The audit found stale generated MCP README guidance
+forbidding now-supported public headers/client metadata; that is corrected.
+No unresolved runtime defect was found in that changed contract scope. Third-party
+public-client live acceptance and Linear's deferred real-expiry test remain separate;
+this is not a universal OAuth or production-readiness certificate.
+
+Notion 0.1.0 candidate is now at
+[grain-notion-extension](https://github.com/Punit-Dethe/grain-notion-extension),
+tag `v0.1.0`, source `401f784ec986c4bf183594549dd75eedb057cb9d`.
+Doctor (0 findings), pack, listing/artwork and public discovery pass. Official
+documentation and live metadata advertise DCR, S256 and public-client `none`;
+the package has only HTTPS transport/OAuth, without extra headers, client secret,
+publisher client override or Grain provider-specific runtime. User authorized a
+disposable workspace for browser approval and one test-page create/edit.
+[Registry PR 4](https://github.com/Punit-Dethe/Grain-Extention/pull/4) holds its
+source submission and removes a retired transcript-transform example that broke
+`check-submission`; all four current submissions validate. It is not published
+or signed in yet. The current GitHub-only tester exception does not approve
+Notion: concrete maintainer/source approval, provenance/signing and real account/
+tool acceptance remain next. No new alpha build/release was dispatched.
+
 **Gateway restored, 14 October:** user approved applying the verified backport
 and restarting 9router. The installed 0.5.65 chunk now matches fixed SHA256
 `0185b1685d655c957cbb63fee0226f224612be79ffd11cf98a409544a496488c`.

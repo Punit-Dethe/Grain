@@ -2,6 +2,26 @@
 
 ## Installed GitHub alpha checkpoint (13 October)
 
+**14 October corrected checkpoint:** after the external 9router schema repair,
+issue #2 was created with exact title/body (`github-alpha-hU7Agp`), then updated
+and closed with one approved write (`github-alpha-M3F0FS`). The latter also creates
+`grain-check-feb200ee`; `github-alpha-IHmv7r` writes exact plain-text file contents
+on that branch, independently verified with main unchanged. The initial issue
+list was stale, so its immediate verification remains Fail; later independent
+reads confirm the creation. The file guard expected REST base64 rather than the
+current MCP tool's literal text; the corrected checkpoint passes. Failed reports
+remain intact, and no completed write was replayed.
+
+Only a bounded 15-second independent read poll, action-attempt metadata and the
+correct literal-content guard remain. Temporary continuation switches are already
+removed; the exact used script is retained solely as ignored evidence at
+`.runs/github-alpha-IHmv7r/evidence/runner.used.mjs` (SHA matches that report).
+Retire it with the run files after review. Tiered exposure/selection is directly
+recorded in `M3F0FS`: two discovery tools initially, then four for issue work or
+three for branch work. The successful file continuation captured no trace, so its
+separate exposure verdict remains Blocked; that is not evidence of an old binary.
+No new provider runner or maintenance engine is introduced.
+
 **14 October work order:** shared platform stabilization comes first; see
 [the active plan](../../docs/Extensions%202.0/PLATFORM-STABILIZATION.md). Do not
 run another provider/write batch automatically. The temporary `--files` mode
