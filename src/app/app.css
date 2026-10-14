@@ -1788,7 +1788,7 @@ html[data-theme="light"] .overview-shortcut-keys .overview-shortcut-key {
   gap: 0;
   overflow: hidden;
   border-radius: 11px;
-  background: var(--bg-0);
+  background: var(--bg-3);
 }
 
 .transcript-card {
@@ -1803,7 +1803,7 @@ html[data-theme="light"] .overview-shortcut-keys .overview-shortcut-key {
 }
 
 .transcript-card:hover {
-  background: var(--bg-2);
+  background: var(--bg-4);
 }
 
 .transcript-head {
@@ -2056,7 +2056,7 @@ html[data-theme="light"] .overview-shortcut-keys .overview-shortcut-key {
 }
 
 .history-feed {
-  background: var(--bg-0);
+  background: var(--bg-3);
 }
 
 .history-state {
