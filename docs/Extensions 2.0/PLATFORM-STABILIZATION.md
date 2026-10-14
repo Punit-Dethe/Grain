@@ -28,9 +28,12 @@ override this current gate. Custom MCP management remains hidden in alpha/releas
 
 **Discovery research checkpoint:** [the comparison and proposed correction](TOOL-DISCOVERY-RESEARCH.md)
 now cover released/pinned Codex, Goose and OpenCode plus provider documentation.
-Recommended next implementation is combined search/schema publication with better
-lexical ranking and task-local metadata reuse, measured against the recorded
-Notion flows. No runtime change has been made from this recommendation yet.
+The user's later clarification prioritizes total request-to-confirmed-action time.
+The latest recommendation is host-side shortlist preparation before initial LLM
+inference, comparing lexical and optional local semantic retrieval; combined
+search/schema publication becomes recovery. Reuse catalogue metadata and measure
+actual action/receipt timestamps against the recorded Notion flows. No runtime
+change or embedding-model selection has been made from these recommendations yet.
 
 **14 October Agent policy correction (latest user decision):** native and MCP
 tool calls execute automatically after ordinary extension enablement/account

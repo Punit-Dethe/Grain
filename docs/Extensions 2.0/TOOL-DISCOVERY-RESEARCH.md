@@ -3,6 +3,196 @@
 Research date: 14 October 2026. Recommendation only; no runtime change, provider
 action, model switch, new harness or application build performed in this review.
 
+## Second pass: request-to-action latency (latest direction)
+
+The user clarified that Grain's main product is executing requests accurately
+and quickly, not matching coding-agent architectures. Optimize the full path
+from submit/end of speech to the requested external change being confirmed.
+Search duration, discovery-call count and time to final prose are supporting
+metrics. This section supersedes the earlier recommendation to make a model
+search call the default first step: the stronger candidate is **host-side tool
+selection before the first model request**, with combined search/load as recovery.
+No implementation or model download was performed in this research pass.
+
+### What the current traces establish
+
+| Workflow | First model round → last successful provider outcome | First model round → final answer |
+| --- | --- | --- |
+| List pages | ~39 s | ~43 s |
+| Fetch/create pages | ~53 s | ~58 s |
+| Search/fetch/update page | ~46 s | ~50 s |
+
+These clocks start at the first logged model round, not at the actual spoken or
+typed submission. They exclude transcription and earlier preparation; do not
+report them as full end-to-end measurements. Roughly 4–5 s of each example occurs
+after the last provider success. Most avoidable model discovery precedes the
+action, so making search faster without removing those rounds misses the larger
+opportunity. Unknown/wrongly targeted actions cannot count as fast successes.
+
+### Closer reference systems and evidence quality
+
+- [LiveKit's voice tool-loop guide](https://docs.livekit.io/agents/logic/tools/design/)
+  focuses on small relevant toolsets, capability-oriented descriptions, precise
+  parameters and concise useful results. It also covers unnecessary handoffs and
+  testing the calls actually made. Its tool-count guidance is a heuristic, not a
+  universal cutoff. These patterns address action latency, not coding work.
+- [Composio search](https://docs.composio.dev/toolkits/meta-tools/search_tools)
+  batches independent intent queries, returns several tools per query plus
+  prerequisite/connection information, and supports continued session context.
+  [Multi-execution](https://next.docs.composio.dev/toolkits/meta-tools/multi_execute_tool)
+  targets independent operations in parallel. Adopt the batching/preparation
+  principles, not a wholesale migration of Grain accounts and execution to a
+  hosted service. Dependent reads/writes still require ordering.
+- [Semantic Router](https://github.com/aurelio-labs/semantic-router) implements
+  non-generative embedding-based route selection, including local encoder
+  options. The relevant idea is shortlist selection without a generative model
+  turn; generating arguments and completing multi-step tasks remains distinct.
+  It is Python infrastructure, not a natural drop-in dependency for Grain's Rust
+  executor. Source checked: `88fb4dcdc1044f060da82f0b52e829e085bc1407`.
+- [Portkey's MCP filter](https://github.com/Portkey-AI/mcp-tool-filter) embeds tool
+  metadata once and selects a shortlist from the request before LLM inference.
+  Source separates embedding, similarity and cache timings. Its benchmark file
+  labels tables as expected/preliminary results, not proof of reproducible
+  end-to-end latency. A sub-10-ms headline does not guarantee a new query/model
+  cold start on this PC. The small, older TypeScript project is architectural
+  evidence, not a chosen production dependency. Checked source:
+  `f53ebc13793268ba4ca1d549239f3fb59b403a63`.
+
+The important shift: the host does retrieval preparation; the main LLM receives
+usable tool schemas immediately instead of spending inference rounds searching.
+
+### Embedding and decision-model candidates
+
+| Candidate | Why test it | Cost/limit that must be measured |
+| --- | --- | --- |
+| BM25 over rich tool metadata | Cheap CPU baseline; preserves exact service/tool/parameter vocabulary | Weaker paraphrase/multilingual matching; quality depends on metadata |
+| Model2Vec/Potion static embeddings + BM25 | Very small/fast semantic candidate; official Rust library | Less contextual understanding; English and multilingual models differ |
+| Small transformer embedder + BM25 | Established local semantic retrieval through maintained Rust inference libraries | Query inference, model load, idle RAM and language coverage |
+| EmbeddingGemma 2 text-only + BM25 | Current Google on-device, multilingual semantic candidate | Real Windows runtime/export support and CPU/cold-start cost are unverified |
+| FunctionGemma or trained decision model | Could make recurring fixed commands local | Training/evaluation and changing community tool sets; not an embedding replacement |
+
+[Model2Vec](https://github.com/MinishLab/model2vec) uses static embeddings distilled
+from sentence transformers. Small English models and larger multilingual models
+exist. [Its Rust implementation](https://github.com/MinishLab/model2vec-rs) can
+load local weights without a model-serving sidecar. Vendor speed/size claims
+must be tested on tool retrieval, especially read/write distinctions, negation
+and context-dependent follow-ups. Checked Rust source:
+`1567eaa5797f02d040ae28bf810d4065b2ecede6`; Python reference:
+`611a1191a3f6f0d427b0518160e6da381dac5dca`.
+
+[FastEmbed-rs](https://github.com/Anush008/fastembed-rs) is an Apache-2.0 Rust
+inference-library candidate. Checked source
+`473fff39e0b0dfcb89603040a3b1b0e7d4f0934e` lists MiniLM, BGE, multilingual E5 and
+original EmbeddingGemma 300M/quantized variants. That is not confirmation of
+EmbeddingGemma **2** support. Validate ORT dependency/runtime compatibility before
+adding anything to Grain; do not ship a Python server just for embeddings.
+
+[Google's 6 October announcement](https://blog.google/innovation-and-ai/technology/developers-tools/embeddinggemma-2/)
+confirms EmbeddingGemma 2 exists: 740M parameters fully multimodal, modular 270M
+text path, 768-dimensional output reducible to smaller vectors. Reported ~191 MB
+active text-weight RAM uses quantization on Pixel 11 Pro; it is not total Windows
+process memory or a query-latency result for Grain. Text tool discovery needs no
+vision/audio encoders. Newness/multimodal benchmark improvements alone do not
+establish better tool retrieval than a smaller text-only model.
+
+[FunctionGemma guidance](https://ai.google.dev/gemma/docs/functiongemma) positions
+it as a 270M function-calling base for customization on a defined action surface.
+It is worth a later fixed-command experiment, but is not evidence that arbitrary
+new MCP tools will work accurately without training. The user's unidentified
+non-LLM decision model was illustrative, not a required technology choice.
+
+Retrieval research adds an important accuracy check: [ToolRet](https://arxiv.org/abs/2503.01763)
+tests retrieval models specifically on tool inventories and finds that general
+retrieval ability does not automatically translate to reliable tool selection.
+[Tool-REX/document expansion](https://arxiv.org/abs/2510.22670) studies enriched
+tool descriptions. This supports indexing purpose, constraints and parameter
+semantics rather than relying on names or buying the latest embedder. It does
+not justify generating descriptions with an extra LLM on every user request.
+
+### Proposed fast path and fallback
+
+`submitted request + bounded conversation context → host shortlist → LLM chooses
+validated call/arguments → existing executor → provider outcome → user receipt`
+
+Prepare native/MCP catalogue metadata when the extension becomes available,
+outside repeated model discovery rounds. Rebuild index entries when definitions
+or ownership change. Precompute document vectors on catalogue revision; embed
+only the current bounded query at request time. Preserve exact tool identities.
+
+Use lexical/exact matching plus optional dense/static retrieval. Start by
+comparing fusion of their candidate sets; do not assume cosine scores are
+calibrated confidence or use similarity as authorization. Include all operations
+needed for the request, not just the nearest single verb. Keep a recoverable
+combined search/load tool so missing candidates remain discoverable.
+Update the current instruction that always tells the model to search first:
+already-offered tools should be callable immediately, with discovery used for
+missing capabilities. Keep the existing canonical-ID/exposure map and schema
+validation rather than adding an alternate dispatch path.
+
+For hundreds/a few thousand tools, a normalized-vector scan may be sufficient:
+1,000 × 256 float32 vectors is about 1 MB of vector data, excluding metadata and
+container overhead. Query embedding/model weights often dominate cost, not this
+scan. No vector database/server is justified without measured scale needs.
+Keep optional model residency scoped to active Agent use; measure cold-start
+after release as well as warm requests. Do not reload weights on every tool call.
+
+### Other parts of action latency Grain controls
+
+1. **Catalogue reuse:** avoid repeated tools/list discovery for model searches.
+   Current MCP HTTP client already shares a pool; do not claim every operation
+   makes a new TCP connection. Short-lived SDK services and execution-time digest
+   revalidation remain separate correctness boundaries. Measure their cost before
+   proposing scoped active-task service reuse; no permanent idle sessions.
+2. **Model input:** selected schemas, clear parameter formats and useful bounded
+   results reduce selection errors/retries and prefill work. Preserve schema
+   meaning; arbitrary stripping/renaming parameters previously caused gateway bugs.
+   Keep provider/model selection unchanged for comparisons.
+3. **Independent operations:** current Agent batch dispatch iterates sequentially.
+   Overlap genuinely independent reads/preparation only when provider serialization
+   and cancellation allow it. `search → fetch target → update` is dependent; fewer
+   calls achieved by guessing the target is not a valid optimization.
+4. **Immediate outcome:** report a confirmed provider result as soon as received,
+   rather than waiting for the final LLM prose. This reduces confirmation delay,
+   not the time the remote action takes. Do not announce the whole task complete
+   when later requested steps remain.
+5. **Speech preparation:** [LiveKit preemptive generation](https://docs.livekit.io/agents/logic/turns/tuning/)
+   overlaps work with turn completion, with speculative-cost trade-offs. Grain can
+   investigate harmless catalogue/retrieval preparation while speech completes,
+   but has no demonstrated streaming-partial-transcript path here. Never execute
+   speculative writes before the actual request is submitted. This is a later
+   overlap opportunity, not the first discovery fix.
+
+### Bounded experiment before choosing a library/model
+
+Use actual enabled GitHub/Notion/native schemas and a small labeled request set.
+Compare (A) host BM25 shortlist, (B) BM25 + small/static embeddings, (C) BM25 +
+EmbeddingGemma 2 text-only if a supported local backend is available. Include
+direct schema exposure as a small-catalogue control; retain combined discovery
+as fallback. Do not stack all candidate models/rerankers into the product.
+
+Retrieval-only terminal runs need no provider writes or full application build.
+Use straightforward existing test boundaries/a disposable script; record and
+retire temporary experiment support. Cover paraphrases, mixed language, explicit
+app names, follow-ups, multi-operation requests, near-identical read/write tools,
+missing tools and catalogue changes. Hold out requests not used to tune metadata.
+
+Measure required-tool-set Recall@K under a schema-byte budget, actual argument and
+target correctness, extra recovery calls, p50/p95 warm/cold retrieval, peak/idle
+RAM and model loading. Then use a small real dev-app read/create/update checkpoint
+on disposable objects. One sample cannot establish production p95 or zero error.
+
+Add consistent request timestamps for submit, transcription ready, catalogue ready,
+model request/response, provider dispatch/outcome and first displayed receipt.
+Record completion latency and failure/unknown outcomes separately; faster wrong
+actions must not improve the success metric. Use the same configured LLM and
+comparable tasks. Choose the least costly candidate that retains measured quality
+and reduces submit-to-confirmed-action latency. There is no measured model winner
+or honest seconds-to-completion promise from this research alone.
+
+Second-pass source snapshots are ignored evidence under
+`tests/agent-harness/.runs/fast-tool-routing-research-20261014/`. No model weights,
+new runtime dependency, hosted service signup or experimental engine was added.
+
 ## Finding
 
 Grain's current discovery path adds avoidable model round trips. Three completed

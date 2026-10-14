@@ -1,5 +1,17 @@
 # Extension implementation: progress, changes and user testing
 
+**Request-to-action research, 14 October (latest):** user clarified the goal as
+submit-to-confirmed-action latency. Expanded the existing research document with
+voice/action systems (LiveKit/Composio), host-side semantic filters, Model2Vec,
+Rust local inference candidates and Google's new EmbeddingGemma 2. Recommendation
+now favors preselecting a recoverable tool shortlist before the first LLM request,
+with combined search/load as fallback. Compare lexical and optional embedding
+variants offline before choosing a dependency; actual Windows latency/accuracy
+is unmeasured. Existing traces show last provider success at ~39/53/46 s after the
+first model round, before answers at ~43/58/50 s; they exclude STT/earlier submit.
+No application changes, model downloads, tool execution, new harness or build.
+See [the second pass](TOOL-DISCOVERY-RESEARCH.md#second-pass-request-to-action-latency-latest-direction).
+
 **Tool-discovery research, 14 October:** compared released/pinned Codex, Goose
 and OpenCode source plus OpenAI, Anthropic and Cloudflare primary documentation.
 No published per-task average search count found. Identified Grain's mandatory
