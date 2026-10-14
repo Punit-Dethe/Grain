@@ -34,11 +34,15 @@ hosted-provider validation are hidden in release/alpha source builds. These
 are presentation gates, not deletion or backend authorization boundaries.
 
 **Live GitHub evidence:** installed private README read and read after restart
-Pass; supported default catalogue contains 49 tools. Issue creation and branch
+Pass. The later trace-capable build discovers 100 supported tools; real reads
+offer two discovery schemas then three including the correct getter. Fresh write
+requests correctly load `issue_write` but omit the requested title; exact guards
+refuse them and no matching issue is created. A generic argument-fidelity prompt
+improvement awaits matching live acceptance. Historical issue creation and branch
 creation independently Pass. Issue update/close Fail with cause unresolved;
 file creation Fail after the model proposed another branch action and the exact
 scope guard refused it. Both write runs cleaned up the owned host and restored
-log settings. No failed write was replayed. The older binary cannot establish
+log settings. No failed write was replayed. The older historical binary cannot establish
 new all-toolset behavior or model-boundary trace. Retained report IDs and object
 identities are in the stabilization document; do not turn partial success into
 full GitHub acceptance.

@@ -117,7 +117,11 @@ export async function runInstalledGitHub(mode) {
       try {
         const buffer = Buffer.alloc(size - offset);
         await handle.read(buffer, 0, buffer.length, offset);
-        for (const line of buffer.toString("utf8").split(/\r?\n/)) {
+        const completeBytes = buffer.lastIndexOf(10) + 1;
+        for (const line of buffer
+          .subarray(0, completeBytes)
+          .toString("utf8")
+          .split(/\r?\n/)) {
           const marker = "[GRAIN] agent-tool-trace ";
           const start = line.indexOf(marker);
           if (start < 0) continue;
@@ -125,6 +129,7 @@ export async function runInstalledGitHub(mode) {
           if (["offered", "selected", "loaded"].includes(event.phase))
             events.push(event);
         }
+        logOffsets.set(name, offset + completeBytes);
       } finally {
         await handle.close();
       }
@@ -252,6 +257,9 @@ export async function runInstalledGitHub(mode) {
       report.results.push({ id, status: "Pass", evidence });
       console.log(`PASS ${id}`);
     } catch (error) {
+      if (logDirectory && !error.diagnostic?.trace) {
+        error.diagnostic = { ...error.diagnostic, trace: await trace() };
+      }
       report.results.push({
         id,
         status: error instanceof Blocked ? "Blocked" : "Fail",
@@ -315,6 +323,18 @@ export async function runInstalledGitHub(mode) {
         "Enable Agent, select its model and enable extension Developer Mode in the alpha",
       );
     const connections = await invoke("mcp_connections_list");
+    const catalogueIds = (await invoke("mcp_provider_status")).map(
+      (item) => item.id,
+    );
+    const enabledCatalogueIds = await main.evaluate(async (ids) => {
+      const settings =
+        await window.__TAURI_INTERNALS__.invoke("get_app_settings");
+      return settings.mcp_enabled_providers.filter((id) => ids.includes(id));
+    }, catalogueIds);
+    if (enabledCatalogueIds.length)
+      throw new Blocked(
+        "Disable developer-catalogue MCP entries before an installed-extension check",
+      );
     const matches = connections.filter(
       (row) =>
         row.source === "store" &&
@@ -347,6 +367,7 @@ export async function runInstalledGitHub(mode) {
       connected: status.connected,
       enabled: status.enabled,
       accountState: status.state,
+      enabledCatalogueCount: enabledCatalogueIds.length,
     };
   };
   const read = async (expected) => {
@@ -453,6 +474,7 @@ export async function runInstalledGitHub(mode) {
       approvedReads: approvals,
       readmeVerified: true,
       connectionRevision: connection.revision,
+      trace: await trace(),
     };
   };
   const action = async (
@@ -505,9 +527,17 @@ export async function runInstalledGitHub(mode) {
           { token: confirm.token, approve: false },
           300000,
         );
-        throw new Error(
+        const error = new Error(
           "Workflow requested an action outside its exact test scope",
         );
+        error.diagnostic = {
+          approvedWrites: writes,
+          approvedReads: reads,
+          refusedTitle: confirm.title,
+          fieldLabels: confirm.details?.map((field) => field.label),
+          trace: await trace(),
+        };
+        throw error;
       }
       if (write) writes++;
       else reads++;
@@ -550,7 +580,7 @@ export async function runInstalledGitHub(mode) {
     await mkdir(join(root, "webview"));
     await launch();
     await check("github.installed-preflight", preflight);
-    if (mode === "--workflow") {
+    if (mode === "--workflow" || mode === "--read") {
       previousLogLevel = await main.evaluate(
         async () =>
           (await window.__TAURI_INTERNALS__.invoke("get_app_settings"))
@@ -566,6 +596,8 @@ export async function runInstalledGitHub(mode) {
         /^handy.*\.log$/.test(name),
       ))
         logOffsets.set(name, (await stat(join(logDirectory, name))).size);
+    }
+    if (mode === "--workflow") {
       const api = async (path) =>
         JSON.parse(
           (
@@ -606,6 +638,14 @@ export async function runInstalledGitHub(mode) {
         const matches = (await api("issues?state=all&per_page=100")).filter(
           (issue) => issue.title === title && !issue.pull_request,
         );
+        if (failure) {
+          failure.diagnostic = {
+            ...failure.diagnostic,
+            matchingIssues: matches.length,
+            effectObserved: matches.length > 0,
+          };
+          throw failure;
+        }
         assert.equal(
           matches.length,
           1,
@@ -614,10 +654,6 @@ export async function runInstalledGitHub(mode) {
         assert.equal(matches[0].body, body);
         number = matches[0].number;
         report.testObjects.issueNumber = number;
-        if (failure) {
-          failure.diagnostic = { effectObserved: true, issueNumber: number };
-          throw failure;
-        }
         return {
           ...result,
           issueNumber: number,
@@ -669,7 +705,7 @@ export async function runInstalledGitHub(mode) {
         const content = `Grain check ${marker}\n`;
         const message = "Add Grain acceptance file";
         const result = await action(
-          `Create ${path} on branch "${branch}" in ${repository}. Its exact text is "Grain check ${marker}" followed by one newline. Commit message must be "${message}". Do not change main or any other file.`,
+          `Create ${path} on the existing branch "${branch}" in ${repository}. The preceding check already created and verified this branch; do not create it again. Its exact text is "Grain check ${marker}" followed by one newline. Commit message must be "${message}". Do not change main or any other file.`,
           {
             ...scope,
             branch,

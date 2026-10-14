@@ -1,5 +1,31 @@
 # Extension implementation: progress, changes and user testing
 
+**GitHub execution diagnosis, 14 October:** the trace-capable installed alpha
+from source `7d7b96f2` discovers 100 supported GitHub tools (`github-alpha-Oq3oFk`).
+Private README read, persisted-account restart and read again pass all four
+stages (`github-alpha-QX5iKK`); each read offers two discovery schemas, then three
+including the selected getter, and independently verifies the real file bytes.
+These results predate the package-header/public-client source changes and do
+not certify GitHub 0.1.1 or the newest source. Owned cleanup passes.
+
+Fresh write runs `github-alpha-xtT5DP` and `github-alpha-lOGzZe` select and load
+`issue_write` correctly but propose arguments without the requested issue title.
+The exact approval guard refuses both; zero writes approved and no matching issue
+exists. This is a model argument-fidelity failure, not evidence of bad alias
+routing or insufficient GitHub permissions. Original update/close failure remains
+unattributed. The older file test was a fresh conversation without earlier branch
+history; its prompt now explicitly states that the verified branch exists.
+
+Added a small provider-independent Agent instruction to include all user-requested
+values, including schema-optional fields, and explain unsupported operations.
+This is a candidate improvement, not a deterministic safety check or a proven
+live fix. No schema rewriting, provider prompt branch, approval weakening, budget
+increase or automatic write replay. The existing runner now retains refusal
+diagnostics across independent-effect assertions, records complete noncumulative
+trace lines, and checks developer-catalogue isolation. No new runner or engine.
+Checks: 19 Agent Rust tests and two exact-approval tests pass; targeted formatting
+passes. Matching-build acceptance and the original write failures remain open.
+
 **Publisher public-client OAuth, 14 October:** implemented optional `oauthClient`
 with public `clientId` and exact HTTPS `issuer` for MCP descriptors and direct
 connection JSON. Other client fields, secrets and endpoint/scope/callback overrides

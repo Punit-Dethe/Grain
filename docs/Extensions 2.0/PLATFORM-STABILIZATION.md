@@ -128,7 +128,23 @@ no unresolved launch-blocking findings. This is not a production certificate.
 
 ## Latest live evidence: preserve both success and failure
 
-All runs below used the older installed binary
+**14 October trace-capable follow-up:** build `38446169856` from `7d7b96f2`
+is installed. `github-alpha-Oq3oFk` discovers 100 supported tools;
+`github-alpha-QX5iKK` passes private read/restart/read with two discovery schemas,
+then three including the correctly resolved getter. New write runs `xtT5DP`
+and `lOGzZe` correctly resolve `issue_write`, but the model omits the requested
+title; exact scope guards refuse, no write is approved, no matching issue exists.
+The earlier update/close failure is still unattributed. A generic requested-field
+instruction is implemented as a candidate improvement; matching live acceptance
+is pending. The file prompt now states its independently verified branch exists
+because each stage is a fresh conversation. No uncertain write was replayed.
+
+This build predates package-owned headers and public-client declarations. The
+100-tool/read result certifies its old host-owned toolset behavior, not the
+unpublished 0.1.1 package or latest source. The historical runs below retain
+their original limitations. No Notion package or provider-specific runtime fork.
+
+The historical runs below used the older installed binary
 `425610fd66921c14c9c26ebddc21b757b8d7c15419a8029aec567f7c0e72d3c2`,
 not the new full-toolset/trace source. Reports are under ignored
 `tests/agent-harness/.runs/<run>/evidence/`.
@@ -172,5 +188,12 @@ build progress or start extra builds just to stay busy.
   GitHub implementation uses that maintained hook. Inspect the installed SDK
   source for ownership/cleanup behavior when changing the contract.
 
-The next code block is item 1. This document does not add new release milestones,
-freeze a speculative generic header API or claim third-party OAuth is solved.
+Item 1's supported source contract is implemented; the active code/checkpoint
+work is item 2, then matching package/install acceptance and affected audit.
+This document does not claim live third-party OAuth or GitHub writes are solved.
+
+The bounded Agent argument instruction follows normal prompting guidance, not
+provider-specific schema rewriting or relaxed execution checks:
+[OpenAI function calling](https://developers.openai.com/api/docs/guides/function-calling)
+and [Anthropic tool-use guidance](https://platform.claude.com/docs/en/agents-and-tools/tool-use/how-tool-use-works).
+Its behavioral acceptance still requires the real configured model.
