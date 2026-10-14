@@ -35,15 +35,18 @@ search/schema publication becomes recovery. Reuse catalogue metadata and measure
 actual action/receipt timestamps against the recorded Notion flows. No runtime
 change or embedding-model selection has been made from these recommendations yet.
 
-**Next work order, 14 October:** [fast tool execution](FAST-TOOL-EXECUTION-PLAN.md)
+**Active work order, 14 October:** [fast tool execution](FAST-TOOL-EXECUTION-PLAN.md)
 turns the supplied deeper research into a bounded lexical-only experiment. The
 user explicitly chose to test without embeddings first. Reuse the existing
 `CapabilityIndex` BM25 path, enrich schema metadata, prepare callable tools before
 initial inference and combine search/load recovery. Develop these together, then
 compare complete-required-tool-set coverage and actual confirmed effects against
 the current path in the dev app. Receipt/transport changes follow only where
-measured. Planning only: no runtime edits, benchmarks, model downloads or builds
-have occurred for this work order.
+measured. First-round lexical publication and combined recovery now exist in
+source, with 92 focused/core/protocol/old-benchmark checks passing. The real
+catalogue holdout and configured-model latency comparison remain pending; no
+embedding model or installer build. Browser-IPC acceptance was stopped before any
+Agent action; use a thin terminal-only headless entry point for the next check.
 
 **14 October Agent policy correction (latest user decision):** native and MCP
 tool calls execute automatically after ordinary extension enablement/account

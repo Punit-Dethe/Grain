@@ -2877,6 +2877,7 @@ struct ToolTurn {
     seen_ids: HashSet<String>,
     blocked_tools: HashSet<String>,
     trace_id: String,
+    started: Instant,
     call_occurrences: HashMap<[u8; 32], usize>,
     receipts: Vec<String>,
 }
@@ -3101,10 +3102,42 @@ async fn run_with_tools(
     run: &AgentRun<'_>,
 ) -> Result<AgentReply, String> {
     use crate::llm_client::ChatEntry;
-    let opened = crate::capability::open(app, &[]);
+    let preparation_started = Instant::now();
+    let mut opened = crate::capability::open(app, &[]);
     if opened.specs.is_empty() {
         return Ok(AgentReply::plain(run_messages(app, full, image).await?));
     }
+    let trace_id = uuid::Uuid::new_v4().to_string();
+    log::info!(
+        "[GRAIN] agent-tool-trace {}",
+        serde_json::json!({
+            "phase": "backend-start", "task": trace_id
+        })
+    );
+    // The latest instruction is primary. Prior user turns are bounded hints,
+    // not evidence that an external object still exists or is writable.
+    let mut queries = full
+        .iter()
+        .rev()
+        .filter(|(role, _)| role == "user")
+        .take(2)
+        .map(|(_, text)| grain_core::capability_agent::sanitize(text, 2048))
+        .collect::<Vec<_>>();
+    if queries.len() > 1 {
+        queries[1] = format!(
+            "{} {}",
+            queries[0],
+            grain_core::capability_agent::sanitize(&queries[1], 256)
+        );
+    }
+    crate::capability::prepare(app, &mut opened.session, &queries, &trace_id).await;
+    log::info!(
+        "[GRAIN] agent-tool-trace {}",
+        serde_json::json!({
+            "phase": "preparation-finished", "task": trace_id,
+            "elapsed_ms": preparation_started.elapsed().as_millis()
+        })
+    );
     let mut entries: Vec<_> = full
         .into_iter()
         .map(|(role, content)| match role.as_str() {
@@ -3134,7 +3167,8 @@ async fn run_with_tools(
             calls: 0,
             seen_ids: HashSet::new(),
             blocked_tools: HashSet::new(),
-            trace_id: uuid::Uuid::new_v4().to_string(),
+            trace_id,
+            started: preparation_started,
             call_occurrences: HashMap::new(),
             receipts: Vec::new(),
         },
@@ -3174,6 +3208,7 @@ mod tool_continuation_tests {
             seen_ids: HashSet::new(),
             blocked_tools: HashSet::new(),
             trace_id: "fixture-task".into(),
+            started: Instant::now(),
             call_occurrences: HashMap::new(),
             receipts: Vec::new(),
         }
@@ -3234,7 +3269,7 @@ mod tool_continuation_tests {
                     turn(),
                     &run,
                     move |_, tools| {
-                        assert_eq!(tools.len(), 4);
+                        assert_eq!(tools.len(), 3);
                         let reply = model.pop_front().unwrap();
                         Box::pin(async move { Ok(reply) })
                     },
@@ -3269,7 +3304,7 @@ mod tool_continuation_tests {
         assert_eq!(pending.call_id, "write-original");
         assert_eq!(pending.turn.hops, 1);
         assert_eq!(pending.turn.calls, 2);
-        assert_eq!(crate::capability::specs(&pending.turn.session).len(), 4);
+        assert_eq!(crate::capability::specs(&pending.turn.session).len(), 3);
         // Executor/SDK execution is tested separately; this fixture supplies its
         // truthful completed outcome at the production continuation boundary.
         assert!(crate::action_exec::discard(&token));
@@ -3289,7 +3324,7 @@ mod tool_continuation_tests {
                     pending.finish(success(), true),
                     &run,
                     move |entries, tools| {
-                        assert_eq!(tools.len(), 4);
+                        assert_eq!(tools.len(), 3);
                         let results: Vec<_> = entries
                             .iter()
                             .filter_map(|entry| match entry {
@@ -3458,7 +3493,7 @@ mod tool_continuation_tests {
                     turn(),
                     &run,
                     move |_, tools| {
-                        assert_eq!(tools.len(), 4);
+                        assert_eq!(tools.len(), 3);
                         round += 1;
                         let response = if round <= 12 {
                             frame(vec![
@@ -3665,12 +3700,23 @@ async fn drive_tool_turn_with<'a>(
             serde_json::json!({
                 "phase": "round", "task": turn.trace_id, "round": turn.hops + 1,
                 "calls": turn.calls, "offered_count": tools.len(), "finalizing": exhausted,
+                "task_elapsed_ms": turn.started.elapsed().as_millis(),
+                "offered_tools": tools.iter().map(|tool| tool.name.as_str()).collect::<Vec<_>>(),
             })
         );
+        let model_started = Instant::now();
         let reply = match request(entries, tools).await {
             Ok(reply) => reply,
             Err(error) => return turn.failure(error),
         };
+        info!(
+            "[GRAIN] agent-tool-trace {}",
+            serde_json::json!({
+                "phase": "model-response", "task": turn.trace_id, "round": turn.hops + 1,
+                "elapsed_ms": model_started.elapsed().as_millis(), "requested_calls": reply.tool_calls.len(),
+                "task_elapsed_ms": turn.started.elapsed().as_millis()
+            })
+        );
         if reply.tool_calls.is_empty() {
             info!(
                 "[GRAIN] agent-tool-trace {}",
@@ -3679,6 +3725,7 @@ async fn drive_tool_turn_with<'a>(
                     "rounds": turn.hops, "calls": turn.calls,
                     "duplicate_calls": turn.call_occurrences.values().map(|count| count - 1).sum::<usize>(),
                     "limit_reached": exhausted,
+                    "task_elapsed_ms": turn.started.elapsed().as_millis(),
                 })
             );
             return Ok(AgentReply::plain(reply.content));
@@ -3772,6 +3819,7 @@ async fn drive_tool_turn_with<'a>(
                 serde_json::json!({
                     "phase": "outcome", "task": turn.trace_id, "call": turn.calls,
                     "tool": trace_name, "status": status, "elapsed_ms": started.elapsed().as_millis(),
+                    "task_elapsed_ms": turn.started.elapsed().as_millis(),
                 })
             );
             match dispatched {

@@ -1,5 +1,17 @@
 # Grain Agent acceptance harness
 
+**14 October lexical-tool checkpoint:** the new Agent prepares first-round action
+schemas and offers combined `search_tools` recovery with `queries` and optional
+`extension_id`. It no longer offers/dispatches `load_extension`. Scripted model
+procedures in `model.mjs`, `workflow.mjs`, `mcp-live.mjs`, `mcp-hf-live.mjs`, and the
+old GitHub two-tool trace assertion encode the former search/load policy. They
+are **not current acceptance evidence** until adapted/retired at the comparison
+checkpoint. Do not add a compatibility path to make those fixtures pass.
+Use focused core/backend tests for this source batch; the real-catalogue and
+configured-model comparison remains pending in
+[the lexical-first plan](../../docs/Extensions%202.0/FAST-TOOL-EXECUTION-PLAN.md).
+No new harness suite or testing engine was added for this work.
+
 ## Installed GitHub alpha checkpoint (13 October)
 
 **14 October corrected checkpoint:** after the external 9router schema repair,

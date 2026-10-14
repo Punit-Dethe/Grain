@@ -1884,6 +1884,16 @@ fn transport_config(
 
 pub(crate) async fn list_tools(app: &AppHandle, provider_id: &str) -> Result<McpToolSet, String> {
     let deadline = tokio::time::Instant::now() + OPERATION_TIMEOUT;
+    list_tools_until(app, provider_id, deadline).await
+}
+
+/// First-round preparation has a short shared deadline. Keep SDK cleanup inside
+/// the normal discovery path instead of dropping a running service on timeout.
+pub(crate) async fn list_tools_until(
+    app: &AppHandle,
+    provider_id: &str,
+    deadline: tokio::time::Instant,
+) -> Result<McpToolSet, String> {
     require_developer_mode(app)?;
     let owner = runtime_provider(app, provider_id)?;
     let spec = owner.spec();

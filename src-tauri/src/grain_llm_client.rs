@@ -241,6 +241,7 @@ struct WireToolCallFn {
 }
 
 /// One function the model may call, as handed in by the Agent. `parameters` is a JSON-Schema object.
+#[derive(Clone)]
 pub struct ToolSpec {
     pub name: String,
     pub description: String,

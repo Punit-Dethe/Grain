@@ -1,6 +1,7 @@
 # Fast tool execution: lexical-first execution plan
 
-Status: planned, not implemented or benchmarked. Updated 14 October 2026.
+Status: lexical source checkpoint implemented; real-catalogue and real-Agent
+comparison pending. Updated 14 October 2026.
 
 This is the next bounded work order within
 [platform stabilization](PLATFORM-STABILIZATION.md). It turns the user's supplied
@@ -9,6 +10,50 @@ implementation and comparison plan, supplementing [our research](TOOL-DISCOVERY-
 The user's latest decision is explicit: **test without embeddings first**.
 No embedding model, model download, inference runtime or semantic benchmark is
 part of this work order. Reconsider those only after reviewing lexical results.
+
+## Current checkpoint
+
+First-round lexical publication and combined recovery now exist in source.
+The existing ranker is reused without dense scores. Catalogue definitions are
+task-owned, preparation runs up to four independent providers concurrently with
+a shared three-second I/O deadline (SDK cleanup may take up to its separate
+two-second bound), and recovery can retry unavailable metadata through normal
+discovery. Successful snapshots are reused for ranking/schema loading only;
+execution still re-discovers and checks current identity/digest. No idle cache,
+new background worker, embedding dependency or transport-lifetime rewrite.
+
+Small known eligible catalogues (up to eight actions, all definitions fitting)
+are offered eagerly; otherwise six lexical candidates are selected and budget
+packing skips definitions that do not fit. Recovery accepts up to four queries
+and optional exact extension scope, merging intent candidates and publishing
+up to eight additional schemas. Already-offered tools remain stable. The old
+loader is no longer offered or dispatched in the live Agent; remaining pure core
+loader fixtures are not compatibility support and can retire when obsolete
+harness procedures are adapted.
+
+Backend diagnostics now correlate preparation, offered IDs/count/bytes,
+model durations and provider outcomes with a monotonic task clock. This is
+**backend tool-turn timing**, not yet speech-end/submission-to-visible-receipt
+measurement; frontend/STT clocks in Block 1 and receipts in Block 4 remain open.
+Required-set evaluation is added separately from existing acceptable-alternative
+metrics. The existing frozen benchmark is supporting evidence, not the planned
+48-request real catalogue holdout or a latency adoption gate.
+
+Implementation review covered canonical/name-map consistency, schema-budget
+packing, deadline cleanup, account/catalogue freshness, query bounds and
+non-replay of unknown writes. A replaced loader changed the expected fixture
+tool count from four to three; continuation checks were updated accordingly.
+No production adoption claim, new installer, model switch or live writes.
+
+Verification at this source boundary: 92 focused/core/protocol/old-benchmark tests
+Pass, plus normal backend Clippy correctness checks (existing warnings). The
+user reiterated no browser control. The attempted dev browser-IPC probe ended
+before an Agent/provider request, and its owned app was closed. For Block 3, add
+only a thin debug one-shot probe to the existing headless setup: MCP catalogue
+export or configured Agent request, bounded request file/output, alpha identity
+check, no browser, audio stack, native worker listener or testing service. This
+checks MCP execution; native real-app acceptance remains separate. Keep the probe
+inside the existing testing documentation and retire disposable driver files.
 
 ## Goal and boundary
 

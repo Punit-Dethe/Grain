@@ -1,5 +1,32 @@
 # Extension implementation: progress, changes and user testing
 
+**Lexical source checkpoint, 14 October (latest):** first-round lexical tool
+publication and combined search/schema recovery are implemented using the
+existing `CapabilityIndex`; no embedding/runtime dependency. MCP and native
+catalogues belong to the task; preparation uses four concurrent providers with a
+shared short I/O deadline and existing SDK cleanup. Cached metadata does not
+replace execution-time identity/digest checks. Tiny fitting catalogues are
+offered eagerly; larger ones use six candidates under the existing schema budget.
+Recovery accepts a bounded query batch and loads directly; the live loader branch
+is removed. Backend monotonic timing and offered-tool diagnostics are added.
+
+Verification: 43 core capability tests, 8 backend exposure tests, 8 continuation
+tests, 29 MCP protocol tests and 4 existing lexical benchmark tests Pass (92).
+Normal backend Clippy correctness checks Pass with existing warnings. Direct
+Windows test startup needed the maintained activation-manifest runner; native
+dependency checks needed the existing short-target build environment. Neither
+failure is reported as a passing direct invocation. Existing benchmark queries
+are old fixtures, not real GitHub/Notion holdout or end-to-end improvement evidence.
+
+The attempted dev browser-IPC check was stopped at the user's request before an
+Agent/provider action; owned app/launcher exited, no live result claimed. Browser
+control remains off. Next: a thin development-only one-shot terminal probe reusing
+the existing headless app path, then actual catalogue and configured-model
+comparison. No new test server, browser runner, transport engine or installer.
+Old scripted search/load harness procedures are explicitly marked obsolete in
+the harness README, not passed or given a runtime compatibility workaround.
+See [the execution plan](FAST-TOOL-EXECUTION-PLAN.md).
+
 **Lexical-first execution plan, 14 October (latest):** reviewed the user's supplied
 deeper research and mapped it to the source. User chose no embeddings for the
 first implementation/comparison. The [new work order](FAST-TOOL-EXECUTION-PLAN.md)
