@@ -40,7 +40,7 @@ pub(super) fn check(path: &Path, policy_path: &Path, pin: &str, gh: &Path) -> Re
     let gh = crate::review::verifier(gh, &policy.verifier_sha256)?;
     verify(&gh, &policy, &source)?;
     if policy.alpha_maintainer_approval.is_some() {
-        println!("Current GitHub source matches explicit alpha maintainer approval; no independent review claimed or key accessed");
+        println!("Current source matches explicit alpha maintainer approval; no independent review claimed or key accessed");
     } else {
         println!("Current GitHub source review matches the protected policy; no key accessed");
     }

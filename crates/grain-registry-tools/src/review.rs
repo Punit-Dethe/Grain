@@ -35,8 +35,8 @@ pub(super) struct Policy {
     pub review_pull_request: u64,
     pub review_head: String,
     pub review_id: u64,
-    /// Explicit operator-held approval for the single tester-alpha GitHub
-    /// submission. This is not a GitHub review and never author-controlled data.
+    /// Explicit operator-held approval for exact tester-alpha submissions.
+    /// This is not a GitHub review and never author-controlled data.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub alpha_maintainer_approval: Option<String>,
     pub approved_at: String,
@@ -120,8 +120,11 @@ impl Policy {
                 || !self.reviewer.eq_ignore_ascii_case("Punit-Dethe")
                 || !self.submitter.eq_ignore_ascii_case("Punit-Dethe")
                 || self.review_id != 0
-                || self.submission_sha256
-                    != "d667ca2fab05aae393497efb46ced148740957f2e443814ab6206aa91523375b"
+                || !matches!(
+                    self.submission_sha256.as_str(),
+                    "d667ca2fab05aae393497efb46ced148740957f2e443814ab6206aa91523375b"
+                        | "c9eaad5d89f26d5439d6a9a1e91a3533370aa576953e62ef9e85a5a63d0a36f3"
+                )
                 || self.publishing_public_key
                     != "RWREj+hdLljbWOv3LCoTKEPv670pVG+P9knBUMWoR+V445yvdBwBuqj8"
             {
@@ -680,6 +683,11 @@ pub(crate) mod tests {
         assert!(p.validate(now).is_err());
         p.alpha_maintainer_approval =
             Some("Maintainer authorization, tester GitHub 0.1.1, 2026-10-14".into());
+        p.validate(now).unwrap();
+        p.submission_sha256 =
+            "c9eaad5d89f26d5439d6a9a1e91a3533370aa576953e62ef9e85a5a63d0a36f3".into();
+        p.alpha_maintainer_approval =
+            Some("Maintainer authorization, tester Notion 0.1.0, 2026-10-14".into());
         p.validate(now).unwrap();
         for (field, value) in [
             ("alpha_maintainer_approval", serde_json::json!(" ")),
