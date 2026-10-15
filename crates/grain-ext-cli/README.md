@@ -10,7 +10,39 @@ worker, or describe an existing remote MCP server. No universal Grain API key
 is required to author either kind. Provider credentials and user authorization
 are separate from the extension's source metadata.
 
-Build the CLI from this workspace:
+## Get the CLI
+
+The **Extension CLI artifacts** GitHub Actions workflow builds the CLI separately
+from Grain on Windows, Linux and macOS. Download the artifact for your OS from a
+successful run and extract it. `BUILD.json` records the exact source commit, CLI
+version and actual Rust host architecture; check it matches your machine. These
+are development downloads, not an announced stable SDK release. A GitHub login
+may be needed to download Actions artifacts; they expire after 30 days.
+
+Verify the executable against `SHA256SUMS` before running it. The checksum detects
+corruption; trust also depends on downloading the intended successful workflow
+from Grain's repository. It is not an independent publisher signature. Windows:
+
+```powershell
+Get-FileHash .\grain-ext.exe -Algorithm SHA256
+.\grain-ext.exe --version
+```
+
+On macOS/Linux, use `shasum -a 256 grain-ext` / `sha256sum grain-ext`, then
+`chmod +x grain-ext` and `./grain-ext --version`. Move it to a directory on your
+PATH, or use its absolute path. No Grain source checkout, Rust or Node is needed
+to run the downloaded CLI for an MCP descriptor. Native project builds need a
+Node.js LTS installation with npm; the generated project installs TypeScript and
+esbuild locally. The CLI reports its own version with `--version`; generated
+projects target Grain extension API `^1.0` and need a matching Grain application.
+
+CLI-source pushes run the workflow; maintainers can also run it manually on a
+reviewed source ref. It grants only
+repository read permission and produces three OS-specific artifacts with source
+identity, guide and checksums. It does not create or modify a GitHub release.
+Cross-platform artifact checks must pass before claiming those downloads work.
+
+For source development, build from the workspace using Rust 1.96 or later:
 
 ```powershell
 cargo build --locked -p grain-ext-cli --bin grain-ext
@@ -31,12 +63,13 @@ grain-ext pack
 ```
 
 `init` creates `manifest.json`, a typed hello action in `src/main.ts`, generated
-`grain.d.ts`, build scripts and developer documentation. Add your own valid
-512×512 `icon.png` before doctor/pack can pass. Declare tools, their supported
+`grain.d.ts`, build scripts, developer documentation and a neutral 512×512
+`icon.png`. The starter passes doctor without having to find artwork first;
+replace that placeholder with your own icon before publication. Declare tools, their supported
 arguments and risk in the manifest, then register matching handlers with
 `grain.actions`. The scaffold's return value uses `{ ok: { title, body } }`.
 Handlers receive validated arguments and a read-only idempotency context.
-Grain owns confirmation, provenance and receipts; a lost response must not cause
+Grain owns execution policy, provenance and receipts; a lost response must not cause
 an automatic repeated write. The generated declarations describe the supported
 result/error forms and restricted storage, network and authentication services.
 
@@ -133,8 +166,9 @@ output cannot replace either project definition.
 
 `dev` refuses MCP projects because there is no Grain worker to reload.
 In Grain, open **Extensions → Installed → Developer** to load a native project.
-Close that drawer to manage **Installed MCP extensions** and **Your MCP connections**.
-Direct MCP connections use the form or credential-free JSON and need no package.
+Close that drawer to manage the shared Installed extension list. Open an
+extension's page for account setup and preferences. In development, direct MCP
+connections use the form or credential-free JSON and need no package.
 Store MCPs are installed from verified catalogue descriptors; their URL/auth
 definition is changed through a verified store update, not the custom editor.
 Installation leaves the connection inactive. Sign in and enable it separately.
@@ -187,9 +221,33 @@ is decoded. This is not full animation validation or a rendering-safety claim.
 Symlinks, unsupported files, case-insensitive duplicate names and multiple
 cover assets refuse. Size/hash metadata and cover-first ordering are stable.
 
-The CLI creates `extensions/<id>/DESCRIPTION.md` and publishes `submission.toml`
-last as its completion marker. Existing submission directories are never
-overwritten; updating a prior submission is not yet supported by this command.
+The CLI stages `extensions/<id>/DESCRIPTION.md` and `submission.toml`, validates
+them together and installs the complete directory. Existing submissions are never
+overwritten implicitly. To draft an
+update, change the project's version, publish a different source commit/tag, then
+add `--update-from <current-registry-version>` to the same submit command:
+
+```powershell
+grain-ext submit --registry C:\path\to\registry --repo https://github.com/owner/repository --tag v1.0.1 --commit <new-full-commit> --license MIT --contact "Maintainer contact" --update-from 1.0.0
+```
+
+The expected version must match the existing draft. Version, tag and commit must
+all differ from the old submission. This command does not order semver versions;
+maintainer review/publication controls the advertised release. Source repository
+and native/MCP kind must match; transfers need maintainer review. A corrupt,
+incomplete or linked existing draft, extra files in its directory, or a concurrent
+submission command causes refusal rather than a forced overwrite. A versioned
+update is still subject to source ownership/approval checks, not authorized by
+this local flag.
+
+Both files are staged and validated before replacing the directory. Ordinary
+replacement failure restores the original; a failed restore retains its path in
+the error for recovery. A process killed between directory moves can leave the
+old draft in `extensions/.grain-submit-*/previous` and a `.grain-submit-<id>.lock`
+at the registry root. Inspect/restore that draft and remove its lock only after
+confirming no submission process is running. This local drafting operation is
+not a crash-atomic Git transaction. No dirty-file reset or automatic Git push is
+performed.
 Media remains at the source pointer with hashes/sizes in the submission. The
 maintainer checker shares the schema and verifies the description snapshot;
 The current maintainer workflow matches source, media, build and signed
@@ -203,15 +261,17 @@ catalogue activation and signing custody remain separate operator decisions;
 the public SDK is not frozen. README is source documentation; the app renders
 the signed DESCRIPTION document directly in the extension's Overview.
 
-Focused checks:
+## Verification
+
+For CLI edits, use the normal affected tests and build:
 
 ```powershell
-cargo test --locked -p grain-sdk -p grain-ext-cli -p grain-extension-checks -p grain-registry-tools --all-targets
-powershell.exe -NoProfile -File tests/agent-harness/build.ps1
-node tests/agent-harness/author-contract.mjs
-node tests/agent-harness/run.mjs --suite extension-contract
-node tests/agent-harness/run.mjs --suite store-mcp
+cargo test --locked -p grain-ext-cli -p grain-extension-checks --lib
+cargo build --locked -p grain-ext-cli --bin grain-ext
 ```
 
-These reuse the maintained real-app runner. They do not need a real provider
-account or dependency installation for generated-project verification.
+Generated declarations/builds use the existing `tests/agent-harness/author-contract.mjs`
+check when given a current stamped CLI. It runs TypeScript positive/negative
+checks and a bundled hello action, without opening Grain or using an account.
+Run real-application suites only when install/auth/runtime behavior changes;
+ordinary CLI edits do not require a new installer or complete Agent harness run.

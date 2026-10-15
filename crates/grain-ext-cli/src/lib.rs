@@ -4,6 +4,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use anyhow::{bail, Context, Result};
+mod submission;
 use grain_sdk::manifest::Surfaces;
 use grain_sdk::{
     Contributes, ExtensionManifest, ExtensionProjectManifest, GrainPack, PackPayloads, Tier,
@@ -21,6 +22,7 @@ Usage:
   grain-ext pack [--output <path>]
   grain-ext submit --registry <path> --repo <url> --tag <tag> --commit <sha>
                    --contact <maintainer> [--license <spdx>] [--category tools]
+                   [--update-from <existing-version>]
   grain-ext --help
   grain-ext --version";
 static NEXT_ARTIFACT_TEMP: AtomicU64 = AtomicU64::new(1);
@@ -264,14 +266,14 @@ pub fn init_mcp_project(
     let descriptor =
         grain_extension_checks::read_mcp_descriptor(&root).map_err(anyhow::Error::msg)?;
     write_json(&root.join("mcp.json"), &descriptor)?;
-    write_text(&root.join("README.md"), &format!("# {name}\n\nMCP extension `{}`. Edit `mcp.json`, run `grain-ext doctor`, then `grain-ext pack`.\n\nGrain owns connection identities, enablement and OAuth consent. Never put credentials, secrets or server-launch commands in this descriptor. Bounded public transport headers and issuer-bound public `oauthClient` metadata are supported; see the CLI author guide for their restrictions. No Grain JavaScript SDK or Node build is required. `grain-ext dev` applies only to native tool projects. Store publishing remains provisional.\n", descriptor.id))?;
+    write_text(&root.join("README.md"), &format!("# {name}\n\nMCP extension `{}`. Edit `mcp.json`, run `grain-ext doctor`, then `grain-ext pack`.\n\nGrain owns connection identities, enablement and OAuth consent. Never put credentials, secrets or server-launch commands in this descriptor. Bounded public transport headers and issuer-bound public `oauthClient` metadata are supported; see the CLI author guide for their restrictions. No Grain JavaScript SDK or Node build is required. `grain-ext dev` applies only to native tool projects. See the CLI author guide for source submission and review.\n", descriptor.id))?;
     write_text(
         &root.join("DESCRIPTION.md"),
         &format!("# {name}\n\n{}\n", descriptor.description),
     )?;
     write_text(&root.join(".gitignore"), "*.mcp.json\n")?;
     guard.keep();
-    Ok(InitResult { root: root.clone(), output: format!("Created {}\n\nMCP descriptor only; no Node build or server launch. OAuth is managed by Grain.\n\nNext:\n  cd {slug}\n  grain-ext doctor\n  grain-ext pack\n\nStore submission and listing remain provisional.", root.display()) })
+    Ok(InitResult { root: root.clone(), output: format!("Created {}\n\nMCP descriptor only; no Node build or server launch. OAuth is managed by Grain.\n\nNext:\n  cd {slug}\n  grain-ext doctor\n  grain-ext pack\n\nEdit DESCRIPTION.md for store text; add media/icon.png and optional wide gallery images before submitting.", root.display()) })
 }
 
 fn replace_artifact(output: &Path, bytes: &[u8]) -> Result<()> {
@@ -342,6 +344,10 @@ pub fn init_project(cwd: &Path, name: &str, id: Option<&str>) -> Result<InitResu
     let project = scaffold_manifest(name, &id);
     validate_scaffold(&project)?;
     write_json(&root.join("manifest.json"), &project)?;
+    fs::write(
+        root.join("icon.png"),
+        include_bytes!("../assets/starter-icon.png"),
+    )?;
     write_text(&root.join("src/main.ts"), &entry_source(name)?)?;
     write_text(&root.join("grain.d.ts"), &typescript_declarations()?)?;
     write_json(&root.join("package.json"), &package_json(&slug))?;
@@ -382,6 +388,7 @@ where
     let mut license = "MIT".to_string();
     let mut contact: Option<String> = None;
     let mut categories: Vec<String> = Vec::new();
+    let mut update_from: Option<String> = None;
     let mut seen = std::collections::HashSet::new();
 
     while let Some(flag) = args.next() {
@@ -400,6 +407,7 @@ where
             "--license" => license = val()?,
             "--contact" => contact = Some(val()?),
             "--category" => categories.push(val()?),
+            "--update-from" => update_from = Some(val()?),
             other => bail!("unknown submit option '{other}'"),
         }
     }
@@ -454,22 +462,20 @@ where
     if !extensions.canonicalize()?.starts_with(&registry) {
         bail!("registry extensions path escapes its checkout");
     }
-    let dir = extensions.join(&id);
-    fs::create_dir(&dir).with_context(|| {
-        format!(
-            "create new submission {}; existing submissions are never overwritten",
-            dir.display()
-        )
-    })?;
-    let mut guard = NewProjectGuard::new(dir.clone());
-    write_text(&dir.join("DESCRIPTION.md"), &listing.description)?;
-    // Publish the completion marker last. Maintainer checks require both its
-    // strict schema and the matching description; partial output cannot pass.
-    replace_artifact(&dir.join("submission.toml"), toml.as_bytes())?;
-    guard.keep();
-
+    let dir = submission::write(
+        &extensions,
+        &submission,
+        &toml,
+        &listing.description,
+        update_from.as_deref(),
+    )?;
+    let action = if update_from.is_some() {
+        "update"
+    } else {
+        "add"
+    };
     Ok(format!(
-        "Wrote {}\n\nProvisional source submission only; no build, upload, signing or release performed. E4 publishing migration is required.\n\nNext:\n  cd {}\n  git add extensions/{id}\n  git commit -m \"add {id}\"\n  git push and open a pull request against grain-extensions",
+        "Wrote {}\n\nSource submission only; no build, upload, signing or release performed.\n\nNext:\n  cd {}\n  git add extensions/{id}\n  git commit -m \"{action} {id}\"\n  Push your branch and open or update its pull request in the extension registry. Source/tag checks, maintainer approval and verified publication follow separately.",
         dir.join("submission.toml").display(),
         registry.display(),
     ))
@@ -509,11 +515,7 @@ fn scaffold_manifest(name: &str, id: &str) -> ExtensionProjectManifest {
             auto_send: None,
             needs: Vec::new(),
             description: format!("A Grain extension by {name}"),
-            // [GRAIN] Point at where the icon belongs so `doctor` guides the
-            // author to drop in a 512×512 icon.png rather than leaving them to
-            // discover the field. An icon is required to submit (§13.3); the
-            // scaffold cannot invent art, so `doctor` reports the missing file
-            // until the author adds it.
+            // Neutral starter artwork; authors replace it with their own icon.
             icon: "icon.png".into(),
             repository: None,
             permissions: Vec::new(),
@@ -561,14 +563,13 @@ impl DevClient {
         let config: DevTokenFile = serde_json::from_str(&raw).context("parse developer token")?;
         let (mut socket, _) = tungstenite::connect(config.url.as_str())
             .context("connect to Grain developer channel")?;
-        socket.send(tungstenite::Message::Text(
-            serde_json::to_string(&grain_sdk::ClientHello {
+        socket.send(tungstenite::Message::Text(serde_json::to_string(
+            &grain_sdk::ClientHello {
                 token: config.token,
                 client: "grain-ext".into(),
                 grain_api: GRAIN_API_VERSION.into(),
-            })?
-            .into(),
-        ))?;
+            },
+        )?))?;
         let tungstenite::Message::Text(welcome) = socket.read()? else {
             bail!("Grain returned an invalid developer handshake");
         };
@@ -583,13 +584,13 @@ impl DevClient {
     fn reload(&mut self, extension_id: &str) -> Result<grain_sdk::DevReloadResult> {
         let request_id = self.next_request;
         self.next_request += 1;
-        self.socket.send(tungstenite::Message::Text(
-            serde_json::to_string(&grain_sdk::DevControlFrame::DevReload {
-                request_id,
-                extension_id: extension_id.into(),
-            })?
-            .into(),
-        ))?;
+        self.socket
+            .send(tungstenite::Message::Text(serde_json::to_string(
+                &grain_sdk::DevControlFrame::DevReload {
+                    request_id,
+                    extension_id: extension_id.into(),
+                },
+            )?))?;
         loop {
             let tungstenite::Message::Text(raw) = self.socket.read()? else {
                 continue;
@@ -872,7 +873,7 @@ fn tsconfig_json() -> serde_json::Value {
 
 fn readme(name: &str, id: &str) -> String {
     format!(
-        "# {name}\n\nGrain extension id: `{id}`\n\n## Develop\n\n1. Install Node.js and run `npm install`.\n2. Run `npm run build` once.\n3. Run `grain-ext doctor`.\n4. Enable Developer mode in Grain and add this folder as an unpacked extension.\n5. Run `grain-ext dev` for incremental builds and hot reload.\n\nEdit `src/main.ts`; `grain.d.ts` is generated from the Grain SDK. `DESCRIPTION.md` is reserved for user-facing listing text; README is developer documentation. Catalog/media migration remains provisional.\n"
+        "# {name}\n\nGrain extension id: `{id}`\n\n## Develop\n\n1. Install Node.js and run `npm install`.\n2. Run `npm run build` once.\n3. Run `grain-ext doctor`.\n4. Enable Developer mode in Grain and add this folder as an unpacked extension.\n5. Run `grain-ext dev` for incremental builds and hot reload.\n\nEdit `src/main.ts`; `grain.d.ts` is generated from the Grain SDK. `DESCRIPTION.md` is reserved for user-facing listing text; README is developer documentation. Replace the neutral 512×512 `icon.png` before publishing. For the store icon, copy your final icon to `media/icon.png`; gallery images are separate wide WebP/GIF files. See the CLI guide for listing limits and new/update submission commands.\n"
     )
 }
 
@@ -958,6 +959,7 @@ mod tests {
         assert!(run(args, &project.root)
             .unwrap_err()
             .to_string()
+            .to_ascii_lowercase()
             .contains("existing submissions"));
         assert_eq!(fs::read(folder.join("submission.toml")).unwrap(), previous);
         fs::write(folder.join("DESCRIPTION.md"), "changed after snapshot").unwrap();
@@ -1000,6 +1002,156 @@ mod tests {
         fs::remove_file(project.root.join("DESCRIPTION.md")).unwrap();
         assert!(run(submission_args(registry.path()), &project.root).is_err());
         assert!(!registry.path().join("extensions").exists());
+    }
+
+    #[test]
+    fn submission_updates_native_and_mcp_drafts_without_losing_the_listing() {
+        for native in [false, true] {
+            let root = tempfile::tempdir().unwrap();
+            let project = if native {
+                init_project(root.path(), "Remote tools", None).unwrap()
+            } else {
+                init_mcp_project(
+                    root.path(),
+                    "Remote tools",
+                    None,
+                    "https://tools.example/mcp",
+                    "none",
+                )
+                .unwrap()
+            };
+            let registry = tempfile::tempdir().unwrap();
+            run(submission_args(registry.path()), &project.root).unwrap();
+            let source = project
+                .root
+                .join(if native { "manifest.json" } else { "mcp.json" });
+            let mut definition: serde_json::Value =
+                serde_json::from_slice(&fs::read(&source).unwrap()).unwrap();
+            definition["version"] = "0.1.1".into();
+            write_json(&source, &definition).unwrap();
+            fs::write(project.root.join("DESCRIPTION.md"), "# Updated listing\n").unwrap();
+            let mut args = submission_args(registry.path());
+            for (flag, value) in [
+                ("--tag", "v0.1.1"),
+                ("--commit", "f234567890abcdef1234567890abcdef12345678"),
+            ] {
+                let at = args.iter().position(|arg| arg == flag).unwrap();
+                args[at + 1] = value.into();
+            }
+            args.extend(["--update-from".into(), "0.1.0".into()]);
+            let output = run(args.clone(), &project.root).unwrap();
+            assert!(output.contains("update com.example.remote-tools"));
+            let target = registry.path().join("extensions/com.example.remote-tools");
+            let updated =
+                grain_extension_checks::read_submission(&target, "com.example.remote-tools")
+                    .unwrap();
+            assert_eq!(updated.version, "0.1.1");
+            assert_eq!(
+                fs::read_to_string(target.join("DESCRIPTION.md")).unwrap(),
+                "# Updated listing\n"
+            );
+            assert!(run(args, &project.root)
+                .unwrap_err()
+                .to_string()
+                .contains("not 0.1.0"));
+            assert_eq!(fs::read_dir(registry.path()).unwrap().count(), 1);
+            assert_eq!(fs::read_dir(target.parent().unwrap()).unwrap().count(), 1);
+        }
+    }
+
+    #[test]
+    fn submission_update_refusals_preserve_both_original_files() {
+        let root = tempfile::tempdir().unwrap();
+        let project = init_mcp_project(
+            root.path(),
+            "Remote tools",
+            None,
+            "https://tools.example/mcp",
+            "none",
+        )
+        .unwrap();
+        let registry = tempfile::tempdir().unwrap();
+        run(submission_args(registry.path()), &project.root).unwrap();
+        let target = registry.path().join("extensions/com.example.remote-tools");
+        let original = fs::read(target.join("submission.toml")).unwrap();
+        let description = fs::read(target.join("DESCRIPTION.md")).unwrap();
+        let previous =
+            grain_extension_checks::read_submission(&target, "com.example.remote-tools").unwrap();
+        for mode in [
+            "version",
+            "tag",
+            "commit",
+            "repo",
+            "kind",
+            "unexpected",
+            "corrupt",
+            "lock",
+            "description",
+        ] {
+            let mut candidate = previous.clone();
+            candidate.version = "0.1.1".into();
+            candidate.tag = "v0.1.1".into();
+            candidate.commit = "f234567890abcdef1234567890abcdef12345678".into();
+            match mode {
+                "version" => candidate.version = previous.version.clone(),
+                "tag" => candidate.tag = previous.tag.clone(),
+                "commit" => candidate.commit = previous.commit.clone(),
+                "repo" => candidate.source_repo = "https://github.com/another/tools".into(),
+                "kind" => candidate.artifact_kind = grain_sdk::distribution::ArtifactKind::Native,
+                "unexpected" => fs::write(target.join("README.md"), "unrelated").unwrap(),
+                "corrupt" => fs::write(target.join("submission.toml"), "invalid").unwrap(),
+                "description" => {}
+                "lock" => fs::write(
+                    registry
+                        .path()
+                        .join(".grain-submit-com.example.remote-tools.lock"),
+                    "another command",
+                )
+                .unwrap(),
+                _ => unreachable!(),
+            }
+            let before = fs::read(target.join("submission.toml")).unwrap();
+            let toml = grain_extension_checks::serialize_submission(&candidate).unwrap();
+            assert!(
+                submission::write(
+                    target.parent().unwrap(),
+                    &candidate,
+                    &toml,
+                    if mode == "description" {
+                        "changed without matching metadata"
+                    } else {
+                        std::str::from_utf8(&description).unwrap()
+                    },
+                    Some("0.1.0")
+                )
+                .is_err(),
+                "{mode}"
+            );
+            assert_eq!(
+                fs::read(target.join("submission.toml")).unwrap(),
+                before,
+                "{mode}"
+            );
+            assert_eq!(
+                fs::read(target.join("DESCRIPTION.md")).unwrap(),
+                description,
+                "{mode}"
+            );
+            if mode == "unexpected" {
+                fs::remove_file(target.join("README.md")).unwrap();
+            }
+            if mode == "corrupt" {
+                fs::write(target.join("submission.toml"), &original).unwrap();
+            }
+            if mode == "lock" {
+                fs::remove_file(
+                    registry
+                        .path()
+                        .join(".grain-submit-com.example.remote-tools.lock"),
+                )
+                .unwrap();
+            }
+        }
     }
 
     #[test]
@@ -1164,6 +1316,7 @@ mod tests {
             "package.json",
             "tsconfig.json",
             "README.md",
+            "icon.png",
             ".gitignore",
         ] {
             assert!(result.root.join(file).is_file(), "missing {file}");
@@ -1237,20 +1390,11 @@ mod tests {
         assert_eq!(project.manifest.id, "dev.example.my-tool");
     }
 
-    fn write_test_icon(dir: &Path) {
-        image::RgbaImage::new(512, 512)
-            .save_with_format(dir.join("icon.png"), image::ImageFormat::Png)
-            .unwrap();
-    }
-
     #[test]
     fn submit_writes_a_valid_submission_into_the_registry() {
         let temp = tempfile::tempdir().unwrap();
         let project =
             init_project(temp.path(), "Hello Ext", Some("com.example.hello-ext")).unwrap();
-        // A submittable extension must carry its icon (§13.3); the scaffold
-        // declares the path, the author supplies the file.
-        write_test_icon(&project.root);
         let registry = tempfile::tempdir().unwrap();
         let output = run(
             [
@@ -1292,12 +1436,11 @@ mod tests {
     }
 
     #[test]
-    fn doctor_flags_a_fresh_scaffold_missing_its_icon() {
-        // The scaffold declares "icon.png" but cannot invent the art, so a fresh
-        // project is not yet submittable — doctor says exactly why (§13.3).
-        // Everything else about the scaffold is clean.
+    fn doctor_flags_a_removed_starter_icon() {
+        // Explicitly removing required artwork still produces a useful finding.
         let temp = tempfile::tempdir().unwrap();
         let project = init_project(temp.path(), "Doctor Test", None).unwrap();
+        fs::remove_file(project.root.join("icon.png")).unwrap();
         let error = run(["doctor".into()], &project.root)
             .unwrap_err()
             .to_string();
@@ -1306,10 +1449,11 @@ mod tests {
     }
 
     #[test]
-    fn doctor_accepts_a_scaffold_once_its_icon_is_added() {
+    fn doctor_accepts_a_fresh_scaffold_with_its_neutral_icon() {
         let temp = tempfile::tempdir().unwrap();
         let project = init_project(temp.path(), "Doctor Test", None).unwrap();
-        write_test_icon(&project.root);
+        let icon = image::open(project.root.join("icon.png")).unwrap();
+        assert_eq!((icon.width(), icon.height()), (512, 512));
         let output = run(["doctor".into()], &project.root).unwrap();
         assert!(output.starts_with("doctor: 0 findings"), "{output}");
     }

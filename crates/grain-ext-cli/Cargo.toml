@@ -20,7 +20,7 @@ notify = "8.2"
 tungstenite = "0.24"
 specta = "=2.0.0-rc.22"
 specta-typescript = "=0.0.9"
+tempfile = "3"
 
 [dev-dependencies]
-tempfile = "3"
 image = { version = "0.25", default-features = false, features = ["png"] }

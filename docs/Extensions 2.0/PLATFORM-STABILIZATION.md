@@ -5,8 +5,9 @@ extension authoring, review, publication and store delivery. It replaces this
 file's earlier chronological work order and the historical E4–E8 phase counts.
 Completed evidence stays in [progress](MCP-EXTENSION-PROGRESS.md) and the focused
 audit documents; it is not a fresh backlog. Six bounded blocks remain below.
-This update is planning/audit only: no runtime, repository protection, custody,
-account, SDK release or publication change is made by writing it.
+Current implementation: Block 1 author CLI changes are implemented locally;
+focused checks pass and cross-platform artifact validation is next. Blocks 2–6
+remain unopened. No application runtime, account, custody or catalogue change.
 
 ## Target experience
 
@@ -79,7 +80,16 @@ provider prerequisite, not a store-hosting dependency.
 
 ## Block 1 — Finish the supported author contract and local workflow
 
-**Start here.** Keep the current native and remote MCP formats; reconcile the
+**In verification, 15 October:** native scaffolds include a neutral valid PNG;
+`submit --update-from <version>` stages/revalidates complete drafts and preserves
+the old draft on refusals or ordinary replacement failure. Native/MCP update,
+source/kind/version checks, stale locks and recovery are documented. A small
+read-only three-OS artifact workflow prepares executable/guide/checksums/source
+identity, with no installer or release. Local 17 CLI + 29 checker tests pass;
+generated TypeScript/type-negative/bundle checks pass. Cross-platform workflow
+and final source review remain to close this block. PR automation stays in Block 3.
+
+Keep the current native and remote MCP formats; reconcile the
 public guide/generated declarations/checker/host behavior before calling the SDK
 stable. Clearly state native worker restrictions, supported argument/result/error
 forms, brokered network/storage/auth, MCP transport/auth support, public headers,

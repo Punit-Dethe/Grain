@@ -1,5 +1,21 @@
 # Extension implementation: progress, changes and user testing
 
+**Block 1 author workflow implementation, 15 October 2026:** implemented native
+starter artwork, explicit `submit --update-from <existing-version>` for native/MCP
+source drafts, and corrected new/update/listing instructions. Reuses the existing
+shared validator, tempfile dependency and GitHub artifact infrastructure; no new
+runtime, service, protocol, harness or application installer. Updates verify the
+old draft/version/source/kind, stage both files, restore ordinary failed moves,
+and preserve recoverable backup on failed restore. Tests cover stale/new versions,
+source/kind/tag/commit mismatches, corrupt or unrelated content, lock contention,
+listing mismatch and rollback; interruption recovery is documented, not claimed
+crash-atomic. Read-only Windows/Linux/macOS CLI artifact workflow is prepared.
+Local checks: **17 CLI + 29 checker Pass**, strict CLI Clippy Pass; existing
+four-stage generated author contract Pass (including 15 expected type refusals).
+Cross-platform artifact checks and final clean-project smoke remain in progress.
+Whole-checker `-D warnings` exposed two existing listing lint findings; not folded
+into this implementation. No user test needed for this CLI-only block.
+
 **Publishing/developer/store readiness plan, 15 October 2026:** audited current
 CLI, shared contract, source review/signing, GitHub workflows/settings and store
 gates. [The existing stabilization plan](PLATFORM-STABILIZATION.md) is now the
