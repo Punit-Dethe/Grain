@@ -4,10 +4,11 @@ Updated 15 October 2026. This is the **single active forward plan** for finishin
 extension authoring, review, publication and store delivery. It replaces this
 file's earlier chronological work order and the historical E4–E8 phase counts.
 Completed evidence stays in [progress](MCP-EXTENSION-PROGRESS.md) and the focused
-audit documents; it is not a fresh backlog. Six bounded blocks remain below.
-Current implementation: Block 1 author CLI changes are implemented locally;
-focused checks pass and cross-platform artifact validation is next. Blocks 2–6
-remain unopened. No application runtime, account, custody or catalogue change.
+audit documents; it is not a fresh backlog. Six bounded blocks are defined below: **Block 1 complete; five remain**.
+Current implementation: Block 1 is complete for the supported author workflow.
+Local/three-OS checks, artifact delivery verification and focused source audit
+pass. Blocks 2–6 remain unopened. No application runtime, account, custody or
+catalogue change. No new installer or stable public SDK release.
 
 ## Target experience
 
@@ -39,13 +40,13 @@ confirmation dialogs.
 | Store identity | Duplicate historical release cards fixed in 608fb263. Browse/details/icons now share latest eligible publication selection. Real Windows store suite: 12 Pass, one existing live-network test ignored. User confirmation of the two-card view remains pending. |
 | Tool selection | Existing lexical shortlist, compact directory and exact recovery have a completed bounded GitHub/Notion checkpoint. No new retrieval research, embeddings or Agent rewrite in this work order. |
 
-## Audit: concrete gaps, not assumed missing implementations
+## Audit baseline: concrete gaps, not assumed missing implementations
 
 | Finding | Basis inspected | Required action |
 | --- | --- | --- |
-| Authors must compile the CLI from Grain source | `crates/grain-ext-cli/README.md` | Distribute a versioned CLI with clear supported OS/runtime requirements; exercise installation from a clean author directory. |
-| Native scaffold does not pass doctor until an icon is supplied | CLI scaffold and tests | Provide a clearly identified valid starter icon or an equally simple documented setup; align runtime/listing icon instructions. Do not silently copy unrelated branding. |
-| Submission drafting cannot update an existing submission | CLI guide and `crates/grain-ext-cli/src/lib.rs` | Explicit safe update mode; preserve an existing draft on invalid input/failure. |
+| Authors had to compile the CLI from Grain source (fixed in Block 1) | `crates/grain-ext-cli/README.md` | Distribute a versioned CLI with clear supported OS/runtime requirements; exercise installation from a clean author directory. |
+| Native scaffold needed supplied artwork to pass doctor (fixed in Block 1) | CLI scaffold and tests | Provide a clearly identified valid starter icon or an equally simple documented setup; align runtime/listing icon instructions. Do not silently copy unrelated branding. |
+| Submission drafting lacked updates (fixed in Block 1) | CLI guide and `crates/grain-ext-cli/src/lib.rs` | Explicit safe update mode; preserve an existing draft on invalid input/failure. |
 | Submission stops at local files | CLI guide | Small optional GitHub PR submission/update helper using existing Git/`gh`; keep manual/offline drafting usable. Authenticate through `gh`, never store a second GitHub credential. |
 | Permanent ownership/review governance is unfinished | `review.rs`, `approval.rs`, registry REVIEW-POLICY | Define ID ownership, authorized updates and maintainer eligibility; replace exact tester hash exceptions with a protected operational approval policy. |
 | Publishing needs too much manual assembly | Actual GitHub/Notion artwork publication; existing CLI commands | One orchestration entry point around existing prepare/sign/assemble/export/activate commands; no parallel implementation of their checks. |
@@ -80,14 +81,21 @@ provider prerequisite, not a store-hosting dependency.
 
 ## Block 1 — Finish the supported author contract and local workflow
 
-**In verification, 15 October:** native scaffolds include a neutral valid PNG;
+**Complete, 15 October:** native scaffolds include a neutral valid PNG;
 `submit --update-from <version>` stages/revalidates complete drafts and preserves
 the old draft on refusals or ordinary replacement failure. Native/MCP update,
 source/kind/version checks, stale locks and recovery are documented. A small
 read-only three-OS artifact workflow prepares executable/guide/checksums/source
 identity, with no installer or release. Local 17 CLI + 29 checker tests pass;
-generated TypeScript/type-negative/bundle checks pass. Cross-platform workflow
-and final source review remain to close this block. PR automation stays in Block 3.
+generated TypeScript/type-negative/bundle checks pass. [Artifact run
+38711004583](https://github.com/Punit-Dethe/Grain/actions/runs/38711004583) passes
+Windows x64, Linux x64 and macOS arm64 (17 CLI/29 checker tests on Windows;
+18 CLI/29 checker tests on Unix). All three bundles were downloaded and their
+checksums/source identities verified. The delivered Windows executable also
+passes clean MCP init/doctor/pack without a Grain checkout. Native CLI packaging
+and new/update drafting passed separately from a clean generated npm project.
+Focused source audit passes. PR automation stays in Block 3; SDK freeze/public
+release is not implied. No user test is required to close this CLI-only block.
 
 Keep the current native and remote MCP formats; reconcile the
 public guide/generated declarations/checker/host behavior before calling the SDK
@@ -283,7 +291,8 @@ separate `Punit-Dethe/Grain-Extention` repository).
 
 ## Current user/operator dependencies
 
-Nothing is needed from the user to begin Block 1. Later:
+Block 1 needs no user test. Nothing is needed from the user to begin Block 2
+implementation; actual protection/custody changes remain later operator decisions:
 
 - Confirm the two-card store view after the recent fix; current artwork is accepted.
 - Confirm concrete publishing protection/custody changes before activation.

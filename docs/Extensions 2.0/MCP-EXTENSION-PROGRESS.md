@@ -1,6 +1,6 @@
 # Extension implementation: progress, changes and user testing
 
-**Block 1 author workflow implementation, 15 October 2026:** implemented native
+**Block 1 complete — author workflow, 15 October 2026:** implemented native
 starter artwork, explicit `submit --update-from <existing-version>` for native/MCP
 source drafts, and corrected new/update/listing instructions. Reuses the existing
 shared validator, tempfile dependency and GitHub artifact infrastructure; no new
@@ -12,9 +12,30 @@ listing mismatch and rollback; interruption recovery is documented, not claimed
 crash-atomic. Read-only Windows/Linux/macOS CLI artifact workflow is prepared.
 Local checks: **17 CLI + 29 checker Pass**, strict CLI Clippy Pass; existing
 four-stage generated author contract Pass (including 15 expected type refusals).
-Cross-platform artifact checks and final clean-project smoke remain in progress.
+Clean real-CLI native and MCP journeys now pass: init/doctor/pack/new draft/
+update; native packaging used the generated npm/TypeScript/esbuild project.
+Disposable sources/drafts were removed. Final author-contract evidence is
+`tests/agent-harness/.runs/author-lBtr0M` (existing check, four stages/15 expected
+type refusals, no app launch). Cross-platform artifact checks also pass.
+The first artifact run found an inherited Windows-only Cargo output path on Unix;
+its successor rejected runner context at job-env level. Both are corrected by
+initializing a runner-local target in the build step, shared through GITHUB_ENV.
+Final [workflow run 38711004583](https://github.com/Punit-Dethe/Grain/actions/runs/38711004583)
+passes on Windows x64, Linux x64 and macOS arm64. Unix jobs run 18 CLI/29 checker
+tests each; Windows runs 17 CLI/29 checker tests. All delivered bundles were
+downloaded and their executable/README/BUILD checksums and source pin verified.
+The delivered Windows CLI also passes help/version and clean MCP init/doctor/
+pack without a checkout or application launch. Earlier failed/cancelled runs
+remain evidence. Download verification evidence is under the disposable local
+temp directory `grain-cli-delivery-20261015`, not a new maintained harness.
+The focused source audit covers complete-draft staging, refusal preservation,
+restore failure backup, per-ID CLI locking, link/extra-file refusal and secret-free
+read-only artifact packaging. No new blocking source finding remains.
 Whole-checker `-D warnings` exposed two existing listing lint findings; not folded
 into this implementation. No user test needed for this CLI-only block.
+**Remaining: five blocks; next Block 2 ownership/approval policy.** No new Agent
+harness code, installer, application/store runtime change or live extension
+publication. The public SDK remains provisional until release acceptance.
 
 **Publishing/developer/store readiness plan, 15 October 2026:** audited current
 CLI, shared contract, source review/signing, GitHub workflows/settings and store
