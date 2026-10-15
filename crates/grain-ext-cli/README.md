@@ -185,11 +185,10 @@ From the project root, with an existing local registry checkout:
 
 ```powershell
 grain-ext submit --registry C:\path\to\registry --repo https://github.com/owner/repository --tag v1.0.0 --commit <full-lowercase-40-character-commit> --license MIT --contact "Maintainer contact"
-grain-registry check-submission --dir C:\path\to\registry
 ```
 
-Build the maintainer checker with `cargo build --locked -p grain-registry-tools
---bin grain-registry`. Schema 1 records the artifact kind, project identity/API,
+The author CLI runs the shared submission checks; authors do not need to compile
+the separate maintainer checker. Schema 1 records the artifact kind, project identity/API,
 source pointer, listing hashes/sizes and maintainer text. TOML uses structured
 serialization, including quotes and backslashes. Unknown fields and duplicate
 singleton CLI flags refuse. Category defaults to, and must be exactly, `tools`.
@@ -255,6 +254,54 @@ catalogue together. See [registry tooling](../grain-registry-tools/README.md)
 for source review, isolated build, signing and publication. A local submission
 draft has not been uploaded: commit its submission directory on a registry
 branch and open a pull request to the registry after publishing the source/tag.
+
+### Optional GitHub PR helper
+
+Install Git and GitHub CLI (checked with GH 2.100.0), and sign in using `gh auth
+login`. For a community submission, create a personal fork/clone using the normal
+GH workflow from a parent directory, then create a dedicated submission branch:
+
+```powershell
+gh repo fork REGISTRY_OWNER/registry --clone
+cd registry
+git fetch upstream main
+git switch -c submission/com.example.tools-v1 upstream/main
+```
+
+Run the existing `grain-ext submit` command from the extension project, pointing
+at that checkout. Push the extension's source commit/tag separately. Then, in the
+registry checkout, explicitly commit/push just its two submission files:
+
+```powershell
+git add -- extensions/com.example.tools/submission.toml extensions/com.example.tools/DESCRIPTION.md
+git commit -m "Submit com.example.tools"
+git push -u origin HEAD
+grain-ext pr --registry . --id com.example.tools --repo REGISTRY_OWNER/registry --head-repo YOUR_ACCOUNT/registry
+```
+
+Maintainers using the registry directly can clone it normally, branch from
+`origin/main`, and use the registry's own identity as `--head-repo`. Renamed forks
+are supported by passing their actual owner/name. The current GH create command
+supports personal fork heads; use the normal GitHub UI for organization-owned
+forks. `--base` defaults to `main`; fetch its history first when using another base.
+
+The helper validates the native/MCP submission, clean checkout, exact committed
+bytes and already-pushed head. The PR diff may contain only this ID's submission
+and DESCRIPTION; rename detection cannot hide an unrelated deleted file. It
+creates a **draft** PR with an explicit head, or returns the matching open PR
+after checking its source repository and head. An ordinary update uses
+`submit --update-from`, a normal commit/push and the same `pr` command. Existing
+PR descriptions, titles and review state are preserved; edit them manually when
+desired. GitHub's list/create commands have different head syntax, handled here.
+
+This convenience command never forks, fetches, commits, pushes, rewrites branches,
+stashes work, merges, approves or publishes. It uses the signed-in author's ordinary
+GH access, not registry signing authority. A branch remains mutable; CI, source
+ownership and maintainer review still decide acceptance. Children are bounded and
+reaped; failures identify the operation/exit status without printing raw credential
+errors. On an interrupted/uncertain create, inspect the branch's GitHub PR before
+repeating; there is no automatic retry. Oversized/ambiguous PR lookup refuses.
+Registry main-protection and publisher custody remain operator responsibilities.
 
 Source authoring, packaging and submission tooling are available. Production
 catalogue activation and signing custody remain separate operator decisions;

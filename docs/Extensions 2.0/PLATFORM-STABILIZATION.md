@@ -239,6 +239,36 @@ framework. Blocks 1–2 complete; four blocks including Block 3 remain. No app b
 or user account test was required. The earlier open-item paragraph records the
 previous staging checkpoint; this paragraph is the current Block 3 status.
 
+**Author PR helper and CI diagnostics implemented, 15 October:** `grain-ext pr`
+validates a clean committed native/MCP draft, exact already-pushed head, target/
+fork identity and an ID-scoped diff, then delegates draft creation or existing-PR
+lookup to maintained GH CLI. Standard fork/branch/commit/push commands remain
+explicit; the helper never rewrites or pushes a user's checkout or overwrites
+PR text. Local Git fixtures cover hidden edits, unrelated deletion/rename,
+wrong remote/fork, exact lookup and uncertain creation. The real terminal check
+created [disposable PR 7](https://github.com/Punit-Dethe/grain-github-alpha-test/pull/7),
+then repeated it and pushed a normal version update into that same PR with its
+description unchanged. The draft is now closed; no catalogue was published.
+That check caught GH list/create head-syntax differences; branch-only lookup with
+exact repository filtering fixes them. The source audit also disabled rename
+detection in scope checking so it cannot hide an unrelated deleted file.
+
+Publishing child failures now identify the operation and bounded, redacted cause;
+timeouts/start failures retain subprocess failure semantics, so uncertain pushes
+still cannot be replayed. 22 CLI + 29 checker tests and strict CLI Clippy pass;
+19 publisher/public-delivery tests pass, including real bare-Git race tests and
+new redaction/timeout cases. No new dependency, app build or harness. The author
+guide no longer tells authors to compile maintainer tooling just to validate a
+draft. CLI artifact CI will run on this source push; new cross-OS delivery is not
+claimed before its results. Source audit passes; graph context remains incomplete
+for newly added modules. The new diagnostic script is not yet activated in the
+remote publisher: its reviewed source pin will be adopted with final integration.
+
+**Current remainder:** final commit-bound publication/tooling-pin integration and
+one complete new live provider update after reviewed ownership/operator adoption.
+Blocks 1–2 complete; Block 3 still open; four blocks including it remain. No new
+user account/app test is needed for this author-tooling step.
+
 Reuse existing trusted CI and local/protected signer. Provide one documented
 maintainer entry point that selects the reviewed candidate, downloads/verifies
 its evidence, prepares the exact policy, signs only after authorization, assembles

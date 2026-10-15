@@ -43,10 +43,36 @@ def git_environment(source):
     return env
 
 
+class CommandFailure(subprocess.SubprocessError):
+    """Bounded stage diagnostic; raw argv/credentials are not displayed."""
+
+
+def diagnostic(stderr, env):
+    detail = stderr or "No diagnostic returned"
+    for name, value in env.items():
+        if value and any(word in name.upper() for word in ["TOKEN", "PASSWORD", "SECRET", "PRIVATE_KEY"]):
+            detail = detail.replace(value, "[redacted]")
+    detail = re.sub(r"https?://[^\s/@]+:[^\s/@]+@", "https://[redacted]@", detail)
+    detail = re.sub(r"(?i)(authorization\s*[:=])[^\r\n]*", r"\1 [redacted]", detail)
+    return detail[-2048:].replace("\x1b", "").strip()
+
+
 def run(args, cwd, env):
     # Trusted fixed GitHub endpoint/maintainer CLI only. Reap timed-out children.
-    return subprocess.run([str(v) for v in args], cwd=cwd, env=env, check=True,
-                          stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=90).stdout
+    command = [str(v) for v in args]
+    operation = command[1] if len(command) > 1 else "command"
+    if Path(command[0]).stem.lower() == "git":
+        operation = next((v for v in command[1:] if v in ["push", "ls-remote"]), "git")
+    try:
+        result = subprocess.run(command, cwd=cwd, env=env, check=False,
+                                stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=90)
+    except subprocess.TimeoutExpired:
+        raise CommandFailure(f"Publication step {operation} timed out; inspect the outcome before retrying") from None
+    except OSError as error:
+        raise CommandFailure(f"Publication step {operation} could not start (OS error {error.errno})") from None
+    if result.returncode:
+        raise CommandFailure(f"Publication step {operation} failed (exit {result.returncode}): {diagnostic(result.stderr, env)}")
+    return result.stdout
 
 
 def push_args(url, base, candidate):

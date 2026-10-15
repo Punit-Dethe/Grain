@@ -15,6 +15,25 @@ import publish_github as publisher
 
 
 class PublisherTests(unittest.TestCase):
+    def test_failed_child_reports_bounded_stage_and_redacts_credentials(self):
+        env = {**os.environ, "FIXTURE_TOKEN": "fixture-private-token", "FIXTURE_PASSWORD": "fixture-password"}
+        script = 'import sys; sys.stderr.write("x"*4000 + " fixture-private-token fixture-password https://user:password@github.com/a Authorization: Bearer hidden"); sys.exit(7)'
+        with self.assertRaises(publisher.CommandFailure) as caught:
+            publisher.run([sys.executable, "-c", script], Path.cwd(), env)
+        message = str(caught.exception)
+        self.assertIn("Publication step -c failed (exit 7)", message)
+        self.assertLess(len(message), 2200)
+        for secret in ["fixture-private-token", "fixture-password", "user:password", "Bearer hidden"]:
+            self.assertNotIn(secret, message)
+        self.assertIn("[redacted]", message)
+
+    def test_timeout_diagnostics_do_not_retain_raw_command_or_output(self):
+        with patch.object(publisher.subprocess, "run", side_effect=subprocess.TimeoutExpired(["secret-command"], 90, stderr="credential")):
+            with self.assertRaisesRegex(publisher.CommandFailure, "step push timed out") as caught:
+                publisher.run(["git", "push", "secret-command"], Path.cwd(), {})
+        self.assertNotIn("secret-command", str(caught.exception))
+        self.assertIsInstance(caught.exception, subprocess.SubprocessError)
+
     def test_inputs_and_handoff_cannot_redirect_or_add_git_flags(self):
         values = ["example/registry", "1" * 40, "2" * 40, "3" * 64, "initial", ""]
         for slot, value in [(0, "https://evil.invalid/repo"), (1, "main"), (2, "1" * 40),

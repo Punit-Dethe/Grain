@@ -4,6 +4,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use anyhow::{bail, Context, Result};
+mod pull_request;
 mod submission;
 use grain_sdk::manifest::Surfaces;
 use grain_sdk::{
@@ -23,6 +24,8 @@ Usage:
   grain-ext submit --registry <path> --repo <url> --tag <tag> --commit <sha>
                    --contact <maintainer> [--license <spdx>] [--category tools]
                    [--update-from <existing-version>]
+  grain-ext pr --registry <path> --id <id> --repo <registry-owner/repo>
+               --head-repo <pushed-owner/repo> [--base main]
   grain-ext --help
   grain-ext --version";
 static NEXT_ARTIFACT_TEMP: AtomicU64 = AtomicU64::new(1);
@@ -130,6 +133,7 @@ where
         }
         "pack" => pack_project(cwd, args),
         "submit" => submit_project(cwd, args),
+        "pr" => pull_request::run(cwd, args),
         _ => bail!("unknown command '{command}'\n\n{HELP}"),
     }
 }
@@ -475,7 +479,7 @@ where
         "add"
     };
     Ok(format!(
-        "Wrote {}\n\nSource submission only; no build, upload, signing or release performed.\n\nNext:\n  cd {}\n  git add extensions/{id}\n  git commit -m \"{action} {id}\"\n  Push your branch and open or update its pull request in the extension registry. Source/tag checks, maintainer approval and verified publication follow separately.",
+        "Wrote {}\n\nSource submission only; no build, upload, signing or release performed.\n\nNext:\n  cd {}\n  git add extensions/{id}\n  git commit -m \"{action} {id}\"\n  Push your branch, then use grain-ext pr (see --help) or open its pull request in the extension registry. Source/tag checks, maintainer approval and verified publication follow separately.",
         dir.join("submission.toml").display(),
         registry.display(),
     ))

@@ -1,5 +1,52 @@
 # Extension implementation: progress, changes and user testing
 
+**Block 3 in progress — author PR convenience and publishing diagnostics,
+15 October 2026:** added `grain-ext pr` using the shared native/MCP submission
+validator, local read-only Git checks and maintained GH CLI. It requires a clean
+checkout on a named submission branch, exact committed bytes, an already-pushed
+matching head, a target/direct personal-fork identity and changes confined to
+one ID's submission/description. It creates a draft or returns the matching open
+PR. Normal Git/GH fork/branch/commit/push stays explicit. There is no automated
+stash/reset/fetch/commit/push/merge/approval/signing or PR-body/title rewrite.
+Native and MCP paths share this helper. Source/tag validation and ownership/
+review remain separate gates; the helper grants no publication authority.
+
+22 CLI + 29 checker tests pass; strict all-target CLI Clippy passes. Five new
+normal Git tests cover both kinds, existing-PR reuse, dirty/untracked and hidden
+assume-unchanged edits, an unrelated deletion masked by rename detection, wrong
+remote/fork, ambiguous identities and uncertain/changed-head creation. No harness
+or dependency was added. Child operations are bounded/reaped, strip Git redirect
+environment and disable optional checkout writes; diagnostics show operation and
+exit status without raw credential errors. New CLI artifact CI runs on source
+push; cross-platform binary delivery is pending its results, not assumed passed.
+
+Terminal-only real workflow: created draft [test PR 7](https://github.com/Punit-Dethe/grain-github-alpha-test/pull/7)
+in the existing disposable repo, verified its exact head, reran lookup and pushed
+a normal version update. Both later calls returned the same PR with its body and
+clean checkout preserved. It is now closed and never entered the signed catalogue.
+The first repeat exposed GH's unsupported owner:branch syntax on `pr list` (it is
+valid on `pr create`); fixed to branch-only lookup with exact repository filtering,
+then reran the same real PR successfully. Source review additionally caught Git
+rename detection hiding an out-of-scope deleted file; `--no-renames` plus a real
+rename fixture closes that gap. Public test source/checkout remains in the owned
+Temp directory `grain-author-pr-live-c_wrh52w`; no cleanup of previously blocked
+temporary files was retried. No Computer Use, provider consent or installer.
+
+The publisher's existing child runner now surfaces operation/exit status and up
+to 2048 characters of credential-redacted diagnostics; timeout/start errors remain
+subprocess failures handled by the existing uncertain-push guard. 19 normal
+publisher/delivery tests pass, including actual bare-Git races and new redaction/
+timeout cases. Raw argv/credentials are not added to displayed errors. This only
+bounds the displayed diagnostic; it does not replace the existing capture runner
+or claim secure-memory erasure. New remote script/tool pins remain to be reviewed
+and activated with final publication integration. Scoped source audit passes;
+graph context did not fully index the new helper, so direct call-path/diff review
+was used. Unrelated Cargo/binding changes are preserved.
+
+**Blocks 1–2 complete; Block 3 remains open.** Next: final commit-bound publication
+and coherent tooling pins, operator adoption, then one full-path new provider
+update. Four blocks including this one remain. No new user test needed now.
+
 **Block 3 in progress — CI intake to exact review draft, 15 October 2026:**
 added `prepare-release-review` over the existing receiver/catalogue/prior-index/
 official GH verification boundaries. It consumes the standard downloaded CI data
