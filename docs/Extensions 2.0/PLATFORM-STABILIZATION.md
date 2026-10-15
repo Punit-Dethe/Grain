@@ -177,6 +177,33 @@ reviewed concrete operator changes, not hidden in a code patch.
 
 ## Block 3 — Reduce publishing to one maintainable operator workflow
 
+**In progress, 15 October — joined post-approval staging implemented:**
+`stage-reviewed-release` reuses the current signer, app-verified serving capture,
+assembly, exact-base local promotion and verified hosting export. It reports each
+stage and a final unsigned local summary. No policy creation/auto-approval, new
+signer, Git writer or Agent harness. Failed work is retained; after a successful
+local promotion, export recovery uses existing export/verify commands without
+signing again. A canonical-path containment test exposed a Windows prefix mismatch
+in the new wrapper's raw roots; canonicalizing every supplied root fixes it.
+Full registry suite: 92 Pass; strict all-target Clippy Pass. Five new normal tests
+exercise the shared workflow with real signed fixtures: MCP addition followed by
+native update/history, stale/unsafe pre-sign refusal, approval/corrupt-fragment
+failure, competing writer and export-only recovery. Three terminal CLI checks
+also pass, including existing/new argument contracts and actual app-root-verified
+base capture followed by invalid-policy refusal without GitHub/key access. A
+scoped manual call-path review supplements graph context, which does not index
+the new wrapper reliably. Local export is pinned to the signed assembly even if
+another writer advances the store after promotion.
+
+**Still open in this block:** CI selection/download and coherent tooling/policy
+preparation, optional author PR helper, final commit/publication tuple integration,
+bounded CI diagnostics and one full-path real-provider publication checkpoint.
+Fixture staging is not claimed as a live approval/provenance/publication run.
+Registry ownership PR 8 remains draft and requires operator adoption before live
+signing. No live signing, key/custody/settings changes, app build or publication
+occurred. Blocks 1–2 remain the only completed blocks; four including this one
+remain. This is a bounded implementation step within Block 3, not a new phase.
+
 Reuse existing trusted CI and local/protected signer. Provide one documented
 maintainer entry point that selects the reviewed candidate, downloads/verifies
 its evidence, prepares the exact policy, signs only after authorization, assembles

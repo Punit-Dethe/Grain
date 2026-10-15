@@ -5,6 +5,8 @@ mod bootstrap_tests;
 mod hosting_tests;
 #[path = "publication_tests.rs"]
 mod publication_tests;
+#[path = "release_tests.rs"]
+mod release_tests;
 #[path = "renewal_tests.rs"]
 mod renewal_tests;
 use super::*;

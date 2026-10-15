@@ -22,6 +22,8 @@ pub(crate) mod capture;
 mod hosting;
 #[path = "publication.rs"]
 pub(crate) mod publication;
+#[path = "release.rs"]
+pub(crate) mod release;
 #[path = "renewal.rs"]
 mod renewal;
 

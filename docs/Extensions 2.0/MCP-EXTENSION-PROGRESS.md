@@ -1,5 +1,45 @@
 # Extension implementation: progress, changes and user testing
 
+**Block 3 in progress — joined reviewed-release staging, 15 October 2026:**
+added `grain-registry stage-reviewed-release`, a thin composition of existing
+review/provenance signing, selected-store capture, serving assembly, conditional
+local promotion and hosting export/verification. The common signer arguments and
+input construction are shared with `sign-reviewed-candidate`; its existing CLI
+contract is retained. The new path derives the prior index from the verified
+selected store. It prints stage outcomes and writes `release.json` only after a
+verified complete bundle exists. That unsigned summary grants no approval or
+remote activation. No new dependency, verifier, service, Agent harness or public
+runtime API. Automatic Agent execution policy and account connections are untouched.
+
+Normal tests reuse the existing real Minisign serving fixtures through a private
+signer seam; production always calls the unchanged protected review signer with
+app-pinned roots. They check MCP addition/native update with retained history,
+stale/unsafe pre-sign refusal, approval/corrupt update failure, a competing local
+writer, and export failure after promotion followed by export-only recovery.
+The first targeted run found a Windows path-prefix mismatch in raw input roots;
+all wrapper roots are now canonicalized before the existing containment check.
+The export pin is calculated from the signed assembly, preventing another writer's
+new pointer from silently selecting a different release. Failed owned work is
+retained for diagnosis; the workflow is not claimed crash-atomic. The guide
+documents pointer inspection and recovery without re-signing or replaying a push.
+
+Verification: **92 registry tests Pass**, strict all-target Clippy Pass, Rust build/
+format checks Pass. Three real CLI checks Pass: old/new argument contracts and
+app-root-verified capture of the current public catalogue into a disposable local
+store followed by invalid-policy refusal. The latter preserved the local pointer,
+accessed no GitHub/key and removed its temporary work. The scoped source audit
+reviewed argument reuse, signing boundary, canonical containment, conditional
+promotion, post-promotion generation binding and failure messages; no blocking
+finding remains. Graph review was used but does not reliably map the new wrapper.
+
+This completes the post-approval local staging part, **not all Block 3**. Still
+open: CI intake/tooling pins and exact policy preparation, optional author PR helper,
+commit-bound publication integration/diagnostics and a full-path live provider
+update after operator policy adoption. No actual operator file, key, GitHub
+protection, hosted catalogue, extension source or application was changed. Registry
+ownership PR 8 remains draft. Blocks 1–2 complete; four blocks including Block 3
+remain. No new user test, installer or Calendar extension needed for this step.
+
 **Block 2 implementation complete — ownership and approval, 15 October 2026:**
 replaced compiled tester-version/hash exceptions with schema-3 protected approval
 policy plus a strict, digest-pinned operator-owned ownership JSON. Signing and

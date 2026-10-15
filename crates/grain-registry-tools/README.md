@@ -194,7 +194,9 @@ release acceptance.
 
 ## Reviewed candidate signing (E4b3 local boundary)
 
-`sign-reviewed-candidate` produces a **signed catalogue update fragment**, without
+For the joined operator path after source review, use `stage-reviewed-release`
+below. `sign-reviewed-candidate` remains the lower-level command and produces a
+**signed catalogue update fragment**, without
 uploading, executing author code, modifying the previous catalogue or activating
 the old registry workflow. This command is maintainer-only and never ships in Grain.
 The [controlled registry CI checkpoint](../../docs/Extensions%202.0/EXTENSION-CI-PROVENANCE-AUDIT.md)
@@ -270,6 +272,62 @@ snapshot, including exact candidate JSON, artifact, DESCRIPTION and pictures;
 extra files, ignored JSON fields, altered trust and symlinks refuse. Existing output
 or output inside an input/policy/ownership tree refuses. The previous index must match its
 approved digest/version, verify against the approved public key and be fresh.
+
+### Stage one reviewed release
+
+```powershell
+grain-registry stage-reviewed-release --submission registry/extensions/com.example.tools --prepared checked-source/prepared --candidate checked-source/candidate --policy protected-review/approved.json --policy-sha256 '<independent approved policy SHA256>' --authority protected-review/ownership.json --gh 'C:\Program Files\GitHub CLI\gh.exe' --attestation checked-source/attestation.jsonl --store protected-serving-store --expected-current-sha256 '<independently reviewed current.json SHA256>' --key protected-keys/publishing.key --prompt-key-password --out fresh-release
+```
+
+This joins existing commands; it does not introduce another verifier or approval
+route. It captures the app-verified current local store, calls the same protected
+review/provenance signer, assembles the complete serving tree, conditionally
+promotes the **local** serving store and exports/verifies a complete hosting bundle.
+The captured base supplies the signer's previous index; no separately selected
+previous tree can drift from this store. Source approval and key custody are
+unchanged. The current ownership file must already be reviewed/adopted. CI download
+and exact approval-policy preparation are still prerequisites at this checkpoint;
+this command never interprets successful CI as human approval.
+
+The output parent must exist; the output directory must be fresh and outside
+the serving store, author/prepared/candidate trees and operator policy/ownership/
+key directories. Those roots are canonicalized before containment checks,
+including Windows path prefixes. Existing output is never reused or overwritten.
+
+| Output | Meaning |
+| --- | --- |
+| `base/v1/` | Verified capture selected by the original current-pointer pin |
+| `signed-update/` | Existing signer's exact approved signed fragment |
+| `assembly/` | Complete verified serving tree and conditional promotion parent |
+| `bundle/` | Verified static hosting handoff retaining existing store history/assets |
+| `release.json` | Successful local summary: prior/new pointer pins, bundle receipt pin, selected snapshot and index version. Not GitHub activation or another approval credential. |
+
+Stages are reported separately. Failures retain the owned output for inspection
+and do not automatically repeat signing, promotion or publication. Before local
+promotion, an approval/assembly failure leaves the store pointer unchanged. A
+competing local writer causes conditional promotion/export to refuse. Export is
+bound to the signed assembly's expected pointer, not whichever generation happens
+to be current after promotion. This is not a crash-atomic transaction across all
+stages. After interruption, inspect the store pointer and retained artifacts;
+do not infer success from the presence of the output directory.
+
+If promotion succeeded but export failed, **do not sign again**. Compare the
+store's current pointer with the retained assembly and rerun only:
+
+```powershell
+grain-registry export-hosting-bundle --store protected-serving-store --expected-current-sha256 '<confirmed current.json SHA256>' --out fresh-recovered-bundle
+grain-registry verify-hosting-bundle --bundle fresh-recovered-bundle --expected-receipt-sha256 '<recovered bundle.json SHA256>'
+```
+
+Do not substitute a later writer's pointer without reviewing that generation.
+A completed bundle still needs the existing commit-bound publication preparation,
+reviewed GitHub tuple and protected publish action. Git activation and public HTTP
+acceptance remain distinct; a confirmed push with failed delivery is recovered by
+the existing read-only delivery check. This command never commits or pushes.
+For multiple extensions, repeat the same path with separately approved policies
+against each new local base, then publish the final verified bundle. There is no
+second batch-specific signing pipeline. The consolidated CI intake/policy and
+author PR helpers remain Block 3 work, not a completed end-to-end workflow claim.
 
 ### Ownership enrollment and changes
 

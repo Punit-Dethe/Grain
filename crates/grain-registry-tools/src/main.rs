@@ -12,7 +12,7 @@
 //! trusts (C-10), and verify against `minisign-verify` in `grain-core`.
 
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use clap::{Args, Parser, Subcommand};
@@ -96,7 +96,7 @@ struct PrepareGithubPublicationArgs {
 }
 
 #[derive(Args)]
-struct SignReviewedCandidateArgs {
+struct ReviewedCandidateArgs {
     #[arg(long)]
     submission: PathBuf,
     #[arg(long)]
@@ -118,11 +118,41 @@ struct SignReviewedCandidateArgs {
     /// GitHub/Sigstore attestation bundle for candidate.json.
     #[arg(long)]
     attestation: PathBuf,
+    #[arg(long)]
+    key: PathBuf,
+}
+
+impl ReviewedCandidateArgs {
+    fn inputs<'a>(
+        &'a self,
+        previous: &'a Path,
+        out: &'a Path,
+        unlock: &'a Unlock,
+    ) -> review::Inputs<'a> {
+        review::Inputs {
+            submission: &self.submission,
+            prepared: &self.prepared,
+            candidate: &self.candidate,
+            policy: &self.policy,
+            policy_pin: &self.policy_sha256,
+            authority: &self.authority,
+            gh: &self.gh,
+            attestation: &self.attestation,
+            previous,
+            key: &self.key,
+            out,
+            unlock,
+        }
+    }
+}
+
+#[derive(Args)]
+struct SignReviewedCandidateArgs {
+    #[command(flatten)]
+    reviewed: ReviewedCandidateArgs,
     /// Previously signed index.json and index.json.minisig directory.
     #[arg(long)]
     previous: PathBuf,
-    #[arg(long)]
-    key: PathBuf,
     /// New update directory; complete hosting/roots/revocations are separate.
     #[arg(long)]
     out: PathBuf,
@@ -246,6 +276,18 @@ enum Cmd {
     /// Sign a new catalogue update only after pinned review and GitHub provenance.
     /// Produces an update fragment, never uploads or mutates the served registry.
     SignReviewedCandidate(SignReviewedCandidateArgs),
+    /// Sign an approved candidate, promote the local serving store and export a verified hosting bundle.
+    /// Never commits, pushes or activates GitHub. Failed work is retained for inspection.
+    StageReviewedRelease {
+        #[command(flatten)]
+        reviewed: ReviewedCandidateArgs,
+        #[arg(long)]
+        store: PathBuf,
+        #[arg(long)]
+        expected_current_sha256: String,
+        #[arg(long)]
+        out: PathBuf,
+    },
     /// Generate a minisign keypair. Writes <name>.pub and <name>.key into --out,
     /// and prints the base64 public-key line to pin in the binary.
     Keygen {
@@ -703,31 +745,16 @@ fn main() -> Result<()> {
             gh,
         } => approval::check(&submission, &policy, &policy_sha256, &authority, &gh),
         Cmd::SignReviewedCandidate(SignReviewedCandidateArgs {
-            submission,
-            prepared,
-            candidate,
-            policy,
-            policy_sha256,
-            authority,
-            gh,
-            attestation,
+            reviewed,
             previous,
-            key,
             out,
-        }) => review::sign(review::Inputs {
-            submission: &submission,
-            prepared: &prepared,
-            candidate: &candidate,
-            policy: &policy,
-            policy_pin: &policy_sha256,
-            authority: &authority,
-            gh: &gh,
-            attestation: &attestation,
-            previous: &previous,
-            key: &key,
-            out: &out,
-            unlock,
-        }),
+        }) => review::sign(reviewed.inputs(&previous, &out, unlock)),
+        Cmd::StageReviewedRelease {
+            reviewed,
+            store,
+            expected_current_sha256,
+            out,
+        } => serving::release::stage(&reviewed, &store, &expected_current_sha256, &out, unlock),
         Cmd::Keygen { out, name } => keygen(out, name, unlock),
         Cmd::Sign { key, input, out } => sign(key, input, out, unlock),
         Cmd::Publine { pubkey } => publine(pubkey),
