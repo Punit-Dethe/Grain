@@ -1,6 +1,6 @@
 # Shared extension platform: bounded stabilization
 
-Updated 14 October 2026. This is the active work order, supplementing the
+Updated 15 October 2026. This is the active work order, supplementing the
 [execution plan](MCP-EXTENSION-REUSE-EXECUTION-PLAN.md). It supersedes the earlier
 GitHub breadth → Notion sequence. Source implementation and outstanding live
 acceptance are distinguished below.
@@ -68,6 +68,16 @@ hints, followed by fetch. One comparable warm control required an extra model
 request. The first control missed catalogue preparation and is not matched.
 Promising single-sample evidence; retain debug opt-in and complete broader
 comparison before adoption. Provider availability is no longer the blocker.
+
+Harbor follow-up: verified the user's saved `deepseek-v4.1-flash:free` model
+without fallback in four terminal Agent reads. Hints passed both tasks (7.36 s
+search, 12.15 s full-page answer). Control search passed with eight calls/one
+identical duplicate; control full-page recovery failed to load fetch and returned
+a qualified partial answer. No provider errors; **three task passes, one failure**.
+All staged model/key settings restored, ordinary profile untouched, no retained
+process or installer. This narrows the next work to retrieval/recovery quality
+and broader workflow acceptance; it does not close the lexical gate or adopt
+the hint experiment. See the progress table and existing fast-execution plan.
 
 **14 October Agent policy correction (latest user decision):** native and MCP
 tool calls execute automatically after ordinary extension enablement/account

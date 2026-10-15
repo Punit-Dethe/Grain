@@ -1,5 +1,59 @@
 # Extension implementation: progress, changes and user testing
 
+**Harbor comparison, 15 October (latest):** exercised the genuine Agent using
+the user's saved `harbor` provider and `deepseek-v4.1-flash:free` model. The saved
+Harbor selection was in ordinary Grain, not the alpha profile. Temporarily staged
+that selected registration/key in the closed alpha profile, disabled fallback,
+and verified the actual provider/model on every offered frame. No secret was
+printed or committed. The ordinary settings/credentials stayed byte-identical;
+alpha selection, fallback and borrowed key were restored, preserving SDK account
+refresh changes. No owned Grain process remains.
+
+Two read-only tasks ran once per condition through the same debug binary and
+Notion account. Order: search control, search hints, full-page hints, full-page
+control. Both pairs prepared identical initial action IDs and schema bytes.
+
+| Task / condition | Action calls | Discovery calls | Model requests | Last action result | Final answer | Task verdict |
+| --- | --- | --- | --- | --- | --- | --- |
+| Find page titles / control | 8 | 0 | 8 | 29.18 s | 33.10 s | Pass; one identical duplicate |
+| Find page titles / hints | 1 | 0 | 2 | 4.71 s | 7.36 s | Pass; no duplicates |
+| Read full page / hints | 2 | 1 | 4 | 9.14 s | 12.15 s | Pass; actual search then fetch |
+| Read full page / control | 5 | 2 | 7 | 22.73 s | 27.04 s | **Fail: partial answer, no full-page fetch** |
+
+No provider errors, budget exhaustion or unexpected/write tools were observed.
+This is **three task passes and one task failure**, not four passes: the control
+explicitly qualified its answer as potentially incomplete. Merely finding the
+expected title and returning nonempty text was insufficient acceptance. Traces
+show recovery loaded other tools but never fetch in that run; raw discovery query
+arguments were not retained, so the exact query/ranking cause is not established.
+The hint run published fetch before calling it in the next model frame. The
+control's last action is a search result, not a full-page confirmation.
+
+Initial publication was six actions plus recovery, 22,524 schema bytes for search
+and 20,974 for the full-page task. Hint metadata added 7,665 / 7,660 bytes, with no
+additional initial schemas. Catalogue preparation took 1.29 / 1.01 / 0.40 / 0.31 s
+in run order; all four prepared successfully. The existing unsupported
+`notion-query-data-sources` schema warning remains (over 64 KiB); this batch does
+not certify every Notion capability.
+
+Hints were quicker and avoided the observed repeated-search/partial-read behavior
+in this small sample. The earlier Gemini hint run answered the same full-page
+prompt in 17.39 s versus Harbor's 12.15 s here, but these are different sessions
+and provider conditions, **not a controlled model-speed comparison**. One sample
+per task/condition does not establish stable latency or reliability. Keep hints
+debug-only opt-in; the offline quality gate, writes, mixed-provider/native checks
+and broader adoption decision remain open. No embeddings or product code changes.
+
+An initial startup attempt hit the alpha-identity guard before model/tool work:
+the shared debug executable had been rebuilt as ordinary Grain. Rebuilt the debug
+alpha executable in 23.88 s, then ran all four journeys without further builds.
+No installer, release, browser or Computer Use. Evidence: ignored
+`tests/agent-harness/.runs/harbor-20261015/` contains comparison, per-run reports,
+events/traces and binary hash; `identity-guard-*` preserves the failed startup.
+Its `run.py` is a disposable credential-staging adapter, **not maintained harness
+infrastructure**; retire it after evidence review rather than extending it into
+a runner. All five restoration assertions passed. No new manual test is assigned.
+
 **9router restored and live recovery verified, 15 October (latest):** after the
 user started the existing gateway, `/v1/models` returned HTTP 200 and genuine
 Grain Agent requests completed using the configured Gemini route. No gateway

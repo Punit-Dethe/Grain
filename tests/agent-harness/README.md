@@ -80,6 +80,17 @@ one initial control missed catalogue preparation and must not be treated as a
 matched timing sample. Hints remain opt-in pending broader comparison; see the
 progress record for the warm control and experimental measurements.
 
+Harbor follow-up (15 October): four genuine read-only journeys verified the
+saved Harbor model with fallback disabled. Three task passes; control full-page
+read was **Fail** because search recovery never published fetch and the response
+was partial. Nonempty reply/expected title/provider success alone cannot accept
+that task. Hints passed both requests and used fewer calls; one sample per task
+and condition does not close the adoption gate. Ignored `.runs/harbor-20261015/`
+holds reports and a disposable profile-staging adapter, not another maintained
+suite. Retire that adapter after evidence review. All changed alpha selection/
+fallback/borrowed-key fields were restored while retaining SDK refresh updates;
+normal settings/credentials were unchanged. No Computer Use or installer.
+
 For an offline catalogue comparison, use the opt-in backend test, not another
 ranker implementation. Its JSON case array has `id`, `split`, `query`, and
 `requires` (all groups required; IDs within each group are alternatives). Tool

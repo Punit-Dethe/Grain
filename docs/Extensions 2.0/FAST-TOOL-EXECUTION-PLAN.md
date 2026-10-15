@@ -1,7 +1,8 @@
 # Fast tool execution: lexical-first execution plan
 
-Status: lexical source checkpoint and terminal MCP read verified; actual-catalogue
-quality gate fails, controlled real-Agent comparison pending. Updated 15 October 2026.
+Status: lexical source checkpoint and bounded Gemini/Harbor read comparisons
+recorded; actual-catalogue quality and broader adoption gates remain open.
+Updated 15 October 2026.
 
 This is the next bounded work order within
 [platform stabilization](PLATFORM-STABILIZATION.md). It turns the user's supplied
@@ -12,6 +13,22 @@ No embedding model, model download, inference runtime or semantic benchmark is
 part of this work order. Reconsider those only after reviewing lexical results.
 
 ## Current checkpoint
+
+Harbor follow-up: the user's saved `deepseek-v4.1-flash:free` model completed
+four genuine Agent journeys with fallback disabled and observed model identity
+verified. Search answered in 7.36 s with deferred hints versus 33.10 s without;
+one action versus eight (one identical duplicate in control). Full-page hints used
+search, one recovery and fetch, answering in 12.15 s. The control answered in
+27.04 s after five searches/two recoveries but never loaded fetch: **partial task
+failure despite no provider error**, not an equivalent speed baseline. Both
+pairs shared initial IDs/schema bytes. Settings/borrowed credential restoration
+passed; no normal-profile changes, installer, browser or product source changes.
+The earlier Gemini full-page hint sample took 17.39 s; different sessions/provider
+conditions prevent attributing that difference solely to the model. These four
+reads are a bounded compatibility/performance check, not the broader write/mixed
+workflow gate. Hints stay debug opt-in. Investigate repeated-search/missing-fetch
+recovery and complete the existing quality gate before adoption; no embedding
+dependency follows automatically. Detailed verdicts/evidence are in progress.
 
 Latest live result: the user restored 9router and three genuine read-only Agent
 journeys completed. The comparable warm control and hint trial used the same
