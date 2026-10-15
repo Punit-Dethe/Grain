@@ -393,15 +393,28 @@ impl StoreState {
     }
 }
 
-fn project_entries(entries: &[IndexEntry], revocations: &Revocations) -> Vec<StoreEntry> {
-    entries
-        .iter()
-        .filter(|entry| match entry.artifact_kind {
+/// The publisher appends releases to the signed index. Keep one latest eligible
+/// publication per id for browsing, installed details and icons. Older releases
+/// remain in the verified index for exact-version integrity and revocations.
+fn latest_entries(entries: &[IndexEntry]) -> std::collections::BTreeMap<&str, &IndexEntry> {
+    let mut latest = std::collections::BTreeMap::new();
+    for entry in entries {
+        let valid = match entry.artifact_kind {
             grain_sdk::distribution::ArtifactKind::Native => entry.validate_tool_only().is_ok(),
             grain_sdk::distribution::ArtifactKind::McpDescriptor => {
                 entry.validate_mcp_installable().is_ok()
             }
-        })
+        };
+        if valid {
+            latest.insert(entry.id.as_str(), entry);
+        }
+    }
+    latest
+}
+
+fn project_entries(entries: &[IndexEntry], revocations: &Revocations) -> Vec<StoreEntry> {
+    latest_entries(entries)
+        .into_values()
         .map(|e| StoreEntry {
             id: e.id.clone(),
             kind: match e.artifact_kind {
@@ -1411,14 +1424,8 @@ pub fn store_entry(app: AppHandle, id: String) -> Result<Option<StoreEntry>, Str
         return Ok(None);
     };
     let revocations = state.revocations.read().unwrap();
-    // Newest entry wins when several versions are published for this id.
-    let matches: Vec<IndexEntry> = index
-        .entries
-        .iter()
-        .filter(|e| e.id == id)
-        .cloned()
-        .collect();
-    let Some(entry) = matches.last() else {
+    let matching = latest_entries(&index.entries);
+    let Some(&entry) = matching.get(id.as_str()) else {
         return Ok(None);
     };
     Ok(project_entries(std::slice::from_ref(entry), &revocations)
@@ -1464,18 +1471,9 @@ pub fn store_covers(app: AppHandle, ids: Vec<String>) -> Result<Vec<StoreCover>,
 
 fn project_covers(entries: &[IndexEntry], ids: Vec<String>) -> Vec<StoreCover> {
     let mut covers: Vec<StoreCover> = Vec::new();
+    let latest = latest_entries(entries);
     for id in ids {
-        // Newest published entry wins, matching `store_entry`.
-        if let Some(entry) = entries.iter().filter(|e| e.id == id).next_back() {
-            let valid = match entry.artifact_kind {
-                grain_sdk::distribution::ArtifactKind::Native => entry.validate_tool_only(),
-                grain_sdk::distribution::ArtifactKind::McpDescriptor => {
-                    entry.validate_mcp_installable()
-                }
-            };
-            if valid.is_err() {
-                continue;
-            }
+        if let Some(entry) = latest.get(id.as_str()) {
             if let Some(m) = entry.icon.as_ref() {
                 covers.push(StoreCover {
                     id,
@@ -1596,6 +1594,60 @@ pub fn store_revocation_banners(app: AppHandle) -> Result<Vec<RevocationBanner>,
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn store_shows_one_latest_publication_per_id_with_matching_icons_and_revocations() {
+        let mut entries: Vec<IndexEntry> = [
+            ("com.grain.github", "0.1.0", "a"),
+            ("com.grain.github", "0.1.1", "b"),
+            ("com.grain.notion", "0.1.0", "c"),
+            ("com.grain.github", "0.1.2", "d"),
+            ("com.grain.notion", "0.1.1", "e"),
+        ]
+        .into_iter()
+        .map(|(id, version, icon)| {
+            serde_json::from_value(serde_json::json!({
+                "id":id,"name":id,"version":version,"artifact_kind":"mcp-descriptor",
+                "tier":"scripted","trust":"verified","sha256":"f".repeat(64),
+                "size":500,"min_grain_api":"1.0",
+                "icon":{"sha256":icon.repeat(64),"size":200,"kind":"png"},
+                "listing":{"sha256":"f".repeat(64),"size":30}
+            }))
+            .unwrap()
+        })
+        .collect();
+        // The shared selection also applies to native tools, not just MCPs.
+        entries[2].artifact_kind = grain_sdk::distribution::ArtifactKind::Native;
+        entries[4].artifact_kind = grain_sdk::distribution::ArtifactKind::Native;
+        let revocations: Revocations = serde_json::from_value(serde_json::json!({
+            "spec":1,"version":1,"expires":"2099-01-01T00:00:00Z",
+            "entries":[{"id":"com.grain.github","version":"0.1.2","state":"revoked","reason":"test"}]
+        })).unwrap();
+        // A retired privileged listing must not hide the eligible publication.
+        let mut retired = entries[3].clone();
+        retired.version = "0.2.0".into();
+        retired.capabilities = vec!["capture:screen-image".into()];
+        entries.push(retired);
+        let view = project_entries(&entries, &revocations);
+        assert_eq!(view.len(), 2);
+        assert_eq!(
+            (&view[0].id, view[0].version.as_str()),
+            (&entries[0].id, "0.1.2")
+        );
+        assert_eq!(
+            (&view[1].id, view[1].version.as_str()),
+            (&entries[2].id, "0.1.1")
+        );
+        assert_eq!(view[0].revocation.as_deref(), Some("revoked"));
+        assert_eq!(view[1].revocation, None);
+        assert_eq!(view[0].icon.as_ref().unwrap().sha256, "d".repeat(64));
+        assert_eq!(view[1].icon.as_ref().unwrap().sha256, "e".repeat(64));
+        let covers = project_covers(&entries, view.iter().map(|e| e.id.clone()).collect());
+        assert_eq!(covers.len(), 2);
+        assert_eq!(covers[0].sha256, view[0].icon.as_ref().unwrap().sha256);
+        assert_eq!(covers[1].sha256, view[1].icon.as_ref().unwrap().sha256);
+        assert_eq!(entries.len(), 6); // The signed index is not rewritten.
+    }
 
     #[test]
     fn explicit_description_projects_and_binds_both_kind_media_without_legacy_fallback() {

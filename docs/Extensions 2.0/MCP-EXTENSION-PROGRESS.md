@@ -1,5 +1,25 @@
 # Extension implementation: progress, changes and user testing
 
+**Store duplicate-version fix, 15 October 2026:** the user accepts the artwork
+layout for now. Their screenshot exposes five cards: three GitHub releases and
+two Notion releases. The signed catalogue correctly retains versioned artifacts,
+but browse projected every release as a separate extension. Browse, installed
+details and installed icons now share one selection per id: the latest eligible
+publication in the existing signed publisher order. Revoked/deprecated state is
+still projected for that exact version; selection does not silently substitute
+an older unrevoked release. Install and Update retain the existing installed
+version comparison. No catalogue republish, account change or installer release.
+Regression covers the five-release/two-id case, native and MCP listings, matching
+icons, a later retired privileged entry and exact-version revocation. The real
+Windows host store suite passes **12 tests**, with its one existing live-network
+test ignored. The dev app rebuilt successfully; reopen the store to check one
+GitHub card (0.1.2) and one Notion card (0.1.1), with Update only for an older
+installed release. Real-app confirmation of the two cards remains pending.
+Run host tests from `src-tauri/` to use its configured `C:/gt` cache and the
+existing Windows activation-manifest test runner; running from the workspace
+root selected a separate native build cache and hit an unrelated transcribe.cpp
+CMake generation failure. No speech build configuration was changed.
+
 **Artwork publication reauthorized, 15 October 2026:** the user explicitly
 authorized publishing both exact artwork candidates after withdrawing the earlier
 approval. PR #5 is merged; follow-up PR #6 corrects a stale producer metadata
@@ -18,7 +38,8 @@ Registry PR #7 pins that verifier fix; the source artifacts are unchanged.
 The prior draft hold below is historical.
 The duplicate author line beneath the detail title is removed; Creator remains
 in Details and the summary remains below the title. Frontend TypeScript/Vite
-build and focused source checks pass; visual acceptance remains pending.
+build and focused source checks pass; the user accepts the artwork/header
+layout for now. The separately reported duplicate store cards are tracked above.
 
 **Separate icon/gallery contract and restored hero, 15 October 2026:** the user
 accepted the Overview/Settings direction and requested a large image above it.

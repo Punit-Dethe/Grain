@@ -116,4 +116,5 @@ selectors. Each has three images. Use Update for an installed older extension
 when offered. Creator stays in Details; the author line is absent below the title.
 The publication creates extension updates only; it does not replace an already
 installed Grain binary. Older binaries do not acquire this new UI from the store.
-Visual acceptance remains pending the user’s real-app check.
+The user accepted this artwork layout for now on 15 October. Their separate
+duplicate-version store-card report is tracked in MCP-EXTENSION-PROGRESS.md.
