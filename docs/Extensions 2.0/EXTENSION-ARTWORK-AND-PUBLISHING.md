@@ -88,6 +88,8 @@ records URLs, pixel sizes and normalization. These are test-listing images;
 they do not certify every depicted service feature through Grain. Public store
 activation remains separate until their exact candidates are approved/signed.
 Both fixed source tags are pushed; the combined candidate is in
-[registry draft PR #5](https://github.com/Punit-Dethe/Grain-Extention/pull/5).
-The user withdrew accidental approval on 15 October: keep this PR a draft and
-both candidates unpublished until new explicit approval.
+[registry PR #5](https://github.com/Punit-Dethe/Grain-Extention/pull/5).
+The user withdrew accidental approval on 15 October, then explicitly
+reauthorized publication of both exact candidates in the next request. PR #5
+is merged; PR #6 aligns producer metadata with the pinned tool build. Signing
+and public activation are in progress; no new Grain installer is required.

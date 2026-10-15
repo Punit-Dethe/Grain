@@ -794,11 +794,6 @@ function ExtensionDetail({
             />
             <div className="extension-detail-heading">
               <h1 id="extension-detail-title">{name}</h1>
-              {entry?.author && (
-                <span className="extension-detail-author">
-                  by {entry.author}
-                </span>
-              )}
               <p>{description || "No description is available."}</p>
             </div>
           </div>

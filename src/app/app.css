@@ -6014,14 +6014,6 @@ html[data-theme="light"] .installed-extension-actions {
   overflow-wrap: anywhere;
 }
 
-.extension-detail-author {
-  display: block;
-  margin-top: 4px;
-  color: var(--text-3);
-  font-size: 12px;
-  overflow-wrap: anywhere;
-}
-
 .extension-detail-intro p {
   max-width: 65ch;
   margin: 10px 0 0;

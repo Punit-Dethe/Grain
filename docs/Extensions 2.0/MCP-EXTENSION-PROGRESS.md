@@ -1,5 +1,14 @@
 # Extension implementation: progress, changes and user testing
 
+**Artwork publication reauthorized, 15 October 2026:** the user explicitly
+authorized publishing both exact artwork candidates after withdrawing the earlier
+approval. PR #5 is merged; follow-up PR #6 corrects a stale producer metadata
+reference to match the existing pinned tool build. Genuine CI preparation and
+signing/publication are in progress; the prior draft hold below is historical.
+The duplicate author line beneath the detail title is removed; Creator remains
+in Details and the summary remains below the title. Frontend TypeScript/Vite
+build and focused source checks pass; visual acceptance remains pending.
+
 **Separate icon/gallery contract and restored hero, 15 October 2026:** the user
 accepted the Overview/Settings direction and requested a large image above it.
 The detail page now restores that wide gallery, with previous/next and numbered

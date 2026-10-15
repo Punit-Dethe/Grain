@@ -122,8 +122,8 @@ impl Policy {
                 || self.review_id != 0
                 || !matches!(
                     self.submission_sha256.as_str(),
-                    "d667ca2fab05aae393497efb46ced148740957f2e443814ab6206aa91523375b"
-                        | "c9eaad5d89f26d5439d6a9a1e91a3533370aa576953e62ef9e85a5a63d0a36f3"
+                    "6e434021102e57675b2fe1edd2b65a851878c4dfff277444091ac03c7caeb127"
+                        | "b486000c5c953a3a4491d70cdd90fbfb90fa75e93f20a5b7af4ab730f25c35bb"
                 )
                 || self.publishing_public_key
                     != "RWREj+hdLljbWOv3LCoTKEPv670pVG+P9knBUMWoR+V445yvdBwBuqj8"
@@ -677,17 +677,17 @@ pub(crate) mod tests {
         p.submitter = "Punit-Dethe".into();
         p.review_id = 0;
         p.submission_sha256 =
-            "d667ca2fab05aae393497efb46ced148740957f2e443814ab6206aa91523375b".into();
+            "6e434021102e57675b2fe1edd2b65a851878c4dfff277444091ac03c7caeb127".into();
         p.publishing_public_key = "RWREj+hdLljbWOv3LCoTKEPv670pVG+P9knBUMWoR+V445yvdBwBuqj8".into();
         let now = Utc::now().timestamp();
         assert!(p.validate(now).is_err());
         p.alpha_maintainer_approval =
-            Some("Maintainer authorization, tester GitHub 0.1.1, 2026-10-14".into());
+            Some("Maintainer authorization, tester GitHub artwork 0.1.2, 2026-10-15".into());
         p.validate(now).unwrap();
         p.submission_sha256 =
-            "c9eaad5d89f26d5439d6a9a1e91a3533370aa576953e62ef9e85a5a63d0a36f3".into();
+            "b486000c5c953a3a4491d70cdd90fbfb90fa75e93f20a5b7af4ab730f25c35bb".into();
         p.alpha_maintainer_approval =
-            Some("Maintainer authorization, tester Notion 0.1.0, 2026-10-14".into());
+            Some("Maintainer authorization, tester Notion artwork 0.1.1, 2026-10-15".into());
         p.validate(now).unwrap();
         for (field, value) in [
             ("alpha_maintainer_approval", serde_json::json!(" ")),
@@ -704,6 +704,18 @@ pub(crate) mod tests {
             ("reviewer", serde_json::json!("another-reviewer")),
             ("review_id", serde_json::json!(1)),
             ("submission_sha256", serde_json::json!("1".repeat(64))),
+            (
+                "submission_sha256",
+                serde_json::json!(
+                    "d667ca2fab05aae393497efb46ced148740957f2e443814ab6206aa91523375b"
+                ),
+            ),
+            (
+                "submission_sha256",
+                serde_json::json!(
+                    "c9eaad5d89f26d5439d6a9a1e91a3533370aa576953e62ef9e85a5a63d0a36f3"
+                ),
+            ),
             (
                 "submission_sha256",
                 serde_json::json!(
