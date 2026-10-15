@@ -18,13 +18,28 @@ delivery Pass. It uses the existing SDK/DCR path. The user has connected it and
 exercised page retrieval/create/update; three completed traces show 7 successful
 Notion executions, no identical repeated calls and no limit exhaustion. Full
 provider/cross-provider acceptance remains pending, including the oversized
-database-query schema. Discovery latency is the next identified improvement:
-15 of 22 calls are search/load rather than actual Notion execution. See the
-latest trace review in the progress document. Publication alone requires no new
+database-query schema. The historical 15-of-22 search/load overhead triggered
+the discovery work, whose adopted policy and completed scoped checkpoint are
+recorded below. It is not the current runtime's call ratio. Publication alone requires no new
 alpha build; the subsequent Agent runtime change below does require an updated
 runtime, currently verified in the development app.
 Earlier dated descriptions below preserve the development history and do not
 override this current gate. Custom MCP management remains hidden in alpha/release.
+
+**15 October discovery adoption (supersedes the opt-in entries below):** normal
+debug/release now use first-round lexical schemas, a bounded compact name directory
+and exact recovery. Lexical-only failed a real Hinglish read and was rejected;
+its initial-recall score has not been relabelled as passing. Removed the experiment
+switch. Kept 24/32 KiB ranked/eager initial caps; increased later task capacity to
+64 KiB after reproducing large-schema starvation. All nine final default Harbor
+journeys pass, covering language variation, ambiguity/missing/unavailable safety
+and GitHub/Notion writes with independent/blind verification. Focused tests and
+the scoped audit pass; 32 oracle-labelled required sets plus three capacity cases
+are available after exact recovery, which is not a model-accuracy claim.
+This closes the bounded discovery implementation block. No new manual batch,
+installer, embedding dependency or harness suite. Next is the existing measured
+receipt work if warranted, or the next platform block; full release acceptance,
+other models/OSs and provider-specific advanced workflows remain separate.
 
 **15 October tool-calling checkpoint:** both GitHub and Notion now pass a bounded
 seven-journey Harbor batch covering separate/combined reads, issue create/update/

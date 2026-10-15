@@ -1,5 +1,15 @@
 # Grain Agent acceptance harness
 
+**15 October final discovery checkpoint:** compact deferred names/exact recovery
+are the normal debug/release policy; the experiment variable is retired. Nine
+final real-Agent journeys pass with configured Harbor, GitHub and Notion, plus
+the focused source audit/tests. The existing evaluator reports initial required
+sets separately from oracle-chosen exact recovery; this is availability proof,
+not LLM accuracy. Initial ranked/eager caps stay 24/32 KiB, later task cap 64 KiB.
+Four disposable Python staging adapters are removed after review; ignored run
+reports/requests remain evidence, not another test framework. No new manual batch.
+See current [progress](../../docs/Extensions%202.0/MCP-EXTENSION-PROGRESS.md).
+
 **14 October lexical-tool checkpoint:** the new Agent prepares first-round action
 schemas and offers combined `search_tools` recovery with `queries` and optional
 `extension_id`. It no longer offers/dispatches `load_extension`. Scripted model
@@ -74,16 +84,15 @@ This exercises **MCP/backend** behavior; frontend display, speech and native wor
 acceptance remain separate. Retire this probe if a maintained direct CLI later
 provides the same coverage; disposable request/analysis files are not new suites.
 
-**15 October precise-recovery experiment:** a debug acceptance process can set
-`GRAIN_AGENT_DEFERRED_HINTS=1` to add at most 8 KiB of inert deferred tool IDs and
-brief purpose metadata to the Agent's context. Their schemas remain unloaded;
-the model must use ordinary `search_tools` to publish them. Default/release behavior
-does not use these hints. Use the same binary/request/profile with the variable
-unset for a control; compare actual completed actions, recovery calls and timing.
-This adds no server, runner or alternate Agent loop. Retire the temporary switch
-and decide the context policy when evidence is sufficient. Initial live acceptance
-was blocked by the local 9router listener being unavailable; no provider action
-from those failed attempts is a passing test. Keep reports in ignored `.runs/`.
+**15 October adopted recovery policy:** normal debug/release Agent requests now
+include at most 8 KiB of inert deferred tool names, then optional purpose metadata.
+Their schemas remain unloaded until ordinary `search_tools` publishes them. The
+`GRAIN_AGENT_DEFERRED_HINTS` experiment switch is retired; it no longer changes
+the runtime. Initial ranked/eager schemas retain 24/32 KiB ceilings, with 64 KiB
+for task recovery. No server, runner or alternate Agent loop. Historical trial
+results below retain their original off/on conditions; use current source/default
+path for new acceptance. The lexical-only initial-recall gate failed; do not call
+mechanical exact-recovery coverage a model-accuracy result. See current progress.
 
 Live follow-up: after the user restored 9router, the same-binary read-only trial
 verified combined recovery and successful search/fetch. All three reports passed;
@@ -110,10 +119,12 @@ shared names; bare names must resolve uniquely or the test rejects the case.
 The test runs production
 projection, ranking and schema publication at K=4/6/8 and records actual packed
 coverage. No model or provider calls occur. It does not replace live task checks.
-Non-eager initial publication now uses 24 KiB, reserving 8 KiB within the total
-32 KiB for recovery. The adapter measures that initial budget; it does not run a
-model recovery journey. Record the budget alongside results when comparing older
-32 KiB reports. Label required provider prerequisites, such as Notion fetching
+Non-eager initial publication uses 24 KiB within the 64 KiB task ceiling. The
+existing evaluator also checks required sets after oracle-chosen exact lookup
+of names actually visible in the bounded directory, preserving previous schemas.
+It does not run a model recovery journey. Record both initial and after-recovery
+coverage and budgets when comparing older 32 KiB reports. Label required provider
+prerequisites, such as Notion fetching
 Markdown guidance before writing content, rather than only the final write tool.
 Runner Pass does not mean retrieval quality Pass. Cases inspected while tuning
 are regression evidence; reserve fresh cases for an independent adoption gate.

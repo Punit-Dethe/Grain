@@ -1,7 +1,8 @@
 # Fast tool execution: lexical-first execution plan
 
-Status: lexical source checkpoint and bounded Gemini/Harbor read comparisons
-recorded; actual-catalogue quality and broader adoption gates remain open.
+Status: combined discovery policy adopted and scoped tool-calling checkpoint
+accepted; lexical-only initial publication rejected. Broader platform release
+and measured receipt work remain separate.
 Updated 15 October 2026.
 
 This is the next bounded work order within
@@ -13,6 +14,43 @@ No embedding model, model download, inference runtime or semantic benchmark is
 part of this work order. Reconsider those only after reviewing lexical results.
 
 ## Current checkpoint
+
+**Adopted policy, 15 October:** first-round lexical schemas plus a compact,
+untrusted deferred name directory and exact recovery. Normal debug/release share
+this path; `GRAIN_AGENT_DEFERRED_HINTS` is retired. Initial ranked/eager caps remain
+24/32 KiB; the task ceiling is 64 KiB, fixing a reproduced failure to recover a
+20 KiB definition without evicting prior schemas. Model calls still require actual
+schema publication and current source/account/digest validation.
+
+Frozen live comparison: all six directory cases passed; lexical-only control
+failed the Hinglish full-page request after 12 searches/four discovery calls.
+The directory completed it with search/recovery/fetch. Spanish, Japanese,
+ambiguous-title, missing-target and unavailable-service cases were also checked;
+Japanese timing is not matched because one preparation missed a provider.
+Final default-path acceptance: **nine of nine pass**, including new issue/page
+writes and blind/independent verification. Zero identical duplicate calls or
+provider errors in that final batch; no wrong-target writes. Source audit,
+13 backend capability, 45 core capability and eight continuation checks pass,
+plus Clippy and scoped format/diff checks. No new manual batch or installer.
+
+Existing evaluator: K=6 initially covers 19/32 required sets in the two-provider
+snapshot, and 32/32 after oracle-chosen exact lookup of names actually visible
+in the directory. The same recovery result holds at K=4/8. Three deliberately
+adversarial late-operation capacity cases using actual large Notion definitions
+also recover at every K (up to 62,386 schema bytes). This is host availability
+proof, **not model accuracy**, and does not pass/relabel the failed original
+95% initial-recall gate. Lexical-only was rejected; no embedding escalation.
+
+Decision: close this bounded discovery implementation/audit block and proceed
+to measured receipt work only if justified, or the next platform work order.
+Do not promise universal speedup or whole-application release readiness. Final
+scope is the configured Harbor model with installed GitHub/Notion, plus focused
+shared-path tests. Rich Notion formatting, genuine async behavior, other models,
+native-worker/UI and platform release gates retain their existing separate
+acceptance boundaries. Disposable staging scripts are retired; ignored evidence
+and exact restoration/fixture cleanup results are in the progress record.
+
+Earlier off/on trials below are historical and do not override this decision.
 
 15 October mixed-provider checkpoint complete: exact action/canonical names now
 resolve directly under existing scope/eligibility, including already-loaded
@@ -183,7 +221,7 @@ the following findings were therefore checked directly against source.
 | Retrieval | `crates/grain-core/src/capability_index.rs` already implements field-weighted BM25, fuzzy token handling and rank fusion | Reuse its lexical path. Audit provider-name promotion and candidate coverage before trusting it; do not build another ranker. |
 | Evaluation | `capability_eval.rs::Case.expected` means acceptable alternatives; any one matching action can pass | Add a distinct complete-required-tool-set check. Do not reinterpret old alternative labels as prerequisites. |
 | MCP projection | `capability.rs::mcp_action_input` leaves parameter metadata/examples/use guidance empty | Derive bounded parameter names/descriptions from actual schemas; reuse native author metadata. |
-| Exposure | `publish_selected` enforces a 32 KiB task schema budget, canonical mappings and digests | Budget actual serialized callable definitions, including host tools. Do not truncate schemas or treat top-K as a guarantee. |
+| Exposure | `publish_selected` enforces a 64 KiB task schema budget, canonical mappings and digests; initial ranked/eager caps stay 24/32 KiB | Budget actual serialized callable definitions, including host tools. Do not truncate schemas or treat top-K as a guarantee. |
 | MCP catalogue | `grain_mcp.rs::list_tools` opens/discovers/closes; search/load call it again | Reuse a request's snapshot for ranking/loading, with existing execution-time freshness checks. |
 | MCP execution | `execute_on_service` discovers tools and compares the current digest before dispatch | Keep this check initially. Catalogue reuse for retrieval does not establish execution freshness. |
 | SDK hints | Pinned `rmcp = 3.5.0` has cache-hint fields; Grain's discovery function returns only tools | SDK support alone does not make Grain cache-aware. Cross-request freshness needs a separate measured decision. |
@@ -258,10 +296,10 @@ Development batches share this checkpoint rather than testing every minor edit.
    Cross-request TTL caching is not required for this first experiment.
 3. If the whole eligible surface is small (initial heuristic: at most 8 actions
    and all definitions fit), publish it eagerly. Otherwise select approximately
-   6 ranked actions, evaluating K=4/6/8 under the existing 32 KiB budget. Budget
-   Non-eager initial publication is now capped at 24 KiB, leaving at least 8 KiB
-   for recovery without eviction; recovery/eager publication can use the full
-   32 KiB task budget. Packing must continue past a candidate that does not fit, not silently stop
+   6 ranked actions, evaluating K=4/6/8. Non-eager initial publication is capped
+   at 24 KiB and eager publication at 32 KiB. Later recovery can use the bounded
+   64 KiB task budget without eviction, retaining room for real 20 KiB definitions.
+   Packing must continue past a candidate that does not fit, not silently stop
    at its rank. Report missing required tools caused by byte limits explicitly.
 4. Reuse `publish_selected`, canonical identity mapping and source/account/digest
    validation. Cross-provider publication must leave each provider's map/specs
@@ -277,6 +315,10 @@ Development batches share this checkpoint rather than testing every minor edit.
    capabilities are missing. Never force search first. Follow-up provider hints
    are soft hints, not proof of object identity or permission. Multi-step requests
    need all necessary operations; do not apply a hard one-search-per-task limit.
+   Include the compact deferred name directory in normal model context, at most
+   8 KiB. Names precede optional author purposes, providers share the bound and
+   omitted/preparation-failed tools are not declared absent. It grants no schemas
+   or authority. Use the same policy in debug/release; no experimental switch.
 7. Preserve auto-approval, schema/source/account checks, exact target resolution,
    bounded outcomes and unknown-write non-replay. A local rank never authorizes
    execution or fabricates missing parameters.
@@ -337,7 +379,16 @@ production error rates. Historical user logs are context, not the control arm.
 
 ### Adoption gate
 
-Proposed experiment gates, not prior results or production guarantees:
+The original gates below evaluated lexical-only initial publication; that policy
+was **rejected**, not passed. Its initial required-set score remains below 95%.
+The adopted combined policy treats the shortlist as an optimization and compact
+names/exact recovery as the completeness path. Acceptance separately requires
+all critical required sets recover within schema limits and genuine-model language,
+ambiguity, missing-target and unavailable-service cases complete correctly. An
+oracle selecting IDs proves availability, not model accuracy; retain both results.
+Do not relabel the original initial-recall or universal latency targets as passed.
+
+Original experiment targets, not production guarantees:
 
 - Zero wrong targets/unauthorized calls, lost receipts or replayed unknown writes.
 - No live task-success regression; every critical required-set fixture passes.

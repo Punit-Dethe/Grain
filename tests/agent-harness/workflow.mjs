@@ -193,7 +193,7 @@ export function workflowReply(body, instruction, fault, mode = "normal") {
       selected(["wf_read"]);
       assert.equal(
         results[2].content,
-        "Could not load selected schemas: selected schemas exceed the 32 KiB task budget; select fewer tools",
+        "Could not load selected schemas: selected schemas exceed the 64 KiB task budget; select fewer tools",
       );
       return reply(call(action("wf_read"), {}));
     }

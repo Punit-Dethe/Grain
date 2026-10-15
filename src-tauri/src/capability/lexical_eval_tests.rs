@@ -118,8 +118,57 @@ fn exported_catalogue_required_sets_under_schema_budget() {
                 grain_core::capability_eval::required_set_coverage(&canonical, &requires).unwrap();
             let bytes = specs(&session).iter().map(schema_bytes).sum::<usize>();
             assert!(bytes <= capability_agent::MAX_SCHEMA_BYTES);
-            rows.push(serde_json::json!({"case":case.id,"split":case.split,"k":k,"required":case.requires,"required_canonical":requires,"offered":offered,"offered_canonical":canonical,"coverage":coverage,"schema_bytes":bytes,"first_turn_micros":started.elapsed().as_micros(),"selection":selection}));
+            let initial_micros = started.elapsed().as_micros();
+            let prior = specs(&session);
+            let hint = deferred_tool_context(&session);
+            let directory: serde_json::Value = hint
+                .as_ref()
+                .map(|text| serde_json::from_str(text.split_once('\n').unwrap().1).unwrap())
+                .unwrap_or_else(|| serde_json::json!({"extensions":[]}));
+            let visible: HashSet<String> = directory["extensions"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .flat_map(|extension| {
+                    extension["tools"].as_array().unwrap().iter().map(|tool| {
+                        format!(
+                            "{}:{}",
+                            extension["extension_id"].as_str().unwrap(),
+                            tool["id"].as_str().unwrap()
+                        )
+                    })
+                })
+                .collect();
+            // An oracle chooses known required names: this proves host availability
+            // and schema packing, NOT that an LLM selects the correct tool.
+            let queries: Vec<_> = requires
+                .iter()
+                .filter(|group| !group.iter().any(|id| canonical.contains(id)))
+                .filter_map(|group| group.iter().find(|id| visible.contains(*id)).cloned())
+                .collect();
+            let mut recovery = Vec::new();
+            for batch in queries.chunks(4) {
+                let request = capability_agent::parse_search_request(
+                    &serde_json::json!({"queries":batch}).to_string(),
+                )
+                .unwrap();
+                let ids = ranked_ids(&mut session, &request.queries, None, false);
+                recovery.push(publish_ranked(&mut session, ids, TOOL_PAGE_SIZE));
+            }
+            let recovered: Vec<_> = session.actions.keys().cloned().collect();
+            let recovery_coverage =
+                grain_core::capability_eval::required_set_coverage(&recovered, &requires).unwrap();
+            let next = specs(&session);
+            for spec in prior {
+                assert!(next
+                    .iter()
+                    .any(|next| next.name == spec.name && next.parameters == spec.parameters));
+            }
+            assert!(
+                next.iter().map(schema_bytes).sum::<usize>() <= capability_agent::MAX_SCHEMA_BYTES
+            );
+            rows.push(serde_json::json!({"case":case.id,"split":case.split,"k":k,"required":case.requires,"required_canonical":requires,"offered":offered,"offered_canonical":canonical,"coverage":coverage,"schema_bytes":bytes,"first_turn_micros":initial_micros,"selection":selection,"hint_bytes":hint.as_ref().map_or(0,String::len),"hint_names":visible.len(),"recovery_queries":queries,"recovery":recovery,"coverage_after_exact_recovery":recovery_coverage}));
         }
     }
-    std::fs::write(report_path, serde_json::to_vec_pretty(&serde_json::json!({"scope":"offline actual supported catalogue; no model/dispatch", "rows":rows})).unwrap()).unwrap();
+    std::fs::write(report_path, serde_json::to_vec_pretty(&serde_json::json!({"scope":"offline actual supported catalogue; oracle-selected exact recovery; no model/dispatch", "rows":rows})).unwrap()).unwrap();
 }

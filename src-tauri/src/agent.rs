@@ -3131,14 +3131,9 @@ async fn run_with_tools(
         );
     }
     crate::capability::prepare(app, &mut opened.session, &queries, &trace_id).await;
-    // Temporary debug experiment: compare both paths using the same binary.
-    // Do not adopt extra model context until live quality/latency is verified.
-    #[cfg(debug_assertions)]
-    let deferred_hints = (std::env::var("GRAIN_AGENT_DEFERRED_HINTS").as_deref() == Ok("1"))
-        .then(|| crate::capability::deferred_tool_context(&opened.session))
-        .flatten();
-    #[cfg(not(debug_assertions))]
-    let deferred_hints: Option<String> = None;
+    // The lexical shortlist is an optimization, not a completeness guarantee.
+    // Names let the model recover missing operations without guessing schemas.
+    let deferred_hints = crate::capability::deferred_tool_context(&opened.session);
     log::info!(
         "[GRAIN] agent-tool-trace {}",
         serde_json::json!({

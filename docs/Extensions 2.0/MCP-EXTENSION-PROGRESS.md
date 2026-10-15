@@ -1,5 +1,89 @@
 # Extension implementation: progress, changes and user testing
 
+**Tool-discovery policy adopted and scoped audit closed, 15 October (latest):**
+the normal Agent now combines the lexical first shortlist, at most 8 KiB of inert
+deferred names/purposes, and exact-name schema recovery. Removed the debug-only
+switch/guards so debug and release use the same policy. Names do not make tools
+callable; existing schema, account/source/digest, same-frame, cancellation and
+unknown-write non-replay checks remain. No embedding model or second router.
+
+The twelve frozen comparison journeys had eleven task passes and one failure.
+All six directory cases passed. Hinglish control issued **12 searches and four
+discovery calls**, never fetched the full page and answered after 61.80 s; the
+directory path performed one recovery/search/fetch and answered in 16.05 s.
+This is a completion improvement, not a matched successful-task speed percentage.
+Spanish README answered in 11.12 s with directory versus 15.71 s control; control
+also attempted an unoffered tool, which was refused before dispatch and corrected.
+Japanese both completed, but the directory run prepared only one provider, so
+exclude that pair from matched timing. Both paths asked which duplicate-title
+issue to change, refused the nonexistent target and respected disconnected Linear.
+Independent GitHub checks proved both ambiguity fixtures stayed open/uncommented
+and the missing issue was not created.
+
+Final source was rebuilt once as a debug alpha (41.68 s, no installer) and run
+with the old experiment variable unset. **All nine default-path journeys pass:**
+
+| Default journey | Final answer | Actual outcome |
+| --- | --- | --- |
+| Hinglish Notion full page | 15.64 s | Search, exact recovery and fetch; correct issue topics |
+| Spanish GitHub README | 12.62 s | Exact README matches separate GitHub CLI retrieval |
+| Japanese Notion full page | 16.86 s | Search/recovery/fetch; correct issue topics |
+| Ambiguous GitHub issue | 10.89 s | Asked which of #4/#5; neither changed |
+| Missing GitHub issue | 14.74 s | Reported missing; no issue/comment created |
+| Unavailable Linear | 7.61 s | No provider action; no substitution with another service |
+| GitHub create/update/close | 18.39 s | Exactly one issue (#6), exact final body, closed; independent CLI proof |
+| Notion private page create/update | 21.25 s | One creation and one update; final body returned |
+| Fresh Notion verification | 14.25 s | Title-only request recovered the unseen random final body marker |
+
+Every final frame verified Harbor `deepseek-v4.1-flash:free`; fallback disabled.
+No provider errors, identical duplicate calls, budget exhaustion, unknown writes
+or wrong targets in this batch. Notion final verification is a fresh conversation
+through Grain's actual search/fetch, not an independent Notion REST client. The
+plain-text page workflow did not demonstrate rich Markdown prerequisites or async
+polling; neither is certified here. One Notion write prepared only its catalogue
+before the shared deadline, and completed correctly despite the unavailable
+GitHub metadata. Existing provider/exposure boundaries remained intact.
+
+Capacity correction: reproduced a failing focused test with ~21 KiB already
+offered and a 20 KiB missing definition. The former 32 KiB ceiling could not
+recover it. The new task cap is **64 KiB**, with initial ranked/eager publication
+unchanged at 24/32 KiB, fixed action/provider limits and no eviction/truncation.
+The test now passes and still proves saturation refusal and unchanged prior
+schemas. The existing exported-catalogue evaluator checked 32 required sets:
+initial K=4/6/8 coverage 19/19/20, after visible-name exact recovery **32/32 at
+each K**. Three additional late-operation capacity cases using actual large
+Notion definitions all recover at each K (maximum 62,386 bytes). These deliberately
+oracle-selected recovery checks prove host availability, not semantic accuracy.
+The old >=95% first-shortlist target failed and remains failed; lexical-only is
+rejected, not retroactively passed. Measured initial setup/clone/index/packing
+p50/p95 was 57/63 ms across these varied fresh sessions, not isolated query p95
+or end-to-end latency. No heavier dependency follows from that diagnostic.
+
+Scoped audit checked default/release reachability, untrusted context bound,
+provider fairness/partial coverage, exact lookup eligibility, both initial caps,
+total bytes, stable earlier schemas, same-frame refusal, model identity and
+unknown-write behavior. It caught and fixed eager publication accidentally growing
+with the recovery cap. Final 13 backend capability + 45 core capability + eight
+continuation tests, evaluator, Clippy correctness and scoped format/diff checks
+pass (existing warnings). Conservative graph gaps were checked against these
+explicit tests and real `run_with_tools` preparation/execution; no whole-repo audit
+or every-tool/model/OS certification is claimed.
+
+The two temporary ambiguity issues (#4/#5) were closed by scoped CLI cleanup only
+after unchanged-target checks passed. New issue #6 is closed; private page
+`Grain Default Check` with its unique run suffix is retained in the disposable
+workspace. All staged alpha model/fallback/key fields restored, ordinary settings/
+credentials byte-identical and no owned Grain process remains. The four disposable
+Python staging adapters are removed; no new maintained harness suite/engine.
+Ignored reports, requests/fixture data and hashes remain under
+`tests/agent-harness/.runs/tool-policy-20261015/` and `tool-policy-default-20261015/`.
+Case SHA-256: `ae38826cf7162ae94da31cec65ede76811a67457e2569de50f4741204b927306`.
+An initial Windows text-decoding failure happened before any model request and
+restored fields; it is not a passing Agent test. Earlier comparison failures stay
+recorded. **No new user test is required for this block.** Close the discovery
+implementation checkpoint; broader platform release gates and measured receipt
+work retain their own scope. No new release or installer was published.
+
 **GitHub + Notion tool-calling checkpoint, 15 October (latest):** both installed
 extensions were enabled. Actual discovery exported 100 supported GitHub tools
 and 56 Notion tools. Implemented exact-name recovery: a complete action/canonical

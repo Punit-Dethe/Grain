@@ -34,7 +34,9 @@ pub const TOOL_NAME_PREFIX: &str = "act__";
 pub const LOAD_EXTENSION: &str = "load_extension";
 pub const SEARCH_TOOLS: &str = "search_tools";
 pub const TOOL_PAGE_SIZE: usize = 8;
-pub const MAX_SCHEMA_BYTES: usize = 32 * 1024;
+// Initial publication stays smaller in the host. Reserve enough later capacity
+// for real MCP definitions (e.g. 20 KiB) without replacing earlier schemas.
+pub const MAX_SCHEMA_BYTES: usize = 64 * 1024;
 
 /// Bound the directory used for host preparation and recovery. Omitted
 /// extensions cannot become executable through retrieval.
