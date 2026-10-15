@@ -26,21 +26,28 @@ pub(super) fn inspect(path: &Path, out: &Path) -> Result<()> {
     crate::prepare::write_artifact(path, out, &serde_json::to_vec(&value)?)
 }
 
-pub(super) fn check(path: &Path, policy_path: &Path, pin: &str, gh: &Path) -> Result<()> {
+pub(super) fn check(
+    path: &Path,
+    policy_path: &Path,
+    pin: &str,
+    authority: &Path,
+    gh: &Path,
+) -> Result<()> {
     let bytes = crate::review::read(policy_path, 32 * 1024)?;
     if digest(&bytes) != pin {
         bail!("Protected review policy digest mismatch");
     }
     let policy: Policy = serde_json::from_slice(&bytes)?;
     policy.validate(Utc::now().timestamp())?;
+    crate::authority::outside(authority, &[path])?;
     let source = submission(path)?;
     if digest(&serde_json::to_vec(&source)?) != policy.submission_sha256 {
         bail!("Submission differs from protected review policy");
     }
     let gh = crate::review::verifier(gh, &policy.verifier_sha256)?;
-    verify(&gh, &policy, &source)?;
-    if policy.alpha_maintainer_approval.is_some() {
-        println!("Current source matches explicit alpha maintainer approval; no independent review claimed or key accessed");
+    verify(&gh, &policy, &source, authority)?;
+    if policy.maintainer_approval.is_some() {
+        println!("Current source matches explicit maintainer approval; no independent review claimed or key accessed");
     } else {
         println!("Current GitHub source review matches the protected policy; no key accessed");
     }
@@ -182,8 +189,14 @@ fn validate_reviews(reviews: &[Value], policy: &Policy, now: i64) -> Result<()> 
     Ok(())
 }
 
-pub(super) fn verify(gh: &Path, policy: &Policy, source: &SourceSubmission) -> Result<()> {
+pub(super) fn verify(
+    gh: &Path,
+    policy: &Policy,
+    source: &SourceSubmission,
+    authority: &Path,
+) -> Result<()> {
     policy.validate(Utc::now().timestamp())?;
+    crate::authority::authorize(authority, policy, source)?;
     if digest(&serde_json::to_vec(source)?) != policy.submission_sha256 {
         bail!("Source differs from the approved submission");
     }
@@ -219,10 +232,9 @@ pub(super) fn verify(gh: &Path, policy: &Policy, source: &SourceSubmission) -> R
     {
         bail!("Merged description differs from reviewed listing");
     }
-    // Only the validated, exact first-party alpha profile can use the operator's
-    // explicit approval. Merge/head/author/source/listing were still checked live.
-    if policy.alpha_maintainer_approval.is_some() {
-        return Ok(());
+    // Explicit operator approval never bypasses ownership or exact source checks.
+    if policy.maintainer_approval.is_some() {
+        return crate::authority::authorize(authority, policy, source);
     }
     let mut reviews = Vec::new();
     for page in 1..=10 {
@@ -238,7 +250,8 @@ pub(super) fn verify(gh: &Path, policy: &Policy, source: &SourceSubmission) -> R
         }
         reviews.extend(batch);
         if count < 100 {
-            return validate_reviews(&reviews, policy, Utc::now().timestamp());
+            validate_reviews(&reviews, policy, Utc::now().timestamp())?;
+            return crate::authority::authorize(authority, policy, source);
         }
     }
     bail!("Review history exceeds the bounded reader; cannot establish latest approval")

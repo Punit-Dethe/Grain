@@ -1,5 +1,46 @@
 # Extension implementation: progress, changes and user testing
 
+**Block 2 implementation complete — ownership and approval, 15 October 2026:**
+replaced compiled tester-version/hash exceptions with schema-3 protected approval
+policy plus a strict, digest-pinned operator-owned ownership JSON. Signing and
+read-only source-review verification require `--authority`; both native and MCP
+releases bind the enrolled ID/source/kind, authorized submitter, eligible reviewer,
+registry branch and publishing key. External submissions retain independent live
+GitHub review. Explicit first-party approval requires an opted-in grant, an owning
+eligible reviewer and a bounded exact-release record reference; no fabricated
+self-review. The reference is audit text, not a separately authenticated credential.
+Operator custody of the approval policy/independent digest remains the trust anchor.
+Prior exact source/listing/artifact, producer/attestation, expiry, previous-index
+and delayed key checks remain. Ownership is rechecked around mutable GitHub reads.
+Changed current ownership bytes invalidate old pins; operators must supply the
+current protected file. Restoring old operator inputs is inside that trust boundary.
+This is not a new identity service, OS sandbox or remote revocation service.
+
+Verification: **87 registry tests Pass**, strict all-target registry Clippy Pass,
+both real CLI help paths Pass, and seven real CLI refusal checks Pass: unauthorized
+submitter/reviewer, changed ownership digest, old schema/alpha field, required
+ownership input on both commands. Refusals occur before live GitHub reads/key
+access; temporary CLI inputs were removed. Existing tests cover independent/
+first-party native/MCP ownership, role removal/takeover, strict limits/containment,
+stale/revoked review, changed source and real Minisign updates. Focused manual
+diff/call-path audit passes; graph review was used but did not reliably map new
+policy flows, so its reported gaps are not substituted for source/test evidence.
+
+[Registry draft PR 8](https://github.com/Punit-Dethe/Grain-Extention/pull/8), commit
+`994b66b`, proposes the existing GitHub/Notion grants and documents enrollment,
+updates, transfers, role changes and withdrawal. Public policy intent is not
+automatically operator authority. The draft is unmerged; no operator file, key,
+GitHub protection, account, hosted catalogue or application changed. Review/adopt
+the current config before the next real signing run; operational acceptance is
+still open. Old tester approvals stay historical and authorize no future version.
+The registry author guide now uses the supported `submit --update-from` workflow.
+No new provider/account, harness or installer was needed; the user's optional
+Calendar example is reserved for a later workflow gap, not added speculatively.
+**Two of six implementation blocks complete; next Block 3 publishing workflow,
+four blocks remain.** No new user test is needed for this tooling-only block.
+No plan scope expansion: policy adoption accompanies Block 3 live publication;
+protection/custody decisions remain in operational acceptance.
+
 **Block 1 complete — author workflow, 15 October 2026:** implemented native
 starter artwork, explicit `submit --update-from <existing-version>` for native/MCP
 source drafts, and corrected new/update/listing instructions. Reuses the existing

@@ -4,11 +4,15 @@ Updated 15 October 2026. This is the **single active forward plan** for finishin
 extension authoring, review, publication and store delivery. It replaces this
 file's earlier chronological work order and the historical E4–E8 phase counts.
 Completed evidence stays in [progress](MCP-EXTENSION-PROGRESS.md) and the focused
-audit documents; it is not a fresh backlog. Six bounded blocks are defined below: **Block 1 complete; five remain**.
-Current implementation: Block 1 is complete for the supported author workflow.
-Local/three-OS checks, artifact delivery verification and focused source audit
-pass. Blocks 2–6 remain unopened. No application runtime, account, custody or
-catalogue change. No new installer or stable public SDK release.
+audit documents; it is not a fresh backlog. Six bounded blocks are defined below:
+**Blocks 1–2 implementation complete; four remain**. Block 2's public ownership
+proposal is [registry draft PR 8](https://github.com/Punit-Dethe/Grain-Extention/pull/8).
+Operator adoption of the reviewed current file is a prerequisite for the next
+real signing run; no protected policy/key location or GitHub settings were changed.
+Block 1 local/three-OS checks and artifact verification pass; Block 2 registry
+tests, CLI refusals, strict Clippy and scoped source audit pass. Next: Block 3
+publication orchestration. No application runtime, account or catalogue change.
+No new installer or stable public SDK release.
 
 ## Target experience
 
@@ -48,7 +52,7 @@ confirmation dialogs.
 | Native scaffold needed supplied artwork to pass doctor (fixed in Block 1) | CLI scaffold and tests | Provide a clearly identified valid starter icon or an equally simple documented setup; align runtime/listing icon instructions. Do not silently copy unrelated branding. |
 | Submission drafting lacked updates (fixed in Block 1) | CLI guide and `crates/grain-ext-cli/src/lib.rs` | Explicit safe update mode; preserve an existing draft on invalid input/failure. |
 | Submission stops at local files | CLI guide | Small optional GitHub PR submission/update helper using existing Git/`gh`; keep manual/offline drafting usable. Authenticate through `gh`, never store a second GitHub credential. |
-| Permanent ownership/review governance is unfinished | `review.rs`, `approval.rs`, registry REVIEW-POLICY | Define ID ownership, authorized updates and maintainer eligibility; replace exact tester hash exceptions with a protected operational approval policy. |
+| Ownership enforcement implemented; operational adoption pending | `authority.rs`, `review.rs`, `approval.rs`, registry draft PR 8 | Schema-3 signing requires a pinned operator-owned ID/source/kind/maintainer/reviewer file. Review/adopt the proposed current file before real signing; configure approved publication protection before community release. |
 | Publishing needs too much manual assembly | Actual GitHub/Notion artwork publication; existing CLI commands | One orchestration entry point around existing prepare/sign/assemble/export/activate commands; no parallel implementation of their checks. |
 | Tooling pins can drift | Corrected stale producer commit and PNG capture omission in PRs 6/7 | One reviewed tooling version per publication; complete-path regression includes icons/gallery. Make mismatch diagnostics visible. |
 | Error diagnostics hide useful causes | `ci/publish_github.py` captures child stderr, then reports CalledProcessError | Bounded, secret-safe stage/error output and a useful final status. Do not log keys, unlock files, tokens or raw credential-bearing requests. |
@@ -125,6 +129,26 @@ draft v1 then v2, and get precise failures without losing its existing work.
 Normal CLI/type/checker tests cover this. No live OAuth or new harness needed.
 
 ## Block 2 — Make source ownership and approval a real policy
+
+**Implementation complete, 15 October:** schema-3 review policies require an
+independently pinned operator-owned ownership file. Both native/MCP paths bind
+ID, source, kind, submitting maintainer, reviewer, registry and publishing key.
+Independent GitHub review remains the external route; opted-in first-party grants
+can use exact explicit operator approval with review ID zero. Compiled version/
+digest exceptions and the old alpha policy field are removed, not migrated.
+Approvals expire and changing the current ownership bytes invalidates prior pins;
+live merge/source/listing and effective review checks remain before key access.
+Enrollment, transfers, role changes and publication withdrawal are documented.
+87 registry tests, strict all-target Clippy, CLI help and seven CLI refusal checks
+pass. Scoped source review covers authorization order, input containment, bounded
+strict parsing, current-file rechecks and preservation of provenance/signing gates.
+No blocking source finding remains. Graph context did not map these new policy
+flows reliably; actual diff/manual call-path review supplied the audit evidence.
+Registry PR 8 proposes only the two existing first-party grants and instructions.
+It remains draft, not adopted authority or a new release approval. Protection/key
+custody remains an explicit operator decision. Adoption and integration into the
+next real publication are carried into Block 3; final operational acceptance is
+Block 6. No new provider, harness, app build, signing or publication was required.
 
 Record extension IDs with authorized source repository/maintainers in a small
 protected registry policy. Define new-ID reservation, updates, transfers,
@@ -291,8 +315,10 @@ separate `Punit-Dethe/Grain-Extention` repository).
 
 ## Current user/operator dependencies
 
-Block 1 needs no user test. Nothing is needed from the user to begin Block 2
-implementation; actual protection/custody changes remain later operator decisions:
+Blocks 1–2 need no new user account/app test. Block 3 can be implemented with
+existing fixtures; before the next live signing, review/adopt registry PR 8's
+ownership configuration into the current operator-owned location. Actual
+protection/custody changes remain reviewed operator decisions:
 
 - Confirm the two-card store view after the recent fix; current artwork is accepted.
 - Confirm concrete publishing protection/custody changes before activation.

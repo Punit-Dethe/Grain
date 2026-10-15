@@ -20,6 +20,7 @@ use minisign::{KeyPair, PublicKeyBox};
 mod signing_key;
 use signing_key::Unlock;
 mod approval;
+mod authority;
 mod catalogue;
 mod prepare;
 mod receive;
@@ -108,6 +109,9 @@ struct SignReviewedCandidateArgs {
     /// Independent digest of the protected, approved policy document.
     #[arg(long)]
     policy_sha256: String,
+    /// Protected ownership/reviewer file, bound by the review policy digest.
+    #[arg(long)]
+    authority: PathBuf,
     /// Absolute path to the independently pinned official GitHub CLI binary.
     #[arg(long)]
     gh: PathBuf,
@@ -234,6 +238,8 @@ enum Cmd {
         policy: PathBuf,
         #[arg(long)]
         policy_sha256: String,
+        #[arg(long)]
+        authority: PathBuf,
         #[arg(long)]
         gh: PathBuf,
     },
@@ -693,14 +699,16 @@ fn main() -> Result<()> {
             submission,
             policy,
             policy_sha256,
+            authority,
             gh,
-        } => approval::check(&submission, &policy, &policy_sha256, &gh),
+        } => approval::check(&submission, &policy, &policy_sha256, &authority, &gh),
         Cmd::SignReviewedCandidate(SignReviewedCandidateArgs {
             submission,
             prepared,
             candidate,
             policy,
             policy_sha256,
+            authority,
             gh,
             attestation,
             previous,
@@ -712,6 +720,7 @@ fn main() -> Result<()> {
             candidate: &candidate,
             policy: &policy,
             policy_pin: &policy_sha256,
+            authority: &authority,
             gh: &gh,
             attestation: &attestation,
             previous: &previous,

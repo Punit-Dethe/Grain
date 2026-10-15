@@ -198,11 +198,12 @@ release acceptance.
 uploading, executing author code, modifying the previous catalogue or activating
 the old registry workflow. This command is maintainer-only and never ships in Grain.
 The [controlled registry CI checkpoint](../../docs/Extensions%202.0/EXTENSION-CI-PROVENANCE-AUDIT.md)
-now verifies genuine provenance through this command; production human review and
-governance remain unaccepted.
+now verifies genuine provenance through this command. Ownership and review are
+enforced by the operator-held policy below; deployment protection/key custody
+remain separate operational acceptance items.
 
 ```powershell
-grain-registry sign-reviewed-candidate --submission registry/extensions/com.example.tools --prepared prepared-tools --candidate catalogue-candidate --policy protected-review/approved.json --policy-sha256 '<independent policy SHA256>' --gh 'C:\Program Files\GitHub CLI\gh.exe' --attestation candidate-attestation.jsonl --previous previous-v1 --key protected-keys/publishing.key --prompt-key-password --out signed-update
+grain-registry sign-reviewed-candidate --submission registry/extensions/com.example.tools --prepared prepared-tools --candidate catalogue-candidate --policy protected-review/approved.json --policy-sha256 '<independent policy SHA256>' --authority protected-review/ownership.json --gh 'C:\Program Files\GitHub CLI\gh.exe' --attestation candidate-attestation.jsonl --previous previous-v1 --key protected-keys/publishing.key --prompt-key-password --out signed-update
 ```
 
 The strict policy has these required fields. All digests are lowercase hexadecimal;
@@ -212,20 +213,21 @@ not TOML bytes or arbitrarily reformatted JSON.
 
 | Policy field | Trusted meaning |
 | --- | --- |
-| `schema` | Integer `2`; schema-1 policies are refused by the current signer |
+| `schema` | Integer `3`; older policies are refused, not migrated |
 | `candidate_sha256`, `submission_sha256`, `receipt_sha256` | Exact approved candidate, complete structured source submission and preparation receipt |
 | `producer_sha256`, `verifier_sha256` | Independently approved registry builder and official `gh` executable bytes |
+| `authority_sha256` | SHA256 of the exact operator-owned ownership file supplied as `--authority` |
 | `registry_repo` | GitHub `owner/repo` whose CI provenance must verify |
 | `registry_commit`, `registry_ref` | Exact registry commit and `refs/heads/<branch>`; scoped branch names are allowed, ambiguous/invalid components refuse |
 | `signer_workflow`, `signer_commit` | Same-repository `owner/repo/.github/workflows/<file>.yml` or `.yaml` and immutable workflow commit; reusable workflow identity is the signer |
-| `reviewer`, `submitter` | Protected review record's reviewer and submitting GitHub account; only submitter becomes catalogue `author` |
+| `reviewer`, `submitter` | Eligible reviewer and authorized submitting maintainer from the ownership file; only submitter becomes catalogue `author` |
 | `review_pull_request`, `review_head`, `review_id` | Nonzero merged registry PR number, exact full reviewed PR head and nonzero latest effective approving GitHub review ID |
-| `alpha_maintainer_approval` | Optional operator-held approval reference for the single authorized GitHub tester-alpha submission; this profile uses `review_id: 0`, never a fabricated GitHub review |
+| `maintainer_approval` | Optional bounded operator approval record reference, allowed only for an opted-in extension and its owning reviewer; uses `review_id: 0`, never a fabricated GitHub review |
 | `approved_at`, `expires_at` | RFC3339 approval window: not future-dated, still valid and at most seven days; rechecked before opening the key |
 | `publishing_public_key` | Independently approved base64 minisign publishing public key |
 | `previous_index_sha256`, `previous_index_version` | Exact currently signed index bytes and monotonic version to extend |
 
-Keep the policy, its expected digest, verifier executable and publishing key in
+Keep the policy, ownership file, expected policy digest, verifier and publishing key in
 immutable operator-owned locations outside author/build workspaces. A digest
 copied from an untrusted policy does **not** establish review. The current signer
 also queries GitHub through the pinned official CLI before any key access. The PR
@@ -240,26 +242,19 @@ is required; there is no offline approval bypass. Production branch/environment
 protections and reviewer eligibility remain separate deployment requirements.
 Do not generate this policy in an author-execution job.
 
-The maintainer authorized an explicit first-party tester-alpha exception on
-9 October 2026, renewed for the two artwork candidates on 15 October. It now
-admits only the exact `com.grain.github` 0.1.2 and `com.grain.notion` 0.1.1 submission
-digests, `Punit-Dethe/Grain-Extention`, the named maintainer as submitter/reviewer,
-and the dedicated alpha publisher. A nonempty bounded approval reference is
-required in the operator-owned policy. Current merged PR/head/source/DESCRIPTION,
-all candidate/receipt/producer pins, cryptographic CI provenance, approval expiry,
-prior catalogue and delayed key checks still apply. Only the independent GitHub
-review lookup is omitted, and no independent review is claimed. Other submissions
-and later versions retain the normal independent-review route.
-The previous GitHub 0.1.1 and Notion 0.1.0 exceptions are replaced, not retained.
-The approved sources are those in registry PR #5; PR #6 corrects only producer
-metadata to the already pinned tooling commit. Neither changes provider access.
+The user's explicit first-party approval model now uses configuration, replacing
+the compiled tester version/digest exceptions. `maintainer_approval` references
+the operator's deliberate approval of this exact release (for example an approval
+record URL or protected log entry). It must be nonempty, single-line and at most
+1024 bytes. It is not fetched or authenticated as a separate credential: authority
+comes from custody of the approved policy and its independently supplied digest.
+Do not let an author job create that policy, select its expected digest or modify
+the ownership file. Current merged PR/head/submitter/source/DESCRIPTION, all
+candidate/receipt/producer pins, CI provenance, expiry and delayed key checks
+still apply. Only the independent GitHub review lookup is omitted for this route.
+No source edit or application rebuild is needed for each ordinary release.
 
-This narrow profile is temporary alpha maintainer tooling: remove its allowlist,
-optional field and regression when the permanent publishing approval policy is
-established. It is not an SDK/runtime API, author-controlled manifest option or
-new signing service. Never add the field automatically to downloaded artifacts.
-
-`verify-source-review` takes `--submission`, `--policy`, `--policy-sha256` and `--gh`
+`verify-source-review` takes `--submission`, `--policy`, `--policy-sha256`, `--authority` and `--gh`
 to check this same gate without a key. `inspect-submission --submission <ID-dir>
 --out <fresh-file>` emits the shared strict structured source request for CI; it
 confers no approval. For review reads only, the child inherits the operator's
@@ -273,8 +268,64 @@ The signer reuses received-byte validation, binds the complete approved submissi
 and stages one owned snapshot. It compares every candidate file against that
 snapshot, including exact candidate JSON, artifact, DESCRIPTION and pictures;
 extra files, ignored JSON fields, altered trust and symlinks refuse. Existing output
-or output inside an input/policy tree refuses. The previous index must match its
+or output inside an input/policy/ownership tree refuses. The previous index must match its
 approved digest/version, verify against the approved public key and be fresh.
+
+### Ownership enrollment and changes
+
+The strict schema-1 ownership JSON is bounded to 128 KiB and 1024 unique extension
+IDs. Each maintainer/reviewer list has 1–32 unique GitHub logins (case-insensitive).
+Unknown fields, ambiguous sources, missing grants and duplicate IDs refuse.
+The following is an example, **not an approved operator configuration**:
+
+```json
+{
+  "schema": 1,
+  "registry_repo": "example/extensions",
+  "registry_ref": "refs/heads/main",
+  "publishing_public_key": "<approved Minisign public key>",
+  "reviewers": ["registry-reviewer"],
+  "extensions": [{
+    "id": "com.example.tools",
+    "source_repo": "https://github.com/example/tools",
+    "artifact_kind": "mcp-descriptor",
+    "maintainers": ["extension-owner"],
+    "allow_maintainer_approval": false
+  }]
+}
+```
+
+`artifact_kind` is `native` or `mcp-descriptor`. `maintainers` authorizes accounts
+that may submit registry PRs for this ID, not every contributor to the source
+repository. `reviewers` authorizes registry source reviewers. External releases
+require a different reviewer and their live effective GitHub approval. For
+first-party self-authored releases, explicitly opt the grant into
+`allow_maintainer_approval`; its approving reviewer must also be a listed owner.
+This flag alone never approves a version. Every release still needs a fresh exact
+policy and approval record. Publisher/display names do not establish ownership.
+
+| Operation | Required operator action |
+| --- | --- |
+| New ID | Review source-repository control and proposed ID, kind and submitting maintainers; approve enrollment before accepting a release. New IDs do not enroll themselves through a submission. |
+| Update | Keep the approved source/kind/owners; approve the new exact candidate using the existing review route. |
+| Transfer/source or kind change | Obtain recorded consent from the current and receiving owners, review the new source and permissions, then explicitly change the grant. Never infer transfer from a matching name or a new submission. |
+| Add/remove maintainer or reviewer | Review the identity change separately, update the protected file and issue new release policies. Authors cannot approve their own role/approval-flag changes. |
+| Withdraw ownership/review authority | Remove the grant, maintainer or reviewer from the current operator file; old pinned policies stop matching. Replacing only a per-release policy does not revoke another copy of it. |
+| Withdraw an already published version | Use the existing signed revocation/publication path; removing an ownership grant stops future signing but does not uninstall or revoke published bytes. |
+
+Keep the canonical current ownership file and approval policies in an immutable
+operator-owned directory outside all submission/build/candidate/prior trees.
+The public registry copy is reviewable policy intent; downloading it from an
+author PR does not make it authority. Adopt a separately reviewed revision into
+the protected operator location and pin its exact bytes in each approval. The
+signer rechecks current bytes/eligibility before and after live review reads.
+Changing the file invalidates old release approvals, including otherwise valid
+ones: reapprove against its new digest. Operators must always supply the current
+file; someone able to substitute an old operator file and its old approved policy
+is inside the signing trust boundary. This is a small local policy mechanism,
+not an OS sandbox, revocation service or GitHub protection configuration tool.
+Choose/review actual repository/environment protection and key custody separately;
+do not enable PR-only writes without adapting the existing publication writer.
 
 Cryptographic provenance uses the maintained [GitHub attestation verifier](https://cli.github.com/manual/gh_attestation_verify)
 (checked with `gh` 2.100.0), with fixed repository/workflow/commit/ref/certificate

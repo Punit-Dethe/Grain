@@ -25,6 +25,7 @@ pub(super) struct Policy {
     pub receipt_sha256: String,
     pub producer_sha256: String,
     pub verifier_sha256: String,
+    pub authority_sha256: String,
     pub registry_repo: String,
     pub registry_commit: String,
     pub registry_ref: String,
@@ -35,10 +36,10 @@ pub(super) struct Policy {
     pub review_pull_request: u64,
     pub review_head: String,
     pub review_id: u64,
-    /// Explicit operator-held approval for exact tester-alpha submissions.
-    /// This is not a GitHub review and never author-controlled data.
+    /// Explicit operator approval, permitted only by the protected ownership file.
+    /// This is never presented as an independent GitHub review.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub alpha_maintainer_approval: Option<String>,
+    pub maintainer_approval: Option<String>,
     pub approved_at: String,
     pub expires_at: String,
     pub publishing_public_key: String,
@@ -52,6 +53,7 @@ pub(super) struct Inputs<'a> {
     pub candidate: &'a Path,
     pub policy: &'a Path,
     pub policy_pin: &'a str,
+    pub authority: &'a Path,
     pub gh: &'a Path,
     pub attestation: &'a Path,
     pub previous: &'a Path,
@@ -60,14 +62,14 @@ pub(super) struct Inputs<'a> {
     pub out: &'a Path,
 }
 
-fn hex(value: &str, len: usize) -> bool {
+pub(super) fn hex(value: &str, len: usize) -> bool {
     value.len() == len
         && value
             .bytes()
             .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 
-fn name(value: &str) -> bool {
+pub(super) fn name(value: &str) -> bool {
     !value.is_empty()
         && value.len() <= 100
         && value
@@ -99,9 +101,10 @@ impl Policy {
             &self.receipt_sha256,
             &self.producer_sha256,
             &self.verifier_sha256,
+            &self.authority_sha256,
             &self.previous_index_sha256,
         ];
-        if self.schema != 2
+        if self.schema != 3
             || hashes.iter().any(|v| !hex(v, 64))
             || !hex(&self.registry_commit, 40)
             || !hex(&self.signer_commit, 40)
@@ -110,25 +113,13 @@ impl Policy {
         {
             bail!("Unsupported review policy or malformed digest");
         }
-        if let Some(reference) = &self.alpha_maintainer_approval {
-            // Temporary, exact-submission exception authorized by the alpha
-            // maintainer. Updates/other publishers still need independent review.
+        if let Some(reference) = &self.maintainer_approval {
             if reference.trim().is_empty()
                 || reference.len() > 1024
                 || reference.chars().any(char::is_control)
-                || self.registry_repo != "Punit-Dethe/Grain-Extention"
-                || !self.reviewer.eq_ignore_ascii_case("Punit-Dethe")
-                || !self.submitter.eq_ignore_ascii_case("Punit-Dethe")
                 || self.review_id != 0
-                || !matches!(
-                    self.submission_sha256.as_str(),
-                    "6e434021102e57675b2fe1edd2b65a851878c4dfff277444091ac03c7caeb127"
-                        | "b486000c5c953a3a4491d70cdd90fbfb90fa75e93f20a5b7af4ab730f25c35bb"
-                )
-                || self.publishing_public_key
-                    != "RWREj+hdLljbWOv3LCoTKEPv670pVG+P9knBUMWoR+V445yvdBwBuqj8"
             {
-                bail!("Alpha maintainer approval does not authorize this submission or publisher");
+                bail!("Explicit maintainer approval needs a bounded reference and review ID zero");
             }
         } else if self.review_id == 0 || self.reviewer.eq_ignore_ascii_case(&self.submitter) {
             bail!("Independent GitHub source approval required");
@@ -523,15 +514,32 @@ pub(super) fn sign(input: Inputs<'_>) -> Result<()> {
     let prepared = directory(input.prepared)?;
     let candidate = directory(input.candidate)?;
     let prior = directory(input.previous)?;
+    crate::authority::outside(
+        input.authority,
+        &[&submission, &prepared, &candidate, &prior],
+    )?;
     let policy_parent = input
         .policy
         .canonicalize()?
         .parent()
         .context("Policy parent")?
         .to_owned();
+    let authority_parent = input
+        .authority
+        .canonicalize()?
+        .parent()
+        .context("Ownership file parent")?
+        .to_owned();
     let out = new_output(
         input.out,
-        &[&submission, &prepared, &candidate, &prior, &policy_parent],
+        &[
+            &submission,
+            &prepared,
+            &candidate,
+            &prior,
+            &policy_parent,
+            &authority_parent,
+        ],
     )?;
     let checked = crate::receive::verify(
         &submission,
@@ -542,6 +550,7 @@ pub(super) fn sign(input: Inputs<'_>) -> Result<()> {
     if digest(&serde_json::to_vec(&checked.receipt.submission)?) != policy.submission_sha256 {
         bail!("Prepared submission differs from approved source review");
     }
+    crate::authority::authorize(input.authority, &policy, &checked.receipt.submission)?;
     let gh = verifier(input.gh, &policy.verifier_sha256)?;
     let reviewed_source = checked.receipt.submission.clone();
     let scratch = tempfile::tempdir()?;
@@ -566,7 +575,7 @@ pub(super) fn sign(input: Inputs<'_>) -> Result<()> {
     )?;
     verify_attestation(&gh, &policy, scratch.path())?;
     // Query mutable review state last, immediately before the delayed key gate.
-    crate::approval::verify(&gh, &policy, &reviewed_source)?;
+    crate::approval::verify(&gh, &policy, &reviewed_source, input.authority)?;
     input
         .unlock
         .outside(input.key, &[&submission, &prepared, &candidate, &prior])?;
@@ -642,12 +651,13 @@ pub(crate) mod tests {
 
     pub(crate) fn policy() -> Policy {
         Policy {
-            schema: 2,
+            schema: 3,
             candidate_sha256: "a".repeat(64),
             submission_sha256: "b".repeat(64),
             receipt_sha256: "c".repeat(64),
             producer_sha256: "d".repeat(64),
             verifier_sha256: "e".repeat(64),
+            authority_sha256: "0".repeat(64),
             registry_repo: "example/registry".into(),
             registry_commit: "a".repeat(40),
             registry_ref: "refs/heads/main".into(),
@@ -658,7 +668,7 @@ pub(crate) mod tests {
             review_pull_request: 1,
             review_head: "c".repeat(40),
             review_id: 2,
-            alpha_maintainer_approval: None,
+            maintainer_approval: None,
             approved_at: (Utc::now() - Days::minutes(1)).to_rfc3339(),
             expires_at: (Utc::now() + Days::days(1)).to_rfc3339(),
             publishing_public_key: grain_core::trust::ROOT_PUBKEY_A.into(),
@@ -668,75 +678,25 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn alpha_owner_approval_is_explicit_and_cannot_authorize_other_submissions() {
+    fn explicit_approval_is_well_formed_and_old_alpha_policy_is_refused() {
         let mut p = policy();
-        p.registry_repo = "Punit-Dethe/Grain-Extention".into();
-        p.signer_workflow =
-            "Punit-Dethe/Grain-Extention/.github/workflows/build-source-candidate.yml".into();
-        p.reviewer = "Punit-Dethe".into();
-        p.submitter = "Punit-Dethe".into();
+        p.reviewer = p.submitter.clone();
         p.review_id = 0;
-        p.submission_sha256 =
-            "6e434021102e57675b2fe1edd2b65a851878c4dfff277444091ac03c7caeb127".into();
-        p.publishing_public_key = "RWREj+hdLljbWOv3LCoTKEPv670pVG+P9knBUMWoR+V445yvdBwBuqj8".into();
-        let now = Utc::now().timestamp();
-        assert!(p.validate(now).is_err());
-        p.alpha_maintainer_approval =
-            Some("Maintainer authorization, tester GitHub artwork 0.1.2, 2026-10-15".into());
-        p.validate(now).unwrap();
-        p.submission_sha256 =
-            "b486000c5c953a3a4491d70cdd90fbfb90fa75e93f20a5b7af4ab730f25c35bb".into();
-        p.alpha_maintainer_approval =
-            Some("Maintainer authorization, tester Notion artwork 0.1.1, 2026-10-15".into());
-        p.validate(now).unwrap();
-        for (field, value) in [
-            ("alpha_maintainer_approval", serde_json::json!(" ")),
-            (
-                "alpha_maintainer_approval",
-                serde_json::json!("approval\nforged"),
-            ),
-            (
-                "alpha_maintainer_approval",
-                serde_json::json!("a".repeat(1025)),
-            ),
-            ("registry_repo", serde_json::json!("another/registry")),
-            ("submitter", serde_json::json!("another-author")),
-            ("reviewer", serde_json::json!("another-reviewer")),
-            ("review_id", serde_json::json!(1)),
-            ("submission_sha256", serde_json::json!("1".repeat(64))),
-            (
-                "submission_sha256",
-                serde_json::json!(
-                    "d667ca2fab05aae393497efb46ced148740957f2e443814ab6206aa91523375b"
-                ),
-            ),
-            (
-                "submission_sha256",
-                serde_json::json!(
-                    "c9eaad5d89f26d5439d6a9a1e91a3533370aa576953e62ef9e85a5a63d0a36f3"
-                ),
-            ),
-            (
-                "submission_sha256",
-                serde_json::json!(
-                    "9d8f657c96869202902cc7ef167db964d9e02926dfd659f80e71d724bcbc1dbf"
-                ),
-            ),
-            (
-                "publishing_public_key",
-                serde_json::json!(grain_core::trust::ROOT_PUBKEY_A),
-            ),
-        ] {
-            let mut bad = serde_json::to_value(&p).unwrap();
-            bad[field] = value;
-            assert!(
-                serde_json::from_value::<Policy>(bad)
-                    .unwrap()
-                    .validate(now)
-                    .is_err(),
-                "{field}"
-            );
+        assert!(p.validate(Utc::now().timestamp()).is_err());
+        p.maintainer_approval = Some("Operator approved this exact release".into());
+        p.validate(Utc::now().timestamp()).unwrap();
+        for reference in [" ".into(), "forged\nreference".into(), "a".repeat(1025)] {
+            p.maintainer_approval = Some(reference);
+            assert!(p.validate(Utc::now().timestamp()).is_err());
         }
+        let mut old = serde_json::to_value(policy()).unwrap();
+        old["schema"] = serde_json::json!(2);
+        assert!(serde_json::from_value::<Policy>(old.clone())
+            .unwrap()
+            .validate(Utc::now().timestamp())
+            .is_err());
+        old["alpha_maintainer_approval"] = serde_json::json!("old exception");
+        assert!(serde_json::from_value::<Policy>(old).is_err());
     }
 
     #[test]
@@ -761,6 +721,7 @@ pub(crate) mod tests {
             "receipt_sha256",
             "producer_sha256",
             "verifier_sha256",
+            "authority_sha256",
             "registry_repo",
             "registry_commit",
             "registry_ref",
