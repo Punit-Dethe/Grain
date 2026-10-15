@@ -1,5 +1,18 @@
 # Extension implementation: progress, changes and user testing
 
+**Publishing/developer/store readiness plan, 15 October 2026:** audited current
+CLI, shared contract, source review/signing, GitHub workflows/settings and store
+gates. [The existing stabilization plan](PLATFORM-STABILIZATION.md) is now the
+single current six-block work order: author workflow; ownership/approval;
+publishing orchestration; publisher account onboarding; store lifecycle;
+operations/release. Historical phase/test counters do not define this backlog.
+Retain the current runtime, libraries, signer/verifier and GitHub host. Actual
+read-only GitHub inspection confirms no publish-environment protection rules,
+main branch protection or rulesets; no settings were changed. Source publication
+still needs a permanent policy replacing exact tester hash exceptions. This
+checkpoint updates plans only; Block 1 implementation is next, with no user
+input needed to begin. No harness expansion, installer or new publication.
+
 **Store duplicate-version fix, 15 October 2026:** the user accepts the artwork
 layout for now. Their screenshot exposes five cards: three GitHub releases and
 two Notion releases. The signed catalogue correctly retains versioned artifacts,

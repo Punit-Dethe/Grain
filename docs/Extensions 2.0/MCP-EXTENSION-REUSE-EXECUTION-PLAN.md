@@ -1,5 +1,13 @@
 # Extension platform: audit, reuse and execution plan
 
+## Active forward work order — 15 October 2026
+
+Use [PLATFORM-STABILIZATION.md](PLATFORM-STABILIZATION.md) for the current six
+publishing/developer/store completion blocks. This document retains the original
+architecture/reuse decisions and dated execution history. Historical phase counts
+and pending-test totals below are not the current remaining-work list. Completed
+runtime/OAuth/tool-selection work is reused, not restarted by the new plan.
+
 ## Current continuation point — 14 October 2026
 
 **Latest gate:** representative GitHub writes now pass with the configured Gemini
