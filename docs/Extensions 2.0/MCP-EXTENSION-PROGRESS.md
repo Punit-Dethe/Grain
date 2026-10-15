@@ -1,5 +1,46 @@
 # Extension implementation: progress, changes and user testing
 
+**Block 3 publication integration checkpoint, 16 October 2026:** registry PR 8
+proposes a single immutable Grain tooling pin for the source builder, producer
+receipt and publisher. The value is selected from the reviewed registry checkout,
+validated before Grain checkout and passed between trusted jobs; author inputs
+and downloaded producer metadata do not select it. Existing native author-build,
+attestation, exact approval, local key and one-shot activation separation stays.
+`PUBLISHING.md` now gives maintainers one command sequence and explicit recovery
+boundaries using existing tools, not another runner. Contributor docs use the
+already implemented PR helper; provenance docs distinguish current policy from
+historical fixtures and remove obsolete schema-2/legacy-hold instructions.
+
+Verification: Actionlint 1.7.12 checks the three affected workflow definitions;
+14 real Bash selector cases pass (seven per workflow), including branch names,
+short/uppercase/multiline/injected values and empty input refusal. 96 registry
+tests and 19 publisher/delivery tests pass. Actual verification-only publication
+of signed commit `15b87cf75c36f5d330470196094738001a6b9426`, parent
+`143b06ad21d8a7cd7c97463d6d3e1722870f5359`, receipt
+`af06f30276f8040ebe59e2f4dc155ed836f3853b4f3a497bace92d06a86ee649`
+passes with the current Rust verifier, complete committed PNG/gallery/history and
+snapshot `95842e9643eac6b1714b83f28e233bf4778fc0a166e88d34e0640c5b8173a803`.
+The first attempt failed on Python's lowercase Windows `nul` versus Rust's exact
+`NUL` wire value. Fixed without loosening handoff equality; the test now uses an
+independent literal Rust-contract fixture rather than deriving both sides from
+the same Python helper. Retained public checkout:
+`C:/Users/watrm/AppData/Local/Temp/grain-publication-verify-_8o1w3xw`.
+No previously blocked cleanup was retried. No signing, catalogue activation,
+Computer Use, account mutation or application build occurred.
+
+CLI run [38784532686](https://github.com/Punit-Dethe/Grain/actions/runs/38784532686)
+at `20845d09ee63d290f4387dfc84a1f803fea25b6e` passes Windows x64, Linux x64 and
+macOS arm64 build/check/package/upload. This closes the prior pending build
+result, not a fresh installer or stable SDK release. Scoped source review covers
+trusted workflow pin selection, producer propagation, unchanged token/signing
+boundaries and exact Python/Rust handoff comparison. The graph has no indexed
+registry nodes, so direct diff/call-path review supplies its missing coverage.
+
+**Blocks 1–2 complete; Block 3 remains open:** reviewed operator ownership/tooling
+adoption and one exact-approved live update remain. Four blocks including Block 3
+remain. New application/provider testing is not required from the user now.
+Unrelated local Cargo/binding edits remain untouched.
+
 **Block 3 in progress — author PR convenience and publishing diagnostics,
 15 October 2026:** added `grain-ext pr` using the shared native/MCP submission
 validator, local read-only Git checks and maintained GH CLI. It requires a clean

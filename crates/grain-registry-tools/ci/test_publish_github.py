@@ -45,7 +45,11 @@ class PublisherTests(unittest.TestCase):
                    "repository": values[0], "branch": "main", "expected_base_commit": values[1],
                    "candidate_commit": values[2], "candidate_receipt_sha256": values[3],
                    "snapshot": "5" * 64, "push_args": publisher.push_args(url, *values[1:3]),
-                   "remove_environment_prefix": "GIT_", "environment": publisher.git_environment({})}
+                   # Literal Rust wire contract; do not derive this fixture from
+                   # Python's environment helper (it hid Windows nul/NUL drift).
+                   "remove_environment_prefix": "GIT_",
+                   "environment": {"GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": "NUL" if sys.platform == "win32" else "/dev/null",
+                                   "GIT_TERMINAL_PROMPT": "0", "GIT_NO_LAZY_FETCH": "1"}}
         self.assertEqual(publisher.validate_handoff(handoff, *values), url)
         for field, value in [("push_args", ["push", "--force", url]), ("branch", "other"),
                              ("previous_receipt_sha256", "4" * 64), ("snapshot", "bad"), ("schema", 2), ("schema", True)]:

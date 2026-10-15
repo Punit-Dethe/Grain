@@ -11,6 +11,10 @@ import re
 import subprocess
 import tempfile
 
+# Exact spelling of the Rust handoff contract, including Windows' NUL device.
+# Python's os.devnull is lowercase on Windows; raw handoff equality is deliberate.
+CONFIG_NULL = "NUL" if os.name == "nt" else "/dev/null"
+
 
 def repository_url(repository):
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*", repository):
@@ -38,7 +42,7 @@ def identity(repository, base, candidate, receipt, mode, previous):
 def git_environment(source):
     # Keep a token out of verification children; pass it only to final Git calls.
     env = {k: v for k, v in source.items() if not k.startswith("GIT_") and k not in ["GH_TOKEN", "GITHUB_TOKEN", "PUBLICATION_TOKEN"]}
-    env.update(GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL=os.devnull,
+    env.update(GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL=CONFIG_NULL,
                GIT_TERMINAL_PROMPT="0", GIT_NO_LAZY_FETCH="1")
     return env
 
@@ -90,7 +94,7 @@ def validate_handoff(handoff, repository, base, candidate, receipt, mode, previo
                 "candidate_receipt_sha256": receipt, "remove_environment_prefix": "GIT_",
                 "evidence_class": f"verified-git-{'initial-' if mode == 'initial' else ''}publication-handoff-not-release-approval",
                 "push_args": push_args(url, base, candidate),
-                "environment": {"GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": os.devnull,
+                "environment": {"GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": CONFIG_NULL,
                                 "GIT_TERMINAL_PROMPT": "0", "GIT_NO_LAZY_FETCH": "1"}}
     if mode == "update":
         expected["previous_receipt_sha256"] = previous

@@ -1,6 +1,6 @@
 # Extension platform: publishing and release work order
 
-Updated 15 October 2026. This is the **single active forward plan** for finishing
+Updated 16 October 2026. This is the **single active forward plan** for finishing
 extension authoring, review, publication and store delivery. It replaces this
 file's earlier chronological work order and the historical E4–E8 phase counts.
 Completed evidence stays in [progress](MCP-EXTENSION-PROGRESS.md) and the focused
@@ -264,10 +264,29 @@ claimed before its results. Source audit passes; graph context remains incomplet
 for newly added modules. The new diagnostic script is not yet activated in the
 remote publisher: its reviewed source pin will be adopted with final integration.
 
-**Current remainder:** final commit-bound publication/tooling-pin integration and
-one complete new live provider update after reviewed ownership/operator adoption.
-Blocks 1–2 complete; Block 3 still open; four blocks including it remain. No new
-user account/app test is needed for this author-tooling step.
+**Publication integration checkpoint, 16 October:** registry PR 8 now proposes
+one immutable `ci/grain-tooling-commit.txt` selection for both trusted source
+preparation and activation, including the producer receipt's source pin. This
+replaces three drifting literals without a new loader/framework. Both workflows
+validate the selected SHA before checkout. Actionlint passes; seven real Bash
+acceptance/refusal inputs pass for each selector, including injected/multiline
+values. The registry's new `PUBLISHING.md` is the maintainer entry point for
+existing intake, approval, staging, exact Git layout/handoff, activation and
+stage-specific recovery. Author docs use the implemented draft-PR helper.
+
+The current production publisher's verification-only route was exercised against
+the actual signed index-7 Git commit. It exposed Windows Python `nul` versus Rust
+`NUL` equality drift in the serialized handoff. Matching Rust's exact spelling
+fixes it; the independent literal wire-contract fixture now detects the old bug.
+The real command passes with no signing or remote mutation. 96 registry tests
+and 19 publisher/delivery tests pass. CLI run 38784532686 at 20845d09 passes all
+three advertised OS builds/tests/artifact uploads. These do not certify a new
+source release or adoption of the proposal. No new harness or installer.
+
+**Current remainder:** adopt the reviewed ownership/tooling proposal and complete
+one new live provider update with exact release approval. Blocks 1–2 complete;
+Block 3 still open; four blocks including it remain. GitHub protection/custody
+changes are separate operator decisions; this checkpoint changes none of them.
 
 Reuse existing trusted CI and local/protected signer. Provide one documented
 maintainer entry point that selects the reviewed candidate, downloads/verifies
