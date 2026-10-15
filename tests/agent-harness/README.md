@@ -70,9 +70,15 @@ the model must use ordinary `search_tools` to publish them. Default/release beha
 does not use these hints. Use the same binary/request/profile with the variable
 unset for a control; compare actual completed actions, recovery calls and timing.
 This adds no server, runner or alternate Agent loop. Retire the temporary switch
-and decide the context policy when evidence is sufficient. Current live acceptance
-is blocked by the local 9router listener being unavailable; no provider action
+and decide the context policy when evidence is sufficient. Initial live acceptance
+was blocked by the local 9router listener being unavailable; no provider action
 from those failed attempts is a passing test. Keep reports in ignored `.runs/`.
+
+Live follow-up: after the user restored 9router, the same-binary read-only trial
+verified combined recovery and successful search/fetch. All three reports passed;
+one initial control missed catalogue preparation and must not be treated as a
+matched timing sample. Hints remain opt-in pending broader comparison; see the
+progress record for the warm control and experimental measurements.
 
 For an offline catalogue comparison, use the opt-in backend test, not another
 ranker implementation. Its JSON case array has `id`, `split`, `query`, and

@@ -1,5 +1,41 @@
 # Extension implementation: progress, changes and user testing
 
+**9router restored and live recovery verified, 15 October (latest):** after the
+user started the existing gateway, `/v1/models` returned HTTP 200 and genuine
+Grain Agent requests completed using the configured Gemini route. No gateway
+configuration, installation or credentials were changed. Ran the same read-only
+Notion find/full-page request with one debug binary/profile, hints off, on, then
+off again. Every journey executed one search and one fetch successfully, returned
+the expected page title/issue topics, and recorded zero duplicate calls.
+
+| Run | Initial catalogues / tools offered | Discovery calls | Model requests | Full-page result | Final answer |
+| --- | --- | --- | --- | --- | --- |
+| First control | 0 / 1 | 2 | 5 | 28.55 s | 33.87 s |
+| Hints on | 1 / 7 | 1 | 3 | 13.38 s | 17.39 s |
+| Warm control | 1 / 7 | 1 | 4 | 21.71 s | 25.44 s |
+
+The first control hit the three-second catalogue preparation deadline; normal
+recovery succeeded, but this is **not a matched performance control**. The other
+two prepared the same six action IDs and schema-byte count (20,974), with fetch absent.
+Preparation took 0.92 s with hints and 2.04 s in the warm control. Hints occupied
+7,660 bytes. In the experimental journey the model combined recovery and the
+already-offered search in its first round, then fetched on the next round; the
+warm control used a separate discovery round. Same-frame exposure authority held:
+fetch became usable only after publication. Raw search arguments were not retained,
+so this verifies successful combined recovery, not the exact query text used.
+
+These are backend timings, not speech/UI latency, and only one comparable
+experimental sample with provider/preparation variability. Do not claim a general
+speedup, completed accuracy gate or production readiness. Hints remain debug-only
+opt-in. Next: a small broader task comparison before deciding to adopt/retire them.
+No writes, browser control, installer, new runner or retained probe process.
+Evidence: ignored `tests/agent-harness/.runs/lexical-fields-20261015/comparison.json`
+plus reports, monotonic traces and binary hash. Task IDs: first control
+`2dcecd15-bb11-45f1-9b06-27007d1d729c`, experiment
+`5b58ae51-a90a-4ccf-a86d-c7c75e4f920a`, warm control
+`17401426-e9e0-45fb-a6da-7d668813c638`. Earlier connection-refused attempts stay
+recorded as failed/blocked; they were not retroactively passed.
+
 **Precise-recovery experiment, 15 October (latest):** separated purpose/prose
 statistics and purpose-paragraph enrichment were tried against the same 72-case
 catalogue corpus. At K=6 the existing path covered 57/72 complete required sets,

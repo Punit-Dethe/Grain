@@ -13,6 +13,17 @@ part of this work order. Reconsider those only after reviewing lexical results.
 
 ## Current checkpoint
 
+Latest live result: the user restored 9router and three genuine read-only Agent
+journeys completed. The comparable warm control and hint trial used the same
+initial six action IDs and schema-byte count: hints combined discovery with an already-offered search,
+reducing four model requests to three in this sample. Full-page result 13.38 s
+with hints versus 21.71 s in the warm control; answers 17.39/25.44 s. An earlier
+control missed catalogue preparation and is excluded from a matched claim.
+One sample, unequal provider/preparation timing and one provider are insufficient
+for adoption. Combined recovery is live-verified for this request; the offline
+quality gate and broader comparison remain open. Keep the debug switch opt-in.
+See the progress record for all three journeys, evidence and limitations.
+
 Latest bounded experiment: scoring purpose/prose separately did not improve the
 72-case K=6 regression coverage (57/72 baseline, 54/72 separate fields, 56/72 with
 purpose enrichment); all scoring/projection changes were reverted. A debug-only
@@ -23,9 +34,9 @@ Inspired by [Anthropic's deferred discovery](https://www.anthropic.com/engineeri
 and [OpenAI's namespace descriptions](https://developers.openai.com/api/docs/guides/tools-tool-search);
 Grain's bounded per-tool hints are our experiment, not an implementation claim
 about either vendor. These sources do not establish a Grain performance gain.
-The live recovery check is blocked by local 9router connection refusal before
-any model/tool action; a normal launcher attempt was policy-rejected. Once the
-user opens 9router, compare the same request with hints off/on in one binary.
+The initial recovery check was blocked by local 9router connection refusal before
+any model/tool action; a normal launcher attempt was policy-rejected. The user
+subsequently restored it, allowing the first same-binary comparison recorded above.
 Retire the debug switch at that decision. The quality gate remains open.
 
 15 October: reserve 8 KiB for recovery by capping a non-eager initial publication

@@ -62,6 +62,13 @@ comparison, with default/release behavior unchanged. Live verification is blocke
 until the configured local 9router is running; no model action occurred. Keep this
 experiment out of adoption claims and retire its switch after comparison.
 
+Live follow-up: user restored 9router; all three read-only journeys passed.
+Combined recovery plus an already-offered search worked in one model round with
+hints, followed by fetch. One comparable warm control required an extra model
+request. The first control missed catalogue preparation and is not matched.
+Promising single-sample evidence; retain debug opt-in and complete broader
+comparison before adoption. Provider availability is no longer the blocker.
+
 **14 October Agent policy correction (latest user decision):** native and MCP
 tool calls execute automatically after ordinary extension enablement/account
 consent. Per-call approval dialogs are removed from capability dispatch, while
