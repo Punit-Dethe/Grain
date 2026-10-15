@@ -631,6 +631,7 @@ fn main() -> Result<()> {
             Cmd::BootstrapServingTree(_)
                 | Cmd::RenewServingMetadata { .. }
                 | Cmd::SignReviewedCandidate(_)
+                | Cmd::StageReviewedRelease { .. }
                 | Cmd::Keygen { .. }
                 | Cmd::Sign { .. }
                 | Cmd::Roots { .. }
