@@ -3,8 +3,19 @@
 **Artwork publication reauthorized, 15 October 2026:** the user explicitly
 authorized publishing both exact artwork candidates after withdrawing the earlier
 approval. PR #5 is merged; follow-up PR #6 corrects a stale producer metadata
-reference to match the existing pinned tool build. Genuine CI preparation and
-signing/publication are in progress; the prior draft hold below is historical.
+reference to match the existing pinned tool build. Both genuine CI preparations pass (runs 38700335101 and 38700339217).
+Both candidates are signed and published in signed index **7** at registry commit
+`15b87cf75c36f5d330470196094738001a6b9426`. [Publication run
+38701547203](https://github.com/Punit-Dethe/Grain-Extention/actions/runs/38701547203)
+passes: remote main confirmed, all **55 public files / 116 HTTP requests**
+matched verified bytes against exact-commit and main URLs, including both PNG
+icons and all six new gallery images. Bundle SHA256:
+`af06f30276f8040ebe59e2f4dc155ed836f3853b4f3a497bace92d06a86ee649`.
+The first publication run stopped before pushing: committed-path capture had
+not allowed the new PNG icon role. Fixed with the shared 512 KiB icon bound,
+a real signed-icon capture regression and all eight capture tests passing.
+Registry PR #7 pins that verifier fix; the source artifacts are unchanged.
+The prior draft hold below is historical.
 The duplicate author line beneath the detail title is removed; Creator remains
 in Details and the summary remains below the title. Frontend TypeScript/Vite
 build and focused source checks pass; visual acceptance remains pending.
@@ -33,18 +44,19 @@ with an attributed square icon and three official-provider wide images each.
 Local doctor/pack, source-pinned preparation and unsigned catalogue staging pass;
 each candidate has one PNG icon and three gallery-only WebP references. Verified
 descriptor differences are version-only: endpoint, authentication and public
-options are unchanged. **They are not yet published to the signed store.**
+options are unchanged. **These preparation checks preceded the completed signed publication recorded above.**
 The existing publisher makes each version's listing immutable; new exact source
 candidates require review/approval/signing, not a fresh Grain installer release.
-Both source branches and fixed tags are pushed. Registry [draft PR #5](https://github.com/Punit-Dethe/Grain-Extention/pull/5)
+Both source branches and fixed tags are pushed. Registry [PR #5](https://github.com/Punit-Dethe/Grain-Extention/pull/5)
 contains the two source submissions, corrected author instructions and workflow
 pins to shared artwork tooling at `3e5862451f556f766391e47167d0c4ddecab5da7`.
-No live `v1` data or exact-source approval exceptions were changed. One explicit
-approval request covers the two new tester candidates before CI/signing/activation.
-**Approval withdrawn, 15 October:** the user said the approval was accidental
+At this preparation checkpoint, no live `v1` data or approval exceptions had
+changed. The later explicit authorization and completed publication are recorded
+above; it supersedes this initial draft state.
+**Historical approval withdrawal, superseded by reauthorization above, 15 October:** the user said the approval was accidental
 and requested that PR #5 remain a draft. No candidate build/signing/publication
-was started following that approval. Keep both candidates unpublished until a
-new explicit approval; the exact-source approval exceptions remain unchanged.
+was started following that withdrawn approval. Publication proceeded only after
+the next explicit user request authorized it again.
 
 Frontend 123 unit tests, TypeScript/Vite build, ESLint/Prettier, SDK/checker/CLI
 tests, normal registry suite, both-role catalogue staging and HTTP inventory

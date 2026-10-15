@@ -82,14 +82,38 @@ approval exceptions cover exact candidates; new candidates require approval.
 
 ## First-party examples
 
-GitHub 0.1.2 and Notion 0.1.1 are prepared with one square icon and three
+GitHub 0.1.2 and Notion 0.1.1 are published with one square icon and three
 wide images each, using official provider assets. Their source `assets/README.md`
 records URLs, pixel sizes and normalization. These are test-listing images;
-they do not certify every depicted service feature through Grain. Public store
-activation remains separate until their exact candidates are approved/signed.
-Both fixed source tags are pushed; the combined candidate is in
+they do not certify every depicted service feature through Grain. Both fixed
+source tags are pushed; the two source submissions are reviewed in
 [registry PR #5](https://github.com/Punit-Dethe/Grain-Extention/pull/5).
 The user withdrew accidental approval on 15 October, then explicitly
 reauthorized publication of both exact candidates in the next request. PR #5
-is merged; PR #6 aligns producer metadata with the pinned tool build. Signing
-and public activation are in progress; no new Grain installer is required.
+is merged; PR #6 aligns producer metadata with the pinned tool build. PR #7
+adds the missing bounded PNG path to publication capture and pins the corrected
+verifier. All eight capture tests pass, including real signed-icon capture.
+The signed index is version 7, published at registry commit
+`15b87cf75c36f5d330470196094738001a6b9426`. [Publication run
+38701547203](https://github.com/Punit-Dethe/Grain-Extention/actions/runs/38701547203)
+passes: Git main confirmed; all 55 public files matched the verified bundle
+through 116 anonymous HTTP requests against exact-commit and main URLs. The
+bundle SHA256 is `af06f30276f8040ebe59e2f4dc155ed836f3853b4f3a497bace92d06a86ee649`.
+
+## Viewing this update
+
+Use the updated development app for the new separate-icon/gallery rendering and
+the title without the duplicate author line:
+
+```powershell
+cd C:\Projects\Grain\grain-main-integration-20261010
+bun run dev:asr
+```
+
+Reopen Extensions → Store to refresh the catalogue. Open GitHub and Notion and
+check the square title icon, large gallery, previous/next buttons and numbered
+selectors. Each has three images. Use Update for an installed older extension
+when offered. Creator stays in Details; the author line is absent below the title.
+The publication creates extension updates only; it does not replace an already
+installed Grain binary. Older binaries do not acquire this new UI from the store.
+Visual acceptance remains pending the user’s real-app check.
