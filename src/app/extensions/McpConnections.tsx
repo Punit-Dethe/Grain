@@ -33,6 +33,7 @@ export function McpConnections({
   onChange,
   onRemoved,
   actionsContainer,
+  onRequestRemoval,
 }: {
   query: string;
   source?: "configured" | "store";
@@ -40,6 +41,7 @@ export function McpConnections({
   onChange?: () => Promise<void>;
   onRemoved?: () => void;
   actionsContainer?: HTMLElement | null;
+  onRequestRemoval?: () => void;
 }) {
   const titleId = useId();
   const [rows, setRows] = useState<Row[]>([]);
@@ -251,6 +253,7 @@ export function McpConnections({
         disabled={busy !== null}
         onClick={(event) => {
           returnFocus.current = event.currentTarget;
+          onRequestRemoval?.();
           setRemoving(row.id);
         }}
       >
@@ -265,11 +268,14 @@ export function McpConnections({
       : button;
   };
   return (
-    <section className="mcp-connections" aria-labelledby={titleId}>
+    <section
+      className={`mcp-connections${source === "store" ? " extension-account-settings" : ""}`}
+      aria-labelledby={titleId}
+    >
       <header className="mcp-connections-heading">
         <div>
           <h2 id={titleId}>
-            {source === "store" ? "Settings" : "Your MCP connections"}
+            {source === "store" ? "Account & access" : "Your MCP connections"}
           </h2>
           <p>
             {source === "configured" &&

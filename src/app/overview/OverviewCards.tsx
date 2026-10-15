@@ -1,248 +1,130 @@
-import { ArrowRight, BookOpen, FileText, Keyboard } from "lucide-react";
+import { ArrowRight } from "lucide-react";
+import type { CSSProperties } from "react";
 import { useTranslation } from "react-i18next";
 import { useSettings } from "@/hooks/useSettings";
 import { formatKeyPart } from "@/lib/utils/keyboard";
 import { hashForRoute } from "../navigation";
 
-const COPY = {
-  intro: {
-    title: "Get comfortable with Grain.",
-    body: "Your shortcuts and tools, all in one place.",
-    action: "Get started",
-  },
-  snippets: {
-    title: "Snippets",
-    explore: "Manage snippets",
-  },
-  dictionary: {
-    title: "Dictionary",
-    explore: "Go to dictionary",
-  },
-  shortcuts: {
-    title: "Shortcuts",
-    none: "Not set",
-  },
-  agent: {
-    title: "Agent",
-    shortcutLabel: "Shortcut",
-    enable: "Turn on Agent",
-  },
-};
+const SHORTCUTS = [
+  { mode: "standard", bindingId: "transcribe" },
+  { mode: "streaming", bindingId: "transcribe_native_asr" },
+  { mode: "agent", bindingId: "summon_agent" },
+] as const;
 
-const DICTATION_BINDING_ID = "transcribe";
-const STREAMING_BINDING_ID = "transcribe_native_asr";
-const AGENT_BINDING_ID = "summon_agent";
+const CAPTURE_SETTINGS = hashForRoute({ page: "settings", section: "capture" });
 
 function go(hash: string) {
   window.location.hash = hash.slice(1);
 }
 
-/** A shortcut chord without keycap boxes. */
-function Keycap({ combination }: { combination: string }) {
-  const keys = combination
-    .split("+")
-    .map((part) => formatKeyPart(part))
-    .filter(Boolean);
+function ShortcutKeys({ combination }: { combination: string }) {
+  const keys = combination.split("+").map(formatKeyPart).filter(Boolean);
+  // Budget glyphs, key padding and separators in ems so the entire chord
+  // scales to its available width without measuring or wrapping individual keys.
+  const emWidth =
+    keys.reduce(
+      (width, key) => width + Math.max(3.84, key.length * 0.66 + 1.92),
+      0,
+    ) +
+    Math.max(0, keys.length - 1) * 1.5;
+  // Shared kbd styles belong to individual keys, never to the entire chord.
   return (
-    <kbd className="overview-keys">
+    <span
+      className="overview-shortcut-keys"
+      data-adaptive={keys.length > 2 ? "true" : undefined}
+      style={
+        {
+          "--shortcut-em-width": Math.max(1, emWidth),
+          "--shortcut-border-width": `${keys.length * 2}px`,
+        } as CSSProperties
+      }
+    >
       {keys.map((key, index) => (
-        <span className="overview-key-part" key={`${key}-${index}`}>
-          {index > 0 && <span className="overview-key-separator">+</span>}
-          {key}
+        <span className="overview-shortcut-key-part" key={`${key}-${index}`}>
+          {index > 0 && <span className="overview-shortcut-plus">+</span>}
+          <kbd className="overview-shortcut-key">{key}</kbd>
         </span>
       ))}
-    </kbd>
-  );
-}
-
-/**
- * One `label — keycap` line in the Shortcuts card.
- */
-function ShortcutRow({
-  label,
-  combination,
-}: {
-  label: string;
-  combination: string | null;
-}) {
-  return (
-    <div className="overview-shortcut-row">
-      <span className="overview-shortcut-label">{label}</span>
-      {combination ? (
-        <Keycap combination={combination} />
-      ) : (
-        <span className="overview-shortcut-off">{COPY.shortcuts.none}</span>
-      )}
-    </div>
-  );
-}
-
-function SnippetsCard() {
-  return (
-    <button
-      className="overview-card overview-card--interactive"
-      type="button"
-      onClick={() => go(hashForRoute({ page: "tools", section: "snippets" }))}
-    >
-      <div className="overview-card-header">
-        <FileText className="overview-card-icon" size={18} strokeWidth={1.8} />
-        <strong className="overview-card-title">{COPY.snippets.title}</strong>
-      </div>
-      <div className="overview-card-footer">
-        <div className="overview-cta-row">
-          <span className="overview-card-cta">{COPY.snippets.explore}</span>
-          <ArrowRight
-            size={13}
-            className="overview-cta-arrow"
-            aria-hidden="true"
-          />
-        </div>
-      </div>
-    </button>
-  );
-}
-
-function DictionaryCard() {
-  return (
-    <button
-      className="overview-card overview-card--interactive"
-      type="button"
-      onClick={() => go(hashForRoute({ page: "tools", section: "dictionary" }))}
-    >
-      <div className="overview-card-header">
-        <BookOpen className="overview-card-icon" size={18} strokeWidth={1.8} />
-        <strong className="overview-card-title">{COPY.dictionary.title}</strong>
-      </div>
-      <div className="overview-card-footer">
-        <div className="overview-cta-row">
-          <span className="overview-card-cta">{COPY.dictionary.explore}</span>
-          <ArrowRight
-            size={13}
-            className="overview-cta-arrow"
-            aria-hidden="true"
-          />
-        </div>
-      </div>
-    </button>
-  );
-}
-
-function ShortcutsCard() {
-  const { t } = useTranslation();
-  const { getSetting } = useSettings();
-  const bindings = getSetting("bindings") ?? {};
-
-  const captureId = DICTATION_BINDING_ID;
-  const streaming = bindings[STREAMING_BINDING_ID];
-  const capture = bindings[captureId];
-
-  const label = (id: string, fallback?: string) =>
-    t(`settings.general.shortcut.bindings.${id}.name`, fallback ?? id);
-
-  return (
-    <div className="overview-card overview-card--static overview-card--shortcuts">
-      <div className="overview-card-header">
-        <Keyboard className="overview-card-icon" size={18} strokeWidth={1.8} />
-        <strong className="overview-card-title">{COPY.shortcuts.title}</strong>
-      </div>
-      <div className="overview-shortcut-list">
-        <ShortcutRow
-          label={label(captureId, capture?.name)}
-          combination={capture?.current_binding || null}
-        />
-        <ShortcutRow
-          label={label(STREAMING_BINDING_ID, streaming?.name)}
-          combination={streaming?.current_binding || null}
-        />
-      </div>
-    </div>
-  );
-}
-
-function AgentCard() {
-  const { getSetting } = useSettings();
-  const enabled = getSetting("agent_enabled") ?? false;
-  const binding = (getSetting("bindings") ?? {})[AGENT_BINDING_ID];
-  const combination = enabled ? binding?.current_binding || null : null;
-
-  return (
-    <button
-      className="overview-card overview-card--interactive"
-      type="button"
-      onClick={() => go(hashForRoute({ page: "agent" }))}
-    >
-      <div className="overview-card-header">
-        <AgentGlyph />
-        <strong className="overview-card-title">{COPY.agent.title}</strong>
-      </div>
-      <div className="overview-card-footer">
-        {combination ? (
-          <div className="overview-shortcut-row overview-agent-row">
-            <span className="overview-shortcut-label">
-              {COPY.agent.shortcutLabel}
-            </span>
-            <Keycap combination={combination} />
-          </div>
-        ) : (
-          <div className="overview-cta-row">
-            <span className="overview-card-cta">{COPY.agent.enable}</span>
-            <ArrowRight
-              size={13}
-              className="overview-cta-arrow"
-              aria-hidden="true"
-            />
-          </div>
-        )}
-      </div>
-    </button>
-  );
-}
-
-/** The prototype's Agent face — clean inline SVG glyph. */
-function AgentGlyph() {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      className="overview-card-icon overview-agent-svg"
-      aria-hidden="true"
-    >
-      <rect x="5.25" y="6" width="13.5" height="10.5" rx="4.25" />
-      <circle cx="10" cy="11.25" r="1" />
-      <circle cx="14" cy="11.25" r="1" />
-      <path d="M10 14.1c.58.5 1.27.75 2 .75s1.42-.25 2-.75M12 6V3.9M8.75 18.2 7.5 20.1M15.25 18.2l1.25 1.9" />
-    </svg>
+    </span>
   );
 }
 
 export function OverviewCards() {
+  const { t } = useTranslation();
+  const { getSetting, isLoading } = useSettings();
+  const bindings = getSetting("bindings") ?? {};
+  const agentEnabled = getSetting("agent_enabled") ?? false;
+
   return (
-    <div className="overview-start-tray">
-      <div className="overview-start-intro">
-        <div>
-          <strong>{COPY.intro.title}</strong>
-          <p>{COPY.intro.body}</p>
+    <div className="overview-shortcut-strip">
+      <div className="overview-shortcut-layout">
+        <aside className="overview-shortcut-info">
+          <p>
+            <strong>{t("overview.shortcuts.infoTitle")}</strong>{" "}
+            {t("overview.shortcuts.infoDescription")}
+          </p>
+          <button
+            className="button overview-shortcut-settings"
+            type="button"
+            onClick={() => go(CAPTURE_SETTINGS)}
+          >
+            {t("overview.shortcuts.infoAction")}
+            <ArrowRight size={13} aria-hidden="true" />
+          </button>
+        </aside>
+        <div className="overview-shortcuts">
+          {SHORTCUTS.map(({ mode, bindingId }) => {
+            const label = t(`overview.shortcuts.${mode}`);
+            const combination = bindings[bindingId]?.current_binding?.trim();
+            const shortcut = combination
+              ? combination
+                  .split("+")
+                  .map(formatKeyPart)
+                  .filter(Boolean)
+                  .join(" + ")
+              : t("overview.shortcuts.notSet");
+            return (
+              <section className="overview-shortcut" key={mode}>
+                <div className="overview-shortcut-heading">
+                  <h3>{label}</h3>
+                  {mode === "agent" && !isLoading && !agentEnabled && (
+                    <span className="overview-shortcut-status">
+                      {t("overview.shortcuts.off")}
+                    </span>
+                  )}
+                </div>
+                <button
+                  className="overview-shortcut-trigger"
+                  type="button"
+                  disabled={isLoading}
+                  aria-label={t("overview.shortcuts.configure", {
+                    mode: label,
+                    shortcut,
+                  })}
+                  onClick={() =>
+                    go(
+                      mode === "agent"
+                        ? hashForRoute({ page: "agent" })
+                        : CAPTURE_SETTINGS,
+                    )
+                  }
+                >
+                  {isLoading ? (
+                    <span className="overview-shortcut-empty">
+                      {t("settings.general.shortcut.loading")}
+                    </span>
+                  ) : combination ? (
+                    <ShortcutKeys combination={combination} />
+                  ) : (
+                    <span className="overview-shortcut-empty">
+                      {t("overview.shortcuts.notSet")}
+                    </span>
+                  )}
+                </button>
+              </section>
+            );
+          })}
         </div>
-        <button
-          className="overview-start-button"
-          type="button"
-          onClick={() =>
-            go(hashForRoute({ page: "settings", section: "capture" }))
-          }
-        >
-          {COPY.intro.action}
-          <ArrowRight size={14} aria-hidden="true" />
-        </button>
-      </div>
-      <div
-        className="overview-grid"
-        role="region"
-        aria-label="Start here options"
-        tabIndex={0}
-      >
-        <ShortcutsCard />
-        <AgentCard />
-        <DictionaryCard />
-        <SnippetsCard />
       </div>
     </div>
   );

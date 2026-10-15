@@ -1,5 +1,35 @@
 # Extension implementation: progress, changes and user testing
 
+**Extension detail UI refinement, 15 October 2026 (latest):** adopted the scoped
+frontend changes from `origin/main` through `f6c9be19`: Home's compact shortcut
+strip and light-theme History surfaces. Kept the extension branch's other work.
+The shared individual extension page now leads with artwork, identity and
+install/update/uninstall actions, followed by Overview / Settings navigation.
+Overview renders the description directly beside ordinary metadata, trust and
+permissions; the boxed Information disclosure and nested permission scrolling
+are gone. Settings groups account/access and preferences into labeled rows,
+with advanced connection configuration kept secondary. Native and MCP-backed
+extensions continue to share the same presentation; store and installed lists
+were outside this refinement.
+
+Both views stay mounted so switching them does not cancel OAuth or reset form
+state. The portalled header Uninstall action reveals Settings before showing
+its existing confirmation. No account, tool-discovery, execution, approval or
+publication contract changed. No new dependency, backend code, installer,
+release or visual test harness. Layout references: [Raycast Settings](https://manual.raycast.com/settings)
+and [Chrome extension management](https://support.google.com/chrome_webstore/answer/2664769?hl=en).
+
+Verification: all **123 frontend unit tests**, TypeScript + Vite production
+frontend build, scoped ESLint and Prettier pass. The source design detector has
+no findings. Independent source review passes with no material blocking finding;
+it covered responsive/light-theme rules, account lifetime and uninstall focus.
+These are nonvisual checks; real-app visual approval and interaction
+acceptance remain **Pending**, not inferred from existing runtime/tool tests.
+User review batch: open GitHub and Notion details from installed/store views;
+inspect Overview and Settings in both themes and a narrower window; confirm
+header Uninstall exposes its confirmation (choose Keep extension); when next
+signing in, switch views and verify the pending sign-in remains active.
+
 **Tool-discovery policy adopted and scoped audit closed, 15 October (latest):**
 the normal Agent now combines the lexical first shortlist, at most 8 KiB of inert
 deferred names/purposes, and exact-name schema recovery. Removed the debug-only

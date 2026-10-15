@@ -9,7 +9,6 @@ import {
 } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import {
-  ChevronDown,
   ChevronLeft,
   ChevronRight,
   Code2,
@@ -536,48 +535,6 @@ function trustDetails(trust: string | undefined): {
   };
 }
 
-function DetailDisclosure({
-  id,
-  title,
-  description,
-  open,
-  onToggle,
-  children,
-}: {
-  id: string;
-  title: string;
-  description: string;
-  open: boolean;
-  onToggle: () => void;
-  children: React.ReactNode;
-}) {
-  const panelId = id + "-panel";
-  return (
-    <section className="extension-detail-disclosure">
-      <h2 className="extension-detail-disclosure-heading">
-        <button
-          className="extension-detail-disclosure-button"
-          type="button"
-          aria-expanded={open}
-          aria-controls={panelId}
-          onClick={onToggle}
-        >
-          <span>
-            <strong>{title}</strong>
-            <small>{description}</small>
-          </span>
-          <ChevronDown size={17} aria-hidden="true" />
-        </button>
-      </h2>
-      {open && (
-        <div id={panelId} className="extension-detail-disclosure-panel">
-          {children}
-        </div>
-      )}
-    </section>
-  );
-}
-
 function ExtensionDetail({
   selection,
   controller,
@@ -601,7 +558,7 @@ function ExtensionDetail({
   const [mediaIndex, setMediaIndex] = useState(0);
   const [readme, setReadme] = useState<string | null>(null);
   const [readmeLoading, setReadmeLoading] = useState(false);
-  const [informationOpen, setInformationOpen] = useState(true);
+  const [view, setView] = useState<"overview" | "settings">("overview");
   const [autoSendBusy, setAutoSendBusy] = useState(false);
   const [autoSendError, setAutoSendError] = useState<string | null>(null);
   const backButtonRef = useRef<HTMLButtonElement>(null);
@@ -625,7 +582,7 @@ function ExtensionDetail({
     let alive = true;
     setMediaIndex(0);
     setReadme(null);
-    setInformationOpen(true);
+    setView("overview");
     setAutoSendError(null);
     if (selection.source !== "store") {
       setCatalogueEntry(null);
@@ -759,52 +716,61 @@ function ExtensionDetail({
       </div>
 
       <div className="extension-detail-content">
-        <div className="extension-detail-media-wrap">
-          <MediaArtwork
-            media={media[mediaIndex]}
-            name={name}
-            className="extension-detail-hero preview-media"
-          />
-          {media.length > 1 && (
-            <>
-              <button
-                className="media-arrow media-arrow-left"
-                type="button"
-                aria-label="Previous preview"
-                onClick={() =>
-                  setMediaIndex((index) =>
-                    nextMediaIndex(index, media.length, -1),
-                  )
-                }
-              >
-                <ChevronLeft size={18} />
-              </button>
-              <button
-                className="media-arrow media-arrow-right"
-                type="button"
-                aria-label="Next preview"
-                onClick={() =>
-                  setMediaIndex((index) =>
-                    nextMediaIndex(index, media.length, 1),
-                  )
-                }
-              >
-                <ChevronRight size={18} />
-              </button>
-              <span className="media-count">
-                {mediaIndex + 1} / {media.length}
-              </span>
-            </>
-          )}
-        </div>
-
         <header className="extension-detail-intro">
-          <div>
-            <div className="eyebrow">Extension</div>
-            <h1 id="extension-detail-title">{name}</h1>
-            <p>{description || "No description is available."}</p>
+          <div className="extension-detail-identity">
+            <div className="extension-detail-media-wrap">
+              <MediaArtwork
+                media={media[mediaIndex]}
+                icon={card?.icon}
+                name={name}
+                className="extension-detail-hero preview-media"
+              />
+              {media.length > 1 && (
+                <>
+                  <button
+                    className="media-arrow media-arrow-left"
+                    type="button"
+                    aria-label="Previous preview"
+                    onClick={() =>
+                      setMediaIndex((index) =>
+                        nextMediaIndex(index, media.length, -1),
+                      )
+                    }
+                  >
+                    <ChevronLeft size={16} aria-hidden="true" />
+                  </button>
+                  <button
+                    className="media-arrow media-arrow-right"
+                    type="button"
+                    aria-label="Next preview"
+                    onClick={() =>
+                      setMediaIndex((index) =>
+                        nextMediaIndex(index, media.length, 1),
+                      )
+                    }
+                  >
+                    <ChevronRight size={16} aria-hidden="true" />
+                  </button>
+                  <span className="media-count">
+                    {mediaIndex + 1} / {media.length}
+                  </span>
+                </>
+              )}
+            </div>
+            <div className="extension-detail-heading">
+              <h1 id="extension-detail-title">{name}</h1>
+              {entry?.author && (
+                <span className="extension-detail-author">
+                  by {entry.author}
+                </span>
+              )}
+              <p>{description || "No description is available."}</p>
+            </div>
           </div>
           <div className="extension-detail-actions">
+            {installedVersion && (
+              <span className="extension-detail-installed">Installed</span>
+            )}
             {entry && selection.source === "store" && !current && (
               <button
                 className="button primary"
@@ -823,15 +789,6 @@ function ExtensionDetail({
                     : "Install"}
               </button>
             )}
-            {card && destination && destination.kind !== "preview" && (
-              <button
-                className="button primary"
-                type="button"
-                onClick={() => routeToDestination(destination)}
-              >
-                Open settings
-              </button>
-            )}
             <div
               className="extension-uninstall-slot"
               ref={setConnectionActions}
@@ -847,167 +804,48 @@ function ExtensionDetail({
                   })
                 }
               >
-                <Trash2 size={14} />
+                <Trash2 size={14} aria-hidden="true" />
                 Uninstall
-              </button>
-            )}
-            {installedVersion && (
-              <button className="button" type="button" disabled>
-                Installed
               </button>
             )}
           </div>
         </header>
 
-        <div className="extension-detail-sections">
-          {controller.error && (
-            <div className="extension-inline-error" role="alert">
-              {controller.error}
-            </div>
-          )}
-          {installError && (
-            <div className="extension-inline-error" role="alert">
-              {installError}
-            </div>
-          )}
-          {installedMcp && (
-            <McpConnections
-              source="store"
-              query=""
-              connectionId={installedMcp.id}
-              onChange={controller.refresh}
-              onRemoved={onBack}
-              actionsContainer={connectionActions}
-            />
-          )}
-          {card && (
-            <section
-              className="mcp-connections"
-              aria-labelledby="extension-settings-title"
-            >
-              <header className="mcp-connections-heading">
-                <div>
-                  <h2 id="extension-settings-title">Settings</h2>
-                </div>
-              </header>
-              <div className="extension-setting-row">
-                <div>
-                  <h3>Enabled</h3>
-                  <p>Make this extension’s tools available to the Agent.</p>
-                </div>
-                <Switch
-                  checked={card.enabled}
-                  disabled={controller.busy !== null}
-                  ariaLabel={`${card.enabled ? "Disable" : "Enable"} ${card.name}`}
-                  onChange={() => void controller.toggle(card)}
-                />
-              </div>
-            </section>
-          )}
-          <DetailDisclosure
-            id="extension-information"
-            title="Information"
-            description="Identity, trust, release details, and permissions"
-            open={informationOpen}
-            onToggle={() => setInformationOpen((open) => !open)}
+        <nav className="extension-detail-nav" aria-label="Extension details">
+          <button
+            type="button"
+            aria-pressed={view === "overview"}
+            aria-controls="extension-overview-panel"
+            onClick={() => setView("overview")}
           >
-            <div className="extension-information-grid">
-              <div className="extension-facts">
-                <dl>
-                  <div>
-                    <dt>Creator</dt>
-                    <dd>{entry?.author || "Not available"}</dd>
-                  </div>
-                  <div>
-                    <dt>Installations</dt>
-                    <dd>{formatStoreCount(entry?.installs)}</dd>
-                  </div>
-                  <div>
-                    <dt>Repository stars</dt>
-                    <dd>{formatStoreCount(stars)}</dd>
-                  </div>
-                  <div>
-                    <dt>Version</dt>
-                    <dd>
-                      {installedVersion ??
-                        card?.version ??
-                        entry?.version ??
-                        "Not available"}
-                    </dd>
-                  </div>
-                  <div>
-                    <dt>Package size</dt>
-                    <dd>{formatStoreSize(entry?.size)}</dd>
-                  </div>
-                  <div>
-                    <dt>Reviewed</dt>
-                    <dd>{formatReview(entry)}</dd>
-                  </div>
-                </dl>
-                <div className="extension-trust" data-tone={trust.tone}>
-                  <div>
-                    <ShieldCheck size={16} aria-hidden="true" />
-                    <strong>{trust.label}</strong>
-                  </div>
-                  <p>{trust.meaning}</p>
-                </div>
-              </div>
-              <div className="extension-permissions-pane">
-                <div className="extension-permissions-heading">
-                  <strong>Declared permissions</strong>
-                  <span>{capabilities.length}</span>
-                </div>
-                <div className="permission-list">
-                  {capabilities.length ? (
-                    capabilities.map((capability) => (
-                      <div className="permission-row" key={capability}>
-                        <ShieldCheck size={15} aria-hidden="true" />
-                        <span>{capabilityLabel(capability)}</span>
-                        <strong>Required</strong>
-                      </div>
-                    ))
-                  ) : (
-                    <div className="extension-detail-muted">
-                      {entry || card
-                        ? "This extension declares no runtime permissions."
-                        : "Permission details are unavailable. Your account controls remain available above."}
-                    </div>
-                  )}
-                </div>
-              </div>
-            </div>
-            {card?.auto_send_eligible && (
-              <div className="extension-auto-send-row">
-                <div className="extension-auto-send-copy">
-                  <div>
-                    <strong>Allow Auto-send for this extension</strong>
-                    <span>Beta</span>
-                  </div>
-                  <p>
-                    {card.auto_send_note ||
-                      "The author marked this extension safe for automatic hand-off."}
-                  </p>
-                  <small>
-                    This applies only while the global Auto-send beta switch is
-                    enabled. Turning it off here makes the policy stricter.
-                  </small>
-                  {autoSendError && (
-                    <div className="extension-auto-send-error" role="alert">
-                      {autoSendError}
-                    </div>
-                  )}
-                </div>
-                <Switch
-                  checked={card.auto_send_enabled}
-                  disabled={!card.enabled}
-                  isUpdating={autoSendBusy}
-                  ariaLabel={`${card.auto_send_enabled ? "Disable" : "Enable"} Auto-send for ${card.name}`}
-                  onChange={(enabled) => void updateAutoSend(enabled)}
-                />
-              </div>
-            )}
-          </DetailDisclosure>
+            Overview
+          </button>
+          <button
+            type="button"
+            aria-pressed={view === "settings"}
+            aria-controls="extension-settings-panel"
+            onClick={() => setView("settings")}
+          >
+            Settings
+          </button>
+        </nav>
 
+        {controller.error && (
+          <div className="extension-inline-error" role="alert">
+            {controller.error}
+          </div>
+        )}
+        {installError && (
+          <div className="extension-inline-error" role="alert">
+            {installError}
+          </div>
+        )}
+
+        <div
+          id="extension-overview-panel"
+          className="extension-detail-panel extension-detail-overview"
+          hidden={view !== "overview"}
+        >
           <section
             className="extension-detail-readme-section"
             aria-label={`${name} description`}
@@ -1026,6 +864,176 @@ function ExtensionDetail({
               )}
             </div>
           </section>
+          <aside
+            className="extension-detail-facts"
+            aria-label="Extension information"
+          >
+            <section
+              className="extension-facts"
+              aria-labelledby="extension-information-title"
+            >
+              <h2 id="extension-information-title">Details</h2>
+              <dl>
+                <div>
+                  <dt>Creator</dt>
+                  <dd>{entry?.author || "Not available"}</dd>
+                </div>
+                <div>
+                  <dt>Version</dt>
+                  <dd>
+                    {installedVersion ??
+                      card?.version ??
+                      entry?.version ??
+                      "Not available"}
+                  </dd>
+                </div>
+                <div>
+                  <dt>Installations</dt>
+                  <dd>{formatStoreCount(entry?.installs)}</dd>
+                </div>
+                <div>
+                  <dt>Repository stars</dt>
+                  <dd>{formatStoreCount(stars)}</dd>
+                </div>
+                <div>
+                  <dt>Package size</dt>
+                  <dd>{formatStoreSize(entry?.size)}</dd>
+                </div>
+                <div>
+                  <dt>Reviewed</dt>
+                  <dd>{formatReview(entry)}</dd>
+                </div>
+              </dl>
+            </section>
+            <section
+              className="extension-trust"
+              data-tone={trust.tone}
+              aria-label="Extension trust"
+            >
+              <div>
+                <ShieldCheck size={16} aria-hidden="true" />
+                <strong>{trust.label}</strong>
+              </div>
+              <p>{trust.meaning}</p>
+            </section>
+            <section
+              className="extension-permissions-pane"
+              aria-labelledby="extension-permissions-title"
+            >
+              <div className="extension-permissions-heading">
+                <h2 id="extension-permissions-title">Declared permissions</h2>
+                <span>{capabilities.length}</span>
+              </div>
+              <div className="permission-list">
+                {capabilities.length ? (
+                  capabilities.map((capability) => (
+                    <div className="permission-row" key={capability}>
+                      <ShieldCheck size={15} aria-hidden="true" />
+                      <span>{capabilityLabel(capability)}</span>
+                      <strong>Required</strong>
+                    </div>
+                  ))
+                ) : (
+                  <p className="extension-detail-note">
+                    {entry || card
+                      ? "This extension declares no runtime permissions."
+                      : "Permission details are unavailable. Your account controls remain available in Settings."}
+                  </p>
+                )}
+              </div>
+            </section>
+          </aside>
+        </div>
+
+        {/* Keep account settings mounted: hiding a view must not cancel sign-in. */}
+        <div
+          id="extension-settings-panel"
+          className="extension-detail-panel extension-detail-settings"
+          hidden={view !== "settings"}
+        >
+          {installedMcp && (
+            <McpConnections
+              source="store"
+              query=""
+              connectionId={installedMcp.id}
+              onChange={controller.refresh}
+              onRemoved={onBack}
+              actionsContainer={connectionActions}
+              onRequestRemoval={() => setView("settings")}
+            />
+          )}
+          {card && (
+            <section
+              className="mcp-connections"
+              aria-labelledby="extension-settings-title"
+            >
+              <header className="mcp-connections-heading">
+                <h2 id="extension-settings-title">Preferences</h2>
+              </header>
+              <div className="extension-setting-row">
+                <div>
+                  <h3>Enabled</h3>
+                  <p>Make this extension’s tools available to the Agent.</p>
+                </div>
+                <Switch
+                  checked={card.enabled}
+                  disabled={controller.busy !== null}
+                  ariaLabel={`${card.enabled ? "Disable" : "Enable"} ${card.name}`}
+                  onChange={() => void controller.toggle(card)}
+                />
+              </div>
+              {destination && destination.kind !== "preview" && (
+                <div className="extension-setting-row">
+                  <div>
+                    <h3>Extension preferences</h3>
+                    <p>Configure this extension’s own settings.</p>
+                  </div>
+                  <button
+                    className="button"
+                    type="button"
+                    onClick={() => routeToDestination(destination)}
+                  >
+                    Open settings
+                  </button>
+                </div>
+              )}
+              {card.auto_send_eligible && (
+                <div className="extension-setting-row extension-auto-send-row">
+                  <div className="extension-auto-send-copy">
+                    <div>
+                      <strong>Allow Auto-send for this extension</strong>
+                      <span>Beta</span>
+                    </div>
+                    <p>
+                      {card.auto_send_note ||
+                        "The author marked this extension safe for automatic hand-off."}
+                    </p>
+                    <small>
+                      This applies only while the global Auto-send beta switch
+                      is enabled. Turning it off here makes the policy stricter.
+                    </small>
+                    {autoSendError && (
+                      <div className="extension-auto-send-error" role="alert">
+                        {autoSendError}
+                      </div>
+                    )}
+                  </div>
+                  <Switch
+                    checked={card.auto_send_enabled}
+                    disabled={!card.enabled}
+                    isUpdating={autoSendBusy}
+                    ariaLabel={`${card.auto_send_enabled ? "Disable" : "Enable"} Auto-send for ${card.name}`}
+                    onChange={(enabled) => void updateAutoSend(enabled)}
+                  />
+                </div>
+              )}
+            </section>
+          )}
+          {!card && !installedMcp && (
+            <p className="extension-detail-note">
+              Install this extension to configure its settings.
+            </p>
+          )}
         </div>
       </div>
     </article>

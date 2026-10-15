@@ -144,3 +144,43 @@
     gap: 8px;
   }
 }
+
+/* Store detail uses the same settings rows without changing configured MCPs. */
+.extension-account-settings .extension-settings-group {
+  grid-template-columns: minmax(0, 1fr) minmax(220px, auto);
+}
+.extension-account-settings .mcp-client-settings summary {
+  display: list-item;
+  width: fit-content;
+  color: var(--text-2);
+  font-weight: 500;
+  line-height: 1.6;
+}
+.extension-account-settings .mcp-client-settings > p {
+  margin: 12px 0;
+  color: var(--text-3);
+  max-width: 72ch;
+}
+.extension-account-settings .mcp-client-settings code {
+  overflow-wrap: anywhere;
+}
+.extension-account-settings .mcp-connection-form {
+  padding: 8px 0 0;
+  gap: 18px;
+}
+.extension-account-settings .mcp-connection-confirm {
+  padding: 16px 0;
+  border-top: 1px solid var(--hairline-soft);
+}
+@media (max-width: 700px) {
+  .extension-account-settings .extension-settings-group {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .extension-detail-settings .extension-setting-row {
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+  .extension-detail-settings .extension-setting-row > div {
+    flex: 1 1 240px;
+  }
+}

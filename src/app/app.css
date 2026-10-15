@@ -1529,376 +1529,226 @@ html[data-theme="light"] .hero {
   line-height: 1.45;
 }
 
-/* ---------------------------------------------------------------------------
- * Overview cards (Start here)
- *
- * A compact tray groups the introduction and four essentials. Tiles expand
- * across wide windows and remain scrollable when the app is narrow.
- * ------------------------------------------------------------------------- */
-
-.overview-start-tray {
-  display: flex;
-  gap: 12px;
+/* Start Here: three equal shortcut columns and a quiet settings note. */
+.overview-shortcut-strip {
   min-width: 0;
-  padding: 10px;
+  padding: 20px 24px;
   border: 1px solid var(--hairline);
   border-radius: var(--radius-lg);
   background: var(--bg-2);
+  container-type: inline-size;
+  container-name: overview-strip;
 }
-
-.overview-start-intro {
-  flex: 0 0 190px;
-  min-width: 0;
-  padding: 5px 4px 3px 6px;
-  display: flex;
-  flex-direction: column;
-  justify-content: space-between;
-  gap: 12px;
+.grain-root[data-theme="dark"] .overview-shortcut-strip {
+  background: #292929;
 }
-
-.overview-start-intro strong {
-  display: block;
-  color: var(--text-1);
-  font-size: 14px;
-  font-weight: 620;
-  line-height: 1.25;
-  letter-spacing: -0.015em;
-}
-
-.overview-start-intro p {
-  margin: 5px 0 0;
-  color: var(--text-3);
-  font-size: 11.5px;
-  line-height: 1.4;
-}
-
-.grain-root .overview-start-button {
-  min-height: 31px;
-  width: 100%;
-  padding: 0 11px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 7px;
-  border: 1px solid color-mix(in srgb, var(--text-1) 22%, transparent);
-  border-radius: 8px;
-  color: var(--text-2);
-  background: transparent;
-  font: inherit;
-  font-size: 11.5px;
-  font-weight: 620;
-  cursor: pointer;
-  transition: background 0.16s ease;
-}
-
-.grain-root .overview-start-button:hover {
-  background: var(--accent-soft);
-}
-
-.overview-start-button:focus-visible,
-.overview-grid:focus-visible,
-button.overview-card:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-}
-
-button.overview-card:focus-visible {
-  outline-offset: -2px;
-}
-
-.overview-grid {
-  flex: 1;
-  display: flex;
-  gap: 8px;
-  min-width: 0;
-  align-items: stretch;
-  overflow-x: auto;
-  overflow-y: hidden;
-  scrollbar-width: thin;
-  scrollbar-color: var(--text-4) transparent;
-}
-
-.overview-grid::-webkit-scrollbar {
-  height: 5px;
-}
-
-.overview-grid::-webkit-scrollbar-thumb {
-  border-radius: 5px;
-  background: var(--text-4);
-}
-
-.overview-card {
-  flex: 1 0 154px;
-  min-width: 0;
-  min-height: 130px;
-  padding: 11px 12px;
-  display: flex;
-  flex-direction: column;
-  position: relative;
-  border-radius: 11px;
-  border: 1px solid var(--hairline);
-  background: var(--bg-3);
-  color: var(--text-1);
-  text-align: left;
-  box-sizing: border-box;
-  font-family: inherit;
-  transition:
-    background 0.18s ease,
-    border-color 0.18s ease,
-    transform 0.2s var(--ease-out),
-    box-shadow 0.2s ease;
-}
-
-button.overview-card {
-  border: 1px solid var(--hairline);
-  cursor: pointer;
-}
-
-.overview-card--shortcuts {
-  flex-basis: 210px;
-}
-
-.overview-card--interactive {
-  cursor: pointer;
-}
-
-.overview-card--interactive:hover {
+.grain-root[data-theme="dark"]
+  .overview-shortcut-strip
+  :is(.overview-shortcut-key, .overview-shortcut-settings) {
   background: var(--bg-4);
-  border-color: var(--accent-soft-hover);
-  transform: translateY(-1px);
 }
-
-.overview-card--static {
-  cursor: default;
+.overview-shortcut-layout {
+  display: grid;
+  grid-template-columns: 180px minmax(0, 1fr);
+  align-items: center;
+  gap: 24px;
 }
-
-html[data-theme="light"] .overview-card,
-html[data-theme="light"] button.overview-card {
-  border: 1px solid var(--hairline-soft);
-  background: #fcfcfb;
-  box-shadow: none;
-}
-
-html[data-theme="light"] .overview-card--interactive:hover {
-  background: #ffffff;
-  border-color: var(--hairline);
-  box-shadow: 0 3px 10px rgba(26, 26, 26, 0.06);
-}
-
-/* Card Header */
-.overview-card-header {
-  display: flex;
-  align-items: flex-start;
-  flex-direction: column;
-  gap: 6px;
+.overview-shortcuts {
   min-width: 0;
-  margin-top: 0;
-  margin-bottom: 2px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
 }
-
-.overview-card--shortcuts .overview-card-header {
-  flex-direction: row;
+.overview-shortcut {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding-inline: 20px;
+}
+.overview-shortcut:first-child {
+  padding-inline-start: 0;
+}
+.overview-shortcut:last-child {
+  padding-inline-end: 0;
+}
+.overview-shortcut + .overview-shortcut {
+  border-inline-start: 1px solid var(--hairline);
+}
+.overview-shortcut-heading {
+  display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
 }
-
-.overview-card-icon {
-  flex: none;
-  color: var(--text-2, #b4b8b8);
-  transition: color 0.18s ease;
-}
-
-.overview-agent-svg {
-  width: 18px;
-  height: 18px;
-  display: block;
-  fill: none;
-  stroke: currentColor;
-  stroke-width: 1.8;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-}
-
-.overview-agent-svg circle {
-  fill: currentColor;
-  stroke: none;
-}
-
-.overview-card--interactive:hover .overview-card-icon {
-  color: var(--accent);
-}
-
-html[data-theme="light"] .overview-card-icon {
-  color: #625f59;
-}
-
-html[data-theme="light"] .overview-card--interactive:hover .overview-card-icon {
-  color: #1a1a1a;
-}
-
-.overview-card-title {
-  display: block;
+.overview-shortcut-heading h3 {
+  margin: 0;
+  color: var(--text-1);
   font-size: 13px;
   font-weight: 600;
-  color: var(--text-1);
-  letter-spacing: -0.01em;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  line-height: 1.35;
 }
-
-html[data-theme="light"] .overview-card-title {
-  color: #1a1a1a;
-}
-
-/* Card Footer / Accessory */
-.overview-card-footer {
-  margin-top: auto;
-  padding-top: 7px;
-  display: flex;
-  align-items: center;
-  min-width: 0;
-}
-
-/* -- Shortcuts list -- */
-.overview-shortcut-list {
-  margin-top: auto;
-  padding-top: 6px;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.overview-shortcut-list > .overview-shortcut-row + .overview-shortcut-row {
-  border-top: 1px solid var(--hairline);
-  padding-top: 10px;
-}
-
-.overview-shortcut-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  min-width: 0;
-}
-
-.overview-shortcut-label {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  color: var(--text-3, #7d8385);
+.overview-shortcut-status {
+  color: var(--text-3);
   font-size: 10.5px;
-  font-weight: 450;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  line-height: 1.4;
 }
-
-html[data-theme="light"] .overview-shortcut-label {
-  color: #625f59;
-}
-
-.overview-shortcut-off {
-  flex: none;
-  color: var(--text-4, #5c6265);
-  font-size: 10px;
-}
-
-/* A chord reads as text, with deliberate space around each plus. */
-.overview-card .overview-keys {
-  flex: 0 1 auto;
+.grain-root .overview-shortcut-trigger {
   min-width: 0;
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  justify-content: flex-end;
-  padding: 0;
-  border: 0;
-  border-radius: 0;
-  box-shadow: none;
-  color: var(--text-2);
-  background: transparent;
-  font-family: inherit;
-  font-size: 12px;
-  font-weight: 620;
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-}
-
-.overview-key-part {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-}
-
-.overview-key-separator {
-  color: var(--text-4);
-  font-weight: 450;
-}
-
-/* -- Agent row & CTA row -- */
-.overview-agent-row {
   width: 100%;
-}
-
-.overview-cta-row {
+  min-height: 40px;
+  padding: 2px 0;
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  width: 100%;
-  gap: 6px;
+  align-self: flex-start;
+  max-width: 100%;
+  border: 0;
+  border-radius: var(--radius-xs);
+  color: var(--text-1);
+  background: transparent;
+  text-align: start;
+  cursor: pointer;
+  container-type: inline-size;
 }
-
-.overview-card-cta {
-  font-size: 11px;
-  font-weight: 550;
-  color: var(--accent);
-  transition: color 0.15s ease;
+.overview-shortcut-keys {
+  min-width: 0;
+  max-width: 100%;
+  display: inline-flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 0.48em;
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  font-weight: 600;
+  line-height: 1.35;
 }
-
-html[data-theme="light"] .overview-card-cta {
-  color: #1a1a1a;
+.overview-shortcut-keys[data-adaptive="true"] {
+  font-size: min(
+    12.5px,
+    calc((100cqi - var(--shortcut-border-width)) / var(--shortcut-em-width))
+  );
 }
-
-.overview-cta-arrow {
-  color: var(--accent);
-  transition: transform 0.18s var(--ease-out);
+.overview-shortcut-key-part {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.48em;
 }
-
-html[data-theme="light"] .overview-cta-arrow {
-  color: #1a1a1a;
+.overview-shortcut-keys .overview-shortcut-key {
+  min-width: 3.84em;
+  min-height: 2.88em;
+  padding: 0.48em 0.96em;
+  display: inline-flex;
+  justify-content: center;
+  align-items: center;
+  border: 1px solid var(--hairline);
+  border-radius: 5.5px;
+  color: var(--text-1);
+  background: var(--color-paper-raised);
+  box-shadow: var(--shadow-hair, 0 1px 1px rgba(0, 0, 0, 0.12));
+  font: inherit;
+  white-space: nowrap;
+  text-align: center;
+  transition: border-color 0.16s ease;
 }
-
-.overview-card--interactive:hover .overview-cta-arrow {
-  transform: translateX(3px);
+.overview-shortcut-plus {
+  flex: none;
+  color: var(--text-3);
+  font-family: var(--font-sans);
+  font-size: 0.9em;
+  font-weight: 450;
 }
-
-@media (max-width: 700px) {
-  .overview-start-tray {
-    flex-direction: column;
+.overview-shortcut-trigger:hover
+  .overview-shortcut-keys
+  .overview-shortcut-key {
+  border-color: var(--accent-focus);
+}
+.overview-shortcut-empty {
+  color: var(--text-3);
+  font-size: 12px;
+}
+.overview-shortcut-info {
+  min-width: 0;
+  padding-inline-end: 24px;
+  border-inline-end: 1px solid var(--hairline);
+}
+.overview-shortcut-info strong {
+  color: var(--text-1);
+  font-weight: 600;
+}
+.overview-shortcut-info p {
+  margin: 0 0 12px;
+  color: var(--text-3);
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+.grain-root .overview-shortcut-settings {
+  font-size: 11.5px;
+}
+.grain-root .overview-shortcut-trigger:focus-visible,
+.grain-root .overview-shortcut-settings:focus-visible {
+  outline: 2px solid var(--text-2);
+  outline-offset: 3px;
+  box-shadow: none !important;
+}
+html[data-theme="light"] .overview-shortcut-keys .overview-shortcut-key {
+  background: var(--color-paper-raised);
+  box-shadow: var(--shadow-hair, 0 1px 1px rgba(26, 26, 26, 0.08));
+}
+@container overview-strip (max-width: 640px) {
+  .overview-shortcut-layout {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 20px;
   }
-
-  .overview-start-intro {
+  .overview-shortcut-info {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 20px;
+    padding-inline-end: 0;
+    padding-block-end: 16px;
+    border-inline-end: 0;
+    border-block-end: 1px solid var(--hairline);
+  }
+  .overview-shortcut-info p {
+    margin-bottom: 0;
+  }
+  .overview-shortcut-settings {
     flex: none;
+  }
+}
+@container overview-strip (max-width: 480px) {
+  .overview-shortcuts {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .overview-shortcut {
     flex-direction: row;
     align-items: center;
-    padding: 3px 4px;
+    justify-content: space-between;
+    padding: 12px 0;
   }
-
-  .overview-start-button {
-    flex: 0 0 auto;
-    width: auto;
-    min-width: 120px;
+  .overview-shortcut + .overview-shortcut {
+    border-inline-start: 0;
+    border-block-start: 1px solid var(--hairline);
+  }
+  .overview-shortcut-heading {
+    flex: 1;
+  }
+  .overview-shortcut-trigger {
+    flex: 0 1 65%;
+    justify-content: flex-end;
+  }
+  .overview-shortcut-keys {
+    justify-content: flex-end;
+  }
+  .overview-shortcut-info {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 12px;
   }
 }
-
-@media (max-width: 460px) {
-  .overview-start-intro {
-    align-items: stretch;
-    flex-direction: column;
-  }
-
-  .overview-start-button {
-    width: 100%;
+@media (prefers-reduced-motion: reduce) {
+  .overview-shortcut-keys .overview-shortcut-key {
+    transition: none;
   }
 }
 
@@ -2894,7 +2744,7 @@ html[data-theme="light"] .transcript-feed {
 /* History and Home recents share one quiet reading surface. */
 html[data-theme="light"] :is(.history-feed, .recent-feed) {
   border: 1px solid #e8e6e1;
-  background: #fcfcfb;
+  background: var(--bg-1);
 }
 
 html[data-theme="light"] :is(.history-feed, .recent-feed) .transcript-card {
@@ -2948,7 +2798,7 @@ html[data-theme="light"] .transcript-card + .transcript-card {
 }
 
 html[data-theme="light"] .transcript-card:hover {
-  background: #f5f4f0;
+  background: var(--bg-3);
 }
 
 html[data-theme="light"] .transcript-body {
@@ -6021,53 +5871,74 @@ html[data-theme="light"] .installed-extension-actions {
   padding-bottom: 72px;
 }
 
+.extension-detail-intro {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 24px;
+  padding-bottom: 30px;
+}
+
+.extension-detail-identity {
+  display: flex;
+  flex: 1 1 420px;
+  align-items: center;
+  gap: 22px;
+  min-width: 0;
+}
+
 .extension-detail-media-wrap {
   position: relative;
-  width: min(640px, calc(100% - 128px));
-  margin: 0 auto;
+  flex: 0 0 132px;
+  width: 132px;
 }
 
 .extension-detail-hero {
   width: 100%;
-  aspect-ratio: 16 / 9;
-  border: 1px solid var(--hairline);
-  border-radius: var(--radius-lg);
+  aspect-ratio: 1;
+  border-radius: var(--radius-md);
 }
 
-.extension-detail-intro {
-  padding: 25px 2px 28px;
-  display: flex;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: 28px;
+.extension-detail-hero img {
+  object-fit: contain;
 }
 
-.extension-detail-intro > div:first-child {
+.extension-detail-heading {
   min-width: 0;
 }
 
 .extension-detail-intro h1 {
-  margin-top: 4px;
+  margin: 0;
   color: var(--text-1);
-  font-size: clamp(25px, 2.5vw, 32px);
+  font-size: 27px;
   font-weight: 640;
-  letter-spacing: -0.035em;
+  letter-spacing: -0.025em;
+  overflow-wrap: anywhere;
+}
+
+.extension-detail-author {
+  display: block;
+  margin-top: 4px;
+  color: var(--text-3);
+  font-size: 12px;
+  overflow-wrap: anywhere;
 }
 
 .extension-detail-intro p {
-  max-width: 700px;
-  margin: 8px 0 0;
-  color: var(--text-3);
-  font-size: 12.5px;
-  line-height: 1.62;
+  max-width: 65ch;
+  margin: 10px 0 0;
+  color: var(--text-2);
+  font-size: 13px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
 }
 
 .extension-detail-actions {
-  flex: 0 0 auto;
   display: flex;
   align-items: center;
-  justify-content: flex-end;
-  gap: 8px;
+  flex-wrap: wrap;
+  gap: 10px;
 }
 
 .extension-detail-actions .button {
@@ -6076,95 +5947,78 @@ html[data-theme="light"] .installed-extension-actions {
   gap: 6px;
 }
 
+.extension-detail-installed {
+  color: var(--text-3);
+  font-size: 12px;
+}
+
 .extension-uninstall-slot {
   display: contents;
 }
 
-.extension-detail-sections {
-  display: grid;
-  gap: 12px;
-}
-
-.extension-detail-disclosure {
-  overflow: hidden;
-  border: 1px solid var(--hairline);
-  border-radius: var(--radius-md);
-  background: color-mix(in srgb, var(--bg-2) 52%, transparent);
-}
-
-.extension-detail-disclosure-heading {
-  margin: 0;
-  font: inherit;
-}
-
-.extension-detail-disclosure-button {
-  width: 100%;
-  min-height: 62px;
-  padding: 12px 16px;
-  border: 0;
+.extension-detail-nav {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 20px;
-  color: var(--text-1);
+  gap: 26px;
+  border-bottom: 1px solid var(--hairline);
+  margin-bottom: 30px;
+}
+
+.extension-detail-nav button {
+  min-height: 42px;
+  padding: 0 1px 12px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
   background: transparent;
+  color: var(--text-3);
+  box-shadow: none;
   font: inherit;
-  text-align: left;
+  font-size: 13px;
   cursor: pointer;
-  transition: background 150ms ease;
 }
 
-.extension-detail-disclosure-button:hover {
-  background: color-mix(in srgb, var(--text-1) 4%, transparent);
+.extension-detail-nav button:hover,
+.extension-detail-nav button[aria-pressed="true"] {
+  color: var(--text-1);
 }
 
-.extension-detail-disclosure-button > span {
+.extension-detail-nav button[aria-pressed="true"] {
+  border-bottom-color: var(--text-1);
+  font-weight: 600;
+}
+
+.extension-detail-nav button:focus-visible,
+.extension-detail-back-button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 4px;
+}
+
+.extension-detail-panel[hidden] {
+  display: none;
+}
+
+.extension-detail-overview {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 245px;
+  align-items: start;
+  gap: 48px;
+}
+
+.extension-detail-facts {
   min-width: 0;
   display: grid;
-  gap: 3px;
+  gap: 26px;
 }
 
-.extension-detail-disclosure-button strong {
+.extension-detail-facts h2 {
+  margin: 0 0 10px;
+  color: var(--text-1);
   font-size: 13px;
-  font-weight: 640;
-}
-
-.extension-detail-disclosure-button small {
-  overflow: hidden;
-  color: var(--text-4);
-  font-size: 10.5px;
-  line-height: 1.4;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.extension-detail-disclosure-button svg {
-  flex: 0 0 auto;
-  color: var(--text-4);
-  transform: rotate(-90deg);
-  transition: transform 160ms var(--ease-out);
-}
-
-.extension-detail-disclosure-button[aria-expanded="true"] svg {
-  transform: rotate(0deg);
-}
-
-.extension-detail-disclosure-panel {
-  padding: 22px;
-  border-top: 1px solid var(--hairline-soft);
-}
-
-.extension-information-grid {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(300px, 0.88fr);
-  gap: 34px;
+  font-weight: 630;
 }
 
 .extension-facts dl {
   margin: 0;
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  column-gap: 28px;
 }
 
 .extension-facts dl > div {
@@ -6172,42 +6026,24 @@ html[data-theme="light"] .installed-extension-actions {
   padding: 9px 0;
   border-bottom: 1px solid var(--hairline-soft);
   display: grid;
-  grid-template-columns: minmax(86px, 0.8fr) minmax(0, 1.2fr);
-  gap: 12px;
-  font-size: 11px;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  align-items: baseline;
+  gap: 14px;
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 .extension-facts dt {
-  color: var(--text-4);
+  color: var(--text-3);
 }
 
 .extension-facts dd {
   min-width: 0;
   margin: 0;
-  overflow: hidden;
   color: var(--text-2);
-  font-weight: 560;
+  font-weight: 500;
   text-align: right;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.extension-trust {
-  margin-top: 18px;
-  padding-left: 12px;
-  border-left: 2px solid var(--text-4);
-}
-
-.extension-trust[data-tone="verified"] {
-  border-left-color: var(--sage);
-}
-
-.extension-trust[data-tone="experimental"] {
-  border-left-color: var(--amber, #c5a66a);
-}
-
-.extension-trust[data-tone="dev"] {
-  border-left-color: var(--accent);
+  overflow-wrap: anywhere;
 }
 
 .extension-trust > div {
@@ -6217,50 +6053,87 @@ html[data-theme="light"] .installed-extension-actions {
   color: var(--text-2);
 }
 
-.extension-trust strong,
-.extension-permissions-heading strong {
-  font-size: 11.5px;
-  font-weight: 630;
+.extension-trust[data-tone="verified"] svg {
+  color: var(--sage);
 }
 
-.extension-trust p {
-  max-width: 530px;
-  margin: 5px 0 0;
-  color: var(--text-4);
-  font-size: 10.5px;
-  line-height: 1.55;
+.extension-trust strong {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.extension-trust p,
+.extension-detail-note {
+  margin: 7px 0 0;
+  color: var(--text-3);
+  font-size: 12px;
+  line-height: 1.6;
 }
 
 .extension-permissions-pane {
   min-width: 0;
-  max-height: 256px;
-  padding-left: 24px;
-  border-left: 1px solid var(--hairline-soft);
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  scrollbar-width: thin;
-  scrollbar-color: var(--text-4) transparent;
 }
 
 .extension-permissions-heading {
-  margin-bottom: 8px;
   display: flex;
-  align-items: center;
+  align-items: baseline;
   justify-content: space-between;
   gap: 12px;
-  color: var(--text-2);
 }
 
 .extension-permissions-heading span {
-  color: var(--text-4);
-  font-size: 10px;
+  color: var(--text-3);
+  font-size: 11px;
   font-variant-numeric: tabular-nums;
 }
 
+.extension-detail .permission-row {
+  padding: 9px 0;
+  border-radius: 0;
+  border-bottom: 1px solid var(--hairline-soft);
+  background: transparent;
+  box-shadow: none;
+  color: var(--text-2);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.extension-detail .permission-row > span {
+  overflow-wrap: anywhere;
+}
+
+.extension-detail .permission-row strong {
+  color: var(--text-3);
+  font-size: 10px;
+}
+
+.extension-detail-settings .mcp-connections {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: 0;
+}
+
+.extension-detail-settings .mcp-connections-heading {
+  margin-bottom: 14px;
+}
+
+.extension-detail-settings .mcp-connections h2 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.extension-detail-settings .extension-setting-row h3 {
+  font-size: 13px;
+  font-weight: 550;
+}
+
+.extension-detail-settings .extension-setting-row p {
+  margin: 5px 0 0;
+  color: var(--text-3);
+}
+
 .extension-auto-send-row {
-  margin-top: 22px;
-  padding-top: 18px;
-  border-top: 1px solid var(--hairline-soft);
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -6280,8 +6153,8 @@ html[data-theme="light"] .installed-extension-actions {
 
 .extension-auto-send-copy strong {
   color: var(--text-2);
-  font-size: 11.5px;
-  font-weight: 630;
+  font-size: 13px;
+  font-weight: 550;
 }
 
 .extension-auto-send-copy > div:first-child > span {
@@ -6301,13 +6174,13 @@ html[data-theme="light"] .installed-extension-actions {
 .extension-auto-send-copy small {
   margin: 5px 0 0;
   display: block;
-  color: var(--text-4);
-  font-size: 10.5px;
+  color: var(--text-3);
+  font-size: 12px;
   line-height: 1.5;
 }
 
 .extension-auto-send-copy small {
-  color: var(--text-5, var(--text-4));
+  color: var(--text-3);
 }
 
 .extension-auto-send-error {
@@ -6319,7 +6192,6 @@ html[data-theme="light"] .installed-extension-actions {
 
 .extension-detail-readme-section {
   min-width: 0;
-  margin-top: 24px;
 }
 
 .extension-detail-readme {
@@ -6328,16 +6200,14 @@ html[data-theme="light"] .installed-extension-actions {
 }
 
 .extension-detail-readme .gm-markdown {
-  max-width: none;
+  max-width: 72ch;
 }
 
 .extension-detail-muted {
-  min-height: 70px;
-  display: grid;
-  place-items: center;
-  color: var(--text-4);
-  font-size: 11px;
-  text-align: center;
+  padding: 12px 0;
+  color: var(--text-3);
+  font-size: 12px;
+  line-height: 1.6;
 }
 
 /* Developer tools remain a secondary utility drawer; store details do not. */
@@ -6651,10 +6521,14 @@ html[data-theme="light"] .tools-canvas {
   background: transparent;
 }
 html[data-theme="light"] .installed-extension-card,
-html[data-theme="light"] .permission-row,
-html[data-theme="light"] .extension-detail-disclosure {
+html[data-theme="light"] .permission-row {
   background: #fcfcfb;
   box-shadow: inset 0 0 0 1px rgba(26, 26, 26, 0.07);
+}
+
+html[data-theme="light"] .extension-detail .permission-row {
+  background: transparent;
+  box-shadow: none;
 }
 
 html[data-theme="light"] .polished-store-card {
@@ -6703,14 +6577,18 @@ html[data-theme="light"] .extension-empty-state {
   .installed-extension-card {
     grid-template-columns: 160px minmax(0, 1fr) auto;
   }
-  .extension-information-grid {
-    grid-template-columns: 1fr;
-    gap: 24px;
+  .extension-detail-overview {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 36px;
+  }
+  .extension-detail-facts {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 26px 32px;
+    padding-top: 26px;
+    border-top: 1px solid var(--hairline-soft);
   }
   .extension-permissions-pane {
-    padding: 20px 0 0;
-    border-top: 1px solid var(--hairline-soft);
-    border-left: 0;
+    grid-column: 1 / -1;
   }
   .extension-auto-send-row {
     align-items: flex-start;
@@ -6765,14 +6643,19 @@ html[data-theme="light"] .extension-empty-state {
     justify-content: flex-start;
     flex-wrap: wrap;
   }
+  .extension-detail-identity {
+    flex-basis: auto;
+    gap: 16px;
+  }
   .extension-detail-media-wrap {
-    width: calc(100% - 24px);
+    width: 96px;
+    flex-basis: 96px;
   }
-  .extension-detail-disclosure-panel {
-    padding: 18px;
+  .extension-detail-intro h1 {
+    font-size: 24px;
   }
-  .extension-facts dl {
-    grid-template-columns: 1fr;
+  .extension-detail-facts {
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 
