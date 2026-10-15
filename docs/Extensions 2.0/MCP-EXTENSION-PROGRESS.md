@@ -1,5 +1,59 @@
 # Extension implementation: progress, changes and user testing
 
+**Block 3 in progress — CI intake to exact review draft, 15 October 2026:**
+added `prepare-release-review` over the existing receiver/catalogue/prior-index/
+official GH verification boundaries. It consumes the standard downloaded CI data
+artifact, independently selected tooling commit/producer pin, reviewed registry
+submission, operator-owned policy template/ownership file and current prior index.
+It regenerates and compares the entire candidate, verifies both candidate and
+producer attestations, fills exact calculated policy pins and emits a source/
+version/kind/tooling summary. Existing schema-3 policy format is reused. No new
+signer, downloader/archive engine, approval format, dependency or Agent harness.
+Approval fields must start empty and remain empty in the draft; the signer refuses
+it until an exact independent operator approval is recorded. Full approval/time
+validation remains on every existing source-review/signing gate. Shared structural
+validation only serves read-only intake and the same full validator. Ownership is
+checked again after network provenance; existing output refuses before expensive
+verification. Operator run/PR/tool selection stays explicit using maintained GH CLI.
+
+Verification: **96 registry tests Pass**, strict all-target Clippy/build/format
+Pass. Four new intake tests reuse real native/MCP author fixtures, media and prior
+Minisign signatures; only their private network callback is substituted. They
+cover exact unapproved drafts, tooling/producer/receipt/submission/candidate drift,
+unknown metadata, provenance failure, ownership changes during verification,
+already approved templates, bad prior signatures and nested/existing output.
+Scoped source review checks that the input-validator extraction preserves full
+approval checks in signing, both proof subjects use the same pinned GH boundary,
+and no output or key access occurs on provenance refusal. Graph review was used
+but did not reliably map the new module; manual diff/call-path review supplies
+the missing context. No blocking source finding remains.
+
+Real terminal-only evidence: selected trusted GitHub run **38700335101** at registry
+`63407e89023f56358ad352f8a8544bbf6529a7c0`, PR 6 head
+`62f8bad2ee7c699635890b1297562563630a7a3e`, tooling source
+`3e5862451f556f766391e47167d0c4ddecab5da7`. The producer executable pin
+`3b572d73d8d746d3300614cd1974c20d536e12d25f91b0c91a525a2004b2acc6`
+was cross-checked by hashing the separate trusted request-job artifact without
+executing it. The new command verifies both genuine GitHub candidate/producer
+attestations, descriptor/PNG/gallery bytes and the current signed index 7, producing
+the expected candidate `47e1c9553d50542948c414ed28a6886d3820d832b6a4f6e9417fb538cd12197a`.
+Deliberately altered producer metadata is refused by official producer provenance
+despite the authentic candidate; no review output is created. The real signer
+also refuses the unchanged draft before live source-review/key access.
+This is a read-only check of an already published candidate, not a new release or
+approval. The ownership proposal was read for eligibility only; no protected file
+or GitHub settings were changed. Automatic approval review rejected deletion of
+the owned disposable CI download directory without a detailed reason; it remains
+at `C:/Users/watrm/AppData/Local/Temp/grain-ci-intake-live-xptadc_0`. It contains
+public CI bytes and explicitly unapproved test drafts, not a new maintained harness
+or adopted operator policy. No installer, Computer Use, provider-account action
+or app change.
+
+**Blocks 1–2 complete; Block 3 remains in progress.** Still open here: optional
+author PR helper, commit-bound publication integration/diagnostics and a complete
+new provider publication after operator adoption of the ownership policy. Four
+blocks including this one remain. No new user test is needed for this tooling step.
+
 **Block 3 in progress — joined reviewed-release staging, 15 October 2026:**
 added `grain-registry stage-reviewed-release`, a thin composition of existing
 review/provenance signing, selected-store capture, serving assembly, conditional

@@ -22,6 +22,7 @@ use signing_key::Unlock;
 mod approval;
 mod authority;
 mod catalogue;
+mod intake;
 mod prepare;
 mod receive;
 mod review;
@@ -273,6 +274,9 @@ enum Cmd {
         #[arg(long)]
         gh: PathBuf,
     },
+    /// Recheck CI bytes/provenance and prepare an unapproved exact review policy.
+    /// No author code execution, key access, signing or publication.
+    PrepareReleaseReview(intake::Args),
     /// Sign a new catalogue update only after pinned review and GitHub provenance.
     /// Produces an update fragment, never uploads or mutates the served registry.
     SignReviewedCandidate(SignReviewedCandidateArgs),
@@ -737,6 +741,7 @@ fn main() -> Result<()> {
             expected_current_sha256,
         } => serving::promote(&assembly, &store, &expected_current_sha256),
         Cmd::InspectSubmission { submission, out } => approval::inspect(&submission, &out),
+        Cmd::PrepareReleaseReview(args) => intake::prepare(&args),
         Cmd::VerifySourceReview {
             submission,
             policy,

@@ -94,7 +94,7 @@ fn branch_ref(value: &str) -> bool {
 }
 
 impl Policy {
-    pub(super) fn validate(&self, now: i64) -> Result<()> {
+    pub(super) fn validate_inputs(&self) -> Result<()> {
         let hashes = [
             &self.candidate_sha256,
             &self.submission_sha256,
@@ -113,17 +113,6 @@ impl Policy {
         {
             bail!("Unsupported review policy or malformed digest");
         }
-        if let Some(reference) = &self.maintainer_approval {
-            if reference.trim().is_empty()
-                || reference.len() > 1024
-                || reference.chars().any(char::is_control)
-                || self.review_id != 0
-            {
-                bail!("Explicit maintainer approval needs a bounded reference and review ID zero");
-            }
-        } else if self.review_id == 0 || self.reviewer.eq_ignore_ascii_case(&self.submitter) {
-            bail!("Independent GitHub source approval required");
-        }
         let repo: Vec<_> = self.registry_repo.split('/').collect();
         let workflow = self
             .signer_workflow
@@ -139,15 +128,31 @@ impl Policy {
                 "Review policy must pin a registry branch, same-repository workflow and reviewer"
             );
         }
+        // Validate the independent public-key anchor before any secret-key read.
+        minisign::PublicKey::from_base64(&self.publishing_public_key)
+            .context("Invalid approved publishing public key")?;
+        Ok(())
+    }
+
+    pub(super) fn validate(&self, now: i64) -> Result<()> {
+        self.validate_inputs()?;
+        if let Some(reference) = &self.maintainer_approval {
+            if reference.trim().is_empty()
+                || reference.len() > 1024
+                || reference.chars().any(char::is_control)
+                || self.review_id != 0
+            {
+                bail!("Explicit maintainer approval needs a bounded reference and review ID zero");
+            }
+        } else if self.review_id == 0 || self.reviewer.eq_ignore_ascii_case(&self.submitter) {
+            bail!("Independent GitHub source approval required");
+        }
         let approved = DateTime::parse_from_rfc3339(&self.approved_at)?.timestamp();
         let expires = DateTime::parse_from_rfc3339(&self.expires_at)?.timestamp();
         if approved > now || expires <= now || expires <= approved || expires - approved > 7 * 86400
         {
             bail!("Review approval is future-dated, expired or longer than seven days");
         }
-        // Validate the independent public-key anchor before any secret-key read.
-        minisign::PublicKey::from_base64(&self.publishing_public_key)
-            .context("Invalid approved publishing public key")?;
         Ok(())
     }
 
@@ -258,11 +263,11 @@ pub(super) fn verifier(path: &Path, pin: &str) -> Result<PathBuf> {
     Ok(path.canonicalize()?)
 }
 
-fn verification_command(gh: &Path, policy: &Policy, scratch: &Path) -> Command {
+fn verification_command(gh: &Path, policy: &Policy, scratch: &Path, subject: &Path) -> Command {
     let mut command = Command::new(gh);
     command
         .args(["attestation", "verify"])
-        .arg(scratch.join("snapshot/candidate.json"))
+        .arg(subject)
         .arg("--bundle")
         .arg(scratch.join("attestation.jsonl"))
         .args([
@@ -346,9 +351,26 @@ pub(super) fn wait_verifier(
     }
 }
 
-fn verify_attestation(gh: &Path, policy: &Policy, scratch: &Path) -> Result<()> {
+pub(super) fn verify_attestation(gh: &Path, policy: &Policy, scratch: &Path) -> Result<()> {
+    verify_subject(
+        gh,
+        policy,
+        scratch,
+        &scratch.join("snapshot/candidate.json"),
+    )
+}
+
+pub(super) fn verify_producer_attestation(
+    gh: &Path,
+    policy: &Policy,
+    scratch: &Path,
+) -> Result<()> {
+    verify_subject(gh, policy, scratch, &scratch.join("producer.json"))
+}
+
+fn verify_subject(gh: &Path, policy: &Policy, scratch: &Path, subject: &Path) -> Result<()> {
     let mut output = tempfile::tempfile()?;
-    let mut command = verification_command(gh, policy, scratch);
+    let mut command = verification_command(gh, policy, scratch, subject);
     command.stdout(output.try_clone()?);
     let mut child = command
         .spawn()
@@ -380,6 +402,10 @@ struct Prior {
     index: Index,
     // Preserve signed forward-compatible fields when extending the catalogue.
     document: serde_json::Value,
+}
+
+pub(super) fn verify_previous(policy: &Policy, path: &Path) -> Result<()> {
+    previous(policy, path).map(|_| ())
 }
 
 fn previous(policy: &Policy, path: &Path) -> Result<Prior> {
@@ -765,8 +791,12 @@ pub(crate) mod tests {
 
     #[test]
     fn verifier_args_pin_certificate_identity_and_strip_inherited_secrets() {
-        let command =
-            verification_command(Path::new("/operator/gh"), &policy(), Path::new("/owned"));
+        let command = verification_command(
+            Path::new("/operator/gh"),
+            &policy(),
+            Path::new("/owned"),
+            Path::new("/owned/snapshot/candidate.json"),
+        );
         let args: Vec<_> = command
             .get_args()
             .map(|v| v.to_string_lossy().into_owned())

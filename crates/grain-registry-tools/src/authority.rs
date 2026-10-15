@@ -115,6 +115,16 @@ pub(super) fn outside(path: &Path, forbidden: &[&Path]) -> Result<()> {
 
 pub(super) fn authorize(path: &Path, policy: &Policy, source: &SourceSubmission) -> Result<()> {
     policy.validate(chrono::Utc::now().timestamp())?;
+    check_candidate(path, policy, source)
+}
+
+// Read-only ownership eligibility for intake; never grants release approval.
+pub(super) fn check_candidate(
+    path: &Path,
+    policy: &Policy,
+    source: &SourceSubmission,
+) -> Result<()> {
+    policy.validate_inputs()?;
     source.validate().map_err(anyhow::Error::msg)?;
     let raw = crate::review::read(path, 128 * 1024)?;
     if digest(&raw) != policy.authority_sha256 {

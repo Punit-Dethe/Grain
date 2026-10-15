@@ -204,6 +204,41 @@ signing. No live signing, key/custody/settings changes, app build or publication
 occurred. Blocks 1–2 remain the only completed blocks; four including this one
 remain. This is a bounded implementation step within Block 3, not a new phase.
 
+**CI intake step complete, 15 October:** `prepare-release-review` takes the
+standard `gh run download` artifact and an operator-owned template in the existing
+policy format. It reuses receipt/payload/catalogue checks, exact candidate-tree
+comparison, prior-index verification and pinned official GH provenance. Candidate
+and producer metadata are both verified; the selected tooling source/digest and
+ownership are checked, with ownership rechecked after network calls. Calculated
+pins are filled without handwritten hashing scripts. Approval dates/reference
+remain unset, so the result cannot authorize signing. Full approval validation
+remains mandatory on every existing signing/source-review path; structural input
+validation is shared with the read-only preparation route. No new approval format,
+verifier, downloader/archive handler, harness or dependency. The guide documents
+one tooling selection, explicit run/PR facts and download-to-review commands.
+
+96 registry tests and strict all-target Clippy pass. Four intake tests reuse real
+native/MCP author preparation and prior signatures; network substitution is only
+in the private test callback. A genuine read-only run against GitHub CI
+38700335101 verifies candidate and producer attestations, PNG/gallery
+listing bytes for the MCP descriptor, and signed prior index 7. Its producer pin
+was cross-checked from the separately downloaded trusted request-job executable,
+which was hashed but never executed. Altering producer metadata while retaining
+the authentic candidate is refused by the official producer-attestation verifier;
+no draft is emitted. The real signer refuses the generated unapproved draft before
+GitHub review/key access. This inspects an already published candidate; it grants
+no new source approval or publication. The proposed ownership file was only read
+for eligibility, not adopted as signing authority. Scoped diff/call-path review
+passes; graph context is incomplete for the new module and does not replace it.
+
+**Current remainder of Block 3:** optional author PR helper, final commit-bound
+publication integration/diagnostics and one complete new live provider update
+after reviewed operator adoption. Run/PR selection and final exact approval stay
+explicit operator steps, using standard GH CLI rather than a new orchestration
+framework. Blocks 1–2 complete; four blocks including Block 3 remain. No app build
+or user account test was required. The earlier open-item paragraph records the
+previous staging checkpoint; this paragraph is the current Block 3 status.
+
 Reuse existing trusted CI and local/protected signer. Provide one documented
 maintainer entry point that selects the reviewed candidate, downloads/verifies
 its evidence, prepares the exact policy, signs only after authorization, assembles
