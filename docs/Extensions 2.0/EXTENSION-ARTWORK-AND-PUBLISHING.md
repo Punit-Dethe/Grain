@@ -82,8 +82,10 @@ approval exceptions cover exact candidates; new candidates require approval.
 
 ## First-party examples
 
-GitHub 0.1.2 and Notion 0.1.1 are being prepared with one square icon and three
+GitHub 0.1.2 and Notion 0.1.1 are prepared with one square icon and three
 wide images each, using official provider assets. Their source `assets/README.md`
 records URLs, pixel sizes and normalization. These are test-listing images;
 they do not certify every depicted service feature through Grain. Public store
 activation remains separate until their exact candidates are approved/signed.
+Both fixed source tags are pushed; the combined candidate is in
+[registry draft PR #5](https://github.com/Punit-Dethe/Grain-Extention/pull/5).

@@ -27,6 +27,11 @@ descriptor differences are version-only: endpoint, authentication and public
 options are unchanged. **They are not yet published to the signed store.**
 The existing publisher makes each version's listing immutable; new exact source
 candidates require review/approval/signing, not a fresh Grain installer release.
+Both source branches and fixed tags are pushed. Registry [draft PR #5](https://github.com/Punit-Dethe/Grain-Extention/pull/5)
+contains the two source submissions, corrected author instructions and workflow
+pins to shared artwork tooling at `3e5862451f556f766391e47167d0c4ddecab5da7`.
+No live `v1` data or exact-source approval exceptions were changed. One explicit
+approval request covers the two new tester candidates before CI/signing/activation.
 
 Frontend 123 unit tests, TypeScript/Vite build, ESLint/Prettier, SDK/checker/CLI
 tests, normal registry suite, both-role catalogue staging and HTTP inventory
