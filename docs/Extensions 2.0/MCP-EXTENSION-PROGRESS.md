@@ -1,5 +1,91 @@
 # Extension implementation: progress, changes and user testing
 
+**Block 3 complete — approved ordinary publication, 16 October 2026:** the user
+separately approved exact Notion 0.1.2 source
+`3910dfd013c5015914cf016b2e3059932cf51752`, registry PR 9 head
+`a99ac7184edcafb00a4917d747dafda179f6f041` and candidate
+`ebc992cf4d8d370c7e2c6cba6c3c402c1a453f3f4838a41bd7899d9aad6b834c`.
+Merged at `64d6211d2c1c044b954a93877974d9be92e56bfe`; main run **38789340252**
+reproduces that exact candidate. The trusted request-job executable was hashed
+without execution, and normal intake verifies both genuine GitHub attestations,
+current adopted ownership and signed prior index 7. Exact approved schema-3
+policy SHA256: `4bdf632f823fcbb26a342853a8307849fe627e7603d6a17a134cd3ff74151f87`.
+Current live source review also passes before protected signing.
+
+The actual public staging command initially refused its password-file flag:
+`StageReviewedRelease` was missing from the global credential admission match.
+This was a confirmed pre-key/pre-output refusal, not an uncertain write. A
+single missing arm fixes it in Grain **bdd5a261**. A normal CLI integration test
+checks staging admission before invalid-base refusal and continued credential
+refusal on read-only commands; it passes on Windows and Linux. The initial test
+used a nonexistent directory and expected a later error context; changed only
+that fixture to an existing empty store, then passed. Strict all-target Clippy
+passes. No signing implementation, bypass, dependency or Agent harness was added.
+
+With the corrected CLI, `stage-reviewed-release` completes normal approval,
+provenance, signing, assembly, conditional local promotion and verified hosting
+export. Live signed index **8** includes GitHub **0.1.2** and Notion **0.1.2**.
+Publication commit `8931134ee42a4c02dda05369304763c77e6cc859`, snapshot
+`711552ba7468b80c91f932cbb2da0b6d813f9bcc4d59284aa8314d8f475d7603`, bundle receipt
+`b28efe05f84ad7fc560a5f8dc2ed7497e2ef0402e5766671a3513c92477c2a69`.
+[Run 38790216499](https://github.com/Punit-Dethe/Grain-Extention/actions/runs/38790216499)
+confirms one leased Git activation and **63 public files / 132 HTTP requests**.
+Evidence/retained work: `C:/Projects/Grain/grain-notion-012-publication-20261016`.
+The existing encrypted publisher key/password file stayed in its current custody;
+only the protected CLI unlocked it for this authorized release. No secret was
+printed, copied into evidence or sent to CI. Root keys were not accessed.
+
+Registry PR **10** is merged at `0629a6aac633a1542c7c9c911cb6fea052480b0b` after
+exact-head CI **38790442365** passes request/preparation/attestation, including the
+real CLI regression on Linux. It updates the shared tooling pin to **bdd5a261**
+and current adoption wording only; approved ownership bytes and catalogue data
+are unchanged. The completed release's acf0a10c producer/publisher identity stays
+recorded as used, rather than retroactively changed. Source/policy/candidate/Git/
+HTTP boundaries and the scoped fixes are audited; no blocking source finding
+remains for this bounded checkpoint. Existing signed native/MCP/Git fixtures,
+96 registry tests, one CLI regression and 19 publisher tests supply automated
+coverage; real application/update/production-control gates are not inferred.
+
+**Blocks 1–3 complete; three remain. Next: Block 4, portable publisher OAuth
+onboarding.** Notion 0.1.2 is an extension update, not a Grain installer. The real
+app's update/account retention check stays in the grouped Block 5 acceptance;
+no new user test is required now. Custom MCP release management stays hidden,
+Agent execution policy and unrelated Cargo/binding edits remain unchanged.
+
+**Block 3 operator adoption and real author workflow, 16 October 2026:** the user
+answered "Approve merge and tester policy adoption" for registry PR 8's exact
+head `a8f31008bea36d927baca76faf56820e66d1abb1`. Marked ready and merged with
+head matching at `d0343cf18d0a2e1b65143923e460ee2a84061cb0`. Adopted exact ownership
+bytes (SHA256 `d471cf0c145dd8a83b131c2e669284f026f78659e0c649f095cd8935423771c3`)
+to `C:/Users/watrm/AppData/Local/GrainPublishing/policy/ownership.json`. The new
+policy directory has inheritance disabled, owner/current operator and SYSTEM
+access only. No existing key was moved/read/unlocked by adoption; GitHub branch/
+environment controls and hosted catalogue bytes are unchanged. This is tester
+authority adoption, not a new source-version approval or community release gate.
+
+Shared-pin draft CI **38787977168** and adopted main CI **38788435338** both pass
+trusted request/preparation/attestation, correctly skipping native execution for
+Notion. Downloaded draft evidence's source pin equals reviewed Grain
+`acf0a10c71fb8b906ecb4e2a23b44fc80d6c44b0`; its producer
+`b5b5d0d24a14866610e298ed1ad204036c57f3789911bbaec8d92a83cecde50b`
+and candidate hashes match independent downloaded trusted-builder/candidate bytes.
+No downloaded binary was executed. Public evidence remains in
+`C:/Users/watrm/AppData/Local/Temp/grain-shared-pin-ci-38787977168`.
+Draft provenance is not treated as eligible approved-main signing evidence.
+
+Prepared a useful ordinary update to close Block 3: Notion **0.1.2**, source/tag
+`3910dfd013c5015914cf016b2e3059932cf51752` / `v0.1.2`. It corrects store text that
+implied per-call approval and stale author/package instructions. JSON comparison
+confirms only descriptor version changes; endpoint, OAuth, tools and artwork stay.
+Doctor reports zero findings; pack and scoped diff/source review pass. Real
+`grain-ext submit --update-from 0.1.1` plus `grain-ext pr` produced
+[registry draft PR 9](https://github.com/Punit-Dethe/Grain-Extention/pull/9), head
+`a99ac7184edcafb00a4917d747dafda179f6f041`, with only the two expected submission/
+description files. It remains unapproved/unpublished; its build-only CI run is
+**38788799821**, and approved merged-ref provenance must precede signing.
+Blocks 1–2 complete; Block 3 remains open for that fresh exact-approved live update.
+Four blocks including it remain; no new application test is requested now.
+
 **Block 3 publication integration checkpoint, 16 October 2026:** registry PR 8
 proposes a single immutable Grain tooling pin for the source builder, producer
 receipt and publisher. The value is selected from the reviewed registry checkout,

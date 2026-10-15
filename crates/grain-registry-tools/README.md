@@ -3,10 +3,12 @@
 These tools do not ship in the application. E4 publishing is in progress;
 production signing/deployment and public SDK freeze are not certified.
 
-Maintainers start with the registry's [publication runbook](https://github.com/Punit-Dethe/Grain-Extention/blob/policy/extension-ownership-20261015/PUBLISHING.md).
+Maintainers start with the registry's [publication runbook](https://github.com/Punit-Dethe/Grain-Extention/blob/main/PUBLISHING.md).
 It joins the commands below into one native/MCP release sequence, with exact
 approval, commit-bound activation and recovery at the stage that failed. It is
-currently proposed in registry PR 8; operator ownership adoption remains pending.
+merged through registry PR 8. The user approved tester ownership adoption on
+16 October; current policy is under `%LOCALAPPDATA%/GrainPublishing/policy/`.
+Adoption does not approve a particular release or certify community-release controls.
 
 Build the tools from the Grain checkout:
 
@@ -419,10 +421,12 @@ the existing read-only delivery check. This command never commits or pushes.
 For multiple extensions, repeat the same path with separately approved policies
 against each new local base, then publish the final verified bundle. There is no
 second batch-specific signing pipeline. Author PR convenience, CI intake and
-publication diagnostics are implemented; registry PR 8 proposes the shared
-tooling pin and complete operator sequence. A new live update after ownership
-adoption remains the Block 3 acceptance gate. Local commands alone do not certify
-that operational adoption or a fresh provider publication.
+publication diagnostics are implemented; registry PR 8 delivered the shared
+tooling pin and complete operator sequence. The separately approved Notion 0.1.2
+update passes the real intake/staging/Git/HTTP path in publication run 38790216499.
+Registry PR 10 selects corrected CLI source `bdd5a261` and runs its focused CLI
+credential regression in CI. Real-app update acceptance and production operator
+controls remain separate gates; see the active stabilization plan.
 
 ### Ownership enrollment and changes
 

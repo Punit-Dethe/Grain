@@ -5,14 +5,21 @@ extension authoring, review, publication and store delivery. It replaces this
 file's earlier chronological work order and the historical E4–E8 phase counts.
 Completed evidence stays in [progress](MCP-EXTENSION-PROGRESS.md) and the focused
 audit documents; it is not a fresh backlog. Six bounded blocks are defined below:
-**Blocks 1–2 implementation complete; four remain**. Block 2's public ownership
-proposal is [registry draft PR 8](https://github.com/Punit-Dethe/Grain-Extention/pull/8).
-Operator adoption of the reviewed current file is a prerequisite for the next
-real signing run; no protected policy/key location or GitHub settings were changed.
-Block 1 local/three-OS checks and artifact verification pass; Block 2 registry
-tests, CLI refusals, strict Clippy and scoped source audit pass. Next: Block 3
-publication orchestration. No application runtime, account or catalogue change.
-No new installer or stable public SDK release.
+**Blocks 1–3 complete; three remain**. The user explicitly approved
+[registry PR 8](https://github.com/Punit-Dethe/Grain-Extention/pull/8) at
+`a8f31008bea36d927baca76faf56820e66d1abb1` and tester ownership adoption on
+16 October. It is merged at `d0343cf18d0a2e1b65143923e460ee2a84061cb0`.
+The exact current ownership file is now adopted outside repositories under
+`%LOCALAPPDATA%/GrainPublishing/policy/ownership.json`; SHA256
+`d471cf0c145dd8a83b131c2e669284f026f78659e0c649f095cd8935423771c3`.
+Its new directory disables inherited access and allows the current operator and
+SYSTEM. Existing signing keys and GitHub protection settings were not changed.
+Block 3's exact-approved Notion 0.1.2 update is live at signed index 8, publication
+commit `8931134ee42a4c02dda05369304763c77e6cc859`. Run **38790216499** confirms Git
+and all 63 public files/132 HTTP checks. The corrected CLI pin and real CLI test
+also pass Linux CI and are merged through registry PR 10. Next: **Block 4, portable
+publisher OAuth onboarding**. Application/store acceptance and production operator
+controls retain their own later gates. No new Grain installer or stable SDK release.
 
 ## Target experience
 
@@ -40,7 +47,7 @@ confirmation dialogs.
 | Listing | Separate DESCRIPTION, 512×512 PNG icon, up to six wide gallery images, signed sizes/hashes and client checks exist. User accepts the current artwork/detail layout for now. |
 | Review/build | Pinned source/tag, isolated native builds, fresh trusted preparation, genuine CI attestations, exact review and signing checks exist. Native author execution is separated from signing authority. |
 | Hosting | Signed roots/index/revocations, content-addressed assets, metadata freshness/cache, conditional publication and anonymous delivery checks exist. GitHub remains the host. |
-| Real extensions | GitHub 0.1.2 and Notion 0.1.1 are live in signed index 7. Publication run 38701547203 confirms remote Git plus 55 public files/116 HTTP requests. Representative account/Agent workflows already passed; not every provider tool is certified. |
+| Real extensions | GitHub 0.1.2 and Notion 0.1.2 are live in signed index 8. Publication run 38790216499 confirms remote Git plus 63 public files/132 HTTP requests. Representative account/Agent workflows already passed; not every provider tool or the new installed update state is certified. |
 | Store identity | Duplicate historical release cards fixed in 608fb263. Browse/details/icons now share latest eligible publication selection. Real Windows store suite: 12 Pass, one existing live-network test ignored. User confirmation of the two-card view remains pending. |
 | Tool selection | Existing lexical shortlist, compact directory and exact recovery have a completed bounded GitHub/Notion checkpoint. No new retrieval research, embeddings or Agent rewrite in this work order. |
 
@@ -283,10 +290,39 @@ and 19 publisher/delivery tests pass. CLI run 38784532686 at 20845d09 passes all
 three advertised OS builds/tests/artifact uploads. These do not certify a new
 source release or adoption of the proposal. No new harness or installer.
 
-**Current remainder:** adopt the reviewed ownership/tooling proposal and complete
-one new live provider update with exact release approval. Blocks 1–2 complete;
-Block 3 still open; four blocks including it remain. GitHub protection/custody
-changes are separate operator decisions; this checkpoint changes none of them.
+**Adopted operator path, 16 October:** the user approved PR 8's exact head and
+tester policy adoption. The merged main workflow run **38788435338** passes
+request/preparation/attestation with the shared tooling pin; the native build is
+correctly skipped for the existing Notion descriptor. Earlier draft-branch run
+**38787977168** also passes, with downloaded producer/candidate bytes independently
+hashed against the trusted request-job executable without executing it. That
+draft evidence is not substituted for eligible main-ref release evidence.
+
+**Complete, 16 October:** the user separately approved exact Notion 0.1.2 source
+`3910dfd013c5015914cf016b2e3059932cf51752` and candidate
+`ebc992cf4d8d370c7e2c6cba6c3c402c1a453f3f4838a41bd7899d9aad6b834c`.
+PR 9 is merged at `64d6211d2c1c044b954a93877974d9be92e56bfe`; main CI
+**38789340252** reproduces that candidate exactly. Normal intake verifies both
+official attestations and exact prior/ownership bindings. The approved schema-3
+policy's SHA256 is `4bdf632f823fcbb26a342853a8307849fe627e7603d6a17a134cd3ff74151f87`.
+The public `stage-reviewed-release` command signs/promotes/exports the approved
+update, then the existing commit-bound gate/publisher confirms live index 8.
+
+Actual CLI execution exposed a missing `StageReviewedRelease` arm in the global
+credential guard, before any key/output access. Grain `bdd5a261` fixes that single
+arm. A real CLI integration test admits staging's password flag through to an
+invalid-base refusal and still rejects credential flags on read-only commands.
+It passes on Windows and in Linux CI **38790442365**; strict Clippy passes.
+Registry PR 10 selects that corrected tooling for future runs and includes the
+fast CLI regression in the trusted request job. The completed release retains
+its independently recorded acf0a10c producer/publisher identity; it is not rewritten.
+No signing implementation, authority grant, Agent harness or dependency was added.
+
+Existing native/MCP signed-store/Git fixtures, 96 registry tests, one public CLI
+regression, 19 publisher tests and the new real MCP update complete Block 3's
+bounded checkpoint/source audit. Block 4 is next; **three blocks remain**. Actual
+GitHub protection/signing-key custody changes and real-app update-state acceptance
+remain Blocks 5–6; live HTTP success alone does not certify them.
 
 Reuse existing trusted CI and local/protected signer. Provide one documented
 maintainer entry point that selects the reviewed candidate, downloads/verifies
@@ -426,10 +462,9 @@ separate `Punit-Dethe/Grain-Extention` repository).
 
 ## Current user/operator dependencies
 
-Blocks 1–2 need no new user account/app test. Block 3 can be implemented with
-existing fixtures; before the next live signing, review/adopt registry PR 8's
-ownership configuration into the current operator-owned location. Actual
-protection/custody changes remain reviewed operator decisions:
+Blocks 1–3 need no new user account/app test. Tester ownership/tooling adoption and
+the separately approved live Notion 0.1.2 update are complete. Actual GitHub
+protection/signing-key custody changes remain reviewed operator decisions:
 
 - Confirm the two-card store view after the recent fix; current artwork is accepted.
 - Confirm concrete publishing protection/custody changes before activation.
