@@ -22,6 +22,30 @@ fn refresh_receipt(p: &Publication) -> String {
 }
 
 #[test]
+fn capture_preserves_signed_png_listing_icons_with_the_icon_size_bound() {
+    let mut p = Publication::new();
+    // Capture authenticates addressed bytes; image decoding belongs to the host.
+    let image = b"controlled png icon fixture";
+    let hash = digest(image);
+    let relative = format!("v1/media/{hash}.png");
+    let (path, limit) = crate::serving::capture::destination(&relative).unwrap();
+    assert_eq!(path, PathBuf::from(&relative));
+    assert_eq!(limit, grain_sdk::ICON_MAX_BYTES);
+    let v1 = p.bundle.join("v1");
+    fs::write(v1.join(format!("media/{hash}.png")), image).unwrap();
+    let mut index = p.f.json(&v1, "index.json");
+    index["entries"][0]["icon"] = json!({"sha256":hash,"kind":"png","size":image.len()});
+    p.f.signed(&v1, "index.json", &index, "publisher");
+    p.pin = refresh_receipt(&p);
+    Publication::install(&p.bundle, &p.repo);
+    p.amend();
+    let out = p.f.root.path().join("icon-capture");
+    capture(&p, &p.candidate, &p.pin, &out).unwrap();
+    assert_eq!(fs::read(out.join("bundle").join(relative)).unwrap(), image);
+    hosting::verify(&out.join("bundle"), &p.pin, &p.f.anchor()).unwrap();
+}
+
+#[test]
 fn capture_reconstructs_previous_and_current_commits_and_feeds_publication_gate() {
     let p = Publication::new();
     fs::write(p.repo.join("v1/index.json"), "ignore dirty worktree").unwrap();

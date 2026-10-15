@@ -59,6 +59,7 @@ pub(super) fn destination(name: &str) -> Result<(PathBuf, u64)> {
             file,
             &[
                 (".md", 64 * 1024),
+                (".png", grain_sdk::ICON_MAX_BYTES),
                 (".webp", 4 * 1024 * 1024),
                 (".gif", 4 * 1024 * 1024),
             ],
