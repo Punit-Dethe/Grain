@@ -32,6 +32,10 @@ contains the two source submissions, corrected author instructions and workflow
 pins to shared artwork tooling at `3e5862451f556f766391e47167d0c4ddecab5da7`.
 No live `v1` data or exact-source approval exceptions were changed. One explicit
 approval request covers the two new tester candidates before CI/signing/activation.
+**Approval withdrawn, 15 October:** the user said the approval was accidental
+and requested that PR #5 remain a draft. No candidate build/signing/publication
+was started following that approval. Keep both candidates unpublished until a
+new explicit approval; the exact-source approval exceptions remain unchanged.
 
 Frontend 123 unit tests, TypeScript/Vite build, ESLint/Prettier, SDK/checker/CLI
 tests, normal registry suite, both-role catalogue staging and HTTP inventory

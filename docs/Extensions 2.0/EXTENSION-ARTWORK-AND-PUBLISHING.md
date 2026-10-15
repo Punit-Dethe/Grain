@@ -89,3 +89,5 @@ they do not certify every depicted service feature through Grain. Public store
 activation remains separate until their exact candidates are approved/signed.
 Both fixed source tags are pushed; the combined candidate is in
 [registry draft PR #5](https://github.com/Punit-Dethe/Grain-Extention/pull/5).
+The user withdrew accidental approval on 15 October: keep this PR a draft and
+both candidates unpublished until new explicit approval.
