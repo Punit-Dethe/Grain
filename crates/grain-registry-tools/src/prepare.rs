@@ -483,10 +483,15 @@ pub(crate) mod tests {
         if media {
             fs::create_dir(src.join("media")).unwrap();
             let mut bytes = std::io::Cursor::new(Vec::new());
-            image::DynamicImage::ImageRgba8(image::RgbaImage::new(16, 16))
+            image::DynamicImage::ImageRgba8(image::RgbaImage::new(640, 360))
                 .write_to(&mut bytes, image::ImageFormat::WebP)
                 .unwrap();
             fs::write(src.join("media/cover.webp"), bytes.into_inner()).unwrap();
+            let mut icon = std::io::Cursor::new(Vec::new());
+            image::DynamicImage::ImageRgba8(image::RgbaImage::new(512, 512))
+                .write_to(&mut icon, image::ImageFormat::Png)
+                .unwrap();
+            fs::write(src.join("media/icon.png"), icon.into_inner()).unwrap();
         }
         command(&src, &["init", "--quiet"]);
         command(
@@ -939,6 +944,20 @@ pub(crate) mod tests {
                 )
                 .unwrap(),
                 fs::read(f.out.join("DESCRIPTION.md")).unwrap()
+            );
+            let icon = entry.icon.as_ref().unwrap();
+            let original_icon = f
+                .value
+                .media
+                .iter()
+                .find(|asset| asset.name == "icon.png")
+                .unwrap();
+            assert_eq!(icon.sha256, original_icon.sha256);
+            assert_eq!(icon.kind, "png");
+            assert_eq!(entry.media.len(), 1);
+            assert_eq!(
+                fs::read(out.join("media").join(format!("{}.png", icon.sha256))).unwrap(),
+                fs::read(f.src.join("media/icon.png")).unwrap()
             );
             for (asset, original) in entry.media.iter().zip(&f.value.media) {
                 assert_eq!(

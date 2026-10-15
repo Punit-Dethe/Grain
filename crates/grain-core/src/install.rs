@@ -604,6 +604,7 @@ mod tests {
             installs: 0,
             readme: String::new(),
             listing: None,
+            icon: None,
             media: Vec::new(),
             categories: Vec::new(),
             extends: Vec::new(),

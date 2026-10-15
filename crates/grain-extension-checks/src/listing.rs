@@ -30,7 +30,7 @@ pub fn read_listing(root: &Path) -> Result<Listing, String> {
         let mut files = Vec::new();
         for entry in fs::read_dir(&directory).map_err(|e| e.to_string())? {
             let entry = entry.map_err(|e| e.to_string())?;
-            if files.len() >= LISTING_MEDIA_MAX_COUNT {
+            if files.len() >= LISTING_MEDIA_MAX_COUNT + 1 {
                 return Err("Too many listing media assets.".into());
             }
             files.push(entry.path());
@@ -58,16 +58,24 @@ pub fn read_listing(root: &Path) -> Result<Listing, String> {
                 .to_string();
             let kind = path.extension().and_then(|e| e.to_str()).unwrap_or("");
             let format = match kind {
+                "png" if name == LISTING_ICON_NAME => image::ImageFormat::Png,
                 "webp" => image::ImageFormat::WebP,
                 "gif" => image::ImageFormat::Gif,
                 _ => {
                     return Err(
-                        "Listing media supports lowercase .webp and .gif files only.".into(),
+                        "Listing images support icon.png for identity and lowercase .webp/.gif for the gallery.".into(),
                     )
                 }
             };
-            let bytes =
-                super::read_bounded(&path, LISTING_MEDIA_MAX_BYTES as u64, "listing media")?;
+            let bytes = super::read_bounded(
+                &path,
+                if name == LISTING_ICON_NAME {
+                    grain_sdk::ICON_MAX_BYTES
+                } else {
+                    LISTING_MEDIA_MAX_BYTES as u64
+                },
+                "listing media",
+            )?;
             total += bytes.len();
             if total > LISTING_TOTAL_MAX_BYTES {
                 return Err("Listing exceeds its total byte budget.".into());
@@ -75,12 +83,21 @@ pub fn read_listing(root: &Path) -> Result<Listing, String> {
             let mut reader = image::ImageReader::with_format(Cursor::new(&bytes), format);
             let mut limits = image::Limits::default();
             limits.max_image_width = Some(2048);
-            limits.max_image_height = Some(2048);
+            limits.max_image_height = Some(1152);
             limits.max_alloc = Some(16 * 1024 * 1024);
             reader.limits(limits);
-            reader.decode().map_err(|_| {
+            let decoded = reader.decode().map_err(|_| {
                 "Listing image is invalid or exceeds its 2048px/16MiB decode limit."
             })?;
+            if name == LISTING_ICON_NAME {
+                if decoded.width() != grain_sdk::ICON_MASTER_DIM
+                    || decoded.height() != grain_sdk::ICON_MASTER_DIM
+                {
+                    return Err("media/icon.png must be exactly 512×512 pixels.".into());
+                }
+            } else {
+                validate_gallery_dimensions(decoded.width(), decoded.height())?;
+            }
             media.push(ListingAsset {
                 name,
                 sha256: digest(&bytes),
@@ -139,9 +156,12 @@ mod tests {
     }
     fn image(path: &Path, width: u32, format: image::ImageFormat) {
         let mut bytes = Cursor::new(Vec::new());
-        image::DynamicImage::ImageRgba8(image::RgbaImage::new(width, 1))
-            .write_to(&mut bytes, format)
-            .unwrap();
+        image::DynamicImage::ImageRgba8(image::RgbaImage::new(
+            if width == 16 { 640 } else { width },
+            360,
+        ))
+        .write_to(&mut bytes, format)
+        .unwrap();
         fs::write(path, bytes.into_inner()).unwrap();
     }
     #[test]
@@ -216,6 +236,37 @@ mod tests {
         for n in 0..7 {
             image(&media.join(format!("{n}.gif")), 16, image::ImageFormat::Gif);
         }
+        assert!(read_listing(root.path()).is_err());
+    }
+    #[test]
+    fn listing_icon_is_a_separate_square_png_and_gallery_must_be_landscape() {
+        let root = listing();
+        let media = root.path().join("media");
+        fs::create_dir(&media).unwrap();
+        let icon = media.join(LISTING_ICON_NAME);
+        let write_icon = |edge| {
+            let mut bytes = Cursor::new(Vec::new());
+            image::DynamicImage::ImageRgba8(image::RgbaImage::new(edge, edge))
+                .write_to(&mut bytes, image::ImageFormat::Png)
+                .unwrap();
+            fs::write(&icon, bytes.into_inner()).unwrap();
+        };
+        write_icon(192);
+        assert!(read_listing(root.path()).err().unwrap().contains("512"));
+        write_icon(512);
+        image(&media.join("cover.webp"), 16, image::ImageFormat::WebP);
+        let value = read_listing(root.path()).unwrap();
+        assert_eq!(value.media.len(), 2);
+        assert_eq!(value.media[0].name, "cover.webp");
+        assert_eq!(value.media[1].name, LISTING_ICON_NAME);
+        fs::copy(&icon, media.join("other.png")).unwrap();
+        assert!(read_listing(root.path()).is_err());
+        fs::remove_file(media.join("other.png")).unwrap();
+        let mut square = Cursor::new(Vec::new());
+        image::DynamicImage::ImageRgba8(image::RgbaImage::new(640, 640))
+            .write_to(&mut square, image::ImageFormat::WebP)
+            .unwrap();
+        fs::write(media.join("cover.webp"), square.into_inner()).unwrap();
         assert!(read_listing(root.path()).is_err());
     }
     #[cfg(unix)]

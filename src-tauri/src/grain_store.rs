@@ -80,7 +80,9 @@ pub struct StoreEntry {
     pub installs: u64,
     /// User-facing DESCRIPTION document hash.
     pub readme: String,
-    /// Screenshots / GIFs for the detail page, loaded lazily — never in browse.
+    /// Square listing icon, independently addressed from the wide gallery.
+    pub icon: Option<StoreMedia>,
+    /// Wide gallery: first image is the store-card cover, further previews lazy.
     pub media: Vec<StoreMedia>,
     /// What kind of thing this is, for the store's filter row.
     pub categories: Vec<String>,
@@ -95,11 +97,11 @@ pub struct StoreEntry {
     pub flags: Vec<String>,
 }
 
-/// One screenshot/GIF ref crossed to the store UI (mirror of `MediaRef`).
+/// One icon/gallery image ref crossed to the store UI (mirror of `MediaRef`).
 #[derive(Clone, Serialize, specta::Type)]
 pub struct StoreMedia {
     pub sha256: String,
-    /// `webp` | `gif`.
+    /// `png` (icon) | `webp` | `gif` (gallery).
     pub kind: String,
 }
 
@@ -421,6 +423,10 @@ fn project_entries(entries: &[IndexEntry], revocations: &Revocations) -> Vec<Sto
             stars: e.stars,
             installs: e.installs,
             readme: e.detail_document_hash().into(),
+            icon: e.icon.as_ref().map(|icon| StoreMedia {
+                sha256: icon.sha256.clone(),
+                kind: icon.kind.clone(),
+            }),
             media: e
                 .media
                 .iter()
@@ -1282,6 +1288,7 @@ fn listing_blob_size(entries: &[IndexEntry], hash: &str, ext: &str) -> Result<Op
                 entry
                     .media
                     .iter()
+                    .chain(entry.icon.iter())
                     .filter(|asset| asset.sha256 == hash && asset.kind == ext)
                     .map(|asset| asset.size),
             );
@@ -1335,7 +1342,13 @@ async fn fetch_media(app: &AppHandle, sha256: &str, ext: &str) -> Result<Vec<u8>
     }
     let state = store_state(app)?;
     let expected_size = signed_listing_blob_size(&state, sha256, ext)?;
-    let budget = expected_size.unwrap_or(STORE_MEDIA_MAX_BYTES);
+    let budget = expected_size
+        .unwrap_or(STORE_MEDIA_MAX_BYTES)
+        .min(if ext == "png" {
+            grain_sdk::ICON_MAX_BYTES
+        } else {
+            STORE_MEDIA_MAX_BYTES
+        });
     let name = format!("media/{sha256}.{ext}");
     let cache_path = state.cache_dir.join(format!("{sha256}.{ext}"));
     if let Some(bytes) = read_bounded_file(&cache_path, budget) {
@@ -1413,7 +1426,7 @@ pub fn store_entry(app: AppHandle, id: String) -> Result<Option<StoreEntry>, Str
         .next())
 }
 
-/// One installed extension's cover reference.
+/// One installed extension's square listing icon reference (existing API name).
 #[derive(Clone, Serialize, specta::Type)]
 pub struct StoreCover {
     pub id: String,
@@ -1421,13 +1434,13 @@ pub struct StoreCover {
     pub kind: String,
 }
 
-/// Cover references for a set of ids, from the CACHED index in ONE parse.
+/// Square listing icon references for a set of ids, from one CACHED index parse.
 ///
 /// The installed list shows each extension's picture, and asking `store_entry`
 /// per row would re-read and re-verify the whole catalogue once per extension.
-/// This reads it once, keeps only `(id, cover)`, and drops the rest — the list
+/// This reads it once, keeps only `(id, icon)`, and drops the rest — the list
 /// gets its images without the catalogue ever staying resident. Ids that are not
-/// in the catalogue, or have no media, are simply absent from the result.
+/// in the catalogue, or have no square icon, are absent from the result.
 #[tauri::command]
 #[specta::specta]
 pub fn store_covers(app: AppHandle, ids: Vec<String>) -> Result<Vec<StoreCover>, String> {
@@ -1463,7 +1476,7 @@ fn project_covers(entries: &[IndexEntry], ids: Vec<String>) -> Vec<StoreCover> {
             if valid.is_err() {
                 continue;
             }
-            if let Some(m) = entry.media.first() {
+            if let Some(m) = entry.icon.as_ref() {
                 covers.push(StoreCover {
                     id,
                     sha256: m.sha256.clone(),
@@ -1475,17 +1488,33 @@ fn project_covers(entries: &[IndexEntry], ids: Vec<String>) -> Vec<StoreCover> {
     covers
 }
 
-/// A screenshot/GIF for the detail page, as a `data:` URL. Lazy — called only
-/// when a detail opens — and integrity-checked against its hash. WEBP or GIF.
+/// A listing image as a hash-checked data URL. Square icons use PNG;
+/// wide covers/previews use WebP or GIF and load only where displayed.
 #[tauri::command]
 #[specta::specta]
 pub async fn store_media(app: AppHandle, sha256: String, kind: String) -> Result<String, String> {
     let (ext, mime) = match kind.as_str() {
+        "png" => ("png", "image/png"),
         "webp" => ("webp", "image/webp"),
         "gif" => ("gif", "image/gif"),
         _ => return Err("unsupported media kind".into()),
     };
     let bytes = fetch_media(&app, &sha256, ext).await?;
+    if kind == "png" {
+        if grain_sdk::png_dimensions(&bytes)
+            != Some((grain_sdk::ICON_MASTER_DIM, grain_sdk::ICON_MASTER_DIM))
+        {
+            return Err("listing icon must be a 512×512 PNG".into());
+        }
+        let mut reader =
+            image::ImageReader::with_format(std::io::Cursor::new(&bytes), image::ImageFormat::Png);
+        let mut limits = image::Limits::default();
+        limits.max_image_width = Some(grain_sdk::ICON_MASTER_DIM);
+        limits.max_image_height = Some(grain_sdk::ICON_MASTER_DIM);
+        limits.max_alloc = Some(4 * 1024 * 1024);
+        reader.limits(limits);
+        reader.decode().map_err(|_| "listing icon PNG is invalid")?;
+    }
     Ok(format!("data:{mime};base64,{}", base64_encode(&bytes)))
 }
 
@@ -1575,6 +1604,7 @@ mod tests {
             "tier": "scripted", "trust": "verified", "sha256": "a".repeat(64),
             "size": 500, "categories": ["tools"], "min_grain_api": "1.0",
             "listing": {"sha256": "b".repeat(64), "size": 30},
+            "icon": {"sha256": "d".repeat(64), "size": 200, "kind": "png"},
             "media": [{"sha256": "c".repeat(64), "size": 100, "kind": "webp"}]
         }))
         .unwrap();
@@ -1597,8 +1627,17 @@ mod tests {
             assert_eq!(projected.len(), 1);
             let covers = project_covers(std::slice::from_ref(&entry), vec![entry.id.clone()]);
             assert_eq!(covers.len(), 1);
-            assert_eq!(covers[0].sha256, "c".repeat(64));
-            assert_eq!(covers[0].kind, "webp");
+            assert_eq!(covers[0].sha256, "d".repeat(64));
+            assert_eq!(covers[0].kind, "png");
+            assert_eq!(projected[0].icon.as_ref().unwrap().sha256, "d".repeat(64));
+            assert_eq!(projected[0].media[0].sha256, "c".repeat(64));
+            let mut no_icon = entry.clone();
+            no_icon.icon = None;
+            assert!(project_covers(&[no_icon], vec![entry.id.clone()]).is_empty());
+            assert_eq!(
+                listing_blob_size(&[entry.clone()], &"d".repeat(64), "png").unwrap(),
+                Some(200)
+            );
             assert_eq!(
                 projected[0].kind,
                 if kind == grain_sdk::distribution::ArtifactKind::McpDescriptor {

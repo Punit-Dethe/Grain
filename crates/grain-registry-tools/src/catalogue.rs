@@ -82,9 +82,19 @@ pub(super) fn stage(
             sha256: source.description_sha256.clone(),
             size: source.description_size,
         }),
+        icon: source
+            .media
+            .iter()
+            .find(|asset| asset.name == grain_sdk::submission::LISTING_ICON_NAME)
+            .map(|asset| grain_sdk::MediaRef {
+                sha256: asset.sha256.clone(),
+                size: asset.size,
+                kind: asset.kind.clone(),
+            }),
         media: source
             .media
             .iter()
+            .filter(|asset| asset.name != grain_sdk::submission::LISTING_ICON_NAME)
             .map(|asset| grain_sdk::MediaRef {
                 sha256: asset.sha256.clone(),
                 size: asset.size,

@@ -10,6 +10,21 @@ pub const DESCRIPTION_MAX_BYTES: usize = 64 * 1024;
 pub const LISTING_MEDIA_MAX_BYTES: usize = 4 * 1024 * 1024;
 pub const LISTING_TOTAL_MAX_BYTES: usize = 16 * 1024 * 1024;
 pub const LISTING_MEDIA_MAX_COUNT: usize = 6;
+/// Reserved listing identity, separate from cover/gallery artwork.
+pub const LISTING_ICON_NAME: &str = "icon.png";
+
+/// Wide gallery images fit a 16:9 viewport without distortion. Accept common
+/// editorial ratios from 3:2 to 2:1; recommend 1280x720 to authors.
+pub fn validate_gallery_dimensions(width: u32, height: u32) -> Result<(), String> {
+    if !(640..=2048).contains(&width)
+        || !(360..=1152).contains(&height)
+        || u64::from(width) * 2 < u64::from(height) * 3
+        || u64::from(width) > u64::from(height) * 2
+    {
+        return Err("Gallery images must be 640–2048px wide, 360–1152px high, with a landscape ratio between 3:2 and 2:1 (recommended 1280×720).".into());
+    }
+    Ok(())
+}
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -110,7 +125,13 @@ pub fn validate_listing_metadata(
     {
         return Err("DESCRIPTION.md requires its bounded size and SHA256 digest.".into());
     }
-    if media.len() > LISTING_MEDIA_MAX_COUNT {
+    if media.len() > LISTING_MEDIA_MAX_COUNT + 1
+        || media
+            .iter()
+            .filter(|asset| asset.name != LISTING_ICON_NAME)
+            .count()
+            > LISTING_MEDIA_MAX_COUNT
+    {
         return Err("Too many listing media assets.".into());
     }
     let mut total = description_size;
@@ -126,11 +147,13 @@ pub fn validate_listing_metadata(
             && !asset.name.starts_with('.')
             && !asset.name.contains("..");
         if !valid_name
-            || !matches!(asset.kind.as_str(), "webp" | "gif")
+            || !(matches!(asset.kind.as_str(), "webp" | "gif") && asset.name != LISTING_ICON_NAME
+                || asset.kind == "png" && asset.name == LISTING_ICON_NAME)
             || !asset.name.ends_with(&format!(".{}", asset.kind))
             || !hex256(&asset.sha256)
             || asset.size == 0
             || asset.size > LISTING_MEDIA_MAX_BYTES as u64
+            || (asset.name == LISTING_ICON_NAME && asset.size > crate::ICON_MAX_BYTES)
             || !names.insert(asset.name.to_ascii_lowercase())
         {
             return Err("Invalid, duplicate or oversized listing media asset.".into());
@@ -325,5 +348,43 @@ mod tests {
             ..asset
         }];
         assert!(value.validate().is_err());
+    }
+    #[test]
+    fn square_icon_and_landscape_gallery_have_distinct_contracts() {
+        let mut value = sample();
+        value.media = vec![ListingAsset {
+            name: LISTING_ICON_NAME.into(),
+            sha256: "b".repeat(64),
+            size: 100,
+            kind: "png".into(),
+        }];
+        assert!(value.validate().is_ok());
+        value.media[0].size = crate::ICON_MAX_BYTES + 1;
+        assert!(value.validate().is_err());
+        value.media[0].size = 100;
+        value.media[0].name = "cover.png".into();
+        assert!(value.validate().is_err());
+        value.media[0].name = LISTING_ICON_NAME.into();
+        value.media[0].kind = "webp".into();
+        assert!(value.validate().is_err());
+        for (width, height) in [
+            (640, 360),
+            (1280, 720),
+            (1920, 1080),
+            (1600, 999),
+            (1660, 830),
+        ] {
+            assert!(validate_gallery_dimensions(width, height).is_ok());
+        }
+        for (width, height) in [
+            (192, 192),
+            (512, 512),
+            (640, 359),
+            (2049, 1080),
+            (1600, 1200),
+            (1660, 665),
+        ] {
+            assert!(validate_gallery_dimensions(width, height).is_err());
+        }
     }
 }

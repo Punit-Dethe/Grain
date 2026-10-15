@@ -368,6 +368,19 @@ fn index_assets(index: &Index, publishable: bool) -> Result<BTreeMap<String, Ass
                 4 * 1024 * 1024,
             )?;
         }
+        if let Some(icon) = &entry.icon {
+            if icon.kind != "png" {
+                bail!("Listing icons must be PNG");
+            }
+            asset(
+                &mut assets,
+                "media",
+                &icon.sha256,
+                "png",
+                icon.size,
+                grain_sdk::ICON_MAX_BYTES,
+            )?;
+        }
     }
     Ok(assets)
 }

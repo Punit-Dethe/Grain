@@ -775,8 +775,8 @@ async storeClose() : Promise<Result<null, string>> {
 }
 },
 /**
- * A screenshot/GIF for the detail page, as a `data:` URL. Lazy — called only
- * when a detail opens — and integrity-checked against its hash. WEBP or GIF.
+ * A listing image as a hash-checked data URL. Square icons use PNG;
+ * wide covers/previews use WebP or GIF and load only where displayed.
  */
 async storeMedia(sha256: string, kind: string) : Promise<Result<string, string>> {
     try {
@@ -814,13 +814,13 @@ async storeEntry(id: string) : Promise<Result<StoreEntry | null, string>> {
 }
 },
 /**
- * Cover references for a set of ids, from the CACHED index in ONE parse.
+ * Square listing icon references for a set of ids, from one CACHED index parse.
  *
  * The installed list shows each extension's picture, and asking `store_entry`
  * per row would re-read and re-verify the whole catalogue once per extension.
- * This reads it once, keeps only `(id, cover)`, and drops the rest — the list
+ * This reads it once, keeps only `(id, icon)`, and drops the rest — the list
  * gets its images without the catalogue ever staying resident. Ids that are not
- * in the catalogue, or have no media, are simply absent from the result.
+ * in the catalogue, or have no square icon, are absent from the result.
  */
 async storeCovers(ids: string[]) : Promise<Result<StoreCover[], string>> {
     try {
@@ -3242,7 +3242,7 @@ export type ShowOverlay = string
 export type Snippet = { id: string; trigger: string; replacement: string; enabled?: boolean }
 export type SoundTheme = "marimba" | "pop" | "custom"
 /**
- * One installed extension's cover reference.
+ * One installed extension's square listing icon reference (existing API name).
  */
 export type StoreCover = { id: string; sha256: string; kind: string }
 /**
@@ -3273,7 +3273,11 @@ installs: number;
  */
 readme: string;
 /**
- * Screenshots / GIFs for the detail page, loaded lazily — never in browse.
+ * Square listing icon, independently addressed from the wide gallery.
+ */
+icon: StoreMedia | null;
+/**
+ * Wide gallery: first image is the store-card cover, further previews lazy.
  */
 media: StoreMedia[];
 /**
@@ -3296,11 +3300,11 @@ revocation: string | null;
  */
 flags: string[] }
 /**
- * One screenshot/GIF ref crossed to the store UI (mirror of `MediaRef`).
+ * One icon/gallery image ref crossed to the store UI (mirror of `MediaRef`).
  */
 export type StoreMedia = { sha256: string;
 /**
- * `webp` | `gif`.
+ * `png` (icon) | `webp` | `gif` (gallery).
  */
 kind: string }
 /**

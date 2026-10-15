@@ -1,5 +1,44 @@
 # Extension implementation: progress, changes and user testing
 
+**Separate icon/gallery contract and restored hero, 15 October 2026:** the user
+accepted the Overview/Settings direction and requested a large image above it.
+The detail page now restores that wide gallery, with previous/next and numbered
+selection, and a separate 64px square title icon. Installed uses square icons;
+store browsing uses the first wide gallery image. Only the active full-size
+preview is loaded; switching images cannot temporarily display the previous
+image. Missing listing icons use a neutral initial, never a gallery cover.
+
+Audited the real inconsistency: native runtime icons already required 512×512
+PNG, but hosted listings had no distinct icon metadata or landscape/minimum-size
+rule. GitHub's old cover was 1024×575; Notion's was 192×192. Added reserved
+`media/icon.png` (512×512, ≤512 KiB), a separate signed catalogue icon, and up to
+six gallery images (640–2048×360–1152, ratio 3:2–2:1, ≤4 MiB each; recommended
+1280×720). The host uses a consistent 16:9 contain viewport. Source checks,
+catalogue staging, serving inventory, HTTP verification, client projection and
+signed-size lookup now preserve those roles. The client also validates PNG icon
+dimensions and decode. Existing 16 MiB listing budget remains.
+
+GitHub 0.1.2 (`d5ae55e7dafaa0f9749a05f1518d0152bffcc803`) and Notion 0.1.1
+(`d44b782581702935d5b1c5f75457d3ac2bac7b70`) are prepared on source branches/tags
+with an attributed square icon and three official-provider wide images each.
+Local doctor/pack, source-pinned preparation and unsigned catalogue staging pass;
+each candidate has one PNG icon and three gallery-only WebP references. Verified
+descriptor differences are version-only: endpoint, authentication and public
+options are unchanged. **They are not yet published to the signed store.**
+The existing publisher makes each version's listing immutable; new exact source
+candidates require review/approval/signing, not a fresh Grain installer release.
+
+Frontend 123 unit tests, TypeScript/Vite build, ESLint/Prettier, SDK/checker/CLI
+tests, normal registry suite, both-role catalogue staging and HTTP inventory
+tests pass. The real host store suite passes 11 with its one existing live-network
+test ignored. Direct Windows unit-test launch initially failed with 0xC0000139;
+the existing `scripts/run-rust-test.ps1` activation-manifest runner resolves it.
+Independent source review caught/fixed disabled-row opacity and icon object-fit
+specificity; final confirmation passes. Visual acceptance of the restored
+gallery remains Pending, including actual multiple-image navigation after signed
+publication. No Computer Use, visual harness, new dependency or installer.
+See [artwork rules and complete publishing explanation](EXTENSION-ARTWORK-AND-PUBLISHING.md).
+
 **Extension detail UI refinement, 15 October 2026 (latest):** adopted the scoped
 frontend changes from `origin/main` through `f6c9be19`: Home's compact shortcut
 strip and light-theme History surfaces. Kept the extension branch's other work.

@@ -34,7 +34,8 @@ class DeliveryTests(unittest.TestCase):
         (self.bundle / "bundle.json").write_bytes(b"receipt")
         (self.bundle / "current.json").write_bytes(b"pointer")
         for name in ["v1/blob/" + "3" * 64 + ".grainpack", "v1/blob/" + "4" * 64 + ".mcp.json",
-                     "v1/media/" + "5" * 64 + ".md", "history/" + "6" * 64 + "/index.json"]:
+                     "v1/media/" + "5" * 64 + ".md", "v1/media/" + "7" * 64 + ".png",
+                     "history/" + "6" * 64 + "/index.json"]:
             path = self.bundle / name
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(b"data\x00\n")

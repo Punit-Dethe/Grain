@@ -151,8 +151,11 @@ pub struct IndexEntry {
     /// README catalogues; present listings never fall back to README.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub listing: Option<ListingDocument>,
-    /// Screenshots / GIFs for the detail page (DISTRIBUTION-PLAN §2.3). Media
-    /// blobs referenced by hash, loaded lazily — never during browse.
+    /// Square listing identity. Never substituted with a gallery cover.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon: Option<MediaRef>,
+    /// Wide gallery media, referenced by hash. First image is the store-card
+    /// cover; remaining detail previews load only when selected.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub media: Vec<MediaRef>,
     /// What KIND of thing this is, from the submission's declared categories
@@ -206,7 +209,7 @@ impl IndexEntry {
         {
             return Err("Invalid listing media digest/kind.".into());
         }
-        let media = self
+        let mut media = self
             .media
             .iter()
             .enumerate()
@@ -219,6 +222,14 @@ impl IndexEntry {
                 kind: asset.kind.clone(),
             })
             .collect::<Vec<_>>();
+        if let Some(icon) = &self.icon {
+            media.push(crate::submission::ListingAsset {
+                name: crate::submission::LISTING_ICON_NAME.into(),
+                sha256: icon.sha256.clone(),
+                size: icon.size,
+                kind: icon.kind.clone(),
+            });
+        }
         crate::submission::validate_listing_metadata(&document.sha256, document.size, &media)
     }
 

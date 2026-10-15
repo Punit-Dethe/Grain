@@ -632,11 +632,10 @@ function ExtensionDetail({
       ? selection.connection.name
       : "Extension");
   const description = card?.description ?? entry?.description ?? "";
-  const media = entry?.media.length
-    ? entry.media
-    : card && controller.covers[card.id]
-      ? [controller.covers[card.id]]
-      : [];
+  const media = entry?.media ?? [];
+  const activeMediaIndex = Math.min(mediaIndex, Math.max(0, media.length - 1));
+  const listingIcon =
+    entry?.icon ?? (selectionId ? controller.covers[selectionId] : undefined);
   const capabilities = entry?.capabilities ?? card?.capabilities ?? [];
   const installedMcp = isConnection
     ? controller.connections.find((row) =>
@@ -716,14 +715,17 @@ function ExtensionDetail({
       </div>
 
       <div className="extension-detail-content">
-        <header className="extension-detail-intro">
-          <div className="extension-detail-identity">
-            <div className="extension-detail-media-wrap">
+        {media.length > 0 && (
+          <section
+            className="extension-detail-gallery"
+            aria-label={`${name} previews`}
+          >
+            <div className="extension-detail-gallery-viewport">
               <MediaArtwork
-                media={media[mediaIndex]}
-                icon={card?.icon}
+                media={media[activeMediaIndex]}
                 name={name}
-                className="extension-detail-hero preview-media"
+                alt={`${name} preview ${activeMediaIndex + 1} of ${media.length}`}
+                className="extension-detail-preview"
               />
               {media.length > 1 && (
                 <>
@@ -732,31 +734,64 @@ function ExtensionDetail({
                     type="button"
                     aria-label="Previous preview"
                     onClick={() =>
-                      setMediaIndex((index) =>
-                        nextMediaIndex(index, media.length, -1),
+                      setMediaIndex(
+                        nextMediaIndex(activeMediaIndex, media.length, -1),
                       )
                     }
                   >
-                    <ChevronLeft size={16} aria-hidden="true" />
+                    <ChevronLeft size={18} aria-hidden="true" />
                   </button>
                   <button
                     className="media-arrow media-arrow-right"
                     type="button"
                     aria-label="Next preview"
                     onClick={() =>
-                      setMediaIndex((index) =>
-                        nextMediaIndex(index, media.length, 1),
+                      setMediaIndex(
+                        nextMediaIndex(activeMediaIndex, media.length, 1),
                       )
                     }
                   >
-                    <ChevronRight size={16} aria-hidden="true" />
+                    <ChevronRight size={18} aria-hidden="true" />
                   </button>
-                  <span className="media-count">
-                    {mediaIndex + 1} / {media.length}
-                  </span>
                 </>
               )}
             </div>
+            {media.length > 1 && (
+              <div className="extension-gallery-navigation">
+                <div
+                  className="extension-gallery-selectors"
+                  role="group"
+                  aria-label="Choose a preview"
+                >
+                  {media.map((image, index) => (
+                    <button
+                      key={`${image.sha256}-${index}`}
+                      type="button"
+                      aria-label={`Show preview ${index + 1} of ${media.length}`}
+                      aria-pressed={activeMediaIndex === index}
+                      onClick={() => setMediaIndex(index)}
+                    >
+                      {index + 1}
+                    </button>
+                  ))}
+                </div>
+                <span className="extension-gallery-position" role="status">
+                  {activeMediaIndex + 1} / {media.length}
+                </span>
+              </div>
+            )}
+          </section>
+        )}
+        <header className="extension-detail-intro">
+          <div className="extension-detail-identity">
+            <MediaArtwork
+              media={listingIcon ?? undefined}
+              icon={card?.icon}
+              name={name}
+              alt={`${name} icon`}
+              placeholder
+              className="extension-detail-icon"
+            />
             <div className="extension-detail-heading">
               <h1 id="extension-detail-title">{name}</h1>
               {entry?.author && (
@@ -1153,6 +1188,8 @@ function InstalledList({
               media={controller.covers[item.id]}
               icon={item.card?.icon}
               name={item.name}
+              alt={`${item.name} icon`}
+              placeholder
               className="extension-artwork"
             />
             <div className="installed-extension-copy">

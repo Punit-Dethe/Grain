@@ -957,7 +957,8 @@ pub(crate) mod tests {
             assert_eq!(new_document["future_envelope"], "retained");
             assert_eq!(fs::read(previous_dir.join("index.json")).unwrap(), old);
             assert!(output.join("blob").read_dir().unwrap().next().is_some());
-            assert_eq!(output.join("media").read_dir().unwrap().count(), 2);
+            // DESCRIPTION, gallery cover and the separate identity icon.
+            assert_eq!(output.join("media").read_dir().unwrap().count(), 3);
             assert!(!output.join("candidate.json").exists());
             let refused = root.join("refused");
             assert!(write_signed(

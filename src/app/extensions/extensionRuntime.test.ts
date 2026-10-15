@@ -88,6 +88,7 @@ const entry = (overrides: Partial<StoreEntry> = {}): StoreEntry => ({
   stars: 0,
   installs: 0,
   readme: "",
+  icon: null,
   media: [],
   categories: [],
   extends: [],

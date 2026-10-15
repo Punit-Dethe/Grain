@@ -170,9 +170,18 @@ pointer's shape, not repository ownership or whether that tag resolves to that
 commit. The maintainer workflow verifies the pinned source and build.
 
 Submission requires nonempty UTF-8 `DESCRIPTION.md` (maximum 64 KiB); README is
-never a fallback. Optional `media/` contains at most six flat `.webp`/`.gif`
-files, each at most 4 MiB, with a total listing budget of 16 MiB including the
-description. Images must decode with width/height at most 2048 pixels. The
+never a fallback. Optional `media/icon.png` is the square listing identity:
+exactly 512×512 PNG, at most 512 KiB. It appears beside the title and in Installed;
+it is never substituted with a gallery cover. Native `manifest.icon` remains
+the same 512×512 PNG contract for its packaged runtime icon.
+
+Add up to six flat `.webp`/`.gif` gallery files, each at most 4 MiB. Gallery images
+must be 640–2048px wide and 360–1152px high, with an aspect ratio between 3:2 and
+2:1; **1280×720 is recommended**. Grain fits them inside a 16:9 viewport without
+cropping or distortion. `cover.webp` or `cover.gif` sorts first and supplies the
+store-card image. Other images follow in filename order. The icon is separate
+from the six gallery slots. Total listing budget: 16 MiB including description,
+icon and gallery. The
 requested 16 MiB decoder allocation limit is best effort; only the first frame
 is decoded. This is not full animation validation or a rendering-safety claim.
 Symlinks, unsupported files, case-insensitive duplicate names and multiple
@@ -192,7 +201,7 @@ branch and open a pull request to the registry after publishing the source/tag.
 Source authoring, packaging and submission tooling are available. Production
 catalogue activation and signing custody remain separate operator decisions;
 the public SDK is not frozen. README is source documentation; the app renders
-the signed DESCRIPTION document as **About this extension**.
+the signed DESCRIPTION document directly in the extension's Overview.
 
 Focused checks:
 

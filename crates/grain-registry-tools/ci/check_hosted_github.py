@@ -44,7 +44,7 @@ def public_path(name):
         return f".registry-publication/{name}"
     if re.fullmatch(r"v1/blob/[0-9a-f]{64}\.(grainpack|mcp\.json)", name):
         return name
-    if re.fullmatch(r"v1/media/[0-9a-f]{64}\.(md|webp|gif)", name):
+    if re.fullmatch(r"v1/media/[0-9a-f]{64}\.(md|png|webp|gif)", name):
         return name
     raise ValueError("Unexpected verified bundle path")
 

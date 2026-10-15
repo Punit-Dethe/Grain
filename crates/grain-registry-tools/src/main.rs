@@ -1169,6 +1169,7 @@ fn publish(
         installs,
         readme,
         listing: None,
+        icon: None,
         media,
         categories,
         extends,
