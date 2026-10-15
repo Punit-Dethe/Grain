@@ -26,6 +26,19 @@ runtime, currently verified in the development app.
 Earlier dated descriptions below preserve the development history and do not
 override this current gate. Custom MCP management remains hidden in alpha/release.
 
+**15 October tool-calling checkpoint:** both GitHub and Notion now pass a bounded
+seven-journey Harbor batch covering separate/combined reads, issue create/update/
+close, private-page create/update and fresh verification. Discovery exported
+100 + 56 supported tools; six initial action schemas grew to at most nine, with
+zero duplicates or provider errors. Exact-name recovery and compact name-first
+metadata were corrected and audited; 13 backend capability, 45 core capability
+and eight continuation tests plus Clippy pass. Normal settings were unchanged;
+temporary alpha model/key staging was restored. No new manual tests or installer.
+This accepts the bounded functional block, not every tool or production release.
+Hints stay debug opt-in: the ordinary read pair was slower with hints. Continue
+the existing shortlist/recovery quality and adoption gates, then measured receipt
+work; do not rerun these passes absent a relevant change. See current progress.
+
 **Discovery research checkpoint:** [the comparison and proposed correction](TOOL-DISCOVERY-RESEARCH.md)
 now cover released/pinned Codex, Goose and OpenCode plus provider documentation.
 The user's later clarification prioritizes total request-to-confirmed-action time.

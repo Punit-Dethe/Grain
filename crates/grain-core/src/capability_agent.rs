@@ -297,7 +297,7 @@ pub struct SearchRequest {
 }
 
 pub fn search_tools_tool_def() -> ToolDef {
-    ToolDef { name: SEARCH_TOOLS.into(), description: "Find additional tools and make their schemas callable on the next model round. Use tools already offered directly. Supply up to four short queries for the operations needed; optionally scope to an exact enabled extension id. Searches and loads together, never executes an action. A no-match result is not proof no suitable tool exists.".into(), parameters: json!({
+    ToolDef { name: SEARCH_TOOLS.into(), description: "Find additional tools and make their schemas callable on the next model round. Use tools already offered directly. Supply up to four exact tool IDs from the deferred catalogue, or short queries describing missing operations; optionally scope to an exact enabled extension id. Searches and loads together, never executes an action. A no-match result is not proof no suitable tool exists.".into(), parameters: json!({
         "type": "object", "properties": {"extension_id": {"type": "string"}, "queries": {"type": "array", "items": {"type": "string", "minLength": 1, "maxLength": 512}, "minItems": 1, "maxItems": 4}}, "required": ["queries"], "additionalProperties": false
     }) }
 }

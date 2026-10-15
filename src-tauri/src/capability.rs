@@ -404,9 +404,33 @@ fn ranked_ids(
         context_ineligible: &excluded,
         auth_missing: &auth_missing,
     };
-    let rankings: Vec<_> = queries
+    let rankings: Vec<Vec<String>> = queries
         .iter()
         .map(|query| {
+            // Explicit catalogue addresses are lookups, not prose searches.
+            // Keep a known loaded ID too, so feedback can report it instead of
+            // filling the task budget with unrelated fuzzy neighbours.
+            let exact: Vec<_> = session
+                .catalogs
+                .values()
+                .flat_map(|catalog| &catalog.entries)
+                .map(|(action, _)| action)
+                .filter(|action| {
+                    query.trim() == action.canonical_id || query.trim() == action.action_id
+                })
+                .collect();
+            if !exact.is_empty() {
+                return exact
+                    .into_iter()
+                    .filter(|action| {
+                        action.enabled
+                            && action.platform_ok
+                            && !action.quarantined
+                            && scope.is_none_or(|scope| scope == action.extension_id)
+                    })
+                    .map(|action| action.canonical_id.clone())
+                    .collect();
+            }
             session
                 .index
                 .as_ref()
@@ -420,6 +444,9 @@ fn ranked_ids(
                     },
                 )
                 .entries
+                .into_iter()
+                .map(|entry| entry.canonical_id)
+                .collect()
         })
         .collect();
     // Query batches preserve several intents instead of allowing one operation
@@ -428,9 +455,9 @@ fn ranked_ids(
     let mut ids = Vec::new();
     for rank in 0..capability_agent::MAX_LOADED_ACTIONS {
         for ranking in &rankings {
-            if let Some(entry) = ranking.get(rank) {
-                if seen.insert(entry.canonical_id.clone()) {
-                    ids.push(entry.canonical_id.clone());
+            if let Some(id) = ranking.get(rank) {
+                if seen.insert(id.clone()) {
+                    ids.push(id.clone());
                 }
             }
         }
@@ -472,7 +499,8 @@ pub(crate) fn deferred_tool_context(session: &CapabilitySession) -> Option<Strin
         "extensions":pending.iter().map(|(id, _)| serde_json::json!({"extension_id":capability_agent::sanitize(id,128),"tools":[]})).collect::<Vec<_>>()});
     let mut listed = 0;
     let mut accepted = String::new();
-    // Round-robin providers so one large catalogue cannot consume every hint.
+    // Names first: verbose purpose text must not hide the rest of a provider's
+    // operations. Round-robin providers so large catalogues share the bound.
     'fill: for rank in 0..pending
         .iter()
         .map(|(_, entries)| entries.len())
@@ -483,10 +511,12 @@ pub(crate) fn deferred_tool_context(session: &CapabilitySession) -> Option<Strin
             let Some(action) = entries.get(rank) else {
                 continue;
             };
-            report["extensions"][position]["tools"].as_array_mut().unwrap().push(serde_json::json!({
-                "id":capability_agent::sanitize(&action.action_id,128),
-                "purpose":capability_agent::sanitize(if action.description.is_empty() { &action.title } else { &action.description },96)
-            }));
+            report["extensions"][position]["tools"]
+                .as_array_mut()
+                .unwrap()
+                .push(serde_json::json!({
+                    "id":capability_agent::sanitize(&action.action_id,128)
+                }));
             report["listed_tools"] = serde_json::json!(listed + 1);
             report["truncated"] = serde_json::json!(listed + 1 < total);
             let candidate = report.to_string();
@@ -500,6 +530,37 @@ pub(crate) fn deferred_tool_context(session: &CapabilitySession) -> Option<Strin
     if listed == 0 {
         None
     } else {
+        // Spend only remaining bytes on optional, untrusted purpose hints.
+        report = serde_json::from_str(&accepted).expect("serialized hint report");
+        'purpose: for rank in 0..pending
+            .iter()
+            .map(|(_, entries)| entries.len())
+            .max()
+            .unwrap_or(0)
+        {
+            for (position, (_, entries)) in pending.iter().enumerate() {
+                let Some(action) = entries.get(rank) else {
+                    continue;
+                };
+                if report["extensions"][position]["tools"].get(rank).is_none() {
+                    continue;
+                }
+                report["extensions"][position]["tools"][rank]["purpose"] =
+                    serde_json::json!(capability_agent::sanitize(
+                        if action.description.is_empty() {
+                            &action.title
+                        } else {
+                            &action.description
+                        },
+                        96
+                    ));
+                let candidate = report.to_string();
+                if PREFIX.len() + candidate.len() > MAX_DEFERRED_HINT_BYTES {
+                    break 'purpose;
+                }
+                accepted = candidate;
+            }
+        }
         Some(format!("{PREFIX}{accepted}"))
     }
 }
@@ -521,12 +582,14 @@ fn publish_ranked_with_budget(
     let byte_budget = byte_budget.min(capability_agent::MAX_SCHEMA_BYTES);
     let mut bytes = specs(session).iter().map(schema_bytes).sum::<usize>();
     let mut loaded = Vec::new();
+    let mut already_loaded = Vec::new();
     let mut skipped = Vec::new();
     for id in ids {
         if loaded.len() == limit {
             break;
         }
         if session.actions.contains_key(&id) {
+            already_loaded.push(id);
             continue;
         }
         let selected = session.catalogs.iter().find_map(|(extension_id, catalog)| {
@@ -556,7 +619,7 @@ fn publish_ranked_with_budget(
         }
     }
     serde_json::json!({
-        "loaded": loaded, "skipped": skipped,
+        "loaded": loaded, "already_loaded": already_loaded, "skipped": skipped,
         "schema_bytes": bytes, "schema_budget": byte_budget,
         "remaining_schema_bytes": capability_agent::MAX_SCHEMA_BYTES.saturating_sub(bytes),
         "instruction": "Loaded actions are callable on the next model round. Use already-offered tools directly. Nothing was executed.",
@@ -1081,6 +1144,122 @@ mod tests {
     }
 
     #[test]
+    fn exact_recovery_does_not_load_neighbours_or_ignore_scope_and_eligibility() {
+        let directory: Vec<_> = ["com.example.github", "mcp.notion"]
+            .into_iter()
+            .map(|id| grain_core::capability_index::ExtensionDirectoryEntry {
+                extension_id: id.into(),
+                name: id.into(),
+                description: String::new(),
+                action_count: 4,
+            })
+            .collect();
+        let mut session = empty_session(&directory, &[]);
+        for entry in &directory {
+            let entries = ["read", "read_notes", "disabled", "quarantined"]
+                .into_iter()
+                .map(|name| {
+                    let (mut action, mut selected) = candidate(name, 0);
+                    action.extension_id = entry.extension_id.clone();
+                    action.canonical_id = format!("{}:{name}", entry.extension_id);
+                    action.enabled = name != "disabled";
+                    action.quarantined = name == "quarantined";
+                    selected.spec.name = capability_agent::tool_name(&action.canonical_id);
+                    (action, selected)
+                })
+                .collect();
+            remember_catalog(
+                &mut session,
+                entry.extension_id.clone(),
+                Catalog {
+                    digest: "digest".into(),
+                    entries,
+                },
+            )
+            .unwrap();
+        }
+        let exact = ranked_ids(&mut session, &[" read ".into()], Some("mcp.notion"), false);
+        assert_eq!(exact, ["mcp.notion:read"]);
+        publish_ranked(&mut session, exact, TOOL_PAGE_SIZE);
+        let repeated = ranked_ids(&mut session, &["mcp.notion:read".into()], None, false);
+        let report = publish_ranked(&mut session, repeated, TOOL_PAGE_SIZE);
+        assert!(report["loaded"].as_array().unwrap().is_empty());
+        assert_eq!(
+            report["already_loaded"],
+            serde_json::json!(["mcp.notion:read"])
+        );
+        assert_eq!(session.actions.len(), 1);
+        let batch = ranked_ids(
+            &mut session,
+            &[
+                "mcp.notion:read_notes".into(),
+                "com.example.github:read".into(),
+            ],
+            None,
+            false,
+        );
+        assert_eq!(batch, ["mcp.notion:read_notes", "com.example.github:read"]);
+        let scoped = ranked_ids(
+            &mut session,
+            &["com.example.github:read".into()],
+            Some("mcp.notion"),
+            false,
+        );
+        assert!(scoped.is_empty());
+        for name in ["disabled", "quarantined"] {
+            assert!(ranked_ids(&mut session, &[name.into()], None, false).is_empty());
+        }
+        assert_eq!(
+            ranked_ids(&mut session, &["read".into()], None, false),
+            ["com.example.github:read", "mcp.notion:read"]
+        );
+        assert_eq!(session.actions.len(), 1); // Discovery/ranking never executes or publishes by itself.
+    }
+
+    #[test]
+    fn deferred_names_fit_before_verbose_purposes_across_two_providers() {
+        let directory: Vec<_> = ["com.example.github", "mcp.notion"]
+            .into_iter()
+            .map(|id| grain_core::capability_index::ExtensionDirectoryEntry {
+                extension_id: id.into(),
+                name: id.into(),
+                description: String::new(),
+                action_count: 100,
+            })
+            .collect();
+        let mut session = empty_session(&directory, &[]);
+        for entry in &directory {
+            let entries = (0..100)
+                .map(|n| {
+                    let (mut action, mut selected) = candidate(&format!("operation_{n}"), 0);
+                    action.extension_id = entry.extension_id.clone();
+                    action.canonical_id = format!("{}:operation_{n}", entry.extension_id);
+                    action.description = "é".repeat(2000);
+                    selected.spec.name = capability_agent::tool_name(&action.canonical_id);
+                    (action, selected)
+                })
+                .collect();
+            remember_catalog(
+                &mut session,
+                entry.extension_id.clone(),
+                Catalog {
+                    digest: "digest".into(),
+                    entries,
+                },
+            )
+            .unwrap();
+        }
+        let text = deferred_tool_context(&session).unwrap();
+        assert!(text.len() <= MAX_DEFERRED_HINT_BYTES);
+        let report: serde_json::Value =
+            serde_json::from_str(text.split_once('\n').unwrap().1).unwrap();
+        assert_eq!(report["listed_tools"], 200);
+        assert_eq!(report["truncated"], false);
+        assert_eq!(report["extensions"][1]["tools"][99]["id"], "operation_99");
+        assert_eq!(specs(&session).len(), 1); // Hints grant no schema/call authority.
+    }
+
+    #[test]
     fn initial_shortlist_reserves_space_for_one_combined_recovery() {
         let mut session = session();
         let extension = "com.example.github";
@@ -1151,7 +1330,7 @@ mod tests {
                 extension_id: id.into(),
                 name: id.into(),
                 description: String::new(),
-                action_count: 200,
+                action_count: 400,
             })
             .collect();
         let mut session = empty_session(&directory, &[]);
@@ -1161,7 +1340,7 @@ mod tests {
                 entry.extension_id.clone(),
                 Catalog {
                     digest: "digest".into(),
-                    entries: (0..200)
+                    entries: (0..400)
                         .map(|n| {
                             let (mut action, mut selected) = candidate(&format!("tool_{n}"), 9000);
                             action.extension_id = entry.extension_id.clone();
@@ -1190,7 +1369,7 @@ mod tests {
         assert!(!text.contains(&"x".repeat(100))); // Schema padding never enters hints.
         let report: serde_json::Value =
             serde_json::from_str(text.split_once('\n').unwrap().1).unwrap();
-        assert_eq!(report["known_deferred_tools"], 398);
+        assert_eq!(report["known_deferred_tools"], 798);
         assert_eq!(report["truncated"], true);
         assert!(report["listed_tools"].as_u64().unwrap() > 2);
         for (n, extension) in report["extensions"].as_array().unwrap().iter().enumerate() {

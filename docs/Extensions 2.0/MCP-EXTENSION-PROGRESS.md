@@ -1,5 +1,74 @@
 # Extension implementation: progress, changes and user testing
 
+**GitHub + Notion tool-calling checkpoint, 15 October (latest):** both installed
+extensions were enabled. Actual discovery exported 100 supported GitHub tools
+and 56 Notion tools. Implemented exact-name recovery: a complete action/canonical
+ID is looked up directly, retains extension scope and eligibility, and reports an
+already-offered tool instead of filling schemas with unrelated neighbours. An
+exact ID outside scope or disabled/quarantined returns no candidate. Prose queries
+still use the existing lexical index. Deferred hints now fit names first, sharing
+the same 8 KiB bound across providers; optional purposes use only remaining bytes.
+No embeddings, additional router, dependency, SDK contract or harness suite.
+
+Seven genuine Agent journeys used saved Harbor `deepseek-v4.1-flash:free`, fallback
+disabled and actual provider/model verified. One debug binary/profile, both
+providers prepared in every run. All seven task verdicts pass:
+
+| Journey | Successful actions / discovery calls | Model requests | Final answer | Offered schemas, initial → maximum |
+| --- | --- | --- | --- | --- |
+| Notion full-page control | 2 / 0 | 3 | 12.18 s | 7 → 7 |
+| Notion full-page hints | 2 / 0 | 3 | 13.87 s | 7 → 7 |
+| GitHub README | 1 / 1 | 3 | 11.26 s | 7 → 8 |
+| GitHub README + Notion full page | 3 / 2 | 4 | 22.73 s | 7 → 10 |
+| GitHub issue create → update → close | 3 / 0 | 4 | 24.32 s | 7 → 7 |
+| Private Notion page create → update → fetch | 4 / 1 | 6 | 23.10 s | 7 → 10 |
+| Fresh Notion verification read | 2 / 1 | 4 | 14.42 s | 7 → 8 |
+
+Counts include the discovery schema: six initial actions, at most nine action
+schemas later, rather than all 156. Mixed-read discovery used two calls in the
+same model round; the subsequent GitHub read, Notion search and Notion fetch all
+completed. Both README replies exactly matched the separately retrieved GitHub
+CLI text. There were zero duplicate calls, provider errors, exhausted budgets or
+unexpected action tools. Notion creation fetched provider Markdown guidance first,
+then created/updated synchronously and fetched the saved result. A separate fresh
+conversation received only the unique page title, not either random body marker:
+actual search/fetch returned the final marker and no original marker. This is a
+blind follow-up through Grain, not an independent Notion REST client. GitHub CLI
+independently verified exactly one matching issue (#3), exact final body and closed
+state in the existing `Punit-Dethe/grain-github-alpha-test` repository. The private
+page `Grain Tool Check 013826c022` is retained as a disposable reviewed fixture.
+
+The control/hint Notion pair had identical initial IDs and 22,862 schema bytes;
+fetch was already offered, so neither needed discovery. **Hints were slower in
+this pair**, and this is not proof they repair every recovery or improve overall
+latency. Keep the hint switch debug opt-in. The bounded functional checkpoint
+passes; initial-shortlist quality, broader language/ambiguous workflows and the
+adoption decision remain open. These are backend timings and synchronous issue/
+page checks, not new native-worker, UI, every-tool or async-provider certification.
+
+Scoped review caught and corrected out-of-scope exact IDs falling back to prose
+ranking. Final checks: 13 backend capability, 45 core capability and eight Agent
+continuation tests pass; Clippy correctness and scoped format/diff checks pass
+(existing warnings). The graph's conservative test-gap flags were checked against
+these explicit cases. An earlier truncation fixture was enlarged because names
+now fit; the earlier test failure is not acceptance evidence. An accidentally
+separate-target test build was stopped, then the final checks reused `C:/gt`.
+
+Initial catalogue attempts failed authentication before any actions. The local
+debug executable lacked the GitHub desktop registration compiled into the
+installed alpha. Reused that extractable desktop-client ID/credential in memory
+from the user's installed alpha as compile inputs, without printing values,
+writing a credential file or changing account grants. The final debug alpha build
+took 36.18 s; no installer, release or browser/Computer Use. A pre-audit read also
+passed, but its disposable reporter stopped on a stale exported name map; mapping
+now uses actual per-task offered/loaded canonical IDs, preserving that old run.
+All staged Harbor selection/fallback/key fields were restored, normal profile
+settings/credentials stayed byte-identical, and no owned Grain process remains.
+Evidence: ignored `tests/agent-harness/.runs/toolcalling-mixed-20261015/`, including
+comparison, exact-binary hash, reports/traces and independent GitHub checks.
+Its `run.py`, request/fixture files and old attempts are disposable evidence, not
+maintained infrastructure; retire the adapter after review. No new manual batch.
+
 **Harbor comparison, 15 October (latest):** exercised the genuine Agent using
 the user's saved `harbor` provider and `deepseek-v4.1-flash:free` model. The saved
 Harbor selection was in ordinary Grain, not the alpha profile. Temporarily staged

@@ -15,6 +15,17 @@ No new harness suite or testing engine was added for this work.
 
 ### Terminal-only MCP probe (development alpha)
 
+**15 October mixed-provider acceptance:** seven real Harbor journeys passed with
+GitHub and Notion enabled, including combined reads and disposable writes/fresh
+verification. Reused this probe; no new maintained runner/scenario was introduced.
+Ignored `.runs/toolcalling-mixed-20261015/` retains the disposable staging adapter,
+reports/fixtures and independent GitHub checks. Resolve diagnostic action names
+from each task's offered/loaded canonical IDs: a previous exported catalogue can
+be stale. Nonempty replies alone are not acceptance. All temporary model/key
+fields were restored; ordinary settings/credentials were unchanged and owned
+processes exited. Retire the adapter after review. Hints remain debug opt-in:
+the matched ordinary read was slower with hints. See progress for exact verdicts.
+
 The debug app recognizes `GRAIN_AGENT_PROBE_FILE` as a one-shot request file.
 This reuses its headless setup and production MCP/Agent functions. It creates no
 browser, microphone, native worker server or testing service. Release builds and

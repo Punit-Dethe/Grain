@@ -14,6 +14,27 @@ part of this work order. Reconsider those only after reviewing lexical results.
 
 ## Current checkpoint
 
+15 October mixed-provider checkpoint complete: exact action/canonical names now
+resolve directly under existing scope/eligibility, including already-loaded
+feedback without unrelated hydration. Deferred hints fit names before optional
+purposes within 8 KiB. All 13 backend capability, 45 core capability and eight
+continuation checks pass, plus scoped review/Clippy. Discovery exported 100 GitHub
+and 56 Notion tools. Seven genuine Harbor journeys pass: separate/combined reads,
+GitHub issue create/update/close, private Notion page create/update and a fresh
+blind verification. GitHub effects were independently checked by GitHub CLI;
+the fresh Notion read recovered the unknown-to-that-conversation final marker.
+Six initial action schemas grew to at most nine, with zero duplicate calls or
+provider errors. No new suite, installer, browser, embeddings or account reset.
+
+Adoption decision: **keep hints debug opt-in**. The matched ordinary Notion read
+already had search/fetch offered; hints answered in 13.87 s versus control 12.18 s,
+with identical three model requests. This batch does not establish universal
+speedup. Source exact-recovery correction is retained independently of the
+experiment. Remaining gates are initial-shortlist quality and broader recovery/
+language/ambiguous workflows, followed by the existing measured receipt work.
+Do not repeat these seven passed procedures without a relevant code change or
+new failure. Detailed evidence, startup failures and restoration are in progress.
+
 Harbor follow-up: the user's saved `deepseek-v4.1-flash:free` model completed
 four genuine Agent journeys with fallback disabled and observed model identity
 verified. Search answered in 7.36 s with deferred hints versus 33.10 s without;
