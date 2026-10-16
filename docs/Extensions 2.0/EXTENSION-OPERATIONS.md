@@ -33,6 +33,45 @@ restoration with a harmless offline signature checked against the pinned public
 key, never by publishing an unreviewed extension. This document does **not** claim
 the current tester keys were rotated, backed up or restore-tested.
 
+**Tester decision, 17 October 2026:** the user explicitly defers real root and
+publishing-key custody/backup setup until public release. This is not a failed
+tester check and does not certify existing backups. Public release still needs
+the named private custodians and a successful restore of each actual key.
+
+### Offline backup restore procedure
+
+Use the existing signer and standard [Minisign verification](https://jedisct1.github.io/minisign/),
+not a new recovery service. The [Minisign project](https://github.com/jedisct1/minisign)
+documents encrypted secret keys and backup handling. Perform this separately for
+root and publishing identities when custody setup is authorized:
+
+1. Obtain the expected public key from an independently trusted, previously pinned
+   record. Do not derive the expected identity from the backup being tested.
+2. Restore only a copy of the encrypted backup into a private offline working
+   directory outside any source checkout, artifact or synchronized public folder.
+   Keep the live key and backup intact; never regenerate a missing identity.
+3. Create a fresh plain-text proof file with a unique date/reference and no
+   catalogue contents. Use fresh, nonexistent signature output paths: the existing
+   signer can overwrite its output. With locally chosen paths, run:
+
+   ```text
+   grain-registry sign --key RESTORED_ENCRYPTED_KEY --input FRESH_PROOF.txt --out FRESH_PROOF.txt.minisig --prompt-key-password
+   minisign -Vm FRESH_PROOF.txt -x FRESH_PROOF.txt.minisig -p INDEPENDENTLY_PINNED_PUBLIC_KEY.pub
+   ```
+
+4. Enter the recovery password only at the local prompt. Verification must succeed
+   against that original public key. Record the key's public identity, backup
+   reference, date and result privately; never record the password/private bytes.
+   Follow the operator's secure disposal procedure for the restored working copy.
+   Do not publish the proof, alter serving metadata or disable key encryption.
+
+The existing encrypted-key unit test now copies, removes and restores a disposable
+fixture key, reloads it with its password, signs a non-catalogue proof and verifies
+against the public key captured before restoration. All four signing-key tests
+pass, including missing/empty/wrong-password refusal. This checks our loader/signing
+path, not actual operator custody. The external Minisign command is documented from
+its official usage; it was not executed here and Minisign was not installed.
+
 ## Routine publication and renewal
 
 Use the [CLI operator instructions](../../crates/grain-registry-tools/README.md)
@@ -132,8 +171,9 @@ committing a proposal alone does not enforce it.
   The actual deployment pause still needs the next approved normal publication.
   Production administrator bypass and main/source protection remain separate
   decisions compatible with the conditional writer; do not silently block it.
-- **Key custody/restore:** the private operator assignments and restore check above
-  remain unconfirmed. No secrets need to enter documentation.
+- **Key custody/restore:** explicitly deferred by the user until public release
+  on 17 October. The disposable recovery check passes; real private assignments,
+  backups and restore remain a public-release prerequisite, not tester acceptance.
 - **Alpha application exposure:** source-aware access is implemented. The dedicated
   alpha identity/debug builds allow signed-store accounts/tools without Developer
   Mode; custom MCPs require a debug build and Developer Mode. Normal tests and the
@@ -142,6 +182,9 @@ committing a proposal alone does not enforce it.
   in the existing inventory, keep normal tests as the default, and run only affected
   final application/packaging checks. Advertise only verified platforms/providers.
 
-These are explicit Block 6 gates. No new installer, live publication, permission
-change, key movement or new provider account is needed for the offline revocation
-implementation and its ordinary signed-fixture tests.
+Public-release gates are separate from tester acceptance. The final Windows alpha
+installer is prepared through the existing Build Test workflow's alpha-only input,
+with exact run-SHA checkout and an explicit release profile. It creates an Actions
+artifact, not a GitHub Release, new version or extension publication. Only that
+packaged app's final exposure/visual check remains on the application side; no
+repeat of already accepted development-app/provider checks is required.

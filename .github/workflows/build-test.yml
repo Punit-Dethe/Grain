@@ -56,9 +56,11 @@ jobs:
       contents: write
     uses: ./.github/workflows/build.yml
     with:
+      ref: ${{ github.sha }}
       platform: windows-latest
       target: x86_64-pc-windows-msvc
       github-extension-alpha: true
+      is-debug-build: false
       asset-prefix: grain-extensions-alpha
       upload-artifacts: true
       sign-binaries: false

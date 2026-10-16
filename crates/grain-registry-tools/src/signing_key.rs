@@ -141,8 +141,10 @@ mod tests {
         let unlock = password_file(&root.path().join("password"), "test protected password\r\n");
         crate::keygen(root.path().join("keys"), "publisher".into(), &unlock).unwrap();
         let key_path = root.path().join("keys/publisher.key");
-        let key = load(&key_path, &unlock).unwrap();
-        let signature = sign(&key, b"signed bytes").unwrap();
+        let signature = {
+            let key = load(&key_path, &unlock).unwrap();
+            sign(&key, b"signed bytes").unwrap()
+        };
         let public = minisign::PublicKeyBox::from_string(
             &fs::read_to_string(root.path().join("keys/publisher.pub")).unwrap(),
         )
@@ -159,6 +161,19 @@ mod tests {
             expires: None,
         };
         grain_core::trust::verify_publisher_signature(&roots, b"signed bytes", &signature).unwrap();
+        // Restore only disposable fixture bytes. Keep the independently captured
+        // public key: accepting a public key derived from the restore proves no identity.
+        let backup = root.path().join("operator-backup");
+        fs::create_dir(&backup).unwrap();
+        fs::copy(&key_path, backup.join("publisher.key")).unwrap();
+        fs::remove_file(&key_path).unwrap();
+        fs::copy(backup.join("publisher.key"), &key_path).unwrap();
+        let proof = b"Grain offline signing-key recovery proof; fixture only";
+        let restored_signature = {
+            let restored_key = load(&key_path, &unlock).unwrap();
+            sign(&restored_key, proof).unwrap()
+        };
+        grain_core::trust::verify_publisher_signature(&roots, proof, &restored_signature).unwrap();
         assert!(grain_core::trust::verify_publisher_signature(
             &roots,
             b"changed bytes",

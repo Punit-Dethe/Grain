@@ -1,6 +1,6 @@
 # Extension platform: publishing and release work order
 
-Updated 16 October 2026. This is the **single active forward plan** for finishing
+Updated 17 October 2026. This is the **single active forward plan** for finishing
 extension authoring, review, publication and store delivery. It replaces this
 file's earlier chronological work order and the historical E4–E8 phase counts.
 Completed evidence stays in [progress](MCP-EXTENSION-PROGRESS.md) and the focused
@@ -24,7 +24,9 @@ one GitHub/Notion card each, Notion Installed/Update and account retention, then
 a harmless read before/after disable/re-enable. Next: **Block 6, operations and
 release acceptance**. Store exposure outside Developer Mode is now implemented
 in Block 6 with normal-test coverage and accepted affected app checks. Final
-packaged-alpha acceptance remains open. No new Grain installer or stable SDK release.
+packaged-alpha acceptance remains open; the existing Windows artifact workflow is
+being used for that final checkpoint. Real key custody/backup setup is explicitly
+deferred by the user until public release (17 October). No stable SDK release.
 
 ## Target experience
 
@@ -606,10 +608,24 @@ authority file or publishing workflow was changed. Prepare concrete controls
 for operator review before production activation; tester source approvals do
 not establish those controls.
 
+**Recovery/packaging checkpoint, 17 October:** the user explicitly defers actual
+key custody/backup setup until public release. Keep that public-release gate
+open; it is no longer a tester acceptance dependency. The existing encrypted-key
+test passes a disposable backup/restore/sign/verify drill against the original
+public key, with no real key access or new recovery tool. Operations documents
+the manual offline procedure using the existing signer and standard Minisign.
+
+The existing Windows alpha artifact caller now checks out the run's exact commit
+and explicitly selects the release profile. This prevents a later branch push
+from changing the source of the final installer. Only the single alpha artifact
+build is intended; no GitHub Release, version bump or new provider publication.
+Final packaged-alpha acceptance remains Pending, separate from accepted dev checks.
+
 1. Document current key custody, separate root/publisher roles, backup/recovery
    and authorized access without copying any secrets into the repository. Decide
    when tester identity becomes the release identity; branding migration is not
-   an implementation blocker for today's tester work.
+   an implementation blocker for today's tester work. Actual custody/backup setup
+   is user-deferred to public release as of 17 October; fixture recovery is Pass.
 2. Exercise metadata renewal before expiry, withdrawal/revocation of a bad release,
    recovery by publishing a corrected version, and failed/stale publication.
    Existing cryptographic/unit fixtures do most of this; no insecure rollback.
@@ -670,7 +686,10 @@ the separately approved live Notion 0.1.2 update are complete. Actual GitHub
 protection/signing-key custody changes remain reviewed operator decisions:
 
 - Two-card store view and grouped Notion update/read checks: user Pass, 16 October.
-- Confirm concrete publishing protection/custody changes before activation.
+- Tester publishing reviewer/main-branch controls are adopted. Confirm the actual
+  deployment pause on the next separately approved normal publication.
+- Real key custody/backup setup is explicitly user-deferred to public release
+  (17 October), alongside production bypass/source-protection decisions.
 - Accept the final alpha exposure/packaging check when that affected path is ready.
 - Decide public release identity/platform scope before the final release, not now.
 

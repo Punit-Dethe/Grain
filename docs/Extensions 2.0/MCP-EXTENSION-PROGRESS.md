@@ -1,5 +1,34 @@
 # Extension implementation: progress, changes and user testing
 
+**Block 6 recovery and final artifact preparation, 17 October 2026:** the user
+explicitly defers actual key custody/backup setup until public release. No real
+private key or password is read, copied, rotated or requested. This supersedes
+earlier records treating custody confirmation as a current tester dependency;
+actual custody and restore remain unverified public-release requirements.
+
+Extended the existing encrypted-key test rather than adding a recovery tool:
+back up a disposable encrypted fixture, remove its original, restore/reload,
+sign a harmless proof and verify against the independently captured original
+public key. All four signing-key tests pass; missing/empty/wrong-password refusal
+remains covered. The runbook documents the existing signer plus official Minisign
+verification; external Minisign verification itself was not run or installed.
+
+The existing single-Windows alpha artifact caller now pins checkout to the exact
+workflow run SHA and explicitly selects the release profile. The previous default
+followed a moving branch, which could build a different commit after a later push.
+Ordinary build callers, alpha OAuth registration and application code are unchanged.
+This prepares one final test artifact, with no GitHub Release, tag/version change,
+new extension publication, live permission change or harness expansion. Packaged
+acceptance remains Pending; prior accepted development-alpha checks stay accepted.
+
+Scoped audit: graph coverage does not index the changed test/YAML, so inspected
+the actual diff and reusable build inputs/checkout/release conditions. Workflow
+Actionlint, scoped whitespace checks and strict registry-tools Clippy (all targets,
+no dependency lint) pass. Clippy first rejected explicit `drop` calls on Minisign's
+non-Drop key type; replaced them with local scopes and reran the four tests and
+strict lint successfully. No production signing behavior changed. Unrelated
+Cargo/binding edits retain their original hashes and remain outside this commit.
+
 **Approved tester publishing controls adopted, 16 October 2026:** the user
 explicitly approves registry PR 12 at
 `97e50fbdc10d041eb037ec4802db5ba5dfbaf041` and both proposed environment settings.
