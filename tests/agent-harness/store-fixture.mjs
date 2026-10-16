@@ -225,6 +225,11 @@ export async function startStore(here) {
           version: ++version,
           expires: new Date(Date.now() + 7 * 86400000).toISOString(),
           entries: [
+            // Production publication appends to signed per-extension history.
+            // Keep predecessors so real updates exercise that same contract.
+            ...(index ? JSON.parse(index).entries : []).filter(
+              (entry) => entry.id === id && entry.version !== packageVersion,
+            ),
             {
               id,
               name: "Store MCP harness",

@@ -61,6 +61,8 @@ pub struct StoreEntry {
     pub kind: String,
     pub name: String,
     pub version: String,
+    /// Same-kind releases preceding this one in the signed publication order.
+    pub previous_versions: Vec<String>,
     pub tier: String,
     pub trust: String,
     pub capabilities: Vec<String>,
@@ -415,54 +417,95 @@ fn latest_entries(entries: &[IndexEntry]) -> std::collections::BTreeMap<&str, &I
 fn project_entries(entries: &[IndexEntry], revocations: &Revocations) -> Vec<StoreEntry> {
     latest_entries(entries)
         .into_values()
-        .map(|e| StoreEntry {
-            id: e.id.clone(),
-            kind: match e.artifact_kind {
-                grain_sdk::distribution::ArtifactKind::Native => "native",
-                grain_sdk::distribution::ArtifactKind::McpDescriptor => "mcp",
-            }
-            .into(),
-            name: e.name.clone(),
-            version: e.version.clone(),
-            tier: tier_str(&e.tier).into(),
-            trust: trust_str(e.trust).into(),
-            capabilities: e.capabilities.clone(),
-            description: e.description.clone(),
-            repo: e.repo.clone(),
-            size: e.size.to_string(),
-            author: e.author.clone(),
-            reviewed_at: e.reviewed_at.clone(),
-            reviewed_commit: e.reviewed_commit.clone(),
-            stars: e.stars,
-            installs: e.installs,
-            readme: e.detail_document_hash().into(),
-            icon: e.icon.as_ref().map(|icon| StoreMedia {
-                sha256: icon.sha256.clone(),
-                kind: icon.kind.clone(),
-            }),
-            media: e
-                .media
-                .iter()
-                .map(|m| StoreMedia {
-                    sha256: m.sha256.clone(),
-                    kind: m.kind.clone(),
-                })
-                .collect(),
-            categories: e.categories.clone(),
-            extends: e.extends.clone(),
-            revocation: revocations.state_for(&e.id, &e.version).map(|s| {
-                match s {
-                    RevocationState::Revoked => "revoked",
-                    RevocationState::Deprecated => "deprecated",
-                }
-                .to_string()
-            }),
-            flags: grain_sdk::flagged_combinations(&e.capabilities, e.tier.clone())
-                .into_iter()
-                .map(|f| f.reason().to_string())
-                .collect(),
-        })
+        .map(|e| project_entry(entries, e, revocations))
         .collect()
+}
+
+fn previous_versions(entries: &[IndexEntry], target: &IndexEntry) -> Vec<String> {
+    entries
+        .iter()
+        .take_while(|entry| entry.id != target.id || entry.version != target.version)
+        .filter(|entry| entry.id == target.id && entry.artifact_kind == target.artifact_kind)
+        .map(|entry| entry.version.clone())
+        .collect()
+}
+
+fn ensure_release_order(
+    entries: &[IndexEntry],
+    target: &IndexEntry,
+    installed_version: Option<&str>,
+) -> Result<(), String> {
+    if latest_entries(entries)
+        .get(target.id.as_str())
+        .is_none_or(|latest| latest.version != target.version)
+    {
+        return Err(
+            "This release is no longer the current store version; refresh the store.".into(),
+        );
+    }
+    if installed_version.is_some_and(|installed| {
+        installed != target.version
+            && !previous_versions(entries, target)
+                .iter()
+                .any(|version| version == installed)
+    }) {
+        return Err(
+            "The installed release does not precede this store version; no update is available."
+                .into(),
+        );
+    }
+    Ok(())
+}
+
+fn project_entry(entries: &[IndexEntry], e: &IndexEntry, revocations: &Revocations) -> StoreEntry {
+    StoreEntry {
+        id: e.id.clone(),
+        kind: match e.artifact_kind {
+            grain_sdk::distribution::ArtifactKind::Native => "native",
+            grain_sdk::distribution::ArtifactKind::McpDescriptor => "mcp",
+        }
+        .into(),
+        name: e.name.clone(),
+        version: e.version.clone(),
+        previous_versions: previous_versions(entries, e),
+        tier: tier_str(&e.tier).into(),
+        trust: trust_str(e.trust).into(),
+        capabilities: e.capabilities.clone(),
+        description: e.description.clone(),
+        repo: e.repo.clone(),
+        size: e.size.to_string(),
+        author: e.author.clone(),
+        reviewed_at: e.reviewed_at.clone(),
+        reviewed_commit: e.reviewed_commit.clone(),
+        stars: e.stars,
+        installs: e.installs,
+        readme: e.detail_document_hash().into(),
+        icon: e.icon.as_ref().map(|icon| StoreMedia {
+            sha256: icon.sha256.clone(),
+            kind: icon.kind.clone(),
+        }),
+        media: e
+            .media
+            .iter()
+            .map(|m| StoreMedia {
+                sha256: m.sha256.clone(),
+                kind: m.kind.clone(),
+            })
+            .collect(),
+        categories: e.categories.clone(),
+        extends: e.extends.clone(),
+        revocation: revocations.state_for(&e.id, &e.version).map(|s| {
+            match s {
+                RevocationState::Revoked => "revoked",
+                RevocationState::Deprecated => "deprecated",
+            }
+            .to_string()
+        }),
+        flags: grain_sdk::flagged_combinations(&e.capabilities, e.tier.clone())
+            .into_iter()
+            .map(|f| f.reason().to_string())
+            .collect(),
+    }
 }
 
 fn now_unix() -> i64 {
@@ -934,6 +977,10 @@ async fn install_entry_with_clock(
     version: &str,
     now: impl Fn() -> i64 + Sync,
 ) -> Result<PathBuf, String> {
+    // Capture ownership before reading its version; a concurrent change must
+    // still fail the existing final record-revision compare-and-swap.
+    let record_revision = reg.record_revision(id);
+    let installed = reg.installed_record(id);
     let (entry, revision, changed) = {
         let owner = state.ownership.lock().unwrap();
         ensure_metadata_fresh(state, now())?;
@@ -954,6 +1001,13 @@ async fn install_entry_with_clock(
                 .ok_or_else(|| format!("no entry {id} {version} in the verified index"))?
         };
         entry.validate_installable()?;
+        ensure_release_order(
+            &state.index.read().unwrap().as_ref().unwrap().entries,
+            &entry,
+            installed
+                .as_ref()
+                .map(|record| record.installed_version.as_str()),
+        )?;
         if !owner.can_install
             || trust::index_status(state.index.read().unwrap().as_ref().unwrap(), now())
                 .map_err(|e| e.to_string())?
@@ -970,7 +1024,6 @@ async fn install_entry_with_clock(
         (entry, owner.revision, owner.changed.subscribe())
     };
 
-    let record_revision = reg.record_revision(id);
     let download = async {
         let bases: Vec<String> = {
             let roots = state.roots.read().unwrap();
@@ -1050,25 +1103,34 @@ async fn acquire_mcp_entry_with_clock(
     now: impl Fn() -> i64 + Sync,
     authorize: impl Fn() -> Result<(), String> + Sync,
 ) -> Result<grain_core::mcp_connections::ConnectionRecord, String> {
-    commit_mcp_entry_with_clock(state, client, id, version, now, authorize, |admitted| {
-        registry
-            .insert_store(admitted)
-            .map_err(|error| error.to_string())
-    })
+    commit_mcp_entry_with_clock(
+        state,
+        client,
+        (id, version),
+        None,
+        now,
+        authorize,
+        |admitted| {
+            registry
+                .insert_store(admitted)
+                .map_err(|error| error.to_string())
+        },
+    )
     .await
 }
 
 async fn commit_mcp_entry_with_clock(
     state: &StoreState,
     client: &reqwest::Client,
-    id: &str,
-    version: &str,
+    release: (&str, &str),
+    installed_version: Option<&str>,
     now: impl Fn() -> i64 + Sync,
     authorize: impl Fn() -> Result<(), String> + Sync,
     commit: impl FnOnce(
         grain_core::mcp::StoreDescriptor,
     ) -> Result<grain_core::mcp_connections::ConnectionRecord, String>,
 ) -> Result<grain_core::mcp_connections::ConnectionRecord, String> {
+    let (id, version) = release;
     let (entry, revision, changed, bases) = {
         let owner = state.ownership.lock().unwrap();
         let index = state.index.read().unwrap();
@@ -1080,6 +1142,7 @@ async fn commit_mcp_entry_with_clock(
             .cloned()
             .ok_or("MCP entry is not in the verified catalogue")?;
         entry.validate_mcp_installable()?;
+        ensure_release_order(&index.entries, &entry, installed_version)?;
         ensure_metadata_fresh(state, now())?;
         if !owner.can_install
             || trust::index_status(index, now()).map_err(|error| error.to_string())?
@@ -1167,8 +1230,11 @@ pub async fn store_mcp_update(
         &connection_id,
         &expected_revision,
     )?;
-    let grain_core::mcp::ConnectionSource::Store { extension_id, .. } =
-        lease.record().identity().source()
+    let grain_core::mcp::ConnectionSource::Store {
+        extension_id,
+        version: installed_version,
+        ..
+    } = lease.record().identity().source()
     else {
         return Err("This connection did not come from the store.".into());
     };
@@ -1179,8 +1245,8 @@ pub async fn store_mcp_update(
     commit_mcp_entry_with_clock(
         &state,
         &client,
-        extension_id,
-        &version,
+        (extension_id, &version),
+        Some(installed_version),
         now_unix,
         || crate::grain_mcp::require_developer_mode(&app),
         |admitted| connections.commit_store_update(&app, &registry, &lease, admitted),
@@ -1428,9 +1494,7 @@ pub fn store_entry(app: AppHandle, id: String) -> Result<Option<StoreEntry>, Str
     let Some(&entry) = matching.get(id.as_str()) else {
         return Ok(None);
     };
-    Ok(project_entries(std::slice::from_ref(entry), &revocations)
-        .into_iter()
-        .next())
+    Ok(Some(project_entry(&index.entries, entry, &revocations)))
 }
 
 /// One installed extension's square listing icon reference (existing API name).
@@ -1647,6 +1711,110 @@ mod tests {
         assert_eq!(covers[0].sha256, view[0].icon.as_ref().unwrap().sha256);
         assert_eq!(covers[1].sha256, view[1].icon.as_ref().unwrap().sha256);
         assert_eq!(entries.len(), 6); // The signed index is not rewritten.
+    }
+
+    #[test]
+    fn store_update_order_is_enforced_before_network_or_registry_changes() {
+        use grain_core::mcp_connections::ConnectionRegistry;
+        use grain_sdk::distribution::ArtifactKind;
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            for kind in [ArtifactKind::Native, ArtifactKind::McpDescriptor] {
+                let data = tempfile::tempdir().unwrap();
+                let state = StoreState::init(data.path());
+                state.ownership.lock().unwrap().can_install = true;
+                let mut index: Index = serde_json::from_slice(include_bytes!(
+                    "../../crates/grain-core/tests/fixtures/mcp-store/index.json",
+                ))
+                .unwrap();
+                let mut older = index.entries.remove(0);
+                older.artifact_kind = kind;
+                // Signed order, deliberately opposite to numeric version order.
+                older.version = "2.0.0".into();
+                let mut latest = older.clone();
+                latest.version = "1.0.0".into();
+                let mut other_kind = older.clone();
+                other_kind.version = "3.0.0".into();
+                other_kind.artifact_kind = if kind == ArtifactKind::Native {
+                    ArtifactKind::McpDescriptor
+                } else {
+                    ArtifactKind::Native
+                };
+                index.entries = vec![older.clone(), other_kind, latest.clone()];
+                let projected = project_entries(&index.entries, &state.revocations.read().unwrap());
+                assert_eq!(projected.len(), 1);
+                assert_eq!(projected[0].previous_versions, vec!["2.0.0"]);
+                assert!(ensure_release_order(&index.entries, &latest, Some("2.0.0")).is_ok());
+                *state.index.write().unwrap() = Some(index);
+                let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+                listener.set_nonblocking(true).unwrap();
+                {
+                    let mut roots = state.roots.write().unwrap();
+                    roots.base_urls = vec![format!("http://{}/", listener.local_addr().unwrap())];
+                    roots.mirrors.clear();
+                }
+                let native =
+                    grain_core::extensions::ExtensionsRegistry::load(data.path(), false).unwrap();
+                let remote = ConnectionRegistry::load(data.path()).unwrap();
+                let client = reqwest::Client::new();
+                for (requested, installed, expected) in [
+                    ("2.0.0", None, "no longer the current"),
+                    ("2.0.0", Some("1.0.0"), "no longer the current"),
+                    ("1.0.0", Some("0.9.0"), "does not precede"),
+                    ("1.0.0", Some("3.0.0"), "does not precede"),
+                ] {
+                    if let Some(version) = installed {
+                        let mut record = install::plan_record(
+                            &latest,
+                            vec![],
+                            None,
+                            vec![],
+                            install::ApprovalDigests::default(),
+                        );
+                        record.installed_version = version.into();
+                        native.install(record).unwrap();
+                    }
+                    let before = serde_json::to_value(native.installed_record(&latest.id)).unwrap();
+                    let result = if kind == ArtifactKind::Native {
+                        install_entry(
+                            &state,
+                            &native,
+                            &data.path().join("extensions"),
+                            &client,
+                            &latest.id,
+                            requested,
+                        )
+                        .await
+                        .map(|_| ())
+                    } else {
+                        commit_mcp_entry_with_clock(
+                            &state,
+                            &client,
+                            (&latest.id, requested),
+                            installed,
+                            now_unix,
+                            || panic!("rejected release reached authorization"),
+                            |_| panic!("rejected release reached account commit"),
+                        )
+                        .await
+                        .map(|_| ())
+                    };
+                    let error = result.unwrap_err();
+                    assert!(error.contains(expected), "{kind:?} {requested}: {error}");
+                    assert_eq!(
+                        serde_json::to_value(native.installed_record(&latest.id)).unwrap(),
+                        before
+                    );
+                    assert!(remote.list().unwrap().is_empty());
+                    assert_eq!(
+                        listener.accept().unwrap_err().kind(),
+                        std::io::ErrorKind::WouldBlock
+                    );
+                    assert!(!data.path().join("extensions").exists());
+                }
+                state.close();
+            }
+        });
     }
 
     #[test]
@@ -2113,6 +2281,7 @@ mod tests {
                     "../../crates/grain-core/tests/fixtures/mcp-store/index.json")).unwrap().entries.remove(0);
                 let original = StoreDescriptor::admit(&entry, include_bytes!(
                     "../../crates/grain-core/tests/fixtures/mcp-store/descriptor.json")).unwrap();
+                let prior_entry = entry.clone();
                 let registry = ConnectionRegistry::load(data.path()).unwrap();
                 let record = registry.insert_store(original.clone()).unwrap();
                 let lease = registry.lease(record.identity().connection_id()).unwrap();
@@ -2124,7 +2293,7 @@ mod tests {
                 let update = StoreDescriptor::admit(&entry, &body).unwrap();
                 let hash = entry.sha256.clone();
                 *state.index.write().unwrap() = Some(Index {
-                    spec:1, version:100, expires:"2099-01-01T00:00:00Z".into(), entries:vec![entry],
+                    spec:1, version:100, expires:"2099-01-01T00:00:00Z".into(), entries:vec![prior_entry, entry],
                     generation: None,
                 });
                 let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -2164,7 +2333,7 @@ mod tests {
                 let client = reqwest::Client::builder().timeout(std::time::Duration::from_secs(2)).build().unwrap();
                 // Test the shared production download/final-gate/core publication.
                 // The Tauri/vault cleanup adapter is separately gated for app acceptance.
-                let download = commit_mcp_entry_with_clock(&state, &client, "com.example.calendar", "2.0.0",
+                let download = commit_mcp_entry_with_clock(&state, &client, ("com.example.calendar", "2.0.0"), Some("1.0.0"),
                     now_unix, || Ok(()), |admitted| {
                         if mode == "cleanup" { return Err("account cleanup failed".into()); }
                         registry.replace_store(&lease, admitted).map_err(|error| error.to_string())?;

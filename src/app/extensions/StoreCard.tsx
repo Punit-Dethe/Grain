@@ -9,7 +9,7 @@
  */
 import { useEffect, useState, type MouseEvent } from "react";
 import { commands, type StoreEntry, type StoreMedia } from "@/bindings";
-import { unwrapResult } from "./extensionRuntime";
+import { storeInstallAction, unwrapResult } from "./extensionRuntime";
 
 export function MediaArtwork({
   media,
@@ -88,7 +88,7 @@ export function StoreCard({
   onInstall: (entry: StoreEntry) => void;
   onPreview: (entry: StoreEntry) => void;
 }) {
-  const current = installedVersion === entry.version;
+  const action = storeInstallAction(entry, installedVersion);
 
   return (
     <article
@@ -119,20 +119,17 @@ export function StoreCard({
             className="button store-install"
             type="button"
             disabled={
-              current || busy || entry.revocation === "revoked" || !canInstall
+              (action !== "Install" && action !== "Update") ||
+              busy ||
+              entry.revocation === "revoked" ||
+              !canInstall
             }
             onClick={(event: MouseEvent) => {
               event.stopPropagation();
               onInstall(entry);
             }}
           >
-            {busy
-              ? "Installing…"
-              : current
-                ? "Installed"
-                : installedVersion
-                  ? "Update"
-                  : "Install"}
+            {busy ? "Installing…" : action}
           </button>
         </div>
         <p className="store-extension-blurb">{entry.description}</p>

@@ -3250,6 +3250,8 @@ export type StoreCover = { id: string; sha256: string; kind: string }
  * [`IndexEntry`]; the index type itself lives in the crypto-free leaf).
  */
 export type StoreEntry = { id: string; kind: string; name: string; version: string; tier: string; trust: string; capabilities: string[];
+/** Same-kind releases preceding this one in the signed publication order. */
+previous_versions: string[];
 /**
  * One-line summary shown under the name on the card.
  */

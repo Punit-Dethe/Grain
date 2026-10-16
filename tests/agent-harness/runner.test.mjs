@@ -2753,6 +2753,12 @@ test("store MCP checkpoint reuses existing peers with separate cases and bounded
       (await fetch(`${base}/blob/${entry.sha256}.grainpack`)).status,
       404,
     );
+    store.configureMcp({ version: "2.0.0" });
+    const updated = await (await fetch(`${base}/index.json`)).json();
+    assert.deepEqual(
+      updated.entries.map((entry) => entry.version),
+      ["1.0.0", "2.0.0"],
+    );
     store.revokeMcp();
     const revocations = await (await fetch(`${base}/revocations.json`)).json();
     assert.ok(revocations.version > index.version);

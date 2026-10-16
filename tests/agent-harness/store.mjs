@@ -133,7 +133,22 @@ export function storeHandlers(ctx) {
           "UI store installation",
           async () => (await status()).fixtureInstalled,
         );
-        await card
+        // Successful installation now opens the real extension detail page.
+        const detail = ctx
+          .main()
+          .getByRole("article", { name: "Harness Lifecycle", exact: true });
+        await detail
+          .getByText("Installed", { exact: true })
+          .waitFor({ state: "visible" });
+        await ctx.activate(
+          detail.getByRole("button", {
+            name: "Back to extensions",
+            exact: true,
+          }),
+        );
+        await (
+          await storeCard()
+        )
           .getByRole("button", { name: "Installed", exact: true })
           .waitFor({ state: "visible" });
         assert.equal((await status()).worker.count, 0);

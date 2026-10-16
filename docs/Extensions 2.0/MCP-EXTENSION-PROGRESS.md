@@ -1,5 +1,47 @@
 # Extension implementation: progress, changes and user testing
 
+**Block 5 update ordering implemented, 16 October 2026:** native and MCP store
+acquisition now refuse historical targets before network I/O; updates require
+the installed version to precede the target in signed same-kind publication
+history. Same-current reinstalls keep their existing guarded backend behavior;
+UI marks them Installed. An unknown installed version is not guessed to be older.
+Both browse and detail projections carry the derived predecessor list, and both
+buttons share the same update decision. No new version parser, signed format,
+dependency, transport, OAuth implementation or extension-author API.
+
+Source audit verified native ownership is captured before the version read and
+the existing final record/connection/catalogue gates still protect publication.
+13 host store tests pass with one existing live-network test ignored; 23 core
+connection and 62 frontend tests pass, plus TypeScript, scoped ESLint, formatting
+and frontend production build. The new ordinary regression deliberately reverses
+numeric-looking labels, excludes other-kind history, and proves refusals leave
+registry/account publication untouched without opening a network connection.
+Existing successful/racing downloads and account-preserving/rotating updates pass.
+Initial test compilation/type errors were corrected locally (nullable version and
+serialized record comparison); no failing build is counted as acceptance.
+
+Reused the maintained real app, built once in 1m25s, binary SHA256
+`3dd23b3910fc71323523f62d746cec4d0629440be4d94c4cd965c560f4267f3d`, source
+fingerprint `4708b9b0f9077574142cf738cc35a3ab5267ca8f83f0aabf3183146193b7c8b0`.
+Native store runs `run-d7xxJx` and `run-SXoBD7` found stale post-install navigation
+and then an ambiguous Installed selector. The existing case now checks the actual
+detail article and returns to the grid. `run-4xh68m` reaches Agent greeting, but
+its old scripted model rejects first-frame selected tools with `Initial Agent
+frame exposed action schemas`. All three have cleanup Pass; no complete runtime
+scenario is accepted, and later native/MCP cases remain Not run. Reports remain
+under `tests/agent-harness/.runs/`; no ordinary app/account was touched.
+
+Kept fixture maintenance to the existing store cases: five lines preserve signed
+MCP history, one existing self-test asserts it, and one native selector follows
+the accepted navigation. Both affected fixture self-tests pass after correcting
+an initially mistaken option name. No new scenario, provider, runner or framework.
+The broader scripted-model mismatch is recorded rather than expanded into a
+harness rewrite here. **Blocks 1–4 complete; Block 5 remains open; two blocks remain.**
+Next: the bounded app/account checkpoint on the current tool-selection contract,
+then the grouped user view check and Block 6 operations. No new user batch or
+installer is requested at this intermediate checkpoint. Custom MCP release gates,
+Agent auto-approval policy and unrelated working edits are unchanged.
+
 **Block 4 complete — publisher account onboarding, 16 October 2026:** Grain
 `3cebf8a97899919b23eb02e5ecb7a2b4651e32c5` adds a supported-route authentication
 guide, includes it in checksummed CLI downloads and gives `doctor` actionable

@@ -21,6 +21,7 @@ import {
   promptLayerScope,
   parseSlotConflict,
   studioShelfMode,
+  storeInstallAction,
 } from "./extensionRuntime";
 
 const card = (overrides: Partial<ExtensionCard> = {}): ExtensionCard => ({
@@ -78,6 +79,7 @@ const entry = (overrides: Partial<StoreEntry> = {}): StoreEntry => ({
   version: "1.0.0",
   tier: "scripted",
   trust: "verified",
+  previous_versions: [],
   capabilities: [],
   description: "An example extension",
   repo: "",
@@ -95,6 +97,25 @@ const entry = (overrides: Partial<StoreEntry> = {}): StoreEntry => ({
   revocation: null,
   flags: [],
   ...overrides,
+});
+
+describe("store update actions", () => {
+  it("uses signed predecessors for both extension kinds, not version text", () => {
+    for (const kind of ["native", "mcp"]) {
+      const listing = entry({
+        kind,
+        version: "1.0.0",
+        previous_versions: ["2.0.0"],
+      });
+      expect(storeInstallAction(listing)).toBe("Install");
+      expect(storeInstallAction(listing, "1.0.0")).toBe("Installed");
+      expect(storeInstallAction(listing, "2.0.0")).toBe("Update");
+      expect(storeInstallAction(listing, "0.9.0")).toBe("No update available");
+      expect(
+        storeInstallAction({ ...listing, previous_versions: [] }, "2.0.0"),
+      ).toBe("No update available");
+    }
+  });
 });
 
 describe("extension destination routing", () => {

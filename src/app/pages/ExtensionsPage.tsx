@@ -63,6 +63,7 @@ import {
   parseSlotConflict,
   slotLabel,
   sortExtensionCards,
+  storeInstallAction,
   unwrapResult,
   type ApprovalRequest,
   type SlotConflict,
@@ -649,7 +650,10 @@ function ExtensionDetail({
     : controller.cards.find(
         (candidate) => candidate.id === (card?.id ?? entry?.id),
       )?.version;
-  const current = !!entry && installedVersion === entry.version;
+  const installAction = entry
+    ? storeInstallAction(entry, installedVersion)
+    : null;
+  const current = installAction === "Installed";
   const destination = card
     ? extensionDestination(card, controller.sections)
     : null;
@@ -807,16 +811,13 @@ function ExtensionDetail({
                 type="button"
                 disabled={
                   installing !== null ||
+                  installAction === "No update available" ||
                   entry.revocation === "revoked" ||
                   !canInstall
                 }
                 onClick={() => void onInstall(entry)}
               >
-                {installing === entry.id
-                  ? "Installing…"
-                  : installedVersion
-                    ? "Update"
-                    : "Install"}
+                {installing === entry.id ? "Installing…" : installAction}
               </button>
             )}
             <div

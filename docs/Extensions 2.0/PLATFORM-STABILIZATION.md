@@ -424,6 +424,40 @@ backend admission and presentation; do not introduce a separate guessed semver
 comparator. Existing account-preserving/rotating update tests and prior real-app
 store evidence remain reusable, but do not certify the current update UI.
 
+**Update-order implementation, 16 October:** one backend rule now admits only the
+latest eligible publication, and only updates a known same-kind predecessor (or
+the same current version). Signed index append order is authoritative; version
+strings are labels, not a second semantic-version comparator. Unknown/absent
+installed history is refused rather than guessed. Both native and MCP paths
+check before download. Native ownership is captured before reading the installed
+version; existing final revision/lease and catalogue cancellation checks remain.
+Browse and single-extension details expose the same derived `previous_versions`;
+both buttons share one action-label helper and disable unavailable updates. This
+does not change the signed index, package/SDK author contract or authentication.
+
+13 ordinary host store tests pass (one existing live-network test ignored),
+including pre-network refusal with unchanged registry/no account commit for both
+kinds and the existing successful/failed/racing downloads. All 23 core connection
+tests and 62 frontend tests pass; TypeScript, scoped ESLint, formatting and Vite
+build pass. Source/call-path audit covers the earlier ownership capture, same-kind
+history and both detail/browse projections; no blocking finding for this change.
+The unrelated Cargo and binding-format edits remain preserved.
+
+The existing real-app suites were attempted with one cached debug build, not an
+installer. `run-d7xxJx` exposed the native store test expecting the grid after
+successful installation; current UI opens details. `run-SXoBD7` retained a too-broad
+Installed locator; its replacement verifies the exact detail article then returns
+to the grid. `run-4xh68m` passes that step but stops because the old scripted model
+rejects first-frame selected action schemas (`Initial Agent frame exposed action
+schemas`). This is incompatible with the accepted fast tool-selection path;
+it is not evidence of an update failure. All three runs have cleanup Pass;
+later native cases and the MCP batch are **Not run**, not accepted by inference.
+Stop here rather than rewrite unrelated Agent test expectations inside this fix.
+The two existing affected fixture self-tests pass; the MCP fixture now retains
+signed predecessor history like the real publisher. No scenario/runner/framework
+was added. Block 5 remains open for a bounded current-contract app checkpoint
+and the grouped user view/account confirmation; Block 6 remains after it.
+
 Keep the accepted layout. Check one-card identity across browse/search/details/
 installed, latest publication and API compatibility, Installed vs Update states,
 version changes and consistent icon/gallery selection. Never offer a downgrade

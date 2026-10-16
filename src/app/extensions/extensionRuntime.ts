@@ -9,6 +9,18 @@ import type {
 
 const NEVER_TOGGLED = "18446744073709551615";
 
+/** Use the host's signed publication history; version text is not an ordering. */
+export function storeInstallAction(
+  entry: Pick<StoreEntry, "version" | "previous_versions">,
+  installedVersion?: string | null,
+): "Install" | "Installed" | "Update" | "No update available" {
+  if (installedVersion == null) return "Install";
+  if (installedVersion === entry.version) return "Installed";
+  return entry.previous_versions.includes(installedVersion)
+    ? "Update"
+    : "No update available";
+}
+
 const CAPABILITY_LABELS: Record<string, string> = {
   "events:sessions": "See when recording starts and stops",
   "events:transcripts": "Read what you dictate",
