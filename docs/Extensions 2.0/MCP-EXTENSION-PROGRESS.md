@@ -1,5 +1,34 @@
 # Extension implementation: progress, changes and user testing
 
+**Approved tester publishing controls adopted, 16 October 2026:** the user
+explicitly approves registry PR 12 at
+`97e50fbdc10d041eb037ec4802db5ba5dfbaf041` and both proposed environment settings.
+Verified the clean exact-head checkout, marked the PR ready and merged with a
+head-match guard; merged commit `bcaa7cf98d453af0ddb1d450416b07ca62d53c62` has the
+previous main `41772f157ea2d321679cb954726c2b9f35f66649` as its sole parent and
+changes only the approved workflow, PUBLISHING and two request-body files.
+
+Re-read the empty environment baseline, applied the approved PUT, inspected
+the now-enabled selected policies (empty), then created only the main branch
+rule. Independent final GET assertions **Pass**: exactly one required reviewer,
+Punit-Dethe/User 206300423; self-review allowed; selected policies enabled;
+exactly one policy, ID `63296048`, type branch, name main. No tag/other branch is
+allowed. A policy-list GET while selected policies were disabled returned 404;
+this was recorded as unconfigured, not mistaken for successful enforcement.
+
+Administrator bypass stays true, rulesets remain empty and main protection
+still returns expected 404, matching the approved unchanged scope. These are
+remaining production gates, not adoption failures. The two expected environment
+protection rules are required_reviewers and branch_policy; no other rule was
+added or removed. The actual job approval pause is **Not run**, to be checked on
+the next separately authorized normal publication. No dummy extension or workflow
+dispatch, signature, catalogue/artifact change, app build, key movement or account
+test. Prior lint/preflight and seven publisher tests remain valid unchanged.
+
+Block 6's tester control adoption is complete; private custody/restore decisions,
+production bypass/source policy and final packaged verification remain open.
+The earlier Pending/draft records below are historical and now superseded.
+
 **Block 6 publishing controls/contributor handoff, 16 October 2026:** read-only
 GitHub APIs reconfirm the publish environment has no reviewer or branch rule,
 administrator bypass is allowed, no rulesets exist and main is unprotected.

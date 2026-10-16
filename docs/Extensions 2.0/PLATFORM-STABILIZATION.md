@@ -548,6 +548,18 @@ pass. Live adoption is Pending the separate operator decision, not counted as
 enforced. No source/signing/tooling pin, extension version or Grain build changes.
 Administrator bypass/source protection and private backup/restore remain gates.
 
+**Tester control adoption complete, 16 October:** the user explicitly approves
+PR 12's exact head and both proposed environment settings. PR 12 is merged at
+`bcaa7cf98d453af0ddb1d450416b07ca62d53c62`. Fresh GETs verify the publish environment
+requires only Punit-Dethe (User 206300423), permits self-review, and allows exactly
+branch main through policy `63296048` (no tags/other branches). The reviewed empty
+baseline was checked before mutation; no unrelated policy was removed. Merge
+touches only the four approved files, with no catalogue/assets or key change.
+Administrator bypass stays true and source/main protection remains absent, as
+approved. No publication was dispatched; test the actual waiting-for-approval
+behavior on the next separately approved ordinary release, not a dummy extension.
+The earlier Pending status above is historical and superseded by this adoption.
+
 `CONTRIBUTING.md` now links the current author/authentication, operator, source and
 normal-test paths so a contributor need not reconstruct the historical chat.
 The harness is an existing app-boundary checkpoint tool, not the default test
