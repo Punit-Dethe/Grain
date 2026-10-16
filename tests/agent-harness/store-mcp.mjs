@@ -105,16 +105,19 @@ export function storeMcpHandlers(ctx) {
   }
   async function read(
     record,
-    mutation = null,
+    inspectPanel = null,
     expected = "mcpVerified",
     instruction = "mcp_configured_read",
   ) {
     const before = calls().length,
       start = ctx.model().journal.length;
-    const page = await ctx.request(instruction);
-    assert.equal(calls().length, before, "Unapproved store call escaped");
-    if (mutation) await mutation(page);
-    await ctx.activate(page.locator(".agc-confirm-actions .agc-action-btn"));
+    await ctx.closePanel();
+    await ctx.invoke("agent_harness_submit", { instruction });
+    const page = await ctx.panel();
+    await ctx.waitFor(
+      "Store Agent reached model",
+      () => ctx.model().journal.length > start,
+    );
     await ctx.waitFor(
       "Store Agent finishes",
       async () => !(await ctx.status()).agent.active,
@@ -132,6 +135,7 @@ export function storeMcpHandlers(ctx) {
       calls().length,
       before + (expected.endsWith("Refused") ? 0 : 1),
     );
+    if (inspectPanel) await inspectPanel(page);
     await ctx.waitFor(
       "Store session disposed",
       () => ctx.provider().activeSessions === 0,
@@ -262,14 +266,15 @@ export function storeMcpHandlers(ctx) {
           await detail
             .getByRole("button", { name: "Install", exact: true })
             .click();
-          await detail
-            .getByRole("button", { name: "Installed", exact: true })
-            .waitFor();
+          await detail.getByText("Installed", { exact: true }).waitFor();
           [record] = await list();
           assert.equal(record.extensionId, ID);
           assert.equal(record.version, "1.0.0");
           await detail
-            .getByRole("region", { name: "Settings", exact: true })
+            .getByRole("button", { name: "Settings", exact: true })
+            .click();
+          await detail
+            .getByRole("region", { name: "Account & access", exact: true })
             .waitFor();
           const uninstall = detail.getByRole("button", {
             name: "Uninstall",
@@ -278,16 +283,14 @@ export function storeMcpHandlers(ctx) {
           await uninstall.waitFor();
           const [uninstallBounds, installedBounds] = await Promise.all([
             uninstall.boundingBox(),
-            detail
-              .getByRole("button", { name: "Installed", exact: true })
-              .boundingBox(),
+            detail.getByText("Installed", { exact: true }).boundingBox(),
           ]);
           assert.ok(
             uninstallBounds && installedBounds,
             "Installation controls are visible",
           );
           assert.ok(
-            uninstallBounds.x + uninstallBounds.width <= installedBounds.x,
+            installedBounds.x + installedBounds.width <= uninstallBounds.x,
             "Uninstall sits beside Installed",
           );
           await page.keyboard.press("Escape");
@@ -300,11 +303,11 @@ export function storeMcpHandlers(ctx) {
           });
           await installed.waitFor();
           const artwork = installed.getByRole("img", {
-            name: "Store MCP harness preview",
+            name: "Store MCP harness icon unavailable",
             exact: true,
           });
           await artwork.waitFor();
-          assert.match(await artwork.getAttribute("src"), /^data:image\/gif/);
+          assert.equal(await artwork.textContent(), "S");
           const search = page.getByPlaceholder("Search installed extensions", {
             exact: true,
           });
@@ -337,13 +340,16 @@ export function storeMcpHandlers(ctx) {
             })
             .click();
           await detail
-            .getByRole("region", { name: "Settings", exact: true })
+            .getByRole("button", { name: "Settings", exact: true })
+            .click();
+          await detail
+            .getByRole("region", { name: "Account & access", exact: true })
             .waitFor();
           await page.screenshot({
             path: join(ctx.root, "store-mcp-detail.png"),
           });
           await detail
-            .getByRole("region", { name: "Settings", exact: true })
+            .getByRole("region", { name: "Account & access", exact: true })
             .scrollIntoViewIfNeeded();
           await page.screenshot({
             path: join(ctx.root, "store-mcp-controls.png"),
@@ -407,29 +413,22 @@ export function storeMcpHandlers(ctx) {
           await publish();
         });
         await stage(
-          "metadata-update-invalidates-approval-preserves-account",
+          "metadata-update-invalidates-lease-preserves-account",
           async () => {
             const before = await row(record),
               stale = record;
-            await read(
-              record,
-              async () => {
-                await publish({
-                  version: "2.0.0",
-                  description: "Updated store listing.",
-                });
-                record = await update(record, "2.0.0");
-              },
-              "mcpRefused",
-            );
+            await publish({
+              version: "2.0.0",
+              description: "Updated store listing.",
+            });
+            record = await update(record, "2.0.0");
             assert.equal(record.state, "inactive");
             assert.equal((await row(record)).accountId, before.accountId);
             await assert.rejects(enable(stale), /changed/);
             await enable(record);
-            await read(record, async () => {
-              const unchanged = await update(record, "2.0.0");
-              assert.equal(unchanged.revision, record.revision);
-            });
+            const unchanged = await update(record, "2.0.0");
+            assert.equal(unchanged.revision, record.revision);
+            await read(record);
           },
         );
         await stage("store-ui-update", async () => {
@@ -451,7 +450,7 @@ export function storeMcpHandlers(ctx) {
             .click();
           await page
             .getByRole("article", { name: "Store MCP harness", exact: true })
-            .getByRole("button", { name: "Installed", exact: true })
+            .getByText("Installed", { exact: true })
             .waitFor();
           [record] = await list();
           assert.equal(record.version, "2.1.0");
@@ -523,8 +522,11 @@ export function storeMcpHandlers(ctx) {
             name: "Store MCP harness",
             exact: true,
           });
+          await detail
+            .getByRole("button", { name: "Settings", exact: true })
+            .click();
           const account = detail.getByRole("region", {
-            name: "Settings",
+            name: "Account & access",
             exact: true,
           });
           await detail
@@ -581,9 +583,17 @@ export function storeMcpHandlers(ctx) {
           });
           if (await postponeUpdate.isVisible()) await postponeUpdate.click();
           await installedCard.click();
-          const installed = page
-            .getByRole("article", { name: "Store MCP harness", exact: true })
-            .getByRole("region", { name: "Settings", exact: true });
+          const detail = page.getByRole("article", {
+            name: "Store MCP harness",
+            exact: true,
+          });
+          await detail
+            .getByRole("button", { name: "Settings", exact: true })
+            .click();
+          const installed = detail.getByRole("region", {
+            name: "Account & access",
+            exact: true,
+          });
           await installed
             .getByRole("button", { name: "Refresh", exact: true })
             .click();
@@ -724,10 +734,9 @@ export function storeMcpHandlers(ctx) {
             ctx.provider().configure({ result: "held" });
             const before = calls().length,
               start = ctx.model().journal.length;
-            const page = await ctx.request("mcp_configured_unknown");
-            await ctx.activate(
-              page.locator(".agc-confirm-actions .agc-action-btn"),
-            );
+            await ctx.invoke("agent_harness_submit", {
+              instruction: "mcp_configured_unknown",
+            });
             await ctx.waitFor(
               "Store read held",
               () => ctx.provider().heldCalls === 1,

@@ -63,7 +63,20 @@ export function mcpAccountReply(
     return call(actions[0].name, MCP_INPUT);
   }
   assert.equal(results.length, 3, "Authenticated MCP action replayed");
-  const content = results[2].content;
+  return mcpAccountResult(
+    results[2].content,
+    account,
+    providerId,
+    disabledOwner,
+  );
+}
+
+export function mcpAccountResult(
+  content,
+  account,
+  providerId,
+  disabledOwner = false,
+) {
   if (content.startsWith("Outcome unknown")) {
     assert.equal(
       content,

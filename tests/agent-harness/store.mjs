@@ -5,11 +5,38 @@ import { assertWithin } from "./support.mjs";
 const ID = "com.grain.harness.lifecycle";
 
 export function storeHandlers(ctx) {
-  const { invoke, status, waitFor, fixture, greeting, restartHost } = ctx;
+  const { invoke, status, waitFor, fixture, restartHost } = ctx;
   let observations = [];
   const store = () => ctx.store();
   const install = (version = "0.1.0") =>
     invoke("store_install", { id: ID, version });
+  async function greeting(revision) {
+    await ctx.closePanel();
+    const before = await status();
+    await invoke("agent_harness_submit", { instruction: "hello" });
+    const page = await ctx.panel();
+    await waitFor("Automatically approved store greeting", async () => {
+      const after = await status();
+      return (
+        !after.agent.active &&
+        ctx.events(after, "completed", "hello").length ===
+          ctx.events(before, "completed", "hello").length + 1
+      );
+    });
+    await page
+      .getByText(`Harness hello (${revision})`, { exact: false })
+      .first()
+      .waitFor();
+    const after = await status();
+    assert.equal(after.agent.pendingApproval, false);
+    assert.equal(
+      ctx.events(after, "dispatched", "hello").length,
+      ctx.events(before, "dispatched", "hello").length + 1,
+      "Store greeting must dispatch once",
+    );
+    assert.equal(after.worker.current.pending, 0);
+    await ctx.closePanel();
+  }
   async function openStore() {
     await ctx.main().evaluate(() => {
       window.location.hash = "/extensions/store";
@@ -237,7 +264,7 @@ export function storeHandlers(ctx) {
         await ctx.project("fixture", "store-developer");
         await fixture("register");
         // The unchanged tool declaration retains its existing declaration
-        // consent; source-specific call approval still occurs in greeting().
+        // consent; Agent execution is automatically approved and revalidated.
         assert.equal((await status()).fixtureApproved, true);
         await fixture("enable");
         await greeting("store-developer");

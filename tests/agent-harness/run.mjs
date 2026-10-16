@@ -1363,8 +1363,10 @@ const storeSuite = storeHandlers({
   status,
   waitFor,
   fixture,
-  greeting,
   restartHost,
+  events,
+  panel,
+  closePanel,
   store: () => store,
   allow: installation.allow,
   project: installation.project,
@@ -1603,6 +1605,7 @@ Object.assign(handlers, configuredAuthSuite.handlers);
 const storeMcpSuite = storeMcpHandlers({
   root,
   main: () => main,
+  panel,
   here,
   cli: () => cliIdentity,
   invoke,
@@ -1889,7 +1892,13 @@ try {
       ],
     };
   }
-  model = await startModel({ fault: options.fault, liveConfig });
+  model = await startModel({
+    fault: options.fault,
+    liveConfig,
+    storeCheckpoint: selected.every((scenario) =>
+      ["store", "store-mcp"].includes(scenario.suite),
+    ),
+  });
   if (
     selected.some((scenario) => ["store", "store-mcp"].includes(scenario.suite))
   ) {

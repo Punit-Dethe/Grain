@@ -1,5 +1,18 @@
 # Grain Agent acceptance harness
 
+**16 October store checkpoint:** use `--suite store` and `--suite store-mcp`
+for current store acceptance. All six cases pass after adapting the existing
+fixtures to first-round selected schemas, automatic Agent execution and current
+detail tabs. Actual call IDs/results, independent dispatch/vault counts and
+ownership/revocation checks remain mandatory; the old pending-per-call-approval
+update step is retired. 80 runner self-tests pass. The same stamped host was
+reused; no new runner, scenario or installer. See current
+[progress](../../docs/Extensions%202.0/MCP-EXTENSION-PROGRESS.md) for exact runs,
+earlier adapter failures and the remaining grouped user check. Other historical
+forced-discovery/manual-approval suites, including `--suite all`, are not a
+current-policy acceptance gate; retire or relocate still-useful assertions during
+the final contributor cleanup rather than add product compatibility behavior.
+
 **15 October final discovery checkpoint:** compact deferred names/exact recovery
 are the normal debug/release policy; the experiment variable is retired. Nine
 final real-Agent journeys pass with configured Harbor, GitHub and Notion, plus

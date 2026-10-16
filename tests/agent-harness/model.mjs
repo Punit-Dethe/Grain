@@ -4,11 +4,12 @@ import assert from "node:assert/strict";
 import { MCP_INPUT, MCP_EXTENSION_ID } from "./mcp-fixture.mjs";
 import { liveReply } from "./mcp-live.mjs";
 import { hfReply } from "./mcp-hf-live.mjs";
-import { mcpAccountReply } from "./mcp-auth.mjs";
+import { mcpAccountReply, mcpAccountResult } from "./mcp-auth.mjs";
 import {
   MCP_CLIENT_ID,
   MCP_PEER_ID,
   MCP_PEER_CLIENT_ID,
+  MCP_PRIVATE_MARKER,
 } from "./mcp-oauth-fixture.mjs";
 import { workflowReply } from "./workflow.mjs";
 import { liveModelAdapter } from "./live-model.mjs";
@@ -59,7 +60,12 @@ export const TYPED_INPUTS = {
   },
 };
 
-export function nextReply(body, fault, workflowMode = "normal") {
+export function nextReply(
+  body,
+  fault,
+  workflowMode = "normal",
+  storeCheckpoint = false,
+) {
   // OpenAI-compatible clients omit `tools` on the final, budget-exhausted
   // round. Preserve that real wire shape; no definitions are offered.
   if (body.tools === undefined) body = { ...body, tools: [] };
@@ -79,6 +85,7 @@ export function nextReply(body, fault, workflowMode = "normal") {
   if (instruction.endsWith("model_wait"))
     return { content: "Harness delayed model reply", delayMs: 15000 };
   const requested = instruction.slice("Harness request: ".length);
+  if (storeCheckpoint && requested === "hello") return storeNativeReply(body);
   if (
     [
       "native_staged",
@@ -134,6 +141,21 @@ export function nextReply(body, fault, workflowMode = "normal") {
       "No exact configured account directory owner",
     );
     const account = requested.endsWith("_a") ? "A" : "B";
+    if (storeCheckpoint) {
+      const provider = ids[account === "B" && ids.length > 1 ? 1 : 0];
+      assert.ok(
+        !JSON.stringify(body).includes(MCP_PRIVATE_MARKER),
+        "MCP credential reached model context",
+      );
+      return storeSelectedReply(
+        body,
+        provider,
+        "fixture_read",
+        "Harness MCP nested read",
+        MCP_INPUT,
+        (content) => mcpAccountResult(content, account, provider.slice(4)),
+      );
+    }
     return mcpAccountReply(
       body,
       account,
@@ -157,6 +179,28 @@ export function nextReply(body, fault, workflowMode = "normal") {
       ids.length > 0 && ids.length <= 32,
       "No exact configured directory owner",
     );
+    if (storeCheckpoint)
+      return {
+        ...storeSelectedReply(
+          body,
+          ids[0],
+          "fixture_read",
+          "Harness MCP nested read",
+          MCP_INPUT,
+          (content) =>
+            mcpResultReply(
+              content,
+              requested === "mcp_configured_unknown"
+                ? "mcp_unknown"
+                : "mcp_read",
+              ids[0],
+            ),
+        ),
+        configuredOwner:
+          fault === "wrong-configured-owner"
+            ? "mcp.configured-00000000000000000000000000000000"
+            : ids[0],
+      };
     return {
       ...mcpReply(
         body,
@@ -473,7 +517,10 @@ function mcpReply(body, requested, extensionId = MCP_EXTENSION_ID) {
     );
     return call(actions[0].name, MCP_INPUT);
   }
-  const content = results.at(-1).content;
+  return mcpResultReply(results.at(-1).content, requested, extensionId);
+}
+
+function mcpResultReply(content, requested, extensionId) {
   if (requested === "mcp_unknown") {
     if (extensionId.startsWith("mcp.configured-")) {
       assert.equal(
@@ -548,7 +595,82 @@ function mcpReply(body, requested, extensionId = MCP_EXTENSION_ID) {
   return { content: "Harness verified MCP nested result", mcpVerified: true };
 }
 
-export async function startModel({ fault, liveConfig } = {}) {
+// Store acceptance checks installation/ownership, not a fixed discovery-round
+// count. Observe the actual selected schema and correlated action result.
+function storeNativeReply(body) {
+  return storeSelectedReply(
+    body,
+    FIXTURE_ID,
+    "hello",
+    "Harness fast hello",
+    {},
+    (content) => {
+      assert.match(content, /^Harness hello \([^)]+\)$/);
+      return { content: `Harness observed result: ${content}` };
+    },
+  );
+}
+
+function storeSelectedReply(body, extensionId, toolId, title, input, verify) {
+  const offered = body.tools.map((tool) => tool.function);
+  const calls = body.messages.flatMap((message) => message.tool_calls ?? []);
+  const actions = calls.filter((call) =>
+    call.function.name.startsWith("act__"),
+  );
+  assert.ok(actions.length <= 1, "Store greeting action replayed");
+  if (actions.length) {
+    const results = body.messages.filter(
+      (message) =>
+        message.role === "tool" && message.tool_call_id === actions[0].id,
+    );
+    assert.equal(
+      results.length,
+      1,
+      "Missing/duplicate actual store action result",
+    );
+    return verify(results[0].content);
+  }
+  const matching = offered.filter(
+    (tool) => tool.name.startsWith("act__") && tool.description.includes(title),
+  );
+  assert.ok(matching.length <= 1, "Ambiguous store greeting schema");
+  if (matching.length && toolId === "fixture_read")
+    assert.equal(matching[0].parameters?.properties?.query?.type, "object");
+  const results = body.messages.filter((message) => message.role === "tool");
+  const name =
+    matching[0]?.name ?? (results.length ? "load_extension" : "search_tools");
+  assert.ok(
+    offered.some((tool) => tool.name === name),
+    "Store tool was not offered",
+  );
+  return {
+    tool_calls: [
+      {
+        id: `harness_${randomUUID()}`,
+        type: "function",
+        function: {
+          name,
+          arguments: JSON.stringify(
+            matching.length
+              ? input
+              : {
+                  extension_id: extensionId,
+                  ...(results.length
+                    ? { tool_ids: [toolId] }
+                    : { query: toolId }),
+                },
+          ),
+        },
+      },
+    ],
+  };
+}
+
+export async function startModel({
+  fault,
+  liveConfig,
+  storeCheckpoint = false,
+} = {}) {
   let workflowMode = "normal";
   const journal = [];
   const sockets = new Set();
@@ -573,7 +695,7 @@ export async function startModel({ fault, liveConfig } = {}) {
       const body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
       const reply = live
         ? await live.reply(body, response)
-        : nextReply(body, fault, workflowMode);
+        : nextReply(body, fault, workflowMode, storeCheckpoint);
       const entry = {
         sequence: journal.length + 1,
         offered: (body.tools ?? []).map((tool) => tool.function.name),

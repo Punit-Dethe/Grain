@@ -458,6 +458,50 @@ signed predecessor history like the real publisher. No scenario/runner/framework
 was added. Block 5 remains open for a bounded current-contract app checkpoint
 and the grouped user view/account confirmation; Block 6 remains after it.
 
+**Automated store checkpoint complete, 16 October:** final `run-aobPCF` (native)
+and `run-tV2ue0` (MCP) pass all six existing real-app cases, cleanup Pass. They
+reuse the previous debug host/source fingerprint without another build. The
+maintained store tests now follow selected first-round schemas, automatic Agent
+execution, tabbed account settings and the installed marker/icon fallback. One
+shared result validator correlates actual tool-call IDs, refuses replay or
+missing/invented results, and reuses existing MCP result/account checks. It is a
+store-test fixture, not a new Agent loop, product policy or provider integration.
+
+Native checks cover install/enable/read/restart/offline, held downloads versus
+disable/removal/developer overrides and bad signatures/hash/close. MCP checks
+cover CLI-authored signed install, update/account ownership, failed/removed
+updates, cancel/reconnect with actual fixture SDK/vault grants, restart, signed
+revocation during an actual call and pending OAuth, and independent configured
+server recovery. Signed predecessor history now matches real publication for
+both fixture kinds. The old pending-per-call-approval update step is retired;
+stale leases and in-flight revocation remain explicitly checked. All 80 runner
+self-tests pass, including wrong/missing/replayed native/MCP/account results.
+Scoped graph/manual source review passes; application code/policies, real
+accounts, installer and scenario IDs are unchanged.
+
+Earlier native passes `run-9oNcKH` and MCP passes `run-LzJxPB` remain supporting
+evidence. MCP `run-180Gus` and `run-qOoldy` retain adapter failures: a remaining
+panel-origin check was still treated as pending approval, then the adapter
+mistook pre-start inactivity for task completion. The origin check now runs on
+the actual completed panel; completion waits for an observed model request.
+Both failed runs have cleanup Pass and earn no acceptance.
+
+**Only the grouped user catalogue/account check remains for this checkpoint:**
+one GitHub and one Notion card, current/update state with an unchanged Notion
+account retained, and one harmless Notion read before/after disable/re-enable.
+Requested once with the alpha development launch command; no new installer.
+The user reports that launch failed and will provide results in the next reply;
+none of these three manual checks is credited. CLI invocation/launch diagnosis
+is separate from the six accepted isolated runs. The command plus `--no-watch`
+subsequently builds the normal dev app in 2m08s and opens `C:/gt/debug/handy.exe`;
+it is left available for testing. No original error text was provided, so its
+cause remains unknown. A local linked-dependency font serving warning is recorded
+in progress; no visual acceptance is inferred. No installer was built.
+Block 5 remains open until that report and any required alpha gate decision;
+Block 6's production operator/release controls are separate. Historical forced
+discovery/per-call-approval suites are not current acceptance; retire or move
+their still-relevant assertions during Block 6, not through compatibility code.
+
 Keep the accepted layout. Check one-card identity across browse/search/details/
 installed, latest publication and API compatibility, Installed vs Update states,
 version changes and consistent icon/gallery selection. Never offer a downgrade
@@ -483,6 +527,14 @@ Ordinary component tests cover most states. One small user visual batch at the
 checkpoint; no fresh installer for each edit.
 
 ## Block 6 — Operations, contributor handoff and release acceptance
+
+**Read-only preflight, 16 October:** registry API still reports publish environment
+`protection_rules: []`, `deployment_branch_policy: null`, no rulesets, and main
+branch protection returns `Branch not protected` (404). These confirm the
+previously recorded operator gap, not a new test failure. No settings, keys,
+authority file or publishing workflow was changed. Prepare concrete controls
+for operator review before production activation; tester source approvals do
+not establish those controls.
 
 1. Document current key custody, separate root/publisher roles, backup/recovery
    and authorized access without copying any secrets into the repository. Decide

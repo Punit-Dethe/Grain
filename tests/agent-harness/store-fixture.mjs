@@ -160,6 +160,11 @@ export async function startStore(here) {
           version: ++version,
           expires: new Date(Date.now() + 7 * 86400000).toISOString(),
           entries: [
+            ...(index ? JSON.parse(index).entries : []).filter(
+              (entry) =>
+                entry.id === pack.manifest.id &&
+                entry.version !== packageVersion,
+            ),
             {
               id: pack.manifest.id,
               name: pack.manifest.name,

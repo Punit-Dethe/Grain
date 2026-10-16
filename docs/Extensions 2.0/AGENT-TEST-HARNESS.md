@@ -219,6 +219,18 @@ Build first using `tests/agent-harness/build.ps1`, with Python `cryptography` av
 
 ## Harness retention and cleanup inventory
 
+**Current store maintenance, 16 October:** no scenario IDs or new harness services
+were added. Existing store fixtures now follow the accepted automatic Agent and
+selected-schema contract; final native/MCP store runs pass with owned cleanup.
+Retain their short schema/result-ID validator and existing store regression cases.
+Historical fixed-discovery/per-call-approval suites are not current acceptance;
+retire their obsolete checks, or move still-relevant protocol/ownership assertions
+to ordinary tests during Block 6. Do not extend product compatibility to satisfy
+them. Ignored `.build` host/logs and `.runs` profiles/reports follow existing
+retention rules; retained evidence is not a claim of file deletion. Exact accepted
+and failed run IDs, identities and the pending grouped user check are in current
+[progress](MCP-EXTENSION-PROGRESS.md). No new cleanup framework or inventory counter.
+
 **Previous bounds/cancellation unit (2 October):** [MCP bounds/cancellation audit](MCP-BOUNDS-CANCELLATION-AUDIT.md) adds `mcp.response-preview`, `mcp.transport-bounds` and `mcp.close-cancellation`. That snapshot had **45 scenarios**, five MCP, and 22 runner self-tests. Final full MCP runs `run-mnHybt` / `run-Rc2B9N` each pass five separately reported procedures and 52 supporting stages, with 46 actual calls, zero retained sessions/held calls and cleanup Pass. The deliberate `short-mcp-preview` fault fails as required; ordinary smoke and 46 production MCP tests pass. The audit preserves the early UI-oracle and failed-report scope errors. Checks 20/31 remain Pending for their complete live/account requirements; **39 Pass / 14 Pending** is unchanged. No new user batch or broader platform work starts here.
 
 **Previous catalog/deadline inventory (2 October):** the [catalog/deadline audit](MCP-CATALOG-DEADLINE-AUDIT.md) brought the inventory to 48 scenarios, eight MCP and 23 runner self-tests. Catalog refusal covers 24 separately identified combinations in management Test and the actual Agent; HTTP and absolute-discovery cases use genuine 45/90-second production clocks with independent cleanup/recovery assertions. Its final evidence and interrupted-run exception remain retained.

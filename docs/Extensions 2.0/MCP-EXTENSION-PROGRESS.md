@@ -1,5 +1,71 @@
 # Extension implementation: progress, changes and user testing
 
+**Block 5 real-app store checkpoint verified, 16 October 2026:** all six existing
+native/MCP store cases pass in final `run-aobPCF` / `run-tV2ue0`, cleanup Pass and
+no remaining recorded host PIDs. Native scenario time: 18,507 ms; MCP: 37,766 ms.
+Same earlier host SHA256 `3dd23b3910fc71323523f62d746cec4d0629440be4d94c4cd965c560f4267f3d`,
+source `4708b9b0f9077574142cf738cc35a3ab5267ca8f83f0aabf3183146193b7c8b0`;
+final runner `19487ac54b8673015d43418690478bf58ffa2bae9767fc12feb72a89c9ab9907`.
+Those six cases reused the existing build; no installer, runtime policy change
+or real provider grant was introduced by acceptance.
+Reports remain under `tests/agent-harness/.runs/`; actual SDK/OS-vault evidence
+uses disposable fixture accounts and does not certify a new live SaaS route.
+
+Repaired the actual store tests for current selected schemas/automatic execution,
+detail tabs, Installed marker and square-icon fallback. The model fixture follows
+offered tool schemas and correlates the actual action result by tool-call ID;
+replay, unrelated/missing results and malformed native/MCP/account output fail.
+Existing MCP result/account validators are shared rather than copied. Native
+fixtures retain signed publication predecessors. All **80 runner self-tests pass**;
+scope/source audit passes with graph coverage supplemented by manual call-path
+review. No new server, runner, scenario, framework or extension was added.
+
+Verified native installation, restart, offline refusal, held update ownership and
+integrity/close/developer-override behavior. MCP verifies signed CLI-authored
+acquisition, current UI update, account retention versus destination changes,
+failed update preservation, removal during download, real fixture sign-in
+cancellation/recovery/restart, revocation against an active read and pending OAuth,
+and independent custom-server recovery. One obsolete held-per-call-approval step
+is replaced by current stale-lease/update checks; this does not claim a pending
+Agent approval exists under automatic execution. Earlier `run-9oNcKH` / `run-LzJxPB`
+are supporting passes. `run-180Gus` retains the leftover panel-callback assumption;
+`run-qOoldy` retains the adapter's premature inactive/start race. Both cleanup Pass,
+neither accepted. The adapter now awaits observed model activity before completion.
+
+**Blocks 1–4 complete; Block 5 automation/audit complete, user confirmation pending;
+two blocks remain.** The grouped user check asks for the actual GitHub/Notion
+two-card catalogue, Notion Installed/Update account retention, then a harmless
+read before/after disabling/re-enabling. Run current code without an installer:
+
+```powershell
+cd C:\Projects\Grain\grain-main-integration-20261010
+bun run tauri dev --config src-tauri/tauri.extensions-alpha.conf.json
+```
+
+Quit installed Extensions Alpha first. Its existing app identity/settings are
+used; no credentials need to be shared. This grouped check is Pending until the
+user reports it; an already-current installation does not require another package
+release. Existing custom-MCP/Developer Mode gates and final production operator
+decisions remain explicit. Unrelated Cargo/binding changes are preserved.
+The user reports the launch command produced an error and asks to receive the
+remaining steps together at the end, with results in their next reply. Manual
+checks remain Pending. Separately ran the same alpha development command with
+`--no-watch`: Vite starts, the normal development build succeeds in 2m08s and
+`C:/gt/debug/handy.exe` opens (observed PID 25268, window title Grain). Left this
+development app/server available for the user's check; no installer or Computer
+Use. Original user error was not supplied and is not claimed reproduced/fixed.
+Debug startup exported bindings; restored the exact pre-launch worktree bytes,
+preserving the unrelated 191/187-line binding-format diff and Cargo changes.
+Startup also logs a linked-node_modules font request outside Vite's allow list;
+this local development warning is retained, not silently counted as visual Pass.
+The six isolated acceptance reports above are unaffected by this separate launch.
+
+Block 6 read-only preflight confirms the registry's `publish` environment still
+has no protection rules or deployment branch policy, no repository rulesets,
+and main protection reports 404/Branch not protected. No remote protection,
+credential, key-custody or authority changes were made; concrete production
+controls still require their reviewed operator decision.
+
 **Block 5 update ordering implemented, 16 October 2026:** native and MCP store
 acquisition now refuse historical targets before network I/O; updates require
 the installed version to precede the target in signed same-kind publication
