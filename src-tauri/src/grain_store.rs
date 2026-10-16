@@ -1220,7 +1220,7 @@ pub async fn store_mcp_update(
     version: String,
 ) -> Result<(), String> {
     crate::grain_commands::require_main_window(&window)?;
-    crate::grain_mcp::require_developer_mode(&app)?;
+    crate::grain_mcp::require_store_access(&app)?;
     let connections = app
         .try_state::<crate::grain_mcp::connections::State>()
         .ok_or("MCP registry unavailable")?;
@@ -1248,15 +1248,15 @@ pub async fn store_mcp_update(
         (extension_id, &version),
         Some(installed_version),
         now_unix,
-        || crate::grain_mcp::require_developer_mode(&app),
+        || crate::grain_mcp::require_store_access(&app),
         |admitted| connections.commit_store_update(&app, &registry, &lease, admitted),
     )
     .await?;
     Ok(())
 }
 
-/// Development-gated acquisition only. Store accounts stay inactive until the
-/// combined acquisition/update/revocation real-app checkpoint is accepted.
+/// Signed-store acquisition in development and the dedicated extensions alpha.
+/// Custom server configuration retains its separate development-only gate.
 #[tauri::command]
 #[specta::specta]
 pub async fn store_mcp_install(
@@ -1266,7 +1266,7 @@ pub async fn store_mcp_install(
     version: String,
 ) -> Result<(), String> {
     crate::grain_commands::require_main_window(&window)?;
-    crate::grain_mcp::require_developer_mode(&app)?;
+    crate::grain_mcp::require_store_access(&app)?;
     let state = store_state(&app)?;
     let registry = app
         .try_state::<crate::grain_mcp::connections::State>()
@@ -1276,7 +1276,7 @@ pub async fn store_mcp_install(
         .try_state::<reqwest::Client>()
         .ok_or("http client unavailable")?;
     acquire_mcp_entry(&state, &registry, &client, &id, &version, || {
-        crate::grain_mcp::require_developer_mode(&app)
+        crate::grain_mcp::require_store_access(&app)
     })
     .await?;
     Ok(())

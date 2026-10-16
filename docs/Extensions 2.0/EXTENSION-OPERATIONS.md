@@ -89,9 +89,10 @@ revocation procedure.
   Generic continuation/tester source approvals do not authorize changing these.
 - **Key custody/restore:** the private operator assignments and restore check above
   remain unconfirmed. No secrets need to enter documentation.
-- **Alpha application exposure:** finish supported-store access outside Developer
-  Mode while keeping custom MCP UI/JSON/backend creation gated. Current accepted
-  development-profile tests do not certify this release configuration.
+- **Alpha application exposure:** source-aware access is implemented. The dedicated
+  alpha identity/debug builds allow signed-store accounts/tools without Developer
+  Mode; custom MCPs require a debug build and Developer Mode. Normal tests pass;
+  the affected real-app check and final packaged-alpha verification remain Pending.
 - **Contributor cleanup and release scope:** identify obsolete harness procedures
   in the existing inventory, keep normal tests as the default, and run only affected
   final application/packaging checks. Advertise only verified platforms/providers.

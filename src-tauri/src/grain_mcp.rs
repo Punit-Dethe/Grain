@@ -1,4 +1,4 @@
-//! Hosted MCP development providers.
+//! Signed-store MCP extensions and development-only custom/hosted providers.
 //!
 //! This deliberately implements only short-lived MCP clients over catalog-owned
 //! HTTPS endpoints. It prefers the stateless discovery lifecycle and can perform
@@ -177,12 +177,12 @@ fn provider_control(id: &str) -> std::sync::Arc<session::Control> {
         .clone()
 }
 
-pub(crate) fn invalidate_all_sessions(app: &AppHandle) {
+pub(crate) fn invalidate_development_sessions(app: &AppHandle) {
     for item in CATALOG {
         provider_control(item.id).invalidate();
     }
     if let Some(state) = app.try_state::<connections::State>() {
-        state.invalidate_all();
+        state.invalidate_development();
     }
 }
 
@@ -228,7 +228,7 @@ impl RuntimeProvider {
             Self::Configured(owner, _) => owner.enabled(app),
             Self::Catalog(item) => {
                 let settings = crate::settings::get_settings(app);
-                settings.extension_developer_mode
+                access_allowed(app, settings.extension_developer_mode, false)
                     && settings
                         .mcp_enabled_providers
                         .iter()
@@ -911,10 +911,46 @@ pub(crate) fn require_configured_consent_fixture(app: &AppHandle, id: &str) -> R
 }
 
 pub(crate) fn require_developer_mode(app: &AppHandle) -> Result<(), String> {
-    if crate::settings::get_settings(app).extension_developer_mode {
+    if access_allowed(
+        app,
+        crate::settings::get_settings(app).extension_developer_mode,
+        false,
+    ) {
         Ok(())
     } else {
-        Err("MCP development providers require Extension Developer Mode".into())
+        Err("Custom MCPs and development providers require a development build and Extension Developer Mode".into())
+    }
+}
+
+fn access_policy(development_build: bool, alpha: bool, developer_mode: bool, store: bool) -> bool {
+    if store {
+        development_build || alpha
+    } else {
+        development_build && developer_mode
+    }
+}
+
+fn access_allowed(app: &AppHandle, developer_mode: bool, store: bool) -> bool {
+    access_policy(
+        cfg!(debug_assertions),
+        app.config().identifier == "com.grain.extensions.alpha",
+        developer_mode,
+        store,
+    )
+}
+
+pub(crate) fn require_store_access(app: &AppHandle) -> Result<(), String> {
+    if access_allowed(app, false, true) {
+        Ok(())
+    } else {
+        Err("Store extensions are not available in this build.".into())
+    }
+}
+
+fn require_provider_access(app: &AppHandle, item: &Provider<'_>) -> Result<(), String> {
+    match item.ownership {
+        Some(owner) => owner.require_access(app),
+        None => require_developer_mode(app),
     }
 }
 
@@ -1583,7 +1619,7 @@ async fn connect_oauth(
     ticket: &session::Ticket,
 ) -> Result<(), String> {
     let _operation = ticket.acquire().await?;
-    require_developer_mode(app)?;
+    require_provider_access(app, item)?;
     // Preserve the existing immediate conflict refusal for configured clients:
     // their callback is known before any issuer discovery or credential work.
     let pre_registered = preregistered(app, item);
@@ -1712,7 +1748,11 @@ async fn connect_oauth(
             return Err(session::CANCELLED.to_string());
         }
         ctx.update_settings(|settings| {
-            if !settings.extension_developer_mode {
+            if !access_allowed(
+                app,
+                settings.extension_developer_mode,
+                item.ownership.is_some_and(|owner| owner.is_store()),
+            ) {
                 return;
             }
             settings
@@ -1894,10 +1934,10 @@ pub(crate) async fn list_tools_until(
     provider_id: &str,
     deadline: tokio::time::Instant,
 ) -> Result<McpToolSet, String> {
-    require_developer_mode(app)?;
     let owner = runtime_provider(app, provider_id)?;
     let spec = owner.spec();
     let item = &spec;
+    require_provider_access(app, item)?;
     let ticket = owner.ticket();
     let _operation = tokio::time::timeout_at(deadline, ticket.acquire())
         .await
@@ -2198,13 +2238,12 @@ pub(crate) async fn call_tool(
     expected_digest: &str,
 ) -> Result<McpCallOutput, ExecutionFailure> {
     let deadline = tokio::time::Instant::now() + OPERATION_TIMEOUT;
-    require_developer_mode(app).map_err(|_| {
-        before_dispatch(FailureClass::Cancelled, "MCP developer access is disabled.")
-    })?;
     let owner = runtime_provider(app, provider_id)
         .map_err(|_| before_dispatch(FailureClass::NotFound, "Unknown MCP provider."))?;
     let spec = owner.spec();
     let item = &spec;
+    require_provider_access(app, item)
+        .map_err(|message| before_dispatch(FailureClass::Cancelled, message))?;
     let ticket = owner.ticket();
     let expected_digest = ticket
         .unbind_digest(expected_digest)
@@ -2549,16 +2588,14 @@ pub async fn mcp_test_provider(
 pub(crate) fn directory(
     app: &AppHandle,
 ) -> Vec<grain_core::capability_index::ExtensionDirectoryEntry> {
-    if !crate::settings::get_settings(app).extension_developer_mode {
-        return Vec::new();
-    }
+    let development = require_developer_mode(app).is_ok();
     let enabled: HashSet<String> = crate::settings::get_settings(app)
         .mcp_enabled_providers
         .into_iter()
         .collect();
     let mut entries: Vec<_> = CATALOG
         .iter()
-        .filter(|item| enabled.contains(item.id) && provider(item.id).is_ok())
+        .filter(|item| development && enabled.contains(item.id) && provider(item.id).is_ok())
         .map(
             |item| grain_core::capability_index::ExtensionDirectoryEntry {
                 extension_id: format!("mcp.{}", item.id),
@@ -2578,6 +2615,25 @@ pub(crate) fn directory(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn store_alpha_access_does_not_unlock_custom_mcp_or_ordinary_releases() {
+        for developer_mode in [false, true] {
+            assert!(access_policy(false, true, developer_mode, true));
+            assert!(!access_policy(false, true, developer_mode, false));
+            assert!(!access_policy(false, false, developer_mode, true));
+            assert!(!access_policy(false, false, developer_mode, false));
+            assert!(access_policy(true, false, developer_mode, true));
+            assert_eq!(
+                access_policy(true, false, developer_mode, false),
+                developer_mode
+            );
+        }
+        // The backend uses the dedicated Tauri identity, not a frontend label.
+        let alpha: serde_json::Value =
+            serde_json::from_str(include_str!("../tauri.extensions-alpha.conf.json")).unwrap();
+        assert_eq!(alpha["identifier"], "com.grain.extensions.alpha");
+    }
 
     #[test]
     fn catalog_descriptors_preserve_endpoints_auth_and_deployed_vault_keys() {

@@ -1,5 +1,14 @@
 # Grain Agent acceptance harness
 
+For ordinary extension work, start with the normal suites: `bun run test:unit`
+or selected Vitest files, the affected Rust tests, and registry/CLI tests when
+those crates change. On Windows run host tests from `src-tauri/` with the existing
+`scripts/run-rust-test.ps1` Cargo runner. Use this real-app harness only for an
+affected application-boundary checkpoint; do not expand it for ordinary policies
+or repeat previously accepted provider journeys on every change. The source-aware
+alpha/Developer Mode policy is covered by normal Rust tests, with one grouped
+affected app check and eventual packaged-alpha acceptance still required.
+
 **16 October store checkpoint:** use `--suite store` and `--suite store-mcp`
 for current store acceptance. All six cases pass after adapting the existing
 fixtures to first-round selected schemas, automatic Agent execution and current
@@ -8,7 +17,7 @@ ownership/revocation checks remain mandatory; the old pending-per-call-approval
 update step is retired. 80 runner self-tests pass. The same stamped host was
 reused; no new runner, scenario or installer. See current
 [progress](../../docs/Extensions%202.0/MCP-EXTENSION-PROGRESS.md) for exact runs,
-earlier adapter failures and the remaining grouped user check. Other historical
+earlier adapter failures and the grouped user check, now reported Pass. Other historical
 forced-discovery/manual-approval suites, including `--suite all`, are not a
 current-policy acceptance gate; retire or relocate still-useful assertions during
 the final contributor cleanup rather than add product compatibility behavior.

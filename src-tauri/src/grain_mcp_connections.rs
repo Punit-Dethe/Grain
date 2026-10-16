@@ -30,6 +30,17 @@ pub(super) struct RuntimeOwner {
 }
 
 impl RuntimeOwner {
+    pub(super) fn is_store(&self) -> bool {
+        matches!(
+            self.lease.record().identity().source(),
+            grain_core::mcp::ConnectionSource::Store { .. }
+        )
+    }
+
+    pub(super) fn require_access(&self, app: &AppHandle) -> Result<(), String> {
+        require_record_access(app, self.lease.record())
+    }
+
     pub(super) fn store_extension_id(&self) -> Option<&str> {
         if !self.current() {
             return None;
@@ -93,7 +104,7 @@ impl RuntimeOwner {
             .operation
             .lock()
             .map_err(|_| RegistryError::InvalidState.to_string())?;
-        super::require_developer_mode(app)?;
+        self.require_access(app)?;
         if !self.current() {
             return Err(RegistryError::Conflict.to_string());
         }
@@ -102,7 +113,7 @@ impl RuntimeOwner {
 
     pub(super) fn enabled(&self, app: &AppHandle) -> bool {
         let settings = crate::settings::get_settings(app);
-        settings.extension_developer_mode
+        super::access_allowed(app, settings.extension_developer_mode, self.is_store())
             && settings.mcp_enabled_providers.contains(&self.enable_key())
             && self.current()
     }
@@ -211,9 +222,9 @@ impl State {
         Ok(())
     }
 
-    pub(super) fn invalidate_all(&self) {
+    pub(super) fn invalidate_development(&self) {
         if let Ok(controls) = self.controls.lock() {
-            for owner in controls.values() {
+            for owner in controls.values().filter(|owner| !owner.is_store()) {
                 owner.control.invalidate();
             }
         }
@@ -248,7 +259,7 @@ impl State {
             .operation
             .lock()
             .map_err(|_| RegistryError::InvalidState.to_string())?;
-        super::require_developer_mode(app)?;
+        super::require_store_access(app)?;
         let grain_core::mcp::ConnectionSource::Store {
             extension_id,
             artifact_sha256,
@@ -382,8 +393,7 @@ fn view(
     record: ConnectionRecord,
 ) -> ConnectionView {
     let settings = crate::settings::get_settings(app);
-    let enabled = settings.extension_developer_mode
-        && record_allowed(app, &record)
+    let enabled = record_allowed(app, &record)
         && settings
             .mcp_enabled_providers
             .iter()
@@ -399,11 +409,21 @@ fn view(
 }
 
 fn record_allowed(app: &AppHandle, record: &ConnectionRecord) -> bool {
+    if require_record_access(app, record).is_err() {
+        return false;
+    }
     match record.identity().source() {
         grain_core::mcp::ConnectionSource::Store { .. } => app
             .try_state::<Arc<crate::grain_store::StoreState>>()
             .is_some_and(|store| store.mcp_record_allowed(record)),
         _ => true,
+    }
+}
+
+fn require_record_access(app: &AppHandle, record: &ConnectionRecord) -> Result<(), String> {
+    match record.identity().source() {
+        grain_core::mcp::ConnectionSource::Store { .. } => super::require_store_access(app),
+        _ => super::require_developer_mode(app),
     }
 }
 
@@ -495,6 +515,7 @@ pub async fn mcp_connection_clear_client_credentials(
     let view_app = app.clone();
     storage(app, move |state, registry| {
         let lease = expected_lease(registry, &id, &expected_revision)?;
+        require_record_access(&view_app, lease.record())?;
         if matches!(
             lease.record().definition().authentication,
             McpAuthentication::None {}
@@ -545,6 +566,7 @@ fn expected_owner(
 ) -> Result<(RuntimeOwner, super::session::Ticket), String> {
     let state = app.try_state::<State>().ok_or("MCP storage unavailable")?;
     let resolved = state.resolve(app, id)?;
+    resolved.0.require_access(app)?;
     if resolved.0.lease.record().revision() != revision(expected)? {
         return Err(RegistryError::Conflict.to_string());
     }
@@ -699,7 +721,7 @@ pub(crate) fn expected_lease(
 
 fn guard(app: &AppHandle, window: &WebviewWindow) -> Result<(), String> {
     crate::grain_commands::require_main_window(window)?;
-    super::require_developer_mode(app)
+    super::require_store_access(app)
 }
 
 async fn storage<T: Send + 'static>(
@@ -708,8 +730,8 @@ async fn storage<T: Send + 'static>(
 ) -> Result<T, String> {
     // Registry disk I/O and its bounded publication retry never block the UI.
     tokio::task::spawn_blocking(move || {
-        // Recheck after scheduling; a queued command cannot use old dev consent.
-        super::require_developer_mode(&app)?;
+        // Recheck after scheduling; individual records retain their source gate.
+        super::require_store_access(&app)?;
         let state = app
             .try_state::<State>()
             .ok_or("MCP connection storage is unavailable.")?;
@@ -718,7 +740,7 @@ async fn storage<T: Send + 'static>(
             .operation
             .lock()
             .map_err(|_| RegistryError::InvalidState.to_string())?;
-        super::require_developer_mode(&app)?;
+        super::require_store_access(&app)?;
         let registry = state.registry(&app)?;
         operation(&state, &registry)
     })
@@ -740,6 +762,7 @@ pub async fn mcp_connections_list(
             .map(|records| {
                 records
                     .into_iter()
+                    .filter(|record| require_record_access(&view_app, record).is_ok())
                     .map(|record| view(&view_app, registry, record))
                     .collect()
             })
@@ -756,9 +779,12 @@ pub async fn mcp_connection_import(
     definition_json: String,
 ) -> Result<ConnectionView, String> {
     guard(&app, &window)?;
+    super::require_developer_mode(&app)?;
     let definition = ConnectionDefinition::parse(definition_json.as_bytes())
         .map_err(|error| error.to_string())?;
+    let view_app = app.clone();
     storage(app, move |_, registry| {
+        super::require_developer_mode(&view_app)?;
         registry
             .insert(definition)
             .map(Into::into)
@@ -777,10 +803,12 @@ pub async fn mcp_connection_replace(
     definition_json: String,
 ) -> Result<ConnectionView, String> {
     guard(&app, &window)?;
+    super::require_developer_mode(&app)?;
     let definition = ConnectionDefinition::parse(definition_json.as_bytes())
         .map_err(|error| error.to_string())?;
     let view_app = app.clone();
     storage(app, move |state, registry| {
+        super::require_developer_mode(&view_app)?;
         let lease = expected_lease(registry, &id, &expected_revision)?;
         if matches!(
             lease.record().identity().source(),
@@ -844,6 +872,7 @@ pub async fn mcp_connection_remove(
     let view_app = app.clone();
     storage(app, move |state, registry| {
         let lease = expected_lease(registry, &id, &expected_revision)?;
+        require_record_access(&view_app, lease.record())?;
         if !registry.is_current(&lease) {
             return Err(RegistryError::Conflict.to_string());
         }
@@ -880,6 +909,7 @@ pub async fn mcp_connection_set_enabled(
     let view_app = app.clone();
     storage(app, move |state, registry| {
         let lease = expected_lease(registry, &id, &expected_revision)?;
+        require_record_access(&view_app, lease.record())?;
         let store = view_app
             .try_state::<Arc<crate::grain_store::StoreState>>()
             .map(|store| store.inner().clone());
@@ -902,7 +932,13 @@ pub async fn mcp_connection_set_enabled(
                 // Only exact account ownership can enable this destination. Neither
                 // raw record IDs nor old account keys can activate an edited URL.
                 settings.mcp_enabled_providers.retain(|value| value != &key);
-                if enabled && settings.extension_developer_mode {
+                if enabled
+                    && super::access_allowed(
+                        &view_app,
+                        settings.extension_developer_mode,
+                        owner.is_store(),
+                    )
+                {
                     settings.mcp_enabled_providers.push(key);
                     settings.mcp_enabled_providers.sort();
                     settings.mcp_enabled_providers.dedup();
@@ -937,9 +973,6 @@ pub(super) fn directory(
         return Vec::new();
     };
     let settings = crate::settings::get_settings(app);
-    if !settings.extension_developer_mode {
-        return Vec::new();
-    }
     records
         .into_iter()
         .filter(|record| {
@@ -963,6 +996,40 @@ pub(super) fn directory(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn disabling_developer_mode_only_invalidates_custom_accounts() {
+        let data = tempfile::tempdir().unwrap();
+        let registry = Arc::new(ConnectionRegistry::load(data.path()).unwrap());
+        let store = registry.insert_store(store_descriptor()).unwrap();
+        let configured = registry.insert(ConnectionDefinition::parse(br#"{"name":"Store-looking custom tools","url":"https://example.com/mcp","authentication":{"type":"oauth"}}"#).unwrap()).unwrap();
+        let state = State::default();
+        let policy = Arc::new(crate::grain_store::StoreState::init(data.path()));
+        let owners = [&store, &configured].map(|record| {
+            state
+                .owner(
+                    registry.clone(),
+                    registry.lease(record.identity().connection_id()).unwrap(),
+                    Some(policy.clone()),
+                )
+                .unwrap()
+        });
+        assert!(owners[0].is_store());
+        assert!(
+            !owners[1].is_store(),
+            "Display metadata cannot grant store provenance"
+        );
+        let store_ticket = owners[0].ticket();
+        let custom_ticket = owners[1].ticket();
+        state.invalidate_development();
+        assert!(store_ticket.commit(|| ()).is_ok());
+        assert!(custom_ticket.commit(|| ()).is_err());
+        // Store consent survives the developer switch, not actual removal.
+        let lease = registry.lease(store.identity().connection_id()).unwrap();
+        registry.remove(&lease).unwrap();
+        assert!(!owners[0].current());
+        policy.close();
+    }
 
     #[test]
     fn connection_views_distinguish_sources_without_exposing_account_identity() {

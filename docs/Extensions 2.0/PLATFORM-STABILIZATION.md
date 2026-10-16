@@ -22,9 +22,9 @@ onboarding, supported authentication routes and native callback correction are
 verified below. The user accepted Block 5's grouped real-app checks on 16 October:
 one GitHub/Notion card each, Notion Installed/Update and account retention, then
 a harmless read before/after disable/re-enable. Next: **Block 6, operations and
-release acceptance**. Store exposure outside Developer Mode carries explicitly
-into Block 6's release gate; that separation is not implemented or certified by
-this acceptance. No new Grain installer or stable SDK release.
+release acceptance**. Store exposure outside Developer Mode is now implemented
+in Block 6 with normal-test coverage; its affected app/release acceptance remains
+open. No new Grain installer or stable SDK release.
 
 ## Target experience
 
@@ -70,7 +70,7 @@ confirmation dialogs.
 | Error diagnostics hide useful causes | `ci/publish_github.py` captures child stderr, then reports CalledProcessError | Bounded, secret-safe stage/error output and a useful final status. Do not log keys, unlock files, tokens or raw credential-bearing requests. |
 | GitHub protection is absent | Read-only API check on 15 October: publish environment `protection_rules: []`, no deployment branch restriction; main protection 404; rulesets `[]` | Configure a workable approved deployment/review policy before public community publication. Do not assume an environment name protects it. |
 | Author OAuth onboarding is only a supported profile | CLI guide, host public-client validation, first-party identities | Publish the support matrix, validate declared client/issuer prerequisites and prove an independent author's supported route without a Grain code change. |
-| Store MCP install/auth still depends on Developer Mode | `grain_store.rs::store_mcp_install`, shared `require_developer_mode` callers | Separate supported-store enablement from custom/development provider gates before release. Do not expose custom MCP editing as a side effect. |
+| Store MCP install/auth Developer Mode coupling fixed in Block 6 | `grain_store.rs::store_mcp_install`, source-aware MCP access policy | Alpha store install/auth/runtime no longer needs Developer Mode. Custom MCPs retain a development-build plus Developer Mode gate. Affected app/release acceptance remains. |
 | Native/MCP compatibility projection differs | SDK native `validate_tool_only` vs MCP `validate_mcp_installable` | Choose and test consistent latest/unsupported/update behavior. No automatic downgrade to evade incompatibility or revocation. |
 | Operations and release handoff are not accepted end to end | Renewal/custody audits, temporary local tester custody, stale historical docs | Establish renewal, withdrawal, recovery and ownership runbooks; consolidate public instructions and run a bounded final acceptance. |
 
@@ -544,6 +544,28 @@ index outside this coherent generation path and is not the operations procedure.
 Use fixture keys and normal registry tests; no live revocation or publication.
 The current [operator runbook](EXTENSION-OPERATIONS.md) holds recovery, custody,
 responsibility and the remaining release gates.
+
+**Alpha exposure implemented, 16 October:** signed store MCP install/update,
+list/status, account controls, discovery and execution use a source-aware gate.
+The dedicated `com.grain.extensions.alpha` identity and debug builds allow store
+records without Developer Mode; custom records and built-in developer providers
+require both a debug build and Developer Mode, even if an old enable key exists.
+Custom import/replace repeat that check after scheduling, and record mutations
+check their source before account/settings changes. Store provenance comes from
+the verified connection record, never its display name or MCP URL. Turning off
+Developer Mode cancels custom sessions without cancelling signed-store sessions.
+Card/detail install buttons follow catalogue readiness for both extension kinds.
+
+85 host MCP tests, 13 store tests (one pre-existing live-network test ignored),
+62 frontend tests, TypeScript, scoped ESLint and the alpha frontend build pass.
+Source/graph audit retains existing signature, latest-publication, revocation,
+revision and vault ownership checks. Clippy completes with existing warnings;
+this is not a claim of repository-wide lint cleanliness. The first host attempt
+was blocked by an open app's DLL lock, then passed after the user closed it.
+No harness source, model workflow, SDK schema or OAuth transport was added.
+The affected real-app check remains Pending: Developer Mode off, store reads and
+Notion reconnect, then restart and repeat. Final packaged-alpha verification is
+reserved for the release checkpoint; debug policy tests do not replace it.
 
 **Read-only preflight, 16 October:** registry API still reports publish environment
 `protection_rules: []`, `deployment_branch_policy: null`, no rulesets, and main

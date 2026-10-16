@@ -1238,12 +1238,10 @@ function StoreGrid({
   controller,
   onPreview,
   onStoreChange,
-  developerEnabled,
 }: {
   query: string;
   controller: InstalledController;
   onPreview: (selection: DetailSelection) => void;
-  developerEnabled: boolean;
   onStoreChange: (state: StoreController) => void;
 }) {
   const [view, setView] = useState<StoreView | null>(null);
@@ -1383,11 +1381,7 @@ function StoreGrid({
               entry={entry}
               installedVersion={installed.get(entry.id)}
               busy={installing === entry.id}
-              canInstall={
-                Boolean(view?.can_install) &&
-                installing === null &&
-                (entry.kind !== "mcp" || developerEnabled)
-              }
+              canInstall={Boolean(view?.can_install) && installing === null}
               onInstall={(target) => void install(target)}
               onPreview={(target) =>
                 onPreview({ source: "store", entry: target })
@@ -1535,12 +1529,7 @@ export function ExtensionsPage({ view }: { view: ExtensionViewId }) {
             onInstall={storeState.install}
             installing={storeState.installing}
             installError={storeState.error}
-            canInstall={
-              Boolean(storeState.view?.can_install) &&
-              (detail.source !== "store" ||
-                detail.entry.kind !== "mcp" ||
-                developer?.enabled === true)
-            }
+            canInstall={Boolean(storeState.view?.can_install)}
           />
         )}
         <div className="extensions-browse-view" hidden={detail !== null}>
@@ -1646,7 +1635,6 @@ export function ExtensionsPage({ view }: { view: ExtensionViewId }) {
             </>
           ) : (
             <StoreGrid
-              developerEnabled={developer?.enabled ?? false}
               query={query}
               controller={controller}
               onPreview={openDetail}

@@ -1,5 +1,50 @@
 # Extension implementation: progress, changes and user testing
 
+**Block 6 alpha access implementation, 16 October 2026:** separated verified store
+MCPs from development/custom MCP permissions. Install/update, stored-account
+management, listing, Agent discovery and dispatch now work without Developer Mode
+in debug builds and the dedicated extensions-alpha identity. Ordinary release
+MCP access stays off; custom MCPs/built-in validation providers need a debug build
+and Developer Mode. Existing custom enable keys cannot bypass that source gate.
+Custom import/replace recheck after scheduling; account/record mutations validate
+the record source before touching settings or vault data. Existing signed-source,
+revocation, stale-version/lease and account checks remain. No author API change.
+
+The scoped audit found that switching Developer Mode off also cancelled store
+sessions. That switch now invalidates custom/developer sessions only. A normal
+test uses actual store-admitted and configured registry records to prove distinct
+provenance, cancellation isolation, and that actual store removal still invalidates
+ownership. Another test covers alpha/ordinary-release/debug access with Developer
+Mode on/off and checks the exact alpha Tauri identifier. UI card/detail actions
+no longer impose a second MCP-only Developer Mode restriction.
+
+Final **85 host MCP tests Pass**, **13 host store Pass / one existing live-network
+test ignored**, **62 frontend Pass**, plus TypeScript, scoped ESLint and alpha Vite
+build Pass. Clippy completes with existing warnings in unrelated/unchanged code;
+no repository-wide clean-lint claim. Graph review flags the authorization boundary
+as high risk, with incomplete coverage mapping; direct call-path/diff audit also
+checks both pre-download/final store gates, per-record command admission, OAuth
+publication, runtime enablement and Developer Mode cancellation. First host test
+attempt was blocked by a loaded speech DLL, then passed after the user closed
+Grain. No failed/blocked attempt is credited as Pass. No harness code or installer.
+
+**Affected user check Pending:** run the current development alpha, turn off
+Developer Mode, read through GitHub/Notion; disconnect/reconnect Notion and repeat
+a harmless read; restart with Developer Mode still off and repeat. Custom MCP
+management should stay absent. This is a new gate-specific check, not a repeat
+of the accepted store/update cases. Packaged-alpha release verification and
+production protection/custody remain open in Block 6. Existing unrelated Cargo
+and binding changes are preserved.
+
+Current normal dev alpha was then launched with
+`bun run tauri dev --config src-tauri/tauri.extensions-alpha.conf.json --no-watch`.
+Vite starts on 1420; cached dev compilation succeeds in 57.26s and
+`C:/gt/debug/handy.exe` opens (PID 10812, title Grain). Left this app/server open
+for the grouped check, with no installer or Computer Use. Startup's unrelated
+autostart-setting warning is retained; successful launch does not certify account
+or Agent behavior. Restored the exact pre-launch binding bytes after debug export;
+the user's unrelated binding/Cargo changes remain unstaged and unchanged.
+
 **User acceptance, 16 October 2026:** the user reports that the grouped store
 checks worked. Record all three as **Pass**: one GitHub and one Notion card;
 Notion Installed/Update state with unchanged account retained; harmless Notion
