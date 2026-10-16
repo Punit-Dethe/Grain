@@ -538,6 +538,23 @@ checkpoint; no fresh installer for each edit.
 
 ## Block 6 — Operations, contributor handoff and release acceptance
 
+**Publishing controls prepared, 16 October:** draft registry PR 12 at
+`97e50fbdc10d041eb037ec4802db5ba5dfbaf041` pins trusted checkout to the dispatch
+SHA, restricts the job to main, and rejects drift from the reviewed base. Two
+non-executing API request bodies propose Punit-Dethe's explicit environment
+approval, self-review allowed, and exactly the main branch. Actionlint, the actual
+inline preflight's matching/stale/non-SHA checks and seven publisher regressions
+pass. Live adoption is Pending the separate operator decision, not counted as
+enforced. No source/signing/tooling pin, extension version or Grain build changes.
+Administrator bypass/source protection and private backup/restore remain gates.
+
+`CONTRIBUTING.md` now links the current author/authentication, operator, source and
+normal-test paths so a contributor need not reconstruct the historical chat.
+The harness is an existing app-boundary checkpoint tool, not the default test
+runner for every edit. Historical all-suite discovery/manual-approval assumptions
+remain explicitly outside current acceptance; no compatibility code or new
+testing framework is added, and physical removal of shared helpers is not claimed.
+
 **In progress, 16 October:** add exact-version revocation through the existing
 signed renewal/assembly/promotion path. The legacy `retire` command mutates an
 index outside this coherent generation path and is not the operations procedure.

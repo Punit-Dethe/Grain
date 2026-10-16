@@ -82,6 +82,43 @@ revocation procedure.
 
 ## Remaining activation gates
 
+### Reviewable tester controls
+
+[Registry PR 12](https://github.com/Punit-Dethe/Grain-Extention/pull/12), exact head
+`97e50fbdc10d041eb037ec4802db5ba5dfbaf041`, prepares six workflow lines and two
+plain REST request bodies. It does not change the tooling pin, signer, candidate
+bytes or running app. Adoption is **Pending operator approval**:
+
+| Control | Proposed tester setting |
+| --- | --- |
+| Workflow dispatch | Branch `main` only; trusted checkout uses the run's exact SHA. |
+| Reviewed base | Run SHA must equal the independently reviewed publication base; drift refuses before candidate checkout. |
+| Deployment approval | Punit-Dethe, public user ID 206300423, must approve the `publish` environment job. |
+| Self-review | Allowed, so the existing single-maintainer tester process remains usable. |
+| Deployment refs | Exactly the branch `main`; no tags or additional branch patterns. |
+| Keys and live releases | No key migration, signing, extension release or installer. |
+
+This approval is for activating a signed catalogue, not for Agent tool calls.
+Agent automatic execution and provider OAuth consent remain unchanged.
+
+Re-read environment and branch policies before adoption; refuse unexpected drift.
+After applying the two reviewed request bodies, GET must confirm the exact reviewer,
+self-review setting and single branch rule. Confirm an actual deployment waits for
+approval on the next separately approved normal publication; do not create a dummy
+extension to test it. Full commands and official references are in the registry's
+[publishing instructions](https://github.com/Punit-Dethe/Grain-Extention/blob/publishing/main-only-activation-20261016/PUBLISHING.md#proposed-tester-publishing-environment--not-automatically-adopted).
+
+Production administrator-bypass remains a separate operator setting. GitHub's
+documented REST environment update and the live `UpdateEnvironmentInput` schema
+do not expose that write field; use the documented Settings checkbox, not an
+undocumented request property. Source branch protection also remains separate:
+PR-only writes can block the current exact-base `GITHUB_TOKEN` publisher. The
+workflow condition does not replace environment enforcement; branches can edit
+their own YAML. No public community-readiness claim follows from these tester
+controls, and no repository control was activated merely by committing this plan.
+
+### Outstanding release decisions
+
 - **GitHub controls:** read-only preflight found no publish-environment protection
   rules/branch restriction, no rulesets and no main branch protection. Prepare
   concrete controls compatible with the current conditional writer for operator

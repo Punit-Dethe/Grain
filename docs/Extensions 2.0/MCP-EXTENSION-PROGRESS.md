@@ -1,5 +1,39 @@
 # Extension implementation: progress, changes and user testing
 
+**Block 6 publishing controls/contributor handoff, 16 October 2026:** read-only
+GitHub APIs reconfirm the publish environment has no reviewer or branch rule,
+administrator bypass is allowed, no rulesets exist and main is unprotected.
+Prepared [draft registry PR 12](https://github.com/Punit-Dethe/Grain-Extention/pull/12)
+at `97e50fbdc10d041eb037ec4802db5ba5dfbaf041`: main-only job admission, an exact
+run-SHA trusted checkout and drift refusal against the reviewed publication base.
+Two inert JSON bodies and the operator procedure propose required maintainer
+approval with self-review allowed and one main-branch-only deployment rule.
+Separate operator approval is requested; no setting/merge/signature/release is
+credited as applied while it is Pending.
+
+Actionlint Pass, the actual workflow's inline preflight passes matching main and
+refuses stale/non-SHA bases before verifier use, and all **seven existing Python
+publisher tests pass** (including real local Git races, lost responses and HTTP
+failure after confirmed push). Proposed bodies validate against the verified
+public maintainer ID and documented API fields. No app tests/build are repeated
+for this workflow/docs change. No new harness, runner or testing dependency.
+
+The source audit keeps signing, exact candidate verification, lease push and
+separate public-delivery checks unchanged. A YAML condition is not an environment
+security boundary because branches can edit their own YAML. The documented REST
+and live GraphQL input lack an administrator-bypass write field; that checkbox
+and main/source protection remain separate production gates. No undocumented API
+call or new publisher credential is introduced. Official references and concrete
+operator steps are linked in [operations](EXTENSION-OPERATIONS.md).
+
+Added the current extension source/test/author/operator map to `CONTRIBUTING.md`.
+Historical harness procedures stay clearly outside current release acceptance;
+no old fixture behavior is restored and no shared-helper deletion is claimed.
+Unrelated Cargo/binding edits and the open user app are untouched. The installed
+two-column visual check remains Pending an explicit report; generic continuation
+is not retroactively treated as its visual acceptance. Block 6 remains open for
+control adoption, private custody/restore decisions and final packaged verification.
+
 **User acceptance and installed-list refinement, 16 October 2026:** the user
 reports the affected alpha checks work. Record **Pass** for store reads with
 Developer Mode off, Notion disconnect/reconnect and a new read, then restart/read
