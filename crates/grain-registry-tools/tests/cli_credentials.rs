@@ -50,6 +50,33 @@ fn reviewed_staging_accepts_unlock_flags_but_read_only_commands_refuse_them() {
     assert!(!error.contains("Credential options apply only"), "{error}");
     assert!(!owned.path().join("release").exists());
 
+    let revocation = run(&[
+        "revoke-serving-release",
+        "--v1",
+        "empty-store",
+        "--expected-snapshot-sha256",
+        &"2".repeat(64),
+        "--id",
+        "com.example.tools",
+        "--version",
+        "1.0.0",
+        "--reason",
+        "Broken release",
+        "--key",
+        "publisher.key",
+        "--out",
+        "revoked",
+        "--key-password-file",
+        "missing-password",
+    ]);
+    assert!(!revocation.status.success());
+    let error = String::from_utf8_lossy(&revocation.stderr);
+    assert!(!error.contains("Credential options apply only"), "{error}");
+    assert!(!error.contains("missing-password"), "{error}");
+    assert!(!error.contains("unrecognized subcommand"), "{error}");
+    assert!(!error.contains("Usage:"), "{error}");
+    assert!(!owned.path().join("revoked").exists());
+
     let read_only = run(&[
         "verify-hosting-bundle",
         "--bundle",

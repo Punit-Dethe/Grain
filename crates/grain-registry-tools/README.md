@@ -713,6 +713,33 @@ operational/release gates.
 
 ## Commit-bound GitHub publication handoff (E4g)
 
+### Withdrawing a broken release
+
+```powershell
+grain-registry revoke-serving-release --v1 SELECTED_SNAPSHOT --expected-snapshot-sha256 '<independently protected snapshot digest>' --id com.example.tools --version 1.0.0 --reason 'Broken release; install the corrected version' --key OPERATOR_PUBLISHING_KEY --prompt-key-password --expires-days 30 --out FRESH_REVOCATION
+grain-registry verify-serving-tree --v1 FRESH_REVOCATION/v1
+grain-registry promote-serving-tree --assembly FRESH_REVOCATION --store PROTECTED_STORE --expected-current-sha256 '<independently protected current.json digest>'
+```
+
+This prepares an exact-version signed revocation and a newly bound index. The
+target must exist in the independently pinned signed snapshot and must not already
+be revoked (including an all-version rule). The user-visible reason must be
+nonempty, at most 1024 UTF-8 bytes and contain no control characters. Existing
+rules, unknown fields, releases and addressed assets remain. Both metadata
+counters advance; expiry is extended as needed and never shortened, so an urgent
+revocation also works immediately after renewal. Authentic expired metadata may
+recover; expired roots still require root authority.
+
+Hosting is unchanged until the normal verified export/commit-bound publication
+steps below succeed. Clients enforce the revocation after refresh, not by push.
+Publish a corrected **new version** through normal source review; never erase the
+old rule or reuse the bad version. This command does not create source approval.
+Do not use legacy `retire`/ad hoc index signing for a generation-bound store.
+The [operator runbook](../../docs/Extensions%202.0/EXTENSION-OPERATIONS.md) lists
+recovery and production activation gates.
+
+### Publishing the verified bundle
+
 ```powershell
 grain-registry prepare-github-publication --checkout OPERATOR_CHECKOUT --repository OWNER/REPO --branch RELEASE_BRANCH --expected-base-commit INDEPENDENT_BASE_COMMIT --candidate-commit INDEPENDENT_CANDIDATE_COMMIT --previous PROTECTED_PREVIOUS_BUNDLE --previous-receipt-sha256 PREVIOUS_RECEIPT_PIN --bundle PROTECTED_CANDIDATE_BUNDLE --expected-receipt-sha256 CANDIDATE_RECEIPT_PIN --out FRESH_HANDOFF
 ```

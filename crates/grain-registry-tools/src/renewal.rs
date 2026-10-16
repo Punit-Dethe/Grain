@@ -1,5 +1,17 @@
-//! Operator renewal only: no new entries, approval, root rotation or publication.
+//! Operator metadata edits: no new releases, approval, root rotation or publication.
 use super::*;
+
+pub(crate) enum MetadataChange<'a> {
+    Renew {
+        days: u32,
+    },
+    Revoke {
+        days: u32,
+        id: &'a str,
+        version: &'a str,
+        reason: &'a str,
+    },
+}
 
 pub(super) fn renew_with(
     v1: &Path,
@@ -10,6 +22,29 @@ pub(super) fn renew_with(
     anchor: &Anchor<'_>,
     unlock: &crate::Unlock,
 ) -> Result<()> {
+    rewrite_with(
+        v1,
+        pin,
+        key,
+        MetadataChange::Renew { days },
+        out,
+        anchor,
+        unlock,
+    )
+}
+
+pub(super) fn rewrite_with(
+    v1: &Path,
+    pin: &str,
+    key: &Path,
+    change: MetadataChange<'_>,
+    out: &Path,
+    anchor: &Anchor<'_>,
+    unlock: &crate::Unlock,
+) -> Result<()> {
+    let days = match &change {
+        MetadataChange::Renew { days } | MetadataChange::Revoke { days, .. } => *days,
+    };
     if !hex(pin) || !(1..=30).contains(&days) {
         bail!("Renewal needs an independent snapshot digest and one to thirty days");
     }
@@ -18,6 +53,28 @@ pub(super) fn renew_with(
     let mut tree = check(v1, anchor, false)?;
     if tree.state.snapshot != pin {
         bail!("Renewal source snapshot changed");
+    }
+    if let MetadataChange::Revoke {
+        id,
+        version,
+        reason,
+        ..
+    } = &change
+    {
+        if reason.trim().is_empty() || reason.len() > 1024 || reason.chars().any(char::is_control) {
+            bail!("Revocation needs a nonempty plain-text reason of at most 1024 bytes");
+        }
+        if !tree
+            .index
+            .entries
+            .iter()
+            .any(|entry| entry.id == *id && entry.version == *version)
+        {
+            bail!("Revocation must name an exact release in the signed snapshot");
+        }
+        if tree.revocations.state_for(id, version) == Some(RevocationState::Revoked) {
+            bail!("Release is already revoked");
+        }
     }
     let out = new_output(out, &[&tree.path])?;
     let roots: Roots = serde_json::from_slice(&tree.docs["roots.json"])?;
@@ -41,11 +98,30 @@ pub(super) fn renew_with(
                 .as_str()
                 .context("Renewal metadata expiry")?,
         )?;
-        if deadline.timestamp() <= old_expiry.timestamp() {
+        if matches!(change, MetadataChange::Renew { .. })
+            && deadline.timestamp() <= old_expiry.timestamp()
+        {
             bail!("Renewal must extend both metadata expirations");
         }
         object.insert("version".into(), version.into());
-        object.insert("expires".into(), deadline.to_rfc3339().into());
+        // An urgent revocation must work even immediately after renewal, and
+        // must not shorten the lifetime already advertised to clients.
+        if deadline.timestamp() > old_expiry.timestamp() {
+            object.insert("expires".into(), deadline.to_rfc3339().into());
+        }
+        if name == "revocations.json" {
+            if let MetadataChange::Revoke {
+                id,
+                version,
+                reason,
+                ..
+            } = &change
+            {
+                object.entry("entries").or_insert_with(|| serde_json::json!([]))
+                    .as_array_mut().context("Revocation entries must be an array")?
+                    .push(serde_json::json!({"id":id,"version":version,"state":"revoked","reason":reason}));
+            }
+        }
         let bytes = serde_json::to_vec(&value)?;
         if bytes.len() > 4 * 1024 * 1024 {
             bail!("Renewed document exceeds metadata size limit");
@@ -99,7 +175,7 @@ pub(super) fn renew_with(
     sync_dir(&out)?;
     owned.1 = true;
     println!(
-        "Renewed signed metadata: index {}, revocations {}, snapshot {}; hosting unchanged",
+        "Prepared signed metadata: index {}, revocations {}, snapshot {}; hosting unchanged",
         next.state.index_version, next.state.revocations_version, next.state.snapshot
     );
     Ok(())

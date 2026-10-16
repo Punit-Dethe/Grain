@@ -199,6 +199,26 @@ enum Cmd {
         #[arg(long)]
         out: PathBuf,
     },
+    /// Revoke one exact signed release; prepares metadata without changing hosting.
+    RevokeServingRelease {
+        #[arg(long)]
+        v1: PathBuf,
+        #[arg(long)]
+        expected_snapshot_sha256: String,
+        #[arg(long)]
+        key: PathBuf,
+        #[arg(long)]
+        id: String,
+        #[arg(long)]
+        version: String,
+        /// User-visible explanation, at most 1024 bytes, without control characters.
+        #[arg(long)]
+        reason: String,
+        #[arg(long, default_value_t = 30)]
+        expires_days: u32,
+        #[arg(long)]
+        out: PathBuf,
+    },
     /// Export selected metadata and all retained addressed assets for static hosting.
     ExportHostingBundle {
         #[arg(long)]
@@ -630,6 +650,7 @@ fn main() -> Result<()> {
             &cli.cmd,
             Cmd::BootstrapServingTree(_)
                 | Cmd::RenewServingMetadata { .. }
+                | Cmd::RevokeServingRelease { .. }
                 | Cmd::SignReviewedCandidate(_)
                 | Cmd::StageReviewedRelease { .. }
                 | Cmd::Keygen { .. }
@@ -716,6 +737,28 @@ fn main() -> Result<()> {
             &expected_snapshot_sha256,
             &key,
             expires_days,
+            &out,
+            unlock,
+        ),
+        Cmd::RevokeServingRelease {
+            v1,
+            expected_snapshot_sha256,
+            key,
+            id,
+            version,
+            reason,
+            expires_days,
+            out,
+        } => serving::edit_metadata(
+            &v1,
+            &expected_snapshot_sha256,
+            &key,
+            serving::MetadataChange::Revoke {
+                days: expires_days,
+                id: &id,
+                version: &version,
+                reason: &reason,
+            },
             &out,
             unlock,
         ),

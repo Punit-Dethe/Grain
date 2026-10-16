@@ -26,6 +26,7 @@ pub(crate) mod publication;
 pub(crate) mod release;
 #[path = "renewal.rs"]
 mod renewal;
+pub(super) use renewal::MetadataChange;
 
 const DOCS: [&str; 6] = [
     "roots.json",
@@ -566,6 +567,17 @@ pub(super) fn renew(
     unlock: &crate::Unlock,
 ) -> Result<()> {
     renewal::renew_with(v1, pin, key, days, out, &app_anchor, unlock)
+}
+
+pub(super) fn edit_metadata(
+    v1: &Path,
+    pin: &str,
+    key: &Path,
+    change: MetadataChange<'_>,
+    out: &Path,
+    unlock: &crate::Unlock,
+) -> Result<()> {
+    renewal::rewrite_with(v1, pin, key, change, out, &app_anchor, unlock)
 }
 
 pub(super) fn assemble(base: &Path, update: &Path, out: &Path) -> Result<()> {

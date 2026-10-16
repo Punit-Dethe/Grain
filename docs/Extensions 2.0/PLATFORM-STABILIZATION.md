@@ -5,7 +5,7 @@ extension authoring, review, publication and store delivery. It replaces this
 file's earlier chronological work order and the historical E4–E8 phase counts.
 Completed evidence stays in [progress](MCP-EXTENSION-PROGRESS.md) and the focused
 audit documents; it is not a fresh backlog. Six bounded blocks are defined below:
-**Blocks 1–4 complete; two remain**. The user explicitly approved
+**Blocks 1–5 checkpoints complete; Block 6 remains**. The user explicitly approved
 [registry PR 8](https://github.com/Punit-Dethe/Grain-Extention/pull/8) at
 `a8f31008bea36d927baca76faf56820e66d1abb1` and tester ownership adoption on
 16 October. It is merged at `d0343cf18d0a2e1b65143923e460ee2a84061cb0`.
@@ -19,8 +19,12 @@ commit `8931134ee42a4c02dda05369304763c77e6cc859`. Run **38790216499** confirms 
 and all 63 public files/132 HTTP checks. The corrected CLI pin and real CLI test
 also pass Linux CI and are merged through registry PR 10. Block 4's author
 onboarding, supported authentication routes and native callback correction are
-verified below. Next: **Block 5, store install/update/account acceptance**. Production operator
-controls retain their own later gates. No new Grain installer or stable SDK release.
+verified below. The user accepted Block 5's grouped real-app checks on 16 October:
+one GitHub/Notion card each, Notion Installed/Update and account retention, then
+a harmless read before/after disable/re-enable. Next: **Block 6, operations and
+release acceptance**. Store exposure outside Developer Mode carries explicitly
+into Block 6's release gate; that separation is not implemented or certified by
+this acceptance. No new Grain installer or stable SDK release.
 
 ## Target experience
 
@@ -48,8 +52,8 @@ confirmation dialogs.
 | Listing | Separate DESCRIPTION, 512×512 PNG icon, up to six wide gallery images, signed sizes/hashes and client checks exist. User accepts the current artwork/detail layout for now. |
 | Review/build | Pinned source/tag, isolated native builds, fresh trusted preparation, genuine CI attestations, exact review and signing checks exist. Native author execution is separated from signing authority. |
 | Hosting | Signed roots/index/revocations, content-addressed assets, metadata freshness/cache, conditional publication and anonymous delivery checks exist. GitHub remains the host. |
-| Real extensions | GitHub 0.1.2 and Notion 0.1.2 are live in signed index 8. Publication run 38790216499 confirms remote Git plus 63 public files/132 HTTP requests. Representative account/Agent workflows already passed; not every provider tool or the new installed update state is certified. |
-| Store identity | Duplicate historical release cards fixed in 608fb263. Browse/details/icons now share latest eligible publication selection. Real Windows store suite: 12 Pass, one existing live-network test ignored. User confirmation of the two-card view remains pending. |
+| Real extensions | GitHub 0.1.2 and Notion 0.1.2 are live in signed index 8. Publication run 38790216499 confirms remote Git plus 63 public files/132 HTTP requests. Representative account/Agent and current store/update checks pass; not every provider tool is certified. |
+| Store identity | Duplicate historical release cards fixed in 608fb263. Browse/details/icons share latest eligible publication selection; updates follow signed publication order. Thirteen ordinary store tests and six real-app native/MCP cases pass. User accepts the two-card view, update/account state and read after re-enable. Existing live-network unit test remains ignored. |
 | Tool selection | Existing lexical shortlist, compact directory and exact recovery have a completed bounded GitHub/Notion checkpoint. No new retrieval research, embeddings or Agent rewrite in this work order. |
 
 ## Audit baseline: concrete gaps, not assumed missing implementations
@@ -60,7 +64,7 @@ confirmation dialogs.
 | Native scaffold needed supplied artwork to pass doctor (fixed in Block 1) | CLI scaffold and tests | Provide a clearly identified valid starter icon or an equally simple documented setup; align runtime/listing icon instructions. Do not silently copy unrelated branding. |
 | Submission drafting lacked updates (fixed in Block 1) | CLI guide and `crates/grain-ext-cli/src/lib.rs` | Explicit safe update mode; preserve an existing draft on invalid input/failure. |
 | Submission stops at local files | CLI guide | Small optional GitHub PR submission/update helper using existing Git/`gh`; keep manual/offline drafting usable. Authenticate through `gh`, never store a second GitHub credential. |
-| Ownership enforcement implemented; operational adoption pending | `authority.rs`, `review.rs`, `approval.rs`, registry draft PR 8 | Schema-3 signing requires a pinned operator-owned ID/source/kind/maintainer/reviewer file. Review/adopt the proposed current file before real signing; configure approved publication protection before community release. |
+| Ownership enforcement and tester adoption complete; production controls pending | `authority.rs`, `review.rs`, `approval.rs`, merged registry PR 8 | Schema-3 signing requires the adopted pinned operator-owned ID/source/kind/maintainer/reviewer file. Configure approved publication protection before community release. |
 | Publishing needs too much manual assembly | Actual GitHub/Notion artwork publication; existing CLI commands | One orchestration entry point around existing prepare/sign/assemble/export/activate commands; no parallel implementation of their checks. |
 | Tooling pins can drift | Corrected stale producer commit and PNG capture omission in PRs 6/7 | One reviewed tooling version per publication; complete-path regression includes icons/gallery. Make mismatch diagnostics visible. |
 | Error diagnostics hide useful causes | `ci/publish_github.py` captures child stderr, then reports CalledProcessError | Bounded, secret-safe stage/error output and a useful final status. Do not log keys, unlock files, tokens or raw credential-bearing requests. |
@@ -455,8 +459,8 @@ later native cases and the MCP batch are **Not run**, not accepted by inference.
 Stop here rather than rewrite unrelated Agent test expectations inside this fix.
 The two existing affected fixture self-tests pass; the MCP fixture now retains
 signed predecessor history like the real publisher. No scenario/runner/framework
-was added. Block 5 remains open for a bounded current-contract app checkpoint
-and the grouped user view/account confirmation; Block 6 remains after it.
+was added. At that intermediate point the bounded current-contract app checkpoint
+and grouped user confirmation remained open; both are now accepted below.
 
 **Automated store checkpoint complete, 16 October:** final `run-aobPCF` (native)
 and `run-tV2ue0` (MCP) pass all six existing real-app cases, cleanup Pass. They
@@ -486,19 +490,20 @@ mistook pre-start inactivity for task completion. The origin check now runs on
 the actual completed panel; completion waits for an observed model request.
 Both failed runs have cleanup Pass and earn no acceptance.
 
-**Only the grouped user catalogue/account check remains for this checkpoint:**
+**Grouped user catalogue/account check — now Pass, 16 October:**
 one GitHub and one Notion card, current/update state with an unchanged Notion
 account retained, and one harmless Notion read before/after disable/re-enable.
 Requested once with the alpha development launch command; no new installer.
-The user reports that launch failed and will provide results in the next reply;
-none of these three manual checks is credited. CLI invocation/launch diagnosis
+The user initially reported that launch failed and would provide results later;
+none of the manual checks was credited at that point. CLI invocation/launch diagnosis
 is separate from the six accepted isolated runs. The command plus `--no-watch`
 subsequently builds the normal dev app in 2m08s and opens `C:/gt/debug/handy.exe`;
 it is left available for testing. No original error text was provided, so its
 cause remains unknown. A local linked-dependency font serving warning is recorded
 in progress; no visual acceptance is inferred. No installer was built.
-Block 5 remains open until that report and any required alpha gate decision;
-Block 6's production operator/release controls are separate. Historical forced
+The latest user report accepts all three checks and closes the store checkpoint.
+The alpha exposure gate carries into Block 6's production/operator release work.
+Historical forced
 discovery/per-call-approval suites are not current acceptance; retire or move
 their still-relevant assertions during Block 6, not through compatibility code.
 
@@ -521,12 +526,24 @@ build, once its gate is explicitly accepted. Keep custom MCP form/JSON managemen
 hidden and keep backend validation/account ownership. Native and MCP remain one
 user-facing extension collection.
 
+**Checkpoint accepted, 16 October:** automated/source audit and the three grouped
+user checks pass. The ordinary alpha store/Developer Mode separation above moves
+to Block 6's final exposure gate; it is not silently counted as delivered. Current
+acceptance used the development alpha profile. No repeated user batch is needed.
+
 **Done:** one native and GitHub/Notion exercise install/setup/action/update/failure/
 uninstall on the real app; reuse prior passes where the behavior did not change.
 Ordinary component tests cover most states. One small user visual batch at the
 checkpoint; no fresh installer for each edit.
 
 ## Block 6 — Operations, contributor handoff and release acceptance
+
+**In progress, 16 October:** add exact-version revocation through the existing
+signed renewal/assembly/promotion path. The legacy `retire` command mutates an
+index outside this coherent generation path and is not the operations procedure.
+Use fixture keys and normal registry tests; no live revocation or publication.
+The current [operator runbook](EXTENSION-OPERATIONS.md) holds recovery, custody,
+responsibility and the remaining release gates.
 
 **Read-only preflight, 16 October:** registry API still reports publish environment
 `protection_rules: []`, `deployment_branch_policy: null`, no rulesets, and main
@@ -553,6 +570,9 @@ not establish those controls.
 5. Run affected unit/integration suites and a final bounded real-app batch. Build
    the intended installer once only when release packaging is needed. Verify only
    the OSs/providers being advertised; label other support honestly.
+6. Finish and explicitly accept supported-store exposure for the intended alpha
+   without exposing custom MCP management. This is the carried Block 5 gate;
+   current Developer Mode acceptance is not ordinary-user release acceptance.
 
 **Done:** a second contributor can follow the docs without private chat context,
 release gates are explicitly accepted and one final signed-store/application
@@ -596,9 +616,9 @@ Blocks 1–4 need no new user account/app test. Tester ownership/tooling adoptio
 the separately approved live Notion 0.1.2 update are complete. Actual GitHub
 protection/signing-key custody changes remain reviewed operator decisions:
 
-- Confirm the two-card store view after the recent fix; current artwork is accepted.
+- Two-card store view and grouped Notion update/read checks: user Pass, 16 October.
 - Confirm concrete publishing protection/custody changes before activation.
-- Check the grouped final store setup/update states on the real app.
+- Accept the final alpha exposure/packaging check when that affected path is ready.
 - Decide public release identity/platform scope before the final release, not now.
 
 The deferred Linear expiry observation, advanced provider tool families, custom

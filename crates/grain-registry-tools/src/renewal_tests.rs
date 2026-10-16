@@ -1,5 +1,174 @@
 use super::*;
-use crate::serving::renewal::renew_with;
+use crate::serving::renewal::{renew_with, rewrite_with, MetadataChange};
+
+#[test]
+fn exact_revocation_preserves_history_and_leaves_other_versions_available() {
+    let f = Fixture::new();
+    // Far-future metadata proves revocation does not wait for a renewal window.
+    let base = f.tree("base", 4, true);
+    let mut index = f.json(&base, "index.json");
+    let mut corrected = index["entries"][1].clone();
+    corrected["version"] = "1.0.1".into();
+    index["entries"].as_array_mut().unwrap().push(corrected);
+    index["entries"][1]["future_entry"] = json!({"preserved":true});
+    f.signed(&base, "index.json", &index, "publisher");
+    let mut rules = f.json(&base, "revocations.json");
+    rules["future_envelope"] = json!({"preserved":true});
+    rules["entries"] = json!([{"id":"com.example.mcp","version":"1.0.0","state":"deprecated","reason":"prior notice","future_rule":true}]);
+    f.signed(&base, "revocations.json", &rules, "publisher");
+    f.bind(&base, "publisher");
+    let old = check(&base, &f.anchor(), true).unwrap();
+    let store = f.root.path().join("store");
+    initialize_with(&base, &store, &f.anchor()).unwrap();
+    let pointer_pin = digest(&fs::read(store.join("current.json")).unwrap());
+    let out = f.root.path().join("revoked");
+    rewrite_with(
+        &base,
+        &old.state.snapshot,
+        &f.root.path().join("keys/publisher.key"),
+        MetadataChange::Revoke {
+            days: 30,
+            id: "com.example.mcp",
+            version: "1.0.0",
+            reason: "Broken release",
+        },
+        &out,
+        &f.anchor(),
+        &crate::Unlock::development(),
+    )
+    .unwrap();
+    let next = check(&out.join("v1"), &f.anchor(), true).unwrap();
+    assert_eq!(next.state.index_version, 5);
+    assert_eq!(next.state.revocations_version, 2);
+    assert_eq!(
+        next.revocations.state_for("com.example.mcp", "1.0.0"),
+        Some(RevocationState::Revoked)
+    );
+    assert_eq!(next.revocations.state_for("com.example.mcp", "1.0.1"), None);
+    assert_eq!(
+        next.revocations.state_for("com.example.native", "1.0.0"),
+        None
+    );
+    let mut before: Value = serde_json::from_slice(&old.docs["index.json"]).unwrap();
+    let mut after = f.json(&out.join("v1"), "index.json");
+    assert_eq!(before["expires"], after["expires"]);
+    without_freshness(&mut before);
+    without_freshness(&mut after);
+    assert_eq!(before, after);
+    let after_rules = f.json(&out.join("v1"), "revocations.json");
+    assert_eq!(after_rules["entries"][0], rules["entries"][0]);
+    assert_eq!(after_rules["future_envelope"], rules["future_envelope"]);
+    for (name, bytes) in &old.docs {
+        assert_eq!(fs::read(base.join(name)).unwrap(), *bytes);
+    }
+    for name in old.assets.keys() {
+        assert_eq!(
+            fs::read(base.join(name)).unwrap(),
+            fs::read(out.join("v1").join(name)).unwrap()
+        );
+    }
+    assert_eq!(old.docs["roots.json"], next.docs["roots.json"]);
+    promote_with(&out, &store, &pointer_pin, &f.anchor()).unwrap();
+    let current = fs::read(store.join("current.json")).unwrap();
+    assert!(promote_with(&out, &store, &pointer_pin, &f.anchor()).is_err());
+    assert_eq!(current, fs::read(store.join("current.json")).unwrap());
+    let bundle = f.root.path().join("bundle");
+    hosting::export(&store, &bundle, &digest(&current), &f.anchor()).unwrap();
+    hosting::verify(
+        &bundle,
+        &digest(&fs::read(bundle.join("bundle.json")).unwrap()),
+        &f.anchor(),
+    )
+    .unwrap();
+}
+
+#[test]
+fn revocation_refuses_unknown_already_revoked_and_invalid_reason_before_key_access() {
+    let f = Fixture::new();
+    let base = renewable(&f, "base", true);
+    let pin = check(&base, &f.anchor(), false).unwrap().state.snapshot;
+    let out = f.root.path().join("refused");
+    for (id, version, reason, error) in [
+        ("com.example.missing", "1.0.0", "broken", "exact release"),
+        ("com.example.mcp", "9.0.0", "broken", "exact release"),
+        ("com.example.native", "1.0.0", "broken", "already revoked"),
+        ("com.example.mcp", "1.0.0", "  ", "plain-text"),
+        ("com.example.mcp", "1.0.0", "bad\nreason", "plain-text"),
+        ("com.example.mcp", "1.0.0", &"x".repeat(1025), "plain-text"),
+    ] {
+        let actual = rewrite_with(
+            &base,
+            &pin,
+            &f.root.path().join("never-open-key"),
+            MetadataChange::Revoke {
+                days: 30,
+                id,
+                version,
+                reason,
+            },
+            &out,
+            &f.anchor(),
+            &crate::Unlock::development(),
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(actual.contains(error), "expected {error}, got {actual}");
+        assert!(!out.exists());
+    }
+}
+
+#[test]
+fn native_revocation_recovers_expired_metadata_and_rejects_duplicate_or_wrong_signer() {
+    let f = Fixture::new();
+    let base = renewable(&f, "base", true);
+    let mut rules = f.json(&base, "revocations.json");
+    rules["entries"][0]["state"] = "deprecated".into();
+    f.signed(&base, "revocations.json", &rules, "publisher");
+    f.bind(&base, "publisher");
+    let old = check(&base, &f.anchor(), false).unwrap();
+    let out = f.root.path().join("revoked");
+    let change = || MetadataChange::Revoke {
+        days: 30,
+        id: "com.example.native",
+        version: "1.0.0",
+        reason: "Broken native release",
+    };
+    assert!(rewrite_with(
+        &base,
+        &old.state.snapshot,
+        &f.root.path().join("keys/rotated.key"),
+        change(),
+        &out,
+        &f.anchor(),
+        &crate::Unlock::development()
+    )
+    .is_err());
+    assert!(!out.exists());
+    rewrite_with(
+        &base,
+        &old.state.snapshot,
+        &f.root.path().join("keys/publisher.key"),
+        change(),
+        &out,
+        &f.anchor(),
+        &crate::Unlock::development(),
+    )
+    .unwrap();
+    let next = check(&out.join("v1"), &f.anchor(), true).unwrap();
+    let refused = f.root.path().join("duplicate");
+    let error = rewrite_with(
+        &out.join("v1"),
+        &next.state.snapshot,
+        &f.root.path().join("never-open-key"),
+        change(),
+        &refused,
+        &f.anchor(),
+        &crate::Unlock::development(),
+    )
+    .unwrap_err();
+    assert!(error.to_string().contains("already revoked"));
+    assert!(!refused.exists());
+}
 
 fn renewable(f: &Fixture, name: &str, expired: bool) -> PathBuf {
     let path = f.tree(name, 4, true);

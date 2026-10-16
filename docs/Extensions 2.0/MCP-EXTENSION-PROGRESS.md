@@ -1,5 +1,38 @@
 # Extension implementation: progress, changes and user testing
 
+**User acceptance, 16 October 2026:** the user reports that the grouped store
+checks worked. Record all three as **Pass**: one GitHub and one Notion card;
+Notion Installed/Update state with unchanged account retained; harmless Notion
+read before and after disabling/re-enabling. No repeat is requested. Together
+with the six automated cases and scoped audit below, this closes Block 5's store
+checkpoint. **Blocks 1–5 checkpoints complete; Block 6 remains.** Supported-store
+exposure outside Developer Mode is explicitly carried to Block 6's final alpha
+gate; the current development-profile pass does not certify that release path.
+
+**Block 6 implementation, 16 October:** added `revoke-serving-release` to the
+existing metadata editor, using the same signature validation, generation binding,
+output ownership and stale-parent promotion guards as renewal. It targets one
+known signed ID/version, requires a bounded reason, preserves existing revocations
+and assets, and leaves hosting untouched. No live extension was revoked, published
+or re-signed. Production repository protection/key custody and alpha exposure
+remain separate explicit gates; see [operations](EXTENSION-OPERATIONS.md).
+
+Verification: all 99 ordinary registry unit tests and the real-executable CLI
+credential-admission test pass. After adding native-specific coverage, all ten
+renewal/revocation cases pass; the same editor covers MCP and native without a
+second signer. Tests cover exact/wildcard prior rules, other versions, preserved
+unknown fields/assets, expired metadata, wrong signer, repeated/stale promotion,
+verified hosting export and pre-key refusal for unknown/duplicate/invalid targets.
+The first full run caught UTC timestamp spelling changing from `Z` to `+00:00`;
+the editor now preserves the existing expiry bytes when no extension is needed.
+No failed run is counted as acceptance. Strict all-target Clippy for this crate
+(`--no-deps`) passes. Broader dependency linting stopped on a pre-existing
+`clippy::int_plus_one` in `grain-extension-checks/src/listing.rs:33`; no unrelated
+source cleanup was folded into this change. Graph review is incomplete for the
+editor, so direct source/diff review also checked credential admission, old-state
+parent binding, monotonic counters/revocations and owned-output cleanup.
+No harness changes, app rebuild/run, live signer access or new user tests.
+
 **Block 5 real-app store checkpoint verified, 16 October 2026:** all six existing
 native/MCP store cases pass in final `run-aobPCF` / `run-tV2ue0`, cleanup Pass and
 no remaining recorded host PIDs. Native scenario time: 18,507 ms; MCP: 37,766 ms.
@@ -32,8 +65,8 @@ are supporting passes. `run-180Gus` retains the leftover panel-callback assumpti
 `run-qOoldy` retains the adapter's premature inactive/start race. Both cleanup Pass,
 neither accepted. The adapter now awaits observed model activity before completion.
 
-**Blocks 1–4 complete; Block 5 automation/audit complete, user confirmation pending;
-two blocks remain.** The grouped user check asks for the actual GitHub/Notion
+**Previous handoff (now superseded by user Pass above):** Block 5 automation/audit
+was complete and user confirmation pending. The grouped check asked for GitHub/Notion
 two-card catalogue, Notion Installed/Update account retention, then a harmless
 read before/after disabling/re-enabling. Run current code without an installer:
 
@@ -43,13 +76,13 @@ bun run tauri dev --config src-tauri/tauri.extensions-alpha.conf.json
 ```
 
 Quit installed Extensions Alpha first. Its existing app identity/settings are
-used; no credentials need to be shared. This grouped check is Pending until the
-user reports it; an already-current installation does not require another package
+used; no credentials need to be shared. The user has now reported Pass; an
+already-current installation does not require another package
 release. Existing custom-MCP/Developer Mode gates and final production operator
 decisions remain explicit. Unrelated Cargo/binding changes are preserved.
 The user reports the launch command produced an error and asks to receive the
 remaining steps together at the end, with results in their next reply. Manual
-checks remain Pending. Separately ran the same alpha development command with
+checks were Pending at that handoff. Separately ran the same alpha development command with
 `--no-watch`: Vite starts, the normal development build succeeds in 2m08s and
 `C:/gt/debug/handy.exe` opens (observed PID 25268, window title Grain). Left this
 development app/server available for the user's check; no installer or Computer
