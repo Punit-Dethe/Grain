@@ -1,5 +1,24 @@
 # Extension implementation: progress, changes and user testing
 
+**Final Windows alpha artifact dispatched, 17 October 2026:**
+[Build Test run 38970462723](https://github.com/Punit-Dethe/Grain/actions/runs/38970462723)
+is **In progress**, pinned to source
+`ad701fd19539c400128d0b289d7c1d5a1cd3fbf8` on
+`extensions/main-integration-20261010`. Direct run metadata confirms that SHA,
+the single `extension-alpha / build` job and the skipped ordinary platform matrix.
+Expected artifact: `grain-extensions-alpha-x86_64-pc-windows-msvc`.
+This is an artifact build, not a published release. Do not count build success,
+download, installation or packaged-app acceptance before their evidence exists.
+
+After success, download that run's artifact into a fresh directory, record the
+installer path/hash and check the release-profile alpha with Developer Mode off:
+one GitHub/Notion store card each and no custom MCP management; the installed list
+uses the requested two-column layout at a normal desktop width; a harmless read
+works through an already configured store account and again after restart.
+No destructive provider test, new OAuth registration or repeat of the full dev
+acceptance batch is required. Block 6 remains open for this packaged checkpoint;
+real-key custody and production protections remain deferred public-release work.
+
 **Block 6 recovery and final artifact preparation, 17 October 2026:** the user
 explicitly defers actual key custody/backup setup until public release. No real
 private key or password is read, copied, rotated or requested. This supersedes

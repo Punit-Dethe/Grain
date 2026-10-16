@@ -620,6 +620,10 @@ and explicitly selects the release profile. This prevents a later branch push
 from changing the source of the final installer. Only the single alpha artifact
 build is intended; no GitHub Release, version bump or new provider publication.
 Final packaged-alpha acceptance remains Pending, separate from accepted dev checks.
+Artifact build [38970462723](https://github.com/Punit-Dethe/Grain/actions/runs/38970462723)
+is In progress at exact source `ad701fd19539c400128d0b289d7c1d5a1cd3fbf8`.
+The ordinary platform matrix is skipped. Artifact success and packaged checks are
+not yet credited; the current progress entry defines the bounded final check.
 
 1. Document current key custody, separate root/publisher roles, backup/recovery
    and authorized access without copying any secrets into the repository. Decide
