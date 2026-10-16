@@ -1,5 +1,45 @@
 # Extension implementation: progress, changes and user testing
 
+**Block 4 complete — publisher account onboarding, 16 October 2026:** Grain
+`3cebf8a97899919b23eb02e5ecb7a2b4651e32c5` adds a supported-route authentication
+guide, includes it in checksummed CLI downloads and gives `doctor` actionable
+offline account-setup reminders. It explicitly does not certify live sign-in.
+Registry author/reviewer guidance is merged through PR 11 at
+`41772f157ea2d321679cb954726c2b9f35f66649`. Public client registration, DCR,
+GitHub's host-specific identity, extractable desktop credentials and unsupported
+secret-required flows are distinguished; global client metadata registration
+remains disabled until a verified permanent identity exists.
+
+The scoped audit found native OAuth used a changing callback path. It now uses
+the registerable `/grain/oauth/callback` path with the existing ephemeral port,
+random state and PKCE. Normal HTTP callback tests reject wrong/duplicate state
+before valid completion; token refresh, cancellation and ownership tests pass.
+No new transport, authentication engine, dependency or harness. MCP authentication
+and first-party package declarations are unchanged. Reuse the user's accepted
+Notion browser consent/read/create/edit evidence for the provider-discovered
+registration route; this is not a newly executed live test or native SaaS claim.
+Installed-update account retention stays in Block 5; Linear expiry stays deferred.
+
+Checks pass: 23 CLI, 29 shared checker, 12 core MCP admission, two SDK auth,
+83 host MCP and 24 native auth tests; strict CLI Clippy, formatting, Actionlint
+and scoped source audit. [CLI run 38884701939](https://github.com/Punit-Dethe/Grain/actions/runs/38884701939)
+passes all three advertised OS builds. The downloaded Windows executable, guides
+and source receipt match their checksums/source identity; guide text matches
+source after line-ending normalization. Downloaded `doctor` reports zero findings
+on the existing Notion project with the correct discovery/setup reminder.
+
+**Blocks 1–4 complete; two remain. Next: Block 5, store install/update/account
+journey.** Preparation: all 12 ordinary host store tests and 61 existing frontend
+routing/installed-collection/runtime tests pass; the existing live-network test
+remains explicitly ignored. Source inspection identifies unequal-version update
+labels plus exact historical backend selection as the next update-order gap;
+resolve it using signed publication order rather than another version comparator.
+This does not certify the current
+real-app update state. No new user batch or installer is needed for Block 4;
+the native callback fix will be present in the next development build. No package
+publication, key/protection changes, or new signing approval. Custom MCP management,
+Agent policy and the unrelated Cargo/binding edits remain unchanged.
+
 **Block 3 complete — approved ordinary publication, 16 October 2026:** the user
 separately approved exact Notion 0.1.2 source
 `3910dfd013c5015914cf016b2e3059932cf51752`, registry PR 9 head

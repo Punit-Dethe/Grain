@@ -5,7 +5,7 @@ extension authoring, review, publication and store delivery. It replaces this
 file's earlier chronological work order and the historical E4–E8 phase counts.
 Completed evidence stays in [progress](MCP-EXTENSION-PROGRESS.md) and the focused
 audit documents; it is not a fresh backlog. Six bounded blocks are defined below:
-**Blocks 1–3 complete; three remain**. The user explicitly approved
+**Blocks 1–4 complete; two remain**. The user explicitly approved
 [registry PR 8](https://github.com/Punit-Dethe/Grain-Extention/pull/8) at
 `a8f31008bea36d927baca76faf56820e66d1abb1` and tester ownership adoption on
 16 October. It is merged at `d0343cf18d0a2e1b65143923e460ee2a84061cb0`.
@@ -17,8 +17,9 @@ SYSTEM. Existing signing keys and GitHub protection settings were not changed.
 Block 3's exact-approved Notion 0.1.2 update is live at signed index 8, publication
 commit `8931134ee42a4c02dda05369304763c77e6cc859`. Run **38790216499** confirms Git
 and all 63 public files/132 HTTP checks. The corrected CLI pin and real CLI test
-also pass Linux CI and are merged through registry PR 10. Next: **Block 4, portable
-publisher OAuth onboarding**. Application/store acceptance and production operator
+also pass Linux CI and are merged through registry PR 10. Block 4's author
+onboarding, supported authentication routes and native callback correction are
+verified below. Next: **Block 5, store install/update/account acceptance**. Production operator
 controls retain their own later gates. No new Grain installer or stable SDK release.
 
 ## Target experience
@@ -354,6 +355,38 @@ signing scripts. No new publishing server/database/portal or Agent harness.
 
 ## Block 4 — Make account onboarding portable for publishers
 
+**Complete, 16 October:** Grain `3cebf8a9` adds the publisher authentication guide
+to CLI downloads and makes `doctor` distinguish anonymous, provider-discovered
+registration and publisher-owned public clients without claiming live sign-in
+verification. Registry PR 11 is merged at
+`41772f157ea2d321679cb954726c2b9f35f66649`; author/reviewer instructions now identify
+unsupported account setup before publication. GitHub's existing build-supplied
+identity, extractable desktop credential limits and disabled global client
+metadata URL are documented; no universal proxy or new authentication engine.
+
+The source audit found native OAuth generated a new callback path for each
+attempt, incompatible with exact provider registration. Native sign-in now uses
+`/grain/oauth/callback` with the existing ephemeral loopback port, random state
+and S256 PKCE. Actual loopback tests reject wrong/duplicate state and accept the
+valid callback. MCP's existing fixed callback and account handling are unchanged.
+
+Verification: 23 CLI, 29 checker, 12 core MCP admission, two SDK authentication,
+83 host MCP and 24 native authentication tests pass; strict CLI Clippy, formatting,
+Actionlint and scoped source audit pass. CLI run **38884701939** passes Windows,
+Linux and macOS. Its Windows download has verified checksums for the executable,
+both guides and source receipt; guide contents match source (checkout line endings
+differ). The downloaded executable reports zero findings on the existing Notion
+project and correctly says local validation does not verify live sign-in.
+
+Reuse the user's accepted real Notion sign-in/read/create/edit evidence: its
+provider-discovered registration route needs no provider-specific Grain source
+entry, and this block did not change that descriptor or MCP authentication path.
+No new native SaaS/provider certification is inferred from protocol tests. Existing
+cancellation, refresh and account ownership regressions pass; installed-update
+account retention remains Block 5. Deferred Linear token expiry stays deferred.
+No new account consent, package publication, signing identity, installer or harness
+was needed. **Two blocks remain.**
+
 Keep the official MCP SDK/OAuth library path. Document and validate these cases:
 
 | Route | What the author supplies | What the user does |
@@ -379,6 +412,17 @@ refresh logic tests already exist. A user should not need to log in every day
 when their provider issues a usable renewable grant.
 
 ## Block 5 — Close the store install/update/account journey
+
+**Preparation, 16 October:** the existing ordinary store suite passes 12 tests
+with its one live-network test explicitly ignored; 61 existing frontend routing,
+installed-collection and extension-runtime tests pass. These reuse current tests,
+not a new harness. Source inspection found a concrete remaining gap: card/detail
+actions treat any unequal installed/catalogue version as an update, while both
+backend acquisition paths select exact historical versions without checking their
+relative signed publication order. Close that update-order gap consistently in
+backend admission and presentation; do not introduce a separate guessed semver
+comparator. Existing account-preserving/rotating update tests and prior real-app
+store evidence remain reusable, but do not certify the current update UI.
 
 Keep the accepted layout. Check one-card identity across browse/search/details/
 installed, latest publication and API compatibility, Installed vs Update states,
@@ -462,13 +506,12 @@ separate `Punit-Dethe/Grain-Extention` repository).
 
 ## Current user/operator dependencies
 
-Blocks 1–3 need no new user account/app test. Tester ownership/tooling adoption and
+Blocks 1–4 need no new user account/app test. Tester ownership/tooling adoption and
 the separately approved live Notion 0.1.2 update are complete. Actual GitHub
 protection/signing-key custody changes remain reviewed operator decisions:
 
 - Confirm the two-card store view after the recent fix; current artwork is accepted.
 - Confirm concrete publishing protection/custody changes before activation.
-- Approve one eligible live browser sign-in if Block 4 needs it; no credentials in chat.
 - Check the grouped final store setup/update states on the real app.
 - Decide public release identity/platform scope before the final release, not now.
 
