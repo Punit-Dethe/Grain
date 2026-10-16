@@ -126,7 +126,24 @@ where
             }
             let report = grain_extension_checks::doctor(cwd);
             if report.is_clean() {
-                Ok(report.to_string())
+                let mut output = report.to_string();
+                if grain_extension_checks::is_mcp_project(cwd).map_err(anyhow::Error::msg)? {
+                    let descriptor = grain_extension_checks::read_mcp_descriptor(cwd)
+                        .map_err(anyhow::Error::msg)?;
+                    let route = match descriptor.authentication {
+                        grain_sdk::mcp::McpAuthentication::None {} => {
+                            "No account sign-in declared; verify the server permits anonymous tools."
+                        }
+                        grain_sdk::mcp::McpAuthentication::OAuth {} if descriptor.oauth_client.is_some() => {
+                            "Publisher public client declared; verify issuer, S256 PKCE, public-client support and Grain's callback with the provider."
+                        }
+                        grain_sdk::mcp::McpAuthentication::OAuth {} => {
+                            "Provider discovery required; verify dynamic registration or an existing supported Grain registration."
+                        }
+                    };
+                    output.push_str(&format!("\n\nAccount setup: {route}\nLocal checks do not verify live sign-in. See AUTHENTICATION.md in the CLI download before publishing."));
+                }
+                Ok(output)
             } else {
                 bail!(report.to_string())
             }
@@ -270,7 +287,7 @@ pub fn init_mcp_project(
     let descriptor =
         grain_extension_checks::read_mcp_descriptor(&root).map_err(anyhow::Error::msg)?;
     write_json(&root.join("mcp.json"), &descriptor)?;
-    write_text(&root.join("README.md"), &format!("# {name}\n\nMCP extension `{}`. Edit `mcp.json`, run `grain-ext doctor`, then `grain-ext pack`.\n\nGrain owns connection identities, enablement and OAuth consent. Never put credentials, secrets or server-launch commands in this descriptor. Bounded public transport headers and issuer-bound public `oauthClient` metadata are supported; see the CLI author guide for their restrictions. No Grain JavaScript SDK or Node build is required. `grain-ext dev` applies only to native tool projects. See the CLI author guide for source submission and review.\n", descriptor.id))?;
+    write_text(&root.join("README.md"), &format!("# {name}\n\nMCP extension `{}`. Edit `mcp.json`, run `grain-ext doctor`, then `grain-ext pack`.\n\nGrain owns connection identities, enablement and OAuth consent. Never put credentials, secrets or server-launch commands in this descriptor. Bounded public transport headers and issuer-bound public `oauthClient` metadata are supported; see the CLI author guide for their restrictions. Local checks do not verify live authentication: choose a supported route and follow AUTHENTICATION.md in the CLI download before publishing. No Grain JavaScript SDK or Node build is required. `grain-ext dev` applies only to native tool projects. See the CLI author guide for source submission and review.\n", descriptor.id))?;
     write_text(
         &root.join("DESCRIPTION.md"),
         &format!("# {name}\n\n{}\n", descriptor.description),
@@ -1212,6 +1229,59 @@ mod tests {
             .unwrap_err()
             .to_string()
             .contains("--registry"));
+    }
+
+    #[test]
+    fn mcp_doctor_distinguishes_setup_routes_without_certifying_live_auth() {
+        let temp = tempfile::tempdir().unwrap();
+        let project = init_mcp_project(
+            temp.path(),
+            "Auth routes",
+            None,
+            "https://tools.example/mcp",
+            "oauth",
+        )
+        .unwrap();
+        let path = project.root.join("mcp.json");
+        let original: serde_json::Value =
+            serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        for (auth, client, expected) in [
+            ("none", false, "No account sign-in declared"),
+            ("oauth", false, "Provider discovery required"),
+            ("oauth", true, "Publisher public client declared"),
+        ] {
+            let mut value = original.clone();
+            value["authentication"]["type"] = serde_json::json!(auth);
+            if client {
+                value["oauthClient"] = serde_json::json!({
+                    "clientId":"publisher-client", "issuer":"https://issuer.example/tenant"
+                });
+            }
+            let raw = serde_json::to_vec_pretty(&value).unwrap();
+            fs::write(&path, &raw).unwrap();
+            let output = run(["doctor".into()], &project.root).unwrap();
+            assert!(
+                output.contains("0 findings") && output.contains(expected),
+                "{output}"
+            );
+            assert!(
+                output.contains("Local checks do not verify live sign-in"),
+                "{output}"
+            );
+            assert_eq!(fs::read(&path).unwrap(), raw);
+        }
+        let mut invalid = original;
+        invalid["oauthClient"] = serde_json::json!({
+            "clientId":"publisher-client", "issuer":"https://issuer.example", "clientSecret":"forbidden"
+        });
+        fs::write(&path, serde_json::to_vec(&invalid).unwrap()).unwrap();
+        assert!(run(["doctor".into()], &project.root)
+            .unwrap_err()
+            .to_string()
+            .contains("E_MCP_DESCRIPTOR"));
+        assert!(fs::read_to_string(project.root.join("README.md"))
+            .unwrap()
+            .contains("AUTHENTICATION.md"));
     }
 
     #[test]

@@ -47,6 +47,7 @@ jobs:
           folder.mkdir()
           shutil.copy2(binary, folder / binary.name)
           shutil.copy2('crates/grain-ext-cli/README.md', folder / 'README.md')
+          shutil.copy2('crates/grain-ext-cli/AUTHENTICATION.md', folder / 'AUTHENTICATION.md')
           (folder / 'BUILD.json').write_text(json.dumps({
               'cli': version, 'source_commit': os.environ['GITHUB_SHA'],
               'rust_host': subprocess.check_output(['rustc', '+1.96.0', '-vV'], text=True).strip(),

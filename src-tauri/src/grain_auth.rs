@@ -28,10 +28,18 @@ use zeroize::{Zeroize, Zeroizing};
 const VAULT_SERVICE: &str = "com.grain.extension.oauth";
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(300);
 const CALLBACK_MAX_BYTES: usize = 16 * 1024;
+const CALLBACK_PATH: &str = "/grain/oauth/callback";
 const TOKEN_MAX_BYTES: usize = 64 * 1024;
 const MAX_GRANTED_SCOPES: usize = 256;
 const EXPIRY_SKEW_SECS: u64 = 60;
 const MAX_PENDING_CONNECTS: usize = 8;
+
+fn loopback_redirect(port: u16) -> String {
+    // Public desktop registrations can allow an ephemeral loopback port, but
+    // still match the registered path. State and PKCE identify each login.
+    format!("http://127.0.0.1:{port}{CALLBACK_PATH}")
+}
+
 struct PendingFlow {
     run_id: uuid::Uuid,
     execution_generation: u64,
@@ -1225,8 +1233,8 @@ async fn connect_attempt(
         .local_addr()
         .map_err(|error| error.to_string())?
         .port();
-    let path = format!("/grain/oauth/{}", uuid::Uuid::new_v4());
-    let redirect = format!("http://127.0.0.1:{port}{path}");
+    let path = CALLBACK_PATH.to_owned();
+    let redirect = loopback_redirect(port);
     let state = CsrfToken::new_random_len(32).secret().to_owned();
     let (challenge, verifier) = PkceCodeChallenge::new_random_sha256();
     let verifier = Zeroizing::new(verifier.secret().to_owned());
@@ -2610,7 +2618,7 @@ mod tests {
         let url = Url::parse(
             &authorize_url(
                 &decl,
-                "http://127.0.0.1:1/cb",
+                &loopback_redirect(43123),
                 "state",
                 PkceCodeChallenge::from_code_verifier_sha256(&PkceCodeVerifier::new(
                     "a".repeat(43),
@@ -2628,6 +2636,14 @@ mod tests {
             Some("S256")
         );
         assert_eq!(query.get("state").map(String::as_str), Some("state"));
+        assert_eq!(
+            query.get("redirect_uri").map(String::as_str),
+            Some("http://127.0.0.1:43123/grain/oauth/callback")
+        );
+        assert_eq!(
+            Url::parse(&loopback_redirect(43124)).unwrap().path(),
+            "/grain/oauth/callback"
+        );
     }
 
     #[test]
@@ -2648,7 +2664,7 @@ mod tests {
         let port = listener.local_addr().unwrap().port();
         let task = tokio::spawn(callback(
             listener,
-            "/grain/oauth/random".into(),
+            CALLBACK_PATH.into(),
             "expected".into(),
             format!("127.0.0.1:{port}"),
         ));
@@ -2665,13 +2681,22 @@ mod tests {
             .unwrap();
         drop(noise);
 
+        let mut wrong_state = tokio::net::TcpStream::connect((std::net::Ipv4Addr::LOCALHOST, port))
+            .await
+            .unwrap();
+        wrong_state.write_all(format!("GET /grain/oauth/callback?code=forged&state=wrong HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n\r\n").as_bytes()).await.unwrap();
+        let mut response = String::new();
+        wrong_state.read_to_string(&mut response).await.unwrap();
+        assert!(response.starts_with("HTTP/1.1 400"));
+        assert!(!task.is_finished());
+
         let mut duplicate = tokio::net::TcpStream::connect((std::net::Ipv4Addr::LOCALHOST, port))
             .await
             .unwrap();
         duplicate
             .write_all(
                 format!(
-                    "GET /grain/oauth/random?code=forged&state=expected&state=expected HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n\r\n"
+                    "GET /grain/oauth/callback?code=forged&state=expected&state=expected HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n\r\n"
                 )
                 .as_bytes(),
             )
@@ -2683,7 +2708,7 @@ mod tests {
             .await
             .unwrap();
         valid
-            .write_all(format!("GET /grain/oauth/random?code=abc&state=expected HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n").as_bytes())
+            .write_all(format!("GET /grain/oauth/callback?code=abc&state=expected HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n").as_bytes())
             .await
             .unwrap();
         valid.write_all(b"\r\n").await.unwrap();

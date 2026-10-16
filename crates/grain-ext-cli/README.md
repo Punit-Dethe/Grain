@@ -10,6 +10,12 @@ worker, or describe an existing remote MCP server. No universal Grain API key
 is required to author either kind. Provider credentials and user authorization
 are separate from the extension's source metadata.
 
+Before publishing, choose and verify a route in [Account setup for authors](AUTHENTICATION.md).
+It covers anonymous access, DCR, publisher-owned public clients, current GitHub
+build registration and unsupported secret-required setups. `doctor` reports
+local validity and a setup reminder; it does not verify live sign-in. The guide
+is included beside this README in the CLI download and covered by its checksum.
+
 ## Get the CLI
 
 The **Extension CLI artifacts** GitHub Actions workflow builds the CLI separately
@@ -145,7 +151,8 @@ client failure never silently falls back to a different registration. Providers
 requiring a secret are outside this publisher-public-client profile; use supported
 host integration or explicit vault setup, never a packaged secret. GitHub's
 existing built-in tester identity is unchanged. This source contract is verified
-with normal SDK tests; live third-party acceptance is not yet claimed.
+with normal SDK/host tests. The existing live Notion discovery/registration route
+is accepted; it does not certify all third-party public-client registrations.
 
 Direct connection JSON uses the same optional `oauthClient`, alongside name,
 url, authentication and public headers. Custom management remains hidden in
