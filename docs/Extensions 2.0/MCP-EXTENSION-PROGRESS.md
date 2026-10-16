@@ -1,5 +1,34 @@
 # Extension implementation: progress, changes and user testing
 
+**User acceptance and installed-list refinement, 16 October 2026:** the user
+reports the affected alpha checks work. Record **Pass** for store reads with
+Developer Mode off, Notion disconnect/reconnect and a new read, then restart/read
+with Developer Mode still off and custom MCP management absent. No repeat is
+needed. This accepts the current development-alpha path; final packaged-alpha
+release verification and publishing/key controls still remain in Block 6.
+
+The requested installed-list refinement uses two columns, falling back to one
+at the existing narrow-window breakpoint. Icons become 56px and rows use an 88px
+minimum height. Removed the surrounding pill surface from Settings/toggle and
+the redundant Enabled/Disabled status text; actionable sign-in/unavailable
+messages remain. Switch semantics, keyboard labels, dimmed disabled identity,
+actual ownership and handlers remain unchanged. Removed superseded CSS rather
+than adding another component or layout path. No store/detail redesign.
+
+62 existing frontend tests, TypeScript and scoped ESLint pass; the one mechanical
+design scan reports no findings. Source review checks two-column minmax sizing,
+title truncation, description clamping, narrow reflow and unchanged keyboard/
+switch behavior. No visual automation or new tests for a reversible CSS change;
+the user's visual confirmation remains Pending. No installer/harness expansion.
+
+Alpha frontend build and scoped source/graph review also pass. CSS changes are
+limited to the installed-list selectors and their superseded responsive rules;
+no shared toggle/artwork behavior changes. Reopened the real development alpha
+with the same command below: cached Rust startup takes 0.84s and Vite serves the
+updated list. Existing local autostart/updater and linked-font serving warnings
+remain recorded; visual acceptance is not inferred from launch. Preserved exact
+pre-launch binding bytes again. No backend source or new test framework changed.
+
 **Block 6 alpha access implementation, 16 October 2026:** separated verified store
 MCPs from development/custom MCP permissions. Install/update, stored-account
 management, listing, Agent discovery and dispatch now work without Developer Mode
@@ -28,10 +57,11 @@ publication, runtime enablement and Developer Mode cancellation. First host test
 attempt was blocked by a loaded speech DLL, then passed after the user closed
 Grain. No failed/blocked attempt is credited as Pass. No harness code or installer.
 
-**Affected user check Pending:** run the current development alpha, turn off
+**Affected user check — now Pass (see latest acceptance above):** run the current
+development alpha, turn off
 Developer Mode, read through GitHub/Notion; disconnect/reconnect Notion and repeat
 a harmless read; restart with Developer Mode still off and repeat. Custom MCP
-management should stay absent. This is a new gate-specific check, not a repeat
+management should stay absent. This was a new gate-specific check, not a repeat
 of the accepted store/update cases. Packaged-alpha release verification and
 production protection/custody remain open in Block 6. Existing unrelated Cargo
 and binding changes are preserved.

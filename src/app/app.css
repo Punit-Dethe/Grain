@@ -5392,22 +5392,29 @@ article.studio-extension-card {
 
 .installed-extension-list {
   display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
 }
 
 /* Installed extensions use their square identity icon, separate from gallery art. */
 .installed-extension-card {
-  min-height: 104px;
-  padding: 10px;
+  min-width: 0;
+  min-height: 88px;
+  padding: 12px;
   display: grid;
-  grid-template-columns: 72px minmax(0, 1fr) auto;
+  grid-template-columns: 56px minmax(0, 1fr) auto;
   align-items: center;
-  gap: 16px;
+  gap: 12px;
   border-radius: 13px;
   background: rgba(255, 255, 255, 0.026);
   box-shadow: none;
   cursor: pointer;
   transition: background 0.15s;
+}
+
+.installed-extension-card .extension-artwork {
+  width: 56px;
+  height: 56px;
 }
 
 .installed-extension-card:hover,
@@ -5587,34 +5594,10 @@ article.studio-extension-card {
   white-space: nowrap;
 }
 
-/* State belongs on the card, not only in the toggle: "Voice Actions, off"
-   should be readable without decoding a switch. */
+/* Only actionable account/status problems need text alongside the switch. */
 .installed-extension-state {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  color: var(--text-4);
-  font-size: 10.5px;
-  letter-spacing: 0.02em;
-  text-transform: uppercase;
-}
-
-.installed-extension-state::before {
-  content: "";
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--text-4);
-}
-
-.installed-extension-card:not(.extension-disabled) .installed-extension-state {
-  color: var(--sage);
-}
-
-.installed-extension-card:not(.extension-disabled)
-  .installed-extension-state::before {
-  background: var(--sage);
-  box-shadow: 0 0 8px rgba(168, 201, 168, 0.45);
+  color: var(--text-3);
+  font-size: 11px;
 }
 
 .installed-extension-heading span,
@@ -5640,20 +5623,10 @@ article.studio-extension-card {
   line-height: 1.55;
 }
 
-/* The actions were adrift at the far right edge with a gulf of empty card
-   between them and the text they act on. Group them, sit them on a surface of
-   their own, and the row reads as one control cluster. */
 .installed-extension-actions {
   display: flex;
   align-items: center;
-  gap: 4px;
-  padding: 4px 5px;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.028);
-}
-
-html[data-theme="light"] .installed-extension-actions {
-  background: rgba(24, 29, 37, 0.045);
+  gap: 6px;
 }
 
 /* Destructive, so it colours only on approach — a permanently red button in a
@@ -6663,9 +6636,6 @@ html[data-theme="light"] .extension-empty-state {
   .studio-extension-grid[data-card-count="1"] {
     grid-template-columns: 1fr;
   }
-  .installed-extension-card {
-    grid-template-columns: 72px minmax(0, 1fr) auto;
-  }
   .extension-detail-overview {
     grid-template-columns: minmax(0, 1fr);
     gap: 36px;
@@ -6702,13 +6672,8 @@ html[data-theme="light"] .extension-empty-state {
   .extension-configure-dialog {
     max-height: calc(100vh - 36px);
   }
-  .installed-extension-card {
-    grid-template-columns: 72px minmax(0, 1fr);
-  }
-  .installed-extension-actions {
-    grid-column: 2;
-    justify-content: flex-end;
-    padding: 0 4px 4px 0;
+  .installed-extension-list {
+    grid-template-columns: minmax(0, 1fr);
   }
   .polished-store-grid {
     grid-template-columns: 1fr;

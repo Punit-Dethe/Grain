@@ -91,8 +91,8 @@ revocation procedure.
   remain unconfirmed. No secrets need to enter documentation.
 - **Alpha application exposure:** source-aware access is implemented. The dedicated
   alpha identity/debug builds allow signed-store accounts/tools without Developer
-  Mode; custom MCPs require a debug build and Developer Mode. Normal tests pass;
-  the affected real-app check and final packaged-alpha verification remain Pending.
+  Mode; custom MCPs require a debug build and Developer Mode. Normal tests and the
+  affected user real-app checks pass. Final packaged-alpha verification remains.
 - **Contributor cleanup and release scope:** identify obsolete harness procedures
   in the existing inventory, keep normal tests as the default, and run only affected
   final application/packaging checks. Advertise only verified platforms/providers.

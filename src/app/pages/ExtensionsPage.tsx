@@ -1194,9 +1194,9 @@ function InstalledList({
                 {item.card?.trust === "dev" && <span>Dev</span>}
               </div>
               <p>{item.description}</p>
-              {/* Whether an extension is actually doing anything is the first
-                  thing this list is asked; a switch alone makes you decode it. */}
-              <span className="installed-extension-state">{item.status}</span>
+              {item.status !== "Enabled" && item.status !== "Disabled" && (
+                <span className="installed-extension-state">{item.status}</span>
+              )}
             </div>
             <div className="installed-extension-actions">
               <button

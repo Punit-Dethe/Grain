@@ -6,8 +6,8 @@ those crates change. On Windows run host tests from `src-tauri/` with the existi
 `scripts/run-rust-test.ps1` Cargo runner. Use this real-app harness only for an
 affected application-boundary checkpoint; do not expand it for ordinary policies
 or repeat previously accepted provider journeys on every change. The source-aware
-alpha/Developer Mode policy is covered by normal Rust tests, with one grouped
-affected app check and eventual packaged-alpha acceptance still required.
+alpha/Developer Mode policy is covered by normal Rust tests and the user's grouped
+app check (Pass, 16 October); eventual packaged-alpha acceptance is still required.
 
 **16 October store checkpoint:** use `--suite store` and `--suite store-mcp`
 for current store acceptance. All six cases pass after adapting the existing
