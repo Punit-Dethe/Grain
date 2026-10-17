@@ -8,7 +8,7 @@
       "off": "Off",
       "configure": "Configure {{mode}} shortcut: {{shortcut}}",
       "infoTitle": "Make it yours",
-      "infoDescription": "with shortcuts that fit your workflow.",
+      "infoDescription": "Shortcuts that fit your workflow.",
       "infoAction": "Shortcut settings"
     }
   },
