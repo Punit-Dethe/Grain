@@ -417,6 +417,22 @@ same commit.
 
 ## Sync log
 
+### October 17 full integration
+
+Merged the complete 34-commit range through `9e57a0d7` on
+`sync/handy-2026-10-17` (merge `1cf50ec1`); target behind count is zero.
+Native fork 0.4.0 `517885822a5f42562972796c53ae496a52c143b6` passes its
+Windows/Linux/macOS CI. Grain's worker/capture/chunking/dictionary paths and
+final frontend benefit review are integrated. Windows checks pass 599 backend,
+359 workspace and 117 frontend tests; explicit process/streaming/Flow/VAD gates
+and installer extraction/runtime checks also pass. All 10 frontend and 13
+suppressed-path reviews are recorded, mapped ports pass, and the divergence
+ratchet is remeasured at 37 files. See `SYNC-2026-10-17.md` for scope and limits.
+Main remains unchanged pending the required real-application UI acceptance.
+Older deferred platform/lifecycle rows remain explicit; zero behind is not a
+claim that those separate behaviors are complete. Entries below describe earlier
+checkpoints and retain their then-current pending counts/pins.
+
 October 17 batch 2: merged five Handy commits through `29bd2c0d`; 28 remain.
 The immutable native pair is now 0.4.0 at `51788582`, contract 3. Adopted filler
 capitalization, shortcut parse validation, shared missing-model capture guards
