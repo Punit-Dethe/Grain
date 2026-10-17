@@ -9,13 +9,52 @@ use grain_tdt::{
     merge_tokens, NativeWindowCursor, Token, Window, WindowCursor, FRAME_SAMPLES,
     NATIVE_MAX_SAMPLES, SAMPLE_RATE,
 };
-use transcribe_cpp::{
-    ExtSlot, ParakeetTdtWindowOptions, RunExtension, RunOptions, Session, TimestampKind,
-};
+use transcribe_cpp::{ParakeetTdtWindowOptions, RunExtension, RunOptions, TimestampKind};
 
 use crate::grain_audio_journal::{PcmJournal, PcmJournalReader};
 
 const ENCODER_FRAME_MS: i64 = FRAME_SAMPLES as i64 * 1_000 / SAMPLE_RATE as i64;
+
+pub(crate) struct FlowModel {
+    pub arch: String,
+    pub variant: String,
+    pub window: bool,
+}
+
+/// The production adapter sends bounded runs to the existing model worker.
+pub(crate) trait Inference {
+    fn flow_model(&self) -> Result<FlowModel, String>;
+    fn run(
+        &mut self,
+        audio: &[f32],
+        options: &RunOptions,
+    ) -> Result<transcribe_cpp::Transcript, String>;
+    fn detokenize(&self, tokens: &[i32]) -> Result<String, String>;
+}
+
+#[cfg(test)]
+impl Inference for transcribe_cpp::Session {
+    fn flow_model(&self) -> Result<FlowModel, String> {
+        let model = self.model();
+        Ok(FlowModel {
+            arch: model.arch(),
+            variant: model.variant(),
+            window: model.accepts_ext(transcribe_cpp::ExtSlot::Run, ParakeetTdtWindowOptions::KIND),
+        })
+    }
+    fn run(
+        &mut self,
+        audio: &[f32],
+        options: &RunOptions,
+    ) -> Result<transcribe_cpp::Transcript, String> {
+        transcribe_cpp::Session::run(self, audio, options).map_err(|error| error.to_string())
+    }
+    fn detokenize(&self, tokens: &[i32]) -> Result<String, String> {
+        self.model()
+            .detokenize(tokens)
+            .map_err(|error| error.to_string())
+    }
+}
 
 pub(crate) fn validate_model(model_id: &str, translate_to_english: bool) -> Result<(), String> {
     if translate_to_english {
@@ -42,12 +81,12 @@ pub(crate) struct TdtAccumulator {
 }
 
 impl TdtAccumulator {
-    pub(crate) fn new(session: &Session, config: &TdtRunConfig) -> Result<Self, String> {
-        let model = session.model();
-        let variant = model.variant();
-        if model.arch() != "parakeet"
+    pub(crate) fn new(session: &dyn Inference, config: &TdtRunConfig) -> Result<Self, String> {
+        let model = session.flow_model()?;
+        let variant = model.variant;
+        if model.arch != "parakeet"
             || !matches!(variant.as_str(), "tdt-0.6b-v2" | "tdt-0.6b-v3")
-            || !model.accepts_ext(ExtSlot::Run, ParakeetTdtWindowOptions::KIND)
+            || !model.window
         {
             return Err(format!(
                 "loaded model '{}' does not expose the reviewed Parakeet TDT Flow contract",
@@ -78,7 +117,7 @@ impl TdtAccumulator {
     /// precedes cursor commit, so native/journal failures never skip audio.
     pub(crate) fn process_stable(
         &mut self,
-        session: &mut Session,
+        session: &mut dyn Inference,
         config: &TdtRunConfig,
         journal: &PcmJournal,
         reader: &mut PcmJournalReader,
@@ -115,7 +154,7 @@ impl TdtAccumulator {
     /// Render the final transcript from stable windows and the remaining tail.
     pub(crate) fn render(
         &mut self,
-        session: &mut Session,
+        session: &mut dyn Inference,
         config: &TdtRunConfig,
         journal: &PcmJournal,
         reader: &mut PcmJournalReader,
@@ -143,7 +182,6 @@ impl TdtAccumulator {
         }
         let ids: Vec<i32> = merged.iter().map(|token| token.id).collect();
         Ok(session
-            .model()
             .detokenize(&ids)
             .map_err(|error| format!("Flow token detokenization failed: {error}"))?
             .trim()
@@ -167,7 +205,7 @@ fn read_window(
 }
 
 fn decode_native_window(
-    session: &mut Session,
+    session: &mut dyn Inference,
     config: &TdtRunConfig,
     audio: &[f32],
     window: Window,
@@ -193,7 +231,7 @@ fn decode_native_window(
 }
 
 fn decode_window(
-    session: &mut Session,
+    session: &mut dyn Inference,
     config: &TdtRunConfig,
     journal: &PcmJournal,
     reader: &mut PcmJournalReader,

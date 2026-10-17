@@ -14,7 +14,7 @@ Thank you for helping translate Grain! This guide explains how to add or improve
 Translation files are located in:
 
 ```
-src/i18n/locales/
+src/app/i18n/locales/
 ├── en/
 │   └── translation.json    # English (source)
 ├── vi/
@@ -32,7 +32,7 @@ src/i18n/locales/
 Create a new folder using the [ISO 639-1 language code](https://en.wikipedia.org/wiki/List_of_ISO_639-1_codes):
 
 ```bash
-mkdir src/i18n/locales/[language-code]
+mkdir src/app/i18n/locales/[language-code]
 ```
 
 Examples:
@@ -47,7 +47,7 @@ Examples:
 ### Step 2: Copy the English File
 
 ```bash
-cp src/i18n/locales/en/translation.json src/i18n/locales/[language-code]/translation.json
+cp src/app/i18n/locales/en/translation.json src/app/i18n/locales/[language-code]/translation.json
 ```
 
 ### Step 3: Translate the Values
@@ -72,7 +72,7 @@ Open the file and translate only the **values** (right side), not the keys (left
 
 ### Step 4: Register Your Language
 
-Edit `src/i18n/languages.ts` and add your language metadata:
+Edit `src/app/i18n/languages.ts` and add your language metadata:
 
 ```typescript
 export const LANGUAGE_METADATA: Record<
@@ -90,7 +90,7 @@ export const LANGUAGE_METADATA: Record<
 ### Step 5: Test Your Translation
 
 1. Run the app: `bun run tauri dev`
-2. Go to Settings → General → App Language
+2. Go to Settings → About → App Language
 3. Select your language
 4. Verify all text displays correctly
 
@@ -151,24 +151,12 @@ Some languages have complex plural rules. For now, use a general form that works
 
 ## Currently Supported Languages
 
-| Language   | Code | Status            |
-| ---------- | ---- | ----------------- |
-| English    | `en` | Complete (source) |
-| Chinese    | `zh` | Complete          |
-| French     | `fr` | Complete          |
-| German     | `de` | Complete          |
-| Japanese   | `ja` | Complete          |
-| Spanish    | `es` | Complete          |
-| Vietnamese | `vi` | Complete          |
+`src/app/i18n/languages.ts` holds locale names. Catalogues are discovered from
+`src/app/i18n/locales/*/translation.json`; a catalogue must exist before a locale
+can be offered. Locale resolution goes through `grain_locale.rs`, including OS
+locale aliases and fallback. New locales need a metadata entry and a catalogue.
 
-## Requested Languages
-
-We'd love help with:
-
-- Korean (`ko`)
-- Portuguese (`pt`)
-- And more!
-
----
-
-Thank you for making Grain accessible to more people around the world!
+Run `bun run check:translations` to validate catalogue structure and report
+English fallback coverage. A missing key falls back to English; do not label
+partially translated catalogues as complete. Preserve plural forms and RTL
+punctuation, and test with `bun run dev:asr` in the real application.

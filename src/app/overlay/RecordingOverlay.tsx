@@ -129,6 +129,9 @@ export function RecordingOverlay() {
     tentative: "",
   });
   const [working, setWorking] = useState(false);
+  const [modelLoading, setModelLoading] = useState(false);
+  const [slowModelLoad, setSlowModelLoad] = useState(false);
+  const loadStarted = useRef(0);
   const [kind, setKind] = useState("transcribing");
   const [elapsed, setElapsed] = useState(0);
   const [session, setSession] = useState(0);
@@ -142,6 +145,7 @@ export function RecordingOverlay() {
   useEffect(() => {
     let disposed = false;
     let revision = 0;
+    let loadRevision = 0;
     let acceptsLiveText = false;
     const updated = {
       position: false,
@@ -225,6 +229,22 @@ export function RecordingOverlay() {
           }),
         ),
         register(
+          events.modelStateChanged.listen(({ payload }) => {
+            if (disposed) return;
+            if (payload.event_type === "loading_started") {
+              loadRevision++;
+              loadStarted.current = Date.now();
+              setModelLoading(true);
+            } else if (
+              payload.event_type === "loading_completed" ||
+              payload.event_type === "loading_failed"
+            ) {
+              loadRevision++;
+              setModelLoading(false);
+            }
+          }),
+        ),
+        register(
           events.streamTextEvent.listen(({ payload }) => {
             if (!disposed && acceptsLiveText) {
               revision++;
@@ -277,6 +297,13 @@ export function RecordingOverlay() {
       if (!updated.theme)
         document.documentElement.dataset.theme = snapshot.theme.resolved;
       if (before === revision) apply(snapshot.presentation);
+      const beforeLoad = loadRevision;
+      const status = await commands.getModelLoadStatus();
+      if (!disposed && beforeLoad === loadRevision && status.status === "ok") {
+        if (status.data.is_loading && !loadStarted.current)
+          loadStarted.current = Date.now();
+        setModelLoading(status.data.is_loading);
+      }
     };
     void initialize().catch(console.error);
     return () => {
@@ -284,6 +311,21 @@ export function RecordingOverlay() {
       releases.forEach((fn) => fn());
     };
   }, []);
+
+  useEffect(() => {
+    setSlowModelLoad(false);
+    if (
+      !modelLoading ||
+      !presentation.visible ||
+      presentation.state !== "streaming"
+    )
+      return;
+    const timer = setTimeout(
+      () => setSlowModelLoad(true),
+      Math.max(0, 2000 - (Date.now() - loadStarted.current)),
+    );
+    return () => clearTimeout(timer);
+  }, [modelLoading, presentation.visible, presentation.state]);
 
   useEffect(() => {
     if (
@@ -440,7 +482,7 @@ export function RecordingOverlay() {
   // Retain Handy-derived Live/Minimal states; Grain owns listening controls,
   // optional icon/close slots and capture tint.
   if (presentation.state === "streaming") {
-    const open = hasText;
+    const open = hasText || slowModelLoad;
     const collapsed = working && !open;
     const iconClass =
       !presentation.app_icon_enabled && !open && !working ? "no-icon" : "";
@@ -462,7 +504,10 @@ export function RecordingOverlay() {
                     {text.committed ? text.committed + " " : ""}
                   </span>
                   <span className="tentative">{text.tentative}</span>
-                  {!working && <span className="scaret" />}
+                  {slowModelLoad && !hasText && (
+                    <span role="status">{t("handySync.loadingModel")}</span>
+                  )}
+                  {!working && !slowModelLoad && <span className="scaret" />}
                 </p>
               </div>
             </div>
@@ -471,7 +516,9 @@ export function RecordingOverlay() {
             ? workingRow(
                 kind === "polishing"
                   ? t("overlay.processing")
-                  : t("overlay.transcribing"),
+                  : modelLoading
+                    ? t("handySync.loadingModel")
+                    : t("overlay.transcribing"),
               )
             : listeningRow(open)}
         </div>
@@ -485,7 +532,9 @@ export function RecordingOverlay() {
   const workLabel =
     presentation.state === "processing"
       ? t("overlay.processing")
-      : t("overlay.transcribing");
+      : modelLoading
+        ? t("handySync.loadingModel")
+        : t("overlay.transcribing");
   const iconClass = !presentation.app_icon_enabled && !busy ? "no-icon" : "";
   return (
     <div dir={direction} className={`ov-stage ${position} ov-fade show`}>

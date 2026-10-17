@@ -35,8 +35,8 @@ For transcribe.cpp changes, `docs/TRANSCRIBE-CPP-FORK.md` and
 `native/transcribe-fork.json` are the binding contract and paired immutable
 source pin. Preserve both fork patches/locks and the current target features
 when adapting Handy dependency changes; a native upgrade is a separately
-tested fork release. `vendor/TRANSCRIBE-CPP.md` records the frozen rollback
-baseline, not an active second implementation.
+tested fork release. Retired vendor baselines are recoverable from Git; only
+the checked immutable source pair is maintained.
 When closing out manually adapted commits, `closeout.py` defers the divergence
 ratchet until after its tree-preserving ancestry merge, because only then does
 the ratchet compare Grain against the newly assessed upstream baseline. Use

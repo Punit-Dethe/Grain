@@ -7,12 +7,19 @@ use tauri::{AppHandle, Manager};
 /// check the actual file, rather than the registry's cached download badge,
 /// before acquiring microphone or presentation resources.
 pub fn require_transcribable_model(app: &AppHandle, model_id: &str) -> Result<(), String> {
-    let manager = app.state::<Arc<crate::managers::transcription::TranscriptionManager>>();
-    if manager.is_model_loaded() && manager.get_current_model().as_deref() == Some(model_id) {
+    let availability = app
+        .state::<Arc<crate::managers::model::ModelManager>>()
+        .get_model_path(model_id);
+    if availability.is_ok() {
         return Ok(());
     }
-    app.state::<Arc<crate::managers::model::ModelManager>>()
-        .get_model_path(model_id)
+    let manager = app.state::<Arc<crate::managers::transcription::TranscriptionManager>>();
+    if manager.get_current_model().as_deref() == Some(model_id)
+        && manager.grain_has_resident_model()
+    {
+        return Ok(());
+    }
+    availability
         .map(|_| ())
         .map_err(|error| format!("No model can transcribe this recording: {error}"))
 }

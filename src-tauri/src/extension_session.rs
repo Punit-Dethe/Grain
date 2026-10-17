@@ -101,10 +101,10 @@ pub fn start(app: &AppHandle, ext_id: &str, mode_id: &str) -> Result<u64, StartE
         .try_start_recording(&binding_id, VadPolicy::Offline)
         .map_err(|error| {
             crate::grain_overlay::hide_failed_capture(app, overlay_generation);
-            if error == "Already recording" {
+            if recording.is_recording() {
                 StartError::Busy
             } else {
-                StartError::Unavailable(error)
+                StartError::Unavailable(error.to_string())
             }
         })?;
 

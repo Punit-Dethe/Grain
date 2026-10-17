@@ -64,7 +64,9 @@ class ForkInputsTest(unittest.TestCase):
                     {"id": name, "features": ["metal", "dynamic-backends", "shared", "vulkan"]}
                     for name in fork.PACKAGES]}})
             self.assertEqual(args[1], "tree")
-            return app_features if cwd.name == "src-tauri" else "dynamic-backends,shared"
+            if cwd.name == "src-tauri":
+                return ",".join(filter(None, [app_features, "serde" if args[args.index("--package") + 1] == "transcribe-cpp" else ""]))
+            return "dynamic-backends,shared"
         return patch.object(fork, "run", side_effect=run)
 
     def test_target_features_do_not_use_union_in_metadata(self):

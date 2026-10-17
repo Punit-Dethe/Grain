@@ -32,6 +32,76 @@
   "0a59e1f3001c64dc4afc955f376508b1a11061c0": {
     "notes": "Clean cherry-pick"
   },
+  "0bb0428ea6e9a40aea3c05a754134105a1821d3f": {
+    "frontend_review": {
+      "outcome": "adapted",
+      "problem": "Chinese recognition language and output script must be independent.",
+      "destinations": [
+        "crates/grain-core/src/settings.rs",
+        "src/app/components/settings/DecodeSettings.tsx"
+      ],
+      "evidence": "See Upstream/SYNC-2026-10-17.md: Windows backend 599 pass; real worker, streaming fault, VAD and exact-text v2/v3 Flow gates pass; frontend build, 117 tests, lint and parity pass. Physical device/UI and macOS/Linux app acceptance remain explicit."
+    },
+    "ports": {
+      "src-tauri/src/actions.rs": {
+        "outcome": "ported",
+        "destinations": [
+          "src-tauri/src/grain_post_process.rs",
+          "src-tauri/src/grain_actions.rs",
+          "src-tauri/src/grain_capture.rs",
+          "src-tauri/src/grain_overlay.rs",
+          "crates/grain-core/src/capture.rs",
+          "src-tauri/src/grain_dictation_routing.rs",
+          "src/app/components/settings/capture/CaptureModes.tsx"
+        ],
+        "evidence": "See Upstream/SYNC-2026-10-17.md: Windows backend 599 pass; real worker, streaming fault, VAD and exact-text v2/v3 Flow gates pass; frontend build, 117 tests, lint and parity pass. Physical device/UI and macOS/Linux app acceptance remain explicit. Source-specific adaptations and dictionary/capture call paths are recorded in the execution matrix; Grain-owned destinations remain authoritative."
+      },
+      "src-tauri/src/audio_toolkit/text.rs": {
+        "outcome": "ported",
+        "destinations": [
+          "src-tauri/src/handy/audio_toolkit/grain_text.rs"
+        ],
+        "evidence": "See Upstream/SYNC-2026-10-17.md: Windows backend 599 pass; real worker, streaming fault, VAD and exact-text v2/v3 Flow gates pass; frontend build, 117 tests, lint and parity pass. Physical device/UI and macOS/Linux app acceptance remain explicit. Source-specific adaptations and dictionary/capture call paths are recorded in the execution matrix; Grain-owned destinations remain authoritative."
+      },
+      "src-tauri/src/managers/transcription.rs": {
+        "outcome": "ported",
+        "destinations": [
+          "src-tauri/src/rolling.rs",
+          "src-tauri/src/tdt_flow.rs",
+          "crates/grain-tdt/src",
+          "src-tauri/src/grain_overlay.rs",
+          "src/app/overlay/RecordingOverlay.tsx",
+          "src-tauri/src/grain_transcription.rs",
+          "src-tauri/src/grain_transcription_manager.rs",
+          "src-tauri/src/grain_engine.rs",
+          "src-tauri/src/context_bias.rs"
+        ],
+        "evidence": "See Upstream/SYNC-2026-10-17.md: Windows backend 599 pass; real worker, streaming fault, VAD and exact-text v2/v3 Flow gates pass; frontend build, 117 tests, lint and parity pass. Physical device/UI and macOS/Linux app acceptance remain explicit. Source-specific adaptations and dictionary/capture call paths are recorded in the execution matrix; Grain-owned destinations remain authoritative."
+      },
+      "src-tauri/src/settings.rs": {
+        "outcome": "ported",
+        "destinations": [
+          "src-tauri/src/grain_settings.rs",
+          "crates/grain-core/src/settings.rs",
+          "crates/grain-core/src/context.rs",
+          "src/app/components/settings/ShowOverlay.tsx",
+          "src/app/components/settings/PillCloseButton.tsx",
+          "src/app/components/settings/PillAppIcon.tsx",
+          "src/app/stores/settingsStore.ts",
+          "crates/grain-core/src/capture.rs",
+          "src-tauri/src/grain_dictation_routing.rs",
+          "src/app/components/settings/capture/CaptureModes.tsx",
+          "crates/grain-core/src/providers.rs",
+          "src-tauri/src/grain_provider_commands.rs",
+          "src/app/stores/ppPoolStore.ts",
+          "src/app/components/settings/post-processing/pool/PostProcessingPool.tsx",
+          "src/app/components/settings/experimentations/AgentSection.tsx",
+          "src/app/components/settings/DecodeSettings.tsx"
+        ],
+        "evidence": "See Upstream/SYNC-2026-10-17.md: Windows backend 599 pass; real worker, streaming fault, VAD and exact-text v2/v3 Flow gates pass; frontend build, 117 tests, lint and parity pass. Physical device/UI and macOS/Linux app acceptance remain explicit. Source-specific adaptations and dictionary/capture call paths are recorded in the execution matrix; Grain-owned destinations remain authoritative."
+      }
+    }
+  },
   "0e5036721ef6f26c3b89ab31bc10cd2ffd6096fb": {
     "frontend_review": {
       "destinations": [
@@ -46,14 +116,14 @@
     "notes": "Audited the final repaired tree from both parents; this merge removes d55ea7ef's accidentally committed conflict markers. Never replay d55ea7ef without this repair.",
     "status": "Merged",
     "suppressed_review": {
+      "outcome": "already-covered",
+      "problem": "The repair merge reconciled dependency, build, workflow, and lockfile state after the transcribe.cpp 0.2.0 integration.",
       "destinations": [
         "src-tauri/Cargo.toml",
         "src-tauri/Cargo.lock",
-        "vendor/TRANSCRIBE-CPP.md"
+        "docs/TRANSCRIBE-CPP-FORK.md"
       ],
-      "evidence": "Exact 0.2.0 manifest declarations, vendored baseline provenance, and regenerated lockfile are checked by policy_check.py and Cargo.",
-      "outcome": "already-covered",
-      "problem": "The repair merge reconciled dependency, build, workflow, and lockfile state after the transcribe.cpp 0.2.0 integration."
+      "evidence": "Exact 0.2.0 manifest declarations, vendored baseline provenance, and regenerated lockfile are checked by policy_check.py and Cargo. Historical vendor implementation is retired; current immutable pin/ABI evidence is in the maintained fork contract."
     }
   },
   "11c2bb1eb8eab5b0472e03d49a908a60010d8777": {
@@ -85,6 +155,53 @@
   "148e5492f43dd0b4a80680ee92bebe6459a4ef3a": {
     "notes": "PORTED: reasoning-rejection retry added to grain_llm_client post_chat (upstream #1809). On a 400/422 to a request carrying reasoning-disable fields, retry once without them and remember the endpoint (url|model) process-wide so later calls skip them. Grain gates reasoning by provider, so this only affects a 'custom' endpoint pointed at a strict API; +2 unit tests."
   },
+  "14ae9c6b42d729371c443c8617ad02c89c4c8061": {
+    "frontend_review": {
+      "outcome": "adapted",
+      "problem": "Custom Anthropic-compatible endpoints need a selectable API wire format.",
+      "destinations": [
+        "src/app/components/settings/post-processing/pool/PpProviderForm.tsx",
+        "src-tauri/src/grain_anthropic.rs",
+        "src-tauri/src/grain_llm_client.rs"
+      ],
+      "evidence": "See Upstream/SYNC-2026-10-17.md: Windows backend 599 pass; real worker, streaming fault, VAD and exact-text v2/v3 Flow gates pass; frontend build, 117 tests, lint and parity pass. Physical device/UI and macOS/Linux app acceptance remain explicit."
+    },
+    "ports": {
+      "src-tauri/src/llm_client.rs": {
+        "outcome": "ported",
+        "destinations": [
+          "src-tauri/src/grain_llm_client.rs",
+          "src-tauri/src/net_diag.rs",
+          "src-tauri/src/grain_llm_fallback.rs",
+          "src-tauri/src/grain_post_process.rs",
+          "src-tauri/src/agent.rs"
+        ],
+        "evidence": "See Upstream/SYNC-2026-10-17.md: Windows backend 599 pass; real worker, streaming fault, VAD and exact-text v2/v3 Flow gates pass; frontend build, 117 tests, lint and parity pass. Physical device/UI and macOS/Linux app acceptance remain explicit. Source-specific adaptations and dictionary/capture call paths are recorded in the execution matrix; Grain-owned destinations remain authoritative."
+      },
+      "src-tauri/src/settings.rs": {
+        "outcome": "ported",
+        "destinations": [
+          "src-tauri/src/grain_settings.rs",
+          "crates/grain-core/src/settings.rs",
+          "crates/grain-core/src/context.rs",
+          "src/app/components/settings/ShowOverlay.tsx",
+          "src/app/components/settings/PillCloseButton.tsx",
+          "src/app/components/settings/PillAppIcon.tsx",
+          "src/app/stores/settingsStore.ts",
+          "crates/grain-core/src/capture.rs",
+          "src-tauri/src/grain_dictation_routing.rs",
+          "src/app/components/settings/capture/CaptureModes.tsx",
+          "crates/grain-core/src/providers.rs",
+          "src-tauri/src/grain_provider_commands.rs",
+          "src/app/stores/ppPoolStore.ts",
+          "src/app/components/settings/post-processing/pool/PostProcessingPool.tsx",
+          "src/app/components/settings/experimentations/AgentSection.tsx",
+          "src/app/components/settings/DecodeSettings.tsx"
+        ],
+        "evidence": "See Upstream/SYNC-2026-10-17.md: Windows backend 599 pass; real worker, streaming fault, VAD and exact-text v2/v3 Flow gates pass; frontend build, 117 tests, lint and parity pass. Physical device/UI and macOS/Linux app acceptance remain explicit. Source-specific adaptations and dictionary/capture call paths are recorded in the execution matrix; Grain-owned destinations remain authoritative."
+      }
+    }
+  },
   "14cfed8aca5d557e0d14f596846bc5bd3fc4b50f": {
     "suppressed_review": {
       "outcome": "adapted",
@@ -95,12 +212,36 @@
       "evidence": "Grain build.yml disables rust-cache binaries, rotates the cache key, and installs the pinned signing CLI with --locked --force; YAML parses"
     }
   },
+  "14f6f0d31cb22a4268acfbddba3052820fd0a06e": {
+    "suppressed_review": {
+      "outcome": "not-applicable",
+      "problem": "Handy v0.9.8 identity/version does not define Grain releases.",
+      "destinations": [
+        "src-tauri/Cargo.toml",
+        "src-tauri/tauri.conf.json"
+      ],
+      "evidence": "See Upstream/SYNC-2026-10-17.md: Windows backend 599 pass; real worker, streaming fault, VAD and exact-text v2/v3 Flow gates pass; frontend build, 117 tests, lint and parity pass. Physical device/UI and macOS/Linux app acceptance remain explicit."
+    }
+  },
   "158168983cfcf01c4555e012a62a7b1ccad77bd4": {
     "notes": "Added Windows prerequisites, MAX_PATH fixes, and code-signing bypass instructions to BUILD.md."
   },
   "17d6c763413e3e29ec5cee76aa19ad01eccb73b2": {
     "notes": "Upstream version bump; Grain versions independently",
     "status": "Ignored"
+  },
+  "1b011a19a990384271c39bfa13a3b367b6bd8926": {
+    "suppressed_review": {
+      "outcome": "adapted",
+      "problem": "The native 0.4 source/ABI/feature contract must be upgraded together.",
+      "destinations": [
+        "native/transcribe-fork.json",
+        "src-tauri/Cargo.toml",
+        "src-tauri/Cargo.lock",
+        "docs/TRANSCRIBE-CPP-FORK.md"
+      ],
+      "evidence": "See Upstream/SYNC-2026-10-17.md: Windows backend 599 pass; real worker, streaming fault, VAD and exact-text v2/v3 Flow gates pass; frontend build, 117 tests, lint and parity pass. Physical device/UI and macOS/Linux app acceptance remain explicit."
+    }
   },
   "1c4f21acd2bab81f75a0cd7556cd3bb7399ffd9a": {
     "notes": "Bumped version to 0.9.1 in Cargo.toml, tauri.conf.json, and package.json."
@@ -119,6 +260,17 @@
   },
   "1fd3f912e2ea950d1694c68199b6e215926b1c81": {
     "notes": "Hoisted the sonner Toaster in AppInner so that model download errors are visible during onboarding."
+  },
+  "20a6685e85c061c56386c98065995a5527513011": {
+    "frontend_review": {
+      "outcome": "adapted",
+      "problem": "Cold model loading after Stop looked like stuck transcription.",
+      "destinations": [
+        "src/app/overlay/RecordingOverlay.tsx",
+        "src-tauri/src/handy/commands/transcription.rs"
+      ],
+      "evidence": "See Upstream/SYNC-2026-10-17.md: Windows backend 599 pass; real worker, streaming fault, VAD and exact-text v2/v3 Flow gates pass; frontend build, 117 tests, lint and parity pass. Physical device/UI and macOS/Linux app acceptance remain explicit."
+    }
   },
   "20ada47d7f98f916d554cf883940dcb83aa9143f": {
     "frontend_review": {
@@ -287,6 +439,20 @@
       "evidence": "Grain app.css scopes scrollbar styling by component and has no macOS exclusion around its custom scrollbars"
     }
   },
+  "340defbc631fa00005628e36d154a8e96b6fe1bb": {
+    "notes": "Grain keeps its contributor/PR policy; Handy feature-freeze and AI-submission policy comments are not imported as instructions."
+  },
+  "345caa8f3e42963c270aff9294091f3436306dbf": {
+    "frontend_review": {
+      "outcome": "adapted",
+      "problem": "Custom sounds changed on disk were invisible until restart.",
+      "destinations": [
+        "src/app/components/settings/SoundPicker.tsx",
+        "src/app/components/ui/Dropdown.tsx"
+      ],
+      "evidence": "See Upstream/SYNC-2026-10-17.md: Windows backend 599 pass; real worker, streaming fault, VAD and exact-text v2/v3 Flow gates pass; frontend build, 117 tests, lint and parity pass. Physical device/UI and macOS/Linux app acceptance remain explicit."
+    }
+  },
   "38825767cf933f59b90209c3f3c5f1e3bbe98766": {
     "notes": "Adapted to Grain flat onboarding layout; store/ModelCard infra already present"
   },
@@ -294,11 +460,68 @@
     "notes": "Applied handy-keys 0.3.2; lockfile already resolved this version.",
     "status": "Merged"
   },
+  "3985508ae7cf4dabfba4e65f73666364b331d586": {
+    "suppressed_review": {
+      "outcome": "adapted",
+      "problem": "Native Silero replaces the ONNX dependency and VAD resource.",
+      "destinations": [
+        "src-tauri/Cargo.lock",
+        "src-tauri/resources/models/silero-vad-v6.2-F32.gguf",
+        "BUILD.md"
+      ],
+      "evidence": "See Upstream/SYNC-2026-10-17.md: Windows backend 599 pass; real worker, streaming fault, VAD and exact-text v2/v3 Flow gates pass; frontend build, 117 tests, lint and parity pass. Physical device/UI and macOS/Linux app acceptance remain explicit."
+    },
+    "ports": {
+      "src-tauri/src/managers/audio.rs": {
+        "outcome": "ported",
+        "destinations": [
+          "src-tauri/src/grain_capture.rs",
+          "src-tauri/src/grain_actions.rs",
+          "src-tauri/src/agent.rs",
+          "src-tauri/src/extension_session.rs",
+          "src-tauri/src/grain_action_session.rs",
+          "src-tauri/src/grain_onboarding.rs",
+          "src-tauri/src/grain_audio.rs",
+          "src-tauri/src/grain_audio_manager.rs"
+        ],
+        "evidence": "See Upstream/SYNC-2026-10-17.md: Windows backend 599 pass; real worker, streaming fault, VAD and exact-text v2/v3 Flow gates pass; frontend build, 117 tests, lint and parity pass. Physical device/UI and macOS/Linux app acceptance remain explicit. Source-specific adaptations and dictionary/capture call paths are recorded in the execution matrix; Grain-owned destinations remain authoritative."
+      }
+    }
+  },
   "3cbbe58272e2067b05645f42a65b7b79b36a83dc": {
     "notes": "Clean cherry-pick. Grain PasteMethod.tsx matched upstream pre-fix structure; Grain Dropdown already supported DropdownOption.disabled, so the macOS hide-but-keep-manual-selection logic works as-is."
   },
   "3f49cf100b33f7a164662cf3f1b953207ab37c7b": {
     "notes": "Added `nl` translation."
+  },
+  "4150a4a8d4e1220e943072e21d94951e6fa29e6b": {
+    "ports": {
+      "src-tauri/src/managers/transcription.rs": {
+        "outcome": "ported",
+        "destinations": [
+          "src-tauri/src/rolling.rs",
+          "src-tauri/src/tdt_flow.rs",
+          "crates/grain-tdt/src",
+          "src-tauri/src/grain_overlay.rs",
+          "src/app/overlay/RecordingOverlay.tsx",
+          "src-tauri/src/grain_transcription.rs",
+          "src-tauri/src/grain_transcription_manager.rs",
+          "src-tauri/src/grain_engine.rs",
+          "src-tauri/src/context_bias.rs"
+        ],
+        "evidence": "See Upstream/SYNC-2026-10-17.md: Windows backend 599 pass; real worker, streaming fault, VAD and exact-text v2/v3 Flow gates pass; frontend build, 117 tests, lint and parity pass. Physical device/UI and macOS/Linux app acceptance remain explicit. Source-specific adaptations and dictionary/capture call paths are recorded in the execution matrix; Grain-owned destinations remain authoritative."
+      }
+    }
+  },
+  "417dc6ac26ace7ce8eec99e41fa2dbbc36e5c2a0": {
+    "frontend_review": {
+      "outcome": "adapted",
+      "problem": "Live preview stayed empty during a slow model load.",
+      "destinations": [
+        "src/app/overlay/RecordingOverlay.tsx"
+      ],
+      "evidence": "See Upstream/SYNC-2026-10-17.md: Windows backend 599 pass; real worker, streaming fault, VAD and exact-text v2/v3 Flow gates pass; frontend build, 117 tests, lint and parity pass. Physical device/UI and macOS/Linux app acceptance remain explicit."
+    }
   },
   "4223e7ac6741298654d98003db38e4164ee98294": {
     "notes": "ADOPTED (re-evaluated 2026-08-08): the reqwest source-chain diagnostics are useful — grain_llm_client swallowed transport causes at post_chat/.send() and fetch_models, the same gap. Ported the helper into a shared crate::net_diag module (payload-safe: sanitized URLs, decode errors keep only classification) and applied it to BOTH cloud clients — grain_llm_client AND the Grain-only stt_client (5 send sites), which the merge could never reach."
@@ -333,6 +556,18 @@
   "485f4ade00169fd8a620c17d1478ad198252e953": {
     "notes": "Added CLT fallback logic in `build.rs`."
   },
+  "48a3d8e9ee456c1c6a3b7223779271c457890b4d": {
+    "suppressed_review": {
+      "outcome": "adapted",
+      "problem": "Linux renderer override must be honored while crash protection remains default.",
+      "destinations": [
+        "src-tauri/src/main.rs",
+        "flake.nix",
+        "BUILD.md"
+      ],
+      "evidence": "See Upstream/SYNC-2026-10-17.md: Windows backend 599 pass; real worker, streaming fault, VAD and exact-text v2/v3 Flow gates pass; frontend build, 117 tests, lint and parity pass. Physical device/UI and macOS/Linux app acceptance remain explicit."
+    }
+  },
   "496a80cc151c8cfba3130c29ce2082f8f10f4f57": {
     "frontend_review": {
       "outcome": "adapted",
@@ -354,6 +589,68 @@
   },
   "4cd49950762b57e7e634f30d9a0cd6b0715fc4ed": {
     "notes": "#1738 ported: settings.rs(inert)->filler_word_removal_enabled added to grain-core AppSettings+Default; text.rs(relocated) new remove_filler_words/normalize/OutputLanguageEvidence API adopted in grain_text.rs; transcription.rs(parallel) batch resolves output-language evidence in the with_engine_session decode, rolling/cloud key filler removal on selected_language via finalize_transcript."
+  },
+  "5197faf0e6fe9c268ed9539ebdc0fcf4ddd6434f": {
+    "frontend_review": {
+      "outcome": "already-covered",
+      "problem": "The UI must not offer retired ONNX migration/settings paths.",
+      "destinations": [
+        "src/app/components/settings/ModelLibrary.tsx",
+        "src-tauri/src/handy/managers/model.rs"
+      ],
+      "evidence": "See Upstream/SYNC-2026-10-17.md: Windows backend 599 pass; real worker, streaming fault, VAD and exact-text v2/v3 Flow gates pass; frontend build, 117 tests, lint and parity pass. Physical device/UI and macOS/Linux app acceptance remain explicit."
+    },
+    "suppressed_review": {
+      "outcome": "adapted",
+      "problem": "Obsolete ONNX runtimes, APIs and build downloads must be removed.",
+      "destinations": [
+        "src-tauri/Cargo.lock",
+        "src-tauri/build.rs",
+        ".github/workflows/build.yml",
+        "BUILD.md",
+        "src-tauri/src/handy/managers/model.rs"
+      ],
+      "evidence": "See Upstream/SYNC-2026-10-17.md: Windows backend 599 pass; real worker, streaming fault, VAD and exact-text v2/v3 Flow gates pass; frontend build, 117 tests, lint and parity pass. Physical device/UI and macOS/Linux app acceptance remain explicit."
+    },
+    "ports": {
+      "src-tauri/src/managers/transcription.rs": {
+        "outcome": "ported",
+        "destinations": [
+          "src-tauri/src/rolling.rs",
+          "src-tauri/src/tdt_flow.rs",
+          "crates/grain-tdt/src",
+          "src-tauri/src/grain_overlay.rs",
+          "src/app/overlay/RecordingOverlay.tsx",
+          "src-tauri/src/grain_transcription.rs",
+          "src-tauri/src/grain_transcription_manager.rs",
+          "src-tauri/src/grain_engine.rs",
+          "src-tauri/src/context_bias.rs"
+        ],
+        "evidence": "See Upstream/SYNC-2026-10-17.md: Windows backend 599 pass; real worker, streaming fault, VAD and exact-text v2/v3 Flow gates pass; frontend build, 117 tests, lint and parity pass. Physical device/UI and macOS/Linux app acceptance remain explicit. Source-specific adaptations and dictionary/capture call paths are recorded in the execution matrix; Grain-owned destinations remain authoritative."
+      },
+      "src-tauri/src/settings.rs": {
+        "outcome": "ported",
+        "destinations": [
+          "src-tauri/src/grain_settings.rs",
+          "crates/grain-core/src/settings.rs",
+          "crates/grain-core/src/context.rs",
+          "src/app/components/settings/ShowOverlay.tsx",
+          "src/app/components/settings/PillCloseButton.tsx",
+          "src/app/components/settings/PillAppIcon.tsx",
+          "src/app/stores/settingsStore.ts",
+          "crates/grain-core/src/capture.rs",
+          "src-tauri/src/grain_dictation_routing.rs",
+          "src/app/components/settings/capture/CaptureModes.tsx",
+          "crates/grain-core/src/providers.rs",
+          "src-tauri/src/grain_provider_commands.rs",
+          "src/app/stores/ppPoolStore.ts",
+          "src/app/components/settings/post-processing/pool/PostProcessingPool.tsx",
+          "src/app/components/settings/experimentations/AgentSection.tsx",
+          "src/app/components/settings/DecodeSettings.tsx"
+        ],
+        "evidence": "See Upstream/SYNC-2026-10-17.md: Windows backend 599 pass; real worker, streaming fault, VAD and exact-text v2/v3 Flow gates pass; frontend build, 117 tests, lint and parity pass. Physical device/UI and macOS/Linux app acceptance remain explicit. Source-specific adaptations and dictionary/capture call paths are recorded in the execution matrix; Grain-owned destinations remain authoritative."
+      }
+    }
   },
   "5276dd3cc75885c723ab7d09fdb3345e3968dca7": {
     "notes": "Turkish semantic corrections manually ported to Grain-owned src/app locale schema, with Grain branding."
@@ -378,11 +675,43 @@
       "evidence": "Grain README uses a separate feature and build structure; no runtime code or shared user instructions changed"
     }
   },
+  "53db4cb676bcb7831b94d95c716a67ddaaa2731a": {
+    "frontend_review": {
+      "outcome": "adapted",
+      "problem": "Hidden checkbox/range inputs did not expose setting names.",
+      "destinations": [
+        "src/app/components/ui/ToggleSwitch.tsx",
+        "src/app/components/ui/Slider.tsx"
+      ],
+      "evidence": "See Upstream/SYNC-2026-10-17.md: Windows backend 599 pass; real worker, streaming fault, VAD and exact-text v2/v3 Flow gates pass; frontend build, 117 tests, lint and parity pass. Physical device/UI and macOS/Linux app acceptance remain explicit."
+    }
+  },
   "5464bfaa0826ec367a052514d87575f92e0113fc": {
     "notes": "Kept Grain non-panicking icon load; menu now reflects real state"
   },
   "549cbde3ebb72459f7f7230783931a45222018a1": {
     "notes": "Overlay migration 2026-10-04 restores first-sample readiness for Batch, Flow, Native ASR, Agent and extension capture. grain_capture polls a bounded receiver lifetime and rejects cancelled generations; recorder test covers no-sample Stop. The owned WebView uses Handy show/ready/hide events; the separate ring-buffer rewrite remains deferred."
+  },
+  "57324065d327a2e096a38cbfa7e0e99405af36cc": {
+    "frontend_review": {
+      "outcome": "already-covered",
+      "problem": "Live added events must not duplicate a history id.",
+      "destinations": [
+        "src/app/history/useHistoryController.ts",
+        "src/app/history/useHistoryController.test.ts"
+      ],
+      "evidence": "See Upstream/SYNC-2026-10-17.md: Windows backend 599 pass; real worker, streaming fault, VAD and exact-text v2/v3 Flow gates pass; frontend build, 117 tests, lint and parity pass. Physical device/UI and macOS/Linux app acceptance remain explicit."
+    }
+  },
+  "586a838cec1b4e89f4654b2c6c399513abaa9c3c": {
+    "suppressed_review": {
+      "outcome": "adapted",
+      "problem": "Wayland overlay, clipboard and non-QWERTY paste need accurate troubleshooting.",
+      "destinations": [
+        "docs/troubleshooting/ubuntu-26-04-gnome-wayland/README.md"
+      ],
+      "evidence": "See Upstream/SYNC-2026-10-17.md: Windows backend 599 pass; real worker, streaming fault, VAD and exact-text v2/v3 Flow gates pass; frontend build, 117 tests, lint and parity pass. Physical device/UI and macOS/Linux app acceptance remain explicit."
+    }
   },
   "58760b22cd13e709384a617a6d86b7df506a65ae": {
     "notes": "Added `ne` translation."
@@ -415,6 +744,9 @@
       }
     },
     "notes": "Single-writer tray architecture deferred: Grain retains its branded single-icon menu and current tray call sites; review as a dedicated tray port."
+  },
+  "5ec58f696354fcf64ae831102e673779e0249717": {
+    "notes": "Grain keeps its contributor/PR policy; no application runtime behavior changes."
   },
   "5f54e17cfca5fd8fd5c61b3dd8aeb37ae45edbbc": {
     "notes": "Bumped transcribe-cpp to 0.1.1."
@@ -466,6 +798,16 @@
       }
     }
   },
+  "73ab851c2b6242283759a4c101b60f0ece132f08": {
+    "suppressed_review": {
+      "outcome": "adapted",
+      "problem": "Ubuntu GNOME/Wayland issues need troubleshooting notes.",
+      "destinations": [
+        "docs/troubleshooting/ubuntu-26-04-gnome-wayland/README.md"
+      ],
+      "evidence": "See Upstream/SYNC-2026-10-17.md: Windows backend 599 pass; real worker, streaming fault, VAD and exact-text v2/v3 Flow gates pass; frontend build, 117 tests, lint and parity pass. Physical device/UI and macOS/Linux app acceptance remain explicit."
+    }
+  },
   "7c31572d1973415a7115ff28226198a1d752cebe": {
     "frontend_review": {
       "outcome": "adapted",
@@ -486,6 +828,17 @@
       "evidence": "Known input/audio behavior explains the hardware boundary and recommends portable standard modifiers.",
       "outcome": "adapted",
       "problem": "Third-party keyboard Fn keys are often firmware-only, so macOS emits no event and the shortcut can never trigger."
+    }
+  },
+  "8605699d988ef87e7717cee28fff25c0546bb564": {
+    "suppressed_review": {
+      "outcome": "adapted",
+      "problem": "NSIS should use the application installer icon.",
+      "destinations": [
+        "src-tauri/tauri.conf.json",
+        "src-tauri/nsis/installer.nsi"
+      ],
+      "evidence": "See Upstream/SYNC-2026-10-17.md: Windows backend 599 pass; real worker, streaming fault, VAD and exact-text v2/v3 Flow gates pass; frontend build, 117 tests, lint and parity pass. Physical device/UI and macOS/Linux app acceptance remain explicit."
     }
   },
   "86616891af0f1ba43620f4f9601593a38e71f320": {
@@ -597,8 +950,140 @@
       }
     }
   },
+  "9e57a0d7929fcc6417ea0d6e54c1b57f62635edd": {
+    "frontend_review": {
+      "outcome": "adapted",
+      "problem": "Long recordings need a VAD chunking preference without overriding native Streaming or Grain Flow.",
+      "destinations": [
+        "src/app/components/settings/DecodeSettings.tsx",
+        "src/app/stores/settingsStore.ts",
+        "src-tauri/src/grain_transcription.rs"
+      ],
+      "evidence": "See Upstream/SYNC-2026-10-17.md: Windows backend 599 pass; real worker, streaming fault, VAD and exact-text v2/v3 Flow gates pass; frontend build, 117 tests, lint and parity pass. Physical device/UI and macOS/Linux app acceptance remain explicit."
+    },
+    "ports": {
+      "src-tauri/src/actions.rs": {
+        "outcome": "ported",
+        "destinations": [
+          "src-tauri/src/grain_post_process.rs",
+          "src-tauri/src/grain_actions.rs",
+          "src-tauri/src/grain_capture.rs",
+          "src-tauri/src/grain_overlay.rs",
+          "crates/grain-core/src/capture.rs",
+          "src-tauri/src/grain_dictation_routing.rs",
+          "src/app/components/settings/capture/CaptureModes.tsx"
+        ],
+        "evidence": "See Upstream/SYNC-2026-10-17.md: Windows backend 599 pass; real worker, streaming fault, VAD and exact-text v2/v3 Flow gates pass; frontend build, 117 tests, lint and parity pass. Physical device/UI and macOS/Linux app acceptance remain explicit. Source-specific adaptations and dictionary/capture call paths are recorded in the execution matrix; Grain-owned destinations remain authoritative."
+      },
+      "src-tauri/src/managers/audio.rs": {
+        "outcome": "ported",
+        "destinations": [
+          "src-tauri/src/grain_capture.rs",
+          "src-tauri/src/grain_actions.rs",
+          "src-tauri/src/agent.rs",
+          "src-tauri/src/extension_session.rs",
+          "src-tauri/src/grain_action_session.rs",
+          "src-tauri/src/grain_onboarding.rs",
+          "src-tauri/src/grain_audio.rs",
+          "src-tauri/src/grain_audio_manager.rs"
+        ],
+        "evidence": "See Upstream/SYNC-2026-10-17.md: Windows backend 599 pass; real worker, streaming fault, VAD and exact-text v2/v3 Flow gates pass; frontend build, 117 tests, lint and parity pass. Physical device/UI and macOS/Linux app acceptance remain explicit. Source-specific adaptations and dictionary/capture call paths are recorded in the execution matrix; Grain-owned destinations remain authoritative."
+      },
+      "src-tauri/src/managers/transcription.rs": {
+        "outcome": "ported",
+        "destinations": [
+          "src-tauri/src/rolling.rs",
+          "src-tauri/src/tdt_flow.rs",
+          "crates/grain-tdt/src",
+          "src-tauri/src/grain_overlay.rs",
+          "src/app/overlay/RecordingOverlay.tsx",
+          "src-tauri/src/grain_transcription.rs",
+          "src-tauri/src/grain_transcription_manager.rs",
+          "src-tauri/src/grain_engine.rs",
+          "src-tauri/src/context_bias.rs"
+        ],
+        "evidence": "See Upstream/SYNC-2026-10-17.md: Windows backend 599 pass; real worker, streaming fault, VAD and exact-text v2/v3 Flow gates pass; frontend build, 117 tests, lint and parity pass. Physical device/UI and macOS/Linux app acceptance remain explicit. Source-specific adaptations and dictionary/capture call paths are recorded in the execution matrix; Grain-owned destinations remain authoritative."
+      },
+      "src-tauri/src/settings.rs": {
+        "outcome": "ported",
+        "destinations": [
+          "src-tauri/src/grain_settings.rs",
+          "crates/grain-core/src/settings.rs",
+          "crates/grain-core/src/context.rs",
+          "src/app/components/settings/ShowOverlay.tsx",
+          "src/app/components/settings/PillCloseButton.tsx",
+          "src/app/components/settings/PillAppIcon.tsx",
+          "src/app/stores/settingsStore.ts",
+          "crates/grain-core/src/capture.rs",
+          "src-tauri/src/grain_dictation_routing.rs",
+          "src/app/components/settings/capture/CaptureModes.tsx",
+          "crates/grain-core/src/providers.rs",
+          "src-tauri/src/grain_provider_commands.rs",
+          "src/app/stores/ppPoolStore.ts",
+          "src/app/components/settings/post-processing/pool/PostProcessingPool.tsx",
+          "src/app/components/settings/experimentations/AgentSection.tsx",
+          "src/app/components/settings/DecodeSettings.tsx"
+        ],
+        "evidence": "See Upstream/SYNC-2026-10-17.md: Windows backend 599 pass; real worker, streaming fault, VAD and exact-text v2/v3 Flow gates pass; frontend build, 117 tests, lint and parity pass. Physical device/UI and macOS/Linux app acceptance remain explicit. Source-specific adaptations and dictionary/capture call paths are recorded in the execution matrix; Grain-owned destinations remain authoritative."
+      }
+    }
+  },
   "a201be9161cd3e62934dec98531204beb1a2a062": {
     "notes": "Bumped in `Cargo.toml`."
+  },
+  "a42131d24c59315fede06775cd354219c4f4a87b": {
+    "suppressed_review": {
+      "outcome": "adapted",
+      "problem": "New recorder ownership, resampling and failure contracts must reach Grain callers.",
+      "destinations": [
+        "src-tauri/Cargo.lock",
+        "src-tauri/src/grain_audio.rs",
+        "src-tauri/src/grain_audio_manager.rs",
+        "src-tauri/src/grain_capture.rs"
+      ],
+      "evidence": "See Upstream/SYNC-2026-10-17.md: Windows backend 599 pass; real worker, streaming fault, VAD and exact-text v2/v3 Flow gates pass; frontend build, 117 tests, lint and parity pass. Physical device/UI and macOS/Linux app acceptance remain explicit."
+    },
+    "ports": {
+      "src-tauri/src/actions.rs": {
+        "outcome": "ported",
+        "destinations": [
+          "src-tauri/src/grain_post_process.rs",
+          "src-tauri/src/grain_actions.rs",
+          "src-tauri/src/grain_capture.rs",
+          "src-tauri/src/grain_overlay.rs",
+          "crates/grain-core/src/capture.rs",
+          "src-tauri/src/grain_dictation_routing.rs",
+          "src/app/components/settings/capture/CaptureModes.tsx"
+        ],
+        "evidence": "See Upstream/SYNC-2026-10-17.md: Windows backend 599 pass; real worker, streaming fault, VAD and exact-text v2/v3 Flow gates pass; frontend build, 117 tests, lint and parity pass. Physical device/UI and macOS/Linux app acceptance remain explicit. Source-specific adaptations and dictionary/capture call paths are recorded in the execution matrix; Grain-owned destinations remain authoritative."
+      },
+      "src-tauri/src/audio_toolkit/audio/sink.rs": {
+        "outcome": "ported",
+        "destinations": [
+          "src-tauri/src/handy/managers/audio.rs",
+          "src-tauri/src/grain_capture.rs",
+          "src-tauri/src/grain_audio_journal.rs",
+          "src-tauri/src/grain_actions.rs",
+          "src-tauri/src/grain_audio.rs",
+          "src-tauri/src/grain_audio_manager.rs"
+        ],
+        "evidence": "See Upstream/SYNC-2026-10-17.md: Windows backend 599 pass; real worker, streaming fault, VAD and exact-text v2/v3 Flow gates pass; frontend build, 117 tests, lint and parity pass. Physical device/UI and macOS/Linux app acceptance remain explicit. Source-specific adaptations and dictionary/capture call paths are recorded in the execution matrix; Grain-owned destinations remain authoritative."
+      },
+      "src-tauri/src/managers/audio.rs": {
+        "outcome": "ported",
+        "destinations": [
+          "src-tauri/src/grain_capture.rs",
+          "src-tauri/src/grain_actions.rs",
+          "src-tauri/src/agent.rs",
+          "src-tauri/src/extension_session.rs",
+          "src-tauri/src/grain_action_session.rs",
+          "src-tauri/src/grain_onboarding.rs",
+          "src-tauri/src/grain_audio.rs",
+          "src-tauri/src/grain_audio_manager.rs"
+        ],
+        "evidence": "See Upstream/SYNC-2026-10-17.md: Windows backend 599 pass; real worker, streaming fault, VAD and exact-text v2/v3 Flow gates pass; frontend build, 117 tests, lint and parity pass. Physical device/UI and macOS/Linux app acceptance remain explicit. Source-specific adaptations and dictionary/capture call paths are recorded in the execution matrix; Grain-owned destinations remain authoritative."
+      }
+    }
   },
   "a4348beb18abdb255b230b659f4adf4774de8270": {
     "ports": {
@@ -647,6 +1132,9 @@
   "a92a4d5e497bc1d7bc8d228c77636c4e600453a9": {
     "notes": "Fixed Tauri memory leak from overlay."
   },
+  "a94b403e0610049fafa54b0a4077db2945084dd8": {
+    "notes": "Grain is unreleased: old portable HF cache and marker upgrade compatibility are not retained. Current portable HF_HOME, HF cache/ref protocol and custom models remain supported."
+  },
   "af48dd68a64d58aad128fdbb920492a03da53c79": {
     "status": "Ignored",
     "notes": "Handy v0.9.6 release version only; Grain owns its independent package version and generated lockfiles",
@@ -692,17 +1180,27 @@
     },
     "status": "Merged",
     "suppressed_review": {
+      "outcome": "adapted",
+      "problem": "Suppressed dependency/workflow files and Grain's deleted catalog generator could leave the Rust API, packaged native ABI, and generated model catalog on different transcribe.cpp baselines.",
       "destinations": [
         "src-tauri/Cargo.toml",
         "src-tauri/Cargo.lock",
         "src-tauri/build.rs",
         "src-tauri/src/handy/catalog/catalog.json",
         "src-tauri/src/handy/catalog/mod.rs",
-        "vendor/TRANSCRIBE-CPP.md"
+        "docs/TRANSCRIBE-CPP-FORK.md"
       ],
-      "evidence": "All four requirements are exact =0.2.0, both vendored crates identify commit 93151602, policy_check.py enforces the contract, and the catalog blob is byte-identical to upstream.",
-      "outcome": "adapted",
-      "problem": "Suppressed dependency/workflow files and Grain's deleted catalog generator could leave the Rust API, packaged native ABI, and generated model catalog on different transcribe.cpp baselines."
+      "evidence": "All four requirements are exact =0.2.0, both vendored crates identify commit 93151602, policy_check.py enforces the contract, and the catalog blob is byte-identical to upstream. Historical vendor implementation is retired; current immutable pin/ABI evidence is in the maintained fork contract."
+    }
+  },
+  "afe5a6310534ffb178794365f31abb8b9fd435a7": {
+    "suppressed_review": {
+      "outcome": "already-covered",
+      "problem": "Troubleshooting Markdown must remain formatter-compatible.",
+      "destinations": [
+        "docs/troubleshooting/ubuntu-26-04-gnome-wayland/README.md"
+      ],
+      "evidence": "See Upstream/SYNC-2026-10-17.md: Windows backend 599 pass; real worker, streaming fault, VAD and exact-text v2/v3 Flow gates pass; frontend build, 117 tests, lint and parity pass. Physical device/UI and macOS/Linux app acceptance remain explicit."
     }
   },
   "b00ae666c57e972b2d3494fc76d8166ffa59032e": {
@@ -745,6 +1243,9 @@
         "evidence": "Grain's updater policy is implemented in grain_update and Nix wrapper rather than the inert Handy settings module."
       }
     }
+  },
+  "b38987a9075e62baafef11263cf8b7448dc38b51": {
+    "notes": "Applied latest-request cancel reconciliation centrally; removed obsolete per-backend async register/unregister tasks. Preserved Agent Escape ownership and Secure Input fallback. Windows build passes; real key acceptance remains required."
   },
   "b428ae4c9c8aecba00d0e44e14d6466d9687795f": {
     "notes": "transcription.rs part = improved GPU-fallback warning (Linux/non-Linux split); merged clean into Grain's transcription.rs. Verified in v0.9.5 sync."
@@ -856,6 +1357,48 @@
     },
     "notes": "Shortcut parity state-machine rewrite deferred because Grain coordinator retains action IDs and Flow routing across start/stop."
   },
+  "c8262ab3ebe56da7f7c4021a6d447d3c42e73176": {
+    "suppressed_review": {
+      "outcome": "adapted",
+      "problem": "Native ASR faults must not crash the desktop application.",
+      "destinations": [
+        "src-tauri/Cargo.lock",
+        "src-tauri/src/grain_engine.rs",
+        "src-tauri/src/main.rs"
+      ],
+      "evidence": "See Upstream/SYNC-2026-10-17.md: Windows backend 599 pass; real worker, streaming fault, VAD and exact-text v2/v3 Flow gates pass; frontend build, 117 tests, lint and parity pass. Physical device/UI and macOS/Linux app acceptance remain explicit."
+    },
+    "ports": {
+      "src-tauri/src/actions.rs": {
+        "outcome": "ported",
+        "destinations": [
+          "src-tauri/src/grain_post_process.rs",
+          "src-tauri/src/grain_actions.rs",
+          "src-tauri/src/grain_capture.rs",
+          "src-tauri/src/grain_overlay.rs",
+          "crates/grain-core/src/capture.rs",
+          "src-tauri/src/grain_dictation_routing.rs",
+          "src/app/components/settings/capture/CaptureModes.tsx"
+        ],
+        "evidence": "See Upstream/SYNC-2026-10-17.md: Windows backend 599 pass; real worker, streaming fault, VAD and exact-text v2/v3 Flow gates pass; frontend build, 117 tests, lint and parity pass. Physical device/UI and macOS/Linux app acceptance remain explicit. Source-specific adaptations and dictionary/capture call paths are recorded in the execution matrix; Grain-owned destinations remain authoritative."
+      },
+      "src-tauri/src/managers/transcription.rs": {
+        "outcome": "ported",
+        "destinations": [
+          "src-tauri/src/rolling.rs",
+          "src-tauri/src/tdt_flow.rs",
+          "crates/grain-tdt/src",
+          "src-tauri/src/grain_overlay.rs",
+          "src/app/overlay/RecordingOverlay.tsx",
+          "src-tauri/src/grain_transcription.rs",
+          "src-tauri/src/grain_transcription_manager.rs",
+          "src-tauri/src/grain_engine.rs",
+          "src-tauri/src/context_bias.rs"
+        ],
+        "evidence": "See Upstream/SYNC-2026-10-17.md: Windows backend 599 pass; real worker, streaming fault, VAD and exact-text v2/v3 Flow gates pass; frontend build, 117 tests, lint and parity pass. Physical device/UI and macOS/Linux app acceptance remain explicit. Source-specific adaptations and dictionary/capture call paths are recorded in the execution matrix; Grain-owned destinations remain authoritative."
+      }
+    }
+  },
   "c89b7bf38974ad317177389f5bfe28236f0d64e3": {
     "frontend_review": {
       "destinations": [
@@ -933,6 +1476,14 @@
   },
   "cfab1dda9db103e95e9fe2f4d76d2168caf0a59d": {
     "notes": "Model sizes already visible in Grain UI with dynamic icons (ported during UI overhaul)."
+  },
+  "cfcb650758899d96392ab6248cb2c1c03e50aa93": {
+    "frontend_review": {
+      "outcome": "not-applicable",
+      "problem": "Handy offered old ONNX users a migration panel.",
+      "destinations": [],
+      "evidence": "See Upstream/SYNC-2026-10-17.md: Windows backend 599 pass; real worker, streaming fault, VAD and exact-text v2/v3 Flow gates pass; frontend build, 117 tests, lint and parity pass. Physical device/UI and macOS/Linux app acceptance remain explicit."
+    }
   },
   "d1180c42ceb344c8219ac419ba6a71c7c938d15c": {
     "notes": "Adapted app-private Linux runtime libraries to /usr/lib/Grain, with SONAME staging and rpath.",
@@ -1015,9 +1566,9 @@
       "problem": "transcribe.cpp 0.2.3 dependency lockfile",
       "destinations": [
         "src-tauri/Cargo.toml",
-        "vendor/TRANSCRIBE-CPP.md"
+        "docs/TRANSCRIBE-CPP-FORK.md"
       ],
-      "evidence": "Grain already pins exact transcribe-cpp 0.2.3 and carries the reviewed vendored TDT patch contract."
+      "evidence": "Grain already pins exact transcribe-cpp 0.2.3 and carries the reviewed vendored TDT patch contract. Historical vendor implementation is retired; current immutable pin/ABI evidence is in the maintained fork contract."
     }
   },
   "dc01346d1cf2ca44b2c726b7140c93dbf929c086": {
@@ -1185,6 +1736,18 @@
     "notes": "Clean cherry-pick. Danish translation file taken verbatim; languages.ts updated with da entry at priority 24.",
     "status": "Merged"
   },
+  "f6b3f8297061acaa763a48c4cdefbbf342c814ac": {
+    "suppressed_review": {
+      "outcome": "adapted",
+      "problem": "Translation contribution paths and supported locale claims must match Grain.",
+      "destinations": [
+        "CONTRIBUTING_TRANSLATIONS.md",
+        "src/app/i18n/languages.ts",
+        "src-tauri/src/grain_locale.rs"
+      ],
+      "evidence": "See Upstream/SYNC-2026-10-17.md: Windows backend 599 pass; real worker, streaming fault, VAD and exact-text v2/v3 Flow gates pass; frontend build, 117 tests, lint and parity pass. Physical device/UI and macOS/Linux app acceptance remain explicit."
+    }
+  },
   "f6fac42e2ede6857a7c46bfac05ac25ae25d0ca3": {
     "suppressed_review": {
       "outcome": "already-covered",
@@ -1205,5 +1768,18 @@
   "fc465b49f0522ca359b36a784a325db8521dfb1c": {
     "notes": "Irrelevant (Grain manages its own custom prompts).",
     "status": "Ignored"
+  },
+  "ffbc9504cbf004ce4819d2ca872fcea92be0fddf": {
+    "suppressed_review": {
+      "outcome": "adapted",
+      "problem": "The native 0.3 dependency bump changes model APIs and packaging.",
+      "destinations": [
+        "native/transcribe-fork.json",
+        "src-tauri/Cargo.toml",
+        "src-tauri/Cargo.lock",
+        "scripts/transcribe_fork.py"
+      ],
+      "evidence": "See Upstream/SYNC-2026-10-17.md: Windows backend 599 pass; real worker, streaming fault, VAD and exact-text v2/v3 Flow gates pass; frontend build, 117 tests, lint and parity pass. Physical device/UI and macOS/Linux app acceptance remain explicit."
+    }
   }
 }

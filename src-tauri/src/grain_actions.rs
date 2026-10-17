@@ -9,7 +9,7 @@ use crate::actions::{
     ShortcutAction,
 };
 use crate::audio_feedback::{play_feedback_sound, SoundType};
-use crate::audio_toolkit::{is_microphone_access_denied, is_no_input_device_error, VadPolicy};
+use crate::audio_toolkit::VadPolicy;
 use crate::managers::audio::AudioRecordingManager;
 use crate::managers::history::HistoryManager;
 use crate::managers::model::ModelManager;
@@ -414,18 +414,12 @@ impl ShortcutAction for RealtimeTranscribeAction {
             rt.cancel_session();
             change_tray_icon(app, TrayIconState::Idle);
             if let Some(err) = recording_error {
-                let error_type = if is_microphone_access_denied(&err) {
-                    "microphone_permission_denied"
-                } else if is_no_input_device_error(&err) {
-                    "no_input_device"
-                } else {
-                    "unknown"
-                };
+                let error_type = crate::managers::audio::recording_error_type(&err);
                 let _ = app.emit(
                     "recording-error",
                     RecordingErrorEvent {
                         error_type: error_type.to_string(),
-                        detail: Some(err),
+                        detail: Some(err.to_string()),
                     },
                 );
             }
@@ -702,7 +696,7 @@ impl ShortcutAction for NativeAsrAction {
         // grain-core settings — VAD is always on.
         let vad_policy = VadPolicy::Streaming;
         let overlay_generation = crate::grain_overlay::show_capture(app, SessionMode::NativeAsr);
-        let mut recording_error: Option<String> = None;
+        let mut recording_error: Option<anyhow::Error> = None;
         let mut readiness = None;
         match rm.try_start_recording(&binding_id, vad_policy) {
             Ok(ready) => readiness = Some(ready),
@@ -723,18 +717,12 @@ impl ShortcutAction for NativeAsrAction {
             tm.cancel_stream();
             change_tray_icon(app, TrayIconState::Idle);
             if let Some(err) = recording_error {
-                let error_type = if is_microphone_access_denied(&err) {
-                    "microphone_permission_denied"
-                } else if is_no_input_device_error(&err) {
-                    "no_input_device"
-                } else {
-                    "unknown"
-                };
+                let error_type = crate::managers::audio::recording_error_type(&err);
                 let _ = app.emit(
                     "recording-error",
                     RecordingErrorEvent {
                         error_type: error_type.to_string(),
-                        detail: Some(err),
+                        detail: Some(err.to_string()),
                     },
                 );
             }

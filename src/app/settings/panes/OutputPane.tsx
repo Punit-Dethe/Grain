@@ -1,3 +1,4 @@
+import { ChineseScriptSetting } from "@/components/settings/DecodeSettings";
 import { useTranslation } from "react-i18next";
 import { AppendTrailingSpace } from "@/components/settings/AppendTrailingSpace";
 import { AutoSubmit } from "@/components/settings/AutoSubmit";
@@ -49,6 +50,7 @@ export function OutputPane() {
         title={t("ui2.settings.groups.corrections")}
         info={t("ui2.settings.groups.correctionsInfo")}
       >
+        <ChineseScriptSetting />
         <FillerWordRemoval descriptionMode="tooltip" grouped />
         <ToggleSwitch
           label={t("ui2.settings.scrapThat.title")}

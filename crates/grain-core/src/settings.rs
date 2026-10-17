@@ -29,6 +29,47 @@ pub const APPLE_INTELLIGENCE_DEFAULT_MODEL_ID: &str = "Apple Intelligence";
 ///   canonical Default Prompt while preserving prompts created by the user.
 pub const CURRENT_SETTINGS_SCHEMA_VERSION: u32 = 3;
 
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Type, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum VadBackend {
+    #[default]
+    Silero,
+    Earshot,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Type, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ChineseScript {
+    #[default]
+    AsTranscribed,
+    Simplified,
+    Traditional,
+}
+
+impl ChineseScript {
+    /// OS locale supplies the default output script; recognition language stays independent.
+    pub fn for_locale(locale: &str) -> Option<Self> {
+        let normalized = locale.to_lowercase().replace('_', "-");
+        let subtags: Vec<_> = normalized.split('-').collect();
+        let traditional = match subtags.first().copied() {
+            Some("zh") => {
+                subtags.contains(&"hant")
+                    || (!subtags.contains(&"hans")
+                        && ["tw", "hk", "mo"]
+                            .iter()
+                            .any(|region| subtags.contains(region)))
+            }
+            Some("yue") => !subtags.contains(&"hans"),
+            _ => return None,
+        };
+        Some(if traditional {
+            Self::Traditional
+        } else {
+            Self::Simplified
+        })
+    }
+}
+
 #[derive(Serialize, Debug, Clone, Copy, PartialEq, Eq, Type)]
 #[serde(rename_all = "lowercase")]
 pub enum LogLevel {
@@ -200,8 +241,18 @@ impl Default for AgentPanelPosition {
     }
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, Default, PartialEq, Eq, Type)]
+#[serde(rename_all = "snake_case")]
+pub enum PostProcessApiFormat {
+    #[default]
+    OpenAi,
+    Anthropic,
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone, Type)]
 pub struct PostProcessProvider {
+    #[serde(default)]
+    pub api_format: PostProcessApiFormat,
     pub id: String,
     pub label: String,
     pub base_url: String,
@@ -610,6 +661,12 @@ pub struct AppSettings {
     pub translate_to_english: bool,
     #[serde(default = "default_selected_language")]
     pub selected_language: String,
+    #[serde(default)]
+    pub chinese_script: ChineseScript,
+    #[serde(default)]
+    pub vad_backend: VadBackend,
+    #[serde(default = "default_long_form_chunking")]
+    pub long_form_chunking: bool,
     #[serde(default = "default_overlay_position")]
     pub overlay_position: OverlayPosition,
     #[serde(default = "default_overlay_style")]
@@ -858,6 +915,10 @@ fn default_update_checks_enabled() -> bool {
 fn default_selected_language() -> String {
     "auto".to_string()
 }
+
+fn default_long_form_chunking() -> bool {
+    true
+}
 fn default_overlay_position() -> OverlayPosition {
     OverlayPosition::Bottom
 }
@@ -987,6 +1048,11 @@ pub fn default_post_process_providers() -> Vec<PostProcessProvider> {
         supports_structured_output: bool,
     ) -> PostProcessProvider {
         PostProcessProvider {
+            api_format: if id == "anthropic" {
+                PostProcessApiFormat::Anthropic
+            } else {
+                PostProcessApiFormat::OpenAi
+            },
             id: id.to_string(),
             label: label.to_string(),
             base_url: base_url.to_string(),
@@ -1630,6 +1696,11 @@ pub fn get_default_settings() -> AppSettings {
         selected_output_device: None,
         translate_to_english: false,
         selected_language: "auto".to_string(),
+        chinese_script: sys_locale::get_locale()
+            .and_then(|locale| ChineseScript::for_locale(&locale))
+            .unwrap_or_default(),
+        vad_backend: VadBackend::default(),
+        long_form_chunking: default_long_form_chunking(),
         overlay_position: default_overlay_position(),
         overlay_style: default_overlay_style(),
         pill_show_app_icon: default_pill_show_app_icon(),

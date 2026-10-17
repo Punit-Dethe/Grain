@@ -19,7 +19,7 @@ Sources and hypotheses: [initial audit](FLOW-ACCURACY-AUDIT.md), [v2-specific re
 - `crates/grain-tdt/`: bounded cursor and native-token merge policies.
 - `src-tauri/src/tdt_flow.rs`: v2 inference selection, exact timestamps and final detokenization.
 - `src-tauri/src/rolling.rs`: existing worker integration and cleanup only.
-- `vendor/transcribe-cpp*` only if the stateful candidate is required; ordinary upstream Batch must remain unchanged.
+- `native/transcribe.cpp` only for a reviewed native patch; preserve paired source pins and semantic acceptance gates.
 
 ## Selection gate
 

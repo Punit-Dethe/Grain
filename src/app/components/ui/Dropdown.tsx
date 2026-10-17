@@ -27,6 +27,7 @@ interface DropdownProps {
   placeholder?: string;
   disabled?: boolean;
   onRefresh?: () => void;
+  ariaLabel?: string;
 }
 
 /** Tallest the menu may get before it scrolls internally (px). */
@@ -69,6 +70,7 @@ export const Dropdown: React.FC<DropdownProps> = ({
   placeholder = "Select an option...",
   disabled = false,
   onRefresh,
+  ariaLabel,
 }) => {
   const { t } = useTranslation();
   const [isOpen, setIsOpen] = useState(false);
@@ -232,6 +234,7 @@ export const Dropdown: React.FC<DropdownProps> = ({
         }`}
         onClick={handleToggle}
         disabled={disabled}
+        aria-label={ariaLabel}
         aria-haspopup="listbox"
         aria-expanded={isOpen}
       >

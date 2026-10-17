@@ -1,4 +1,4 @@
-use crate::settings::PostProcessProvider;
+use crate::settings::{PostProcessApiFormat, PostProcessProvider};
 use log::debug;
 use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE, REFERER, USER_AGENT};
 use serde::{Deserialize, Serialize};
@@ -420,7 +420,15 @@ pub async fn send_chat_completion_with_schema(
     reasoning: Option<ReasoningConfig>,
 ) -> Result<LlmSuccess, LlmError> {
     let base_url = provider.base_url.trim_end_matches('/');
-    let url = format!("{}/chat/completions", base_url);
+    let url = format!(
+        "{}/{}",
+        base_url,
+        if provider.api_format == PostProcessApiFormat::Anthropic {
+            "messages"
+        } else {
+            "chat/completions"
+        }
+    );
 
     debug!("Sending chat completion request to: {}", url);
 
@@ -460,7 +468,7 @@ pub async fn send_chat_completion_with_schema(
         tool_choice: None,
     };
 
-    send_request(client, &url, headers, &request_body).await
+    send_request(client, &url, headers, &request_body, provider.api_format).await
 }
 
 /// [GRAIN] Send a free-form multi-turn chat completion (used by the Agent).
@@ -478,7 +486,15 @@ pub async fn send_chat(
     reasoning: Option<ReasoningConfig>,
 ) -> Result<LlmSuccess, LlmError> {
     let base_url = provider.base_url.trim_end_matches('/');
-    let url = format!("{}/chat/completions", base_url);
+    let url = format!(
+        "{}/{}",
+        base_url,
+        if provider.api_format == PostProcessApiFormat::Anthropic {
+            "messages"
+        } else {
+            "chat/completions"
+        }
+    );
 
     let headers = build_auth_headers(provider, &api_key).map_err(LlmError::Other)?;
 
@@ -498,7 +514,7 @@ pub async fn send_chat(
         tool_choice: None,
     };
 
-    send_request(client, &url, headers, &request_body).await
+    send_request(client, &url, headers, &request_body, provider.api_format).await
 }
 
 /// [GRAIN] Like [`send_chat`], but the final user turn also carries an image.
@@ -524,7 +540,15 @@ pub async fn send_chat_with_image(
     reasoning: Option<ReasoningConfig>,
 ) -> Result<LlmSuccess, LlmError> {
     let base_url = provider.base_url.trim_end_matches('/');
-    let url = format!("{}/chat/completions", base_url);
+    let url = format!(
+        "{}/{}",
+        base_url,
+        if provider.api_format == PostProcessApiFormat::Anthropic {
+            "messages"
+        } else {
+            "chat/completions"
+        }
+    );
     let headers = build_auth_headers(provider, &api_key).map_err(LlmError::Other)?;
 
     // The image rides on the LAST user turn — the one the model is answering.
@@ -552,7 +576,7 @@ pub async fn send_chat_with_image(
         tool_choice: None,
     };
 
-    send_request(client, &url, headers, &request_body).await
+    send_request(client, &url, headers, &request_body, provider.api_format).await
 }
 
 /// [GRAIN] Send a tool-enabled multi-turn chat completion. Same OpenAI-compatible endpoint as [`send_chat`],
@@ -575,7 +599,15 @@ pub async fn send_chat_with_tools(
     reasoning: Option<ReasoningConfig>,
 ) -> Result<LlmChatResult, LlmError> {
     let base_url = provider.base_url.trim_end_matches('/');
-    let url = format!("{}/chat/completions", base_url);
+    let url = format!(
+        "{}/{}",
+        base_url,
+        if provider.api_format == PostProcessApiFormat::Anthropic {
+            "messages"
+        } else {
+            "chat/completions"
+        }
+    );
 
     let headers = build_auth_headers(provider, &api_key).map_err(LlmError::Other)?;
 
@@ -648,7 +680,7 @@ pub async fn send_chat_with_tools(
         tool_choice: Some("auto".to_string()),
     };
 
-    send_request_with_tools(client, &url, headers, &request_body).await
+    send_request_with_tools(client, &url, headers, &request_body, provider.api_format).await
 }
 
 /// Build the common + provider-specific auth headers for one request.
@@ -678,7 +710,7 @@ fn build_auth_headers(provider: &PostProcessProvider, api_key: &str) -> Result<H
     if !api_key.is_empty() {
         // [GRAIN] Phase 2 note: will switch to provider.auth_style enum;
         // keep this narrow id match until that migration lands.
-        if provider.id == "anthropic" {
+        if provider.api_format == PostProcessApiFormat::Anthropic {
             headers.insert(
                 "x-api-key",
                 HeaderValue::from_str(api_key)
@@ -705,8 +737,9 @@ async fn send_request(
     url: &str,
     headers: HeaderMap,
     request_body: &ChatCompletionRequest,
+    format: PostProcessApiFormat,
 ) -> Result<LlmSuccess, LlmError> {
-    let completion = post_chat(client, url, headers, request_body).await?;
+    let completion = post_chat(client, url, headers, request_body, format).await?;
     Ok(LlmSuccess {
         content: completion
             .choices
@@ -722,8 +755,9 @@ async fn send_request_with_tools(
     url: &str,
     headers: HeaderMap,
     request_body: &ChatCompletionRequest,
+    format: PostProcessApiFormat,
 ) -> Result<LlmChatResult, LlmError> {
-    let completion = post_chat(client, url, headers, request_body).await?;
+    let completion = post_chat(client, url, headers, request_body, format).await?;
     let message = completion.choices.into_iter().next().map(|c| c.message);
     let (content, tool_calls) = match message {
         Some(m) => {
@@ -757,6 +791,7 @@ async fn post_chat(
     url: &str,
     headers: HeaderMap,
     request_body: &ChatCompletionRequest,
+    format: PostProcessApiFormat,
 ) -> Result<ChatCompletionResponse, LlmError> {
     // [GRAIN] Reasoning-rejection retry (ported from upstream Handy #1809).
     // Grain gates reasoning-disable fields by provider, so only "custom" and
@@ -769,7 +804,7 @@ async fn post_chat(
         request_body.reasoning_effort.is_some() || request_body.reasoning.is_some();
     let mut payload = serde_json::to_value(request_body)
         .map_err(|e| LlmError::Other(format!("serialize request: {e}")))?;
-    let mut reasoning_in_payload = carries_reasoning;
+    let mut reasoning_in_payload = carries_reasoning && format != PostProcessApiFormat::Anthropic;
     if carries_reasoning && reasoning_endpoint_rejected(&reject_key) {
         strip_reasoning_fields(&mut payload);
         reasoning_in_payload = false;
@@ -784,7 +819,7 @@ async fn post_chat(
         .post(url)
         .headers(headers.clone())
         .timeout(LLM_REQUEST_TIMEOUT)
-        .json(&payload)
+        .json(&wire_payload(&payload, format)?)
         .send()
         .await
         .map_err(|e| LlmError::Other(report_reqwest_error("HTTP request failed", &e)))?;
@@ -799,7 +834,7 @@ async fn post_chat(
             .post(url)
             .headers(headers.clone())
             .timeout(LLM_REQUEST_TIMEOUT)
-            .json(&payload)
+            .json(&wire_payload(&payload, format)?)
             .send()
             .await
             .map_err(|e| LlmError::Other(report_reqwest_error("HTTP retry failed", &e)))?;
@@ -826,7 +861,7 @@ async fn post_chat(
             .post(url)
             .headers(headers)
             .timeout(LLM_REQUEST_TIMEOUT)
-            .json(&payload)
+            .json(&wire_payload(&payload, format)?)
             .send()
             .await
             .map_err(|e| LlmError::Other(report_reqwest_error("HTTP retry failed", &e)))?;
@@ -848,9 +883,37 @@ async fn post_chat(
         )));
     }
 
-    let completion: ChatCompletionResponse = serde_json::from_str(&body)
-        .map_err(|e| LlmError::Other(format!("Failed to parse API response: {}", e)))?;
-    Ok(completion)
+    let parsed: Value = serde_json::from_str(&body)
+        .map_err(|e| LlmError::Other(format!("Failed to parse API response: {e}")))?;
+    let parsed = if format == PostProcessApiFormat::Anthropic {
+        crate::grain_anthropic::response(parsed).map_err(LlmError::Other)?
+    } else {
+        if parsed["choices"].as_array().is_some_and(|choices| {
+            choices
+                .iter()
+                .any(|choice| choice["finish_reason"] == "length")
+        }) {
+            return Err(LlmError::Other(
+                "Response was truncated at the provider's output token limit".into(),
+            ));
+        }
+        parsed
+    };
+    serde_json::from_value(parsed)
+        .map_err(|e| LlmError::Other(format!("Failed to parse API response: {e}")))
+}
+
+fn wire_payload(
+    payload: &Value,
+    format: PostProcessApiFormat,
+) -> Result<std::borrow::Cow<'_, Value>, LlmError> {
+    if format == PostProcessApiFormat::Anthropic {
+        crate::grain_anthropic::request(payload)
+            .map(std::borrow::Cow::Owned)
+            .map_err(LlmError::Other)
+    } else {
+        Ok(std::borrow::Cow::Borrowed(payload))
+    }
 }
 
 /// Fetch available models from an OpenAI-compatible API
@@ -1021,5 +1084,76 @@ mod tests {
         let before = payload.clone();
         strip_image_parts(&mut payload);
         assert_eq!(payload, before);
+    }
+}
+
+#[cfg(test)]
+mod anthropic_transport_tests {
+    use super::*;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    #[tokio::test]
+    async fn custom_provider_uses_messages_auth_and_parses_response() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut request = Vec::new();
+            let mut bytes = [0u8; 2048];
+            let body_start = loop {
+                let count = stream.read(&mut bytes).await.unwrap();
+                assert_ne!(count, 0);
+                request.extend_from_slice(&bytes[..count]);
+                assert!(request.len() < 16384);
+                if let Some(index) = request.windows(4).position(|w| w == b"\r\n\r\n") {
+                    break index + 4;
+                }
+            };
+            let headers = String::from_utf8_lossy(&request[..body_start]).to_lowercase();
+            let length: usize = headers
+                .lines()
+                .find_map(|line| line.strip_prefix("content-length:"))
+                .unwrap()
+                .trim()
+                .parse()
+                .unwrap();
+            while request.len() < body_start + length {
+                let count = stream.read(&mut bytes).await.unwrap();
+                assert_ne!(count, 0);
+                request.extend_from_slice(&bytes[..count]);
+            }
+            assert!(headers.starts_with("post /v1/messages "));
+            assert!(headers.contains("x-api-key: test-key"));
+            assert!(headers.contains("anthropic-version: 2023-06-01"));
+            assert!(!headers.contains("authorization:"));
+            let body: Value =
+                serde_json::from_slice(&request[body_start..body_start + length]).unwrap();
+            assert_eq!(body["max_tokens"], 4096);
+            assert_eq!(body["system"], "Be concise");
+            let body = r#"{"stop_reason":"end_turn","content":[{"type":"text","text":"Ready."}]}"#;
+            let response = format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", body.len(), body);
+            stream.write_all(response.as_bytes()).await.unwrap();
+        });
+        let mut provider = grain_core::settings::default_post_process_providers()
+            .into_iter()
+            .find(|provider| provider.id == "custom")
+            .unwrap();
+        provider.api_format = PostProcessApiFormat::Anthropic;
+        provider.base_url = format!("http://{address}/v1");
+        let result = send_chat(
+            &reqwest::Client::new(),
+            &provider,
+            "test-key".into(),
+            "claude",
+            vec![
+                ("system".into(), "Be concise".into()),
+                ("user".into(), "Hello".into()),
+            ],
+            None,
+            None,
+        )
+        .await
+        .unwrap_or_else(|error| panic!("{error}"));
+        assert_eq!(result.content.as_deref(), Some("Ready."));
+        server.await.unwrap();
     }
 }

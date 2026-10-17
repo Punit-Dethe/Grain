@@ -1,0 +1,144 @@
+//! Grain's model queries carried by Handy's existing worker transport.
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum Request {
+    FlowModel,
+    Detokenize { tokens: Vec<i32> },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum Response {
+    FlowModel {
+        arch: String,
+        variant: String,
+        window: bool,
+    },
+    Text(String),
+}
+
+pub fn dispatch(request: Request, session: &transcribe_cpp::Session) -> Result<Response, String> {
+    let model = session.model();
+    match request {
+        Request::FlowModel => Ok(Response::FlowModel {
+            arch: model.arch(),
+            variant: model.variant(),
+            window: model.accepts_ext(
+                transcribe_cpp::ExtSlot::Run,
+                transcribe_cpp::ParakeetTdtWindowOptions::KIND,
+            ),
+        }),
+        Request::Detokenize { tokens } => model
+            .detokenize(&tokens)
+            .map(Response::Text)
+            .map_err(|error| error.to_string()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::engine_supervisor::{DeviceSelector, EngineSupervisor, LoadSpec};
+    use crate::grain_audio_journal::PcmJournal;
+    use crate::grain_transcription::FlowSession;
+    use crate::tdt_flow::{Inference, TdtAccumulator, TdtRunConfig};
+    use std::sync::atomic::AtomicBool;
+
+    /// Run against the real Grain executable's worker, not an in-process model.
+    #[test]
+    #[ignore = "requires Grain worker executable, model and exact-text fixtures"]
+    fn worker_flow_journal_preserves_exact_text_and_recovers_after_cancel() {
+        let engine = EngineSupervisor::new(false);
+        let info = engine
+            .load(LoadSpec {
+                path: std::env::var_os("GRAIN_FLOW_TEST_MODEL").unwrap().into(),
+                backend: transcribe_cpp::Backend::Cpu,
+                device: DeviceSelector::Auto,
+            })
+            .unwrap();
+        let cancelled = AtomicBool::new(false);
+        let mut session = FlowSession {
+            engine: &engine,
+            mark: engine.cancel_mark(),
+            cancelled: &cancelled,
+        };
+        let model = session.flow_model().unwrap();
+        assert_eq!(model.arch, info.arch);
+        assert_eq!(model.variant, info.variant);
+        assert!(model.window);
+        let config = TdtRunConfig {
+            model_id: info.variant,
+            language: None,
+        };
+        let cases: Vec<serde_json::Value> = serde_json::from_slice(
+            &std::fs::read(std::env::var_os("GRAIN_FLOW_TEST_CASES").unwrap()).unwrap(),
+        )
+        .unwrap();
+        assert!(!cases.is_empty());
+        for case in cases {
+            let pcm =
+                crate::audio_toolkit::read_wav_samples(case["path"].as_str().unwrap()).unwrap();
+            let journal = PcmJournal::create().unwrap();
+            let mut reader = journal.reader().unwrap();
+            let mut accumulator = TdtAccumulator::new(&session, &config).unwrap();
+            let ceiling = accumulator.max_input_samples();
+            let mut audio = Vec::with_capacity(ceiling);
+            for block in pcm.chunks(8001) {
+                journal.append(block).unwrap();
+                accumulator
+                    .process_stable(
+                        &mut session,
+                        &config,
+                        &journal,
+                        &mut reader,
+                        &mut audio,
+                        journal.frame_count(),
+                    )
+                    .unwrap();
+            }
+            journal.close().unwrap();
+            let text = accumulator
+                .render(
+                    &mut session,
+                    &config,
+                    &journal,
+                    &mut reader,
+                    &mut audio,
+                    journal.frame_count(),
+                )
+                .unwrap();
+            assert_eq!(
+                text,
+                case["expected"].as_str().unwrap(),
+                "full casing/punctuation must agree"
+            );
+            assert!(audio.capacity() <= ceiling);
+        }
+        engine.cancel();
+        assert!(
+            session.flow_model().is_err(),
+            "old epoch must not revive a cancelled session"
+        );
+        let fresh = FlowSession {
+            engine: &engine,
+            mark: engine.cancel_mark(),
+            cancelled: &cancelled,
+        };
+        assert!(
+            fresh.flow_model().unwrap().window,
+            "a fresh cancellation epoch must be usable"
+        );
+        engine.unload().wait();
+        assert!(engine.loaded().is_none());
+    }
+
+    #[test]
+    fn grain_model_queries_round_trip_without_native_handles() {
+        let request = Request::Detokenize {
+            tokens: vec![0, 10, 442],
+        };
+        let json = serde_json::to_vec(&request).unwrap();
+        assert!(matches!(serde_json::from_slice::<Request>(&json).unwrap(),
+            Request::Detokenize { tokens } if tokens == [0, 10, 442]));
+    }
+}
