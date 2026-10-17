@@ -5,7 +5,7 @@
   "src-tauri/capabilities/default.json": 16,
   "src-tauri/capabilities/desktop.json": 2,
   "src-tauri/resources/default_settings.json": 2,
-  "src-tauri/src/handy/actions.rs": 721,
+  "src-tauri/src/handy/actions.rs": 719,
   "src-tauri/src/handy/audio_toolkit/audio/sink.rs": 17,
   "src-tauri/src/handy/audio_toolkit/audio/sink/tests.rs": 16,
   "src-tauri/src/handy/audio_toolkit/mod.rs": 4,
@@ -33,7 +33,7 @@
   "src-tauri/src/handy/transcription_coordinator.rs": 1619,
   "src-tauri/src/handy/tray.rs": 642,
   "src-tauri/src/handy/utils.rs": 60,
-  "src-tauri/src/lib.rs": 1301,
+  "src-tauri/src/lib.rs": 1302,
   "src-tauri/src/main.rs": 13,
   "src-tauri/tauri.conf.json": 22
 }
