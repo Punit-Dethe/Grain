@@ -1529,22 +1529,25 @@ html[data-theme="light"] .hero {
   line-height: 1.45;
 }
 
-/* Start Here: three equal shortcut columns and a quiet settings note. */
+/* Start Here: three equal shortcut cards and a quiet settings note. */
 .overview-shortcut-strip {
+  --overview-shortcut-surface: var(--bg-2);
+  --overview-shortcut-card-surface: var(--color-paper-raised);
   min-width: 0;
   padding: 20px 24px;
   border: 1px solid var(--hairline);
   border-radius: var(--radius-lg);
-  background: var(--bg-2);
+  background: var(--overview-shortcut-surface);
   container-type: inline-size;
   container-name: overview-strip;
 }
 .grain-root[data-theme="dark"] .overview-shortcut-strip {
-  background: #292929;
+  --overview-shortcut-surface: #292929;
+  --overview-shortcut-card-surface: var(--bg-4);
 }
 .grain-root[data-theme="dark"]
   .overview-shortcut-strip
-  :is(.overview-shortcut-key, .overview-shortcut-settings) {
+  .overview-shortcut-settings {
   background: var(--bg-4);
 }
 .overview-shortcut-layout {
@@ -1557,22 +1560,17 @@ html[data-theme="light"] .hero {
   min-width: 0;
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
 }
 .overview-shortcut {
   min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 12px;
-  padding-inline: 20px;
-}
-.overview-shortcut:first-child {
-  padding-inline-start: 0;
-}
-.overview-shortcut:last-child {
-  padding-inline-end: 0;
-}
-.overview-shortcut + .overview-shortcut {
-  border-inline-start: 1px solid var(--hairline);
+  padding: 14px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-md);
+  background: var(--overview-shortcut-card-surface);
 }
 .overview-shortcut-heading {
   display: flex;
@@ -1643,7 +1641,7 @@ html[data-theme="light"] .hero {
   border: 1px solid var(--hairline);
   border-radius: 5.5px;
   color: var(--text-1);
-  background: var(--color-paper-raised);
+  background: var(--overview-shortcut-surface);
   box-shadow: var(--shadow-hair, 0 1px 1px rgba(0, 0, 0, 0.12));
   font: inherit;
   white-space: nowrap;
@@ -1691,10 +1689,10 @@ html[data-theme="light"] .hero {
   box-shadow: none !important;
 }
 html[data-theme="light"] .overview-shortcut-keys .overview-shortcut-key {
-  background: var(--color-paper-raised);
+  background: var(--overview-shortcut-surface);
   box-shadow: var(--shadow-hair, 0 1px 1px rgba(26, 26, 26, 0.08));
 }
-@container overview-strip (max-width: 640px) {
+@container overview-strip (max-width: 800px) {
   .overview-shortcut-layout {
     grid-template-columns: minmax(0, 1fr);
     gap: 20px;
@@ -1716,7 +1714,7 @@ html[data-theme="light"] .overview-shortcut-keys .overview-shortcut-key {
     flex: none;
   }
 }
-@container overview-strip (max-width: 480px) {
+@container overview-strip (max-width: 600px) {
   .overview-shortcuts {
     grid-template-columns: minmax(0, 1fr);
   }
@@ -1724,11 +1722,7 @@ html[data-theme="light"] .overview-shortcut-keys .overview-shortcut-key {
     flex-direction: row;
     align-items: center;
     justify-content: space-between;
-    padding: 12px 0;
-  }
-  .overview-shortcut + .overview-shortcut {
-    border-inline-start: 0;
-    border-block-start: 1px solid var(--hairline);
+    padding: 12px 14px;
   }
   .overview-shortcut-heading {
     flex: 1;
