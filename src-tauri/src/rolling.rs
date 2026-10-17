@@ -11,16 +11,13 @@ use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::Instant;
 
-use tauri::{AppHandle, Manager};
+use tauri::AppHandle;
 use transcribe_cpp::CancelToken;
 
 use crate::grain_audio_journal::{PcmJournal, PcmJournalReader};
-use crate::managers::model::ModelManager;
 use crate::managers::transcription::TranscriptionManager;
 use crate::settings::get_settings;
-use crate::tdt_flow::{
-    validate_model_installation, TdtAccumulator, TdtRunConfig,
-};
+use crate::tdt_flow::{TdtAccumulator, TdtRunConfig};
 
 const MIN_TRANSCRIBE_SAMPLES: u64 = grain_tdt::SAMPLE_RATE;
 
@@ -80,11 +77,7 @@ impl RollingTranscriber {
         let settings = get_settings(&app);
         crate::tdt_flow::validate_model(&settings.selected_model, settings.translate_to_english)?;
         let model_id = settings.selected_model.clone();
-        let is_downloaded = app
-            .try_state::<Arc<ModelManager>>()
-            .and_then(|models| models.get_model_info(&model_id))
-            .is_some_and(|model| model.is_downloaded);
-        validate_model_installation(is_downloaded)?;
+        crate::grain_capture::require_transcribable_model(&app, &model_id)?;
 
         // Serialize replacement through the active-session lock. The worker
         // owns the model lease for its whole lifetime, so spawning its

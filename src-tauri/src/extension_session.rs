@@ -81,6 +81,11 @@ pub fn start(app: &AppHandle, ext_id: &str, mode_id: &str) -> Result<u64, StartE
     }
 
     transcription.initiate_model_load();
+    crate::grain_capture::require_transcribable_model(
+        app,
+        &crate::settings::get_settings(app).selected_model,
+    )
+    .map_err(StartError::Unavailable)?;
     {
         let recording = Arc::clone(&recording);
         std::thread::spawn(move || {

@@ -1921,19 +1921,24 @@ pub fn init_transcribe_backend() {
                      disabling transcribe.cpp GPU acceleration and using CPU"
                 );
             }
-            let devices = transcribe_compute_devices();
-            info!(
-                "transcribe-cpp initialized with {} compute device(s): [{}]",
-                devices.len(),
-                devices
-                    .iter()
-                    .map(|d| format!("{} ({})", d.name, d.kind))
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            );
         }
         Err(e) => warn!("Failed to initialize transcribe-cpp backends: {}", e),
     }
+}
+
+/// Log registered devices only when enumeration is explicitly requested.
+/// Listing may open a GPU and compile Metal shaders, so keep it off UI startup.
+pub fn report_compute_devices() {
+    let devices = transcribe_compute_devices();
+    info!(
+        "transcribe-cpp initialized with {} compute device(s): [{}]",
+        devices.len(),
+        devices
+            .iter()
+            .map(|d| format!("{} ({})", d.name, d.kind))
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
 }
 
 /// Human-readable list of the transcribe-cpp compute devices registered at

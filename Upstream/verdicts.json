@@ -201,6 +201,22 @@
       "evidence": "The upstream diff is whitespace in a generated binding file; Grain generates src/app/bindings.ts from its own Rust API and never hand-merges it"
     }
   },
+  "29bd2c0d6b4b705df5fd6d2f387e5db5ecc27480": {
+    "ports": {
+      "src-tauri/src/managers/transcription.rs": {
+        "outcome": "ported",
+        "destinations": [
+          "src-tauri/src/rolling.rs",
+          "src-tauri/src/tdt_flow.rs",
+          "crates/grain-tdt/src",
+          "src-tauri/src/grain_overlay.rs",
+          "src/app/overlay/RecordingOverlay.tsx",
+          "src-tauri/src/grain_transcription.rs"
+        ],
+        "evidence": "Move diagnostic device enumeration out of init_transcribe_backend. Explicit headless mode calls report_compute_devices; Grain retains lazy Advanced-page enumeration and does not spawn a boot prewarm. Flow/batch model loading still uses the shared initialized backend."
+      }
+    }
+  },
   "2bdf9ac05724fd6fa22f28dabb664c54a43fae3c": {
     "frontend_review": {
       "outcome": "not-applicable",
@@ -242,6 +258,18 @@
       }
     },
     "status": "Merged"
+  },
+  "2d526b157953ddf9a5bb34194786cea69569b6a1": {
+    "suppressed_review": {
+      "outcome": "adapted",
+      "problem": "Handy updates transcribe.cpp to 0.2.4 for runtime fixes.",
+      "destinations": [
+        "native/transcribe-fork.json",
+        "src-tauri/Cargo.toml",
+        "scripts/flow-audit/Cargo.toml"
+      ],
+      "evidence": "Grain ports the cumulative fork onto 0.4.0 at 517885822a5f42562972796c53ae496a52c143b6 with paired immutable pins/locks, contract revision 3, native failure tests, source-built backend tests and real v2/v3 journal replay. Target backend features are retained."
+    }
   },
   "2dd35bbb5a85a0fa46f539a0c2a06d1a246c88fa": {
     "notes": "Safely merged into `tray.rs`"
@@ -1102,6 +1130,17 @@
     "notes": "Cherry-picked as 0eac7cab; rename-conflict resolved into handy/tray_i18n.rs (blob byte-identical to upstream 2bdc84ca).",
     "status": "Merged"
   },
+  "eb49dc02acfe94fe3b03e3b83316c1f1bbee920b": {
+    "ports": {
+      "src-tauri/src/audio_toolkit/text.rs": {
+        "outcome": "ported",
+        "destinations": [
+          "src-tauri/src/handy/audio_toolkit/grain_text.rs"
+        ],
+        "evidence": "The compiled shared text module now restores only capitals owed by sentence-start fillers. grain_text.rs exercises assembled prompted/unprompted output, sentence continuations and lowercase fillers; no chunk-seam capitalization heuristic is added."
+      }
+    }
+  },
   "eb9301e01c8f53383eea5d5252035c4aabe75bc3": {
     "notes": "Added `reset()` to `FrameResampler` on `Cmd::Start`."
   },
@@ -1117,6 +1156,23 @@
       "problem": "Handy Catalan translation contribution docs",
       "destinations": [],
       "evidence": "Grain did not add Catalan to its independently curated app locales in this round."
+    }
+  },
+  "eea1f5f42ca049b7d8092f8933526defc2e14482": {
+    "ports": {
+      "src-tauri/src/actions.rs": {
+        "outcome": "ported",
+        "destinations": [
+          "src-tauri/src/grain_post_process.rs",
+          "src-tauri/src/grain_actions.rs",
+          "src-tauri/src/grain_capture.rs",
+          "src-tauri/src/grain_overlay.rs",
+          "crates/grain-core/src/capture.rs",
+          "src-tauri/src/grain_dictation_routing.rs",
+          "src/app/components/settings/capture/CaptureModes.tsx"
+        ],
+        "evidence": "Batch delegates before VAD/tray/overlay/mic to grain_capture::require_transcribable_model. Flow, NativeAsr, Agent start_dictation and declared extension sessions use that shared guard before acquiring capture resources. Actual selected model files are checked unless that exact model is resident; obsolete cached-download guards are removed. Prompt Record reuses validated dictation. The separate Extension Mode feature remains disabled before acquisition."
+      }
     }
   },
   "f0f7e7ff4674eb0d4fceb4da49f75934555f55b4": {

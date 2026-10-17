@@ -385,19 +385,21 @@ impl ShortcutAction for RealtimeTranscribeAction {
         // the manager's load predicate before it spawns the rolling worker. The
         // model itself still loads asynchronously, so recording startup does not
         // wait for weights or allocate a second engine.
-        let rolling_error = rt.start_session(app.clone(), sid).err();
+        if let Err(error) = rt.start_session(app.clone(), sid) {
+            rt.cancel_session();
+            crate::bridge::emit(app, DaemonEvent::ModelError { error });
+            return;
+        }
 
         let binding_id = binding_id.to_string();
         // Flow uses exact continuous audio and does not load or run the ASR VAD.
         let vad_policy = VadPolicy::Disabled;
         let overlay_generation = crate::grain_overlay::show_capture(app, SessionMode::Dictation);
         let mut readiness = None;
-        let mut recording_error = rolling_error;
-        if recording_error.is_none() {
-            match rm.try_start_recording_low_ram(&binding_id, vad_policy) {
-                Ok(ready) => readiness = Some(ready),
-                Err(error) => recording_error = Some(error),
-            }
+        let mut recording_error = None;
+        match rm.try_start_recording_low_ram(&binding_id, vad_policy) {
+            Ok(ready) => readiness = Some(ready),
+            Err(error) => recording_error = Some(error),
         }
 
         if recording_error.is_none() {
@@ -665,7 +667,7 @@ impl ShortcutAction for NativeAsrAction {
         let mm = app.state::<Arc<ModelManager>>();
         let ok = mm
             .get_model_info(&selected)
-            .is_some_and(|m| m.is_downloaded && m.supports_streaming);
+            .is_some_and(|m| m.supports_streaming);
         if !ok {
             warn!("Native ASR: no streaming model selected/installed");
             crate::bridge::emit(
@@ -675,6 +677,11 @@ impl ShortcutAction for NativeAsrAction {
                         .into(),
                 },
             );
+            return;
+        }
+
+        if let Err(error) = crate::grain_capture::require_transcribable_model(app, &selected) {
+            crate::bridge::emit(app, DaemonEvent::ModelError { error });
             return;
         }
 

@@ -89,6 +89,39 @@ mod tests {
     use super::finalize_transcript;
 
     #[test]
+    fn assembled_text_restores_only_sentence_start_filler_capitals() {
+        for skip_custom_words in [false, true] {
+            for (raw, expected) in [
+                ("Um, so we should ship.", "So we should ship."),
+                ("That works. Um, let me check.", "That works. Let me check."),
+                (
+                    "We can, Um, continue after a pause.",
+                    "We can, continue after a pause.",
+                ),
+                (
+                    "um lowercase stays lowercase.",
+                    "lowercase stays lowercase.",
+                ),
+            ] {
+                assert_eq!(
+                    finalize_transcript(
+                        raw,
+                        &[],
+                        0.5,
+                        "en",
+                        &None,
+                        true,
+                        skip_custom_words,
+                        &[],
+                        false
+                    ),
+                    expected
+                );
+            }
+        }
+    }
+
+    #[test]
     fn english_cleanup_preserves_ha_in_place_names() {
         // Both assembled Flow text and already-prompted text use this cleanup.
         for skip_custom_words in [false, true] {

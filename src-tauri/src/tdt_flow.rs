@@ -27,13 +27,6 @@ pub(crate) fn validate_model(model_id: &str, translate_to_english: bool) -> Resu
     Ok(())
 }
 
-pub(crate) fn validate_model_installation(is_downloaded: bool) -> Result<(), String> {
-    if !is_downloaded {
-        return Err("Flow requires its selected Parakeet TDT model to be downloaded".into());
-    }
-    Ok(())
-}
-
 pub(crate) struct TdtRunConfig {
     pub(crate) model_id: String,
     pub(crate) language: Option<String>,
@@ -380,12 +373,6 @@ mod tests {
         ] {
             assert!(validate_model(model, false).is_err(), "accepted {model}");
         }
-    }
-
-    #[test]
-    fn model_must_be_installed_before_capture() {
-        assert!(validate_model_installation(true).is_ok());
-        assert!(validate_model_installation(false).is_err());
     }
 
     #[test]

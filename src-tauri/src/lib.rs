@@ -1071,6 +1071,7 @@ pub fn run(cli_args: CliArgs) {
                 // Register transcribe-cpp compute backends (required for both
                 // --list-devices and any GGUF model load).
                 managers::transcription::init_transcribe_backend();
+                managers::transcription::report_compute_devices();
                 let model_manager = Arc::new(
                     ModelManager::new(&app_handle).expect("Failed to initialize model manager"),
                 );

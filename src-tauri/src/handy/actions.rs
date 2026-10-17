@@ -302,6 +302,14 @@ impl ShortcutAction for TranscribeAction {
 
         let kickoff_started = Instant::now();
         tm.initiate_model_load();
+        // [GRAIN] Apply upstream's pre-capture availability guard across all modes.
+        if let Err(error) = crate::grain_capture::require_transcribable_model(
+            app,
+            &get_settings(app).selected_model,
+        ) {
+            log::warn!("Not starting recording: {error}");
+            return;
+        }
         let rm_clone = Arc::clone(&rm);
         std::thread::spawn(move || {
             if let Err(e) = rm_clone.preload_vad() {
