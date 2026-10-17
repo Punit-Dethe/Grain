@@ -59,10 +59,10 @@ export function OverviewCards() {
     <div className="overview-shortcut-strip">
       <div className="overview-shortcut-layout">
         <aside className="overview-shortcut-info">
-          <div>
-            <h3>{t("overview.shortcuts.infoTitle")}</h3>
-            <p>{t("overview.shortcuts.infoDescription")}</p>
-          </div>
+          <p>
+            <strong>{t("overview.shortcuts.infoTitle")}</strong>{" "}
+            {t("overview.shortcuts.infoDescription")}
+          </p>
           <button
             className="button overview-shortcut-settings"
             type="button"
