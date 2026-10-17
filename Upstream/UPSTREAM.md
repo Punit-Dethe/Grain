@@ -251,6 +251,11 @@ bun install && cargo check              # regenerate lockfiles
 python Upstream/verdict.py --pending    # anything left unassessed? record it
 ```
 
+For a staged sync, pass `--target <commit>` to `merge_upstream.py`. The tool
+still fetches first and rejects targets outside fetched Handy main history.
+Resolve, review, test and finish each batch before selecting the next boundary;
+never substitute a bare merge or move the upstream tracking ref to an older tip.
+
 **Never run a bare `git merge upstream/main`.** The remote-tracking ref is a
 local cache; merging against a stale one is how the first 2026-08-02 sync
 "completed" while 16 commits it could not see stayed behind. Every tool here

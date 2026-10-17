@@ -26,6 +26,7 @@ conflict for an invisible behaviour change.
 
 from __future__ import annotations
 
+import argparse
 import os
 import subprocess
 import sys
@@ -67,7 +68,7 @@ def exists_at(ref: str, path: str) -> bool:
     return git("cat-file", "-e", f"{ref}:{path}").returncode == 0
 
 
-def frontend_adopted_from_upstream() -> list[str]:
+def frontend_adopted_from_upstream(target: str = "upstream/main") -> list[str]:
     """Frontend paths this merge changed that upstream, not Grain, authored.
 
     A path counts when the merge touched it AND the corresponding upstream path
@@ -79,7 +80,7 @@ def frontend_adopted_from_upstream() -> list[str]:
     adopted = []
     for path in (p.strip() for p in changed if p.strip()):
         upstream_path = path.replace(FROZEN_EXEMPT, FROZEN_PREFIX, 1) if path.startswith(FROZEN_EXEMPT) else path
-        probe = git("cat-file", "-e", f"upstream/main:{upstream_path}")
+        probe = git("cat-file", "-e", f"{target}:{upstream_path}")
         if probe.returncode == 0:
             adopted.append(path)
     return adopted
@@ -90,18 +91,34 @@ def working_tree_dirty() -> bool:
 
 
 def in_merge() -> bool:
-    return os.path.exists(os.path.join(ROOT, ".git", "MERGE_HEAD"))
+    # A linked worktree has a .git file, not a directory.
+    return git("rev-parse", "--quiet", "--verify", "MERGE_HEAD").returncode == 0
 
 
-def start(dry_run: bool) -> int:
+def resolve_target(target: str) -> str:
+    resolved = git("rev-parse", "--verify", "--end-of-options", f"{target}^{{commit}}")
+    if resolved.returncode or not resolved.stdout.strip():
+        raise ValueError(f"not a commit: {target}")
+    sha = resolved.stdout.strip()
+    if git("merge-base", "--is-ancestor", sha, "upstream/main").returncode != 0:
+        raise ValueError(f"target is not in fetched Handy main history: {target}")
+    return sha
+
+
+def start(dry_run: bool, target: str = "upstream/main") -> int:
     if ensure_fresh() is None:
         return 1
+    try:
+        target_sha = resolve_target(target)
+    except ValueError as error:
+        print(f"[merge] {error}", file=sys.stderr)
+        return 1
 
-    behind = git("rev-list", "--count", "HEAD..upstream/main").stdout.strip()
+    behind = git("rev-list", "--count", f"HEAD..{target_sha}").stdout.strip()
     if behind == "0":
-        print("[merge] already up to date with upstream/main")
+        print(f"[merge] already up to date with {target}")
         return 0
-    print(f"[merge] {behind} commit(s) to merge")
+    print(f"[merge] {behind} commit(s) to merge through {target_sha[:8]}")
 
     if dry_run:
         print("[merge] --dry-run: not starting a merge")
@@ -116,7 +133,10 @@ def start(dry_run: bool) -> int:
 
     # Reused rerere content is review input, never an auto-staged decision.
     # Force this even on clones carrying the old autoupdate=true setup.
-    git("-c", "rerere.autoupdate=false", "merge", "--no-commit", "--no-ff", "upstream/main")
+    merged = git("-c", "rerere.autoupdate=false", "merge", "--no-commit", "--no-ff", target_sha)
+    if merged.returncode not in (0, 1) or not in_merge():
+        print(f"[merge] could not start merge: {merged.stderr.strip()}", file=sys.stderr)
+        return 1
 
     conflicts = conflicted_paths()
     frozen = [p for p in conflicts if is_frozen_frontend(p)]
@@ -139,7 +159,7 @@ def start(dry_run: bool) -> int:
     # with upstream's src/, and src/app/... is not one. So they arrive unnoticed.
     # This is what put upstream's slider-reset props and two translation files
     # into src/app/ on the 08-02 sync; the build caught it, but only by luck.
-    adopted = frontend_adopted_from_upstream()
+    adopted = frontend_adopted_from_upstream(target_sha)
     for path in adopted:
         if exists_at("HEAD", path):
             git("checkout", "HEAD", "--", path)  # our version wins
@@ -223,12 +243,17 @@ def finish() -> int:
 
 
 def main() -> int:
-    if "--help" in sys.argv or "-h" in sys.argv:
-        print(__doc__)
-        return 0
-    if "--finish" in sys.argv:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--target", default="upstream/main", help="Tested batch boundary in fetched Handy main history")
+    parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--finish", action="store_true")
+    parser.add_argument("--no-fetch", action="store_true", help="Use an already-fetched upstream ref")
+    args = parser.parse_args()
+    if args.finish:
+        if args.target != "upstream/main" or args.dry_run:
+            parser.error("--finish cannot be combined with --target or --dry-run")
         return finish()
-    return start("--dry-run" in sys.argv)
+    return start(args.dry_run, args.target)
 
 
 if __name__ == "__main__":
