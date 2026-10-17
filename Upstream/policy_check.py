@@ -41,6 +41,26 @@ def load_relocations() -> dict:
     return {key: value for key, value in raw.items() if not key.startswith("_")}
 
 
+def upstream_source_files() -> set[str]:
+    """Validate existing routes before, and new routes during, an upstream merge.
+
+    A fetch must not invalidate a route just because a pending commit deletes
+    its source. Once that deletion is merged, the merge base advances and the
+    obsolete source no longer qualifies. New upstream paths are accepted too,
+    so a merge can update its routes before the merge commit is recorded.
+    """
+    base = git("merge-base", "HEAD", "upstream/main")
+    if base.returncode or not base.stdout.strip():
+        raise RuntimeError("cannot determine the integrated Handy baseline")
+    files: set[str] = set()
+    for ref in dict.fromkeys(("upstream/main", base.stdout.strip())):
+        tree = git("ls-tree", "-r", "--name-only", ref, "--", "src-tauri/src/")
+        if tree.returncode:
+            raise RuntimeError(f"cannot inspect Handy source tree at {ref}")
+        files.update(tree.stdout.splitlines())
+    return files
+
+
 def render(relocations: dict) -> str:
     lines = [
         BEGIN,
@@ -169,10 +189,11 @@ def main() -> int:
                     )
         if not commit:
             failures.append("transcribe contract lacks its exact upstream commit")
-    upstream_files = set(
-        git("ls-tree", "-r", "--name-only", "upstream/main", "--", "src-tauri/src/")
-        .stdout.splitlines()
-    )
+    try:
+        upstream_files = upstream_source_files()
+    except RuntimeError as error:
+        failures.append(str(error))
+        upstream_files = set()
 
     for source, entry in sorted(relocations.items()):
         if entry.get("kind") not in KINDS:
@@ -184,7 +205,7 @@ def main() -> int:
         if not str(entry.get("why", "")).strip():
             failures.append(f"{source}: why is required")
         if source not in upstream_files:
-            failures.append(f"{source}: source does not exist in upstream/main")
+            failures.append(f"{source}: source does not exist in the integrated baseline or upstream/main")
         for destination in destinations:
             if not os.path.exists(os.path.join(ROOT, destination)):
                 failures.append(f"{source}: destination does not exist: {destination}")

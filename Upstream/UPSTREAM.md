@@ -12,6 +12,10 @@ Handy live in [UPSTREAMABLE.md](UPSTREAMABLE.md).
 the exact Handy commits already present in ancestry whose runtime behavior
 Grain has deliberately not implemented yet.
 
+The active October 17 sync sequence and Flow/dictionary impact assessment are
+in [SYNC-2026-10-17.md](SYNC-2026-10-17.md). Frontend benefit review is the final
+stage, not a blanket decision to ignore upstream UI fixes.
+
 ## The short version
 
 **The common case is reviewing a PR, not running a procedure.** Every 2 hours
