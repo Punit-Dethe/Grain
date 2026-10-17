@@ -1,23 +1,45 @@
 # Extension implementation: progress, changes and user testing
 
-**Final Windows alpha artifact dispatched, 17 October 2026:**
+**Final Windows alpha artifact verified, 17 October 2026:**
 [Build Test run 38970462723](https://github.com/Punit-Dethe/Grain/actions/runs/38970462723)
-is **In progress**, pinned to source
+is **Success**, pinned to source
 `ad701fd19539c400128d0b289d7c1d5a1cd3fbf8` on
-`extensions/main-integration-20261010`. Direct run metadata confirms that SHA,
-the single `extension-alpha / build` job and the skipped ordinary platform matrix.
-Expected artifact: `grain-extensions-alpha-x86_64-pc-windows-msvc`.
-This is an artifact build, not a published release. Do not count build success,
-download, installation or packaged-app acceptance before their evidence exists.
+`extensions/main-integration-20261010`. Run metadata and checkout logs confirm the
+exact source; logs also confirm the optimized release profile, extensions-alpha
+frontend mode and alpha NSIS configuration. Only `extension-alpha / build` ran;
+the ordinary platform matrix was skipped. No GitHub Release/tag was created.
 
-After success, download that run's artifact into a fresh directory, record the
-installer path/hash and check the release-profile alpha with Developer Mode off:
-one GitHub/Notion store card each and no custom MCP management; the installed list
-uses the requested two-column layout at a normal desktop width; a harmless read
-works through an already configured store account and again after restart.
-No destructive provider test, new OAuth registration or repeat of the full dev
-acceptance batch is required. Block 6 remains open for this packaged checkpoint;
-real-key custody and production protections remain deferred public-release work.
+Downloaded artifact `12078696365`,
+`grain-extensions-alpha-x86_64-pc-windows-msvc`, into a fresh Downloads directory.
+Archive SHA256 exactly matches GitHub's API digest:
+`5fcd6fa0d72664cb28a72d6867e2b857a811927df1a90c65ca716a9d930568bf`.
+ZIP integrity and extraction-path checks pass. Extracted installer is 26,902,434
+bytes; Windows version metadata reports Grain Extensions Alpha 0.0.8. Its SHA256:
+`68d5d596f0ccee7b8e48363fe69324fb76e58e6f3c79f049622b4b347a02f67c`.
+Authenticode reports NotSigned, matching the tester workflow's explicit
+`sign-binaries: false`; this is not a claim of Windows publisher signing.
+
+Local installer:
+`C:\Users\watrm\Downloads\Grain-Extensions-Alpha\run-38970462723\installer\nsis\Grain Extensions Alpha_0.0.8_x64-setup.exe`.
+The adjacent run directory contains the original ZIP and
+`artifact-verification.json` with source/run/artifact IDs and hashes. No installer
+was launched and the user's running app/profile was not changed.
+
+**Only the packaged-app acceptance is Pending:** quit the old Extensions Alpha
+from its tray, run this installer, then open Grain Extensions Alpha (not the dev
+app). With Developer Mode off, check these together:
+
+1. Store has one GitHub and one Notion card, with custom MCP management absent.
+2. Installed extensions show two columns at normal desktop width (one when narrow),
+   with no extra Enabled/Disabled text or surrounding control pill.
+3. Ask the Agent for a harmless read through an already configured store extension;
+   quit/reopen the alpha and repeat. Sign in normally only if the account requires it.
+
+Do not repeat the full development-app/provider batch or perform destructive
+actions. Record actual results before marking Block 6's packaged checkpoint
+complete. Real-key custody and production protections remain deferred
+public-release work. No application/harness code or new tests were added for
+this download/documentation checkpoint; unrelated Cargo/binding bytes are unchanged.
 
 **Block 6 recovery and final artifact preparation, 17 October 2026:** the user
 explicitly defers actual key custody/backup setup until public release. No real
