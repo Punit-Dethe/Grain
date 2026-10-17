@@ -1366,6 +1366,7 @@ fn command_bindings() -> Builder<tauri::Wry> {
             shortcut::change_selected_language_setting,
             grain_transcription::change_chinese_script_setting,
             grain_transcription::change_long_form_chunking_setting,
+            grain_transcription::change_vad_enabled_setting,
             grain_transcription::change_vad_backend_setting,
             shortcut::change_overlay_position_setting,
             grain_overlay::change_overlay_style_setting,

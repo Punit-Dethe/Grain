@@ -1,5 +1,4 @@
 use crate::audio_feedback::{play_feedback_sound, SoundType};
-use crate::audio_toolkit::VadPolicy;
 use crate::managers::audio::AudioRecordingManager;
 use crate::managers::history::HistoryManager;
 use crate::managers::model::ModelManager;
@@ -340,10 +339,7 @@ impl ShortcutAction for TranscribeAction {
         );
         debug!("Microphone mode - always_on: {}", is_always_on);
 
-        // Batch dictation never streams, so the session runs the offline VAD
-        // profile. [GRAIN] grain-core settings have no `vad_enabled` toggle
-        // (upstream's setting was never ported) — VAD is always on.
-        let vad_policy = VadPolicy::Offline;
+        let vad_policy = crate::grain_audio::capture_vad_policy(settings.vad_enabled, false); // [GRAIN]
 
         let overlay_generation = crate::grain_overlay::show_capture(app, SessionMode::Batch);
         let mut recording_error: Option<anyhow::Error> = None;

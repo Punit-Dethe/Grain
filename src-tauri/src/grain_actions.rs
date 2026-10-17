@@ -657,7 +657,8 @@ impl ShortcutAction for NativeAsrAction {
     fn start(&self, app: &AppHandle, binding_id: &str, _shortcut_str: &str) {
         // Require a selected + installed + streaming-capable model. Without one,
         // surface a clear, actionable error to the pill and don't open the mic.
-        let selected = get_settings(app).selected_asr_model;
+        let settings = get_settings(app);
+        let selected = settings.selected_asr_model;
         let mm = app.state::<Arc<ModelManager>>();
         let ok = mm
             .get_model_info(&selected)
@@ -691,10 +692,7 @@ impl ShortcutAction for NativeAsrAction {
         let binding_id = binding_id.to_string();
         change_tray_icon(app, TrayIconState::Recording);
 
-        // Streaming-capable model verified above → the streaming VAD profile
-        // (longer post-speech tail). No `vad_enabled` toggle in
-        // grain-core settings — VAD is always on.
-        let vad_policy = VadPolicy::Streaming;
+        let vad_policy = crate::grain_audio::capture_vad_policy(settings.vad_enabled, true);
         let overlay_generation = crate::grain_overlay::show_capture(app, SessionMode::NativeAsr);
         let mut recording_error: Option<anyhow::Error> = None;
         let mut readiness = None;

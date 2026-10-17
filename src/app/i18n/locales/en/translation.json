@@ -1117,6 +1117,8 @@
   "handySync": {
     "apiFormat": "API format",
     "vadTitle": "Voice activity detector",
+    "vadEnabledTitle": "Voice activity detection",
+    "vadEnabledDescription": "Filter non-speech audio in Standard and Streaming recordings. Changes apply to the next recording. Flow keeps continuous audio; long-recording chunking has its own setting.",
     "vadDescription": "Choose how Grain filters silence and finds pauses in long recordings.",
     "chunkingTitle": "Chunk long recordings",
     "chunkingDescription": "Split long recordings at pauses to keep recognition accurate. Individual chunks can introduce sentence breaks. Streaming, Flow and models with native long-form support keep their own decoding.",

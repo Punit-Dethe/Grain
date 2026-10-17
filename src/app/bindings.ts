@@ -260,6 +260,14 @@ async changeLongFormChunkingSetting(enabled: boolean) : Promise<Result<null, str
     else return { status: "error", error: e  as any };
 }
 },
+async changeVadEnabledSetting(enabled: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_vad_enabled_setting", { enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async changeVadBackendSetting(backend: VadBackend) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("change_vad_backend_setting", { backend }) };
@@ -2304,7 +2312,7 @@ selected_asr_model?: string; always_on_microphone?: boolean; selected_microphone
  * Which input channel to use on the selected microphone device.
  * None means "average all channels" (original behavior).
  */
-selected_channel?: number | null; clamshell_microphone?: string | null; selected_output_device?: string | null; translate_to_english?: boolean; selected_language?: string; chinese_script?: ChineseScript; vad_backend?: VadBackend; long_form_chunking?: boolean; overlay_position?: OverlayPosition; overlay_style?: OverlayStyle;
+selected_channel?: number | null; clamshell_microphone?: string | null; selected_output_device?: string | null; translate_to_english?: boolean; selected_language?: string; chinese_script?: ChineseScript; vad_backend?: VadBackend; vad_enabled?: boolean; long_form_chunking?: boolean; overlay_position?: OverlayPosition; overlay_style?: OverlayStyle;
 /**
  * [GRAIN] Show the icon of the app being dictated into, in place of the
  * pill's state dot. ON while the behaviour is being developed; it will

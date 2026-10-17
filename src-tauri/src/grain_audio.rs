@@ -3,6 +3,21 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Mutex;
 use tauri::Manager;
 
+/// Handy's capture VAD selection, shared by Grain's separate mode callers.
+pub(crate) fn capture_vad_policy(
+    enabled: bool,
+    streaming: bool,
+) -> crate::audio_toolkit::VadPolicy {
+    use crate::audio_toolkit::VadPolicy;
+    if !enabled {
+        VadPolicy::Disabled
+    } else if streaming {
+        VadPolicy::Streaming
+    } else {
+        VadPolicy::Offline
+    }
+}
+
 pub(crate) struct State {
     retain: AtomicBool,
     frames: AtomicU64,
@@ -91,6 +106,18 @@ mod recorder_tests {
     };
     use std::sync::{mpsc, Arc};
     use std::time::Duration;
+
+    #[test]
+    fn capture_vad_switch_matches_handy_for_both_modes() {
+        for (enabled, streaming, expected) in [
+            (true, false, VadPolicy::Offline),
+            (true, true, VadPolicy::Streaming),
+            (false, false, VadPolicy::Disabled),
+            (false, true, VadPolicy::Disabled),
+        ] {
+            assert_eq!(capture_vad_policy(enabled, streaming), expected);
+        }
+    }
 
     #[test]
     fn recorder_disconnect_drains_resampler_tail_into_journal_only_sink() {

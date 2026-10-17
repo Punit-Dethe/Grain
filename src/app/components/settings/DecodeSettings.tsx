@@ -10,6 +10,14 @@ export function CaptureDecodeSettings() {
   const { getSetting, updateSetting, isUpdating } = useSettings();
   return (
     <>
+      <ToggleSwitch
+        label={t("handySync.vadEnabledTitle")}
+        description={t("handySync.vadEnabledDescription")}
+        grouped
+        checked={getSetting("vad_enabled") ?? true}
+        isUpdating={isUpdating("vad_enabled")}
+        onChange={(value) => void updateSetting("vad_enabled", value)}
+      />
       <SettingContainer
         title={t("handySync.vadTitle")}
         description={t("handySync.vadDescription")}

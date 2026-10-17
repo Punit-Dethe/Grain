@@ -174,6 +174,14 @@ pub fn change_chinese_script_setting(
 
 #[tauri::command]
 #[specta::specta]
+pub fn change_vad_enabled_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
+    app.state::<Arc<grain_core::AppContext>>()
+        .update_settings(|settings| settings.vad_enabled = enabled)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+#[specta::specta]
 pub fn change_long_form_chunking_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
     app.state::<Arc<grain_core::AppContext>>()
         .update_settings(|settings| settings.long_form_chunking = enabled)

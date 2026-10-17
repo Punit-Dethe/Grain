@@ -187,6 +187,10 @@ const settingUpdaters: {
     );
     if (result.status === "error") throw new Error(result.error);
   },
+  vad_enabled: async (value) => {
+    const result = await commands.changeVadEnabledSetting(value as boolean);
+    if (result.status === "error") throw new Error(result.error);
+  },
   vad_backend: async (value) => {
     const result = await commands.changeVadBackendSetting(value as VadBackend);
     if (result.status === "error") throw new Error(result.error);

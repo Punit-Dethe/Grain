@@ -665,6 +665,8 @@ pub struct AppSettings {
     pub chinese_script: ChineseScript,
     #[serde(default)]
     pub vad_backend: VadBackend,
+    #[serde(default = "default_vad_enabled")]
+    pub vad_enabled: bool,
     #[serde(default = "default_long_form_chunking")]
     pub long_form_chunking: bool,
     #[serde(default = "default_overlay_position")]
@@ -916,6 +918,9 @@ fn default_selected_language() -> String {
     "auto".to_string()
 }
 
+fn default_vad_enabled() -> bool {
+    true
+}
 fn default_long_form_chunking() -> bool {
     true
 }
@@ -1700,6 +1705,7 @@ pub fn get_default_settings() -> AppSettings {
             .and_then(|locale| ChineseScript::for_locale(&locale))
             .unwrap_or_default(),
         vad_backend: VadBackend::default(),
+        vad_enabled: default_vad_enabled(),
         long_form_chunking: default_long_form_chunking(),
         overlay_position: default_overlay_position(),
         overlay_style: default_overlay_style(),
