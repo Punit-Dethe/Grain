@@ -498,6 +498,17 @@
   "8c46721a77cf157092802f1024c04394b22d1113": {
     "notes": "AUDIT 2026-07-17: was NOT actually applied - all 12 Moonshine models still read \"English speech-to-text\". Fixed by taking upstream catalog.json verbatim (also converged its hand-reformatting)."
   },
+  "8ef8dd4347c08ba20936dda1024172fe2e4cb90a": {
+    "ports": {
+      "src-tauri/src/audio_toolkit/text.rs": {
+        "outcome": "ported",
+        "destinations": [
+          "src-tauri/src/handy/audio_toolkit/grain_text.rs"
+        ],
+        "evidence": "Merged the shared English filler fix. Grain finalize_transcript calls the same shared removal function; english_cleanup_preserves_ha_in_place_names covers Flow and prompted cleanup, and english_cleanup_still_removes_hesitation_fillers covers retained fillers. cargo check --lib passed; full backend suite passed 582 tests, with 3 existing opt-in tests ignored, after applying the documented Common Controls v6 manifest to the disposable Windows test executable."
+      }
+    }
+  },
   "8f72266842d759af385f812fc093ea829fbdf9f1": {
     "notes": "Irrelevant (Grain is an independent fork).",
     "status": "Ignored"
