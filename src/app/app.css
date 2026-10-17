@@ -1534,7 +1534,7 @@ html[data-theme="light"] .hero {
   --overview-shortcut-surface: var(--bg-2);
   --overview-shortcut-card-surface: var(--color-paper-raised);
   min-width: 0;
-  padding: 20px 24px;
+  padding: 10px;
   border: 1px solid var(--hairline);
   border-radius: var(--radius-lg);
   background: var(--overview-shortcut-surface);
@@ -1552,9 +1552,9 @@ html[data-theme="light"] .hero {
 }
 .overview-shortcut-layout {
   display: grid;
-  grid-template-columns: 180px minmax(0, 1fr);
+  grid-template-columns: 194px minmax(0, 1fr);
   align-items: center;
-  gap: 24px;
+  gap: 8px;
 }
 .overview-shortcuts {
   min-width: 0;
@@ -1567,7 +1567,7 @@ html[data-theme="light"] .hero {
   display: flex;
   flex-direction: column;
   gap: 12px;
-  padding: 14px;
+  padding: 12px;
   border: 1px solid var(--hairline);
   border-radius: var(--radius-md);
   background: var(--overview-shortcut-card-surface);
@@ -1666,7 +1666,7 @@ html[data-theme="light"] .hero {
 }
 .overview-shortcut-info {
   min-width: 0;
-  padding-inline-end: 24px;
+  padding-inline: 6px 16px;
   border-inline-end: 1px solid var(--hairline);
 }
 .overview-shortcut-info strong {
@@ -1702,7 +1702,7 @@ html[data-theme="light"] .overview-shortcut-keys .overview-shortcut-key {
     align-items: center;
     justify-content: space-between;
     gap: 20px;
-    padding-inline-end: 0;
+    padding-inline: 6px;
     padding-block-end: 16px;
     border-inline-end: 0;
     border-block-end: 1px solid var(--hairline);
