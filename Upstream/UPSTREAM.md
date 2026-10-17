@@ -417,6 +417,14 @@ same commit.
 
 ## Sync log
 
+October 17 batch 2: merged five Handy commits through `29bd2c0d`; 28 remain.
+The immutable native pair is now 0.4.0 at `51788582`, contract 3. Adopted filler
+capitalization, shortcut parse validation, shared missing-model capture guards
+and lazy startup device reporting. The source-built backend suite passes 585
+tests (3 opt-in skips); the preceding native checkpoint also passes real v2/v3
+production journal/replay gates. Exact scope, lint limits and reviewed
+new-base budget differences are recorded in the active plan and divergence map.
+
 October 17 staged sync, batch 1: merged Handy `8ef8dd43` (#2156), preserving
 Ha Long Bay/Ha Noi during English filler cleanup. `cargo check --lib` passes;
 582 backend tests pass, with 3 existing opt-in tests ignored, after the

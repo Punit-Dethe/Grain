@@ -33,6 +33,16 @@ Prompt Record from Carbon shadows; preserve that lifecycle gate. The macOS-only
 
 ## Current conflict rules (authoritative; audited 2026-08-22)
 
+October 17 batch 2 preserves Grain's lazy accelerator enumeration and shared
+capture admission. Against the new `29bd2c0d` merge base, reviewed budgets move
+`actions.rs` 641 → 662 (upstream's inline availability check becomes a marked
+delegate before VAD prewarm), `managers/transcription.rs` 1093 → 1102
+(the report function documents Grain's lazy caller rather than Handy's boot
+prewarm), and `lib.rs` 1246 → 1251 (explicit headless reporting while retaining
+Grain's entry point and lazy UI startup). Capture policy remains in
+`grain_capture.rs`; no second engine or frontend import is added. These are
+measured new-base differences, not blanket budget headroom.
+
 Never copy a static merge-base claim from this document. Query
 `git merge-base HEAD upstream/main` and `git describe --tags --always <sha>`.
 The rules here supersede repeated dated rows in the audit history below.
