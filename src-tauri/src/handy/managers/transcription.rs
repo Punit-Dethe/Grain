@@ -655,7 +655,11 @@ impl TranscriptionManager {
                 // loaded model's real ones (GGUF metadata) so badges/gating
                 // reflect runtime truth, not the pre-download probe. The
                 // load-completed event below triggers the frontend refresh.
-                let caps = session.model().capabilities();
+                let caps = session.model().capabilities().map_err(|e| {
+                    let error_msg = format!("Failed to query ASR capabilities: {e}");
+                    emit_loading_failed(&error_msg);
+                    anyhow::anyhow!(error_msg)
+                })?;
                 self.model_manager.set_runtime_capabilities(
                     model_id,
                     caps.supports_streaming,
@@ -887,7 +891,16 @@ impl TranscriptionManager {
         let (supports_streaming, supports_translate, languages) = {
             let LoadedEngine::TranscribeCpp(session) = &engine;
             let model = session.model();
-            let caps = model.capabilities();
+            let caps = match model.capabilities() {
+                Ok(caps) => caps,
+                Err(error) => {
+                    warn!("Live preview: capability query failed: {error}");
+                    self.return_engine(engine, &model_id);
+                    self.router.clear();
+                    drain_until_finalize(rx);
+                    return;
+                }
+            };
             info!(
                 "Live preview: model '{}' arch='{}' variant='{}' supports_streaming={} \
                  supports_translate={} languages={:?}",
@@ -1246,7 +1259,7 @@ impl TranscriptionManager {
         let (result, model_is_whisper, output_language, model_languages) =
             self.with_engine_session(&active_model, |session| {
                 let model = session.model();
-                let caps = model.capabilities();
+                let caps = model.capabilities()?;
                 let takes_prompt = model.supports(Feature::InitialPrompt);
                 let model_supports_translate = caps.supports_translate;
                 let model_languages = caps.languages;

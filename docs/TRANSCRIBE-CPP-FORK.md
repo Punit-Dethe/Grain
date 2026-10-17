@@ -1,6 +1,6 @@
 # Grain native fork integration
 
-Grain consumes the existing safe Rust wrapper and native sys package from the [maintained source fork](https://github.com/Punit-Dethe/transcribe.cpp/tree/codex/grain-0.2.3). Both packages retain upstream version 0.2.3 and resolve to one immutable source revision. There is no new service, download engine, persistent Flow handle or inference algorithm in Grain.
+Grain consumes the safe Rust wrapper and native sys package from the [maintained source fork](https://github.com/Punit-Dethe/transcribe.cpp/tree/sync/grain-0.4.0). Both packages retain upstream version 0.4.0 and resolve to one immutable source revision. There is no new service, download engine, persistent Flow handle or inference algorithm in Grain.
 
 ## Source and runtime contract
 
@@ -8,9 +8,9 @@ Grain consumes the existing safe Rust wrapper and native sys package from the [m
 
 The fork has upstream source layout, generated Rust FFI, and its existing safe wrapper. Cargo finds both packages inside the same Git checkout and compiles the native library through upstream CMake. Users install Grain's compiled application and bundled shared libraries/backend modules; no source checkout or runtime download is needed.
 
-Contract revision **2**, patch identity **`grain-flow-v1`**, semantic ABI **`c4b19911cc9a09a3`**. Native queries use static storage and work without `.git`. Rust validates version, contract identity/revision, runtime digest and 16 size/alignment pairs before model loading or backend setup; the result is cached once. The previous version-only gate could not distinguish an unpatched 0.2.3 DLL. Missing exports fail in the OS loader; incompatible values produce an explicit compatibility error. This checks compatibility, not cryptographic authenticity.
+Contract revision **3**, patch identity **`grain-flow-v1`**, semantic ABI **`3669c8465a11b2f5`**. Native queries use static storage and work without `.git`. Rust validates version, contract identity/revision, runtime digest and 30 size/alignment pairs before model loading or backend setup; the result is cached once. Upstream ABI IDs 0–28 are preserved; PKFW is appended as ID 29. Missing exports fail in the OS loader; incompatible values produce an explicit compatibility error. This checks compatibility, not cryptographic authenticity.
 
-Grain retains capture, journal, window cursor, token merging, replay, cancellation, inference lease and post-processing. v2 uses ordinary bounded native runs; v3 opts into PKFW; both detokenize merged IDs through the native tokenizer. Successful decoding remains equivalent to the audited vendor patch. The second pass backports only upstream Parakeet predictor/joint compute-failure handling and applies it to PKFW; encoder and ggml remain at the 0.2.3 baseline.
+Grain retains capture, journal, window cursor, token merging, replay, cancellation, inference lease and post-processing. v2 uses ordinary bounded native runs; v3 opts into PKFW; both detokenize merged IDs through the native tokenizer. The fork ports only the cumulative Grain patch onto upstream 0.4.0, retaining upstream's new encoder, ggml, VAD, language ID, diarization and vocabulary APIs. Predictor/joint failure handling is already upstream. Confidence and some timestamps differ from 0.2.3; bit-exact extraction parity is not claimed for this upgrade.
 
 Full source SHA and artifact hashes belong to build/release provenance. The optional native short Git stamp can be `unknown` in source archives; it is not an identity gate. Do not embed a commit's own SHA in its committed source.
 
@@ -34,7 +34,46 @@ uv run --no-project scripts/transcribe_fork.py --runtime-dir src-tauri/transcrib
 
 On Linux, start this command with loader paths appropriate to the inspected directory, such as `LD_LIBRARY_PATH=/absolute/native/lib`; static Apple/ARM builds use the fork's Rust `grain_contract` example instead. Runtime inspection verifies the expected identity/digest/version and actual CPU fallback discovery. It does not replace full installer/resource verification. Existing `DEP_TRANSCRIBE_CPP_*` forwarding, Tauri staging, SONAME handling, Windows resource layout and Linux rpaths are preserved.
 
-## Validation evidence
+## October 17 upgrade evidence
+
+Native candidate `517885822a5f42562972796c53ae496a52c143b6` is based on
+upstream 0.4.0 `f1dcd15858c4bbba87ca97862b4e448b2cf15b8f`.
+The static Windows CPU suite passes 59 tests, with one diarization fixture
+smoke skipped. The shared CPU/Vulkan build passes six native tests and discovers
+both the CPU and RTX 3080. Safe Rust with serde passes 13 library and 10 no-model
+tests; PKFW run options survive JSON and postcard worker transport. Clippy,
+formatting, regenerated Rust/Python/TypeScript bindings, Swift ABI and package
+checks pass (sys archive: 1,718 files, about 4.3 MiB compressed).
+
+Explicit real v2 Q8 and v3 Q4 lifecycle tests pass cancellation/reset,
+invalid-window recovery, model lifetime and detokenization with public JFK
+audio. The unchanged maintained Flow audit compares public 11/35/83-second
+fixtures against 0.2.3. Full cased/punctuated Batch, Flow, independent-window and
+diagnostic-window strings agree on CPU and Vulkan. Token IDs agree in the
+matching shared CPU v2 comparison; confidence and some frame/timestamp values
+differ. These fixtures do not prove multilingual accuracy or general
+sentence-continuation correctness; timing overlaps with builds prevent using
+these runs as performance benchmarks.
+
+Capability queries are now fallible: model loading and Batch propagate errors;
+the streaming error branch returns its engine and clears/drains the route.
+The dependency checker verifies the paired source pin and target features; all
+ten pin/runtime-path tests and 28 upstream tooling tests pass. The official
+source-built backend suite passes **582 tests, 3 ignored**. Its production Flow
+journal gate is then run explicitly with both v2 and v3: all three public clips
+pass incremental partitioning and fresh replay, exact cased/punctuated output,
+and bounded audio capacity. The initial v2 fixture setup mistakenly selected
+the audit's diagnostic PKFW output; correcting it to the production independent
+window output resolves that test setup failure. Native CI and package/resource
+acceptance for this new revision remain separate gates.
+
+The capability error handling adds 17 measured divergence lines to the current
+Handy manager baseline (1076 → 1093). This is reviewed adaptation of the 0.4
+fallible ASR API, including streaming cleanup, rather than a new Grain feature.
+The forthcoming supervisor integration replaces these in-process call sites;
+do not retain a second legacy engine to preserve this checkpoint.
+
+## Historical 0.2.3 validation (does not validate 0.4.0)
 
 - Windows native static CPU/CLI build: all **39 enabled CTest cases pass**. Tiny deterministic ggml weights exercise the actual PKFW decoder: blank/repeated zero-duration advance, duration boundaries, token/tail budgets, fresh-state reuse, graph-setup failure, model/head/blank/duration gates and invalid extensions. Exported detokenization tests cover split UTF-8 tokens, buffer capacities, no implicit NUL, invalid arguments, exception containment and reuse.
 - Safe Rust: **14 unit/no-model tests pass**, Clippy denies warnings, formatting/bindgen/semantic digest checks pass. The source package audit checks platform-neutral paths, actual Cargo target directories, native sources, ABI data and both FluidAudio notices; the sys package is about **3.7 MiB compressed**. Registry publishing is not part of this integration.

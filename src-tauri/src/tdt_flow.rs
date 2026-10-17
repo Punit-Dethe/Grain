@@ -269,10 +269,10 @@ fn convert_tokens(
 mod tests {
     use super::*;
 
-    /// Local fixtures contain private dictation. Supply model/module paths and
+    /// Local fixtures may contain private dictation. Supply model/module paths and
     /// a JSON array of {path, expected} cases; nothing is downloaded or printed.
     #[test]
-    #[ignore = "requires local Parakeet v2 model and explicitly supplied WAV fixtures"]
+    #[ignore = "requires local Parakeet v2/v3 model and explicitly supplied WAV fixtures"]
     fn real_model_journal_partition_and_fresh_replay_match_offline_policy() {
         use transcribe_cpp::{Backend, Model, ModelOptions, SessionOptions};
         let model_path = std::env::var("GRAIN_FLOW_TEST_MODEL").unwrap();
@@ -287,7 +287,13 @@ mod tests {
             },
         )
         .unwrap();
-        assert_eq!(model.variant(), "tdt-0.6b-v2");
+        let variant = model.variant();
+        assert!(matches!(variant.as_str(), "tdt-0.6b-v2" | "tdt-0.6b-v3"));
+        let expected_capacity = if variant == "tdt-0.6b-v2" {
+            NATIVE_MAX_SAMPLES as usize
+        } else {
+            grain_tdt::MAX_MODEL_SAMPLES as usize
+        };
         let mut session = model
             .session_with(&SessionOptions {
                 n_threads: 4,
@@ -300,7 +306,7 @@ mod tests {
         .unwrap();
         assert!(!cases.is_empty());
         let config = TdtRunConfig {
-            model_id: "fixture-v2".into(),
+            model_id: format!("fixture-{variant}"),
             language: None,
         };
         for case in cases {
@@ -317,7 +323,7 @@ mod tests {
                 {
                     let mut reader = journal.reader().unwrap();
                     let mut accumulator = TdtAccumulator::new(&session, &config).unwrap();
-                    assert_eq!(accumulator.max_input_samples(), NATIVE_MAX_SAMPLES as usize);
+                    assert_eq!(accumulator.max_input_samples(), expected_capacity);
                     let mut audio = Vec::with_capacity(accumulator.max_input_samples());
                     for block in pcm.chunks(8_001) {
                         journal.append(block).unwrap();
@@ -349,7 +355,7 @@ mod tests {
                         text == case["expected"].as_str().unwrap(),
                         "journal result differs from offline policy"
                     );
-                    assert!(audio.capacity() <= NATIVE_MAX_SAMPLES as usize);
+                    assert!(audio.capacity() <= expected_capacity);
                 }
                 drop(journal);
             }

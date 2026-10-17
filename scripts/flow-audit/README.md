@@ -11,7 +11,7 @@ This standalone tool is excluded from application builds. It loads one model, ru
 
 ## Run
 
-Requires a matching Grain-patched native 0.2.3 library with `PKFW` support, its backend modules, and a reviewed Parakeet TDT v2/v3 GGUF. Models and recordings are not downloaded or uploaded by this tool. The audit used v2 Q8_0, CPU, four native threads, and no language hint on any path.
+Requires the matching Grain-patched native library pinned in `native/transcribe-fork.json`, its backend modules, and a reviewed Parakeet TDT v2/v3 GGUF. Models and recordings are not downloaded or uploaded by this tool. Reports record the native version and selected backend; use the same fixture, model, backend and thread count for upgrade comparisons.
 
 The audit and app now pin the same maintained native fork through independent
 Git patch pairs/lockfiles. `uv run --no-project scripts/transcribe_fork.py --check

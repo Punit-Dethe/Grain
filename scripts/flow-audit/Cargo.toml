@@ -9,10 +9,10 @@ publish = false
 
 [dependencies]
 grain-tdt = { path = "../../crates/grain-tdt" }
-transcribe-cpp = { version = "=0.2.3", default-features = false, features = ["dynamic-backends"] }
+transcribe-cpp = { version = "=0.4.0", default-features = false, features = ["dynamic-backends"] }
 hound = "3.5"
 serde_json = "1"
 
 [patch.crates-io]
-transcribe-cpp = { git = "https://github.com/Punit-Dethe/transcribe.cpp.git", rev = "2d336ea878ded786f63dd53520beed8fc6192c61" }
-transcribe-cpp-sys = { git = "https://github.com/Punit-Dethe/transcribe.cpp.git", rev = "2d336ea878ded786f63dd53520beed8fc6192c61" }
+transcribe-cpp = { git = "https://github.com/Punit-Dethe/transcribe.cpp.git", rev = "517885822a5f42562972796c53ae496a52c143b6" }
+transcribe-cpp-sys = { git = "https://github.com/Punit-Dethe/transcribe.cpp.git", rev = "517885822a5f42562972796c53ae496a52c143b6" }
