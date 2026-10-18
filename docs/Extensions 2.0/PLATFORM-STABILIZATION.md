@@ -58,6 +58,14 @@ integration evidence is maintained in progress. Earlier
 alpha acceptance applies to its recorded build; it is not assumed to verify
 the new merged source or main's new speech engine.
 
+**Installer requested, 18 October:** the user chooses a downloadable packaged app
+for the integration check. Existing alpha-only Actions run
+[39137075550](https://github.com/Punit-Dethe/Grain/actions/runs/39137075550) is
+In progress at source `13b8a5cb03d1beba6f51e5acb95550c3d98790ed`.
+It produces a Windows installer artifact without publishing a GitHub Release.
+Use it for the same small smoke check after successful build/download verification;
+no repeat of the six-block acceptance batch is added.
+
 ## Target experience
 
 - **Author:** get the supported CLI, create a native tool or remote MCP project,

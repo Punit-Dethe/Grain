@@ -1,5 +1,22 @@
 # Extension implementation: progress, changes and user testing
 
+**User-requested post-merge installer, 18 October 2026:** started existing
+alpha-only [Build Test run 39137075550](https://github.com/Punit-Dethe/Grain/actions/runs/39137075550)
+at exact source `13b8a5cb03d1beba6f51e5acb95550c3d98790ed` on the extension
+branch. Direct run metadata confirms **In progress**, with only the Windows
+`extension-alpha / build` job and the ordinary platform matrix skipped.
+Expected artifact: `grain-extensions-alpha-x86_64-pc-windows-msvc`, containing
+the Grain Extensions Alpha 0.0.9 NSIS installer. The user explicitly requests an
+installer after the main merge, superseding the earlier dev-only smoke route.
+Use that installer for the same short dictation/Agent/harmless extension-read
+check after build/download verification. Build and merged-app acceptance remain
+Pending; the earlier 0.0.8 acceptance does not cover the new merged binary.
+
+This is an Actions artifact-only release-profile build, not a GitHub Release,
+tag, version bump or extension publication. No workflow/app code or local edits
+were changed; remote source equals the pinned committed source. Download and
+verify this exact run's artifact after success; do not use the older run's installer.
+
 **Main integration, 18 October 2026:** merge main
 `a1d5b288a644bb8442c1228bec562347da46d024` (0.0.9) into the extension branch,
 starting at accepted checkpoint `d548c945c1b320019b4f9f2762d002bf2d3172ef`.
