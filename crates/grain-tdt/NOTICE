@@ -1,6 +1,6 @@
 Grain Parakeet TDT core
 
-Window geometry and token overlap merging are Rust adaptations of FluidAudio:
+The former window geometry and token overlap merger were Rust adaptations of FluidAudio:
 https://github.com/FluidInference/FluidAudio
 Reference commit: 3fd63887eef1dc25edea8263ce4b44aa854d898b
 Sources/FluidAudio/ASR/Parakeet/ParakeetChunkLayout.swift
@@ -9,6 +9,8 @@ Sources/FluidAudio/Shared/AsrChunkTokenMerger.swift
 
 FluidAudio is distributed under the Apache License, Version 2.0.
 The source files above contain no individual copyright notices.
+The v2/v3 stateful planner supersedes that implementation. This notice retains
+the provenance of the common window/token descriptors originally ported with it.
 Grain modifications: Rust port, sample-count-only planning for file-backed audio,
-in-place accumulation, and deterministic tests.
+stateful owned-frame scheduling, and deterministic tests.
 See LICENSE for the Apache License, Version 2.0.

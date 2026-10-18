@@ -330,6 +330,7 @@ pub fn configure(app: &AppHandle) -> Result<(), String> {
     settings.post_process_fallback_enabled = false;
     settings.post_process_provider_id = "custom".into();
     settings.post_process_providers = vec![crate::settings::PostProcessProvider {
+        api_format: crate::settings::PostProcessApiFormat::OpenAi,
         id: "custom".into(),
         label: "Harness scripted model".into(),
         base_url: format!("http://127.0.0.1:{}/v1", config().marker.model_port),

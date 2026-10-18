@@ -1,7 +1,28 @@
 //! Grain capture callers share Handy's first-sample feedback contract.
 use crate::managers::audio::{AudioRecordingManager, RecordingReadiness};
 use std::sync::Arc;
-use tauri::AppHandle;
+use tauri::{AppHandle, Manager};
+
+/// A resident selected model remains usable after its file is removed. Otherwise
+/// check the actual file, rather than the registry's cached download badge,
+/// before acquiring microphone or presentation resources.
+pub fn require_transcribable_model(app: &AppHandle, model_id: &str) -> Result<(), String> {
+    let availability = app
+        .state::<Arc<crate::managers::model::ModelManager>>()
+        .get_model_path(model_id);
+    if availability.is_ok() {
+        return Ok(());
+    }
+    let manager = app.state::<Arc<crate::managers::transcription::TranscriptionManager>>();
+    if manager.get_current_model().as_deref() == Some(model_id)
+        && manager.grain_has_resident_model()
+    {
+        return Ok(());
+    }
+    availability
+        .map(|_| ())
+        .map_err(|error| format!("No model can transcribe this recording: {error}"))
+}
 
 /// Call after queuing the session's overlay show. Stop/cancel invalidates every
 /// stage, including the mute after a blocking cue.

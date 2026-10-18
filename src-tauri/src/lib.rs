@@ -28,6 +28,8 @@ mod bridge; // [GRAIN] Tauri-shell → headless DaemonEvent bus
 mod capability; // [GRAIN] Capability Index V2 host wiring — Agent hot-set tool exposure + dispatch
 #[path = "handy/catalog/mod.rs"]
 mod catalog;
+#[path = "handy/chinese_script.rs"]
+mod chinese_script;
 #[path = "handy/cli.rs"]
 pub mod cli;
 #[path = "handy/clipboard.rs"]
@@ -38,6 +40,8 @@ mod context_bias; // [GRAIN] budgeted whisper decoder-prefix hotwords
 mod context_detect; // [GRAIN] foreground app/site detection + three-stage prompt composition
 mod context_screen; // [GRAIN] foreground-window image capture — extension capability, no core caller
 mod dev_extensions; // [GRAIN] validated load-unpacked project reader
+#[path = "handy/engine_supervisor/mod.rs"]
+pub mod engine_supervisor;
 mod events_auth; // [GRAIN] token identity + capability filter for the events WS (SPEC 7.1)
 mod events_server; // [GRAIN] local WebSocket event transport to the pill
 mod extension_companion; // [GRAIN] developer-only native companion process supervisor (Phase 4)
@@ -57,9 +61,12 @@ mod grain_events; // [GRAIN] typed payloads for the webview event surface (see t
                   // single-provider `llm_client.rs`. Upstream's file stays on disk untouched and
                   // UN-COMPILED (no `mod llm_client;`) so upstream merges land conflict-free;
                   // the alias keeps every `crate::llm_client::` path working.
+mod grain_anthropic;
+mod grain_audio;
 mod grain_capture; // [GRAIN] shared first-sample readiness for owned capture callers
 mod grain_dictation_routing; // [GRAIN] model-selected Dictation action resolution
 mod grain_embed;
+mod grain_engine;
 mod grain_llm_client;
 mod grain_locale; // [GRAIN] locale-tag resolution, owned in Rust (was duplicated in TS)
 mod grain_mcp; // [GRAIN] stateless hosted MCP development providers (2026-07-28 only)
@@ -292,6 +299,22 @@ fn build_main_window(app: &AppHandle) -> tauri::Result<tauri::WebviewWindow> {
 
     let window = win_builder.build()?;
 
+    // [GRAIN] Handy's WebView2 accelerator fix at Grain's lazy builder.
+    #[cfg(target_os = "windows")]
+    let _ = window.with_webview(|webview| unsafe {
+        use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2Settings3;
+        use windows::core::Interface;
+        let result = webview
+            .controller()
+            .CoreWebView2()
+            .and_then(|core| core.Settings())
+            .and_then(|settings| settings.cast::<ICoreWebView2Settings3>())
+            .and_then(|settings| settings.SetAreBrowserAcceleratorKeysEnabled(false));
+        if let Err(error) = result {
+            log::warn!("Failed to disable WebView2 browser accelerators: {error}");
+        }
+    });
+
     // [GRAIN] On Windows 11, restore the OS default corner preference so the
     // window gets Windows 11's natural subtle rounding, clipped cleanly at the
     // real window frame with no CSS compositing artifacts.
@@ -427,7 +450,6 @@ fn initialize_core_logic(app_handle: &AppHandle) {
     }
 
     // Apply accelerator preferences before any model loads
-    managers::transcription::apply_accelerator_settings(app_handle);
 
     // Add managers to Tauri's managed state
     app_handle.manage(recording_manager.clone());
@@ -435,10 +457,6 @@ fn initialize_core_logic(app_handle: &AppHandle) {
     app_handle.manage(transcription_manager.clone());
     app_handle.manage(history_manager.clone());
     app_handle.manage(tray::CurrentTrayIconState::new());
-    // [GRAIN] Register the transcribe-cpp compute backends ONCE before any model
-    // load — with `dynamic-backends` this dlopens the ggml modules next to the
-    // exe; skipping it leaves ZERO compute devices and every GGUF load fails.
-    managers::transcription::init_transcribe_backend();
     // [GRAIN] Flow owns capture scheduling but no model engine. Its serial worker
     // leases the shared TranscriptionManager model for stateless Parakeet TDT
     // windows, keeping one resident model across Batch/Flow/Native ASR.
@@ -724,8 +742,17 @@ fn run_headless_transcription(app: &AppHandle, args: &CliArgs) -> i32 {
     // exit. Pass an index here to --device-index.
     if args.list_devices {
         println!("transcribe-cpp compute devices:");
-        for d in managers::transcription::describe_compute_devices() {
-            println!("  {}", d);
+        let manager = app.state::<Arc<TranscriptionManager>>();
+        match managers::transcription::describe_compute_devices(&manager) {
+            Ok(devices) => {
+                for device in devices {
+                    println!("  {}", device);
+                }
+            }
+            Err(error) => {
+                eprintln!("Cannot list compute devices: {error}");
+                return 1;
+            }
         }
         if args.transcribe_file.is_none() {
             return 0;
@@ -1111,14 +1138,12 @@ pub fn run(cli_args: CliArgs) {
                     });
                     return Ok(());
                 }
-                // Register transcribe-cpp compute backends (required for both
-                // --list-devices and any GGUF model load).
+                // The extension probe needs no ASR managers or inference engine.
                 #[cfg(all(debug_assertions, not(feature = "agent-harness")))]
                 if let Some(path) = agent_probe.clone() {
                     grain_agent_probe::launch(app_handle, path);
                     return Ok(());
                 }
-                managers::transcription::init_transcribe_backend();
                 let model_manager = Arc::new(
                     ModelManager::new(&app_handle).expect("Failed to initialize model manager"),
                 );
@@ -1128,7 +1153,6 @@ pub fn run(cli_args: CliArgs) {
                 );
                 app_handle.manage(model_manager);
                 app_handle.manage(transcription_manager);
-                managers::transcription::apply_accelerator_settings(&app_handle);
 
                 let handle = app_handle.clone();
                 let args = cli_args.clone();
@@ -1227,7 +1251,7 @@ pub fn run(cli_args: CliArgs) {
 
             // [GRAIN] Accelerator enumeration is NOT pre-warmed at boot:
             // `get_available_accelerators` enumerates transcribe-cpp's GPU
-            // devices lazily (and caches in its OnceLock) the first time the
+            // devices lazily through the supervisor the first time the
             // Advanced page asks for it — that page already shows a loading
             // state, so the one-time cost is paid only when actually needed
             // ("if it's not in use, destroy it").
@@ -1396,6 +1420,10 @@ fn command_bindings() -> Builder<tauri::Wry> {
             shortcut::change_autostart_setting,
             shortcut::change_translate_to_english_setting,
             shortcut::change_selected_language_setting,
+            grain_transcription::change_chinese_script_setting,
+            grain_transcription::change_long_form_chunking_setting,
+            grain_transcription::change_vad_enabled_setting,
+            grain_transcription::change_vad_backend_setting,
             shortcut::change_overlay_position_setting,
             grain_overlay::change_overlay_style_setting,
             grain_overlay::change_pill_hide_close_button_setting,

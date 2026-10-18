@@ -9,7 +9,7 @@ use crate::actions::{
     ShortcutAction,
 };
 use crate::audio_feedback::{play_feedback_sound, SoundType};
-use crate::audio_toolkit::{is_microphone_access_denied, is_no_input_device_error, VadPolicy};
+use crate::audio_toolkit::VadPolicy;
 use crate::managers::audio::AudioRecordingManager;
 use crate::managers::history::HistoryManager;
 use crate::managers::model::ModelManager;
@@ -385,19 +385,21 @@ impl ShortcutAction for RealtimeTranscribeAction {
         // the manager's load predicate before it spawns the rolling worker. The
         // model itself still loads asynchronously, so recording startup does not
         // wait for weights or allocate a second engine.
-        let rolling_error = rt.start_session(app.clone(), sid).err();
+        if let Err(error) = rt.start_session(app.clone(), sid) {
+            rt.cancel_session();
+            crate::bridge::emit(app, DaemonEvent::ModelError { error });
+            return;
+        }
 
         let binding_id = binding_id.to_string();
         // Flow uses exact continuous audio and does not load or run the ASR VAD.
         let vad_policy = VadPolicy::Disabled;
         let overlay_generation = crate::grain_overlay::show_capture(app, SessionMode::Dictation);
         let mut readiness = None;
-        let mut recording_error = rolling_error;
-        if recording_error.is_none() {
-            match rm.try_start_recording_low_ram(&binding_id, vad_policy) {
-                Ok(ready) => readiness = Some(ready),
-                Err(error) => recording_error = Some(error),
-            }
+        let mut recording_error = None;
+        match rm.try_start_recording_low_ram(&binding_id, vad_policy) {
+            Ok(ready) => readiness = Some(ready),
+            Err(error) => recording_error = Some(error),
         }
 
         if recording_error.is_none() {
@@ -412,18 +414,12 @@ impl ShortcutAction for RealtimeTranscribeAction {
             rt.cancel_session();
             change_tray_icon(app, TrayIconState::Idle);
             if let Some(err) = recording_error {
-                let error_type = if is_microphone_access_denied(&err) {
-                    "microphone_permission_denied"
-                } else if is_no_input_device_error(&err) {
-                    "no_input_device"
-                } else {
-                    "unknown"
-                };
+                let error_type = crate::managers::audio::recording_error_type(&err);
                 let _ = app.emit(
                     "recording-error",
                     RecordingErrorEvent {
                         error_type: error_type.to_string(),
-                        detail: Some(err),
+                        detail: Some(err.to_string()),
                     },
                 );
             }
@@ -661,11 +657,12 @@ impl ShortcutAction for NativeAsrAction {
     fn start(&self, app: &AppHandle, binding_id: &str, _shortcut_str: &str) {
         // Require a selected + installed + streaming-capable model. Without one,
         // surface a clear, actionable error to the pill and don't open the mic.
-        let selected = get_settings(app).selected_asr_model;
+        let settings = get_settings(app);
+        let selected = settings.selected_asr_model;
         let mm = app.state::<Arc<ModelManager>>();
         let ok = mm
             .get_model_info(&selected)
-            .is_some_and(|m| m.is_downloaded && m.supports_streaming);
+            .is_some_and(|m| m.supports_streaming);
         if !ok {
             warn!("Native ASR: no streaming model selected/installed");
             crate::bridge::emit(
@@ -675,6 +672,11 @@ impl ShortcutAction for NativeAsrAction {
                         .into(),
                 },
             );
+            return;
+        }
+
+        if let Err(error) = crate::grain_capture::require_transcribable_model(app, &selected) {
+            crate::bridge::emit(app, DaemonEvent::ModelError { error });
             return;
         }
 
@@ -690,12 +692,9 @@ impl ShortcutAction for NativeAsrAction {
         let binding_id = binding_id.to_string();
         change_tray_icon(app, TrayIconState::Recording);
 
-        // Streaming-capable model verified above → the streaming VAD profile
-        // (longer post-speech tail). No `vad_enabled` toggle in
-        // grain-core settings — VAD is always on.
-        let vad_policy = VadPolicy::Streaming;
+        let vad_policy = crate::grain_audio::capture_vad_policy(settings.vad_enabled, true);
         let overlay_generation = crate::grain_overlay::show_capture(app, SessionMode::NativeAsr);
-        let mut recording_error: Option<String> = None;
+        let mut recording_error: Option<anyhow::Error> = None;
         let mut readiness = None;
         match rm.try_start_recording(&binding_id, vad_policy) {
             Ok(ready) => readiness = Some(ready),
@@ -716,18 +715,12 @@ impl ShortcutAction for NativeAsrAction {
             tm.cancel_stream();
             change_tray_icon(app, TrayIconState::Idle);
             if let Some(err) = recording_error {
-                let error_type = if is_microphone_access_denied(&err) {
-                    "microphone_permission_denied"
-                } else if is_no_input_device_error(&err) {
-                    "no_input_device"
-                } else {
-                    "unknown"
-                };
+                let error_type = crate::managers::audio::recording_error_type(&err);
                 let _ = app.emit(
                     "recording-error",
                     RecordingErrorEvent {
                         error_type: error_type.to_string(),
-                        detail: Some(err),
+                        detail: Some(err.to_string()),
                     },
                 );
             }

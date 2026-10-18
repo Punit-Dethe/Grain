@@ -4,7 +4,8 @@ import { RefreshCcw } from "lucide-react";
 import { Input } from "../../../ui/Input";
 import { Button } from "../../../ui/Button";
 import { isBuiltinPpId } from "./usePpPool";
-import type { PostProcessProvider } from "@/bindings";
+import { Dropdown } from "../../../ui/Dropdown";
+import type { PostProcessApiFormat, PostProcessProvider } from "@/bindings";
 
 interface PpProviderFormProps {
   existing?: PostProcessProvider;
@@ -43,6 +44,9 @@ export const PpProviderForm: React.FC<PpProviderFormProps> = ({
 
   const [label, setLabel] = useState(existing?.label ?? "");
   const [baseUrl, setBaseUrl] = useState(existing?.base_url ?? "");
+  const [apiFormat, setApiFormat] = useState<PostProcessApiFormat>(
+    existing?.api_format ?? "open_ai",
+  );
   const [model, setModel] = useState(existingModel ?? "");
   const [apiKey, setApiKey] = useState("");
   const [modelOptions, setModelOptions] = useState<string[]>([]);
@@ -79,9 +83,19 @@ export const PpProviderForm: React.FC<PpProviderFormProps> = ({
     setValidationError(null);
 
     const provider: PostProcessProvider = existing
-      ? { ...existing, label: label.trim(), base_url: baseUrl.trim() }
+      ? {
+          ...existing,
+          label: label.trim(),
+          base_url: baseUrl.trim(),
+          api_format: apiFormat,
+          supports_structured_output:
+            apiFormat === "anthropic"
+              ? false
+              : existing.supports_structured_output,
+        }
       : {
           id: newId(),
+          api_format: apiFormat,
           label: label.trim(),
           base_url: baseUrl.trim(),
           allow_base_url_edit: true,
@@ -141,6 +155,22 @@ export const PpProviderForm: React.FC<PpProviderFormProps> = ({
           disabled={baseUrlLocked}
         />
       </label>
+
+      <div className="flex flex-col gap-1">
+        <span className="text-xs font-medium text-ink-soft">
+          {t("handySync.apiFormat")}
+        </span>
+        <Dropdown
+          ariaLabel={t("handySync.apiFormat")}
+          selectedValue={apiFormat}
+          onSelect={(value) => setApiFormat(value as PostProcessApiFormat)}
+          disabled={baseUrlLocked || saving}
+          options={[
+            { value: "open_ai", label: "OpenAI" },
+            { value: "anthropic", label: "Anthropic" },
+          ]}
+        />
+      </div>
 
       <label className="flex flex-col gap-1">
         <span className="text-xs font-medium text-ink-soft">

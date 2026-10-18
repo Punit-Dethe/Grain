@@ -1,5 +1,54 @@
 # Extension implementation: progress, changes and user testing
 
+**Main integration, 18 October 2026:** merge main
+`a1d5b288a644bb8442c1228bec562347da46d024` (0.0.9) into the extension branch,
+starting at accepted checkpoint `d548c945c1b320019b4f9f2762d002bf2d3172ef`.
+This incorporates main's app/UI, recorder/VAD, stateful Flow and native 0.4.0
+work without publishing a release or pushing extensions into main. Main has
+70 commits beyond the common ancestor; the extension side has 216.
+
+Used the documented normal three-way override for `merge=ours`; the default
+Handy driver would hide conflicts in Grain-owned files. Resolved four files:
+startup keeps the debug probe but removes main's obsolete in-process backend
+initializer; the dependency lock retains current MCP dependencies and main's
+paired native pin while removing old VAD dependencies; shared CSS keeps the
+combined layout; generated bindings combine main's settings/provider types with
+the current extension contract. All one-sided main paths match main (normalizing
+checkout line endings); no incoming-only changes were silently discarded.
+The store/MCP policy/runtime files, extension page and alpha-only caller retain
+their pre-merge implementations. No hand-edited Handy runtime or new harness.
+
+Compilation caught main's new provider `api_format` field missing in two existing
+fixtures: the extension tool-finalizing test and the debug acceptance executable.
+Added OpenAI format to both; no test framework expansion. Fixed the resolved
+lockfile's missing package delimiter, then
+the locked backend build succeeds. The first native build attempt from the repo
+root hit the existing Windows junction issue; retry used the documented short
+`C:/gt` target from `src-tauri/` with child-only LOCALAPPDATA/TEMP removal, matching
+the existing Tauri launcher's workaround. No machine environment/config change.
+
+Verification: **126 frontend tests** and **567 workspace tests** pass (including
+core, SDK, CLI, registry admission/signing and TDT). **761 host tests pass,
+23 existing tests ignored**.
+Alpha TypeScript/Vite build, scoped ESLint, affected workflow Actionlint, ten
+native-source contract tests and upstream relocation policy pass. Existing six
+host compiler warnings are retained, not a claim of warning-free source.
+The explicit generated-binding export test passes, and the resulting bindings
+type-check. The existing `agent-harness` executable passes its locked Cargo check
+with existing dead-code warnings. Scoped whitespace checks pass across the full
+staged merge. Source review checks both sides of overlapping app startup,
+Agent/model transport and settings registration; graph test-gap estimates are
+not treated as newly failing tests. Actual host/workspace suites provide evidence.
+Earlier six-block alpha acceptance remains valid for its recorded installer;
+the merged source still needs the small dev-app smoke check in the active plan.
+
+Unrelated local Cargo/binding bytes are backed up outside the checkout and in
+the named pre-merge stash. Their reapply retains merged/generated settings and
+provider fields in three generated-line overlaps; the removed legacy engine enum
+is not reintroduced by a formatting edit. Original bytes remain available in the
+backup/stash. No installer,
+signing-key, registry publication or provider-account changes are part of this merge.
+
 **Final packaged-alpha user acceptance, 18 October 2026 — Pass:** the user
 explicitly answers **"All three passed"** for the downloaded alpha installer:
 

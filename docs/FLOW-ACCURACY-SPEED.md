@@ -1,5 +1,7 @@
 # Parakeet v2 accuracy and speed selection
 
+> Historical v2 policy, superseded on 2026-10-18 by [stateful buffered v2](FLOW-V2-STATEFUL-PLAN.md). The measurements below do not select the current defaults.
+
 2026-09-26. Exact Handy v2 Q8_0 GGUF, Grain's pinned native 0.2.3. Audio conditioning is excluded. This report measures disagreement with complete-input Batch; it does not measure human-referenced WER.
 
 ## External starting points

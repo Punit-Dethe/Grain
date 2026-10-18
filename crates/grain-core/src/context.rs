@@ -645,6 +645,24 @@ mod tests {
     }
 
     #[test]
+    fn capture_vad_defaults_on_and_toggle_survives_reload() {
+        let dir = tempfile::tempdir().unwrap();
+        let data = dir.path().join("data");
+        let ctx = AppContext::new("res", &data);
+        assert!(ctx.settings().vad_enabled);
+        drop(ctx);
+
+        for enabled in [false, true] {
+            let ctx = AppContext::new("res", &data);
+            ctx.update_settings(|s| s.vad_enabled = enabled).unwrap();
+            drop(ctx);
+            let reloaded = AppContext::new("res", &data);
+            assert_eq!(reloaded.settings().vad_enabled, enabled);
+            assert!(reloaded.settings().long_form_chunking);
+        }
+    }
+
+    #[test]
     fn settings_round_trip_across_reload() {
         let dir = tempfile::tempdir().unwrap();
         let data = dir.path().join("data");

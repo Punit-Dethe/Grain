@@ -367,43 +367,6 @@ jobs:
           echo "CMAKE_CXX_COMPILER_TARGET=aarch64-pc-windows-msvc" >> $env:GITHUB_ENV
           echo "CL=/EHsc" >> $env:GITHUB_ENV
 
-      - name: Install ONNX Runtime (x86_64 macOS)
-        if: inputs.target == 'x86_64-apple-darwin'
-        shell: bash
-        run: |
-          ORT_VERSION="1.24.2"
-          curl -L -o ort.tgz "https://blob.handy.computer/onnxruntime-osx-x86_64-${ORT_VERSION}.tgz"
-          tar xzf ort.tgz
-          ORT_DIR="$(pwd)/onnxruntime-osx-x86_64-${ORT_VERSION}"
-          echo "ORT_LIB_LOCATION=$ORT_DIR/lib" >> $GITHUB_ENV
-          echo "ORT_PREFER_DYNAMIC_LINK=1" >> $GITHUB_ENV
-          # Bundle the versioned dylib (matches the install name @rpath/libonnxruntime.1.24.2.dylib)
-          jq --arg lib "$ORT_DIR/lib/libonnxruntime.${ORT_VERSION}.dylib" \
-            '.bundle.macOS.frameworks = [$lib]' \
-            src-tauri/tauri.conf.json > tmp.json && mv tmp.json src-tauri/tauri.conf.json
-
-      - name: Install ONNX Runtime (x86_64 Linux, Ubuntu 22.04)
-        if: contains(inputs.platform, 'ubuntu-22.04') && inputs.target == 'x86_64-unknown-linux-gnu'
-        shell: bash
-        run: |
-          ORT_VERSION="1.24.2"
-          curl -L -o ort.tgz "https://blob.handy.computer/onnxruntime-linux-x86_64-${ORT_VERSION}.tgz"
-          tar xzf ort.tgz
-          ORT_DIR="$(pwd)/onnxruntime-linux-x86_64-${ORT_VERSION}"
-          echo "ORT_LIB_LOCATION=$ORT_DIR/lib" >> $GITHUB_ENV
-          echo "ORT_PREFER_DYNAMIC_LINK=1" >> $GITHUB_ENV
-          # Resolve symlinks so the deb bundler gets real files (not broken symlinks)
-          for f in "$ORT_DIR"/lib/libonnxruntime.so*; do
-            if [ -L "$f" ]; then
-              cp -L "$f" "$f.real" && mv "$f.real" "$f"
-            fi
-          done
-          # Bundle only the loader-facing SONAME in Grain's private runtime dir.
-          # deb.files key = destination in package, value = source on disk.
-          jq --arg soname "$ORT_DIR/lib/libonnxruntime.so.1" \
-            '.bundle.linux.deb.files["/usr/lib/Grain/libonnxruntime.so.1"] = $soname' \
-            src-tauri/tauri.conf.json > tmp.json && mv tmp.json src-tauri/tauri.conf.json
-
       - name: Build with Tauri
         uses: tauri-apps/tauri-action@v0
         env:

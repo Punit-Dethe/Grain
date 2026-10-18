@@ -30,6 +30,33 @@ installer/archive verification also pass. No repeat user batch or build is neede
 Real key custody/backup setup is explicitly
 deferred by the user until public release (17 October). No stable SDK release.
 
+## Next step — integrate current main (18 October)
+
+The user requests merging main into the extension branch before further feature
+work. This keeps main's app/UI/speech improvements alongside the accepted
+extension platform; it does not merge the alpha into main or publish a release.
+
+1. Preserve unrelated local Cargo/binding edits, pin fetched main and preview the
+   merge. Use the documented real three-way override for `merge=ours`: the Handy
+   suppression driver must not discard another Grain branch's changes.
+2. Resolve startup, lockfile, CSS and generated-binding conflicts; keep main's
+   native source pair/API settings and the extension runtime, commands and gates.
+   Compare one-sided paths with main to detect silently omitted changes.
+3. Run the normal affected frontend/core/backend checks and inspect overlapping
+   model transport code. Fix integration errors without expanding the harness.
+4. Commit/push the integration to the existing extension branch, restore local
+   edits against the merged API, then request only a small dev-app smoke check:
+   dictation, Agent opening and a harmless configured-extension read. No installer
+   rebuild or repetition of the completed six-block acceptance batch is required.
+
+Main is pinned to `a1d5b288a644bb8442c1228bec562347da46d024` (0.0.9),
+70 commits ahead of the common ancestor; the extension branch has 216 commits
+of its own. Merge resolutions and automated checks pass; only the three small
+dev-app smoke checks above remain user acceptance for this integration. Current
+integration evidence is maintained in progress. Earlier
+alpha acceptance applies to its recorded build; it is not assumed to verify
+the new merged source or main's new speech engine.
+
 ## Target experience
 
 - **Author:** get the supported CLI, create a native tool or remote MCP project,

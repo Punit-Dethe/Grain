@@ -244,6 +244,38 @@ async changeSelectedLanguageSetting(language: string) : Promise<Result<null, str
     else return { status: "error", error: e  as any };
 }
 },
+async changeChineseScriptSetting(script: ChineseScript) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_chinese_script_setting", { script }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async changeLongFormChunkingSetting(enabled: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_long_form_chunking_setting", { enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async changeVadEnabledSetting(enabled: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_vad_enabled_setting", { enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async changeVadBackendSetting(backend: VadBackend) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_vad_backend_setting", { backend }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async changeOverlayPositionSetting(position: string) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("change_overlay_position_setting", { position }) };
@@ -1042,8 +1074,8 @@ async mcpConnectionImport(definitionJson: string) : Promise<Result<ConnectionVie
 }
 },
 /**
- * Development-gated acquisition only. Store accounts stay inactive until the
- * combined acquisition/update/revocation real-app checkpoint is accepted.
+ * Signed-store acquisition in development and the dedicated extensions alpha.
+ * Custom server configuration retains its separate development-only gate.
  */
 async storeMcpInstall(id: string, version: string) : Promise<Result<null, string>> {
     try {
@@ -1528,7 +1560,7 @@ async changeTranscribeGpuDevice(device: string | null) : Promise<Result<null, st
  * First-call cost is dominated by enumerating GPU devices through the
  * transcribe.cpp Metal/Vulkan backend, which loads dynamic libraries and
  * probes hardware. Run it on the blocking pool so the webview thread
- * stays responsive — see also the startup pre-warm in `lib.rs`.
+ * stays responsive. Grain enumerates lazily when the settings request it.
  */
 async getAvailableAccelerators() : Promise<AvailableAccelerators> {
     return await TAURI_INVOKE("get_available_accelerators");
@@ -2402,7 +2434,7 @@ selected_asr_model?: string; always_on_microphone?: boolean; selected_microphone
  * Which input channel to use on the selected microphone device.
  * None means "average all channels" (original behavior).
  */
-selected_channel?: number | null; clamshell_microphone?: string | null; selected_output_device?: string | null; translate_to_english?: boolean; selected_language?: string; overlay_position?: OverlayPosition; overlay_style?: OverlayStyle;
+selected_channel?: number | null; clamshell_microphone?: string | null; selected_output_device?: string | null; translate_to_english?: boolean; selected_language?: string; chinese_script?: ChineseScript; vad_backend?: VadBackend; vad_enabled?: boolean; long_form_chunking?: boolean; overlay_position?: OverlayPosition; overlay_style?: OverlayStyle;
 /**
  * [GRAIN] Show the icon of the app being dictated into, in place of the
  * pill's state dot. ON while the behaviour is being developed; it will
@@ -2580,13 +2612,13 @@ expires_at: string | null }
 export type AutoSubmitKey = "enter" | "ctrl_enter" | "cmd_enter"
 export type AvailableAccelerators = { transcribe: string[]; gpu_devices: GpuDeviceOption[] }
 export type BindingResponse = { success: boolean; binding: ShortcutBinding | null; error: string | null }
+export type ChineseScript = "as_transcribed" | "simplified" | "traditional"
 export type ClipboardHandling = "dont_modify" | "copy_to_clipboard"
 /**
  * Host UI projection, deliberately omitting vault/account IDs and numeric u64
  * revisions (JavaScript numbers cannot represent all supported revisions).
  */
-export type ConnectionView = { id: string; source: string; extensionId: string | null; version: string | null; revision: string; name: string; url: string; authentication: string; headers: { [key in string]?: string }; oauthClient: McpPublicOAuthClient | null; state: string }
-export type McpPublicOAuthClient = { clientId: string; issuer: string }
+export type ConnectionView = { id: string; source: string; extensionId: string | null; version: string | null; revision: string; name: string; url: string; authentication: string; headers: Partial<{ [key in string]: string }>; oauthClient: McpPublicOAuthClient | null; state: string }
 /**
  * [GRAIN] One context-awareness profile, as the settings UI needs it.
  *
@@ -2688,13 +2720,6 @@ name: string;
 url_host: string | null }
 export type DeveloperExtension = { id: string; path: string }
 export type EmbedModelStatus = "ready" | "downloading" | "absent"
-export type EngineType =
-/**
- * Any GGML/GGUF model loaded through transcribe-cpp (Whisper, Parakeet,
- * Voxtral, Qwen3-ASR, Nemotron, …). The architecture is auto-detected from
- * the file, so this one variant covers the whole transcribe-cpp family.
- */
-"TranscribeCpp" | "Parakeet" | "Moonshine" | "MoonshineStreaming" | "SenseVoice" | "GigaAM" | "Canary" | "Cohere"
 /**
  * One row of the Extensions Overview tab. Built-ins delegate their enabled
  * state to core settings flags (manifest-first, PLAN.md D4); installed packs
@@ -2968,6 +2993,11 @@ export type McpProviderStatus = { id: string; name: string; description: string;
  * Recovery is cleared on restart/invalidation; this never polls a provider.
  */
 state: string }
+/**
+ * Publisher-owned public registration. Grain discovers endpoints and keeps
+ * account tokens; this never supplies a client secret or callback override.
+ */
+export type McpPublicOAuthClient = { clientId: string; issuer: string }
 export type MicLevel = number[]
 /**
  * The model's files were removed.
@@ -2993,8 +3023,8 @@ export type ModelExtractionCompleted = string
  * Archive extraction began (directory-based models).
  */
 export type ModelExtractionStarted = string
-export type ModelInfo = { id: string; name: string; description: string; filename: string; source: ModelSource; size_mb: number; is_downloaded: boolean; is_downloading: boolean; partial_size: number; is_directory: boolean; engine_type: EngineType; accuracy_score: number; speed_score: number; supports_translation: boolean; is_recommended: boolean; supported_languages: string[]; supports_language_selection: boolean; is_custom: boolean; supports_streaming: boolean; supports_language_detection: boolean }
-export type ModelLoadStatus = { is_loaded: boolean; current_model: string | null }
+export type ModelInfo = { id: string; name: string; description: string; filename: string; source: ModelSource; size_mb: number; is_downloaded: boolean; is_downloading: boolean; partial_size: number; accuracy_score: number; speed_score: number; supports_translation: boolean; is_recommended: boolean; supported_languages: string[]; supports_language_selection: boolean; is_custom: boolean; supports_streaming: boolean; supports_language_detection: boolean }
+export type ModelLoadStatus = { is_loading: boolean; is_loaded: boolean; current_model: string | null }
 /**
  * Where a model comes from and how Handy obtains it — the routing discriminant
  * for downloading and on-disk resolution.
@@ -3094,7 +3124,8 @@ export type PaginatedHistory = { entries: HistoryEntry[]; has_more: boolean }
 export type PasteError = null
 export type PasteMethod = "ctrl_v" | "direct" | "none" | "shift_insert" | "ctrl_shift_v" | "external_script"
 export type PermissionAccess = "allowed" | "denied" | "unknown"
-export type PostProcessProvider = { id: string; label: string; base_url: string; allow_base_url_edit?: boolean; models_endpoint?: string | null; supports_structured_output?: boolean;
+export type PostProcessApiFormat = "open_ai" | "anthropic"
+export type PostProcessProvider = { api_format?: PostProcessApiFormat; id: string; label: string; base_url: string; allow_base_url_edit?: boolean; models_endpoint?: string | null; supports_structured_output?: boolean;
 /**
  * [GRAIN] Included in ordered fallback when true.
  */
@@ -3249,9 +3280,11 @@ export type StoreCover = { id: string; sha256: string; kind: string }
  * One card's data for the store UI (a specta-friendly projection of
  * [`IndexEntry`]; the index type itself lives in the crypto-free leaf).
  */
-export type StoreEntry = { id: string; kind: string; name: string; version: string; tier: string; trust: string; capabilities: string[];
-/** Same-kind releases preceding this one in the signed publication order. */
-previous_versions: string[];
+export type StoreEntry = { id: string; kind: string; name: string; version: string;
+/**
+ * Same-kind releases preceding this one in the signed publication order.
+ */
+previous_versions: string[]; tier: string; trust: string; capabilities: string[];
 /**
  * One-line summary shown under the name on the card.
  */
@@ -3412,6 +3445,7 @@ notes: string | null;
  * RFC 3339 publication date as `latest.json` reported it.
  */
 date: string | null }
+export type VadBackend = "silero" | "earshot"
 export type WindowsMicrophonePermissionStatus = { supported: boolean; overall_access: PermissionAccess; device_access: PermissionAccess; app_access: PermissionAccess; desktop_app_access: PermissionAccess }
 
 /** tauri-specta globals **/

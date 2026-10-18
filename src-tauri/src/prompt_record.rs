@@ -181,3 +181,32 @@ pub async fn transcribe_split(
         ),
     }
 }
+
+/// Finish Standard's live chunks, or drain them before independently decoding
+/// content and its spoken instruction. No finalization runs on discarded text.
+pub(crate) async fn transcribe_recording_split(
+    app: &AppHandle,
+    samples: Vec<f32>,
+    mark: Option<usize>,
+) -> (Result<String, String>, Option<String>) {
+    let tm = std::sync::Arc::clone(
+        &app.state::<std::sync::Arc<crate::managers::transcription::TranscriptionManager>>(),
+    );
+    if mark.is_some_and(|m| m > 0 && m < samples.len()) {
+        let len = samples.len();
+        let drained = tauri::async_runtime::spawn_blocking(move || tm.discard_recording_live(len))
+            .await
+            .map_err(|e| e.to_string())
+            .and_then(|result| result.map_err(|e| e.to_string()));
+        if let Err(error) = drained {
+            return (Err(error), None);
+        }
+        transcribe_split(app, samples, mark).await
+    } else {
+        let result = tauri::async_runtime::spawn_blocking(move || tm.transcribe_recording(samples))
+            .await
+            .map_err(|e| e.to_string())
+            .and_then(|result| result.map_err(|e| e.to_string()));
+        (result, None)
+    }
+}

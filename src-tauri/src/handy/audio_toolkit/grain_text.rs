@@ -89,6 +89,77 @@ mod tests {
     use super::finalize_transcript;
 
     #[test]
+    fn assembled_text_restores_only_sentence_start_filler_capitals() {
+        for skip_custom_words in [false, true] {
+            for (raw, expected) in [
+                ("Um, so we should ship.", "So we should ship."),
+                ("That works. Um, let me check.", "That works. Let me check."),
+                (
+                    "We can, Um, continue after a pause.",
+                    "We can, continue after a pause.",
+                ),
+                (
+                    "um lowercase stays lowercase.",
+                    "lowercase stays lowercase.",
+                ),
+            ] {
+                assert_eq!(
+                    finalize_transcript(
+                        raw,
+                        &[],
+                        0.5,
+                        "en",
+                        &None,
+                        true,
+                        skip_custom_words,
+                        &[],
+                        false
+                    ),
+                    expected
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn english_cleanup_preserves_ha_in_place_names() {
+        // Both assembled Flow text and already-prompted text use this cleanup.
+        for skip_custom_words in [false, true] {
+            for place in ["Ha Long Bay", "Ha Noi"] {
+                let raw = format!("um {place} is beautiful.");
+                let result = finalize_transcript(
+                    &raw,
+                    &[],
+                    0.5,
+                    "en",
+                    &None,
+                    true,
+                    skip_custom_words,
+                    &[],
+                    false,
+                );
+                assert_eq!(result, format!("{place} is beautiful."));
+            }
+        }
+    }
+
+    #[test]
+    fn english_cleanup_still_removes_hesitation_fillers() {
+        let result = finalize_transcript(
+            "um ah eh I visited Ha Noi.",
+            &[],
+            0.5,
+            "en",
+            &None,
+            true,
+            false,
+            &[],
+            false,
+        );
+        assert_eq!(result, "I visited Ha Noi.");
+    }
+
+    #[test]
     fn test_finalize_applies_custom_words_and_filters() {
         // Non-whisper path: fuzzy correction runs, then fillers are removed.
         let custom = vec!["ChargeBee".to_string()];

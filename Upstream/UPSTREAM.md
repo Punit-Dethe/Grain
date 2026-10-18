@@ -12,6 +12,10 @@ Handy live in [UPSTREAMABLE.md](UPSTREAMABLE.md).
 the exact Handy commits already present in ancestry whose runtime behavior
 Grain has deliberately not implemented yet.
 
+The active October 17 sync sequence and Flow/dictionary impact assessment are
+in [SYNC-2026-10-17.md](SYNC-2026-10-17.md). Frontend benefit review is the final
+stage, not a blanket decision to ignore upstream UI fixes.
+
 ## The short version
 
 **The common case is reviewing a PR, not running a procedure.** Every 2 hours
@@ -31,8 +35,8 @@ For transcribe.cpp changes, `docs/TRANSCRIBE-CPP-FORK.md` and
 `native/transcribe-fork.json` are the binding contract and paired immutable
 source pin. Preserve both fork patches/locks and the current target features
 when adapting Handy dependency changes; a native upgrade is a separately
-tested fork release. `vendor/TRANSCRIBE-CPP.md` records the frozen rollback
-baseline, not an active second implementation.
+tested fork release. Retired vendor baselines are recoverable from Git; only
+the checked immutable source pair is maintained.
 When closing out manually adapted commits, `closeout.py` defers the divergence
 ratchet until after its tree-preserving ancestry merge, because only then does
 the ratchet compare Grain against the newly assessed upstream baseline. Use
@@ -247,6 +251,11 @@ bun install && cargo check              # regenerate lockfiles
 python Upstream/verdict.py --pending    # anything left unassessed? record it
 ```
 
+For a staged sync, pass `--target <commit>` to `merge_upstream.py`. The tool
+still fetches first and rejects targets outside fetched Handy main history.
+Resolve, review, test and finish each batch before selecting the next boundary;
+never substitute a bare merge or move the upstream tracking ref to an older tip.
+
 **Never run a bare `git merge upstream/main`.** The remote-tracking ref is a
 local cache; merging against a stale one is how the first 2026-08-02 sync
 "completed" while 16 commits it could not see stayed behind. Every tool here
@@ -407,6 +416,40 @@ When you make a new deliberate deviation, add it to the divergence map in the
 same commit.
 
 ## Sync log
+
+### October 17 full integration
+
+Merged the complete 34-commit range through `9e57a0d7` on
+`sync/handy-2026-10-17` (merge `1cf50ec1`); target behind count is zero.
+Native fork 0.4.0 `517885822a5f42562972796c53ae496a52c143b6` passes its
+Windows/Linux/macOS CI. Grain's worker/capture/chunking/dictionary paths and
+final frontend benefit review are integrated. Windows checks pass 599 backend,
+359 workspace and 117 frontend tests; explicit process/streaming/Flow/VAD gates
+and installer extraction/runtime checks also pass. All 10 frontend and 13
+suppressed-path reviews are recorded, mapped ports pass, and the divergence
+ratchet is remeasured at 37 files. See `SYNC-2026-10-17.md` for scope and limits.
+Main remains unchanged pending the required real-application UI acceptance.
+Older deferred platform/lifecycle rows remain explicit; zero behind is not a
+claim that those separate behaviors are complete. Entries below describe earlier
+checkpoints and retain their then-current pending counts/pins.
+
+October 17 batch 2: merged five Handy commits through `29bd2c0d`; 28 remain.
+The immutable native pair is now 0.4.0 at `51788582`, contract 3. Adopted filler
+capitalization, shortcut parse validation, shared missing-model capture guards
+and lazy startup device reporting. The source-built backend suite passes 585
+tests (3 opt-in skips); the preceding native checkpoint also passes real v2/v3
+production journal/replay gates. Exact scope, lint limits and reviewed
+new-base budget differences are recorded in the active plan and divergence map.
+
+October 17 staged sync, batch 1: merged Handy `8ef8dd43` (#2156), preserving
+Ha Long Bay/Ha Noi during English filler cleanup. `cargo check --lib` passes;
+582 backend tests pass, with 3 existing opt-in tests ignored, after the
+documented disposable Windows test-manifest workaround. Port audit,
+frontend review, policy, divergence audit and post-merge ratchet pass; no budget
+growth was accepted. The pre-merge ratchet saw the incoming upstream line
+against the old base; that difference disappears after the real ancestry merge.
+The native pin remains 0.2.3. There are 33 pending Handy commits; see the active
+execution plan for subsequent native/capture and final frontend stages.
 
 | Date          | Upstream ref                       | Notes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 | ------------- | ---------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

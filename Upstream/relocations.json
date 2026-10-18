@@ -28,7 +28,8 @@
       "src-tauri/src/grain_provider_commands.rs",
       "src/app/stores/ppPoolStore.ts",
       "src/app/components/settings/post-processing/pool/PostProcessingPool.tsx",
-      "src/app/components/settings/experimentations/AgentSection.tsx"
+      "src/app/components/settings/experimentations/AgentSection.tsx",
+      "src/app/components/settings/DecodeSettings.tsx"
     ],
     "why": "Inert (no `mod settings;`). Grain's settings are grain-core AppContext; a NEW upstream setting must be added there and to its Default, or `get_settings().<field>` in merged handy code fails to compile. (#1254 selected_channel needed this.) Provider participation and order are persisted through Grain commands; smart rotation and quotas are retired. Preserve the exact-permutation reorder validation and credential boundary in Upstream/LLM-FALLBACK.md. Automatic Agent text context was retired on 2026-10-04; do not restore agent_context_mode or field/unique/window background capture when porting settings. Dictation caret context and extension screenText remain active; see Upstream/AGENT-TEXT-CONTEXT.md."
   },
@@ -66,9 +67,7 @@
   },
   "src-tauri/src/audio_toolkit/text.rs": {
     "kind": "relocated",
-    "grain": [
-      "src-tauri/src/handy/audio_toolkit/grain_text.rs"
-    ],
+    "grain": ["src-tauri/src/handy/audio_toolkit/grain_text.rs"],
     "why": "finalize_transcript relocated to grain_text.rs; final-text / word-boundary fixes may belong there rather than the merged handy text.rs."
   },
   "src-tauri/src/managers/transcription.rs": {
@@ -79,19 +78,12 @@
       "crates/grain-tdt/src",
       "src-tauri/src/grain_overlay.rs",
       "src/app/overlay/RecordingOverlay.tsx",
-      "src-tauri/src/grain_transcription.rs"
+      "src-tauri/src/grain_transcription.rs",
+      "src-tauri/src/grain_transcription_manager.rs",
+      "src-tauri/src/grain_engine.rs",
+      "src-tauri/src/context_bias.rs"
     ],
     "why": "Merged in handy/, but Parakeet TDT Flow has Grain-only capture scheduling, native adaptation, and window/token logic that upstream's batch/streaming fixes cannot reach. Check whether the fixed bug-class exists there too. Local batch callers share Grain's grain_transcription adapter; it delegates loading, inference and final cleanup to the shared manager."
-  },
-  "src-tauri/src/audio_toolkit/audio/recorder.rs": {
-    "kind": "parallel",
-    "grain": [
-      "src-tauri/src/handy/managers/audio.rs",
-      "src-tauri/src/grain_capture.rs",
-      "src-tauri/src/grain_audio_journal.rs",
-      "src-tauri/src/grain_actions.rs"
-    ],
-    "why": "Shared bounded recorder differs from upstream callback/ring-buffer implementation. First-sample acknowledgements, no-sample cancellation, resampler tail and journal callbacks must still satisfy Grain capture callers; a successful merge alone cannot prove those adapters are correct."
   },
   "src-tauri/src/managers/audio.rs": {
     "kind": "relocated",
@@ -101,8 +93,22 @@
       "src-tauri/src/agent.rs",
       "src-tauri/src/extension_session.rs",
       "src-tauri/src/grain_action_session.rs",
-      "src-tauri/src/grain_onboarding.rs"
+      "src-tauri/src/grain_onboarding.rs",
+      "src-tauri/src/grain_audio.rs",
+      "src-tauri/src/grain_audio_manager.rs"
     ],
     "why": "Shared RecordingReadiness/capture-generation API is consumed by Grain startup, feedback, failure and cancellation adapters across every capture family. Review these callers when upstream changes stream startup, disconnect recovery, readiness, stop or mute."
+  },
+  "src-tauri/src/audio_toolkit/audio/sink.rs": {
+    "kind": "parallel",
+    "grain": [
+      "src-tauri/src/handy/managers/audio.rs",
+      "src-tauri/src/grain_capture.rs",
+      "src-tauri/src/grain_audio_journal.rs",
+      "src-tauri/src/grain_actions.rs",
+      "src-tauri/src/grain_audio.rs",
+      "src-tauri/src/grain_audio_manager.rs"
+    ],
+    "why": "Handy recorder is now a dependency; the shared CaptureSink is the Grain journal/retention seam. Review first-sample acknowledgement, partial valid tail, disabled VAD, frame geometry, Prompt Record marks, cancellation and disconnect cleanup across Grain callers."
   }
 }

@@ -1,10 +1,10 @@
 {
   "repository": "https://github.com/Punit-Dethe/transcribe.cpp.git",
-  "revision": "2d336ea878ded786f63dd53520beed8fc6192c61",
+  "revision": "eeffcc3887018015d04d20e61d3698a33d790f24",
   "upstream_repository": "https://github.com/handy-computer/transcribe.cpp.git",
-  "upstream_revision": "63a44d9239d610b3908e8a66b384924cd4a77217",
-  "version": "0.2.3",
-  "contract_revision": 2,
-  "patch_identity": "grain-flow-v1",
-  "abi_hash": "c4b19911cc9a09a3"
+  "upstream_revision": "f1dcd15858c4bbba87ca97862b4e448b2cf15b8f",
+  "version": "0.4.0",
+  "contract_revision": 5,
+  "patch_identity": "grain-flow-tdt",
+  "abi_hash": "19ba4aa29b4b28e4"
 }
