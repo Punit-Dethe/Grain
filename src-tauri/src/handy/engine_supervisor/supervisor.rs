@@ -962,11 +962,16 @@ impl Owner {
         request: crate::grain_engine::Request,
         epoch: u64,
     ) -> Result<crate::grain_engine::Response, EngineError> {
+        let cleanup = matches!(request, crate::grain_engine::Request::ResetFlow);
         let request = Request::Grain(request);
         let mut retried = false;
         loop {
             if self.shared.cancelled_since(epoch) {
                 return Err(EngineError::Cancelled);
+            }
+            // [GRAIN] Cleanup must never load a model or restart a dead worker.
+            if cleanup && self.worker.is_none() {
+                return Ok(crate::grain_engine::Response::Reset);
             }
             self.ensure_worker()?;
             match self.call_work(&request, None, CALL_FLOOR, epoch) {
@@ -974,6 +979,9 @@ impl Owner {
                 Ok(other) => return Err(unexpected(&other).into()),
                 Err(failure) if failure.worker_lost() => {
                     let on_gpu = self.worker_lost("Grain model query", &failure);
+                    if cleanup {
+                        return Err(failure.into());
+                    }
                     let pinned = self.spec.as_ref().is_some_and(LoadSpec::pinned);
                     let hung_on_cpu = matches!(failure, Failure::Hung(_)) && !on_gpu;
                     if retried || pinned || hung_on_cpu {

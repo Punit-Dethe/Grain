@@ -2,7 +2,7 @@
 //!
 //! Capture only appends exact Float32 samples to a temporary journal and sends
 //! a coalescing wake. One serial worker owns the shared transcribe.cpp lease,
-//! finalizes stable Fluid-style windows. Standard and Native ASR do not use
+//! finalizes stable model-specific windows. Standard and Native ASR do not use
 //! this module.
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};

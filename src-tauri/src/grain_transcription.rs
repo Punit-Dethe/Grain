@@ -75,6 +75,16 @@ impl FlowSession<'_> {
     }
 }
 
+impl Drop for FlowSession<'_> {
+    fn drop(&mut self) {
+        // Still inside the exclusive inference lease. The epoch gate rejects
+        // stale cleanup after cancellation, so it cannot reset a new owner.
+        let _ = self
+            .engine
+            .grain_request(self.mark, crate::grain_engine::Request::ResetFlow);
+    }
+}
+
 impl crate::tdt_flow::Inference for FlowSession<'_> {
     fn flow_model(&self) -> Result<crate::tdt_flow::FlowModel, String> {
         self.check_cancelled()?;
@@ -86,11 +96,11 @@ impl crate::tdt_flow::Inference for FlowSession<'_> {
             crate::grain_engine::Response::FlowModel {
                 arch,
                 variant,
-                window,
+                supported,
             } => Ok(crate::tdt_flow::FlowModel {
                 arch,
                 variant,
-                window,
+                supported,
             }),
             _ => Err("Worker returned an unexpected Flow model response".into()),
         }

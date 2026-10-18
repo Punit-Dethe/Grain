@@ -15,7 +15,7 @@
   "src-tauri/src/handy/commands/models.rs": 89,
   "src-tauri/src/handy/commands/transcription.rs": 10,
   "src-tauri/src/handy/engine_supervisor/protocol.rs": 2,
-  "src-tauri/src/handy/engine_supervisor/supervisor.rs": 73,
+  "src-tauri/src/handy/engine_supervisor/supervisor.rs": 81,
   "src-tauri/src/handy/engine_supervisor/worker.rs": 7,
   "src-tauri/src/handy/input.rs": 39,
   "src-tauri/src/handy/managers/audio.rs": 45,

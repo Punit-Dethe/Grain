@@ -85,7 +85,7 @@ pub fn run() -> i32 {
         let finished_run = matches!(request, Request::Run { .. });
         let response = match request {
             // [GRAIN] Query the same resident model; no second engine or handle.
-            Request::Grain(request) => match session.as_ref() {
+            Request::Grain(request) => match session.as_mut() {
                 Some((session, _)) => crate::grain_engine::dispatch(request, session)
                     .map(Response::Grain)
                     .unwrap_or_else(Response::Error),

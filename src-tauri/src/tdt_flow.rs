@@ -1,15 +1,15 @@
 //! [GRAIN] Bounded Parakeet TDT window adapter for Flow.
 //!
-//! Grain owns the append-only journal and window cursor. Every native call is
-//! an isolated utterance. V2 uses Batch's ordinary decoder with bounded native
-//! windows and quiet cuts near their ceiling. V3 retains its reviewed Fluid
-//! window contract. Only native token IDs/timestamps cross window boundaries.
+//! Grain owns the journal and geometry. V2 carries native TDT decoder state
+//! across owned frame ranges; v3 retains the reviewed Fluid window/merge policy.
 
 use grain_tdt::{
-    merge_tokens, NativeWindowCursor, Token, Window, WindowCursor, FRAME_SAMPLES,
-    NATIVE_MAX_SAMPLES, SAMPLE_RATE,
+    merge_tokens, BufferedCursor, Token, Window, WindowCursor, BUFFERED_MAX_SAMPLES,
+    BUFFERED_OWNED_FRAMES, FRAME_SAMPLES, SAMPLE_RATE,
 };
-use transcribe_cpp::{ParakeetTdtWindowOptions, RunExtension, RunOptions, TimestampKind};
+use transcribe_cpp::{
+    ParakeetTdtBufferedOptions, ParakeetTdtWindowOptions, RunExtension, RunOptions, TimestampKind,
+};
 
 use crate::grain_audio_journal::{PcmJournal, PcmJournalReader};
 
@@ -18,7 +18,7 @@ const ENCODER_FRAME_MS: i64 = FRAME_SAMPLES as i64 * 1_000 / SAMPLE_RATE as i64;
 pub(crate) struct FlowModel {
     pub arch: String,
     pub variant: String,
-    pub window: bool,
+    pub supported: bool,
 }
 
 /// The production adapter sends bounded runs to the existing model worker.
@@ -39,7 +39,14 @@ impl Inference for transcribe_cpp::Session {
         Ok(FlowModel {
             arch: model.arch(),
             variant: model.variant(),
-            window: model.accepts_ext(transcribe_cpp::ExtSlot::Run, ParakeetTdtWindowOptions::KIND),
+            supported: model.accepts_ext(
+                transcribe_cpp::ExtSlot::Run,
+                if model.variant() == "tdt-0.6b-v2" {
+                    ParakeetTdtBufferedOptions::KIND
+                } else {
+                    ParakeetTdtWindowOptions::KIND
+                },
+            ),
         })
     }
     fn run(
@@ -75,7 +82,7 @@ pub(crate) struct TdtRunConfig {
 /// the transcript token sequence; audio remains in the file-backed journal.
 pub(crate) struct TdtAccumulator {
     cursor: WindowCursor,
-    native_cursor: Option<NativeWindowCursor>,
+    buffered_cursor: Option<BufferedCursor>,
     stable_tokens: Vec<Token>,
     decoded_windows: usize,
 }
@@ -86,7 +93,7 @@ impl TdtAccumulator {
         let variant = model.variant;
         if model.arch != "parakeet"
             || !matches!(variant.as_str(), "tdt-0.6b-v2" | "tdt-0.6b-v3")
-            || !model.window
+            || !model.supported
         {
             return Err(format!(
                 "loaded model '{}' does not expose the reviewed Parakeet TDT Flow contract",
@@ -95,7 +102,7 @@ impl TdtAccumulator {
         }
         Ok(Self {
             cursor: WindowCursor::default(),
-            native_cursor: (variant == "tdt-0.6b-v2").then(NativeWindowCursor::default),
+            buffered_cursor: (variant == "tdt-0.6b-v2").then(BufferedCursor::default),
             stable_tokens: Vec::new(),
             decoded_windows: 0,
         })
@@ -106,14 +113,14 @@ impl TdtAccumulator {
     }
 
     pub(crate) fn max_input_samples(&self) -> usize {
-        if self.native_cursor.is_some() {
-            NATIVE_MAX_SAMPLES as usize
+        if self.buffered_cursor.is_some() {
+            BUFFERED_MAX_SAMPLES as usize
         } else {
             grain_tdt::MAX_MODEL_SAMPLES as usize
         }
     }
 
-    /// Finalize every window that now has real lookahead. A successful merge
+    /// Finalize every window that now has real lookahead. Successful accumulation
     /// precedes cursor commit, so native/journal failures never skip audio.
     pub(crate) fn process_stable(
         &mut self,
@@ -124,17 +131,13 @@ impl TdtAccumulator {
         audio: &mut Vec<f32>,
         total_samples: u64,
     ) -> Result<(), String> {
-        if let Some(cursor) = &mut self.native_cursor {
-            while let Some(input) = cursor.next_stable(total_samples) {
-                read_window(journal, reader, audio, input)?;
-                let window = cursor
-                    .prefer_pause(input, audio)
-                    .ok_or_else(|| "Flow native cursor rejected its input buffer".to_string())?;
-                audio.truncate(window.input_samples());
-                let tokens = decode_native_window(session, config, audio, window)?;
-                merge_tokens(&mut self.stable_tokens, &tokens);
+        if let Some(cursor) = &mut self.buffered_cursor {
+            while let Some(window) = cursor.next_stable(total_samples) {
+                read_window(journal, reader, audio, window)?;
+                let tokens = decode_buffered_window(session, config, audio, window)?;
+                self.stable_tokens.extend(tokens);
                 if !cursor.commit(window) {
-                    return Err("Flow native cursor rejected its stable window".into());
+                    return Err("Flow buffered cursor rejected its stable window".into());
                 }
                 self.decoded_windows += 1;
             }
@@ -162,22 +165,30 @@ impl TdtAccumulator {
         total_samples: u64,
     ) -> Result<String, String> {
         self.process_stable(session, config, journal, reader, audio, total_samples)?;
-        let mut merged = self.stable_tokens.clone();
-        let tail_window = match &self.native_cursor {
+        let mut merged = if self.buffered_cursor.is_some() {
+            std::mem::take(&mut self.stable_tokens)
+        } else {
+            self.stable_tokens.clone()
+        };
+        let tail_window = match &self.buffered_cursor {
             Some(cursor) => cursor.tail(total_samples),
             None => self.cursor.tail(total_samples),
         };
         if let Some(window) = tail_window {
-            let tail = if self.native_cursor.is_some() {
+            let tail = if self.buffered_cursor.is_some() {
                 read_window(journal, reader, audio, window)?;
-                decode_native_window(session, config, audio, window)?
+                decode_buffered_window(session, config, audio, window)?
             } else {
                 decode_window(session, config, journal, reader, audio, window)?
             };
-            merge_tokens(&mut merged, &tail);
+            if self.buffered_cursor.is_some() {
+                merged.extend(tail);
+            } else {
+                merge_tokens(&mut merged, &tail);
+            }
             self.decoded_windows += 1;
         }
-        if merged.len() > 1 {
+        if self.buffered_cursor.is_none() && merged.len() > 1 {
             merged.sort_by_key(|token| token.frame);
         }
         let ids: Vec<i32> = merged.iter().map(|token| token.id).collect();
@@ -204,30 +215,43 @@ fn read_window(
     Ok(())
 }
 
-fn decode_native_window(
+fn decode_buffered_window(
     session: &mut dyn Inference,
     config: &TdtRunConfig,
     audio: &[f32],
     window: Window,
 ) -> Result<Vec<Token>, String> {
-    // Ordinary Batch policy: no extra padding, context filtering, tail loop,
-    // custom SOS or fixed token budget. Every window starts a fresh utterance.
+    i32::try_from(window.read_end.div_ceil(FRAME_SAMPLES))
+        .map_err(|_| "Flow recording is too long for native timestamps".to_string())?;
+    let start =
+        i32::try_from(window.context_frames()).map_err(|_| "Flow context exceeds native range")?;
+    let offset = i32::try_from(window.chunk_start / FRAME_SAMPLES)
+        .map_err(|_| "Flow offset exceeds native range")?;
     let options = RunOptions {
         timestamps: TimestampKind::Token,
         language: config.language.clone(),
+        family: Some(RunExtension::ParakeetTdtBuffered(
+            ParakeetTdtBufferedOptions {
+                decode_start_frame: start,
+                decode_end_frame: if window.is_last {
+                    -1
+                } else {
+                    start + BUFFERED_OWNED_FRAMES as i32
+                },
+                timestamp_offset_frames: offset,
+                reset: window.chunk_start == 0,
+                finalize: window.is_last,
+            },
+        )),
         ..Default::default()
     };
-    let frame_offset = window.read_start / FRAME_SAMPLES;
-    // Validate the global bound before expensive inference.
-    i32::try_from(window.read_end.div_ceil(FRAME_SAMPLES))
-        .map_err(|_| "Flow recording is too long for native timestamps".to_string())?;
     let transcript = session.run(audio, &options).map_err(|error| {
         format!(
-            "Flow native decode failed for samples [{}..{}]: {error}",
+            "Flow buffered decode failed for samples [{}..{}]: {error}",
             window.read_start, window.read_end
         )
     })?;
-    convert_tokens(transcript.tokens, frame_offset)
+    convert_tokens(transcript.tokens)
 }
 
 fn decode_window(
@@ -265,13 +289,10 @@ fn decode_window(
         )
     })?;
 
-    convert_tokens(transcript.tokens, 0)
+    convert_tokens(transcript.tokens)
 }
 
-fn convert_tokens(
-    tokens: Vec<transcribe_cpp::Token>,
-    frame_offset: u64,
-) -> Result<Vec<Token>, String> {
+fn convert_tokens(tokens: Vec<transcribe_cpp::Token>) -> Result<Vec<Token>, String> {
     tokens
         .into_iter()
         .map(|token| {
@@ -286,9 +307,7 @@ fn convert_tokens(
             }
             Ok(Token {
                 id: token.id,
-                frame: frame_offset
-                    .checked_add((token.t0_ms / ENCODER_FRAME_MS) as u64)
-                    .ok_or_else(|| "Flow absolute token timestamp overflowed".to_string())?,
+                frame: (token.t0_ms / ENCODER_FRAME_MS) as u64,
                 confidence: token.p,
                 duration: (duration_ms / ENCODER_FRAME_MS) as u32,
             })
@@ -310,10 +329,18 @@ mod tests {
         transcribe_cpp::disable_logging();
         transcribe_cpp::init_backends(std::env::var("GRAIN_FLOW_TEST_NATIVE_DIR").unwrap())
             .unwrap();
+        let backend = match std::env::var("GRAIN_FLOW_TEST_BACKEND")
+            .as_deref()
+            .unwrap_or("cpu")
+        {
+            "cpu" => Backend::Cpu,
+            "vulkan" => Backend::Vulkan,
+            _ => panic!("expected cpu or vulkan"),
+        };
         let model = Model::load_with(
             model_path,
             &ModelOptions {
-                backend: Backend::Cpu,
+                backend,
                 ..Default::default()
             },
         )
@@ -321,7 +348,7 @@ mod tests {
         let variant = model.variant();
         assert!(matches!(variant.as_str(), "tdt-0.6b-v2" | "tdt-0.6b-v3"));
         let expected_capacity = if variant == "tdt-0.6b-v2" {
-            NATIVE_MAX_SAMPLES as usize
+            BUFFERED_MAX_SAMPLES as usize
         } else {
             grain_tdt::MAX_MODEL_SAMPLES as usize
         };
@@ -419,7 +446,7 @@ mod tests {
     }
 
     #[test]
-    fn native_window_timestamps_preserve_absolute_phase_and_metadata() {
+    fn native_timestamps_preserve_metadata() {
         let token = transcribe_cpp::Token {
             id: 42,
             p: 0.75,
@@ -427,35 +454,134 @@ mod tests {
             t1_ms: 480,
             ..Default::default()
         };
-        let result = convert_tokens(vec![token.clone()], 350).unwrap();
-        assert_eq!(result[0].frame, 352);
+        let result = convert_tokens(vec![token]).unwrap();
+        assert_eq!(result[0].frame, 2);
         assert_eq!(result[0].id, 42);
         assert_eq!(result[0].duration, 4);
         assert_eq!(result[0].confidence, 0.75);
-        assert_eq!(convert_tokens(vec![token], 0).unwrap()[0].frame, 2);
     }
 
     #[test]
-    fn invalid_native_timing_and_absolute_overflow_are_rejected() {
+    fn invalid_native_timing_is_rejected() {
         for (start, end) in [(-80, 0), (160, 80), (1, 81), (0, 1), (0, 400)] {
-            assert!(convert_tokens(
-                vec![transcribe_cpp::Token {
-                    t0_ms: start,
-                    t1_ms: end,
-                    ..Default::default()
-                }],
-                0
-            )
+            assert!(convert_tokens(vec![transcribe_cpp::Token {
+                t0_ms: start,
+                t1_ms: end,
+                ..Default::default()
+            }])
             .is_err());
         }
-        assert!(convert_tokens(
-            vec![transcribe_cpp::Token {
-                t0_ms: 80,
-                t1_ms: 80,
+    }
+
+    #[derive(Default)]
+    struct RecordingInference {
+        calls: Vec<(usize, RunOptions)>,
+        fail_call: Option<usize>,
+    }
+    impl Inference for RecordingInference {
+        fn flow_model(&self) -> Result<FlowModel, String> {
+            Ok(FlowModel {
+                arch: "parakeet".into(),
+                variant: "tdt-0.6b-v2".into(),
+                supported: true,
+            })
+        }
+        fn run(
+            &mut self,
+            audio: &[f32],
+            options: &RunOptions,
+        ) -> Result<transcribe_cpp::Transcript, String> {
+            self.calls.push((audio.len(), options.clone()));
+            if self.fail_call == Some(self.calls.len()) {
+                return Err("injected decode failure".into());
+            }
+            let Some(RunExtension::ParakeetTdtBuffered(ext)) = &options.family else {
+                panic!("expected buffered v2")
+            };
+            let mut result = transcribe_cpp::Transcript::default();
+            // Identical token IDs must survive across adjacent owned windows.
+            result.tokens.push(transcribe_cpp::Token {
+                id: 42,
+                p: 0.8,
+                t0_ms: i64::from(ext.timestamp_offset_frames) * 80,
+                t1_ms: i64::from(ext.timestamp_offset_frames) * 80 + 80,
                 ..Default::default()
-            }],
-            u64::MAX
-        )
-        .is_err());
+            });
+            Ok(result)
+        }
+        fn detokenize(&self, tokens: &[i32]) -> Result<String, String> {
+            Ok(tokens
+                .iter()
+                .map(i32::to_string)
+                .collect::<Vec<_>>()
+                .join(","))
+        }
+    }
+
+    #[test]
+    fn buffered_journal_owns_frames_once_and_replay_resets_native_state() {
+        let journal = PcmJournal::create().unwrap();
+        journal.append(&vec![0.0; 400_001]).unwrap();
+        journal.close().unwrap();
+        let mut reader = journal.reader().unwrap();
+        let mut session = RecordingInference {
+            fail_call: Some(2),
+            ..Default::default()
+        };
+        let config = TdtRunConfig {
+            model_id: "fixture-v2".into(),
+            language: None,
+        };
+        let mut accumulator = TdtAccumulator::new(&session, &config).unwrap();
+        let mut audio = Vec::with_capacity(accumulator.max_input_samples());
+        assert!(accumulator
+            .render(
+                &mut session,
+                &config,
+                &journal,
+                &mut reader,
+                &mut audio,
+                journal.frame_count()
+            )
+            .is_err());
+        assert_eq!(accumulator.decoded_windows(), 1);
+        // Production discards the failed accumulator and makes one clean replay.
+        let mut replay = TdtAccumulator::new(&session, &config).unwrap();
+        assert_eq!(
+            replay
+                .render(
+                    &mut session,
+                    &config,
+                    &journal,
+                    &mut reader,
+                    &mut audio,
+                    journal.frame_count()
+                )
+                .unwrap(),
+            "42,42,42"
+        );
+        let replay_calls = &session.calls[2..];
+        assert_eq!(
+            replay_calls.iter().map(|(len, _)| *len).collect::<Vec<_>>(),
+            [239_360, 399_360, 240_001]
+        );
+        for (i, (_, opts)) in replay_calls.iter().enumerate() {
+            let Some(RunExtension::ParakeetTdtBuffered(ext)) = &opts.family else {
+                panic!("wrong decoder")
+            };
+            assert_eq!(ext.timestamp_offset_frames, i as i32 * 125);
+            assert_eq!(ext.decode_start_frame, if i == 0 { 0 } else { 125 });
+            assert_eq!(
+                ext.decode_end_frame,
+                if i == 2 {
+                    -1
+                } else {
+                    ext.decode_start_frame + 125
+                }
+            );
+            assert_eq!(ext.reset, i == 0);
+            assert_eq!(ext.finalize, i == 2);
+        }
+        assert!(audio.capacity() <= BUFFERED_MAX_SAMPLES as usize);
     }
 }

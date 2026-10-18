@@ -327,3 +327,14 @@ clears permanently at the next real merge or `-s ours` close-out, after which
 Run [audit_divergence.py](audit_divergence.py) to re-check this and the
 "converged" claims above against real blobs — both had silently gone stale
 before it existed.
+
+## Parakeet v2 buffered Flow transport (2026-10-18)
+
+The supervisor's existing `[GRAIN]` model-query hook adds eight transport lines:
+reset requests are epoch scoped, never start a worker for cleanup, and never
+retry a reset after worker loss. The worker dispatch borrows its existing
+session mutably so Grain-owned `grain_engine` can call the safe native reset.
+All v2 geometry, accumulation and model policy remain outside `handy/`; no
+new engine, thread, decoder policy or feature state is added to Handy code.
+The supervisor budget grows from 73 to 81 lines after reviewing this cleanup
+boundary. The native ABI and implementation live in the maintained source fork.

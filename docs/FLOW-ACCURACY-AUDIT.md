@@ -1,5 +1,7 @@
 # Flow accuracy audit — 2026-09-26
 
+> Historical v2 policy, superseded on 2026-10-18 by [stateful buffered v2](FLOW-V2-STATEFUL-PLAN.md). The measurements below do not select the current defaults.
+
 Status: historical investigation and initial offline experiments complete. The follow-up [implementation plan](FLOW-ACCURACY-IMPLEMENTATION.md) and [accuracy/speed measurements](FLOW-ACCURACY-SPEED.md) supersede this report's unchanged-production status. This is not an accuracy-parity claim.
 
 Follow-up: [Parakeet v2 research round two](PARAKEET-V2-FLOW-RESEARCH.md) identifies NVIDIA's v2-specific stateful buffered inference results and adds that candidate alongside the pause-aware baseline. The implementation and measurements linked above record the subsequent selection.

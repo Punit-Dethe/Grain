@@ -1,5 +1,7 @@
 # Flow accuracy implementation plan
 
+> Historical v2 policy, superseded on 2026-10-18 by [stateful buffered v2](FLOW-V2-STATEFUL-PLAN.md). The measurements below do not select the current defaults.
+
 2026-09-26. Target: Handy Parakeet TDT 0.6B v2 GGUF, initially Q8_0. Preserve the journal, one serial worker/model lease, existing final processing and bounded audio memory. Grain-owned conditioning is excluded.
 
 ## Order of work

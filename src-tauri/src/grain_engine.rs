@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Request {
     FlowModel,
+    ResetFlow,
     Detokenize { tokens: Vec<i32> },
 }
 
@@ -12,20 +13,32 @@ pub enum Response {
     FlowModel {
         arch: String,
         variant: String,
-        window: bool,
+        supported: bool,
     },
     Text(String),
+    Reset,
 }
 
-pub fn dispatch(request: Request, session: &transcribe_cpp::Session) -> Result<Response, String> {
+pub fn dispatch(
+    request: Request,
+    session: &mut transcribe_cpp::Session,
+) -> Result<Response, String> {
     let model = session.model();
     match request {
+        Request::ResetFlow => session
+            .reset()
+            .map(|()| Response::Reset)
+            .map_err(|error| error.to_string()),
         Request::FlowModel => Ok(Response::FlowModel {
             arch: model.arch(),
             variant: model.variant(),
-            window: model.accepts_ext(
+            supported: model.accepts_ext(
                 transcribe_cpp::ExtSlot::Run,
-                transcribe_cpp::ParakeetTdtWindowOptions::KIND,
+                if model.variant() == "tdt-0.6b-v2" {
+                    transcribe_cpp::ParakeetTdtBufferedOptions::KIND
+                } else {
+                    transcribe_cpp::ParakeetTdtWindowOptions::KIND
+                },
             ),
         }),
         Request::Detokenize { tokens } => model
@@ -48,14 +61,23 @@ mod tests {
     #[test]
     #[ignore = "requires Grain worker executable, model and exact-text fixtures"]
     fn worker_flow_journal_preserves_exact_text_and_recovers_after_cancel() {
-        let engine = EngineSupervisor::new(false);
+        let engine = EngineSupervisor::new(true);
+        let backend = match std::env::var("GRAIN_FLOW_TEST_BACKEND")
+            .as_deref()
+            .unwrap_or("cpu")
+        {
+            "cpu" => transcribe_cpp::Backend::Cpu,
+            "vulkan" => transcribe_cpp::Backend::Vulkan,
+            _ => panic!("expected cpu or vulkan"),
+        };
         let info = engine
             .load(LoadSpec {
                 path: std::env::var_os("GRAIN_FLOW_TEST_MODEL").unwrap().into(),
-                backend: transcribe_cpp::Backend::Cpu,
+                backend,
                 device: DeviceSelector::Auto,
             })
             .unwrap();
+        assert_eq!(info.on_gpu, backend == transcribe_cpp::Backend::Vulkan);
         let cancelled = AtomicBool::new(false);
         let mut session = FlowSession {
             engine: &engine,
@@ -65,7 +87,7 @@ mod tests {
         let model = session.flow_model().unwrap();
         assert_eq!(model.arch, info.arch);
         assert_eq!(model.variant, info.variant);
-        assert!(model.window);
+        assert!(model.supported);
         let config = TdtRunConfig {
             model_id: info.variant,
             language: None,
@@ -125,11 +147,17 @@ mod tests {
             cancelled: &cancelled,
         };
         assert!(
-            fresh.flow_model().unwrap().window,
+            fresh.flow_model().unwrap().supported,
             "a fresh cancellation epoch must be usable"
         );
         engine.unload().wait();
+        drop(fresh);
+        drop(session);
         assert!(engine.loaded().is_none());
+        assert!(
+            !engine.grain_has_resident_model(),
+            "cleanup must not reload an unloaded worker"
+        );
     }
 
     #[test]
