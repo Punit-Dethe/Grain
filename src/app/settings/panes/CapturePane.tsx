@@ -1,3 +1,4 @@
+import { CaptureDecodeSettings } from "@/components/settings/DecodeSettings";
 import { useTranslation } from "react-i18next";
 import { type } from "@tauri-apps/plugin-os";
 import { CaptureModes } from "@/components/settings/capture/CaptureModes";
@@ -33,6 +34,7 @@ export function CapturePane() {
         info={t("ui2.settings.groups.recordingInfo")}
       >
         <PushToTalk descriptionMode="tooltip" grouped />
+        <CaptureDecodeSettings />
         {/* Push-to-talk cancels by releasing the key, so a cancel shortcut would
             be a key that can never fire. Linux keeps it hidden regardless:
             dynamic re-registration there is unstable. */}

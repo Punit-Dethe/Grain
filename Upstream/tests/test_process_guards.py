@@ -24,6 +24,37 @@ import suppressed_review  # noqa: E402
 
 
 class MergeFrontendTests(unittest.TestCase):
+    def test_linked_worktree_merge_is_detected_through_git(self) -> None:
+        with patch.object(merge_upstream, "git", return_value=SimpleNamespace(returncode=0)) as mocked:
+            self.assertTrue(merge_upstream.in_merge())
+            mocked.assert_called_once_with("rev-parse", "--quiet", "--verify", "MERGE_HEAD")
+
+    def test_non_merge_worktree_is_not_reported_as_merging(self) -> None:
+        with patch.object(merge_upstream, "git", return_value=SimpleNamespace(returncode=1)):
+            self.assertFalse(merge_upstream.in_merge())
+
+    def test_staged_target_must_be_in_fetched_handy_history(self) -> None:
+        sha = "a" * 40
+        with patch.object(merge_upstream, "git", side_effect=[
+            SimpleNamespace(returncode=0, stdout=sha + "\n"),
+            SimpleNamespace(returncode=0),
+        ]) as mocked:
+            self.assertEqual(merge_upstream.resolve_target("batch-ref"), sha)
+            self.assertEqual(mocked.call_args.args, ("merge-base", "--is-ancestor", sha, "upstream/main"))
+
+    def test_unrelated_target_is_rejected(self) -> None:
+        with patch.object(merge_upstream, "git", side_effect=[
+            SimpleNamespace(returncode=0, stdout="a" * 40),
+            SimpleNamespace(returncode=1),
+        ]):
+            with self.assertRaisesRegex(ValueError, "not in fetched Handy main history"):
+                merge_upstream.resolve_target("other-project")
+
+    def test_unknown_target_is_rejected(self) -> None:
+        with patch.object(merge_upstream, "git", return_value=SimpleNamespace(returncode=1, stdout="")):
+            with self.assertRaisesRegex(ValueError, "not a commit"):
+                merge_upstream.resolve_target("missing")
+
     def test_exists_at_uses_git_tree_not_filesystem(self) -> None:
         with patch.object(
             merge_upstream, "git", return_value=SimpleNamespace(returncode=1)

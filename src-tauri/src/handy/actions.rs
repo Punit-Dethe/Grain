@@ -1,5 +1,4 @@
 use crate::audio_feedback::{play_feedback_sound, SoundType};
-use crate::audio_toolkit::{is_microphone_access_denied, is_no_input_device_error, VadPolicy};
 use crate::managers::audio::AudioRecordingManager;
 use crate::managers::history::HistoryManager;
 use crate::managers::model::ModelManager;
@@ -302,6 +301,14 @@ impl ShortcutAction for TranscribeAction {
 
         let kickoff_started = Instant::now();
         tm.initiate_model_load();
+        // [GRAIN] Apply upstream's pre-capture availability guard across all modes.
+        if let Err(error) = crate::grain_capture::require_transcribable_model(
+            app,
+            &get_settings(app).selected_model,
+        ) {
+            log::warn!("Not starting recording: {error}");
+            return;
+        }
         let rm_clone = Arc::clone(&rm);
         std::thread::spawn(move || {
             if let Err(e) = rm_clone.preload_vad() {
@@ -332,14 +339,12 @@ impl ShortcutAction for TranscribeAction {
         );
         debug!("Microphone mode - always_on: {}", is_always_on);
 
-        // Batch dictation never streams, so the session runs the offline VAD
-        // profile. [GRAIN] grain-core settings have no `vad_enabled` toggle
-        // (upstream's setting was never ported) — VAD is always on.
-        let vad_policy = VadPolicy::Offline;
+        let vad_policy = crate::grain_audio::capture_vad_policy(settings.vad_enabled, false); // [GRAIN]
 
         let overlay_generation = crate::grain_overlay::show_capture(app, SessionMode::Batch);
-        let mut recording_error: Option<String> = None;
+        let mut recording_error: Option<anyhow::Error> = None;
         let mut readiness = None;
+        tm.start_stream(); // [GRAIN] Handy's live long-form policy; Flow has its own routed action.
         match rm.try_start_recording(&binding_id, vad_policy) {
             Ok(ready) => readiness = Some(ready),
             Err(error) => recording_error = Some(error),
@@ -354,22 +359,17 @@ impl ShortcutAction for TranscribeAction {
                 crate::grain_capture::announce_ready(app, &rm, readiness, true);
             }
         } else {
+            tm.cancel_stream(); // [GRAIN] Retire the route when capture never started.
             crate::grain_overlay::hide_failed_capture(app, overlay_generation);
             // [GRAIN] Failed capture dismisses the arming presentation.
             change_tray_icon(app, TrayIconState::Idle);
             if let Some(err) = recording_error {
-                let error_type = if is_microphone_access_denied(&err) {
-                    "microphone_permission_denied"
-                } else if is_no_input_device_error(&err) {
-                    "no_input_device"
-                } else {
-                    "unknown"
-                };
+                let error_type = crate::managers::audio::recording_error_type(&err);
                 let _ = app.emit(
                     "recording-error",
                     RecordingErrorEvent {
                         error_type: error_type.to_string(),
-                        detail: Some(err),
+                        detail: Some(err.to_string()),
                     },
                 );
             }
@@ -474,7 +474,8 @@ impl ShortcutAction for TranscribeAction {
                     let prompt_mark = rm.take_prompt_mark();
                     let transcription_time = Instant::now();
                     let (transcription_result, spoken_prompt) =
-                        crate::prompt_record::transcribe_split(&ah, samples, prompt_mark).await;
+                        crate::prompt_record::transcribe_recording_split(&ah, samples, prompt_mark)
+                            .await;
                     let post_process = post_process || spoken_prompt.is_some();
 
                     // Await WAV save and verify

@@ -129,7 +129,7 @@ The original pause-aware experiment remains a useful low-complexity baseline. Th
 7. **Measure operational costs.** Bounded PCM memory does not bound quadratic full-attention scratch by itself. Measure peak working set, native allocation high-water mark, warm/cold compute, worker backlog and real stop latency. NVIDIA's `owned + right` theoretical streaming latency is not a measured Grain stop delay.
 8. **Choose the smallest passing change.** Keep the existing runtime capture/journal/worker architecture. If pause-aware independent windows meet the accuracy gate, ship that simpler policy. If stateful buffered decoding materially improves referenced accuracy, review that adapter and its lifetime/ABI explicitly before integration. No local-attention rewrite, additional ASR engine, full-audio final rerun, model switch or preview is selected by this research.
 
-Any native implementation must update the explicitly permitted patch in `vendor/TRANSCRIBE-CPP.md`, regenerate bindings/ABI where needed, and satisfy its validation contract. An upstream dependency upgrade must follow that contract and `Upstream/UPSTREAM.md`; reading current reference code is not authorization to mix native releases.
+Any native implementation must update the explicitly permitted patch in `docs/TRANSCRIBE-CPP-FORK.md`, regenerate bindings/ABI where needed, and satisfy its validation contract. An upstream dependency upgrade must follow that contract and `Upstream/UPSTREAM.md`; reading current reference code is not authorization to mix native releases.
 
 ## Evidence limits
 

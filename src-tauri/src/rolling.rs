@@ -2,7 +2,7 @@
 //!
 //! Capture only appends exact Float32 samples to a temporary journal and sends
 //! a coalescing wake. One serial worker owns the shared transcribe.cpp lease,
-//! finalizes stable Fluid-style windows. Standard and Native ASR do not use
+//! finalizes stable model-specific windows. Standard and Native ASR do not use
 //! this module.
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -11,16 +11,12 @@ use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::Instant;
 
-use tauri::{AppHandle, Manager};
-use transcribe_cpp::CancelToken;
+use tauri::AppHandle;
 
 use crate::grain_audio_journal::{PcmJournal, PcmJournalReader};
-use crate::managers::model::ModelManager;
 use crate::managers::transcription::TranscriptionManager;
 use crate::settings::get_settings;
-use crate::tdt_flow::{
-    validate_model_installation, TdtAccumulator, TdtRunConfig,
-};
+use crate::tdt_flow::{TdtAccumulator, TdtRunConfig};
 
 const MIN_TRANSCRIBE_SAMPLES: u64 = grain_tdt::SAMPLE_RATE;
 
@@ -72,19 +68,11 @@ impl RollingTranscriber {
         }
     }
 
-    pub fn start_session(
-        self: &Arc<Self>,
-        app: AppHandle,
-        session_id: u64,
-    ) -> Result<(), String> {
+    pub fn start_session(self: &Arc<Self>, app: AppHandle, session_id: u64) -> Result<(), String> {
         let settings = get_settings(&app);
         crate::tdt_flow::validate_model(&settings.selected_model, settings.translate_to_english)?;
         let model_id = settings.selected_model.clone();
-        let is_downloaded = app
-            .try_state::<Arc<ModelManager>>()
-            .and_then(|models| models.get_model_info(&model_id))
-            .is_some_and(|model| model.is_downloaded);
-        validate_model_installation(is_downloaded)?;
+        crate::grain_capture::require_transcribable_model(&app, &model_id)?;
 
         // Serialize replacement through the active-session lock. The worker
         // owns the model lease for its whole lifetime, so spawning its
@@ -175,7 +163,7 @@ struct RollingSession {
     tx: SyncSender<WorkerCommand>,
     worker: Mutex<Option<JoinHandle<WorkerOutput>>>,
     cancelled: Arc<AtomicBool>,
-    cancel_token: CancelToken,
+    manager: Arc<TranscriptionManager>,
     journal_failed: AtomicBool,
 }
 
@@ -188,11 +176,10 @@ impl RollingSession {
         let journal = Arc::new(PcmJournal::create()?);
         let reader = journal.reader()?;
         let cancelled = Arc::new(AtomicBool::new(false));
-        let cancel_token = CancelToken::new();
+        let manager = Arc::clone(&transcriber.tm);
         let (tx, rx) = mpsc::sync_channel(1);
         let worker_journal = Arc::clone(&journal);
         let worker_cancelled = Arc::clone(&cancelled);
-        let worker_token = cancel_token.clone();
         let worker = std::thread::Builder::new()
             .name("grain-flow".into())
             .spawn(move || {
@@ -202,7 +189,7 @@ impl RollingSession {
                     reader,
                     &rx,
                     &worker_cancelled,
-                    &worker_token,
+                    session_id,
                     &config,
                 )
             })?;
@@ -212,7 +199,7 @@ impl RollingSession {
             tx,
             worker: Mutex::new(Some(worker)),
             cancelled,
-            cancel_token,
+            manager,
             journal_failed: AtomicBool::new(false),
         })
     }
@@ -257,7 +244,7 @@ impl RollingSession {
 
     fn request_cancel(&self) {
         self.cancelled.store(true, Ordering::Release);
-        self.cancel_token.cancel();
+        self.manager.cancel_grain_flow(self.session_id);
         let _ = self.tx.try_send(WorkerCommand::Wake);
     }
 
@@ -299,15 +286,13 @@ fn run_worker(
     reader: PcmJournalReader,
     rx: &Receiver<WorkerCommand>,
     cancelled: &AtomicBool,
-    cancel_token: &CancelToken,
+    session_id: u64,
     config: &TdtRunConfig,
 ) -> WorkerOutput {
-    let result = manager.with_grain_flow_session(&config.model_id, |session| {
-        session.set_cancel_token(cancel_token);
-        let result = run_session(session, journal, reader, rx, cancelled, config);
-        session.clear_cancel_token();
-        Ok(result)
-    });
+    let result =
+        manager.with_grain_flow_session(&config.model_id, session_id, cancelled, |session| {
+            Ok(run_session(session, journal, reader, rx, cancelled, config))
+        });
     match result {
         Ok(output) => output,
         Err(error) => WorkerOutput::failure(format!(
@@ -317,7 +302,7 @@ fn run_worker(
 }
 
 fn run_session(
-    session: &mut transcribe_cpp::Session,
+    session: &mut dyn crate::tdt_flow::Inference,
     journal: &PcmJournal,
     mut reader: PcmJournalReader,
     rx: &Receiver<WorkerCommand>,
@@ -426,5 +411,4 @@ mod tests {
         .unwrap();
         assert_eq!(observed.load(Ordering::Relaxed), 42);
     }
-
 }

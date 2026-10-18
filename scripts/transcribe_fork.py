@@ -79,6 +79,8 @@ def check(pin: dict, metadata: bool, official: bool, target: str | None = None) 
                 if workspace.name == "src-tauri":
                     required = ({"metal"} if "apple-darwin" in host else set()
                                 if host == "aarch64-pc-windows-msvc" else required | {"vulkan"})
+                if workspace.name == "src-tauri" and name == "transcribe-cpp":
+                    required.add("serde")  # JSON IPC to the isolated model worker.
                 require(features == required,
                         f"{workspace.name}: {name} target features {sorted(features)} must be {sorted(required)}")
     print(f"Native source pair verified: {pin['revision']}")

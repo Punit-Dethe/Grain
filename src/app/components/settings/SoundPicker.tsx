@@ -18,6 +18,9 @@ export const SoundPicker: React.FC<SoundPickerProps> = ({
   const { getSetting, updateSetting } = useSettings();
   const playTestSound = useSettingsStore((state) => state.playTestSound);
   const customSounds = useSettingsStore((state) => state.customSounds);
+  const checkCustomSounds = useSettingsStore(
+    (state) => state.checkCustomSounds,
+  );
 
   const selectedTheme = getSetting("sound_theme") ?? "marimba";
 
@@ -50,6 +53,7 @@ export const SoundPicker: React.FC<SoundPickerProps> = ({
             updateSetting("sound_theme", value as "marimba" | "pop" | "custom")
           }
           options={options}
+          onRefresh={checkCustomSounds}
         />
         <Button
           variant="ghost"

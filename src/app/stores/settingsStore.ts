@@ -4,6 +4,8 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
   AgentAutocopy,
   AgentPanelPosition,
+  ChineseScript,
+  VadBackend,
   AppSettings as Settings,
   AudioDevice,
   ModelUnloadTimeout,
@@ -173,6 +175,26 @@ const settingUpdaters: {
     commands.changeTranslateToEnglishSetting(value as boolean),
   selected_language: (value) =>
     commands.changeSelectedLanguageSetting(value as string),
+  chinese_script: async (value) => {
+    const result = await commands.changeChineseScriptSetting(
+      value as ChineseScript,
+    );
+    if (result.status === "error") throw new Error(result.error);
+  },
+  long_form_chunking: async (value) => {
+    const result = await commands.changeLongFormChunkingSetting(
+      value as boolean,
+    );
+    if (result.status === "error") throw new Error(result.error);
+  },
+  vad_enabled: async (value) => {
+    const result = await commands.changeVadEnabledSetting(value as boolean);
+    if (result.status === "error") throw new Error(result.error);
+  },
+  vad_backend: async (value) => {
+    const result = await commands.changeVadBackendSetting(value as VadBackend);
+    if (result.status === "error") throw new Error(result.error);
+  },
   overlay_position: (value) =>
     commands.changeOverlayPositionSetting(value as string),
   overlay_style: async (value) => {

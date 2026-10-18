@@ -105,6 +105,7 @@ pub fn cancel_current_operation(app: &AppHandle) {
     // Abandon any live streaming transcription before checking unload policy.
     let tm = app.state::<Arc<TranscriptionManager>>();
     tm.cancel_stream();
+    tm.cancel_transcription(); // [GRAIN] Cancel worker inference as well as capture.
     tm.maybe_unload_immediately("cancellation");
 
     // Notify coordinator so it can keep lifecycle state coherent.

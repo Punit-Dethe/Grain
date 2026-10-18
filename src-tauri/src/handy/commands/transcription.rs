@@ -7,6 +7,7 @@ use tauri::{AppHandle, State};
 
 #[derive(Serialize, Type)]
 pub struct ModelLoadStatus {
+    is_loading: bool, // [GRAIN] Snapshot for late-loading overlay listeners.
     is_loaded: bool,
     current_model: Option<String>,
 }
@@ -22,12 +23,10 @@ pub fn set_model_unload_timeout(app: AppHandle, timeout: ModelUnloadTimeout) {
 #[tauri::command]
 #[specta::specta]
 pub fn get_model_load_status(
-    // [GRAIN] Grain manages the manager as `Arc<TranscriptionManager>` (lib.rs),
-    // so the bare `State<TranscriptionManager>` upstream declares is never found
-    // and the command errors ("state not managed"). Match Grain's managed type.
     transcription_manager: State<Arc<TranscriptionManager>>,
 ) -> Result<ModelLoadStatus, String> {
     Ok(ModelLoadStatus {
+        is_loading: transcription_manager.grain_is_loading(), // [GRAIN]
         is_loaded: transcription_manager.is_model_loaded(),
         current_model: transcription_manager.get_current_model(),
     })
@@ -36,10 +35,12 @@ pub fn get_model_load_status(
 #[tauri::command]
 #[specta::specta]
 pub fn unload_model_manually(
-    // [GRAIN] Same Arc-managed state as get_model_load_status above.
     transcription_manager: State<Arc<TranscriptionManager>>,
 ) -> Result<(), String> {
-    transcription_manager
-        .unload_model()
-        .map_err(|e| format!("Failed to unload model: {}", e))
+    if transcription_manager.request_unload() {
+        // [GRAIN] Surface busy leases instead of false success.
+        Ok(())
+    } else {
+        Err("The transcription model is in use; stop the active recording first".into())
+    }
 }

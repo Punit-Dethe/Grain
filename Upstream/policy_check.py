@@ -20,7 +20,6 @@ ROOT = os.path.dirname(HERE)
 RELOCATIONS_PATH = os.path.join(HERE, "relocations.json")
 DIVERGENCE_PATH = os.path.join(HERE, "UPSTREAM-DIVERGENCE.md")
 LIB_PATH = os.path.join(ROOT, "src-tauri", "src", "lib.rs")
-TRANSCRIBE_CONTRACT_PATH = os.path.join(ROOT, "vendor", "TRANSCRIBE-CPP.md")
 TRANSCRIBE_PIN_PATH = os.path.join(ROOT, "native", "transcribe-fork.json")
 TAURI_MANIFEST_PATH = os.path.join(ROOT, "src-tauri", "Cargo.toml")
 BEGIN = "<!-- BEGIN GENERATED RELOCATION POLICY -->"
@@ -41,16 +40,37 @@ def load_relocations() -> dict:
     return {key: value for key, value in raw.items() if not key.startswith("_")}
 
 
+def upstream_source_files() -> set[str]:
+    """Validate existing routes before, and new routes during, an upstream merge.
+
+    A fetch must not invalidate a route just because a pending commit deletes
+    its source. Once that deletion is merged, the merge base advances and the
+    obsolete source no longer qualifies. New upstream paths are accepted too,
+    so a merge can update its routes before the merge commit is recorded.
+    """
+    base = git("merge-base", "HEAD", "upstream/main")
+    if base.returncode or not base.stdout.strip():
+        raise RuntimeError("cannot determine the integrated Handy baseline")
+    files: set[str] = set()
+    for ref in dict.fromkeys(("upstream/main", base.stdout.strip())):
+        tree = git("ls-tree", "-r", "--name-only", ref, "--", "src-tauri/src/")
+        if tree.returncode:
+            raise RuntimeError(f"cannot inspect Handy source tree at {ref}")
+        files.update(tree.stdout.splitlines())
+    return files
+
+
 def render(relocations: dict) -> str:
     lines = [
         BEGIN,
+        "<!-- prettier-ignore -->",
         "| Upstream source | Kind | Grain runtime destinations |",
         "| --- | --- | --- |",
     ]
     for source, entry in sorted(relocations.items()):
         destinations = "<br>".join(f"`{path}`" for path in entry["grain"])
         lines.append(f"| `{source}` | {entry['kind']} | {destinations} |")
-    lines.append(END)
+    lines.extend(["", END])
     return "\n".join(lines)
 
 
@@ -74,7 +94,7 @@ def overlay_seam_failures(relocations: dict, root: str = ROOT) -> list[str]:
             "src/app/overlay/RecordingOverlay.tsx", "src/app/overlay/wave.ts",
             "src/app/overlay/overlay.css", "recording-overlay.html", "vite.config.ts",
         },
-        "src-tauri/src/audio_toolkit/audio/recorder.rs": {"src-tauri/src/grain_capture.rs"},
+        "src-tauri/src/audio_toolkit/audio/sink.rs": {"src-tauri/src/grain_capture.rs"},
         "src-tauri/src/managers/audio.rs": {"src-tauri/src/grain_capture.rs"},
         "src-tauri/src/managers/transcription.rs": {"src-tauri/src/grain_overlay.rs"},
         "src-tauri/src/settings.rs": {"src/app/components/settings/ShowOverlay.tsx"},
@@ -142,37 +162,11 @@ def main() -> int:
     if not os.path.isfile(os.path.join(ROOT, "docs", "TRANSCRIBE-CPP-FORK.md")):
         failures.append("missing docs/TRANSCRIBE-CPP-FORK.md integration contract")
 
-    # Optional frozen rollback trees retain their own original provenance.
-    # They must never dictate the active source pin or the next native upgrade.
-    if os.path.exists(TRANSCRIBE_CONTRACT_PATH):
-        with open(TRANSCRIBE_CONTRACT_PATH, encoding="utf-8") as handle:
-            contract = handle.read()
-        baseline = re.search(r"Published crates: `transcribe-cpp ([^`]+)`", contract)
-        commit = re.search(r"Upstream commit: `([0-9a-f]{40})`", contract)
-        if not baseline:
-            failures.append("transcribe contract lacks a published-crate baseline")
-        else:
-            for package in ("transcribe-cpp", "transcribe-cpp-sys"):
-                vendor_dir = os.path.join(ROOT, "vendor", f"{package}-{baseline.group(1)}")
-                if not os.path.isdir(vendor_dir):
-                    continue
-                vcs_path = os.path.join(vendor_dir, ".cargo_vcs_info.json")
-                try:
-                    with open(vcs_path, encoding="utf-8") as handle:
-                        vendor_commit = json.load(handle)["git"]["sha1"]
-                except (FileNotFoundError, KeyError, json.JSONDecodeError):
-                    failures.append(f"{package}: invalid .cargo_vcs_info.json")
-                    continue
-                if commit and vendor_commit != commit.group(1):
-                    failures.append(
-                        f"{package}: vendored commit {vendor_commit} differs from contract"
-                    )
-        if not commit:
-            failures.append("transcribe contract lacks its exact upstream commit")
-    upstream_files = set(
-        git("ls-tree", "-r", "--name-only", "upstream/main", "--", "src-tauri/src/")
-        .stdout.splitlines()
-    )
+    try:
+        upstream_files = upstream_source_files()
+    except RuntimeError as error:
+        failures.append(str(error))
+        upstream_files = set()
 
     for source, entry in sorted(relocations.items()):
         if entry.get("kind") not in KINDS:
@@ -184,7 +178,7 @@ def main() -> int:
         if not str(entry.get("why", "")).strip():
             failures.append(f"{source}: why is required")
         if source not in upstream_files:
-            failures.append(f"{source}: source does not exist in upstream/main")
+            failures.append(f"{source}: source does not exist in the integrated baseline or upstream/main")
         for destination in destinations:
             if not os.path.exists(os.path.join(ROOT, destination)):
                 failures.append(f"{source}: destination does not exist: {destination}")

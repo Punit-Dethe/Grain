@@ -66,18 +66,18 @@ impl BiasSet {
         S: AsRef<str>,
     {
         for term in terms {
-            let term = term.as_ref().trim();
-            if term.is_empty() {
+            let term = collapse_whitespace(term.as_ref());
+            if term.is_empty() || term.contains('\0') {
                 continue;
             }
             if self
                 .terms
                 .iter()
-                .any(|existing| existing.eq_ignore_ascii_case(term))
+                .any(|existing| existing.eq_ignore_ascii_case(&term))
             {
                 continue;
             }
-            self.terms.push(term.to_string());
+            self.terms.push(term);
         }
     }
 
@@ -90,48 +90,24 @@ impl BiasSet {
     /// Drops whole terms from the FRONT until the result fits [`MAX_PROMPT_BYTES`]
     /// — see the module docs for why the front is what gives way.
     pub fn render(&self) -> Option<String> {
-        if self.terms.is_empty() {
-            return None;
-        }
+        let terms = self.bounded_terms();
+        (!terms.is_empty()).then(|| terms.join(SEPARATOR))
+    }
 
-        // Normalize first: a term carrying a newline or a tab would otherwise
-        // put irregular whitespace into the prefix.
-        let normalized: Vec<String> = self
-            .terms
-            .iter()
-            .map(|t| collapse_whitespace(t))
-            .filter(|t| !t.is_empty())
-            .collect();
-        if normalized.is_empty() {
-            return None;
-        }
-
-        // Walk from the END (most important) and keep what fits, so the terms
-        // that survive are the ones the decoder attends to hardest.
-        let mut kept_rev: Vec<&str> = Vec::new();
-        let mut bytes = 0usize;
-        for term in normalized.iter().rev() {
-            let added = term.len()
-                + if kept_rev.is_empty() {
-                    0
-                } else {
-                    SEPARATOR.len()
-                };
+    /// Keep individual terms intact for the native vocabulary API too.
+    fn bounded_terms(&self) -> Vec<String> {
+        let mut kept = Vec::new();
+        let mut bytes = 0;
+        for term in self.terms.iter().rev() {
+            let added = term.len() + if kept.is_empty() { 0 } else { SEPARATOR.len() };
             if bytes + added > MAX_PROMPT_BYTES {
-                // A single term longer than the whole budget is unusable; skip
-                // it and keep trying shorter, lower-priority ones rather than
-                // giving up on the list.
                 continue;
             }
             bytes += added;
-            kept_rev.push(term.as_str());
+            kept.push(term.clone());
         }
-        if kept_rev.is_empty() {
-            return None;
-        }
-
-        kept_rev.reverse();
-        Some(kept_rev.join(SEPARATOR))
+        kept.reverse();
+        kept
     }
 }
 
@@ -190,10 +166,11 @@ static ACTION_GEN: AtomicU64 = AtomicU64::new(0);
 ///
 /// Synchronous because there is nothing to fetch: the terms are already here.
 pub fn arm_action_session(terms: Vec<String>) -> u64 {
+    let mut guard = ACTION_TERMS
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
     let generation = ACTION_GEN.fetch_add(1, Ordering::SeqCst) + 1;
-    if let Ok(mut guard) = ACTION_TERMS.lock() {
-        *guard = terms;
-    }
+    *guard = terms;
     generation
 }
 
@@ -216,33 +193,41 @@ pub fn clear_action_session(generation: u64) {
 /// carries one marked line and none of this module's lifecycle.
 ///
 /// The standing dictionary goes first; explicit action vocabulary follows it.
-pub fn for_transcription(settings: &grain_core::AppSettings) -> Option<String> {
+fn take_terms(settings: &grain_core::AppSettings) -> BiasSet {
     let mut set = from_custom_words(&settings.custom_words);
-    let dictionary_terms = set.terms.len();
     if let Ok(mut guard) = ACTION_TERMS.lock() {
         set.extend(std::mem::take(&mut *guard));
     }
-    let action_terms = set.terms.len() - dictionary_terms;
-    let rendered = set.render();
+    set
+}
 
-    // Counts and byte lengths only, never the terms.
-    if let Some(prefix) = &rendered {
-        let kept = prefix.split(SEPARATOR).count();
-        log::info!(
-            "[GRAIN] bias: {kept} term(s), {} bytes (from {dictionary_terms} dictionary \
-             + {action_terms} action{})",
-            prefix.len(),
-            if kept < dictionary_terms + action_terms {
-                ", budget trimmed the rest"
-            } else {
-                ""
-            },
-        );
-    } else if dictionary_terms + action_terms > 0 {
-        log::info!("[GRAIN] bias: nothing usable from {dictionary_terms} dictionary term(s)");
+/// Snapshot once for all chunks of one decode. Never split rendered text back
+/// into terms: a dictionary phrase may itself contain commas.
+pub(crate) fn configure_run(
+    options: &mut transcribe_cpp::RunOptions,
+    settings: &grain_core::AppSettings,
+    vocabulary: bool,
+    initial_prompt: bool,
+) {
+    let terms = take_terms(settings);
+    if vocabulary {
+        options.vocabulary = terms.bounded_terms();
+    } else if initial_prompt {
+        if let Some(prompt) = terms.render() {
+            options.family = Some(transcribe_cpp::RunExtension::Whisper(
+                transcribe_cpp::WhisperRunOptions {
+                    initial_prompt: Some(prompt),
+                    ..Default::default()
+                },
+            ));
+        }
     }
+}
 
-    rendered
+pub(crate) fn was_prompted(options: &transcribe_cpp::RunOptions) -> bool {
+    !options.vocabulary.is_empty()
+        || matches!(&options.family,
+        Some(transcribe_cpp::RunExtension::Whisper(options)) if options.initial_prompt.is_some())
 }
 
 #[cfg(test)]
@@ -374,5 +359,23 @@ mod tests {
         clear_action_session(stale_generation);
         assert_eq!(*ACTION_TERMS.lock().unwrap(), vec!["New".to_string()]);
         clear_action_session(new_generation);
+    }
+}
+
+#[cfg(test)]
+mod native_vocabulary_tests {
+    use super::*;
+    #[test]
+    fn native_terms_preserve_phrases_and_share_prompt_budget() {
+        let set = from_custom_words(&[
+            " ACME, Inc. ".into(),
+            "Grain\nStore".into(),
+            "grain store".into(),
+            "invalid\0term".into(),
+        ]);
+        assert_eq!(set.bounded_terms(), ["ACME, Inc.", "Grain Store"]);
+        let large = from_custom_words(&(0..500).map(|n| format!("Term{n:04}")).collect::<Vec<_>>());
+        assert!(large.bounded_terms().join(SEPARATOR).len() <= MAX_PROMPT_BYTES);
+        assert_eq!(large.bounded_terms().last().unwrap(), "Term0499");
     }
 }

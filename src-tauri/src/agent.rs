@@ -441,6 +441,13 @@ fn start_dictation(app: &AppHandle) -> Option<crate::managers::audio::RecordingR
     }
     let tm = app.state::<Arc<TranscriptionManager>>();
     tm.initiate_model_load();
+    if let Err(error) = crate::grain_capture::require_transcribable_model(
+        app,
+        &get_settings(app).selected_model,
+    ) {
+        warn!("[GRAIN] agent: not starting dictation: {error}");
+        return None;
+    }
     {
         let rm = Arc::clone(&rm);
         std::thread::spawn(move || {

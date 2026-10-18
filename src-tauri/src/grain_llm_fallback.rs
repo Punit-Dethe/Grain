@@ -158,6 +158,7 @@ mod tests {
             for (index, model) in models.iter().enumerate() {
                 let id = format!("test-{index}");
                 s.post_process_providers.push(PostProcessProvider {
+                    api_format: Default::default(),
                     id: id.clone(),
                     label: id.clone(),
                     base_url: self.url.clone(),

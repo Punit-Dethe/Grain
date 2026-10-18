@@ -1,5 +1,7 @@
 # Flow accuracy implementation plan
 
+> Historical v2 policy, superseded on 2026-10-18 by [stateful buffered v2](FLOW-V2-STATEFUL-PLAN.md). The measurements below do not select the current defaults.
+
 2026-09-26. Target: Handy Parakeet TDT 0.6B v2 GGUF, initially Q8_0. Preserve the journal, one serial worker/model lease, existing final processing and bounded audio memory. Grain-owned conditioning is excluded.
 
 ## Order of work
@@ -19,7 +21,7 @@ Sources and hypotheses: [initial audit](FLOW-ACCURACY-AUDIT.md), [v2-specific re
 - `crates/grain-tdt/`: bounded cursor and native-token merge policies.
 - `src-tauri/src/tdt_flow.rs`: v2 inference selection, exact timestamps and final detokenization.
 - `src-tauri/src/rolling.rs`: existing worker integration and cleanup only.
-- `vendor/transcribe-cpp*` only if the stateful candidate is required; ordinary upstream Batch must remain unchanged.
+- `native/transcribe.cpp` only for a reviewed native patch; preserve paired source pins and semantic acceptance gates.
 
 ## Selection gate
 

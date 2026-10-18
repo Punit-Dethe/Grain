@@ -3,7 +3,6 @@ use super::model_capabilities::{
 };
 use crate::settings::{get_settings, write_settings};
 use anyhow::Result;
-use flate2::read::GzDecoder;
 use hf_hub::api::tokio::{ApiBuilder, CancellationToken, Progress};
 use hf_hub::{Cache, Repo, RepoType};
 use log::{debug, error, info, warn};
@@ -11,32 +10,15 @@ use serde::{Deserialize, Serialize};
 use specta::Type;
 use std::collections::{HashMap, HashSet};
 use std::fs;
-use std::fs::File;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-use tar::Archive;
 use tauri::{AppHandle, Emitter, Manager};
 
 mod download;
 
 use download::{HttpDownloadOutcome, DOWNLOAD_STALL_TIMEOUT};
-
-#[derive(Debug, Clone, Serialize, Deserialize, Type)]
-pub enum EngineType {
-    /// Any GGML/GGUF model loaded through transcribe-cpp (Whisper, Parakeet,
-    /// Voxtral, Qwen3-ASR, Nemotron, …). The architecture is auto-detected from
-    /// the file, so this one variant covers the whole transcribe-cpp family.
-    TranscribeCpp,
-    Parakeet,
-    Moonshine,
-    MoonshineStreaming,
-    SenseVoice,
-    GigaAM,
-    Canary,
-    Cohere,
-}
 
 /// Where a model comes from and how Handy obtains it — the routing discriminant
 /// for downloading and on-disk resolution.
@@ -68,8 +50,6 @@ pub struct ModelInfo {
     pub is_downloaded: bool,
     pub is_downloading: bool,
     pub partial_size: u64,
-    pub is_directory: bool,
-    pub engine_type: EngineType,
     pub accuracy_score: f32,        // 0.0 to 1.0, higher is more accurate
     pub speed_score: f32,           // 0.0 to 1.0, higher is faster
     pub supports_translation: bool, // Whether the model supports translating to English
@@ -90,19 +70,16 @@ fn recognition_language(language: &str) -> &str {
     }
 }
 
-/// The base code Handy matches a language *intent* on: a tag's primary subtag,
-/// with any BCP-47 region or script suffix dropped (`en-US` → `en`, `zh-CN` →
-/// `zh`, `zh-Hant` → `zh`). Bare and three-letter codes (`haw`) pass through
-/// unchanged. Lets a bare intent (`en`) match a model that advertises full
-/// locales (`en-US`) without discarding the real code the engine needs.
+/// A tag's primary language subtag, with any BCP-47 region/script suffix
+/// dropped (`en-US` → `en`, `zh-Hant` → `zh`).
 fn base_language(language: &str) -> &str {
-    match language.split_once('-') {
-        Some((base, _)) => base,
-        None => language,
-    }
+    language.split(&['-', '_'][..]).next().unwrap_or(language)
 }
 
-/// Match equivalent language codes without changing the model's returned code.
+/// The stable user intent used to compare language codes across model
+/// families. Norwegian Bokmål (`nb`) maps to Norwegian (`no`), while Nynorsk
+/// (`nn`) remains distinct; Filipino (`fil`) maps to Tagalog (`tl`). This is
+/// only for matching: callers must return/pass the model's original code.
 pub(crate) fn canonical_language_code(language: &str) -> &str {
     match base_language(language) {
         "nb" => "no",
@@ -173,7 +150,6 @@ pub struct ModelDescriptor {
     pub source: ModelSource,
     pub name: String,
     pub description: String,
-    pub engine_type: EngineType,
     pub caps: CapabilityProbe,
     pub files: Vec<QuantFile>,
     pub default_quant: Option<String>,
@@ -244,8 +220,6 @@ impl ModelDescriptor {
             is_downloaded: status.is_downloaded,
             is_downloading: status.is_downloading,
             partial_size: status.partial_size,
-            is_directory: false,
-            engine_type: self.engine_type.clone(),
             accuracy_score: self.accuracy_score,
             speed_score: self.speed_score,
             supports_translation: self.caps.supports_translation.unwrap_or(false),
@@ -271,10 +245,7 @@ impl ModelDescriptor {
 /// Matching is base-aware ([`base_language`]) and returns the model's own
 /// *concrete* code, so a bare intent (`en`) resolves to the exact string the
 /// engine's prompt table expects (`en-US`) for models that advertise full
-/// BCP-47 locales. Chinese *script* intents (`zh-Hans`/`zh-Hant`) are the sole
-/// exception: they pass through unchanged so the downstream Simplified /
-/// Traditional output conversion still fires (the engine path collapses them to
-/// a plain Chinese code separately).
+/// BCP-47 locales.
 pub fn effective_language(
     intent: &str,
     supported_languages: &[String],
@@ -285,6 +256,9 @@ pub fn effective_language(
     }
 
     if intent != "auto" {
+        // Prefer the same base code before considering an equivalence alias. If
+        // a future model advertises both `no` and `nb`, an explicit `nb` intent
+        // must select `nb`, regardless of capability-list order.
         let exact_base_match = supported_languages
             .iter()
             .find(|language| base_language(language) == base_language(intent));
@@ -293,10 +267,8 @@ pub fn effective_language(
                 canonical_language_code(language) == canonical_language_code(intent)
             })
         };
+
         if let Some(code) = exact_base_match.or_else(equivalent_match) {
-            if intent == "zh-Hans" || intent == "zh-Hant" {
-                return intent.to_string();
-            }
             return code.clone();
         }
     }
@@ -324,24 +296,33 @@ pub struct DownloadProgress {
     pub percentage: f64,
 }
 
-/// Resolve a Hugging Face model file in the shared HF cache, if already present.
-/// Uses hf-hub's stock location (HF_HOME or ~/.cache/huggingface/hub) so
-/// downloads are shared with other tools.
+fn hf_cached_path(repo_id: &str, revision: &str, filename: &str) -> Option<PathBuf> {
+    hf_cached_path_in(&[Cache::from_env()], repo_id, revision, filename)
+}
+
+/// Resolve a Hugging Face model file in the supplied caches, if already present.
 ///
 /// hf-hub resolves purely through `refs/<revision>`. Pinned downloads write
 /// `refs/<commit-sha>`, but caches populated before pinning — or by other
 /// tools, which download via `main` — only have `refs/main`, so lookup falls
 /// back to it. Grandfathered `main` copies may predate the pin; per policy a
 /// working local model is never invalidated by routine catalog regeneration.
-fn hf_cached_path(repo_id: &str, revision: &str, filename: &str) -> Option<PathBuf> {
+fn hf_cached_path_in(
+    caches: &[Cache],
+    repo_id: &str,
+    revision: &str,
+    filename: &str,
+) -> Option<PathBuf> {
     let get = |rev: &str| {
-        Cache::from_env()
-            .repo(Repo::with_revision(
-                repo_id.to_string(),
-                RepoType::Model,
-                rev.to_string(),
-            ))
-            .get(filename)
+        caches.iter().find_map(|cache| {
+            cache
+                .repo(Repo::with_revision(
+                    repo_id.to_string(),
+                    RepoType::Model,
+                    rev.to_string(),
+                ))
+                .get(filename)
+        })
     };
     get(revision).or_else(|| (revision != "main").then(|| get("main")).flatten())
 }
@@ -521,7 +502,6 @@ pub struct ModelManager {
     models_dir: PathBuf,
     available_models: Mutex<HashMap<String, ModelInfo>>,
     cancel_flags: Arc<Mutex<HashMap<String, CancellationToken>>>,
-    extracting_models: Arc<Mutex<HashSet<String>>>,
     /// Single-flight guard for [`Self::rescan_local_models`] so concurrent
     /// refresh requests coalesce instead of scanning the disk in parallel.
     is_rescanning: Arc<AtomicBool>,
@@ -573,8 +553,6 @@ impl ModelManager {
                 is_downloaded: false,
                 is_downloading: false,
                 partial_size: 0,
-                is_directory: false,
-                engine_type: EngineType::TranscribeCpp,
                 accuracy_score: 0.60,
                 speed_score: 0.85,
                 supports_translation: true,
@@ -606,8 +584,6 @@ impl ModelManager {
                 is_downloaded: false,
                 is_downloading: false,
                 partial_size: 0,
-                is_directory: false,
-                engine_type: EngineType::TranscribeCpp,
                 accuracy_score: 0.75,
                 speed_score: 0.60,
                 supports_translation: true,
@@ -638,8 +614,6 @@ impl ModelManager {
                 is_downloaded: false,
                 is_downloading: false,
                 partial_size: 0,
-                is_directory: false,
-                engine_type: EngineType::TranscribeCpp,
                 accuracy_score: 0.80,
                 speed_score: 0.40,
                 supports_translation: false, // Turbo doesn't support translation
@@ -670,8 +644,6 @@ impl ModelManager {
                 is_downloaded: false,
                 is_downloading: false,
                 partial_size: 0,
-                is_directory: false,
-                engine_type: EngineType::TranscribeCpp,
                 accuracy_score: 0.85,
                 speed_score: 0.30,
                 supports_translation: true,
@@ -703,8 +675,6 @@ impl ModelManager {
                 is_downloaded: false,
                 is_downloading: false,
                 partial_size: 0,
-                is_directory: false,
-                engine_type: EngineType::TranscribeCpp,
                 accuracy_score: 0.85,
                 speed_score: 0.35,
                 supports_translation: false,
@@ -716,11 +686,6 @@ impl ModelManager {
                 supports_language_detection: true,
             },
         );
-
-        // [GRAIN] The legacy ONNX model entries (Parakeet/Moonshine/SenseVoice/
-        // GigaAM/Canary/Cohere via transcribe-rs) were REMOVED: every family ships
-        // as GGUF in the bundled catalog below, and transcribe-rs is no longer a
-        // dependency. Only the whisper .bin legacy entries (transcribe-cpp) remain.
 
         // Seed the bundled offline catalog before the on-disk scans, so a model
         // already in the HF cache dedups onto its richer catalog entry (the scans
@@ -742,7 +707,6 @@ impl ModelManager {
             models_dir,
             available_models: Mutex::new(available_models),
             cancel_flags: Arc::new(Mutex::new(HashMap::new())),
-            extracting_models: Arc::new(Mutex::new(HashSet::new())),
             is_rescanning: Arc::new(AtomicBool::new(false)),
         };
 
@@ -937,7 +901,7 @@ impl ModelManager {
         let downloading_ids: HashSet<String> =
             self.cancel_flags.lock().unwrap().keys().cloned().collect();
         let mut models = self.available_models.lock().unwrap();
-        let mut vanished_alternates: Vec<String> = Vec::new();
+        let mut vanished_models: Vec<String> = Vec::new();
 
         for model in models.values_mut() {
             if let ModelSource::HuggingFace { repo_id, revision } = &model.source {
@@ -955,58 +919,37 @@ impl ModelManager {
                 // file is gone, the entry goes with it.
                 if !model.is_downloaded
                     && !downloading_ids.contains(&model.id)
-                    && Self::is_catalog_alternate_quant(repo_id, &model.filename)
+                    && Self::disappears_when_missing(model)
                 {
-                    vanished_alternates.push(model.id.clone());
+                    vanished_models.push(model.id.clone());
                 }
                 continue;
             }
-            if model.is_directory {
-                // For directory-based models, check if the directory exists
-                let model_path = self.models_dir.join(&model.filename);
-                let partial_path = self.models_dir.join(format!("{}.partial", &model.filename));
-                let extracting_path = self
-                    .models_dir
-                    .join(format!("{}.extracting", &model.filename));
+            let model_path = self.models_dir.join(&model.filename);
+            let partial_path = self.models_dir.join(format!("{}.partial", &model.filename));
 
-                // Clean up any leftover .extracting directories from interrupted extractions
-                // But only if this model is NOT currently being extracted
-                let is_currently_extracting = {
-                    let extracting = self.extracting_models.lock().unwrap();
-                    extracting.contains(&model.id)
-                };
-                if extracting_path.exists() && !is_currently_extracting {
-                    warn!("Cleaning up interrupted extraction for model: {}", model.id);
-                    let _ = fs::remove_dir_all(&extracting_path);
-                }
+            model.is_downloaded = model_path.exists();
+            model.is_downloading = false;
 
-                model.is_downloaded = model_path.exists() && model_path.is_dir();
-                model.is_downloading = false;
-
-                // Get partial file size if it exists (for the .tar.gz being downloaded)
-                if partial_path.exists() {
-                    model.partial_size = partial_path.metadata().map(|m| m.len()).unwrap_or(0);
-                } else {
-                    model.partial_size = 0;
-                }
+            // Get partial file size if it exists
+            if partial_path.exists() {
+                model.partial_size = partial_path.metadata().map(|m| m.len()).unwrap_or(0);
             } else {
-                // For file-based models (existing logic)
-                let model_path = self.models_dir.join(&model.filename);
-                let partial_path = self.models_dir.join(format!("{}.partial", &model.filename));
+                model.partial_size = 0;
+            }
 
-                model.is_downloaded = model_path.exists();
-                model.is_downloading = false;
-
-                // Get partial file size if it exists
-                if partial_path.exists() {
-                    model.partial_size = partial_path.metadata().map(|m| m.len()).unwrap_or(0);
-                } else {
-                    model.partial_size = 0;
-                }
+            // Custom entries are discovered from files and have no download
+            // source. Once their file is gone, keeping the entry would offer a
+            // Download action that can never succeed.
+            if !model.is_downloaded
+                && !downloading_ids.contains(&model.id)
+                && Self::disappears_when_missing(model)
+            {
+                vanished_models.push(model.id.clone());
             }
         }
 
-        for id in vanished_alternates {
+        for id in vanished_models {
             models.remove(&id);
         }
 
@@ -1020,6 +963,24 @@ impl ModelManager {
             desc.default_file()
                 .is_some_and(|d| d.filename != file.filename)
         })
+    }
+
+    /// Entries discovered exclusively from disk should disappear with their
+    /// files. Catalog defaults remain so the UI can offer them for download.
+    fn disappears_when_missing(model: &ModelInfo) -> bool {
+        model.is_custom
+            || match &model.source {
+                ModelSource::HuggingFace { repo_id, .. } => {
+                    Self::is_catalog_alternate_quant(repo_id, &model.filename)
+                }
+                _ => false,
+            }
+    }
+
+    fn selected_model_is_available(models: &HashMap<String, ModelInfo>, model_id: &str) -> bool {
+        models
+            .get(model_id)
+            .is_some_and(|model| model.is_downloaded)
     }
 
     /// Remove a single file from the shared HF cache: the snapshot pointer for
@@ -1049,50 +1010,38 @@ impl ModelManager {
     fn auto_select_model_if_needed(&self) -> Result<()> {
         let mut settings = get_settings(&self.app_handle);
 
-        // Clear stale selection: selected model is set but doesn't exist
-        // in available_models (e.g. deleted custom model file).
-        // [GRAIN] Also clear a selection that violates the per-category rule
-        // (a streaming model left in `selected_model` by an older build) so
-        // auto-selection below can replace it with a standard model.
+        // A model cannot remain selected after its files disappear. Catalog
+        // entries stay in the registry so they can be downloaded again, so
+        // checking only whether the id exists is not sufficient.
         if !settings.selected_model.is_empty() {
-            let models = self.available_models.lock().unwrap();
-            let entry = models.get(&settings.selected_model);
-            let exists = entry.is_some();
-            let is_downloaded = entry.is_some_and(|m| m.is_downloaded);
-            let is_streaming = entry.map(|m| m.supports_streaming).unwrap_or(false);
-            drop(models);
+            let is_available = {
+                let models = self.available_models.lock().unwrap();
+                Self::selected_model_is_available(&models, &settings.selected_model)
+                    && models
+                        .get(&settings.selected_model)
+                        .is_some_and(|model| !model.supports_streaming) // [GRAIN] Standard category only.
+            };
 
-            if !is_downloaded || is_streaming {
+            if !is_available {
                 info!(
-                    "Selected model '{}' is {} — clearing selection",
-                    settings.selected_model,
-                    if is_streaming {
-                        "a streaming model (batch selection must be standard)"
-                    } else if exists {
-                        "not available on disk"
-                    } else {
-                        "not found in available models"
-                    }
+                    "Selected model '{}' is not available on disk; clearing selection",
+                    settings.selected_model
                 );
                 settings.selected_model = String::new();
                 write_settings(&self.app_handle, settings.clone());
             }
         }
 
-        // [GRAIN] Upstream gates auto-selection on `onboarding_completed`; Grain
-        // has no such settings flag (the frontend gates onboarding on model
-        // presence), so auto-selection always runs here.
+        // [GRAIN] Onboarding uses model presence; there is no completion flag.
 
         // If no model is selected, pick the first downloaded one using the same
         // ranked order the UI receives.
-        // [GRAIN] Standard models only: `selected_model` (Batch/Rolling) must
-        // never auto-fill with a streaming model (per-category separation —
-        // `selected_asr_model` is chosen explicitly in the Streaming section).
         if settings.selected_model.is_empty() {
             if let Some(available_model) = self
                 .get_available_models()
                 .into_iter()
                 .find(|model| model.is_downloaded && !model.supports_streaming)
+            // [GRAIN]
             {
                 info!(
                     "Auto-selecting model: {} ({})",
@@ -1122,10 +1071,9 @@ impl ModelManager {
             return Ok(());
         }
 
-        // Collect filenames of predefined transcribe-cpp file-based models to skip
+        // Collect filenames of predefined models to skip
         let predefined_filenames: HashSet<String> = available_models
             .values()
-            .filter(|m| matches!(m.engine_type, EngineType::TranscribeCpp) && !m.is_directory)
             .map(|m| m.filename.clone())
             .collect();
 
@@ -1253,8 +1201,6 @@ impl ModelManager {
                     is_downloaded: true, // Already present on disk
                     is_downloading: false,
                     partial_size: 0,
-                    is_directory: false,
-                    engine_type: EngineType::TranscribeCpp,
                     accuracy_score: 0.0, // Sentinel: UI hides score bars when both are 0
                     speed_score: 0.0,
                     supports_translation: caps.supports_translation,
@@ -1277,7 +1223,8 @@ impl ModelManager {
     /// transcribe-cpp recognises are surfaced; arbitrary (e.g. LLM) GGUFs that
     /// share the cache are ignored.
     fn discover_hf_cache_models(available_models: &mut HashMap<String, ModelInfo>) {
-        Self::discover_hf_cache_models_in(Cache::from_env().path(), available_models);
+        let cache = Cache::from_env(); // [GRAIN] Current cache only; no old portable-cache migration.
+        Self::discover_hf_cache_models_in(cache.path(), available_models);
     }
 
     /// Scan a Hugging Face cache root (`<cache>/models--*`) for GGUF snapshots.
@@ -1397,8 +1344,6 @@ impl ModelManager {
                         is_downloaded: true,
                         is_downloading: false,
                         partial_size: 0,
-                        is_directory: false,
-                        engine_type: EngineType::TranscribeCpp,
                         accuracy_score: 0.0,
                         speed_score: 0.0,
                         supports_translation: caps.supports_translation,
@@ -1813,98 +1758,7 @@ impl ModelManager {
             HttpDownloadOutcome::Completed => {}
         }
 
-        // Handle directory-based models (extract tar.gz) vs file-based models
-        if model_info.is_directory {
-            // Track that this model is being extracted
-            {
-                let mut extracting = self.extracting_models.lock().unwrap();
-                extracting.insert(model_id.to_string());
-            }
-
-            // Emit extraction started event
-            let _ = self.app_handle.emit("model-extraction-started", model_id);
-            info!("Extracting archive for directory-based model: {}", model_id);
-
-            // Use a temporary extraction directory to ensure atomic operations
-            let temp_extract_dir = self
-                .models_dir
-                .join(format!("{}.extracting", &model_info.filename));
-            let final_model_dir = self.models_dir.join(&model_info.filename);
-
-            // Clean up any previous incomplete extraction
-            if temp_extract_dir.exists() {
-                let _ = fs::remove_dir_all(&temp_extract_dir);
-            }
-
-            // Create temporary extraction directory
-            fs::create_dir_all(&temp_extract_dir)?;
-
-            // Open the downloaded tar.gz file
-            let tar_gz = File::open(&partial_path)?;
-            let tar = GzDecoder::new(tar_gz);
-            let mut archive = Archive::new(tar);
-
-            // Extract to the temporary directory first
-            archive.unpack(&temp_extract_dir).map_err(|e| {
-                let error_msg = format!("Failed to extract archive: {}", e);
-                // Clean up failed extraction
-                let _ = fs::remove_dir_all(&temp_extract_dir);
-                // Delete the corrupt partial file so the next download attempt starts fresh
-                // instead of resuming from a broken archive (issue #858).
-                let _ = fs::remove_file(&partial_path);
-                // Remove from extracting set
-                {
-                    let mut extracting = self.extracting_models.lock().unwrap();
-                    extracting.remove(model_id);
-                }
-                let _ = self.app_handle.emit(
-                    "model-extraction-failed",
-                    &serde_json::json!({
-                        "model_id": model_id,
-                        "error": error_msg
-                    }),
-                );
-                anyhow::anyhow!(error_msg)
-            })?;
-
-            // Find the actual extracted directory (archive might have a nested structure)
-            let extracted_dirs: Vec<_> = fs::read_dir(&temp_extract_dir)?
-                .filter_map(|entry| entry.ok())
-                .filter(|entry| entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false))
-                .collect();
-
-            if extracted_dirs.len() == 1 {
-                // Single directory extracted, move it to the final location
-                let source_dir = extracted_dirs[0].path();
-                if final_model_dir.exists() {
-                    fs::remove_dir_all(&final_model_dir)?;
-                }
-                fs::rename(&source_dir, &final_model_dir)?;
-                // Clean up temp directory
-                let _ = fs::remove_dir_all(&temp_extract_dir);
-            } else {
-                // Multiple items or no directories, rename the temp directory itself
-                if final_model_dir.exists() {
-                    fs::remove_dir_all(&final_model_dir)?;
-                }
-                fs::rename(&temp_extract_dir, &final_model_dir)?;
-            }
-
-            info!("Successfully extracted archive for model: {}", model_id);
-            // Remove from extracting set
-            {
-                let mut extracting = self.extracting_models.lock().unwrap();
-                extracting.remove(model_id);
-            }
-            // Emit extraction completed event
-            let _ = self.app_handle.emit("model-extraction-completed", model_id);
-
-            // Remove the downloaded tar.gz file
-            let _ = fs::remove_file(&partial_path);
-        } else {
-            // Move partial file to final location for file-based models
-            fs::rename(&partial_path, &model_path)?;
-        }
+        fs::rename(&partial_path, &model_path)?;
 
         // Disarm the guard — success path does its own cleanup because it
         // additionally sets is_downloaded = true.
@@ -1981,8 +1835,14 @@ impl ModelManager {
                     deleted = true;
                 }
             }
+            // Files already missing (e.g. removed outside Handy) is not a failure —
+            // deleting is idempotent, so this still needs to fall through and clear
+            // the stale "Downloaded" entry rather than erroring out and leaving it stuck.
             if !deleted {
-                return Err(anyhow::anyhow!("No model files found to delete"));
+                debug!(
+                    "ModelManager: no HF cache/model files found on disk for {}; clearing stale entry",
+                    model_id
+                );
             }
             // Alternate-quant entries are discovery-created (the catalog only
             // seeds defaults), so deleting one un-discovers it rather than
@@ -2004,25 +1864,15 @@ impl ModelManager {
 
         let mut deleted_something = false;
 
-        if model_info.is_directory {
-            // Delete complete model directory if it exists
-            if model_path.exists() && model_path.is_dir() {
-                info!("Deleting model directory at: {:?}", model_path);
-                fs::remove_dir_all(&model_path)?;
-                info!("Model directory deleted successfully");
-                deleted_something = true;
-            }
-        } else {
-            // Delete complete model file if it exists
-            if model_path.exists() {
-                info!("Deleting model file at: {:?}", model_path);
-                fs::remove_file(&model_path)?;
-                info!("Model file deleted successfully");
-                deleted_something = true;
-            }
+        // Delete complete model file if it exists
+        if model_path.exists() {
+            info!("Deleting model file at: {:?}", model_path);
+            fs::remove_file(&model_path)?;
+            info!("Model file deleted successfully");
+            deleted_something = true;
         }
 
-        // Delete partial file if it exists (same for both types)
+        // Delete partial file if it exists
         if partial_path.exists() {
             info!("Deleting partial file at: {:?}", partial_path);
             fs::remove_file(&partial_path)?;
@@ -2030,8 +1880,14 @@ impl ModelManager {
             deleted_something = true;
         }
 
+        // Files already missing (e.g. removed outside Handy) is not a failure —
+        // deleting is idempotent, so this still needs to fall through and clear
+        // the stale "Downloaded" entry rather than erroring out and leaving it stuck.
         if !deleted_something {
-            return Err(anyhow::anyhow!("No model files found to delete"));
+            debug!(
+                "ModelManager: no files found on disk for {}; clearing stale entry",
+                model_id
+            );
         }
 
         // Custom models should be removed from the list entirely since they
@@ -2050,6 +1906,38 @@ impl ModelManager {
         let _ = self.app_handle.emit("model-deleted", model_id);
 
         Ok(())
+    }
+
+    /// Reconcile a model that was advertised as downloaded but whose path has
+    /// since disappeared. This is deliberately narrower than a full rescan: it
+    /// only runs after a definitive missing-path check and cannot disturb an
+    /// unrelated in-flight download.
+    fn mark_model_unavailable(&self, model_id: &str) {
+        let removed = {
+            let mut models = self.available_models.lock().unwrap();
+            let should_remove = models
+                .get(model_id)
+                .is_some_and(Self::disappears_when_missing);
+            if should_remove {
+                models.remove(model_id);
+                true
+            } else if let Some(model) = models.get_mut(model_id) {
+                model.is_downloaded = false;
+                false
+            } else {
+                return;
+            }
+        };
+
+        if removed {
+            info!("Removing vanished discovered model '{}'", model_id);
+        } else {
+            info!("Marking model '{}' as unavailable on disk", model_id);
+        }
+        // Keep the persisted preference here: an already-loaded engine may
+        // still be usable, and re-downloading this model should restore it.
+        // Startup and explicit Rescan perform the broader selection cleanup.
+        let _ = self.app_handle.emit("models-updated", ());
     }
 
     pub fn get_model_path(&self, model_id: &str) -> Result<PathBuf> {
@@ -2087,6 +1975,7 @@ impl ModelManager {
                 }
                 return Ok(local_path);
             }
+            self.mark_model_unavailable(model_id);
             return Err(anyhow::anyhow!(
                 "Complete model file not found in HF cache or models dir: {}",
                 model_id
@@ -2098,27 +1987,17 @@ impl ModelManager {
             .models_dir
             .join(format!("{}.partial", &model_info.filename));
 
-        if model_info.is_directory {
-            // For directory-based models, ensure the directory exists and is complete
-            if model_path.exists() && model_path.is_dir() && !partial_path.exists() {
-                Ok(model_path)
-            } else {
-                Err(anyhow::anyhow!(
-                    "Complete model directory not found: {}",
-                    model_id
-                ))
-            }
-        } else {
-            // For file-based models (existing logic)
-            if model_path.exists() && !partial_path.exists() {
-                Ok(model_path)
-            } else {
-                Err(anyhow::anyhow!(
-                    "Complete model file not found: {}",
-                    model_id
-                ))
-            }
+        if !model_path.exists() {
+            self.mark_model_unavailable(model_id);
+            return Err(anyhow::anyhow!(
+                "Complete model file not found: {}",
+                model_id
+            ));
         }
+        if partial_path.exists() {
+            return Err(anyhow::anyhow!("Model file is incomplete: {}", model_id));
+        }
+        Ok(model_path)
     }
 
     pub fn cancel_download(&self, model_id: &str) -> Result<()> {
@@ -2159,15 +2038,76 @@ impl ModelManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs::File;
     use std::io::Write;
     use tempfile::TempDir;
 
-    #[test]
-    fn test_effective_language_accepts_chinese_script_intent_for_zh_capability() {
-        let languages = vec!["zh".to_string()];
+    fn add_cached_model(cache: &Path, repo_id: &str, revision: &str, filename: &str) -> PathBuf {
+        let repo_dir = cache.join(format!("models--{}", repo_id.replace('/', "--")));
+        let snapshot = repo_dir.join("snapshots").join(revision).join(filename);
+        fs::create_dir_all(snapshot.parent().unwrap()).unwrap();
+        fs::create_dir_all(repo_dir.join("refs")).unwrap();
+        fs::write(repo_dir.join("refs").join(revision), revision).unwrap();
+        fs::write(&snapshot, b"model").unwrap();
+        snapshot
+    }
 
-        assert_eq!(effective_language("zh-Hans", &languages, false), "zh-Hans");
-        assert_eq!(effective_language("zh-Hant", &languages, false), "zh-Hant");
+    #[test]
+    fn test_hf_cached_path_falls_back_to_legacy_cache() {
+        let active = TempDir::new().unwrap();
+        let legacy = TempDir::new().unwrap();
+        let expected = add_cached_model(
+            legacy.path(),
+            "handy-computer/test-model",
+            "old-revision",
+            "model.gguf",
+        );
+        let caches = vec![
+            Cache::new(active.path().to_path_buf()),
+            Cache::new(legacy.path().to_path_buf()),
+        ];
+
+        assert_eq!(
+            hf_cached_path_in(
+                &caches,
+                "handy-computer/test-model",
+                "old-revision",
+                "model.gguf"
+            ),
+            Some(expected)
+        );
+    }
+
+    #[test]
+    fn test_hf_cached_path_prefers_active_cache() {
+        let active = TempDir::new().unwrap();
+        let legacy = TempDir::new().unwrap();
+        let expected = add_cached_model(
+            active.path(),
+            "handy-computer/test-model",
+            "revision",
+            "model.gguf",
+        );
+        add_cached_model(
+            legacy.path(),
+            "handy-computer/test-model",
+            "revision",
+            "model.gguf",
+        );
+        let caches = vec![
+            Cache::new(active.path().to_path_buf()),
+            Cache::new(legacy.path().to_path_buf()),
+        ];
+
+        assert_eq!(
+            hf_cached_path_in(
+                &caches,
+                "handy-computer/test-model",
+                "revision",
+                "model.gguf"
+            ),
+            Some(expected)
+        );
     }
 
     #[test]
@@ -2200,19 +2140,19 @@ mod tests {
     }
 
     #[test]
-    fn test_effective_language_resolves_alias_to_model_code() {
-        assert_eq!(effective_language("no", &["nb".to_string()], false), "nb");
-        assert_eq!(effective_language("tl", &["fil".to_string()], false), "fil");
+    fn test_effective_language_preserves_intent_across_model_code_variants() {
+        assert_eq!(effective_language("no", &["nb".to_string()], true), "nb");
+        assert_eq!(effective_language("nb", &["no".to_string()], true), "no");
+        assert_eq!(effective_language("tl", &["fil".to_string()], true), "fil");
+        assert_eq!(effective_language("fil", &["tl".to_string()], true), "tl");
     }
 
     #[test]
-    fn test_effective_language_preserves_chinese_script_intent_for_locale_model() {
-        // Script intents survive so Simplified/Traditional output conversion
-        // still fires, even when the model advertises a regioned Chinese code.
-        let languages = vec!["en-US".to_string(), "zh-CN".to_string()];
+    fn test_effective_language_prefers_exact_norwegian_code() {
+        let languages = vec!["no".to_string(), "nb".to_string()];
 
-        assert_eq!(effective_language("zh-Hans", &languages, true), "zh-Hans");
-        assert_eq!(effective_language("zh-Hant", &languages, true), "zh-Hant");
+        assert_eq!(effective_language("nb", &languages, true), "nb");
+        assert_eq!(effective_language("no", &languages, true), "no");
     }
 
     #[test]
@@ -2286,8 +2226,6 @@ mod tests {
                 is_downloaded: false,
                 is_downloading: false,
                 partial_size: 0,
-                is_directory: false,
-                engine_type: EngineType::TranscribeCpp,
                 accuracy_score: 0.5,
                 speed_score: 0.5,
                 supports_translation: true,
@@ -2316,6 +2254,7 @@ mod tests {
         assert!(matches!(custom.source, ModelSource::Local)); // Custom models have no remote source
         assert!(custom.is_downloaded);
         assert!(custom.is_custom);
+        assert!(ModelManager::disappears_when_missing(custom));
         assert_eq!(custom.accuracy_score, 0.0);
         assert_eq!(custom.speed_score, 0.0);
         assert!(custom.supported_languages.is_empty());
@@ -2330,7 +2269,6 @@ mod tests {
         assert_eq!(gguf.filename, "my-gguf-model.gguf");
         assert_eq!(gguf.name, "Friendly GGUF Name");
         assert!(gguf.is_custom);
-        assert!(matches!(gguf.engine_type, EngineType::TranscribeCpp));
 
         // Should NOT have discovered hidden, non-model, predefined, partial, or directories
         assert!(!models.contains_key(".hidden-model"));
@@ -2376,7 +2314,6 @@ mod tests {
             },
             name: "Model".to_string(),
             description: "desc".to_string(),
-            engine_type: EngineType::TranscribeCpp,
             caps: CapabilityProbe::default(),
             files: vec![
                 QuantFile {
@@ -2412,6 +2349,24 @@ mod tests {
         assert_eq!(alt_info.filename, "model-Q4_K_M.gguf");
         assert!(!alt_info.is_recommended);
         assert!(!alt_info.is_custom);
+
+        // Catalog defaults stay visible for re-download when their file is gone.
+        assert!(!ModelManager::disappears_when_missing(&default_info));
+
+        let mut selection_models = HashMap::new();
+        selection_models.insert(default_info.id.clone(), default_info.clone());
+        assert!(!ModelManager::selected_model_is_available(
+            &selection_models,
+            &default_info.id
+        ));
+        selection_models
+            .get_mut(&default_info.id)
+            .unwrap()
+            .is_downloaded = true;
+        assert!(ModelManager::selected_model_is_available(
+            &selection_models,
+            &default_info.id
+        ));
 
         // The default rendered through the per-file path matches to_model_info,
         // so seeded entries and discovered defaults can never diverge.
@@ -2459,6 +2414,7 @@ mod tests {
         assert!(info.is_downloaded);
         assert!(!info.is_custom);
         assert!(matches!(info.source, ModelSource::HuggingFace { .. }));
+        assert!(ModelManager::disappears_when_missing(info));
 
         // …while the default-quant file dedups onto its seeded entry: exactly
         // one new id, and no filename-stem custom entries for either file.

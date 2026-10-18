@@ -19,20 +19,9 @@ This guide covers how to set up the development environment and build Grain from
 - Xcode Command Line Tools
 - Install with: `xcode-select --install`
 
-##### Intel Mac (x86_64)
-
-Prebuilt ONNX Runtime binaries are not available for Intel Macs. Install ONNX Runtime via Homebrew and link dynamically:
-
-```bash
-brew install onnxruntime
-ORT_LIB_LOCATION=$(brew --prefix onnxruntime)/lib ORT_PREFER_DYNAMIC_LINK=1 bun run tauri dev
-```
-
-The same environment variables apply for production builds:
-
-```bash
-ORT_LIB_LOCATION=$(brew --prefix onnxruntime)/lib ORT_PREFER_DYNAMIC_LINK=1 bun run tauri build
-```
+Both Intel and Apple Silicon builds use the pinned transcribe.cpp source.
+The build script weak-links CoreAudio and supplies clang's availability runtime
+for older macOS deployment targets. ONNX Runtime is no longer required.
 
 #### Windows
 
@@ -63,6 +52,10 @@ ORT_LIB_LOCATION=$(brew --prefix onnxruntime)/lib ORT_PREFER_DYNAMIC_LINK=1 bun 
 > `CARGO_TARGET_DIR`. Neither alone is sufficient.
 
 #### Linux
+
+The WebKit DMABUF crash workaround defaults to enabled and respects an explicit
+`WEBKIT_DISABLE_DMABUF_RENDERER=0` override. Set the override only when diagnosing
+renderer compatibility; leaving it unset keeps crash protection on.
 
 - Build essentials
 - ALSA development libraries
