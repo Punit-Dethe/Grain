@@ -8423,7 +8423,7 @@ dependencies = [
 [[package]]
 name = "transcribe-cpp"
 version = "0.4.0"
-source = "git+https://github.com/Punit-Dethe/transcribe.cpp.git?rev=e77845e7de1f6aff6f7e24473b70d9e5a0565000#e77845e7de1f6aff6f7e24473b70d9e5a0565000"
+source = "git+https://github.com/Punit-Dethe/transcribe.cpp.git?rev=eeffcc3887018015d04d20e61d3698a33d790f24#eeffcc3887018015d04d20e61d3698a33d790f24"
 dependencies = [
  "log",
  "serde",
@@ -8434,7 +8434,7 @@ dependencies = [
 [[package]]
 name = "transcribe-cpp-sys"
 version = "0.4.0"
-source = "git+https://github.com/Punit-Dethe/transcribe.cpp.git?rev=e77845e7de1f6aff6f7e24473b70d9e5a0565000#e77845e7de1f6aff6f7e24473b70d9e5a0565000"
+source = "git+https://github.com/Punit-Dethe/transcribe.cpp.git?rev=eeffcc3887018015d04d20e61d3698a33d790f24#eeffcc3887018015d04d20e61d3698a33d790f24"
 dependencies = [
  "cmake",
  "serde_json",

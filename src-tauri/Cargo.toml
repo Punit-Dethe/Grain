@@ -31,7 +31,7 @@ serde = { version = "1", features = ["derive"] }
 [dependencies]
 grain-core = { path = "../crates/grain-core" } # [GRAIN] headless core: owned settings + event bus
 grain-sdk = { path = "../crates/grain-sdk" } # [GRAIN] the wire contract: events, actions, WS auth handshake
-grain-tdt = { path = "../crates/grain-tdt" } # [GRAIN] Fluid-style Parakeet TDT geometry + token merger
+grain-tdt = { path = "../crates/grain-tdt" } # [GRAIN] Bounded stateful Parakeet TDT geometry
 tempfile = "3" # [GRAIN] auto-deleted PCM journal for low-RAM rolling sessions
 once_cell = "1"
 tauri = { version = "2.11.5", features = [
@@ -219,8 +219,8 @@ transcribe-cpp = { version = "=0.4.0", default-features = false, features = [
 [patch.crates-io]
 # [GRAIN] Paired immutable native fork; preserve exact upstream versions/features.
 # See ../native/transcribe-fork.json and ../docs/TRANSCRIBE-CPP-FORK.md.
-transcribe-cpp = { git = "https://github.com/Punit-Dethe/transcribe.cpp.git", rev = "e77845e7de1f6aff6f7e24473b70d9e5a0565000" }
-transcribe-cpp-sys = { git = "https://github.com/Punit-Dethe/transcribe.cpp.git", rev = "e77845e7de1f6aff6f7e24473b70d9e5a0565000" }
+transcribe-cpp = { git = "https://github.com/Punit-Dethe/transcribe.cpp.git", rev = "eeffcc3887018015d04d20e61d3698a33d790f24" }
+transcribe-cpp-sys = { git = "https://github.com/Punit-Dethe/transcribe.cpp.git", rev = "eeffcc3887018015d04d20e61d3698a33d790f24" }
 tao = { git = "https://github.com/cjpais/tao", rev = "c3bee28c1d446d95f08c95c3b6f8d4bde052b876" }
 tao-macros = { git = "https://github.com/cjpais/tao", rev = "c3bee28c1d446d95f08c95c3b6f8d4bde052b876" }
 

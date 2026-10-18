@@ -34,11 +34,7 @@ pub fn dispatch(
             variant: model.variant(),
             supported: model.accepts_ext(
                 transcribe_cpp::ExtSlot::Run,
-                if model.variant() == "tdt-0.6b-v2" {
-                    transcribe_cpp::ParakeetTdtBufferedOptions::KIND
-                } else {
-                    transcribe_cpp::ParakeetTdtWindowOptions::KIND
-                },
+                transcribe_cpp::ParakeetTdtBufferedOptions::KIND,
             ),
         }),
         Request::Detokenize { tokens } => model
@@ -98,8 +94,22 @@ mod tests {
         .unwrap();
         assert!(!cases.is_empty());
         for case in cases {
-            let pcm =
-                crate::audio_toolkit::read_wav_samples(case["path"].as_str().unwrap()).unwrap();
+            // Match the offline oracle's PCM16 conversion exactly. The generic
+            // Handy WAV helper divides by 32767, perturbing quantized decoding.
+            let mut wav = hound::WavReader::open(case["path"].as_str().unwrap()).unwrap();
+            assert_eq!(
+                (
+                    wav.spec().sample_rate,
+                    wav.spec().channels,
+                    wav.spec().bits_per_sample
+                ),
+                (16000, 1, 16)
+            );
+            assert_eq!(wav.spec().sample_format, hound::SampleFormat::Int);
+            let pcm: Vec<f32> = wav
+                .samples::<i16>()
+                .map(|s| s.unwrap() as f32 / 32768.0)
+                .collect();
             let journal = PcmJournal::create().unwrap();
             let mut reader = journal.reader().unwrap();
             let mut accumulator = TdtAccumulator::new(&session, &config).unwrap();

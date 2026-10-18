@@ -2,7 +2,7 @@
 
 2026-10-18. Scope is Parakeet TDT 0.6B v2 only. The user selects published
 NVIDIA results rather than parameter fitting on private microphone recordings.
-V3 keeps its current reviewed decoder and layout.
+This records the v2 implementation checkpoint. The subsequent [v3 plan](FLOW-V3-STATEFUL-PLAN.md) adopts the same buffered architecture for v3; v2 geometry and decoding remain unchanged.
 
 ## Reference and selected configuration
 

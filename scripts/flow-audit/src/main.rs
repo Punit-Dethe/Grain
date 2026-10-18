@@ -3,13 +3,12 @@
 use std::{error::Error, path::Path, time::Instant};
 
 use grain_tdt::{
-    merge_tokens, BufferedCursor, Token, WindowCursor, BUFFERED_MAX_SAMPLES, BUFFERED_OWNED_FRAMES,
-    FRAME_SAMPLES, SAMPLE_RATE,
+    BufferedCursor, Token, BUFFERED_MAX_SAMPLES, BUFFERED_OWNED_FRAMES, FRAME_SAMPLES, SAMPLE_RATE,
 };
 use serde_json::{json, Value};
 use transcribe_cpp::{
-    Backend, ExtSlot, Model, ModelOptions, ParakeetTdtBufferedOptions, ParakeetTdtWindowOptions,
-    RunExtension, RunOptions, Session, SessionOptions, TimestampKind,
+    Backend, ExtSlot, Model, ModelOptions, ParakeetTdtBufferedOptions, RunExtension, RunOptions,
+    Session, SessionOptions, TimestampKind,
 };
 
 type Result<T> = std::result::Result<T, Box<dyn Error>>;
@@ -39,53 +38,34 @@ fn options() -> RunOptions {
     }
 }
 
-fn flow(session: &mut Session, pcm: &[f32], v2: bool) -> Result<(String, Value)> {
+fn flow(session: &mut Session, pcm: &[f32]) -> Result<(String, Value)> {
     let mut tokens = Vec::new();
     let mut measurements = Vec::new();
     let mut buffered = BufferedCursor::default();
-    let mut fluid = WindowCursor::default();
-    let mut audio = Vec::with_capacity(if v2 {
-        BUFFERED_MAX_SAMPLES
-    } else {
-        grain_tdt::MAX_MODEL_SAMPLES
-    } as usize);
+    let mut audio = Vec::with_capacity(BUFFERED_MAX_SAMPLES as usize);
     loop {
         let total = pcm.len() as u64;
-        let window = if v2 {
-            buffered.next_stable(total).or_else(|| buffered.tail(total))
-        } else {
-            fluid.next_stable(total).or_else(|| fluid.tail(total))
-        };
+        let window = buffered.next_stable(total).or_else(|| buffered.tail(total));
         let Some(window) = window else {
             break;
         };
         audio.clear();
         audio.extend_from_slice(&pcm[window.read_start as usize..window.read_end as usize]);
         let mut opts = options();
-        if v2 {
-            let start: i32 = window.context_frames().try_into()?;
-            opts.family = Some(RunExtension::ParakeetTdtBuffered(
-                ParakeetTdtBufferedOptions {
-                    decode_start_frame: start,
-                    decode_end_frame: if window.is_last {
-                        -1
-                    } else {
-                        start + BUFFERED_OWNED_FRAMES as i32
-                    },
-                    timestamp_offset_frames: (window.chunk_start / FRAME_SAMPLES).try_into()?,
-                    reset: window.chunk_start == 0,
-                    finalize: window.is_last,
+        let start: i32 = window.context_frames().try_into()?;
+        opts.family = Some(RunExtension::ParakeetTdtBuffered(
+            ParakeetTdtBufferedOptions {
+                decode_start_frame: start,
+                decode_end_frame: if window.is_last {
+                    -1
+                } else {
+                    start + BUFFERED_OWNED_FRAMES as i32
                 },
-            ));
-        } else {
-            audio.resize(window.encoder_input_samples(), 0.0);
-            opts.family = Some(RunExtension::ParakeetTdtWindow(ParakeetTdtWindowOptions {
-                decode_start_frame: window.context_frames().try_into()?,
-                decode_end_frame: window.content_frames().try_into()?,
-                timestamp_offset_frames: window.global_frame_offset().try_into()?,
-                finalize_tail: window.finalize_decoder(),
-            }));
-        }
+                timestamp_offset_frames: (window.chunk_start / FRAME_SAMPLES).try_into()?,
+                reset: window.chunk_start == 0,
+                finalize: window.is_last,
+            },
+        ));
         let start = Instant::now();
         let result = session.run(&audio, &opts)?;
         let decode_seconds = start.elapsed().as_secs_f64();
@@ -112,25 +92,13 @@ fn flow(session: &mut Session, pcm: &[f32], v2: bool) -> Result<(String, Value)>
             "token_sequence": owned.iter().map(|t| json!({"id": t.id, "frame": t.frame,
                 "confidence": t.confidence, "duration_frames": t.duration})).collect::<Vec<_>>() }),
         );
-        if v2 {
-            tokens.extend(owned);
-        } else {
-            merge_tokens(&mut tokens, &owned);
-        }
+        tokens.extend(owned);
         if window.is_last {
             break;
         }
-        let committed = if v2 {
-            buffered.commit(window)
-        } else {
-            fluid.commit(window)
-        };
-        if !committed {
+        if !buffered.commit(window) {
             return Err("cursor rejected its own window".into());
         }
-    }
-    if !v2 {
-        tokens.sort_by_key(|t| t.frame);
     }
     let ids: Vec<_> = tokens.iter().map(|t| t.id).collect();
     Ok((
@@ -182,8 +150,8 @@ fn main() -> Result<()> {
     let threads: i32 = std::env::var("FLOW_AUDIT_THREADS")
         .unwrap_or_else(|_| "4".into())
         .parse()?;
-    if threads <= 0 {
-        return Err("thread count must be positive".into());
+    if threads < 0 {
+        return Err("thread count must be nonnegative; 0 selects the native default".into());
     }
     let backend = match std::env::var("FLOW_AUDIT_BACKEND")
         .as_deref()
@@ -205,17 +173,9 @@ fn main() -> Result<()> {
             ..Default::default()
         },
     )?;
-    let v2 = model.variant() == "tdt-0.6b-v2";
     if model.arch() != "parakeet"
         || !matches!(model.variant().as_str(), "tdt-0.6b-v2" | "tdt-0.6b-v3")
-        || !model.accepts_ext(
-            ExtSlot::Run,
-            if v2 {
-                ParakeetTdtBufferedOptions::KIND
-            } else {
-                ParakeetTdtWindowOptions::KIND
-            },
-        )
+        || !model.accepts_ext(ExtSlot::Run, ParakeetTdtBufferedOptions::KIND)
     {
         return Err("model does not support the reviewed Flow contract".into());
     }
@@ -227,7 +187,7 @@ fn main() -> Result<()> {
     for path in &args[3..] {
         let audio = load_audio(Path::new(path))?;
         let start = Instant::now();
-        let (text, windows) = flow(&mut session, &audio, v2)?;
+        let (text, windows) = flow(&mut session, &audio)?;
         let mut row = json!({"file": Path::new(path).file_name().unwrap_or_default().to_string_lossy(),
             "samples": audio.len(), "text": text, "windows": windows,
             "total_compute_seconds": start.elapsed().as_secs_f64()});
@@ -252,7 +212,7 @@ fn main() -> Result<()> {
         "native_version": transcribe_cpp::version(), "native_patch": transcribe_cpp::grain_patch_id(),
         "native_abi_hash": transcribe_cpp::runtime_header_hash(),
         "model_file": Path::new(&args[0]).file_name().unwrap_or_default().to_string_lossy(),
-            "policy": if v2 { "stateful-125-125-62" } else { "fluid-v3" }, "recordings": rows,
+            "policy": "stateful-125-125-62", "recordings": rows,
             "note": "Offline conformance diagnostics. Compute time excludes capture, cold loading and transport; this is not Stop latency or a parameter-tuning benchmark."
         }))?,
     )?;

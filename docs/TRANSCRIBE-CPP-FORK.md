@@ -1,6 +1,6 @@
 # Grain native fork integration
 
-Grain consumes the safe Rust wrapper and native sys package from the [maintained source fork](https://github.com/Punit-Dethe/transcribe.cpp/tree/flow/parakeet-v2-stateful). Both packages retain upstream version 0.4.0 and resolve to one immutable source revision. There is no new service, download engine, persistent Flow handle or inference algorithm in Grain.
+Grain consumes the safe Rust wrapper and native sys package from the [maintained source fork](https://github.com/Punit-Dethe/transcribe.cpp/tree/flow/parakeet-v3-stateful). Both packages retain upstream version 0.4.0 and resolve to one immutable source revision. There is no new service, download engine, persistent Flow handle or inference algorithm in Grain.
 
 ## Source and runtime contract
 
@@ -8,9 +8,9 @@ Grain consumes the safe Rust wrapper and native sys package from the [maintained
 
 The fork has upstream source layout, generated Rust FFI, and its existing safe wrapper. Cargo finds both packages inside the same Git checkout and compiles the native library through upstream CMake. Users install Grain's compiled application and bundled shared libraries/backend modules; no source checkout or runtime download is needed.
 
-Contract revision **4**, patch identity **`grain-flow-v2`**, semantic ABI **`4fb918e2c49684a4`**. Native queries use static storage and work without `.git`. Rust validates version, contract identity/revision, runtime digest and 31 size/alignment pairs before model loading or backend setup; the result is cached once. Upstream ABI IDs 0–28 are preserved; PKFW is appended as ID 29; v2 buffered TDT (PKBF) is ID 30. Missing exports fail in the OS loader; incompatible values produce an explicit compatibility error. This checks compatibility, not cryptographic authenticity.
+Contract revision **5**, patch identity **`grain-flow-tdt`**, semantic ABI **`19ba4aa29b4b28e4`**. Native queries use static storage and work without `.git`. Rust validates version, contract identity/revision, runtime digest and 31 size/alignment pairs before model loading or backend setup; the result is cached once. Upstream ABI IDs 0–28 are preserved; PKFW is appended as ID 29; v2/v3 buffered TDT (PKBF) is ID 30. Missing exports fail in the OS loader; incompatible values produce an explicit compatibility error. This checks compatibility, not cryptographic authenticity.
 
-Grain retains capture, journal, window cursor, token merging, replay, cancellation, inference lease and post-processing. v2 uses PKBF with 10s left / 10s owned / 4.96s right context and continuous TDT predictor state; v3 retains PKFW and merging. V2 appends owned IDs without merging; both detokenize the complete sequence through the native tokenizer. The fork ports only the cumulative Grain patch onto upstream 0.4.0, retaining upstream's new encoder, ggml, VAD, language ID, diarization and vocabulary APIs. Predictor/joint failure handling is already upstream. Confidence and some timestamps differ from 0.2.3; bit-exact extraction parity is not claimed for this upgrade.
+Grain retains capture, journal, window cursor, replay, cancellation, inference lease and post-processing. Both v2 and v3 use PKBF with 10s left / 10s owned / 4.96s right context and continuous TDT predictor state. Owned IDs append once without merging; both detokenize the complete sequence through the native tokenizer. The former Fluid cursor/padding/merger are removed from Grain; PKFW remains independently exposed by the native SDK. The fork ports only the cumulative Grain patch onto upstream 0.4.0, retaining upstream's new encoder, ggml, VAD, language ID, diarization and vocabulary APIs. Predictor/joint failure handling is already upstream. Confidence and some timestamps differ from 0.2.3; bit-exact extraction parity is not claimed for this upgrade.
 
 Full source SHA and artifact hashes belong to build/release provenance. The optional native short Git stamp can be `unknown` in source archives; it is not an identity gate. Do not embed a commit's own SHA in its committed source.
 
@@ -96,3 +96,11 @@ cleanup never reloads a model or restarts a dead worker.
 See [the v2 plan](FLOW-V2-STATEFUL-PLAN.md) for sources, desktop CPU/GPU evidence,
 implementation checks and limits. Published NeMo WER is evidence for the policy,
 not measured GGUF accuracy.
+
+## October 18 v3 buffered policy
+
+Native revision `eeffcc3887018015d04d20e61d3698a33d790f24` extends the same
+PKBF continuation to reviewed v3 metadata. Contract 5 distinguishes this
+capability from the former v2-only contract; no ABI structs or worker requests
+are added. V2 behavior is unchanged. See [the v3 plan](FLOW-V3-STATEFUL-PLAN.md)
+for the accuracy-first decision, primary sources, verification and limits.
