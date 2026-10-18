@@ -50,8 +50,9 @@ extension platform; it does not merge the alpha into main or publish a release.
    rebuild or repetition of the completed six-block acceptance batch is required.
 
 Main is pinned to `a1d5b288a644bb8442c1228bec562347da46d024` (0.0.9),
-70 commits ahead of the common ancestor; the extension branch has 216 commits
-of its own. Merge resolutions and automated checks pass; only the three small
+70 commits ahead of the common ancestor; the extension branch had 216 commits
+of its own. Merge `a01ede94` is pushed and has both heads as parents; the branch
+is now zero commits behind that main. Resolutions and automated checks pass; only the three small
 dev-app smoke checks above remain user acceptance for this integration. Current
 integration evidence is maintained in progress. Earlier
 alpha acceptance applies to its recorded build; it is not assumed to verify

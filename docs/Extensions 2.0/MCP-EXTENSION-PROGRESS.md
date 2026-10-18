@@ -6,6 +6,11 @@ starting at accepted checkpoint `d548c945c1b320019b4f9f2762d002bf2d3172ef`.
 This incorporates main's app/UI, recorder/VAD, stateful Flow and native 0.4.0
 work without publishing a release or pushing extensions into main. Main has
 70 commits beyond the common ancestor; the extension side has 216.
+Completed and pushed as merge commit `a01ede94648f62762785bc17403e30c2f1748a86`.
+Both original heads are its parents; main is now an ancestor with zero commits
+remaining behind the fetched/current remote main. Local edits were reapplied
+and TypeScript rechecked successfully. Only the small merged-dev-app smoke
+check below remains; the older accepted installer does not contain this merge.
 
 Used the documented normal three-way override for `merge=ours`; the default
 Handy driver would hide conflicts in Grain-owned files. Resolved four files:
@@ -44,7 +49,8 @@ the merged source still needs the small dev-app smoke check in the active plan.
 
 Unrelated local Cargo/binding bytes are backed up outside the checkout and in
 the named pre-merge stash. Their reapply retains merged/generated settings and
-provider fields in three generated-line overlaps; the removed legacy engine enum
+provider fields in three schema overlaps plus one whitespace-only overlap;
+the removed legacy engine enum
 is not reintroduced by a formatting edit. Original bytes remain available in the
 backup/stash. No installer,
 signing-key, registry publication or provider-account changes are part of this merge.
