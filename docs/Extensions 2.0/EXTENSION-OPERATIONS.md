@@ -165,7 +165,16 @@ their own YAML. No public community-readiness claim follows from these tester
 controls. Adoption required the user's separate approval and live API writes;
 committing a proposal alone does not enforce it.
 
-### Outstanding release decisions
+### Tester acceptance and outstanding public-release decisions
+
+All six stabilization tester checkpoints are complete as of 18 October 2026.
+The user explicitly confirms all three final Windows packaged-alpha checks pass:
+Developer Mode off with one GitHub/Notion card each and no custom MCP controls,
+two installed extensions per row, and a harmless Notion read before/after restart.
+This accepts run `38970462723` at source
+`ad701fd19539c400128d0b289d7c1d5a1cd3fbf8`; evidence and installer hashes are in
+[progress](MCP-EXTENSION-PROGRESS.md). Public-release requirements below are not
+implied complete by tester acceptance.
 
 - **GitHub controls:** tester reviewer/main-branch settings are adopted above.
   The actual deployment pause still needs the next approved normal publication.
@@ -177,7 +186,8 @@ committing a proposal alone does not enforce it.
 - **Alpha application exposure:** source-aware access is implemented. The dedicated
   alpha identity/debug builds allow signed-store accounts/tools without Developer
   Mode; custom MCPs require a debug build and Developer Mode. Normal tests and the
-  affected user real-app checks pass. Final packaged-alpha verification remains.
+  affected user real-app checks pass. Final Windows packaged-alpha checks are
+  explicitly user-accepted on 18 October; no repeat is required.
 - **Contributor cleanup and release scope:** identify obsolete harness procedures
   in the existing inventory, keep normal tests as the default, and run only affected
   final application/packaging checks. Advertise only verified platforms/providers.
@@ -185,6 +195,6 @@ committing a proposal alone does not enforce it.
 Public-release gates are separate from tester acceptance. The final Windows alpha
 installer is prepared through the existing Build Test workflow's alpha-only input,
 with exact run-SHA checkout and an explicit release profile. It creates an Actions
-artifact, not a GitHub Release, new version or extension publication. Only that
-packaged app's final exposure/visual check remains on the application side; no
-repeat of already accepted development-app/provider checks is required.
+artifact, not a GitHub Release, new version or extension publication. That packaged
+app's final exposure/visual/read-and-restart checks now pass by explicit user
+report. No repeat of accepted development-app/provider checks is required.

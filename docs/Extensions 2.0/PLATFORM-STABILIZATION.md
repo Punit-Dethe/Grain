@@ -1,11 +1,12 @@
 # Extension platform: publishing and release work order
 
-Updated 17 October 2026. This is the **single active forward plan** for finishing
+Updated 18 October 2026. This is the **single active forward plan** for finishing
 extension authoring, review, publication and store delivery. It replaces this
 file's earlier chronological work order and the historical E4–E8 phase counts.
 Completed evidence stays in [progress](MCP-EXTENSION-PROGRESS.md) and the focused
 audit documents; it is not a fresh backlog. Six bounded blocks are defined below:
-**Blocks 1–5 checkpoints complete; Block 6 remains**. The user explicitly approved
+**All six blocks' tester checkpoints complete.** Public-release gates remain
+separate below; this is not public production sign-off. The user explicitly approved
 [registry PR 8](https://github.com/Punit-Dethe/Grain-Extention/pull/8) at
 `a8f31008bea36d927baca76faf56820e66d1abb1` and tester ownership adoption on
 16 October. It is merged at `d0343cf18d0a2e1b65143923e460ee2a84061cb0`.
@@ -21,12 +22,12 @@ also pass Linux CI and are merged through registry PR 10. Block 4's author
 onboarding, supported authentication routes and native callback correction are
 verified below. The user accepted Block 5's grouped real-app checks on 16 October:
 one GitHub/Notion card each, Notion Installed/Update and account retention, then
-a harmless read before/after disable/re-enable. Next: **Block 6, operations and
-release acceptance**. Store exposure outside Developer Mode is now implemented
-in Block 6 with normal-test coverage and accepted affected app checks. Final
-packaged-alpha acceptance remains open; the final Windows artifact build passed
-and its downloaded installer/archive checks pass. The progress entry contains the
-exact local installer and three grouped checks. Real key custody/backup setup is explicitly
+a harmless read before/after disable/re-enable. **Block 6's final Windows packaged
+alpha is accepted on 18 October:** the user reports all three checks pass: store
+visibility/custom MCP hiding with Developer Mode off, two installed extensions per
+row, and a harmless Notion read before/after app restart. The artifact build and
+installer/archive verification also pass. No repeat user batch or build is needed.
+Real key custody/backup setup is explicitly
 deferred by the user until public release (17 October). No stable SDK release.
 
 ## Target experience
@@ -541,6 +542,15 @@ checkpoint; no fresh installer for each edit.
 
 ## Block 6 — Operations, contributor handoff and release acceptance
 
+**Tester checkpoint complete, 18 October:** all three final packaged-alpha checks
+are explicitly accepted by the user. This closes the carried store-exposure gate
+and installed-list visual acceptance for Windows. The source audits, affected
+normal tests, operator/contributor handoff and fixture recovery evidence below
+remain valid. Public key custody/restore and production GitHub controls remain
+deferred gates, not silently passed checks. Observe the actual approval pause on
+the next separately approved normal publication. Earlier Pending entries below
+describe the sequence before acceptance and are superseded where stated here.
+
 **Publishing controls prepared, 16 October:** draft registry PR 12 at
 `97e50fbdc10d041eb037ec4802db5ba5dfbaf041` pins trusted checkout to the dispatch
 SHA, restricts the job to main, and rejects drift from the reviewed base. Two
@@ -620,14 +630,15 @@ The existing Windows alpha artifact caller now checks out the run's exact commit
 and explicitly selects the release profile. This prevents a later branch push
 from changing the source of the final installer. Only the single alpha artifact
 build is intended; no GitHub Release, version bump or new provider publication.
-Final packaged-alpha acceptance remains Pending, separate from accepted dev checks.
+Final packaged-alpha acceptance is Pass by explicit user report on 18 October,
+separate from the earlier accepted dev checks.
 Artifact build [38970462723](https://github.com/Punit-Dethe/Grain/actions/runs/38970462723)
 is **Success** at exact source `ad701fd19539c400128d0b289d7c1d5a1cd3fbf8`.
 The ordinary platform matrix was skipped. Downloaded ZIP matches the GitHub API
 SHA256; archive integrity and installer identity/version pass. Logs confirm exact
-checkout and the optimized release profile. Installation and the three grouped
-packaged checks in the current progress entry remain Pending; build/download
-success does not replace actual packaged-app acceptance. No additional build is
+checkout and the optimized release profile. The user subsequently confirms all
+three grouped packaged checks pass on 18 October; acceptance comes from that
+report, not build/download success alone. No additional build is
 needed for this documentation-only update.
 
 1. Document current key custody, separate root/publisher roles, backup/recovery
@@ -690,16 +701,17 @@ separate `Punit-Dethe/Grain-Extention` repository).
 
 ## Current user/operator dependencies
 
-Blocks 1–4 need no new user account/app test. Tester ownership/tooling adoption and
-the separately approved live Notion 0.1.2 update are complete. Actual GitHub
-protection/signing-key custody changes remain reviewed operator decisions:
+All six tester checkpoints are accepted; no user account/app tests remain in this
+bounded work order. Tester ownership/tooling adoption and the separately approved
+live Notion 0.1.2 update are complete. Remaining future operator decisions are:
 
 - Two-card store view and grouped Notion update/read checks: user Pass, 16 October.
 - Tester publishing reviewer/main-branch controls are adopted. Confirm the actual
   deployment pause on the next separately approved normal publication.
 - Real key custody/backup setup is explicitly user-deferred to public release
   (17 October), alongside production bypass/source-protection decisions.
-- Accept the final alpha exposure/packaging check when that affected path is ready.
+- Final alpha exposure/packaging and installed-list visual check: user Pass,
+  18 October. No repeat is needed.
 - Decide public release identity/platform scope before the final release, not now.
 
 The deferred Linear expiry observation, advanced provider tool families, custom

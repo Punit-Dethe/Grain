@@ -1,5 +1,26 @@
 # Extension implementation: progress, changes and user testing
 
+**Final packaged-alpha user acceptance, 18 October 2026 — Pass:** the user
+explicitly answers **"All three passed"** for the downloaded alpha installer:
+
+1. With Developer Mode off, the store shows one GitHub and one Notion card and
+   custom MCP controls are absent.
+2. Installed extensions display two per row at normal desktop width.
+3. A harmless Notion read works before and after restarting the packaged app.
+
+This accepts the Windows alpha from run `38970462723`, source
+`ad701fd19539c400128d0b289d7c1d5a1cd3fbf8`, whose installer verification is below.
+The earlier packaged/visual Pending entries are historical and superseded by
+this explicit result. No new automated execution or extra provider/OS coverage
+is claimed. No repeated checks, app changes, build or publication are needed.
+
+**All six stabilization blocks' tester checkpoints are complete.** No user tests
+remain in this bounded checkpoint. Public release still needs actual key custody,
+encrypted backups/real-key recovery, production publishing protections and release
+identity/platform decisions. Confirm the environment's real approval pause at the
+next separately approved normal publication; no dummy publication is required.
+The separately documented deferred features/provider checks remain deferred.
+
 **Final Windows alpha artifact verified, 17 October 2026:**
 [Build Test run 38970462723](https://github.com/Punit-Dethe/Grain/actions/runs/38970462723)
 is **Success**, pinned to source
@@ -25,7 +46,7 @@ The adjacent run directory contains the original ZIP and
 `artifact-verification.json` with source/run/artifact IDs and hashes. No installer
 was launched and the user's running app/profile was not changed.
 
-**Only the packaged-app acceptance is Pending:** quit the old Extensions Alpha
+**Packaged-app procedure (accepted above on 18 October):** quit the old Extensions Alpha
 from its tray, run this installer, then open Grain Extensions Alpha (not the dev
 app). With Developer Mode off, check these together:
 
@@ -35,9 +56,9 @@ app). With Developer Mode off, check these together:
 3. Ask the Agent for a harmless read through an already configured store extension;
    quit/reopen the alpha and repeat. Sign in normally only if the account requires it.
 
-Do not repeat the full development-app/provider batch or perform destructive
-actions. Record actual results before marking Block 6's packaged checkpoint
-complete. Real-key custody and production protections remain deferred
+These checks now pass by explicit user report; do not repeat the full
+development-app/provider batch or perform destructive actions. Block 6's tester
+checkpoint is complete. Real-key custody and production protections remain deferred
 public-release work. No application/harness code or new tests were added for
 this download/documentation checkpoint; unrelated Cargo/binding bytes are unchanged.
 
