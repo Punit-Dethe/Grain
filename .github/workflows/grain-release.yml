@@ -217,21 +217,18 @@ jobs:
           releaseDraft: ${{ github.event_name != 'workflow_dispatch' || inputs.draft }}
           prerelease: false
           releaseBody: |
-            # Grain v0.0.8
+            # Grain v0.0.9
 
-            This Windows release moves the recording pill to WebView, simplifies dictation settings and provider routing, and improves everyday feedback.
+            This Windows release improves Flow accuracy, refreshes the interface, and brings audio capture and native transcription closer to Handy.
 
-            - Replaced the small native Rust recording pill with a WebView pill and migrated its interactions. Dot Matrix was retired, leaving one pill style.
-            - Fixed the model indicator, restored Flow audio feedback, and allowed streaming ASR without a live preview.
-            - Added options to hide the pill's close button and app icon, removed hover-only interactions, and gave Agent a gradient variant of the same pill.
-            - Retired the prompt switcher. Prompt Record now uses a shortcut with clearer recording feedback.
-            - Fixed the Alt+E shortcut issue and unified dictation shortcut routing.
-            - Updated Home, refined the sidebar, and merged Capture and Speech-to-Text settings.
-            - Corrected light-theme text contrast. The production interface uses the light theme while dark-theme work remains in development.
-            - Stopped automatically collecting OCR, text-field contents, and unique words for Agent; screen capture remains available when needed.
-            - Removed cloud STT and simplified LLM selection to ordered fallback.
-            - Smoothed copied-to-clipboard feedback by waiting until the recording pill clears.
-            - Mapped and reduced Handy divergence around the pill, model, and settings integration.
+            - Simplified the Start Here section on Home.
+            - Improved dark theme so it is ready for everyday use.
+            - Increased Flow accuracy for supported Parakeet v2 and v3 TDT models while keeping Flow fast.
+            - Aligned audio input, VAD behavior, and the Silero library with Handy.
+            - Incorporated 36 commits from the forked transcribe.cpp library, including Flow and chunking improvements.
+            - Synced with Handy through October 17, 2026, and mapped the remaining divergence.
+
+            Coming next: v0.0.10 is planned to include a standard Windows release and a separate alpha with a public extension platform and initial integrations for GitHub, Notion, Google Calendar, and Teams.
           # NSIS installer only (matches tauri.conf.json windows.nsis).
           args: "--bundles nsis"
 

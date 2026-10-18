@@ -1,6 +1,6 @@
 [package]
 name = "handy"
-version = "0.0.8"
+version = "0.0.9"
 description = "Grain"
 authors = ["cjpais"]
 edition = "2021"
