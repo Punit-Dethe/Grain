@@ -11,17 +11,17 @@ import {
 } from "./wave";
 
 describe("Grain's retained waveform", () => {
-  it("matches trajectories evaluated by the original Rust WaveField", () => {
-    // Captured from main's native renderer with 25 bars, 0.2 input for 30
-    // frames, then silence. Covers attack, outward travel and delayed release.
+  it("retains the original motion with a linear normalized input", () => {
+    // Original Rust trajectories rescaled from the retired sensitivity curve
+    // to 0.2 input. Attack, outward travel, spring and release are unchanged.
     const reference = new Map([
-      [1, [0.007821477, 0.01943163, 0.01943163]],
-      [5, [0.05004646, 0.12433513, 0.21258679]],
-      [12, [0.0803065, 0.29935482, 0.42641297]],
-      [30, [0.18718152, 0.47272304, 0.4737629]],
-      [45, [0.18520658, 0.30069998, 0.15229982]],
-      [60, [0.0501257, 0.057968434, 0.02651876]],
-      [90, [0.0014486954, 0.0016413801, 0.0007468766]],
+      [1, [0.003300566, 0.008199905, 0.008199905]],
+      [5, [0.021118981, 0.052467871, 0.089708968]],
+      [12, [0.033888339, 0.126323993, 0.179940944]],
+      [30, [0.078988262, 0.199483215, 0.199922023]],
+      [45, [0.078154862, 0.126891633, 0.064268621]],
+      [60, [0.021152419, 0.024461955, 0.011190585]],
+      [90, [0.000611331, 0.000692642, 0.000315173]],
     ]);
     // The compact 13-bar slot has the same sampled positions at 0, 3, 6.
     for (const count of [13, 25]) {
@@ -38,6 +38,23 @@ describe("Grain's retained waveform", () => {
       }
       field.reset();
       expect([...field.bars].every((value) => value === 0)).toBe(true);
+    }
+  });
+  it("preserves Handy's normalized scale without gating quiet levels or boosting speech", () => {
+    for (const amplitude of [0, 0.001, 0.006, 0.012, 0.2, 0.5, 1]) {
+      const field = new WaveField();
+      const full = new WaveField();
+      // A flat normalized spectrum must reach the motion unchanged, including
+      // values below Grain's old 0.012 cutoff. Repeat through attack/release.
+      const input = audioAmplitude(Array(16).fill(amplitude));
+      for (let frame = 1; frame <= 90; frame++) {
+        const active = frame <= 30;
+        field.advance(1 / 60, active ? input : 0, 13);
+        full.advance(1 / 60, active ? 1 : 0, 13);
+        for (let i = 0; i < 13; i++) {
+          expect(field.bars[i]).toBeCloseTo(full.bars[i] * amplitude, 10);
+        }
+      }
     }
   });
   it("retains native compact bar spacing and visible round-cap heights", () => {
