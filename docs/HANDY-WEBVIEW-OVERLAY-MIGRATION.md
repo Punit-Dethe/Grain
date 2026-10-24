@@ -116,6 +116,11 @@ The existing native code is the primary reference: near-black `#1E1E20`, alpha 2
 
 Preserve the existing waveform's presentation math from `crates/grain-pill/src/lib.rs`: finite/clamped RMS of the incoming microphone buckets, noise floor `0.012`, amplitude curve exponent `0.45`, attack/release `0.028s`/`0.14s`, center-to-edge travel `0.22s`, critically damped spring rate `26`, edge taper, bar spacing and minimum height. Its history is only 24 scalar levels at 60 Hz and the maximum is 48 bars. Port this bounded state into persistent frontend refs/arrays and update the existing bar elements from one visible-only animation frame loop. Reset between sessions and cancel the loop on hide/unmount. Do not add Handy's frontend exponential filter in front of this retained response: that would change the reaction the user explicitly likes. The backend still supplies Handy's normalized buckets and targeted, throttled event delivery; there is no new audio capture or DSP service.
 
+2026-10-24 update: the user supersedes the extra `0.012` floor and `0.45` amplitude
+curve above. The current renderer consumes Handy's normalized scale without
+that second sensitivity adjustment, while retaining RMS aggregation and all
+motion/geometry. See [the current contract](../Upstream/OVERLAY-MAINTENANCE.md#waveform-input-sensitivity--2026-10-24).
+
 Existing window bounds (Handy: compact 256×50, streaming 400×120) do not contain Grain's wider live card unchanged. Use a small geometry hook with one source of truth for CSS/native bounds; preserve upstream positioning math. Source tokens and the supplied Grain images define colors for each element: the existing `ACCENT` constant does not justify recoloring the pale waveform visible in these references.
 
 Retain `pill_icon`'s foreground/site detection, cache, nonblocking lookup and stale-resolution guards. Its current payload is premultiplied RGBA; a WebView image needs straight-alpha PNG. Reuse its existing `png_data_url` conversion and encode only on icon changes. Keep the fallback dot and clear stale icons between sessions. Stop `surface_watch` and pending resolution on stop/cancel.

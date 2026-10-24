@@ -1,5 +1,7 @@
 // Grain WaveField, translated from the retired Rust renderer. The input remains
-// Handy's normalized FFT buckets; this is bounded presentation state only.
+// Handy's normalized FFT buckets; their sensitivity is not remapped here.
+// RMS combines the buckets for Grain's single traveling wave, rather than
+// changing its visual layout to Handy's separate frequency bars.
 const MAX_BARS = 48;
 const HISTORY = 24;
 const HZ = 60;
@@ -60,10 +62,9 @@ export class WaveField {
 
   advance(seconds: number, amplitude: number, count: number) {
     const dt = Math.max(0, Math.min(0.1, seconds));
-    const target = Math.pow(
-      Math.max(0, Math.min(1, amplitude) - 0.012) / (1 - 0.012),
-      0.45,
-    );
+    // Handy already applies the dB floor, gain and response curve before
+    // emitting mic-level. Keep that normalized scale: no second gate/boost.
+    const target = Math.max(0, Math.min(1, amplitude));
     const tau = target > this.level ? 0.028 : 0.14;
     this.level += (target - this.level) * (1 - Math.exp(-dt / tau));
     this.accumulated += dt * HZ;

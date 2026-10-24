@@ -16,7 +16,7 @@ reference, implementation history and build evidence are in the
 | First real sample, cancellation during arming, feedback and mute                                                                                                          | Shared recorder/audio-manager `RecordingReadiness`; `src-tauri/src/grain_capture.rs` adapts callers                            | Check Batch, Flow, Native ASR, Agent, extensions, action sessions and onboarding. Device-open success is not sample readiness. Preserve cancellation after every blocking stage. |
 | Bounded PCM/journal callbacks and resampler tail                                                                                                                          | Shared marked recorder/audio-manager hooks; `grain_audio_journal.rs`, `grain_actions.rs`                                       | Preserve journal ownership, overflow failure and tail delivery. The unrelated ring-buffer and Earshot ports remain deferred.                                                     |
 | Stream text and working phases                                                                                                                                            | Shared transcription manager emits `StreamTextEvent`/`StreamPhaseEvent`; owned overlay adapts public events/snapshot hydration | Committed prefix plus replaceable tentative tail; retain finalizing text, reject stale sessions, and keep Compact/None from opening.                                             |
-| UI layout, caption expansion/scrolling, cleanup, waveform filter, colors and Agent tint                                                                                   | `src/app/overlay/RecordingOverlay.tsx`, `wave.ts`, `overlay.css`                                                               | Grain-owned. Review upstream UI commits as behavioral problem reports and adapt relevant fixes explicitly; never merge/restore the upstream frontend file.                       |
+| UI layout, caption expansion/scrolling, cleanup, waveform motion, colors and Agent tint                                                                                   | `src/app/overlay/RecordingOverlay.tsx`, `wave.ts`, `overlay.css`                                                               | Grain-owned. Review upstream UI commits as behavioral problem reports and adapt relevant fixes explicitly; never merge/restore the upstream frontend file.                       |
 | App/site identity                                                                                                                                                         | `pill_icon.rs`, `surface_watch.rs`                                                                                             | Keep existing Rust detection and per-session cleanup. No foreground-app detection in the WebView.                                                                                |
 | Preferences                                                                                                                                                               | `grain-core` settings/context, owned commands, settings store/components                                                       | Persist in Rust; frontend commands write, events/snapshot read. No frontend-only preference or new parallel settings system.                                                     |
 | Build/event boundary                                                                                                                                                      | `lib.rs`, `grain_events.rs`, generated `src/app/bindings.ts`, `recording-overlay.html`, `vite.config.ts`                       | Compile the shared lifecycle and owned adapters separately. Export bindings after command/event/type changes. Keep the owned entry in both the native builders and Vite.         |
@@ -50,7 +50,9 @@ shortcut reconciliation. AI can borrow Standard or Streaming.
 Preserve the always-dark `#1F1F21` surface and `#474749` border, neutral gray
 accents, foreground icon, and original Grain waveform response. Waveform is the
 only renderer: 13 round-capped 2px bars in a 51px slot, 1.7px gaps, original
-RMS/noise-floor/attack/release/travel/spring math. Expanded text uses the retained
+RMS aggregation and attack/release/travel/spring motion. Audio sensitivity comes
+from Handy's shared visualizer: no additional frontend quiet-level cutoff or
+power/gain curve. Expanded text uses the retained
 Handy-style transitions and scrolling. The compact close-button preference
 removes only the X and its space; working labels remain, and expanded live text
 keeps the X.
@@ -106,6 +108,30 @@ preference correction on 2026-10-04. Cross-platform acceptance and hardware/RAM
 measurements remain separate. Keep the user's running process intact if it
 locks runtime DLLs; use the existing test-executable workaround or restart with
 the user. Never create a browser-only visual replica.
+
+## Waveform input sensitivity — 2026-10-24
+
+User decision: use Handy's audio sensitivity while retaining Grain's waveform
+appearance and motion. Compared the active pipeline with fetched Handy
+`5a9451e7`: `audio/visualizer.rs` matches verbatim; the sink uses the same 512-sample
+window, 16 buckets and 400–4,000 Hz range, feeding real samples before VAD. The
+shared overlay sends those levels unchanged with Handy's existing throttle.
+No frequency filter, capture processing or native visualizer change is needed.
+
+`wave.ts` no longer subtracts a second 0.012 floor or applies the 0.45 power
+boost to that already-normalized input. RMS still combines buckets for Grain's
+single center-outward wave; attack/release, travel, spring, taper and bar geometry
+are retained. Handy's separate frequency-bar renderer and its frontend temporal
+filter are not substituted for the user's retained animation. Thus source
+sensitivity is shared; the two renderers do not claim identical bar trajectories.
+This supersedes the earlier migration's instruction to retain the extra floor
+and amplitude curve. Regression checks cover quiet levels below the retired
+cutoff, linear response, original motion timing and geometry.
+
+Verification: all 120 frontend tests, TypeScript/Vite production build, ESLint,
+changed-file formatting, settings UI parity, upstream preflight and its 28
+tooling tests pass. No Rust, event contract, capture or waveform markup/CSS
+changes. Real-microphone response approval remains with the user.
 
 ## Measured divergence change
 
