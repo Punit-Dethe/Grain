@@ -1934,6 +1934,7 @@ pub(crate) async fn list_tools_until(
     provider_id: &str,
     deadline: tokio::time::Instant,
 ) -> Result<McpToolSet, String> {
+    let started = std::time::Instant::now();
     let owner = runtime_provider(app, provider_id)?;
     let spec = owner.spec();
     let item = &spec;
@@ -1942,6 +1943,7 @@ pub(crate) async fn list_tools_until(
     let _operation = tokio::time::timeout_at(deadline, ticket.acquire())
         .await
         .map_err(|_| "MCP operation queue timed out")??;
+    let queued_ms = started.elapsed().as_millis();
     if !owner.enabled(app) {
         return Err(format!("{} MCP is disabled in Grain Settings", item.name));
     }
@@ -1957,8 +1959,22 @@ pub(crate) async fn list_tools_until(
         ))
         .await?
         .map_err(|failure| failure.message)?;
+    let connected_ms = started.elapsed().as_millis();
     let result = ticket.run(discover_on_service(&service, deadline)).await;
+    let discovered_ms = started.elapsed().as_millis();
     close_service(service).await;
+    trace_mcp_timing(
+        provider_id,
+        "list_tools",
+        serde_json::json!({
+            "total_ms": started.elapsed().as_millis(),
+            "queue_ms": queued_ms,
+            "connect_ms": connected_ms - queued_ms,
+            "discover_ms": discovered_ms - connected_ms,
+            "close_ms": started.elapsed().as_millis() - discovered_ms,
+            "tools": match &result { Ok(Ok(tools)) => Some(tools.len()), _ => None },
+        }),
+    );
     let tools = result??;
     if !owner.enabled(app) {
         return Err("The MCP extension was disabled during discovery.".into());
@@ -2018,6 +2034,7 @@ async fn open_service(
         .await;
     }
     ticket.observe_recovery(None);
+    let auth_started = std::time::Instant::now();
     let manager = tokio::time::timeout_at(
         deadline,
         authorization_manager(http.clone(), item, app, ticket, operation),
@@ -2028,6 +2045,7 @@ async fn open_service(
         ticket.observe_recovery(Some(recovery));
         recovery.failure()
     })?;
+    let auth_ms = auth_started.elapsed().as_millis();
     let client = bounded_http::BoundedClient::guarded(
         http,
         provider_destination_policy(item).map_err(|_| Recovery::Configuration.failure())?,
@@ -2035,7 +2053,8 @@ async fn open_service(
     .with_authenticated_cleanup();
     let legacy_probe = client.legacy_probe();
     let cleanup = client.clone();
-    serve_http(
+    let handshake_started = std::time::Instant::now();
+    let served = serve_http(
         AuthClient::new(client, manager),
         transport_config(
             provider_endpoint(item)
@@ -2048,7 +2067,31 @@ async fn open_service(
         Some(cleanup),
         Some(ticket.clone()),
     )
-    .await
+    .await;
+    trace_mcp_timing(
+        item.id,
+        "open",
+        serde_json::json!({
+            "oauth_setup_ms": auth_ms,
+            "handshake_ms": handshake_started.elapsed().as_millis(),
+            "ok": served.is_ok(),
+        }),
+    );
+    served
+}
+
+/// MCP phase latency. Public provider/tool identities and durations only:
+/// never arguments, results, endpoints or credentials.
+fn trace_mcp_timing(provider_id: &str, operation: &str, timings: serde_json::Value) {
+    log::info!(
+        "[GRAIN] agent-tool-trace {}",
+        serde_json::json!({
+            "phase": "mcp-timing",
+            "provider": provider_id,
+            "operation": operation,
+            "timings": timings,
+        })
+    );
 }
 
 async fn serve_http<C: rmcp::transport::streamable_http_client::StreamableHttpClient + Sync>(
@@ -2237,6 +2280,7 @@ pub(crate) async fn call_tool(
     arguments: &serde_json::Value,
     expected_digest: &str,
 ) -> Result<McpCallOutput, ExecutionFailure> {
+    let started = std::time::Instant::now();
     let deadline = tokio::time::Instant::now() + OPERATION_TIMEOUT;
     let owner = runtime_provider(app, provider_id)
         .map_err(|_| before_dispatch(FailureClass::NotFound, "Unknown MCP provider."))?;
@@ -2269,6 +2313,7 @@ pub(crate) async fn call_tool(
     })?;
     let http = provider_http(app, item)
         .map_err(|_| before_dispatch(FailureClass::Internal, "MCP HTTP client unavailable."))?;
+    let queued_ms = started.elapsed().as_millis();
     let service = ticket
         .run(open_service(
             http,
@@ -2280,6 +2325,7 @@ pub(crate) async fn call_tool(
         ))
         .await
         .map_err(|message| before_dispatch(FailureClass::Cancelled, message))??;
+    let connected_ms = started.elapsed().as_millis();
     let result = ticket
         .run(call_on_service(
             &service,
@@ -2292,7 +2338,21 @@ pub(crate) async fn call_tool(
         ))
         .await
         .unwrap_or_else(|message| Err(session_cancelled(&service, message)));
+    let called_ms = started.elapsed().as_millis();
     close_service(service).await;
+    trace_mcp_timing(
+        provider_id,
+        "call_tool",
+        serde_json::json!({
+            "tool": tool_name,
+            "total_ms": started.elapsed().as_millis(),
+            "queue_ms": queued_ms,
+            "connect_ms": connected_ms - queued_ms,
+            "revalidate_and_call_ms": called_ms - connected_ms,
+            "close_ms": started.elapsed().as_millis() - called_ms,
+            "ok": result.is_ok(),
+        }),
+    );
     result
 }
 
@@ -2320,9 +2380,11 @@ async fn call_on_service(
     deadline: tokio::time::Instant,
     is_enabled: impl Fn() -> bool,
 ) -> Result<McpCallOutput, ExecutionFailure> {
+    let revalidate_started = std::time::Instant::now();
     let tools = discover_on_service(service, deadline)
         .await
         .map_err(|message| before_dispatch(FailureClass::Network, message))?;
+    let revalidate_ms = revalidate_started.elapsed().as_millis();
     let current_digest = tool_set_digest(item, &tools).map_err(|_| {
         before_dispatch(
             FailureClass::Internal,
@@ -2368,21 +2430,32 @@ async fn call_on_service(
     service
         .dispatched
         .store(true, std::sync::atomic::Ordering::Release);
+    let call_started = std::time::Instant::now();
     let response = tokio::time::timeout_at(
         deadline,
         service.call_tool_once(
             CallToolRequestParams::new(tool_name.to_string()).with_arguments(arguments),
         ),
     )
-    .await
-    .map_err(|_| {
-        ExecutionFailure::new(
-            DispatchPhase::Dispatched,
-            FailureClass::Network,
-            "The tool response deadline expired.",
-        )
-    })?
-    .map_err(service_failure)?;
+    .await;
+    trace_mcp_timing(
+        item.id,
+        "tools_call",
+        serde_json::json!({
+            "tool": tool_name,
+            "revalidate_ms": revalidate_ms,
+            "call_ms": call_started.elapsed().as_millis(),
+        }),
+    );
+    let response = response
+        .map_err(|_| {
+            ExecutionFailure::new(
+                DispatchPhase::Dispatched,
+                FailureClass::Network,
+                "The tool response deadline expired.",
+            )
+        })?
+        .map_err(service_failure)?;
     match response {
         CallToolResponse::Complete(result) => bounded_call_output(result).map_err(|_| {
             ExecutionFailure::new(
