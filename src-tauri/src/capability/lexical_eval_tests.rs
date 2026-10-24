@@ -87,7 +87,7 @@ fn exported_catalogue_required_sets_under_schema_budget() {
         candidates[0].0.canonical_id.clone()
     };
     let mut rows = Vec::new();
-    for k in [4, 6, 8] {
+    for k in [4, 6, 8, SHORTLIST_SIZE] {
         for case in &cases {
             let started = Instant::now();
             let mut session = empty_session(&directory, &[]);

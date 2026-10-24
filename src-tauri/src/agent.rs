@@ -110,6 +110,32 @@ const AGENT_SYSTEM_PROMPT: &str = "You are Grain's built-in assistant. The user 
 
 const RUN_CANCELLED: &str = "Agent run cancelled. A tool already executing may have had effects; do not repeat automatically.";
 
+/// Marks a reply written in the same message as the request's last tool calls.
+const FINAL_REPLY_MARKER: &str = "[final]";
+
+/// Tool-path guidance. Every model round costs seconds, so the model is asked
+/// not to spend rounds re-checking successful results, and may finish in the
+/// same message as its last calls. Grain shows such a reply only when every
+/// call in that message succeeded (see `same_round_final_reply`).
+const AGENT_TOOL_GUIDANCE: &str = "Tool-use rules: A tool result that reports success is authoritative; do not search, fetch or re-read an object to verify a change you just made unless the user asked you to check it. Call independent tools together in one message. When the tool calls in a message are the last steps the request needs and your reply does not depend on what they return, also write the final reply to the user in that same message, starting with [final]. Grain shows that reply only if every call succeeds; otherwise you receive the results and continue. Do not invent identifiers, numbers or links that only a result would reveal. If more steps may remain, leave the message text empty.";
+
+/// Strip the same-round marker. Returns the reply only when the marker leads
+/// the text and something follows it.
+fn same_round_final_reply(content: &str) -> Option<String> {
+    let trimmed = content.trim_start();
+    let head = trimmed.get(..FINAL_REPLY_MARKER.len())?;
+    if !head.eq_ignore_ascii_case(FINAL_REPLY_MARKER) {
+        return None;
+    }
+    let reply = trimmed[FINAL_REPLY_MARKER.len()..].trim();
+    (!reply.is_empty()).then(|| reply.to_string())
+}
+
+/// A normal final answer may still carry the marker; never show it.
+fn strip_final_marker(content: String) -> String {
+    same_round_final_reply(&content).unwrap_or(content)
+}
+
 #[derive(Default)]
 struct AgentRunState {
     generation: u64,
@@ -667,10 +693,9 @@ fn start_dictation(app: &AppHandle) -> Option<crate::managers::audio::RecordingR
     }
     let tm = app.state::<Arc<TranscriptionManager>>();
     tm.initiate_model_load();
-    if let Err(error) = crate::grain_capture::require_transcribable_model(
-        app,
-        &get_settings(app).selected_model,
-    ) {
+    if let Err(error) =
+        crate::grain_capture::require_transcribable_model(app, &get_settings(app).selected_model)
+    {
         warn!("[GRAIN] agent: not starting dictation: {error}");
         return None;
     }
@@ -3162,6 +3187,8 @@ async fn run_with_tools(
             directory.push('\n');
             directory.push_str(&hints);
         }
+        directory.push('\n');
+        directory.push_str(AGENT_TOOL_GUIDANCE);
         let position = entries
             .iter()
             .take_while(|entry| matches!(entry, ChatEntry::System(_)))
@@ -3428,6 +3455,87 @@ mod tool_continuation_tests {
                     let reply = model.pop_front().unwrap(); Box::pin(async move { Ok(reply) })
                 }, |call, _, _| { assert_eq!(call.id, "verify"); Box::pin(async {Some(crate::capability::ToolResult::Text("Read current state".into()))}) }, |_| {})).await.unwrap().unwrap();
         }
+    }
+
+    async fn run_same_round(
+        outcome: fn() -> Option<crate::capability::ToolResult>,
+    ) -> (AgentReply, usize) {
+        let control = AgentRunControl::default();
+        let (run, registration) = control.begin().unwrap();
+        let rounds = Arc::new(AtomicU64::new(0));
+        let counted = rounds.clone();
+        let reply = run
+            .wait(
+                registration,
+                drive_tool_turn_with(
+                    turn(),
+                    &run,
+                    move |_, _| {
+                        let round = counted.fetch_add(1, Ordering::SeqCst);
+                        let reply = if round == 0 {
+                            LlmToolReply {
+                                content: "[final] Added the line to your page.".into(),
+                                tool_calls: vec![call("write-1", "write")],
+                            }
+                        } else {
+                            LlmToolReply {
+                                content: "[final] Recovered after the result.".into(),
+                                tool_calls: vec![],
+                            }
+                        };
+                        Box::pin(async move { Ok(reply) })
+                    },
+                    move |_, _, _| Box::pin(async move { outcome() }),
+                    |_| {},
+                ),
+            )
+            .await
+            .unwrap()
+            .unwrap();
+        (reply, rounds.load(Ordering::SeqCst) as usize)
+    }
+
+    #[tokio::test]
+    async fn same_round_reply_finishes_only_when_every_call_succeeds() {
+        let (reply, rounds) =
+            run_same_round(|| Some(crate::capability::ToolResult::Completed(success()))).await;
+        assert_eq!(rounds, 1);
+        assert_eq!(reply.text, "Added the line to your page.");
+
+        for failed in [
+            (|| {
+                Some(crate::capability::ToolResult::Completed(
+                    ActionOutcome::UnknownOutcome {
+                        message: "Provider may have written".into(),
+                    },
+                ))
+            }) as fn() -> Option<crate::capability::ToolResult>,
+            || {
+                Some(crate::capability::ToolResult::Text(
+                    "search feedback".into(),
+                ))
+            },
+            || None,
+        ] {
+            let (reply, rounds) = run_same_round(failed).await;
+            assert_eq!(rounds, 2, "a non-success must return results to the model");
+            assert_eq!(reply.text, "Recovered after the result.");
+        }
+    }
+
+    #[test]
+    fn final_marker_is_recognised_only_at_the_start_and_never_shown() {
+        assert_eq!(
+            same_round_final_reply("  [FINAL]  Done.").as_deref(),
+            Some("Done.")
+        );
+        assert_eq!(same_round_final_reply("[final]   "), None);
+        assert_eq!(same_round_final_reply("Done. [final]"), None);
+        assert_eq!(same_round_final_reply(""), None);
+        assert_eq!(strip_final_marker("[final] Done.".into()), "Done.");
+        assert_eq!(strip_final_marker("Plain answer".into()), "Plain answer");
+        assert!(AGENT_TOOL_GUIDANCE.contains("authoritative"));
+        assert!(AGENT_TOOL_GUIDANCE.contains(FINAL_REPLY_MARKER));
     }
 
     #[test]
@@ -3743,7 +3851,7 @@ async fn drive_tool_turn_with<'a>(
                     "task_elapsed_ms": turn.started.elapsed().as_millis(),
                 })
             );
-            return Ok(AgentReply::plain(reply.content));
+            return Ok(AgentReply::plain(strip_final_marker(reply.content)));
         }
         if exhausted {
             let notice = "Grain reached this request's tool limit. The model still requested tools despite being asked to finish; those extra calls were not executed. Completed actions must not be repeated automatically.";
@@ -3764,13 +3872,19 @@ async fn drive_tool_turn_with<'a>(
         if let Err(error) = turn.admit_frame(&reply.tool_calls) {
             return turn.failure(error);
         }
+        let same_round_reply = same_round_final_reply(&reply.content);
+        // Every call in this frame must be an executed, confirmed success for a
+        // same-round reply to stand. Feedback, refusals and failures continue.
+        let mut all_succeeded = true;
         let mut withheld = None;
         for call in &reply.tool_calls {
             if withheld.is_some() {
+                all_succeeded = false;
                 turn.result(call.id.clone(), "Not executed because another call is awaiting approval. Ask for remaining work only after its result.".into());
                 continue;
             }
             if turn.calls >= MAX_AGENT_TOOL_CALLS {
+                all_succeeded = false;
                 turn.result(
                     call.id.clone(),
                     "Not executed because the task's tool-call budget is exhausted.".into(),
@@ -3795,6 +3909,7 @@ async fn drive_tool_turn_with<'a>(
                 })
             );
             if turn.blocked_tools.contains(&call.name) {
+                all_succeeded = false;
                 info!(
                     "[GRAIN] agent-tool-trace {}",
                     serde_json::json!({
@@ -3837,6 +3952,14 @@ async fn drive_tool_turn_with<'a>(
                     "task_elapsed_ms": turn.started.elapsed().as_millis(),
                 })
             );
+            if !matches!(
+                &dispatched,
+                Some(crate::capability::ToolResult::Completed(
+                    grain_core::execution::ActionOutcome::Succeeded(_)
+                ))
+            ) {
+                all_succeeded = false;
+            }
             match dispatched {
                 Some(crate::capability::ToolResult::Completed(outcome)) => {
                     turn.completed(call, outcome);
@@ -3871,6 +3994,19 @@ async fn drive_tool_turn_with<'a>(
                 text,
                 confirm_action: Some(confirm),
             });
+        }
+        if let Some(final_reply) = same_round_reply.filter(|_| all_succeeded) {
+            info!(
+                "[GRAIN] agent-tool-trace {}",
+                serde_json::json!({
+                    "phase": "finished", "task": turn.trace_id,
+                    "rounds": turn.hops, "calls": turn.calls,
+                    "duplicate_calls": turn.call_occurrences.values().map(|count| count - 1).sum::<usize>(),
+                    "limit_reached": false, "same_round_reply": true,
+                    "task_elapsed_ms": turn.started.elapsed().as_millis(),
+                })
+            );
+            return Ok(AgentReply::plain(final_reply));
         }
     }
 }

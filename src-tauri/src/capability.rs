@@ -81,9 +81,12 @@ struct Catalog {
     entries: Vec<(ActionInput, SessionAction)>,
 }
 
-const SHORTLIST_SIZE: usize = 6;
-// Keep the initial model payload small; later recovery has a separate ceiling.
-const INITIAL_SCHEMA_BYTES: usize = 24 * 1024;
+// The provider caches the stable prompt prefix, so a larger first-round
+// shortlist costs little time; a missing tool costs a whole model round.
+const SHORTLIST_SIZE: usize = 12;
+const INITIAL_SCHEMA_BYTES: usize = 48 * 1024;
+/// Learned frequently used tools per extension placed ahead of lexical hits.
+const HOT_PER_EXTENSION: usize = 4;
 const EAGER_SCHEMA_BYTES: usize = 32 * 1024;
 const MAX_DEFERRED_HINT_BYTES: usize = 8 * 1024;
 const EAGER_TOOL_COUNT: usize = 8;
@@ -177,16 +180,21 @@ pub async fn dispatch(
         Ok(None) => return None,
         Err(message) => return Some(ToolResult::Text(message.to_string())),
     };
-    Some(
-        execute_action(
-            app,
-            session,
-            &loaded.canonical_id,
-            &loaded.manifest_digest,
-            &call.arguments,
-        )
-        .await,
+    let result = execute_action(
+        app,
+        session,
+        &loaded.canonical_id,
+        &loaded.manifest_digest,
+        &call.arguments,
     )
+    .await;
+    if matches!(
+        &result,
+        ToolResult::Completed(grain_core::execution::ActionOutcome::Succeeded(_))
+    ) {
+        usage::record_success(app, &loaded.canonical_id);
+    }
+    Some(result)
 }
 
 fn resolve_offered_action(
@@ -338,6 +346,13 @@ pub async fn prepare(
             )
             <= EAGER_SCHEMA_BYTES;
     let ids = ranked_ids(session, queries, None, eager);
+    let hot = if eager {
+        Vec::new()
+    } else {
+        learned_hot_ids(app, session).await
+    };
+    let hot_count = hot.len();
+    let ids = merge_hot_first(hot, ids, SHORTLIST_SIZE / 2);
     let report = publish_ranked_with_budget(
         session,
         ids,
@@ -358,10 +373,37 @@ pub async fn prepare(
             "phase": "prepared", "task": trace_id, "catalog_ms": catalog_ms,
             "elapsed_ms": started.elapsed().as_millis(), "catalogs": session.catalogs.len(),
             "unavailable_catalogs": unavailable, "eager": eager, "selection": report,
+            "learned_candidates": hot_count,
             "offered_count": specs(session).len(),
             "schema_bytes": specs(session).iter().map(schema_bytes).sum::<usize>()
         })
     );
+}
+
+/// Learned frequently used tools of the catalogues prepared for this task.
+/// The harness keeps deterministic lexical selection across its scenarios.
+async fn learned_hot_ids(app: &AppHandle, session: &CapabilitySession) -> Vec<String> {
+    if cfg!(feature = "agent-harness") {
+        return Vec::new();
+    }
+    let usage = usage::load(app).await;
+    session
+        .catalogs
+        .keys()
+        .flat_map(|extension_id| usage.hot(extension_id, HOT_PER_EXTENSION))
+        .filter(|id| !session.actions.contains_key(id))
+        .collect()
+}
+
+/// Learned tools go first (at most `hot_cap`), then lexical ranking, deduped.
+/// Publication still resolves every id against the current catalogue.
+fn merge_hot_first(hot: Vec<String>, ranked: Vec<String>, hot_cap: usize) -> Vec<String> {
+    let mut seen = HashSet::new();
+    hot.into_iter()
+        .take(hot_cap)
+        .chain(ranked)
+        .filter(|id| seen.insert(id.clone()))
+        .collect()
 }
 
 fn ranked_ids(
@@ -1273,10 +1315,14 @@ mod tests {
                 digest: "digest".into(),
                 entries: (0..5)
                     .map(|n| {
+                        // Three fit the initial budget; tool_3 fits only the
+                        // remaining recovery room; tool_4 fits nowhere.
                         let padding = match n {
-                            3 => 20_000,
+                            3 => {
+                                (capability_agent::MAX_SCHEMA_BYTES - INITIAL_SCHEMA_BYTES) * 3 / 4
+                            }
                             4 => capability_agent::MAX_SCHEMA_BYTES,
-                            _ => 7_000,
+                            _ => INITIAL_SCHEMA_BYTES * 7 / 24,
                         };
                         let (mut action, selected) = candidate(&format!("tool_{n}"), padding);
                         action.aliases = vec![format!("tool_{n}")];
@@ -1497,3 +1543,36 @@ mod tests {
 
 #[cfg(test)]
 mod lexical_eval_tests;
+mod usage;
+
+#[cfg(test)]
+mod shortlist_tests {
+    use super::*;
+
+    #[test]
+    fn learned_tools_lead_are_capped_and_deduplicated() {
+        let ids = |items: &[&str]| items.iter().map(|id| id.to_string()).collect::<Vec<_>>();
+        assert_eq!(
+            merge_hot_first(
+                ids(&["e:update", "e:fetch", "e:search", "e:extra"]),
+                ids(&["e:search", "e:create", "e:update"]),
+                3,
+            ),
+            ids(&["e:update", "e:fetch", "e:search", "e:create"])
+        );
+        assert_eq!(merge_hot_first(Vec::new(), ids(&["e:a"]), 6), ids(&["e:a"]));
+    }
+
+    #[test]
+    fn learned_ids_absent_from_the_catalogue_publish_nothing() {
+        let mut session = tests::session();
+        let report = publish_ranked_with_budget(
+            &mut session,
+            vec!["com.example.github:removed_tool".into()],
+            SHORTLIST_SIZE,
+            INITIAL_SCHEMA_BYTES,
+        );
+        assert!(session.actions.is_empty());
+        assert_eq!(report["loaded"], serde_json::json!([]));
+    }
+}
