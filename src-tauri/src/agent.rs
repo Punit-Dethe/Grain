@@ -3036,12 +3036,7 @@ async fn resume_pending_turn(
             "That confirmation has expired or belongs to another Agent session.".into(),
         ));
     };
-    let execute_started = Instant::now();
     let outcome = crate::action_exec::resume(app, token, approve).await;
-    info!(
-        "[GRAIN] perf agent: approved action executed in {}ms (approve: {approve})",
-        execute_started.elapsed().as_millis()
-    );
     let Some(continuation) = continuation else {
         return Ok(outcome_to_reply(outcome));
     };
@@ -3498,57 +3493,11 @@ async fn drive_tool_turn(
         |entries, tools| Box::pin(run_messages_with_tools(app, entries, tools, image)),
         move |call, session, offered| {
             let app = dispatch_app.clone();
-            Box::pin(async move {
-                let result = crate::capability::dispatch(&app, call, session, offered).await;
-                match result {
-                    Some(crate::capability::ToolResult::Confirm(confirm))
-                        if dev_auto_approve() =>
-                    {
-                        let started = Instant::now();
-                        let outcome = crate::action_exec::resume(&app, &confirm.token, true).await;
-                        let succeeded = matches!(
-                            outcome,
-                            grain_core::execution::ActionOutcome::Succeeded(_)
-                        );
-                        info!(
-                            "[GRAIN] perf agent: dev auto-approved '{}' executed in {}ms (succeeded: {succeeded})",
-                            call.name,
-                            started.elapsed().as_millis()
-                        );
-                        Some(crate::capability::ToolResult::Ran {
-                            text: outcome.model_summary(),
-                            succeeded,
-                        })
-                    }
-                    other => other,
-                }
-            })
+            Box::pin(async move { crate::capability::dispatch(&app, call, session, offered).await })
         },
         |token| arm_pending_expiry(app, token),
     )
     .await
-}
-
-/// Development-only approval bypass for measuring raw tool-loop latency.
-/// Requires a debug build, the normal (non-harness) feature set, and
-/// `GRAIN_DEV_AUTO_APPROVE=1` in the launching environment. Release builds
-/// compile this to `false`; the harness keeps exercising the real approval UI.
-fn dev_auto_approve() -> bool {
-    #[cfg(all(debug_assertions, not(feature = "agent-harness")))]
-    {
-        static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-        *ENABLED.get_or_init(|| {
-            let on = std::env::var("GRAIN_DEV_AUTO_APPROVE").as_deref() == Ok("1");
-            if on {
-                warn!("[GRAIN] GRAIN_DEV_AUTO_APPROVE=1: Agent tool approvals are bypassed (debug build only)");
-            }
-            on
-        })
-    }
-    #[cfg(not(all(debug_assertions, not(feature = "agent-harness"))))]
-    {
-        false
-    }
 }
 
 /// The production loop with model/adapter boundaries injected for deterministic
@@ -3566,10 +3515,7 @@ async fn drive_tool_turn_with<'a>(
         + Send,
     arm_expiry: impl Fn(String) + Send,
 ) -> Result<AgentReply, String> {
-    let task_started = Instant::now();
-    let mut round = 0usize;
     loop {
-        round += 1;
         let exhausted = turn.hops >= MAX_AGENT_TOOL_HOPS || turn.calls >= MAX_AGENT_TOOL_CALLS;
         let tools = if exhausted {
             Vec::new()
@@ -3577,22 +3523,8 @@ async fn drive_tool_turn_with<'a>(
             crate::capability::specs(&turn.session)
         };
         let offered: HashSet<_> = tools.iter().map(|tool| tool.name.clone()).collect();
-        let tool_count = tools.len();
-        let model_started = Instant::now();
         let reply = request(turn.entries.clone(), tools).await?;
-        info!(
-            "[GRAIN] perf agent: round {round} model {}ms ({} entries, {tool_count} tools offered, {} calls returned) task +{}ms",
-            model_started.elapsed().as_millis(),
-            turn.entries.len(),
-            reply.tool_calls.len(),
-            task_started.elapsed().as_millis()
-        );
         if reply.tool_calls.is_empty() {
-            info!(
-                "[GRAIN] perf agent: task finished after {round} model rounds, {} tool calls in {}ms",
-                turn.calls,
-                task_started.elapsed().as_millis()
-            );
             return Ok(AgentReply::plain(reply.content));
         }
         if exhausted {
@@ -3617,24 +3549,11 @@ async fn drive_tool_turn_with<'a>(
                 turn.result(call.id.clone(), "This tool was declined or did not return a confirmed success. It cannot run again in this task; use a different verification tool or make a fresh explicit request.".into());
                 continue;
             }
-            let dispatch_started = Instant::now();
-            let dispatched = dispatch(call, &mut turn.session, &offered).await;
-            info!(
-                "[GRAIN] perf agent: round {round} dispatch '{}' {}ms",
-                call.name,
-                dispatch_started.elapsed().as_millis()
-            );
-            match dispatched {
+            match dispatch(call, &mut turn.session, &offered).await {
                 Some(crate::capability::ToolResult::Confirm(confirm)) => {
                     withheld = Some((confirm, call.id.clone(), call.name.clone()));
                 }
                 Some(crate::capability::ToolResult::Text(text)) => {
-                    turn.result(call.id.clone(), text)
-                }
-                Some(crate::capability::ToolResult::Ran { text, succeeded }) => {
-                    if !succeeded {
-                        turn.blocked_tools.insert(call.name.clone());
-                    }
                     turn.result(call.id.clone(), text)
                 }
                 None => turn.result(
@@ -3644,10 +3563,6 @@ async fn drive_tool_turn_with<'a>(
             }
         }
         if let Some((confirm, call_id, tool_name)) = withheld {
-            info!(
-                "[GRAIN] perf agent: approval requested for '{tool_name}' after {round} model rounds, task +{}ms",
-                task_started.elapsed().as_millis()
-            );
             let text = format!(
                 "{}\n\nWould you like me to go ahead? (yes / no)",
                 confirm.markdown
@@ -4281,7 +4196,6 @@ async fn run_agent_once_tools(
         }
     }
 
-    let llm_started = Instant::now();
     let response = tokio::time::timeout(
         AGENT_LLM_TIMEOUT,
         crate::llm_client::send_chat_with_tools(
@@ -4297,20 +4211,6 @@ async fn run_agent_once_tools(
         ),
     )
     .await;
-    info!(
-        "[GRAIN] perf agent: provider '{}' model '{}' responded in {}ms (ok: {}, total_tokens: {})",
-        provider.id,
-        model,
-        llm_started.elapsed().as_millis(),
-        matches!(response, Ok(Ok(_))),
-        match &response {
-            Ok(Ok(result)) => result
-                .total_tokens
-                .map(|t| t.to_string())
-                .unwrap_or_else(|| "?".into()),
-            _ => "-".into(),
-        }
-    );
 
     match response {
         Err(_) => {

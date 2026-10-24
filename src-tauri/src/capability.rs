@@ -26,13 +26,6 @@ use tauri::AppHandle;
 pub enum ToolResult {
     Text(String),
     Confirm(crate::agent::AgentConfirm),
-    /// A held action that was resumed inside the same round (development-only
-    /// auto-approval). `succeeded == false` blocks the tool for the rest of the
-    /// task exactly like a declined or uncertain user-approved call.
-    Ran {
-        text: String,
-        succeeded: bool,
-    },
 }
 
 fn to_spec(def: capability_agent::ToolDef) -> ToolSpec {
@@ -185,7 +178,6 @@ async fn handle_catalog(
     if !session.exposure.contains_extension(&extension_id) {
         return "That extension is not present in this request's enabled directory.".into();
     }
-    let catalog_started = std::time::Instant::now();
     let (actions, digest, mcp) = if let Some(provider_id) = extension_id.strip_prefix("mcp.") {
         let catalog = match crate::grain_mcp::list_tools(app, provider_id).await {
             Ok(catalog) => catalog,
@@ -217,12 +209,6 @@ async fn handle_catalog(
         }
         (catalog.actions, catalog.manifest_digest, None)
     };
-    log::info!(
-        "[GRAIN] perf capability: {} catalog for '{extension_id}' fetched in {}ms ({} actions)",
-        call.name,
-        catalog_started.elapsed().as_millis(),
-        actions.len()
-    );
     let Some(ids) = selection else {
         let mut page = capability_agent::search_metadata(&actions, &query, offset);
         page["extension_id"] = serde_json::json!(extension_id);
