@@ -1223,3 +1223,62 @@ async fn entirely_unsupported_catalog_is_empty_and_digest_still_revalidates() {
     assert!(close_service(service).await);
     fixture.stop().await;
 }
+
+#[tokio::test]
+async fn one_revalidated_service_dispatches_a_frame_concurrently_with_per_call_boundaries() {
+    let fixture = Fixture::start(Behavior::Complete(json!({
+        "resultType": "complete",
+        "content": [{"type": "text", "text": "done"}]
+    })))
+    .await;
+    let service = fixture.service(McpHttpClient::local_test_client()).await;
+    let item = provider("linear").unwrap();
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    let tools = revalidate_on_service(&service, item, &digest(), deadline)
+        .await
+        .unwrap();
+    let flags = [
+        std::sync::atomic::AtomicBool::new(false),
+        std::sync::atomic::AtomicBool::new(false),
+    ];
+    let enabled = || true;
+    let (first, second) = tokio::join!(
+        dispatch_on_service(
+            &service,
+            &tools,
+            item,
+            "write",
+            serde_json::Map::new(),
+            deadline,
+            &enabled,
+            &flags[0],
+            0,
+        ),
+        dispatch_on_service(
+            &service,
+            &tools,
+            item,
+            "write",
+            serde_json::Map::new(),
+            deadline,
+            &enabled,
+            &flags[1],
+            0,
+        ),
+    );
+    assert!(first.is_ok() && second.is_ok());
+    assert!(flags.iter().all(|flag| flag.load(Ordering::SeqCst)));
+    // The shared service's own flag stays untouched by batched dispatch.
+    assert!(!service.dispatched.load(Ordering::SeqCst));
+    assert_eq!(fixture.calls.load(Ordering::SeqCst), 2);
+    assert_eq!(
+        cancelled_after(&flags[0], "gone").phase,
+        DispatchPhase::Dispatched
+    );
+    assert_eq!(
+        cancelled_after(&std::sync::atomic::AtomicBool::new(false), "gone").phase,
+        DispatchPhase::NotDispatched
+    );
+    assert!(close_service(service).await);
+    fixture.stop().await;
+}

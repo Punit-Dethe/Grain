@@ -156,6 +156,9 @@ pub async fn run_or_confirm(app: &AppHandle, prepared: PreparedCall, title: &str
 /// Current Agent policy: enabling a tool extension authorizes its calls without
 /// per-call dialogs. Keep risk/side-effect classification and every execution
 /// revalidation; this policy does not make writes into reads or bypass consent.
+/// The Agent runs whole frames through [`run_agent_calls`]; this single-call
+/// form remains for the executor contract tests.
+#[cfg(test)]
 pub(crate) async fn run_agent_call(
     app: Option<&AppHandle>,
     prepared: PreparedCall,
@@ -174,6 +177,76 @@ pub(crate) async fn run_agent_call(
             "App handle required for Agent execution",
         ),
     }
+}
+
+/// Run every action requested in one model message under the same policy as
+/// [`run_agent_call`]. Each call is revalidated on its own. MCP calls to one
+/// provider share a connection and revalidation and are sent concurrently;
+/// different providers run concurrently with each other; native worker calls
+/// keep their sequential order. Outcomes are returned in input order.
+pub(crate) async fn run_agent_calls(
+    app: &AppHandle,
+    prepared: Vec<PreparedCall>,
+) -> Vec<ActionOutcome> {
+    let mut outcomes: Vec<Option<ActionOutcome>> = prepared.iter().map(|_| None).collect();
+    let mut mcp: std::collections::BTreeMap<String, Vec<usize>> = Default::default();
+    let mut native = Vec::new();
+    for (index, call) in prepared.iter().enumerate() {
+        log::info!(
+            "[GRAIN] agent-tool-trace {}",
+            serde_json::json!({
+                "phase": "auto-approved", "tool": call.canonical_id,
+                "risk": call.risk, "side_effect": call.side_effect,
+            })
+        );
+        let valid = current_manifest_digest(app, call)
+            .is_some_and(|digest| call.still_valid(&digest, now_ms()).is_ok());
+        if !valid {
+            outcomes[index] = Some(failed(
+                FailureClass::Cancelled,
+                "The extension action changed or expired before it could run.",
+            ));
+        } else if let Some(provider_id) = call.extension_id.strip_prefix("mcp.") {
+            mcp.entry(provider_id.to_string()).or_default().push(index);
+        } else {
+            native.push(index);
+        }
+    }
+    let prepared = &prepared;
+    let mcp_groups = mcp.into_iter().map(|(provider_id, indices)| async move {
+        let batch: Vec<_> = indices
+            .iter()
+            .map(|&index| crate::grain_mcp::McpBatchCall {
+                tool_name: prepared[index].action_id.clone(),
+                arguments: prepared[index].arguments.clone(),
+                expected_digest: prepared[index].manifest_digest.clone(),
+            })
+            .collect();
+        let results = crate::grain_mcp::call_tools(app, &provider_id, &batch).await;
+        indices
+            .into_iter()
+            .zip(results)
+            .map(|(index, result)| (index, mcp_outcome(result, &prepared[index])))
+            .collect::<Vec<_>>()
+    });
+    let native_run = async {
+        let mut done = Vec::with_capacity(native.len());
+        for index in native {
+            done.push((index, third_party_execute(app, &prepared[index]).await));
+        }
+        done
+    };
+    let (groups, native_done) =
+        futures_util::future::join(futures_util::future::join_all(mcp_groups), native_run).await;
+    for (index, outcome) in groups.into_iter().flatten().chain(native_done) {
+        outcomes[index] = Some(outcome);
+    }
+    outcomes
+        .into_iter()
+        .map(|outcome| {
+            outcome.unwrap_or_else(|| failed(FailureClass::Internal, "The action did not run."))
+        })
+        .collect()
 }
 
 /// Approve (or decline) a held confirmation and run the *exact* call. Revalidates

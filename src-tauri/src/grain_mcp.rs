@@ -2356,12 +2356,167 @@ pub(crate) async fn call_tool(
     result
 }
 
-fn session_cancelled(service: &McpService, message: String) -> ExecutionFailure {
+/// One call of a batch issued from a single model message.
+pub(crate) struct McpBatchCall {
+    pub tool_name: String,
+    pub arguments: serde_json::Value,
+    pub expected_digest: String,
+}
+
+/// Run several calls from one model message against one provider. They share
+/// one operation slot, one connection and one time-of-use revalidation, then
+/// dispatch concurrently on that service. Results keep the input order. Each
+/// call keeps its own dispatch boundary, so cancellation reports certainty per
+/// call. Mismatched digests fall back to independent sequential calls.
+pub(crate) async fn call_tools(
+    app: &AppHandle,
+    provider_id: &str,
+    calls: &[McpBatchCall],
+) -> Vec<Result<McpCallOutput, ExecutionFailure>> {
+    if calls.len() < 2
+        || calls
+            .iter()
+            .any(|call| call.expected_digest != calls[0].expected_digest)
+    {
+        let mut results = Vec::with_capacity(calls.len());
+        for call in calls {
+            results.push(
+                call_tool(
+                    app,
+                    provider_id,
+                    &call.tool_name,
+                    &call.arguments,
+                    &call.expected_digest,
+                )
+                .await,
+            );
+        }
+        return results;
+    }
+    match call_tools_batched(app, provider_id, calls).await {
+        Ok(results) => results,
+        // Every early failure happens before any call can be dispatched.
+        Err(failure) => calls.iter().map(|_| Err(failure.clone())).collect(),
+    }
+}
+
+async fn call_tools_batched(
+    app: &AppHandle,
+    provider_id: &str,
+    calls: &[McpBatchCall],
+) -> Result<Vec<Result<McpCallOutput, ExecutionFailure>>, ExecutionFailure> {
+    let started = std::time::Instant::now();
+    let deadline = tokio::time::Instant::now() + OPERATION_TIMEOUT;
+    let owner = runtime_provider(app, provider_id)
+        .map_err(|_| before_dispatch(FailureClass::NotFound, "Unknown MCP provider."))?;
+    let spec = owner.spec();
+    let item = &spec;
+    require_provider_access(app, item)
+        .map_err(|message| before_dispatch(FailureClass::Cancelled, message))?;
+    let ticket = owner.ticket();
+    let expected_digest = ticket
+        .unbind_digest(&calls[0].expected_digest)
+        .map_err(|message| before_dispatch(FailureClass::Cancelled, message))?;
+    let expected_digest = owner
+        .unbind(expected_digest)
+        .map_err(|message| before_dispatch(FailureClass::Cancelled, message))?;
+    let _operation = tokio::time::timeout_at(deadline, ticket.acquire())
+        .await
+        .map_err(|_| before_dispatch(FailureClass::Network, "MCP operation queue timed out."))?
+        .map_err(|message| before_dispatch(FailureClass::Cancelled, message))?;
+    if !owner.enabled(app) {
+        return Err(before_dispatch(
+            FailureClass::Cancelled,
+            "The MCP extension is disabled.",
+        ));
+    }
+    let arguments: Vec<_> = calls
+        .iter()
+        .map(|call| call.arguments.as_object().cloned())
+        .collect();
+    let http = provider_http(app, item)
+        .map_err(|_| before_dispatch(FailureClass::Internal, "MCP HTTP client unavailable."))?;
+    let queued_ms = started.elapsed().as_millis();
+    let service = ticket
+        .run(open_service(
+            http,
+            item,
+            app,
+            &ticket,
+            &_operation,
+            deadline,
+        ))
+        .await
+        .map_err(|message| before_dispatch(FailureClass::Cancelled, message))??;
+    let connected_ms = started.elapsed().as_millis();
+    let flags: Vec<_> = calls
+        .iter()
+        .map(|_| std::sync::atomic::AtomicBool::new(false))
+        .collect();
+    let is_enabled = || ticket.commit(|| owner.enabled(app)).unwrap_or(false);
+    let batch = async {
+        let revalidate_started = std::time::Instant::now();
+        let tools = revalidate_on_service(&service, item, expected_digest, deadline).await?;
+        let revalidate_ms = revalidate_started.elapsed().as_millis();
+        let pending = calls
+            .iter()
+            .zip(arguments)
+            .zip(&flags)
+            .map(|((call, arguments), flag)| {
+                let (service, tools, is_enabled) = (&service, &tools, &is_enabled);
+                async move {
+                    let Some(arguments) = arguments else {
+                        return Err(before_dispatch(
+                            FailureClass::InvalidArgument,
+                            "MCP arguments must be an object.",
+                        ));
+                    };
+                    dispatch_on_service(
+                        service,
+                        tools,
+                        item,
+                        &call.tool_name,
+                        arguments,
+                        deadline,
+                        is_enabled,
+                        flag,
+                        revalidate_ms,
+                    )
+                    .await
+                }
+            });
+        Ok::<_, ExecutionFailure>(futures_util::future::join_all(pending).await)
+    };
+    let results = match ticket.run(batch).await {
+        Ok(Ok(results)) => results,
+        // Revalidation failed before any call was sent.
+        Ok(Err(failure)) => calls.iter().map(|_| Err(failure.clone())).collect(),
+        Err(message) => flags
+            .iter()
+            .map(|flag| Err(cancelled_after(flag, &message)))
+            .collect(),
+    };
+    let called_ms = started.elapsed().as_millis();
+    close_service(service).await;
+    trace_mcp_timing(
+        provider_id,
+        "call_tools",
+        serde_json::json!({
+            "tools": calls.iter().map(|call| call.tool_name.as_str()).collect::<Vec<_>>(),
+            "total_ms": started.elapsed().as_millis(),
+            "queue_ms": queued_ms,
+            "connect_ms": connected_ms - queued_ms,
+            "revalidate_and_calls_ms": called_ms - connected_ms,
+            "close_ms": started.elapsed().as_millis() - called_ms,
+            "ok": results.iter().filter(|result| result.is_ok()).count(),
+        }),
+    );
+    Ok(results)
+}
+
+fn cancelled_after(flag: &std::sync::atomic::AtomicBool, message: &str) -> ExecutionFailure {
     ExecutionFailure::new(
-        if service
-            .dispatched
-            .load(std::sync::atomic::Ordering::Acquire)
-        {
+        if flag.load(std::sync::atomic::Ordering::Acquire) {
             DispatchPhase::Dispatched
         } else {
             DispatchPhase::NotDispatched
@@ -2371,6 +2526,10 @@ fn session_cancelled(service: &McpService, message: String) -> ExecutionFailure 
     )
 }
 
+fn session_cancelled(service: &McpService, message: String) -> ExecutionFailure {
+    cancelled_after(&service.dispatched, &message)
+}
+
 async fn call_on_service(
     service: &McpService,
     item: &Provider<'_>,
@@ -2378,13 +2537,36 @@ async fn call_on_service(
     arguments: serde_json::Map<String, serde_json::Value>,
     expected_digest: &str,
     deadline: tokio::time::Instant,
-    is_enabled: impl Fn() -> bool,
+    is_enabled: impl Fn() -> bool + Sync,
 ) -> Result<McpCallOutput, ExecutionFailure> {
     let revalidate_started = std::time::Instant::now();
+    let tools = revalidate_on_service(service, item, expected_digest, deadline).await?;
+    let revalidate_ms = revalidate_started.elapsed().as_millis();
+    dispatch_on_service(
+        service,
+        &tools,
+        item,
+        tool_name,
+        arguments,
+        deadline,
+        &is_enabled,
+        &service.dispatched,
+        revalidate_ms,
+    )
+    .await
+}
+
+/// Time-of-use catalogue check shared by single and batched calls: the live
+/// tool set must still hash to the digest the schemas were loaded under.
+async fn revalidate_on_service(
+    service: &McpService,
+    item: &Provider<'_>,
+    expected_digest: &str,
+    deadline: tokio::time::Instant,
+) -> Result<Vec<Tool>, ExecutionFailure> {
     let tools = discover_on_service(service, deadline)
         .await
         .map_err(|message| before_dispatch(FailureClass::Network, message))?;
-    let revalidate_ms = revalidate_started.elapsed().as_millis();
     let current_digest = tool_set_digest(item, &tools).map_err(|_| {
         before_dispatch(
             FailureClass::Internal,
@@ -2397,6 +2579,24 @@ async fn call_on_service(
             "MCP definitions changed after confirmation. Ask again.",
         ));
     }
+    Ok(tools)
+}
+
+/// Validate and send one call on an already revalidated service. `dispatched`
+/// is this call's own boundary flag, so a cancelled batch reports each call's
+/// certainty independently.
+#[allow(clippy::too_many_arguments)]
+async fn dispatch_on_service(
+    service: &McpService,
+    tools: &[Tool],
+    item: &Provider<'_>,
+    tool_name: &str,
+    arguments: serde_json::Map<String, serde_json::Value>,
+    deadline: tokio::time::Instant,
+    is_enabled: &(dyn Fn() -> bool + Sync),
+    dispatched: &std::sync::atomic::AtomicBool,
+    revalidate_ms: u128,
+) -> Result<McpCallOutput, ExecutionFailure> {
     let tool = tools
         .iter()
         .find(|tool| tool.name.as_ref() == tool_name)
@@ -2427,9 +2627,7 @@ async fn call_on_service(
     }
     // From this point the SDK may have sent the request. Transport errors are
     // ambiguous even when their wording suggests a local send failure.
-    service
-        .dispatched
-        .store(true, std::sync::atomic::Ordering::Release);
+    dispatched.store(true, std::sync::atomic::Ordering::Release);
     let call_started = std::time::Instant::now();
     let response = tokio::time::timeout_at(
         deadline,

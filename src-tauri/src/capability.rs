@@ -81,10 +81,11 @@ struct Catalog {
     entries: Vec<(ActionInput, SessionAction)>,
 }
 
-// The provider caches the stable prompt prefix, so a larger first-round
-// shortlist costs little time; a missing tool costs a whole model round.
-const SHORTLIST_SIZE: usize = 12;
-const INITIAL_SCHEMA_BYTES: usize = 48 * 1024;
+// Measured: 38-49 KiB first rounds cost ~1.5-2 s more than 18-24 KiB ones,
+// because each task's tool set differs and defeats provider prefix caching.
+// Learned per-extension tools cover the common misses at this size.
+const SHORTLIST_SIZE: usize = 8;
+const INITIAL_SCHEMA_BYTES: usize = 32 * 1024;
 /// Learned frequently used tools per extension placed ahead of lexical hits.
 const HOT_PER_EXTENSION: usize = 4;
 const EAGER_SCHEMA_BYTES: usize = 32 * 1024;
@@ -145,56 +146,83 @@ pub fn specs(session: &CapabilitySession) -> Vec<ToolSpec> {
 }
 
 /// Dispatch one tool call if it belongs to the capability surface. Returns
-/// `Some(result_text)` when handled, `None` when the call is not ours (the caller
-/// reports an unavailable tool).
-pub async fn dispatch(
+/// Dispatch every call of one model message. Returns one entry per call, in
+/// order: `Some(result)` when handled, `None` when the call is not ours (the
+/// caller reports an unavailable tool).
+///
+/// Discovery calls mutate the task session and run first, in order. Action
+/// names were resolved against the tools offered at the start of the round, so
+/// discovery in the same message can never authorise them. All actions are
+/// then executed together (see `action_exec::run_agent_calls`).
+pub async fn dispatch_frame(
+    app: &AppHandle,
+    calls: &[ToolCallOut],
+    session: &mut CapabilitySession,
+    offered_names: &HashSet<String>,
+) -> Vec<Option<ToolResult>> {
+    let mut results: Vec<Option<ToolResult>> = calls.iter().map(|_| None).collect();
+    let mut prepared = Vec::new();
+    for (index, call) in calls.iter().enumerate() {
+        if call.name == SEARCH_TOOLS {
+            results[index] = Some(ToolResult::Text(
+                search(app, call, session, offered_names).await,
+            ));
+            continue;
+        }
+        // An action tool resolves through the session's exposure map — the
+        // authoritative reverse of `tool_name`. An undisclosed or invented name
+        // resolves to nothing here and falls through to the caller (which will
+        // report "no such tool"): discovery is not authorisation.
+        match resolve_offered_action(&session.exposure, offered_names, &call.name) {
+            Ok(Some(loaded)) => match prepare_action(
+                app,
+                session,
+                &loaded.canonical_id,
+                &loaded.manifest_digest,
+                &call.arguments,
+            ) {
+                Ok(call) => prepared.push((index, call)),
+                Err(feedback) => results[index] = Some(feedback),
+            },
+            Ok(None) => {}
+            Err(message) => results[index] = Some(ToolResult::Text(message.to_string())),
+        }
+    }
+    if prepared.is_empty() {
+        return results;
+    }
+    let (indices, calls): (Vec<_>, Vec<_>) = prepared.into_iter().unzip();
+    let canonical: Vec<_> = calls.iter().map(|call| call.canonical_id.clone()).collect();
+    let outcomes = crate::action_exec::run_agent_calls(app, calls).await;
+    for ((index, canonical), outcome) in indices.into_iter().zip(canonical).zip(outcomes) {
+        if matches!(outcome, grain_core::execution::ActionOutcome::Succeeded(_)) {
+            usage::record_success(app, &canonical);
+        }
+        results[index] = Some(ToolResult::Completed(outcome));
+    }
+    results
+}
+
+async fn search(
     app: &AppHandle,
     call: &ToolCallOut,
     session: &mut CapabilitySession,
     offered_names: &HashSet<String>,
-) -> Option<ToolResult> {
-    if call.name == SEARCH_TOOLS {
-        if !offered_names.contains(&call.name) {
-            return Some(ToolResult::Text(
-                "That discovery tool was not available in this model round.".to_string(),
-            ));
-        }
-        let result = handle_catalog(app, call, session).await;
-        // Public tool identities only: never arguments, results or account credentials.
-        log::info!(
-            "[GRAIN] agent-tool-trace {}",
-            serde_json::json!({
-                "phase": "loaded",
-                "tools": session.actions.iter().map(|(id, action)|
-                    (action.spec.name.clone(), id.clone())).collect::<BTreeMap<_, _>>()
-            })
-        );
-        return Some(ToolResult::Text(result));
+) -> String {
+    if !offered_names.contains(&call.name) {
+        return "That discovery tool was not available in this model round.".to_string();
     }
-    // An action tool resolves through the session's exposure map — the
-    // authoritative reverse of `tool_name`. An undisclosed or invented name
-    // resolves to nothing here and falls through to the caller (which will report
-    // "no such tool"): discovery is not authorisation.
-    let loaded = match resolve_offered_action(&session.exposure, offered_names, &call.name) {
-        Ok(Some(loaded)) => loaded,
-        Ok(None) => return None,
-        Err(message) => return Some(ToolResult::Text(message.to_string())),
-    };
-    let result = execute_action(
-        app,
-        session,
-        &loaded.canonical_id,
-        &loaded.manifest_digest,
-        &call.arguments,
-    )
-    .await;
-    if matches!(
-        &result,
-        ToolResult::Completed(grain_core::execution::ActionOutcome::Succeeded(_))
-    ) {
-        usage::record_success(app, &loaded.canonical_id);
-    }
-    Some(result)
+    let result = handle_catalog(app, call, session).await;
+    // Public tool identities only: never arguments, results or account credentials.
+    log::info!(
+        "[GRAIN] agent-tool-trace {}",
+        serde_json::json!({
+            "phase": "loaded",
+            "tools": session.actions.iter().map(|(id, action)|
+                (action.spec.name.clone(), id.clone())).collect::<BTreeMap<_, _>>()
+        })
+    );
+    result
 }
 
 fn resolve_offered_action(
@@ -315,7 +343,19 @@ pub async fn prepare(
 ) {
     let started = Instant::now();
     let deadline = tokio::time::Instant::now() + PREFETCH_BUDGET;
-    let ids = session.directory_ids.clone();
+    let prefetched = prefetch::take(PREFETCH_BUDGET).await;
+    let reused = prefetched.len();
+    for (id, catalog) in prefetched {
+        if session.directory_ids.contains(&id) {
+            let _ = remember_catalog(session, id, catalog);
+        }
+    }
+    let ids: Vec<_> = session
+        .directory_ids
+        .iter()
+        .filter(|id| !session.catalogs.contains_key(*id))
+        .cloned()
+        .collect();
     let mut pending = stream::iter(ids.into_iter().map(|id| async move {
         let result = fetch_catalog(app, &id, Some(deadline)).await;
         (id, result)
@@ -373,7 +413,7 @@ pub async fn prepare(
             "phase": "prepared", "task": trace_id, "catalog_ms": catalog_ms,
             "elapsed_ms": started.elapsed().as_millis(), "catalogs": session.catalogs.len(),
             "unavailable_catalogs": unavailable, "eager": eager, "selection": report,
-            "learned_candidates": hot_count,
+            "learned_candidates": hot_count, "prefetched_catalogs": reused,
             "offered_count": specs(session).len(),
             "schema_bytes": specs(session).iter().map(schema_bytes).sum::<usize>()
         })
@@ -819,17 +859,20 @@ pub(crate) fn mcp_action_input(
     }
 }
 
-/// Prepare and automatically execute one resolved action under the current
-/// Agent policy. Conservative classification and time-of-use checks remain.
-async fn execute_action(
+/// Resolve one action into the exact prepared call the current Agent policy
+/// runs automatically. Conservative classification and time-of-use checks
+/// remain; execution happens per model message in [`dispatch_frame`].
+fn prepare_action(
     app: &AppHandle,
     session: &CapabilitySession,
     canonical: &str,
     loaded_manifest_digest: &str,
     arguments_json: &str,
-) -> ToolResult {
+) -> Result<grain_core::execution::PreparedCall, ToolResult> {
     let Some(session_action) = session.actions.get(canonical) else {
-        return ToolResult::Text(format!("The action \"{canonical}\" is not available."));
+        return Err(ToolResult::Text(format!(
+            "The action \"{canonical}\" is not available."
+        )));
     };
     if let ActionOrigin::Mcp {
         provider_id,
@@ -837,14 +880,12 @@ async fn execute_action(
         tool_name,
     } = &session_action.origin
     {
-        let arguments = match parse_mcp_arguments(arguments_json, &session_action.spec.parameters) {
-            Ok(arguments) => arguments,
-            Err(error) => {
-                return ToolResult::Text(format!("The action arguments are invalid: {error}."))
-            }
-        };
+        let arguments = parse_mcp_arguments(arguments_json, &session_action.spec.parameters)
+            .map_err(|error| {
+                ToolResult::Text(format!("The action arguments are invalid: {error}."))
+            })?;
         let extension_id = format!("mcp.{provider_id}");
-        let prepared = crate::action_exec::prepare(
+        return Ok(crate::action_exec::prepare(
             canonical,
             &extension_id,
             tool_name,
@@ -853,21 +894,16 @@ async fn execute_action(
             RiskClass::Confirm,
             SideEffect::Write,
             loaded_manifest_digest,
-        );
-        return ToolResult::Completed(
-            crate::action_exec::run_agent_call(Some(app), prepared).await,
-        );
+        ));
     }
 
     let Some(action) = crate::extension_host::capability_action_meta(canonical) else {
-        return ToolResult::Text(format!("The action \"{canonical}\" is not available."));
+        return Err(ToolResult::Text(format!(
+            "The action \"{canonical}\" is not available."
+        )));
     };
-    let arguments = match capability_agent::parse_and_validate_arguments(&action, arguments_json) {
-        Ok(arguments) => arguments,
-        Err(error) => {
-            return ToolResult::Text(format!("The action arguments are invalid: {error}."))
-        }
-    };
+    let arguments = capability_agent::parse_and_validate_arguments(&action, arguments_json)
+        .map_err(|error| ToolResult::Text(format!("The action arguments are invalid: {error}.")))?;
 
     // Automatic approval is a host policy, not a claim that these are reads.
     let risk = RiskClass::Confirm;
@@ -875,18 +911,18 @@ async fn execute_action(
     let digest =
         crate::extension_host::approved_action_digest(app, &action.extension_id, &action.action_id);
     let Some(digest) = digest else {
-        return ToolResult::Text(
+        return Err(ToolResult::Text(
             "The action is no longer approved or available. Ask again after reviewing the extension."
                 .to_string(),
-        );
+        ));
     };
     if !loaded_digest_is_current(loaded_manifest_digest, &digest) {
-        return ToolResult::Text(
+        return Err(ToolResult::Text(
             "The extension changed after its tools were loaded. Start the request again so Grain can expose the current schemas."
                 .to_string(),
-        );
+        ));
     }
-    let prepared = crate::action_exec::prepare(
+    Ok(crate::action_exec::prepare(
         canonical,
         &action.extension_id,
         &action.action_id,
@@ -895,9 +931,7 @@ async fn execute_action(
         risk,
         side_effect,
         &digest,
-    );
-
-    ToolResult::Completed(crate::action_exec::run_agent_call(Some(app), prepared).await)
+    ))
 }
 
 fn parse_mcp_arguments(raw: &str, schema: &serde_json::Value) -> Result<serde_json::Value, String> {
@@ -1544,6 +1578,204 @@ mod tests {
 #[cfg(test)]
 mod lexical_eval_tests;
 mod usage;
+
+/// [GRAIN] Summon-time catalogue prefetch.
+///
+/// The Agent shortcut starts fetching every enabled extension's tool list
+/// while the user is still speaking, so the request finds fresh catalogues
+/// instead of opening connections after submit. One slot holds at most one
+/// summon's catalogues. They are consumed by the next request, dropped on
+/// cancel or a newer summon, and expire after [`TTL`]. Catalogues carry the
+/// same generation-bound digests as a normal fetch, so an account or catalogue
+/// change in between still fails time-of-use revalidation before any call.
+pub(crate) mod prefetch {
+    use super::{fetch_catalog, Catalog};
+    use std::collections::BTreeMap;
+    use std::sync::Mutex;
+    use std::time::{Duration, Instant};
+    use tauri::AppHandle;
+
+    const TTL: Duration = Duration::from_secs(60);
+    const FETCH_BUDGET: Duration = Duration::from_secs(8);
+
+    struct Slot {
+        generation: u64,
+        started: Instant,
+        catalogs: BTreeMap<String, Catalog>,
+        done: Option<tokio::sync::watch::Receiver<bool>>,
+        task: Option<tokio::task::AbortHandle>,
+    }
+
+    static SLOT: Mutex<Option<Slot>> = Mutex::new(None);
+    static GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+    fn lock() -> std::sync::MutexGuard<'static, Option<Slot>> {
+        SLOT.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// Start fetching every enabled extension's catalogue. Supersedes any
+    /// earlier prefetch. Does nothing when no extension is enabled.
+    pub(crate) fn start(app: &AppHandle) {
+        let opened = super::open(app, &[]);
+        let ids = opened.session.directory_ids.clone();
+        clear();
+        if ids.is_empty() {
+            return;
+        }
+        let generation = GENERATION.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+        let (done_tx, done_rx) = tokio::sync::watch::channel(false);
+        let app = app.clone();
+        let task = tauri::async_runtime::spawn(async move {
+            let started = Instant::now();
+            let deadline = tokio::time::Instant::now() + FETCH_BUDGET;
+            let results = futures_util::future::join_all(ids.into_iter().map(|id| {
+                let app = app.clone();
+                async move {
+                    let result = fetch_catalog(&app, &id, Some(deadline)).await;
+                    (id, result)
+                }
+            }))
+            .await;
+            let mut fetched = 0;
+            let mut guard = lock();
+            if let Some(slot) = guard.as_mut().filter(|slot| slot.generation == generation) {
+                for (id, result) in results {
+                    if let Ok(catalog) = result {
+                        slot.catalogs.insert(id, catalog);
+                        fetched += 1;
+                    }
+                }
+                slot.task = None;
+            }
+            drop(guard);
+            let _ = done_tx.send(true);
+            log::info!(
+                "[GRAIN] agent-tool-trace {}",
+                serde_json::json!({
+                    "phase": "prefetched", "catalogs": fetched,
+                    "elapsed_ms": started.elapsed().as_millis(),
+                })
+            );
+        });
+        *lock() = Some(Slot {
+            generation,
+            started: Instant::now(),
+            catalogs: BTreeMap::new(),
+            done: Some(done_rx),
+            task: Some(task.inner().abort_handle()),
+        });
+        // Destroy an unused prefetch (e.g. a plain question with no tools).
+        tauri::async_runtime::spawn(async move {
+            tokio::time::sleep(TTL).await;
+            let mut guard = lock();
+            if guard
+                .as_ref()
+                .is_some_and(|slot| slot.generation == generation)
+            {
+                if let Some(task) = guard.take().and_then(|slot| slot.task) {
+                    task.abort();
+                }
+            }
+        });
+    }
+
+    /// Drop any prefetch, aborting a fetch still in flight.
+    pub(crate) fn clear() {
+        if let Some(slot) = lock().take() {
+            if let Some(task) = slot.task {
+                task.abort();
+            }
+        }
+    }
+
+    /// Take the current prefetch for one request. Waits up to `wait` for a
+    /// fetch still in flight; returns nothing if none exists or it expired.
+    pub(super) async fn take(wait: Duration) -> BTreeMap<String, Catalog> {
+        let done = lock().as_ref().and_then(|slot| slot.done.clone());
+        if let Some(mut done) = done {
+            let _ = tokio::time::timeout(wait, done.wait_for(|finished| *finished)).await;
+        }
+        match lock().take() {
+            Some(slot) if slot.started.elapsed() <= TTL => {
+                if let Some(task) = slot.task {
+                    // Still unfinished after the wait: the request fetches the
+                    // missing catalogues itself.
+                    task.abort();
+                }
+                slot.catalogs
+            }
+            Some(slot) => {
+                if let Some(task) = slot.task {
+                    task.abort();
+                }
+                BTreeMap::new()
+            }
+            None => BTreeMap::new(),
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[tokio::test]
+        async fn expired_or_cleared_prefetch_is_never_used() {
+            let mut catalogs = BTreeMap::new();
+            catalogs.insert(
+                "mcp.fixture".to_string(),
+                Catalog {
+                    digest: "d".into(),
+                    entries: Vec::new(),
+                },
+            );
+            *lock() = Some(Slot {
+                generation: 1,
+                started: Instant::now() - TTL - Duration::from_secs(1),
+                catalogs,
+                done: None,
+                task: None,
+            });
+            assert!(take(Duration::ZERO).await.is_empty());
+            assert!(lock().is_none(), "an expired prefetch is dropped");
+
+            let mut catalogs = BTreeMap::new();
+            catalogs.insert(
+                "mcp.fixture".to_string(),
+                Catalog {
+                    digest: "d".into(),
+                    entries: Vec::new(),
+                },
+            );
+            *lock() = Some(Slot {
+                generation: 2,
+                started: Instant::now(),
+                catalogs,
+                done: None,
+                task: None,
+            });
+            clear();
+            assert!(take(Duration::ZERO).await.is_empty());
+
+            let mut catalogs = BTreeMap::new();
+            catalogs.insert(
+                "mcp.fixture".to_string(),
+                Catalog {
+                    digest: "d".into(),
+                    entries: Vec::new(),
+                },
+            );
+            *lock() = Some(Slot {
+                generation: 3,
+                started: Instant::now(),
+                catalogs,
+                done: None,
+                task: None,
+            });
+            assert_eq!(take(Duration::ZERO).await.len(), 1);
+            assert!(take(Duration::ZERO).await.is_empty(), "consumed once");
+        }
+    }
+}
 
 #[cfg(test)]
 mod shortlist_tests {
