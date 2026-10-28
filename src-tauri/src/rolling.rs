@@ -1,9 +1,9 @@
 //! [GRAIN] Parakeet TDT v2/v3 Flow recording service.
 //!
-//! Capture appends the same VAD-filtered Float32 samples Batch retains to a
-//! temporary journal and sends a coalescing wake. One serial worker owns the
-//! shared transcribe.cpp lease, finalizes stable Fluid-style windows. Standard
-//! and Native ASR do not use this module.
+//! Capture only appends exact Float32 samples to a temporary journal and sends
+//! a coalescing wake. One serial worker owns the shared transcribe.cpp lease,
+//! finalizes stable Fluid-style windows. Standard and Native ASR do not use
+//! this module.
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, SyncSender, TrySendError};
@@ -23,9 +23,6 @@ use crate::tdt_flow::{
 };
 
 const MIN_TRANSCRIBE_SAMPLES: u64 = grain_tdt::SAMPLE_RATE;
-/// Batch pads a non-empty recording shorter than one second to 1.25 seconds
-/// (`AudioRecordingManager::stop_recording`); Flow applies the same rule.
-const SHORT_RECORDING_PADDED_SAMPLES: u64 = MIN_TRANSCRIBE_SAMPLES * 5 / 4;
 
 pub struct RollingTranscriber {
     tm: Arc<TranscriptionManager>,
@@ -119,7 +116,7 @@ impl RollingTranscriber {
         Ok(())
     }
 
-    pub fn feed(&self, frame: &[f32]) {
+    pub fn feed(&self, frame: &[f32], _speech: Option<bool>) {
         if let Some(session) = self.active.lock().unwrap().as_ref() {
             session.feed(frame);
         }
@@ -245,13 +242,6 @@ impl RollingSession {
             self.join_cancelled();
             return WorkerOutput::failure("Flow stopped because its audio journal failed");
         }
-        if let Err(error) = pad_short_recording(&self.journal) {
-            self.request_cancel();
-            self.join_cancelled();
-            return WorkerOutput::failure(format!(
-                "Flow could not pad its short recording: {error}"
-            ));
-        }
         if let Err(error) = self.journal.close() {
             self.request_cancel();
             self.join_cancelled();
@@ -288,17 +278,6 @@ impl RollingSession {
 struct WorkerOutput {
     text: String,
     error: Option<String>,
-}
-
-/// Mirror Batch's stop-time padding. Runs after the recorder has drained, so
-/// no capture frame can land after the zeros.
-fn pad_short_recording(journal: &PcmJournal) -> std::io::Result<()> {
-    let frames = journal.frame_count();
-    if frames == 0 || frames >= MIN_TRANSCRIBE_SAMPLES {
-        return Ok(());
-    }
-    let padding = (SHORT_RECORDING_PADDED_SAMPLES - frames) as usize;
-    journal.append(&vec![0.0; padding])
 }
 
 impl WorkerOutput {
@@ -446,27 +425,6 @@ mod tests {
         })
         .unwrap();
         assert_eq!(observed.load(Ordering::Relaxed), 42);
-    }
-
-    #[test]
-    fn short_recording_is_padded_like_batch() {
-        let empty = PcmJournal::create().unwrap();
-        pad_short_recording(&empty).unwrap();
-        assert_eq!(empty.frame_count(), 0);
-
-        let short = PcmJournal::create().unwrap();
-        short.append(&[0.5; 4_800]).unwrap();
-        pad_short_recording(&short).unwrap();
-        let audio = short.read_all_f32().unwrap();
-        assert_eq!(audio.len() as u64, SHORT_RECORDING_PADDED_SAMPLES);
-        assert!(audio[..4_800].iter().all(|&sample| sample == 0.5));
-        assert!(audio[4_800..].iter().all(|&sample| sample == 0.0));
-
-        let full = PcmJournal::create().unwrap();
-        full.append(&vec![0.5; MIN_TRANSCRIBE_SAMPLES as usize])
-            .unwrap();
-        pad_short_recording(&full).unwrap();
-        assert_eq!(full.frame_count(), MIN_TRANSCRIBE_SAMPLES);
     }
 
 }

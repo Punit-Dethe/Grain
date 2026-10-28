@@ -459,8 +459,8 @@ impl ShortcutAction for PasteCatchDeliverAction {
     fn stop(&self, _app: &AppHandle, _binding_id: &str, _shortcut_str: &str) {}
 }
 
-// Parakeet TDT Flow journals Batch's VAD-filtered capture while a serial
-// worker finalizes stable windows.
+// Parakeet TDT Flow journals exact capture audio while a serial worker
+// finalizes stable windows and refreshes the mutable tail.
 struct RealtimeTranscribeAction {
     post_process_override: AtomicBool,
 }
@@ -481,8 +481,8 @@ impl ShortcutAction for RealtimeTranscribeAction {
         // pill is the only surface, driven by the DaemonEvents below.
 
         let binding_id = binding_id.to_string();
-        // Flow filters capture with the same offline VAD profile as Batch.
-        let vad_policy = VadPolicy::Offline;
+        // Flow uses exact continuous audio and does not load or run the ASR VAD.
+        let vad_policy = VadPolicy::Disabled;
         let mut recording_error = rolling_error;
         if recording_error.is_none() {
             // A speaker cue is ordinary microphone input. Flow uses the visual

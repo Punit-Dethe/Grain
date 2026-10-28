@@ -80,7 +80,7 @@ pub type AudioFrameCallback = Arc<dyn Fn(&[f32]) + Send + Sync + 'static>;
 /// [GRAIN] Callback invoked with EVERY resampled 16 kHz mono frame while
 /// recording (not just the frames that pass VAD), plus the frame's
 /// voice-activity decision: `Some(true)` voiced, `Some(false)` non-speech,
-/// `None` when VAD is bypassed. Native ASR streams this continuous signal;
+/// `None` when VAD is bypassed. Flow journals this exact continuous stream;
 /// unlike [`AudioFrameCallback`], it must not lose non-speech frames.
 pub type SampleFrameCallback = Arc<dyn Fn(&[f32], Option<bool>) + Send + Sync + 'static>;
 
@@ -93,12 +93,12 @@ pub struct AudioRecorder {
     audio_cb: Option<AudioFrameCallback>,
     // [GRAIN] every-frame callback for Flow (see `SampleFrameCallback`).
     sample_cb: Option<SampleFrameCallback>,
-    // [GRAIN] Live count (in 16 kHz mono samples) of audio that passed the
-    // session's VAD policy: the Batch buffer or the Flow journal. Mirrored out
-    // of the worker thread once per captured chunk. Prompt Record marks the
-    // content→instruction split at click time with this index (VAD compaction
-    // and stop-time padding only ever append — they never reorder the
-    // prefix). Reset to 0 on each `Start`.
+    // [GRAIN] Live length (in 16 kHz mono samples) of the current recording's
+    // finalized buffer, mirrored out of the worker thread once per captured chunk.
+    // Used by Prompt Record to mark the content→instruction split point at click
+    // time: the value is a valid index into the `Vec<f32>` that `stop()` returns
+    // (VAD compaction and stop-time padding only ever appends — they
+    // never reorder the prefix). Reset to 0 on each `Start`.
     recorded_len: Arc<AtomicUsize>,
     /// Which input channel to use. None = average all (original behavior).
     selected_channel: Option<usize>,
@@ -127,17 +127,17 @@ impl AudioRecorder {
         })
     }
 
-    /// [GRAIN] The number of 16 kHz mono samples that passed VAD into the
-    /// CURRENT recording so far (0 when idle). Prompt Record snapshots this at
-    /// click time as the split index into the Batch buffer or Flow journal. Lags real
+    /// [GRAIN] The number of 16 kHz mono samples captured into the CURRENT
+    /// recording so far (0 when idle). Prompt Record snapshots this at click time
+    /// as the split index into the buffer that `stop()` will return. Lags real
     /// time by at most one capture chunk (tens of ms) — inconsequential for a
     /// spoken content→instruction boundary.
     pub fn recorded_len(&self) -> usize {
         self.recorded_len.load(Ordering::Relaxed)
     }
 
-    /// [GRAIN] Stream every 16 kHz mono frame live while recording (for Native
-    /// ASR) with its voice-activity decision. Same threading
+    /// [GRAIN] Stream every 16 kHz mono frame live while recording (for the
+    /// Flow) with its voice-activity decision. Same threading
     /// rules as [`with_audio_callback`](Self::with_audio_callback): keep it cheap.
     pub fn with_sample_callback<F>(mut self, cb: F) -> Self
     where
@@ -418,7 +418,7 @@ impl AudioRecorder {
         self.start_with_retention(vad_policy, true)
     }
 
-    /// [GRAIN] Flow journals its post-VAD audio to disk, so it can
+    /// [GRAIN] Rolling journals the continuous session to PCM16, so it can
     /// disable the duplicate f32 capture buffer. Other recording modes retain
     /// the upstream behavior through [`start`](Self::start).
     pub fn start_with_retention(
@@ -893,7 +893,7 @@ fn run_consumer(
     let mut recording = false;
     let mut vad_policy = VadPolicy::Offline;
     let mut retain_full_audio = true; // [GRAIN]
-    let mut emitted_samples = 0usize; // [GRAIN] Prompt Record timeline
+    let mut captured_frames = 0usize; // [GRAIN] rolling Prompt Record timeline
     let mut capture_failed = false; // [GRAIN] current session exceeded queue bound
 
     // ---------- latency instrumentation ---------------------------------- //
@@ -929,7 +929,6 @@ fn run_consumer(
     // bypassed or not recording. The VAD is stateful, so it is stepped EXACTLY
     // ONCE per frame here — the returned decision is reused for rolling (no
     // second `push_frame`). Upstream's version returns nothing else changed.
-    #[allow(clippy::too_many_arguments)]
     fn handle_frame(
         samples: &[f32],
         recording: bool,
@@ -938,14 +937,12 @@ fn run_consumer(
         audio_cb: &Option<AudioFrameCallback>,
         out_buf: &mut Vec<f32>,
         retain_full_audio: bool,
-        emitted: &mut usize, // [GRAIN] post-VAD samples, the Prompt Record timeline
     ) -> Option<bool> {
         if !recording {
             return None;
         }
 
         let mut emit = |buf: &[f32]| {
-            *emitted += buf.len();
             if retain_full_audio {
                 out_buf.extend_from_slice(buf);
             }
@@ -1008,7 +1005,7 @@ fn run_consumer(
                     vad_policy = policy;
                     retain_full_audio = retain;
                     processed_samples.clear();
-                    emitted_samples = 0;
+                    captured_frames = 0;
                     recorded_len.store(0, Ordering::Relaxed); // [GRAIN] fresh mark baseline
                     recording = true;
                     visualizer.reset();
@@ -1043,8 +1040,8 @@ fn run_consumer(
                                 &audio_cb,
                                 &mut processed_samples,
                                 retain_full_audio,
-                                &mut emitted_samples,
                             );
+                            captured_frames += frame.len();
                             if let Some(cb) = &sample_cb {
                                 cb(frame, speech);
                             }
@@ -1067,8 +1064,8 @@ fn run_consumer(
                                         &audio_cb,
                                         &mut processed_samples,
                                         retain_full_audio,
-                                        &mut emitted_samples,
                                     );
+                                    captured_frames += frame.len();
                                     // [GRAIN] Keep rolling aligned with the same
                                     // finalized resampled stream during the
                                     // device-channel drain.
@@ -1095,8 +1092,8 @@ fn run_consumer(
                             &audio_cb,
                             &mut processed_samples,
                             retain_full_audio,
-                            &mut emitted_samples,
                         );
+                        captured_frames += frame.len();
                         // [GRAIN] The resampler can retain a partial final frame;
                         // deliver it before `stop_recording` replies and the
                         // caller flushes the rolling cursor.
@@ -1171,9 +1168,10 @@ fn run_consumer(
                     &audio_cb,
                     &mut processed_samples,
                     retain_full_audio,
-                    &mut emitted_samples,
                 );
-                // [GRAIN] Native ASR receives every resampled frame.
+                captured_frames += frame.len();
+                // [GRAIN] stream every resampled 16 kHz frame to Flow. It journals
+                // the exact continuous stream and intentionally ignores VAD.
                 if let Some(cb) = &sample_cb {
                     cb(frame, speech);
                 }
@@ -1184,7 +1182,14 @@ fn run_consumer(
             // [GRAIN] Publish the live buffer length so Prompt Record can mark
             // the content→instruction split at click time. Cheap: one relaxed
             // store per captured chunk (not per frame).
-            recorded_len.store(emitted_samples, Ordering::Relaxed);
+            recorded_len.store(
+                if retain_full_audio {
+                    processed_samples.len()
+                } else {
+                    captured_frames
+                },
+                Ordering::Relaxed,
+            );
             if let Some(started) = awaiting_first_captured_chunk.take() {
                 log::debug!(
                     "first captured chunk ({:.1}ms of audio) processed {:?} after Cmd::Start",
