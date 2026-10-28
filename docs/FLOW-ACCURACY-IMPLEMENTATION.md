@@ -2,6 +2,8 @@
 
 2026-09-26. Target: Handy Parakeet TDT 0.6B v2 GGUF, initially Q8_0. Preserve the journal, one serial worker/model lease, existing final processing and bounded audio memory. Grain-owned conditioning is excluded.
 
+Update 2026-10-28: Flow now journals Batch's Silero-filtered audio (`VadPolicy::Offline`) instead of exact continuous PCM. See the VAD update in [FLOW-TDT-REWRITE.md](FLOW-TDT-REWRITE.md); the measurements below predate it.
+
 ## Order of work
 
 1. Extend the existing offline evaluator with frame-aligned independent native windows at 15, 24.96 and 30 seconds. Compare with complete-audio Batch and the current Fluid-style decoder. Keep exact PCM, native token IDs and full per-window measurements.
