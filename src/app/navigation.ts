@@ -22,14 +22,6 @@ export type ToolSectionId = (typeof TOOL_SECTION_IDS)[number];
 
 export const EXTENSION_VIEW_IDS = ["installed", "store"] as const;
 
-/** Alpha and acceptance builds expose the extension entry point; ordinary releases don't. */
-export function extensionsNavigationVisible(
-  mode: string,
-  development: boolean,
-): boolean {
-  return development || mode === "extensions-alpha" || mode === "agent-harness";
-}
-
 /** Direct MCP configuration stays in development until its release checkpoint. */
 export function customMcpManagementVisible(
   mode: string,

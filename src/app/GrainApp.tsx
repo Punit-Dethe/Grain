@@ -28,7 +28,6 @@ import {
   hashForRoute,
   routeFromHash,
   routeUsesCompactGlobalRail,
-  extensionsNavigationVisible,
   type AppRoute,
 } from "./navigation";
 import { SettingsPage } from "./pages/SettingsPage";
@@ -301,14 +300,6 @@ function Sidebar({
       </div>
       <nav className="nav-list">
         {NAV_ITEMS.map((item) => {
-          if (
-            item.page === "extensions" &&
-            !extensionsNavigationVisible(
-              import.meta.env.MODE,
-              import.meta.env.DEV,
-            )
-          )
-            return null;
           const active =
             item.page === route.page ||
             (item.page === "extensions" && route.page === "extension-settings");

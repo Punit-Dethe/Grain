@@ -30,6 +30,14 @@ installer/archive verification also pass. No repeat user batch or build is neede
 Real key custody/backup setup is explicitly
 deferred by the user until public release (17 October). No stable SDK release.
 
+**Navigation update, 31 October:** the user now requests the Extensions sidebar
+entry in the normal app. Removed only the old build-mode visibility condition;
+the existing Installed/Store destinations are enabled in normal builds too.
+Custom MCP configuration and backend account/execution build policies remain
+unchanged. Frontend tests/build/lint pass; the installed app requires a future
+updated build or a dev launch to see this source change. Visual acceptance is
+Pending; no installer/release is dispatched for this edit.
+
 ## Final merge into main — 31 October
 
 The conflict-free combined source passes 127 frontend, 567 workspace and 771

@@ -1,5 +1,26 @@
 # Extension implementation: progress, changes and user testing
 
+**Normal-build Extensions sidebar, 31 October 2026:** at the user's request,
+remove the old alpha/development-only sidebar condition and its unused visibility
+helper. Extensions now uses its existing enabled Installed-page destination in
+every app build. Existing route parsing, current-page semantics, appearance and
+store/settings pages are unchanged. Remove the obsolete test that required normal
+builds to hide the item; keep route round trips and custom MCP visibility tests.
+Custom MCP management remains development-only. Backend store execution/auth gates
+are not broadened by showing a navigation entry.
+
+Based on main `9deb7e50` (0.0.10), which arrived after the final platform merge.
+Preserved unrelated local generated bindings and backed up original local bytes
+before the version fast-forward. No installer/release dispatch or backend change.
+The installed app does not hot-reload this source edit; it needs a later updated
+build, or the normal development app, for user visual confirmation.
+126 frontend tests pass (one obsolete hidden-navigation requirement removed),
+along with the standard TypeScript/Vite build, scoped ESLint and whitespace
+checks. The single mechanical UI scan reports no findings. Scoped source/graph
+review confirms the existing destination, enabled button, active-page styling
+and custom MCP policy are retained. No backend tests/rebuild are repeated for
+this frontend-only deletion. User visual confirmation remains Pending.
+
 **Final main integration, 31 October 2026:** the user explicitly authorizes
 updating and finally merging the extension branch into main. Pinned remote main
 `905b1fd2663ec7c83ef1d7020c9515bc8f97f3dd` and extension source
