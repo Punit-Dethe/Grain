@@ -33,6 +33,17 @@ Prefer `code-review-graph` MCP tools over Grep/Glob/Read when exploring, reviewi
 
 <quality_standards>
 
+**Release status / clean breaks (user decision, 2026-10-07):** Grain is unreleased,
+before pre-alpha, with no deployed users. Do not spend effort preserving old
+Grain extensions, settings, formats, registry history or upgrade migrations.
+Retire obsolete paths and use the new contract directly; no compatibility-only
+fallbacks, tombstones, archives or version reservations are required. Earlier
+legacy-removal holds are superseded. Retain current security/correctness checks,
+needed provider/protocol support, first-party behavior and the upstream boundary
+above. Preserve unrelated local working changes; this is not an instruction to
+discard them. Record cleanup of already-built compatibility-only code in the
+execution plan instead of extending it.
+
 1. **Destroy if not in use:** Do not hold resources, listeners, state, or services alive beyond their required lifetime. Explicit cleanup is mandatory.
 2. **Low RAM / Low Overhead:** Reject approaches that trade memory for marginal convenience. We prioritize edge-device performance.
 3. **Optimization Priority:** Correctness → Efficiency (RAM/CPU) → Maintainability.
@@ -43,7 +54,7 @@ Prefer `code-review-graph` MCP tools over Grep/Glob/Read when exploring, reviewi
 
 1. **UI 2.0 Branch Isolation:** All UI 2.0 overhaul work MUST remain on the dedicated `ui/grain-2.0` branch. NEVER push UI 2.0 commits directly to `main`; merge only when the user explicitly requests the final merge.
 2. **No Visual Harnesses:** NEVER create browser-only UI harnesses, mock Tauri shims, screenshot replicas, or temporary alternate render paths for visual review. Test the real application only.
-3. **No Browser or Computer Control:** NEVER use browser-control, computer-control, in-app-browser, `agent-browser`, or equivalent automation for Grain UI development or visual evaluation. This rule overrides generic skill workflows that request automated browser screenshots or browser-based design evaluation.
+3. **Real-Application Acceptance Automation (updated 2026-10-01):** The user authorizes automated Agent acceptance testing against the real Grain application. Use the maintained `tests/agent-harness/` runner with isolated profiles, scoped credentials, owned-process cleanup and recorded evidence. Browser/computer automation may exercise the real application for these tests; never substitute browser-only UI replicas or mock Tauri visual harnesses. User visual approval remains required for UI design changes.
 4. **User Owns Visual Approval:** At the end of each UI phase, provide exact commands for running the real Tauri application and ask the user for visual confirmation. If a visual detail is unclear, ask the user for a screenshot instead of creating a harness or controlling the UI.
 5. **Non-Visual Verification Still Required:** Continue running code review, type checks, lint, tests, production builds, parity checks, and Rust checks without browser automation.
    </ui_development_protocol>

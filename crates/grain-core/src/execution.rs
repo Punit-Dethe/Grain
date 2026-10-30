@@ -106,8 +106,8 @@ pub struct PreparedCall {
     /// The manifest digest in force at prepare time — rechecked at execution to
     /// catch an install/update that changed the action underneath us (§12.7/§12.13).
     pub manifest_digest: String,
-    /// Present for side-effecting calls so a retry that arrives after a delayed
-    /// success cannot double-fire; the executor dedupes on it within a window.
+    /// Operation identity forwarded when an adapter supports it. A local key
+    /// alone does not establish provider deduplication or make a write retryable.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub idempotency_key: Option<String>,
     pub prepared_at_ms: i64,
@@ -171,6 +171,93 @@ pub enum FailureClass {
     Internal,
 }
 
+/// What the host knows when execution fails. Dispatch means the request may
+/// have reached the provider, not that the provider definitely performed it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DispatchPhase {
+    NotDispatched,
+    Dispatched,
+    ResponseReceived,
+}
+
+/// A host-authored failure with execution certainty independent of its cause.
+/// Never put raw SDK exceptions, credentials or provider payloads in `message`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ExecutionFailure {
+    pub phase: DispatchPhase,
+    pub class: FailureClass,
+    pub message: String,
+}
+
+impl ExecutionFailure {
+    pub fn new(phase: DispatchPhase, class: FailureClass, message: impl Into<String>) -> Self {
+        Self {
+            phase,
+            class,
+            message: message.into(),
+        }
+    }
+
+    pub fn into_outcome(self) -> ActionOutcome {
+        match self.phase {
+            DispatchPhase::NotDispatched => ActionOutcome::Failed {
+                class: self.class,
+                message: format!("The action was not dispatched. {}", self.message),
+            },
+            DispatchPhase::Dispatched => ActionOutcome::UnknownOutcome {
+                message: format!(
+                    "The provider may have performed the action, but Grain could not confirm its result. {} Do not repeat it automatically.",
+                    self.message
+                ),
+            },
+            DispatchPhase::ResponseReceived => ActionOutcome::ResultUnavailable {
+                message: format!(
+                    "The provider responded, but Grain cannot present the final result. {} Do not infer success or absence of effects, or repeat the action automatically.",
+                    self.message
+                ),
+            },
+        }
+    }
+}
+
+/// A bounded display/model preview. Unlike capability metadata, result data
+/// needs its whitespace preserved. Invisible formatting/control text is removed.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ResultText {
+    pub text: String,
+    pub truncated: bool,
+}
+
+pub fn is_hidden_result_character(ch: char) -> bool {
+    (ch.is_control() && !matches!(ch, '\n' | '\r' | '\t'))
+        || matches!(ch, '\u{200B}'..='\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2060}'..='\u{206F}' | '\u{FEFF}')
+}
+
+/// Keep the entire preview (including its truncation marker) within `max_bytes`.
+pub fn bounded_result_text(raw: &str, max_bytes: usize) -> ResultText {
+    const MARKER: &str = "\n[Result truncated.]";
+    let mut text = String::with_capacity(raw.len().min(max_bytes));
+    let mut truncated = false;
+    for ch in raw.chars().filter(|ch| !is_hidden_result_character(*ch)) {
+        if text.len().saturating_add(ch.len_utf8()) > max_bytes {
+            truncated = true;
+            break;
+        }
+        text.push(ch);
+    }
+    if truncated {
+        let marker = &MARKER[..MARKER.len().min(max_bytes)];
+        let mut end = text.len().min(max_bytes.saturating_sub(marker.len()));
+        while !text.is_char_boundary(end) {
+            end -= 1;
+        }
+        text.truncate(end);
+        text.push_str(marker);
+    }
+    ResultText { text, truncated }
+}
+
 /// The bounded data a successful action returns for rendering.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -183,6 +270,10 @@ pub struct SuccessData {
     pub title: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub body: Option<String>,
+    /// Bounded structured data retained independently from its display preview.
+    /// This is untrusted result data, never an instruction or permission grant.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub structured_content: Option<Value>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub details: Vec<Field>,
     /// True when a side effect happened (render as a receipt); false for a read
@@ -205,6 +296,15 @@ pub enum ActionOutcome {
     /// A side-effecting call whose result is genuinely unknown — e.g. an
     /// ambiguous timeout. The user is told plainly; the host does not retry.
     UnknownOutcome {
+        message: String,
+    },
+    /// A response arrived, but no supported final result can be presented.
+    /// This is not evidence that the provider made no changes.
+    ResultUnavailable {
+        message: String,
+    },
+    /// The provider returned `isError`, which may follow partial side effects.
+    ToolReportedError {
         message: String,
     },
     /// The action needs the user before it can proceed (a follow-up field, a
@@ -242,8 +342,13 @@ impl ActionOutcome {
                 level: NoticeLevel::Info,
                 message: "Cancelled.".to_string(),
             },
-            ActionOutcome::UnknownOutcome { message } => Interaction::Notice {
+            ActionOutcome::UnknownOutcome { message }
+            | ActionOutcome::ResultUnavailable { message } => Interaction::Notice {
                 level: NoticeLevel::Warning,
+                message: message.clone(),
+            },
+            ActionOutcome::ToolReportedError { message } => Interaction::Notice {
+                level: NoticeLevel::Error,
                 message: message.clone(),
             },
             ActionOutcome::NeedsInteraction(interaction) => interaction.clone(),
@@ -266,13 +371,19 @@ impl ActionOutcome {
             ActionOutcome::UnknownOutcome { message } => {
                 format!("Outcome unknown — do not claim it succeeded: {message}")
             }
+            ActionOutcome::ResultUnavailable { message } => {
+                format!("Provider responded; final result unavailable: {message}")
+            }
+            ActionOutcome::ToolReportedError { message } => {
+                format!("Tool reported an error; partial effects may have occurred. Do not repeat automatically: {message}")
+            }
             ActionOutcome::NeedsInteraction(_) => {
                 "Waiting on the user before this can proceed.".to_string()
             }
         };
         // Tool results are untrusted evidence. Bound and strip invisible/control
         // text before they re-enter the model context.
-        crate::capability_agent::sanitize(&raw, 4 * 1024)
+        bounded_result_text(&raw, 16 * 1024).text
     }
 }
 
@@ -440,6 +551,7 @@ mod tests {
             source: Some("GitHub".into()),
             title: Some("Created issue".into()),
             body: Some("acme/web #125".into()),
+            structured_content: None,
             details: vec![],
             receipt: true,
         });
@@ -452,6 +564,7 @@ mod tests {
             source: Some("GitHub".into()),
             title: Some("Open issues".into()),
             body: None,
+            structured_content: None,
             details: vec![],
             receipt: false,
         });
@@ -474,6 +587,97 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn execution_failure_keeps_dispatch_certainty_separate_from_cause() {
+        for class in [
+            FailureClass::Network,
+            FailureClass::Auth,
+            FailureClass::Internal,
+        ] {
+            let before = ExecutionFailure::new(DispatchPhase::NotDispatched, class, "Unavailable.")
+                .into_outcome();
+            assert!(
+                matches!(&before, ActionOutcome::Failed { class: actual, .. } if *actual == class)
+            );
+            assert!(before.model_summary().contains("not dispatched"));
+
+            let after = ExecutionFailure::new(DispatchPhase::Dispatched, class, "Response lost.")
+                .into_outcome();
+            assert!(matches!(&after, ActionOutcome::UnknownOutcome { .. }));
+            assert!(after
+                .model_summary()
+                .contains("Do not repeat it automatically"));
+            assert!(!after.model_summary().contains("not dispatched"));
+
+            let response = ExecutionFailure::new(
+                DispatchPhase::ResponseReceived,
+                class,
+                "Unsupported result.",
+            )
+            .into_outcome();
+            assert!(matches!(&response, ActionOutcome::ResultUnavailable { .. }));
+            assert!(matches!(
+                response.to_interaction("Write"),
+                Interaction::Notice {
+                    level: NoticeLevel::Warning,
+                    ..
+                }
+            ));
+        }
+    }
+
+    #[test]
+    fn result_previews_preserve_formatting_and_mark_utf8_safe_truncation() {
+        let code = "if ready {\n\tprint(\"a  b\");\n}\u{202e}\u{0}";
+        let result = bounded_result_text(code, 100);
+        assert_eq!(result.text, "if ready {\n\tprint(\"a  b\");\n}");
+        assert!(!result.truncated);
+        for limit in [0, 1, 10, 19, 20, 31, 64] {
+            let result = bounded_result_text(&"🙂".repeat(100), limit);
+            assert!(result.truncated);
+            assert!(result.text.len() <= limit);
+            if limit >= 20 {
+                assert!(result.text.contains("[Result truncated.]"));
+            }
+        }
+        assert!(!bounded_result_text("1234", 4).truncated);
+    }
+
+    #[test]
+    fn model_results_preserve_json_and_distinguish_partial_tool_errors() {
+        let outcome = ActionOutcome::Succeeded(SuccessData {
+            source: None,
+            title: None,
+            body: Some("{\n  \"value\": \"a  b\"\n}".into()),
+            structured_content: None,
+            details: vec![],
+            receipt: false,
+        });
+        assert_eq!(
+            serde_json::from_str::<Value>(&outcome.model_summary()).unwrap()["value"],
+            "a  b"
+        );
+        let error = ActionOutcome::ToolReportedError {
+            message: "Second step failed.".into(),
+        };
+        assert!(error.model_summary().contains("partial effects"));
+        assert!(error
+            .model_summary()
+            .contains("Do not repeat automatically"));
+        for outcome in [
+            error,
+            ActionOutcome::ResultUnavailable {
+                message: "Unsupported task.".into(),
+            },
+        ] {
+            let encoded = serde_json::to_string(&outcome).unwrap();
+            assert_eq!(
+                serde_json::from_str::<ActionOutcome>(&encoded).unwrap(),
+                outcome
+            );
+        }
     }
 
     #[test]

@@ -5,24 +5,9 @@
 //! extension; each worker opens its **own** WebSocket with its **own** token
 //! (SPEC §7.1 — never a shared realm, which would make identity forgeable).
 //!
-//! Responsibilities:
-//! - **Activation dispatch**: subscribe to the event bus; wake a worker when a
-//!   broadcast matches its manifest `activation` (`onEvent:<Variant>`,
-//!   `onTransform` → warm on `RecordingStarted`), carrying the triggering event
-//!   as the injected `activation` payload (the broadcast is already past when
-//!   the worker connects, so the wake reason must travel with the spawn).
-//! - **Worker registry**: per-extension token, strikes, last-activity, and the
-//!   connection channel (set when its WS attaches in `events_server`).
-//! - **Host calls**: [`call_worker`] issues a `HostCall` and awaits the worker's
-//!   `HostCallResult` under a deadline; [`run_transforms`] is the transform
-//!   pipeline built on it (150 ms hard deadline, 3-strike auto-disable).
-//! - **Reaper**: idle (> 120 s, no pending calls, not resident) workers are
-//!   killed and their tokens revoked — "destroy if not in use".
-//!
-//! The security wall is the Rust WS boundary ([`crate::events_auth`] +
-//! [`crate::host_api`]). This lifecycle index also requires the corresponding
-//! grant before a declared activation can wake a worker, so the carried wake
-//! payload cannot bypass the connection's live-event filter.
+//! Explicit tool calls wake workers; no event, transcript or session activation
+//! is installed. Rust owns tokens, bounded calls, idle cleanup and generation-
+//! scoped supervisor windows. The host API/WS boundary enforces tool-only grants.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -31,7 +16,7 @@ use std::sync::{Arc, Mutex, OnceLock, RwLock};
 use std::time::{Duration, Instant};
 
 use grain_core::{AppContext, DaemonEvent};
-use grain_sdk::{daemon_event_capability, GrainPack, HostCall, HostFrame};
+use grain_sdk::{GrainPack, HostCall, HostFrame};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tauri::{AppHandle, Emitter, Listener, Manager, WebviewUrl, WebviewWindowBuilder};
@@ -40,7 +25,7 @@ use tokio_tungstenite::tungstenite::Message;
 
 /// The hidden supervisor webview: Grain's code, one per app run, created on the
 /// first worker need and torn down when the last worker dies.
-const SUPERVISOR_LABEL: &str = "extension-host";
+const SUPERVISOR_LABEL_PREFIX: &str = "extension-host-";
 /// A dedicated frontend route (Step 5) — NOT the SPA root, so no extension code
 /// ever shares Grain's main global.
 const SUPERVISOR_URL: &str = "extension-host.html";
@@ -48,15 +33,13 @@ const SUPERVISOR_URL: &str = "extension-host.html";
 /// Reaper policy (SPEC §3: workers are ephemeral).
 const IDLE_REAP_SECS: u64 = 120;
 const REAP_INTERVAL_SECS: u64 = 30;
+const MAX_NATIVE_WORKERS: usize = 8;
+const MAX_ACTIVE_NATIVE_CALLS: usize = 8;
+const MAX_PENDING_WORKER_CALLS: usize = 4;
+pub(crate) const WORKER_OUTBOUND_CAPACITY: usize = 8;
+const WORKER_BUSY: &str = "worker call capacity reached";
 
-/// Transform budget (SPEC §3.1): a cold worker cannot fit this, which is why
-/// `onTransform` extensions warm on `RecordingStarted`.
-const TRANSFORM_DEADLINE: Duration = Duration::from_millis(150);
-/// A session mode owns the deliberately slow stage, but never indefinitely.
-/// Thirty seconds is generous for a routed model call and still guarantees a
-/// hung worker cannot eat the user's transcript.
-const SESSION_STAGE_DEADLINE: Duration = Duration::from_secs(30);
-/// Consecutive transform failures before auto-disable (SPEC §3.3).
+/// Consecutive over-budget heap samples before resource-policy disable.
 const MAX_STRIKES: u32 = 3;
 /// Generous pathology guard, not accounting: Chromium's reported JS heap is
 /// not the worker process footprint. It is still the right signal for a runaway
@@ -78,12 +61,69 @@ struct DevSource {
 struct WorkerConn {
     /// The single-writer funnel to this worker's socket (owned by its `handle`
     /// task; every frame the host sends goes through here).
-    out_tx: mpsc::UnboundedSender<Message>,
+    out_tx: mpsc::Sender<Message>,
+    closed: tokio::sync::watch::Sender<bool>,
     /// In-flight host calls: `call_id` → the awaiter's oneshot. `Arc` so
     /// [`call_worker`]/[`resolve_call_result`] can operate on it without holding
     /// the `workers` lock across an await.
-    pending: Arc<Mutex<HashMap<u64, oneshot::Sender<Result<Value, String>>>>>,
+    pending: PendingCalls,
     next_call_id: Arc<AtomicU64>,
+}
+
+type PendingCalls = Arc<Mutex<HashMap<u64, oneshot::Sender<Result<Value, String>>>>>;
+
+struct PendingCall {
+    calls: PendingCalls,
+    id: u64,
+}
+
+impl Drop for PendingCall {
+    fn drop(&mut self) {
+        self.calls.lock().unwrap().remove(&self.id);
+    }
+}
+
+struct QueuedCall {
+    pending: PendingCall,
+    reply: oneshot::Receiver<Result<Value, String>>,
+}
+
+impl QueuedCall {
+    async fn wait(self, deadline: Duration) -> Result<Value, String> {
+        let result = match tokio::time::timeout(deadline, self.reply).await {
+            Ok(Ok(result)) => result,
+            Ok(Err(_)) => Err("worker dropped the call".into()),
+            Err(_) => Err("deadline exceeded".into()),
+        };
+        drop(self.pending);
+        result
+    }
+}
+
+/// Own the exact native worker while startup or a queued call is unfinished.
+/// Dropping the request retires that generation; successful replies disarm it.
+struct NativeCallOwner<F: FnOnce()> {
+    retire: Option<F>,
+}
+
+impl<F: FnOnce()> NativeCallOwner<F> {
+    fn new(retire: F) -> Self {
+        Self {
+            retire: Some(retire),
+        }
+    }
+
+    fn completed(&mut self) {
+        self.retire = None;
+    }
+}
+
+impl<F: FnOnce()> Drop for NativeCallOwner<F> {
+    fn drop(&mut self) {
+        if let Some(retire) = self.retire.take() {
+            retire();
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -95,20 +135,42 @@ enum RuntimeKind {
 struct Worker {
     /// The token minted for this worker; revoked at reap (SPEC §7.1).
     token: String,
+    /// Manifest/source and registry identity actually used by this worker.
+    call_digest: Option<String>,
+    execution_generation: u64,
     /// `onStartup` workers are never reaped for idleness.
     resident: bool,
-    /// Consecutive transform-deadline failures (SPEC §3.3).
-    strikes: u32,
-    /// Consecutive over-budget samples. Separate from transform strikes so a
-    /// healthy heap sample cannot forgive a slow transform (or vice versa).
+    /// Consecutive over-budget heap samples for this worker generation.
     memory_strikes: u32,
     kind: RuntimeKind,
-    /// Epoch seconds of the last frame from this worker; the reaper's clock.
-    /// `Arc` so the connection can bump it directly (no lock per frame).
+    /// Epoch seconds of the last user call/connection; maintenance never renews it.
+    /// User queue admission owns renewal; socket readers never bump it.
     last_activity: Arc<AtomicU64>,
     conn: Option<WorkerConn>,
     /// Paths only; the source map is loaded and parsed solely on failure.
     dev_source: Option<DevSource>,
+}
+
+impl Worker {
+    fn matches_native_call(
+        &self,
+        record: &grain_core::extensions::ExtensionRecord,
+        expected_digest: &str,
+    ) -> bool {
+        record.enabled
+            && record.execution_generation == self.execution_generation
+            && self.call_digest.as_deref() == Some(expected_digest)
+    }
+
+    fn close_pending(&self) {
+        if let Some(conn) = &self.conn {
+            conn.closed.send_replace(true);
+            let _ = conn.out_tx.try_send(Message::Close(None));
+            for (_, sender) in conn.pending.lock().unwrap().drain() {
+                let _ = sender.send(Err("worker terminated".into()));
+            }
+        }
+    }
 }
 
 /// The worker registry: the map plus every operation over it. Deliberately free
@@ -128,6 +190,15 @@ impl Workers {
 
     fn is_running(&self, ext_id: &str) -> bool {
         self.map.lock().unwrap().contains_key(ext_id)
+    }
+
+    fn generation_for_token(&self, ext_id: &str, token: &str) -> Option<u64> {
+        self.map
+            .lock()
+            .unwrap()
+            .get(ext_id)
+            .filter(|worker| worker.token == token)
+            .map(|worker| worker.execution_generation)
     }
 
     fn is_empty(&self) -> bool {
@@ -150,6 +221,39 @@ impl Workers {
         map.remove(ext_id)
     }
 
+    /// Recheck eligibility under the same lock used by queue admission.
+    fn remove_if_idle(
+        &self,
+        ext_id: &str,
+        token: &str,
+        now: u64,
+        idle_secs: u64,
+    ) -> Option<Worker> {
+        let mut map = self.map.lock().unwrap();
+        let worker = map.get(ext_id)?;
+        if worker.token != token || !Self::is_idle(worker, now, idle_secs) {
+            return None;
+        }
+        map.remove(ext_id)
+    }
+
+    fn is_idle(worker: &Worker, now: u64, idle_secs: u64) -> bool {
+        !worker.resident
+            && now.saturating_sub(worker.last_activity.load(Ordering::Relaxed)) > idle_secs
+            && worker
+                .conn
+                .as_ref()
+                .is_none_or(|conn| conn.pending.lock().unwrap().is_empty())
+    }
+
+    fn owns_token(&self, ext_id: &str, token: &str) -> bool {
+        self.map
+            .lock()
+            .unwrap()
+            .get(ext_id)
+            .is_some_and(|worker| worker.token == token)
+    }
+
     fn len(&self) -> usize {
         self.map.lock().unwrap().len()
     }
@@ -168,52 +272,62 @@ impl Workers {
         &self,
         ext_id: &str,
         token: &str,
-        out_tx: mpsc::UnboundedSender<Message>,
+        out_tx: mpsc::Sender<Message>,
     ) -> Option<Arc<AtomicU64>> {
         let mut map = self.map.lock().unwrap();
         let w = map.get_mut(ext_id)?;
         if w.token != token {
             return None;
         }
+        if w.conn.is_some() {
+            return None;
+        }
         w.last_activity.store(now_secs(), Ordering::Relaxed);
         w.conn = Some(WorkerConn {
             out_tx,
+            closed: tokio::sync::watch::channel(false).0,
             pending: Arc::new(Mutex::new(HashMap::new())),
             next_call_id: Arc::new(AtomicU64::new(1)),
         });
         Some(w.last_activity.clone())
     }
 
-    /// Whether a worker has a live connection, which is what [`call`] needs —
-    /// stricter than "spawned", because a spawned webview takes a moment to
-    /// connect back.
-    ///
-    fn is_connected(&self, ext_id: &str) -> bool {
+    fn token(&self, ext_id: &str) -> Option<String> {
         self.map
             .lock()
             .unwrap()
             .get(ext_id)
-            .is_some_and(|w| w.conn.is_some())
+            .map(|worker| worker.token.clone())
     }
 
-    /// Wait, bounded, for a just-spawned worker to connect.
-    ///
-    /// Without this an action on a cold extension fails instantly with "worker
-    /// not connected" — and cold is the **normal** case, because a routed
-    /// action is usually the only reason to wake that extension at all. The
-    /// transform path can skip a cold worker (it has a 150 ms budget and text
-    /// to pass through unchanged); an action has neither.
-    ///
-    /// Polling rather than a notify: this runs once per cold action, the
-    /// interval is short enough to be invisible next to the spawn it is waiting
-    /// on, and a condvar threaded through the connection path would be more
-    /// machinery than the problem deserves.
-    async fn wait_connected(&self, ext_id: &str, deadline: Duration) -> bool {
+    fn connection_closed(
+        &self,
+        ext_id: &str,
+        token: &str,
+    ) -> Option<tokio::sync::watch::Receiver<bool>> {
+        self.map
+            .lock()
+            .unwrap()
+            .get(ext_id)
+            .filter(|worker| worker.token == token)
+            .and_then(|worker| worker.conn.as_ref())
+            .map(|conn| conn.closed.subscribe())
+    }
+
+    /// Wait only for the generation that this call woke. Removal/replacement
+    /// fails promptly instead of migrating the request to a different worker.
+    async fn wait_connected(&self, ext_id: &str, token: &str, deadline: Duration) -> bool {
         const POLL: Duration = Duration::from_millis(20);
         let started = Instant::now();
         loop {
-            if self.is_connected(ext_id) {
-                return true;
+            {
+                let map = self.map.lock().unwrap();
+                let Some(worker) = map.get(ext_id).filter(|worker| worker.token == token) else {
+                    return false;
+                };
+                if worker.conn.is_some() {
+                    return true;
+                }
             }
             if started.elapsed() >= deadline {
                 return false;
@@ -224,6 +338,7 @@ impl Workers {
 
     /// Issue a `HostCall` to a connected worker and await its answer under
     /// `deadline`. Never holds the registry lock across the await.
+    #[cfg(test)]
     async fn call(
         &self,
         ext_id: &str,
@@ -231,49 +346,115 @@ impl Workers {
         params: Value,
         deadline: Duration,
     ) -> Result<Value, String> {
-        let (out_tx, pending, next_call_id) = {
-            let map = self.map.lock().unwrap();
-            let conn = map
-                .get(ext_id)
-                .and_then(|w| w.conn.as_ref())
-                .ok_or("worker not connected")?;
-            (
-                conn.out_tx.clone(),
-                conn.pending.clone(),
-                conn.next_call_id.clone(),
-            )
-        };
-        let call_id = next_call_id.fetch_add(1, Ordering::Relaxed);
-        let (tx, rx) = oneshot::channel();
-        pending.lock().unwrap().insert(call_id, tx);
-        let frame = HostFrame::Call(HostCall {
-            call_id,
-            method: method.to_string(),
+        self.call_owned(ext_id, None, method, params, deadline)
+            .await
+    }
+
+    async fn call_owned(
+        &self,
+        ext_id: &str,
+        token: Option<&str>,
+        method: &str,
+        params: Value,
+        deadline: Duration,
+    ) -> Result<Value, String> {
+        self.call_tracked(
+            ext_id,
+            token,
+            method,
             params,
-        });
-        let json = serde_json::to_string(&frame).map_err(|e| e.to_string())?;
-        if out_tx.send(Message::Text(json.into())).is_err() {
-            pending.lock().unwrap().remove(&call_id);
-            return Err("worker channel closed".into());
-        }
-        match tokio::time::timeout(deadline, rx).await {
-            Ok(Ok(res)) => res,
-            Ok(Err(_)) => Err("worker dropped the call".into()),
-            Err(_) => {
-                pending.lock().unwrap().remove(&call_id);
-                Err("deadline exceeded".into())
+            deadline,
+            &AtomicBool::new(false),
+        )
+        .await
+    }
+
+    /// A successful queue send is the conservative dispatch boundary. Closing
+    /// the worker afterward cannot prove that its handler never ran.
+    async fn call_tracked(
+        &self,
+        ext_id: &str,
+        token: Option<&str>,
+        method: &str,
+        params: Value,
+        deadline: Duration,
+        dispatched: &AtomicBool,
+    ) -> Result<Value, String> {
+        self.enqueue(ext_id, token, method, params, dispatched, None)?
+            .wait(deadline)
+            .await
+    }
+
+    /// Synchronous queue boundary, usable inside a registry admission lock.
+    fn enqueue(
+        &self,
+        ext_id: &str,
+        token: Option<&str>,
+        method: &str,
+        params: Value,
+        dispatched: &AtomicBool,
+        expected_identity: Option<(&str, Instant)>,
+    ) -> Result<QueuedCall, String> {
+        let queued = {
+            let map = self.map.lock().unwrap();
+            let worker = map.get(ext_id).ok_or("worker not connected")?;
+            if token.is_some_and(|token| worker.token != token) {
+                return Err("worker generation changed".into());
             }
-        }
+            if expected_identity
+                .is_some_and(|(expected, _)| worker.call_digest.as_deref() != Some(expected))
+            {
+                return Err("worker tool identity changed".into());
+            }
+            let conn = worker.conn.as_ref().ok_or("worker not connected")?;
+            if conn.pending.lock().unwrap().len() >= MAX_PENDING_WORKER_CALLS {
+                return Err(WORKER_BUSY.into());
+            }
+            let call_id = conn.next_call_id.fetch_add(1, Ordering::Relaxed);
+            let frame = HostFrame::Call(HostCall {
+                call_id,
+                method: method.to_string(),
+                params,
+            });
+            let json = serde_json::to_string(&frame).map_err(|error| error.to_string())?;
+            let (tx, rx) = oneshot::channel();
+            conn.pending.lock().unwrap().insert(call_id, tx);
+            let guard = PendingCall {
+                calls: conn.pending.clone(),
+                id: call_id,
+            };
+            if expected_identity.is_some_and(|(_, expires)| Instant::now() >= expires) {
+                return Err("deadline exceeded".into());
+            }
+            // Queue under the registry lock so removal cannot overtake dispatch
+            // or drain before the pending entry is installed.
+            conn.out_tx
+                .try_send(Message::Text(json.into()))
+                .map_err(|error| match error {
+                    mpsc::error::TrySendError::Full(_) => WORKER_BUSY.to_string(),
+                    mpsc::error::TrySendError::Closed(_) => "worker channel closed".to_string(),
+                })?;
+            dispatched.store(true, Ordering::Release);
+            if method != "memory.sample" {
+                worker.last_activity.store(now_secs(), Ordering::Relaxed);
+            }
+            QueuedCall {
+                pending: guard,
+                reply: rx,
+            }
+        };
+        Ok(queued)
     }
 
     /// Route a `HostCallResult` back to the awaiter of its `call_id` (no-op if
     /// the worker/call is unknown or already timed out).
-    fn resolve(&self, ext_id: &str, call_id: u64, result: Result<Value, String>) {
+    fn resolve(&self, ext_id: &str, token: &str, call_id: u64, result: Result<Value, String>) {
         let pending = self
             .map
             .lock()
             .unwrap()
             .get(ext_id)
+            .filter(|worker| worker.token == token)
             .and_then(|w| w.conn.as_ref())
             .map(|c| c.pending.clone());
         if let Some(pending) = pending {
@@ -285,63 +466,64 @@ impl Workers {
 
     /// Ids of workers idle longer than `idle_secs` with no pending calls and not
     /// resident — the reaper's kill list.
-    fn idle_victims(&self, now: u64, idle_secs: u64) -> Vec<String> {
+    fn idle_victims(&self, now: u64, idle_secs: u64) -> Vec<(String, String)> {
         self.map
             .lock()
             .unwrap()
             .iter()
             .filter_map(|(id, w)| {
-                if w.resident {
-                    return None;
-                }
-                let idle = now.saturating_sub(w.last_activity.load(Ordering::Relaxed));
-                let busy = w
-                    .conn
-                    .as_ref()
-                    .map(|c| !c.pending.lock().unwrap().is_empty())
-                    .unwrap_or(false);
-                (idle > idle_secs && !busy).then(|| id.clone())
+                Self::is_idle(w, now, idle_secs).then(|| (id.clone(), w.token.clone()))
             })
             .collect()
     }
 
-    fn clear_strikes(&self, ext_id: &str) {
-        if let Some(w) = self.map.lock().unwrap().get_mut(ext_id) {
-            w.strikes = 0;
-        }
-    }
-
-    /// Record a transform failure and return its new consecutive-strike count.
-    fn record_strike(&self, ext_id: &str) -> Option<u32> {
-        match self.map.lock().unwrap().get_mut(ext_id) {
-            Some(w) => {
-                w.strikes += 1;
-                Some(w.strikes)
-            }
-            None => None,
-        }
-    }
-
-    fn clear_memory_strikes(&self, ext_id: &str) {
-        if let Some(worker) = self.map.lock().unwrap().get_mut(ext_id) {
+    fn clear_memory_strikes(&self, ext_id: &str, token: &str) {
+        if let Some(worker) = self
+            .map
+            .lock()
+            .unwrap()
+            .get_mut(ext_id)
+            .filter(|worker| worker.token == token)
+        {
             worker.memory_strikes = 0;
         }
     }
 
-    fn record_memory_strike(&self, ext_id: &str) -> Option<u32> {
-        self.map.lock().unwrap().get_mut(ext_id).map(|worker| {
-            worker.memory_strikes += 1;
-            worker.memory_strikes
-        })
+    fn record_memory_strike(&self, ext_id: &str, token: &str) -> Option<u32> {
+        self.map
+            .lock()
+            .unwrap()
+            .get_mut(ext_id)
+            .filter(|worker| worker.token == token)
+            .map(|worker| {
+                worker.memory_strikes = worker.memory_strikes.saturating_add(1);
+                worker.memory_strikes
+            })
     }
 
-    fn scripted_connected_ids(&self) -> Vec<String> {
+    fn scripted_tokens(&self) -> Vec<(String, String)> {
+        self.map
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(_, worker)| worker.kind == RuntimeKind::Scripted)
+            .map(|(id, worker)| (id.clone(), worker.token.clone()))
+            .collect()
+    }
+
+    fn scripted_connected_tokens(&self) -> Vec<(String, String, u64)> {
         self.map
             .lock()
             .unwrap()
             .iter()
             .filter_map(|(id, worker)| {
-                (worker.kind == RuntimeKind::Scripted && worker.conn.is_some()).then(|| id.clone())
+                (worker.kind == RuntimeKind::Scripted && worker.conn.is_some()).then(|| {
+                    (
+                        id.clone(),
+                        worker.token.clone(),
+                        worker.execution_generation,
+                    )
+                })
             })
             .collect()
     }
@@ -370,30 +552,9 @@ impl Workers {
         true
     }
 
-    /// Send a host notification that intentionally has no response waiter.
-    /// Call id zero is reserved for these one-way lifecycle messages.
-    fn notify(&self, ext_id: &str, method: &str, params: Value) -> Result<(), String> {
-        let out_tx = self
-            .map
-            .lock()
-            .unwrap()
-            .get(ext_id)
-            .and_then(|worker| worker.conn.as_ref())
-            .map(|conn| conn.out_tx.clone())
-            .ok_or("worker not connected")?;
-        let frame = HostFrame::Call(HostCall {
-            call_id: 0,
-            method: method.to_string(),
-            params,
-        });
-        let json = serde_json::to_string(&frame).map_err(|error| error.to_string())?;
-        out_tx
-            .send(Message::Text(json.into()))
-            .map_err(|_| "worker channel closed".to_string())
-    }
-
     /// Stop waiting for every host-initiated call to this worker. Session
     /// cancellation uses this to return immediately; late replies are ignored.
+    #[cfg(test)]
     fn cancel_pending(&self, ext_id: &str, reason: &str) {
         let pending = self
             .map
@@ -413,10 +574,60 @@ impl Workers {
 /// Supervisor readiness gate: Tauri events are not buffered, so a `spawn` emit
 /// before the page's `listen` is registered would be lost. Spawns issued before
 /// the page reports `ext-host://ready` are queued and flushed on ready.
+#[derive(Default)]
 struct Supervisor {
+    generation: u64,
     exists: bool,
     ready: bool,
     queue: Vec<SpawnPayload>,
+}
+
+impl Supervisor {
+    fn begin(&mut self) -> Option<u64> {
+        if self.exists {
+            return None;
+        }
+        self.generation = self
+            .generation
+            .checked_add(1)
+            .expect("supervisor generation exhausted");
+        self.exists = true;
+        self.ready = false;
+        Some(self.generation)
+    }
+
+    fn owns(&self, generation: u64) -> bool {
+        self.exists && self.generation == generation
+    }
+
+    fn accept_ready(&mut self, generation: u64) -> bool {
+        if !self.owns(generation) || self.ready {
+            return false;
+        }
+        self.ready = true;
+        true
+    }
+
+    fn retire(&mut self) -> Option<u64> {
+        if !self.exists {
+            return None;
+        }
+        self.exists = false;
+        self.ready = false;
+        self.queue.clear();
+        Some(self.generation)
+    }
+}
+
+fn supervisor_label(generation: u64) -> String {
+    format!("{SUPERVISOR_LABEL_PREFIX}{generation}")
+}
+
+#[derive(Deserialize)]
+struct SupervisorStatus {
+    generation: u64,
+    #[serde(default)]
+    reason: String,
 }
 
 /// The hot-path index. **An installed-but-idle extension must cost the native
@@ -425,16 +636,6 @@ struct Supervisor {
 /// manifests live). Rebuilt only when the extension set changes.
 #[derive(Default)]
 struct Index {
-    /// Event variant name → extension ids that wake on it.
-    by_event: HashMap<String, Vec<String>>,
-    /// `onTransform` extensions, already sorted into toggle order.
-    transforms: Vec<String>,
-    /// Contributed prompt layers, already sorted into toggle order and already
-    /// screened. Held here rather than read from the manifest at dictation time
-    /// for the usual reason — the post-process path must not touch the disk —
-    /// and screened here rather than at render time so a pack whose text was
-    /// edited on disk after import never reaches the prompt at all.
-    prompt_layers: Vec<CompiledPromptLayer>,
     /// Declared actions, compiled (`docs/Extensions V1/PLAN.md`). Same reasoning
     /// as the layers above: built here so nothing on a felt path reads a
     /// manifest, and gated by the approval digest on every rebuild rather than
@@ -457,15 +658,6 @@ struct Index {
     /// hot path (§11.2). Pure metadata memory; no worker. Consumed by the Agent
     /// tool loop in a later Phase 2B pass.
     capability: grain_core::capability_index::CapabilityIndex,
-}
-
-/// An enabled extension's prompt layer, compiled for matching.
-struct CompiledPromptLayer {
-    ext_id: String,
-    layer_id: String,
-    target: grain_sdk::manifest::PromptTarget,
-    when: grain_sdk::manifest::LayerWhen,
-    text: String,
 }
 
 /// Guards so the common case — no scripted extension enabled — costs exactly
@@ -516,6 +708,7 @@ fn recommend_vectors() -> &'static RwLock<RecommendVectors> {
 struct HostState {
     app: AppHandle,
     workers: Workers,
+    native_calls: tokio::sync::Semaphore,
     supervisor: Mutex<Supervisor>,
     index: RwLock<Index>,
 }
@@ -526,157 +719,43 @@ static HOST: OnceLock<HostState> = OnceLock::new();
 /// startup and whenever the extension set changes (enable/disable/grant/import/
 /// uninstall/auto-disable) — **never** from a hot path.
 pub fn refresh_index(app: &AppHandle) {
-    let host = match HOST.get() {
-        Some(h) => h,
-        None => return,
+    let Some(host) = HOST.get() else {
+        return;
     };
-    let mut by_event: HashMap<String, Vec<String>> = HashMap::new();
-    let mut transforms: Vec<(String, u64)> = Vec::new();
-    let mut prompt_layers: Vec<(CompiledPromptLayer, u64)> = Vec::new();
-    let mut actions: Vec<grain_core::action_router::IndexedAction> = Vec::new();
-    let mut capability_inputs: Vec<grain_core::capability_index::ActionInput> = Vec::new();
-    let mut recommendations: Vec<grain_core::recommend::IndexedRecommendation> = Vec::new();
-    let mut recommend_examples: Vec<(String, Vec<String>)> = Vec::new();
-    let mut auto_send_eligible: std::collections::HashSet<String> =
-        std::collections::HashSet::new();
-    let mut startup_workers: Vec<(String, GrainPack, Vec<String>)> = Vec::new();
-
+    let mut actions = Vec::new();
+    let mut capability_inputs = Vec::new();
     if let Some(reg) = app.try_state::<Arc<grain_core::extensions::ExtensionsRegistry>>() {
-        for rec in reg.records() {
-            if !rec.enabled {
-                continue;
-            }
-            let Some(pack) = load_manifest(app, &rec.id) else {
-                continue;
-            };
-            // Prompt layers are collected BEFORE the runtime filter: an inert
-            // tier-A pack contributing static text is the shape this feature
-            // exists for, and requiring a runtime for it would push authors
-            // toward code they do not need.
-            collect_prompt_layers(&rec, &pack, &mut prompt_layers);
-            if !pack.has_runtime() {
-                continue;
-            }
-            // Actions ARE gated on a runtime, unlike prompt layers: a pack with
-            // nothing to call would win a route and then dead-end.
-            collect_actions(&rec, &pack, &mut actions);
-            // [GRAIN] Capability Index V2 draws from the same declared actions,
-            // projected for the schema-aware retriever (docs/Extensions 2.0 §6).
-            // Repeat the approval-digest gate for V2: an edited on-disk pack
-            // cannot smuggle a new Agent tool into an already-enabled record.
-            collect_capability_actions(&rec, &pack, &mut capability_inputs);
-            // The Extension Mode pool. Gated on searchable + recommendation
-            // approval, NOT on declaring any action — a translator is a real
-            // searchable extension with no command catalogue at all (§3.1).
-            collect_recommendation(
-                &rec,
-                &pack,
-                &mut recommendations,
-                &mut recommend_examples,
-                &mut auto_send_eligible,
-            );
-            let mut granted_variants = Vec::new();
-            for variant in declared_event_variants(&pack.manifest.activation) {
-                let Some(capability) = daemon_event_capability(&variant) else {
-                    continue;
-                };
-                if has_grant(&rec.granted, capability) {
-                    granted_variants.push(variant);
-                } else {
-                    log::warn!(
-                        "[ext:{}] deny activation onEvent:{variant} missing capability {capability}",
-                        rec.id
-                    );
+        for rec in reg.records().into_iter().filter(|record| record.enabled) {
+            match load_manifest_result(app, &rec.id) {
+                Ok(pack) => {
+                    collect_actions(&rec, &pack, &mut actions);
+                    collect_capability_actions(&rec, &pack, &mut capability_inputs);
+                }
+                Err(reason) => {
+                    if let Err(error) = reg.quarantine(&rec.id, &reason) {
+                        log::error!("[ext:{}] could not persist quarantine: {error}", rec.id);
+                    }
+                    stop_extension(&rec.id, "incompatible tool-only extension");
+                    crate::grain_auth::cancel_extension(&rec.id);
                 }
             }
-            if declares_transform(&pack.manifest.activation)
-                && has_grant(&rec.granted, "transform:transcript")
-            {
-                transforms.push((rec.id.clone(), rec.toggle_seq));
-                granted_variants.push("RecordingStarted".to_string());
-            } else if declares_transform(&pack.manifest.activation) {
-                log::warn!(
-                    "[ext:{}] deny activation onTransform missing capability transform:transcript",
-                    rec.id
-                );
-            }
-            granted_variants.sort();
-            granted_variants.dedup();
-            for variant in granted_variants {
-                by_event.entry(variant).or_default().push(rec.id.clone());
-            }
-            if has_resident_grant(&pack.manifest.activation, &rec.granted) && !is_running(&rec.id) {
-                startup_workers.push((rec.id.clone(), pack, rec.granted.clone()));
-            } else if declares_startup(&pack.manifest.activation)
-                && !has_grant(&rec.granted, "resident")
-            {
-                log::warn!(
-                    "[ext:{}] deny onStartup missing capability resident",
-                    rec.id
-                );
-            }
         }
     }
-    transforms.sort_by_key(|(_, seq)| *seq);
-    let transforms: Vec<String> = transforms.into_iter().map(|(id, _)| id).collect();
-    // Toggle order (SPEC §4.4) is the ordering everywhere else contributions
-    // compete, and it is the only one the user can actually change.
-    prompt_layers.sort_by_key(|(_, seq)| *seq);
-    let prompt_layers: Vec<CompiledPromptLayer> =
-        prompt_layers.into_iter().map(|(l, _)| l).collect();
-
-    let action_count = actions.len();
-    let action_index = grain_core::action_router::ActionIndex::build(actions);
-    HAS_ACTIONS.store(action_count > 0, Ordering::Relaxed);
-    HAS_RECOMMENDATIONS.store(!recommendations.is_empty(), Ordering::Relaxed);
-    let capability = grain_core::capability_index::CapabilityIndex::build(capability_inputs);
-
-    HAS_ACTIVATIONS.store(!by_event.is_empty(), Ordering::Relaxed);
-    HAS_TRANSFORMS.store(!transforms.is_empty(), Ordering::Relaxed);
-    HAS_PROMPT_LAYERS.store(!prompt_layers.is_empty(), Ordering::Relaxed);
-    HAS_CONTEXT_SLOT.store(
-        app.try_state::<Arc<grain_core::extensions::ExtensionsRegistry>>()
-            .and_then(|reg| reg.slot_occupant(grain_sdk::manifest::PROMPT_CONTEXT_SLOT))
-            .is_some_and(|occupant| occupant != grain_core::extensions::CORE_DEFAULT),
-        Ordering::Relaxed,
-    );
-    HAS_MAIN_SLOT.store(
-        app.try_state::<Arc<grain_core::extensions::ExtensionsRegistry>>()
-            .and_then(|reg| reg.slot_occupant(grain_sdk::manifest::PROMPT_MAIN_SLOT))
-            .is_some_and(|occupant| occupant != grain_core::extensions::CORE_DEFAULT),
-        Ordering::Relaxed,
-    );
-    log::debug!(
-        "[GRAIN] ext-host: index rebuilt — {} activation variant(s), {} transform(s), {} prompt layer(s)",
-        by_event.len(),
-        transforms.len(),
-        prompt_layers.len()
-    );
+    HAS_ACTIONS.store(!actions.is_empty(), Ordering::Relaxed);
+    HAS_RECOMMENDATIONS.store(false, Ordering::Relaxed);
+    HAS_ACTIVATIONS.store(false, Ordering::Relaxed);
+    HAS_TRANSFORMS.store(false, Ordering::Relaxed);
+    HAS_PROMPT_LAYERS.store(false, Ordering::Relaxed);
+    HAS_CONTEXT_SLOT.store(false, Ordering::Relaxed);
+    HAS_MAIN_SLOT.store(false, Ordering::Relaxed);
     *host.index.write().unwrap() = Index {
-        by_event,
-        transforms,
-        prompt_layers,
-        actions: action_index,
-        recommendations,
-        auto_send_eligible,
-        capability,
+        actions: grain_core::action_router::ActionIndex::build(actions),
+        capability: grain_core::capability_index::CapabilityIndex::build(capability_inputs),
+        ..Index::default()
     };
-    // Embed the pool's examples off this path, generation-guarded, so a slow
-    // rebuild never blocks a switch and a stale embed never lands on a newer
-    // pool. Until it completes the pool ranks name-only, which is honest.
-    reembed_recommendations(app.clone(), recommend_examples);
-    // "The extension set changed" is exactly the trigger for reconciling
-    // contributed shortcuts, so every caller of `refresh_index` gets it for
-    // free rather than having to remember a second call. `sync` defers onto
-    // the async runtime, so this stays safe even when the change was caused by
-    // a shortcut press.
+    // Reconcile old registrations to an empty set; enabling tools creates no
+    // event subscription, resident worker, prompt layer or shortcut.
     crate::extension_shortcuts::sync(app);
-    for (id, pack, granted) in startup_workers {
-        if !is_running(&id) {
-            log::info!("[ext:{id}] life activation startup");
-            spawn_worker(app, &id, &pack, granted, None);
-        }
-    }
 }
 
 /// Compile one enabled extension's declared prompt layers into the index.
@@ -695,46 +774,6 @@ pub fn refresh_index(app: &AppHandle) {
 ///
 /// Both failures are logged and skipped, never repaired: text that has drifted
 /// from what the user agreed to is not something to sanitise and use anyway.
-fn collect_prompt_layers(
-    rec: &grain_core::extensions::ExtensionRecord,
-    pack: &GrainPack,
-    out: &mut Vec<(CompiledPromptLayer, u64)>,
-) {
-    let declared = &pack.manifest.contributes.prompt_layers;
-    if declared.is_empty() {
-        return;
-    }
-    let approved = grain_core::extensions::prompt_layers_fingerprint(declared);
-    if rec.prompt_layers_approved.as_deref() != Some(approved.as_str()) {
-        log::warn!(
-            "[ext:{}] prompt layers not applied — the declared text differs from what was \
-             approved; the user must review it again",
-            rec.id
-        );
-        return;
-    }
-    for layer in declared {
-        let text = layer.text.trim();
-        if let Err(why) = crate::context_detect::prompt_stack::screen_contributed_text(text) {
-            log::warn!(
-                "[ext:{}] prompt layer '{}' refused: {why}",
-                rec.id,
-                layer.id
-            );
-            continue;
-        }
-        out.push((
-            CompiledPromptLayer {
-                ext_id: rec.id.clone(),
-                layer_id: layer.id.clone(),
-                target: layer.target,
-                when: layer.when.clone(),
-                text: text.to_string(),
-            },
-            rec.toggle_seq,
-        ));
-    }
-}
 
 /// Compile one enabled extension's declared actions into the index.
 ///
@@ -824,6 +863,7 @@ fn collect_capability_actions(
 /// extension with no command catalogue at all (§3.1), and gating it out here
 /// would make the one example the plan uses for "recommend exists even with zero
 /// commands" unrankable.
+#[cfg(test)]
 fn collect_recommendation(
     rec: &grain_core::extensions::ExtensionRecord,
     pack: &GrainPack,
@@ -874,58 +914,6 @@ pub fn auto_send_eligible() -> std::collections::HashSet<String> {
 /// mode** (§5), not a failure: the pool still ranks on names, and first use of
 /// Extension Mode is where the download is offered. An extension whose examples
 /// fail to embed simply has no topical vectors and is reachable by name only.
-fn reembed_recommendations(app: AppHandle, examples: Vec<(String, Vec<String>)>) {
-    let generation = RECOMMEND_GENERATION.fetch_add(1, Ordering::SeqCst) + 1;
-    if examples.is_empty() || !crate::grain_embed::model_on_disk() {
-        // Clear any vectors from a previous pool so a now-absent model or empty
-        // pool cannot leave stale topical scores behind.
-        let mut cache = recommend_vectors().write().unwrap();
-        if cache.generation < generation {
-            *cache = RecommendVectors {
-                generation,
-                vectors: HashMap::new(),
-            };
-        }
-        return;
-    }
-    tauri::async_runtime::spawn_blocking(move || {
-        let mut vectors: HashMap<String, Vec<Vec<f32>>> = HashMap::new();
-        for (id, phrases) in examples {
-            let phrases: Vec<String> = phrases
-                .into_iter()
-                .filter(|p| !p.trim().is_empty())
-                .collect();
-            if phrases.is_empty() {
-                continue;
-            }
-            // Indexing uses the same bounded residency as interactive retrieval.
-            crate::grain_embed::touch_extension_mode(&app);
-            match crate::grain_embed::embed(phrases) {
-                Ok(embedded) => {
-                    vectors.insert(id, embedded);
-                }
-                Err(error) => {
-                    log::warn!("[GRAIN] ext-host: embedding examples for '{id}' failed: {error:#}");
-                }
-            }
-        }
-        // A rebuild that started after this one owns the answer.
-        if RECOMMEND_GENERATION.load(Ordering::SeqCst) != generation {
-            log::debug!(
-                "[GRAIN] ext-host: discarding stale recommendation vectors (gen {generation})"
-            );
-            return;
-        }
-        log::debug!(
-            "[GRAIN] ext-host: recommendation vectors ready — {} extension(s) embedded",
-            vectors.len()
-        );
-        *recommend_vectors().write().unwrap() = RecommendVectors {
-            generation,
-            vectors,
-        };
-    });
-}
 
 /// Rank the installed searchable extensions for one spoken request
 /// (`docs/Extensions V1/PLAN.md` §3.1). The whole recommendation, minus the
@@ -1023,7 +1011,10 @@ pub fn capability_actions_for_extension(
     }
     Ok(ExtensionActionSet {
         actions,
-        manifest_digest: digest,
+        manifest_digest: grain_core::extensions::native_call_fingerprint(&record, &pack.manifest)
+            .map_err(|_| {
+            "that extension's call identity could not be verified".to_string()
+        })?,
     })
 }
 
@@ -1057,7 +1048,10 @@ pub fn approved_action_digest(
         return None;
     }
     let digest = grain_core::extensions::actions_fingerprint(declared);
-    (record.actions_approved.as_deref() == Some(digest.as_str())).then_some(digest)
+    if record.actions_approved.as_deref() != Some(digest.as_str()) {
+        return None;
+    }
+    grain_core::extensions::native_call_fingerprint(&record, &pack.manifest).ok()
 }
 
 /// The display name and one-line purpose for a pooled extension, for the
@@ -1189,82 +1183,13 @@ pub fn action_vocabulary() -> Vec<String> {
 /// Called once per finalized transcript, off the paste path. With nothing
 /// installed — the overwhelmingly common case — this is one relaxed atomic load
 /// and an empty struct: no lock, no disk, no clone of the registry.
+/// Migration compatibility shim. Context belongs to the agent/core, and
+/// extension metadata can never replace or augment a Grain prompt.
 pub fn prompt_contributions(
-    app: &AppHandle,
-    ctx: Option<&crate::context_detect::ActiveContext>,
+    _app: &AppHandle,
+    _ctx: Option<&crate::context_detect::ActiveContext>,
 ) -> crate::context_detect::prompt_stack::Contributions {
-    use crate::context_detect::prompt_stack::{ContributedLayer, Contributions};
-
-    // Slot changes rebuild this index, and invalid/missing replacement text
-    // falls back to Grain rather than erasing a host prompt position.
-    if !HAS_PROMPT_LAYERS.load(Ordering::Relaxed)
-        && !HAS_CONTEXT_SLOT.load(Ordering::Relaxed)
-        && !HAS_MAIN_SLOT.load(Ordering::Relaxed)
-    {
-        return Contributions::default();
-    }
-    let Some(host) = HOST.get() else {
-        return Contributions::default();
-    };
-    let context_owner = app
-        .try_state::<Arc<grain_core::extensions::ExtensionsRegistry>>()
-        .and_then(|reg| reg.slot_occupant(grain_sdk::manifest::PROMPT_CONTEXT_SLOT))
-        .filter(|occupant| occupant != grain_core::extensions::CORE_DEFAULT);
-    let main_owner = app
-        .try_state::<Arc<grain_core::extensions::ExtensionsRegistry>>()
-        .and_then(|reg| reg.slot_occupant(grain_sdk::manifest::PROMPT_MAIN_SLOT))
-        .filter(|occupant| occupant != grain_core::extensions::CORE_DEFAULT);
-    let index = host.index.read().unwrap();
-    let layers = index
-        .prompt_layers
-        .iter()
-        .filter(|layer| layer.target == grain_sdk::manifest::PromptTarget::Additive)
-        .filter(|l| crate::context_detect::layer_matches(&l.when, ctx))
-        .map(|l| {
-            log::info!("[ext:{}] prompt layer '{}' applies", l.ext_id, l.layer_id);
-            ContributedLayer {
-                ext_id: l.ext_id.clone(),
-                text: l.text.clone(),
-            }
-        })
-        .collect();
-    let main = main_owner.as_ref().and_then(|owner| {
-        index
-            .prompt_layers
-            .iter()
-            .find(|layer| {
-                layer.ext_id == *owner && layer.target == grain_sdk::manifest::PromptTarget::Main
-            })
-            .map(|layer| ContributedLayer {
-                ext_id: layer.ext_id.clone(),
-                text: layer.text.clone(),
-            })
-    });
-    let context = context_owner.as_ref().and_then(|owner| {
-        index
-            .prompt_layers
-            .iter()
-            .find(|layer| {
-                layer.ext_id == *owner
-                    && layer.target == grain_sdk::manifest::PromptTarget::Context
-                    && crate::context_detect::layer_matches(&layer.when, ctx)
-            })
-            .map(|layer| ContributedLayer {
-                ext_id: layer.ext_id.clone(),
-                text: layer.text.clone(),
-            })
-    });
-    if let Some(layer) = &main {
-        log::info!("[ext:{}] prompt.main replacement applies", layer.ext_id);
-    }
-    if let Some(layer) = &context {
-        log::info!("[ext:{}] prompt.context replacement applies", layer.ext_id);
-    }
-    Contributions {
-        layers,
-        main,
-        context,
-    }
+    crate::context_detect::prompt_stack::Contributions::default()
 }
 
 /// Supervisor → worker: create a Web Worker for this extension.
@@ -1278,20 +1203,18 @@ struct SpawnPayload {
     /// The granted capability names, injected so the shim can expose only the
     /// matching `grain.*` surface (the wall is still Rust-side).
     caps: Vec<String>,
-    /// The event that woke this worker (`{"Variant": {...}}`), or absent for a
-    /// non-event spawn.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    activation: Option<Value>,
 }
 
 #[derive(Clone, Serialize)]
 struct KillPayload {
     ext_id: String,
+    token: String,
 }
 
 #[derive(Deserialize)]
 struct DiedPayload {
     ext_id: String,
+    token: String,
     #[serde(default)]
     reason: String,
     #[serde(default)]
@@ -1403,18 +1326,15 @@ fn map_worker_error(source: &DevSource, payload: &DiedPayload) -> Option<String>
     Some(format!("{}\n    at {location}", payload.reason))
 }
 
-/// Start the host: register the supervisor↔host event bridge, the activation
-/// dispatcher, and the reaper. Idempotent (a second call is a no-op).
-pub fn start(app: AppHandle, ctx: Arc<AppContext>) {
+/// Start explicit tool execution support and idle cleanup. No activation or
+/// daemon event subscriber is installed. Idempotent.
+pub fn start(app: AppHandle, _ctx: Arc<AppContext>) {
     if HOST
         .set(HostState {
             app: app.clone(),
             workers: Workers::new(),
-            supervisor: Mutex::new(Supervisor {
-                exists: false,
-                ready: false,
-                queue: Vec::new(),
-            }),
+            native_calls: tokio::sync::Semaphore::new(MAX_ACTIVE_NATIVE_CALLS),
+            supervisor: Mutex::new(Supervisor::default()),
             index: RwLock::new(Index::default()),
         })
         .is_err()
@@ -1429,6 +1349,12 @@ pub fn start(app: AppHandle, ctx: Arc<AppContext>) {
     // Supervisor → host: a worker crashed or reported a fatal error.
     app.listen("ext-host://died", move |ev| {
         if let Ok(p) = serde_json::from_str::<DiedPayload>(ev.payload()) {
+            if !HOST
+                .get()
+                .is_some_and(|host| host.workers.owns_token(&p.ext_id, &p.token))
+            {
+                return;
+            }
             let detail = HOST
                 .get()
                 .and_then(|host| host.workers.dev_source(&p.ext_id))
@@ -1436,25 +1362,20 @@ pub fn start(app: AppHandle, ctx: Arc<AppContext>) {
                 .or_else(|| p.stack.clone())
                 .unwrap_or_else(|| p.reason.clone());
             log::error!("[ext:{}] error {detail}", p.ext_id);
-            kill_worker(&p.ext_id, "worker reported death");
+            kill_worker_inner(&p.ext_id, "worker reported death", Some(&p.token), false);
         }
     });
 
     // Supervisor → host: the page loaded and its listeners are live → flush any
     // spawns queued while it was starting.
-    app.listen("ext-host://ready", move |_| on_supervisor_ready());
-
-    // Activation dispatch: wake workers on their declared events. A dedicated
-    // subscriber so the wake path is independent of any connected worker.
-    let app_act = app.clone();
-    tauri::async_runtime::spawn(async move {
-        let mut rx = ctx.subscribe();
-        loop {
-            match rx.recv().await {
-                Ok(ev) => on_event(&app_act, &ev),
-                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
-                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
-            }
+    app.listen("ext-host://ready", move |event| {
+        if let Ok(status) = serde_json::from_str::<SupervisorStatus>(event.payload()) {
+            on_supervisor_ready(status.generation);
+        }
+    });
+    app.listen("ext-host://failed", move |event| {
+        if let Ok(status) = serde_json::from_str::<SupervisorStatus>(event.payload()) {
+            fail_supervisor(status.generation, &status.reason);
         }
     });
 
@@ -1473,6 +1394,7 @@ pub fn start(app: AppHandle, ctx: Arc<AppContext>) {
 
 /// Explicit daemon-event variants an activation list wakes on. `onTransform`
 /// warming is added separately only after its own capability grant is checked.
+#[cfg(test)]
 fn declared_event_variants(activation: &[String]) -> Vec<String> {
     let mut out: Vec<String> = activation
         .iter()
@@ -1489,69 +1411,48 @@ fn declared_event_variants(activation: &[String]) -> Vec<String> {
     out
 }
 
+#[cfg(test)]
 fn declares_transform(activation: &[String]) -> bool {
     activation.iter().any(|a| a == "onTransform")
 }
 
+#[cfg(test)]
 fn declares_startup(activation: &[String]) -> bool {
     activation.iter().any(|a| a == "onStartup")
 }
 
+#[cfg(test)]
 fn has_resident_grant(activation: &[String], granted: &[String]) -> bool {
     declares_startup(activation) && has_grant(granted, "resident")
 }
 
+#[cfg(test)]
 fn has_grant(granted: &[String], capability: &str) -> bool {
     granted.iter().any(|grant| grant == capability)
-}
-
-fn on_event(app: &AppHandle, ev: &DaemonEvent) {
-    // Zero-cost when no extension declares an event activation: one relaxed
-    // load. This runs for EVERY broadcast, including AudioLevel while
-    // recording, so nothing above this line may allocate or touch the disk.
-    if !HAS_ACTIVATIONS.load(Ordering::Relaxed) {
-        return;
-    }
-    let host = match HOST.get() {
-        Some(h) => h,
-        None => return,
-    };
-    // Allocation-free tag read, then an index lookup — no registry, no disk.
-    let waking: Vec<String> = {
-        let index = host.index.read().unwrap();
-        match index.by_event.get(ev.variant_name()) {
-            Some(ids) => ids.clone(),
-            None => return,
-        }
-    };
-    let cold: Vec<String> = waking.into_iter().filter(|id| !is_running(id)).collect();
-    if cold.is_empty() {
-        return; // already awake — it gets this event over its own connection
-    }
-    // Only now, on the rare spawn path, is it worth serializing the event to
-    // carry as the activation payload.
-    let activation = serde_json::to_value(ev).ok();
-    let reg = match app.try_state::<Arc<grain_core::extensions::ExtensionsRegistry>>() {
-        Some(r) => r,
-        None => return,
-    };
-    for id in cold {
-        log::info!("[ext:{id}] life activation {}", ev.variant_name());
-        let pack = match load_manifest(app, &id) {
-            Some(p) => p,
-            None => continue,
-        };
-        let granted = reg.record(&id).map(|r| r.granted).unwrap_or_default();
-        spawn_worker(app, &id, &pack, granted, activation.clone());
-    }
 }
 
 // ── Worker lifecycle ────────────────────────────────────────────────────────
 
 fn is_running(ext_id: &str) -> bool {
     HOST.get()
-        .map(|h| h.workers.is_running(ext_id))
-        .unwrap_or(false)
+        .is_some_and(|host| host.workers.is_running(ext_id))
+}
+
+/// Bounded non-secret diagnostics, compiled only in the acceptance executable.
+#[cfg(feature = "agent-harness")]
+pub(crate) fn harness_snapshot(ext_id: &str) -> Value {
+    let Some(host) = HOST.get() else {
+        return serde_json::json!({"count": 0, "current": null});
+    };
+    let workers = host.workers.map.lock().unwrap();
+    let current = workers.get(ext_id).map(|worker| serde_json::json!({
+        "identity": crate::grain_agent_harness::worker_identity(&worker.token),
+        "generation": worker.execution_generation,
+        "connected": worker.conn.is_some(),
+        "pending": worker.conn.as_ref().map(|conn| conn.pending.lock().unwrap().len()).unwrap_or(0),
+        "idleSeconds": now_secs().saturating_sub(worker.last_activity.load(Ordering::Relaxed)),
+    }));
+    serde_json::json!({"count": workers.len(), "current": current})
 }
 
 fn spawn_worker(
@@ -1560,64 +1461,125 @@ fn spawn_worker(
     pack: &GrainPack,
     caps: Vec<String>,
     activation: Option<Value>,
-) {
+    revision: grain_core::extensions::RecordRevision,
+) -> Option<String> {
+    if pack.validate_tool_only().is_err() || activation.is_some() {
+        log::warn!("[ext:{ext_id}] refused retired extension runtime or activation");
+        return None;
+    }
     let host = match HOST.get() {
         Some(h) => h,
-        None => return,
+        None => return None,
     };
     let dev_project = app
         .try_state::<Arc<grain_core::extensions::ExtensionsRegistry>>()
         .and_then(|registry| registry.dev_path(ext_id))
         .and_then(|root| crate::dev_extensions::load_project(&root).ok());
+    let record = app
+        .try_state::<Arc<grain_core::extensions::ExtensionsRegistry>>()?
+        .record(ext_id)
+        .filter(|record| record.enabled)?;
+    if record.granted != caps {
+        return None;
+    }
+    let call_digest =
+        grain_core::extensions::native_call_fingerprint(&record, &pack.manifest).ok()?;
     let companion_launch = if pack.manifest.tier == grain_sdk::Tier::Native {
         if !crate::settings::get_settings(app).extension_developer_mode {
             log::error!("[ext:{ext_id}] deny native companion outside developer mode");
-            return;
+            return None;
         }
         let Some(project) = dev_project.as_ref() else {
             log::error!("[ext:{ext_id}] deny native companion outside load-unpacked project");
-            return;
+            return None;
         };
         let Some(binary) = project.companion_path.clone() else {
             log::error!("[ext:{ext_id}] native project has no current-platform companion");
-            return;
+            return None;
         };
         Some((project.root.clone(), binary))
     } else {
         None
     };
-    // Mint a per-worker token bound to exactly the granted caps (SPEC §7.1): the
-    // same server-side filter that gates the pill now gates this worker.
-    let token = crate::events_server::mint_worker_token(ext_id, caps.iter().cloned().collect());
-    // The declaration alone is not authority. Every spawn path (including a
-    // shortcut/event that happens to wake this worker) re-checks the grant so a
-    // stale/tampered registry cannot turn a denied worker into an immortal one.
-    let resident = has_resident_grant(&pack.manifest.activation, &caps);
-    let dev_source = dev_project.and_then(|project| {
-        project.entry_path.map(|entry| DevSource {
-            root: project.root,
-            entry,
-        })
-    });
-    host.workers.insert(
-        ext_id,
-        Worker {
-            token: token.clone(),
-            resident,
-            strikes: 0,
-            memory_strikes: 0,
-            kind: if pack.manifest.tier == grain_sdk::Tier::Native {
-                RuntimeKind::Companion
+    let registry = app.try_state::<Arc<grain_core::extensions::ExtensionsRegistry>>()?;
+    let (token, creation) = registry
+        .with_current_record(ext_id, revision, |current| {
+            let current = current.filter(|current| {
+                current.enabled && current.execution_generation == record.execution_generation
+            })?;
+            if current.granted != caps {
+                return None;
+            }
+            // Mint a per-worker token bound to exactly the granted caps (SPEC §7.1): the
+            // same server-side filter that gates the pill now gates this worker.
+            let token =
+                crate::events_server::mint_worker_token(ext_id, caps.iter().cloned().collect());
+            // The declaration alone is not authority. Every spawn path (including a
+            // shortcut/event that happens to wake this worker) re-checks the grant so a
+            // stale/tampered registry cannot turn a denied worker into an immortal one.
+            let resident = false;
+            let dev_source = dev_project.and_then(|project| {
+                project.entry_path.map(|entry| DevSource {
+                    root: project.root,
+                    entry,
+                })
+            });
+            let mut sup = host.supervisor.lock().unwrap();
+            // A second cold request must not replace a live worker or leak its token.
+            if let Some(current) = host.workers.token(ext_id) {
+                crate::events_server::revoke_token(&token);
+                return Some((current, None));
+            }
+            if host.workers.len() >= MAX_NATIVE_WORKERS {
+                crate::events_server::revoke_token(&token);
+                return None;
+            }
+            host.workers.insert(
+                ext_id,
+                Worker {
+                    token: token.clone(),
+                    call_digest: Some(call_digest),
+                    execution_generation: record.execution_generation,
+                    resident,
+                    memory_strikes: 0,
+                    kind: if pack.manifest.tier == grain_sdk::Tier::Native {
+                        RuntimeKind::Companion
+                    } else {
+                        RuntimeKind::Scripted
+                    },
+                    last_activity: Arc::new(AtomicU64::new(now_secs())),
+                    conn: None,
+                    dev_source,
+                },
+            );
+            #[cfg(feature = "agent-harness")]
+            crate::grain_agent_harness::observe("spawned", ext_id, "", &token);
+            if companion_launch.is_some() {
+                drop(sup);
+                return Some((token, None));
+            }
+            let payload = SpawnPayload {
+                ext_id: ext_id.to_string(),
+                token: token.clone(),
+                entry_source: pack.manifest.entry_source.clone(),
+                caps,
+            };
+            log::info!("[ext:{ext_id}] life worker spawned (resident={resident})");
+            let creation = sup.begin();
+            if sup.ready {
+                let _ = app.emit_to(
+                    supervisor_label(sup.generation),
+                    "ext-host://spawn",
+                    payload,
+                );
             } else {
-                RuntimeKind::Scripted
-            },
-            last_activity: Arc::new(AtomicU64::new(now_secs())),
-            conn: None,
-            dev_source,
-        },
-    );
+                sup.queue.push(payload);
+            }
+            drop(sup);
+            Some((token, creation))
+        })
+        .ok()??;
     if let Some((root, binary)) = companion_launch {
-        log::info!("[ext:{ext_id}] life native companion activation");
         if let Err(error) =
             crate::extension_companion::start(ext_id, &token, root, binary, activation)
         {
@@ -1627,134 +1589,149 @@ fn spawn_worker(
                 format!("Native companion could not start: {error}"),
             );
         }
-        return;
     }
-    let payload = SpawnPayload {
-        ext_id: ext_id.to_string(),
-        token,
-        entry_source: pack.manifest.entry_source.clone(),
-        caps,
-        activation,
-    };
-    log::info!("[ext:{ext_id}] life worker spawned (resident={resident})");
-    ensure_supervisor(app);
-    let mut sup = host.supervisor.lock().unwrap();
-    if sup.ready {
-        let _ = app.emit_to(SUPERVISOR_LABEL, "ext-host://spawn", payload);
-    } else {
-        sup.queue.push(payload); // flushed by on_supervisor_ready
+    if let Some(generation) = creation {
+        ensure_supervisor(app, generation);
     }
+    Some(token)
 }
 
-/// Create the supervisor webview if it isn't up yet. Window creation is posted
-/// to the main thread (tauri#3990: never build a window on a shortcut/event
-/// thread) and returns immediately.
-fn ensure_supervisor(app: &AppHandle) {
-    let host = match HOST.get() {
-        Some(h) => h,
-        None => return,
-    };
-    {
-        let mut sup = host.supervisor.lock().unwrap();
-        if sup.exists {
-            return;
-        }
-        sup.exists = true;
-    }
+/// Main-thread closures and readiness are scoped to one supervisor generation.
+/// Each generation has its own label, so delayed close cannot close a replacement.
+fn ensure_supervisor(app: &AppHandle, generation: u64) {
     let app2 = app.clone();
-    let _ = app.run_on_main_thread(move || {
-        if app2.get_webview_window(SUPERVISOR_LABEL).is_some() {
+    if let Err(error) = app.run_on_main_thread(move || {
+        let Some(host) = HOST.get() else { return };
+        let sup = host.supervisor.lock().unwrap();
+        if !sup.owns(generation) {
             return;
         }
-        let mut builder = WebviewWindowBuilder::new(
-            &app2,
-            SUPERVISOR_LABEL,
-            WebviewUrl::App(SUPERVISOR_URL.into()),
-        )
-        .title("Grain Extension Host")
-        .inner_size(1.0, 1.0)
-        .visible(false)
-        .skip_taskbar(true);
+        let label = supervisor_label(generation);
+        let mut builder =
+            WebviewWindowBuilder::new(&app2, &label, WebviewUrl::App(SUPERVISOR_URL.into()))
+                .initialization_script(format!(
+                    "window.__GRAIN_SUPERVISOR_GENERATION__ = {generation};"
+                ))
+                .title("Grain Extension Host")
+                .inner_size(1.0, 1.0)
+                .visible(false)
+                .skip_taskbar(true);
         if let Some(data_dir) = crate::portable::data_dir() {
             builder = builder.data_directory(data_dir.join("webview"));
         }
-        if let Err(e) = builder.build() {
-            log::error!("[GRAIN] ext-host: supervisor window failed: {e}");
-            if let Some(h) = HOST.get() {
-                h.supervisor.lock().unwrap().exists = false; // allow a retry
-            }
+        let result = builder.build();
+        if let Ok(window) = &result {
+            window.on_window_event(move |event| {
+                if matches!(event, tauri::WindowEvent::Destroyed) {
+                    fail_supervisor(generation, "supervisor window destroyed");
+                }
+            });
         }
-    });
+        drop(sup);
+        if let Err(error) = result {
+            fail_supervisor(generation, &format!("supervisor creation failed: {error}"));
+        }
+    }) {
+        fail_supervisor(
+            generation,
+            &format!("supervisor scheduling failed: {error}"),
+        );
+    }
 }
 
-fn on_supervisor_ready() {
-    let host = match HOST.get() {
-        Some(h) => h,
-        None => return,
-    };
-    let (app, queued) = {
-        let mut sup = host.supervisor.lock().unwrap();
-        sup.ready = true;
-        (host.app.clone(), std::mem::take(&mut sup.queue))
-    };
-    for payload in queued {
-        let _ = app.emit_to(SUPERVISOR_LABEL, "ext-host://spawn", payload);
+fn on_supervisor_ready(generation: u64) {
+    let Some(host) = HOST.get() else { return };
+    let mut sup = host.supervisor.lock().unwrap();
+    if !sup.accept_ready(generation) {
+        return;
     }
+    // Keep the gate locked through emission: stop cannot overtake a queued spawn.
+    for payload in std::mem::take(&mut sup.queue) {
+        if host.workers.owns_token(&payload.ext_id, &payload.token) {
+            let _ = host
+                .app
+                .emit_to(supervisor_label(generation), "ext-host://spawn", payload);
+        }
+    }
+}
+
+fn fail_supervisor(generation: u64, reason: &str) {
+    let Some(host) = HOST.get() else { return };
+    let victims = {
+        let mut sup = host.supervisor.lock().unwrap();
+        if !sup.owns(generation) {
+            return;
+        }
+        let victims = host.workers.scripted_tokens();
+        sup.retire();
+        victims
+    };
+    log::error!("[GRAIN] ext-host generation {generation}: {reason}");
+    for (id, token) in victims {
+        kill_worker_inner(&id, "supervisor unavailable", Some(&token), true);
+    }
+    close_supervisor(generation);
 }
 
 /// Terminate a worker: drop its registry entry, revoke its token, tell the
 /// supervisor to kill the Web Worker, and fail any in-flight host calls so their
 /// awaiters don't hang. Tears down the supervisor when the last worker dies.
 fn kill_worker_inner(ext_id: &str, reason: &str, token: Option<&str>, preserve_supervisor: bool) {
+    kill_worker_checked(ext_id, reason, token, preserve_supervisor, None);
+}
+
+fn kill_worker_checked(
+    ext_id: &str,
+    reason: &str,
+    token: Option<&str>,
+    preserve_supervisor: bool,
+    idle: Option<(u64, u64)>,
+) {
     let host = match HOST.get() {
         Some(h) => h,
         None => return,
     };
+    let mut sup = host.supervisor.lock().unwrap();
     let worker = match token {
-        Some(token) => host.workers.remove_if_token(ext_id, token),
+        Some(token) => match idle {
+            Some((now, idle_secs)) => host.workers.remove_if_idle(ext_id, token, now, idle_secs),
+            None => host.workers.remove_if_token(ext_id, token),
+        },
         None => host.workers.remove(ext_id),
     };
     let worker = match worker {
         Some(w) => w,
         None => return,
     };
-    let empty = host.workers.is_empty();
+    sup.queue
+        .retain(|payload| payload.ext_id != ext_id || payload.token != worker.token);
     log::info!("[ext:{ext_id}] life worker reaped ({reason})");
+    if sup.exists {
+        let _ = host.app.emit_to(
+            supervisor_label(sup.generation),
+            "ext-host://kill",
+            KillPayload {
+                ext_id: ext_id.to_string(),
+                token: worker.token.clone(),
+            },
+        );
+    }
+    let closing = if host.workers.is_empty() && !preserve_supervisor {
+        sup.retire()
+    } else {
+        None
+    };
+    drop(sup);
     if worker.kind == RuntimeKind::Companion {
         crate::extension_companion::stop(ext_id, reason);
     }
-    // A reload/disable may reap the worker while its session-owned slow stage
-    // is awaiting a result. Give the worker's AbortSignal one best-effort turn
-    // before closing the socket, then release the host-side waiter below.
-    if crate::extension_session::is_owned_by(ext_id) {
-        if let Some(conn) = &worker.conn {
-            let frame = HostFrame::Call(HostCall {
-                call_id: 0,
-                method: "session.cancel".to_string(),
-                params: json!({ "reason": reason }),
-            });
-            if let Ok(payload) = serde_json::to_string(&frame) {
-                let _ = conn.out_tx.send(Message::Text(payload.into()));
-            }
-        }
-    }
     crate::extension_view::fail_interactive_for_extension(&host.app, ext_id, reason);
     crate::events_server::revoke_token(&worker.token);
-    let _ = host.app.emit_to(
-        SUPERVISOR_LABEL,
-        "ext-host://kill",
-        KillPayload {
-            ext_id: ext_id.to_string(),
-        },
-    );
-    if let Some(conn) = &worker.conn {
-        let _ = conn.out_tx.send(Message::Close(None));
-        for (_, tx) in conn.pending.lock().unwrap().drain() {
-            let _ = tx.send(Err("worker terminated".into()));
-        }
-    }
-    if empty && !preserve_supervisor {
-        teardown_supervisor();
+    #[cfg(feature = "agent-harness")]
+    crate::grain_agent_harness::observe("retired", ext_id, "", &worker.token);
+    worker.close_pending();
+    if let Some(generation) = closing {
+        close_supervisor(generation);
     }
 }
 
@@ -1771,26 +1748,32 @@ pub fn stop_extension(ext_id: &str, reason: &str) {
     kill_worker(ext_id, reason);
 }
 
-fn teardown_supervisor() {
-    let host = match HOST.get() {
-        Some(h) => h,
-        None => return,
-    };
-    {
-        let mut sup = host.supervisor.lock().unwrap();
-        if !sup.exists {
-            return;
-        }
-        sup.exists = false;
-        sup.ready = false;
-        sup.queue.clear();
+pub fn stop_extension_generation(ext_id: &str, generation: u64, reason: &str) {
+    let Some(host) = HOST.get() else { return };
+    let token = host
+        .workers
+        .map
+        .lock()
+        .unwrap()
+        .get(ext_id)
+        .filter(|worker| worker.execution_generation == generation)
+        .map(|worker| worker.token.clone());
+    if let Some(token) = token {
+        kill_worker_inner(ext_id, reason, Some(&token), false);
     }
+}
+
+fn close_supervisor(generation: u64) {
+    let Some(host) = HOST.get() else { return };
     let app = host.app.clone();
-    let _ = app.clone().run_on_main_thread(move || {
-        if let Some(w) = app.get_webview_window(SUPERVISOR_LABEL) {
-            let _ = w.close();
+    let label = supervisor_label(generation);
+    if let Err(error) = app.clone().run_on_main_thread(move || {
+        if let Some(window) = app.get_webview_window(&label) {
+            let _ = window.close();
         }
-    });
+    }) {
+        log::error!("[GRAIN] ext-host generation {generation}: close scheduling failed: {error}");
+    }
 }
 
 fn reap_idle() {
@@ -1798,11 +1781,17 @@ fn reap_idle() {
         Some(h) => h,
         None => return,
     };
-    for id in host.workers.idle_victims(now_secs(), IDLE_REAP_SECS) {
+    for (id, token) in host.workers.idle_victims(now_secs(), IDLE_REAP_SECS) {
         if crate::extension_session::is_owned_by(&id) {
             continue;
         }
-        kill_worker(&id, "idle timeout");
+        kill_worker_checked(
+            &id,
+            "idle timeout",
+            Some(&token),
+            false,
+            Some((now_secs(), IDLE_REAP_SECS)),
+        );
     }
 }
 
@@ -1834,14 +1823,19 @@ async fn sample_worker_heaps() {
     let Some(host) = HOST.get() else {
         return;
     };
-    let ids = host.workers.scripted_connected_ids();
-    let samples = futures_util::future::join_all(ids.iter().map(|id| {
-        host.workers
-            .call(id, "memory.sample", Value::Null, MEMORY_SAMPLE_DEADLINE)
+    let ids = host.workers.scripted_connected_tokens();
+    let samples = futures_util::future::join_all(ids.iter().map(|(id, token, _)| {
+        host.workers.call_owned(
+            id,
+            Some(token),
+            "memory.sample",
+            Value::Null,
+            MEMORY_SAMPLE_DEADLINE,
+        )
     }))
     .await;
 
-    for (id, sample) in ids.into_iter().zip(samples) {
+    for ((id, token, generation), sample) in ids.into_iter().zip(samples) {
         let Ok(sample) = sample.and_then(parse_heap_sample) else {
             // Missing engine support or a transient worker failure is not an
             // over-budget reading and therefore never earns a strike.
@@ -1850,10 +1844,12 @@ async fn sample_worker_heaps() {
         match sample {
             HeapSample::Unsupported => {}
             HeapSample::Bytes(bytes) if bytes <= WORKER_HEAP_LIMIT_BYTES => {
-                host.workers.clear_memory_strikes(&id);
+                host.workers.clear_memory_strikes(&id, &token);
             }
             HeapSample::Bytes(bytes) => {
-                let strike = host.workers.record_memory_strike(&id).unwrap_or(0);
+                let Some(strike) = host.workers.record_memory_strike(&id, &token) else {
+                    continue;
+                };
                 log::warn!(
                     "[ext:{id}] life worker heap {} MiB exceeds {} MiB (strike {strike} of {MAX_STRIKES})",
                     bytes / (1024 * 1024),
@@ -1863,6 +1859,8 @@ async fn sample_worker_heaps() {
                     auto_disable(
                         &host.app,
                         &id,
+                        &token,
+                        generation,
                         format!(
                             "It repeatedly exceeded the {} MiB extension worker heap ceiling.",
                             WORKER_HEAP_LIMIT_BYTES / (1024 * 1024)
@@ -1876,16 +1874,24 @@ async fn sample_worker_heaps() {
 
 // ── Connection surface (called from events_server on the worker's WS) ────────
 
-/// A worker's WS authenticated: register its outbound channel and return the
-/// shared last-activity clock for the connection to bump on each frame. The
-/// token must match the current generation, so a stale socket cannot replace it.
+/// Source ownership for a host RPC; a socket token never borrows the next worker.
+pub fn rpc_execution_generation(ext_id: &str, token: &str) -> Option<u64> {
+    HOST.get()?.workers.generation_for_token(ext_id, token)
+}
+
+/// A worker's WS authenticated: register its outbound channel. Socket traffic
+/// must not renew idle ownership: maintenance replies would keep it alive forever.
+/// The token must match the current generation.
 pub fn attach_connection(
     ext_id: &str,
     token: &str,
-    out_tx: mpsc::UnboundedSender<Message>,
-) -> Option<Arc<AtomicU64>> {
+    out_tx: mpsc::Sender<Message>,
+) -> Option<tokio::sync::watch::Receiver<bool>> {
     match HOST.get() {
-        Some(h) => h.workers.attach(ext_id, token, out_tx),
+        Some(h) => {
+            h.workers.attach(ext_id, token, out_tx)?;
+            h.workers.connection_closed(ext_id, token)
+        }
         None => None,
     }
 }
@@ -1907,9 +1913,9 @@ pub fn detach_connection(ext_id: &str, token: &str) {
 }
 
 /// Route a `HostCallResult` back to its awaiter (the transform/session caller).
-pub fn resolve_call_result(ext_id: &str, call_id: u64, result: Result<Value, String>) {
+pub fn resolve_call_result(ext_id: &str, token: &str, call_id: u64, result: Result<Value, String>) {
     if let Some(host) = HOST.get() {
-        host.workers.resolve(ext_id, call_id, result);
+        host.workers.resolve(ext_id, token, call_id, result);
     }
 }
 
@@ -1921,71 +1927,18 @@ pub fn resolve_call_result(ext_id: &str, call_id: u64, result: Result<Value, Str
 /// (3 → auto-disable). An empty-string reply suppresses the paste (the
 /// documented output-suppression behavior). Never blocks the paste path on a
 /// cold spawn.
-pub async fn run_transforms(app: &AppHandle, text: String) -> String {
-    // THE paste path. With no transform extension enabled this is one relaxed
-    // atomic load and a return — no registry clone, no disk, no allocation.
-    // Dictation must be exactly as fast as it was before the platform existed.
-    if !HAS_TRANSFORMS.load(Ordering::Relaxed) {
-        return text;
-    }
-    let host = match HOST.get() {
-        Some(h) => h,
-        None => return text,
-    };
-    // Pre-sorted into toggle order at index-build time.
-    let transforms: Vec<String> = host.index.read().unwrap().transforms.clone();
-    if transforms.is_empty() {
-        return text;
-    }
-
-    let mut current = text;
-    for id in transforms {
-        // A cold worker cannot fit the budget; skip rather than block the paste.
-        if !is_running(&id) {
-            continue;
-        }
-        let started = Instant::now();
-        match host
-            .workers
-            .call(
-                &id,
-                "transform",
-                json!({ "text": current }),
-                TRANSFORM_DEADLINE,
-            )
-            .await
-        {
-            Ok(v) => {
-                // Accept either `{ "text": "…" }` or a bare string.
-                if let Some(s) = v.get("text").and_then(|t| t.as_str()) {
-                    current = s.to_string();
-                } else if let Some(s) = v.as_str() {
-                    current = s.to_string();
-                }
-                clear_strikes(&id);
-            }
-            Err(e) => {
-                log::warn!("[GRAIN] transform '{id}' failed ({e}) — text unchanged");
-                let strikes = record_strike(app, &id);
-                if e == "deadline exceeded" {
-                    log::warn!(
-                        "[ext:{id}] slow transform took {} ms (budget {} ms) — strike {strikes} of {MAX_STRIKES}",
-                        started.elapsed().as_millis(),
-                        TRANSFORM_DEADLINE.as_millis(),
-                    );
-                }
-            }
-        }
-    }
-    current
+pub async fn run_transforms(_app: &AppHandle, text: String) -> String {
+    text
 }
 
+#[allow(dead_code)] // Retired command compatibility until surface cleanup.
 #[derive(Debug, PartialEq, Eq)]
 pub enum SessionStageOutput {
     Text(String),
     Handled,
 }
 
+#[cfg(test)]
 fn parse_session_stage_output(value: Value) -> Result<SessionStageOutput, String> {
     if let Some(text) = value.as_str() {
         return Ok(SessionStageOutput::Text(text.to_string()));
@@ -2005,53 +1958,16 @@ fn parse_session_stage_output(value: Value) -> Result<SessionStageOutput, String
 
 /// Keep the owning worker warm for the recording. The activation payload is
 /// data only; the session's identity still comes from its minted token.
-pub fn wake_for_session(app: &AppHandle, ext_id: &str, mode: &str) {
-    if is_running(ext_id) {
-        return;
-    }
-    let Some(pack) = load_manifest(app, ext_id) else {
-        return;
-    };
-    let granted = app
-        .try_state::<Arc<grain_core::extensions::ExtensionsRegistry>>()
-        .and_then(|registry| registry.record(ext_id))
-        .map(|record| record.granted)
-        .unwrap_or_default();
-    spawn_worker(
-        app,
-        ext_id,
-        &pack,
-        granted,
-        Some(json!({ "Session": { "mode": mode } })),
-    );
-}
+pub fn wake_for_session(_app: &AppHandle, _ext_id: &str, _mode: &str) {}
 
 /// Run the owner-controlled slow stage. Failure is deliberately returned to
 /// the caller, which falls back to the exact input text.
 pub async fn run_session_stage(
-    ext_id: &str,
-    mode: &str,
-    text: &str,
+    _ext_id: &str,
+    _mode: &str,
+    _text: &str,
 ) -> Result<SessionStageOutput, String> {
-    let host = HOST.get().ok_or("extension host unavailable")?;
-    let result = host
-        .workers
-        .call(
-            ext_id,
-            "sessionStage",
-            json!({ "mode": mode, "text": text }),
-            SESSION_STAGE_DEADLINE,
-        )
-        .await;
-    if result
-        .as_ref()
-        .is_err_and(|error| error == "deadline exceeded")
-    {
-        let _ = host
-            .workers
-            .notify(ext_id, "session.cancel", json!({ "reason": "timeout" }));
-    }
-    parse_session_stage_output(result?)
+    Err("Extension recording sessions are retired.".into())
 }
 
 // ── Hand-off (`docs/Extensions V1/PLAN.md` §3) ──────────────────────────────
@@ -2062,13 +1978,21 @@ pub async fn run_session_stage(
 // *what* it is handed (the full transcript, not extracted spans). Waking a cold
 // worker, the deadline pair, and the call/outcome shape are unchanged.
 
-/// How long a handed-off request may take before the host gives up.
-///
-/// Generous compared with the transform budget, and deliberately so: the
-/// extension is expected to leave the machine (a Spotify call, a Slack post) and
-/// may call a model — the network grant already allows 15 s. The felt path is
-/// not this; the pill says what is happening while the extension works.
-const HANDOFF_DEADLINE: Duration = Duration::from_secs(20);
+/// Absolute native operation budget, including validation, wake and reply.
+const NATIVE_OPERATION_DEADLINE: Duration = Duration::from_secs(20);
+
+fn native_time_remaining(
+    expires: Instant,
+    phase: grain_core::execution::DispatchPhase,
+) -> Result<Duration, ActionCallError> {
+    expires.checked_duration_since(Instant::now()).filter(|remaining| !remaining.is_zero()).ok_or_else(|| {
+        ActionCallError::Execution(grain_core::execution::ExecutionFailure::new(
+            phase,
+            grain_core::execution::FailureClass::Network,
+            "The native tool exceeded its operation deadline. Effects may have occurred if it was dispatched.",
+        ))
+    })
+}
 
 /// How long to wait for a cold worker to connect before giving up.
 ///
@@ -2082,6 +2006,7 @@ const HANDOFF_WAKE_DEADLINE: Duration = Duration::from_secs(3);
 
 /// What a handed-off request produced.
 #[derive(Debug, PartialEq)]
+#[allow(dead_code)] // Legacy wire shape; whole-request execution is retired.
 pub enum HandOffOutcome {
     /// The extension handled it. The optional line is a short result to show.
     Done(Option<String>),
@@ -2100,6 +2025,7 @@ pub enum HandOffOutcome {
     Unknown,
 }
 
+#[cfg(test)]
 fn validate_request_reply_shape(value: &Value) -> Result<(), String> {
     let object = value
         .as_object()
@@ -2119,6 +2045,7 @@ fn validate_request_reply_shape(value: &Value) -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(test)]
 fn parse_handoff_outcome(value: Value) -> HandOffOutcome {
     if let Err(reason) = validate_request_reply_shape(&value) {
         return HandOffOutcome::Failed(reason);
@@ -2144,19 +2071,44 @@ fn parse_handoff_outcome(value: Value) -> HandOffOutcome {
 /// scale this feature is built for — twenty installed extensions would mean
 /// twenty worker spawns per press. Spawned with no activation payload: the
 /// request arrives as an explicit host call, not as a wake event.
-fn wake_for_request(app: &AppHandle, ext_id: &str) {
-    if is_running(ext_id) {
-        return;
+fn wake_for_request(app: &AppHandle, ext_id: &str, expected_digest: &str) -> Option<String> {
+    let registry = app.try_state::<Arc<grain_core::extensions::ExtensionsRegistry>>()?;
+    let revision = registry.record_revision(ext_id);
+    // Source can drift without a registry mutation or developer reload. Verify
+    // the approved call first, then reuse only a worker with that source identity.
+    // An obsolete request must not retire a worker serving the newer source.
+    let pack = load_manifest(app, ext_id)?;
+    let (granted, existing) = registry
+        .with_current_record(ext_id, revision, |record| {
+            let record = record.filter(|record| record.enabled)?;
+            let current =
+                grain_core::extensions::native_call_fingerprint(record, &pack.manifest).ok()?;
+            if current != expected_digest {
+                return None;
+            }
+            let host = HOST.get()?;
+            let workers = host.workers.map.lock().unwrap();
+            let existing = workers.get(ext_id).map(|worker| {
+                (
+                    worker.token.clone(),
+                    worker.matches_native_call(record, expected_digest),
+                )
+            });
+            Some((record.granted.clone(), existing))
+        })
+        .ok()??;
+    if let Some((token, current)) = existing {
+        if current {
+            return Some(token);
+        }
+        kill_worker_inner(
+            ext_id,
+            "native account, source or runtime changed",
+            Some(&token),
+            false,
+        );
     }
-    let Some(pack) = load_manifest(app, ext_id) else {
-        return;
-    };
-    let granted = app
-        .try_state::<Arc<grain_core::extensions::ExtensionsRegistry>>()
-        .and_then(|registry| registry.record(ext_id))
-        .map(|record| record.granted)
-        .unwrap_or_default();
-    spawn_worker(app, ext_id, &pack, granted, None);
+    spawn_worker(app, ext_id, &pack, granted, None, revision)
 }
 
 /// Hand the full request to the extension the user accepted (§3).
@@ -2165,66 +2117,140 @@ fn wake_for_request(app: &AppHandle, ext_id: &str) {
 /// next — interpretation, any `match.*` ranking, clarification, the result. Grain
 /// does not resolve anything first; that was the old routing model. What it does
 /// guarantee is that the extension is still enabled and awake.
-pub async fn hand_off(app: &AppHandle, ext_id: &str, request: &str) -> HandOffOutcome {
-    let Some(host) = HOST.get() else {
-        return HandOffOutcome::Failed("extension host unavailable".into());
-    };
-    // Re-check enablement at hand-off, not only at ranking. A user can disable an
-    // extension between speaking and accepting, and the request would then run
-    // against something they just turned off.
-    let enabled = app
-        .try_state::<Arc<grain_core::extensions::ExtensionsRegistry>>()
-        .and_then(|registry| registry.record(ext_id))
-        .is_some_and(|record| record.enabled);
-    if !enabled {
-        return HandOffOutcome::Failed("that extension is no longer enabled".into());
-    }
-    // The chosen extension was almost certainly cold — being handed a request is
-    // usually the only reason to wake it. Give the spawn a bounded moment to
-    // connect rather than failing instantly.
-    wake_for_request(app, ext_id);
-    if !host
-        .workers
-        .wait_connected(ext_id, HANDOFF_WAKE_DEADLINE)
-        .await
-    {
-        log::warn!("[ext:{ext_id}] request — worker did not start in time");
-        return HandOffOutcome::Failed("that extension did not start in time".into());
-    }
-    match host
-        .workers
-        .call(
-            ext_id,
-            "request",
-            json!({ "request": request }),
-            HANDOFF_DEADLINE,
-        )
-        .await
-    {
-        Ok(value) => {
-            clear_strikes(ext_id);
-            parse_handoff_outcome(value)
-        }
-        Err(error) if error == "deadline exceeded" => {
-            record_strike(app, ext_id);
-            log::warn!("[ext:{ext_id}] request timed out after {HANDOFF_DEADLINE:?}");
-            HandOffOutcome::Unknown
-        }
-        Err(error) => {
-            record_strike(app, ext_id);
-            HandOffOutcome::Failed(error)
-        }
-    }
+pub async fn hand_off(_app: &AppHandle, _ext_id: &str, _request: &str) -> HandOffOutcome {
+    HandOffOutcome::Failed(
+        "Whole-request extension hand-off is retired. Use a declared tool call.".into(),
+    )
 }
 
-/// [GRAIN] Why a third-party action call could not produce a result. A timeout is
-/// kept distinct from an unavailability because a *side-effecting* timeout is an
-/// unknown outcome (the action may have run), not a plain failure (§8.5).
+/// Availability failures precede dispatch; transport failures carry certainty.
+#[derive(Debug)]
 pub enum ActionCallError {
-    /// The worker did not answer within the deadline.
-    Timeout,
+    Execution(grain_core::execution::ExecutionFailure),
     /// The worker could not be reached or the extension is gone.
     Unavailable(String),
+}
+
+fn native_arguments_for_snapshot(
+    manifest: &grain_sdk::ExtensionManifest,
+    record: &grain_core::extensions::ExtensionRecord,
+    action_id: &str,
+    arguments: &Value,
+    expected_digest: &str,
+) -> Result<Value, ActionCallError> {
+    if !record.enabled || record.id != manifest.id {
+        return Err(ActionCallError::Unavailable(
+            "that extension is no longer enabled".into(),
+        ));
+    }
+    let action = manifest
+        .contributes
+        .actions
+        .iter()
+        .find(|action| action.id.trim() == action_id)
+        .ok_or_else(|| ActionCallError::Unavailable("that tool is no longer declared".into()))?;
+    let approved = grain_core::extensions::actions_fingerprint(&manifest.contributes.actions);
+    if record.actions_approved.as_deref() != Some(approved.as_str()) {
+        return Err(ActionCallError::Unavailable(
+            "that tool is no longer approved".into(),
+        ));
+    }
+    let current =
+        grain_core::extensions::native_call_fingerprint(record, manifest).map_err(|_| {
+            ActionCallError::Unavailable("that tool identity could not be verified".into())
+        })?;
+    if current != expected_digest {
+        return Err(ActionCallError::Unavailable(
+            "that tool changed before dispatch".into(),
+        ));
+    }
+    grain_core::capability_agent::validate_native_arguments(action, arguments).map_err(|message| {
+        ActionCallError::Execution(grain_core::execution::ExecutionFailure::new(
+            grain_core::execution::DispatchPhase::NotDispatched,
+            grain_core::execution::FailureClass::InvalidArgument,
+            message,
+        ))
+    })
+}
+
+fn approved_native_arguments(
+    app: &AppHandle,
+    ext_id: &str,
+    action_id: &str,
+    arguments: &Value,
+    expected_digest: &str,
+) -> Result<Value, ActionCallError> {
+    let pack = load_manifest_result(app, ext_id).map_err(ActionCallError::Unavailable)?;
+    pack.validate_tool_only()
+        .map_err(ActionCallError::Unavailable)?;
+    let record = app
+        .try_state::<Arc<grain_core::extensions::ExtensionsRegistry>>()
+        .and_then(|registry| registry.record(ext_id))
+        .ok_or_else(|| {
+            ActionCallError::Unavailable("that extension is no longer installed".into())
+        })?;
+    native_arguments_for_snapshot(
+        &pack.manifest,
+        &record,
+        action_id,
+        arguments,
+        expected_digest,
+    )
+}
+
+struct NativeAdmission<'a> {
+    extension_id: &'a str,
+    token: &'a str,
+    action_id: &'a str,
+    arguments: &'a Value,
+    expected_digest: &'a str,
+    idempotency_key: Option<&'a str>,
+    expires: Instant,
+}
+
+fn enqueue_native_call(
+    registry: &grain_core::extensions::ExtensionsRegistry,
+    workers: &Workers,
+    manifest: &grain_sdk::ExtensionManifest,
+    admission: &NativeAdmission<'_>,
+    dispatched: &AtomicBool,
+) -> Result<QueuedCall, ActionCallError> {
+    registry.with_record_locked(admission.extension_id, |record| {
+        let record = record.ok_or_else(|| {
+            ActionCallError::Unavailable("that extension is no longer installed".into())
+        })?;
+        let arguments = native_arguments_for_snapshot(
+            manifest,
+            record,
+            admission.action_id,
+            admission.arguments,
+            admission.expected_digest,
+        )?;
+        workers
+            .enqueue(
+                admission.extension_id,
+                Some(admission.token),
+                "action",
+                json!({"action": admission.action_id, "arguments": arguments,
+                "idempotencyKey": admission.idempotency_key}),
+                dispatched,
+                Some((admission.expected_digest, admission.expires)),
+            )
+            .map_err(|error| ActionCallError::Execution(native_call_failure(&error, false)))
+    })
+}
+
+fn native_reply_if_current(
+    value: Value,
+    current: Result<Value, ActionCallError>,
+) -> Result<Value, ActionCallError> {
+    current.map(|_| value).map_err(|_| {
+        ActionCallError::Execution(grain_core::execution::ExecutionFailure::new(
+            grain_core::execution::DispatchPhase::ResponseReceived,
+            grain_core::execution::FailureClass::Cancelled,
+            "The native result belongs to a tool that changed or was disabled. Effects may have occurred.",
+        ))
+    })
 }
 
 /// [GRAIN] Invoke one exact declared action on an extension worker (Extensions 2.0
@@ -2234,159 +2260,167 @@ pub enum ActionCallError {
 /// structured result; the executor maps it to an `ActionOutcome`.
 ///
 /// Enablement is re-checked here (time-of-use, §12.7), the cold worker is woken,
-/// and a deadline overrun is reported as [`ActionCallError::Timeout`] so the
-/// executor can decide unknown-vs-failed by side effect.
+/// and queued calls retain dispatch certainty even when their reply is lost.
 pub async fn run_action(
     app: &AppHandle,
     ext_id: &str,
     action_id: &str,
     arguments: &Value,
     idempotency_key: Option<&str>,
+    expected_digest: &str,
 ) -> Result<Value, ActionCallError> {
+    use grain_core::execution::DispatchPhase;
+    #[cfg(feature = "agent-harness")]
+    crate::grain_agent_harness::observe("invoked", ext_id, action_id, "");
+    let expires = Instant::now() + NATIVE_OPERATION_DEADLINE;
     let Some(host) = HOST.get() else {
         return Err(ActionCallError::Unavailable(
             "extension host unavailable".into(),
         ));
     };
-    let enabled = app
-        .try_state::<Arc<grain_core::extensions::ExtensionsRegistry>>()
-        .and_then(|registry| registry.record(ext_id))
-        .is_some_and(|record| record.enabled);
-    if !enabled {
-        return Err(ActionCallError::Unavailable(
-            "that extension is no longer enabled".into(),
-        ));
-    }
-    wake_for_request(app, ext_id);
+    let _permit = acquire_native_call(&host.native_calls)?;
+    let arguments = approved_native_arguments(app, ext_id, action_id, arguments, expected_digest)?;
+    native_time_remaining(expires, DispatchPhase::NotDispatched)?;
+    let token = wake_for_request(app, ext_id, expected_digest)
+        .ok_or_else(|| ActionCallError::Unavailable("extension worker unavailable".into()))?;
+    let mut owner = NativeCallOwner::new(|| {
+        kill_worker_inner(
+            ext_id,
+            "native request abandoned or failed",
+            Some(&token),
+            false,
+        );
+    });
     if !host
         .workers
-        .wait_connected(ext_id, HANDOFF_WAKE_DEADLINE)
+        .wait_connected(
+            ext_id,
+            &token,
+            native_time_remaining(expires, DispatchPhase::NotDispatched)?
+                .min(HANDOFF_WAKE_DEADLINE),
+        )
         .await
     {
         log::warn!("[ext:{ext_id}] action — worker did not start in time");
+        kill_worker_inner(ext_id, "worker startup failed", Some(&token), false);
         return Err(ActionCallError::Unavailable(
             "that extension did not start in time".into(),
         ));
     }
-    match host
-        .workers
-        .call(
-            ext_id,
-            "action",
-            json!({
-                "action": action_id,
-                "arguments": arguments,
-                "idempotencyKey": idempotency_key,
-            }),
-            HANDOFF_DEADLINE,
-        )
+    // File validation happens outside the lock. The exact snapshot's identity,
+    // approval, arguments and queue admission are then checked under one read.
+    let pack = load_manifest_result(app, ext_id).map_err(ActionCallError::Unavailable)?;
+    pack.validate_tool_only()
+        .map_err(ActionCallError::Unavailable)?;
+    let registry = app
+        .try_state::<Arc<grain_core::extensions::ExtensionsRegistry>>()
+        .ok_or_else(|| ActionCallError::Unavailable("extension registry unavailable".into()))?;
+    let dispatched = AtomicBool::new(false);
+    let queued = enqueue_native_call(
+        &registry,
+        &host.workers,
+        &pack.manifest,
+        &NativeAdmission {
+            extension_id: ext_id,
+            token: &token,
+            action_id,
+            arguments: &arguments,
+            expected_digest,
+            idempotency_key,
+            expires,
+        },
+        &dispatched,
+    );
+    let queued = match queued {
+        Ok(queued) => queued,
+        Err(error) => {
+            if matches!(&error, ActionCallError::Execution(failure) if failure.class == grain_core::execution::FailureClass::RateLimited)
+            {
+                owner.completed();
+            }
+            return Err(error);
+        }
+    };
+    #[cfg(feature = "agent-harness")]
+    crate::grain_agent_harness::observe("dispatched", ext_id, action_id, &token);
+    match queued
+        .wait(native_time_remaining(expires, DispatchPhase::Dispatched)?)
         .await
     {
         Ok(value) => {
-            clear_strikes(ext_id);
+            validate_native_reply_budget(&value)?;
+            let value = native_reply_if_current(
+                value,
+                approved_native_arguments(app, ext_id, action_id, &arguments, expected_digest),
+            )?;
+            native_time_remaining(expires, DispatchPhase::ResponseReceived)?;
+            owner.completed();
+            #[cfg(feature = "agent-harness")]
+            crate::grain_agent_harness::observe("completed", ext_id, action_id, &token);
             Ok(value)
         }
-        Err(error) if error == "deadline exceeded" => {
-            record_strike(app, ext_id);
-            log::warn!("[ext:{ext_id}] action '{action_id}' timed out after {HANDOFF_DEADLINE:?}");
-            Err(ActionCallError::Timeout)
-        }
-        Err(error) => {
-            record_strike(app, ext_id);
-            Err(ActionCallError::Unavailable(error))
-        }
+        Err(error) => Err(ActionCallError::Execution(native_call_failure(
+            &error,
+            dispatched.load(Ordering::Acquire),
+        ))),
     }
+}
+
+fn validate_native_reply_budget(value: &Value) -> Result<(), ActionCallError> {
+    grain_core::tool_schema::validate_native_result(value).map_err(|_| {
+        ActionCallError::Execution(grain_core::execution::ExecutionFailure::new(
+            grain_core::execution::DispatchPhase::ResponseReceived,
+            grain_core::execution::FailureClass::Internal,
+            "The native tool returned a result exceeding its supported budget. Effects may have occurred.",
+        ))
+    })
+}
+
+fn acquire_native_call(
+    calls: &tokio::sync::Semaphore,
+) -> Result<tokio::sync::SemaphorePermit<'_>, ActionCallError> {
+    calls
+        .try_acquire()
+        .map_err(|_| ActionCallError::Execution(native_call_failure(WORKER_BUSY, false)))
+}
+
+fn native_call_failure(error: &str, dispatched: bool) -> grain_core::execution::ExecutionFailure {
+    use grain_core::execution::{DispatchPhase, ExecutionFailure, FailureClass};
+    ExecutionFailure::new(
+        if dispatched {
+            DispatchPhase::Dispatched
+        } else {
+            DispatchPhase::NotDispatched
+        },
+        if error == WORKER_BUSY {
+            FailureClass::RateLimited
+        } else if error == "deadline exceeded" {
+            FailureClass::Network
+        } else {
+            FailureClass::Internal
+        },
+        if error == WORKER_BUSY {
+            "The native extension is busy. Start a fresh request after current work finishes."
+        } else {
+            "The native tool did not produce a usable result."
+        },
+    )
 }
 
 /// User cancellation is immediate: notify the handler's AbortSignal and drop
 /// the Rust waiter. The worker may finish later; its response has no recipient.
-pub fn cancel_session_stage(ext_id: &str, reason: &str) {
-    let Some(host) = HOST.get() else {
-        return;
-    };
-    let _ = host
-        .workers
-        .notify(ext_id, "session.cancel", json!({ "reason": reason }));
-    host.workers.cancel_pending(ext_id, reason);
-}
+pub fn cancel_session_stage(_ext_id: &str, _reason: &str) {}
 
 /// How long the host waits for a worker to *acknowledge* a shortcut. The
 /// runtime acknowledges on receipt and runs the handler detached, so this
 /// covers delivery only — a shortcut that opens an LLM call is not "slow".
-const SHORTCUT_DEADLINE: Duration = Duration::from_secs(2);
 
 /// A contributed shortcut fired (SPEC §3.3). Wakes the extension if it is cold,
 /// otherwise hands the press to the running worker.
 ///
 /// Everything happens on the async runtime: the caller is the global-shortcut
 /// dispatch path, where blocking hangs every hotkey in the app.
-pub fn wake_for_shortcut(app: &AppHandle, ext_id: &str, shortcut_id: &str) {
-    let app = app.clone();
-    let ext_id = ext_id.to_string();
-    let shortcut_id = shortcut_id.to_string();
-    tauri::async_runtime::spawn(async move {
-        log::info!("[ext:{ext_id}] life activation shortcut:{shortcut_id}");
-        if is_running(&ext_id) {
-            let host = match HOST.get() {
-                Some(h) => h,
-                None => return,
-            };
-            if let Err(e) = host
-                .workers
-                .call(
-                    &ext_id,
-                    "shortcut",
-                    json!({ "id": shortcut_id }),
-                    SHORTCUT_DEADLINE,
-                )
-                .await
-            {
-                log::warn!("[GRAIN] shortcut '{shortcut_id}' → '{ext_id}' failed: {e}");
-            }
-            return;
-        }
-        // Cold: the press IS the activation, and travels as the payload — the
-        // same device `on_event` uses, since there is no ready handshake to
-        // wait on and a dropped keypress would be indistinguishable from a bug.
-        let Some(pack) = load_manifest(&app, &ext_id) else {
-            return;
-        };
-        let granted = app
-            .try_state::<Arc<grain_core::extensions::ExtensionsRegistry>>()
-            .and_then(|reg| reg.record(&ext_id))
-            .map(|r| r.granted)
-            .unwrap_or_default();
-        spawn_worker(
-            &app,
-            &ext_id,
-            &pack,
-            granted,
-            Some(json!({ "Shortcut": { "id": shortcut_id } })),
-        );
-    });
-}
-
-fn clear_strikes(ext_id: &str) {
-    if let Some(host) = HOST.get() {
-        host.workers.clear_strikes(ext_id);
-    }
-}
-
-fn record_strike(app: &AppHandle, ext_id: &str) -> u32 {
-    let host = match HOST.get() {
-        Some(h) => h,
-        None => return 0,
-    };
-    let strikes = host.workers.record_strike(ext_id).unwrap_or(0);
-    if strikes >= MAX_STRIKES {
-        auto_disable(
-            app,
-            ext_id,
-            "It repeatedly missed the 150 ms transform deadline.".to_string(),
-        );
-    }
-    strikes
-}
+pub fn wake_for_shortcut(_app: &AppHandle, _ext_id: &str, _shortcut_id: &str) {}
 
 /// Whether `id` is an explicitly loaded-unpacked project. Diagnostic call
 /// logging uses this cheap registry lookup so installed extensions add no log
@@ -2397,16 +2431,47 @@ pub fn is_dev_extension(app: &AppHandle, id: &str) -> bool {
         .is_some()
 }
 
-/// SPEC §3.3: a persistently failing transform is disabled (not left slowing
-/// every paste). The user re-enables explicitly from Overview.
-fn auto_disable(app: &AppHandle, ext_id: &str, reason: String) {
-    log::warn!("[ext:{ext_id}] life auto-disabled: {reason}");
-    if let Some(reg) = app.try_state::<Arc<grain_core::extensions::ExtensionsRegistry>>() {
-        let _ = reg.set_enabled(ext_id, false);
+/// Resource-policy disable. Ordinary tool errors/cancellation never use this.
+fn disable_sampled_worker(
+    registry: &grain_core::extensions::ExtensionsRegistry,
+    workers: &Workers,
+    ext_id: &str,
+    token: &str,
+    generation: u64,
+) -> anyhow::Result<bool> {
+    registry.disable_if_generation_guarded(ext_id, generation, || {
+        let workers = workers.map.lock().unwrap();
+        if workers.get(ext_id).is_some_and(|worker| {
+            worker.token == token && worker.execution_generation == generation
+        }) {
+            Some(workers)
+        } else {
+            None
+        }
+    })
+}
+
+fn auto_disable(app: &AppHandle, ext_id: &str, token: &str, generation: u64, reason: String) {
+    let Some(host) = HOST.get() else { return };
+    let Some(reg) = app.try_state::<Arc<grain_core::extensions::ExtensionsRegistry>>() else {
+        return;
+    };
+    let changed = match disable_sampled_worker(&reg, &host.workers, ext_id, token, generation) {
+        Ok(changed) => changed,
+        Err(error) => {
+            // A persistence failure must not leave the sampled worker alive.
+            log::error!("[ext:{ext_id}] resource disable failed: {error}");
+            kill_worker_inner(ext_id, "resource disable failed", Some(token), false);
+            refresh_index(app);
+            return;
+        }
+    };
+    kill_worker_inner(ext_id, "repeated resource violations", Some(token), false);
+    if !changed {
+        return;
     }
+    log::warn!("[ext:{ext_id}] life auto-disabled: {reason}");
     refresh_index(app); // drop it from the hot-path index immediately
-    crate::extension_view::destroy_for_extension(app, ext_id);
-    kill_worker(ext_id, "auto-disabled after repeated resource violations");
     if let Some(ctx) = app.try_state::<Arc<AppContext>>() {
         ctx.emit(DaemonEvent::ExtensionDisabled {
             id: ext_id.to_string(),
@@ -2426,7 +2491,7 @@ pub fn companion_gave_up(ext_id: &str, token: &str, reason: String) {
     };
     crate::events_server::revoke_token(&worker.token);
     if let Some(conn) = worker.conn {
-        let _ = conn.out_tx.send(Message::Close(None));
+        let _ = conn.out_tx.try_send(Message::Close(None));
         for (_, sender) in conn.pending.lock().unwrap().drain() {
             let _ = sender.send(Err(reason.clone()));
         }
@@ -2506,7 +2571,11 @@ pub fn load_manifest_result(app: &AppHandle, id: &str) -> Result<GrainPack, Stri
             if !crate::settings::get_settings(app).extension_developer_mode {
                 return Err("developer mode is disabled".into());
             }
-            return crate::dev_extensions::load_project(&path).map(|project| project.pack);
+            let project = crate::dev_extensions::load_project(&path)?;
+            if project.pack.manifest.id != id {
+                return Err("Development project id changed; unload and add it again.".into());
+            }
+            return Ok(project.pack);
         }
     }
     let ctx = app
@@ -2516,56 +2585,58 @@ pub fn load_manifest_result(app: &AppHandle, id: &str) -> Result<GrainPack, Stri
     let installed_record = app
         .try_state::<Arc<grain_core::extensions::ExtensionsRegistry>>()
         .and_then(|registry| registry.record(id));
-    // Legacy single-file location (manual import, seeded built-ins).
+    if let Some(record) = installed_record {
+        return read_installed_pack(&ext_dir, &record);
+    }
+    Err(format!("no installed pack for '{id}'"))
+}
+
+fn read_installed_pack(
+    ext_dir: &std::path::Path,
+    record: &grain_core::extensions::ExtensionRecord,
+) -> Result<GrainPack, String> {
+    let id = &record.id;
+    grain_sdk::validate_extension_id(id)?;
+    grain_sdk::validate_extension_version(&record.installed_version)?;
+    let hash = record.artifact_sha256.as_deref().ok_or_else(|| {
+        format!("extension '{id}' has no artifact hash; reimport/reinstall it before use")
+    })?;
+    let artifact = grain_core::install::artifact_dir(ext_dir, id, &record.installed_version, hash)
+        .map_err(|error| error.to_string())?
+        .join("pack.grainpack.json");
+    let trusted = record.trust != grain_sdk::Trust::Dev;
+    if artifact.exists() {
+        // A corrupt current artifact must fail, never fall back to stale bytes.
+        return read_pack_file(
+            &artifact,
+            trusted,
+            Some(hash),
+            id,
+            Some(&record.installed_version),
+        );
+    }
+    // Existing installations keep their old layout; every fallback is still
+    // checked against the recorded hash, id and version before use.
     let legacy = ext_dir.join(format!("{id}.grainpack.json"));
-    if legacy.exists()
-        && installed_record
-            .as_ref()
-            .is_none_or(|record| record.trust == grain_sdk::Trust::Dev)
-    {
-        let expected = installed_record
-            .as_ref()
-            .and_then(|record| record.artifact_sha256.as_deref());
-        if installed_record.is_some() && expected.is_none() {
-            return Err(format!(
-                "extension '{id}' has no artifact hash; reimport it before use"
-            ));
-        }
+    if !trusted && legacy.exists() {
         return read_pack_file(
             &legacy,
             false,
-            expected,
+            Some(hash),
             id,
-            installed_record
-                .as_ref()
-                .map(|record| record.installed_version.as_str()),
+            Some(&record.installed_version),
         );
     }
-    // [GRAIN] Phase 5B: a store-installed pack lives in its versioned directory
-    // `<id>/<version>/pack.grainpack.json` (SPEC §5.2 — atomic, previous-version
-    // retained). Resolve it from the record's installed version.
-    if let Some(rec) = installed_record {
-        if rec.trust == grain_sdk::Trust::Dev {
-            return Err(format!("no manually imported pack file for '{id}'"));
-        }
-        grain_sdk::validate_extension_version(&rec.installed_version)?;
-        let versioned = grain_core::install::version_dir(&ext_dir, id, &rec.installed_version)
-            .join("pack.grainpack.json");
-        if versioned.exists() {
-            let expected = rec.artifact_sha256.as_deref();
-            if expected.is_none() && rec.trust != grain_sdk::Trust::Dev {
-                return Err(format!(
-                    "verified extension '{id}' has no artifact hash; reinstall it before use"
-                ));
-            }
-            return read_pack_file(
-                &versioned,
-                true,
-                expected,
-                id,
-                Some(rec.installed_version.as_str()),
-            );
-        }
+    let versioned = grain_core::install::version_dir(ext_dir, id, &record.installed_version)
+        .join("pack.grainpack.json");
+    if versioned.exists() {
+        return read_pack_file(
+            &versioned,
+            trusted,
+            Some(hash),
+            id,
+            Some(&record.installed_version),
+        );
     }
     Err(format!("no pack file for '{id}'"))
 }
@@ -2587,9 +2658,16 @@ pub fn reload_dev_extension(
     let reg = app
         .try_state::<Arc<grain_core::extensions::ExtensionsRegistry>>()
         .ok_or("extensions registry unavailable")?;
-    let path = reg.dev_path(id).ok_or_else(|| {
-        format!("'{id}' is not loaded unpacked; add it from Grain settings first")
-    })?;
+    let revision = reg.record_revision(id);
+    let prior = reg.record(id).ok_or("developer extension record missing")?;
+    let had_worker = is_running(id);
+    let path = prior
+        .dev
+        .as_ref()
+        .map(|dev| dev.path.clone())
+        .ok_or_else(|| {
+            format!("'{id}' is not loaded unpacked; add it from Grain settings first")
+        })?;
     let loaded = crate::dev_extensions::load_project(&path)?;
     if loaded.pack.manifest.id != id {
         return Err(format!(
@@ -2598,12 +2676,7 @@ pub fn reload_dev_extension(
         ));
     }
 
-    let prior = reg.record(id).ok_or("developer extension record missing")?;
     let slots_changed = prior.slots != loaded.pack.manifest.slots;
-    if slots_changed && prior.enabled {
-        reg.set_enabled(id, false)
-            .map_err(|error| error.to_string())?;
-    }
     let enabled = prior.enabled && !slots_changed;
     let requested = &loaded.pack.manifest.permissions;
     let granted = prior
@@ -2612,62 +2685,79 @@ pub fn reload_dev_extension(
         .filter(|permission| requested.contains(permission))
         .cloned()
         .collect::<Vec<_>>();
-    reg.install(grain_core::extensions::ExtensionRecord {
-        id: id.to_string(),
-        enabled,
-        toggle_seq: prior.toggle_seq,
-        installed_version: loaded.pack.manifest.version.clone(),
-        artifact_sha256: None,
-        granted: granted.clone(),
-        slots: loaded.pack.manifest.slots.clone(),
-        // A hot reload re-approves, for the same reason the initial dev load
-        // does: this is the author's own project on their own disk, and the
-        // prompt text is the thing they are iterating on.
-        prompt_layers_approved: (!loaded.pack.manifest.contributes.prompt_layers.is_empty()).then(
-            || {
-                grain_core::extensions::prompt_layers_fingerprint(
-                    &loaded.pack.manifest.contributes.prompt_layers,
+    let installed = reg.install_if_current(
+        grain_core::extensions::ExtensionRecord {
+            id: id.to_string(),
+            enabled,
+            execution_generation: 0,
+            toggle_seq: prior.toggle_seq,
+            installed_version: loaded.pack.manifest.version.clone(),
+            artifact_sha256: None,
+            granted: granted.clone(),
+            slots: loaded.pack.manifest.slots.clone(),
+            // A hot reload re-approves, for the same reason the initial dev load
+            // does: this is the author's own project on their own disk, and the
+            // prompt text is the thing they are iterating on.
+            prompt_layers_approved: (!loaded.pack.manifest.contributes.prompt_layers.is_empty())
+                .then(|| {
+                    grain_core::extensions::prompt_layers_fingerprint(
+                        &loaded.pack.manifest.contributes.prompt_layers,
+                    )
+                }),
+            // Same reasoning for actions, and the same limit: this shortcut exists
+            // only for a load-unpacked project on the author's own disk.
+            actions_approved: (!loaded.pack.manifest.contributes.actions.is_empty()).then(|| {
+                grain_core::extensions::actions_fingerprint(
+                    &loaded.pack.manifest.contributes.actions,
                 )
-            },
-        ),
-        // Same reasoning for actions, and the same limit: this shortcut exists
-        // only for a load-unpacked project on the author's own disk.
-        actions_approved: (!loaded.pack.manifest.contributes.actions.is_empty()).then(|| {
-            grain_core::extensions::actions_fingerprint(&loaded.pack.manifest.contributes.actions)
-        }),
-        authentication_approved: loaded
-            .pack
-            .manifest
-            .contributes
-            .authentication
-            .as_ref()
-            .map(grain_core::extensions::authentication_fingerprint),
-        // And for what the extension is ranked by. Same shortcut, same limit.
-        recommend_approved: loaded
-            .pack
-            .manifest
-            .kind
-            .is_searchable()
-            .then(|| grain_core::extensions::recommendation_fingerprint(&loaded.pack.manifest)),
-        dev: prior.dev,
-        // A dev hot-reload preserves the record's rung (a load-unpacked project
-        // is `dev`); trust is never changed by a reload.
-        trust: prior.trust,
-    })
-    .map_err(|error| error.to_string())?;
-
-    let had_worker = is_running(id);
-    log::info!("[ext:{id}] life developer reload");
-    if had_worker {
-        kill_worker_inner(id, "developer hot reload", None, true);
+            }),
+            authentication_approved: loaded
+                .pack
+                .manifest
+                .contributes
+                .authentication
+                .as_ref()
+                .map(grain_core::extensions::authentication_fingerprint),
+            authentication_session: prior.authentication_session.clone(),
+            // And for what the extension is ranked by. Same shortcut, same limit.
+            recommend_approved: loaded
+                .pack
+                .manifest
+                .kind
+                .is_searchable()
+                .then(|| grain_core::extensions::recommendation_fingerprint(&loaded.pack.manifest)),
+            dev: prior.dev,
+            // A dev hot-reload preserves the record's rung (a load-unpacked project
+            // is `dev`); trust is never changed by a reload.
+            trust: prior.trust,
+        },
+        revision,
+    );
+    if reg
+        .record(id)
+        .is_none_or(|current| current.execution_generation != prior.execution_generation)
+    {
+        stop_extension_generation(id, prior.execution_generation, "developer hot reload");
+        crate::grain_auth::cancel_extension_generation(id, prior.execution_generation);
     }
+    let installed_generation = installed.map_err(|error| error.to_string())?;
+
+    log::info!("[ext:{id}] life developer reload");
     refresh_index(app);
+    let mut restarted_worker = false;
     if had_worker && enabled && !is_running(id) {
-        spawn_worker(app, id, &loaded.pack, granted, None);
+        let current_revision = reg.record_revision(id);
+        if reg
+            .record(id)
+            .is_some_and(|current| current.execution_generation == installed_generation)
+        {
+            restarted_worker =
+                spawn_worker(app, id, &loaded.pack, granted, None, current_revision).is_some();
+        }
     }
     let worker_count = HOST.get().map(|host| host.workers.len()).unwrap_or(0);
     Ok(grain_sdk::DevReloadResult {
-        restarted_worker: had_worker && enabled,
+        restarted_worker,
         enabled,
         worker_count,
         token_count: crate::events_server::token_count(),
@@ -2685,28 +2775,19 @@ pub fn reload_dev_extension(
 /// as a demo nobody asked for.
 const RETIRED_BUILTINS: &[&str] = &["grain.auto-categorize", "grain.agent-center-layout"];
 
-/// Take retired built-ins off an existing install: the record, the pack file on
-/// disk, and anything the pack stored. Idempotent — after the first boot there
-/// is nothing left to find, and a fresh install never had them.
-fn retire_builtin_packs(app: &AppHandle) {
+/// Disable legacy bundled integrations while preserving artifacts and user data.
+/// A fresh install never receives these packages.
+fn retire_builtin_packs(app: &AppHandle) -> Result<(), String> {
     let Some(reg) = app.try_state::<Arc<grain_core::extensions::ExtensionsRegistry>>() else {
-        return;
+        return Ok(());
     };
     for id in RETIRED_BUILTINS {
-        if reg.dev_path(id).is_some() {
-            continue; // a live dev project owns the id — leave it alone
-        }
-        let known = reg.is_installed(id);
-        let _ = reg.uninstall(id);
-        if let Some(ctx) = app.try_state::<Arc<AppContext>>() {
-            let dir = ctx.data_dir.join("extensions");
-            let _ = std::fs::remove_file(dir.join(format!("{id}.grainpack.json")));
-            let _ = crate::host_api::ExtStorage::new(&ctx.data_dir, id).purge();
-        }
-        if known {
-            log::info!("[GRAIN] retired built-in '{id}' removed");
+        if reg.dev_path(id).is_none() && reg.is_installed(id) {
+            reg.quarantine(id, "Retired bundled extension; tools only are supported.")
+                .map_err(|error| error.to_string())?;
         }
     }
+    Ok(())
 }
 
 /// Bring the installed set in line with what this build actually ships. Called
@@ -2716,13 +2797,248 @@ fn retire_builtin_packs(app: &AppHandle) {
 /// does: first-party extensions are real packs in the catalogue, installed the
 /// same way anyone else's are, so this only has to clean up after the ones that
 /// were seeded into existing installs.
-pub fn reconcile_builtin_packs(app: &AppHandle) {
-    retire_builtin_packs(app);
+pub fn reconcile_builtin_packs(app: &AppHandle) -> Result<(), String> {
+    // Runs before HOST starts. Validate disabled records too so legacy artifacts
+    // retain a persistent refusal reason and old grants cannot survive restart.
+    if let Some(reg) = app.try_state::<Arc<grain_core::extensions::ExtensionsRegistry>>() {
+        for record in reg.records() {
+            if let Err(reason) = load_manifest_result(app, &record.id) {
+                reg.quarantine(&record.id, &reason)
+                    .map_err(|error| error.to_string())?;
+            }
+        }
+    }
+    if let Some(ctx) = app.try_state::<Arc<AppContext>>() {
+        grain_core::extensions::archive_retired_prompts(&ctx.data_dir, &ctx.settings())
+            .map_err(|error| format!("preserve retired extension prompts: {error}"))?;
+        grain_core::extensions::archive_retired_bindings(&ctx.data_dir, &ctx.settings())
+            .map_err(|error| format!("preserve retired extension bindings: {error}"))?;
+        ctx.update_settings(|settings| {
+            grain_core::extensions::retire_extension_prompts(settings);
+            grain_core::extensions::retire_extension_bindings(settings);
+        })
+        .map_err(|error| error.to_string())?;
+    }
+    retire_builtin_packs(app)?;
+    if let Some(reg) = app.try_state::<Arc<grain_core::extensions::ExtensionsRegistry>>() {
+        reg.finish_tool_only_migration()
+            .map_err(|error| error.to_string())?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn installed_hash_owner_selects_immutable_bytes_before_legacy_layouts() {
+        let dir = tempfile::tempdir().unwrap();
+        let pack = pack_of("");
+        let mut record = record_for(&pack);
+        let bytes = serde_json::to_vec(&pack).unwrap();
+        let hash = grain_core::trust::sha256_hex(&bytes);
+        record.artifact_sha256 = Some(hash.clone());
+        std::fs::write(
+            dir.path().join(format!("{}.grainpack.json", record.id)),
+            b"stale shadow",
+        )
+        .unwrap();
+        let artifact = grain_core::install::publish_artifact(
+            dir.path(),
+            &record.id,
+            &record.installed_version,
+            &hash,
+            &bytes,
+        )
+        .unwrap();
+        assert!(read_installed_pack(dir.path(), &record).is_ok());
+        std::fs::write(artifact.join("pack.grainpack.json"), b"corrupt").unwrap();
+        // Even a matching legacy copy cannot hide a corrupt current owner.
+        std::fs::write(
+            dir.path().join(format!("{}.grainpack.json", record.id)),
+            &bytes,
+        )
+        .unwrap();
+        assert!(read_installed_pack(dir.path(), &record).is_err());
+    }
+
+    #[test]
+    fn legacy_flat_and_versioned_packages_require_recorded_hash_on_restart() {
+        for trusted in [false, true] {
+            let dir = tempfile::tempdir().unwrap();
+            let pack = pack_of("");
+            let mut record = record_for(&pack);
+            let bytes = serde_json::to_vec(&pack).unwrap();
+            record.artifact_sha256 = Some(grain_core::trust::sha256_hex(&bytes));
+            let path = if trusted {
+                record.trust = grain_sdk::Trust::Verified;
+                let version = grain_core::install::version_dir(
+                    dir.path(),
+                    &record.id,
+                    &record.installed_version,
+                );
+                std::fs::create_dir_all(&version).unwrap();
+                version.join("pack.grainpack.json")
+            } else {
+                dir.path().join(format!("{}.grainpack.json", record.id))
+            };
+            std::fs::write(&path, &bytes).unwrap();
+            assert!(read_installed_pack(dir.path(), &record).is_ok());
+            std::fs::write(&path, b"changed").unwrap();
+            assert!(read_installed_pack(dir.path(), &record).is_err());
+            record.artifact_sha256 = None;
+            assert!(read_installed_pack(dir.path(), &record).is_err());
+        }
+    }
+
+    #[test]
+    fn native_operation_capacity_refuses_before_dispatch_and_releases_on_drop() {
+        let calls = tokio::sync::Semaphore::new(MAX_ACTIVE_NATIVE_CALLS);
+        let mut permits: Vec<_> = (0..MAX_ACTIVE_NATIVE_CALLS)
+            .map(|_| acquire_native_call(&calls).unwrap())
+            .collect();
+        let ActionCallError::Execution(error) = acquire_native_call(&calls).unwrap_err() else {
+            panic!("structured capacity refusal expected")
+        };
+        assert_eq!(
+            error.phase,
+            grain_core::execution::DispatchPhase::NotDispatched
+        );
+        assert_eq!(
+            error.class,
+            grain_core::execution::FailureClass::RateLimited
+        );
+        permits.pop();
+        assert!(acquire_native_call(&calls).is_ok());
+        drop(permits);
+        assert_eq!(calls.available_permits(), MAX_ACTIVE_NATIVE_CALLS);
+    }
+
+    #[test]
+    fn pending_capacity_preserves_existing_calls_and_never_queues_fifth() {
+        rt().block_on(async {
+            let workers = Workers::new();
+            workers.insert("tools", worker(now_secs(), false));
+            let (tx, mut rx) = mpsc::channel(WORKER_OUTBOUND_CAPACITY);
+            workers.attach("tools", "tok", tx).unwrap();
+            let mut queued = Vec::new();
+            for _ in 0..MAX_PENDING_WORKER_CALLS {
+                queued.push(
+                    workers
+                        .enqueue(
+                            "tools",
+                            Some("tok"),
+                            "action",
+                            json!({}),
+                            &AtomicBool::new(false),
+                            None,
+                        )
+                        .unwrap(),
+                );
+            }
+            let dispatched = AtomicBool::new(false);
+            assert_eq!(
+                workers
+                    .enqueue("tools", Some("tok"), "action", json!({}), &dispatched, None)
+                    .err()
+                    .unwrap(),
+                WORKER_BUSY
+            );
+            assert!(!dispatched.load(Ordering::Acquire));
+            for _ in 0..MAX_PENDING_WORKER_CALLS {
+                let Message::Text(frame) = rx.recv().await.unwrap() else {
+                    panic!("call")
+                };
+                let HostFrame::Call(call) = serde_json::from_str(&frame).unwrap() else {
+                    panic!("call")
+                };
+                workers.resolve("tools", "tok", call.call_id, Ok(json!({"ok":true})));
+            }
+            assert!(rx.try_recv().is_err());
+            for call in queued {
+                assert!(call.wait(Duration::from_secs(1)).await.is_ok());
+            }
+            let next = workers
+                .enqueue("tools", Some("tok"), "action", json!({}), &dispatched, None)
+                .unwrap();
+            assert!(dispatched.load(Ordering::Acquire));
+            drop(next);
+        });
+    }
+
+    #[test]
+    fn full_outbound_queue_refuses_without_pending_leak_and_closes_reliably() {
+        rt().block_on(async {
+            let workers = Workers::new();
+            workers.insert("tools", worker(now_secs(), false));
+            let (tx, mut rx) = mpsc::channel(WORKER_OUTBOUND_CAPACITY);
+            workers.attach("tools", "tok", tx.clone()).unwrap();
+            let mut closed = workers.connection_closed("tools", "tok").unwrap();
+            let first = workers
+                .enqueue(
+                    "tools",
+                    Some("tok"),
+                    "action",
+                    json!({}),
+                    &AtomicBool::new(false),
+                    None,
+                )
+                .unwrap();
+            let pending = first.pending.calls.clone();
+            for _ in 1..WORKER_OUTBOUND_CAPACITY {
+                tx.try_send(Message::Text("queued".into())).unwrap();
+            }
+            let dispatched = AtomicBool::new(false);
+            assert_eq!(
+                workers
+                    .enqueue("tools", Some("tok"), "action", json!({}), &dispatched, None)
+                    .err()
+                    .unwrap(),
+                WORKER_BUSY
+            );
+            assert!(!dispatched.load(Ordering::Acquire));
+            assert_eq!(pending.lock().unwrap().len(), 1);
+            workers
+                .remove_if_token("tools", "tok")
+                .unwrap()
+                .close_pending();
+            assert!(*closed.wait_for(|value| *value).await.unwrap());
+            assert!(first.wait(Duration::from_secs(1)).await.is_err());
+            assert!(pending.lock().unwrap().is_empty());
+            let mut frames = 0;
+            while rx.try_recv().is_ok() {
+                frames += 1;
+            }
+            assert_eq!(frames, WORKER_OUTBOUND_CAPACITY); // no extra close or replay frame
+        });
+    }
+
+    #[test]
+    fn duplicate_socket_cannot_replace_current_worker_connection() {
+        rt().block_on(async {
+            let workers = Workers::new();
+            workers.insert("tools", worker(now_secs(), false));
+            let (tx, mut rx) = mpsc::channel(WORKER_OUTBOUND_CAPACITY);
+            workers.attach("tools", "tok", tx).unwrap();
+            let (duplicate, mut duplicate_rx) = mpsc::channel(WORKER_OUTBOUND_CAPACITY);
+            assert!(workers.attach("tools", "tok", duplicate).is_none());
+            let call = workers
+                .enqueue(
+                    "tools",
+                    Some("tok"),
+                    "action",
+                    json!({}),
+                    &AtomicBool::new(false),
+                    None,
+                )
+                .unwrap();
+            assert!(rx.try_recv().is_ok());
+            assert!(duplicate_rx.try_recv().is_err());
+            drop(call);
+            workers.remove("tools").unwrap().close_pending();
+        });
+    }
 
     /// The index is keyed by `DaemonEvent::variant_name`, so the variants an
     /// activation expands to must be spelled exactly the way events report
@@ -2810,6 +3126,7 @@ mod tests {
         grain_core::extensions::ExtensionRecord {
             id: "com.x.p".into(),
             enabled: true,
+            execution_generation: 0,
             toggle_seq: 1,
             installed_version: "1.0".into(),
             artifact_sha256: None,
@@ -2819,6 +3136,7 @@ mod tests {
                 &pack.manifest.contributes.actions,
             )),
             authentication_approved: None,
+            authentication_session: None,
             recommend_approved: pack
                 .manifest
                 .kind
@@ -2996,14 +3314,63 @@ mod tests {
     fn worker(last_activity: u64, resident: bool) -> Worker {
         Worker {
             token: "tok".into(),
+            call_digest: None,
+            execution_generation: 0,
             resident,
-            strikes: 0,
             memory_strikes: 0,
             kind: RuntimeKind::Scripted,
             last_activity: Arc::new(AtomicU64::new(last_activity)),
             conn: None,
             dev_source: None,
         }
+    }
+
+    #[test]
+    fn warm_native_reuse_requires_source_identity_and_current_registry_generation() {
+        let pack = pack_of("");
+        let mut record = record_for(&pack);
+        let old_digest =
+            grain_core::extensions::native_call_fingerprint(&record, &pack.manifest).unwrap();
+        let mut warm = worker(0, false);
+        warm.execution_generation = record.execution_generation;
+        warm.call_digest = Some(old_digest.clone());
+        assert!(warm.matches_native_call(&record, &old_digest));
+        let mut changed = pack.manifest.clone();
+        changed.entry_source.push_str("// changed without reload");
+        let fresh_digest =
+            grain_core::extensions::native_call_fingerprint(&record, &changed).unwrap();
+        assert!(!warm.matches_native_call(&record, &fresh_digest));
+        warm.call_digest = Some(fresh_digest.clone());
+        assert!(warm.matches_native_call(&record, &fresh_digest));
+        assert!(!warm.matches_native_call(&record, &old_digest));
+        record.enabled = false;
+        assert!(!warm.matches_native_call(&record, &fresh_digest));
+        record.enabled = true;
+        record.execution_generation += 1;
+        assert!(!warm.matches_native_call(&record, &fresh_digest));
+        warm.execution_generation = record.execution_generation;
+        warm.call_digest = None;
+        assert!(!warm.matches_native_call(&record, &fresh_digest));
+    }
+
+    #[test]
+    fn host_rpc_token_cannot_borrow_a_replacement_workers_generation() {
+        let workers = Workers::new();
+        let mut original = worker(0, false);
+        original.execution_generation = 10;
+        workers.insert("account", original);
+        assert_eq!(workers.generation_for_token("account", "tok"), Some(10));
+        let mut replacement = worker(0, false);
+        replacement.token = "new-token".into();
+        replacement.execution_generation = 20;
+        workers.insert("account", replacement);
+        assert_eq!(workers.generation_for_token("account", "tok"), None);
+        assert_eq!(
+            workers.generation_for_token("account", "new-token"),
+            Some(20)
+        );
+        workers.remove("account");
+        assert_eq!(workers.generation_for_token("account", "new-token"), None);
     }
 
     fn rt() -> tokio::runtime::Runtime {
@@ -3021,7 +3388,7 @@ mod tests {
     fn call_roundtrips_through_a_fake_worker() {
         rt().block_on(async {
             let workers = Workers::new();
-            let (out_tx, mut out_rx) = mpsc::unbounded_channel::<Message>();
+            let (out_tx, mut out_rx) = mpsc::channel::<Message>(WORKER_OUTBOUND_CAPACITY);
             workers.insert("com.x.a", worker(now_secs(), false));
             workers.attach("com.x.a", "tok", out_tx).unwrap();
 
@@ -3040,7 +3407,7 @@ mod tests {
                     }
                     _ => panic!("expected a Call frame"),
                 };
-                workers.resolve("com.x.a", call_id, Ok(json!({ "text": "HI" })));
+                workers.resolve("com.x.a", "tok", call_id, Ok(json!({ "text": "HI" })));
             };
 
             let (res, _) = tokio::join!(
@@ -3069,7 +3436,7 @@ mod tests {
                 "worker not connected"
             );
             // Connected but silent → the deadline fires (never blocks the paste).
-            let (out_tx, _keep) = mpsc::unbounded_channel::<Message>();
+            let (out_tx, _keep) = mpsc::channel::<Message>(WORKER_OUTBOUND_CAPACITY);
             workers.insert("com.x.a", worker(now_secs(), false));
             workers.attach("com.x.a", "tok", out_tx).unwrap();
             assert_eq!(
@@ -3103,7 +3470,7 @@ mod tests {
     fn cancelling_pending_calls_releases_the_waiter_immediately() {
         rt().block_on(async {
             let workers = Workers::new();
-            let (out_tx, mut out_rx) = mpsc::unbounded_channel::<Message>();
+            let (out_tx, mut out_rx) = mpsc::channel::<Message>(WORKER_OUTBOUND_CAPACITY);
             workers.insert("com.x.a", worker(now_secs(), false));
             workers.attach("com.x.a", "tok", out_tx).unwrap();
 
@@ -3125,9 +3492,690 @@ mod tests {
     }
 
     #[test]
+    fn native_queue_failures_preserve_dispatch_certainty_without_replay() {
+        use grain_core::execution::{ActionOutcome, RiskClass, SideEffect};
+        rt().block_on(async {
+            for mode in [
+                "absent", "stale", "closed", "cancel", "error", "timeout", "invalid", "ok",
+            ] {
+                let workers = Workers::new();
+                let (out_tx, mut out_rx) = mpsc::channel(WORKER_OUTBOUND_CAPACITY);
+                if mode != "absent" {
+                    workers.insert("tools", worker(now_secs(), false));
+                    workers.attach("tools", "tok", out_tx).unwrap();
+                }
+                if mode == "closed" {
+                    out_rx.close();
+                }
+                let prepared = crate::action_exec::prepare(
+                    "tools:write",
+                    "tools",
+                    "write",
+                    "Tools",
+                    json!({}),
+                    RiskClass::Confirm,
+                    SideEffect::Write,
+                    "current",
+                );
+                let dispatched = AtomicBool::new(false);
+                let token = if mode == "stale" { "old" } else { "tok" };
+                let call = workers.call_tracked(
+                    "tools",
+                    Some(token),
+                    "action",
+                    json!({}),
+                    Duration::from_millis(20),
+                    &dispatched,
+                );
+                let before = matches!(mode, "absent" | "stale" | "closed");
+                let mut count = 0;
+                let result = if before {
+                    call.await
+                } else {
+                    let handler = async {
+                        let Message::Text(frame) = out_rx.recv().await.expect("one queued call")
+                        else {
+                            panic!("not a call")
+                        };
+                        let frame: HostFrame = serde_json::from_str(&frame).unwrap();
+                        let HostFrame::Call(call) = frame else {
+                            panic!("not a call")
+                        };
+                        count += 1; // Simulated effect, before teardown or a lost reply.
+                        match mode {
+                            "cancel" => workers.cancel_pending("tools", "disabled after queue"),
+                            "error" => workers.resolve(
+                                "tools",
+                                "tok",
+                                call.call_id,
+                                Err("token=secret-provider-payload".into()),
+                            ),
+                            "invalid" => workers.resolve(
+                                "tools",
+                                "tok",
+                                call.call_id,
+                                Ok(json!(["invalid"])),
+                            ),
+                            "ok" => workers.resolve(
+                                "tools",
+                                "tok",
+                                call.call_id,
+                                Ok(json!({"ok": "recorded"})),
+                            ),
+                            "timeout" => {}
+                            _ => unreachable!(),
+                        }
+                    };
+                    tokio::join!(call, handler).0
+                };
+                assert_eq!(dispatched.load(Ordering::Acquire), !before, "{mode}");
+                let outcome = crate::action_exec::native_outcome(
+                    result.map_err(|error| {
+                        ActionCallError::Execution(native_call_failure(
+                            &error,
+                            dispatched.load(Ordering::Acquire),
+                        ))
+                    }),
+                    &prepared,
+                );
+                match mode {
+                    "absent" | "stale" | "closed" => {
+                        assert!(matches!(outcome, ActionOutcome::Failed { .. }))
+                    }
+                    "cancel" | "error" | "timeout" => {
+                        assert!(matches!(outcome, ActionOutcome::UnknownOutcome { .. }))
+                    }
+                    "invalid" => {
+                        assert!(matches!(outcome, ActionOutcome::ResultUnavailable { .. }))
+                    }
+                    "ok" => assert!(matches!(outcome, ActionOutcome::Succeeded(_))),
+                    _ => unreachable!(),
+                }
+                assert_eq!(count, if before { 0 } else { 1 });
+                assert!(out_rx.try_recv().is_err(), "no replay");
+                assert!(!outcome.model_summary().contains("secret-provider"));
+                if let Some(worker) = workers.map.lock().unwrap().get("tools") {
+                    assert!(worker
+                        .conn
+                        .as_ref()
+                        .unwrap()
+                        .pending
+                        .lock()
+                        .unwrap()
+                        .is_empty());
+                };
+            }
+        });
+    }
+
+    #[test]
+    fn native_snapshot_rejects_invalid_arguments_and_changed_approval_before_queue() {
+        rt().block_on(async {
+            let mut pack = pack_of("");
+            pack.manifest.contributes.actions[0].params = serde_json::from_value(json!([
+                {"name": "title", "kind": "text"},
+                {"name": "priority", "kind": "number", "required": false}
+            ]))
+            .unwrap();
+            let record = record_for(&pack);
+            let digest =
+                grain_core::extensions::native_call_fingerprint(&record, &pack.manifest).unwrap();
+            let workers = Workers::new();
+            workers.insert(&record.id, worker(now_secs(), false));
+            let (out_tx, mut out_rx) = mpsc::channel(WORKER_OUTBOUND_CAPACITY);
+            workers.attach(&record.id, "tok", out_tx).unwrap();
+            for arguments in [
+                json!({}),
+                json!([]),
+                json!({"title": 7}),
+                json!({"title": " "}),
+                json!({"title": "Hi", "priority": "3"}),
+                json!({"title": "Hi", "fixture-private-key": true}),
+                json!({"title": "x".repeat(64 * 1024)}),
+            ] {
+                let error = native_arguments_for_snapshot(
+                    &pack.manifest,
+                    &record,
+                    "next",
+                    &arguments,
+                    &digest,
+                )
+                .unwrap_err();
+                let ActionCallError::Execution(failure) = error else {
+                    panic!("invalid input expected")
+                };
+                assert_eq!(
+                    failure.phase,
+                    grain_core::execution::DispatchPhase::NotDispatched
+                );
+                assert_eq!(
+                    failure.class,
+                    grain_core::execution::FailureClass::InvalidArgument
+                );
+                assert!(!failure.message.contains("fixture-private-key"));
+                assert!(out_rx.try_recv().is_err());
+            }
+            let arguments = json!({"title": "Hello", "priority": null});
+            let normalized =
+                native_arguments_for_snapshot(&pack.manifest, &record, "next", &arguments, &digest)
+                    .unwrap();
+            assert_eq!(normalized, json!({"title": "Hello"}));
+            for mode in [
+                "disabled",
+                "reenabled",
+                "unapproved",
+                "source",
+                "params",
+                "missing",
+            ] {
+                let mut record = record.clone();
+                let mut changed = pack.manifest.clone();
+                match mode {
+                    "disabled" => record.enabled = false,
+                    "reenabled" => record.toggle_seq += 1,
+                    "unapproved" => record.actions_approved = None,
+                    "source" => changed.entry_source.push_str("// changed"),
+                    "params" => changed.contributes.actions[0].params.clear(),
+                    "missing" => changed.contributes.actions.clear(),
+                    _ => unreachable!(),
+                }
+                assert!(
+                    native_arguments_for_snapshot(&changed, &record, "next", &normalized, &digest)
+                        .is_err(),
+                    "{mode}"
+                );
+                assert!(out_rx.try_recv().is_err());
+            }
+            let dispatched = AtomicBool::new(false);
+            let call = workers.call_tracked(
+                &record.id,
+                Some("tok"),
+                "action",
+                normalized.clone(),
+                Duration::from_secs(1),
+                &dispatched,
+            );
+            let handler = async {
+                let Message::Text(frame) = out_rx.recv().await.unwrap() else {
+                    panic!("call expected")
+                };
+                let HostFrame::Call(call) = serde_json::from_str(&frame).unwrap() else {
+                    panic!("call expected")
+                };
+                assert_eq!(call.params, normalized);
+                workers.resolve(&record.id, "tok", call.call_id, Ok(json!({"ok": "hello"})));
+            };
+            assert!(tokio::join!(call, handler).0.is_ok());
+            assert!(dispatched.load(Ordering::Acquire));
+            assert!(out_rx.try_recv().is_err());
+        });
+    }
+
+    #[test]
+    fn native_admission_orders_registry_disable_and_worker_replacement_with_queue() {
+        rt().block_on(async {
+            for mode in [
+                "disabled",
+                "reenabled",
+                "replaced",
+                "source_worker",
+                "restored",
+                "same_source_reload",
+                "same_source_install",
+                "missing",
+                "invalid",
+                "expired",
+                "after_queue",
+                "after_reply",
+                "valid",
+            ] {
+                let directory = tempfile::tempdir().unwrap();
+                let registry =
+                    grain_core::extensions::ExtensionsRegistry::load(directory.path(), false)
+                        .unwrap();
+                let pack = pack_of("");
+                let mut record = record_for(&pack);
+                record.enabled = false;
+                registry.install(record).unwrap();
+                registry.set_enabled(&pack.manifest.id, true).unwrap();
+                if mode == "same_source_reload" {
+                    registry
+                        .load_dev(
+                            registry.record(&pack.manifest.id).unwrap(),
+                            directory.path().join("project"),
+                        )
+                        .unwrap();
+                }
+                let digest = grain_core::extensions::native_call_fingerprint(
+                    &registry.record(&pack.manifest.id).unwrap(),
+                    &pack.manifest,
+                )
+                .unwrap();
+                let workers = Workers::new();
+                let mut spawned = worker(now_secs(), false);
+                spawned.call_digest = Some(if mode == "source_worker" {
+                    "old-source".into()
+                } else {
+                    digest.clone()
+                });
+                workers.insert(&pack.manifest.id, spawned);
+                let (out_tx, mut out_rx) = mpsc::channel(WORKER_OUTBOUND_CAPACITY);
+                workers.attach(&pack.manifest.id, "tok", out_tx).unwrap();
+                match mode {
+                    "disabled" => {
+                        registry.set_enabled(&pack.manifest.id, false).unwrap();
+                    }
+                    "reenabled" => {
+                        registry.set_enabled(&pack.manifest.id, false).unwrap();
+                        registry.set_enabled(&pack.manifest.id, true).unwrap();
+                    }
+                    "replaced" => {
+                        let mut replacement = worker(now_secs(), false);
+                        replacement.token = "replacement".into();
+                        workers.insert(&pack.manifest.id, replacement);
+                    }
+                    "missing" => {
+                        registry.uninstall(&pack.manifest.id).unwrap();
+                    }
+                    "restored" => {
+                        registry
+                            .load_dev(
+                                registry.record(&pack.manifest.id).unwrap(),
+                                directory.path().join("project"),
+                            )
+                            .unwrap();
+                        registry.unload_dev(&pack.manifest.id).unwrap();
+                    }
+                    "same_source_reload" => {
+                        registry
+                            .load_dev(
+                                registry.record(&pack.manifest.id).unwrap(),
+                                directory.path().join("project"),
+                            )
+                            .unwrap();
+                    }
+                    "same_source_install" => {
+                        registry
+                            .install(registry.record(&pack.manifest.id).unwrap())
+                            .unwrap();
+                    }
+                    _ => {}
+                }
+                let arguments = if mode == "invalid" {
+                    json!({"undeclared": true})
+                } else {
+                    json!({})
+                };
+                let admission = NativeAdmission {
+                    extension_id: &pack.manifest.id,
+                    token: "tok",
+                    action_id: "next",
+                    arguments: &arguments,
+                    expected_digest: &digest,
+                    idempotency_key: None,
+                    expires: if mode == "expired" {
+                        Instant::now() - Duration::from_secs(1)
+                    } else {
+                        Instant::now() + NATIVE_OPERATION_DEADLINE
+                    },
+                };
+                let dispatched = AtomicBool::new(false);
+                let queued = enqueue_native_call(
+                    &registry,
+                    &workers,
+                    &pack.manifest,
+                    &admission,
+                    &dispatched,
+                );
+                if !matches!(mode, "after_queue" | "after_reply" | "valid") {
+                    assert!(queued.is_err(), "{mode}");
+                    assert!(!dispatched.load(Ordering::Acquire));
+                    assert!(out_rx.try_recv().is_err(), "zero frames: {mode}");
+                    if mode == "expired" {
+                        assert!(workers.map.lock().unwrap()[&pack.manifest.id]
+                            .conn
+                            .as_ref()
+                            .unwrap()
+                            .pending
+                            .lock()
+                            .unwrap()
+                            .is_empty());
+                    }
+                    if matches!(
+                        mode,
+                        "restored" | "same_source_reload" | "same_source_install"
+                    ) {
+                        let current_digest = grain_core::extensions::native_call_fingerprint(
+                            &registry.record(&pack.manifest.id).unwrap(),
+                            &pack.manifest,
+                        )
+                        .unwrap();
+                        let current = NativeAdmission {
+                            expected_digest: &current_digest,
+                            ..admission
+                        };
+                        assert!(
+                            enqueue_native_call(
+                                &registry,
+                                &workers,
+                                &pack.manifest,
+                                &current,
+                                &dispatched,
+                            )
+                            .is_err(),
+                            "fresh approval cannot use the old warm worker"
+                        );
+                        assert!(!dispatched.load(Ordering::Acquire));
+                        assert!(out_rx.try_recv().is_err());
+                        let mut replacement = worker(now_secs(), false);
+                        replacement.token = "fresh".into();
+                        replacement.call_digest = Some(current_digest.clone());
+                        workers.insert(&pack.manifest.id, replacement);
+                        let (fresh_tx, mut fresh_rx) = mpsc::channel(WORKER_OUTBOUND_CAPACITY);
+                        workers
+                            .attach(&pack.manifest.id, "fresh", fresh_tx)
+                            .unwrap();
+                        let current = NativeAdmission {
+                            token: "fresh",
+                            ..current
+                        };
+                        let queued = enqueue_native_call(
+                            &registry,
+                            &workers,
+                            &pack.manifest,
+                            &current,
+                            &dispatched,
+                        )
+                        .unwrap();
+                        let Message::Text(frame) = fresh_rx.try_recv().unwrap() else {
+                            panic!("one fresh call")
+                        };
+                        let HostFrame::Call(call) = serde_json::from_str(&frame).unwrap() else {
+                            panic!("call")
+                        };
+                        workers.resolve(
+                            &pack.manifest.id,
+                            "fresh",
+                            call.call_id,
+                            Ok(json!({"ok": "fresh"})),
+                        );
+                        assert_eq!(
+                            queued.wait(Duration::from_secs(1)).await.unwrap(),
+                            json!({"ok": "fresh"})
+                        );
+                        assert!(dispatched.load(Ordering::Acquire));
+                        assert!(fresh_rx.try_recv().is_err(), "fresh call is not replayed");
+                    }
+                    continue;
+                }
+                let queued = queued.unwrap();
+                assert!(dispatched.load(Ordering::Acquire));
+                let Message::Text(frame) = out_rx.try_recv().unwrap() else {
+                    panic!("one call")
+                };
+                let HostFrame::Call(call) = serde_json::from_str(&frame).unwrap() else {
+                    panic!("call")
+                };
+                assert_eq!(call.params["action"], "next");
+                if mode == "after_queue" {
+                    // Admission has released its lock; disable completes while
+                    // the reply waiter remains alive, then exact-token teardown.
+                    registry.set_enabled(&pack.manifest.id, false).unwrap();
+                    workers
+                        .remove_if_token(&pack.manifest.id, "tok")
+                        .unwrap()
+                        .close_pending();
+                    let error = queued.wait(Duration::from_secs(1)).await.unwrap_err();
+                    let failure = native_call_failure(&error, dispatched.load(Ordering::Acquire));
+                    assert!(matches!(
+                        failure.into_outcome(),
+                        grain_core::execution::ActionOutcome::UnknownOutcome { .. }
+                    ));
+                    assert!(matches!(out_rx.try_recv(), Ok(Message::Close(_))));
+                } else {
+                    workers.resolve(
+                        &pack.manifest.id,
+                        "tok",
+                        call.call_id,
+                        Ok(json!({"ok": "hello"})),
+                    );
+                    let reply = queued.wait(Duration::from_secs(1)).await.unwrap();
+                    if mode == "after_reply" {
+                        registry.set_enabled(&pack.manifest.id, false).unwrap();
+                        let current = registry.with_record_locked(&pack.manifest.id, |record| {
+                            native_arguments_for_snapshot(
+                                &pack.manifest,
+                                record.unwrap(),
+                                "next",
+                                &arguments,
+                                &digest,
+                            )
+                        });
+                        let failure = native_reply_if_current(reply, current).unwrap_err();
+                        let prepared = crate::action_exec::prepare(
+                            "com.x.p:next",
+                            "com.x.p",
+                            "next",
+                            "P",
+                            json!({}),
+                            grain_core::execution::RiskClass::Confirm,
+                            grain_core::execution::SideEffect::Write,
+                            &digest,
+                        );
+                        assert!(matches!(
+                            crate::action_exec::native_outcome(Err(failure), &prepared),
+                            grain_core::execution::ActionOutcome::ResultUnavailable { .. }
+                        ));
+                    } else {
+                        assert!(native_reply_if_current(reply, Ok(json!({}))).is_ok());
+                    }
+                }
+                assert!(out_rx.try_recv().is_err(), "no replay");
+            }
+        });
+    }
+
+    #[test]
+    fn native_request_owner_drop_retires_only_its_generation_and_releases_pending_calls() {
+        rt().block_on(async {
+            for mode in [
+                "startup",
+                "cancel",
+                "timeout",
+                "transport_error",
+                "replacement",
+                "success",
+            ] {
+                let workers = Workers::new();
+                workers.insert("tools", worker(now_secs(), false));
+                let (out_tx, mut out_rx) = mpsc::channel(WORKER_OUTBOUND_CAPACITY);
+                workers.attach("tools", "tok", out_tx).unwrap();
+                let mut owner = NativeCallOwner::new(|| {
+                    if let Some(worker) = workers.remove_if_token("tools", "tok") {
+                        worker.close_pending();
+                    }
+                });
+                let dispatched = AtomicBool::new(false);
+                if mode == "startup" {
+                    drop(owner);
+                    assert_eq!(workers.len(), 0);
+                    assert!(matches!(out_rx.try_recv(), Ok(Message::Close(_))));
+                    continue;
+                }
+                let queued = workers
+                    .enqueue("tools", Some("tok"), "action", json!({}), &dispatched, None)
+                    .unwrap();
+                let pending = queued.pending.calls.clone();
+                let Message::Text(frame) = out_rx.try_recv().unwrap() else {
+                    panic!("one call")
+                };
+                let HostFrame::Call(call) = serde_json::from_str(&frame).unwrap() else {
+                    panic!("call")
+                };
+                match mode {
+                    "cancel" | "replacement" => {
+                        if mode == "replacement" {
+                            let mut replacement = worker(now_secs(), false);
+                            replacement.token = "new".into();
+                            workers.insert("tools", replacement);
+                        }
+                        drop(queued);
+                    }
+                    "timeout" | "transport_error" => {
+                        if mode == "transport_error" {
+                            workers.resolve(
+                                "tools",
+                                "tok",
+                                call.call_id,
+                                Err("private error".into()),
+                            );
+                        }
+                        let error = queued.wait(Duration::from_millis(10)).await.unwrap_err();
+                        assert!(matches!(
+                            native_call_failure(&error, true).into_outcome(),
+                            grain_core::execution::ActionOutcome::UnknownOutcome { .. }
+                        ));
+                    }
+                    "success" => {
+                        workers.resolve("tools", "tok", call.call_id, Ok(json!({"ok": "hello"})));
+                        assert!(queued.wait(Duration::from_secs(1)).await.is_ok());
+                        owner.completed();
+                    }
+                    _ => unreachable!(),
+                }
+                drop(owner);
+                assert!(pending.lock().unwrap().is_empty());
+                if mode == "replacement" {
+                    assert!(workers.owns_token("tools", "new"));
+                } else if mode == "success" {
+                    assert!(workers.owns_token("tools", "tok"));
+                } else {
+                    assert_eq!(workers.len(), 0);
+                    assert!(matches!(out_rx.try_recv(), Ok(Message::Close(_))));
+                }
+                assert!(out_rx.try_recv().is_err(), "no replay");
+            }
+        });
+    }
+
+    #[test]
+    fn aborting_native_waiter_runs_cleanup_without_retiring_a_replacement() {
+        rt().block_on(async {
+            for replace in [false, true] {
+                let workers = Arc::new(Workers::new());
+                workers.insert("tools", worker(now_secs(), false));
+                let (out_tx, mut out_rx) = mpsc::channel(WORKER_OUTBOUND_CAPACITY);
+                workers.attach("tools", "tok", out_tx).unwrap();
+                let owned = workers.clone();
+                let task = tokio::spawn(async move {
+                    let mut owner = NativeCallOwner::new(|| {
+                        if let Some(worker) = owned.remove_if_token("tools", "tok") {
+                            worker.close_pending();
+                        }
+                    });
+                    let dispatched = AtomicBool::new(false);
+                    let queued = owned
+                        .enqueue("tools", Some("tok"), "action", json!({}), &dispatched, None)
+                        .unwrap();
+                    let result = queued.wait(Duration::from_secs(20)).await;
+                    if result.is_ok() {
+                        owner.completed();
+                    }
+                    result
+                });
+                assert!(matches!(out_rx.recv().await, Some(Message::Text(_))));
+                let pending = workers
+                    .map
+                    .lock()
+                    .unwrap()
+                    .get("tools")
+                    .unwrap()
+                    .conn
+                    .as_ref()
+                    .unwrap()
+                    .pending
+                    .clone();
+                assert_eq!(pending.lock().unwrap().len(), 1);
+                if replace {
+                    let mut replacement = worker(now_secs(), false);
+                    replacement.token = "replacement".into();
+                    workers.insert("tools", replacement);
+                }
+                task.abort();
+                assert!(task.await.unwrap_err().is_cancelled());
+                assert!(pending.lock().unwrap().is_empty());
+                if replace {
+                    assert!(workers.owns_token("tools", "replacement"));
+                } else {
+                    assert_eq!(workers.len(), 0);
+                    assert!(matches!(out_rx.try_recv(), Ok(Message::Close(_))));
+                }
+                assert!(out_rx.try_recv().is_err(), "no replay");
+            }
+        });
+    }
+
+    #[test]
+    fn agent_session_close_retires_its_native_call_without_touching_a_replacement() {
+        rt().block_on(async {
+            for replace in [false, true] {
+                let workers = Workers::new();
+                workers.insert("tools", worker(now_secs(), false));
+                let (out_tx, mut out_rx) = mpsc::channel(WORKER_OUTBOUND_CAPACITY);
+                workers.attach("tools", "tok", out_tx).unwrap();
+                let pending = workers
+                    .map
+                    .lock()
+                    .unwrap()
+                    .get("tools")
+                    .unwrap()
+                    .conn
+                    .as_ref()
+                    .unwrap()
+                    .pending
+                    .clone();
+                let control = crate::agent::AgentRunControl::default();
+                let (run, registration) = control.begin().unwrap();
+                let operation = run.wait(registration, async {
+                    let _owner = NativeCallOwner::new(|| {
+                        if let Some(worker) = workers.remove_if_token("tools", "tok") {
+                            worker.close_pending();
+                        }
+                    });
+                    let dispatched = AtomicBool::new(false);
+                    workers
+                        .enqueue("tools", Some("tok"), "action", json!({}), &dispatched, None)
+                        .unwrap()
+                        .wait(Duration::from_secs(20))
+                        .await
+                });
+                let close = async {
+                    assert!(matches!(out_rx.recv().await, Some(Message::Text(_))));
+                    if replace {
+                        let mut replacement = worker(now_secs(), false);
+                        replacement.token = "new".into();
+                        workers.insert("tools", replacement);
+                    }
+                    control.cancel();
+                };
+                let (result, _) = tokio::join!(operation, close);
+                assert!(result.unwrap_err().contains("may have had effects"));
+                assert!(pending.lock().unwrap().is_empty());
+                if replace {
+                    assert!(workers.owns_token("tools", "new"));
+                } else {
+                    assert_eq!(workers.len(), 0);
+                    assert!(matches!(out_rx.try_recv(), Ok(Message::Close(_))));
+                }
+                assert!(out_rx.try_recv().is_err(), "one dispatch, no replay");
+            }
+        });
+    }
+
+    #[test]
     fn resolve_unknown_call_is_a_noop() {
         let workers = Workers::new();
-        workers.resolve("nobody", 7, Ok(Value::Null)); // must not panic
+        workers.resolve("nobody", "tok", 7, Ok(Value::Null)); // must not panic
     }
 
     #[test]
@@ -3137,23 +4185,242 @@ mod tests {
         workers.insert("fresh", worker(now_secs(), false)); // just active
         workers.insert("resident", worker(0, true)); // never reaped
         let victims = workers.idle_victims(now_secs(), IDLE_REAP_SECS);
-        assert_eq!(victims, vec!["stale".to_string()]);
+        assert_eq!(victims, vec![("stale".to_string(), "tok".to_string())]);
     }
 
     #[test]
-    fn strikes_trip_at_the_limit_and_reset() {
+    fn idle_removal_rechecks_pending_activity_and_token_after_selection() {
+        rt().block_on(async {
+            let workers = Workers::new();
+            workers.insert("tools", worker(0, false));
+            let (tx, mut rx) = mpsc::channel(WORKER_OUTBOUND_CAPACITY);
+            let activity = workers.attach("tools", "tok", tx).unwrap();
+            activity.store(0, Ordering::Relaxed);
+            assert_eq!(workers.idle_victims(now_secs(), IDLE_REAP_SECS).len(), 1);
+            let queued = workers
+                .enqueue(
+                    "tools",
+                    Some("tok"),
+                    "action",
+                    json!({}),
+                    &AtomicBool::new(false),
+                    None,
+                )
+                .unwrap();
+            let Message::Text(frame) = rx.try_recv().unwrap() else {
+                panic!("one call")
+            };
+            let HostFrame::Call(call) = serde_json::from_str(&frame).unwrap() else {
+                panic!("call")
+            };
+            activity.store(0, Ordering::Relaxed); // Busy protects even an old activity clock.
+            assert!(workers
+                .remove_if_idle("tools", "tok", now_secs(), IDLE_REAP_SECS)
+                .is_none());
+            workers.resolve("tools", "tok", call.call_id, Ok(Value::Null));
+            queued.wait(Duration::from_secs(1)).await.unwrap();
+            activity.store(now_secs(), Ordering::Relaxed);
+            assert!(workers
+                .remove_if_idle("tools", "tok", now_secs(), IDLE_REAP_SECS)
+                .is_none());
+            let mut replacement = worker(0, false);
+            replacement.token = "new".into();
+            workers.insert("tools", replacement);
+            assert!(workers
+                .remove_if_idle("tools", "tok", now_secs(), IDLE_REAP_SECS)
+                .is_none());
+            assert!(workers
+                .remove_if_idle("tools", "new", now_secs(), IDLE_REAP_SECS)
+                .is_some());
+            assert!(rx.try_recv().is_err(), "no replay");
+        });
+    }
+
+    #[test]
+    fn native_deadline_preserves_dispatch_certainty_and_reply_budget() {
+        use grain_core::execution::{ActionOutcome, DispatchPhase};
+        rt().block_on(async {
+            let expires = Instant::now() + Duration::from_millis(80);
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            let remaining = native_time_remaining(expires, DispatchPhase::NotDispatched).unwrap();
+            assert!(
+                remaining < Duration::from_millis(80),
+                "startup consumes the same budget"
+            );
+            let expired = Instant::now() - Duration::from_secs(1);
+            let prepared = crate::action_exec::prepare(
+                "tools:next",
+                "tools",
+                "next",
+                "Tools",
+                json!({}),
+                grain_core::execution::RiskClass::Confirm,
+                grain_core::execution::SideEffect::Write,
+                "digest",
+            );
+            for phase in [
+                DispatchPhase::NotDispatched,
+                DispatchPhase::Dispatched,
+                DispatchPhase::ResponseReceived,
+            ] {
+                let error = native_time_remaining(expired, phase).unwrap_err();
+                let outcome = crate::action_exec::native_outcome(Err(error), &prepared);
+                assert!(match phase {
+                    DispatchPhase::NotDispatched => matches!(outcome, ActionOutcome::Failed { .. }),
+                    DispatchPhase::Dispatched =>
+                        matches!(outcome, ActionOutcome::UnknownOutcome { .. }),
+                    DispatchPhase::ResponseReceived =>
+                        matches!(outcome, ActionOutcome::ResultUnavailable { .. }),
+                });
+            }
+            let workers = Workers::new();
+            workers.insert("tools", worker(now_secs(), false));
+            let (tx, mut rx) = mpsc::channel(WORKER_OUTBOUND_CAPACITY);
+            workers.attach("tools", "tok", tx).unwrap();
+            let dispatched = AtomicBool::new(false);
+            let queued = workers
+                .enqueue("tools", Some("tok"), "action", json!({}), &dispatched, None)
+                .unwrap();
+            let Message::Text(frame) = rx.try_recv().unwrap() else {
+                panic!("call")
+            };
+            let HostFrame::Call(call) = serde_json::from_str(&frame).unwrap() else {
+                panic!("call")
+            };
+            workers.resolve(
+                "tools",
+                "tok",
+                call.call_id,
+                Ok(json!({"ok": "x".repeat(64 * 1024)})),
+            );
+            let reply = queued.wait(Duration::from_secs(1)).await.unwrap();
+            let error = validate_native_reply_budget(&reply).unwrap_err();
+            assert!(matches!(
+                crate::action_exec::native_outcome(Err(error), &prepared),
+                ActionOutcome::ResultUnavailable { .. }
+            ));
+            assert!(dispatched.load(Ordering::Acquire));
+            assert!(rx.try_recv().is_err(), "exactly one dispatch");
+            assert!(workers.map.lock().unwrap()["tools"]
+                .conn
+                .as_ref()
+                .unwrap()
+                .pending
+                .lock()
+                .unwrap()
+                .is_empty());
+        });
+    }
+
+    #[test]
+    fn maintenance_samples_do_not_keep_an_idle_worker_alive() {
+        rt().block_on(async {
+            let workers = Workers::new();
+            workers.insert("tools", worker(0, false));
+            let (tx, mut rx) = mpsc::channel(WORKER_OUTBOUND_CAPACITY);
+            let activity = workers.attach("tools", "tok", tx).unwrap();
+            activity.store(0, Ordering::Relaxed);
+            for _ in 0..4 {
+                let queued = workers
+                    .enqueue(
+                        "tools",
+                        Some("tok"),
+                        "memory.sample",
+                        Value::Null,
+                        &AtomicBool::new(false),
+                        None,
+                    )
+                    .unwrap();
+                assert!(
+                    workers.idle_victims(now_secs(), IDLE_REAP_SECS).is_empty(),
+                    "a pending sample is protected until it finishes"
+                );
+                let Message::Text(frame) = rx.try_recv().unwrap() else {
+                    panic!("sample")
+                };
+                let HostFrame::Call(call) = serde_json::from_str(&frame).unwrap() else {
+                    panic!("sample")
+                };
+                workers.resolve(
+                    "tools",
+                    "tok",
+                    call.call_id,
+                    Ok(json!({"supported": false})),
+                );
+                queued.wait(Duration::from_secs(1)).await.unwrap();
+                assert_eq!(activity.load(Ordering::Relaxed), 0);
+                assert_eq!(workers.idle_victims(now_secs(), IDLE_REAP_SECS).len(), 1);
+            }
+            assert!(workers
+                .remove_if_idle("tools", "tok", now_secs(), IDLE_REAP_SECS)
+                .is_some());
+        });
+    }
+
+    #[test]
+    fn resource_disable_requires_both_registry_and_worker_ownership() {
+        let directory = tempfile::tempdir().unwrap();
+        let registry =
+            grain_core::extensions::ExtensionsRegistry::load(directory.path(), false).unwrap();
+        let pack = pack_of("");
+        registry.install(record_for(&pack)).unwrap();
+        registry.set_enabled(&pack.manifest.id, true).unwrap();
+        let generation = registry
+            .record(&pack.manifest.id)
+            .unwrap()
+            .execution_generation;
         let workers = Workers::new();
-        workers.insert("a", worker(0, false));
-        assert_eq!(workers.record_strike("a"), Some(1));
-        assert_eq!(workers.record_strike("a"), Some(2));
-        assert_eq!(workers.record_strike("a"), Some(3)); // 3rd strike → trip
-        workers.clear_strikes("a");
-        assert_eq!(workers.record_strike("a"), Some(1)); // counter reset
-        assert_eq!(workers.record_strike("missing"), None); // unknown never trips
+        let mut replacement = worker(now_secs(), false);
+        replacement.token = "new".into();
+        replacement.execution_generation = generation;
+        workers.insert(&pack.manifest.id, replacement);
+        assert!(
+            !disable_sampled_worker(&registry, &workers, &pack.manifest.id, "tok", generation)
+                .unwrap()
+        );
+        assert!(
+            registry.record(&pack.manifest.id).unwrap().enabled,
+            "same registry generation, different worker survives"
+        );
+        assert!(workers.owns_token(&pack.manifest.id, "new"));
+        let mut current = worker(now_secs(), false);
+        current.execution_generation = generation;
+        workers.insert(&pack.manifest.id, current);
+        registry
+            .install(registry.record(&pack.manifest.id).unwrap())
+            .unwrap();
+        assert!(
+            !disable_sampled_worker(&registry, &workers, &pack.manifest.id, "tok", generation)
+                .unwrap()
+        );
+        assert!(
+            registry.record(&pack.manifest.id).unwrap().enabled,
+            "same worker token, different registry generation survives"
+        );
+        let generation = registry
+            .record(&pack.manifest.id)
+            .unwrap()
+            .execution_generation;
+        workers
+            .map
+            .lock()
+            .unwrap()
+            .get_mut(&pack.manifest.id)
+            .unwrap()
+            .execution_generation = generation;
+        assert!(
+            disable_sampled_worker(&registry, &workers, &pack.manifest.id, "tok", generation)
+                .unwrap()
+        );
+        assert!(!registry.record(&pack.manifest.id).unwrap().enabled);
+        assert!(
+            workers.owns_token(&pack.manifest.id, "tok"),
+            "guard is released before separate runtime cleanup"
+        );
     }
 
     #[test]
-    fn heap_samples_are_typed_and_memory_strikes_are_independent() {
+    fn heap_samples_are_typed_and_memory_strikes_reset() {
         assert_eq!(
             parse_heap_sample(json!({"supported": true, "usedBytes": 42})).unwrap(),
             HeapSample::Bytes(42)
@@ -3166,13 +4433,17 @@ mod tests {
 
         let workers = Workers::new();
         workers.insert("leak", worker(0, false));
-        assert_eq!(workers.record_memory_strike("leak"), Some(1));
-        assert_eq!(workers.record_memory_strike("leak"), Some(2));
-        assert_eq!(workers.record_strike("leak"), Some(1));
-        workers.clear_memory_strikes("leak");
-        assert_eq!(workers.record_memory_strike("leak"), Some(1));
-        // The transform counter was not forgiven by a healthy heap sample.
-        assert_eq!(workers.record_strike("leak"), Some(2));
+        assert_eq!(workers.record_memory_strike("leak", "tok"), Some(1));
+        assert_eq!(workers.record_memory_strike("leak", "tok"), Some(2));
+        workers.clear_memory_strikes("leak", "tok");
+        assert_eq!(workers.record_memory_strike("leak", "tok"), Some(1));
+        let mut replacement = worker(0, false);
+        replacement.token = "replacement".into();
+        replacement.memory_strikes = 2;
+        workers.insert("leak", replacement);
+        assert_eq!(workers.record_memory_strike("leak", "tok"), None);
+        workers.clear_memory_strikes("leak", "tok");
+        assert_eq!(workers.record_memory_strike("leak", "replacement"), Some(3));
     }
 
     #[test]
@@ -3181,7 +4452,7 @@ mod tests {
         let mut replacement = worker(now_secs(), false);
         replacement.token = "new-token".into();
         workers.insert("a", replacement);
-        let (out_tx, _out_rx) = mpsc::unbounded_channel::<Message>();
+        let (out_tx, _out_rx) = mpsc::channel::<Message>(WORKER_OUTBOUND_CAPACITY);
         assert!(workers.attach("a", "old-token", out_tx).is_none());
         assert!(workers.remove_if_token("a", "old-token").is_none());
         assert_eq!(workers.len(), 1);
@@ -3195,14 +4466,230 @@ mod tests {
         let mut companion = worker(now_secs(), false);
         companion.kind = RuntimeKind::Companion;
         workers.insert("native", companion);
-        let (out_tx, _out_rx) = mpsc::unbounded_channel::<Message>();
+        let (out_tx, _out_rx) = mpsc::channel::<Message>(WORKER_OUTBOUND_CAPACITY);
         workers.attach("native", "tok", out_tx).unwrap();
-        assert!(workers.scripted_connected_ids().is_empty());
+        assert!(workers.scripted_connected_tokens().is_empty());
         assert!(workers.detach_companion("native", "tok"));
         assert_eq!(workers.len(), 1);
 
-        let (replacement_tx, _replacement_rx) = mpsc::unbounded_channel::<Message>();
+        let (replacement_tx, _replacement_rx) = mpsc::channel::<Message>(WORKER_OUTBOUND_CAPACITY);
         assert!(workers.attach("native", "tok", replacement_tx).is_some());
+    }
+
+    #[test]
+    fn stale_failure_and_queued_spawn_cannot_own_a_replacement_worker() {
+        let workers = Workers::new();
+        let mut old = worker(0, false);
+        old.token = "old".into();
+        workers.insert("tools", old);
+        assert!(workers.owns_token("tools", "old"));
+        let mut replacement = worker(1, false);
+        replacement.token = "new".into();
+        workers.insert("tools", replacement);
+        assert!(!workers.owns_token("tools", "old"));
+        assert!(workers.owns_token("tools", "new"));
+        assert!(workers.remove_if_token("tools", "old").is_none());
+        assert_eq!(workers.len(), 1);
+    }
+
+    #[test]
+    fn replaced_worker_cannot_receive_a_waiting_or_prepared_call() {
+        rt().block_on(async {
+            let workers = Workers::new();
+            let mut replacement = worker(now_secs(), false);
+            replacement.token = "new".into();
+            workers.insert("tools", replacement);
+            let (out_tx, mut out_rx) = mpsc::channel(WORKER_OUTBOUND_CAPACITY);
+            workers.attach("tools", "new", out_tx).unwrap();
+            assert!(
+                !workers
+                    .wait_connected("tools", "old", Duration::from_secs(5))
+                    .await
+            );
+            assert_eq!(
+                workers
+                    .call_owned(
+                        "tools",
+                        Some("old"),
+                        "action",
+                        json!({}),
+                        Duration::from_secs(5)
+                    )
+                    .await
+                    .unwrap_err(),
+                "worker generation changed"
+            );
+            assert!(out_rx.try_recv().is_err());
+            assert!(workers.map.lock().unwrap()["tools"]
+                .conn
+                .as_ref()
+                .unwrap()
+                .pending
+                .lock()
+                .unwrap()
+                .is_empty());
+        });
+    }
+
+    #[test]
+    fn stale_socket_reply_cannot_resolve_same_call_id_in_replacement() {
+        rt().block_on(async {
+            let workers = Workers::new();
+            let mut replacement = worker(now_secs(), false);
+            replacement.token = "new".into();
+            workers.insert("tools", replacement);
+            let (out_tx, mut out_rx) = mpsc::channel(WORKER_OUTBOUND_CAPACITY);
+            workers.attach("tools", "new", out_tx).unwrap();
+            let responder = async {
+                let Message::Text(frame) = out_rx.recv().await.unwrap() else {
+                    panic!("call frame")
+                };
+                let HostFrame::Call(call) = serde_json::from_str(&frame).unwrap() else {
+                    panic!("call frame")
+                };
+                workers.resolve("tools", "old", call.call_id, Ok(json!("forged")));
+                assert_eq!(
+                    workers.map.lock().unwrap()["tools"]
+                        .conn
+                        .as_ref()
+                        .unwrap()
+                        .pending
+                        .lock()
+                        .unwrap()
+                        .len(),
+                    1
+                );
+                workers.resolve("tools", "new", call.call_id, Ok(json!("correct")));
+            };
+            let (result, _) = tokio::join!(
+                workers.call_owned(
+                    "tools",
+                    Some("new"),
+                    "action",
+                    json!({}),
+                    Duration::from_secs(2)
+                ),
+                responder
+            );
+            assert_eq!(result.unwrap(), json!("correct"));
+        });
+    }
+
+    #[test]
+    fn dropping_call_future_releases_pending_entry_without_waiting_for_deadline() {
+        rt().block_on(async {
+            let workers = Workers::new();
+            workers.insert("tools", worker(now_secs(), false));
+            let (out_tx, mut out_rx) = mpsc::channel(WORKER_OUTBOUND_CAPACITY);
+            workers.attach("tools", "tok", out_tx).unwrap();
+            let mut call = Box::pin(workers.call_owned(
+                "tools",
+                Some("tok"),
+                "action",
+                json!({}),
+                Duration::from_secs(60),
+            ));
+            tokio::select! {
+                frame = out_rx.recv() => { assert!(frame.is_some()); }
+                result = &mut call => { panic!("call returned prematurely: {result:?}"); }
+            }
+            let pending = workers.map.lock().unwrap()["tools"]
+                .conn
+                .as_ref()
+                .unwrap()
+                .pending
+                .clone();
+            assert_eq!(pending.lock().unwrap().len(), 1);
+            drop(call);
+            assert!(pending.lock().unwrap().is_empty());
+        });
+    }
+
+    #[test]
+    fn closed_worker_channel_releases_pending_entry() {
+        rt().block_on(async {
+            let workers = Workers::new();
+            workers.insert("tools", worker(now_secs(), false));
+            let (out_tx, out_rx) = mpsc::channel(WORKER_OUTBOUND_CAPACITY);
+            workers.attach("tools", "tok", out_tx).unwrap();
+            drop(out_rx);
+            assert_eq!(
+                workers
+                    .call_owned(
+                        "tools",
+                        Some("tok"),
+                        "action",
+                        json!({}),
+                        Duration::from_secs(60)
+                    )
+                    .await
+                    .unwrap_err(),
+                "worker channel closed"
+            );
+            assert!(workers.map.lock().unwrap()["tools"]
+                .conn
+                .as_ref()
+                .unwrap()
+                .pending
+                .lock()
+                .unwrap()
+                .is_empty());
+        });
+    }
+
+    #[test]
+    fn supervisor_restart_refuses_late_ready_and_keeps_new_queue() {
+        let mut supervisor = Supervisor::default();
+        assert!(!supervisor.accept_ready(0));
+        let old = supervisor.begin().unwrap();
+        assert!(supervisor.begin().is_none());
+        supervisor.queue.push(SpawnPayload {
+            ext_id: "tools".into(),
+            token: "old".into(),
+            entry_source: "old source".into(),
+            caps: vec![],
+        });
+        assert_eq!(supervisor.retire(), Some(old));
+        assert!(supervisor.queue.is_empty());
+        let new = supervisor.begin().unwrap();
+        supervisor.queue.push(SpawnPayload {
+            ext_id: "tools".into(),
+            token: "new".into(),
+            entry_source: "new source".into(),
+            caps: vec![],
+        });
+        assert_ne!(supervisor_label(old), supervisor_label(new));
+        assert!(!supervisor.owns(old)); // delayed creation/failure cannot own new window
+        assert!(!supervisor.accept_ready(old));
+        assert!(!supervisor.ready);
+        assert_eq!(supervisor.queue[0].token, "new");
+        assert!(supervisor.accept_ready(new));
+        assert!(!supervisor.accept_ready(new)); // duplicate ready cannot reflush
+        assert_eq!(supervisor.retire(), Some(new));
+        assert!(!supervisor.accept_ready(new));
+        assert!(supervisor.retire().is_none());
+    }
+
+    #[test]
+    fn supervisor_failure_snapshot_excludes_companions_and_cannot_remove_replacement() {
+        let workers = Workers::new();
+        let mut scripted = worker(now_secs(), false);
+        scripted.token = "old".into();
+        workers.insert("tools", scripted);
+        let mut companion = worker(now_secs(), false);
+        companion.kind = RuntimeKind::Companion;
+        workers.insert("native", companion);
+        let victims = workers.scripted_tokens();
+        assert_eq!(victims, vec![("tools".into(), "old".into())]);
+        workers.remove("tools");
+        let mut replacement = worker(now_secs(), false);
+        replacement.token = "new".into();
+        workers.insert("tools", replacement);
+        for (id, token) in victims {
+            assert!(workers.remove_if_token(&id, &token).is_none());
+        }
+        assert!(workers.owns_token("tools", "new"));
+        assert!(workers.is_running("native"));
     }
 
     #[test]
@@ -3241,6 +4728,7 @@ mod tests {
         let mapped = map_worker_error(
             &DevSource { root, entry },
             &DiedPayload {
+                token: "fixture".into(),
                 ext_id: "com.example.dev".into(),
                 reason: "Uncaught Error: mapped".into(),
                 stack: Some("Error: mapped\n    at blob:grain-worker:23:3".into()),

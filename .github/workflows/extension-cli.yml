@@ -1,0 +1,66 @@
+name: Extension CLI artifacts
+
+# Developer downloads only: no application installer, release, signing key or push.
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "crates/grain-ext-cli/**"
+      - "crates/grain-extension-checks/**"
+      - "crates/grain-sdk/**"
+      - ".github/workflows/extension-cli.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  cli:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-24.04, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
+        with:
+          persist-credentials: false
+      - name: Build and check the CLI only
+        shell: bash
+        run: |
+          export CARGO_TARGET_DIR="$RUNNER_TEMP/grain-cli-target"
+          echo "CARGO_TARGET_DIR=$CARGO_TARGET_DIR" >> "$GITHUB_ENV"
+          rustup toolchain install 1.96.0 --profile minimal --no-self-update
+          cargo +1.96.0 test --locked -p grain-ext-cli -p grain-extension-checks --lib
+          cargo +1.96.0 build --locked --release -p grain-ext-cli --bin grain-ext
+      - name: Package executable, guide and checksum
+        shell: bash
+        run: |
+          python - <<'PY'
+          import hashlib, json, os, pathlib, shutil, subprocess
+          target = pathlib.Path(json.loads(subprocess.check_output(
+              ['cargo', '+1.96.0', 'metadata', '--format-version', '1', '--no-deps']))['target_directory'])
+          binary = target / 'release' / ('grain-ext.exe' if os.name == 'nt' else 'grain-ext')
+          version = subprocess.check_output([str(binary), '--version'], text=True).strip()
+          subprocess.run([str(binary), '--help'], check=True)
+          folder = pathlib.Path('cli-download')
+          folder.mkdir()
+          shutil.copy2(binary, folder / binary.name)
+          shutil.copy2('crates/grain-ext-cli/README.md', folder / 'README.md')
+          shutil.copy2('crates/grain-ext-cli/AUTHENTICATION.md', folder / 'AUTHENTICATION.md')
+          (folder / 'BUILD.json').write_text(json.dumps({
+              'cli': version, 'source_commit': os.environ['GITHUB_SHA'],
+              'rust_host': subprocess.check_output(['rustc', '+1.96.0', '-vV'], text=True).strip(),
+              'scope': 'developer artifact; no application or extension-store release'
+          }, indent=2) + '\n', encoding='utf-8')
+          files = sorted(folder.iterdir())
+          (folder / 'SHA256SUMS').write_text(''.join(
+              hashlib.sha256(file.read_bytes()).hexdigest() + '  ' + file.name + '\n'
+              for file in files), encoding='utf-8')
+          PY
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: grain-ext-${{ runner.os }}
+          path: cli-download/
+          retention-days: 30
+          if-no-files-found: error

@@ -66,6 +66,43 @@ Before you begin, ensure you have the following installed:
 
 For detailed platform-specific setup instructions, see [BUILD.md](BUILD.md).
 
+### Extension platform work
+
+Extension authoring does not require a Grain app checkout. Start with the
+[author CLI guide](crates/grain-ext-cli/README.md) and its
+[authentication guide](crates/grain-ext-cli/AUTHENTICATION.md). Submit packages
+through the [extension registry](https://github.com/Punit-Dethe/Grain-Extention).
+Native tools and remote MCP descriptors share the store experience; extensions
+cannot access retired host context/prompt/screen capabilities.
+
+For changes to Grain itself, use the [active platform plan](docs/Extensions%202.0/PLATFORM-STABILIZATION.md)
+and [operations runbook](docs/Extensions%202.0/EXTENSION-OPERATIONS.md). Current code:
+
+| Area | Location | Start verification here |
+| --- | --- | --- |
+| Author contract/CLI | `crates/grain-sdk`, `grain-ext-cli`, `grain-extension-checks` | The affected crate's `cargo test --locked -p PACKAGE`. |
+| Review/signing/publication | `crates/grain-registry-tools` and registry workflows | Crate tests and the Python CI helper tests; no real key/account required. |
+| MCP accounts/lifecycle/dispatch | `src-tauri/src/grain_mcp*.rs`, `grain_store.rs` | Affected normal host tests from `src-tauri/`, e.g. `cargo test --locked --lib grain_mcp::`. |
+| Store presentation | `src/app/extensions`, `src/app/pages/ExtensionsPage.tsx` | Selected Vitest tests, TypeScript and scoped ESLint; user checks the real app's layout. |
+
+On Windows, before running host tests, set
+`$env:CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUNNER='powershell.exe -NoProfile -File C:/PATH/TO/GRAIN/scripts/run-rust-test.ps1'`.
+Use your checkout's absolute path. Quit the app from its tray before a host build
+if it locks the speech DLLs. Registry/CLI tests do not need the desktop app.
+
+The dedicated alpha/debug build permits signed-store MCPs without Developer Mode.
+Custom MCPs remain debug-build plus Developer Mode only. Test the real development
+app with `bun run tauri dev --config src-tauri/tauri.extensions-alpha.conf.json --no-watch`;
+an installer is unnecessary for ordinary iterations.
+
+Use the [existing Agent acceptance harness](tests/agent-harness/README.md) only
+when a change crosses an application boundary that normal tests cannot cover.
+Its current store subsets are `--suite store` and `--suite store-mcp`; old fixed
+discovery/manual-approval procedures and `--suite all` are historical, not current
+release gates. Do not restore obsolete product behavior to satisfy old fixtures,
+or add a new harness for a pure policy/UI change. Retention and retirement are
+tracked in the existing [inventory](docs/Extensions%202.0/AGENT-TEST-HARNESS.md#harness-retention-and-cleanup-inventory).
+
 ### Understanding the Codebase
 
 Grain follows a clean architecture pattern:

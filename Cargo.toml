@@ -23,3 +23,9 @@ anyhow = "1"
 
 [profile.dev]
 incremental = true
+
+# Real encrypted maintainer keys must keep their full scrypt work factor in
+# development/tests. Optimize that existing dependency, never weaken its KDF.
+# This workspace excludes the app; its separate profiles remain unchanged.
+[profile.dev.package.scrypt]
+opt-level = 3

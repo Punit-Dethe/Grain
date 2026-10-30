@@ -31,6 +31,8 @@ pub enum InstallError {
     Pack(pack::PackError),
     /// A filesystem step failed.
     Io(String),
+    /// The artifact does not satisfy the live tool-only contract or signed identity.
+    Manifest(String),
 }
 
 impl std::fmt::Display for InstallError {
@@ -39,6 +41,7 @@ impl std::fmt::Display for InstallError {
             InstallError::Hash(e) => write!(f, "artifact verification failed: {e}"),
             InstallError::Pack(e) => write!(f, "unpack failed: {e}"),
             InstallError::Io(e) => write!(f, "io error: {e}"),
+            InstallError::Manifest(e) => write!(f, "extension refused: {e}"),
         }
     }
 }
@@ -53,8 +56,84 @@ pub fn version_dir(root: &Path, id: &str, version: &str) -> PathBuf {
     root.join(id).join(version)
 }
 
-fn staging_dir(root: &Path, id: &str, version: &str) -> PathBuf {
-    root.join(".staging").join(format!("{id}-{version}"))
+/// New artifacts are addressed by content, so same-version replacements cannot
+/// overwrite another registry owner's bytes. Legacy version directories remain readable.
+pub fn artifact_dir(
+    root: &Path,
+    id: &str,
+    version: &str,
+    hash: &str,
+) -> Result<PathBuf, InstallError> {
+    grain_sdk::validate_extension_id(id).map_err(InstallError::Io)?;
+    grain_sdk::validate_extension_version(version).map_err(InstallError::Io)?;
+    if hash.len() != 64 || !hash.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err(InstallError::Manifest("Invalid artifact hash.".into()));
+    }
+    Ok(version_dir(root, id, version).join(hash.to_ascii_lowercase()))
+}
+
+/// Publish complete bytes once. Never replace/delete a published artifact,
+/// including on a lost registry race or failed registry persistence.
+pub fn publish_artifact(
+    root: &Path,
+    id: &str,
+    version: &str,
+    hash: &str,
+    bytes: &[u8],
+) -> Result<PathBuf, InstallError> {
+    use std::io::{Read, Write};
+    let destination = artifact_dir(root, id, version, hash)?;
+    if bytes.len() as u64 > grain_sdk::PACK_MAX_BYTES {
+        return Err(InstallError::Manifest(
+            "Tool package exceeds the import budget.".into(),
+        ));
+    }
+    trust::verify_artifact(bytes, hash).map_err(InstallError::Hash)?;
+    let verify_existing = || {
+        let file = std::fs::File::open(destination.join("pack.grainpack.json"))
+            .map_err(|error| InstallError::Io(error.to_string()))?;
+        let mut existing = Vec::new();
+        file.take(grain_sdk::PACK_MAX_BYTES + 1)
+            .read_to_end(&mut existing)
+            .map_err(|error| InstallError::Io(error.to_string()))?;
+        if existing.len() as u64 > grain_sdk::PACK_MAX_BYTES {
+            return Err(InstallError::Manifest(
+                "Existing artifact exceeds the import budget.".into(),
+            ));
+        }
+        trust::verify_artifact(&existing, hash).map_err(InstallError::Hash)
+    };
+    if destination.exists() {
+        verify_existing()?;
+        return Ok(destination);
+    }
+    let staging_root = root.join(".staging");
+    std::fs::create_dir_all(&staging_root).map_err(|error| InstallError::Io(error.to_string()))?;
+    let staging = tempfile::Builder::new()
+        .prefix("grainpack-")
+        .tempdir_in(&staging_root)
+        .map_err(|error| InstallError::Io(error.to_string()))?;
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(staging.path().join("pack.grainpack.json"))
+        .map_err(|error| InstallError::Io(error.to_string()))?;
+    file.write_all(bytes)
+        .and_then(|_| file.sync_all())
+        .map_err(|error| InstallError::Io(error.to_string()))?;
+    drop(file);
+    std::fs::create_dir_all(destination.parent().expect("artifact parent"))
+        .map_err(|error| InstallError::Io(error.to_string()))?;
+    if let Err(error) = std::fs::rename(staging.path(), &destination) {
+        // Another publisher may have won with the same bytes. Verify it, and
+        // let our private staging owner clean up only its own directory.
+        if destination.exists() {
+            verify_existing()?;
+        } else {
+            return Err(InstallError::Io(error.to_string()));
+        }
+    }
+    Ok(destination)
 }
 
 /// Verify the artifact hash, then unpack it into its versioned directory via a
@@ -71,42 +150,45 @@ pub fn stage_artifact(
 ) -> Result<PathBuf, InstallError> {
     grain_sdk::validate_extension_id(&entry.id).map_err(InstallError::Io)?;
     grain_sdk::validate_extension_version(&entry.version).map_err(InstallError::Io)?;
+    entry
+        .validate_installable()
+        .map_err(InstallError::Manifest)?;
     trust::verify_artifact(bytes, &entry.sha256).map_err(InstallError::Hash)?;
 
-    let staging = staging_dir(root, &entry.id, &entry.version);
-    // Clean any stale staging from an interrupted attempt.
-    let _ = std::fs::remove_dir_all(&staging);
-    std::fs::create_dir_all(&staging).map_err(|e| InstallError::Io(e.to_string()))?;
-
-    match pack::detect_shape(bytes) {
-        PackShape::Zip => {
-            // Multi-file bundle (scripted/native with separate entry + assets).
-            // NOTE: the current runtime loads embedded single-file `GrainPack`s;
-            // loading a multi-file directory bundle at runtime is a follow-on
-            // once the worker/surface loaders read from disk. The extraction and
-            // install transaction are complete and safe regardless.
-            pack::extract_zip(bytes, &staging, limits).map_err(InstallError::Pack)?;
-        }
-        PackShape::Json => {
-            // A single-file `GrainPack` (the runtime's native format): store it
-            // under the canonical name the loader reads from the version dir.
-            std::fs::write(staging.join("pack.grainpack.json"), bytes)
-                .map_err(|e| InstallError::Io(e.to_string()))?;
-        }
-        PackShape::Unknown => {
-            return Err(InstallError::Pack(pack::PackError::NotZip));
-        }
+    // Validate before filesystem mutation. Unsupported directory/native bundles
+    // cannot be installed as if the embedded-script runtime could execute them.
+    if pack::detect_shape(bytes) != PackShape::Json {
+        return Err(InstallError::Manifest(
+            "Only embedded tool-only JSON packages are supported.".into(),
+        ));
+    }
+    if bytes.len() as u64 > limits.max_entry_size.min(2 * 1024 * 1024) {
+        return Err(InstallError::Manifest(
+            "Tool package exceeds the 2 MiB import budget.".into(),
+        ));
+    }
+    let parsed: grain_sdk::GrainPack =
+        serde_json::from_slice(bytes).map_err(|error| InstallError::Manifest(error.to_string()))?;
+    parsed.validate_trusted().map_err(InstallError::Manifest)?;
+    if parsed.manifest.id != entry.id
+        || parsed.manifest.version != entry.version
+        || parsed.manifest.tier != entry.tier
+    {
+        return Err(InstallError::Manifest(
+            "Package identity does not match the signed index.".into(),
+        ));
+    }
+    let mut declared = parsed.manifest.permissions.clone();
+    let mut indexed = entry.capabilities.clone();
+    declared.sort();
+    indexed.sort();
+    if declared != indexed {
+        return Err(InstallError::Manifest(
+            "Package permissions do not match the signed index.".into(),
+        ));
     }
 
-    let final_dir = version_dir(root, &entry.id, &entry.version);
-    if let Some(parent) = final_dir.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| InstallError::Io(e.to_string()))?;
-    }
-    // The only non-atomic step is this rename; the previous version dir (a
-    // sibling under <id>/) is untouched until the caller enables the new one.
-    let _ = std::fs::remove_dir_all(&final_dir);
-    std::fs::rename(&staging, &final_dir).map_err(|e| InstallError::Io(e.to_string()))?;
-    Ok(final_dir)
+    publish_artifact(root, &entry.id, &entry.version, &entry.sha256, bytes)
 }
 
 /// Build the registry record for a verified index entry. **This is the sole
@@ -187,6 +269,7 @@ pub fn plan_record(
     ExtensionRecord {
         id: entry.id.clone(),
         enabled,
+        execution_generation: 0,
         toggle_seq: prior.map(|r| r.toggle_seq).unwrap_or(0),
         installed_version: entry.version.clone(),
         artifact_sha256: Some(entry.sha256.clone()),
@@ -202,6 +285,7 @@ pub fn plan_record(
         prompt_layers_approved: approved,
         actions_approved: approved_actions,
         authentication_approved: approved_authentication,
+        authentication_session: prior.and_then(|record| record.authentication_session.clone()),
         recommend_approved: approved_recommend,
         dev: None,
         // THE trust assignment. Sourced only from the verified entry, bound to
@@ -220,6 +304,20 @@ pub fn install_from_verified_entry(
     bytes: &[u8],
     limits: ExtractLimits,
 ) -> Result<PathBuf, InstallError> {
+    let revision = reg.record_revision(&entry.id);
+    install_from_verified_entry_if_current(reg, root, entry, bytes, limits, revision)
+}
+
+pub fn install_from_verified_entry_if_current(
+    reg: &ExtensionsRegistry,
+    root: &Path,
+    entry: &IndexEntry,
+    bytes: &[u8],
+    limits: ExtractLimits,
+    revision: crate::extensions::RecordRevision,
+) -> Result<PathBuf, InstallError> {
+    reg.with_current_record(&entry.id, revision, |_| ())
+        .map_err(|error| InstallError::Io(error.to_string()))?;
     let dir = stage_artifact(root, entry, bytes, limits)?;
     let prior = reg.installed_record(&entry.id);
     let granted = prior
@@ -233,7 +331,7 @@ pub fn install_from_verified_entry(
         .unwrap_or_default();
     let digests = manifest.as_ref().map(declared_digests).unwrap_or_default();
     let record = plan_record(entry, granted, prior.as_ref(), slots, digests);
-    reg.install(record)
+    reg.install_if_current(record, revision)
         .map_err(|e| InstallError::Io(e.to_string()))?;
     Ok(dir)
 }
@@ -316,12 +414,180 @@ mod tests {
     use grain_sdk::distribution::Trust;
     use grain_sdk::manifest::Tier;
 
+    #[test]
+    fn concurrent_same_version_publication_preserves_all_hash_owners() {
+        let dir = tmp();
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(9));
+        let threads: Vec<_> = (0..8)
+            .map(|index| {
+                let root = dir.path().to_path_buf();
+                let barrier = barrier.clone();
+                std::thread::spawn(move || {
+                    let bytes = tool_pack("com.example.tools", "1", &[]);
+                    let mut bytes = bytes;
+                    // Four callers publish the same bytes, four distinct siblings.
+                    if index >= 4 {
+                        bytes.extend(std::iter::repeat_n(b' ', index));
+                    }
+                    let hash = trust::sha256_hex(&bytes);
+                    barrier.wait();
+                    let path =
+                        publish_artifact(&root, "com.example.tools", "1", &hash, &bytes).unwrap();
+                    assert_eq!(
+                        std::fs::read(path.join("pack.grainpack.json")).unwrap(),
+                        bytes
+                    );
+                    path
+                })
+            })
+            .collect();
+        barrier.wait();
+        let paths: std::collections::HashSet<_> = threads
+            .into_iter()
+            .map(|thread| thread.join().unwrap())
+            .collect();
+        assert_eq!(paths.len(), 5);
+        assert_eq!(
+            std::fs::read_dir(dir.path().join(".staging"))
+                .unwrap()
+                .count(),
+            0
+        );
+    }
+
+    #[test]
+    fn corrupt_published_artifact_is_refused_without_overwriting_it() {
+        let dir = tmp();
+        let bytes = tool_pack("com.example.tools", "1", &[]);
+        let hash = trust::sha256_hex(&bytes);
+        let path = publish_artifact(dir.path(), "com.example.tools", "1", &hash, &bytes).unwrap();
+        std::fs::write(path.join("pack.grainpack.json"), b"corrupt-local").unwrap();
+        assert!(publish_artifact(dir.path(), "com.example.tools", "1", &hash, &bytes).is_err());
+        assert_eq!(
+            std::fs::read(path.join("pack.grainpack.json")).unwrap(),
+            b"corrupt-local"
+        );
+        for hash in ["../escape", &"g".repeat(64)] {
+            assert!(artifact_dir(dir.path(), "com.example.tools", "1", hash).is_err());
+        }
+    }
+
+    #[test]
+    fn publication_error_cleans_only_private_staging() {
+        let dir = tmp();
+        let bytes = tool_pack("com.example.tools", "1", &[]);
+        let hash = trust::sha256_hex(&bytes);
+        std::fs::write(dir.path().join("com.example.tools"), b"blocked-parent").unwrap();
+        assert!(publish_artifact(dir.path(), "com.example.tools", "1", &hash, &bytes).is_err());
+        assert_eq!(
+            std::fs::read(dir.path().join("com.example.tools")).unwrap(),
+            b"blocked-parent"
+        );
+        assert_eq!(
+            std::fs::read_dir(dir.path().join(".staging"))
+                .unwrap()
+                .count(),
+            0
+        );
+    }
+
+    #[test]
+    fn losing_registry_writer_and_failed_persistence_keep_complete_artifacts() {
+        let dir = tmp();
+        let reg = ExtensionsRegistry::load(dir.path(), false).unwrap();
+        let root = dir.path().join("extensions");
+        let first = tool_pack("com.example.tools", "1", &[]);
+        let first_entry = entry("com.example.tools", "1", Trust::Verified, &[], &first);
+        let old = install_from_verified_entry(
+            &reg,
+            &root,
+            &first_entry,
+            &first,
+            ExtractLimits::default(),
+        )
+        .unwrap();
+        let revision = reg.record_revision(&first_entry.id);
+        let mut changed = first.clone();
+        changed.push(b' ');
+        let update = entry(&first_entry.id, "1", Trust::Verified, &[], &changed);
+        let new = stage_artifact(&root, &update, &changed, ExtractLimits::default()).unwrap();
+        reg.set_enabled(&first_entry.id, false).unwrap();
+        let record = plan_record(&update, vec![], None, vec![], ApprovalDigests::default());
+        assert!(reg.install_if_current(record.clone(), revision).is_err());
+        assert_eq!(
+            std::fs::read(old.join("pack.grainpack.json")).unwrap(),
+            first
+        );
+        assert_eq!(
+            std::fs::read(new.join("pack.grainpack.json")).unwrap(),
+            changed
+        );
+        let fresh = reg.record_revision(&first_entry.id);
+        let registry_path = dir.path().join("extensions.json");
+        let persisted = std::fs::read(&registry_path).unwrap();
+        std::fs::remove_file(&registry_path).unwrap();
+        std::fs::create_dir(&registry_path).unwrap();
+        assert!(reg.install_if_current(record, fresh).is_err());
+        assert_eq!(
+            reg.record(&first_entry.id)
+                .unwrap()
+                .artifact_sha256
+                .as_deref(),
+            Some(update.sha256.as_str())
+        );
+        std::fs::remove_dir(&registry_path).unwrap();
+        std::fs::write(&registry_path, persisted).unwrap();
+        let restarted = ExtensionsRegistry::load(dir.path(), false).unwrap();
+        assert_eq!(
+            restarted
+                .record(&first_entry.id)
+                .unwrap()
+                .artifact_sha256
+                .as_deref(),
+            Some(first_entry.sha256.as_str())
+        );
+        // Both the in-memory owner and the last persisted owner have valid bytes.
+        assert!(old.join("pack.grainpack.json").exists());
+        assert!(new.join("pack.grainpack.json").exists());
+    }
+
+    #[test]
+    fn stale_verified_install_cannot_stage_or_restore_disabled_record() {
+        let dir = tmp();
+        let reg = ExtensionsRegistry::load(dir.path(), false).unwrap();
+        let bytes = tool_pack("com.example.tools", "1", &[]);
+        let entry = entry("com.example.tools", "1", Trust::Verified, &[], &bytes);
+        let root = dir.path().join("extensions");
+        install_from_verified_entry(&reg, &root, &entry, &bytes, ExtractLimits::default()).unwrap();
+        reg.set_enabled(&entry.id, true).unwrap();
+        let revision = reg.record_revision(&entry.id);
+        reg.set_enabled(&entry.id, false).unwrap();
+        let replacement = tool_pack(&entry.id, "2", &[]);
+        let mut update = entry.clone();
+        update.version = "2".into();
+        update.sha256 = trust::sha256_hex(&replacement);
+        update.size = replacement.len() as u64;
+        let result = install_from_verified_entry_if_current(
+            &reg,
+            &root,
+            &update,
+            &replacement,
+            ExtractLimits::default(),
+            revision,
+        );
+        assert!(result.unwrap_err().to_string().contains("changed"));
+        assert!(!root.join(&entry.id).join("2").exists());
+        assert!(!reg.is_enabled(&entry.id));
+        assert_eq!(reg.record(&entry.id).unwrap().installed_version, "1");
+    }
+
     fn entry(id: &str, version: &str, trust: Trust, caps: &[&str], bytes: &[u8]) -> IndexEntry {
         IndexEntry {
+            artifact_kind: grain_sdk::distribution::ArtifactKind::Native,
             id: id.into(),
             name: id.into(),
             version: version.into(),
-            tier: Tier::Pack,
+            tier: Tier::Scripted,
             trust,
             capabilities: caps.iter().map(|c| c.to_string()).collect(),
             sha256: trust::sha256_hex(bytes),
@@ -337,14 +603,38 @@ mod tests {
             description: String::new(),
             installs: 0,
             readme: String::new(),
+            listing: None,
+            icon: None,
             media: Vec::new(),
             categories: Vec::new(),
             extends: Vec::new(),
         }
     }
 
+    fn tool_pack(id: &str, version: &str, caps: &[&str]) -> Vec<u8> {
+        serde_json::to_vec(&serde_json::json!({
+            "manifest": { "id": id, "name": "Test tools", "version": version,
+                "grainApi": "^1.0", "tier": "scripted", "entry_source": "grain.onAction(() => ({}));",
+                "permissions": caps }, "payloads": {} })).unwrap()
+    }
+
     fn tmp() -> tempfile::TempDir {
         tempfile::tempdir().unwrap()
+    }
+
+    #[test]
+    fn future_catalog_api_refuses_before_hash_or_filesystem_work() {
+        let dir = tmp();
+        let bytes = tool_pack("com.example.future", "1.0.0", &[]);
+        let mut e = entry("com.example.future", "1.0.0", Trust::Verified, &[], &bytes);
+        e.min_grain_api = "2.0".into();
+        e.validate_tool_only().unwrap(); // Browsing remains possible.
+                                         // An invalid artifact must not obscure the earlier compatibility refusal.
+        let error =
+            stage_artifact(dir.path(), &e, b"invalid", ExtractLimits::default()).unwrap_err();
+        assert!(matches!(error, InstallError::Manifest(ref message)
+            if message == grain_sdk::compatibility::UNSUPPORTED_EXTENSION_API));
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
     }
 
     // â”€â”€ Anti-forgery guarantee, DISTRIBUTION-PLAN Â§3.2 â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -363,6 +653,7 @@ mod tests {
         let rec = ExtensionRecord {
             id: "com.evil.fake".into(),
             enabled: false,
+            execution_generation: 0,
             toggle_seq: 0,
             installed_version: "1.0.0".into(),
             artifact_sha256: None,
@@ -370,6 +661,7 @@ mod tests {
             prompt_layers_approved: None,
             actions_approved: None,
             authentication_approved: None,
+            authentication_session: None,
             recommend_approved: None,
             slots: vec![],
             dev: None,
@@ -437,13 +729,66 @@ mod tests {
     }
 
     #[test]
+    fn signed_retired_or_mismatched_packages_are_refused_before_staging() {
+        for permission in ["capture:selection", "llm", "os:exec"] {
+            let dir = tmp();
+            let bytes = tool_pack("com.example.x", "1.0.0", &[permission]);
+            let e = entry(
+                "com.example.x",
+                "1.0.0",
+                Trust::Verified,
+                &[permission],
+                &bytes,
+            );
+            assert!(matches!(
+                stage_artifact(dir.path(), &e, &bytes, ExtractLimits::default()),
+                Err(InstallError::Manifest(_))
+            ));
+            assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
+        }
+        let dir = tmp();
+        let bytes = tool_pack("com.example.other", "1.0.0", &["storage"]);
+        let e = entry(
+            "com.example.x",
+            "1.0.0",
+            Trust::Verified,
+            &["storage"],
+            &bytes,
+        );
+        assert!(stage_artifact(dir.path(), &e, &bytes, ExtractLimits::default()).is_err());
+        let bytes = tool_pack("com.example.x", "1.0.0", &["storage"]);
+        let e = entry("com.example.x", "1.0.0", Trust::Verified, &[], &bytes);
+        assert!(stage_artifact(dir.path(), &e, &bytes, ExtractLimits::default()).is_err());
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn retired_catalogue_metadata_cannot_stage_an_otherwise_valid_tool() {
+        let bytes = tool_pack("com.example.x", "1.0.0", &[]);
+        for surface in [false, true] {
+            let dir = tmp();
+            let mut e = entry("com.example.x", "1.0.0", Trust::Verified, &[], &bytes);
+            if surface {
+                e.extends.push("future.host-surface".into());
+            } else {
+                e.categories.push("prompts".into());
+            }
+            assert!(matches!(
+                stage_artifact(dir.path(), &e, &bytes, ExtractLimits::default()),
+                Err(InstallError::Manifest(_))
+            ));
+            assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
+        }
+    }
+
+    #[test]
     fn json_pack_installs_to_its_version_dir() {
         let dir = tmp();
         let reg = ExtensionsRegistry::load(dir.path(), false).unwrap();
-        let bytes = b"{\"id\":\"com.example.x\",\"name\":\"X\"}";
-        let e = entry("com.example.x", "2.0.0", Trust::Verified, &[], bytes);
+        let bytes = tool_pack("com.example.x", "2.0.0", &[]);
+        let e = entry("com.example.x", "2.0.0", Trust::Verified, &[], &bytes);
         let out =
-            install_from_verified_entry(&reg, dir.path(), &e, bytes, ExtractLimits::default())
+            install_from_verified_entry(&reg, dir.path(), &e, &bytes, ExtractLimits::default())
                 .expect("install");
         assert!(out.join("pack.grainpack.json").exists());
         let rec = reg.record("com.example.x").unwrap();
@@ -458,22 +803,22 @@ mod tests {
         let dir = tmp();
         let reg = ExtensionsRegistry::load(dir.path(), false).unwrap();
         // Prior 1.0 enabled with no capabilities.
-        let b1 = b"{\"v\":1}";
-        let e1 = entry("com.example.x", "1.0.0", Trust::Verified, &[], b1);
-        install_from_verified_entry(&reg, dir.path(), &e1, b1, ExtractLimits::default()).unwrap();
+        let b1 = tool_pack("com.example.x", "1.0.0", &[]);
+        let e1 = entry("com.example.x", "1.0.0", Trust::Verified, &[], &b1);
+        install_from_verified_entry(&reg, dir.path(), &e1, &b1, ExtractLimits::default()).unwrap();
         reg.set_enabled("com.example.x", true).unwrap();
         assert!(reg.is_enabled("com.example.x"));
 
         // 1.1 adds a capability â†’ held disabled until the diff is approved.
-        let b2 = b"{\"v\":2}";
+        let b2 = tool_pack("com.example.x", "1.1.0", &["net:api.example.com"]);
         let e2 = entry(
             "com.example.x",
             "1.1.0",
             Trust::Verified,
             &["net:api.example.com"],
-            b2,
+            &b2,
         );
-        install_from_verified_entry(&reg, dir.path(), &e2, b2, ExtractLimits::default()).unwrap();
+        install_from_verified_entry(&reg, dir.path(), &e2, &b2, ExtractLimits::default()).unwrap();
         let rec = reg.record("com.example.x").unwrap();
         assert_eq!(rec.installed_version, "1.1.0");
         assert!(
@@ -491,6 +836,7 @@ mod tests {
         let approved = ExtensionRecord {
             id: "com.example.x".into(),
             enabled: true,
+            execution_generation: 0,
             toggle_seq: 1,
             installed_version: "1.0.0".into(),
             artifact_sha256: None,
@@ -498,6 +844,7 @@ mod tests {
             prompt_layers_approved: Some("fingerprint-of-1.0".into()),
             actions_approved: None,
             authentication_approved: None,
+            authentication_session: None,
             recommend_approved: None,
             slots: vec![],
             dev: None,
@@ -549,6 +896,7 @@ mod tests {
         let approved = ExtensionRecord {
             id: "com.example.x".into(),
             enabled: true,
+            execution_generation: 0,
             toggle_seq: 1,
             installed_version: "1.0.0".into(),
             artifact_sha256: None,
@@ -556,6 +904,7 @@ mod tests {
             prompt_layers_approved: None,
             actions_approved: Some("actions-of-1.0".into()),
             authentication_approved: None,
+            authentication_session: None,
             recommend_approved: None,
             slots: vec![],
             dev: None,
@@ -608,6 +957,7 @@ mod tests {
         let approved = ExtensionRecord {
             id: "com.example.x".into(),
             enabled: true,
+            execution_generation: 0,
             toggle_seq: 1,
             installed_version: "1.0.0".into(),
             artifact_sha256: None,
@@ -615,6 +965,7 @@ mod tests {
             prompt_layers_approved: None,
             actions_approved: None,
             authentication_approved: None,
+            authentication_session: None,
             recommend_approved: Some("recommend-of-1.0".into()),
             slots: vec![],
             dev: None,
@@ -666,6 +1017,7 @@ mod tests {
         let approved = ExtensionRecord {
             id: "com.example.x".into(),
             enabled: true,
+            execution_generation: 0,
             toggle_seq: 1,
             installed_version: "1.0.0".into(),
             artifact_sha256: None,
@@ -673,6 +1025,7 @@ mod tests {
             prompt_layers_approved: Some("layers-of-1.0".into()),
             actions_approved: Some("actions-of-1.0".into()),
             authentication_approved: None,
+            authentication_session: None,
             recommend_approved: Some("recommend-of-1.0".into()),
             slots: vec![],
             dev: None,
@@ -709,18 +1062,18 @@ mod tests {
     fn update_with_same_permissions_keeps_enabled() {
         let dir = tmp();
         let reg = ExtensionsRegistry::load(dir.path(), false).unwrap();
-        let b1 = b"{\"v\":1}";
-        let e1 = entry("com.example.x", "1.0.0", Trust::Verified, &["storage"], b1);
-        install_from_verified_entry(&reg, dir.path(), &e1, b1, ExtractLimits::default()).unwrap();
+        let b1 = tool_pack("com.example.x", "1.0.0", &["storage"]);
+        let e1 = entry("com.example.x", "1.0.0", Trust::Verified, &["storage"], &b1);
+        install_from_verified_entry(&reg, dir.path(), &e1, &b1, ExtractLimits::default()).unwrap();
         // Grant the capability, then enable.
         let mut rec = reg.record("com.example.x").unwrap();
         rec.granted = vec!["storage".into()];
         reg.install(rec).unwrap();
         reg.set_enabled("com.example.x", true).unwrap();
 
-        let b2 = b"{\"v\":2}";
-        let e2 = entry("com.example.x", "1.2.0", Trust::Verified, &["storage"], b2);
-        install_from_verified_entry(&reg, dir.path(), &e2, b2, ExtractLimits::default()).unwrap();
+        let b2 = tool_pack("com.example.x", "1.2.0", &["storage"]);
+        let e2 = entry("com.example.x", "1.2.0", Trust::Verified, &["storage"], &b2);
+        install_from_verified_entry(&reg, dir.path(), &e2, &b2, ExtractLimits::default()).unwrap();
         assert!(
             reg.is_enabled("com.example.x"),
             "an update that adds no permissions stays enabled"
@@ -731,22 +1084,16 @@ mod tests {
     fn update_drops_grants_that_are_no_longer_declared() {
         let dir = tmp();
         let reg = ExtensionsRegistry::load(dir.path(), false).unwrap();
-        let b1 = b"{\"v\":1}";
-        let e1 = entry(
-            "com.example.x",
-            "1.0.0",
-            Trust::Verified,
-            &["storage", "capture:selection"],
-            b1,
-        );
-        install_from_verified_entry(&reg, dir.path(), &e1, b1, ExtractLimits::default()).unwrap();
+        let b1 = tool_pack("com.example.x", "1.0.0", &["storage"]);
+        let e1 = entry("com.example.x", "1.0.0", Trust::Verified, &["storage"], &b1);
+        install_from_verified_entry(&reg, dir.path(), &e1, &b1, ExtractLimits::default()).unwrap();
         let mut record = reg.record("com.example.x").unwrap();
         record.granted = vec!["storage".into(), "capture:selection".into()];
         reg.install(record).unwrap();
 
-        let b2 = b"{\"v\":2}";
-        let e2 = entry("com.example.x", "2.0.0", Trust::Verified, &["storage"], b2);
-        install_from_verified_entry(&reg, dir.path(), &e2, b2, ExtractLimits::default()).unwrap();
+        let b2 = tool_pack("com.example.x", "2.0.0", &["storage"]);
+        let e2 = entry("com.example.x", "2.0.0", Trust::Verified, &["storage"], &b2);
+        install_from_verified_entry(&reg, dir.path(), &e2, &b2, ExtractLimits::default()).unwrap();
 
         assert_eq!(
             reg.record("com.example.x").unwrap().granted,
@@ -760,9 +1107,10 @@ mod tests {
         // exactly one id.
         let dir = tmp();
         let reg = ExtensionsRegistry::load(dir.path(), false).unwrap();
-        let bytes = b"{\"id\":\"com.example.a\"}";
-        let e = entry("com.example.a", "1.0.0", Trust::Verified, &[], bytes);
-        install_from_verified_entry(&reg, dir.path(), &e, bytes, ExtractLimits::default()).unwrap();
+        let bytes = tool_pack("com.example.a", "1.0.0", &[]);
+        let e = entry("com.example.a", "1.0.0", Trust::Verified, &[], &bytes);
+        install_from_verified_entry(&reg, dir.path(), &e, &bytes, ExtractLimits::default())
+            .unwrap();
         assert!(reg.is_installed("com.example.a"));
         assert_eq!(reg.records().len(), 1, "install touched exactly one id");
     }

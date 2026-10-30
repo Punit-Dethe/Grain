@@ -1,5 +1,7 @@
 # Grain Extensions 2.0 — Agent, Launcher, and Dynamic UI Plan
 
+**Historical architecture notice, 3 October 2026:** this document preserves earlier designs and implementation history. Its prompt/data/shortcut/context/settings contributions and dynamic-UI scope are superseded by the [tools-only product plan](MCP-EXTENSION-PLAN.md), [current execution order](MCP-EXTENSION-REUSE-EXECUTION-PLAN.md) and [ecosystem delivery assessment](EXTENSION-ECOSYSTEM-BLAST-RADIUS-AUDIT.md). Do not use the older approved/status wording below to authorize retired capabilities. Physical cleanup remains on hold; retained host-owned presentation/wire contracts are not automatically obsolete.
+
 **MCP planning update (2026-09-26):** The researched [native and MCP extension delivery plan](MCP-EXTENSION-PLAN.md) defines the proposed next implementation sequence, phase gates, and one-to-five extension validation ladder. See its [research](MCP-EXTENSION-RESEARCH.md) and [source ledger](MCP-EXTENSION-SOURCES.json). It proposes promoting the 2026-08-31 remote-MCP development integration to a supported extension adapter while preserving the 2026-09-08 visual-ownership boundary. This is a plan, not a claim that those changes are implemented.
 
 **Status:** Approved architecture and implementation plan

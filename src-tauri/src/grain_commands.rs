@@ -11,7 +11,6 @@
 
 use crate::settings;
 use crate::settings::DefaultPanel;
-use crate::shortcut::{register_shortcut, unregister_shortcut};
 use log::warn;
 use tauri::{AppHandle, Manager};
 
@@ -568,6 +567,52 @@ pub fn change_paste_catch_enabled_setting(app: AppHandle, enabled: bool) -> Resu
     Ok(())
 }
 
+/// Enable the core Agent and reconcile its summon shortcut independently of extensions.
+#[tauri::command]
+#[specta::specta]
+pub fn change_agent_enabled_setting(
+    app: AppHandle,
+    window: tauri::WebviewWindow,
+    enabled: bool,
+) -> Result<(), String> {
+    require_main_window(&window)?;
+    let mut settings = settings::get_settings(&app);
+    if settings.agent_enabled == enabled {
+        return Ok(());
+    }
+    // Before onboarding initializes shortcuts, saving the setting is enough:
+    // initialization will register the enabled Agent alongside the other keys.
+    if app
+        .try_state::<crate::commands::ShortcutsInitialized>()
+        .is_some()
+    {
+        let binding = settings::get_stored_binding(&app, "summon_agent")?;
+        if enabled {
+            crate::shortcut::register_shortcut(&app, binding)?;
+        } else {
+            crate::shortcut::unregister_shortcut(&app, binding)?;
+        }
+    }
+    settings.agent_enabled = enabled;
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
+/// Enable core snippet matching independently of extensions.
+#[tauri::command]
+#[specta::specta]
+pub fn change_snippets_enabled_setting(
+    app: AppHandle,
+    window: tauri::WebviewWindow,
+    enabled: bool,
+) -> Result<(), String> {
+    require_main_window(&window)?;
+    let mut settings = settings::get_settings(&app);
+    settings.snippets_enabled = enabled;
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
 /// [GRAIN] Agent auto-copy policy (off / first reply / all replies).
 #[tauri::command]
 #[specta::specta]
@@ -751,17 +796,6 @@ pub struct RecommendInfo {
     pub entities: Vec<String>,
 }
 
-impl RecommendInfo {
-    fn from_decl(decl: &grain_sdk::manifest::RecommendDecl) -> Self {
-        Self {
-            purpose: decl.purpose.clone(),
-            examples: decl.examples.clone(),
-            aliases: decl.aliases.clone(),
-            entities: decl.entities.clone(),
-        }
-    }
-}
-
 /// [GRAIN] One contributed prompt layer, as every surface that shows one needs
 /// it: the approval sheet, the extension card, and the prompt-stack view.
 ///
@@ -780,25 +814,6 @@ pub struct PromptLayerInfo {
     pub app: Vec<String>,
     pub website: Vec<String>,
     pub category: Vec<String>,
-}
-
-impl PromptLayerInfo {
-    fn from_decl(decl: &grain_sdk::manifest::PromptLayerDecl) -> Self {
-        Self {
-            id: decl.id.clone(),
-            target: match decl.target {
-                grain_sdk::manifest::PromptTarget::Additive => "additive",
-                grain_sdk::manifest::PromptTarget::Main => "main",
-                grain_sdk::manifest::PromptTarget::Context => "context",
-            }
-            .to_string(),
-            text: decl.text.clone(),
-            everywhere: decl.when.is_unconditional(),
-            app: decl.when.app.clone(),
-            website: decl.when.website.clone(),
-            category: decl.when.category.clone(),
-        }
-    }
 }
 
 /// [GRAIN] Start or stop listening for a request
@@ -1077,20 +1092,6 @@ pub fn extensions_overview(app: AppHandle) -> Result<Vec<ExtensionCard>, String>
     for rec in reg.records() {
         let facts = match load_pack(&app, &rec.id) {
             Ok(p) => {
-                // A pack with prompt layers has something worth opening even
-                // with no settings or shortcuts of its own — the text it puts
-                // in front of the model is the whole reason to look.
-                let prompt_layers: Vec<PromptLayerInfo> = p
-                    .manifest
-                    .contributes
-                    .prompt_layers
-                    .iter()
-                    .map(PromptLayerInfo::from_decl)
-                    .collect();
-                // Same argument for actions, and a stronger one: what an
-                // extension can DO is the thing a user most wants to look up
-                // again later, and the approval sheet is a moment they will
-                // not get back.
                 let actions: Vec<ActionInfo> = p
                     .manifest
                     .contributes
@@ -1098,11 +1099,7 @@ pub fn extensions_overview(app: AppHandle) -> Result<Vec<ExtensionCard>, String>
                     .iter()
                     .map(ActionInfo::from_decl)
                     .collect();
-                let has_detail = !p.manifest.contributes.settings.is_empty()
-                    || !p.manifest.contributes.shortcuts.is_empty()
-                    || p.manifest.contributes.authentication.is_some()
-                    || !prompt_layers.is_empty()
-                    || !actions.is_empty();
+                let has_detail = !actions.is_empty();
                 PackFacts {
                     name: p.manifest.name,
                     description: p.manifest.description,
@@ -1114,28 +1111,23 @@ pub fn extensions_overview(app: AppHandle) -> Result<Vec<ExtensionCard>, String>
                         grain_sdk::Tier::Scripted => "scripted",
                         grain_sdk::Tier::Native => "native",
                     },
-                    prompt_layers,
+                    prompt_layers: Vec::new(),
                     actions,
-                    kind: p.manifest.kind.as_str(),
-                    recommend: p.manifest.recommend.as_ref().map(RecommendInfo::from_decl),
-                    needs: p.manifest.needs,
-                    auto_send_eligible: p
-                        .manifest
-                        .auto_send
-                        .as_ref()
-                        .is_some_and(|declaration| declaration.eligible),
-                    auto_send_note: p
-                        .manifest
-                        .auto_send
-                        .as_ref()
-                        .and_then(|declaration| declaration.note.clone()),
+                    kind: "extending",
+                    recommend: None,
+                    needs: Vec::new(),
+                    auto_send_eligible: false,
+                    auto_send_note: None,
                 }
             }
             // SPEC §6 last row: a broken/missing pack file renders an error
             // card; it never takes the page down.
             Err(e) => PackFacts {
                 name: rec.id.clone(),
-                description: format!("Unreadable pack: {e}"),
+                description: format!(
+                    "Extension unavailable: {}",
+                    reg.quarantine_reason(&rec.id).unwrap_or(e)
+                ),
                 ..PackFacts::default()
             },
         };
@@ -1244,9 +1236,8 @@ impl Default for PackFacts {
     }
 }
 
-/// Flip an extension on/off (SPEC §5.1 inline toggle). Built-ins write their
-/// settings flag + bump toggle order; packs write the registry. The Agent
-/// toggle re-registers its binding so the change is zero-overhead-when-off.
+/// Flip a tool extension on/off. Core Agent, Snippets and context settings use
+/// their own commands and cannot be enabled through the extension registry.
 #[tauri::command]
 #[specta::specta]
 pub fn extension_set_enabled(
@@ -1262,32 +1253,15 @@ pub fn extension_set_enabled(
         .ok_or("extensions registry unavailable")?;
 
     match id.as_str() {
-        ext::BUILTIN_SNIPPETS => {
-            let mut settings = settings::get_settings(&app);
-            settings.snippets_enabled = enabled;
-            settings::write_settings(&app, settings);
-        }
-        ext::BUILTIN_CONTEXT => {
-            let mut settings = settings::get_settings(&app);
-            settings.context_awareness_enabled = enabled;
-            settings::write_settings(&app, settings);
-        }
-        ext::BUILTIN_AGENT => {
-            let mut settings = settings::get_settings(&app);
-            settings.agent_enabled = enabled;
-            settings::write_settings(&app, settings.clone());
-            // The summon binding registers/
-            // unregisters live so disabled truly means no global hook.
-            if let Some(binding) = settings.bindings.get("summon_agent") {
-                if enabled {
-                    let _ = register_shortcut(&app, binding.clone());
-                } else {
-                    let _ = unregister_shortcut(&app, binding.clone());
-                }
-            }
+        ext::BUILTIN_SNIPPETS | ext::BUILTIN_CONTEXT | ext::BUILTIN_AGENT => {
+            return Err("Core features are configured independently of extensions.".into());
         }
         // Imported packs: registry bit + payload application.
         pack_id if reg.is_installed(pack_id) => {
+            let revision = reg.record_revision(pack_id);
+            let record = reg
+                .record(pack_id)
+                .ok_or("extension is no longer installed")?;
             // [GRAIN] Phase 5A (DISTRIBUTION-PLAN §3.1, §5.3): a revoked
             // extension cannot run again, enforced from the cached revocation
             // list BEFORE a worker is ever spawned — so it holds even if the
@@ -1296,16 +1270,24 @@ pub fn extension_set_enabled(
                 if let Some(store) =
                     app.try_state::<std::sync::Arc<crate::grain_store::StoreState>>()
                 {
-                    let version = reg
-                        .record(pack_id)
-                        .map(|r| r.installed_version)
-                        .unwrap_or_default();
+                    let version = &record.installed_version;
                     if let Some(grain_sdk::RevocationState::Revoked) =
                         store.revocation_state(pack_id, &version)
                     {
                         return Err(serde_json::json!({ "revoked": pack_id }).to_string());
                     }
                 }
+            }
+            if !enabled {
+                let persisted = reg
+                    .set_enabled(pack_id, false)
+                    .map_err(|error| error.to_string());
+                stop_extension_runtime(&app, pack_id, "extension disabled");
+                crate::extension_host::refresh_index(&app);
+                // The in-memory disable already took effect. Disk failure must
+                // still retire its worker/account before reporting persistence.
+                persisted?;
+                return Ok(());
             }
             let pack = load_pack(&app, pack_id)?;
             // [GRAIN] SPEC §6 (the Chrome model): a scripted extension is HELD
@@ -1315,20 +1297,9 @@ pub fn extension_set_enabled(
             // The frontend catches this structured error, shows the permission
             // sheet, calls `extension_grant`, and retries.
             //
-            // [GRAIN] Prompt layers are asked for in the SAME sheet, because a
-            // prompt layer needs no capability — which is what makes it the safe
-            // way to contribute, and also what would let a pack ship harmless
-            // wording, get approved, and change it in an update with nothing
-            // asking again. That is the rug pull (CVE-2025-54136). The TEXT is
-            // part of what was approved, so when it no longer matches, the
-            // extension is held and the user reads the new wording before it can
-            // shape a single dictation.
-            //
-            // Both are gathered before either is returned: two sheets in a row
-            // for one enable is how a user learns to click Approve without
-            // reading, which defeats the point of asking at all.
+            // Approve scoped permissions, exact tools and account configuration together.
             if enabled {
-                let granted = reg.record(pack_id).map(|r| r.granted).unwrap_or_default();
+                let granted = &record.granted;
                 let missing: Vec<String> = if pack.has_runtime() {
                     pack.manifest
                         .permissions
@@ -1339,57 +1310,21 @@ pub fn extension_set_enabled(
                 } else {
                     Vec::new()
                 };
-                // Inert packs included, deliberately: a tier-A pack with a
-                // prompt layer is exactly the case the sheet would never see.
-                let declared = &pack.manifest.contributes.prompt_layers;
-                let unapproved = !declared.is_empty() && {
-                    let approved = reg
-                        .record(pack_id)
-                        .and_then(|r| r.prompt_layers_approved)
-                        .unwrap_or_default();
-                    approved != ext::prompt_layers_fingerprint(declared)
-                };
-                // Same question for actions, and it has to be asked here or an
-                // extension that declares one stays permanently inert: the
-                // routing gate refuses an unapproved declaration, and nothing
-                // else would ever ask the user about it.
                 let declared_actions = &pack.manifest.contributes.actions;
                 let actions_unapproved = !declared_actions.is_empty() && {
-                    let approved = reg
-                        .record(pack_id)
-                        .and_then(|r| r.actions_approved)
-                        .unwrap_or_default();
-                    approved != ext::actions_fingerprint(declared_actions)
-                };
-                let recommendation_unapproved = pack.manifest.kind.is_searchable() && {
-                    let approved = reg
-                        .record(pack_id)
-                        .and_then(|record| record.recommend_approved)
-                        .unwrap_or_default();
-                    approved != ext::recommendation_fingerprint(&pack.manifest)
+                    record.actions_approved.as_deref()
+                        != Some(ext::actions_fingerprint(declared_actions).as_str())
                 };
                 let declared_authentication = pack.manifest.contributes.authentication.as_ref();
                 let authentication_unapproved = declared_authentication.is_some() && {
-                    let approved = reg
-                        .record(pack_id)
-                        .and_then(|record| record.authentication_approved)
-                        .unwrap_or_default();
-                    approved
-                        != declared_authentication
-                            .map(ext::authentication_fingerprint)
-                            .unwrap_or_default()
+                    record.authentication_approved
+                        != declared_authentication.map(ext::authentication_fingerprint)
                 };
-                if !missing.is_empty()
-                    || unapproved
-                    || actions_unapproved
-                    || authentication_unapproved
-                    || recommendation_unapproved
-                {
-                    let layers: Vec<PromptLayerInfo> = if unapproved {
-                        declared.iter().map(PromptLayerInfo::from_decl).collect()
-                    } else {
-                        Vec::new()
-                    };
+                if !missing.is_empty() || actions_unapproved || authentication_unapproved {
+                    reg.with_current_record(pack_id, revision, |_| ())
+                        .map_err(|error| error.to_string())?;
+                    let approval_digest = ext::approval_fingerprint(&record, &pack)
+                        .map_err(|error| error.to_string())?;
                     let actions: Vec<ActionInfo> = if actions_unapproved {
                         declared_actions.iter().map(ActionInfo::from_decl).collect()
                     } else {
@@ -1401,42 +1336,19 @@ pub fn extension_set_enabled(
                     // One sheet carrying all three. Two sheets in a row is how a
                     // user learns to click through without reading.
                     return Err(serde_json::json!({
+                        "approvalDigest": approval_digest,
+                        "reviewedName": pack.manifest.name,
                         "needsPermissions": missing,
-                        "needsPromptLayers": layers,
+                        "needsPromptLayers": [],
                         "needsActions": actions,
                         "needsAuthentication": authentication,
-                        "needsRecommendation": recommendation_unapproved,
+                        "needsRecommendation": false,
                     })
                     .to_string());
                 }
             }
-            // [GRAIN] SPEC §3.2: at most one enabled occupant per slot, and a
-            // contested claim reaches the user as an explicit takeover — never
-            // a silent steal, never load-order dependent. Same structured-error
-            // shape as the permission sheet above, so the frontend flow matches.
-            if enabled {
-                if let Some(c) = reg.slot_conflict(pack_id) {
-                    return Err(serde_json::json!({ "slotConflict": c }).to_string());
-                }
-            }
-            reg.set_enabled(pack_id, enabled)
-                .map_err(|e| e.to_string())?;
-            if let Some(ctx) = app.try_state::<std::sync::Arc<grain_core::AppContext>>() {
-                ctx.update_settings(|s| {
-                    if enabled {
-                        ext::apply_prompt_pack(s, pack_id, &pack.payloads.prompts);
-                    } else {
-                        ext::remove_prompt_pack(s, pack_id);
-                    }
-                })
-                .map_err(|e| e.to_string())?;
-            }
-            // SPEC §6: a disabled extension keeps no window and no live
-            // credential — every surface is destroyed, not merely slept.
-            if !enabled {
-                crate::extension_host::stop_extension(pack_id, "extension disabled");
-                crate::grain_auth::cancel_extension(pack_id);
-            }
+            reg.set_enabled_at_revision(pack_id, true, revision)
+                .map_err(|error| error.to_string())?;
             // The activation/transform index is what the paste path and event
             // bus read; it must never lag the registry.
             crate::extension_host::refresh_index(&app);
@@ -1444,10 +1356,6 @@ pub fn extension_set_enabled(
         }
         other => return Err(format!("unknown extension id '{other}'")),
     }
-    if enabled {
-        let _ = reg.touch_builtin_toggle(&id);
-    }
-    Ok(())
 }
 
 /// Where imported `.grainpack` files live: `<data>/extensions/<id>.grainpack.json`.
@@ -1483,78 +1391,6 @@ fn read_pack_input(path: &std::path::Path) -> Result<Vec<u8>, String> {
     Ok(bytes)
 }
 
-/// A pack file replacement that rolls itself back unless the registry update
-/// succeeds. The random, create-new temporary cannot be pre-planted as a
-/// symlink, and moving the old destination aside avoids following one.
-struct PendingPackReplacement {
-    output: std::path::PathBuf,
-    backup: Option<std::path::PathBuf>,
-    committed: bool,
-}
-
-impl PendingPackReplacement {
-    fn begin(output: std::path::PathBuf, bytes: &[u8]) -> Result<Self, String> {
-        use std::io::Write;
-
-        let parent = output.parent().ok_or("pack path has no parent")?;
-        std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
-        let nonce = uuid::Uuid::new_v4().simple();
-        let temp = parent.join(format!(".grainpack-{nonce}.tmp"));
-        let backup = parent.join(format!(".grainpack-{nonce}.previous"));
-        let mut file = std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&temp)
-            .map_err(|error| error.to_string())?;
-        if let Err(error) = file.write_all(bytes).and_then(|_| file.sync_all()) {
-            let _ = std::fs::remove_file(&temp);
-            return Err(error.to_string());
-        }
-        drop(file);
-
-        let backup = if output.exists() {
-            if let Err(error) = std::fs::rename(&output, &backup) {
-                let _ = std::fs::remove_file(&temp);
-                return Err(error.to_string());
-            }
-            Some(backup)
-        } else {
-            None
-        };
-        if let Err(error) = std::fs::rename(&temp, &output) {
-            let _ = std::fs::remove_file(&temp);
-            if let Some(backup) = &backup {
-                let _ = std::fs::rename(backup, &output);
-            }
-            return Err(error.to_string());
-        }
-        Ok(Self {
-            output,
-            backup,
-            committed: false,
-        })
-    }
-
-    fn commit(mut self) {
-        if let Some(backup) = self.backup.take() {
-            let _ = std::fs::remove_file(backup);
-        }
-        self.committed = true;
-    }
-}
-
-impl Drop for PendingPackReplacement {
-    fn drop(&mut self) {
-        if self.committed {
-            return;
-        }
-        let _ = std::fs::remove_file(&self.output);
-        if let Some(backup) = self.backup.take() {
-            let _ = std::fs::rename(backup, &self.output);
-        }
-    }
-}
-
 fn imported_update_can_stay_enabled(
     prior: Option<&grain_core::extensions::ExtensionRecord>,
     pack: &grain_sdk::GrainPack,
@@ -1572,9 +1408,6 @@ fn imported_update_can_stay_enabled(
     {
         return false;
     }
-    let prompt_layers_match = manifest.contributes.prompt_layers.is_empty()
-        || prior.prompt_layers_approved.as_deref()
-            == Some(ext::prompt_layers_fingerprint(&manifest.contributes.prompt_layers).as_str());
     let actions_match = manifest.contributes.actions.is_empty()
         || prior.actions_approved.as_deref()
             == Some(ext::actions_fingerprint(&manifest.contributes.actions).as_str());
@@ -1587,15 +1420,110 @@ fn imported_update_can_stay_enabled(
                 prior.authentication_approved.as_deref()
                     == Some(ext::authentication_fingerprint(declaration).as_str())
             });
-    let recommendation_match = !manifest.kind.is_searchable()
-        || prior.recommend_approved.as_deref()
-            == Some(ext::recommendation_fingerprint(manifest).as_str());
-    prompt_layers_match && actions_match && authentication_match && recommendation_match
+    actions_match && authentication_match
 }
 
 #[cfg(test)]
 mod imported_update_security_tests {
     use super::*;
+
+    #[test]
+    fn permission_review_binds_source_auth_grants_and_execution_identity() {
+        let pack = auth_pack("https://login.example.com/oauth/token");
+        let record = approved_record(&pack);
+        let digest = grain_core::extensions::approval_fingerprint(&record, &pack).unwrap();
+        for mode in ["source", "auth", "identity", "grant", "version", "wrong_id"] {
+            let mut record = record.clone();
+            let mut changed = pack.clone();
+            match mode {
+                "source" => changed.manifest.entry_source.push_str("// replacement"),
+                "auth" => changed
+                    .manifest
+                    .contributes
+                    .authentication
+                    .as_mut()
+                    .unwrap()
+                    .scopes
+                    .push("write".into()),
+                "identity" => record.execution_generation += 1,
+                "grant" => record.granted.clear(),
+                "version" => record.installed_version.push('2'),
+                "wrong_id" => changed.manifest.id = "com.example.other".into(),
+                _ => unreachable!(),
+            }
+            assert!(
+                reviewed_grant_record(record, &changed, vec![], &digest).is_err(),
+                "{mode}"
+            );
+        }
+        assert!(reviewed_grant_record(record, &pack, vec![], &digest).is_ok());
+    }
+
+    #[test]
+    fn reviewed_grants_and_activation_have_one_owner_and_reject_replay() {
+        let dir = tempfile::tempdir().unwrap();
+        let registry = grain_core::extensions::ExtensionsRegistry::load(dir.path(), false).unwrap();
+        let pack = auth_pack("https://login.example.com/oauth/token");
+        let mut record = approved_record(&pack);
+        record.enabled = false;
+        record.granted.clear();
+        record.authentication_approved = None;
+        registry.install(record).unwrap();
+        let record = registry.record(&pack.manifest.id).unwrap();
+        let revision = registry.record_revision(&record.id);
+        let digest = grain_core::extensions::approval_fingerprint(&record, &pack).unwrap();
+        assert!(
+            reviewed_grant_record(record.clone(), &pack, vec!["auth".into()], &digest).is_err()
+        );
+        assert!(
+            reviewed_grant_record(record.clone(), &pack, vec!["capture".into()], &digest).is_err()
+        );
+        let approved = reviewed_grant_record(
+            record.clone(),
+            &pack,
+            pack.manifest.permissions.clone(),
+            &digest,
+        )
+        .unwrap();
+        registry
+            .approve_and_enable_if_current(approved, revision)
+            .unwrap();
+        let current = registry.record(&record.id).unwrap();
+        assert!(current.enabled);
+        assert_eq!(current.granted, pack.manifest.permissions);
+        assert!(current.authentication_approved.is_some());
+        assert!(
+            reviewed_grant_record(current, &pack, pack.manifest.permissions.clone(), &digest)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn explicit_disable_and_late_replacement_defeat_review_before_commit() {
+        let dir = tempfile::tempdir().unwrap();
+        let registry = grain_core::extensions::ExtensionsRegistry::load(dir.path(), false).unwrap();
+        let pack = auth_pack("https://login.example.com/oauth/token");
+        let mut record = approved_record(&pack);
+        record.enabled = false;
+        record.granted.clear();
+        registry.install(record).unwrap();
+        let record = registry.record(&pack.manifest.id).unwrap();
+        let revision = registry.record_revision(&record.id);
+        let digest = grain_core::extensions::approval_fingerprint(&record, &pack).unwrap();
+        let approved =
+            reviewed_grant_record(record, &pack, pack.manifest.permissions.clone(), &digest)
+                .unwrap();
+        registry.set_enabled(&pack.manifest.id, false).unwrap();
+        assert!(registry
+            .approve_and_enable_if_current(approved, revision)
+            .is_err());
+        assert!(!registry.is_enabled(&pack.manifest.id));
+        assert!(registry
+            .record(&pack.manifest.id)
+            .unwrap()
+            .granted
+            .is_empty());
+    }
 
     fn auth_pack(token_endpoint: &str) -> grain_sdk::GrainPack {
         serde_json::from_value(serde_json::json!({
@@ -1626,6 +1554,7 @@ mod imported_update_security_tests {
         grain_core::extensions::ExtensionRecord {
             id: pack.manifest.id.clone(),
             enabled: true,
+            execution_generation: 0,
             toggle_seq: 1,
             installed_version: pack.manifest.version.clone(),
             artifact_sha256: None,
@@ -1635,6 +1564,7 @@ mod imported_update_security_tests {
             authentication_approved: Some(grain_core::extensions::authentication_fingerprint(
                 pack.manifest.contributes.authentication.as_ref().unwrap(),
             )),
+            authentication_session: None,
             recommend_approved: None,
             slots: Vec::new(),
             dev: None,
@@ -1670,21 +1600,31 @@ mod imported_update_security_tests {
     }
 
     #[test]
-    fn pack_file_replacement_rolls_back_until_committed() {
+    fn imported_artifact_publication_never_replaces_another_owner() {
         let directory = tempfile::tempdir().unwrap();
-        let output = directory.path().join("extension.grainpack.json");
-        std::fs::write(&output, b"approved-old").unwrap();
-        {
-            let _pending =
-                PendingPackReplacement::begin(output.clone(), b"uncommitted-new").unwrap();
-            assert_eq!(std::fs::read(&output).unwrap(), b"uncommitted-new");
-        }
-        assert_eq!(std::fs::read(&output).unwrap(), b"approved-old");
-
-        PendingPackReplacement::begin(output.clone(), b"committed-new")
+        let publish = |bytes: &[u8]| {
+            grain_core::install::publish_artifact(
+                directory.path(),
+                "com.example.tools",
+                "1",
+                &grain_core::trust::sha256_hex(bytes),
+                bytes,
+            )
             .unwrap()
-            .commit();
-        assert_eq!(std::fs::read(output).unwrap(), b"committed-new");
+        };
+        let old = publish(b"approved-old");
+        let abandoned = publish(b"uncommitted-new");
+        let current = publish(b"committed-new");
+        assert_ne!(old, abandoned);
+        assert_ne!(abandoned, current);
+        assert_eq!(
+            std::fs::read(old.join("pack.grainpack.json")).unwrap(),
+            b"approved-old"
+        );
+        assert_eq!(
+            std::fs::read(current.join("pack.grainpack.json")).unwrap(),
+            b"committed-new"
+        );
     }
 
     #[test]
@@ -1791,6 +1731,7 @@ pub fn extension_set_developer_mode(
         .ok_or("extensions registry unavailable")?;
     let mut cleanup_error = None;
     if !enabled {
+        crate::grain_mcp::invalidate_development_sessions(&app);
         let ids: Vec<String> = reg.dev_records().into_iter().map(|(id, _)| id).collect();
         for id in ids {
             stop_extension_runtime(&app, &id, "developer mode disabled");
@@ -1844,6 +1785,7 @@ fn register_unpacked_project(
         .try_state::<std::sync::Arc<ext::ExtensionsRegistry>>()
         .ok_or("extensions registry unavailable")?;
     let id = loaded.pack.manifest.id.clone();
+    let revision = reg.record_revision(&id);
     let prior = reg.record(&id);
     let requested = &loaded.pack.manifest.permissions;
     let granted = prior
@@ -1860,6 +1802,7 @@ fn register_unpacked_project(
     let record = ext::ExtensionRecord {
         id: id.clone(),
         enabled: false,
+        execution_generation: 0,
         toggle_seq: prior.as_ref().map(|record| record.toggle_seq).unwrap_or(0),
         installed_version: loaded.pack.manifest.version.clone(),
         artifact_sha256: None,
@@ -1882,6 +1825,8 @@ fn register_unpacked_project(
             .authentication
             .as_ref()
             .map(ext::authentication_fingerprint),
+        // The registry carries only the same dev project's account forward.
+        authentication_session: None,
         recommend_approved: loaded
             .pack
             .manifest
@@ -1892,13 +1837,30 @@ fn register_unpacked_project(
         // Load-unpacked is the `dev` rung: never promotable, never verified.
         trust: grain_sdk::Trust::Dev,
     };
-    reg.load_dev(record, loaded.root)
-        .map_err(|error| error.to_string())?;
-    stop_extension_runtime(app, &id, "load-unpacked project replaced");
+    let installed = reg.load_dev_if_current(record, loaded.root, revision);
+    if let Some(prior) = prior.filter(|prior| {
+        reg.record(&id)
+            .is_none_or(|current| current.execution_generation != prior.execution_generation)
+    }) {
+        crate::extension_host::stop_extension_generation(
+            &id,
+            prior.execution_generation,
+            "load-unpacked project replaced",
+        );
+        crate::grain_auth::cancel_extension_generation(&id, prior.execution_generation);
+    }
+    installed.map_err(|error| {
+        #[cfg(feature = "agent-harness")]
+        log::warn!("[agent-harness] developer registration failed: {error:#}");
+        error.to_string()
+    })?;
     Ok(id)
 }
 
-fn load_unpacked_project(app: &AppHandle, root: &std::path::Path) -> Result<String, String> {
+pub(crate) fn load_unpacked_project(
+    app: &AppHandle,
+    root: &std::path::Path,
+) -> Result<String, String> {
     if !settings::get_settings(app).extension_developer_mode {
         return Err("Developer mode is disabled".into());
     }
@@ -2076,7 +2038,11 @@ pub fn extension_unload_dev(
         return Err(format!("'{id}' is not a load-unpacked extension"));
     }
     stop_extension_runtime(&app, &id, "load-unpacked project unloaded");
-    reg.unload_dev(&id).map_err(|error| error.to_string())?;
+    reg.unload_dev(&id).map_err(|error| {
+        #[cfg(feature = "agent-harness")]
+        log::warn!("[agent-harness] developer unload failed: {error:#}");
+        error.to_string()
+    })?;
     restore_enabled_extension(&app, &id)?;
     if let Err(error) = crate::extension_icons::purge_dev_cache(&app) {
         log::warn!("[GRAIN] developer icon-cache cleanup failed: {error}");
@@ -2091,18 +2057,9 @@ pub fn extension_unload_dev(
 /// `host_api`'s `settings.get/set`, which the extension itself calls. Off the
 /// hot path by construction: settings are read when the page opens and written
 /// when someone moves a control, never per transcription or per event.
-pub(crate) fn setting_decl(
-    app: &AppHandle,
-    ext_id: &str,
-    key: &str,
-) -> Option<grain_sdk::SettingDecl> {
-    load_pack(app, ext_id)
-        .ok()?
-        .manifest
-        .contributes
-        .settings
-        .into_iter()
-        .find(|d| d.key == key)
+pub(crate) fn setting_decl(app: &AppHandle, id: &str, key: &str) -> Option<grain_sdk::SettingDecl> {
+    let _ = (app, id, key);
+    None
 }
 
 #[derive(serde::Serialize, specta::Type, Clone)]
@@ -2132,66 +2089,6 @@ pub struct ExtensionSettingField {
 
 /// Flatten a declaration into its renderer schema (no value). Shared by
 /// top-level rows and nested list fields.
-fn field_schema(decl: &grain_sdk::SettingDecl) -> ExtensionSettingField {
-    use grain_sdk::SettingKind as K;
-    let (kind, min, max, step, options, fields, item_label) = match &decl.kind {
-        K::Bool => ("bool", None, None, None, vec![], vec![], None),
-        K::String => ("string", None, None, None, vec![], vec![], None),
-        K::Secret => ("secret", None, None, None, vec![], vec![], None),
-        K::Shortcut => ("shortcut", None, None, None, vec![], vec![], None),
-        K::Color => ("color", None, None, None, vec![], vec![], None),
-        K::AppPath => ("app_path", None, None, None, vec![], vec![], None),
-        K::Url => ("url", None, None, None, vec![], vec![], None),
-        K::Number { min, max } => ("number", *min, *max, None, vec![], vec![], None),
-        K::Slider { min, max, step } => (
-            "slider",
-            Some(*min),
-            Some(*max),
-            *step,
-            vec![],
-            vec![],
-            None,
-        ),
-        K::Select { options } => (
-            "select",
-            None,
-            None,
-            None,
-            options
-                .iter()
-                .map(|o| SelectOptionDto {
-                    value: o.value.clone(),
-                    label: o.label.clone(),
-                })
-                .collect(),
-            vec![],
-            None,
-        ),
-        K::List { fields, item_label } => (
-            "list",
-            None,
-            None,
-            None,
-            vec![],
-            fields.iter().map(field_schema).collect(),
-            item_label.clone(),
-        ),
-        K::Panel { .. } => ("unsupported", None, None, None, vec![], vec![], None),
-        K::Unsupported => ("unsupported", None, None, None, vec![], vec![], None),
-    };
-    ExtensionSettingField {
-        key: decl.key.clone(),
-        label: decl.label.clone(),
-        description: decl.description.clone(),
-        kind: kind.to_string(),
-        min,
-        max,
-        step,
-        options,
-        fields,
-        item_label,
-    }
-}
 
 /// One row of an extension's settings section: the declaration flattened into
 /// exactly what a control needs, plus the value to show.
@@ -2227,30 +2124,6 @@ pub struct ExtensionSettingRow {
     pub item_label: Option<String>,
 }
 
-fn setting_row(
-    decl: grain_sdk::SettingDecl,
-    value: serde_json::Value,
-    notice: Option<String>,
-) -> ExtensionSettingRow {
-    let schema = field_schema(&decl);
-    ExtensionSettingRow {
-        key: schema.key,
-        label: schema.label,
-        description: schema.description,
-        kind: schema.kind,
-        anchor: decl.anchor,
-        order: decl.order,
-        value,
-        notice,
-        min: schema.min,
-        max: schema.max,
-        step: schema.step,
-        options: schema.options,
-        fields: schema.fields,
-        item_label: schema.item_label,
-    }
-}
-
 /// The settings an extension declares, resolved against what is stored
 /// (SPEC §4.1, levels 1–2). Ordered by `order`, ties on declaration order, so
 /// the host renders straight down the list.
@@ -2263,58 +2136,12 @@ pub fn extension_settings_schema(
     app: AppHandle,
     id: String,
 ) -> Result<Vec<ExtensionSettingRow>, String> {
-    let pack = load_pack(&app, &id)?;
-    let ctx = app
-        .try_state::<std::sync::Arc<grain_core::AppContext>>()
-        .ok_or("app context unavailable")?;
-    Ok(rows_for(
-        pack.manifest.contributes.settings,
-        &crate::host_api::ExtStorage::new(&ctx.data_dir, &id),
-        &ctx,
-        &id,
-    ))
+    load_pack(&app, &id)?;
+    Ok(Vec::new())
 }
 
 /// Resolve a declaration list against what is stored. Split out so
 /// [`extension_settings_sections`] reads each pack once rather than twice.
-fn rows_for(
-    decls: Vec<grain_sdk::SettingDecl>,
-    store: &crate::host_api::ExtStorage,
-    ctx: &grain_core::AppContext,
-    ext_id: &str,
-) -> Vec<ExtensionSettingRow> {
-    let mut rows: Vec<ExtensionSettingRow> = decls
-        .into_iter()
-        .filter(|d| {
-            !matches!(
-                &d.kind,
-                grain_sdk::SettingKind::Unsupported | grain_sdk::SettingKind::Panel { .. }
-            )
-        })
-        .map(|decl| {
-            let stored = if matches!(decl.kind, grain_sdk::SettingKind::Secret) {
-                let marker = if ctx
-                    .extension_secret(&crate::host_api::extension_secret_key(ext_id, &decl.key))
-                    .is_some()
-                {
-                    crate::host_api::SECRET_REDACTED
-                } else {
-                    ""
-                };
-                serde_json::Value::String(marker.to_string())
-            } else {
-                store.settings_get(&decl.key).unwrap_or_else(|error| {
-                    log::warn!("[GRAIN] extension settings storage read failed: {error}");
-                    serde_json::Value::Null
-                })
-            };
-            let resolved = grain_sdk::settings_schema::resolve(&decl, Some(&stored));
-            setting_row(decl, resolved.value, resolved.notice)
-        })
-        .collect();
-    rows.sort_by_key(|r| r.order);
-    rows
-}
 
 /// The live state of one extension's contributed shortcuts (SPEC §3.3), so the
 /// settings section can show a chord that is registered — and name the holder
@@ -2322,7 +2149,8 @@ fn rows_for(
 #[tauri::command]
 #[specta::specta]
 pub fn extension_shortcuts_status(id: String) -> Vec<crate::extension_shortcuts::ShortcutStatus> {
-    crate::extension_shortcuts::status_for(&id)
+    let _ = id;
+    Vec::new()
 }
 
 /// One enabled extension's settings, ready to render.
@@ -2344,37 +2172,8 @@ pub struct ExtensionSettingsSection {
 pub fn extension_settings_sections(
     app: AppHandle,
 ) -> Result<Vec<ExtensionSettingsSection>, String> {
-    use grain_core::extensions as ext;
-    let reg = app
-        .try_state::<std::sync::Arc<ext::ExtensionsRegistry>>()
-        .ok_or("extensions registry unavailable")?;
-
-    let ctx = app
-        .try_state::<std::sync::Arc<grain_core::AppContext>>()
-        .ok_or("app context unavailable")?;
-
-    let mut enabled: Vec<ext::ExtensionRecord> =
-        reg.records().into_iter().filter(|r| r.enabled).collect();
-    enabled.sort_by_key(|r| r.toggle_seq);
-
-    let mut out = Vec::new();
-    for rec in enabled {
-        let Ok(pack) = load_pack(&app, &rec.id) else {
-            // A broken pack file must not take the settings page down (SPEC §6).
-            continue;
-        };
-        if pack.manifest.contributes.settings.is_empty() {
-            continue;
-        }
-        let store = crate::host_api::ExtStorage::new(&ctx.data_dir, &rec.id);
-        let rows = rows_for(pack.manifest.contributes.settings, &store, &ctx, &rec.id);
-        out.push(ExtensionSettingsSection {
-            id: rec.id,
-            name: pack.manifest.name,
-            rows,
-        });
-    }
-    Ok(out)
+    let _ = app;
+    Ok(Vec::new())
 }
 
 /// Write one schema-declared setting from the host's own control.
@@ -2393,34 +2192,11 @@ pub fn extension_setting_set(
     value: serde_json::Value,
 ) -> Result<ExtensionSettingRow, String> {
     require_main_window(&window)?;
-    let decl = setting_decl(&app, &id, &key)
-        .ok_or_else(|| format!("'{key}' is not a declared setting of '{id}'"))?;
-    let accepted = grain_sdk::settings_schema::coerce(&decl, &value)?;
-    let ctx = app
-        .try_state::<std::sync::Arc<grain_core::AppContext>>()
-        .ok_or("app context unavailable")?;
-    if matches!(decl.kind, grain_sdk::SettingKind::Secret) {
-        let secret = accepted.value.as_str().ok_or("secret value must be text")?;
-        ctx.set_extension_secret(
-            crate::host_api::extension_secret_key(&id, &key),
-            secret.to_string(),
-        )
-        .map_err(|error| error.to_string())?;
-        let marker = if secret.is_empty() {
-            ""
-        } else {
-            crate::host_api::SECRET_REDACTED
-        };
-        return Ok(setting_row(
-            decl,
-            serde_json::Value::String(marker.to_string()),
-            accepted.notice,
-        ));
-    }
-    crate::host_api::ExtStorage::new(&ctx.data_dir, &id)
-        .settings_set(&key, accepted.value.clone())
-        .map_err(|error| error.to_string())?;
-    Ok(setting_row(decl, accepted.value, accepted.notice))
+    let _ = (app, id, key, value);
+    Err(
+        "Extension settings contributions are retired. Use account/connection configuration."
+            .into(),
+    )
 }
 
 /// Import a `.grainpack` file (SPEC §1.1 tier A-inert). Validates, copies into
@@ -2451,7 +2227,21 @@ pub fn extension_import_pack(
         .try_state::<std::sync::Arc<ext::ExtensionsRegistry>>()
         .ok_or("extensions registry unavailable")?;
     let id = pack.manifest.id.clone();
-    let replacement = PendingPackReplacement::begin(pack_path(&app, &id)?, &stored)?;
+    let revision = reg.record_revision(&id);
+    reg.with_current_record(&id, revision, |_| ())
+        .map_err(|error| error.to_string())?;
+    let ctx = app
+        .try_state::<std::sync::Arc<grain_core::AppContext>>()
+        .ok_or("app context unavailable")?;
+    let artifact_hash = grain_core::trust::sha256_hex(&stored);
+    grain_core::install::publish_artifact(
+        &ctx.data_dir.join("extensions"),
+        &id,
+        &pack.manifest.version,
+        &artifact_hash,
+        &stored,
+    )
+    .map_err(|error| error.to_string())?;
     // Re-import/update of an installed pack must PRESERVE the user's state
     // (SPEC §6 update row) — resetting enabled/toggle order on update would
     // silently disable a working pack.
@@ -2459,58 +2249,71 @@ pub fn extension_import_pack(
     let prior = reg.installed_record(&id);
     let was_enabled = prior.as_ref().map(|r| r.enabled).unwrap_or(false);
     let stays_enabled = imported_update_can_stay_enabled(prior.as_ref(), &pack);
-    reg.install(ext::ExtensionRecord {
-        id: id.clone(),
-        // Re-import is an update, not an approval. Any newly requested grant or
-        // changed prompt/action/auth/recommendation digest holds the pack off
-        // until the settings sheet has shown the new contract.
-        enabled: stays_enabled,
-        toggle_seq: prior.as_ref().map(|r| r.toggle_seq).unwrap_or(0),
-        installed_version: pack.manifest.version.clone(),
-        artifact_sha256: Some(grain_core::trust::sha256_hex(&stored)),
-        granted: prior
-            .as_ref()
-            .map(|record| {
-                record
-                    .granted
-                    .iter()
-                    .filter(|permission| pack.manifest.permissions.contains(permission))
-                    .cloned()
-                    .collect()
-            })
-            .unwrap_or_default(),
-        slots: pack.manifest.slots.clone(),
-        // A manually imported pack is a third-party file, so its prompt text is
-        // NOT approved by importing it: the prior approval is carried forward
-        // and a re-import with changed wording therefore stops matching, holds
-        // the enable, and shows the user what changed. This is the update path
-        // the rug-pull incidents of 2025 walked through.
-        prompt_layers_approved: prior
-            .as_ref()
-            .and_then(|r| r.prompt_layers_approved.clone()),
-        // Carried, never recomputed. Importing is not approving: if the
-        // declaration changed, this stops matching, the actions go inert, and
-        // the enable path shows the user what is different.
-        actions_approved: prior.as_ref().and_then(|r| r.actions_approved.clone()),
-        authentication_approved: prior
-            .as_ref()
-            .and_then(|r| r.authentication_approved.clone()),
-        // Carried for the same reason, and the stake is higher: what this one
-        // gates is whether the extension is eligible to be handed the user's
-        // words at all. `None` means never approved, so an import that has not
-        // been reviewed under this contract simply is not ranked.
-        recommend_approved: prior.as_ref().and_then(|r| r.recommend_approved.clone()),
-        dev: None,
-        // A manually imported local file is UNTRUSTED, always — even if a
-        // store-verified record for this id existed. Trust comes only from the
-        // signed index (DISTRIBUTION-PLAN §3.2); inheriting it here would let a
-        // local pack impersonate a verified one.
-        trust: grain_sdk::Trust::UNTRUSTED_DEFAULT,
-    })
+    reg.install_if_current(
+        ext::ExtensionRecord {
+            id: id.clone(),
+            // Re-import is an update, not an approval. Any newly requested grant or
+            // changed prompt/action/auth/recommendation digest holds the pack off
+            // until the settings sheet has shown the new contract.
+            enabled: stays_enabled,
+            execution_generation: 0,
+            toggle_seq: prior.as_ref().map(|r| r.toggle_seq).unwrap_or(0),
+            installed_version: pack.manifest.version.clone(),
+            artifact_sha256: Some(artifact_hash),
+            granted: prior
+                .as_ref()
+                .map(|record| {
+                    record
+                        .granted
+                        .iter()
+                        .filter(|permission| pack.manifest.permissions.contains(permission))
+                        .cloned()
+                        .collect()
+                })
+                .unwrap_or_default(),
+            slots: pack.manifest.slots.clone(),
+            // A manually imported pack is a third-party file, so its prompt text is
+            // NOT approved by importing it: the prior approval is carried forward
+            // and a re-import with changed wording therefore stops matching, holds
+            // the enable, and shows the user what changed. This is the update path
+            // the rug-pull incidents of 2025 walked through.
+            prompt_layers_approved: prior
+                .as_ref()
+                .and_then(|r| r.prompt_layers_approved.clone()),
+            // Carried, never recomputed. Importing is not approving: if the
+            // declaration changed, this stops matching, the actions go inert, and
+            // the enable path shows the user what is different.
+            actions_approved: prior.as_ref().and_then(|r| r.actions_approved.clone()),
+            authentication_approved: prior
+                .as_ref()
+                .and_then(|r| r.authentication_approved.clone()),
+            authentication_session: prior
+                .as_ref()
+                .and_then(|r| r.authentication_session.clone()),
+            // Carried for the same reason, and the stake is higher: what this one
+            // gates is whether the extension is eligible to be handed the user's
+            // words at all. `None` means never approved, so an import that has not
+            // been reviewed under this contract simply is not ranked.
+            recommend_approved: prior.as_ref().and_then(|r| r.recommend_approved.clone()),
+            dev: None,
+            // A manually imported local file is UNTRUSTED, always — even if a
+            // store-verified record for this id existed. Trust comes only from the
+            // signed index (DISTRIBUTION-PLAN §3.2); inheriting it here would let a
+            // local pack impersonate a verified one.
+            trust: grain_sdk::Trust::UNTRUSTED_DEFAULT,
+        },
+        revision,
+    )
     .map_err(|e| e.to_string())?;
-    replacement.commit();
     if was_enabled && !stays_enabled && !dev_active {
-        stop_extension_runtime(&app, &id, "extension update requires renewed approval");
+        if let Some(prior) = &prior {
+            crate::extension_host::stop_extension_generation(
+                &id,
+                prior.execution_generation,
+                "extension update requires renewed approval",
+            );
+            crate::grain_auth::cancel_extension_generation(&id, prior.execution_generation);
+        }
     }
     // An enabled pack's payloads refresh in place (apply is idempotent).
     if stays_enabled && !dev_active {
@@ -2540,23 +2343,9 @@ pub async fn extension_pick_app(
     window: tauri::WebviewWindow,
     id: String,
 ) -> Result<Option<String>, String> {
-    use tauri_plugin_dialog::DialogExt;
     require_main_window(&window)?;
-    let picker = app.clone();
-    let picked =
-        tauri::async_runtime::spawn_blocking(move || picker.dialog().file().blocking_pick_file())
-            .await
-            .map_err(|e| e.to_string())?;
-    let path = picked
-        .and_then(|f| f.into_path().ok())
-        .map(|p| p.to_string_lossy().to_string());
-    if let Some(ref p) = path {
-        let ctx = app
-            .try_state::<std::sync::Arc<grain_core::AppContext>>()
-            .ok_or("app context unavailable")?;
-        crate::host_api::approve_app(&ctx.data_dir, &id, p).map_err(|e| e.to_string())?;
-    }
-    Ok(path)
+    let _ = (app, id);
+    Err("Extension application access is retired. Context belongs to the agent.".into())
 }
 
 /// [GRAIN] Phase 5C: capture the FOREGROUND app for an `app_path` control (the
@@ -2571,35 +2360,19 @@ pub fn extension_capture_app(
     id: String,
 ) -> Result<Option<String>, String> {
     require_main_window(&window)?;
-    let Some(detected) = detect_active_app() else {
-        return Ok(None);
-    };
-    // `exe_path` is empty when the path couldn't be resolved — nothing to record.
-    let path = detected.exe_path;
-    if path.is_empty() {
-        return Ok(None);
-    }
-    let ctx = app
-        .try_state::<std::sync::Arc<grain_core::AppContext>>()
-        .ok_or("app context unavailable")?;
-    crate::host_api::approve_app(&ctx.data_dir, &id, &path).map_err(|e| e.to_string())?;
-    Ok(Some(path))
+    let _ = (app, id);
+    Err("Extension application access is retired. Context belongs to the agent.".into())
 }
 
-/// Record the user's approval of what an extension asked for (SPEC §6) —
-/// capabilities, and the prompt layers it contributes. Called by the permission
-/// sheet on Approve; the caller then retries enable.
+/// Approve the reviewed tool permissions, declarations and account configuration,
+/// then enable the extension in the same checked registry mutation.
 ///
 /// Grants are clamped to what the manifest actually requests, so neither a
 /// compromised frontend nor a stale sheet can widen an extension's reach beyond
 /// what the user was shown.
 ///
-/// **Prompt layers are approved here too**, by the same act and with no
-/// parameter of their own: the approved value is recomputed from the pack on
-/// disk, so what gets recorded is necessarily the text the sheet just rendered
-/// and never something the caller supplies. An inert pack whose only ask is a
-/// prompt layer therefore approves through `extension_grant(id, [])` — one
-/// approval act rather than a second command that could drift from this one.
+/// Approve the exact package/registry identity shown by the permission sheet
+/// and enable it in one checked mutation. A changed review needs a fresh sheet.
 #[tauri::command]
 #[specta::specta]
 pub fn extension_grant(
@@ -2607,16 +2380,63 @@ pub fn extension_grant(
     window: tauri::WebviewWindow,
     id: String,
     permissions: Vec<String>,
+    approval_digest: String,
 ) -> Result<(), String> {
     use grain_core::extensions as ext;
     require_main_window(&window)?;
     let reg = app
         .try_state::<std::sync::Arc<ext::ExtensionsRegistry>>()
         .ok_or("extensions registry unavailable")?;
-    let mut rec = reg
+    let revision = reg.record_revision(&id);
+    let rec = reg
         .record(&id)
         .ok_or_else(|| format!("'{id}' is not installed"))?;
-    let manifest = load_pack(&app, &id)?.manifest;
+    let pack = load_pack(&app, &id)?;
+    let rec = reviewed_grant_record(rec, &pack, permissions, &approval_digest)?;
+    if let Some(store) = app.try_state::<std::sync::Arc<crate::grain_store::StoreState>>() {
+        if store.revocation_state(&id, &rec.installed_version)
+            == Some(grain_sdk::RevocationState::Revoked)
+        {
+            return Err(serde_json::json!({"revoked": id}).to_string());
+        }
+    }
+    let prior_generation = rec.execution_generation;
+    let approved = reg.approve_and_enable_if_current(rec, revision);
+    if reg
+        .record(&id)
+        .is_none_or(|current| current.execution_generation != prior_generation)
+    {
+        crate::extension_host::stop_extension_generation(
+            &id,
+            prior_generation,
+            "extension permissions changed",
+        );
+        crate::grain_auth::cancel_extension_generation(&id, prior_generation);
+    }
+    crate::extension_host::refresh_index(&app);
+    approved.map(|_| ()).map_err(|error| {
+        #[cfg(feature = "agent-harness")]
+        log::warn!("[agent-harness] developer approval failed: {error:#}");
+        error.to_string()
+    })
+}
+
+fn reviewed_grant_record(
+    mut rec: grain_core::extensions::ExtensionRecord,
+    pack: &grain_sdk::GrainPack,
+    permissions: Vec<String>,
+    approval_digest: &str,
+) -> Result<grain_core::extensions::ExtensionRecord, String> {
+    use grain_core::extensions as ext;
+    pack.validate_tool_only()?;
+    if pack.manifest.id != rec.id {
+        return Err("Reviewed package identity does not match the installed extension.".into());
+    }
+    if ext::approval_fingerprint(&rec, pack).map_err(|error| error.to_string())? != approval_digest
+    {
+        return Err("The extension changed after review. Open a fresh permission sheet.".into());
+    }
+    let manifest = &pack.manifest;
     if let Some(extra) = permissions
         .iter()
         .find(|p| !manifest.permissions.contains(p))
@@ -2628,8 +2448,7 @@ pub fn extension_grant(
             rec.granted.push(p);
         }
     }
-    rec.prompt_layers_approved = (!manifest.contributes.prompt_layers.is_empty())
-        .then(|| ext::prompt_layers_fingerprint(&manifest.contributes.prompt_layers));
+    rec.prompt_layers_approved = None;
     // Recomputed from disk, never taken from the caller — the fingerprint IS the
     // grant, so accepting one over the wire would let a caller approve a
     // declaration the user never saw.
@@ -2640,14 +2459,15 @@ pub fn extension_grant(
         .authentication
         .as_ref()
         .map(ext::authentication_fingerprint);
-    // Same act, same rule: recomputed from disk. Keyed off `kind` rather than a
-    // list being non-empty, because what is being approved here is eligibility
-    // to be handed the whole request — see `recommendation_fingerprint`.
-    rec.recommend_approved = manifest
-        .kind
-        .is_searchable()
-        .then(|| ext::recommendation_fingerprint(&manifest));
-    reg.install(rec).map_err(|e| e.to_string())
+    rec.recommend_approved = None;
+    if manifest
+        .permissions
+        .iter()
+        .any(|permission| !rec.granted.contains(permission))
+    {
+        return Err("Review all requested permissions before enabling this extension.".into());
+    }
+    Ok(rec)
 }
 
 /// Record the user's answer to a slot takeover prompt (SPEC §3.2). Hands `slot`
@@ -2665,20 +2485,9 @@ pub fn extension_take_slot(
     id: String,
     slot: String,
 ) -> Result<(), String> {
-    use grain_core::extensions as ext;
+    let _ = (app, id, slot);
     require_main_window(&window)?;
-    let reg = app
-        .try_state::<std::sync::Arc<ext::ExtensionsRegistry>>()
-        .ok_or("extensions registry unavailable")?;
-    let displaced = reg.take_slot(&id, &slot).map_err(|e| e.to_string())?;
-
-    if let Some(prev) = &displaced {
-        // The loser is disabled by `take_slot`; its payloads must come off too.
-        stop_extension_runtime(&app, prev, "extension lost an exclusive slot");
-        log::info!("[GRAIN] slot '{slot}' taken by '{id}' (was '{prev}')");
-    }
-    crate::extension_host::refresh_index(&app);
-    Ok(())
+    Err("Extension feature slots are retired. Extensions provide tools only.".into())
 }
 
 /// Export an installed pack to `dest` (SPEC §5.1 "shareable data packs").
@@ -2715,17 +2524,22 @@ pub async fn extension_uninstall(
     if id == ext::BUILTIN_SNIPPETS || id == ext::BUILTIN_CONTEXT || id == ext::BUILTIN_AGENT {
         return Err("built-in features can be turned off, not uninstalled".into());
     }
-    crate::grain_auth::cancel_extension(&id);
-    // Credentials are never kept for an uninstalled identity, regardless of
-    // whether ordinary extension data is retained for a later reinstall.
-    crate::grain_auth::purge_extension(&app, &id).await?;
     let reg = app
         .try_state::<std::sync::Arc<ext::ExtensionsRegistry>>()
         .ok_or("extensions registry unavailable")?;
     let dev_active = reg.dev_path(&id).is_some();
-    if !reg.uninstall(&id).map_err(|e| e.to_string())? && !dev_active {
+    let removed = reg.uninstall_with_record(&id).map_err(|e| e.to_string())?;
+    let old_generation = removed.as_ref().map(|record| record.execution_generation);
+    let session = removed.and_then(|record| record.authentication_session);
+    if old_generation.is_none() && !dev_active {
         return Err("not installed".into());
     }
+    if let Some(generation) = old_generation {
+        crate::grain_auth::cancel_extension_generation(&id, generation);
+    }
+    // Invalidate publication before blocking on the vault. Cleanup addresses
+    // only the removed grant, never a replacement login or active dev account.
+    let credential_cleanup = crate::grain_auth::purge_extension(&id, session);
     crate::extension_host::refresh_index(&app);
     if purge {
         if let Some(ctx) = app.try_state::<std::sync::Arc<grain_core::AppContext>>() {
@@ -2742,7 +2556,7 @@ pub async fn extension_uninstall(
             crate::extension_icons::purge(&app, &id)?;
             crate::extension_misroutes::purge(&app, &id);
         }
-        return Ok(());
+        return credential_cleanup.await;
     }
     if let Some(ctx) = app.try_state::<std::sync::Arc<grain_core::AppContext>>() {
         let _ = ctx.update_settings(|s| ext::remove_prompt_pack(s, &id));
@@ -2761,7 +2575,9 @@ pub async fn extension_uninstall(
     }
     // Disable keeps a rebind; uninstall is the transaction that clears it
     // (SPEC §6: shortcuts unregistered, slots released, storage wiped).
-    crate::extension_host::stop_extension(&id, "extension uninstalled");
+    if let Some(generation) = old_generation {
+        crate::extension_host::stop_extension_generation(&id, generation, "extension uninstalled");
+    }
     crate::extension_shortcuts::forget(&app, &id);
     if purge {
         let _ = std::fs::remove_file(pack_path(&app, &id)?);
@@ -2769,5 +2585,5 @@ pub async fn extension_uninstall(
         crate::extension_misroutes::purge(&app, &id);
     }
     crate::extension_host::refresh_index(&app);
-    Ok(())
+    credential_cleanup.await
 }

@@ -113,7 +113,7 @@ Grain can reach tools through two implementation paths:
 | Adapter | What it is | Intended use |
 | --- | --- | --- |
 | **MCP** | A remote HTTPS Model Context Protocol server discovered and called through the official MCP client stack. | External services and integrations that already expose MCP. |
-| **Native/direct** | A reviewed Grain-maintained provider implemented locally against the service or API. | First-party integrations where a direct implementation is simpler or gives a better desktop experience. |
+| **Native/direct** | A JavaScript tool extension using Grain's constrained SDK and host-brokered APIs. | First-party or third-party integrations that call a service directly instead of using MCP. |
 
 Both adapters normalize into the same host-owned contract:
 

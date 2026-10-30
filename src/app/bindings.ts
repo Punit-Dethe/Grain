@@ -611,6 +611,28 @@ async changeContextAwarenessEnabledSetting(enabled: boolean) : Promise<Result<nu
 }
 },
 /**
+ * Enable the core Agent and reconcile its summon shortcut independently of extensions.
+ */
+async changeAgentEnabledSetting(enabled: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_agent_enabled_setting", { enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Enable core snippet matching independently of extensions.
+ */
+async changeSnippetsEnabledSetting(enabled: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_snippets_enabled_setting", { enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * [GRAIN] Agent auto-copy policy (off / first reply / all replies).
  */
 async changeAgentAutocopySetting(mode: AgentAutocopy) : Promise<Result<null, string>> {
@@ -785,8 +807,8 @@ async storeClose() : Promise<Result<null, string>> {
 }
 },
 /**
- * A screenshot/GIF for the detail page, as a `data:` URL. Lazy — called only
- * when a detail opens — and integrity-checked against its hash. WEBP or GIF.
+ * A listing image as a hash-checked data URL. Square icons use PNG;
+ * wide covers/previews use WebP or GIF and load only where displayed.
  */
 async storeMedia(sha256: string, kind: string) : Promise<Result<string, string>> {
     try {
@@ -797,8 +819,8 @@ async storeMedia(sha256: string, kind: string) : Promise<Result<string, string>>
 }
 },
 /**
- * An extension's full README (markdown text), by its media hash. Lazy, and
- * integrity-checked. Rendered on the detail page.
+ * An extension's detail Markdown (new DESCRIPTION or legacy README), by its
+ * media hash. Lazy, hash-checked and size-bound for explicit signed listings.
  */
 async storeReadme(sha256: string) : Promise<Result<string, string>> {
     try {
@@ -824,13 +846,13 @@ async storeEntry(id: string) : Promise<Result<StoreEntry | null, string>> {
 }
 },
 /**
- * Cover references for a set of ids, from the CACHED index in ONE parse.
+ * Square listing icon references for a set of ids, from one CACHED index parse.
  *
  * The installed list shows each extension's picture, and asking `store_entry`
  * per row would re-read and re-verify the whole catalogue once per extension.
- * This reads it once, keeps only `(id, cover)`, and drops the rest — the list
+ * This reads it once, keeps only `(id, icon)`, and drops the rest — the list
  * gets its images without the catalogue ever staying resident. Ids that are not
- * in the catalogue, or have no media, are simply absent from the result.
+ * in the catalogue, or have no square icon, are absent from the result.
  */
 async storeCovers(ids: string[]) : Promise<Result<StoreCover[], string>> {
     try {
@@ -865,9 +887,8 @@ async storeRevocationBanners() : Promise<Result<RevocationBanner[], string>> {
 }
 },
 /**
- * Flip an extension on/off (SPEC §5.1 inline toggle). Built-ins write their
- * settings flag + bump toggle order; packs write the registry. The Agent
- * toggle re-registers its binding so the change is zero-overhead-when-off.
+ * Flip a tool extension on/off. Core Agent, Snippets and context settings use
+ * their own commands and cannot be enabled through the extension registry.
  */
 async extensionSetEnabled(id: string, enabled: boolean) : Promise<Result<null, string>> {
     try {
@@ -946,24 +967,19 @@ async extensionRecommendationLabRemove() : Promise<Result<null, string>> {
 }
 },
 /**
- * Record the user's approval of what an extension asked for (SPEC §6) —
- * capabilities, and the prompt layers it contributes. Called by the permission
- * sheet on Approve; the caller then retries enable.
+ * Approve the reviewed tool permissions, declarations and account configuration,
+ * then enable the extension in the same checked registry mutation.
  *
  * Grants are clamped to what the manifest actually requests, so neither a
  * compromised frontend nor a stale sheet can widen an extension's reach beyond
  * what the user was shown.
  *
- * **Prompt layers are approved here too**, by the same act and with no
- * parameter of their own: the approved value is recomputed from the pack on
- * disk, so what gets recorded is necessarily the text the sheet just rendered
- * and never something the caller supplies. An inert pack whose only ask is a
- * prompt layer therefore approves through `extension_grant(id, [])` — one
- * approval act rather than a second command that could drift from this one.
+ * Approve the exact package/registry identity shown by the permission sheet
+ * and enable it in one checked mutation. A changed review needs a fresh sheet.
  */
-async extensionGrant(id: string, permissions: string[]) : Promise<Result<null, string>> {
+async extensionGrant(id: string, permissions: string[], approvalDigest: string) : Promise<Result<null, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("extension_grant", { id, permissions }) };
+    return { status: "ok", data: await TAURI_INVOKE("extension_grant", { id, permissions, approvalDigest }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1036,6 +1052,110 @@ async mcpDisconnectProvider(id: string) : Promise<Result<null, string>> {
 async mcpTestProvider(id: string) : Promise<Result<McpDiscoveryResult, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("mcp_test_provider", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async mcpConnectionsList() : Promise<Result<ConnectionView[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("mcp_connections_list") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async mcpConnectionImport(definitionJson: string) : Promise<Result<ConnectionView, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("mcp_connection_import", { definitionJson }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Signed-store acquisition in development and the dedicated extensions alpha.
+ * Custom server configuration retains its separate development-only gate.
+ */
+async storeMcpInstall(id: string, version: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("store_mcp_install", { id, version }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Exact-revision verified update. It uses the same download/verification and
+ * final ownership gate as acquisition, never user-supplied descriptor JSON.
+ */
+async storeMcpUpdate(connectionId: string, expectedRevision: string, version: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("store_mcp_update", { connectionId, expectedRevision, version }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async mcpConnectionReplace(id: string, expectedRevision: string, definitionJson: string) : Promise<Result<ConnectionView, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("mcp_connection_replace", { id, expectedRevision, definitionJson }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async mcpConnectionRemove(id: string, expectedRevision: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("mcp_connection_remove", { id, expectedRevision }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async mcpConnectionSetEnabled(id: string, expectedRevision: string, enabled: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("mcp_connection_set_enabled", { id, expectedRevision, enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async mcpConnectionConnect(id: string, expectedRevision: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("mcp_connection_connect", { id, expectedRevision }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async mcpConnectionStatus(id: string, expectedRevision: string) : Promise<Result<McpProviderStatus, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("mcp_connection_status", { id, expectedRevision }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async mcpConnectionDisconnect(id: string, expectedRevision: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("mcp_connection_disconnect", { id, expectedRevision }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async mcpConnectionSetClientCredentials(id: string, expectedRevision: string, clientId: string, clientSecret: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("mcp_connection_set_client_credentials", { id, expectedRevision, clientId, clientSecret }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async mcpConnectionClearClientCredentials(id: string, expectedRevision: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("mcp_connection_clear_client_credentials", { id, expectedRevision }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1119,6 +1239,8 @@ async extensionCaptureApp(id: string) : Promise<Result<string | null, string>> {
 }
 },
 /**
+ * Resolve a declaration list against what is stored. Split out so
+ * [`extension_settings_sections`] reads each pack once rather than twice.
  * The live state of one extension's contributed shortcuts (SPEC §3.3), so the
  * settings section can show a chord that is registered — and name the holder
  * of one that isn't, rather than leaving a dead hotkey unexplained.
@@ -1438,7 +1560,7 @@ async changeTranscribeGpuDevice(device: string | null) : Promise<Result<null, st
  * First-call cost is dominated by enumerating GPU devices through the
  * transcribe.cpp Metal/Vulkan backend, which loads dynamic libraries and
  * probes hardware. Run it on the blocking pool so the webview thread
- * stays responsive — see also the startup pre-warm in `lib.rs`.
+ * stays responsive. Grain enumerates lazily when the settings request it.
  */
 async getAvailableAccelerators() : Promise<AvailableAccelerators> {
     return await TAURI_INVOKE("get_available_accelerators");
@@ -2493,6 +2615,11 @@ export type BindingResponse = { success: boolean; binding: ShortcutBinding | nul
 export type ChineseScript = "as_transcribed" | "simplified" | "traditional"
 export type ClipboardHandling = "dont_modify" | "copy_to_clipboard"
 /**
+ * Host UI projection, deliberately omitting vault/account IDs and numeric u64
+ * revisions (JavaScript numbers cannot represent all supported revisions).
+ */
+export type ConnectionView = { id: string; source: string; extensionId: string | null; version: string | null; revision: string; name: string; url: string; authentication: string; headers: Partial<{ [key in string]: string }>; oauthClient: McpPublicOAuthClient | null; state: string }
+/**
  * [GRAIN] One context-awareness profile, as the settings UI needs it.
  *
  * Carries BOTH texts on purpose. The UI has to be able to show the effective
@@ -2765,6 +2892,8 @@ fields: ExtensionSettingField[];
  */
 item_label: string | null }
 /**
+ * Flatten a declaration into its renderer schema (no value). Shared by
+ * top-level rows and nested list fields.
  * One row of an extension's settings section: the declaration flattened into
  * exactly what a control needs, plus the value to show.
  *
@@ -2859,9 +2988,16 @@ export type LogLevel = "trace" | "debug" | "info" | "warn" | "error"
 export type McpDiscoveryResult = { provider_id: string; provider_name: string; tool_count: number; tools: string[]; tool_set_digest: string }
 export type McpProviderStatus = { id: string; name: string; description: string; endpoint: string; setup_url: string; requires_client_credentials: boolean; client_id_configured: boolean; connected: boolean; enabled: boolean;
 /**
- * `ready` | `needs_client_credentials` | `disconnected` | `unavailable`
+ * Stored credentials are not a live health check.
+ * Storage inventory plus the last generation-owned recovery observation.
+ * Recovery is cleared on restart/invalidation; this never polls a provider.
  */
 state: string }
+/**
+ * Publisher-owned public registration. Grain discovers endpoints and keeps
+ * account tokens; this never supplies a client secret or callback override.
+ */
+export type McpPublicOAuthClient = { clientId: string; issuer: string }
 export type MicLevel = number[]
 /**
  * The model's files were removed.
@@ -3137,14 +3273,18 @@ export type ShowOverlay = string
 export type Snippet = { id: string; trigger: string; replacement: string; enabled?: boolean }
 export type SoundTheme = "marimba" | "pop" | "custom"
 /**
- * One installed extension's cover reference.
+ * One installed extension's square listing icon reference (existing API name).
  */
 export type StoreCover = { id: string; sha256: string; kind: string }
 /**
  * One card's data for the store UI (a specta-friendly projection of
  * [`IndexEntry`]; the index type itself lives in the crypto-free leaf).
  */
-export type StoreEntry = { id: string; name: string; version: string; tier: string; trust: string; capabilities: string[];
+export type StoreEntry = { id: string; kind: string; name: string; version: string;
+/**
+ * Same-kind releases preceding this one in the signed publication order.
+ */
+previous_versions: string[]; tier: string; trust: string; capabilities: string[];
 /**
  * One-line summary shown under the name on the card.
  */
@@ -3164,11 +3304,15 @@ stars: number;
  */
 installs: number;
 /**
- * README media hash (empty = none). The detail page fetches it lazily.
+ * User-facing DESCRIPTION document hash.
  */
 readme: string;
 /**
- * Screenshots / GIFs for the detail page, loaded lazily — never in browse.
+ * Square listing icon, independently addressed from the wide gallery.
+ */
+icon: StoreMedia | null;
+/**
+ * Wide gallery: first image is the store-card cover, further previews lazy.
  */
 media: StoreMedia[];
 /**
@@ -3191,11 +3335,11 @@ revocation: string | null;
  */
 flags: string[] }
 /**
- * One screenshot/GIF ref crossed to the store UI (mirror of `MediaRef`).
+ * One icon/gallery image ref crossed to the store UI (mirror of `MediaRef`).
  */
 export type StoreMedia = { sha256: string;
 /**
- * `webp` | `gif`.
+ * `png` (icon) | `webp` | `gif` (gallery).
  */
 kind: string }
 /**

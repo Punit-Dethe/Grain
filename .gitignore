@@ -99,6 +99,10 @@ Upstream/merge-report.md
 # Local planning documents
 docs/
 
+# Persistent Agent harness definitions are versioned; builds/runs are disposable.
+/tests/agent-harness/.build/
+/tests/agent-harness/.runs/
+
 # [GRAIN] Phase 5B: the extension registry is a SEPARATE git repo living as a
 # sibling subdirectory (owner decision, 2026-07-24) — one directory tree for
 # cross-referencing, its own git for clean separation. Never tracked here.

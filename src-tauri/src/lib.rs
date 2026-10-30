@@ -95,6 +95,12 @@ pub(crate) use grain_llm_client as llm_client;
 #[path = "handy/overlay.rs"]
 mod overlay;
 pub(crate) use grain_settings as settings;
+#[cfg(feature = "agent-harness")]
+mod grain_agent_harness;
+#[cfg(feature = "agent-harness")]
+mod grain_agent_harness_auth;
+#[cfg(feature = "agent-harness")]
+mod grain_agent_harness_mcp;
 mod grain_llm_fallback;
 mod grain_provider_commands;
 mod grain_transcription;
@@ -107,7 +113,10 @@ mod net_diag; // [GRAIN] shared reqwest transport-error diagnostics (upstream #1
 mod paste_tx;
 mod pill_icon; // [GRAIN] pill identity — the foreground app's icon → pill
 #[path = "handy/portable.rs"]
+#[cfg(not(feature = "agent-harness"))]
 pub mod portable;
+#[cfg(feature = "agent-harness")]
+pub use grain_agent_harness::portable;
 mod prompt_record; // [GRAIN] Prompt Record: split content vs spoken AI instruction at the shortcut mark
 mod rolling; // [GRAIN] Parakeet TDT Flow capture and scheduling service
 #[path = "handy/secure_input.rs"]
@@ -137,7 +146,11 @@ pub fn eval_requested() -> bool {
     grain_actions::eval::requested().is_some()
 }
 
+#[cfg(all(debug_assertions, not(feature = "agent-harness")))]
+mod grain_agent_probe;
+
 #[cfg(debug_assertions)]
+#[cfg(any(test, not(feature = "agent-harness")))]
 use specta_typescript::{BigIntExportBehavior, Typescript};
 use tauri_specta::{collect_commands, collect_events, Builder};
 
@@ -470,6 +483,7 @@ fn initialize_core_logic(app_handle: &AppHandle) {
     // pool (the official rmcp v3 transport). It creates no connection until a
     // provider is explicitly connected/tested and holds no service at idle.
     app_handle.manage(grain_mcp::McpHttpClient::build().expect("failed to build MCP HTTP client"));
+    app_handle.manage(grain_mcp::connections::State::default());
     // [GRAIN] Agent: holds the selection captured at summon time until the window
     // reads it on mount. The window itself is created on demand and destroyed on close.
     app_handle.manage(agent::AgentState::default());
@@ -477,11 +491,10 @@ fn initialize_core_logic(app_handle: &AppHandle) {
     // confirmed missed paste and the moment the clipboard is handed back.
     app_handle.manage(paste_catch::PasteCatchState::default());
 
-    // [GRAIN] Start the local WebSocket event transport. It launches the pill
-    // supervisor only after the listener owns its port, so rapid dev restarts
-    // cannot strand this app run without a pill.
+    // [GRAIN] Worker/developer requests use the authenticated loopback socket;
+    // recording and Agent UI events stay on the internal WebView bridge.
     if let Some(ctx) = app_handle.try_state::<Arc<grain_core::AppContext>>() {
-        events_server::start(ctx.inner().clone(), app_handle.clone());
+        events_server::start(app_handle.clone());
         // [GRAIN] extension worker lifecycle: activation dispatch + idle reaper.
         extension_host::start(app_handle.clone(), ctx.inner().clone());
         if get_settings(app_handle).extension_developer_mode {
@@ -635,6 +648,7 @@ fn initialize_core_logic(app_handle: &AppHandle) {
 
     // Apply the autostart preference (SMAppService login item on macOS 13+,
     // tauri-plugin-autostart elsewhere)
+    #[cfg(not(feature = "agent-harness"))]
     autostart::apply_autostart(app_handle, settings.autostart_enabled);
 
     // Shared recording overlay is created once during main-thread setup.
@@ -942,7 +956,7 @@ pub fn run(cli_args: CliArgs) {
 
     let specta_builder = command_bindings();
 
-    #[cfg(debug_assertions)] // <- Only export on non-release builds
+    #[cfg(all(debug_assertions, not(feature = "agent-harness")))]
     specta_builder
         .export(
             Typescript::default().bigint(BigIntExportBehavior::Number),
@@ -951,16 +965,40 @@ pub fn run(cli_args: CliArgs) {
         .expect("Failed to export typescript bindings");
 
     let invoke_handler = specta_builder.invoke_handler();
+    #[cfg(feature = "agent-harness")]
+    let invoke_handler = {
+        let harness_handler: fn(tauri::ipc::Invoke) -> bool = tauri::generate_handler![
+            grain_agent_harness::agent_harness_status,
+            grain_agent_harness::agent_harness_fixture,
+            grain_agent_harness::agent_harness_submit,
+            grain_agent_harness::agent_harness_shutdown,
+            grain_agent_harness_auth::agent_harness_auth,
+            grain_agent_harness_mcp::agent_harness_mcp,
+            grain_agent_harness_mcp::agent_harness_configured_consent,
+        ];
+        move |invoke: tauri::ipc::Invoke| {
+            if invoke.message.command().starts_with("agent_harness_") {
+                harness_handler(invoke)
+            } else {
+                invoke_handler(invoke)
+            }
+        }
+    };
 
     // The headless path must run as its own instance (see the single-instance
     // note below), not forward to an already-running app.
     // [GRAIN] `--eval <golden.json>` (Extensions V1 P3) is a headless subcommand
     // too — read straight from the args so the upstream CliArgs never learns it.
     let eval_request = crate::grain_actions::eval::requested();
+    #[cfg(all(debug_assertions, not(feature = "agent-harness")))]
+    let agent_probe = std::env::var_os("GRAIN_AGENT_PROBE_FILE").map(std::path::PathBuf::from);
+    #[cfg(not(all(debug_assertions, not(feature = "agent-harness"))))]
+    let agent_probe: Option<std::path::PathBuf> = None;
     let headless_mode = cli_args.transcribe_file.is_some()
         || cli_args.list_devices
         || cli_args.list_models
-        || eval_request.is_some();
+        || eval_request.is_some()
+        || agent_probe.is_some();
 
     #[allow(unused_mut)]
     let mut builder = tauri::Builder::default()
@@ -1023,7 +1061,7 @@ pub fn run(cli_args: CliArgs) {
     // That would make the headless path (--transcribe-file/--list-devices) a
     // silent no-op whenever the app is already open, so skip it in headless mode
     // and run a standalone instance instead.
-    if !headless_mode {
+    if !headless_mode && !cfg!(feature = "agent-harness") {
         builder = builder.plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
             if args.iter().any(|a| a == "--toggle-transcription") {
                 signal_handle::send_transcription_input(app, "transcribe", "CLI");
@@ -1066,6 +1104,11 @@ pub fn run(cli_args: CliArgs) {
             // (initialize_core_logic) sets up.
             if headless_mode {
                 let app_handle = app.handle().clone();
+                #[cfg(all(debug_assertions, not(feature = "agent-harness")))]
+                if agent_probe.is_some() {
+                    grain_agent_probe::check_identity(&app_handle)
+                        .map_err(std::io::Error::other)?;
+                }
                 // [GRAIN] AppContext must be staged before the managers — the
                 // ModelManager reads settings during construction.
                 {
@@ -1095,8 +1138,12 @@ pub fn run(cli_args: CliArgs) {
                     });
                     return Ok(());
                 }
-                // Register transcribe-cpp compute backends (required for both
-                // --list-devices and any GGUF model load).
+                // The extension probe needs no ASR managers or inference engine.
+                #[cfg(all(debug_assertions, not(feature = "agent-harness")))]
+                if let Some(path) = agent_probe.clone() {
+                    grain_agent_probe::launch(app_handle, path);
+                    return Ok(());
+                }
                 let model_manager = Arc::new(
                     ModelManager::new(&app_handle).expect("Failed to initialize model manager"),
                 );
@@ -1161,14 +1208,19 @@ pub fn run(cli_args: CliArgs) {
                 // [GRAIN] Phase 5A: the store client — loads verified roots +
                 // revocations from cache-or-seed (small, resident); the parsed
                 // index stays out of memory until the store is opened.
-                app.manage(std::sync::Arc::new(grain_store::StoreState::init(
-                    &data_dir,
-                )));
+                #[cfg(not(feature = "agent-harness"))]
+                let store = grain_store::StoreState::init(&data_dir);
+                #[cfg(feature = "agent-harness")]
+                let store = grain_store::StoreState::init_harness(&data_dir);
+                app.manage(std::sync::Arc::new(store));
                 // [GRAIN] Reconcile built-ins with what this build ships,
                 // now that AppContext + the registry are managed. Default off.
-                extension_host::reconcile_builtin_packs(&app.handle());
+                extension_host::reconcile_builtin_packs(&app.handle())
+                    .map_err(std::io::Error::other)?;
             }
 
+            #[cfg(feature = "agent-harness")]
+            grain_agent_harness::configure(app.handle()).map_err(std::io::Error::other)?;
             let mut settings = get_settings(&app.handle());
 
             // CLI --debug flag overrides debug_mode and log level (runtime-only, not persisted)
@@ -1214,6 +1266,7 @@ pub fn run(cli_args: CliArgs) {
             // start-hidden skips the WebView, or after close destroyed it to
             // release WebView2 RAM. This is one delayed task, not a resident
             // polling engine.
+            #[cfg(not(feature = "agent-harness"))]
             grain_update::spawn_automatic_check(app_handle.clone());
 
             // Hide tray icon if --no-tray was passed
@@ -1305,7 +1358,7 @@ pub fn run(cli_args: CliArgs) {
         .invoke_handler(invoke_handler)
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
-        .run(|app, event| {
+        .run(move |app, event| {
             #[cfg(target_os = "macos")]
             if let tauri::RunEvent::Reopen { .. } = &event {
                 show_main_window(app);
@@ -1327,7 +1380,10 @@ pub fn run(cli_args: CliArgs) {
             }
             if let tauri::RunEvent::Exit = &event {
                 extension_companion::stop_all();
-                if let Some(ctx) = app.try_state::<Arc<grain_core::AppContext>>() {
+                if let Some(ctx) = app
+                    .try_state::<Arc<grain_core::AppContext>>()
+                    .filter(|_| !headless_mode)
+                {
                     events_server::disable_dev_control(&ctx.data_dir);
                 }
             }
@@ -1410,6 +1466,8 @@ fn command_bindings() -> Builder<tauri::Wry> {
             grain_commands::change_capture_end_with_ai_setting,
             grain_commands::change_capture_always_ai_setting,
             grain_commands::change_context_awareness_enabled_setting,
+            grain_commands::change_agent_enabled_setting,
+            grain_commands::change_snippets_enabled_setting,
             grain_commands::change_agent_autocopy_setting,
             grain_commands::change_agent_quick_enabled_setting,
             grain_commands::change_agent_screen_image_setting,
@@ -1449,6 +1507,18 @@ fn command_bindings() -> Builder<tauri::Wry> {
             grain_mcp::mcp_connect_provider,
             grain_mcp::mcp_disconnect_provider,
             grain_mcp::mcp_test_provider,
+            grain_mcp::connections::mcp_connections_list,
+            grain_mcp::connections::mcp_connection_import,
+            grain_store::store_mcp_install,
+            grain_store::store_mcp_update,
+            grain_mcp::connections::mcp_connection_replace,
+            grain_mcp::connections::mcp_connection_remove,
+            grain_mcp::connections::mcp_connection_set_enabled,
+            grain_mcp::connections::mcp_connection_connect,
+            grain_mcp::connections::mcp_connection_status,
+            grain_mcp::connections::mcp_connection_disconnect,
+            grain_mcp::connections::mcp_connection_set_client_credentials,
+            grain_mcp::connections::mcp_connection_clear_client_credentials,
             grain_commands::extension_take_slot,
             grain_commands::extension_settings_schema,
             grain_commands::extension_settings_sections,

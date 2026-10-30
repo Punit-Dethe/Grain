@@ -8,13 +8,13 @@
 //!
 //! This module is deliberately pure (no sockets, no Tauri) so the security
 //! properties are unit-tested directly: tokenless/unknown rejection, identity
-//! from the table, and per-capability event filtering.
+//! from the table, role preservation and token revocation. Public sockets no
+//! longer subscribe to the core event bus at all (`events_server`).
 
 use std::collections::{HashMap, HashSet};
 use std::sync::RwLock;
 
-use grain_core::DaemonEvent;
-use grain_sdk::{daemon_event_capability, ClientHello};
+use grain_sdk::ClientHello;
 
 /// What a connected client may receive/do. Extension workers get `Named` sets
 /// derived from user-granted manifests; developer control receives no events.
@@ -96,33 +96,6 @@ impl TokenRegistry {
     }
 }
 
-/// The capability an event requires. Phase 0 granularity: transcript-bearing
-/// events, the high-frequency level feed, and everything else as session/UI
-/// signals. Refined in Phase 2 when `Named` consumers exist.
-fn required_capability(ev: &DaemonEvent) -> &'static str {
-    daemon_event_capability(ev.variant_name())
-        .expect("every DaemonEvent variant must have a capability mapping")
-}
-
-/// May this identity receive this event? (Filtered = never sent, not blanked.)
-pub fn allows_event(identity: &ClientIdentity, ev: &DaemonEvent) -> bool {
-    if identity.role == ClientRole::DevControl {
-        return false;
-    }
-    // Recommendation ranking and the searchable pool are host UI state before
-    // the user has selected an owner. They are pill-only regardless of ordinary
-    // event grants; workers must not observe or spoof chooser lifecycle.
-    if matches!(
-        ev,
-        DaemonEvent::ExtensionRecommend { .. } | DaemonEvent::ExtensionRecommendClear
-    ) {
-        return false;
-    }
-    match &identity.caps {
-        CapabilitySet::Named(caps) => caps.contains(required_capability(ev)),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -162,38 +135,6 @@ mod tests {
             id.caps,
             CapabilitySet::Named(["events:sessions".to_string()].into_iter().collect())
         );
-    }
-
-    #[test]
-    fn capability_filter_gates_transcripts_and_levels() {
-        let reg = registry_with_ext();
-        let ext = reg.authenticate(r#"{"token":"ext-a-secret"}"#).unwrap();
-
-        let transcript = DaemonEvent::TranscriptionComplete {
-            session_id: 1,
-            text: "secret words".into(),
-        };
-        let session = DaemonEvent::RecordingStopped { session_id: 1 };
-        let levels = DaemonEvent::AudioLevel { levels: vec![0.5] };
-
-        assert!(!allows_event(&ext, &transcript), "no transcript cap");
-        assert!(!allows_event(&ext, &levels), "no audio-levels cap");
-        assert!(allows_event(&ext, &session), "sessions granted");
-    }
-
-    #[test]
-    fn extension_recommendations_are_pill_only_even_with_transcript_access() {
-        let event = DaemonEvent::ExtensionRecommend {
-            presentation_id: 7,
-            candidates: vec![],
-            name_only: false,
-        };
-        let worker = ClientIdentity {
-            id: "com.example.transcriber".into(),
-            role: ClientRole::Worker,
-            caps: CapabilitySet::Named(["events:transcripts".to_string()].into_iter().collect()),
-        };
-        assert!(!allows_event(&worker, &event));
     }
 
     #[test]

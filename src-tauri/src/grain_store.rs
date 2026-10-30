@@ -17,23 +17,35 @@
 //! memory; the entry list is dropped. Nothing here runs on a timer.
 
 use std::path::{Path, PathBuf};
-use std::sync::RwLock;
+use std::sync::{Mutex, MutexGuard, RwLock};
 
 use grain_core::install::{self, InstallError};
 use grain_core::pack::ExtractLimits;
+use grain_core::store_cache::{self, Metadata, SignedDocument};
 use grain_core::trust::{self, IndexStatus, TrustError};
 use grain_sdk::distribution::{Index, IndexEntry, RevocationState, Revocations, Roots};
 use serde::Serialize;
 
-const STORE_DOCUMENT_MAX_BYTES: u64 = 4 * 1024 * 1024;
-const STORE_SIGNATURE_MAX_BYTES: u64 = 64 * 1024;
+const STORE_DOCUMENT_MAX_BYTES: u64 = store_cache::DOCUMENT_MAX_BYTES;
+const STORE_SIGNATURE_MAX_BYTES: u64 = store_cache::SIGNATURE_MAX_BYTES;
 const STORE_MEDIA_MAX_BYTES: u64 = 16 * 1024 * 1024;
+const STORE_OPERATION_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// Serializes only short synchronous commits; no lock spans network I/O.
+struct StoreOwnership {
+    revision: u64,
+    can_install: bool,
+    changed: tokio::sync::watch::Sender<u64>,
+}
 
 /// The resident store state (registered as managed Tauri state). Roots and
 /// revocations are small and stay loaded; the parsed index is present only
 /// while the Extensions store UI is active.
 pub struct StoreState {
+    ownership: Mutex<StoreOwnership>,
     cache_dir: PathBuf,
+    /// An unreadable/untrusted selection cannot silently reset rollback floors.
+    cache_unavailable: bool,
     roots: RwLock<Roots>,
     revocations: RwLock<Revocations>,
     index: RwLock<Option<Index>>,
@@ -46,8 +58,11 @@ pub struct StoreState {
 #[derive(Clone, Serialize, specta::Type)]
 pub struct StoreEntry {
     pub id: String,
+    pub kind: String,
     pub name: String,
     pub version: String,
+    /// Same-kind releases preceding this one in the signed publication order.
+    pub previous_versions: Vec<String>,
     pub tier: String,
     pub trust: String,
     pub capabilities: Vec<String>,
@@ -65,9 +80,11 @@ pub struct StoreEntry {
     /// Popularity signal shown on the card and detail page. Read straight from
     /// the signed index — the client never counts or queries per card.
     pub installs: u64,
-    /// README media hash (empty = none). The detail page fetches it lazily.
+    /// User-facing DESCRIPTION document hash.
     pub readme: String,
-    /// Screenshots / GIFs for the detail page, loaded lazily — never in browse.
+    /// Square listing icon, independently addressed from the wide gallery.
+    pub icon: Option<StoreMedia>,
+    /// Wide gallery: first image is the store-card cover, further previews lazy.
     pub media: Vec<StoreMedia>,
     /// What kind of thing this is, for the store's filter row.
     pub categories: Vec<String>,
@@ -82,11 +99,11 @@ pub struct StoreEntry {
     pub flags: Vec<String>,
 }
 
-/// One screenshot/GIF ref crossed to the store UI (mirror of `MediaRef`).
+/// One icon/gallery image ref crossed to the store UI (mirror of `MediaRef`).
 #[derive(Clone, Serialize, specta::Type)]
 pub struct StoreMedia {
     pub sha256: String,
-    /// `webp` | `gif`.
+    /// `png` (icon) | `webp` | `gif` (gallery).
     pub kind: String,
 }
 
@@ -133,6 +150,76 @@ fn trust_str(t: grain_sdk::Trust) -> &'static str {
 }
 
 impl StoreState {
+    // Component-test fixture only. Production revocations enter through the
+    // existing signed cache/refresh verifier, never through this setter.
+    #[cfg(test)]
+    pub(crate) fn set_test_revocations(&self, revocations: Revocations) {
+        *self.revocations.write().unwrap() = revocations;
+    }
+
+    /// Fixed test trust anchor and loopback transport, compiled only into the
+    /// guarded isolated acceptance host. Root rotation is intentionally excluded.
+    #[cfg(feature = "agent-harness")]
+    pub(crate) fn init_harness(data_dir: &Path) -> Self {
+        let mut state = Self::init(data_dir);
+        if let Some(base) = crate::grain_agent_harness::store_base(data_dir) {
+            let roots = Roots {
+                spec: 1,
+                version: 1,
+                publishing_key: crate::grain_agent_harness::STORE_PUBLISHING_KEY.into(),
+                base_urls: vec![base],
+                mirrors: Vec::new(),
+                expires: None,
+            };
+            *state.stored_version.get_mut().unwrap() =
+                load_cached_index(&state.cache_dir, &roots, None, now_unix())
+                    .ok()
+                    .map(|(index, _)| index.version);
+            *state.revocations.get_mut().unwrap() =
+                load_cached_revocations(&state.cache_dir, &roots).unwrap_or(Revocations {
+                    spec: 1,
+                    version: 0,
+                    expires: String::new(),
+                    entries: Vec::new(),
+                });
+            *state.roots.get_mut().unwrap() = roots;
+            // The existing guarded host uses a fixed fixture publisher instead
+            // of public roots. Verify its entire selected index/policy here.
+            state.cache_unavailable = match Metadata::read(&state.cache_dir) {
+                Ok(None) => false,
+                Ok(Some(cache)) => {
+                    trust::verify_index(
+                        state.roots.get_mut().unwrap(),
+                        &cache.index.document,
+                        &cache.index.signature,
+                        None,
+                        now_unix(),
+                        false,
+                    )
+                    .is_err()
+                        || trust::verify_revocations(
+                            state.roots.get_mut().unwrap(),
+                            &cache.revocations.document,
+                            &cache.revocations.signature,
+                        )
+                        .is_err()
+                }
+                Err(_) => true,
+            };
+        }
+        state
+    }
+
+    #[cfg(feature = "agent-harness")]
+    pub(crate) fn harness_snapshot(&self) -> serde_json::Value {
+        let owner = self.ownership.lock().unwrap();
+        serde_json::json!({
+            "indexResident": self.index.read().unwrap().is_some(),
+            "canInstall": owner.can_install,
+            "storedVersion": *self.stored_version.read().unwrap(),
+        })
+    }
+
     /// Load roots + revocations from the disk cache, falling back to the
     /// embedded seed. The index is intentionally **not** loaded here (only its
     /// version, for the rollback floor) so idle footprint stays minimal.
@@ -140,41 +227,55 @@ impl StoreState {
         let cache_dir = data_dir.join("store");
         let _ = std::fs::create_dir_all(&cache_dir);
 
-        // Roots: cache first (verified against the pinned keys), else seed.
-        let roots = load_cached_roots(&cache_dir)
-            .or_else(|| {
-                trust::verify_roots(trust::SEED_ROOTS.as_bytes(), trust::SEED_ROOTS_SIG).ok()
-            })
-            .unwrap_or_else(|| {
-                // The seed is embedded and signed at build time; this cannot
-                // fail unless the binary is corrupt.
-                panic!("embedded seed roots failed to verify — corrupt binary");
-            });
-
-        // Revocations: cache first, else seed.
-        let revocations = load_cached_revocations(&cache_dir, &roots)
-            .or_else(|| {
-                trust::verify_revocations(
-                    &roots,
-                    trust::SEED_REVOCATIONS.as_bytes(),
-                    trust::SEED_REVOCATIONS_SIG,
-                )
-                .ok()
-            })
-            .unwrap_or_else(|| Revocations {
-                spec: 1,
-                version: 0,
-                expires: String::new(),
-                entries: Vec::new(),
-            });
-
-        // Rollback floor from any cached index (verify, read version, drop).
-        let stored_version = load_cached_index(&cache_dir, &roots, None, now_unix())
-            .ok()
-            .map(|(idx, _)| idx.version);
+        // Authenticate one complete selection, never independent disk pairs.
+        // Absence bootstraps; corruption cannot be interpreted as a fresh user.
+        let cached = Metadata::read(&cache_dir);
+        let mut cache_unavailable = cached.is_err();
+        let mut roots = trust::verify_roots(trust::SEED_ROOTS.as_bytes(), trust::SEED_ROOTS_SIG)
+            .expect("embedded seed roots failed to verify");
+        let mut revocations = trust::verify_revocations(
+            &roots,
+            trust::SEED_REVOCATIONS.as_bytes(),
+            trust::SEED_REVOCATIONS_SIG,
+        )
+        .expect("embedded seed revocations failed to verify");
+        let mut stored_version = None;
+        if let Ok(Some(cache)) = cached {
+            match trust::verify_roots(&cache.roots.document, &cache.roots.signature) {
+                Ok(verified) => roots = verified,
+                Err(_) => cache_unavailable = true,
+            }
+            // Catalogue corruption must not discard an independently valid
+            // signed kill switch. Invalid roots never select an untrusted key.
+            match trust::verify_revocations(
+                &roots,
+                &cache.revocations.document,
+                &cache.revocations.signature,
+            ) {
+                Ok(verified) => revocations = verified,
+                Err(_) => cache_unavailable = true,
+            }
+            match trust::verify_index(
+                &roots,
+                &cache.index.document,
+                &cache.index.signature,
+                None,
+                now_unix(),
+                false,
+            ) {
+                Ok((index, _)) => stored_version = Some(index.version),
+                Err(_) => cache_unavailable = true,
+            }
+        }
 
         StoreState {
+            ownership: Mutex::new(StoreOwnership {
+                revision: 0,
+                can_install: false,
+                changed: tokio::sync::watch::channel(0).0,
+            }),
             cache_dir,
+            cache_unavailable,
             roots: RwLock::new(roots),
             revocations: RwLock::new(revocations),
             index: RwLock::new(None),
@@ -188,29 +289,90 @@ impl StoreState {
         self.revocations.read().unwrap().state_for(id, version)
     }
 
+    /// Uses the resident signed kill switch even with the store closed. No
+    /// catalogue/tools/network cache is retained to make this decision.
+    pub(crate) fn mcp_record_allowed(
+        &self,
+        record: &grain_core::mcp_connections::ConnectionRecord,
+    ) -> bool {
+        self.revocations.read().is_ok_and(|revocations| {
+            record.revocation_state(&revocations) != Some(RevocationState::Revoked)
+        })
+    }
+
     /// Drop the parsed index when the Extensions store UI closes. Roots and
     /// revocations stay resident.
     pub fn close(&self) {
+        let mut owner = self.ownership.lock().unwrap();
+        Self::invalidate(&mut owner);
         *self.index.write().unwrap() = None;
+    }
+
+    fn invalidate(owner: &mut StoreOwnership) {
+        owner.revision = owner
+            .revision
+            .checked_add(1)
+            .expect("store revision exhausted");
+        owner.can_install = false;
+        owner.changed.send_replace(owner.revision);
+    }
+
+    fn begin_refresh(&self) -> (u64, tokio::sync::watch::Receiver<u64>) {
+        let mut owner = self.ownership.lock().unwrap();
+        Self::invalidate(&mut owner);
+        (owner.revision, owner.changed.subscribe())
+    }
+
+    fn current(&self, revision: u64) -> Result<MutexGuard<'_, StoreOwnership>, String> {
+        let owner = self.ownership.lock().unwrap();
+        if owner.revision != revision {
+            return Err("store changed or closed; reopen it before installing".into());
+        }
+        Ok(owner)
+    }
+
+    async fn while_current<T>(
+        &self,
+        revision: u64,
+        mut changed: tokio::sync::watch::Receiver<u64>,
+        operation: impl std::future::Future<Output = T>,
+    ) -> Result<T, String> {
+        if *changed.borrow_and_update() != revision {
+            return Err("store operation superseded".into());
+        }
+        tokio::select! {
+            biased;
+            _ = changed.changed() => Err("store operation superseded".into()),
+            _ = tokio::time::sleep(STORE_OPERATION_TIMEOUT) => Err("store operation timed out".into()),
+            result = operation => Ok(result),
+        }
     }
 
     /// Ensure the index is resident (from cache or seed), returning the view.
     /// Used when opening the store without a network round-trip.
+    #[cfg(test)]
     fn view_from_resident(&self) -> StoreView {
+        let mut owner = self.ownership.lock().unwrap();
+        owner.can_install = false;
+        self.offline_view()
+    }
+
+    /// Caller holds ownership so an obsolete fallback cannot reopen the store.
+    fn offline_view(&self) -> StoreView {
         let mut guard = self.index.write().unwrap();
         if guard.is_none() {
             let roots = self.roots.read().unwrap();
-            let loaded = load_cached_index(&self.cache_dir, &roots, None, now_unix())
-                .map(|(idx, status)| (idx, status))
-                .or_else(|_| {
+            let stored = *self.stored_version.read().unwrap();
+            let loaded =
+                load_cached_index(&self.cache_dir, &roots, stored, now_unix()).or_else(|_| {
                     // Seed is expiry-exempt until the first refresh.
                     trust::verify_index(
                         &roots,
                         trust::SEED_INDEX.as_bytes(),
                         trust::SEED_INDEX_SIG,
-                        None,
+                        stored,
                         now_unix(),
-                        true,
+                        stored.is_none(),
                     )
                 });
             match loaded {
@@ -233,66 +395,117 @@ impl StoreState {
     }
 }
 
+/// The publisher appends releases to the signed index. Keep one latest eligible
+/// publication per id for browsing, installed details and icons. Older releases
+/// remain in the verified index for exact-version integrity and revocations.
+fn latest_entries(entries: &[IndexEntry]) -> std::collections::BTreeMap<&str, &IndexEntry> {
+    let mut latest = std::collections::BTreeMap::new();
+    for entry in entries {
+        let valid = match entry.artifact_kind {
+            grain_sdk::distribution::ArtifactKind::Native => entry.validate_tool_only().is_ok(),
+            grain_sdk::distribution::ArtifactKind::McpDescriptor => {
+                entry.validate_mcp_installable().is_ok()
+            }
+        };
+        if valid {
+            latest.insert(entry.id.as_str(), entry);
+        }
+    }
+    latest
+}
+
 fn project_entries(entries: &[IndexEntry], revocations: &Revocations) -> Vec<StoreEntry> {
+    latest_entries(entries)
+        .into_values()
+        .map(|e| project_entry(entries, e, revocations))
+        .collect()
+}
+
+fn previous_versions(entries: &[IndexEntry], target: &IndexEntry) -> Vec<String> {
     entries
         .iter()
-        .filter(|entry| {
-            entry.id != "grain.agent-center-layout"
-                && !entry.capabilities.iter().any(|capability| {
-                    matches!(
-                        capability.as_str(),
-                        "surface:workspace" | "surface:overlay" | "pill:slots"
-                    )
-                })
-                && !entry.extends.iter().any(|surface| {
-                    matches!(
-                        surface.as_str(),
-                        "pill.theme"
-                            | "agent.reply-surface"
-                            | "overlay.recording"
-                            | "overlay.pointer"
-                    ) || surface.starts_with("overrides:")
-                })
-        })
-        .map(|e| StoreEntry {
-            id: e.id.clone(),
-            name: e.name.clone(),
-            version: e.version.clone(),
-            tier: tier_str(&e.tier).into(),
-            trust: trust_str(e.trust).into(),
-            capabilities: e.capabilities.clone(),
-            description: e.description.clone(),
-            repo: e.repo.clone(),
-            size: e.size.to_string(),
-            author: e.author.clone(),
-            reviewed_at: e.reviewed_at.clone(),
-            reviewed_commit: e.reviewed_commit.clone(),
-            stars: e.stars,
-            installs: e.installs,
-            readme: e.readme.clone(),
-            media: e
-                .media
-                .iter()
-                .map(|m| StoreMedia {
-                    sha256: m.sha256.clone(),
-                    kind: m.kind.clone(),
-                })
-                .collect(),
-            categories: e.categories.clone(),
-            extends: e.extends.clone(),
-            revocation: revocations.state_for(&e.id, &e.version).map(|s| {
-                match s {
-                    RevocationState::Revoked => "revoked",
-                    RevocationState::Deprecated => "deprecated",
-                }
-                .to_string()
-            }),
-            flags: grain_sdk::flagged_combinations(&e.capabilities, e.tier.clone())
-                .into_iter()
-                .map(|f| f.reason().to_string())
-                .collect(),
-        })
+        .take_while(|entry| entry.id != target.id || entry.version != target.version)
+        .filter(|entry| entry.id == target.id && entry.artifact_kind == target.artifact_kind)
+        .map(|entry| entry.version.clone())
         .collect()
+}
+
+fn ensure_release_order(
+    entries: &[IndexEntry],
+    target: &IndexEntry,
+    installed_version: Option<&str>,
+) -> Result<(), String> {
+    if latest_entries(entries)
+        .get(target.id.as_str())
+        .is_none_or(|latest| latest.version != target.version)
+    {
+        return Err(
+            "This release is no longer the current store version; refresh the store.".into(),
+        );
+    }
+    if installed_version.is_some_and(|installed| {
+        installed != target.version
+            && !previous_versions(entries, target)
+                .iter()
+                .any(|version| version == installed)
+    }) {
+        return Err(
+            "The installed release does not precede this store version; no update is available."
+                .into(),
+        );
+    }
+    Ok(())
+}
+
+fn project_entry(entries: &[IndexEntry], e: &IndexEntry, revocations: &Revocations) -> StoreEntry {
+    StoreEntry {
+        id: e.id.clone(),
+        kind: match e.artifact_kind {
+            grain_sdk::distribution::ArtifactKind::Native => "native",
+            grain_sdk::distribution::ArtifactKind::McpDescriptor => "mcp",
+        }
+        .into(),
+        name: e.name.clone(),
+        version: e.version.clone(),
+        previous_versions: previous_versions(entries, e),
+        tier: tier_str(&e.tier).into(),
+        trust: trust_str(e.trust).into(),
+        capabilities: e.capabilities.clone(),
+        description: e.description.clone(),
+        repo: e.repo.clone(),
+        size: e.size.to_string(),
+        author: e.author.clone(),
+        reviewed_at: e.reviewed_at.clone(),
+        reviewed_commit: e.reviewed_commit.clone(),
+        stars: e.stars,
+        installs: e.installs,
+        readme: e.detail_document_hash().into(),
+        icon: e.icon.as_ref().map(|icon| StoreMedia {
+            sha256: icon.sha256.clone(),
+            kind: icon.kind.clone(),
+        }),
+        media: e
+            .media
+            .iter()
+            .map(|m| StoreMedia {
+                sha256: m.sha256.clone(),
+                kind: m.kind.clone(),
+            })
+            .collect(),
+        categories: e.categories.clone(),
+        extends: e.extends.clone(),
+        revocation: revocations.state_for(&e.id, &e.version).map(|s| {
+            match s {
+                RevocationState::Revoked => "revoked",
+                RevocationState::Deprecated => "deprecated",
+            }
+            .to_string()
+        }),
+        flags: grain_sdk::flagged_combinations(&e.capabilities, e.tier.clone())
+            .into_iter()
+            .map(|f| f.reason().to_string())
+            .collect(),
+    }
 }
 
 fn now_unix() -> i64 {
@@ -306,13 +519,14 @@ fn now_unix() -> i64 {
 // ── Cache helpers (all verify before returning) ────────────────────────────
 
 fn read_pair(dir: &Path, name: &str) -> Option<(Vec<u8>, String)> {
-    let doc = read_bounded_file(&dir.join(name), STORE_DOCUMENT_MAX_BYTES)?;
-    let sig = String::from_utf8(read_bounded_file(
-        &dir.join(format!("{name}.minisig")),
-        STORE_SIGNATURE_MAX_BYTES,
-    )?)
-    .ok()?;
-    Some((doc, sig))
+    let cache = Metadata::read(dir).ok()??;
+    let pair = match name {
+        "roots.json" => cache.roots,
+        "index.json" => cache.index,
+        "revocations.json" => cache.revocations,
+        _ => return None,
+    };
+    Some((pair.document, pair.signature))
 }
 
 fn read_bounded_file(path: &Path, max: u64) -> Option<Vec<u8>> {
@@ -324,16 +538,7 @@ fn read_bounded_file(path: &Path, max: u64) -> Option<Vec<u8>> {
     (bytes.len() as u64 <= max).then_some(bytes)
 }
 
-fn write_pair(dir: &Path, name: &str, doc: &[u8], sig: &str) {
-    let _ = std::fs::write(dir.join(name), doc);
-    let _ = std::fs::write(dir.join(format!("{name}.minisig")), sig);
-}
-
-fn load_cached_roots(dir: &Path) -> Option<Roots> {
-    let (doc, sig) = read_pair(dir, "roots.json")?;
-    trust::verify_roots(&doc, &sig).ok()
-}
-
+#[cfg(feature = "agent-harness")]
 fn load_cached_revocations(dir: &Path, roots: &Roots) -> Option<Revocations> {
     let (doc, sig) = read_pair(dir, "revocations.json")?;
     trust::verify_revocations(roots, &doc, &sig).ok()
@@ -380,10 +585,74 @@ async fn fetch_text(client: &reqwest::Client, base: &str, name: &str, max: u64) 
 /// verifying each, caching on success, and applying revocations. Returns the
 /// resulting [`StoreView`]; on total network failure it falls back to cache.
 pub async fn refresh(state: &StoreState, client: &reqwest::Client) -> StoreView {
-    refresh_at(state, client, now_unix()).await
+    refresh_with_clock(state, client, now_unix).await
 }
 
-async fn refresh_at(state: &StoreState, client: &reqwest::Client, now: i64) -> StoreView {
+fn closed_view() -> StoreView {
+    StoreView {
+        status: "offline".into(),
+        can_install: false,
+        entries: Vec::new(),
+    }
+}
+
+fn ensure_metadata_fresh(state: &StoreState, now: i64) -> Result<(), String> {
+    if state.cache_unavailable {
+        return Err(
+            "store metadata cache is unreadable or untrusted; reset it before installing".into(),
+        );
+    }
+    if trust::roots_status(&state.roots.read().unwrap(), now).map_err(|e| e.to_string())?
+        != IndexStatus::Fresh
+        || trust::revocations_status(&state.revocations.read().unwrap(), now)
+            .map_err(|e| e.to_string())?
+            != IndexStatus::Fresh
+    {
+        return Err(
+            "store roots or revocations are expired or unsupported; refresh before installing"
+                .into(),
+        );
+    }
+    Ok(())
+}
+
+async fn refresh_with_clock(
+    state: &StoreState,
+    client: &reqwest::Client,
+    now: impl Fn() -> i64 + Sync,
+) -> StoreView {
+    let (revision, changed) = state.begin_refresh();
+    match state
+        .while_current(
+            revision,
+            changed,
+            refresh_owned(state, client, revision, &now),
+        )
+        .await
+    {
+        Ok(view) => view,
+        Err(_) => {
+            // Only the current attempt may load a fallback; close/replacement wins.
+            match state.current(revision) {
+                Ok(_owner) => state.offline_view(),
+                Err(_) => closed_view(),
+            }
+        }
+    }
+}
+
+async fn refresh_owned(
+    state: &StoreState,
+    client: &reqwest::Client,
+    revision: u64,
+    now: &(impl Fn() -> i64 + Sync),
+) -> StoreView {
+    if state.cache_unavailable {
+        return match state.current(revision) {
+            Ok(_owner) => state.offline_view(),
+            Err(_) => closed_view(),
+        };
+    }
     let bases: Vec<String> = {
         let roots = state.roots.read().unwrap();
         roots
@@ -395,7 +664,10 @@ async fn refresh_at(state: &StoreState, client: &reqwest::Client, now: i64) -> S
     };
 
     for base in &bases {
-        // roots.json — verified against pinned keys; adopt if newer.
+        // Verify pending roots without publishing them. A later signature,
+        // download failure or cancelled refresh must leave current trust intact.
+        let mut roots = state.roots.read().unwrap().clone();
+        let mut roots_update = None;
         if let (Some(rdoc), Some(rsig)) = (
             fetch(client, base, "roots.json", STORE_DOCUMENT_MAX_BYTES).await,
             fetch_text(
@@ -407,15 +679,16 @@ async fn refresh_at(state: &StoreState, client: &reqwest::Client, now: i64) -> S
             .await,
         ) {
             if let Ok(new_roots) = trust::verify_roots(&rdoc, &rsig) {
-                let adopt = new_roots.version >= state.roots.read().unwrap().version;
-                if adopt {
-                    write_pair(&state.cache_dir, "roots.json", &rdoc, &rsig);
-                    *state.roots.write().unwrap() = new_roots;
+                if new_roots.version >= roots.version {
+                    roots = new_roots;
+                    roots_update = Some((rdoc, rsig));
                 }
             }
         }
 
-        let roots = state.roots.read().unwrap().clone();
+        if trust::roots_status(&roots, now()) != Ok(IndexStatus::Fresh) {
+            continue;
+        }
         let stored = *state.stored_version.read().unwrap();
 
         let (Some(idoc), Some(isig)) = (
@@ -430,13 +703,13 @@ async fn refresh_at(state: &StoreState, client: &reqwest::Client, now: i64) -> S
         ) else {
             continue;
         };
-        let Ok((index, status)) = trust::verify_index(&roots, &idoc, &isig, stored, now, false)
-        else {
+        let Ok((index, _)) = trust::verify_index(&roots, &idoc, &isig, stored, now(), false) else {
             continue;
         };
 
-        // revocations.json — verify and apply; missing is not fatal.
-        if let (Some(vdoc), Some(vsig)) = (
+        // A fresh index alone cannot authorize installation. Require a signed
+        // current revocation response, including for an empty initial catalogue.
+        let (Some(vdoc), Some(vsig)) = (
             fetch(client, base, "revocations.json", STORE_DOCUMENT_MAX_BYTES).await,
             fetch_text(
                 client,
@@ -445,15 +718,171 @@ async fn refresh_at(state: &StoreState, client: &reqwest::Client, now: i64) -> S
                 STORE_SIGNATURE_MAX_BYTES,
             )
             .await,
-        ) {
-            if let Ok(revs) = trust::verify_revocations(&roots, &vdoc, &vsig) {
-                write_pair(&state.cache_dir, "revocations.json", &vdoc, &vsig);
-                *state.revocations.write().unwrap() = revs;
+        ) else {
+            continue;
+        };
+        let Ok(revs) = trust::verify_revocations(&roots, &vdoc, &vsig) else {
+            continue;
+        };
+
+        let Ok(mut owner) = state.current(revision) else {
+            return closed_view();
+        };
+        let stored = *state.stored_version.read().unwrap();
+        if stored.is_some_and(|floor| index.version < floor) {
+            continue;
+        }
+        let Ok(status) = trust::index_status(&index, now()) else {
+            continue;
+        };
+        let current_revs = state.revocations.read().unwrap();
+        let replace_revs = revs.version >= current_revs.version;
+        let selected_revs = if replace_revs { &revs } else { &*current_revs };
+        let same_publisher = roots.publishing_key == state.roots.read().unwrap().publishing_key;
+        let metadata_fresh = trust::roots_status(&roots, now()) == Ok(IndexStatus::Fresh)
+            && trust::revocations_status(&revs, now()) == Ok(IndexStatus::Fresh)
+            && trust::revocations_status(selected_revs, now()) == Ok(IndexStatus::Fresh);
+        drop(current_revs);
+        let (mut cache, had_cache) = match Metadata::read(&state.cache_dir) {
+            Ok(Some(cache)) => (cache, true),
+            Ok(None) => (Metadata::seed(), false),
+            Err(_) => continue,
+        };
+        // Authenticate prior bytes before using their identity or preserving
+        // them in another snapshot. A newer disk selection also keeps its floor
+        // if a previous operation could not report successful persistence.
+        let resident_roots = state.roots.read().unwrap().clone();
+        let Ok(previous_roots) = trust::verify_roots(&cache.roots.document, &cache.roots.signature)
+        else {
+            continue;
+        };
+        if let Some((rdoc, _)) = &roots_update {
+            if store_cache::check_identity(
+                previous_roots.version,
+                &cache.roots.document,
+                roots.version,
+                rdoc,
+            )
+            .is_err()
+            {
+                continue;
+            }
+        }
+        if had_cache {
+            let Ok((previous_index, _)) = trust::verify_index(
+                &resident_roots,
+                &cache.index.document,
+                &cache.index.signature,
+                stored,
+                now(),
+                false,
+            ) else {
+                continue;
+            };
+            if store_cache::check_identity(
+                previous_index.version,
+                &cache.index.document,
+                index.version,
+                &idoc,
+            )
+            .is_err()
+            {
+                continue;
+            }
+            let Ok(previous_revs) = trust::verify_revocations(
+                &resident_roots,
+                &cache.revocations.document,
+                &cache.revocations.signature,
+            ) else {
+                continue;
+            };
+            if replace_revs
+                && store_cache::check_identity(
+                    previous_revs.version,
+                    &cache.revocations.document,
+                    revs.version,
+                    &vdoc,
+                )
+                .is_err()
+            {
+                continue;
+            }
+            if !replace_revs && previous_revs.version != state.revocations.read().unwrap().version {
+                continue;
+            }
+        } else if !replace_revs {
+            // No authenticated durable proof exists for the stronger resident
+            // policy; do not serialize a forged document or forget that floor.
+            continue;
+        }
+        // Current-key negative policy takes effect even when persistence or
+        // acquisition fails. Only a successful cache commit grants installs.
+        if replace_revs && same_publisher && revs.spec == 1 {
+            *state.revocations.write().unwrap() = revs.clone();
+        }
+        let generation_matches = trust::verify_metadata_generation(
+            &index,
+            roots_update
+                .as_ref()
+                .map_or(cache.roots.document.as_slice(), |(doc, _)| doc.as_slice()),
+            if replace_revs {
+                &vdoc
+            } else {
+                &cache.revocations.document
+            },
+        )
+        .is_ok();
+        // An older response cannot replace resident policy. A changed publisher
+        // cannot borrow policy authenticated only by its predecessor's key.
+        if (!replace_revs && !same_publisher) || !metadata_fresh || !generation_matches {
+            if replace_revs && same_publisher && revs.spec == 1 {
+                cache.revocations = SignedDocument {
+                    document: vdoc,
+                    signature: vsig,
+                };
+                // Preserve the prior trusted catalogue and its rollback floor.
+                if trust::verify_index(
+                    &resident_roots,
+                    &cache.index.document,
+                    &cache.index.signature,
+                    stored,
+                    now(),
+                    false,
+                )
+                .is_ok()
+                {
+                    if let Err(error) = cache.write(&state.cache_dir) {
+                        log::warn!("store revocation cache persistence failed: {error}");
+                    }
+                }
+            }
+            continue;
+        }
+
+        if status != IndexStatus::Fresh && replace_revs && same_publisher && revs.spec == 1 {
+            cache.revocations = SignedDocument {
+                document: vdoc.clone(),
+                signature: vsig.clone(),
+            };
+            if trust::verify_index(
+                &resident_roots,
+                &cache.index.document,
+                &cache.index.signature,
+                stored,
+                now(),
+                false,
+            )
+            .is_ok()
+            {
+                if let Err(error) = cache.write(&state.cache_dir) {
+                    log::warn!("store revocation cache persistence failed: {error}");
+                }
             }
         }
 
         match status {
             IndexStatus::NeedsNewerClient => {
+                *state.index.write().unwrap() = None;
                 return StoreView {
                     status: "needs-newer-client".into(),
                     can_install: false,
@@ -461,14 +890,46 @@ async fn refresh_at(state: &StoreState, client: &reqwest::Client, now: i64) -> S
                 };
             }
             IndexStatus::Fresh => {
-                write_pair(&state.cache_dir, "index.json", &idoc, &isig);
+                if let Some((rdoc, rsig)) = roots_update {
+                    cache.roots = SignedDocument {
+                        document: rdoc,
+                        signature: rsig,
+                    };
+                }
+                if replace_revs {
+                    cache.revocations = SignedDocument {
+                        document: vdoc,
+                        signature: vsig,
+                    };
+                }
+                cache.index = SignedDocument {
+                    document: idoc,
+                    signature: isig,
+                };
+                if let Err(error) = cache.write(&state.cache_dir) {
+                    log::warn!("store metadata cache persistence failed: {error}");
+                    continue;
+                }
+                *state.roots.write().unwrap() = roots;
+                if replace_revs {
+                    *state.revocations.write().unwrap() = revs;
+                }
                 *state.stored_version.write().unwrap() = Some(index.version);
                 let revocations = state.revocations.read().unwrap();
                 let entries = project_entries(&index.entries, &revocations);
                 *state.index.write().unwrap() = Some(index);
+                owner.can_install = ensure_metadata_fresh(state, now()).is_ok()
+                    && state.index.read().unwrap().as_ref().is_some_and(|index| {
+                        trust::index_status(index, now()) == Ok(IndexStatus::Fresh)
+                    });
                 return StoreView {
-                    status: "fresh".into(),
-                    can_install: true,
+                    status: if owner.can_install {
+                        "fresh"
+                    } else {
+                        "offline"
+                    }
+                    .into(),
+                    can_install: owner.can_install,
                     entries,
                 };
             }
@@ -487,7 +948,10 @@ async fn refresh_at(state: &StoreState, client: &reqwest::Client, now: i64) -> S
     }
 
     // No base reachable — render from whatever is resident/cached, offline.
-    state.view_from_resident()
+    match state.current(revision) {
+        Ok(_owner) => state.offline_view(),
+        Err(_) => closed_view(),
+    }
 }
 
 /// Install a verified entry: fetch its content-addressed blob, verify the hash,
@@ -501,56 +965,322 @@ pub async fn install_entry(
     id: &str,
     version: &str,
 ) -> Result<PathBuf, String> {
-    // Revocation gate: never install a revoked (id, version).
-    if let Some(RevocationState::Revoked) = state.revocation_state(id, version) {
-        return Err(format!("{id} {version} has been revoked"));
-    }
+    install_entry_with_clock(state, reg, ext_root, client, id, version, now_unix).await
+}
 
-    let entry: IndexEntry = {
-        let guard = state.index.read().unwrap();
-        let idx = guard
-            .as_ref()
-            .ok_or("store is not open; open it before installing")?;
-        idx.entries
-            .iter()
-            .find(|e| e.id == id && e.version == version)
-            .cloned()
-            .ok_or_else(|| format!("no entry {id} {version} in the verified index"))?
-    };
-    if entry.size > grain_sdk::PACK_MAX_BYTES {
-        return Err(format!(
-            "catalogue artifact exceeds the {} MiB pack limit",
-            grain_sdk::PACK_MAX_BYTES / (1024 * 1024)
-        ));
-    }
-
-    let bases: Vec<String> = {
-        let roots = state.roots.read().unwrap();
-        roots
-            .base_urls
-            .iter()
-            .chain(roots.mirrors.iter())
-            .cloned()
-            .collect()
-    };
-    let blob_name = format!("blob/{}.grainpack", entry.sha256);
-    let mut bytes: Option<Vec<u8>> = None;
-    for base in &bases {
-        if let Some(b) = fetch(client, base, &blob_name, grain_sdk::PACK_MAX_BYTES).await {
-            bytes = Some(b);
-            break;
+async fn install_entry_with_clock(
+    state: &StoreState,
+    reg: &grain_core::extensions::ExtensionsRegistry,
+    ext_root: &Path,
+    client: &reqwest::Client,
+    id: &str,
+    version: &str,
+    now: impl Fn() -> i64 + Sync,
+) -> Result<PathBuf, String> {
+    // Capture ownership before reading its version; a concurrent change must
+    // still fail the existing final record-revision compare-and-swap.
+    let record_revision = reg.record_revision(id);
+    let installed = reg.installed_record(id);
+    let (entry, revision, changed) = {
+        let owner = state.ownership.lock().unwrap();
+        ensure_metadata_fresh(state, now())?;
+        // Revocation gate: never install a revoked (id, version).
+        if let Some(RevocationState::Revoked) = state.revocation_state(id, version) {
+            return Err(format!("{id} {version} has been revoked"));
         }
-    }
-    let bytes = bytes.ok_or("could not download the artifact from any host")?;
+
+        let entry: IndexEntry = {
+            let guard = state.index.read().unwrap();
+            let idx = guard
+                .as_ref()
+                .ok_or("store is not open; open it before installing")?;
+            idx.entries
+                .iter()
+                .find(|e| e.id == id && e.version == version)
+                .cloned()
+                .ok_or_else(|| format!("no entry {id} {version} in the verified index"))?
+        };
+        entry.validate_installable()?;
+        ensure_release_order(
+            &state.index.read().unwrap().as_ref().unwrap().entries,
+            &entry,
+            installed
+                .as_ref()
+                .map(|record| record.installed_version.as_str()),
+        )?;
+        if !owner.can_install
+            || trust::index_status(state.index.read().unwrap().as_ref().unwrap(), now())
+                .map_err(|e| e.to_string())?
+                != IndexStatus::Fresh
+        {
+            return Err("store is offline or expired; refresh it before installing".into());
+        }
+        if entry.size > grain_sdk::PACK_MAX_BYTES {
+            return Err(format!(
+                "catalogue artifact exceeds the {} MiB pack limit",
+                grain_sdk::PACK_MAX_BYTES / (1024 * 1024)
+            ));
+        }
+        (entry, owner.revision, owner.changed.subscribe())
+    };
+
+    let download = async {
+        let bases: Vec<String> = {
+            let roots = state.roots.read().unwrap();
+            roots
+                .base_urls
+                .iter()
+                .chain(roots.mirrors.iter())
+                .cloned()
+                .collect()
+        };
+        let blob_name = format!("blob/{}.grainpack", entry.sha256);
+        let mut bytes: Option<Vec<u8>> = None;
+        for base in &bases {
+            if let Some(b) = fetch(client, base, &blob_name, grain_sdk::PACK_MAX_BYTES).await {
+                bytes = Some(b);
+                break;
+            }
+        }
+        bytes.ok_or("could not download the artifact from any host")
+    };
+    let bytes = state.while_current(revision, changed, download).await??;
     if entry.size != 0 && bytes.len() as u64 != entry.size {
         return Err("downloaded artifact size did not match the signed catalogue".into());
     }
 
-    install::install_from_verified_entry(reg, ext_root, &entry, &bytes, ExtractLimits::default())
-        .map_err(|e: InstallError| e.to_string())
+    // Keep the bounded synchronous install and its final checks in one commit.
+    let owner = state.current(revision)?;
+    ensure_metadata_fresh(state, now())?;
+    if !owner.can_install
+        || state
+            .index
+            .read()
+            .unwrap()
+            .as_ref()
+            .map(|index| trust::index_status(index, now()))
+            .transpose()
+            .map_err(|e| e.to_string())?
+            != Some(IndexStatus::Fresh)
+    {
+        return Err("store is offline or expired; refresh it before installing".into());
+    }
+    if state.revocation_state(id, version) == Some(RevocationState::Revoked) {
+        return Err(format!("{id} {version} has been revoked"));
+    }
+    install::install_from_verified_entry_if_current(
+        reg,
+        ext_root,
+        &entry,
+        &bytes,
+        ExtractLimits::default(),
+        record_revision,
+    )
+    .map_err(|e: InstallError| e.to_string())
 }
 
 // ── Tauri commands ─────────────────────────────────────────────────────────
+
+/// Acquire an inactive remote descriptor through the existing signed store.
+/// No connection to the publisher's MCP endpoint or credential write occurs.
+pub async fn acquire_mcp_entry(
+    state: &StoreState,
+    registry: &grain_core::mcp_connections::ConnectionRegistry,
+    client: &reqwest::Client,
+    id: &str,
+    version: &str,
+    authorize: impl Fn() -> Result<(), String> + Sync,
+) -> Result<grain_core::mcp_connections::ConnectionRecord, String> {
+    acquire_mcp_entry_with_clock(state, registry, client, id, version, now_unix, authorize).await
+}
+
+async fn acquire_mcp_entry_with_clock(
+    state: &StoreState,
+    registry: &grain_core::mcp_connections::ConnectionRegistry,
+    client: &reqwest::Client,
+    id: &str,
+    version: &str,
+    now: impl Fn() -> i64 + Sync,
+    authorize: impl Fn() -> Result<(), String> + Sync,
+) -> Result<grain_core::mcp_connections::ConnectionRecord, String> {
+    commit_mcp_entry_with_clock(
+        state,
+        client,
+        (id, version),
+        None,
+        now,
+        authorize,
+        |admitted| {
+            registry
+                .insert_store(admitted)
+                .map_err(|error| error.to_string())
+        },
+    )
+    .await
+}
+
+async fn commit_mcp_entry_with_clock(
+    state: &StoreState,
+    client: &reqwest::Client,
+    release: (&str, &str),
+    installed_version: Option<&str>,
+    now: impl Fn() -> i64 + Sync,
+    authorize: impl Fn() -> Result<(), String> + Sync,
+    commit: impl FnOnce(
+        grain_core::mcp::StoreDescriptor,
+    ) -> Result<grain_core::mcp_connections::ConnectionRecord, String>,
+) -> Result<grain_core::mcp_connections::ConnectionRecord, String> {
+    let (id, version) = release;
+    let (entry, revision, changed, bases) = {
+        let owner = state.ownership.lock().unwrap();
+        let index = state.index.read().unwrap();
+        let index = index.as_ref().ok_or("store is not open")?;
+        let entry = index
+            .entries
+            .iter()
+            .find(|entry| entry.id == id && entry.version == version)
+            .cloned()
+            .ok_or("MCP entry is not in the verified catalogue")?;
+        entry.validate_mcp_installable()?;
+        ensure_release_order(&index.entries, &entry, installed_version)?;
+        ensure_metadata_fresh(state, now())?;
+        if !owner.can_install
+            || trust::index_status(index, now()).map_err(|error| error.to_string())?
+                != IndexStatus::Fresh
+        {
+            return Err("store is offline or expired; refresh it before installing".into());
+        }
+        if state.revocation_state(id, version).is_some() {
+            return Err("MCP catalogue entry is revoked or deprecated".into());
+        }
+        let roots = state.roots.read().unwrap();
+        (
+            entry,
+            owner.revision,
+            owner.changed.subscribe(),
+            roots
+                .base_urls
+                .iter()
+                .chain(roots.mirrors.iter())
+                .cloned()
+                .collect::<Vec<_>>(),
+        )
+    };
+    let download = async {
+        let blob = format!("blob/{}.mcp.json", entry.sha256);
+        for base in bases {
+            if let Some(bytes) = fetch(
+                client,
+                &base,
+                &blob,
+                grain_sdk::mcp::MCP_DESCRIPTOR_MAX_BYTES as u64,
+            )
+            .await
+            {
+                return Ok(bytes);
+            }
+        }
+        Err("could not download the MCP descriptor from any host")
+    };
+    let bytes = state.while_current(revision, changed, download).await??;
+    let admitted = grain_core::mcp::StoreDescriptor::admit(&entry, &bytes)?;
+    // Close/refresh/revocation and the bounded registry commit are serialized.
+    // No lock spans a network await; failed save cannot publish a connection.
+    let _owner = state.current(revision)?;
+    ensure_metadata_fresh(state, now())?;
+    if !_owner.can_install
+        || state
+            .index
+            .read()
+            .unwrap()
+            .as_ref()
+            .map(|index| trust::index_status(index, now()))
+            .transpose()
+            .map_err(|error| error.to_string())?
+            != Some(IndexStatus::Fresh)
+    {
+        return Err("store is offline or expired; refresh it before installing".into());
+    }
+    if state.revocation_state(id, version).is_some() {
+        return Err("MCP catalogue entry is revoked or deprecated".into());
+    }
+    authorize()?;
+    commit(admitted)
+}
+
+/// Exact-revision verified update. It uses the same download/verification and
+/// final ownership gate as acquisition, never user-supplied descriptor JSON.
+#[tauri::command]
+#[specta::specta]
+pub async fn store_mcp_update(
+    app: AppHandle,
+    window: tauri::WebviewWindow,
+    connection_id: String,
+    expected_revision: String,
+    version: String,
+) -> Result<(), String> {
+    crate::grain_commands::require_main_window(&window)?;
+    crate::grain_mcp::require_store_access(&app)?;
+    let connections = app
+        .try_state::<crate::grain_mcp::connections::State>()
+        .ok_or("MCP registry unavailable")?;
+    let registry = connections.registry(&app)?;
+    let lease = crate::grain_mcp::connections::expected_lease(
+        &registry,
+        &connection_id,
+        &expected_revision,
+    )?;
+    let grain_core::mcp::ConnectionSource::Store {
+        extension_id,
+        version: installed_version,
+        ..
+    } = lease.record().identity().source()
+    else {
+        return Err("This connection did not come from the store.".into());
+    };
+    let state = store_state(&app)?;
+    let client = app
+        .try_state::<reqwest::Client>()
+        .ok_or("http client unavailable")?;
+    commit_mcp_entry_with_clock(
+        &state,
+        &client,
+        (extension_id, &version),
+        Some(installed_version),
+        now_unix,
+        || crate::grain_mcp::require_store_access(&app),
+        |admitted| connections.commit_store_update(&app, &registry, &lease, admitted),
+    )
+    .await?;
+    Ok(())
+}
+
+/// Signed-store acquisition in development and the dedicated extensions alpha.
+/// Custom server configuration retains its separate development-only gate.
+#[tauri::command]
+#[specta::specta]
+pub async fn store_mcp_install(
+    app: AppHandle,
+    window: tauri::WebviewWindow,
+    id: String,
+    version: String,
+) -> Result<(), String> {
+    crate::grain_commands::require_main_window(&window)?;
+    crate::grain_mcp::require_store_access(&app)?;
+    let state = store_state(&app)?;
+    let registry = app
+        .try_state::<crate::grain_mcp::connections::State>()
+        .ok_or("MCP registry unavailable")?
+        .registry(&app)?;
+    let client = app
+        .try_state::<reqwest::Client>()
+        .ok_or("http client unavailable")?;
+    acquire_mcp_entry(&state, &registry, &client, &id, &version, || {
+        crate::grain_mcp::require_store_access(&app)
+    })
+    .await?;
+    Ok(())
+}
 
 use std::sync::Arc;
 use tauri::{AppHandle, Manager};
@@ -578,7 +1308,11 @@ pub async fn store_browse(app: AppHandle) -> Result<StoreView, String> {
         .try_state::<reqwest::Client>()
         .map(|c| c.inner().clone())
         .ok_or("http client unavailable")?;
-    Ok(refresh(&state, &client).await)
+    let view = refresh(&state, &client).await;
+    if let Some(connections) = app.try_state::<crate::grain_mcp::connections::State>() {
+        connections.enforce_store_revocations(&app, &state)?;
+    }
+    Ok(view)
 }
 
 /// Close the Extensions store UI: drop the parsed index so idle footprint
@@ -620,6 +1354,63 @@ fn base64_encode(data: &[u8]) -> String {
 /// then the base URLs. Content-addressed blobs are immutable, so the on-disk
 /// cache never goes stale and a hit avoids the network entirely (low-RAM: no
 /// resident media, and the webview drops the bytes when the detail closes).
+fn listing_blob_size(entries: &[IndexEntry], hash: &str, ext: &str) -> Result<Option<u64>, String> {
+    let mut expected = None;
+    for entry in entries {
+        let Some(document) = &entry.listing else {
+            continue;
+        };
+        let mut sizes = (ext == "md" && document.sha256 == hash)
+            .then_some(document.size)
+            .into_iter()
+            .chain(
+                entry
+                    .media
+                    .iter()
+                    .chain(entry.icon.iter())
+                    .filter(|asset| asset.sha256 == hash && asset.kind == ext)
+                    .map(|asset| asset.size),
+            );
+        let Some(first) = sizes.next() else {
+            continue;
+        };
+        entry.validate_listing()?;
+        for size in std::iter::once(first).chain(sizes) {
+            if expected.is_some_and(|previous| previous != size) {
+                return Err("Conflicting signed listing sizes".into());
+            }
+            expected = Some(size);
+        }
+    }
+    Ok(expected)
+}
+
+fn signed_listing_blob_size(
+    state: &StoreState,
+    hash: &str,
+    ext: &str,
+) -> Result<Option<u64>, String> {
+    let index = state.index.read().map_err(|_| "store index unavailable")?;
+    if let Some(index) = &*index {
+        return listing_blob_size(&index.entries, hash, ext);
+    }
+    drop(index);
+    let roots = state
+        .roots
+        .read()
+        .map_err(|_| "store roots unavailable")?
+        .clone();
+    let floor = *state
+        .stored_version
+        .read()
+        .map_err(|_| "store floor unavailable")?;
+    // Lazy detail loading does not keep a catalogue resident after store close.
+    match load_cached_index(&state.cache_dir, &roots, floor, now_unix()) {
+        Ok((index, _)) => listing_blob_size(&index.entries, hash, ext),
+        Err(_) => Ok(None), // Existing legacy hash-only requests retain their limit.
+    }
+}
+
 async fn fetch_media(app: &AppHandle, sha256: &str, ext: &str) -> Result<Vec<u8>, String> {
     if sha256.len() != 64
         || !sha256
@@ -629,10 +1420,20 @@ async fn fetch_media(app: &AppHandle, sha256: &str, ext: &str) -> Result<Vec<u8>
         return Err("invalid media hash".into());
     }
     let state = store_state(app)?;
+    let expected_size = signed_listing_blob_size(&state, sha256, ext)?;
+    let budget = expected_size
+        .unwrap_or(STORE_MEDIA_MAX_BYTES)
+        .min(if ext == "png" {
+            grain_sdk::ICON_MAX_BYTES
+        } else {
+            STORE_MEDIA_MAX_BYTES
+        });
     let name = format!("media/{sha256}.{ext}");
     let cache_path = state.cache_dir.join(format!("{sha256}.{ext}"));
-    if let Some(bytes) = read_bounded_file(&cache_path, STORE_MEDIA_MAX_BYTES) {
-        if grain_core::trust::sha256_hex(&bytes) == sha256 {
+    if let Some(bytes) = read_bounded_file(&cache_path, budget) {
+        if expected_size.is_none_or(|size| bytes.len() as u64 == size)
+            && grain_core::trust::sha256_hex(&bytes) == sha256
+        {
             return Ok(bytes);
         }
     }
@@ -650,9 +1451,11 @@ async fn fetch_media(app: &AppHandle, sha256: &str, ext: &str) -> Result<Vec<u8>
             .collect()
     };
     for base in &bases {
-        if let Some(bytes) = fetch(&client, base, &name, STORE_MEDIA_MAX_BYTES).await {
+        if let Some(bytes) = fetch(&client, base, &name, budget).await {
             // Content integrity: the bytes MUST hash to the requested id.
-            if grain_core::trust::sha256_hex(&bytes) != sha256 {
+            if expected_size.is_some_and(|size| bytes.len() as u64 != size)
+                || grain_core::trust::sha256_hex(&bytes) != sha256
+            {
                 continue;
             }
             let _ = std::fs::create_dir_all(&state.cache_dir);
@@ -687,22 +1490,14 @@ pub fn store_entry(app: AppHandle, id: String) -> Result<Option<StoreEntry>, Str
         return Ok(None);
     };
     let revocations = state.revocations.read().unwrap();
-    // Newest entry wins when several versions are published for this id.
-    let matches: Vec<IndexEntry> = index
-        .entries
-        .iter()
-        .filter(|e| e.id == id)
-        .cloned()
-        .collect();
-    let Some(entry) = matches.last() else {
+    let matching = latest_entries(&index.entries);
+    let Some(&entry) = matching.get(id.as_str()) else {
         return Ok(None);
     };
-    Ok(project_entries(std::slice::from_ref(entry), &revocations)
-        .into_iter()
-        .next())
+    Ok(Some(project_entry(&index.entries, entry, &revocations)))
 }
 
-/// One installed extension's cover reference.
+/// One installed extension's square listing icon reference (existing API name).
 #[derive(Clone, Serialize, specta::Type)]
 pub struct StoreCover {
     pub id: String,
@@ -710,13 +1505,13 @@ pub struct StoreCover {
     pub kind: String,
 }
 
-/// Cover references for a set of ids, from the CACHED index in ONE parse.
+/// Square listing icon references for a set of ids, from one CACHED index parse.
 ///
 /// The installed list shows each extension's picture, and asking `store_entry`
 /// per row would re-read and re-verify the whole catalogue once per extension.
-/// This reads it once, keeps only `(id, cover)`, and drops the rest — the list
+/// This reads it once, keeps only `(id, icon)`, and drops the rest — the list
 /// gets its images without the catalogue ever staying resident. Ids that are not
-/// in the catalogue, or have no media, are simply absent from the result.
+/// in the catalogue, or have no square icon, are absent from the result.
 #[tauri::command]
 #[specta::specta]
 pub fn store_covers(app: AppHandle, ids: Vec<String>) -> Result<Vec<StoreCover>, String> {
@@ -735,11 +1530,15 @@ pub fn store_covers(app: AppHandle, ids: Vec<String>) -> Result<Vec<StoreCover>,
     let Ok((index, _)) = loaded else {
         return Ok(Vec::new());
     };
+    Ok(project_covers(&index.entries, ids))
+}
+
+fn project_covers(entries: &[IndexEntry], ids: Vec<String>) -> Vec<StoreCover> {
     let mut covers: Vec<StoreCover> = Vec::new();
+    let latest = latest_entries(entries);
     for id in ids {
-        // Newest published entry wins, matching `store_entry`.
-        if let Some(entry) = index.entries.iter().filter(|e| e.id == id).next_back() {
-            if let Some(m) = entry.media.first() {
+        if let Some(entry) = latest.get(id.as_str()) {
+            if let Some(m) = entry.icon.as_ref() {
                 covers.push(StoreCover {
                     id,
                     sha256: m.sha256.clone(),
@@ -748,25 +1547,41 @@ pub fn store_covers(app: AppHandle, ids: Vec<String>) -> Result<Vec<StoreCover>,
             }
         }
     }
-    Ok(covers)
+    covers
 }
 
-/// A screenshot/GIF for the detail page, as a `data:` URL. Lazy — called only
-/// when a detail opens — and integrity-checked against its hash. WEBP or GIF.
+/// A listing image as a hash-checked data URL. Square icons use PNG;
+/// wide covers/previews use WebP or GIF and load only where displayed.
 #[tauri::command]
 #[specta::specta]
 pub async fn store_media(app: AppHandle, sha256: String, kind: String) -> Result<String, String> {
     let (ext, mime) = match kind.as_str() {
+        "png" => ("png", "image/png"),
         "webp" => ("webp", "image/webp"),
         "gif" => ("gif", "image/gif"),
         _ => return Err("unsupported media kind".into()),
     };
     let bytes = fetch_media(&app, &sha256, ext).await?;
+    if kind == "png" {
+        if grain_sdk::png_dimensions(&bytes)
+            != Some((grain_sdk::ICON_MASTER_DIM, grain_sdk::ICON_MASTER_DIM))
+        {
+            return Err("listing icon must be a 512×512 PNG".into());
+        }
+        let mut reader =
+            image::ImageReader::with_format(std::io::Cursor::new(&bytes), image::ImageFormat::Png);
+        let mut limits = image::Limits::default();
+        limits.max_image_width = Some(grain_sdk::ICON_MASTER_DIM);
+        limits.max_image_height = Some(grain_sdk::ICON_MASTER_DIM);
+        limits.max_alloc = Some(4 * 1024 * 1024);
+        reader.limits(limits);
+        reader.decode().map_err(|_| "listing icon PNG is invalid")?;
+    }
     Ok(format!("data:{mime};base64,{}", base64_encode(&bytes)))
 }
 
-/// An extension's full README (markdown text), by its media hash. Lazy, and
-/// integrity-checked. Rendered on the detail page.
+/// An extension's detail Markdown (new DESCRIPTION or legacy README), by its
+/// media hash. Lazy, hash-checked and size-bound for explicit signed listings.
 #[tauri::command]
 #[specta::specta]
 pub async fn store_readme(app: AppHandle, sha256: String) -> Result<String, String> {
@@ -844,6 +1659,253 @@ pub fn store_revocation_banners(app: AppHandle) -> Result<Vec<RevocationBanner>,
 mod tests {
     use super::*;
 
+    #[test]
+    fn store_shows_one_latest_publication_per_id_with_matching_icons_and_revocations() {
+        let mut entries: Vec<IndexEntry> = [
+            ("com.grain.github", "0.1.0", "a"),
+            ("com.grain.github", "0.1.1", "b"),
+            ("com.grain.notion", "0.1.0", "c"),
+            ("com.grain.github", "0.1.2", "d"),
+            ("com.grain.notion", "0.1.1", "e"),
+        ]
+        .into_iter()
+        .map(|(id, version, icon)| {
+            serde_json::from_value(serde_json::json!({
+                "id":id,"name":id,"version":version,"artifact_kind":"mcp-descriptor",
+                "tier":"scripted","trust":"verified","sha256":"f".repeat(64),
+                "size":500,"min_grain_api":"1.0",
+                "icon":{"sha256":icon.repeat(64),"size":200,"kind":"png"},
+                "listing":{"sha256":"f".repeat(64),"size":30}
+            }))
+            .unwrap()
+        })
+        .collect();
+        // The shared selection also applies to native tools, not just MCPs.
+        entries[2].artifact_kind = grain_sdk::distribution::ArtifactKind::Native;
+        entries[4].artifact_kind = grain_sdk::distribution::ArtifactKind::Native;
+        let revocations: Revocations = serde_json::from_value(serde_json::json!({
+            "spec":1,"version":1,"expires":"2099-01-01T00:00:00Z",
+            "entries":[{"id":"com.grain.github","version":"0.1.2","state":"revoked","reason":"test"}]
+        })).unwrap();
+        // A retired privileged listing must not hide the eligible publication.
+        let mut retired = entries[3].clone();
+        retired.version = "0.2.0".into();
+        retired.capabilities = vec!["capture:screen-image".into()];
+        entries.push(retired);
+        let view = project_entries(&entries, &revocations);
+        assert_eq!(view.len(), 2);
+        assert_eq!(
+            (&view[0].id, view[0].version.as_str()),
+            (&entries[0].id, "0.1.2")
+        );
+        assert_eq!(
+            (&view[1].id, view[1].version.as_str()),
+            (&entries[2].id, "0.1.1")
+        );
+        assert_eq!(view[0].revocation.as_deref(), Some("revoked"));
+        assert_eq!(view[1].revocation, None);
+        assert_eq!(view[0].icon.as_ref().unwrap().sha256, "d".repeat(64));
+        assert_eq!(view[1].icon.as_ref().unwrap().sha256, "e".repeat(64));
+        let covers = project_covers(&entries, view.iter().map(|e| e.id.clone()).collect());
+        assert_eq!(covers.len(), 2);
+        assert_eq!(covers[0].sha256, view[0].icon.as_ref().unwrap().sha256);
+        assert_eq!(covers[1].sha256, view[1].icon.as_ref().unwrap().sha256);
+        assert_eq!(entries.len(), 6); // The signed index is not rewritten.
+    }
+
+    #[test]
+    fn store_update_order_is_enforced_before_network_or_registry_changes() {
+        use grain_core::mcp_connections::ConnectionRegistry;
+        use grain_sdk::distribution::ArtifactKind;
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            for kind in [ArtifactKind::Native, ArtifactKind::McpDescriptor] {
+                let data = tempfile::tempdir().unwrap();
+                let state = StoreState::init(data.path());
+                state.ownership.lock().unwrap().can_install = true;
+                let mut index: Index = serde_json::from_slice(include_bytes!(
+                    "../../crates/grain-core/tests/fixtures/mcp-store/index.json",
+                ))
+                .unwrap();
+                let mut older = index.entries.remove(0);
+                older.artifact_kind = kind;
+                // Signed order, deliberately opposite to numeric version order.
+                older.version = "2.0.0".into();
+                let mut latest = older.clone();
+                latest.version = "1.0.0".into();
+                let mut other_kind = older.clone();
+                other_kind.version = "3.0.0".into();
+                other_kind.artifact_kind = if kind == ArtifactKind::Native {
+                    ArtifactKind::McpDescriptor
+                } else {
+                    ArtifactKind::Native
+                };
+                index.entries = vec![older.clone(), other_kind, latest.clone()];
+                let projected = project_entries(&index.entries, &state.revocations.read().unwrap());
+                assert_eq!(projected.len(), 1);
+                assert_eq!(projected[0].previous_versions, vec!["2.0.0"]);
+                assert!(ensure_release_order(&index.entries, &latest, Some("2.0.0")).is_ok());
+                *state.index.write().unwrap() = Some(index);
+                let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+                listener.set_nonblocking(true).unwrap();
+                {
+                    let mut roots = state.roots.write().unwrap();
+                    roots.base_urls = vec![format!("http://{}/", listener.local_addr().unwrap())];
+                    roots.mirrors.clear();
+                }
+                let native =
+                    grain_core::extensions::ExtensionsRegistry::load(data.path(), false).unwrap();
+                let remote = ConnectionRegistry::load(data.path()).unwrap();
+                let client = reqwest::Client::new();
+                for (requested, installed, expected) in [
+                    ("2.0.0", None, "no longer the current"),
+                    ("2.0.0", Some("1.0.0"), "no longer the current"),
+                    ("1.0.0", Some("0.9.0"), "does not precede"),
+                    ("1.0.0", Some("3.0.0"), "does not precede"),
+                ] {
+                    if let Some(version) = installed {
+                        let mut record = install::plan_record(
+                            &latest,
+                            vec![],
+                            None,
+                            vec![],
+                            install::ApprovalDigests::default(),
+                        );
+                        record.installed_version = version.into();
+                        native.install(record).unwrap();
+                    }
+                    let before = serde_json::to_value(native.installed_record(&latest.id)).unwrap();
+                    let result = if kind == ArtifactKind::Native {
+                        install_entry(
+                            &state,
+                            &native,
+                            &data.path().join("extensions"),
+                            &client,
+                            &latest.id,
+                            requested,
+                        )
+                        .await
+                        .map(|_| ())
+                    } else {
+                        commit_mcp_entry_with_clock(
+                            &state,
+                            &client,
+                            (&latest.id, requested),
+                            installed,
+                            now_unix,
+                            || panic!("rejected release reached authorization"),
+                            |_| panic!("rejected release reached account commit"),
+                        )
+                        .await
+                        .map(|_| ())
+                    };
+                    let error = result.unwrap_err();
+                    assert!(error.contains(expected), "{kind:?} {requested}: {error}");
+                    assert_eq!(
+                        serde_json::to_value(native.installed_record(&latest.id)).unwrap(),
+                        before
+                    );
+                    assert!(remote.list().unwrap().is_empty());
+                    assert_eq!(
+                        listener.accept().unwrap_err().kind(),
+                        std::io::ErrorKind::WouldBlock
+                    );
+                    assert!(!data.path().join("extensions").exists());
+                }
+                state.close();
+            }
+        });
+    }
+
+    #[test]
+    fn explicit_description_projects_and_binds_both_kind_media_without_legacy_fallback() {
+        let mut entry: IndexEntry = serde_json::from_value(serde_json::json!({
+            "id": "com.example.listing", "name": "Listing", "version": "1.0.0",
+            "tier": "scripted", "trust": "verified", "sha256": "a".repeat(64),
+            "size": 500, "categories": ["tools"], "min_grain_api": "1.0",
+            "listing": {"sha256": "b".repeat(64), "size": 30},
+            "icon": {"sha256": "d".repeat(64), "size": 200, "kind": "png"},
+            "media": [{"sha256": "c".repeat(64), "size": 100, "kind": "webp"}]
+        }))
+        .unwrap();
+        let revocations = Revocations {
+            spec: 1,
+            version: 1,
+            expires: String::new(),
+            entries: Vec::new(),
+        };
+        assert_eq!(
+            project_entries(&[entry.clone()], &revocations)[0].readme,
+            "b".repeat(64)
+        );
+        for kind in [
+            grain_sdk::distribution::ArtifactKind::Native,
+            grain_sdk::distribution::ArtifactKind::McpDescriptor,
+        ] {
+            entry.artifact_kind = kind;
+            let projected = project_entries(std::slice::from_ref(&entry), &revocations);
+            assert_eq!(projected.len(), 1);
+            let covers = project_covers(std::slice::from_ref(&entry), vec![entry.id.clone()]);
+            assert_eq!(covers.len(), 1);
+            assert_eq!(covers[0].sha256, "d".repeat(64));
+            assert_eq!(covers[0].kind, "png");
+            assert_eq!(projected[0].icon.as_ref().unwrap().sha256, "d".repeat(64));
+            assert_eq!(projected[0].media[0].sha256, "c".repeat(64));
+            let mut no_icon = entry.clone();
+            no_icon.icon = None;
+            assert!(project_covers(&[no_icon], vec![entry.id.clone()]).is_empty());
+            assert_eq!(
+                listing_blob_size(&[entry.clone()], &"d".repeat(64), "png").unwrap(),
+                Some(200)
+            );
+            assert_eq!(
+                projected[0].kind,
+                if kind == grain_sdk::distribution::ArtifactKind::McpDescriptor {
+                    "mcp"
+                } else {
+                    "native"
+                }
+            );
+            assert_eq!(projected[0].readme, "b".repeat(64));
+            let mut privileged = entry.clone();
+            privileged.capabilities = vec!["capture:screen-image".into()];
+            assert!(project_covers(
+                std::slice::from_ref(&privileged),
+                vec![privileged.id.clone()]
+            )
+            .is_empty());
+            assert!(project_entries(&[privileged], &revocations).is_empty());
+            assert_eq!(
+                listing_blob_size(&[entry.clone()], &"b".repeat(64), "md").unwrap(),
+                Some(30)
+            );
+            assert_eq!(
+                listing_blob_size(&[entry.clone()], &"c".repeat(64), "webp").unwrap(),
+                Some(100)
+            );
+            let mut bad = entry.clone();
+            bad.listing.as_mut().unwrap().size = 0;
+            assert!(listing_blob_size(&[bad], &"b".repeat(64), "md").is_err());
+            let mut conflicting = entry.clone();
+            conflicting.listing.as_mut().unwrap().size = 31;
+            assert!(
+                listing_blob_size(&[entry.clone(), conflicting], &"b".repeat(64), "md").is_err()
+            );
+        }
+        entry.artifact_kind = grain_sdk::distribution::ArtifactKind::Native;
+        entry.readme = "legacy".into();
+        assert!(project_entries(&[entry.clone()], &revocations).is_empty());
+        entry.listing = None;
+        assert_eq!(
+            project_entries(&[entry.clone()], &revocations)[0].readme,
+            "legacy"
+        );
+        assert_eq!(
+            listing_blob_size(&[entry], &"c".repeat(64), "webp").unwrap(),
+            None
+        );
+    }
+
     fn tmp_data(label: &str) -> PathBuf {
         use std::sync::atomic::{AtomicU64, Ordering};
         static N: AtomicU64 = AtomicU64::new(0);
@@ -883,38 +1945,47 @@ mod tests {
         let _ = std::fs::remove_dir_all(&data);
     }
 
-    // End-to-end client path against a REAL signed catalogue (the committed
-    // fixture produced by `grain-registry publish`): cache load → verify roots
-    // against the PINNED keys → verify index against the publishing key →
-    // project entries. Proves the producer (5B) and verifier (5A) agree, and
-    // that a verified entry surfaces with its real trust.
     #[test]
-    fn verified_fixture_catalogue_loads_from_cache() {
-        let data = tmp_data("fixture");
-        let store = data.join("store");
-        std::fs::create_dir_all(&store).unwrap();
-        let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("tests")
-            .join("fixtures")
-            .join("store");
-        for f in [
-            "roots.json",
-            "roots.json.minisig",
-            "index.json",
-            "index.json.minisig",
+    fn verified_selection_restores_floors_but_corrupt_cache_cannot_rebootstrap() {
+        for mode in [
+            "valid",
+            "truncated",
+            "root_signature",
+            "index_signature",
+            "revocation_signature",
         ] {
-            std::fs::copy(fixture.join(f), store.join(f))
-                .unwrap_or_else(|e| panic!("copy fixture {f}: {e}"));
+            let data = tempfile::tempdir().unwrap();
+            let cache_dir = data.path().join("store");
+            std::fs::create_dir(&cache_dir).unwrap();
+            let mut cache = Metadata::seed();
+            match mode {
+                "root_signature" => cache.roots.signature = "bad".into(),
+                "index_signature" => cache.index.signature = "bad".into(),
+                "revocation_signature" => cache.revocations.signature = "bad".into(),
+                _ => {}
+            }
+            cache.write(&cache_dir).unwrap();
+            if mode == "truncated" {
+                std::fs::write(cache_dir.join(store_cache::FILE_NAME), b"partial").unwrap();
+            }
+            let state = StoreState::init(data.path());
+            assert_eq!(state.cache_unavailable, mode != "valid", "{mode}");
+            assert_eq!(
+                *state.stored_version.read().unwrap(),
+                if matches!(mode, "valid" | "root_signature" | "revocation_signature") {
+                    Some(1)
+                } else {
+                    None
+                }
+            );
+            assert!(state.index.read().unwrap().is_none());
+            assert!(!state.ownership.lock().unwrap().can_install);
+            if mode != "valid" {
+                assert!(ensure_metadata_fresh(&state, now_unix())
+                    .unwrap_err()
+                    .contains("cache"));
+            }
         }
-        let state = StoreState::init(&data);
-        let view = state.view_from_resident();
-        assert_eq!(view.entries.len(), 1, "the fixture catalogue has one entry");
-        let e = &view.entries[0];
-        assert_eq!(e.id, "com.example.hello");
-        assert_eq!(e.trust, "verified", "trust comes from the signed index");
-        assert_eq!(e.tier, "scripted");
-        assert!(e.revocation.is_none());
-        let _ = std::fs::remove_dir_all(&data);
     }
 
     fn fixture_dir() -> PathBuf {
@@ -924,102 +1995,46 @@ mod tests {
             .join("store")
     }
 
-    /// A dead-simple blocking file server for the fixture `v1/` tree. Serves any
-    /// existing file by request path; 404 otherwise. One request per connection.
-    fn serve_v1(root: PathBuf) -> Option<std::net::SocketAddr> {
-        use std::io::{Read, Write};
-        use std::net::TcpListener;
-        // The signed fixture roots.json names 127.0.0.1:8787, so bind exactly it.
-        let listener = TcpListener::bind("127.0.0.1:8787").ok()?;
-        let addr = listener.local_addr().ok()?;
-        std::thread::spawn(move || {
-            for stream in listener.incoming() {
-                let Ok(mut stream) = stream else { continue };
-                let mut buf = [0u8; 2048];
-                let n = stream.read(&mut buf).unwrap_or(0);
-                let req = String::from_utf8_lossy(&buf[..n]);
-                let path = req
-                    .lines()
-                    .next()
-                    .and_then(|l| l.split_whitespace().nth(1))
-                    .unwrap_or("/")
-                    .trim_start_matches('/')
-                    .to_string();
-                let file = root.join(&path);
-                let body = std::fs::read(&file).ok();
-                let resp = match body {
-                    Some(bytes) => {
-                        let mut head = format!(
-                            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-                            bytes.len()
-                        )
-                        .into_bytes();
-                        head.extend_from_slice(&bytes);
-                        head
-                    }
-                    None => {
-                        b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
-                            .to_vec()
-                    }
-                };
-                let _ = stream.write_all(&resp);
-                let _ = stream.flush();
-            }
-        });
-        Some(addr)
-    }
-
-    // FULL client end-to-end over real HTTP against the signed catalogue:
-    // serve v1/ on localhost → StoreState refresh (verify roots+index) → install
-    // the artifact (fetch blob → verify sha256 → unpack → registry record with
-    // trust) → confirm the pack loads from its versioned dir. This is the honest
-    // synthetic equivalent of the in-app store click, minus the GUI and worker
-    // execution.
+    // Verify the immutable signed legacy catalogue, then use an ephemeral
+    // listener as a tripwire. No server thread or fixed-port skip is needed:
+    // retirement must refuse the install before even opening a connection.
     #[test]
-    fn http_end_to_end_install_from_signed_catalogue() {
-        // Build the served tree = fixture (roots/index/sigs + blob).
-        let data = tmp_data("e2e");
-        let served = data.join("served_v1");
-        std::fs::create_dir_all(served.join("blob")).unwrap();
-        let fx = fixture_dir();
-        for f in [
-            "roots.json",
-            "roots.json.minisig",
-            "index.json",
-            "index.json.minisig",
-        ] {
-            std::fs::copy(fx.join(f), served.join(f)).unwrap();
-        }
-        for e in std::fs::read_dir(fx.join("blob")).unwrap().flatten() {
-            std::fs::copy(e.path(), served.join("blob").join(e.file_name())).unwrap();
-        }
-
-        let Some(_addr) = serve_v1(served) else {
-            eprintln!("SKIP: could not bind 127.0.0.1:8787 (port busy)");
-            return;
-        };
-
-        // Seed the store cache with the fixture roots so init picks up the
-        // localhost base URL, then refresh + install over HTTP.
-        let store_cache = data.join("store");
-        std::fs::create_dir_all(&store_cache).unwrap();
-        for f in ["roots.json", "roots.json.minisig"] {
-            std::fs::copy(fx.join(f), store_cache.join(f)).unwrap();
-        }
+    fn signed_legacy_install_is_refused_before_download() {
+        let data = tmp_data("retired-install");
         let state = StoreState::init(&data);
+        let fx = fixture_dir();
+        let roots = trust::verify_roots(
+            &std::fs::read(fx.join("roots.json")).unwrap(),
+            &std::fs::read_to_string(fx.join("roots.json.minisig")).unwrap(),
+        )
+        .unwrap();
+        let (index, status) = trust::verify_index(
+            &roots,
+            &std::fs::read(fx.join("index.json")).unwrap(),
+            &std::fs::read_to_string(fx.join("index.json.minisig")).unwrap(),
+            None,
+            1_787_270_400,
+            false,
+        )
+        .unwrap();
+        assert!(matches!(status, IndexStatus::Fresh));
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        // Change only the test transport destination after signature verification.
+        // The index, permissions, artifact identity and signatures stay untouched.
+        let mut transport_roots = roots;
+        transport_roots.base_urls = vec![format!("http://{}/", listener.local_addr().unwrap())];
+        transport_roots.mirrors.clear();
+        *state.roots.write().unwrap() = transport_roots;
+        *state.index.write().unwrap() = Some(index);
         let reg = grain_core::extensions::ExtensionsRegistry::load(&data, false).unwrap();
         let ext_root = data.join("extensions");
-        let client = reqwest::Client::new();
-
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_millis(300))
+            .build()
+            .unwrap();
         let rt = tokio::runtime::Runtime::new().unwrap();
-        // Verify the immutable signed fixture at a time inside its validity
-        // window. Production refreshes always pass the real wall clock.
-        let view = rt.block_on(refresh_at(&state, &client, 1_787_270_400));
-        assert_eq!(view.status, "fresh", "index verified + fresh over HTTP");
-        assert_eq!(view.entries.len(), 1);
-        assert!(view.can_install);
-
-        let dir = rt
+        let error = rt
             .block_on(install_entry(
                 &state,
                 &reg,
@@ -1028,77 +2043,628 @@ mod tests {
                 "com.example.hello",
                 "1.0.0",
             ))
-            .expect("install over HTTP");
-        assert!(
-            dir.join("pack.grainpack.json").exists(),
-            "artifact unpacked"
-        );
-
-        let rec = reg.record("com.example.hello").expect("registry record");
+            .unwrap_err();
+        assert!(error.contains("transform:transcript"), "{error}");
         assert_eq!(
-            rec.trust,
-            grain_sdk::Trust::Verified,
-            "trust from signed index"
+            listener.accept().unwrap_err().kind(),
+            std::io::ErrorKind::WouldBlock
         );
-        assert_eq!(rec.installed_version, "1.0.0");
-        assert!(
-            !rec.enabled,
-            "fresh install lands disabled (enable is explicit)"
-        );
-
+        assert!(reg.record("com.example.hello").is_none());
+        assert!(!ext_root.join("com.example.hello").exists());
+        state.close();
+        drop(listener);
         let _ = std::fs::remove_dir_all(&data);
     }
 
-    // The REAL end-to-end against the live GitHub-hosted catalogue: a fresh
-    // StoreState (embedded seed roots → raw.githubusercontent base URL) →
-    // refresh over the network → verify against pinned keys → install a scripted
-    // extension from its content-addressed blob. Network-dependent, so it is
-    // #[ignore]d in normal runs; run with `cargo test -- --ignored live_github`.
+    // Exercise the real download/hash/install path with an embedded tool pack.
+    // Metadata is synthetic here; the separate legacy fixture verifies signatures.
+    #[test]
+    fn tool_download_installs_disabled_and_rejects_wrong_hash() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            for mode in ["tool", "hash", "expiry", "root_expiry", "revocation_expiry", "close", "replace", "revoke", "disable_record", "remove_record", "replace_record"] {
+                let corrupt = mode == "hash";
+                let data = tmp_data(mode);
+                let state = StoreState::init(&data);
+                state.ownership.lock().unwrap().can_install = true;
+                let clock = std::sync::atomic::AtomicI64::new(now_unix());
+                let bytes = serde_json::to_vec(&serde_json::json!({
+                    "manifest": {"id": "com.example.tools", "name": "Test tools",
+                        "version": "1.0.0", "grainApi": "^1.0", "tier": "scripted",
+                        "entry_source": "grain.actions({});", "permissions": []},
+                    "payloads": {}
+                })).unwrap();
+                let hash = trust::sha256_hex(&bytes);
+                let entry: IndexEntry = serde_json::from_value(serde_json::json!({
+                    "id": "com.example.tools", "name": "Test tools", "version": "1.0.0",
+                    "tier": "scripted", "trust": "verified", "sha256": hash,
+                    "size": bytes.len(), "categories": ["tools"]
+                })).unwrap();
+                assert_eq!(project_entries(std::slice::from_ref(&entry),
+                    &state.revocations.read().unwrap()).len(), 1);
+                *state.index.write().unwrap() = Some(grain_sdk::Index {
+                    spec: 1, version: 1, expires: "2099-01-01T00:00:00Z".into(),
+                    generation: None,
+                    entries: vec![entry],
+                });
+                let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+                {
+                    let mut roots = state.roots.write().unwrap();
+                    roots.base_urls = vec![format!("http://{}/", listener.local_addr().unwrap())];
+                    roots.mirrors.clear();
+                }
+                let reg = grain_core::extensions::ExtensionsRegistry::load(&data, false).unwrap();
+                if mode == "disable_record" || mode == "replace_record" {
+                    let record = install::plan_record(
+                        &state.index.read().unwrap().as_ref().unwrap().entries[0],
+                        vec![], None, vec![], install::ApprovalDigests::default(),
+                    );
+                    reg.install(record).unwrap();
+                    reg.set_enabled("com.example.tools", true).unwrap();
+                }
+                let server = async {
+                    let (mut socket, _) = listener.accept().await.unwrap();
+                    let mut request = [0u8; 2048];
+                    let mut count = 0;
+                    while !request[..count].windows(4).any(|part| part == b"\r\n\r\n") {
+                        assert!(count < request.len(), "oversized request header");
+                        let read = socket.read(&mut request[count..]).await.unwrap();
+                        assert_ne!(read, 0, "truncated request header");
+                        count += read;
+                    }
+                    assert!(String::from_utf8_lossy(&request[..count])
+                        .starts_with(&format!("GET /blob/{hash}.grainpack HTTP/1.1")));
+                    match mode {
+                        "expiry" => { clock.store(i64::MAX, std::sync::atomic::Ordering::SeqCst); }
+                        "root_expiry" => { state.roots.write().unwrap().expires = Some("2000-01-01T00:00:00Z".into()); }
+                        "revocation_expiry" => { state.revocations.write().unwrap().expires = "2000-01-01T00:00:00Z".into(); }
+                        "close" => { state.close(); return; }
+                        "replace" => { let _ = state.begin_refresh(); return; }
+                        "revoke" => {
+                            let _owner = state.ownership.lock().unwrap();
+                            *state.revocations.write().unwrap() = serde_json::from_value(serde_json::json!({
+                                "spec": 1, "version": 999, "expires": "2099-01-01T00:00:00Z",
+                                "entries": [{"id": "com.example.tools", "version": "1.0.0", "state": "revoked", "reason": "fixture"}]
+                            })).unwrap();
+                        }
+                        "disable_record" => { reg.set_enabled("com.example.tools", false).unwrap(); }
+                        "remove_record" => { reg.uninstall("com.example.tools").unwrap(); }
+                        "replace_record" => {
+                            let mut record = reg.record("com.example.tools").unwrap();
+                            record.installed_version = "local replacement".into();
+                            reg.install(record).unwrap();
+                        }
+                        _ => {}
+                    }
+                    let mut body = bytes.clone();
+                    if corrupt { body[0] = b'!'; }
+                    socket.write_all(format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len()).as_bytes()).await.unwrap();
+                    socket.write_all(&body).await.unwrap();
+                };
+                let ext_root = data.join("extensions");
+                let client = reqwest::Client::builder()
+                    .timeout(std::time::Duration::from_secs(2)).build().unwrap();
+                let install = install_entry_with_clock(&state, &reg, &ext_root, &client,
+                    "com.example.tools", "1.0.0", || clock.load(std::sync::atomic::Ordering::SeqCst));
+                // Both futures and all sockets are owned by this bounded scope.
+                let (_, result) = tokio::time::timeout(std::time::Duration::from_secs(3),
+                    async { tokio::join!(server, install) }).await.unwrap();
+                if mode != "tool" {
+                    let expected = match mode {
+                        "hash" => "artifact verification failed",
+                        "expiry" | "root_expiry" | "revocation_expiry" => "expired",
+                        "revoke" => "revoked",
+                        "disable_record" | "remove_record" | "replace_record" => "changed",
+                        _ => "superseded",
+                    };
+                    let error = result.unwrap_err();
+                    assert!(error.contains(expected), "{mode}: {error}");
+                    match mode {
+                        "disable_record" => assert!(!reg.is_enabled("com.example.tools")),
+                        "replace_record" => assert_eq!(reg.record("com.example.tools").unwrap().installed_version, "local replacement"),
+                        _ => assert!(reg.record("com.example.tools").is_none()),
+                    }
+                    assert!(!ext_root.join("com.example.tools").exists());
+                } else {
+                    assert!(result.unwrap().join("pack.grainpack.json").exists());
+                    let record = reg.record("com.example.tools").unwrap();
+                    assert_eq!(record.trust, grain_sdk::Trust::Verified);
+                    assert!(!record.enabled);
+                }
+                state.close();
+                drop(listener);
+                let _ = std::fs::remove_dir_all(&data);
+            }
+        });
+    }
+
+    #[test]
+    fn mcp_download_commits_only_current_verified_descriptor() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            for mode in ["valid", "hash", "identity", "size", "expiry", "root_expiry", "revocation_expiry", "close", "refresh", "revoke", "consent", "writer"] {
+                let data = tempfile::tempdir().unwrap();
+                let state = StoreState::init(data.path());
+                state.ownership.lock().unwrap().can_install = true;
+                let clock = std::sync::atomic::AtomicI64::new(now_unix());
+                let body = include_bytes!("../../crates/grain-core/tests/fixtures/mcp-store/descriptor.json");
+                let mut entry: IndexEntry = serde_json::from_slice::<grain_sdk::Index>(include_bytes!("../../crates/grain-core/tests/fixtures/mcp-store/index.json")).unwrap().entries.remove(0);
+                if mode == "identity" { entry.id = "com.example.substitute".into(); }
+                if mode == "size" { entry.size += 1; }
+                let id = entry.id.clone();
+                let hash = entry.sha256.clone();
+                *state.index.write().unwrap() = Some(grain_sdk::Index {
+                    spec: 1, version: 100, expires: "2099-01-01T00:00:00Z".into(), entries: vec![entry],
+                    generation: None,
+                });
+                let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+                {
+                    let mut roots = state.roots.write().unwrap();
+                    roots.base_urls = vec![format!("http://{}/", listener.local_addr().unwrap())];
+                    roots.mirrors.clear();
+                }
+                let registry = grain_core::mcp_connections::ConnectionRegistry::load(data.path()).unwrap();
+                let mut writer = None;
+                if mode == "writer" {
+                    let lock = std::fs::File::options().read(true).write(true).create(true).truncate(false)
+                        .open(data.path().join(".mcp-connections.lock")).unwrap();
+                    lock.try_lock().unwrap(); writer = Some(lock);
+                }
+                let server = async {
+                    let (mut socket, _) = listener.accept().await.unwrap();
+                    let mut request = [0u8; 2048];
+                    let mut count = 0;
+                    while !request[..count].windows(4).any(|part| part == b"\r\n\r\n") {
+                        assert!(count < request.len());
+                        let read = socket.read(&mut request[count..]).await.unwrap();
+                        assert_ne!(read, 0); count += read;
+                    }
+                    assert!(String::from_utf8_lossy(&request[..count]).starts_with(&format!("GET /blob/{hash}.mcp.json HTTP/1.1")));
+                    match mode {
+                        "expiry" => { clock.store(i64::MAX, std::sync::atomic::Ordering::SeqCst); }
+                        "root_expiry" => { state.roots.write().unwrap().expires = Some("2000-01-01T00:00:00Z".into()); }
+                        "revocation_expiry" => { state.revocations.write().unwrap().expires = "2000-01-01T00:00:00Z".into(); }
+                        "close" => { state.close(); return; }
+                        "refresh" => { state.begin_refresh(); return; }
+                        "revoke" => {
+                            let _owner = state.ownership.lock().unwrap();
+                            *state.revocations.write().unwrap() = serde_json::from_value(serde_json::json!({
+                                "spec":1,"version":999,"expires":"2099-01-01T00:00:00Z",
+                                "entries":[{"id":id,"state":"revoked","reason":"test"}]
+                            })).unwrap();
+                        }
+                        _ => {}
+                    }
+                    let mut bytes = body.to_vec(); if mode == "hash" { bytes[0] = b'!'; }
+                    socket.write_all(format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", bytes.len()).as_bytes()).await.unwrap();
+                    socket.write_all(&bytes).await.unwrap();
+                };
+                let client = reqwest::Client::builder().timeout(std::time::Duration::from_secs(2)).build().unwrap();
+                let acquire = acquire_mcp_entry_with_clock(&state, &registry, &client, &id, "1.0.0",
+                    || clock.load(std::sync::atomic::Ordering::SeqCst),
+                    || if mode == "consent" { Err("developer consent withdrawn".into()) } else { Ok(()) });
+                let (_, result) = tokio::time::timeout(std::time::Duration::from_secs(3), async { tokio::join!(server, acquire) }).await.unwrap();
+                if mode == "valid" {
+                    let record = result.unwrap();
+                    assert_eq!(registry.list().unwrap(), vec![record.clone()]);
+                    let loaded = grain_core::mcp_connections::ConnectionRegistry::load(data.path()).unwrap();
+                    assert_eq!(loaded.list().unwrap(), vec![record]);
+                } else {
+                    let expected = match mode {
+                        "hash" => "hash", "identity" => "identity", "size" => "size",
+                        "expiry" | "root_expiry" | "revocation_expiry" => "expired", "revoke" => "revoked", "consent" => "consent",
+                        "writer" => "changed", _ => "superseded",
+                    };
+                    let error = result.unwrap_err(); assert!(error.contains(expected), "{mode}: {error}");
+                    assert!(registry.list().unwrap().is_empty());
+                    assert!(!data.path().join("mcp-connections.json").exists());
+                }
+                drop(writer); state.close();
+            }
+        });
+    }
+
+    #[test]
+    fn mcp_update_download_cannot_overwrite_changed_or_reacquired_ownership() {
+        use grain_core::mcp::StoreDescriptor;
+        use grain_core::mcp_connections::ConnectionRegistry;
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            for mode in ["valid", "stale", "removed", "reacquired", "cleanup", "writer"] {
+                let data = tempfile::tempdir().unwrap();
+                let state = StoreState::init(data.path());
+                state.ownership.lock().unwrap().can_install = true;
+                let mut entry = serde_json::from_slice::<Index>(include_bytes!(
+                    "../../crates/grain-core/tests/fixtures/mcp-store/index.json")).unwrap().entries.remove(0);
+                let original = StoreDescriptor::admit(&entry, include_bytes!(
+                    "../../crates/grain-core/tests/fixtures/mcp-store/descriptor.json")).unwrap();
+                let prior_entry = entry.clone();
+                let registry = ConnectionRegistry::load(data.path()).unwrap();
+                let record = registry.insert_store(original.clone()).unwrap();
+                let lease = registry.lease(record.identity().connection_id()).unwrap();
+                let mut artifact: serde_json::Value = serde_json::from_str(original.artifact()).unwrap();
+                artifact["version"] = "2.0.0".into();
+                let body = serde_json::to_vec(&artifact).unwrap();
+                entry.version = "2.0.0".into(); entry.size = body.len() as u64;
+                entry.sha256 = trust::sha256_hex(&body);
+                let update = StoreDescriptor::admit(&entry, &body).unwrap();
+                let hash = entry.sha256.clone();
+                *state.index.write().unwrap() = Some(Index {
+                    spec:1, version:100, expires:"2099-01-01T00:00:00Z".into(), entries:vec![prior_entry, entry],
+                    generation: None,
+                });
+                let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+                {
+                    let mut roots = state.roots.write().unwrap();
+                    roots.base_urls = vec![format!("http://{}/", listener.local_addr().unwrap())];
+                    roots.mirrors.clear();
+                }
+                let mut writer = None;
+                if mode == "writer" {
+                    let lock = std::fs::File::options().read(true).write(true).create(true).truncate(false)
+                        .open(data.path().join(".mcp-connections.lock")).unwrap();
+                    lock.try_lock().unwrap(); writer = Some(lock);
+                }
+                let disk_before = std::fs::read(data.path().join("mcp-connections.json")).unwrap();
+                let server = async {
+                    let (mut socket, _) = listener.accept().await.unwrap();
+                    let mut request = [0; 2048]; let mut count = 0;
+                    while !request[..count].windows(4).any(|part| part == b"\r\n\r\n") {
+                        assert!(count < request.len());
+                        let read = socket.read(&mut request[count..]).await.unwrap();
+                        assert_ne!(read, 0); count += read;
+                    }
+                    assert!(String::from_utf8_lossy(&request[..count]).starts_with(
+                        &format!("GET /blob/{hash}.mcp.json HTTP/1.1")));
+                    match mode {
+                        "stale" => { registry.replace_store(&lease, update.clone()).unwrap(); }
+                        "removed" | "reacquired" => {
+                            registry.remove(&lease).unwrap();
+                            if mode == "reacquired" { registry.insert_store(original.clone()).unwrap(); }
+                        }
+                        _ => {}
+                    }
+                    socket.write_all(format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len()).as_bytes()).await.unwrap();
+                    socket.write_all(&body).await.unwrap();
+                };
+                let client = reqwest::Client::builder().timeout(std::time::Duration::from_secs(2)).build().unwrap();
+                // Test the shared production download/final-gate/core publication.
+                // The Tauri/vault cleanup adapter is separately gated for app acceptance.
+                let download = commit_mcp_entry_with_clock(&state, &client, ("com.example.calendar", "2.0.0"), Some("1.0.0"),
+                    now_unix, || Ok(()), |admitted| {
+                        if mode == "cleanup" { return Err("account cleanup failed".into()); }
+                        registry.replace_store(&lease, admitted).map_err(|error| error.to_string())?;
+                        Ok(registry.lease(record.identity().connection_id()).unwrap().record().clone())
+                    });
+                let (_, result) = tokio::time::timeout(std::time::Duration::from_secs(3),
+                    async { tokio::join!(server, download) }).await.unwrap();
+                if mode == "valid" {
+                    let next = result.unwrap(); assert_eq!(next.revision(), 2);
+                    assert_eq!(next.identity().account_id(), record.identity().account_id());
+                } else {
+                    let error = result.unwrap_err();
+                    assert!(error.contains(if mode == "cleanup" { "cleanup" } else { "changed" }), "{mode}: {error}");
+                    let records = registry.list().unwrap();
+                    match mode {
+                        "removed" => assert!(records.is_empty()),
+                        "stale" => assert_eq!(records[0].revision(), 2),
+                        "reacquired" => assert_ne!(records[0].identity().connection_id(), record.identity().connection_id()),
+                        _ => { assert_eq!(records, vec![record]);
+                            assert_eq!(std::fs::read(data.path().join("mcp-connections.json")).unwrap(), disk_before); }
+                    }
+                }
+                assert_eq!(ConnectionRegistry::load(data.path()).unwrap().list().unwrap(), registry.list().unwrap());
+                drop(writer); state.close();
+            }
+        });
+    }
+
+    #[test]
+    fn stale_catalog_install_is_refused_before_download() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        for mode in ["offline", "expired", "newer-client", "closed"] {
+            let data = tmp_data(mode);
+            let state = StoreState::init(&data);
+            let entry = serde_json::from_value(serde_json::json!({
+                "id": "com.example.tools", "name": "Tools", "version": "1.0.0",
+                "tier": "scripted", "trust": "verified", "sha256": "0".repeat(64), "size": 1
+            }))
+            .unwrap();
+            *state.index.write().unwrap() = Some(Index {
+                spec: if mode == "newer-client" { u32::MAX } else { 1 },
+                generation: None,
+                version: 1,
+                expires: if mode == "expired" {
+                    "2000-01-01T00:00:00Z"
+                } else {
+                    "2099-01-01T00:00:00Z"
+                }
+                .into(),
+                entries: vec![entry],
+            });
+            state.ownership.lock().unwrap().can_install = mode != "offline";
+            if mode == "closed" {
+                state.close();
+            }
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            listener.set_nonblocking(true).unwrap();
+            {
+                let mut roots = state.roots.write().unwrap();
+                roots.base_urls = vec![format!("http://{}/", listener.local_addr().unwrap())];
+                roots.mirrors.clear();
+            }
+            let reg = grain_core::extensions::ExtensionsRegistry::load(&data, false).unwrap();
+            let root = data.join("extensions");
+            let error = rt
+                .block_on(install_entry(
+                    &state,
+                    &reg,
+                    &root,
+                    &reqwest::Client::new(),
+                    "com.example.tools",
+                    "1.0.0",
+                ))
+                .unwrap_err();
+            assert!(
+                error.contains(if mode == "closed" {
+                    "not open"
+                } else {
+                    "offline or expired"
+                }),
+                "{mode}: {error}"
+            );
+            assert_eq!(
+                listener.accept().unwrap_err().kind(),
+                std::io::ErrorKind::WouldBlock
+            );
+            assert!(reg.record("com.example.tools").is_none());
+            assert!(!root.join("com.example.tools").exists());
+            state.close();
+            drop(listener);
+            let _ = std::fs::remove_dir_all(data);
+        }
+    }
+
+    #[test]
+    fn close_or_replacement_cancels_refresh_without_late_cache_writes() {
+        use tokio::io::AsyncReadExt;
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            for mode in ["close", "replace", "timeout"] {
+                let data = tmp_data("refresh-cancel");
+                let state = StoreState::init(&data);
+                let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+                {
+                    let mut roots = state.roots.write().unwrap();
+                    roots.base_urls = vec![format!("http://{}/", listener.local_addr().unwrap())];
+                    roots.mirrors.clear();
+                }
+                let server = async {
+                    let (mut socket, _) = listener.accept().await.unwrap();
+                    let mut request = [0; 1024];
+                    assert!(socket.read(&mut request).await.unwrap() > 0);
+                    if mode == "replace" {
+                        let _ = state.begin_refresh();
+                    } else if mode == "close" {
+                        state.close();
+                    }
+                    // Hold the socket until cancellation actually drops the client.
+                    assert_eq!(socket.read(&mut request).await.unwrap(), 0);
+                };
+                let client = reqwest::Client::new();
+                let (_, view) = tokio::time::timeout(
+                    STORE_OPERATION_TIMEOUT + std::time::Duration::from_secs(3),
+                    async { tokio::join!(server, refresh(&state, &client)) },
+                )
+                .await
+                .unwrap();
+                assert!(!view.can_install);
+                assert!(view.entries.is_empty());
+                if mode == "timeout" {
+                    assert!(
+                        state.index.read().unwrap().is_some(),
+                        "current timeout may show an offline seed"
+                    );
+                } else {
+                    assert!(state.index.read().unwrap().is_none());
+                }
+                assert!(state.stored_version.read().unwrap().is_none());
+                assert_eq!(std::fs::read_dir(&state.cache_dir).unwrap().count(), 0);
+                state.close();
+                drop(listener);
+                let _ = std::fs::remove_dir_all(data);
+            }
+        });
+    }
+
+    #[test]
+    fn signed_refresh_rechecks_expiry_and_preserves_metadata_floors() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            const TEST_PUBLISHER: &str = "RWRncmFpbi1oMeKKiXB1MzK9cv70E+awsu8bSq3aeqLBQfIzcSpodrNR";
+            const INDEX: &str = include_str!("../tests/fixtures/store-generation/index.json");
+            const INDEX_SIG: &str = include_str!("../tests/fixtures/store-generation/index.json.minisig");
+            const REVS: &str = include_str!("../tests/fixtures/store-generation/revocations.json");
+            const REVS_SIG: &str = include_str!("../tests/fixtures/store-generation/revocations.json.minisig");
+            let mut modes = vec!["fresh", "expiry", "rollback", "revocation_rollback", "cache_failure", "root_equivocation", "index_equivocation", "missing_index", "bad_index", "missing_revocations", "bad_revocations", "mixed_policy", "unbound_index"];
+            #[cfg(windows)]
+            modes.push("persist_failure");
+            for mode in modes {
+                let data = tmp_data(mode);
+                if matches!(mode, "root_equivocation" | "index_equivocation") {
+                    std::fs::create_dir(data.join("store")).unwrap();
+                    Metadata::seed().write(&data.join("store")).unwrap();
+                }
+                if matches!(mode, "expiry" | "mixed_policy") {
+                    let cache_dir = data.join("store");
+                    std::fs::create_dir(&cache_dir).unwrap();
+                    let mut cache = Metadata::seed();
+                    cache.index = SignedDocument { document: INDEX.as_bytes().into(), signature: INDEX_SIG.into() };
+                    cache.revocations = SignedDocument { document: REVS.as_bytes().into(), signature: REVS_SIG.into() };
+                    cache.write(&cache_dir).unwrap();
+                }
+                let cache_guard = if mode == "persist_failure" {
+                    let cache_dir = data.join("store");
+                    std::fs::create_dir(&cache_dir).unwrap();
+                    let mut cache = Metadata::seed();
+                    cache.index = SignedDocument { document: INDEX.as_bytes().into(), signature: INDEX_SIG.into() };
+                    cache.revocations = SignedDocument { document: REVS.as_bytes().into(), signature: REVS_SIG.into() };
+                    cache.write(&cache_dir).unwrap();
+                    #[cfg(windows)]
+                    {
+                        use std::os::windows::fs::OpenOptionsExt;
+                        Some(std::fs::OpenOptions::new().read(true).share_mode(1)
+                            .open(cache_dir.join(store_cache::FILE_NAME)).unwrap())
+                    }
+                    #[cfg(not(windows))]
+                    { None::<std::fs::File> }
+                } else { None };
+                let mut state = StoreState::init(&data);
+                let genuine_identity_case = matches!(mode, "root_equivocation" | "index_equivocation" | "unbound_index");
+                if !genuine_identity_case {
+                    state.roots.write().unwrap().publishing_key = TEST_PUBLISHER.into();
+                    state.cache_unavailable = false;
+                    if matches!(mode, "persist_failure" | "expiry" | "mixed_policy") { *state.stored_version.write().unwrap() = Some(1); }
+                }
+                // A stronger resident policy without durable signed proof must
+                // not be serialized as forged metadata or forgotten on restart.
+                if mode == "revocation_rollback" { state.revocations.write().unwrap().version = 999; }
+                if mode == "rollback" { *state.stored_version.write().unwrap() = Some(2); }
+                let clock = std::sync::atomic::AtomicI64::new(now_unix());
+                let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+                {
+                    let mut roots = state.roots.write().unwrap();
+                    roots.base_urls = vec![format!("http://{}/", listener.local_addr().unwrap())];
+                    roots.mirrors.clear();
+                }
+                let server = async {
+                    let responses = [
+                        ("roots.json", trust::SEED_ROOTS), ("roots.json.minisig", trust::SEED_ROOTS_SIG),
+                        ("index.json", if genuine_identity_case { trust::SEED_INDEX } else { INDEX }), ("index.json.minisig", if genuine_identity_case { trust::SEED_INDEX_SIG } else { INDEX_SIG }),
+                        ("revocations.json", if genuine_identity_case { trust::SEED_REVOCATIONS } else { REVS }), ("revocations.json.minisig", if genuine_identity_case { trust::SEED_REVOCATIONS_SIG } else { REVS_SIG }),
+                    ];
+                    let count = if matches!(mode, "rollback" | "missing_index" | "bad_index") { 4 } else { 6 };
+                    for (name, body) in responses.into_iter().take(count) {
+                        let (mut socket, _) = listener.accept().await.unwrap();
+                        let mut request = [0; 2048];
+                        let mut count = 0;
+                        while !request[..count].windows(4).any(|bytes| bytes == b"\r\n\r\n") {
+                            assert!(count < request.len());
+                            let read = socket.read(&mut request[count..]).await.unwrap();
+                            assert_ne!(read, 0);
+                            count += read;
+                        }
+                        assert!(String::from_utf8_lossy(&request[..count]).starts_with(&format!("GET /{name} HTTP/1.1")));
+                        if mode == "expiry" && name == "revocations.json.minisig" {
+                            clock.store(i64::MAX, std::sync::atomic::Ordering::SeqCst);
+                        }
+                        if mode == "cache_failure" && name == "revocations.json.minisig" {
+                            std::fs::create_dir(state.cache_dir.join(store_cache::FILE_NAME)).unwrap();
+                        }
+                        let missing = (mode == "missing_index" && name == "index.json")
+                            || (mode == "missing_revocations" && name == "revocations.json");
+                        let bad = (mode == "bad_index" && name == "index.json")
+                            || (mode == "bad_revocations" && name == "revocations.json");
+                        let body = match (mode, name) {
+                            ("root_equivocation", "roots.json") => include_str!("../tests/fixtures/store/roots.json"),
+                            ("root_equivocation", "roots.json.minisig") => include_str!("../tests/fixtures/store/roots.json.minisig"),
+                            ("index_equivocation", "index.json") => include_str!("../tests/fixtures/store/index.json"),
+                            ("index_equivocation", "index.json.minisig") => include_str!("../tests/fixtures/store/index.json.minisig"),
+                            ("mixed_policy", "revocations.json") => include_str!("../tests/fixtures/store-generation/mixed-revocations.json"),
+                            ("mixed_policy", "revocations.json.minisig") => include_str!("../tests/fixtures/store-generation/mixed-revocations.json.minisig"),
+                            _ if bad => "tampered",
+                            _ => body,
+                        };
+                        let status = if missing || (!genuine_identity_case && name.starts_with("roots.json")) { "404 Not Found" } else { "200 OK" };
+                        socket.write_all(format!("HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len()).as_bytes()).await.unwrap();
+                        socket.write_all(body.as_bytes()).await.unwrap();
+                    }
+                };
+                let client = reqwest::Client::new();
+                let (_, view) = tokio::time::timeout(std::time::Duration::from_secs(3), async {
+                    tokio::join!(server, refresh_with_clock(&state, &client, || clock.load(std::sync::atomic::Ordering::SeqCst)))
+                }).await.unwrap();
+                assert_eq!(state.revocations.read().unwrap().version, match mode { "revocation_rollback" => 999, "mixed_policy" => 2, _ => 1 });
+                if mode == "mixed_policy" {
+                    assert_eq!(state.revocations.read().unwrap().state_for("com.example.current-policy", "1.0.0"), Some(RevocationState::Revoked));
+                }
+                assert_eq!(view.can_install, mode == "fresh", "{mode}");
+                assert_eq!(state.ownership.lock().unwrap().can_install, mode == "fresh");
+                assert_eq!(*state.stored_version.read().unwrap(), match mode { "fresh" | "persist_failure" | "root_equivocation" | "index_equivocation" | "expiry" | "mixed_policy" => Some(1), "rollback" => Some(2), _ => None });
+                assert!(!state.cache_dir.join("index.json").exists());
+                assert!(!state.cache_dir.join("roots.json").exists());
+                assert_eq!(state.cache_dir.join(store_cache::FILE_NAME).is_file(), matches!(mode, "fresh" | "expiry" | "persist_failure" | "root_equivocation" | "index_equivocation" | "mixed_policy" | "unbound_index"));
+                if matches!(mode, "persist_failure" | "root_equivocation" | "index_equivocation") {
+                    assert_eq!(Metadata::read(&state.cache_dir).unwrap().unwrap().index.document, if mode == "persist_failure" { INDEX.as_bytes() } else { trust::SEED_INDEX.as_bytes() });
+                    assert_eq!(std::fs::read_dir(&state.cache_dir).unwrap().count(), 1);
+                }
+                if mode == "fresh" {
+                    let restarted = StoreState::init(&data);
+                    // Fixture publisher override exists only in this test. The
+                    // ordinary public client must reject its signatures.
+                    assert!(restarted.cache_unavailable);
+                    assert_eq!(*restarted.stored_version.read().unwrap(), None);
+                    let mut fixture_roots = restarted.roots.read().unwrap().clone();
+                    fixture_roots.publishing_key = TEST_PUBLISHER.into();
+                    assert_eq!(load_cached_index(&state.cache_dir, &fixture_roots, None, now_unix()).unwrap().0.version, 1);
+                    assert_eq!(restarted.revocations.read().unwrap().version, 1);
+                    assert!(restarted.index.read().unwrap().is_none());
+                    assert!(!restarted.ownership.lock().unwrap().can_install);
+                }
+                if mode != "fresh" {
+                    assert_eq!(state.roots.read().unwrap().base_urls, vec![format!("http://{}/", listener.local_addr().unwrap())]);
+                }
+                assert_eq!(state.index.read().unwrap().is_some(), matches!(mode, "fresh" | "expiry" | "mixed_policy" | "persist_failure" | "root_equivocation" | "index_equivocation" | "unbound_index"), "{mode}");
+                state.close();
+                drop(cache_guard);
+                drop(listener);
+                let _ = std::fs::remove_dir_all(data);
+            }
+        });
+    }
+
+    // Read-only live catalogue compatibility check; no legacy artifact install.
     #[test]
     #[ignore = "network: fetches the live GitHub-hosted catalogue"]
-    fn live_github_end_to_end_install() {
+    fn live_github_catalogue_exposes_only_tools() {
         let data = tmp_data("live");
         let state = StoreState::init(&data);
-        let reg = grain_core::extensions::ExtensionsRegistry::load(&data, false).unwrap();
-        let ext_root = data.join("extensions");
         let client = reqwest::Client::new();
         let rt = tokio::runtime::Runtime::new().unwrap();
-
         let view = rt.block_on(refresh(&state, &client));
         assert_eq!(view.status, "fresh", "live index verified + fresh");
         assert!(
+            view.can_install,
+            "live publication must authorize acquisition"
+        );
+        assert!(
             view.entries
                 .iter()
-                .all(|entry| entry.id != "grain.agent-center-layout"),
-            "visual-only packs are hidden even if a stale catalogue publishes them"
+                .any(|entry| entry.id == "com.grain.github"),
+            "the first-party GitHub listing must be visible, not an empty catalogue"
         );
-
-        // Voice Actions — the scripted extension exercising the new
-        // open:url/open:app capabilities — installs the same way.
-        assert!(
-            view.entries.iter().any(|e| e.id == "grain.voice-actions"),
-            "voice actions is published"
-        );
-        rt.block_on(install_entry(
-            &state,
-            &reg,
-            &ext_root,
-            &client,
-            "grain.voice-actions",
-            "1.0.0",
-        ))
-        .expect("install voice actions from the live blob");
-        let va = reg
-            .record("grain.voice-actions")
-            .expect("voice actions installed");
-        assert_eq!(va.trust, grain_sdk::Trust::Core);
-        // Its single-file pack unpacked into the versioned dir.
-        assert!(
-            grain_core::install::version_dir(&ext_root, "grain.voice-actions", "1.0.0")
-                .join("pack.grainpack.json")
-                .exists(),
-            "voice actions artifact unpacked"
-        );
+        let index = state.index.read().unwrap();
+        let raw = index.as_ref().expect("verified live index");
+        for entry in &view.entries {
+            let original = raw
+                .entries
+                .iter()
+                .find(|candidate| candidate.id == entry.id && candidate.version == entry.version)
+                .unwrap();
+            match original.artifact_kind {
+                grain_sdk::distribution::ArtifactKind::Native => original.validate_tool_only(),
+                grain_sdk::distribution::ArtifactKind::McpDescriptor => {
+                    original.validate_mcp_installable()
+                }
+            }
+            .unwrap();
+        }
+        drop(index);
+        state.close();
         let _ = std::fs::remove_dir_all(&data);
     }
 

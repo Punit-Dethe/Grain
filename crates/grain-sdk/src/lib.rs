@@ -20,13 +20,16 @@
 //! narrowly, widen later).
 
 pub mod authoring;
+pub mod compatibility;
 pub mod distribution;
 pub mod error;
 pub mod event;
 pub mod flagged;
 pub mod manifest;
+pub mod mcp;
 pub mod protocol;
 pub mod settings_schema;
+pub mod submission;
 
 pub use authoring::{ExtensionProjectManifest, GRAIN_API_TYPESCRIPT};
 pub use distribution::{

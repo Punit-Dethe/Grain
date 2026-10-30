@@ -5392,24 +5392,29 @@ article.studio-extension-card {
 
 .installed-extension-list {
   display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
 }
 
-/* The 190px thumbnail dominated a row whose content is two lines of text, so
-   the card read as mostly picture and empty space. A tighter plate leaves the
-   name and description as the subject. */
+/* Installed extensions use their square identity icon, separate from gallery art. */
 .installed-extension-card {
-  min-height: 104px;
-  padding: 10px;
+  min-width: 0;
+  min-height: 88px;
+  padding: 12px;
   display: grid;
-  grid-template-columns: 148px minmax(0, 1fr) auto;
+  grid-template-columns: 56px minmax(0, 1fr) auto;
   align-items: center;
-  gap: 16px;
+  gap: 12px;
   border-radius: 13px;
   background: rgba(255, 255, 255, 0.026);
   box-shadow: none;
   cursor: pointer;
   transition: background 0.15s;
+}
+
+.installed-extension-card .extension-artwork {
+  width: 56px;
+  height: 56px;
 }
 
 .installed-extension-card:hover,
@@ -5501,8 +5506,31 @@ article.studio-extension-card {
 }
 
 .extension-artwork {
-  height: 84px;
+  width: 72px;
+  height: 72px;
   border-radius: 9px;
+}
+
+.extension-artwork,
+.extension-detail-icon {
+  position: relative;
+  overflow: hidden;
+  background: var(--bg-3);
+}
+
+.extension-artwork::before,
+.extension-artwork::after {
+  content: none;
+}
+
+.extension-icon-placeholder {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: var(--text-3);
+  font-size: 24px;
+  font-weight: 550;
 }
 
 .extension-artwork img,
@@ -5516,11 +5544,37 @@ article.studio-extension-card {
   object-fit: cover;
 }
 
+.extension-artwork img,
+.store-artwork img {
+  object-fit: contain;
+}
+
 .installed-extension-copy {
   min-width: 0;
   display: grid;
   gap: 5px;
   align-content: center;
+}
+
+:is(
+  .extension-artwork,
+  .store-artwork,
+  .preview-media
+)[data-has-artwork="true"] {
+  background-image: none;
+}
+
+:is(
+    .extension-artwork,
+    .store-artwork,
+    .preview-media
+  )[data-has-artwork="true"]::before,
+:is(
+    .extension-artwork,
+    .store-artwork,
+    .preview-media
+  )[data-has-artwork="true"]::after {
+  content: none;
 }
 
 .installed-extension-heading {
@@ -5540,34 +5594,10 @@ article.studio-extension-card {
   white-space: nowrap;
 }
 
-/* State belongs on the card, not only in the toggle: "Voice Actions, off"
-   should be readable without decoding a switch. */
+/* Only actionable account/status problems need text alongside the switch. */
 .installed-extension-state {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  color: var(--text-4);
-  font-size: 10.5px;
-  letter-spacing: 0.02em;
-  text-transform: uppercase;
-}
-
-.installed-extension-state::before {
-  content: "";
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--text-4);
-}
-
-.installed-extension-card:not(.extension-disabled) .installed-extension-state {
-  color: var(--sage);
-}
-
-.installed-extension-card:not(.extension-disabled)
-  .installed-extension-state::before {
-  background: var(--sage);
-  box-shadow: 0 0 8px rgba(168, 201, 168, 0.45);
+  color: var(--text-3);
+  font-size: 11px;
 }
 
 .installed-extension-heading span,
@@ -5593,20 +5623,10 @@ article.studio-extension-card {
   line-height: 1.55;
 }
 
-/* The actions were adrift at the far right edge with a gulf of empty card
-   between them and the text they act on. Group them, sit them on a surface of
-   their own, and the row reads as one control cluster. */
 .installed-extension-actions {
   display: flex;
   align-items: center;
-  gap: 4px;
-  padding: 4px 5px;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.028);
-}
-
-html[data-theme="light"] .installed-extension-actions {
-  background: rgba(24, 29, 37, 0.045);
+  gap: 6px;
 }
 
 /* Destructive, so it colours only on approach — a permanently red button in a
@@ -5850,53 +5870,137 @@ html[data-theme="light"] .installed-extension-actions {
   padding-bottom: 72px;
 }
 
-.extension-detail-media-wrap {
-  position: relative;
-  width: min(640px, calc(100% - 128px));
-  margin: 0 auto;
+.extension-detail-intro {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 18px;
+  padding-bottom: 22px;
 }
 
-.extension-detail-hero {
+.extension-detail-identity {
+  display: flex;
+  flex: 1 1 420px;
+  align-items: center;
+  gap: 16px;
+  min-width: 0;
+}
+
+.extension-detail-icon {
+  width: 64px;
+  height: 64px;
+  flex: 0 0 64px;
+  border-radius: 12px;
+}
+
+.extension-detail-icon img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.extension-detail-gallery {
+  margin-bottom: 28px;
+}
+
+.extension-detail-gallery-viewport {
+  position: relative;
+}
+
+.extension-detail-preview {
+  position: relative;
   width: 100%;
   aspect-ratio: 16 / 9;
-  border: 1px solid var(--hairline);
-  border-radius: var(--radius-lg);
+  overflow: hidden;
+  border-radius: var(--radius-md);
+  background: var(--bg-2);
 }
 
-.extension-detail-intro {
-  padding: 25px 2px 28px;
+.extension-detail-preview img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.extension-gallery-navigation {
+  margin-top: 10px;
   display: flex;
-  align-items: flex-end;
+  align-items: center;
   justify-content: space-between;
-  gap: 28px;
+  gap: 16px;
 }
 
-.extension-detail-intro > div:first-child {
+.extension-gallery-selectors {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.extension-gallery-selectors button {
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-3);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.extension-gallery-selectors button:hover {
+  background: var(--bg-3);
+  color: var(--text-1);
+}
+
+.extension-gallery-selectors button[aria-pressed="true"] {
+  border-color: var(--hairline);
+  background: var(--bg-3);
+  color: var(--text-1);
+  font-weight: 600;
+}
+
+.extension-gallery-selectors button:focus-visible,
+.extension-detail-gallery .media-arrow:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+
+.extension-gallery-position {
+  color: var(--text-3);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.extension-detail-heading {
   min-width: 0;
 }
 
 .extension-detail-intro h1 {
-  margin-top: 4px;
+  margin: 0;
   color: var(--text-1);
-  font-size: clamp(25px, 2.5vw, 32px);
+  font-size: 27px;
   font-weight: 640;
-  letter-spacing: -0.035em;
+  letter-spacing: -0.025em;
+  overflow-wrap: anywhere;
 }
 
 .extension-detail-intro p {
-  max-width: 700px;
-  margin: 8px 0 0;
-  color: var(--text-3);
-  font-size: 12.5px;
-  line-height: 1.62;
+  max-width: 65ch;
+  margin: 10px 0 0;
+  color: var(--text-2);
+  font-size: 13px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
 }
 
 .extension-detail-actions {
-  flex: 0 0 auto;
   display: flex;
   align-items: center;
-  justify-content: flex-end;
-  gap: 8px;
+  flex-wrap: wrap;
+  gap: 10px;
 }
 
 .extension-detail-actions .button {
@@ -5905,91 +6009,78 @@ html[data-theme="light"] .installed-extension-actions {
   gap: 6px;
 }
 
-.extension-detail-sections {
-  display: grid;
-  gap: 12px;
+.extension-detail-installed {
+  color: var(--text-3);
+  font-size: 12px;
 }
 
-.extension-detail-disclosure {
-  overflow: hidden;
-  border: 1px solid var(--hairline);
-  border-radius: var(--radius-md);
-  background: color-mix(in srgb, var(--bg-2) 52%, transparent);
+.extension-uninstall-slot {
+  display: contents;
 }
 
-.extension-detail-disclosure-heading {
-  margin: 0;
-  font: inherit;
-}
-
-.extension-detail-disclosure-button {
-  width: 100%;
-  min-height: 62px;
-  padding: 12px 16px;
-  border: 0;
+.extension-detail-nav {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 20px;
-  color: var(--text-1);
+  gap: 26px;
+  border-bottom: 1px solid var(--hairline);
+  margin-bottom: 30px;
+}
+
+.extension-detail-nav button {
+  min-height: 42px;
+  padding: 0 1px 12px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
   background: transparent;
+  color: var(--text-3);
+  box-shadow: none;
   font: inherit;
-  text-align: left;
+  font-size: 13px;
   cursor: pointer;
-  transition: background 150ms ease;
 }
 
-.extension-detail-disclosure-button:hover {
-  background: color-mix(in srgb, var(--text-1) 4%, transparent);
+.extension-detail-nav button:hover,
+.extension-detail-nav button[aria-pressed="true"] {
+  color: var(--text-1);
 }
 
-.extension-detail-disclosure-button > span {
+.extension-detail-nav button[aria-pressed="true"] {
+  border-bottom-color: var(--text-1);
+  font-weight: 600;
+}
+
+.extension-detail-nav button:focus-visible,
+.extension-detail-back-button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 4px;
+}
+
+.extension-detail-panel[hidden] {
+  display: none;
+}
+
+.extension-detail-overview {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 245px;
+  align-items: start;
+  gap: 48px;
+}
+
+.extension-detail-facts {
   min-width: 0;
   display: grid;
-  gap: 3px;
+  gap: 26px;
 }
 
-.extension-detail-disclosure-button strong {
+.extension-detail-facts h2 {
+  margin: 0 0 10px;
+  color: var(--text-1);
   font-size: 13px;
-  font-weight: 640;
-}
-
-.extension-detail-disclosure-button small {
-  overflow: hidden;
-  color: var(--text-4);
-  font-size: 10.5px;
-  line-height: 1.4;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.extension-detail-disclosure-button svg {
-  flex: 0 0 auto;
-  color: var(--text-4);
-  transform: rotate(-90deg);
-  transition: transform 160ms var(--ease-out);
-}
-
-.extension-detail-disclosure-button[aria-expanded="true"] svg {
-  transform: rotate(0deg);
-}
-
-.extension-detail-disclosure-panel {
-  padding: 22px;
-  border-top: 1px solid var(--hairline-soft);
-}
-
-.extension-information-grid {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(300px, 0.88fr);
-  gap: 34px;
+  font-weight: 630;
 }
 
 .extension-facts dl {
   margin: 0;
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  column-gap: 28px;
 }
 
 .extension-facts dl > div {
@@ -5997,42 +6088,24 @@ html[data-theme="light"] .installed-extension-actions {
   padding: 9px 0;
   border-bottom: 1px solid var(--hairline-soft);
   display: grid;
-  grid-template-columns: minmax(86px, 0.8fr) minmax(0, 1.2fr);
-  gap: 12px;
-  font-size: 11px;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  align-items: baseline;
+  gap: 14px;
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 .extension-facts dt {
-  color: var(--text-4);
+  color: var(--text-3);
 }
 
 .extension-facts dd {
   min-width: 0;
   margin: 0;
-  overflow: hidden;
   color: var(--text-2);
-  font-weight: 560;
+  font-weight: 500;
   text-align: right;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.extension-trust {
-  margin-top: 18px;
-  padding-left: 12px;
-  border-left: 2px solid var(--text-4);
-}
-
-.extension-trust[data-tone="verified"] {
-  border-left-color: var(--sage);
-}
-
-.extension-trust[data-tone="experimental"] {
-  border-left-color: var(--amber, #c5a66a);
-}
-
-.extension-trust[data-tone="dev"] {
-  border-left-color: var(--accent);
+  overflow-wrap: anywhere;
 }
 
 .extension-trust > div {
@@ -6042,50 +6115,87 @@ html[data-theme="light"] .installed-extension-actions {
   color: var(--text-2);
 }
 
-.extension-trust strong,
-.extension-permissions-heading strong {
-  font-size: 11.5px;
-  font-weight: 630;
+.extension-trust[data-tone="verified"] svg {
+  color: var(--sage);
 }
 
-.extension-trust p {
-  max-width: 530px;
-  margin: 5px 0 0;
-  color: var(--text-4);
-  font-size: 10.5px;
-  line-height: 1.55;
+.extension-trust strong {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.extension-trust p,
+.extension-detail-note {
+  margin: 7px 0 0;
+  color: var(--text-3);
+  font-size: 12px;
+  line-height: 1.6;
 }
 
 .extension-permissions-pane {
   min-width: 0;
-  max-height: 256px;
-  padding-left: 24px;
-  border-left: 1px solid var(--hairline-soft);
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  scrollbar-width: thin;
-  scrollbar-color: var(--text-4) transparent;
 }
 
 .extension-permissions-heading {
-  margin-bottom: 8px;
   display: flex;
-  align-items: center;
+  align-items: baseline;
   justify-content: space-between;
   gap: 12px;
-  color: var(--text-2);
 }
 
 .extension-permissions-heading span {
-  color: var(--text-4);
-  font-size: 10px;
+  color: var(--text-3);
+  font-size: 11px;
   font-variant-numeric: tabular-nums;
 }
 
+.extension-detail .permission-row {
+  padding: 9px 0;
+  border-radius: 0;
+  border-bottom: 1px solid var(--hairline-soft);
+  background: transparent;
+  box-shadow: none;
+  color: var(--text-2);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.extension-detail .permission-row > span {
+  overflow-wrap: anywhere;
+}
+
+.extension-detail .permission-row strong {
+  color: var(--text-3);
+  font-size: 10px;
+}
+
+.extension-detail-settings .mcp-connections {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: 0;
+}
+
+.extension-detail-settings .mcp-connections-heading {
+  margin-bottom: 14px;
+}
+
+.extension-detail-settings .mcp-connections h2 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.extension-detail-settings .extension-setting-row h3 {
+  font-size: 13px;
+  font-weight: 550;
+}
+
+.extension-detail-settings .extension-setting-row p {
+  margin: 5px 0 0;
+  color: var(--text-3);
+}
+
 .extension-auto-send-row {
-  margin-top: 22px;
-  padding-top: 18px;
-  border-top: 1px solid var(--hairline-soft);
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -6105,8 +6215,8 @@ html[data-theme="light"] .installed-extension-actions {
 
 .extension-auto-send-copy strong {
   color: var(--text-2);
-  font-size: 11.5px;
-  font-weight: 630;
+  font-size: 13px;
+  font-weight: 550;
 }
 
 .extension-auto-send-copy > div:first-child > span {
@@ -6126,13 +6236,13 @@ html[data-theme="light"] .installed-extension-actions {
 .extension-auto-send-copy small {
   margin: 5px 0 0;
   display: block;
-  color: var(--text-4);
-  font-size: 10.5px;
+  color: var(--text-3);
+  font-size: 12px;
   line-height: 1.5;
 }
 
 .extension-auto-send-copy small {
-  color: var(--text-5, var(--text-4));
+  color: var(--text-3);
 }
 
 .extension-auto-send-error {
@@ -6143,49 +6253,23 @@ html[data-theme="light"] .installed-extension-actions {
 }
 
 .extension-detail-readme-section {
-  overflow: hidden;
-  border: 1px solid var(--hairline);
-  border-radius: var(--radius-md);
-  background: color-mix(in srgb, var(--bg-2) 52%, transparent);
-}
-
-.extension-detail-readme-heading {
-  min-height: 62px;
-  padding: 12px 16px;
-  border-bottom: 1px solid var(--hairline-soft);
-  display: grid;
-  align-content: center;
-  gap: 3px;
-}
-
-.extension-detail-readme-heading strong {
-  color: var(--text-1);
-  font-size: 13px;
-  font-weight: 640;
-}
-
-.extension-detail-readme-heading span {
-  color: var(--text-4);
-  font-size: 10.5px;
-  line-height: 1.4;
+  min-width: 0;
 }
 
 .extension-detail-readme {
   min-height: 88px;
-  padding: 22px;
+  padding: 0;
 }
 
-.extension-detail-readme .markdown-body {
-  max-width: 820px;
+.extension-detail-readme .gm-markdown {
+  max-width: 72ch;
 }
 
 .extension-detail-muted {
-  min-height: 70px;
-  display: grid;
-  place-items: center;
-  color: var(--text-4);
-  font-size: 11px;
-  text-align: center;
+  padding: 12px 0;
+  color: var(--text-3);
+  font-size: 12px;
+  line-height: 1.6;
 }
 
 /* Developer tools remain a secondary utility drawer; store details do not. */
@@ -6499,11 +6583,14 @@ html[data-theme="light"] .tools-canvas {
   background: transparent;
 }
 html[data-theme="light"] .installed-extension-card,
-html[data-theme="light"] .permission-row,
-html[data-theme="light"] .extension-detail-disclosure,
-html[data-theme="light"] .extension-detail-readme-section {
+html[data-theme="light"] .permission-row {
   background: #fcfcfb;
   box-shadow: inset 0 0 0 1px rgba(26, 26, 26, 0.07);
+}
+
+html[data-theme="light"] .extension-detail .permission-row {
+  background: transparent;
+  box-shadow: none;
 }
 
 html[data-theme="light"] .polished-store-card {
@@ -6549,17 +6636,18 @@ html[data-theme="light"] .extension-empty-state {
   .studio-extension-grid[data-card-count="1"] {
     grid-template-columns: 1fr;
   }
-  .installed-extension-card {
-    grid-template-columns: 160px minmax(0, 1fr) auto;
+  .extension-detail-overview {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 36px;
   }
-  .extension-information-grid {
-    grid-template-columns: 1fr;
-    gap: 24px;
+  .extension-detail-facts {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 26px 32px;
+    padding-top: 26px;
+    border-top: 1px solid var(--hairline-soft);
   }
   .extension-permissions-pane {
-    padding: 20px 0 0;
-    border-top: 1px solid var(--hairline-soft);
-    border-left: 0;
+    grid-column: 1 / -1;
   }
   .extension-auto-send-row {
     align-items: flex-start;
@@ -6584,13 +6672,8 @@ html[data-theme="light"] .extension-empty-state {
   .extension-configure-dialog {
     max-height: calc(100vh - 36px);
   }
-  .installed-extension-card {
-    grid-template-columns: 120px minmax(0, 1fr);
-  }
-  .installed-extension-actions {
-    grid-column: 2;
-    justify-content: flex-end;
-    padding: 0 4px 4px 0;
+  .installed-extension-list {
+    grid-template-columns: minmax(0, 1fr);
   }
   .polished-store-grid {
     grid-template-columns: 1fr;
@@ -6614,17 +6697,15 @@ html[data-theme="light"] .extension-empty-state {
     justify-content: flex-start;
     flex-wrap: wrap;
   }
-  .extension-detail-media-wrap {
-    width: calc(100% - 24px);
+  .extension-detail-identity {
+    flex-basis: auto;
+    gap: 16px;
   }
-  .extension-detail-disclosure-panel {
-    padding: 18px;
+  .extension-detail-intro h1 {
+    font-size: 24px;
   }
-  .extension-detail-readme {
-    padding: 18px;
-  }
-  .extension-facts dl {
-    grid-template-columns: 1fr;
+  .extension-detail-facts {
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 

@@ -1,0 +1,200 @@
+# Extension store operations
+
+Current operator handoff, 16 October 2026. The active scope/status lives in
+[the six-block plan](PLATFORM-STABILIZATION.md); implementation evidence lives
+in [progress](MCP-EXTENSION-PROGRESS.md). This runbook uses the existing CLI and
+GitHub host. It introduces no service, scheduler or second publisher.
+
+## Responsibility and credentials
+
+The current tester maintainer is Punit-Dethe. The adopted ownership policy is
+outside source/build trees at `%LOCALAPPDATA%/GrainPublishing/policy/ownership.json`,
+SHA256 `d471cf0c145dd8a83b131c2e669284f026f78659e0c649f095cd8935423771c3`.
+It authorizes exact tester approvals for GitHub/Notion; it is not blanket community
+approval. Keep source approval, account consent and Agent execution policy distinct.
+
+- **Root key:** authorizes publisher/trust-root changes. Keep offline and separate
+  from routine publishing. A suspected root compromise requires a separately
+  reviewed trust recovery; publisher-signed metadata cannot repair root trust.
+- **Publishing key:** signs reviewed releases, renewal and revocation. Use explicit
+  password unlocking; never put it in an author checkout, CI build artifact or chat.
+  The app updater key is a different identity and must not be reused.
+- **GitHub publisher access:** activates only the verified commit/bundle through
+  the existing conditional workflow. Failed source build/review must never acquire
+  signing credentials. A deployment environment's name alone provides no protection.
+- **Provider registrations:** GitHub App and other pre-registered OAuth identities
+  are maintained by their registration owner. Third-party authors document their
+  registration/support prerequisites. Packages carry no client secrets.
+
+Before public community release, the operator must confirm who holds each key,
+who may approve/deploy, and a private backup plus tested restore procedure. Store
+encrypted backups/password recovery separately with restricted access; prove
+restoration with a harmless offline signature checked against the pinned public
+key, never by publishing an unreviewed extension. This document does **not** claim
+the current tester keys were rotated, backed up or restore-tested.
+
+**Tester decision, 17 October 2026:** the user explicitly defers real root and
+publishing-key custody/backup setup until public release. This is not a failed
+tester check and does not certify existing backups. Public release still needs
+the named private custodians and a successful restore of each actual key.
+
+### Offline backup restore procedure
+
+Use the existing signer and standard [Minisign verification](https://jedisct1.github.io/minisign/),
+not a new recovery service. The [Minisign project](https://github.com/jedisct1/minisign)
+documents encrypted secret keys and backup handling. Perform this separately for
+root and publishing identities when custody setup is authorized:
+
+1. Obtain the expected public key from an independently trusted, previously pinned
+   record. Do not derive the expected identity from the backup being tested.
+2. Restore only a copy of the encrypted backup into a private offline working
+   directory outside any source checkout, artifact or synchronized public folder.
+   Keep the live key and backup intact; never regenerate a missing identity.
+3. Create a fresh plain-text proof file with a unique date/reference and no
+   catalogue contents. Use fresh, nonexistent signature output paths: the existing
+   signer can overwrite its output. With locally chosen paths, run:
+
+   ```text
+   grain-registry sign --key RESTORED_ENCRYPTED_KEY --input FRESH_PROOF.txt --out FRESH_PROOF.txt.minisig --prompt-key-password
+   minisign -Vm FRESH_PROOF.txt -x FRESH_PROOF.txt.minisig -p INDEPENDENTLY_PINNED_PUBLIC_KEY.pub
+   ```
+
+4. Enter the recovery password only at the local prompt. Verification must succeed
+   against that original public key. Record the key's public identity, backup
+   reference, date and result privately; never record the password/private bytes.
+   Follow the operator's secure disposal procedure for the restored working copy.
+   Do not publish the proof, alter serving metadata or disable key encryption.
+
+The existing encrypted-key unit test now copies, removes and restores a disposable
+fixture key, reloads it with its password, signs a non-catalogue proof and verifies
+against the public key captured before restoration. All four signing-key tests
+pass, including missing/empty/wrong-password refusal. This checks our loader/signing
+path, not actual operator custody. The external Minisign command is documented from
+its official usage; it was not executed here and Minisign was not installed.
+
+## Routine publication and renewal
+
+Use the [CLI operator instructions](../../crates/grain-registry-tools/README.md)
+for exact commands and argument contracts. Authors use `grain-ext submit`; operators
+select trusted CI evidence and approve the exact source/candidate before
+`stage-reviewed-release`. Retain its candidate/snapshot/bundle and final GitHub
+publication receipt. Do not choose pins from an author's own claimed receipt.
+
+Check selected signed metadata before expiry. `renew-serving-metadata` updates
+index/revocation counters and expiry only; it does not approve releases or deploy.
+Use its fresh assembly with existing promotion, export and commit-bound GitHub
+publication. Confirm remote Git **and** anonymous hosted-file verification. There
+is no automatic renewal job: assigning/scheduling an operator is an activation
+decision, not implemented background work. Expired index/revocations can be renewed
+if authentic; expired roots require root-authorized recovery.
+
+## Broken release or abuse
+
+1. Identify the exact published ID/version from the protected current snapshot;
+   record a short public reason without private incident details.
+2. Use `revoke-serving-release` with that independent snapshot digest and the
+   publisher key. This prepares a complete assembly; it does not change hosting.
+3. Verify, promote against the unchanged selected pointer, export, then follow
+   the same commit-bound publication and anonymous checks as a release.
+4. Confirm the app enforces the new revocation on refresh. Offline clients do
+   not receive immediate push revocation. Retain immutable addressed assets and
+   signed rules; do not edit metadata on the host by hand.
+5. Review/publish a corrected new version through the normal author workflow.
+   The old revocation stays in place. Re-enabling the bad version is not recovery.
+
+The exact-version command covers native and MCP packages. It refuses unknown or
+already revoked targets and never weakens an earlier rule. Widespread publisher
+compromise/root rotation is a separate authority operation, not something this
+single-release command claims to solve. Legacy `retire` is not a coherent-store
+revocation procedure.
+
+## Failed publication and provider outage
+
+| Failure | Response |
+| --- | --- |
+| Source/review/signing refused | Fix that named cause; preserve the working store. Do not bypass approval or reclassify it as success. |
+| Snapshot/current pointer or Git base changed | Inspect the newer trusted state and prepare again against it; never force-push over another publisher. |
+| Local promotion succeeded, export failed | Reuse the verified promoted snapshot and export/verify again; do not sign or repeat provider actions unnecessarily. |
+| Push succeeded, delivery verification failed | Read remote Git and verify the exact intended bundle before retrying the delivery check. Do not create another release merely because reporting failed. |
+| Provider down or OAuth registration changed | Maintainer checks the upstream provider and registration. Preserve accounts/installation; report needs-attention/reconnect when required. Never silently redirect credentials to another endpoint. |
+| Community package abandoned/abusive | Registry maintainer records the case, contacts the author where appropriate, and reviews restriction/revocation. A first-party listing does not make Grain the maintainer of the provider's MCP server. |
+
+## Remaining activation gates
+
+### Adopted tester controls
+
+[Registry PR 12](https://github.com/Punit-Dethe/Grain-Extention/pull/12), exact head
+`97e50fbdc10d041eb037ec4802db5ba5dfbaf041`, prepares six workflow lines and two
+plain REST request bodies. It does not change the tooling pin, signer, candidate
+bytes or running app. The user explicitly approved merge and tester adoption on
+16 October 2026. PR 12 is merged at
+`bcaa7cf98d453af0ddb1d450416b07ca62d53c62`; both reviewed settings are **active and
+verified by fresh GETs**. The main-only deployment policy ID is `63296048`.
+
+| Control | Adopted tester setting |
+| --- | --- |
+| Workflow dispatch | Branch `main` only; trusted checkout uses the run's exact SHA. |
+| Reviewed base | Run SHA must equal the independently reviewed publication base; drift refuses before candidate checkout. |
+| Deployment approval | Punit-Dethe, public user ID 206300423, must approve the `publish` environment job. |
+| Self-review | Allowed, so the existing single-maintainer tester process remains usable. |
+| Deployment refs | Exactly the branch `main`; no tags or additional branch patterns. |
+| Keys and live releases | No key migration, signing, extension release or installer. |
+
+This approval is for activating a signed catalogue, not for Agent tool calls.
+Agent automatic execution and provider OAuth consent remain unchanged.
+
+Adoption re-read the reviewed empty baseline before the PUT, inspected the selected
+policies before adding the main rule, then independently verified exactly one
+reviewer (User 206300423), self-review allowed, two expected protection rules and
+one `main` branch policy with no tags. Administrator bypass is still true; main
+remains unprotected with no rulesets, as approved. The merge changes only workflow,
+operator instructions and the two proposed bodies; catalogue/assets are unchanged.
+For future control updates, re-read the current state and refuse unexpected drift.
+Confirm an actual deployment waits for
+approval on the next separately approved normal publication; do not create a dummy
+extension to test it. Full commands and official references are in the registry's
+[publishing instructions](https://github.com/Punit-Dethe/Grain-Extention/blob/publishing/main-only-activation-20261016/PUBLISHING.md#proposed-tester-publishing-environment--not-automatically-adopted).
+
+Production administrator-bypass remains a separate operator setting. GitHub's
+documented REST environment update and the live `UpdateEnvironmentInput` schema
+do not expose that write field; use the documented Settings checkbox, not an
+undocumented request property. Source branch protection also remains separate:
+PR-only writes can block the current exact-base `GITHUB_TOKEN` publisher. The
+workflow condition does not replace environment enforcement; branches can edit
+their own YAML. No public community-readiness claim follows from these tester
+controls. Adoption required the user's separate approval and live API writes;
+committing a proposal alone does not enforce it.
+
+### Tester acceptance and outstanding public-release decisions
+
+All six stabilization tester checkpoints are complete as of 18 October 2026.
+The user explicitly confirms all three final Windows packaged-alpha checks pass:
+Developer Mode off with one GitHub/Notion card each and no custom MCP controls,
+two installed extensions per row, and a harmless Notion read before/after restart.
+This accepts run `38970462723` at source
+`ad701fd19539c400128d0b289d7c1d5a1cd3fbf8`; evidence and installer hashes are in
+[progress](MCP-EXTENSION-PROGRESS.md). Public-release requirements below are not
+implied complete by tester acceptance.
+
+- **GitHub controls:** tester reviewer/main-branch settings are adopted above.
+  The actual deployment pause still needs the next approved normal publication.
+  Production administrator bypass and main/source protection remain separate
+  decisions compatible with the conditional writer; do not silently block it.
+- **Key custody/restore:** explicitly deferred by the user until public release
+  on 17 October. The disposable recovery check passes; real private assignments,
+  backups and restore remain a public-release prerequisite, not tester acceptance.
+- **Alpha application exposure:** source-aware access is implemented. The dedicated
+  alpha identity/debug builds allow signed-store accounts/tools without Developer
+  Mode; custom MCPs require a debug build and Developer Mode. Normal tests and the
+  affected user real-app checks pass. Final Windows packaged-alpha checks are
+  explicitly user-accepted on 18 October; no repeat is required.
+- **Contributor cleanup and release scope:** identify obsolete harness procedures
+  in the existing inventory, keep normal tests as the default, and run only affected
+  final application/packaging checks. Advertise only verified platforms/providers.
+
+Public-release gates are separate from tester acceptance. The final Windows alpha
+installer is prepared through the existing Build Test workflow's alpha-only input,
+with exact run-SHA checkout and an explicit release profile. It creates an Actions
+artifact, not a GitHub Release, new version or extension publication. That packaged
+app's final exposure/visual/read-and-restart checks now pass by explicit user
+report. No repeat of accepted development-app/provider checks is required.

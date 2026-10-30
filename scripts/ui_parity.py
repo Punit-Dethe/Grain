@@ -95,7 +95,7 @@ def app_settings_fields(src: str) -> list:
 def commands(src: str) -> list:
     """Generated command functions, as (camelCase, snake_case) pairs."""
     out = []
-    for camel in sorted(set(re.findall(r"^async (\w+)\(", src, re.M))):
+    for camel in sorted(set(re.findall(r"^\s*async (\w+)\(", src, re.M))):
         snake = re.sub(r"([A-Z])", lambda m: "_" + m.group(1).lower(), camel)
         out.append((camel, snake))
     return out

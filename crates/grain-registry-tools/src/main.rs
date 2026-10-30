@@ -4,7 +4,7 @@
 //! *verifying* side. It never ships in Grain. Three jobs:
 //!
 //! - `keygen`  — generate a minisign keypair (root or publishing) and print the
-//!               base64 public-key line to pin in the app.
+//!   base64 public-key line to pin in the app.
 //! - `sign`    — produce a detached `<file>.minisig` for a JSON document.
 //! - `publine` — print the base64 public-key line from a `.pub` file.
 //!
@@ -12,12 +12,21 @@
 //! trusts (C-10), and verify against `minisign-verify` in `grain-core`.
 
 use std::fs;
-use std::io::Cursor;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
-use clap::{Parser, Subcommand};
-use minisign::{KeyPair, PublicKeyBox, SecretKeyBox};
+use clap::{Args, Parser, Subcommand};
+use minisign::{KeyPair, PublicKeyBox};
+mod signing_key;
+use signing_key::Unlock;
+mod approval;
+mod authority;
+mod catalogue;
+mod intake;
+mod prepare;
+mod receive;
+mod review;
+mod serving;
 
 #[derive(Parser)]
 #[command(
@@ -27,10 +36,282 @@ use minisign::{KeyPair, PublicKeyBox, SecretKeyBox};
 struct Cli {
     #[command(subcommand)]
     cmd: Cmd,
+    #[command(flatten)]
+    unlock: Unlock,
+}
+
+#[derive(Args)]
+struct BootstrapServingTreeArgs {
+    #[arg(long)]
+    key: PathBuf,
+    #[arg(long, default_value_t = 30)]
+    expires_days: u32,
+    #[arg(long)]
+    out: PathBuf,
+}
+
+#[derive(Args)]
+struct PrepareInitialGithubPublicationArgs {
+    #[arg(long)]
+    checkout: PathBuf,
+    #[arg(long)]
+    repository: String,
+    #[arg(long)]
+    branch: String,
+    #[arg(long)]
+    expected_base_commit: String,
+    #[arg(long)]
+    candidate_commit: String,
+    #[arg(long)]
+    bundle: PathBuf,
+    #[arg(long)]
+    expected_receipt_sha256: String,
+    #[arg(long)]
+    out: PathBuf,
+}
+
+#[derive(Args)]
+struct PrepareGithubPublicationArgs {
+    #[arg(long)]
+    checkout: PathBuf,
+    /// Independently expected GitHub OWNER/REPO, without .git.
+    #[arg(long)]
+    repository: String,
+    #[arg(long)]
+    branch: String,
+    #[arg(long)]
+    expected_base_commit: String,
+    #[arg(long)]
+    candidate_commit: String,
+    #[arg(long)]
+    previous: PathBuf,
+    #[arg(long)]
+    previous_receipt_sha256: String,
+    #[arg(long)]
+    bundle: PathBuf,
+    #[arg(long)]
+    expected_receipt_sha256: String,
+    /// Fresh directory for the conditional push handoff, not a deploy.
+    #[arg(long)]
+    out: PathBuf,
+}
+
+#[derive(Args)]
+struct ReviewedCandidateArgs {
+    #[arg(long)]
+    submission: PathBuf,
+    #[arg(long)]
+    prepared: PathBuf,
+    #[arg(long)]
+    candidate: PathBuf,
+    /// Operator-owned review policy, outside author-controlled workspaces.
+    #[arg(long)]
+    policy: PathBuf,
+    /// Independent digest of the protected, approved policy document.
+    #[arg(long)]
+    policy_sha256: String,
+    /// Protected ownership/reviewer file, bound by the review policy digest.
+    #[arg(long)]
+    authority: PathBuf,
+    /// Absolute path to the independently pinned official GitHub CLI binary.
+    #[arg(long)]
+    gh: PathBuf,
+    /// GitHub/Sigstore attestation bundle for candidate.json.
+    #[arg(long)]
+    attestation: PathBuf,
+    #[arg(long)]
+    key: PathBuf,
+}
+
+impl ReviewedCandidateArgs {
+    fn inputs<'a>(
+        &'a self,
+        previous: &'a Path,
+        out: &'a Path,
+        unlock: &'a Unlock,
+    ) -> review::Inputs<'a> {
+        review::Inputs {
+            submission: &self.submission,
+            prepared: &self.prepared,
+            candidate: &self.candidate,
+            policy: &self.policy,
+            policy_pin: &self.policy_sha256,
+            authority: &self.authority,
+            gh: &self.gh,
+            attestation: &self.attestation,
+            previous,
+            key: &self.key,
+            out,
+            unlock,
+        }
+    }
+}
+
+#[derive(Args)]
+struct SignReviewedCandidateArgs {
+    #[command(flatten)]
+    reviewed: ReviewedCandidateArgs,
+    /// Previously signed index.json and index.json.minisig directory.
+    #[arg(long)]
+    previous: PathBuf,
+    /// New update directory; complete hosting/roots/revocations are separate.
+    #[arg(long)]
+    out: PathBuf,
 }
 
 #[derive(Subcommand)]
 enum Cmd {
+    /// Create an empty signed catalogue from current app trust, without old data.
+    BootstrapServingTree(BootstrapServingTreeArgs),
+    /// Capture authenticated previous publication proof from an exact Git commit.
+    /// Never reads the working tree, activates metadata, authenticates or pushes.
+    CaptureGithubPublication {
+        #[arg(long)]
+        checkout: PathBuf,
+        #[arg(long)]
+        repository: String,
+        #[arg(long)]
+        expected_commit: String,
+        #[arg(long)]
+        expected_receipt_sha256: String,
+        /// Fresh directory containing bundle/ and an unsigned capture receipt.
+        #[arg(long)]
+        out: PathBuf,
+    },
+    /// Bind verified current/history bundles to exact Git commits; never pushes.
+    PrepareGithubPublication(PrepareGithubPublicationArgs),
+    /// Verify a clean seed-derived first publication, with no previous bundle.
+    /// Emits an exact-base conditional handoff; never authenticates or pushes.
+    PrepareInitialGithubPublication(PrepareInitialGithubPublicationArgs),
+    /// Renew signed catalogue/revocation expiry without changing entries or hosting.
+    RenewServingMetadata {
+        #[arg(long)]
+        v1: PathBuf,
+        /// Independent digest of the complete previously signed snapshot.
+        #[arg(long)]
+        expected_snapshot_sha256: String,
+        #[arg(long)]
+        key: PathBuf,
+        /// Renewal lifetime, from one through thirty days.
+        #[arg(long, default_value_t = 30)]
+        expires_days: u32,
+        /// Fresh assembly directory; never overwrites the source or deploys it.
+        #[arg(long)]
+        out: PathBuf,
+    },
+    /// Revoke one exact signed release; prepares metadata without changing hosting.
+    RevokeServingRelease {
+        #[arg(long)]
+        v1: PathBuf,
+        #[arg(long)]
+        expected_snapshot_sha256: String,
+        #[arg(long)]
+        key: PathBuf,
+        #[arg(long)]
+        id: String,
+        #[arg(long)]
+        version: String,
+        /// User-visible explanation, at most 1024 bytes, without control characters.
+        #[arg(long)]
+        reason: String,
+        #[arg(long, default_value_t = 30)]
+        expires_days: u32,
+        #[arg(long)]
+        out: PathBuf,
+    },
+    /// Export selected metadata and all retained addressed assets for static hosting.
+    ExportHostingBundle {
+        #[arg(long)]
+        store: PathBuf,
+        #[arg(long)]
+        out: PathBuf,
+        #[arg(long)]
+        expected_current_sha256: String,
+    },
+    /// Verify an independently receipt-pinned static hosting bundle. Never deploys.
+    VerifyHostingBundle {
+        #[arg(long)]
+        bundle: PathBuf,
+        #[arg(long)]
+        expected_receipt_sha256: String,
+    },
+    /// Export one verified selected snapshot without deploying or changing it.
+    ExportServingSnapshot {
+        #[arg(long)]
+        store: PathBuf,
+        #[arg(long)]
+        out: PathBuf,
+        #[arg(long)]
+        expected_current_sha256: String,
+    },
+    /// Verify the app-pinned trust chain and every referenced serving asset.
+    VerifyServingTree {
+        #[arg(long)]
+        v1: PathBuf,
+    },
+    /// Assemble a full serving tree from a signed base and signed update fragment.
+    AssembleServingTree {
+        #[arg(long)]
+        base: PathBuf,
+        #[arg(long)]
+        update: PathBuf,
+        #[arg(long)]
+        out: PathBuf,
+    },
+    /// Initialize a new local immutable snapshot store. Does not deploy hosting.
+    InitializeServingStore {
+        #[arg(long)]
+        v1: PathBuf,
+        #[arg(long)]
+        out: PathBuf,
+    },
+    /// Serialize local promotion against an independently pinned current pointer.
+    PromoteServingTree {
+        #[arg(long)]
+        assembly: PathBuf,
+        #[arg(long)]
+        store: PathBuf,
+        #[arg(long)]
+        expected_current_sha256: String,
+    },
+    /// Emit a strict bounded source request for isolated CI. Grants no approval.
+    InspectSubmission {
+        #[arg(long)]
+        submission: PathBuf,
+        #[arg(long)]
+        out: PathBuf,
+    },
+    /// Confirm current GitHub source approval without reading a signing key.
+    VerifySourceReview {
+        #[arg(long)]
+        submission: PathBuf,
+        #[arg(long)]
+        policy: PathBuf,
+        #[arg(long)]
+        policy_sha256: String,
+        #[arg(long)]
+        authority: PathBuf,
+        #[arg(long)]
+        gh: PathBuf,
+    },
+    /// Recheck CI bytes/provenance and prepare an unapproved exact review policy.
+    /// No author code execution, key access, signing or publication.
+    PrepareReleaseReview(intake::Args),
+    /// Sign a new catalogue update only after pinned review and GitHub provenance.
+    /// Produces an update fragment, never uploads or mutates the served registry.
+    SignReviewedCandidate(SignReviewedCandidateArgs),
+    /// Sign an approved candidate, promote the local serving store and export a verified hosting bundle.
+    /// Never commits, pushes or activates GitHub. Failed work is retained for inspection.
+    StageReviewedRelease {
+        #[command(flatten)]
+        reviewed: ReviewedCandidateArgs,
+        #[arg(long)]
+        store: PathBuf,
+        #[arg(long)]
+        expected_current_sha256: String,
+        #[arg(long)]
+        out: PathBuf,
+    },
     /// Generate a minisign keypair. Writes <name>.pub and <name>.key into --out,
     /// and prints the base64 public-key line to pin in the binary.
     Keygen {
@@ -175,9 +456,54 @@ enum Cmd {
         #[arg(long)]
         out: PathBuf,
     },
+    /// Prepare a no-signing artifact/listing snapshot from a locally pinned
+    /// source checkout. The receipt is unsigned and is NOT review authority.
+    PrepareArtifact {
+        /// Registry extensions/<id> folder with submission.toml and DESCRIPTION.
+        #[arg(long)]
+        submission: PathBuf,
+        /// Standalone source checkout; native build must already be complete.
+        #[arg(long)]
+        src: PathBuf,
+        /// New output directory; existing output is never overwritten.
+        #[arg(long)]
+        out: PathBuf,
+    },
+    /// Revalidate a received preparation against a reviewed submission and
+    /// independently expected hashes. This never grants review/signing trust.
+    VerifyPrepared {
+        #[arg(long)]
+        submission: PathBuf,
+        #[arg(long)]
+        prepared: PathBuf,
+        /// Expected receipt digest from independently verified CI/review.
+        #[arg(long)]
+        receipt_sha256: String,
+        /// Expected builder executable digest from trusted build policy.
+        #[arg(long)]
+        producer_sha256: String,
+    },
+    /// Stage an unsigned catalogue candidate from checked bytes. No trust,
+    /// index update, signing or publication is performed.
+    PrepareCatalogue {
+        #[arg(long)]
+        submission: PathBuf,
+        #[arg(long)]
+        prepared: PathBuf,
+        #[arg(long)]
+        receipt_sha256: String,
+        #[arg(long)]
+        producer_sha256: String,
+        /// New directory outside both input trees, with an existing parent.
+        #[arg(long)]
+        out: PathBuf,
+    },
 }
 
 /// The submission manifest an author writes (source pointer, never an artifact).
+/// Retained only for the legacy producer until E4 migration; new source
+/// admission uses the shared strict SourceSubmission contract instead.
+#[allow(dead_code)]
 #[derive(serde::Deserialize)]
 struct Submission {
     id: String,
@@ -193,11 +519,15 @@ struct Submission {
 
 fn check_submission(dir: PathBuf) -> Result<()> {
     let ext_dir = dir.join("extensions");
+    if fs::symlink_metadata(&ext_dir)?.file_type().is_symlink() {
+        anyhow::bail!("registry extensions path must not be a symbolic link");
+    }
     let mut ids: Vec<String> = Vec::new();
     let mut problems = 0usize;
 
     let entries = fs::read_dir(&ext_dir).with_context(|| format!("read {}", ext_dir.display()))?;
-    for entry in entries.flatten() {
+    for entry in entries {
+        let entry = entry.context("read submission directory entry")?;
         if !entry.path().is_dir() {
             continue;
         }
@@ -208,11 +538,15 @@ fn check_submission(dir: PathBuf) -> Result<()> {
             problems += 1;
             continue;
         }
-        let raw = fs::read_to_string(&toml_path)?;
-        let s: Submission = match toml::from_str(&raw) {
+        if entry.file_type()?.is_symlink() {
+            println!("FAIL {folder}: submission folders must not be symbolic links");
+            problems += 1;
+            continue;
+        }
+        let s = match grain_extension_checks::read_submission(&entry.path(), &folder) {
             Ok(s) => s,
             Err(e) => {
-                println!("FAIL {folder}: unparseable submission.toml: {e}");
+                println!("FAIL {folder}: {e}");
                 problems += 1;
                 continue;
             }
@@ -309,16 +643,176 @@ fn edit_distance(a: &str, b: &str) -> usize {
 }
 
 fn main() -> Result<()> {
-    match Cli::parse().cmd {
-        Cmd::Keygen { out, name } => keygen(out, name),
-        Cmd::Sign { key, input, out } => sign(key, input, out),
+    let cli = Cli::parse();
+    let unlock = &cli.unlock;
+    if unlock.requested()
+        && !matches!(
+            &cli.cmd,
+            Cmd::BootstrapServingTree(_)
+                | Cmd::RenewServingMetadata { .. }
+                | Cmd::RevokeServingRelease { .. }
+                | Cmd::SignReviewedCandidate(_)
+                | Cmd::StageReviewedRelease { .. }
+                | Cmd::Keygen { .. }
+                | Cmd::Sign { .. }
+                | Cmd::Roots { .. }
+                | Cmd::Publish { .. }
+                | Cmd::SetInstalls { .. }
+                | Cmd::Retire { .. }
+        )
+    {
+        anyhow::bail!("Credential options apply only to key generation/signing commands");
+    }
+    match cli.cmd {
+        Cmd::BootstrapServingTree(BootstrapServingTreeArgs {
+            key,
+            expires_days,
+            out,
+        }) => serving::bootstrap::create(&key, expires_days, &out, unlock),
+        Cmd::CaptureGithubPublication {
+            checkout,
+            repository,
+            expected_commit,
+            expected_receipt_sha256,
+            out,
+        } => serving::capture::capture(
+            &checkout,
+            &repository,
+            &expected_commit,
+            &expected_receipt_sha256,
+            &out,
+        ),
+        Cmd::PrepareInitialGithubPublication(PrepareInitialGithubPublicationArgs {
+            checkout,
+            repository,
+            branch,
+            expected_base_commit,
+            candidate_commit,
+            bundle,
+            expected_receipt_sha256,
+            out,
+        }) => serving::publication::prepare_initial(&serving::publication::InitialRequest {
+            commit: serving::publication::Commit {
+                checkout: &checkout,
+                repository: &repository,
+                branch: &branch,
+                base_commit: &expected_base_commit,
+                candidate_commit: &candidate_commit,
+            },
+            bundle: &bundle,
+            bundle_pin: &expected_receipt_sha256,
+            out: &out,
+        }),
+        Cmd::PrepareGithubPublication(PrepareGithubPublicationArgs {
+            checkout,
+            repository,
+            branch,
+            expected_base_commit,
+            candidate_commit,
+            previous,
+            previous_receipt_sha256,
+            bundle,
+            expected_receipt_sha256,
+            out,
+        }) => serving::publication::prepare(&serving::publication::Request {
+            checkout: &checkout,
+            repository: &repository,
+            branch: &branch,
+            base_commit: &expected_base_commit,
+            candidate_commit: &candidate_commit,
+            previous: &previous,
+            previous_pin: &previous_receipt_sha256,
+            bundle: &bundle,
+            bundle_pin: &expected_receipt_sha256,
+            out: &out,
+        }),
+        Cmd::RenewServingMetadata {
+            v1,
+            expected_snapshot_sha256,
+            key,
+            expires_days,
+            out,
+        } => serving::renew(
+            &v1,
+            &expected_snapshot_sha256,
+            &key,
+            expires_days,
+            &out,
+            unlock,
+        ),
+        Cmd::RevokeServingRelease {
+            v1,
+            expected_snapshot_sha256,
+            key,
+            id,
+            version,
+            reason,
+            expires_days,
+            out,
+        } => serving::edit_metadata(
+            &v1,
+            &expected_snapshot_sha256,
+            &key,
+            serving::MetadataChange::Revoke {
+                days: expires_days,
+                id: &id,
+                version: &version,
+                reason: &reason,
+            },
+            &out,
+            unlock,
+        ),
+        Cmd::ExportHostingBundle {
+            store,
+            out,
+            expected_current_sha256,
+        } => serving::export_hosting_bundle(&store, &out, &expected_current_sha256),
+        Cmd::VerifyHostingBundle {
+            bundle,
+            expected_receipt_sha256,
+        } => serving::verify_hosting_bundle(&bundle, &expected_receipt_sha256),
+        Cmd::ExportServingSnapshot {
+            store,
+            out,
+            expected_current_sha256,
+        } => serving::export(&store, &out, &expected_current_sha256),
+        Cmd::VerifyServingTree { v1 } => serving::verify(&v1),
+        Cmd::AssembleServingTree { base, update, out } => serving::assemble(&base, &update, &out),
+        Cmd::InitializeServingStore { v1, out } => serving::initialize(&v1, &out),
+        Cmd::PromoteServingTree {
+            assembly,
+            store,
+            expected_current_sha256,
+        } => serving::promote(&assembly, &store, &expected_current_sha256),
+        Cmd::InspectSubmission { submission, out } => approval::inspect(&submission, &out),
+        Cmd::PrepareReleaseReview(args) => intake::prepare(&args),
+        Cmd::VerifySourceReview {
+            submission,
+            policy,
+            policy_sha256,
+            authority,
+            gh,
+        } => approval::check(&submission, &policy, &policy_sha256, &authority, &gh),
+        Cmd::SignReviewedCandidate(SignReviewedCandidateArgs {
+            reviewed,
+            previous,
+            out,
+        }) => review::sign(reviewed.inputs(&previous, &out, unlock)),
+        Cmd::StageReviewedRelease {
+            reviewed,
+            store,
+            expected_current_sha256,
+            out,
+        } => serving::release::stage(&reviewed, &store, &expected_current_sha256, &out, unlock),
+        Cmd::Keygen { out, name } => keygen(out, name, unlock),
+        Cmd::Sign { key, input, out } => sign(key, input, out, unlock),
         Cmd::Publine { pubkey } => publine(pubkey),
         Cmd::Roots {
             root_key,
             publishing_pub,
             base_urls,
             v1,
-        } => roots(root_key, publishing_pub, base_urls, v1),
+        } => roots(root_key, publishing_pub, base_urls, v1, unlock),
         Cmd::Publish {
             key,
             pack,
@@ -339,23 +833,60 @@ fn main() -> Result<()> {
             expires_days,
             v1,
             media_src,
+            unlock,
         ),
         Cmd::SetInstalls {
             key,
             sets,
             expires_days,
             v1,
-        } => set_installs(key, sets, expires_days, v1),
+        } => set_installs(key, sets, expires_days, v1, unlock),
         Cmd::Retire {
             key,
             ids,
             expires_days,
             v1,
-        } => retire(key, ids, expires_days, v1),
+        } => retire(key, ids, expires_days, v1, unlock),
         Cmd::Verify { v1 } => verify(v1),
         Cmd::CheckSubmission { dir } => check_submission(dir),
         Cmd::SiteGen { v1, out } => site_gen(v1, out),
         Cmd::BuildPack { src, out } => build_pack(src, out),
+        Cmd::PrepareArtifact {
+            submission,
+            src,
+            out,
+        } => prepare::prepare(submission, src, out),
+        Cmd::VerifyPrepared {
+            submission,
+            prepared,
+            receipt_sha256,
+            producer_sha256,
+        } => {
+            let verified =
+                receive::verify(&submission, &prepared, &receipt_sha256, &producer_sha256)?;
+            println!(
+                "verified {} {} ({}, {} artifact bytes, {} DESCRIPTION bytes) — bytes only; CI review/signing authority still required",
+                verified.receipt.submission.id,
+                verified.receipt.submission.version,
+                verified.receipt.artifact_sha256,
+                verified.artifact.len(),
+                verified.description.len()
+            );
+            Ok(())
+        }
+        Cmd::PrepareCatalogue {
+            submission,
+            prepared,
+            receipt_sha256,
+            producer_sha256,
+            out,
+        } => catalogue::prepare(
+            &submission,
+            &prepared,
+            &receipt_sha256,
+            &producer_sha256,
+            &out,
+        ),
     }
 }
 
@@ -363,36 +894,11 @@ fn main() -> Result<()> {
 /// `manifest.json` + the entry file → `entry_source`. The result is what the
 /// runtime loads directly, and what `publish` then hashes/signs.
 fn build_pack(src: PathBuf, out: PathBuf) -> Result<()> {
-    let manifest_raw = fs::read_to_string(src.join("manifest.json"))
-        .with_context(|| format!("read {}/manifest.json", src.display()))?;
-    // Parse loosely as JSON so we can rewrite fields without pinning the schema.
-    let mut manifest: serde_json::Value =
-        serde_json::from_str(&manifest_raw).context("parse manifest.json")?;
-
-    // Inline the entry file → entry_source, drop the project-only `entry` path.
-    if let Some(entry) = manifest
-        .get("entry")
-        .and_then(|v| v.as_str())
-        .map(String::from)
-    {
-        let js = fs::read_to_string(src.join(&entry))
-            .with_context(|| format!("read entry file {entry}"))?;
-        manifest["entry_source"] = serde_json::Value::String(js);
-        manifest.as_object_mut().unwrap().remove("entry");
-    }
-
-    let pack: grain_sdk::GrainPack = serde_json::from_value(serde_json::json!({
-        "manifest": manifest,
-        "payloads": {}
-    }))
-    .context("project does not parse as a GrainPack")?;
-    pack.validate_trusted()
-        .map_err(|error| anyhow::anyhow!("invalid extension: {error}"))?;
-    let json = format!("{}\n", serde_json::to_string_pretty(&pack)?);
-    if let Some(parent) = out.parent() {
-        fs::create_dir_all(parent).ok();
-    }
-    fs::write(&out, json).with_context(|| format!("write {}", out.display()))?;
+    // No compilation occurs in maintainer tooling: untrusted author builds
+    // must finish in a separate no-secret job before this shared boundary.
+    let pack = grain_extension_checks::build_pack(&src).map_err(anyhow::Error::msg)?;
+    let bytes = serde_json::to_vec(&pack)?;
+    prepare::write_artifact(&src, &out, &bytes)?;
     println!(
         "built {} ({} bytes)",
         out.display(),
@@ -489,72 +995,12 @@ against a pinned key; this site is a shop window only.</footer>
 /// Run the client's own verification against a `v1/` tree, using the pinned root
 /// keys compiled into `grain-core`. Fails loudly on any mismatch.
 fn verify(v1: PathBuf) -> Result<()> {
-    let roots_doc = fs::read(v1.join("roots.json")).context("read roots.json")?;
-    let roots_sig = fs::read_to_string(v1.join("roots.json.minisig")).context("read roots sig")?;
-    let roots = grain_core::trust::verify_roots(&roots_doc, &roots_sig)
-        .map_err(|e| anyhow::anyhow!("roots verification failed (pinned key): {e}"))?;
-    println!(
-        "roots.json OK — publishing key {}",
-        &roots.publishing_key[..16.min(roots.publishing_key.len())]
-    );
-
-    let idx_doc = fs::read(v1.join("index.json")).context("read index.json")?;
-    let idx_sig = fs::read_to_string(v1.join("index.json.minisig")).context("read index sig")?;
-    let now = chrono::Utc::now().timestamp();
-    let (index, status) =
-        grain_core::trust::verify_index(&roots, &idx_doc, &idx_sig, None, now, false)
-            .map_err(|e| anyhow::anyhow!("index verification failed: {e}"))?;
-    println!(
-        "index.json OK — {} entrie(s), status {:?}",
-        index.entries.len(),
-        status
-    );
-    for e in &index.entries {
-        println!(
-            "  · {} {} [{}] {}",
-            e.id,
-            e.version,
-            tier_dbg(&e.tier),
-            e.sha256
-        );
-    }
-
-    let rev_path = v1.join("revocations.json");
-    if rev_path.exists() {
-        let doc = fs::read(&rev_path)?;
-        let sig = fs::read_to_string(v1.join("revocations.json.minisig"))?;
-        let rev = grain_core::trust::verify_revocations(&roots, &doc, &sig)
-            .map_err(|e| anyhow::anyhow!("revocations verification failed: {e}"))?;
-        println!("revocations.json OK — {} entrie(s)", rev.entries.len());
-    }
-    println!("VERIFIED");
-    Ok(())
+    // One current verifier: no optional policy or signature-only success path.
+    serving::verify(&v1)
 }
-
-fn tier_dbg(t: &grain_sdk::Tier) -> &'static str {
-    match t {
-        grain_sdk::Tier::Pack => "pack",
-        grain_sdk::Tier::Scripted => "scripted",
-        grain_sdk::Tier::Native => "native",
-    }
-}
-
 /// Sign `bytes` into a detached `.minisig` string with a secret-key file.
-fn sign_bytes(key: &std::path::Path, bytes: &[u8]) -> Result<String> {
-    let sk_str = fs::read_to_string(key).with_context(|| format!("read {}", key.display()))?;
-    let sk_box = SecretKeyBox::from_string(&sk_str).context("parse secret key")?;
-    let sk = sk_box
-        .into_secret_key(Some(String::new()))
-        .context("decode secret key (unencrypted dev key)")?;
-    let sig_box = minisign::sign(
-        None,
-        &sk,
-        Cursor::new(bytes),
-        Some("grain registry signed document"),
-        Some("grain-registry"),
-    )
-    .context("sign")?;
-    Ok(sig_box.into_string())
+fn sign_bytes(key: &std::path::Path, bytes: &[u8], unlock: &Unlock) -> Result<String> {
+    signing_key::sign(&signing_key::load(key, unlock)?, bytes)
 }
 
 fn roots(
@@ -562,6 +1008,7 @@ fn roots(
     publishing_pub: String,
     base_urls: Vec<String>,
     v1: PathBuf,
+    unlock: &Unlock,
 ) -> Result<()> {
     fs::create_dir_all(&v1).ok();
     let roots = grain_sdk::Roots {
@@ -574,7 +1021,7 @@ fn roots(
     };
     let json = format!("{}\n", serde_json::to_string_pretty(&roots)?);
     let doc = json.into_bytes();
-    let sig = sign_bytes(&root_key, &doc)?;
+    let sig = sign_bytes(&root_key, &doc, unlock)?;
     fs::write(v1.join("roots.json"), &doc)?;
     fs::write(v1.join("roots.json.minisig"), sig)?;
     println!("wrote {}/roots.json (+ .minisig)", v1.display());
@@ -598,23 +1045,7 @@ fn manifest_of(bytes: &[u8]) -> Result<(grain_sdk::ExtensionManifest, Vec<String
             Ok((pack.manifest, extends))
         }
         PackShape::Zip => {
-            let tmp = std::env::temp_dir().join(format!("grain-pub-{}", std::process::id()));
-            let _ = fs::remove_dir_all(&tmp);
-            fs::create_dir_all(&tmp)?;
-            grain_core::pack::extract_zip(bytes, &tmp, Default::default())
-                .map_err(|e| anyhow::anyhow!("extract: {e}"))?;
-            let m = fs::read(tmp.join("manifest.json")).context("zip missing manifest.json")?;
-            let manifest: grain_sdk::ExtensionManifest =
-                serde_json::from_slice(&m).context("parse manifest.json")?;
-            let _ = fs::remove_dir_all(&tmp);
-            grain_sdk::GrainPack {
-                manifest: manifest.clone(),
-                payloads: grain_sdk::PackPayloads::default(),
-            }
-            .validate_host_owned_ui()
-            .map_err(|error| anyhow::anyhow!("validate host-owned UI boundary: {error}"))?;
-            let extends = manifest.extends();
-            Ok((manifest, extends))
+            anyhow::bail!("Directory/native ZIP bundles are unsupported by the tool-only runtime; publish an embedded tool package")
         }
         PackShape::Unknown => {
             anyhow::bail!("not a recognised .grainpack (first byte is not {{ or PK)")
@@ -705,7 +1136,18 @@ fn publish(
     expires_days: i64,
     v1: PathBuf,
     media_src: Option<PathBuf>,
+    unlock: &Unlock,
 ) -> Result<()> {
+    if pack
+        .parent()
+        .is_some_and(|src| src.join("receipt.json").exists())
+        || media_src.as_ref().is_some_and(|src| {
+            src.join("submission.toml").exists() || src.join("receipt.json").exists()
+        })
+    {
+        anyhow::bail!("Source-pointer publication requires the E4 reviewed-build and DESCRIPTION/media migration; use check-submission for author metadata only.");
+    }
+    let generation = current_generation(&v1)?;
     let bytes = fs::read(&pack).with_context(|| format!("read {}", pack.display()))?;
     let (manifest, extends) = manifest_of(&bytes)?;
     let sha256 = grain_core::trust::sha256_hex(&bytes);
@@ -732,6 +1174,7 @@ fn publish(
             spec: 1,
             version: 0,
             expires: String::new(),
+            generation: None,
             entries: Vec::new(),
         }
     };
@@ -790,6 +1233,7 @@ fn publish(
         }
     }
     let entry = grain_sdk::IndexEntry {
+        artifact_kind: grain_sdk::distribution::ArtifactKind::Native,
         id: manifest.id.clone(),
         name: manifest.name.clone(),
         version: manifest.version.clone(),
@@ -809,6 +1253,8 @@ fn publish(
         stars,
         installs,
         readme,
+        listing: None,
+        icon: None,
         media,
         categories,
         extends,
@@ -819,6 +1265,7 @@ fn publish(
         .entries
         .retain(|e| !(e.id == entry.id && e.version == entry.version));
     index.entries.push(entry);
+    index.generation = Some(generation);
     index.version += 1;
     index.expires = (today + chrono::Duration::days(expires_days))
         .format("%Y-%m-%dT%H:%M:%SZ")
@@ -826,7 +1273,7 @@ fn publish(
 
     let json = format!("{}\n", serde_json::to_string_pretty(&index)?);
     let doc = json.into_bytes();
-    let sig = sign_bytes(&key, &doc)?;
+    let sig = sign_bytes(&key, &doc, unlock)?;
     fs::write(&index_path, &doc)?;
     fs::write(v1.join("index.json.minisig"), sig)?;
 
@@ -844,11 +1291,19 @@ fn publish(
 /// server-side (the CDN/download endpoint aggregates artifact fetches); this is
 /// the step that publishes those totals into the signed document the client
 /// reads. Ids not present in the index are reported and skipped.
-fn set_installs(key: PathBuf, sets: Vec<String>, expires_days: i64, v1: PathBuf) -> Result<()> {
+fn set_installs(
+    key: PathBuf,
+    sets: Vec<String>,
+    expires_days: i64,
+    v1: PathBuf,
+    unlock: &Unlock,
+) -> Result<()> {
+    let generation = current_generation(&v1)?;
     let index_path = v1.join("index.json");
     let mut index: grain_sdk::Index =
         serde_json::from_slice(&fs::read(&index_path).context("read index.json")?)
             .context("parse index.json")?;
+    index.generation = Some(generation);
 
     for pair in &sets {
         let (id, count) = pair
@@ -876,7 +1331,7 @@ fn set_installs(key: PathBuf, sets: Vec<String>, expires_days: i64, v1: PathBuf)
         .to_string();
     let json = format!("{}\n", serde_json::to_string_pretty(&index)?);
     let doc = json.into_bytes();
-    let sig = sign_bytes(&key, &doc)?;
+    let sig = sign_bytes(&key, &doc, unlock)?;
     fs::write(&index_path, &doc)?;
     fs::write(v1.join("index.json.minisig"), sig)?;
     println!("index re-signed (version {})", index.version);
@@ -890,11 +1345,19 @@ fn set_installs(key: PathBuf, sets: Vec<String>, expires_days: i64, v1: PathBuf)
 /// keyed off the retired one: two entries can legitimately share a media blob,
 /// and deleting by the retired entry's hash list alone would pull a file still
 /// under a surviving card.
-fn retire(key: PathBuf, ids: Vec<String>, expires_days: i64, v1: PathBuf) -> Result<()> {
+fn retire(
+    key: PathBuf,
+    ids: Vec<String>,
+    expires_days: i64,
+    v1: PathBuf,
+    unlock: &Unlock,
+) -> Result<()> {
+    let generation = current_generation(&v1)?;
     let index_path = v1.join("index.json");
     let mut index: grain_sdk::Index =
         serde_json::from_slice(&fs::read(&index_path).context("read index.json")?)
             .context("parse index.json")?;
+    index.generation = Some(generation);
 
     let before = index.entries.len();
     let mut dropped: Vec<grain_sdk::IndexEntry> = Vec::new();
@@ -944,7 +1407,7 @@ fn retire(key: PathBuf, ids: Vec<String>, expires_days: i64, v1: PathBuf) -> Res
         .format("%Y-%m-%dT%H:%M:%SZ")
         .to_string();
     let doc = format!("{}\n", serde_json::to_string_pretty(&index)?).into_bytes();
-    let sig = sign_bytes(&key, &doc)?;
+    let sig = sign_bytes(&key, &doc, unlock)?;
     fs::write(&index_path, &doc)?;
     fs::write(v1.join("index.json.minisig"), sig)?;
     println!(
@@ -964,16 +1427,46 @@ fn remove_if_present(path: &std::path::Path) -> Result<()> {
     Ok(())
 }
 
-fn keygen(out: PathBuf, name: String) -> Result<()> {
-    fs::create_dir_all(&out).with_context(|| format!("create {}", out.display()))?;
-    // Development keys are encrypted with an EMPTY passphrase (custody decision,
-    // PHASE5A §Step 1): the box round-trips deterministically with no prompt,
-    // and the final migration to real passphrases on removable media is a
-    // re-pin + re-sign, not a redesign. `to_box`/`into_secret_key` must agree on
-    // the passphrase, hence a generated-encrypted key rather than an
-    // unencrypted one whose box the crate still wraps in scrypt.
+fn current_generation(v1: &std::path::Path) -> Result<grain_sdk::distribution::MetadataGeneration> {
+    let roots = review::read(&v1.join("roots.json"), 64 * 1024)?;
+    let root_sig = String::from_utf8(review::read(&v1.join("roots.json.minisig"), 8192)?)?;
+    let trusted = grain_core::trust::verify_roots(&roots, &root_sig)?;
+    let revocations = review::read(&v1.join("revocations.json"), 4 * 1024 * 1024)?;
+    let rev_sig = String::from_utf8(review::read(&v1.join("revocations.json.minisig"), 8192)?)?;
+    let policy = grain_core::trust::verify_revocations(&trusted, &revocations, &rev_sig)?;
+    let now = chrono::Utc::now().timestamp();
+    if grain_core::trust::roots_status(&trusted, now)? != grain_core::trust::IndexStatus::Fresh
+        || grain_core::trust::revocations_status(&policy, now)?
+            != grain_core::trust::IndexStatus::Fresh
+    {
+        anyhow::bail!("Publication requires fresh signed roots and revocations");
+    }
+    Ok(grain_core::trust::metadata_generation(&roots, &revocations))
+}
+
+fn keygen(out: PathBuf, name: String, unlock: &Unlock) -> Result<()> {
+    if name.is_empty()
+        || name.len() > 80
+        || !name
+            .bytes()
+            .all(|v| v.is_ascii_alphanumeric() || v == b'-' || v == b'_')
+    {
+        anyhow::bail!("Key name must contain only letters, digits, hyphen or underscore");
+    }
+    if let Ok(meta) = fs::symlink_metadata(&out) {
+        if !meta.is_dir() || meta.file_type().is_symlink() {
+            anyhow::bail!("Key output must be a real directory");
+        }
+    }
+    for suffix in ["pub", "key"] {
+        if fs::symlink_metadata(out.join(format!("{name}.{suffix}"))).is_ok() {
+            anyhow::bail!("Key output already exists; never overwrite a keypair");
+        }
+    }
+    let password = unlock.password(true)?;
     let KeyPair { pk, sk } =
-        KeyPair::generate_encrypted_keypair(Some(String::new())).context("generate keypair")?;
+        KeyPair::generate_encrypted_keypair(Some(password)).context("Generate keypair")?;
+    fs::create_dir_all(&out).with_context(|| format!("create {}", out.display()))?;
 
     let pk_box = pk.to_box().context("encode public key")?;
     let sk_box = sk
@@ -982,10 +1475,18 @@ fn keygen(out: PathBuf, name: String) -> Result<()> {
 
     let pub_path = out.join(format!("{name}.pub"));
     let key_path = out.join(format!("{name}.key"));
-    fs::write(&pub_path, pk_box.to_string())
-        .with_context(|| format!("write {}", pub_path.display()))?;
-    fs::write(&key_path, sk_box.to_string())
-        .with_context(|| format!("write {}", key_path.display()))?;
+    use std::io::Write;
+    // Owner-only staging files are removed on every unfinished outcome. Commit
+    // each complete file without clobbering another operator's output.
+    let mut secret = tempfile::NamedTempFile::new_in(&out)?;
+    secret.write_all(sk_box.to_string().as_bytes())?;
+    secret.as_file().sync_all()?;
+    let mut public = tempfile::NamedTempFile::new_in(&out)?;
+    public.write_all(pk_box.to_string().as_bytes())?;
+    public.as_file().sync_all()?;
+    secret.persist_noclobber(&key_path).map_err(|e| e.error)?;
+    public.persist_noclobber(&pub_path).map_err(|e| e.error)
+        .context("Secret key saved; public key output failed: retain the key and inspect outputs before retrying")?;
 
     println!("wrote {}", pub_path.display());
     println!("wrote {}  (SECRET — never commit)", key_path.display());
@@ -995,34 +1496,16 @@ fn keygen(out: PathBuf, name: String) -> Result<()> {
     Ok(())
 }
 
-fn sign(key: PathBuf, input: PathBuf, out: Option<PathBuf>) -> Result<()> {
-    let sk_str = fs::read_to_string(&key).with_context(|| format!("read {}", key.display()))?;
-    let sk_box = SecretKeyBox::from_string(&sk_str).context("parse secret key")?;
-    // Pass an empty password rather than `None`: the minisign crate prompts on
-    // stdin whenever the password is `None` (even for an unencrypted key), which
-    // would hang non-interactive signing. Our development keys are unencrypted,
-    // so an empty password is ignored by the (absent) KDF.
-    let sk = sk_box
-        .into_secret_key(Some(String::new()))
-        .context("decode secret key (unencrypted dev key)")?;
-
+fn sign(key: PathBuf, input: PathBuf, out: Option<PathBuf>, unlock: &Unlock) -> Result<()> {
     let data = fs::read(&input).with_context(|| format!("read {}", input.display()))?;
-    let sig_box = minisign::sign(
-        None,
-        &sk,
-        Cursor::new(&data),
-        Some("grain registry signed document"),
-        Some("grain-registry"),
-    )
-    .context("sign")?;
+    let signature = sign_bytes(&key, &data, unlock)?;
 
     let sig_path = out.unwrap_or_else(|| {
         let mut p = input.clone().into_os_string();
         p.push(".minisig");
         PathBuf::from(p)
     });
-    fs::write(&sig_path, sig_box.into_string())
-        .with_context(|| format!("write {}", sig_path.display()))?;
+    fs::write(&sig_path, signature).with_context(|| format!("write {}", sig_path.display()))?;
     println!("wrote {}", sig_path.display());
     Ok(())
 }
@@ -1033,4 +1516,71 @@ fn publine(pubkey: PathBuf) -> Result<()> {
     let pk = pk_box.into_public_key().context("decode public key")?;
     println!("{}", pk.to_base64());
     Ok(())
+}
+
+#[cfg(test)]
+mod submission_tests {
+    use super::*;
+    #[test]
+    fn registry_accepts_shared_contract_and_refuses_changed_description_or_folder() {
+        let root = tempfile::tempdir().unwrap();
+        let folder = root.path().join("extensions/com.example.tools");
+        fs::create_dir_all(&folder).unwrap();
+        fs::write(folder.join("DESCRIPTION.md"), "# Tools\n").unwrap();
+        let listing = grain_extension_checks::listing::read_listing(&folder).unwrap();
+        let value = grain_sdk::submission::SourceSubmission {
+            schema: 1,
+            artifact_kind: grain_sdk::distribution::ArtifactKind::McpDescriptor,
+            id: "com.example.tools".into(),
+            version: "1.0.0".into(),
+            grain_api: "^1.0".into(),
+            source_repo: "https://github.com/example/tools".into(),
+            tag: "v1.0.0".into(),
+            commit: "1".repeat(40),
+            summary: "Tools".into(),
+            categories: vec!["tools".into()],
+            license: "MIT".into(),
+            contact: "maintainer".into(),
+            description_sha256: listing.sha256,
+            description_size: listing.description.len() as u64,
+            media: Vec::new(),
+        };
+        fs::write(
+            folder.join("submission.toml"),
+            grain_extension_checks::serialize_submission(&value).unwrap(),
+        )
+        .unwrap();
+        check_submission(root.path().into()).unwrap();
+        fs::write(folder.join("DESCRIPTION.md"), "changed").unwrap();
+        assert!(check_submission(root.path().into()).is_err());
+        fs::write(folder.join("DESCRIPTION.md"), "# Tools\n").unwrap();
+        fs::rename(&folder, root.path().join("extensions/com.example.other")).unwrap();
+        assert!(check_submission(root.path().into()).is_err());
+    }
+    #[test]
+    fn schema_one_sources_cannot_enter_the_legacy_signing_pipeline() {
+        for (marker, media) in [
+            ("submission.toml", true),
+            ("receipt.json", true),
+            ("receipt.json", false),
+        ] {
+            let root = tempfile::tempdir().unwrap();
+            fs::write(root.path().join(marker), "schema = 1").unwrap();
+            let error = publish(
+                root.path().join("missing.key"),
+                root.path().join("missing.grainpack"),
+                "verified".into(),
+                String::new(),
+                String::new(),
+                String::new(),
+                30,
+                root.path().join("v1"),
+                media.then(|| root.path().into()),
+                &Unlock::development(),
+            )
+            .unwrap_err();
+            assert!(error.to_string().contains("E4"));
+            assert!(!root.path().join("v1").exists());
+        }
+    }
 }

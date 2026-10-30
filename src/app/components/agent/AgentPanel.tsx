@@ -237,6 +237,10 @@ export function AgentPanel() {
   const runFirst = useCallback(
     async (instruction: string) => {
       firstRunStartedRef.current = true;
+      // The panel may already be busy while speech is being transcribed. Seed
+      // visible state now: updating instructionRef or busy=true alone need not
+      // trigger another render before the model finishes.
+      setMessages([{ id: "u0", role: "user", content: instruction }]);
       setBusy(true);
       setError(null);
       try {
@@ -955,7 +959,8 @@ export function AgentPanel() {
     </div>
   );
 
-  const quoteText = contextRef.current?.trim() || instructionRef.current;
+  // Selected source text is separate from the submitted message below.
+  const quoteText = contextRef.current?.trim() || "";
   const shortcutParts = followupShortcut
     ? followupShortcut.split("+").map(keycapLabel)
     : [];
@@ -966,21 +971,24 @@ export function AgentPanel() {
 
   // ══ CENTER: the sleek center-top panel ════════════════════════════════════
   // One continuously-growing surface (no compact/expanded split). Before the
-  // first follow-up the thread is just the shown answer; a follow-up
+  // first follow-up the thread is the submitted message and shown answer; a follow-up
   // materialises the exchange into a threaded conversation.
   if (position === "center") {
     const thread: ChatMessage[] = expanded
       ? messages
-      : !busy && displayedReply
-        ? [
-            {
-              id: "a0",
-              role: "assistant",
-              content: displayedReply,
-              confirmAction: compactConfirmAction,
-            },
-          ]
-        : [];
+      : [
+          ...messages,
+          ...(!busy && !error && displayedReply
+            ? [
+                {
+                  id: "a0",
+                  role: "assistant" as const,
+                  content: displayedReply,
+                  confirmAction: compactConfirmAction,
+                },
+              ]
+            : []),
+        ];
     const hasAnswer = thread.some((m) => m.role === "assistant");
     // Redo re-runs the first instruction only (there are no versions once the
     // conversation branches), so it lives under the sole pre-follow-up answer.
@@ -1021,64 +1029,55 @@ export function AgentPanel() {
               </div>
             )}
 
-            {error ? (
-              <div className="agc-error">{error}</div>
-            ) : thread.length === 0 && busy ? (
-              <div className="agent-typing" aria-hidden="true">
-                <span />
-                <span />
-                <span />
-              </div>
-            ) : (
-              thread.map((m, idx) => (
-                <div key={m.id} className={`agc-c-turn is-${m.role}`}>
-                  {m.role === "user" ? (
-                    <div className="agc-c-user">{m.content}</div>
-                  ) : (
-                    <>
-                      <div className="agc-c-answer">
-                        <AgentMarkdown markdown={m.content} />
-                      </div>
-                      {m.confirmAction && renderConfirmAction(m.confirmAction)}
-                      {expanded && (
-                        <div className="agc-c-tools">
+            {thread.map((m, idx) => (
+              <div key={m.id} className={`agc-c-turn is-${m.role}`}>
+                {m.role === "user" ? (
+                  <div className="agc-c-user">{m.content}</div>
+                ) : (
+                  <>
+                    <div className="agc-c-answer">
+                      <AgentMarkdown markdown={m.content} />
+                    </div>
+                    {m.confirmAction && renderConfirmAction(m.confirmAction)}
+                    {expanded && (
+                      <div className="agc-c-tools">
+                        <button
+                          type="button"
+                          className={`agc-c-tool ${flashedId === m.id ? "is-flash" : ""}`}
+                          onClick={() => copyOne(m.id, m.content)}
+                          title={t("agent.copyReply")}
+                        >
+                          {flashedId === m.id ? (
+                            <Check size={13} />
+                          ) : (
+                            <Copy size={13} />
+                          )}
+                        </button>
+                        {canRedo && idx === lastIdx && (
                           <button
                             type="button"
-                            className={`agc-c-tool ${flashedId === m.id ? "is-flash" : ""}`}
-                            onClick={() => copyOne(m.id, m.content)}
-                            title={t("agent.copyReply")}
+                            className="agc-c-tool"
+                            onClick={retry}
+                            title={t("agent.retry")}
                           >
-                            {flashedId === m.id ? (
-                              <Check size={13} />
-                            ) : (
-                              <Copy size={13} />
-                            )}
+                            <RotateCcw size={13} />
                           </button>
-                          {canRedo && idx === lastIdx && (
-                            <button
-                              type="button"
-                              className="agc-c-tool"
-                              onClick={retry}
-                              title={t("agent.retry")}
-                            >
-                              <RotateCcw size={13} />
-                            </button>
-                          )}
-                        </div>
-                      )}
-                    </>
-                  )}
-                </div>
-              ))
-            )}
+                        )}
+                      </div>
+                    )}
+                  </>
+                )}
+              </div>
+            ))}
 
-            {thread.length > 0 && busy && (
+            {busy && (
               <div className="agent-typing" aria-hidden="true">
                 <span />
                 <span />
                 <span />
               </div>
             )}
+            {error && <div className="agc-error">{error}</div>}
             <div ref={endRef} />
           </div>
 
@@ -1200,7 +1199,7 @@ export function AgentPanel() {
             </button>
           </div>
 
-          {/* The captured text (selection, else the instruction). */}
+          {/* Optional selected source text; the submitted message is below. */}
           {quoteText && (
             <div
               className={`agc-quote ${quoteOpen ? "is-open" : ""}`}
@@ -1217,6 +1216,13 @@ export function AgentPanel() {
 
           {/* Reply */}
           <div className="agc-body">
+            {messages.map((m) => (
+              <div key={m.id} className="agc-turn agc-submitted">
+                <div className="agc-turn-body agc-turn-body--user">
+                  {m.content}
+                </div>
+              </div>
+            ))}
             {busy ? (
               <div className="agent-typing" aria-hidden="true">
                 <span />

@@ -9,42 +9,65 @@
  */
 import { useEffect, useState, type MouseEvent } from "react";
 import { commands, type StoreEntry, type StoreMedia } from "@/bindings";
-import { unwrapResult } from "./extensionRuntime";
+import { storeInstallAction, unwrapResult } from "./extensionRuntime";
 
 export function MediaArtwork({
   media,
   icon,
   name,
   className,
+  alt,
+  placeholder = false,
 }: {
   media?: StoreMedia;
   icon?: string | null;
   name: string;
   className: string;
+  alt?: string;
+  placeholder?: boolean;
 }) {
-  const [url, setUrl] = useState<string | null>(icon ?? null);
+  const mediaKey = media ? `${media.kind}:${media.sha256}` : "";
+  const [resolved, setResolved] = useState<{
+    key: string;
+    url: string | null;
+  } | null>(null);
+  // Ignore an earlier image immediately, before the next effect fetch starts.
+  const url = resolved?.key === mediaKey ? resolved.url : (icon ?? null);
   useEffect(() => {
     let alive = true;
-    setUrl(icon ?? null);
     if (media) {
       void commands
         .storeMedia(media.sha256, media.kind)
         .then(unwrapResult)
-        .then((value) => alive && setUrl(value))
-        .catch(() => alive && setUrl(icon ?? null));
+        .then((value) => alive && setResolved({ key: mediaKey, url: value }))
+        .catch(
+          () => alive && setResolved({ key: mediaKey, url: icon ?? null }),
+        );
+    } else {
+      setResolved(null);
     }
     return () => {
       alive = false;
-      setUrl(null);
     };
-  }, [icon, media?.kind, media?.sha256]);
+  }, [icon, media?.kind, media?.sha256, mediaKey]);
 
   return (
     <div
       className={className}
       data-extension-icon={!media && Boolean(icon) ? "true" : "false"}
+      data-has-artwork={Boolean(url)}
     >
-      {url && <img src={url} alt={`${name} ${media ? "preview" : "icon"}`} />}
+      {url ? (
+        <img src={url} alt={alt ?? `${name} ${media ? "preview" : "icon"}`} />
+      ) : placeholder ? (
+        <span
+          className="extension-icon-placeholder"
+          role="img"
+          aria-label={`${name} icon unavailable`}
+        >
+          {name.slice(0, 1).toLocaleUpperCase()}
+        </span>
+      ) : null}
     </div>
   );
 }
@@ -65,7 +88,7 @@ export function StoreCard({
   onInstall: (entry: StoreEntry) => void;
   onPreview: (entry: StoreEntry) => void;
 }) {
-  const current = installedVersion === entry.version;
+  const action = storeInstallAction(entry, installedVersion);
 
   return (
     <article
@@ -96,20 +119,17 @@ export function StoreCard({
             className="button store-install"
             type="button"
             disabled={
-              current || busy || entry.revocation === "revoked" || !canInstall
+              (action !== "Install" && action !== "Update") ||
+              busy ||
+              entry.revocation === "revoked" ||
+              !canInstall
             }
             onClick={(event: MouseEvent) => {
               event.stopPropagation();
               onInstall(entry);
             }}
           >
-            {busy
-              ? "Installing…"
-              : current
-                ? "Installed"
-                : installedVersion
-                  ? "Update"
-                  : "Install"}
+            {busy ? "Installing…" : action}
           </button>
         </div>
         <p className="store-extension-blurb">{entry.description}</p>

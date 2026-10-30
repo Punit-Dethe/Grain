@@ -20,6 +20,9 @@
 //!    refuse *new* installs (**indefinite freeze**). The seed is exempt until
 //!    the first successful refresh.
 //! 4. One signature covers the whole catalogue (**mix-and-match**).
+//!    Hosted acquisition also requires `verify_metadata_generation` over the
+//!    exact authenticated roots and revocations; signature validity alone is
+//!    insufficient to select an installable publication.
 
 use chrono::DateTime;
 use grain_sdk::distribution::{Index, Revocations, Roots, EXPIRY_CLOCK_SKEW_SECS};
@@ -27,20 +30,51 @@ use grain_sdk::DISTRIBUTION_SPEC;
 use minisign_verify::{PublicKey, Signature};
 use sha2::{Digest, Sha256};
 
-/// Root public key **A**, pinned in the binary. Development key (custody
-/// decision, PHASE5A §Step 1); replaced by a passphrase-encrypted key on
-/// removable media as the final migration step, which re-pins this constant.
-pub const ROOT_PUBKEY_A: &str = "RWS/IbxLWqqJLfHQWl6ZxD+Num5sgD55ozULy2TwgPuKgG0jZlE9GwjA";
+/// Construct the document binding before signing an index. Detached signature
+/// text is deliberately excluded: companion signatures are verified separately.
+pub fn metadata_generation(
+    roots: &[u8],
+    revocations: &[u8],
+) -> grain_sdk::distribution::MetadataGeneration {
+    grain_sdk::distribution::MetadataGeneration {
+        roots_sha256: sha256_hex(roots),
+        revocations_sha256: sha256_hex(revocations),
+    }
+}
 
-/// Root public key **B**, the spare (DISTRIBUTION-PLAN §2.2). Pinned from day
-/// one so losing one root drive is an inconvenience, not a re-release.
-pub const ROOT_PUBKEY_B: &str = "RWSBLR8dz4PCQU/GDLkq4LC08RH6ei6mfQTjIOSDt8D/VoB8zbrSCbev";
+/// Call after authenticating all three documents. No seed/network exemption:
+/// acquisition requires exact companions authorized by the signed catalogue.
+pub fn verify_metadata_generation(
+    index: &Index,
+    roots: &[u8],
+    revocations: &[u8],
+) -> Result<(), TrustError> {
+    let generation = index
+        .generation
+        .as_ref()
+        .ok_or_else(|| TrustError::BadJson("missing metadata generation binding".into()))?;
+    for (expected, bytes) in [
+        (&generation.roots_sha256, roots),
+        (&generation.revocations_sha256, revocations),
+    ] {
+        verify_artifact(bytes, expected)?;
+    }
+    Ok(())
+}
+
+/// Tester-alpha root **A**, pinned in the binary. Its encrypted private key is
+/// held outside the source/build trees; production custody is a separate gate.
+pub const ROOT_PUBKEY_A: &str = "RWSnf9G+PTaCZbm0qNvNehMpaD4+n0nuv6d2/8TlCuQ36/qeXZ3qM5i6";
+
+/// Tester-alpha spare root **B**. Independent offline storage and backups are
+/// operational responsibilities, not guarantees supplied by this constant.
+pub const ROOT_PUBKEY_B: &str = "RWThbjwKfwAb0SyZ1du5kjCuoqQAvYpaL3KPtf0uG9welYakY2HtS5vl";
 
 /// Last-resort bootstrap base URL, used only if `roots.json` cannot be fetched
 /// and no cached copy exists. Absolute bases normally come from the signed
 /// `roots.json`, so moving hosts is a signed-file change, not an app release.
 pub const BOOTSTRAP_BASE_URL: &str =
-    "https://github.com/Punit-Dethe/grain-extensions/releases/download/v1/";
+    "https://raw.githubusercontent.com/Punit-Dethe/Grain-Extention/main/v1/";
 
 // ---- The seed, embedded in the binary (DISTRIBUTION-PLAN §5.3) ------------
 // First open is instant and offline works. The seed index is expiry-exempt
@@ -135,6 +169,18 @@ pub fn verify_roots(roots_json: &[u8], sig_text: &str) -> Result<Roots, TrustErr
     serde_json::from_slice(roots_json).map_err(|e| TrustError::BadJson(e.to_string()))
 }
 
+/// Authenticate raw historical publisher metadata with already verified roots.
+/// This grants no schema, expiry, rollback, revocation or installation approval.
+/// Maintainer archival uses this before parsing retired document shapes; clients
+/// must continue using `verify_index` / `verify_revocations` for active metadata.
+pub fn verify_publisher_signature(
+    roots: &Roots,
+    data: &[u8],
+    sig_text: &str,
+) -> Result<(), TrustError> {
+    verify_with_key(&roots.publishing_key, data, sig_text)
+}
+
 /// **Step 2.** Verify and parse `index.json` against the publishing key named in
 /// a *verified* [`Roots`], applying the rollback and expiry rules in order.
 ///
@@ -176,15 +222,55 @@ pub fn verify_index(
     let status = if is_seed {
         IndexStatus::Fresh
     } else {
-        let expires = parse_rfc3339(&index.expires)?;
-        if now_unix > expires + EXPIRY_CLOCK_SKEW_SECS {
-            IndexStatus::Expired
-        } else {
-            IndexStatus::Fresh
-        }
+        index_status(&index, now_unix)?
     };
 
     Ok((index, status))
+}
+
+/// Recheck an already verified catalog at use time, without a seed exemption.
+/// Signature verification remains the caller's responsibility.
+pub fn index_status(index: &Index, now_unix: i64) -> Result<IndexStatus, TrustError> {
+    metadata_status(index.spec, Some(&index.expires), now_unix)
+}
+
+/// Use only after authenticating roots. Expired roots may still authenticate
+/// cached revocations, but cannot authorize a new install.
+pub fn roots_status(roots: &Roots, now_unix: i64) -> Result<IndexStatus, TrustError> {
+    metadata_status(roots.spec, roots.expires.as_deref(), now_unix)
+}
+
+/// Keep enforcing an expired signed kill switch; freshness gates acquisition,
+/// not revocation of already-installed extensions.
+pub fn revocations_status(
+    revocations: &Revocations,
+    now_unix: i64,
+) -> Result<IndexStatus, TrustError> {
+    metadata_status(revocations.spec, Some(&revocations.expires), now_unix)
+}
+
+fn metadata_status(
+    spec: u32,
+    expires: Option<&str>,
+    now_unix: i64,
+) -> Result<IndexStatus, TrustError> {
+    if spec > DISTRIBUTION_SPEC {
+        return Ok(IndexStatus::NeedsNewerClient);
+    }
+    if spec != DISTRIBUTION_SPEC {
+        return Err(TrustError::BadJson("unsupported metadata spec".into()));
+    }
+    let Some(expires) = expires else {
+        return Ok(IndexStatus::Fresh);
+    };
+    let expires = parse_rfc3339(expires)?;
+    Ok(
+        if now_unix > expires.saturating_add(EXPIRY_CLOCK_SKEW_SECS) {
+            IndexStatus::Expired
+        } else {
+            IndexStatus::Fresh
+        },
+    )
 }
 
 /// Verify and parse `revocations.json` against the publishing key. Revocations
@@ -237,6 +323,47 @@ fn parse_rfc3339(s: &str) -> Result<i64, TrustError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn generation_requires_exact_companions_and_never_exempts_unbound_seed() {
+        let roots = verify_roots(SEED_ROOTS.as_bytes(), SEED_ROOTS_SIG).unwrap();
+        let (mut index, _) =
+            verify_index(&roots, SEED_INDEX.as_bytes(), SEED_INDEX_SIG, None, 0, true).unwrap();
+        assert!(verify_metadata_generation(
+            &index,
+            SEED_ROOTS.as_bytes(),
+            SEED_REVOCATIONS.as_bytes()
+        )
+        .is_err());
+        index.generation = Some(metadata_generation(
+            SEED_ROOTS.as_bytes(),
+            SEED_REVOCATIONS.as_bytes(),
+        ));
+        assert!(verify_metadata_generation(
+            &index,
+            SEED_ROOTS.as_bytes(),
+            SEED_REVOCATIONS.as_bytes()
+        )
+        .is_ok());
+        assert!(verify_metadata_generation(
+            &index,
+            b"different signed roots",
+            SEED_REVOCATIONS.as_bytes()
+        )
+        .is_err());
+        let mut formatted = SEED_REVOCATIONS.as_bytes().to_vec();
+        formatted.push(b'\n');
+        assert!(verify_metadata_generation(&index, SEED_ROOTS.as_bytes(), &formatted).is_err());
+        for bad in ["", "sha256", "abc", &"0".repeat(64)] {
+            index.generation.as_mut().unwrap().revocations_sha256 = bad.into();
+            assert!(verify_metadata_generation(
+                &index,
+                SEED_ROOTS.as_bytes(),
+                SEED_REVOCATIONS.as_bytes()
+            )
+            .is_err());
+        }
+    }
 
     // The embedded seed must verify with the pinned keys as shipped — otherwise
     // the app boots with a dead store.
@@ -328,6 +455,39 @@ mod tests {
     }
 
     #[test]
+    fn verified_catalog_is_rechecked_at_use_time_with_the_same_clock_skew() {
+        let roots = verify_roots(SEED_ROOTS.as_bytes(), SEED_ROOTS_SIG).unwrap();
+        let (mut index, _) = verify_index(
+            &roots,
+            SEED_INDEX.as_bytes(),
+            SEED_INDEX_SIG,
+            None,
+            0,
+            false,
+        )
+        .unwrap();
+        let expiry = parse_rfc3339(&index.expires).unwrap();
+        assert_eq!(
+            index_status(&index, expiry + EXPIRY_CLOCK_SKEW_SECS).unwrap(),
+            IndexStatus::Fresh
+        );
+        assert_eq!(
+            index_status(&index, expiry + EXPIRY_CLOCK_SKEW_SECS + 1).unwrap(),
+            IndexStatus::Expired
+        );
+        index.expires = "invalid".into();
+        assert!(matches!(
+            index_status(&index, 0),
+            Err(TrustError::BadExpiry(_))
+        ));
+        index.spec = u32::MAX;
+        assert_eq!(
+            index_status(&index, 0).unwrap(),
+            IndexStatus::NeedsNewerClient
+        );
+    }
+
+    #[test]
     fn artifact_hash_roundtrip() {
         let bytes = b"a grainpack's bytes";
         let h = sha256_hex(bytes);
@@ -336,5 +496,47 @@ mod tests {
             verify_artifact(bytes, "deadbeef"),
             Err(TrustError::HashMismatch { .. })
         ));
+    }
+
+    #[test]
+    fn bootstrap_host_matches_the_genuine_signed_seed() {
+        let roots = verify_roots(SEED_ROOTS.as_bytes(), SEED_ROOTS_SIG).unwrap();
+        assert_eq!(roots.base_urls, vec![BOOTSTRAP_BASE_URL]);
+    }
+
+    #[test]
+    fn roots_and_revocations_share_freshness_spec_and_clock_skew_rules() {
+        let mut roots = verify_roots(SEED_ROOTS.as_bytes(), SEED_ROOTS_SIG).unwrap();
+        let mut revs =
+            verify_revocations(&roots, SEED_REVOCATIONS.as_bytes(), SEED_REVOCATIONS_SIG).unwrap();
+        roots.expires = Some(revs.expires.clone());
+        let expiry = parse_rfc3339(&revs.expires).unwrap();
+        for (now, expected) in [
+            (expiry + EXPIRY_CLOCK_SKEW_SECS, IndexStatus::Fresh),
+            (expiry + EXPIRY_CLOCK_SKEW_SECS + 1, IndexStatus::Expired),
+        ] {
+            assert_eq!(roots_status(&roots, now).unwrap(), expected);
+            assert_eq!(revocations_status(&revs, now).unwrap(), expected);
+        }
+        roots.spec = u32::MAX;
+        revs.spec = u32::MAX;
+        assert_eq!(
+            roots_status(&roots, 0).unwrap(),
+            IndexStatus::NeedsNewerClient
+        );
+        assert_eq!(
+            revocations_status(&revs, 0).unwrap(),
+            IndexStatus::NeedsNewerClient
+        );
+        roots.spec = 0;
+        revs.spec = 0;
+        assert!(roots_status(&roots, 0).is_err() && revocations_status(&revs, 0).is_err());
+        roots.spec = 1;
+        roots.expires = Some("invalid".into());
+        revs.spec = 1;
+        revs.expires = "invalid".into();
+        assert!(roots_status(&roots, 0).is_err() && revocations_status(&revs, 0).is_err());
+        roots.expires = None;
+        assert_eq!(roots_status(&roots, i64::MAX).unwrap(), IndexStatus::Fresh);
     }
 }

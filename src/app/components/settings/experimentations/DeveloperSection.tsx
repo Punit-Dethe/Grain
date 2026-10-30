@@ -1,15 +1,20 @@
 /* eslint-disable i18next/no-literal-string -- developer-only validation UI copy is intentionally not part of the shipped localization surface. */
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { invoke } from "@tauri-apps/api/core";
-import {
-  ExternalLink,
-  FlaskConical,
-  FolderOpen,
-  Network,
-  Trash2,
-  X,
-} from "lucide-react";
+import { ExternalLink, FolderOpen, Network, X } from "lucide-react";
 import { LiveLogViewer, type LiveLogFilterChip } from "../debug/LiveLogViewer";
+import { customMcpManagementVisible } from "@/navigation";
+
+const showHostedValidation = customMcpManagementVisible(
+  import.meta.env.MODE,
+  import.meta.env.DEV,
+);
 
 interface DeveloperExtension {
   id: string;
@@ -19,7 +24,6 @@ interface DeveloperExtension {
 interface ExtensionDeveloperStatus {
   enabled: boolean;
   loaded: DeveloperExtension[];
-  lab_count: number;
 }
 
 interface McpProviderStatus {
@@ -52,14 +56,6 @@ const LOAD_UNPACKED_DESCRIPTION =
   "Local code has the same permission checks as installed extensions.";
 const CHOOSE_FOLDER_LABEL = "Choose folder\u2026";
 const DEV_LABEL = "dev";
-const LAB_LABEL = "Recommendation Lab";
-const LAB_CORE_LABEL = "Core 6";
-const LAB_STRESS_LABEL = "Stress 24";
-const LAB_REMOVE_LABEL = "Remove lab";
-const LAB_DESCRIPTION =
-  "Installs local, zero-permission fixtures through Grain's real unpacked-extension runtime. Core covers six representative cases; Stress expands the same test to 24 extensions.";
-const labLoadedLabel = (count: number) => `${count} loaded`;
-
 const MCP_TEST_PROMPTS: Record<string, string> = {
   linear: "Show my five most recently updated Linear issues.",
   notion: "Find the three most recently edited pages in my Notion workspace.",
@@ -70,7 +66,10 @@ const McpProviders: React.FC<{
   providers: McpProviderStatus[];
   refresh: () => Promise<void>;
 }> = ({ providers, refresh }) => {
-  const [busy, setBusy] = useState("");
+  const active = useRef(new Set<string>());
+  const [busy, setBusy] = useState<Set<string>>(new Set());
+  const [signingIn, setSigningIn] = useState<Set<string>>(new Set());
+  const [cancelling, setCancelling] = useState<Set<string>>(new Set());
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<string | null>(null);
   const [credentials, setCredentials] = useState<
@@ -78,16 +77,52 @@ const McpProviders: React.FC<{
   >({});
 
   const run = async (id: string, action: () => Promise<unknown>) => {
-    setBusy(id);
+    if (active.current.has(id)) return;
+    active.current.add(id);
+    setBusy(new Set(active.current));
     setError(null);
     setResult(null);
     try {
       await action();
+    } catch (reason) {
+      setError(String(reason));
+    } finally {
+      await refresh().catch((reason) =>
+        setError((current) => current ?? String(reason)),
+      );
+      active.current.delete(id);
+      setBusy(new Set(active.current));
+    }
+  };
+
+  const connect = (id: string) => {
+    void run(id, async () => {
+      setSigningIn((current) => new Set(current).add(id));
+      try {
+        await invoke("mcp_connect_provider", { id });
+      } finally {
+        setSigningIn((current) => {
+          const next = new Set(current);
+          next.delete(id);
+          return next;
+        });
+      }
+    });
+  };
+
+  const cancelSignIn = async (id: string) => {
+    setCancelling((current) => new Set(current).add(id));
+    try {
+      await invoke("mcp_disconnect_provider", { id });
       await refresh();
     } catch (reason) {
       setError(String(reason));
     } finally {
-      setBusy("");
+      setCancelling((current) => {
+        const next = new Set(current);
+        next.delete(id);
+        return next;
+      });
     }
   };
 
@@ -116,7 +151,7 @@ const McpProviders: React.FC<{
         id: provider.id,
       });
       setResult(
-        `${discovered.provider_name} is Agent-ready: ${discovered.tool_count} tools — ${discovered.tools.slice(0, 8).join(", ")}${discovered.tools.length > 8 ? "…" : ""}`,
+        `${discovered.provider_name} discovery passed: ${discovered.tool_count} tools — ${discovered.tools.slice(0, 8).join(", ")}${discovered.tools.length > 8 ? "…" : ""}`,
       );
     });
   };
@@ -158,6 +193,7 @@ const McpProviders: React.FC<{
 
       <div className="divide-y divide-line border-t border-line">
         {providers.map((provider) => {
+          const isBusy = busy.has(provider.id) || cancelling.has(provider.id);
           const values = credentials[provider.id] ?? {
             clientId: "",
             clientSecret: "",
@@ -171,11 +207,13 @@ const McpProviders: React.FC<{
                       {provider.name}
                     </span>
                     <span className="rounded-full border border-line px-1.5 py-0.5 text-[10px] text-ink-faint">
-                      {provider.connected ? "connected" : provider.state}
+                      {provider.state === "stored"
+                        ? "credentials stored"
+                        : provider.state.replace(/_/g, " ")}
                     </span>
                     {!provider.requires_client_credentials && (
                       <span className="rounded-full border border-accent/30 px-1.5 py-0.5 text-[10px] text-accent">
-                        one-click login
+                        browser sign-in
                       </span>
                     )}
                   </div>
@@ -193,10 +231,20 @@ const McpProviders: React.FC<{
                 </a>
                 {provider.connected ? (
                   <>
+                    {provider.state === "reconnect_required" && (
+                      <button
+                        type="button"
+                        className="button"
+                        disabled={isBusy}
+                        onClick={() => connect(provider.id)}
+                      >
+                        Sign in again
+                      </button>
+                    )}
                     <button
                       type="button"
                       className="button"
-                      disabled={busy === provider.id}
+                      disabled={isBusy}
                       onClick={() =>
                         void run(provider.id, () =>
                           invoke("mcp_set_provider_enabled", {
@@ -211,7 +259,7 @@ const McpProviders: React.FC<{
                     <button
                       type="button"
                       className="button"
-                      disabled={busy === provider.id || !provider.enabled}
+                      disabled={isBusy || !provider.enabled}
                       onClick={() => test(provider)}
                     >
                       Test
@@ -219,7 +267,7 @@ const McpProviders: React.FC<{
                     <button
                       type="button"
                       className="button danger"
-                      disabled={busy === provider.id}
+                      disabled={isBusy}
                       onClick={() =>
                         void run(provider.id, () =>
                           invoke("mcp_disconnect_provider", {
@@ -236,17 +284,23 @@ const McpProviders: React.FC<{
                     type="button"
                     className="button"
                     disabled={
-                      busy === provider.id ||
+                      isBusy ||
                       (provider.requires_client_credentials &&
                         !provider.client_id_configured)
                     }
-                    onClick={() =>
-                      void run(provider.id, () =>
-                        invoke("mcp_connect_provider", { id: provider.id }),
-                      )
-                    }
+                    onClick={() => connect(provider.id)}
                   >
                     Connect &amp; enable
+                  </button>
+                )}
+                {signingIn.has(provider.id) && (
+                  <button
+                    type="button"
+                    className="button"
+                    disabled={cancelling.has(provider.id)}
+                    onClick={() => void cancelSignIn(provider.id)}
+                  >
+                    Cancel sign-in
                   </button>
                 )}
               </div>
@@ -286,8 +340,8 @@ const McpProviders: React.FC<{
                       value={values.clientSecret}
                       maxLength={4096}
                       autoComplete="new-password"
-                      placeholder="OAuth client secret"
-                      aria-label={`${provider.name} OAuth client secret`}
+                      placeholder="Client secret (optional for public clients)"
+                      aria-label={`${provider.name} OAuth client secret (optional for public clients)`}
                       onChange={(event) =>
                         setCredentials((current) => ({
                           ...current,
@@ -302,11 +356,7 @@ const McpProviders: React.FC<{
                     <button
                       type="button"
                       className="button"
-                      disabled={
-                        busy === provider.id ||
-                        !values.clientId.trim() ||
-                        !values.clientSecret
-                      }
+                      disabled={isBusy || !values.clientId.trim()}
                       onClick={() => saveCredentials(provider)}
                     >
                       Save to vault
@@ -338,7 +388,6 @@ export const DeveloperSection: React.FC<{
 }> = ({ onExtensionsChanged }) => {
   const [loaded, setLoaded] = useState<DeveloperExtension[]>([]);
   const [mcpProviders, setMcpProviders] = useState<McpProviderStatus[]>([]);
-  const [labCount, setLabCount] = useState(0);
   const [selectedId, setSelectedId] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -346,11 +395,12 @@ export const DeveloperSection: React.FC<{
   const refresh = useCallback(async () => {
     const [status, providers] = await Promise.all([
       invoke<ExtensionDeveloperStatus>("extension_developer_status"),
-      invoke<McpProviderStatus[]>("mcp_provider_status"),
+      showHostedValidation
+        ? invoke<McpProviderStatus[]>("mcp_provider_status")
+        : Promise.resolve([]),
     ]);
     setLoaded(status.loaded);
     setMcpProviders(providers);
-    setLabCount(status.lab_count);
     setSelectedId((current) =>
       status.loaded.some((extension) => extension.id === current)
         ? current
@@ -381,31 +431,6 @@ export const DeveloperSection: React.FC<{
     [loaded, selectedId],
   );
 
-  const installLab = (size: "core" | "stress") => {
-    const count = size === "core" ? 6 : 24;
-    if (
-      !window.confirm(
-        `Install and enable ${count} local Recommendation Lab extensions? Selecting one hands it the full captured request. The fixtures request no permissions and call no external services.`,
-      )
-    ) {
-      return;
-    }
-    void run(() =>
-      invoke<number>("extension_recommendation_lab_install", { size }),
-    );
-  };
-
-  const removeLab = () => {
-    if (
-      !window.confirm(
-        "Remove every Recommendation Lab extension and clear its synthetic ranking feedback?",
-      )
-    ) {
-      return;
-    }
-    void run(() => invoke("extension_recommendation_lab_remove"));
-  };
-
   const loader = (
     <div className="rounded-xl border border-line bg-paper-raised">
       <div className="flex items-center justify-between gap-3 px-4 py-3">
@@ -429,63 +454,6 @@ export const DeveloperSection: React.FC<{
           {CHOOSE_FOLDER_LABEL}
         </button>
       </div>
-
-      {import.meta.env.DEV && (
-        <div className="border-t border-line px-4 py-3">
-          <div className="flex items-start gap-2.5">
-            <FlaskConical
-              className="mt-0.5 shrink-0 text-accent"
-              width={15}
-              height={15}
-              aria-hidden="true"
-            />
-            <div className="min-w-0 flex-1">
-              <div className="flex flex-wrap items-center gap-2">
-                <div className="text-sm font-medium text-ink">{LAB_LABEL}</div>
-                {labCount > 0 && (
-                  <span className="rounded-full bg-accent/10 px-2 py-0.5 text-[10px] font-medium tabular-nums text-accent">
-                    {labLoadedLabel(labCount)}
-                  </span>
-                )}
-              </div>
-              <p className="mt-1 max-w-xl text-xs leading-relaxed text-ink-faint">
-                {LAB_DESCRIPTION}
-              </p>
-              <div className="mt-3 flex flex-wrap gap-2">
-                <button
-                  type="button"
-                  className="button"
-                  disabled={busy}
-                  aria-pressed={labCount === 6}
-                  onClick={() => installLab("core")}
-                >
-                  {LAB_CORE_LABEL}
-                </button>
-                <button
-                  type="button"
-                  className="button"
-                  disabled={busy}
-                  aria-pressed={labCount === 24}
-                  onClick={() => installLab("stress")}
-                >
-                  {LAB_STRESS_LABEL}
-                </button>
-                {labCount > 0 && (
-                  <button
-                    type="button"
-                    className="button danger"
-                    disabled={busy}
-                    onClick={removeLab}
-                  >
-                    <Trash2 width={13} height={13} aria-hidden="true" />
-                    {LAB_REMOVE_LABEL}
-                  </button>
-                )}
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
 
       {loaded.length > 0 && (
         <div className="border-t border-line px-4 py-3 space-y-1.5">
@@ -538,7 +506,9 @@ export const DeveloperSection: React.FC<{
           </div>
         )}
         {loader}
-        <McpProviders providers={mcpProviders} refresh={refresh} />
+        {showHostedValidation && (
+          <McpProviders providers={mcpProviders} refresh={refresh} />
+        )}
         <div className="rounded-xl border border-line bg-paper-raised p-5 text-sm text-ink-soft">
           {EMPTY_MESSAGE}
         </div>
@@ -554,7 +524,9 @@ export const DeveloperSection: React.FC<{
         </div>
       )}
       {loader}
-      <McpProviders providers={mcpProviders} refresh={refresh} />
+      {showHostedValidation && (
+        <McpProviders providers={mcpProviders} refresh={refresh} />
+      )}
       <div className="flex flex-wrap items-end justify-between gap-3 rounded-xl border border-line bg-paper-raised p-4">
         <div className="min-w-0">
           <div className="text-sm font-medium text-ink">

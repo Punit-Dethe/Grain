@@ -12,6 +12,10 @@
 
 pub mod context;
 pub mod extensions;
+// Provisional remote descriptors and host-owned identity, without a transport.
+pub mod mcp;
+// Host-owned custom connection metadata, separate from credentials/transport.
+pub mod mcp_connections;
 // The event/action wire types moved to grain-sdk (the dependency leaf);
 // this alias keeps every `grain_core::event::X` path compiling unchanged.
 pub use grain_sdk as event;
@@ -20,6 +24,8 @@ pub mod providers;
 pub mod settings;
 // [GRAIN] Phase 5A: pinned-key verification of the signed extension catalogue.
 pub mod trust;
+// Bounded, atomic local storage of the signed store metadata; no service.
+pub mod store_cache;
 // [GRAIN] Phase 5A: pack format v2 detection + path-safe archive extraction.
 pub mod pack;
 // [GRAIN] Phase 5A: install/update/remove transaction + the trust invariant.
@@ -63,6 +69,8 @@ pub mod interaction;
 // outcome — mapped to `interaction` for rendering. Pure; the host executor is
 // built on it.
 pub mod execution;
+// Bounded, offline JSON Schema validation shared by MCP discovery and execution.
+pub mod tool_schema;
 // [GRAIN] Recommendation ranking (docs/Extensions V1/PLAN.md §3.1). Which
 // searchable extension should be offered a request. Pure and model-free: the
 // host injects semantic scores, so grain-core carries no embedder.

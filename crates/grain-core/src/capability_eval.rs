@@ -45,6 +45,34 @@ pub struct Case {
     pub auth_missing: Vec<String>,
 }
 
+/// All prerequisite groups must be present; IDs within a group are alternative
+/// valid operations. Separate from Case.expected's any-acceptable-tool metric.
+#[derive(Debug, PartialEq, Serialize)]
+pub struct RequiredSetCoverage {
+    pub matched_groups: usize,
+    pub required_groups: usize,
+    pub complete: bool,
+}
+
+pub fn required_set_coverage(
+    offered: &[String],
+    requirements: &[Vec<String>],
+) -> Result<RequiredSetCoverage, String> {
+    if requirements.iter().any(|group| group.is_empty()) {
+        return Err("a required tool group must contain at least one alternative".into());
+    }
+    let offered: HashSet<_> = offered.iter().collect();
+    let matched_groups = requirements
+        .iter()
+        .filter(|group| group.iter().any(|id| offered.contains(id)))
+        .count();
+    Ok(RequiredSetCoverage {
+        matched_groups,
+        required_groups: requirements.len(),
+        complete: matched_groups == requirements.len(),
+    })
+}
+
 impl Case {
     fn expects_none(&self) -> bool {
         self.expected.is_empty()
@@ -560,6 +588,20 @@ impl Corpus {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn complete_coverage_requires_each_step_and_accepts_alternatives() {
+        let groups = vec![vec!["search".into(), "find".into()], vec!["update".into()]];
+        let partial = required_set_coverage(&["find".into()], &groups).unwrap();
+        assert_eq!(partial.matched_groups, 1);
+        assert!(!partial.complete);
+        assert!(
+            required_set_coverage(&["find".into(), "update".into()], &groups)
+                .unwrap()
+                .complete
+        );
+        assert!(required_set_coverage(&[], &[vec![]]).is_err());
+    }
 
     fn case(said: &str, expect: &[&str], slices: &[&str]) -> Case {
         Case {

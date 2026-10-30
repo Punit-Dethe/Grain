@@ -9,11 +9,10 @@ import {
 } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import {
-  ChevronDown,
   ChevronLeft,
   ChevronRight,
   Code2,
-  Eye,
+  Settings2,
   PackageOpen,
   ShieldCheck,
   Trash2,
@@ -22,6 +21,7 @@ import {
 } from "lucide-react";
 import {
   commands,
+  type ConnectionView,
   type ExtensionCard,
   type ExtensionDeveloperStatus,
   type ExtensionSettingField,
@@ -30,8 +30,11 @@ import {
   type StoreEntry,
   type StoreMedia,
   type StoreView,
+  type McpProviderStatus,
 } from "@/bindings";
 import { MediaArtwork, StoreCard } from "../extensions/StoreCard";
+import { McpConnections } from "../extensions/McpConnections";
+import { installedExtensionItems } from "../extensions/installedExtensions";
 import { Markdown } from "@/components/markdown/Markdown";
 import "@/components/markdown/markdown.css";
 import { DeveloperSection } from "@/components/settings/experimentations/DeveloperSection";
@@ -45,7 +48,11 @@ import {
   type SettingsSection,
 } from "@/components/settings/experimentations/ExtensionSettings";
 import { useSettings } from "@/hooks/useSettings";
-import { hashForRoute, type ExtensionViewId } from "../navigation";
+import {
+  hashForRoute,
+  customMcpManagementVisible,
+  type ExtensionViewId,
+} from "../navigation";
 import { ExtensionApprovalDetails } from "../extensions/ExtensionApprovalDetails";
 import {
   capabilityLabel,
@@ -56,6 +63,7 @@ import {
   parseSlotConflict,
   slotLabel,
   sortExtensionCards,
+  storeInstallAction,
   unwrapResult,
   type ApprovalRequest,
   type SlotConflict,
@@ -100,6 +108,9 @@ function adaptSettingRow(row: ExtensionSettingRow): SettingRow {
 
 interface InstalledController {
   cards: ExtensionCard[];
+  connections: ConnectionView[];
+  accounts: Record<string, McpProviderStatus>;
+  listings: Record<string, StoreEntry>;
   sections: ExtensionSettingsSection[];
   covers: Record<string, StoreMedia>;
   loading: boolean;
@@ -107,7 +118,11 @@ interface InstalledController {
   busy: string | null;
   refresh: () => Promise<void>;
   toggle: (card: ExtensionCard) => Promise<void>;
-  uninstall: (card: ExtensionCard) => Promise<void>;
+  toggleConnection: (
+    connection: ConnectionView,
+    enabled: boolean,
+  ) => Promise<void>;
+  uninstall: (card: ExtensionCard) => Promise<boolean>;
   permissionDialog: React.ReactNode;
   conflictDialog: React.ReactNode;
 }
@@ -115,6 +130,11 @@ interface InstalledController {
 function useInstalledExtensions(): InstalledController {
   const { refreshSettings } = useSettings();
   const [cards, setCards] = useState<ExtensionCard[]>([]);
+  const [connections, setConnections] = useState<ConnectionView[]>([]);
+  const [accounts, setAccounts] = useState<Record<string, McpProviderStatus>>(
+    {},
+  );
+  const [listings, setListings] = useState<Record<string, StoreEntry>>({});
   const [sections, setSections] = useState<ExtensionSettingsSection[]>([]);
   const [covers, setCovers] = useState<Record<string, StoreMedia>>({});
   const [loading, setLoading] = useState(true);
@@ -129,21 +149,59 @@ function useInstalledExtensions(): InstalledController {
   } | null>(null);
 
   const refresh = useCallback(async () => {
-    const [overview, nextSections] = await Promise.all([
+    const [overview, nextSections, remote] = await Promise.all([
       commands.extensionsOverview().then(unwrapResult),
       commands
         .extensionSettingsSections()
         .then(unwrapResult)
         .catch(() => []),
+      commands
+        .mcpConnectionsList()
+        .then(unwrapResult)
+        .catch(() => []),
     ]);
     const nextCards = sortExtensionCards(overview);
-    const nextCovers = nextCards.length
-      ? await commands
-          .storeCovers(nextCards.map((card) => card.id))
-          .then(unwrapResult)
-          .catch(() => [])
-      : [];
+    const nextConnections = remote.filter((row) => row.source === "store");
+    const ids = [
+      ...new Set([
+        ...nextCards.map((card) => card.id),
+        ...nextConnections.flatMap((row) =>
+          row.extensionId ? [row.extensionId] : [],
+        ),
+      ]),
+    ];
+    const [nextCovers, nextAccounts, nextListings] = await Promise.all([
+      ids.length
+        ? commands
+            .storeCovers(ids)
+            .then(unwrapResult)
+            .catch(() => [])
+        : [],
+      Promise.all(
+        nextConnections.map(async (row) => {
+          const status = await commands
+            .mcpConnectionStatus(row.id, row.revision)
+            .then(unwrapResult)
+            .catch(() => null);
+          return status ? [[row.id, status] as const] : [];
+        }),
+      ),
+      Promise.all(
+        nextConnections.map(async (row) => {
+          const entry = row.extensionId
+            ? await commands
+                .storeEntry(row.extensionId)
+                .then(unwrapResult)
+                .catch(() => null)
+            : null;
+          return entry ? [[entry.id, entry] as const] : [];
+        }),
+      ),
+    ]);
     setCards(nextCards);
+    setConnections(nextConnections);
+    setAccounts(Object.fromEntries(nextAccounts.flat()));
+    setListings(Object.fromEntries(nextListings.flat()));
     setSections(nextSections);
     setCovers(
       Object.fromEntries(
@@ -181,7 +239,11 @@ function useInstalledExtensions(): InstalledController {
           reason instanceof Error ? reason.message : String(reason);
         const approval = parseApprovalRequest(message);
         const conflict = parseSlotConflict(message);
-        if (approval) setPending({ card, ...approval });
+        if (approval)
+          setPending({
+            card: { ...card, name: approval.reviewedName },
+            ...approval,
+          });
         else if (conflict) setContested({ card, conflict });
         else setError(message);
       } finally {
@@ -198,12 +260,33 @@ function useInstalledExtensions(): InstalledController {
           `Uninstall "${card.name}"?\n\nIts saved data is kept for a future reinstall.`,
         )
       ) {
-        return;
+        return false;
       }
       setBusy(card.id);
       setError(null);
       try {
         unwrapResult(await commands.extensionUninstall(card.id, false));
+        await refresh();
+        return true;
+      } catch (reason) {
+        setError(String(reason));
+        return false;
+      } finally {
+        setBusy(null);
+      }
+    },
+    [refresh],
+  );
+
+  const toggleConnection = useCallback(
+    async (row: ConnectionView, enabled: boolean) => {
+      if (busy) return;
+      setBusy(row.id);
+      setError(null);
+      try {
+        unwrapResult(
+          await commands.mcpConnectionSetEnabled(row.id, row.revision, enabled),
+        );
         await refresh();
       } catch (reason) {
         setError(String(reason));
@@ -211,7 +294,7 @@ function useInstalledExtensions(): InstalledController {
         setBusy(null);
       }
     },
-    [refresh],
+    [busy, refresh],
   );
 
   const occupantName = useCallback(
@@ -224,12 +307,13 @@ function useInstalledExtensions(): InstalledController {
 
   const approve = useCallback(async () => {
     if (!pending) return;
-    const { card, permissions } = pending;
+    const { card, permissions, approvalDigest } = pending;
     setPending(null);
     setBusy(card.id);
     try {
-      unwrapResult(await commands.extensionGrant(card.id, permissions));
-      unwrapResult(await commands.extensionSetEnabled(card.id, true));
+      unwrapResult(
+        await commands.extensionGrant(card.id, permissions, approvalDigest),
+      );
       await refresh();
     } catch (reason) {
       const message = reason instanceof Error ? reason.message : String(reason);
@@ -345,6 +429,9 @@ function useInstalledExtensions(): InstalledController {
 
   return {
     cards,
+    connections,
+    accounts,
+    listings,
     sections,
     covers,
     loading,
@@ -352,6 +439,7 @@ function useInstalledExtensions(): InstalledController {
     busy,
     refresh,
     toggle,
+    toggleConnection,
     uninstall,
     permissionDialog,
     conflictDialog,
@@ -360,7 +448,15 @@ function useInstalledExtensions(): InstalledController {
 
 type DetailSelection =
   | { source: "installed"; card: ExtensionCard }
+  | { source: "connection"; connection: ConnectionView }
   | { source: "store"; entry: StoreEntry };
+
+interface StoreController {
+  view: StoreView | null;
+  installing: string | null;
+  error: string | null;
+  install: (entry: StoreEntry) => Promise<void>;
+}
 
 type StoreEntryWithOptionalStars = StoreEntry & { stars?: number };
 
@@ -440,48 +536,6 @@ function trustDetails(trust: string | undefined): {
   };
 }
 
-function DetailDisclosure({
-  id,
-  title,
-  description,
-  open,
-  onToggle,
-  children,
-}: {
-  id: string;
-  title: string;
-  description: string;
-  open: boolean;
-  onToggle: () => void;
-  children: React.ReactNode;
-}) {
-  const panelId = id + "-panel";
-  return (
-    <section className="extension-detail-disclosure">
-      <h2 className="extension-detail-disclosure-heading">
-        <button
-          className="extension-detail-disclosure-button"
-          type="button"
-          aria-expanded={open}
-          aria-controls={panelId}
-          onClick={onToggle}
-        >
-          <span>
-            <strong>{title}</strong>
-            <small>{description}</small>
-          </span>
-          <ChevronDown size={17} aria-hidden="true" />
-        </button>
-      </h2>
-      {open && (
-        <div id={panelId} className="extension-detail-disclosure-panel">
-          {children}
-        </div>
-      )}
-    </section>
-  );
-}
-
 function ExtensionDetail({
   selection,
   controller,
@@ -489,6 +543,7 @@ function ExtensionDetail({
   onInstall,
   installing,
   canInstall,
+  installError,
 }: {
   selection: DetailSelection;
   controller: InstalledController;
@@ -496,6 +551,7 @@ function ExtensionDetail({
   onInstall: (entry: StoreEntry) => Promise<void>;
   installing: string | null;
   canInstall: boolean;
+  installError: string | null;
 }) {
   const [catalogueEntry, setCatalogueEntry] = useState<StoreEntry | null>(
     selection.source === "store" ? selection.entry : null,
@@ -503,10 +559,12 @@ function ExtensionDetail({
   const [mediaIndex, setMediaIndex] = useState(0);
   const [readme, setReadme] = useState<string | null>(null);
   const [readmeLoading, setReadmeLoading] = useState(false);
-  const [informationOpen, setInformationOpen] = useState(true);
+  const [view, setView] = useState<"overview" | "settings">("overview");
   const [autoSendBusy, setAutoSendBusy] = useState(false);
   const [autoSendError, setAutoSendError] = useState<string | null>(null);
   const backButtonRef = useRef<HTMLButtonElement>(null);
+  const [connectionActions, setConnectionActions] =
+    useState<HTMLDivElement | null>(null);
 
   useEffect(() => {
     const frame = requestAnimationFrame(() => backButtonRef.current?.focus());
@@ -525,12 +583,16 @@ function ExtensionDetail({
     let alive = true;
     setMediaIndex(0);
     setReadme(null);
-    setInformationOpen(true);
+    setView("overview");
     setAutoSendError(null);
-    if (selection.source === "installed") {
+    if (selection.source !== "store") {
       setCatalogueEntry(null);
       void commands
-        .storeEntry(selection.card.id)
+        .storeEntry(
+          selection.source === "installed"
+            ? selection.card.id
+            : (selection.connection.extensionId ?? ""),
+        )
         .then(unwrapResult)
         .then((entry) => alive && setCatalogueEntry(entry))
         .catch(() => alive && setCatalogueEntry(null));
@@ -546,28 +608,52 @@ function ExtensionDetail({
 
   const selectedCard = selection.source === "installed" ? selection.card : null;
   const selectionId =
-    selection.source === "installed" ? selection.card.id : selection.entry.id;
-  const card =
-    controller.cards.find((candidate) => candidate.id === selectionId) ??
-    selectedCard;
+    selection.source === "installed"
+      ? selection.card.id
+      : selection.source === "connection"
+        ? selection.connection.extensionId
+        : selection.entry.id;
+  const isConnection =
+    selection.source === "connection" ||
+    (selection.source === "store" && selection.entry.kind === "mcp");
+  const card = isConnection
+    ? null
+    : (controller.cards.find((candidate) => candidate.id === selectionId) ??
+      selectedCard);
   const entry =
     selection.source === "store"
       ? selection.entry
-      : catalogueEntry?.id === selection.card.id
+      : catalogueEntry?.id === selectionId
         ? catalogueEntry
         : null;
-  const name = card?.name ?? entry?.name ?? "Extension";
+  const name =
+    card?.name ??
+    entry?.name ??
+    (selection.source === "connection"
+      ? selection.connection.name
+      : "Extension");
   const description = card?.description ?? entry?.description ?? "";
-  const media = entry?.media.length
-    ? entry.media
-    : card && controller.covers[card.id]
-      ? [controller.covers[card.id]]
-      : [];
+  const media = entry?.media ?? [];
+  const activeMediaIndex = Math.min(mediaIndex, Math.max(0, media.length - 1));
+  const listingIcon =
+    entry?.icon ?? (selectionId ? controller.covers[selectionId] : undefined);
   const capabilities = entry?.capabilities ?? card?.capabilities ?? [];
-  const installedVersion = controller.cards.find(
-    (candidate) => candidate.id === (card?.id ?? entry?.id),
-  )?.version;
-  const current = !!entry && installedVersion === entry.version;
+  const installedMcp = isConnection
+    ? controller.connections.find((row) =>
+        selection.source === "connection"
+          ? row.id === selection.connection.id
+          : row.extensionId === selectionId,
+      )
+    : undefined;
+  const installedVersion = isConnection
+    ? installedMcp?.version
+    : controller.cards.find(
+        (candidate) => candidate.id === (card?.id ?? entry?.id),
+      )?.version;
+  const installAction = entry
+    ? storeInstallAction(entry, installedVersion)
+    : null;
+  const current = installAction === "Installed";
   const destination = card
     ? extensionDestination(card, controller.sections)
     : null;
@@ -633,222 +719,352 @@ function ExtensionDetail({
       </div>
 
       <div className="extension-detail-content">
-        <div className="extension-detail-media-wrap">
-          <MediaArtwork
-            media={media[mediaIndex]}
-            name={name}
-            className="extension-detail-hero preview-media"
-          />
-          {media.length > 1 && (
-            <>
-              <button
-                className="media-arrow media-arrow-left"
-                type="button"
-                aria-label="Previous preview"
-                onClick={() =>
-                  setMediaIndex((index) =>
-                    nextMediaIndex(index, media.length, -1),
-                  )
-                }
-              >
-                <ChevronLeft size={18} />
-              </button>
-              <button
-                className="media-arrow media-arrow-right"
-                type="button"
-                aria-label="Next preview"
-                onClick={() =>
-                  setMediaIndex((index) =>
-                    nextMediaIndex(index, media.length, 1),
-                  )
-                }
-              >
-                <ChevronRight size={18} />
-              </button>
-              <span className="media-count">
-                {mediaIndex + 1} / {media.length}
-              </span>
-            </>
-          )}
-        </div>
-
+        {media.length > 0 && (
+          <section
+            className="extension-detail-gallery"
+            aria-label={`${name} previews`}
+          >
+            <div className="extension-detail-gallery-viewport">
+              <MediaArtwork
+                media={media[activeMediaIndex]}
+                name={name}
+                alt={`${name} preview ${activeMediaIndex + 1} of ${media.length}`}
+                className="extension-detail-preview"
+              />
+              {media.length > 1 && (
+                <>
+                  <button
+                    className="media-arrow media-arrow-left"
+                    type="button"
+                    aria-label="Previous preview"
+                    onClick={() =>
+                      setMediaIndex(
+                        nextMediaIndex(activeMediaIndex, media.length, -1),
+                      )
+                    }
+                  >
+                    <ChevronLeft size={18} aria-hidden="true" />
+                  </button>
+                  <button
+                    className="media-arrow media-arrow-right"
+                    type="button"
+                    aria-label="Next preview"
+                    onClick={() =>
+                      setMediaIndex(
+                        nextMediaIndex(activeMediaIndex, media.length, 1),
+                      )
+                    }
+                  >
+                    <ChevronRight size={18} aria-hidden="true" />
+                  </button>
+                </>
+              )}
+            </div>
+            {media.length > 1 && (
+              <div className="extension-gallery-navigation">
+                <div
+                  className="extension-gallery-selectors"
+                  role="group"
+                  aria-label="Choose a preview"
+                >
+                  {media.map((image, index) => (
+                    <button
+                      key={`${image.sha256}-${index}`}
+                      type="button"
+                      aria-label={`Show preview ${index + 1} of ${media.length}`}
+                      aria-pressed={activeMediaIndex === index}
+                      onClick={() => setMediaIndex(index)}
+                    >
+                      {index + 1}
+                    </button>
+                  ))}
+                </div>
+                <span className="extension-gallery-position" role="status">
+                  {activeMediaIndex + 1} / {media.length}
+                </span>
+              </div>
+            )}
+          </section>
+        )}
         <header className="extension-detail-intro">
-          <div>
-            <div className="eyebrow">Extension</div>
-            <h1 id="extension-detail-title">{name}</h1>
-            <p>{description || "No description is available."}</p>
+          <div className="extension-detail-identity">
+            <MediaArtwork
+              media={listingIcon ?? undefined}
+              icon={card?.icon}
+              name={name}
+              alt={`${name} icon`}
+              placeholder
+              className="extension-detail-icon"
+            />
+            <div className="extension-detail-heading">
+              <h1 id="extension-detail-title">{name}</h1>
+              <p>{description || "No description is available."}</p>
+            </div>
           </div>
           <div className="extension-detail-actions">
+            {installedVersion && (
+              <span className="extension-detail-installed">Installed</span>
+            )}
             {entry && selection.source === "store" && !current && (
               <button
                 className="button primary"
                 type="button"
                 disabled={
-                  installing === entry.id ||
+                  installing !== null ||
+                  installAction === "No update available" ||
                   entry.revocation === "revoked" ||
                   !canInstall
                 }
                 onClick={() => void onInstall(entry)}
               >
-                {installing === entry.id
-                  ? "Installing…"
-                  : installedVersion
-                    ? "Update"
-                    : "Install"}
+                {installing === entry.id ? "Installing…" : installAction}
               </button>
             )}
-            {card && destination && destination.kind !== "preview" && (
-              <button
-                className="button primary"
-                type="button"
-                onClick={() => routeToDestination(destination)}
-              >
-                Open settings
-              </button>
-            )}
-            {entry &&
-              current &&
-              (!destination || destination.kind === "preview") && (
-                <button className="button" type="button" disabled>
-                  Installed
-                </button>
-              )}
+            <div
+              className="extension-uninstall-slot"
+              ref={setConnectionActions}
+            />
             {card?.trust !== "dev" && card && (
               <button
                 className="button danger"
                 type="button"
                 disabled={controller.busy === card.id}
-                onClick={() => void controller.uninstall(card)}
+                onClick={() =>
+                  void controller.uninstall(card).then((removed) => {
+                    if (removed) onBack();
+                  })
+                }
               >
-                <Trash2 size={14} />
+                <Trash2 size={14} aria-hidden="true" />
                 Uninstall
               </button>
             )}
           </div>
         </header>
 
-        <div className="extension-detail-sections">
-          <DetailDisclosure
-            id="extension-information"
-            title="Information"
-            description="Identity, trust, release details, and permissions"
-            open={informationOpen}
-            onToggle={() => setInformationOpen((open) => !open)}
+        <nav className="extension-detail-nav" aria-label="Extension details">
+          <button
+            type="button"
+            aria-pressed={view === "overview"}
+            aria-controls="extension-overview-panel"
+            onClick={() => setView("overview")}
           >
-            <div className="extension-information-grid">
-              <div className="extension-facts">
-                <dl>
-                  <div>
-                    <dt>Creator</dt>
-                    <dd>{entry?.author || "Not available"}</dd>
-                  </div>
-                  <div>
-                    <dt>Installations</dt>
-                    <dd>{formatStoreCount(entry?.installs)}</dd>
-                  </div>
-                  <div>
-                    <dt>Repository stars</dt>
-                    <dd>{formatStoreCount(stars)}</dd>
-                  </div>
-                  <div>
-                    <dt>Version</dt>
-                    <dd>
-                      {card?.version ?? entry?.version ?? "Not available"}
-                    </dd>
-                  </div>
-                  <div>
-                    <dt>Package size</dt>
-                    <dd>{formatStoreSize(entry?.size)}</dd>
-                  </div>
-                  <div>
-                    <dt>Reviewed</dt>
-                    <dd>{formatReview(entry)}</dd>
-                  </div>
-                </dl>
-                <div className="extension-trust" data-tone={trust.tone}>
-                  <div>
-                    <ShieldCheck size={16} aria-hidden="true" />
-                    <strong>{trust.label}</strong>
-                  </div>
-                  <p>{trust.meaning}</p>
-                </div>
-              </div>
-              <div className="extension-permissions-pane">
-                <div className="extension-permissions-heading">
-                  <strong>Declared permissions</strong>
-                  <span>{capabilities.length}</span>
-                </div>
-                <div className="permission-list">
-                  {capabilities.length ? (
-                    capabilities.map((capability) => (
-                      <div className="permission-row" key={capability}>
-                        <ShieldCheck size={15} aria-hidden="true" />
-                        <span>{capabilityLabel(capability)}</span>
-                        <strong>Required</strong>
-                      </div>
-                    ))
-                  ) : (
-                    <div className="extension-detail-muted">
-                      This extension declares no runtime permissions.
-                    </div>
-                  )}
-                </div>
-              </div>
-            </div>
-            {card?.auto_send_eligible && (
-              <div className="extension-auto-send-row">
-                <div className="extension-auto-send-copy">
-                  <div>
-                    <strong>Allow Auto-send for this extension</strong>
-                    <span>Beta</span>
-                  </div>
-                  <p>
-                    {card.auto_send_note ||
-                      "The author marked this extension safe for automatic hand-off."}
-                  </p>
-                  <small>
-                    This applies only while the global Auto-send beta switch is
-                    enabled. Turning it off here makes the policy stricter.
-                  </small>
-                  {autoSendError && (
-                    <div className="extension-auto-send-error" role="alert">
-                      {autoSendError}
-                    </div>
-                  )}
-                </div>
-                <Switch
-                  checked={card.auto_send_enabled}
-                  disabled={!card.enabled}
-                  isUpdating={autoSendBusy}
-                  ariaLabel={`${card.auto_send_enabled ? "Disable" : "Enable"} Auto-send for ${card.name}`}
-                  onChange={(enabled) => void updateAutoSend(enabled)}
-                />
-              </div>
-            )}
-          </DetailDisclosure>
+            Overview
+          </button>
+          <button
+            type="button"
+            aria-pressed={view === "settings"}
+            aria-controls="extension-settings-panel"
+            onClick={() => setView("settings")}
+          >
+            Settings
+          </button>
+        </nav>
 
+        {controller.error && (
+          <div className="extension-inline-error" role="alert">
+            {controller.error}
+          </div>
+        )}
+        {installError && (
+          <div className="extension-inline-error" role="alert">
+            {installError}
+          </div>
+        )}
+
+        <div
+          id="extension-overview-panel"
+          className="extension-detail-panel extension-detail-overview"
+          hidden={view !== "overview"}
+        >
           <section
             className="extension-detail-readme-section"
-            aria-labelledby="extension-readme-title"
+            aria-label={`${name} description`}
           >
-            <header className="extension-detail-readme-heading">
-              <strong id="extension-readme-title">README</strong>
-              <span>Documentation supplied by the extension author</span>
-            </header>
             <div className="extension-detail-readme">
               {readmeLoading ? (
                 <div className="extension-detail-muted" role="status">
-                  Loading README…
+                  Loading description…
                 </div>
               ) : readme ? (
                 <Markdown markdown={readme} softBreaks />
               ) : (
                 <div className="extension-detail-muted">
-                  README is not available for this extension.
+                  A description document is not available for this extension.
                 </div>
               )}
             </div>
           </section>
+          <aside
+            className="extension-detail-facts"
+            aria-label="Extension information"
+          >
+            <section
+              className="extension-facts"
+              aria-labelledby="extension-information-title"
+            >
+              <h2 id="extension-information-title">Details</h2>
+              <dl>
+                <div>
+                  <dt>Creator</dt>
+                  <dd>{entry?.author || "Not available"}</dd>
+                </div>
+                <div>
+                  <dt>Version</dt>
+                  <dd>
+                    {installedVersion ??
+                      card?.version ??
+                      entry?.version ??
+                      "Not available"}
+                  </dd>
+                </div>
+                <div>
+                  <dt>Installations</dt>
+                  <dd>{formatStoreCount(entry?.installs)}</dd>
+                </div>
+                <div>
+                  <dt>Repository stars</dt>
+                  <dd>{formatStoreCount(stars)}</dd>
+                </div>
+                <div>
+                  <dt>Package size</dt>
+                  <dd>{formatStoreSize(entry?.size)}</dd>
+                </div>
+                <div>
+                  <dt>Reviewed</dt>
+                  <dd>{formatReview(entry)}</dd>
+                </div>
+              </dl>
+            </section>
+            <section
+              className="extension-trust"
+              data-tone={trust.tone}
+              aria-label="Extension trust"
+            >
+              <div>
+                <ShieldCheck size={16} aria-hidden="true" />
+                <strong>{trust.label}</strong>
+              </div>
+              <p>{trust.meaning}</p>
+            </section>
+            <section
+              className="extension-permissions-pane"
+              aria-labelledby="extension-permissions-title"
+            >
+              <div className="extension-permissions-heading">
+                <h2 id="extension-permissions-title">Declared permissions</h2>
+                <span>{capabilities.length}</span>
+              </div>
+              <div className="permission-list">
+                {capabilities.length ? (
+                  capabilities.map((capability) => (
+                    <div className="permission-row" key={capability}>
+                      <ShieldCheck size={15} aria-hidden="true" />
+                      <span>{capabilityLabel(capability)}</span>
+                      <strong>Required</strong>
+                    </div>
+                  ))
+                ) : (
+                  <p className="extension-detail-note">
+                    {entry || card
+                      ? "This extension declares no runtime permissions."
+                      : "Permission details are unavailable. Your account controls remain available in Settings."}
+                  </p>
+                )}
+              </div>
+            </section>
+          </aside>
+        </div>
+
+        {/* Keep account settings mounted: hiding a view must not cancel sign-in. */}
+        <div
+          id="extension-settings-panel"
+          className="extension-detail-panel extension-detail-settings"
+          hidden={view !== "settings"}
+        >
+          {installedMcp && (
+            <McpConnections
+              source="store"
+              query=""
+              connectionId={installedMcp.id}
+              onChange={controller.refresh}
+              onRemoved={onBack}
+              actionsContainer={connectionActions}
+              onRequestRemoval={() => setView("settings")}
+            />
+          )}
+          {card && (
+            <section
+              className="mcp-connections"
+              aria-labelledby="extension-settings-title"
+            >
+              <header className="mcp-connections-heading">
+                <h2 id="extension-settings-title">Preferences</h2>
+              </header>
+              <div className="extension-setting-row">
+                <div>
+                  <h3>Enabled</h3>
+                  <p>Make this extension’s tools available to the Agent.</p>
+                </div>
+                <Switch
+                  checked={card.enabled}
+                  disabled={controller.busy !== null}
+                  ariaLabel={`${card.enabled ? "Disable" : "Enable"} ${card.name}`}
+                  onChange={() => void controller.toggle(card)}
+                />
+              </div>
+              {destination && destination.kind !== "preview" && (
+                <div className="extension-setting-row">
+                  <div>
+                    <h3>Extension preferences</h3>
+                    <p>Configure this extension’s own settings.</p>
+                  </div>
+                  <button
+                    className="button"
+                    type="button"
+                    onClick={() => routeToDestination(destination)}
+                  >
+                    Open settings
+                  </button>
+                </div>
+              )}
+              {card.auto_send_eligible && (
+                <div className="extension-setting-row extension-auto-send-row">
+                  <div className="extension-auto-send-copy">
+                    <div>
+                      <strong>Allow Auto-send for this extension</strong>
+                      <span>Beta</span>
+                    </div>
+                    <p>
+                      {card.auto_send_note ||
+                        "The author marked this extension safe for automatic hand-off."}
+                    </p>
+                    <small>
+                      This applies only while the global Auto-send beta switch
+                      is enabled. Turning it off here makes the policy stricter.
+                    </small>
+                    {autoSendError && (
+                      <div className="extension-auto-send-error" role="alert">
+                        {autoSendError}
+                      </div>
+                    )}
+                  </div>
+                  <Switch
+                    checked={card.auto_send_enabled}
+                    disabled={!card.enabled}
+                    isUpdating={autoSendBusy}
+                    ariaLabel={`${card.auto_send_enabled ? "Disable" : "Enable"} Auto-send for ${card.name}`}
+                    onChange={(enabled) => void updateAutoSend(enabled)}
+                  />
+                </div>
+              )}
+            </section>
+          )}
+          {!card && !installedMcp && (
+            <p className="extension-detail-note">
+              Install this extension to configure its settings.
+            </p>
+          )}
         </div>
       </div>
     </article>
@@ -889,7 +1105,15 @@ function InstalledList({
   onPreview: (selection: DetailSelection) => void;
   onBrowseStore: () => void;
 }) {
-  const entries = filterExtensions(controller.cards, query);
+  const entries = filterExtensions(
+    installedExtensionItems(
+      controller.cards,
+      controller.connections,
+      controller.accounts,
+      controller.listings,
+    ),
+    query,
+  );
   if (controller.loading)
     return (
       <div className="extension-state" role="status">
@@ -918,44 +1142,35 @@ function InstalledList({
 
   return (
     <div className="installed-extension-list">
-      {entries.map((card) => {
-        const destination = extensionDestination(card, controller.sections);
-        const openCard = async () => {
-          let resolvedDestination = destination;
-
-          // Disabled packs are intentionally absent from the aggregate anchor
-          // command. Read just this pack's schema before routing so its card
-          // still opens the tool/settings surface it contributes to.
-          if (
-            !card.enabled &&
-            card.has_detail &&
-            destination.kind === "extension-settings"
-          ) {
-            try {
-              const rows = unwrapResult(
-                await commands.extensionSettingsSchema(card.id),
+      {entries.map((item) => {
+        const openCard = () => {
+          if (item.card) onPreview({ source: "installed", card: item.card });
+          else if (item.connection)
+            onPreview({ source: "connection", connection: item.connection });
+        };
+        const toggle = () => {
+          if (item.card) void controller.toggle(item.card);
+          else if (item.connection) {
+            const account = controller.accounts[item.connection.id];
+            if (
+              !account ||
+              (item.connection.authentication === "oauth" && !account.connected)
+            )
+              openCard();
+            else
+              void controller.toggleConnection(
+                item.connection,
+                !account.enabled,
               );
-              resolvedDestination = extensionDestination(card, [
-                ...controller.sections,
-                { id: card.id, name: card.name, rows },
-              ]);
-            } catch {
-              // The standalone extension settings page presents the backend
-              // error if the pack itself is unreadable.
-            }
           }
-
-          if (resolvedDestination.kind === "preview")
-            onPreview({ source: "installed", card });
-          else routeToDestination(resolvedDestination);
         };
         return (
           <article
-            className={`extension-card installed-extension-card${card.enabled ? "" : " extension-disabled"}`}
-            key={card.id}
+            className={`extension-card installed-extension-card${item.enabled ? "" : " extension-disabled"}`}
+            key={item.connection?.id ?? item.id}
             tabIndex={0}
             role="button"
-            aria-label={`Open ${card.name}`}
+            aria-label={`Open ${item.name}`}
             onClick={() => void openCard()}
             onKeyDown={(event) => {
               if (event.target !== event.currentTarget) return;
@@ -966,65 +1181,46 @@ function InstalledList({
             }}
           >
             <MediaArtwork
-              media={controller.covers[card.id]}
-              name={card.name}
+              media={controller.covers[item.id]}
+              icon={item.card?.icon}
+              name={item.name}
+              alt={`${item.name} icon`}
+              placeholder
               className="extension-artwork"
             />
             <div className="installed-extension-copy">
               <div className="installed-extension-heading">
-                <strong>{card.name}</strong>
-                {card.trust === "dev" && <span>Dev</span>}
+                <strong>{item.name}</strong>
+                {item.card?.trust === "dev" && <span>Dev</span>}
               </div>
-              <p>{card.description}</p>
-              {/* Whether an extension is actually doing anything is the first
-                  thing this list is asked; a switch alone makes you decode it. */}
-              <span className="installed-extension-state">
-                {card.enabled ? "Enabled" : "Disabled"}
-              </span>
+              <p>{item.description}</p>
+              {item.status !== "Enabled" && item.status !== "Disabled" && (
+                <span className="installed-extension-state">{item.status}</span>
+              )}
             </div>
             <div className="installed-extension-actions">
               <button
                 className="icon-button extension-preview-button"
                 type="button"
-                title={`Preview ${card.name}`}
-                aria-label={`Preview ${card.name}`}
+                title={`Settings for ${item.name}`}
+                aria-label={`Settings for ${item.name}`}
                 onClick={(event) => {
                   event.stopPropagation();
-                  onPreview({ source: "installed", card });
+                  openCard();
                 }}
               >
-                <Eye size={16} />
+                <Settings2 size={16} />
               </button>
-              {/* Removing an extension was reachable only by opening its
-                  preview and scrolling to the footer, so the list you manage
-                  extensions from was the one place you could not remove one.
-                  A dev override is unloaded from the developer tools that
-                  loaded it, not uninstalled. */}
-              {card.trust !== "dev" && (
-                <button
-                  className="icon-button extension-uninstall-button"
-                  type="button"
-                  title={`Uninstall ${card.name}`}
-                  aria-label={`Uninstall ${card.name}`}
-                  disabled={controller.busy === card.id}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    void controller.uninstall(card);
-                  }}
-                >
-                  <Trash2 size={15} />
-                </button>
-              )}
               <button
-                className={`toggle${card.enabled ? " on" : ""}`}
+                className={`toggle${item.enabled ? " on" : ""}`}
                 type="button"
                 role="switch"
-                aria-checked={card.enabled}
-                aria-label={`${card.enabled ? "Disable" : "Enable"} ${card.name}`}
-                disabled={controller.busy === card.id}
+                aria-checked={item.enabled}
+                aria-label={`${item.enabled ? "Disable" : "Enable"} ${item.name}`}
+                disabled={controller.busy !== null}
                 onClick={(event) => {
                   event.stopPropagation();
-                  void controller.toggle(card);
+                  toggle();
                 }}
               >
                 <span />
@@ -1046,17 +1242,15 @@ function StoreGrid({
   query: string;
   controller: InstalledController;
   onPreview: (selection: DetailSelection) => void;
-  onStoreChange: (state: {
-    view: StoreView | null;
-    installing: string | null;
-    install: (entry: StoreEntry) => Promise<void>;
-  }) => void;
+  onStoreChange: (state: StoreController) => void;
 }) {
   const [view, setView] = useState<StoreView | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [category, setCategory] = useState("all");
   const [installing, setInstalling] = useState<string | null>(null);
+  const installActive = useRef(false);
+  const live = useRef(false);
   const refreshInstalled = controller.refresh;
 
   const load = useCallback(async () => {
@@ -1065,11 +1259,13 @@ function StoreGrid({
 
   useEffect(() => {
     let alive = true;
+    live.current = true;
     void load()
       .catch((reason) => alive && setError(String(reason)))
       .finally(() => alive && setLoading(false));
     return () => {
       alive = false;
+      live.current = false;
       setView(null);
       void commands.storeClose();
     };
@@ -1077,27 +1273,50 @@ function StoreGrid({
 
   const install = useCallback(
     async (entry: StoreEntry) => {
+      if (installActive.current) return;
+      installActive.current = true;
       setInstalling(entry.id);
       setError(null);
       try {
-        unwrapResult(await commands.storeInstall(entry.id, entry.version));
+        const existing = controller.connections.find(
+          (row) => row.extensionId === entry.id,
+        );
+        unwrapResult(
+          await (entry.kind === "mcp"
+            ? existing
+              ? commands.storeMcpUpdate(
+                  existing.id,
+                  existing.revision,
+                  entry.version,
+                )
+              : commands.storeMcpInstall(entry.id, entry.version)
+            : commands.storeInstall(entry.id, entry.version)),
+        );
         await Promise.all([load(), refreshInstalled()]);
+        if (live.current) onPreview({ source: "store", entry });
       } catch (reason) {
         setError(String(reason));
       } finally {
+        installActive.current = false;
         setInstalling(null);
       }
     },
-    [load, refreshInstalled],
+    [load, refreshInstalled, controller.connections, onPreview],
   );
 
   useEffect(() => {
-    onStoreChange({ view, installing, install });
-  }, [install, installing, onStoreChange, view]);
+    onStoreChange({ view, installing, error, install });
+  }, [install, installing, error, onStoreChange, view]);
 
   const installed = useMemo(
-    () => new Map(controller.cards.map((card) => [card.id, card.version])),
-    [controller.cards],
+    () =>
+      new Map([
+        ...controller.cards.map((card) => [card.id, card.version] as const),
+        ...controller.connections.map(
+          (row) => [row.extensionId!, row.version!] as const,
+        ),
+      ]),
+    [controller.cards, controller.connections],
   );
   const categories = useMemo(
     () =>
@@ -1126,7 +1345,11 @@ function StoreGrid({
             : "Offline — showing the last verified catalogue. Installs are paused."}
         </div>
       )}
-      {error && <div className="extension-inline-error">{error}</div>}
+      {error && (
+        <div className="extension-inline-error" role="alert">
+          {error}
+        </div>
+      )}
       <div className="store-intro polished-store-intro">
         <div>
           <strong>Extension store</strong>
@@ -1158,7 +1381,7 @@ function StoreGrid({
               entry={entry}
               installedVersion={installed.get(entry.id)}
               busy={installing === entry.id}
-              canInstall={Boolean(view?.can_install)}
+              canInstall={Boolean(view?.can_install) && installing === null}
               onInstall={(target) => void install(target)}
               onPreview={(target) =>
                 onPreview({ source: "store", entry: target })
@@ -1179,6 +1402,7 @@ export function ExtensionsPage({ view }: { view: ExtensionViewId }) {
   });
   const [detail, setDetail] = useState<DetailSelection | null>(null);
   const detailOriginRef = useRef<HTMLElement | null>(null);
+  const installedTabRef = useRef<HTMLButtonElement>(null);
   const [developer, setDeveloper] = useState<ExtensionDeveloperStatus | null>(
     null,
   );
@@ -1186,16 +1410,22 @@ export function ExtensionsPage({ view }: { view: ExtensionViewId }) {
   const [developerBusy, setDeveloperBusy] = useState(false);
   const [importBusy, setImportBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
-  const [storeState, setStoreState] = useState<{
-    view: StoreView | null;
-    installing: string | null;
-    install: (entry: StoreEntry) => Promise<void>;
-  }>({ view: null, installing: null, install: async () => {} });
+  const [storeState, setStoreState] = useState<StoreController>({
+    view: null,
+    installing: null,
+    error: null,
+    install: async () => {},
+  });
 
   useEffect(() => {
     setDetail(null);
     detailOriginRef.current = null;
-    setStoreState({ view: null, installing: null, install: async () => {} });
+    setStoreState({
+      view: null,
+      installing: null,
+      error: null,
+      install: async () => {},
+    });
   }, [view]);
 
   useEffect(() => {
@@ -1223,6 +1453,7 @@ export function ExtensionsPage({ view }: { view: ExtensionViewId }) {
         }));
       }
       setDeveloperOpen(true);
+      await controller.refresh();
     } catch (reason) {
       setNotice(String(reason));
     } finally {
@@ -1266,11 +1497,7 @@ export function ExtensionsPage({ view }: { view: ExtensionViewId }) {
   };
 
   const onStoreChange = useCallback(
-    (next: {
-      view: StoreView | null;
-      installing: string | null;
-      install: (entry: StoreEntry) => Promise<void>;
-    }) => setStoreState(next),
+    (next: StoreController) => setStoreState(next),
     [],
   );
   const openDetail = useCallback((selection: DetailSelection) => {
@@ -1284,6 +1511,7 @@ export function ExtensionsPage({ view }: { view: ExtensionViewId }) {
     setDetail(null);
     requestAnimationFrame(() => {
       if (origin?.isConnected) origin.focus();
+      else installedTabRef.current?.focus();
     });
   }, []);
 
@@ -1300,7 +1528,8 @@ export function ExtensionsPage({ view }: { view: ExtensionViewId }) {
             onBack={closeDetail}
             onInstall={storeState.install}
             installing={storeState.installing}
-            canInstall={storeState.view?.can_install ?? false}
+            installError={storeState.error}
+            canInstall={Boolean(storeState.view?.can_install)}
           />
         )}
         <div className="extensions-browse-view" hidden={detail !== null}>
@@ -1309,8 +1538,8 @@ export function ExtensionsPage({ view }: { view: ExtensionViewId }) {
               <div className="eyebrow">Capability management</div>
               <h1>Extensions</h1>
               <p className="page-subtitle">
-                Install, enable, update, and remove focused additions. Settings
-                stay beside the capability each extension extends.
+                Add tools to the Agent with extensions. Connect your own MCP
+                server alongside your installed extensions.
               </p>
             </div>
             <div className="header-actions">
@@ -1344,6 +1573,7 @@ export function ExtensionsPage({ view }: { view: ExtensionViewId }) {
           <div className="extension-toolbar">
             <div className="segmented" aria-label="Extension collection">
               <button
+                ref={installedTabRef}
                 className={view === "installed" ? "active" : ""}
                 type="button"
                 onClick={() => {
@@ -1353,7 +1583,10 @@ export function ExtensionsPage({ view }: { view: ExtensionViewId }) {
                   }).slice(1);
                 }}
               >
-                Installed <span>{controller.cards.length}</span>
+                Installed{" "}
+                <span>
+                  {controller.cards.length + controller.connections.length}
+                </span>
               </button>
               <button
                 className={view === "store" ? "active" : ""}
@@ -1381,17 +1614,25 @@ export function ExtensionsPage({ view }: { view: ExtensionViewId }) {
           </div>
 
           {view === "installed" ? (
-            <InstalledList
-              controller={controller}
-              query={query}
-              onPreview={openDetail}
-              onBrowseStore={() => {
-                window.location.hash = hashForRoute({
-                  page: "extensions",
-                  view: "store",
-                }).slice(1);
-              }}
-            />
+            <>
+              <InstalledList
+                controller={controller}
+                query={query}
+                onPreview={openDetail}
+                onBrowseStore={() => {
+                  window.location.hash = hashForRoute({
+                    page: "extensions",
+                    view: "store",
+                  }).slice(1);
+                }}
+              />
+              {customMcpManagementVisible(
+                import.meta.env.MODE,
+                import.meta.env.DEV,
+              ) &&
+                developer?.enabled &&
+                detail === null && <McpConnections query={query} />}
+            </>
           ) : (
             <StoreGrid
               query={query}

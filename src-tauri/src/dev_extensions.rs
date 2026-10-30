@@ -6,6 +6,7 @@
 
 use std::path::{Component, Path, PathBuf};
 
+use grain_sdk::compatibility::api_requirement_supported;
 use grain_sdk::{ExtensionProjectManifest, GrainPack, PackPayloads, Tier, GRAIN_API_VERSION};
 
 const MAX_MANIFEST_BYTES: u64 = 1024 * 1024;
@@ -45,10 +46,7 @@ pub fn load_project(root: &Path) -> Result<LoadedDevProject, String> {
         return Err("manifest.json must use 'entry', not embedded 'entry_source'".into());
     }
     if !api_requirement_supported(&project.manifest.grain_api, GRAIN_API_VERSION) {
-        return Err(format!(
-            "extension requires Grain API '{}', but this build provides '{}'",
-            project.manifest.grain_api, GRAIN_API_VERSION
-        ));
+        return Err(grain_sdk::compatibility::UNSUPPORTED_EXTENSION_API.into());
     }
 
     let (entry_path, companion_path) = match project.manifest.tier {
@@ -136,33 +134,6 @@ fn canonical_project_file(root: &Path, value: &str, label: &str) -> Result<PathB
     Ok(path)
 }
 
-fn api_requirement_supported(requirement: &str, current: &str) -> bool {
-    let requirement = requirement.trim();
-    let (caret, version) = match requirement.strip_prefix('^') {
-        Some(version) => (true, version),
-        None => (false, requirement),
-    };
-    let Some(required) = parse_version(version) else {
-        return false;
-    };
-    let Some(current) = parse_version(current) else {
-        return false;
-    };
-    if caret {
-        required.0 == current.0 && current >= required
-    } else {
-        current == required
-    }
-}
-
-fn parse_version(version: &str) -> Option<(u64, u64, u64)> {
-    let mut parts = version.split('.');
-    let major = parts.next()?.parse().ok()?;
-    let minor = parts.next()?.parse().ok()?;
-    let patch = parts.next().map(str::parse).transpose().ok()?.unwrap_or(0);
-    parts.next().is_none().then_some((major, minor, patch))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -175,8 +146,8 @@ mod tests {
             r#"{
               "id":"com.example.test","name":"Test","version":"0.1.0",
               "grainApi":"^1.0","tier":"scripted","entry":"src/main.ts",
-              "permissions":[],"activation":["onShortcut:open"],
-              "contributes":{"shortcuts":[{"id":"open","label":"Open"}]}
+              "permissions":[],"activation":[],
+              "contributes":{"actions":[{"id":"read","title":"Read","utterances":["read data"],"risk":"safe"}]}
             }"#,
         )
         .unwrap();
@@ -225,7 +196,7 @@ mod tests {
     }
 
     #[test]
-    fn native_companion_is_dev_only_and_resolves_inside_the_chosen_folder() {
+    fn native_companions_are_refused_even_in_developer_mode() {
         let dir = tempfile::tempdir().unwrap();
         let binary = if cfg!(windows) {
             "companion.exe"
@@ -248,14 +219,8 @@ mod tests {
         )
         .unwrap();
 
-        let loaded = load_project(dir.path()).unwrap();
-        assert!(loaded.entry_path.is_none());
-        assert_eq!(
-            loaded.companion_path,
-            Some(dir.path().join(binary).canonicalize().unwrap())
-        );
-        // The regular import validator remains a hard distribution boundary.
-        assert!(loaded.pack.validate().is_err());
-        loaded.pack.validate_dev().unwrap();
+        assert!(load_project(dir.path())
+            .unwrap_err()
+            .contains("native companion executables"));
     }
 }

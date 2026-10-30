@@ -1,35 +1,104 @@
-//! [GRAIN] B1: local WebSocket that streams `DaemonEvent`s to the pill.
-//!
-//! The core listens on `127.0.0.1:EVENTS_PORT`; each connecting client (the pill)
-//! subscribes to the `AppContext` broadcast bus and receives every event as JSON.
-//! This is the seed of the future local server (the OpenAI-compatible endpoints
-//! grow on the same listener later).
+//! Authenticated loopback requests/results for native workers and developer control.
+//! Recording and Agent UI events stay on the internal WebView bridge; public
+//! socket roles never subscribe to the core event bus.
 
 use std::sync::atomic::{AtomicUsize, Ordering};
+#[cfg(test)]
 use std::sync::Arc;
 use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
-use grain_core::AppContext;
 use tauri::AppHandle;
 use tokio::net::TcpStream;
-use tokio::sync::broadcast::error::RecvError;
 use tokio_tungstenite::{
-    accept_hdr_async,
+    accept_hdr_async_with_config,
     tungstenite::{
         handshake::server::{ErrorResponse, Request, Response},
         http::{header::ORIGIN, StatusCode, Uri},
+        protocol::WebSocketConfig,
         Message,
     },
 };
 
-/// Fixed loopback port the pill connects to (`ws://127.0.0.1:EVENTS_PORT`).
+/// Fixed loopback port for extension worker/developer-control traffic.
+#[cfg(not(feature = "agent-harness"))]
 pub const EVENTS_PORT: u16 = 7124;
+#[cfg(feature = "agent-harness")]
+pub const EVENTS_PORT: u16 = 17124;
 static UNAUTHENTICATED_CONNECTIONS: AtomicUsize = AtomicUsize::new(0);
 const MAX_UNAUTHENTICATED_CONNECTIONS: usize = 64;
 
+// Applies before authentication to every client on this shared listener.
+// Bound fragmented messages as well as individual frames before JSON decoding.
+const MAX_INBOUND_WS_BYTES: usize = 512 * 1024;
+const MAX_WORKER_RPC_TASKS: usize = 4;
+const SOCKET_WRITE_DEADLINE: Duration = Duration::from_secs(2);
+
+// A slow peer must not trap the socket owner inside the writer arm. Cancelling
+// a partially written frame closes this connection; it is never replayed.
+async fn socket_write<F, E>(
+    send: F,
+    closed: Option<&mut tokio::sync::watch::Receiver<bool>>,
+    deadline: Duration,
+) -> bool
+where
+    F: std::future::Future<Output = Result<(), E>>,
+{
+    tokio::select! {
+        biased;
+        _ = async {
+            match closed {
+                Some(closed) => { let _ = closed.wait_for(|value| *value).await; }
+                None => std::future::pending::<()>().await,
+            }
+        } => false,
+        result = tokio::time::timeout(deadline, send) => matches!(result, Ok(Ok(()))),
+    }
+}
+
+fn spawn_worker_rpc<F>(requests: &mut tokio::task::JoinSet<()>, request: F) -> bool
+where
+    F: std::future::Future<Output = ()> + Send + 'static,
+{
+    while requests.try_join_next().is_some() {}
+    if requests.len() >= MAX_WORKER_RPC_TASKS {
+        return false;
+    }
+    requests.spawn(request);
+    true
+}
+
+// Stop serialization before retaining more than one permitted wire frame.
+// Parsed host-API results have separate per-API limits; this bounds encoding.
+fn worker_response_json(response: &grain_sdk::HostFrame) -> Result<String, serde_json::Error> {
+    struct Limited(Vec<u8>);
+    impl std::io::Write for Limited {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            if bytes.len() > MAX_INBOUND_WS_BYTES.saturating_sub(self.0.len()) {
+                return Err(std::io::Error::other("worker response exceeds wire budget"));
+            }
+            self.0.extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let mut buffer = Limited(Vec::new());
+    serde_json::to_writer(&mut buffer, response)?;
+    Ok(String::from_utf8(buffer.0).expect("JSON serialization is UTF-8"))
+}
+
+fn events_websocket_config() -> WebSocketConfig {
+    WebSocketConfig {
+        max_message_size: Some(MAX_INBOUND_WS_BYTES),
+        max_frame_size: Some(MAX_INBOUND_WS_BYTES),
+        ..WebSocketConfig::default()
+    }
+}
+
 /// [GRAIN] SPEC §7.1: the server-side token → identity table. Minted per app
-/// run; the pill's token is injected into its environment at spawn. A
+/// run; each worker's token is injected into its environment at spawn. A
 /// connection that hasn't authenticated with a registered token within
 /// [`AUTH_DEADLINE`] receives nothing and is dropped.
 static TOKENS: std::sync::OnceLock<crate::events_auth::TokenRegistry> = std::sync::OnceLock::new();
@@ -75,8 +144,8 @@ impl Drop for PreAuthGuard<'_> {
 }
 
 /// Browsers do not apply same-origin policy to WebSockets, so the local server
-/// must reject browser handshakes from arbitrary sites. Native clients (the
-/// pill and, later, native extensions) omit Origin and remain valid.
+/// must reject browser handshakes from arbitrary sites. Native worker clients
+/// omit Origin and remain valid.
 fn origin_allowed(origin: Option<&str>) -> bool {
     let Some(origin) = origin else {
         return true;
@@ -118,9 +187,10 @@ pub fn mint_worker_token(ext_id: &str, caps: std::collections::HashSet<String>) 
 
 fn mint_extension_token(
     ext_id: &str,
-    caps: std::collections::HashSet<String>,
+    mut caps: std::collections::HashSet<String>,
     role: crate::events_auth::ClientRole,
 ) -> String {
+    caps.retain(|cap| grain_sdk::manifest::tool_permission_allowed(cap));
     let token = format!(
         "{}{}",
         uuid::Uuid::new_v4().simple(),
@@ -175,7 +245,7 @@ pub fn enable_dev_control(data_dir: &std::path::Path) -> Result<(), String> {
     std::fs::create_dir_all(data_dir).map_err(|error| error.to_string())?;
     let path = data_dir.join(DEV_TOKEN_FILE);
     let body = serde_json::to_vec_pretty(&DevTokenFile {
-        url: "ws://127.0.0.1:7124",
+        url: &format!("ws://127.0.0.1:{EVENTS_PORT}"),
         token: &token,
     })
     .map_err(|error| error.to_string())?;
@@ -236,13 +306,8 @@ fn bind_events_listener(
     socket.listen(1024)
 }
 
-/// Spawn the event WS server on the Tauri async runtime.
-///
-/// `app` is carried alongside the headless `ctx` because the reverse channel now
-/// needs Tauri-managed state: a Prompt Record click must reach the
-/// `AudioRecordingManager` to snapshot the audio split mark. Event emission stays
-/// headless (`ctx.emit`).
-pub fn start(ctx: Arc<AppContext>, app: AppHandle) {
+/// Spawn the authenticated worker/developer request server.
+pub fn start(app: AppHandle) {
     std::thread::spawn(move || {
         let rt = match tokio::runtime::Builder::new_current_thread()
             .enable_all()
@@ -266,9 +331,8 @@ pub fn start(ctx: Arc<AppContext>, app: AppHandle) {
             };
             // Rapid dev restarts can briefly leave the previous process owning
             // the fixed loopback port. Returning here used to permanently skip
-            // both the event transport and pill launch for the new app run.
-            // Retry at low frequency until the old listener releases the port;
-            // only then is it safe to start the pill supervisor.
+            // worker/developer transport for the new app run. Retry at low
+            // frequency until the old listener releases the port.
             let mut bind_attempt = 0u32;
             let listener = loop {
                 match bind_events_listener(socket_addr) {
@@ -285,13 +349,11 @@ pub fn start(ctx: Arc<AppContext>, app: AppHandle) {
                 }
             };
             log::info!("[GRAIN] events WS listening on ws://{addr}");
-
             loop {
                 match listener.accept().await {
                     Ok((stream, _)) => {
-                        let ctx = ctx.clone();
                         let app = app.clone();
-                        tokio::spawn(handle(stream, ctx, app));
+                        tokio::spawn(handle(stream, app));
                     }
                     Err(e) => log::warn!("[GRAIN] events WS accept error: {e}"),
                 }
@@ -300,7 +362,7 @@ pub fn start(ctx: Arc<AppContext>, app: AppHandle) {
     });
 }
 
-async fn handle(stream: TcpStream, ctx: Arc<AppContext>, app: AppHandle) {
+async fn handle(stream: TcpStream, app: AppHandle) {
     let mut pre_auth = match PreAuthGuard::acquire(
         &UNAUTHENTICATED_CONNECTIONS,
         MAX_UNAUTHENTICATED_CONNECTIONS,
@@ -314,26 +376,30 @@ async fn handle(stream: TcpStream, ctx: Arc<AppContext>, app: AppHandle) {
         }
     };
 
-    let ws = match accept_hdr_async(stream, |request: &Request, response: Response| {
-        let origin = request.headers().get(ORIGIN);
-        let allowed = match origin {
-            None => origin_allowed(None),
-            Some(value) => value
-                .to_str()
-                .is_ok_and(|value| origin_allowed(Some(value))),
-        };
-        if allowed {
-            return Ok(response);
-        }
+    let ws = match accept_hdr_async_with_config(
+        stream,
+        |request: &Request, response: Response| {
+            let origin = request.headers().get(ORIGIN);
+            let allowed = match origin {
+                None => origin_allowed(None),
+                Some(value) => value
+                    .to_str()
+                    .is_ok_and(|value| origin_allowed(Some(value))),
+            };
+            if allowed {
+                return Ok(response);
+            }
 
-        let offending = origin
-            .and_then(|value| value.to_str().ok())
-            .unwrap_or("<invalid Origin header>");
-        log::warn!("[GRAIN] events WS: rejected Origin '{offending}'");
-        let mut error = ErrorResponse::new(Some("WebSocket Origin not allowed".into()));
-        *error.status_mut() = StatusCode::FORBIDDEN;
-        Err(error)
-    })
+            let offending = origin
+                .and_then(|value| value.to_str().ok())
+                .unwrap_or("<invalid Origin header>");
+            log::warn!("[GRAIN] events WS: rejected Origin '{offending}'");
+            let mut error = ErrorResponse::new(Some("WebSocket Origin not allowed".into()));
+            *error.status_mut() = StatusCode::FORBIDDEN;
+            Err(error)
+        },
+        Some(events_websocket_config()),
+    )
     .await
     {
         Ok(ws) => ws,
@@ -374,7 +440,13 @@ async fn handle(stream: TcpStream, ctx: Arc<AppContext>, app: AppHandle) {
     if let Ok(json) = serde_json::to_string(&grain_sdk::ServerWelcome {
         grain_api: grain_sdk::GRAIN_API_VERSION.into(),
     }) {
-        if write.send(Message::Text(json.into())).await.is_err() {
+        if !socket_write(
+            write.send(Message::Text(json.into())),
+            None,
+            SOCKET_WRITE_DEADLINE,
+        )
+        .await
+        {
             return;
         }
     }
@@ -413,7 +485,13 @@ async fn handle(stream: TcpStream, ctx: Arc<AppContext>, app: AppHandle) {
             let Ok(json) = serde_json::to_string(&frame) else {
                 continue;
             };
-            if write.send(Message::Text(json.into())).await.is_err() {
+            if !socket_write(
+                write.send(Message::Text(json.into())),
+                None,
+                SOCKET_WRITE_DEADLINE,
+            )
+            .await
+            {
                 break;
             }
         }
@@ -429,45 +507,33 @@ async fn handle(stream: TcpStream, ctx: Arc<AppContext>, app: AppHandle) {
     // responses, and host-initiated calls all funnel through this mpsc so `write`
     // is touched from exactly one place (the `outgoing` arm) — no interleaved
     // partial frames, no borrow fight. `write` is only used here from now on.
-    let (out_tx, mut out_rx) = tokio::sync::mpsc::unbounded_channel::<Message>();
+    let (out_tx, mut out_rx) =
+        tokio::sync::mpsc::channel::<Message>(crate::extension_host::WORKER_OUTBOUND_CAPACITY);
 
     // The authenticated role, not its capability set, decides which protocol
     // this socket speaks and whether the worker host tracks it for reaping.
     let is_worker = identity.role == crate::events_auth::ClientRole::Worker;
-    let last_activity = if is_worker {
-        let Some(activity) =
-            crate::extension_host::attach_connection(&identity.id, &session.token, out_tx.clone())
-        else {
+    let mut worker_closed = None;
+    if is_worker {
+        worker_closed =
+            crate::extension_host::attach_connection(&identity.id, &session.token, out_tx.clone());
+        if worker_closed.is_none() {
             return;
-        };
-        Some(activity)
-    } else {
-        None
-    };
+        }
+    }
 
-    let mut rx = ctx.subscribe();
+    // Workers and developer controls have only explicit request/result traffic.
+    // The recording WebView is internal and no longer subscribes through this socket.
+    // Own and bound host-API work to this socket. Drop aborts unfinished tasks.
+    let mut requests = tokio::task::JoinSet::new();
     loop {
         tokio::select! {
-            ev = rx.recv() => match ev {
-                Ok(ev) => {
-                    // Capability filter: an identity without the grant never
-                    // receives the event at all (SPEC §1.3).
-                    if !crate::events_auth::allows_event(&identity, &ev) {
-                        continue;
-                    }
-                    if let Ok(json) = serde_json::to_string(&ev) {
-                        if out_tx.send(Message::Text(json.into())).is_err() {
-                            break; // writer arm gone
-                        }
-                    }
-                }
-                Err(RecvError::Lagged(_)) => continue, // dropped some; keep streaming
-                Err(RecvError::Closed) => break,        // bus closed (shutdown)
-            },
+            _ = async { let _ = worker_closed.as_mut().expect("worker close signal").wait_for(|closed| *closed).await; }, if is_worker => break,
+            _ = requests.join_next(), if !requests.is_empty() => {},
             // The single writer: everything bound for this socket passes here.
             outgoing = out_rx.recv() => match outgoing {
                 Some(m) => {
-                    if write.send(m).await.is_err() {
+                    if !socket_write(write.send(m), worker_closed.as_mut(), SOCKET_WRITE_DEADLINE).await {
                         break; // client gone
                     }
                 }
@@ -478,14 +544,6 @@ async fn handle(stream: TcpStream, ctx: Arc<AppContext>, app: AppHandle) {
             // control; workers cannot issue application control commands.
             msg = read.next() => match msg {
                 Some(Ok(Message::Text(txt))) => {
-                    if let Some(la) = &last_activity {
-                        // Touch: feeds the extension host's idle reaper.
-                        let now = std::time::SystemTime::now()
-                            .duration_since(std::time::UNIX_EPOCH)
-                            .map(|d| d.as_secs())
-                            .unwrap_or(0);
-                        la.store(now, Ordering::Relaxed);
-                    }
                     if is_worker {
                         match serde_json::from_str::<grain_sdk::HostFrame>(&txt) {
                             Ok(grain_sdk::HostFrame::Request(req)) => {
@@ -494,7 +552,8 @@ async fn handle(stream: TcpStream, ctx: Arc<AppContext>, app: AppHandle) {
                                 let app = app.clone();
                                 let identity = identity.clone();
                                 let out_tx = out_tx.clone();
-                                tokio::spawn(async move {
+                                let worker_token = session.token.clone();
+                                if !spawn_worker_rpc(&mut requests, async move {
                                     let developer_logging =
                                         crate::extension_host::is_dev_extension(
                                             &app,
@@ -516,6 +575,7 @@ async fn handle(stream: TcpStream, ctx: Arc<AppContext>, app: AppHandle) {
                                         });
                                     let resp = match crate::host_api::dispatch(
                                         &app, &identity, &req.method, req.params,
+                                        crate::extension_host::rpc_execution_generation(&identity.id, &worker_token),
                                     )
                                     .await
                                     {
@@ -555,12 +615,12 @@ async fn handle(stream: TcpStream, ctx: Arc<AppContext>, app: AppHandle) {
                                             }
                                         }
                                     };
-                                    if let Ok(json) =
-                                        serde_json::to_string(&grain_sdk::HostFrame::Response(resp))
-                                    {
-                                        let _ = out_tx.send(Message::Text(json.into()));
+                                    let sent = worker_response_json(&grain_sdk::HostFrame::Response(resp))
+                                        .is_ok_and(|json| out_tx.try_send(Message::Text(json.into())).is_ok());
+                                    if !sent {
+                                        crate::extension_host::detach_connection(&identity.id, &worker_token);
                                     }
-                                });
+                                }) { break; }
                             }
                             Ok(grain_sdk::HostFrame::CallResult(r)) => {
                                 let result = match r.err {
@@ -568,7 +628,7 @@ async fn handle(stream: TcpStream, ctx: Arc<AppContext>, app: AppHandle) {
                                     None => Ok(r.ok.unwrap_or(serde_json::Value::Null)),
                                 };
                                 crate::extension_host::resolve_call_result(
-                                    &identity.id, r.call_id, result,
+                                    &identity.id, &session.token, r.call_id, result,
                                 );
                             }
                             // Response/Call are server→worker; a worker echoing
@@ -585,11 +645,160 @@ async fn handle(stream: TcpStream, ctx: Arc<AppContext>, app: AppHandle) {
     if is_worker {
         crate::extension_host::detach_connection(&identity.id, &session.token);
     }
+    requests.abort_all();
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn socket_write_deadline_and_close_signal_drop_stalled_writer() {
+        struct Dropped(Arc<AtomicUsize>);
+        impl Drop for Dropped {
+            fn drop(&mut self) {
+                self.0.fetch_add(1, Ordering::SeqCst);
+            }
+        }
+        for close in [false, true] {
+            let dropped = Arc::new(AtomicUsize::new(0));
+            let guard = Dropped(dropped.clone());
+            let (tx, mut rx) = tokio::sync::watch::channel(false);
+            let write = async move {
+                let _guard = guard;
+                std::future::pending::<Result<(), ()>>().await
+            };
+            let shutdown = async {
+                if close {
+                    tokio::task::yield_now().await;
+                    tx.send_replace(true);
+                }
+            };
+            let (sent, _) = tokio::join!(
+                socket_write(write, Some(&mut rx), Duration::from_millis(20)),
+                shutdown
+            );
+            assert!(!sent);
+            assert_eq!(dropped.load(Ordering::SeqCst), 1);
+        }
+        assert!(socket_write(async { Ok::<_, ()>(()) }, None, Duration::from_secs(1)).await);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn worker_rpc_tasks_are_bounded_and_socket_drop_releases_owners() {
+        struct Owner(Arc<AtomicUsize>);
+        impl Drop for Owner {
+            fn drop(&mut self) {
+                self.0.fetch_add(1, Ordering::SeqCst);
+            }
+        }
+        let started = Arc::new(AtomicUsize::new(0));
+        let released = Arc::new(AtomicUsize::new(0));
+        let mut requests = tokio::task::JoinSet::new();
+        for index in 0..=MAX_WORKER_RPC_TASKS {
+            let started = started.clone();
+            let released = released.clone();
+            assert_eq!(
+                spawn_worker_rpc(&mut requests, async move {
+                    started.fetch_add(1, Ordering::SeqCst);
+                    let _owner = Owner(released);
+                    std::future::pending::<()>().await;
+                }),
+                index < MAX_WORKER_RPC_TASKS
+            );
+        }
+        tokio::task::yield_now().await;
+        assert_eq!(started.load(Ordering::SeqCst), MAX_WORKER_RPC_TASKS);
+        drop(requests);
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while released.load(Ordering::SeqCst) != MAX_WORKER_RPC_TASKS {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+    }
+
+    #[test]
+    fn worker_rpc_encoding_stops_at_wire_budget_and_preserves_small_replies() {
+        for size in [100, MAX_INBOUND_WS_BYTES, MAX_INBOUND_WS_BYTES * 2] {
+            let frame = grain_sdk::HostFrame::Response(grain_sdk::ServerResponse {
+                id: 1,
+                ok: Some(serde_json::json!({"body": "x".repeat(size)})),
+                err: None,
+            });
+            let result = worker_response_json(&frame);
+            if size == 100 {
+                assert_eq!(
+                    serde_json::from_str::<serde_json::Value>(&result.unwrap()).unwrap(),
+                    serde_json::to_value(&frame).unwrap()
+                );
+            } else {
+                assert!(result.is_err());
+            }
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn socket_limits_reject_large_frames_and_fragmented_messages() {
+        use tokio_tungstenite::tungstenite::protocol::frame::{
+            coding::{Data, OpCode},
+            Frame,
+        };
+        for fragmented in [false, true] {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let address = listener.local_addr().unwrap();
+            let server = tokio::spawn(async move {
+                let (socket, _) = listener.accept().await.unwrap();
+                let mut ws = tokio_tungstenite::accept_async_with_config(
+                    socket,
+                    Some(events_websocket_config()),
+                )
+                .await
+                .unwrap();
+                assert_eq!(
+                    ws.next().await.unwrap().unwrap(),
+                    Message::Text("normal".into())
+                );
+                let result = tokio::time::timeout(Duration::from_secs(2), ws.next())
+                    .await
+                    .unwrap()
+                    .unwrap();
+                assert!(matches!(
+                    result,
+                    Err(tokio_tungstenite::tungstenite::Error::Capacity(_))
+                ));
+            });
+            let (mut client, _) = tokio_tungstenite::connect_async(format!("ws://{address}"))
+                .await
+                .unwrap();
+            client.send(Message::Text("normal".into())).await.unwrap();
+            if fragmented {
+                let half = MAX_INBOUND_WS_BYTES / 2 + 1;
+                client
+                    .send(Message::Frame(Frame::message(
+                        vec![b'x'; half],
+                        OpCode::Data(Data::Text),
+                        false,
+                    )))
+                    .await
+                    .unwrap();
+                // Each fragment fits; their aggregate must still be rejected.
+                let _ = client
+                    .send(Message::Frame(Frame::message(
+                        vec![b'x'; half],
+                        OpCode::Data(Data::Continue),
+                        true,
+                    )))
+                    .await;
+            } else {
+                let _ = client
+                    .send(Message::Text("x".repeat(MAX_INBOUND_WS_BYTES + 1)))
+                    .await;
+            }
+            server.await.unwrap();
+        }
+    }
 
     #[tokio::test(flavor = "current_thread")]
     async fn event_listener_is_exclusive_and_rebinds_after_release() {

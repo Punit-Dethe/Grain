@@ -10,14 +10,152 @@ use std::fs;
 use std::path::{Component, Path, PathBuf};
 
 use base64::Engine as _;
+use grain_sdk::compatibility::api_requirement_supported;
 use grain_sdk::{
     daemon_event_capability, ExtensionProjectManifest, GrainPack, PackPayloads, Tier,
     DAEMON_EVENT_VARIANTS, GRAIN_API_VERSION,
 };
 
+pub mod listing;
+
+/// Strict bounded TOML shared by author CLI and maintainer checks.
+pub fn parse_submission(raw: &str) -> Result<grain_sdk::submission::SourceSubmission, String> {
+    if raw.len() > grain_sdk::submission::SUBMISSION_MAX_BYTES {
+        return Err("submission.toml exceeds its byte limit.".into());
+    }
+    let submission: grain_sdk::submission::SourceSubmission =
+        toml::from_str(raw).map_err(|e| format!("Invalid submission TOML: {e}"))?;
+    submission.validate()?;
+    Ok(submission)
+}
+
+pub fn serialize_submission(
+    submission: &grain_sdk::submission::SourceSubmission,
+) -> Result<String, String> {
+    submission.validate()?;
+    let raw = toml::to_string_pretty(submission).map_err(|e| e.to_string())?;
+    parse_submission(&raw)?;
+    Ok(raw)
+}
+
+pub fn read_submission(
+    root: &Path,
+    expected_id: &str,
+) -> Result<grain_sdk::submission::SourceSubmission, String> {
+    let root = root.canonicalize().map_err(|e| e.to_string())?;
+    let path = safe_project_file(&root, "submission.toml", "submission")?;
+    if fs::symlink_metadata(root.join("submission.toml"))
+        .map_err(|e| e.to_string())?
+        .file_type()
+        .is_symlink()
+    {
+        return Err("submission.toml must not be a symbolic link.".into());
+    }
+    let raw = read_bounded_utf8(
+        &path,
+        grain_sdk::submission::SUBMISSION_MAX_BYTES as u64,
+        "submission.toml",
+    )?;
+    let submission = parse_submission(&raw)?;
+    if submission.id != expected_id {
+        return Err("Submission id must match its registry folder.".into());
+    }
+    listing::verify_submission_listing(&root, &submission)?;
+    Ok(submission)
+}
+
+pub struct ProjectIdentity {
+    pub kind: grain_sdk::distribution::ArtifactKind,
+    pub id: String,
+    pub version: String,
+    pub grain_api: String,
+    pub summary: String,
+}
+
+/// Use bounded/contained metadata reads after doctor, not a second unbounded
+/// manifest read from author-controlled source paths.
+pub fn project_identity(root: &Path) -> Result<ProjectIdentity, String> {
+    if is_mcp_project(root)? {
+        let descriptor = read_mcp_descriptor(root)?;
+        return Ok(ProjectIdentity {
+            kind: grain_sdk::distribution::ArtifactKind::McpDescriptor,
+            id: descriptor.id,
+            version: descriptor.version,
+            grain_api: descriptor.grain_api,
+            summary: descriptor.description,
+        });
+    }
+    let root = root.canonicalize().map_err(|e| e.to_string())?;
+    let path = safe_project_file(&root, "manifest.json", "manifest")?;
+    let raw = read_bounded_utf8(&path, MAX_MANIFEST_BYTES, "manifest.json")?;
+    let project: ExtensionProjectManifest =
+        serde_json::from_str(&raw).map_err(|e| e.to_string())?;
+    check_project_identity(&project)?;
+    let manifest = project.manifest;
+    Ok(ProjectIdentity {
+        kind: grain_sdk::distribution::ArtifactKind::Native,
+        id: manifest.id,
+        version: manifest.version,
+        grain_api: manifest.grain_api,
+        summary: if manifest.description.is_empty() {
+            manifest.name
+        } else {
+            manifest.description
+        },
+    })
+}
+
+fn check_project_identity(project: &ExtensionProjectManifest) -> Result<(), String> {
+    let mut manifest = project.manifest.clone();
+    manifest.entry_source = "// source submitted for a separate reviewed build".into();
+    GrainPack {
+        manifest,
+        payloads: PackPayloads::default(),
+    }
+    .validate()
+}
+
 pub const MAX_MANIFEST_BYTES: u64 = 1024 * 1024;
 pub const MAX_PROJECT_FILE_BYTES: u64 = 5 * 1024 * 1024;
 pub const MAX_ENTRY_BYTES: u64 = MAX_PROJECT_FILE_BYTES;
+
+/// An MCP project contains metadata, never a JavaScript entry or host identity.
+/// Refuse ambiguous roots rather than silently choosing one extension kind.
+pub fn is_mcp_project(root: &Path) -> Result<bool, String> {
+    let mcp = root
+        .join("mcp.json")
+        .try_exists()
+        .map_err(|e| e.to_string())?;
+    let native = root
+        .join("manifest.json")
+        .try_exists()
+        .map_err(|e| e.to_string())?;
+    if mcp && native {
+        return Err("project must contain either manifest.json or mcp.json, not both".into());
+    }
+    Ok(mcp)
+}
+
+/// The exact host parser, bounded filesystem read and canonical descriptor are
+/// shared by doctor, CLI packaging and registry tooling. This performs no DNS,
+/// network, registration or execution; destination admission remains host-owned.
+pub fn read_mcp_descriptor(root: &Path) -> Result<grain_sdk::mcp::McpDescriptor, String> {
+    let root = root
+        .canonicalize()
+        .map_err(|e| format!("open project root: {e}"))?;
+    if !is_mcp_project(&root)? {
+        return Err("MCP project requires mcp.json".into());
+    }
+    let path = safe_project_file(&root, "mcp.json", "MCP descriptor")?;
+    let bytes = read_bounded(
+        &path,
+        grain_sdk::mcp::MCP_DESCRIPTOR_MAX_BYTES as u64,
+        "mcp.json",
+    )?;
+    grain_core::mcp::ValidatedDescriptor::parse(&bytes)
+        .map(|value| value.descriptor().clone())
+        .map_err(|e| e.to_string())
+}
 
 const IGNORED_DIRECTORIES: &[&str] = &[".git", "dist", "node_modules", "target"];
 
@@ -163,7 +301,26 @@ pub fn doctor(root: &Path) -> DoctorReport {
     };
 
     scan_submitted_files(&root, &mut report);
-    check_manifest(&root, &mut report);
+    if root.join("DESCRIPTION.md").exists() || root.join("media").exists() {
+        if let Err(error) = listing::read_listing(&root) {
+            report
+                .findings
+                .push(Finding::project("E_LISTING", "DESCRIPTION.md", error));
+        }
+    }
+    match is_mcp_project(&root) {
+        Ok(true) => {
+            if let Err(error) = read_mcp_descriptor(&root) {
+                report
+                    .findings
+                    .push(Finding::project("E_MCP_DESCRIPTOR", "mcp.json", error));
+            }
+        }
+        Ok(false) => check_manifest(&root, &mut report),
+        Err(error) => report
+            .findings
+            .push(Finding::project("E_PROJECT_KIND", ".", error)),
+    }
     sort_findings(&mut report.findings);
     report
 }
@@ -403,23 +560,6 @@ fn check_icon(root: &Path, project: &ExtensionProjectManifest, report: &mut Doct
 fn check_recommendation(project: &ExtensionProjectManifest, report: &mut DoctorReport) {
     let manifest = &project.manifest;
 
-    // The likeliest confusion after V1: commands declared by something Grain
-    // never ranks. They are not wasted — the extension matches against them
-    // itself — but nothing the user says out loud will reach them.
-    if !manifest.kind.is_searchable() && !manifest.contributes.actions.is_empty() {
-        report.findings.push(Finding::advice(
-            "W_KIND_UNRANKED",
-            "manifest.json",
-            format!(
-                "kind is '{}', so Grain never hands this extension a spoken request; its {} \
-                 declared action(s) are reachable only from its own shortcut or its own \
-                 matching. Declare kind 'searchable' to be recommended.",
-                manifest.kind.as_str(),
-                manifest.contributes.actions.len()
-            ),
-        ));
-    }
-
     let Some(recommend) = &manifest.recommend else {
         return;
     };
@@ -585,10 +725,7 @@ fn check_api_version(project: &ExtensionProjectManifest, report: &mut DoctorRepo
         report.findings.push(Finding::project(
             "E_API_VERSION",
             "manifest.json",
-            format!(
-                "grainApi '{}' is not supported by SDK '{}'",
-                project.manifest.grain_api, GRAIN_API_VERSION
-            ),
+            grain_sdk::compatibility::UNSUPPORTED_EXTENSION_API,
         ));
     }
 }
@@ -602,9 +739,7 @@ fn check_pack_contract(project: &ExtensionProjectManifest, report: &mut DoctorRe
         manifest,
         payloads: PackPayloads::default(),
     };
-    // `doctor` is a developer-project check. Native companions are permitted
-    // only through this unpacked/developer validation boundary; installation
-    // and import still use `validate()` and reject native code.
+    // Developer and install validation both enforce the tool-only boundary.
     let validation = if pack.manifest.tier == Tier::Native {
         pack.validate_dev()
     } else {
@@ -865,33 +1000,6 @@ fn forbidden_unicode_name(character: char) -> Option<&'static str> {
     }
 }
 
-fn api_requirement_supported(requirement: &str, current: &str) -> bool {
-    let requirement = requirement.trim();
-    let (caret, version) = match requirement.strip_prefix('^') {
-        Some(version) => (true, version),
-        None => (false, requirement),
-    };
-    let Some(required) = parse_version(version) else {
-        return false;
-    };
-    let Some(current) = parse_version(current) else {
-        return false;
-    };
-    if caret {
-        required.0 == current.0 && current >= required
-    } else {
-        current == required
-    }
-}
-
-fn parse_version(version: &str) -> Option<(u64, u64, u64)> {
-    let mut parts = version.split('.');
-    let major = parts.next()?.parse().ok()?;
-    let minor = parts.next()?.parse().ok()?;
-    let patch = parts.next().map(str::parse).transpose().ok()?.unwrap_or(0);
-    parts.next().is_none().then_some((major, minor, patch))
-}
-
 fn is_ignored_directory(path: &Path) -> bool {
     path.file_name()
         .and_then(|name| name.to_str())
@@ -924,6 +1032,78 @@ fn sort_findings(findings: &mut [Finding]) {
 mod tests {
     use super::*;
 
+    #[test]
+    fn typed_submission_serialization_is_exact_strict_and_bounded() {
+        use grain_sdk::submission::*;
+        let submission = SourceSubmission {
+            schema: 1,
+            artifact_kind: grain_sdk::distribution::ArtifactKind::Native,
+            id: "com.example.tools".into(),
+            version: "1.0.0".into(),
+            grain_api: "^1.0".into(),
+            source_repo: "https://github.com/example/tools".into(),
+            tag: "v1.0.0".into(),
+            commit: "1".repeat(40),
+            summary: "Say \"hello\" from C:\\tools".into(),
+            categories: vec!["tools".into()],
+            license: "MIT".into(),
+            contact: "a@example.com".into(),
+            description_sha256: "a".repeat(64),
+            description_size: 10,
+            media: Vec::new(),
+        };
+        let raw = serialize_submission(&submission).unwrap();
+        assert_eq!(parse_submission(&raw).unwrap().summary, submission.summary);
+        assert!(parse_submission(&(raw.clone() + "\ntrust = 'core'\n")).is_err());
+        assert!(parse_submission(&(raw.clone() + "\nid = 'com.other.tools'\n")).is_err());
+        assert!(parse_submission(&" ".repeat(SUBMISSION_MAX_BYTES + 1)).is_err());
+        assert!(parse_submission(
+            "id = 'com.example.legacy'\nsource_repo = 'https://github.com/example/legacy'\n"
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn mcp_doctor_uses_host_admission_and_bounds_without_native_requirements() {
+        let directory = tempfile::tempdir().unwrap();
+        let descriptor = serde_json::json!({"schema":1,"id":"com.example.mcp","name":"Tools","description":"Remote tools","version":"1.0.0","grainApi":"^1.0","transport":{"type":"streamable-http","url":"https://tools.example/mcp"},"authentication":{"type":"none"}});
+        let path = directory.path().join("mcp.json");
+        fs::write(&path, serde_json::to_vec(&descriptor).unwrap()).unwrap();
+        assert!(doctor(directory.path()).is_clean());
+        assert_eq!(doctor(directory.path()).files_checked, 1);
+        for (key, value) in [
+            ("schema", serde_json::json!(2)),
+            ("grainApi", serde_json::json!("^2.0")),
+            ("id", serde_json::json!("../escape")),
+            (
+                "transport",
+                serde_json::json!({"type":"stdio","command":"app"}),
+            ),
+            (
+                "authentication",
+                serde_json::json!({"type":"none","token":"secret"}),
+            ),
+            ("enabled", serde_json::json!(true)),
+        ] {
+            let mut bad = descriptor.clone();
+            bad[key] = value;
+            fs::write(&path, serde_json::to_vec(&bad).unwrap()).unwrap();
+            let report = doctor(directory.path());
+            assert!(!report.is_clean(), "unexpected admission of {key}");
+            assert!(report.findings.iter().any(|f| f.code == "E_MCP_DESCRIPTOR"));
+        }
+        fs::write(
+            &path,
+            vec![b' '; grain_sdk::mcp::MCP_DESCRIPTOR_MAX_BYTES + 1],
+        )
+        .unwrap();
+        assert!(read_mcp_descriptor(directory.path())
+            .unwrap_err()
+            .contains("8192"));
+        fs::write(&path, b"{invalid").unwrap();
+        assert!(!doctor(directory.path()).is_clean());
+    }
+
     fn fake_png(dim: u32) -> Vec<u8> {
         let mut bytes = std::io::Cursor::new(Vec::new());
         image::DynamicImage::ImageRgba8(image::RgbaImage::new(dim, dim))
@@ -944,8 +1124,8 @@ mod tests {
             r#"{
               "id":"com.example.clean","name":"Clean","version":"0.1.0",
               "grainApi":"^1.0","tier":"scripted","entry":"dist/main.js","icon":"icon.png",
-              "permissions":[],"activation":["onShortcut:open"],
-              "contributes":{"shortcuts":[{"id":"open","label":"Open"}]}
+              "permissions":[],"activation":[],
+              "contributes":{"actions":[{"id":"read","title":"Read","risk":"safe","utterances":["read data"]}]}
             }"#,
         )
         .unwrap();
@@ -1065,7 +1245,7 @@ mod tests {
     }
 
     #[test]
-    fn native_developer_project_has_no_javascript_entry_requirement() {
+    fn native_companions_are_rejected_in_developer_projects() {
         let directory = tempfile::tempdir().unwrap();
         fs::write(
             directory.path().join("manifest.json"),
@@ -1079,11 +1259,14 @@ mod tests {
         .unwrap();
         write_icon(directory.path());
 
-        assert!(doctor(directory.path()).is_clean());
+        assert!(doctor(directory.path())
+            .findings
+            .iter()
+            .any(|finding| finding.code == "E_MANIFEST" && finding.message.contains("Retired")));
     }
 
     #[test]
-    fn session_mode_is_a_valid_runtime_activation_path() {
+    fn retired_session_modes_are_rejected() {
         let directory = tempfile::tempdir().unwrap();
         fs::write(
             directory.path().join("manifest.json"),
@@ -1097,7 +1280,10 @@ mod tests {
         .unwrap();
         write_icon(directory.path());
 
-        assert!(doctor(directory.path()).is_clean());
+        assert!(doctor(directory.path())
+            .findings
+            .iter()
+            .any(|finding| finding.code == "E_MANIFEST" && finding.message.contains("Retired")));
     }
 
     #[test]
@@ -1120,7 +1306,7 @@ mod tests {
     const SEARCHABLE: &str = r#"{
       "id":"com.example.open","name":"Open","version":"1.1.0",
       "grainApi":"^1.0","tier":"scripted","entry":"dist/main.js","icon":"icon.png",
-      "permissions":["open:url","settings"],"activation":[],
+      "permissions":["storage"],"activation":[],
       "kind":"searchable",
       "recommend":{
         "purpose":"Open the apps and sites you set up",
@@ -1150,7 +1336,7 @@ mod tests {
     }
 
     #[test]
-    fn commands_on_an_unranked_extension_are_called_out() {
+    fn tools_do_not_require_whole_request_recommendation() {
         // The likeliest confusion after V1: an author declares actions, ships
         // `extending` by omission, and nothing they say out loud reaches it.
         let directory = variant(&[(
@@ -1163,7 +1349,7 @@ mod tests {
             "",
         )]);
         let report = doctor(directory.path());
-        assert!(codes(&report).contains(&"W_KIND_UNRANKED"), "{report}");
+        assert!(!codes(&report).contains(&"W_KIND_UNRANKED"), "{report}");
         assert!(
             report.is_clean(),
             "declaring commands without being searchable is legal, just useless: {report}"
@@ -1323,7 +1509,7 @@ mod tests {
         // phrasing, however the paths happen to sort.
         let directory = variant(&[
             (
-                r#""permissions":["open:url","settings"]"#,
+                r#""permissions":["storage"]"#,
                 r#""permissions":["not-real"]"#,
             ),
             (r#""aliases":["shortcuts"]"#, r#""aliases":["launch"]"#),

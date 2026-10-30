@@ -1,7 +1,8 @@
 //! [GRAIN] Bridge from the Tauri shell to the headless core's event bus.
 //!
 //! Deliver Grain capture context to the recording WebView and retain public
-//! SDK events on the core bus for extensions and the development controller.
+//! SDK events on the internal core bus. Extension workers and developer sockets
+//! do not subscribe to this feed.
 
 use std::sync::Arc;
 

@@ -1,0 +1,1 @@
+{"schema":1,"id":"com.example.calendar","name":"Calendar","description":"Read calendar events.","version":"1.0.0","grainApi":"^1.0","transport":{"type":"streamable-http","url":"https://mcp.example.com/mcp"},"authentication":{"type":"oauth"}}

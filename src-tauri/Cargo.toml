@@ -7,6 +7,15 @@ edition = "2021"
 license = "MIT"
 default-run = "handy"
 
+[features]
+agent-harness = []
+custom-protocol = ["tauri/custom-protocol"]
+
+[[bin]]
+name = "grain-agent-harness"
+path = "src/grain_agent_harness_main.rs"
+required-features = ["agent-harness"]
+
 [profile.dev]
 incremental = true # Compile your binary in smaller steps.
 
@@ -68,13 +77,18 @@ reqwest = { version = "0.12", features = ["json", "stream", "gzip", "brotli", "d
 # [GRAIN] Development-only remote MCP client. v3 is the first official Rust SDK
 # for the stateless 2026-07-28 lifecycle. Keep features client-only: no stdio,
 # child-process, server, or Dynamic UI surface is linked.
-rmcp = { version = "3.0.0", default-features = false, features = ["client", "auth", "reqwest", "transport-streamable-http-client-reqwest"] }
+rmcp = { version = "=3.5.0", default-features = false, features = ["client", "auth", "reqwest", "transport-streamable-http-client-reqwest"] }
+# [GRAIN] Standard native OAuth primitives; already locked through rmcp.
+# Use the bounded host HTTP adapter, no additional default HTTP client features.
+oauth2 = { version = "=5.0.0", default-features = false }
 # rmcp v3 uses reqwest 0.13. Keep the existing app-wide 0.12 client stable while
 # MCP is an experimental integration layer; this alias is managed as one lazy
 # MCP-only pool and can disappear if the host converges on 0.13 later.
 reqwest_mcp = { package = "reqwest", version = "0.13.2", default-features = false, features = ["json", "stream", "rustls"] }
 async-trait = "0.1"
 futures-util = "0.3"
+# Already used by rmcp; names its public SSE stream type for our cancellable HTTP adapter.
+sse-stream = "0.2.5"
 tokio-tungstenite = "0.24" # [GRAIN] local WS event transport to the pill
 rustfft = "6.4.0"
 strsim = "0.11.0"

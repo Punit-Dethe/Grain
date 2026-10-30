@@ -2,6 +2,13 @@
 <html lang="en" dir="ltr">
   <head>
     <meta charset="UTF-8" />
+    <!-- Blob extension workers inherit this page's policy. Browser connections
+         are limited to supervisor IPC and the local host socket; extension HTTP
+         requests must use Grain's exact-host net.fetch authorization. -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self' 'unsafe-inline' blob:; worker-src blob:; connect-src ipc: http://ipc.localhost ws://127.0.0.1:7124; style-src 'unsafe-inline'; object-src 'none'; base-uri 'none'"
+    />
     <title>Grain Extension Host</title>
     <!-- [GRAIN] The hidden supervisor surface (SPEC §3.1). It renders nothing —
          it exists only to host one Web Worker per extension. No React, no fonts,
