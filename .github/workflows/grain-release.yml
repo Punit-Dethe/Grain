@@ -217,18 +217,16 @@ jobs:
           releaseDraft: ${{ github.event_name != 'workflow_dispatch' || inputs.draft }}
           prerelease: false
           releaseBody: |
-            # Grain v0.0.9
+            # Grain v0.0.10
 
-            This Windows release improves Flow accuracy, refreshes the interface, and brings audio capture and native transcription closer to Handy.
+            The extension beta is now included in the main Windows release. Update Grain to try the extension platform without installing a separate alpha build.
 
-            - Simplified the Start Here section on Home.
-            - Improved dark theme so it is ready for everyday use.
-            - Increased Flow accuracy for supported Parakeet v2 and v3 TDT models while keeping Flow fast.
-            - Aligned audio input, VAD behavior, and the Silero library with Handy.
-            - Incorporated 36 commits from the forked transcribe.cpp library, including Flow and chunking improvements.
-            - Synced with Handy through October 17, 2026, and mapped the remaining divergence.
+            - Added the extension beta to the main application.
+            - Improved Agent responsiveness when working with extension tools.
+            - Restored Handy's waveform sensitivity while keeping Grain's waveform appearance and animation.
+            - Included small bug fixes and reliability improvements.
 
-            Coming next: v0.0.10 is planned to include a standard Windows release and a separate alpha with a public extension platform and initial integrations for GitHub, Notion, Google Calendar, and Teams.
+            The extension platform is in beta; feedback is welcome as we continue improving it.
           # NSIS installer only (matches tauri.conf.json windows.nsis).
           args: "--bundles nsis"
 
