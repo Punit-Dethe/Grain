@@ -255,7 +255,7 @@ The reduced public authoring contract is still being finalized. Older Extension 
 
 ## Quick start
 
-First-run onboarding introduces Batch, Flow, and ASR, then guides you through model setup, a real transcription test, and shortcut setup.
+First-run onboarding introduces Batch, Flow, and ASR, and shortcut setup.
 
 1. Choose **Beta** (core app) or **Alpha** (core app plus extensions) from [Releases](https://github.com/Punit-Dethe/Grain/releases).
 2. Grant microphone and accessibility/input permissions where your OS requires them.
