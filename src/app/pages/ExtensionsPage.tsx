@@ -60,16 +60,11 @@ import {
   filterExtensions,
   nextMediaIndex,
   parseApprovalRequest,
-  parseSlotConflict,
-  slotLabel,
   sortExtensionCards,
   storeInstallAction,
   unwrapResult,
   type ApprovalRequest,
-  type SlotConflict,
 } from "../extensions/extensionRuntime";
-
-const CORE_DEFAULT = "grain.core";
 
 const SETTING_KINDS = new Set<SettingRow["kind"]>([
   "bool",
@@ -124,7 +119,6 @@ interface InstalledController {
   ) => Promise<void>;
   uninstall: (card: ExtensionCard) => Promise<boolean>;
   permissionDialog: React.ReactNode;
-  conflictDialog: React.ReactNode;
 }
 
 function useInstalledExtensions(): InstalledController {
@@ -143,10 +137,6 @@ function useInstalledExtensions(): InstalledController {
   const [pending, setPending] = useState<
     ({ card: ExtensionCard } & ApprovalRequest) | null
   >(null);
-  const [contested, setContested] = useState<{
-    card: ExtensionCard;
-    conflict: SlotConflict;
-  } | null>(null);
 
   const refresh = useCallback(async () => {
     const [overview, nextSections, remote] = await Promise.all([
@@ -238,13 +228,11 @@ function useInstalledExtensions(): InstalledController {
         const message =
           reason instanceof Error ? reason.message : String(reason);
         const approval = parseApprovalRequest(message);
-        const conflict = parseSlotConflict(message);
         if (approval)
           setPending({
             card: { ...card, name: approval.reviewedName },
             ...approval,
           });
-        else if (conflict) setContested({ card, conflict });
         else setError(message);
       } finally {
         setBusy(null);
@@ -297,14 +285,6 @@ function useInstalledExtensions(): InstalledController {
     [busy, refresh],
   );
 
-  const occupantName = useCallback(
-    (id: string) =>
-      id === CORE_DEFAULT
-        ? "Grain's built-in default"
-        : (cards.find((card) => card.id === id)?.name ?? id),
-    [cards],
-  );
-
   const approve = useCallback(async () => {
     if (!pending) return;
     const { card, permissions, approvalDigest } = pending;
@@ -316,34 +296,11 @@ function useInstalledExtensions(): InstalledController {
       );
       await refresh();
     } catch (reason) {
-      const message = reason instanceof Error ? reason.message : String(reason);
-      const conflict = parseSlotConflict(message);
-      if (conflict) setContested({ card, conflict });
-      else setError(message);
+      setError(reason instanceof Error ? reason.message : String(reason));
     } finally {
       setBusy(null);
     }
   }, [pending, refresh]);
-
-  const takeOver = useCallback(async () => {
-    if (!contested) return;
-    const { card, conflict } = contested;
-    setContested(null);
-    setBusy(card.id);
-    try {
-      unwrapResult(await commands.extensionTakeSlot(card.id, conflict.slot));
-      unwrapResult(await commands.extensionSetEnabled(card.id, true));
-      await refresh();
-    } catch (reason) {
-      const message = reason instanceof Error ? reason.message : String(reason);
-      const next = parseSlotConflict(message);
-      if (next) setContested({ card, conflict: next });
-      else setError(message);
-      await refresh();
-    } finally {
-      setBusy(null);
-    }
-  }, [contested, refresh]);
 
   const permissionDialog = pending ? (
     <div
@@ -383,50 +340,6 @@ function useInstalledExtensions(): InstalledController {
     </div>
   ) : null;
 
-  const conflictDialog = contested ? (
-    <div
-      className="extension-confirm-backdrop"
-      role="presentation"
-      onClick={() => setContested(null)}
-    >
-      <div
-        className="extension-confirm"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="conflict-title"
-        onClick={(event) => event.stopPropagation()}
-      >
-        <div className="extension-confirm-title">
-          <ShieldCheck size={17} />
-          <h2 id="conflict-title">
-            Replace {slotLabel(contested.conflict.slot)}?
-          </h2>
-        </div>
-        <p>
-          {occupantName(contested.conflict.currentOccupant)} currently controls{" "}
-          {slotLabel(contested.conflict.slot)}. Enabling {contested.card.name}{" "}
-          will switch it off.
-        </p>
-        <div className="extension-confirm-actions">
-          <button
-            className="button"
-            type="button"
-            onClick={() => setContested(null)}
-          >
-            Keep current
-          </button>
-          <button
-            className="button primary"
-            type="button"
-            onClick={() => void takeOver()}
-          >
-            Replace and enable
-          </button>
-        </div>
-      </div>
-    </div>
-  ) : null;
-
   return {
     cards,
     connections,
@@ -442,7 +355,6 @@ function useInstalledExtensions(): InstalledController {
     toggleConnection,
     uninstall,
     permissionDialog,
-    conflictDialog,
   };
 }
 
@@ -1679,7 +1591,6 @@ export function ExtensionsPage({ view }: { view: ExtensionViewId }) {
       )}
 
       {controller.permissionDialog}
-      {controller.conflictDialog}
     </section>
   );
 }

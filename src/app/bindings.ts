@@ -1141,23 +1141,6 @@ async mcpConnectionClearClientCredentials(id: string, expectedRevision: string) 
 }
 },
 /**
- * Record the user's answer to a slot takeover prompt (SPEC §3.2). Hands `slot`
- * to `id` and disables whoever held it, in one step — the counterpart to
- * `extension_grant` for the `slotConflict` error. The caller then retries
- * enable, which now sees the slot as its own.
- *
- * This is the ONLY path that moves a slot between extensions: `set_enabled`
- * refuses a contested claim, so a takeover is always something the user chose.
- */
-async extensionTakeSlot(id: string, slot: string) : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("extension_take_slot", { id, slot }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
  * The settings an extension declares, resolved against what is stored
  * (SPEC §4.1, levels 1–2). Ordered by `order`, ties on declaration order, so
  * the host renders straight down the list.

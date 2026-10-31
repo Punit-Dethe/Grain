@@ -22,34 +22,8 @@ export function storeInstallAction(
 }
 
 const CAPABILITY_LABELS: Record<string, string> = {
-  "events:sessions": "See when recording starts and stops",
-  "events:transcripts": "Read what you dictate",
-  "events:audio-levels": "See live microphone levels",
-  resident: "Keep its worker running while Grain is open",
-  "transform:transcript": "Rewrite your text before it is pasted",
-  "session:start": "Start a recording session itself",
   storage: "Store its own data on this device",
-  settings: "Save its own settings",
-  llm: "Send text and images to your configured AI provider",
-  embed: "Turn text into embeddings",
-  "capture:selection": "Read your currently selected text",
-  "capture:app": "See which app you're currently using",
-  "capture:screen-text": "Read all the text on the window you're using",
-  "capture:screen-image": "Take a screenshot of the window you are using",
-  "open:url": "Open web links in your browser",
-  "open:app": "Launch apps you choose",
 };
-
-const SLOT_LABELS: Record<string, string> = {
-  "output.destination": "where your text is sent",
-  "prompt.main": "Grain's main dictation instruction",
-  "prompt.context": "what Grain tells the AI about the app you are typing in",
-};
-
-export interface SlotConflict {
-  slot: string;
-  currentOccupant: string;
-}
 
 export type ExtensionDestination =
   | { kind: "tools"; section: "snippets" | "context" }
@@ -72,10 +46,6 @@ export function capabilityLabel(capability: string): string {
   return capability.startsWith("net:")
     ? `Send data to ${capability.slice("net:".length)}`
     : (CAPABILITY_LABELS[capability] ?? capability);
-}
-
-export function slotLabel(slot: string): string {
-  return SLOT_LABELS[slot] ?? slot;
 }
 
 export interface ApprovalRequest {
@@ -174,35 +144,6 @@ export function parseApprovalRequest(error: unknown): ApprovalRequest | null {
   }
 }
 
-/** Plain-language description of when a contributed layer applies. */
-export function promptLayerScope(layer: PromptLayerInfo): string {
-  const role =
-    layer.target === "main"
-      ? "Replaces Main prompt"
-      : layer.target === "context"
-        ? "Replaces Context provider"
-        : "Adds a rule";
-  if (layer.everywhere) return `${role} · Every dictation`;
-  const parts: string[] = [];
-  if (layer.website.length) parts.push(layer.website.join(", "));
-  if (layer.app.length) parts.push(layer.app.join(", "));
-  if (layer.category.length) parts.push(layer.category.join(", "));
-  return parts.length
-    ? `${role} · In ${parts.join(" · ")}`
-    : `${role} · Every dictation`;
-}
-
-export function parseSlotConflict(error: unknown): SlotConflict | null {
-  try {
-    const parsed = JSON.parse(String(error)) as {
-      slotConflict?: SlotConflict;
-    };
-    return parsed.slotConflict?.slot ? parsed.slotConflict : null;
-  } catch {
-    return null;
-  }
-}
-
 export function sortExtensionCards<
   T extends Pick<ExtensionCard, "enabled" | "toggle_seq" | "name">,
 >(cards: T[]): T[] {
@@ -292,50 +233,6 @@ export function extensionDestination(
     return { kind: "extension-settings", extensionId: card.id };
   }
   return { kind: "preview" };
-}
-
-/**
- * Store entries to recommend beside a Personalize tool or Agent.
- *
- * An entry qualifies when a surface it declares resolves to this tool — never
- * because its text happens to contain a matching word. Already-installed ids
- * drop out: a recommendation to install what you have installed is noise.
- */
-export function matchToolRecommendations(
-  entries: StoreEntry[],
-  tool: ToolSection,
-  installedIds: ReadonlySet<string> = new Set(),
-  limit = 3,
-): StoreEntry[] {
-  return entries
-    .filter((entry) => {
-      if (installedIds.has(entry.id)) return false;
-      const destination = destinationForSurfaces(entry.extends);
-      return tool === "agent"
-        ? destination?.kind === "agent"
-        : destination?.kind === "tools" && destination.section === tool;
-    })
-    .sort(
-      (left, right) =>
-        right.installs - left.installs || left.name.localeCompare(right.name),
-    )
-    .slice(0, limit);
-}
-
-export type StudioShelfMode =
-  "recommendations" | "installed-with-more" | "installed";
-
-/** The Studio shelf has one deliberately small state table.
- *
- * - No installed extension: recommend up to two and link to the store.
- * - One or two installed: show those cards and keep one Get more card.
- * - Three or more installed: every tile is real inventory, so the store card
- *   gets out of the way.
- */
-export function studioShelfMode(installedCount: number): StudioShelfMode {
-  if (installedCount <= 0) return "recommendations";
-  if (installedCount <= 2) return "installed-with-more";
-  return "installed";
 }
 
 export function filterExtensions<

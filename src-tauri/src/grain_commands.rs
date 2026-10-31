@@ -2265,26 +2265,6 @@ fn reviewed_grant_record(
     Ok(rec)
 }
 
-/// Record the user's answer to a slot takeover prompt (SPEC §3.2). Hands `slot`
-/// to `id` and disables whoever held it, in one step — the counterpart to
-/// `extension_grant` for the `slotConflict` error. The caller then retries
-/// enable, which now sees the slot as its own.
-///
-/// This is the ONLY path that moves a slot between extensions: `set_enabled`
-/// refuses a contested claim, so a takeover is always something the user chose.
-#[tauri::command]
-#[specta::specta]
-pub fn extension_take_slot(
-    app: AppHandle,
-    window: tauri::WebviewWindow,
-    id: String,
-    slot: String,
-) -> Result<(), String> {
-    let _ = (app, id, slot);
-    require_main_window(&window)?;
-    Err("Extension feature slots are retired. Extensions provide tools only.".into())
-}
-
 /// Uninstall a pack. `purge` also deletes the stored pack file; without it the
 /// file stays for lossless reinstall (SPEC §6 keep-by-default). Applied
 /// payloads are always removed.

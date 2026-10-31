@@ -15,12 +15,8 @@ import type {
 import {
   extensionDestination,
   filterExtensions,
-  matchToolRecommendations,
   nextMediaIndex,
   parseApprovalRequest,
-  promptLayerScope,
-  parseSlotConflict,
-  studioShelfMode,
   storeInstallAction,
 } from "./extensionRuntime";
 
@@ -144,100 +140,6 @@ describe("extension destination routing", () => {
   });
 });
 
-describe("tool recommendations", () => {
-  it("keeps Agent recommendations attached to its standalone destination", () => {
-    const agentExtension = entry({
-      id: "agent.tools",
-      extends: ["agent.after"],
-    });
-    const contextExtension = entry({
-      id: "context.tools",
-      extends: ["context.after"],
-    });
-    expect(
-      matchToolRecommendations([agentExtension, contextExtension], "agent"),
-    ).toEqual([agentExtension]);
-    expect(
-      matchToolRecommendations([agentExtension, contextExtension], "context"),
-    ).toEqual([contextExtension]);
-  });
-  it.each([
-    [0, "recommendations"],
-    [1, "installed-with-more"],
-    [2, "installed-with-more"],
-    [3, "installed"],
-    [8, "installed"],
-  ] as const)(
-    "uses the correct Studio shelf for %i installed",
-    (count, mode) => {
-      expect(studioShelfMode(count)).toBe(mode);
-    },
-  );
-
-  it("recommends by the surface an extension declares, not by its wording", () => {
-    // App Modes anchors itself to `context.after` and never uses the word
-    // "context"; Starter Prompts feeds the prompt list and says "prompts" in
-    // every sentence. Keyword scoring got both of these backwards.
-    const appModes = entry({
-      id: "grain.app-modes",
-      name: "App Modes",
-      description: "Format what you dictate differently in each app.",
-      extends: ["context.after"],
-    });
-    const starterPrompts = entry({
-      id: "grain.starter-prompts",
-      name: "Starter Prompts",
-      description: "General, Coding and Email prompts for post-processing.",
-      extends: ["dictation.prompts"],
-    });
-    expect(
-      matchToolRecommendations([starterPrompts, appModes], "context"),
-    ).toEqual([appModes]);
-    expect(
-      matchToolRecommendations([starterPrompts, appModes], "agent"),
-    ).toEqual([]);
-  });
-
-  it("does not recommend what is already installed", () => {
-    const voiceActions = entry({
-      id: "grain.voice-actions",
-      extends: ["snippets.after"],
-    });
-    expect(matchToolRecommendations([voiceActions], "snippets")).toEqual([
-      voiceActions,
-    ]);
-    expect(
-      matchToolRecommendations(
-        [voiceActions],
-        "snippets",
-        new Set(["grain.voice-actions"]),
-      ),
-    ).toEqual([]);
-  });
-
-  it("limits Studio to the two most-installed matching extensions", () => {
-    const entries = [
-      entry({ id: "context.one", installs: 10, extends: ["context.after"] }),
-      entry({ id: "context.two", installs: 80, extends: ["context.after"] }),
-      entry({ id: "context.three", installs: 40, extends: ["context.after"] }),
-    ];
-
-    expect(matchToolRecommendations(entries, "context", new Set(), 2)).toEqual([
-      entries[1],
-      entries[2],
-    ]);
-  });
-
-  it("declares nothing for a tool no surface maps to", () => {
-    expect(
-      matchToolRecommendations(
-        [entry({ extends: ["snippets.after"] })],
-        "dictionary",
-      ),
-    ).toEqual([]);
-  });
-});
-
 describe("extension collection helpers", () => {
   it("searches names, ids, and descriptions directly", () => {
     const entries = [
@@ -254,7 +156,7 @@ describe("extension collection helpers", () => {
     expect(nextMediaIndex(4, 0, 1)).toBe(0);
   });
 
-  it("parses permission and slot holds", () => {
+  it("parses permission holds", () => {
     expect(
       parseApprovalRequest(
         reviewError('{"needsPermissions":["storage","open:url"]}'),
@@ -268,11 +170,6 @@ describe("extension collection helpers", () => {
       authentication: null,
       recommendation: false,
     });
-    expect(
-      parseSlotConflict(
-        '{"slotConflict":{"slot":"output.destination","currentOccupant":"old"}}',
-      ),
-    ).toEqual({ slot: "output.destination", currentOccupant: "old" });
   });
 
   it("parses an approval that is only about prompt text", () => {
@@ -382,28 +279,6 @@ describe("extension collection helpers", () => {
       parseApprovalRequest(reviewError('{"needsPermissions":["storage"]}'))
         ?.approvalDigest,
     ).toBe("a".repeat(64));
-  });
-
-  it("describes when a contributed layer applies", () => {
-    const layer = {
-      id: "a",
-      target: "additive",
-      text: "Be terse.",
-      everywhere: false,
-      app: ["code"],
-      website: [],
-      category: [],
-    };
-    expect(promptLayerScope(layer)).toBe("Adds a rule · In code");
-    expect(promptLayerScope({ ...layer, everywhere: true })).toBe(
-      "Adds a rule · Every dictation",
-    );
-    expect(promptLayerScope({ ...layer, target: "main" })).toBe(
-      "Replaces Main prompt · In code",
-    );
-    expect(promptLayerScope({ ...layer, target: "context" })).toBe(
-      "Replaces Context provider · In code",
-    );
   });
 });
 
