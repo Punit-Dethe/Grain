@@ -1449,7 +1449,6 @@ export function ExtensionsPage({ view }: { view: ExtensionViewId }) {
         setDeveloper((current) => ({
           enabled: true,
           loaded: current?.loaded ?? [],
-          lab_count: current?.lab_count ?? 0,
         }));
       }
       setDeveloperOpen(true);
@@ -1465,7 +1464,7 @@ export function ExtensionsPage({ view }: { view: ExtensionViewId }) {
     setDeveloperBusy(true);
     try {
       unwrapResult(await commands.extensionSetDeveloperMode(false));
-      setDeveloper({ enabled: false, loaded: [], lab_count: 0 });
+      setDeveloper({ enabled: false, loaded: [] });
       setDeveloperOpen(false);
       await controller.refresh();
     } catch (reason) {

@@ -1646,7 +1646,6 @@ pub struct DeveloperExtension {
 pub struct ExtensionDeveloperStatus {
     pub enabled: bool,
     pub loaded: Vec<DeveloperExtension>,
-    pub lab_count: u32,
 }
 
 /// Developer mode is a distinct, explicit product setting. Reporting loaded
@@ -1659,27 +1658,18 @@ pub fn extension_developer_status(app: AppHandle) -> Result<ExtensionDeveloperSt
     let reg = app
         .try_state::<std::sync::Arc<ExtensionsRegistry>>()
         .ok_or("extensions registry unavailable")?;
-    let mut lab_count = 0u32;
     let mut loaded: Vec<DeveloperExtension> = reg
         .dev_records()
         .into_iter()
-        .map(|(id, path)| {
-            if id.starts_with(crate::extension_lab::LAB_PREFIX)
-                && crate::extension_lab::owns_project(&app, &path)
-            {
-                lab_count = lab_count.saturating_add(1);
-            }
-            DeveloperExtension {
-                id,
-                path: path.to_string_lossy().into_owned(),
-            }
+        .map(|(id, path)| DeveloperExtension {
+            id,
+            path: path.to_string_lossy().into_owned(),
         })
         .collect();
     loaded.sort_by(|a, b| a.id.cmp(&b.id));
     Ok(ExtensionDeveloperStatus {
         enabled: settings::get_settings(&app).extension_developer_mode,
         loaded,
-        lab_count,
     })
 }
 
@@ -1738,13 +1728,9 @@ pub fn extension_set_developer_mode(
             reg.unload_dev(&id).map_err(|error| error.to_string())?;
             restore_enabled_extension(&app, &id)?;
         }
-        if let Err(error) = crate::extension_lab::remove_materialized(&app) {
-            log::warn!("[GRAIN] recommendation lab cleanup failed: {error}");
-            cleanup_error = Some(error);
-        }
         if let Err(error) = crate::extension_icons::purge_dev_cache(&app) {
             log::warn!("[GRAIN] developer icon-cache cleanup failed: {error}");
-            cleanup_error.get_or_insert(error);
+            cleanup_error = Some(error);
         }
     }
     let data_dir = app
@@ -1871,129 +1857,6 @@ pub(crate) fn load_unpacked_project(
     }
     crate::extension_host::refresh_index(app);
     Ok(id)
-}
-
-fn unload_recommendation_lab_records(
-    app: &AppHandle,
-    keep: &std::collections::HashSet<String>,
-) -> Result<(), String> {
-    use grain_core::extensions::ExtensionsRegistry;
-    let reg = app
-        .try_state::<std::sync::Arc<ExtensionsRegistry>>()
-        .ok_or("extensions registry unavailable")?;
-    let records = reg.dev_records();
-    for (id, path) in records {
-        if keep.contains(&id)
-            || !id.starts_with(crate::extension_lab::LAB_PREFIX)
-            || !crate::extension_lab::owns_project(app, &path)
-        {
-            continue;
-        }
-        stop_extension_runtime(app, &id, "Recommendation Lab fixture removed");
-        reg.unload_dev(&id).map_err(|error| error.to_string())?;
-        restore_enabled_extension(app, &id)?;
-        crate::extension_misroutes::purge(app, &id);
-    }
-    Ok(())
-}
-
-/// Install a deterministic searchable-extension corpus through the ordinary
-/// unpacked-project loader. Debug + developer-mode only: release builds do not
-/// materialise or execute these fixtures.
-#[tauri::command]
-#[specta::specta]
-pub fn extension_recommendation_lab_install(
-    app: AppHandle,
-    window: tauri::WebviewWindow,
-    size: String,
-) -> Result<u32, String> {
-    use grain_core::extensions::ExtensionsRegistry;
-    require_main_window(&window)?;
-    if !settings::get_settings(&app).extension_developer_mode {
-        return Err("Developer mode is disabled".into());
-    }
-    let limit = match size.as_str() {
-        "core" => crate::extension_lab::CORE_COUNT,
-        "stress" => crate::extension_lab::STRESS_COUNT,
-        _ => return Err("Recommendation Lab size must be 'core' or 'stress'".into()),
-    };
-    let desired: std::collections::HashSet<String> =
-        crate::extension_lab::ids(limit).into_iter().collect();
-    let projects = crate::extension_lab::materialize(&app)?;
-    let selected: Vec<_> = projects
-        .into_iter()
-        .filter(|project| desired.contains(&project.id))
-        .map(|project| {
-            let loaded = crate::dev_extensions::load_project(&project.root)?;
-            if loaded.pack.manifest.id != project.id {
-                return Err(format!(
-                    "Recommendation Lab project '{}' declared an unexpected id",
-                    project.id
-                ));
-            }
-            if !loaded.pack.manifest.permissions.is_empty() {
-                return Err(format!(
-                    "Recommendation Lab project '{}' unexpectedly requests permissions",
-                    project.id
-                ));
-            }
-            Ok(loaded)
-        })
-        .collect::<Result<_, String>>()?;
-    if selected.len() != limit {
-        return Err("Recommendation Lab corpus is incomplete".into());
-    }
-
-    let reg = app
-        .try_state::<std::sync::Arc<ExtensionsRegistry>>()
-        .ok_or("extensions registry unavailable")?;
-    for loaded in &selected {
-        let id = &loaded.pack.manifest.id;
-        if let Some(path) = reg.dev_path(id) {
-            if !crate::extension_lab::owns_project(&app, &path) {
-                return Err(format!(
-                    "'{id}' is already loaded from another developer project"
-                ));
-            }
-        }
-    }
-
-    unload_recommendation_lab_records(&app, &desired)?;
-    let install_result = (|| {
-        for loaded in selected {
-            let id = register_unpacked_project(&app, loaded)?;
-            reg.set_enabled(&id, true)
-                .map_err(|error| error.to_string())?;
-        }
-        Ok::<(), String>(())
-    })();
-    if let Err(error) = install_result {
-        let _ = unload_recommendation_lab_records(&app, &std::collections::HashSet::new());
-        crate::extension_host::refresh_index(&app);
-        return Err(format!(
-            "Recommendation Lab installation rolled back: {error}"
-        ));
-    }
-    crate::extension_host::refresh_index(&app);
-    Ok(limit as u32)
-}
-
-#[tauri::command]
-#[specta::specta]
-pub fn extension_recommendation_lab_remove(
-    app: AppHandle,
-    window: tauri::WebviewWindow,
-) -> Result<(), String> {
-    require_main_window(&window)?;
-    if !settings::get_settings(&app).extension_developer_mode {
-        return Err("Developer mode is disabled".into());
-    }
-    unload_recommendation_lab_records(&app, &std::collections::HashSet::new())?;
-    if let Err(error) = crate::extension_icons::purge_dev_cache(&app) {
-        log::warn!("[GRAIN] developer icon-cache cleanup failed: {error}");
-    }
-    crate::extension_host::refresh_index(&app);
-    crate::extension_lab::remove_materialized(&app)
 }
 
 /// Human-only load-unpacked entry point. The frontend cannot provide a path:
