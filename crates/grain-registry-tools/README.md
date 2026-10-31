@@ -734,7 +734,7 @@ Hosting is unchanged until the normal verified export/commit-bound publication
 steps below succeed. Clients enforce the revocation after refresh, not by push.
 Publish a corrected **new version** through normal source review; never erase the
 old rule or reuse the bad version. This command does not create source approval.
-Do not use legacy `retire`/ad hoc index signing for a generation-bound store.
+Do not hand-sign `index.json` for a generation-bound store.
 The [operator runbook](../../docs/Extensions%202.0/EXTENSION-OPERATIONS.md) lists
 recovery and production activation gates.
 
