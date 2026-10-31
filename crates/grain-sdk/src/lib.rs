@@ -41,9 +41,9 @@ pub use event::{
 };
 pub use manifest::{
     png_dimensions, validate_extension_id, validate_extension_version, AuthenticationDecl,
-    AuthenticationType, CompanionDecl, Contributes, ExtensionManifest, GrainPack, PackPayloads,
-    RedirectMethod, Tier, ICON_MASTER_DIM, ICON_MAX_BYTES, KNOWN_CAPABILITIES,
-    PACK_ENTRY_MAX_BYTES, PACK_MAX_BYTES,
+    AuthenticationType, Contributes, ExtensionManifest, GrainPack, PackPayloads, RedirectMethod,
+    Tier, ICON_MASTER_DIM, ICON_MAX_BYTES, KNOWN_CAPABILITIES, PACK_ENTRY_MAX_BYTES,
+    PACK_MAX_BYTES,
 };
 pub use protocol::{
     ClientHello, ClientRequest, DevControlFrame, DevReloadResult, HostCall, HostCallResult,

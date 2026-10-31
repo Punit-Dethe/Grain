@@ -708,9 +708,6 @@ pub fn capability_actions_for_extension(
         .ok_or_else(|| "that extension is disabled or no longer installed".to_string())?;
     let pack = load_manifest(app, extension_id)
         .ok_or_else(|| "that extension's manifest is unavailable".to_string())?;
-    if !pack.has_runtime() {
-        return Err("that extension has no executable runtime".to_string());
-    }
     let declared = &pack.manifest.contributes.actions;
     let digest = grain_core::extensions::actions_fingerprint(declared);
     if declared.is_empty() || record.actions_approved.as_deref() != Some(digest.as_str()) {

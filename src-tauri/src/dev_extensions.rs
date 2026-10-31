@@ -7,7 +7,7 @@
 use std::path::{Component, Path, PathBuf};
 
 use grain_sdk::compatibility::api_requirement_supported;
-use grain_sdk::{ExtensionProjectManifest, GrainPack, PackPayloads, Tier, GRAIN_API_VERSION};
+use grain_sdk::{ExtensionProjectManifest, GrainPack, PackPayloads, GRAIN_API_VERSION};
 
 const MAX_MANIFEST_BYTES: u64 = 1024 * 1024;
 const MAX_ENTRY_BYTES: u64 = 5 * 1024 * 1024;
@@ -47,23 +47,15 @@ pub fn load_project(root: &Path) -> Result<LoadedDevProject, String> {
         return Err(grain_sdk::compatibility::UNSUPPORTED_EXTENSION_API.into());
     }
 
-    let entry_path = match project.manifest.tier {
-        Tier::Scripted => {
-            let entry_path = canonical_project_file(&root, &project.entry, "entry")?;
-            let entry_meta = std::fs::metadata(&entry_path)
-                .map_err(|error| format!("inspect entry '{}': {error}", project.entry))?;
-            if entry_meta.len() > MAX_ENTRY_BYTES {
-                return Err("extension entry is larger than 5 MB".into());
-            }
-            project.manifest.entry_source = std::fs::read_to_string(&entry_path)
-                .map_err(|error| format!("read entry '{}': {error}", project.entry))?;
-            Some(entry_path)
-        }
-        // Native companion executables are retired. Nothing on disk is opened;
-        // `validate_dev` below refuses the manifest with the tool-only error.
-        Tier::Native => None,
-        Tier::Pack => return Err("load unpacked does not accept data-only packs".into()),
-    };
+    let entry_path = canonical_project_file(&root, &project.entry, "entry")?;
+    let entry_meta = std::fs::metadata(&entry_path)
+        .map_err(|error| format!("inspect entry '{}': {error}", project.entry))?;
+    if entry_meta.len() > MAX_ENTRY_BYTES {
+        return Err("extension entry is larger than 5 MB".into());
+    }
+    project.manifest.entry_source = std::fs::read_to_string(&entry_path)
+        .map_err(|error| format!("read entry '{}': {error}", project.entry))?;
+    let entry_path = Some(entry_path);
 
     let pack = GrainPack {
         manifest: project.manifest,
@@ -191,12 +183,12 @@ mod tests {
 
         assert!(load_project(dir.path())
             .unwrap_err()
-            .contains("native companion executables"));
+            .contains("unknown variant `native`"));
 
-        // Refusal comes from manifest validation, not from inspecting the binary.
+        // Runtime metadata is refused before inspecting an executable path.
         std::fs::remove_file(dir.path().join(binary)).unwrap();
         assert!(load_project(dir.path())
             .unwrap_err()
-            .contains("native companion executables"));
+            .contains("unknown variant `native`"));
     }
 }

@@ -833,11 +833,7 @@ pub fn extensions_overview(app: AppHandle) -> Result<Vec<ExtensionCard>, String>
                     description: p.manifest.description,
                     repository: p.manifest.repository,
                     capabilities: p.manifest.permissions,
-                    tier: match p.manifest.tier {
-                        grain_sdk::Tier::Pack => "pack",
-                        grain_sdk::Tier::Scripted => "scripted",
-                        grain_sdk::Tier::Native => "native",
-                    },
+                    tier: "scripted",
                     actions,
                 }
             }
@@ -988,16 +984,13 @@ pub fn extension_set_enabled(
             // Approve scoped permissions, exact tools and account configuration together.
             if enabled {
                 let granted = &record.granted;
-                let missing: Vec<String> = if pack.has_runtime() {
-                    pack.manifest
-                        .permissions
-                        .iter()
-                        .filter(|p| !granted.contains(p))
-                        .cloned()
-                        .collect()
-                } else {
-                    Vec::new()
-                };
+                let missing: Vec<String> = pack
+                    .manifest
+                    .permissions
+                    .iter()
+                    .filter(|p| !granted.contains(p))
+                    .cloned()
+                    .collect();
                 let declared_actions = &pack.manifest.contributes.actions;
                 let actions_unapproved = !declared_actions.is_empty() && {
                     record.actions_approved.as_deref()

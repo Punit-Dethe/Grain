@@ -10,7 +10,7 @@ use std::path::{Component, Path, PathBuf};
 
 use base64::Engine as _;
 use grain_sdk::compatibility::api_requirement_supported;
-use grain_sdk::{ExtensionProjectManifest, GrainPack, PackPayloads, Tier, GRAIN_API_VERSION};
+use grain_sdk::{ExtensionProjectManifest, GrainPack, PackPayloads, GRAIN_API_VERSION};
 
 pub mod listing;
 
@@ -287,16 +287,10 @@ pub fn build_pack(root: &Path) -> Result<GrainPack, String> {
     let raw = read_bounded_utf8(&manifest_path, MAX_MANIFEST_BYTES, "manifest.json")?;
     let project: ExtensionProjectManifest =
         serde_json::from_str(&raw).map_err(|error| format!("parse manifest.json: {error}"))?;
-    if project.manifest.tier == Tier::Native {
-        return Err("native developer projects cannot be packaged in V1".into());
-    }
-
     let mut manifest = project.manifest;
-    if manifest.tier == Tier::Scripted {
-        let entry = safe_project_file(&root, &project.entry, "entry")?;
-        manifest.entry_source = read_bounded_utf8(&entry, MAX_ENTRY_BYTES, &project.entry)
-            .map_err(|error| format!("{error}; run the project build first"))?;
-    }
+    let entry = safe_project_file(&root, &project.entry, "entry")?;
+    manifest.entry_source = read_bounded_utf8(&entry, MAX_ENTRY_BYTES, &project.entry)
+        .map_err(|error| format!("{error}; run the project build first"))?;
 
     let icon = safe_project_file(&root, &manifest.icon, "icon")?;
     let icon_bytes = read_bounded(&icon, grain_sdk::ICON_MAX_BYTES, &manifest.icon)?;
@@ -495,13 +489,6 @@ fn check_icon(root: &Path, project: &ExtensionProjectManifest, report: &mut Doct
 }
 
 fn check_entry(root: &Path, project: &ExtensionProjectManifest, report: &mut DoctorReport) {
-    // A project entry is JavaScript for the scripted runtime only. Data packs
-    // are inert and native companions select their platform binary from the
-    // manifest, so neither has an `entry` file to inspect.
-    if project.manifest.tier != Tier::Scripted {
-        return;
-    }
-
     let entry = Path::new(&project.entry);
     if entry.as_os_str().is_empty()
         || entry.components().any(|component| {
@@ -574,7 +561,7 @@ fn check_api_version(project: &ExtensionProjectManifest, report: &mut DoctorRepo
 
 fn check_pack_contract(project: &ExtensionProjectManifest, report: &mut DoctorReport) {
     let mut manifest = project.manifest.clone();
-    if manifest.tier == Tier::Scripted && manifest.entry_source.trim().is_empty() {
+    if manifest.entry_source.trim().is_empty() {
         manifest.entry_source = "// checked from project entry".into();
     }
     let pack = GrainPack {
@@ -582,11 +569,7 @@ fn check_pack_contract(project: &ExtensionProjectManifest, report: &mut DoctorRe
         payloads: PackPayloads::default(),
     };
     // Developer and install validation both enforce the tool-only boundary.
-    let validation = if pack.manifest.tier == Tier::Native {
-        pack.validate_dev()
-    } else {
-        pack.validate()
-    };
+    let validation = pack.validate();
     if let Err(error) = validation {
         report
             .findings
@@ -976,7 +959,8 @@ mod tests {
         assert!(doctor(directory.path())
             .findings
             .iter()
-            .any(|finding| finding.code == "E_MANIFEST" && finding.message.contains("Retired")));
+            .any(|finding| finding.code == "E_MANIFEST"
+                && finding.message.contains("unknown variant")));
     }
 
     #[test]

@@ -11,9 +11,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum Tier {
-    Pack,
     Scripted,
-    Native,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -44,50 +42,16 @@ pub struct ExtensionManifest {
     pub icon: String,
     #[serde(default)]
     pub repository: Option<String>,
-    /// Capability names (SPEC §1.3). Tier-A-inert packs must have none — the
-    /// import path rejects otherwise (egress packs arrive with their consent
-    /// surface, not before). Scripted packs may request from
-    /// [`KNOWN_CAPABILITIES`]; the user grants them at first enable.
+    /// Scoped permissions from [`KNOWN_CAPABILITIES`] or bounded `net:<host>`
+    /// grants. The user approves them before enablement.
     #[serde(default)]
     pub permissions: Vec<String>,
-    /// [GRAIN] Tier-B only: the extension's JS, embedded so a scripted pack
-    /// stays a single shareable file (guide Step 4). Empty for tier-A.
+    /// Embedded JavaScript source, required for every tool package.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub entry_source: String,
     /// Tools and optional host-owned authentication.
     #[serde(default)]
     pub contributes: Contributes,
-    /// [GRAIN] Phase 4 Tier-C companion binaries. Native manifests remain
-    /// developer-only until signed distribution lands in Phase 5.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub companion: Option<CompanionDecl>,
-}
-
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
-pub struct CompanionDecl {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub windows: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub macos: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub linux: Option<String>,
-}
-
-impl CompanionDecl {
-    pub fn current_platform(&self) -> Option<&str> {
-        #[cfg(target_os = "windows")]
-        return self.windows.as_deref();
-        #[cfg(target_os = "macos")]
-        return self.macos.as_deref();
-        #[cfg(target_os = "linux")]
-        return self.linux.as_deref();
-        #[allow(unreachable_code)]
-        None
-    }
-
-    fn has_any(&self) -> bool {
-        self.windows.is_some() || self.macos.is_some() || self.linux.is_some()
-    }
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -922,11 +886,7 @@ impl GrainPack {
             return Err(crate::compatibility::UNSUPPORTED_EXTENSION_API.into());
         }
         let c = &m.contributes;
-        let retired = if m.tier == Tier::Native || m.companion.is_some() {
-            Some("native companion executables")
-        } else if m.tier == Tier::Pack {
-            Some("data and prompt packs")
-        } else if c.actions.iter().any(|action| action.agent_rules.is_some()) {
+        let retired = if c.actions.iter().any(|action| action.agent_rules.is_some()) {
             Some("agent prompt rules")
         } else if c
             .actions
@@ -988,26 +948,23 @@ impl GrainPack {
         }
     }
 
-    /// Structural validation (Phase 2: tier-A packs and tier-B scripted;
-    /// `native` still rejected — it arrives with the tier-C supervisor).
+    /// Validate an imported tool package.
     pub fn validate(&self) -> Result<(), String> {
-        self.validate_inner(false, false)
+        self.validate_inner(false)
     }
 
-    /// Load-unpacked validation is the only Phase-4 path allowed to admit a
-    /// native companion. Installed/imported packs continue through `validate`.
+    /// Developer projects use the same tool contract as imported packages.
     pub fn validate_dev(&self) -> Result<(), String> {
-        self.validate_inner(true, false)
+        self.validate_inner(false)
     }
 
     /// Validation for artifacts whose bytes were authenticated by Grain's
-    /// signed catalogue. Only that trust path may claim the `grain.` namespace
-    /// or carry a native companion outside developer mode.
+    /// signed catalogue. Only that trust path may claim the `grain.` namespace.
     pub fn validate_trusted(&self) -> Result<(), String> {
-        self.validate_inner(true, true)
+        self.validate_inner(true)
     }
 
-    fn validate_inner(&self, allow_native: bool, allow_reserved_id: bool) -> Result<(), String> {
+    fn validate_inner(&self, allow_reserved_id: bool) -> Result<(), String> {
         self.validate_tool_only()?;
         let m = &self.manifest;
         validate_extension_id(&m.id)?;
@@ -1021,80 +978,19 @@ impl GrainPack {
         if m.name.trim().is_empty() {
             return Err("manifest.name is required".into());
         }
-        match m.tier {
-            Tier::Native => {
-                if !allow_native {
-                    return Err("native extensions are developer-mode only".into());
-                }
-                if !m.entry_source.is_empty() {
-                    return Err("native extensions must not carry entry_source".into());
-                }
-                if !m.companion.as_ref().is_some_and(CompanionDecl::has_any) {
-                    return Err("native extensions require a companion binary map".into());
-                }
-                for cap in &m.permissions {
-                    if !KNOWN_CAPABILITIES.contains(&cap.as_str())
-                        && network_capability_host(cap).is_none()
-                    {
-                        return Err(format!("unknown capability '{cap}'"));
-                    }
-                }
-            }
-            Tier::Pack => {
-                if !m.permissions.is_empty() {
-                    // A-inert by definition (SPEC §1.1): data consumed locally
-                    // needs no grants. Egress/provider packs arrive with their
-                    // consent surface later.
-                    return Err(format!(
-                        "tier-A packs requesting permissions ({}) are not supported yet",
-                        m.permissions.join(", ")
-                    ));
-                }
-                if !m.entry_source.is_empty() {
-                    return Err("tier-A packs must not carry entry_source".into());
-                }
-                if m.companion.is_some() {
-                    return Err("tier-A packs must not declare a companion".into());
-                }
-            }
-            Tier::Scripted => {
-                if m.entry_source.trim().is_empty() {
-                    return Err("scripted extensions require entry_source".into());
-                }
-                if m.entry_source.len() > PACK_ENTRY_MAX_BYTES {
-                    return Err(format!(
-                        "scripted extension entry is larger than {} MB",
-                        PACK_ENTRY_MAX_BYTES / (1024 * 1024)
-                    ));
-                }
-                if m.companion.is_some() {
-                    return Err("scripted extensions must not declare a companion".into());
-                }
-                for cap in &m.permissions {
-                    if !KNOWN_CAPABILITIES.contains(&cap.as_str())
-                        && network_capability_host(cap).is_none()
-                    {
-                        return Err(format!("unknown capability '{cap}'"));
-                    }
-                }
-            }
+        if m.entry_source.trim().is_empty() {
+            return Err("scripted extensions require entry_source".into());
+        }
+        if m.entry_source.len() > PACK_ENTRY_MAX_BYTES {
+            return Err(format!(
+                "scripted extension entry is larger than {} MB",
+                PACK_ENTRY_MAX_BYTES / (1024 * 1024)
+            ));
         }
         self.embedded_icon_png()?;
         validate_actions(&m.contributes.actions, &m.permissions)?;
         validate_authentication(m.contributes.authentication.as_ref(), &m.permissions)?;
-        if m.contributes.authentication.is_some() && m.tier != Tier::Scripted {
-            return Err("authentication declarations require a scripted extension".into());
-        }
         Ok(())
-    }
-
-    /// True for tier-B extensions (drive a worker), false for data packs.
-    pub fn is_scripted(&self) -> bool {
-        self.manifest.tier == Tier::Scripted
-    }
-
-    pub fn has_runtime(&self) -> bool {
-        matches!(self.manifest.tier, Tier::Scripted | Tier::Native)
     }
 }
 
@@ -1169,15 +1065,13 @@ mod tests {
     }
 
     #[test]
-    fn unsupported_runtime_and_scoped_actions_remain_refused() {
+    fn scoped_actions_remain_refused() {
         let base = serde_json::json!({"manifest": {
             "id":"com.example.tools","name":"Tools","version":"1",
             "tier":"scripted","entry_source":"//",
             "contributes":{"actions":[{"id":"read","title":"Read","risk":"confirm","utterances":["read data"]}]}
         }});
         for (pointer, value) in [
-            ("/manifest/tier", serde_json::json!("pack")),
-            ("/manifest/tier", serde_json::json!("native")),
             (
                 "/manifest/contributes/actions/0/when",
                 serde_json::json!({"app":["code"]}),

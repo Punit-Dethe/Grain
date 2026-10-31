@@ -122,22 +122,6 @@ pub struct RevocationBanner {
     pub reason: String,
 }
 
-fn tier_str(t: &grain_sdk::Tier) -> &'static str {
-    match t {
-        grain_sdk::Tier::Pack => "pack",
-        grain_sdk::Tier::Scripted => "scripted",
-        grain_sdk::Tier::Native => "native",
-    }
-}
-
-/// Trust as the STORE says it.
-///
-/// `Core` is an internal provenance rung — our own packs are built and signed by
-/// the same CI job, with no review queue — but to someone deciding whether to
-/// install, it promises exactly what `Verified` promises. Two words for one
-/// guarantee only raises the question of which is better, and first-party
-/// software claiming its own extra tier is not a good answer to that. So the
-/// catalogue keeps the distinction and the card does not.
 fn trust_str(t: grain_sdk::Trust) -> &'static str {
     match t {
         grain_sdk::Trust::Dev => "dev",
@@ -465,7 +449,7 @@ fn project_entry(entries: &[IndexEntry], e: &IndexEntry, revocations: &Revocatio
         name: e.name.clone(),
         version: e.version.clone(),
         previous_versions: previous_versions(entries, e),
-        tier: tier_str(&e.tier).into(),
+        tier: "scripted".into(),
         trust: trust_str(e.trust).into(),
         capabilities: e.capabilities.clone(),
         description: e.description.clone(),

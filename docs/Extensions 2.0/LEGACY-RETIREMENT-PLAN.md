@@ -437,3 +437,44 @@ model decision remain as listed above. Do not revisit M7.
 - Remaining: companion declarations and Pack/Native tier branches; signed index
   `extends` contract; action `when`/`agentRules`/LayerWhen and approval hash;
   unused embedding model/engine. The last three choices remain pending. M7 stays.
+
+**1 November 2026, session 3 continued: companion/runtime contracts retired.**
+
+- Removed `CompanionDecl`, the manifest companion field, `Tier::Pack` and
+  `Tier::Native`, `allow_native` validation and the runtime-kind helpers. The
+  signed/current wire still declares `tier: "scripted"`; unsupported runtime
+  names now fail parsing. Developer projects are always bounded JavaScript
+  entries; native executable paths are never inspected. Removed companion
+  platform eligibility from native tool projection (JavaScript is portable).
+- Simplified author packaging, enable-grant collection and card tier projection
+  to the current runtime. Permissions, action/auth consent, identities, source
+  size/path checks, trusted namespace admission and MCP acquisition remain.
+  Updated catalogue/developer negative tests to assert refusal at parsing;
+  no compatibility runtime or refusal tombstone was added. Bindings regenerated
+  with no output diff. No product UI or M7 change.
+- Verification: workspace tests pass (core 254, SDK 44, checker/CLI 23 each,
+  registry tools 99); normal app all-target check and 699 app tests pass / 23
+  ignored; strict SDK/core/CLI/registry Clippy passes; app Clippy exits zero
+  with unchanged 69/86 warnings. tsc, 101 Vitest tests, parity/policy, rustfmt,
+  diff checks and 80 runner self-tests pass. The pre-existing listing.rs
+  strict-Clippy, settingsStore.test.ts ESLint and two ratchet failures remain.
+- Rebuilt the isolated host and ran seven real-app cases: registry 3/3, native
+  signed-store 3/3, legacy quarantine/recovery 1/1 Pass. The quarantine case now
+  reuses the existing current-policy greeting model adapter. Lost-pointer
+  negative control failed at its expected assertion; all four run cleanups
+  Pass and no harness process remained. Evidence (ignored), all under
+  `tests/agent-harness/.runs/retirement-t8-20261101/`:
+  `run-J8QCm7` (registry), `run-SGxbJa` (store), `run-2mVVR5` (quarantine),
+  `run-xg5ytM` (negative), each `evidence/report.md`.
+- Still pending the user's three presented choices: remove signed-index
+  `extends` or retain it empty; remove action conditions/rules and change the
+  approval digest or retain them; remove unused embedding engine/download UI
+  or retain it for a separate discovery feature. No answer was inferred.
+- Final catalogue cleanup should include the residual retired-built-in id
+  denylist and obsolete `prompts`/`dictation` category vocabulary. Also audit
+  the DESCRIPTION/README fallback and native artifact-kind encoding with the
+  current publisher and signed fixtures: these were not extended here, and
+  needed current native/MCP protocol support must survive. Keep this work in
+  the coherent signed-catalogue unit after the `extends` decision.
+- Full batch 2/3 acceptance, ordinary dictation/microphone and any remaining
+  user visual checks are not certified by these scoped automated results.

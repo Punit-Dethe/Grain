@@ -254,9 +254,6 @@ impl IndexEntry {
         ) {
             return Err("This built-in extension is retired.".into());
         }
-        if self.tier != Tier::Scripted {
-            return Err("Only embedded tool-only extensions are supported.".into());
-        }
         if let Some(permission) = self
             .capabilities
             .iter()
@@ -292,7 +289,6 @@ impl IndexEntry {
     pub fn validate_mcp_installable(&self) -> Result<(), String> {
         self.validate_listing()?;
         if self.artifact_kind != ArtifactKind::McpDescriptor
-            || self.tier != Tier::Scripted
             || !matches!(self.trust, Trust::Verified | Trust::Core)
             || !self.capabilities.is_empty()
             || !self.extends.is_empty()
@@ -596,10 +592,13 @@ mod tool_catalogue_tests {
             retired.capabilities.push(permission.into());
             assert!(retired.validate_tool_only().is_err(), "{permission}");
         }
-        for tier in [Tier::Native, Tier::Pack] {
-            let mut retired = entry.clone();
-            retired.tier = tier;
-            assert!(retired.validate_tool_only().is_err());
+        for tier in ["native", "pack", "future-runtime"] {
+            let mut wire = serde_json::to_value(&entry).unwrap();
+            wire["tier"] = serde_json::json!(tier);
+            assert!(
+                serde_json::from_value::<IndexEntry>(wire).is_err(),
+                "{tier}"
+            );
         }
         for category in ["prompts", "dictation", "future-category"] {
             let mut retired = entry.clone();

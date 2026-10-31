@@ -982,14 +982,9 @@ fn namespace_of(extension_id: &str) -> &str {
 /// exist, and the retriever's contract does not change when they arrive.
 ///
 /// `enabled` is passed in because the manifest cannot know runtime state; the
-/// host holds it. `platform_ok` is derived from the companion declaration.
+/// host holds it. Embedded JavaScript tools are platform-independent.
 pub fn actions_from_manifest(ext: &ExtensionManifest, enabled: bool) -> Vec<ActionInput> {
     let namespace = namespace_of(&ext.id).to_string();
-    let platform_ok = ext
-        .companion
-        .as_ref()
-        .is_none_or(|companion| companion.current_platform().is_some());
-
     // Provider identity and description supply extension-level context;
     // action titles and utterances supply the tool-specific retrieval terms.
     let mut aliases: Vec<String> = vec![ext.name.clone()];
@@ -1053,7 +1048,7 @@ pub fn actions_from_manifest(ext: &ExtensionManifest, enabled: bool) -> Vec<Acti
                 provider_context: provider_context.clone(),
                 risk: action.risk,
                 enabled,
-                platform_ok,
+                platform_ok: true,
                 quarantined: false,
             }
         })

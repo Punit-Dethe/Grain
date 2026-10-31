@@ -543,7 +543,6 @@ fn scaffold_manifest(name: &str, id: &str) -> ExtensionProjectManifest {
                 // Authentication requires an explicit author decision and consent.
                 ..Default::default()
             },
-            companion: None,
         },
         entry: "dist/main.js".into(),
     }

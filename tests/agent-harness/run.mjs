@@ -1888,7 +1888,9 @@ try {
     storeCheckpoint: selected.every(
       (scenario) =>
         ["store", "store-mcp", "registry-recovery"].includes(scenario.suite) ||
-        scenario.id === "native.registry-refusal",
+        ["native.registry-refusal", "native.legacy-quarantine"].includes(
+          scenario.id,
+        ),
     ),
   });
   if (
