@@ -215,3 +215,49 @@ retirement rather than leaving machinery in place.
 shortcuts (`handy/` hooks, run `Upstream/ratchet.py`) → M1 Extension Mode →
 M6 settings contribution UI → M7 Agent confirmation. M6 and M7 change visible
 UI and need the user's decision first.
+
+**31 October 2026, session 2 continued: batch 2 (Tier 2).**
+
+- Commits: M3 `e024fab9` (prompt contributions, extension prompt tier,
+  transform hook), M5 `1dc2496d` (headless `--eval`, core `eval`/
+  `recommend_eval`/`matching`, `main.rs` back to upstream), M4 `a569ef39`
+  (startup migrations, `tool_only_migration_version`, `extensions_imported_v1`,
+  the ignored `ExtensionsRegistry::load` argument, prompt-pack apply/remove;
+  harness `native.legacy-migration` became `native.legacy-quarantine`), M2
+  `0307d8fb` (extension sessions and contributed shortcuts with all their
+  `handy/` hooks), M1 `52acc2ed` (Extension Mode, V1 recommendation pool,
+  grain-core `recommend`/`action_router`, embed warm witness, action
+  vocabulary biasing, auto-send, `extension_mode` binding), M6 `3fb036db`
+  (settings contribution UI, extension settings route, destination routing,
+  `has_detail`, extension secret store).
+- Decisions: settings load now drops a saved `extension_mode` binding through
+  the existing retired-binding list, so no backend registers a dead chord.
+  `cancel_session` always emits `SessionCancelled`. `net.fetch` refuses the
+  retired `secret` parameter (fail closed); `auth: true` is the only
+  host-held credential. Old `extension_secrets` entries are dropped from the
+  credential file on its next write. The extension-owned prompt grouping in
+  Post-processing is gone; the "Your prompts" group label stays. Kept as
+  non-extension: `migrate_overlay_settings`, `RETIRED_DEFAULT_PROMPT_IDS`, the
+  `load_secrets` legacy bare map, `settings_schema_version` migrations.
+- Fix carried in M1: `Upstream/relocations.json` and its generated table still
+  listed `extension_session.rs`/`grain_action_session.rs` after M2, so
+  `Upstream/policy_check.py` failed. Both rows are removed; the check passes.
+- **M7 dropped by the user.** Agent auto-approval and the dormant
+  confirmation card stay as they are; do not touch them.
+- New finding: after M1 nothing uses the embedding engine. The capability
+  index never receives dense scores (`dense: None`), and Extension Mode was
+  the only consumer. The ~130 MB model download in Settings now has no effect,
+  and `grain_embed.rs` engine functions compile as dead code. Needs a user
+  decision (remove the setting and engine, or wire the dense tier).
+- Verification: app lib tests 699 pass / 23 ignored; grain-core 268; vitest 18
+  files / 102 tests; tsc pass; eslint only the pre-existing error; parity,
+  policy OK; ratchet fails only on the pre-existing `Cargo.toml` 142 → 156 and
+  `lib.rs` 1302 → 1305 (was 1328); handy files shrink (`handler.rs` 40 → 12,
+  `secure_input.rs` 216 → 212). Remaining app warnings are pre-existing
+  (`action_exec` confirm path, clamshell, handy managers) plus the new
+  `grain_embed` dead engine.
+
+**Next: batch 3 (Tier 3)** without M7: SDK manifest fields and tombstones,
+slot registry, prompt-layer approvals/fingerprints and `recommend_approved`,
+`toggle_seq` prompt arbitration, SDK `ExtensionRecommend` events, card
+`recommend`/`needs`/`kind`.
