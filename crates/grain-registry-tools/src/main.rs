@@ -897,17 +897,11 @@ fn site_gen(v1: PathBuf, out: PathBuf) -> Result<()> {
 
     let mut cards = String::new();
     for e in &index.entries {
-        let flags = grain_sdk::flagged_combinations(&e.capabilities, e.tier.clone());
-        let flag_html: String = flags
-            .iter()
-            .map(|f| format!("<li class=\"flag\">⚠ {}</li>", html_escape(f.reason())))
-            .collect();
         cards.push_str(&format!(
             r#"<article class="card">
   <h2>{name}</h2>
   <p class="meta">{author} · v{version} · <span class="trust {trust}">{trust}</span></p>
   <p class="reviewed">Reviewed {reviewed} at {commit}</p>
-  <ul class="flags">{flags}</ul>
   <a class="open" href="grain://store/{id}">Open in Grain</a>
 </article>"#,
             name = html_escape(&e.name),
@@ -925,7 +919,6 @@ fn site_gen(v1: PathBuf, out: PathBuf) -> Result<()> {
             } else {
                 &e.reviewed_commit[..7.min(e.reviewed_commit.len())]
             }),
-            flags = flag_html,
             id = html_escape(&e.id),
         ));
     }
@@ -944,7 +937,6 @@ fn site_gen(v1: PathBuf, out: PathBuf) -> Result<()> {
   .reviewed{{color:#888;font-size:.75rem}}
   .trust{{padding:.05rem .4rem;border-radius:4px;font-size:.75rem}}
   .trust.verified{{background:#d1fae5;color:#065f46}} .trust.core{{background:#e0e7ff;color:#3730a3}}
-  .flags{{list-style:none;padding:0;margin:.5rem 0}} .flag{{color:#b45309;font-size:.75rem}}
   .open{{display:inline-block;margin-top:.5rem;font-size:.85rem}}
   footer{{margin-top:2rem;color:#888;font-size:.8rem}}
 </style></head>
@@ -1006,10 +998,9 @@ fn roots(
 
 /// Read the manifest out of a `.grainpack` (JSON embeds it; ZIP carries a
 /// `manifest.json` entry).
-/// The manifest and host-owned positions the artifact extends. Validation runs
-/// before metadata derivation so retired visual declarations can never enter a
-/// signed catalogue index.
-fn manifest_of(bytes: &[u8]) -> Result<(grain_sdk::ExtensionManifest, Vec<String>)> {
+/// Validate the artifact before deriving signed catalogue metadata. Tool
+/// packages declare no host-owned settings or prompt positions.
+fn manifest_of(bytes: &[u8]) -> Result<grain_sdk::ExtensionManifest> {
     use grain_core::pack::{detect_shape, PackShape};
     match detect_shape(bytes) {
         PackShape::Json => {
@@ -1017,8 +1008,7 @@ fn manifest_of(bytes: &[u8]) -> Result<(grain_sdk::ExtensionManifest, Vec<String
                 serde_json::from_slice(bytes).context("parse JSON grainpack")?;
             pack.validate_trusted()
                 .map_err(|error| anyhow::anyhow!("validate grainpack: {error}"))?;
-            let extends = pack.extends();
-            Ok((pack.manifest, extends))
+            Ok(pack.manifest)
         }
         PackShape::Zip => {
             anyhow::bail!("Directory/native ZIP bundles are unsupported by the tool-only runtime; publish an embedded tool package")
@@ -1125,7 +1115,7 @@ fn publish(
     }
     let generation = current_generation(&v1)?;
     let bytes = fs::read(&pack).with_context(|| format!("read {}", pack.display()))?;
-    let (manifest, extends) = manifest_of(&bytes)?;
+    let manifest = manifest_of(&bytes)?;
     let sha256 = grain_core::trust::sha256_hex(&bytes);
 
     let trust = match trust.as_str() {
@@ -1233,7 +1223,7 @@ fn publish(
         icon: None,
         media,
         categories,
-        extends,
+        extends: Vec::new(),
     };
 
     // Upsert by (id, version).

@@ -37,7 +37,6 @@ const entry = (overrides: Partial<StoreEntry> = {}): StoreEntry => ({
   categories: [],
   extends: [],
   revocation: null,
-  flags: [],
   ...overrides,
 });
 

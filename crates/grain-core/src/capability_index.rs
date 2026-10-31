@@ -990,21 +990,12 @@ pub fn actions_from_manifest(ext: &ExtensionManifest, enabled: bool) -> Vec<Acti
         .as_ref()
         .is_none_or(|companion| companion.current_platform().is_some());
 
-    // The address surface: the extension name is an implicit alias, plus any
-    // declared recommendation aliases.
+    // Provider identity and description supply extension-level context;
+    // action titles and utterances supply the tool-specific retrieval terms.
     let mut aliases: Vec<String> = vec![ext.name.clone()];
     let mut provider_context: Vec<String> = Vec::new();
-    let mut tags: Vec<String> = Vec::new();
     if !ext.description.is_empty() {
         provider_context.push(ext.description.clone());
-    }
-    if let Some(recommend) = &ext.recommend {
-        aliases.extend(recommend.aliases.iter().cloned());
-        if !recommend.purpose.is_empty() {
-            provider_context.push(recommend.purpose.clone());
-        }
-        provider_context.extend(recommend.examples.iter().cloned());
-        tags.extend(recommend.entities.iter().cloned());
     }
     aliases.retain(|alias| !alias.trim().is_empty());
     aliases.dedup();
@@ -1052,7 +1043,7 @@ pub fn actions_from_manifest(ext: &ExtensionManifest, enabled: bool) -> Vec<Acti
                 title: action.title.trim().to_string(),
                 aliases: aliases.clone(),
                 namespaces: vec![namespace.clone()],
-                tags: tags.clone(),
+                tags: Vec::new(),
                 examples: Vec::new(),
                 phrases,
                 params,
@@ -1646,10 +1637,9 @@ mod tests {
             "id": "com.grain.spotify",
             "name": "Spotify",
             "version": "0.0.1",
-            "tier": "pack",
-            "kind": "standalone",
+            "tier": "scripted",
+            "entry_source": "//",
             "description": "Control Spotify playback",
-            "recommend": { "purpose": "Play music on Spotify", "aliases": ["spotify"], "entities": ["artist"] },
             "contributes": {
                 "actions": [
                     { "id": "next", "title": "Skip to the next track", "risk": "safe", "utterances": ["skip this", "next song"] },
@@ -1663,13 +1653,13 @@ mod tests {
         let play = inputs.iter().find(|i| i.action_id == "play").unwrap();
         assert_eq!(play.canonical_id, "com.grain.spotify:play");
         assert!(play.aliases.contains(&"Spotify".to_string()));
-        assert!(play.aliases.contains(&"spotify".to_string()));
+        assert_eq!(play.provider_context, vec!["Control Spotify playback"]);
         assert!(
             play.phrases.iter().any(|p| p == "play"),
             "utterance literal kept, placeholder dropped"
         );
         assert!(play.params.iter().any(|param| param.name == "artist"));
-        assert!(play.tags.contains(&"artist".to_string()));
+        assert!(play.tags.is_empty());
 
         // And the projection retrieves: "skip this" names the next track.
         let index = CapabilityIndex::build(inputs);

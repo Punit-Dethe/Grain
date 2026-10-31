@@ -24,11 +24,9 @@ pub mod compatibility;
 pub mod distribution;
 pub mod error;
 pub mod event;
-pub mod flagged;
 pub mod manifest;
 pub mod mcp;
 pub mod protocol;
-pub mod settings_schema;
 pub mod submission;
 
 pub use authoring::{ExtensionProjectManifest, GRAIN_API_TYPESCRIPT};
@@ -41,16 +39,13 @@ pub use event::{
     daemon_event_capability, DaemonEvent, OverlayPosition, PillAction, ResolvedTheme, SessionMode,
     DAEMON_EVENT_VARIANTS, PILL_ICON_PX,
 };
-pub use flagged::{flagged_combinations, FlaggedCombination};
 pub use manifest::{
     png_dimensions, validate_extension_id, validate_extension_version, AuthenticationDecl,
     AuthenticationType, CompanionDecl, Contributes, ExtensionManifest, GrainPack, PackPayloads,
-    PromptPackEntry, PromptTarget, RedirectMethod, SelectOption, SettingDecl, SettingKind,
-    ShortcutDecl, Tier, ANCHORS, ICON_MASTER_DIM, ICON_MAX_BYTES, KNOWN_CAPABILITIES, KNOWN_SLOTS,
-    PACK_ENTRY_MAX_BYTES, PACK_MAX_BYTES, PROMPT_CONTEXT_SLOT, PROMPT_MAIN_SLOT, SURFACE_PROMPTS,
+    RedirectMethod, Tier, ICON_MASTER_DIM, ICON_MAX_BYTES, KNOWN_CAPABILITIES,
+    PACK_ENTRY_MAX_BYTES, PACK_MAX_BYTES,
 };
 pub use protocol::{
     ClientHello, ClientRequest, DevControlFrame, DevReloadResult, HostCall, HostCallResult,
     HostFrame, ServerResponse, ServerWelcome, GRAIN_API_VERSION,
 };
-pub use settings_schema::Accepted;

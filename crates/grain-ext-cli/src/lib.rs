@@ -6,7 +6,6 @@ use std::time::{Duration, Instant};
 use anyhow::{bail, Context, Result};
 mod pull_request;
 mod submission;
-use grain_sdk::manifest::Surfaces;
 use grain_sdk::{
     Contributes, ExtensionManifest, ExtensionProjectManifest, GrainPack, PackPayloads, Tier,
     GRAIN_API_TYPESCRIPT, GRAIN_API_VERSION, KNOWN_CAPABILITIES,
@@ -530,30 +529,18 @@ fn scaffold_manifest(name: &str, id: &str) -> ExtensionProjectManifest {
             version: "0.1.0".into(),
             grain_api: format!("^{GRAIN_API_VERSION}"),
             tier: Tier::Scripted,
-            // Tool discovery uses declared actions; no whole-request opt-in.
-            kind: Default::default(),
-            recommend: None,
-            auto_send: None,
-            needs: Vec::new(),
             description: format!("A Grain extension by {name}"),
             // Neutral starter artwork; authors replace it with their own icon.
             icon: "icon.png".into(),
             repository: None,
             permissions: Vec::new(),
-            activation: Vec::new(),
             entry_source: String::new(),
-            surfaces: Surfaces::default(),
-            slots: Vec::new(),
-            variant_slots: Vec::new(),
             contributes: Contributes {
-                settings: Vec::new(),
                 actions: vec![serde_json::from_value(serde_json::json!({
                     "id": "hello", "title": "Say hello", "risk": "safe", "utterances": ["say hello"]
                 }))
                 .expect("static tool declaration")],
-                session_mode: None,
-                // The scaffold declares neither authentication nor session
-                // mode; both require an explicit author decision and consent.
+                // Authentication requires an explicit author decision and consent.
                 ..Default::default()
             },
             companion: None,
@@ -1401,9 +1388,24 @@ mod tests {
         assert_eq!(project.manifest.id, "com.example.focus-notes");
         assert_eq!(project.manifest.grain_api, "^1.0");
         assert_eq!(project.entry, "dist/main.js");
-        assert!(project.manifest.activation.is_empty());
-        assert!(project.manifest.contributes.shortcuts.is_empty());
         assert_eq!(project.manifest.contributes.actions[0].id, "hello");
+        let manifest: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        for retired in [
+            "kind",
+            "recommend",
+            "autoSend",
+            "needs",
+            "activation",
+            "surfaces",
+            "slots",
+            "variant_slots",
+        ] {
+            assert!(
+                manifest.get(retired).is_none(),
+                "scaffold emitted {retired}"
+            );
+        }
+        assert_eq!(manifest["contributes"].as_object().unwrap().len(), 1);
         validate_scaffold(&project).unwrap();
 
         let declarations = fs::read_to_string(result.root.join("grain.d.ts")).unwrap();

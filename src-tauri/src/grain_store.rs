@@ -94,9 +94,6 @@ pub struct StoreEntry {
     pub extends: Vec<String>,
     /// Revocation state for this exact version, if any: "revoked" | "deprecated".
     pub revocation: Option<String>,
-    /// Flagged capability combinations (DISTRIBUTION-PLAN §3.3), plain-language,
-    /// so the card tells the user what the reviewer was warned about.
-    pub flags: Vec<String>,
 }
 
 /// One icon/gallery image ref crossed to the store UI (mirror of `MediaRef`).
@@ -501,10 +498,6 @@ fn project_entry(entries: &[IndexEntry], e: &IndexEntry, revocations: &Revocatio
             }
             .to_string()
         }),
-        flags: grain_sdk::flagged_combinations(&e.capabilities, e.tier.clone())
-            .into_iter()
-            .map(|f| f.reason().to_string())
-            .collect(),
     }
 }
 

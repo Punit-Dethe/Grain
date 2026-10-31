@@ -395,3 +395,45 @@ model decision remain as listed above. Do not revisit M7.
   `ExtensionManifest` directly, so its fields must change with that struct).
   Three remaining product decisions have been presented to the user; SDK edits
   independent of those decisions can proceed. No change to M7.
+
+**1 November 2026, session 3 continued: SDK manifest/scaffold retirement.**
+
+- Removed classification/recommend/auto-send/needs, activation, slots/variants,
+  authored surfaces, contributed settings/shortcuts/sessions/prompt layers and
+  prompt/theme payload fields, their declarations, obsolete validators and
+  SDK exports. Deleted `settings_schema.rs` (no external consumer) and its 12
+  tests. The CLI scaffold and lifecycle fixture use the narrower contract.
+  Unknown manifest keys retain normal Serde behavior; no tombstones or new
+  compatibility validators were added. Authentication still denies unknown keys.
+- Removed `extends()` derivation from manifests and packages. Signed index
+  metadata still emits its existing empty `extends` field pending the user's
+  decision; there is no remaining host-position derivation or SDK stub.
+- Core discovery found: `actions_from_manifest` still consumed old recommendation
+  aliases/examples/entities in the live native tool index. Removed that legacy
+  projection; native tools use the current extension name/description and action
+  title/utterance/parameter metadata. Updated the real projection/retrieval test;
+  the retriever itself is unchanged. Packages relying on retired recommendation
+  metadata no longer get those extra discovery terms.
+- Narrowed `KNOWN_CAPABILITIES` to storage/auth (bounded `net:<host>` remains
+  separately validated). Removed `flagged.rs` and its eight tests: every warning
+  watched only retired capture/transcript/native-executable permissions. Removed
+  the unused StoreEntry flags DTO and the obsolete registry-site warning markup;
+  no current Grain UI rendered that field. Regenerated bindings. Permission
+  admission, action/auth approvals, artifact limits, trust and revocation remain.
+- Verification: workspace all-target check/tests pass (core 254, SDK 44,
+  checker/CLI 23 each, registry tools 99); SDK lost 38 tests net: 18 manifest,
+  12 settings-schema, eight flags. Strict SDK/core/CLI/registry Clippy passes;
+  fixed the existing SDK test's needless borrow while updating that module.
+  The checker retains only its two existing listing.rs strict-Clippy failures.
+  App all-target check, app tests 699 pass / 23 ignored, regenerated bindings,
+  tsc, 101 Vitest tests, frontend build, parity/policy, rustfmt and diff checks
+  pass. ESLint retains the existing raw-invoke test import failure.
+- Rebuilt the real isolated host and repeated the registry/native-call checkpoint:
+  3/3 Pass; lost-pointer negative control failed at the expected assertion;
+  both cleanup Pass. Evidence (ignored):
+  `tests/agent-harness/.runs/retirement-t7-20261101/run-Ene9Dx/evidence/report.md`
+  and `run-Bd7RPb/evidence/report.md`. These are scoped registry/native-call
+  results, not whole batch/dictation or live-provider certification.
+- Remaining: companion declarations and Pack/Native tier branches; signed index
+  `extends` contract; action `when`/`agentRules`/LayerWhen and approval hash;
+  unused embedding model/engine. The last three choices remain pending. M7 stays.

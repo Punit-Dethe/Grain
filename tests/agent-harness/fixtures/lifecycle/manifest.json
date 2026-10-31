@@ -4,13 +4,8 @@
   "version": "0.1.0",
   "grainApi": "^1.0",
   "tier": "scripted",
-  "kind": "extending",
   "description": "Permission-free Agent acceptance fixture",
   "permissions": [],
-  "activation": [],
-  "surfaces": {},
-  "slots": [],
-  "variant_slots": [],
   "contributes": {
     "actions": [
       {

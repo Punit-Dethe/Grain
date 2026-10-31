@@ -2695,12 +2695,7 @@ extends: string[];
 /**
  * Revocation state for this exact version, if any: "revoked" | "deprecated".
  */
-revocation: string | null;
-/**
- * Flagged capability combinations (DISTRIBUTION-PLAN §3.3), plain-language,
- * so the card tells the user what the reviewer was warned about.
- */
-flags: string[] }
+revocation: string | null }
 /**
  * One icon/gallery image ref crossed to the store UI (mirror of `MediaRef`).
  */
