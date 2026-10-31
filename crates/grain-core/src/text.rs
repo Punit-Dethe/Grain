@@ -1,11 +1,10 @@
 //! [GRAIN] The ASR-text substrate: normalisation, tokenisation, and the fuzzy
 //! matching that absorbs what the acoustic model does to speech.
 //!
-//! Extracted from `action_router` so it can outlive it. The V1 template matcher
-//! in `action_router` is one consumer; the V2 capability retriever
-//! (`capability_index`) is another, and both must agree — byte-for-byte — about
-//! what counts as "the same word heard slightly wrong", or a token filed one way
-//! and matched another silently drops candidates. Keeping the definition in one
+//! The V2 capability retriever (`capability_index`) both files and matches
+//! tokens through this module, and the two sides must agree — byte-for-byte —
+//! about what counts as "the same word heard slightly wrong", or a token filed
+//! one way and matched another silently drops candidates. Keeping the definition in one
 //! place is the only way that agreement is enforced rather than hoped for.
 //!
 //! Everything here is pure, allocation-light, and model-free. It runs on the

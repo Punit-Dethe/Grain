@@ -60,7 +60,6 @@ export async function sourceFingerprint() {
       "index.html",
       "recording-overlay.html",
       "extension-host.html",
-      "extension-view.html",
     ].map((path) => join(repo, path)),
   );
   for (const input of [

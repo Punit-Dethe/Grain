@@ -46,8 +46,6 @@ mod events_auth; // [GRAIN] token identity + capability filter for the events WS
 mod events_server; // [GRAIN] authenticated loopback WebSocket for native workers and developer control
 mod extension_host; // [GRAIN] extension worker lifecycle (SPEC 3.1) — supervisor, activation, reaper
 mod extension_icons; // [GRAIN] verified master icon -> installed extension card icon
-mod extension_misroutes; // [GRAIN] bounded decline counters -> conservative topical rerank
-mod extension_view; // [GRAIN] host-rendered standard Extension Mode component tree
 mod grain_actions; // [GRAIN] Grain's shortcut actions (rolling, Native ASR, switcher, agent)
 mod grain_audio_journal; // [GRAIN] bounded-RAM PCM backing for rolling sessions
 mod grain_auth; // [GRAIN] host-owned extension OAuth + OS credential vault
@@ -1477,22 +1475,6 @@ fn command_bindings() -> Builder<tauri::Wry> {
             grain_mcp::connections::mcp_connection_clear_client_credentials,
             grain_commands::extension_settings_schema,
             grain_commands::extension_settings_sections,
-            grain_commands::grain_action_listen,
-            grain_commands::grain_action_log,
-            grain_commands::grain_extension_mode_status,
-            grain_commands::grain_extension_mode_download_model,
-            grain_commands::grain_extension_mode_decline,
-            grain_commands::grain_extension_mode_accept,
-            grain_commands::change_auto_send_setting,
-            grain_commands::change_auto_send_for_extension,
-            extension_view::extension_view_init,
-            extension_view::extension_view_ready,
-            extension_view::extension_view_choose,
-            extension_view::extension_view_download_model,
-            extension_view::extension_view_copy,
-            extension_view::extension_view_open_extensions,
-            extension_view::extension_view_output,
-            extension_view::extension_view_close,
             grain_commands::extension_import_pack,
             grain_commands::extension_uninstall,
             shortcut::change_lazy_stream_close_setting,
@@ -1615,7 +1597,6 @@ fn command_bindings() -> Builder<tauri::Wry> {
             grain_events::ModelExtractionCompleted,
             grain_events::RecordingError,
             grain_events::PasteError,
-            grain_events::ExtensionRecommendation,
             grain_theme::ThemeChanged,
         ])
 }

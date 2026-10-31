@@ -23,21 +23,13 @@ network access is still used for those features and model downloads.
 `src-tauri/src/grain_transcription.rs` contains the former local batch branch:
 idempotent loading, then `spawn_blocking` around the shared manager's
 `transcribe`. It has no HTTP client, settings pool, timeout, quota or state.
-Prompt Record, Agent voice input and extension/action captures use this same
-manager. Their microphone readiness, feedback and cleanup are retained.
+Prompt Record and Agent voice input use this same manager. Their microphone
+readiness, feedback and cleanup are retained.
 
-Extension Mode is temporarily withheld while its transition proceeds on another
-branch. `grain-core/capture::EXTENSION_MODE_AVAILABLE` is false in both current
-development and production builds: shared shortcut registration (including
-saved custom chords, edits and keyboard-backend switches) never claims its key.
-The narrow `[GRAIN]` hook in Handy's macOS `secure_input.rs` uses the same
-`shortcut_is_withheld` policy before shadow registration. Extension shortcut
-reconciliation also excludes its saved chord from reservations.
-`grain_action_session::start_locked` rejects direct starts before microphone,
-model, embedding or renderer acquisition. Disabled dispatches do not open a
-notice. Saved bindings and the underlying implementation remain intact; other
-extension and Agent entry points are unchanged. Preserve this gate when porting
-upstream shortcut changes.
+Extension Mode and its `extension_mode` binding are retired. Settings load drops
+a saved `extension_mode` binding, so no keyboard backend registers a chord for
+it, and Handy's shortcut handler and macOS `secure_input.rs` carry no Extension
+Mode hooks.
 
 Standard (`transcribe`, Alt+Space) selects reviewed installed Parakeet TDT v2/v3
 Flow through `grain-core/capture.rs` and `grain_dictation_routing.rs`. Other

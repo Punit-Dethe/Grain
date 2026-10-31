@@ -604,61 +604,11 @@ struct SupervisorStatus {
 /// manifests live). Rebuilt only when the extension set changes.
 #[derive(Default)]
 struct Index {
-    /// Declared actions, compiled (`docs/Extensions V1/PLAN.md`). Same reasoning
-    /// as the layers above: built here so nothing on a felt path reads a
-    /// manifest, and gated by the approval digest on every rebuild rather than
-    /// once at import.
-    actions: grain_core::action_router::ActionIndex,
-    /// [GRAIN] The Extension Mode pool (`docs/Extensions V1/PLAN.md` §3.1): the
-    /// searchable, recommendation-approved extensions and the aliases the lexical
-    /// leg matches. The examples that feed the semantic leg are embedded off this
-    /// path — see [`RECOMMEND_VECTORS`] — so what lives here is only what ranking
-    /// needs synchronously.
-    recommendations: Vec<grain_core::recommend::IndexedRecommendation>,
-    /// [GRAIN] Pooled extensions whose author marked them Auto-send eligible
-    /// (`autoSend.eligible`, §5). Only the *author* half — the global toggle and
-    /// the user's per-extension deny-list are applied at decision time, because
-    /// those change without an index rebuild.
-    auto_send_eligible: std::collections::HashSet<String>,
     /// [GRAIN] Capability Index V2 (`docs/Extensions 2.0/PLAN.md` §6): the
-    /// schema-projection action retriever, built from the same installed
-    /// manifests as `actions` above and on the same rebuild trigger — never on a
-    /// hot path (§11.2). Pure metadata memory; no worker. Consumed by the Agent
-    /// tool loop in a later Phase 2B pass.
+    /// schema-projection action retriever, built from the installed manifests
+    /// on every rebuild — never on a hot path (§11.2). Pure metadata memory; no
+    /// worker. Read by the Agent tool loop.
     capability: grain_core::capability_index::CapabilityIndex,
-}
-
-/// Free-standing guards (not behind `HOST`), so the check needs no lock and no
-/// `OnceLock` deref. With no declared actions, a lookup pays one relaxed load.
-static HAS_ACTIONS: AtomicBool = AtomicBool::new(false);
-/// And for the Extension Mode pool: with nothing searchable installed, the
-/// recommendation path is one relaxed load and never touches the index.
-static HAS_RECOMMENDATIONS: AtomicBool = AtomicBool::new(false);
-/// [GRAIN] Cached example embeddings for the semantic leg of recommendation
-/// (`docs/Extensions V1/PLAN.md` §3.1). Held outside [`Index`] and behind its
-/// own lock for the same reason the retired calibration was: embedding a pool of
-/// examples is seconds of model work, and `refresh_index` runs when the user
-/// flips a switch. So the index rebuilds synchronously, this stays empty, and a
-/// background task fills it once the vectors are ready — until then
-/// recommendation runs in name-only mode, which is honest rather than blocked.
-///
-/// Keyed by extension id → one vector per declared example. The query is scored
-/// against the best of an extension's example vectors at request time.
-static RECOMMEND_VECTORS: OnceLock<RwLock<RecommendVectors>> = OnceLock::new();
-
-/// Generation guard so a slow embed for an old pool cannot land on top of a
-/// newer one — the same guard the retired calibration used, and for the same
-/// race.
-static RECOMMEND_GENERATION: AtomicU64 = AtomicU64::new(0);
-
-#[derive(Default)]
-struct RecommendVectors {
-    generation: u64,
-    vectors: HashMap<String, Vec<Vec<f32>>>,
-}
-
-fn recommend_vectors() -> &'static RwLock<RecommendVectors> {
-    RECOMMEND_VECTORS.get_or_init(|| RwLock::new(RecommendVectors::default()))
 }
 
 struct HostState {
@@ -678,13 +628,11 @@ pub fn refresh_index(app: &AppHandle) {
     let Some(host) = HOST.get() else {
         return;
     };
-    let mut actions = Vec::new();
     let mut capability_inputs = Vec::new();
     if let Some(reg) = app.try_state::<Arc<grain_core::extensions::ExtensionsRegistry>>() {
         for rec in reg.records().into_iter().filter(|record| record.enabled) {
             match load_manifest_result(app, &rec.id) {
                 Ok(pack) => {
-                    collect_actions(&rec, &pack, &mut actions);
                     collect_capability_actions(&rec, &pack, &mut capability_inputs);
                 }
                 Err(reason) => {
@@ -697,89 +645,14 @@ pub fn refresh_index(app: &AppHandle) {
             }
         }
     }
-    HAS_ACTIONS.store(!actions.is_empty(), Ordering::Relaxed);
-    HAS_RECOMMENDATIONS.store(false, Ordering::Relaxed);
     *host.index.write().unwrap() = Index {
-        actions: grain_core::action_router::ActionIndex::build(actions),
         capability: grain_core::capability_index::CapabilityIndex::build(capability_inputs),
-        ..Index::default()
     };
 }
 
-/// Compile one enabled extension's declared prompt layers into the index.
-///
-/// Two gates, both of which must hold every rebuild rather than once at import:
-///
-/// 1. **The approved text is the text.** A layer whose wording no longer matches
-///    what the user approved is skipped entirely. This is the rug pull —
-///    CVE-2025-54136 is exactly "approval of a definition did not survive a
-///    later change to it", and the VS Code marketplace shipped the same shape
-///    repeatedly through routine version bumps. Grain already holds an extension
-///    for a widened *capability*; a prompt layer changes what the model does to
-///    the user's words, so it belongs to the same permission surface.
-/// 2. **The screen runs again here.** It ran at import too, but import and
-///    dictation are different moments and a pack file can be edited in between.
-///
-/// Both failures are logged and skipped, never repaired: text that has drifted
-/// from what the user agreed to is not something to sanitise and use anyway.
-
-/// Compile one enabled extension's declared actions into the index.
-///
-/// Three gates, and each closes a different hole:
-///
-/// 1. **Classification** (`docs/Extensions V1/PLAN.md` §2). Only a `searchable`
-///    extension may be handed what the user said. Most of the platform is
-///    `extending` — prompt layers, settings, App Modes — and without this
-///    every one of them competes for "next song". Declared, never inferred: an
-///    extension can legitimately be searchable *and* own a shortcut, so
-///    "does it declare commands?" is the wrong question.
-/// 2. **The recommendation digest.** What it gates is *disclosure*: being
-///    pickable means receiving the whole request, so an extension whose
-///    recommendation was rewritten since the user read it drops out until they
-///    read the new one.
-/// 3. **The actions digest**, as before — what an update can quietly change
-///    here is not wording but what happens.
-fn collect_actions(
-    rec: &grain_core::extensions::ExtensionRecord,
-    pack: &GrainPack,
-    out: &mut Vec<grain_core::action_router::IndexedAction>,
-) {
-    if !pack.manifest.kind.is_searchable() {
-        return;
-    }
-    let recommend = grain_core::extensions::recommendation_fingerprint(&pack.manifest);
-    if rec.recommend_approved.as_deref() != Some(recommend.as_str()) {
-        log::warn!(
-            "[ext:{}] not searchable — what it is ranked by differs from what was approved; \
-             the user must review it again",
-            rec.id
-        );
-        return;
-    }
-    let declared = &pack.manifest.contributes.actions;
-    if declared.is_empty() {
-        return;
-    }
-    let approved = grain_core::extensions::actions_fingerprint(declared);
-    if rec.actions_approved.as_deref() != Some(approved.as_str()) {
-        log::warn!(
-            "[ext:{}] actions not usable — the declaration differs from what was approved; \
-             the user must review it again",
-            rec.id
-        );
-        return;
-    }
-    for decl in declared {
-        out.push(grain_core::action_router::IndexedAction::from_decl(
-            &rec.id, decl,
-        ));
-    }
-}
-
 /// Project actions into Capability Index V2 only while the exact declaration the
-/// user approved is still installed. Unlike V1 routing this intentionally does
-/// not require `kind: searchable`: the effective V2 plan makes declared actions
-/// Agent contributions for standalone and extending packs too.
+/// user approved is still installed. Any `kind` qualifies: the V2 plan makes
+/// declared actions Agent contributions for standalone and extending packs too.
 fn collect_capability_actions(
     rec: &grain_core::extensions::ExtensionRecord,
     pack: &GrainPack,
@@ -801,57 +674,6 @@ fn collect_capability_actions(
         &pack.manifest,
         true,
     ));
-}
-
-/// The pooled extensions whose author marked them Auto-send eligible (§5). The
-/// caller intersects this with the user's deny-list and the global toggle.
-pub fn auto_send_eligible() -> std::collections::HashSet<String> {
-    if !HAS_RECOMMENDATIONS.load(Ordering::Relaxed) {
-        return std::collections::HashSet::new();
-    }
-    HOST.get()
-        .map(|host| host.index.read().unwrap().auto_send_eligible.clone())
-        .unwrap_or_default()
-}
-
-/// Embed the pool's example phrases and cache the vectors, off the rebuild path.
-///
-/// Fire-and-forget and generation-guarded, the shape the retired calibration
-/// used. Skips entirely when the model is not on disk — that is **name-only
-/// mode** (§5), not a failure: the pool still ranks on names, and first use of
-/// Extension Mode is where the download is offered. An extension whose examples
-/// fail to embed simply has no topical vectors and is reachable by name only.
-
-/// Rank the installed searchable extensions for one spoken request
-/// (`docs/Extensions V1/PLAN.md` §3.1). The whole recommendation, minus the
-/// hand-off: which extensions, in what order, by name or by topic. With nothing
-/// searchable installed this is one relaxed atomic load.
-///
-/// `excluded` is the decline-and-reopen set (G2): extensions the user already
-/// turned down for this request, dropped from the ballot so the reopened chooser
-/// cannot offer the same wrong pick again.
-///
-/// Runs the semantic leg only when the model is on disk *and* the cached vectors
-/// belong to the current pool; otherwise it hands `None` to the ranker, which is
-/// name-only mode. Blocking on the query embed, so it must not be called from a
-/// felt path — the Extension Mode session calls it off the microphone thread.
-pub fn recommend(
-    spoken: &str,
-    excluded: &[String],
-) -> (Vec<grain_core::recommend::Recommendation>, bool) {
-    if !HAS_RECOMMENDATIONS.load(Ordering::Relaxed) {
-        return (Vec::new(), false);
-    }
-    let Some(host) = HOST.get() else {
-        return (Vec::new(), false);
-    };
-    let index = host.index.read().unwrap();
-    let semantic = semantic_scores(spoken);
-    let semantic_available = semantic.is_some();
-    (
-        grain_core::recommend::rank(&index.recommendations, spoken, semantic.as_ref(), excluded),
-        semantic_available,
-    )
 }
 
 /// [GRAIN] Level-1 Agent extension directory (Extensions 2.0 Amendment D).
@@ -959,129 +781,6 @@ pub fn approved_action_digest(
         return None;
     }
     grain_core::extensions::native_call_fingerprint(&record, &pack.manifest).ok()
-}
-
-/// The display name and one-line purpose for a pooled extension, for the
-/// recommendation event. Reads the manifest off disk, so it is called from the
-/// session's off-thread `deliver`, never a felt path.
-pub fn recommendation_display(app: &AppHandle, id: &str) -> Option<(String, String)> {
-    let pack = load_manifest(app, id)?;
-    let purpose = pack
-        .manifest
-        .recommend
-        .as_ref()
-        .map(|r| r.purpose.clone())
-        .unwrap_or_default();
-    Some((pack.manifest.name, purpose))
-}
-
-/// How many searchable, approved extensions are in the Extension Mode pool.
-///
-/// The one fact a surface needs to decide whether Extension Mode is worth
-/// offering at all, and whether the embedding-model download is worth its ~130 MB
-/// — a pool of zero has nothing to rank, semantic or not. One relaxed atomic
-/// load when nothing searchable is installed.
-pub fn searchable_count() -> usize {
-    if !HAS_RECOMMENDATIONS.load(Ordering::Relaxed) {
-        return 0;
-    }
-    HOST.get()
-        .map(|host| host.index.read().unwrap().recommendations.len())
-        .unwrap_or(0)
-}
-
-/// Every searchable extension id in the pool, in index order.
-///
-/// The chooser surface lists **all** installed searchable extensions, not only
-/// the ranked picks: the recommendations sit highlighted at the top, and the
-/// rest are there so the user can always find and choose the right one by hand
-/// (or by typing to filter) when ranking withheld it. One relaxed atomic load
-/// when nothing searchable is installed.
-pub fn searchable_ids() -> Vec<String> {
-    if !HAS_RECOMMENDATIONS.load(Ordering::Relaxed) {
-        return Vec::new();
-    }
-    HOST.get()
-        .map(|host| {
-            host.index
-                .read()
-                .unwrap()
-                .recommendations
-                .iter()
-                .map(|r| r.extension_id.clone())
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
-/// The semantic leg: embed the query and score it against each pooled
-/// extension's cached example vectors, best example wins.
-///
-/// `None` — name-only mode — when the model is absent, the cache belongs to an
-/// older pool, or the query cannot be embedded. Every one of those degrades to
-/// names rather than to a wrong topical guess, which is the safe direction: a
-/// missing topical score withholds a recommendation, it never invents one.
-///
-/// Scores are read straight off the cache rather than off the index, because the
-/// generation guard already guarantees the cache belongs to the current pool —
-/// an extension that has embedded is in the map, one that has not simply has no
-/// topical score, and the ranker treats that as "reachable by name only".
-fn semantic_scores(spoken: &str) -> Option<HashMap<String, f32>> {
-    if !crate::grain_embed::model_on_disk() {
-        return None;
-    }
-    let cache = recommend_vectors().read().unwrap();
-    if cache.generation != RECOMMEND_GENERATION.load(Ordering::SeqCst) || cache.vectors.is_empty() {
-        return None;
-    }
-    let query = crate::grain_embed::embed_query(spoken.to_string()).ok()?;
-    let mut scores = HashMap::new();
-    for (id, vectors) in &cache.vectors {
-        if let Some(best) = vectors.iter().map(|v| cosine(&query, v)).reduce(f32::max) {
-            scores.insert(id.clone(), best);
-        }
-    }
-    (!scores.is_empty()).then_some(scores)
-}
-
-/// Cosine similarity of two vectors the embedder already L2-normalised, so this
-/// is a dot product. Length-guarded rather than trusting both came from the same
-/// model — a mismatch scores 0 instead of panicking on a bad index.
-fn cosine(a: &[f32], b: &[f32]) -> f32 {
-    if a.len() != b.len() {
-        return 0.0;
-    }
-    a.iter().zip(b).map(|(x, y)| x * y).sum()
-}
-
-/// Every literal word the installed actions declare, for ASR biasing.
-///
-/// Deduplicated and unordered — the bias set has its own budget and ordering
-/// rules. Placeholders contribute nothing: `{artist}` is the part Grain cannot
-/// predict, and that is exactly the part the extension resolves.
-pub fn action_vocabulary() -> Vec<String> {
-    if !HAS_ACTIONS.load(Ordering::Relaxed) {
-        return Vec::new();
-    }
-    let Some(host) = HOST.get() else {
-        return Vec::new();
-    };
-    let mut terms: Vec<String> = Vec::new();
-    let mut seen = std::collections::HashSet::new();
-    for action in host.index.read().unwrap().actions.actions() {
-        for template in &action.templates {
-            for part in template {
-                if let grain_sdk::manifest::UtterancePart::Literal(literal) = part {
-                    for word in literal.split_whitespace() {
-                        if word.len() > 2 && seen.insert(word.to_lowercase()) {
-                            terms.push(word.to_string());
-                        }
-                    }
-                }
-            }
-        }
-    }
-    terms
 }
 
 /// Supervisor → worker: create a Web Worker for this extension.
@@ -1535,7 +1234,6 @@ fn kill_worker_checked(
         None
     };
     drop(sup);
-    crate::extension_view::fail_interactive_for_extension(&host.app, ext_id, reason);
     crate::events_server::revoke_token(&worker.token);
     #[cfg(feature = "agent-harness")]
     crate::grain_agent_harness::observe("retired", ext_id, "", &worker.token);
@@ -1552,9 +1250,6 @@ fn kill_worker(ext_id: &str, reason: &str) {
 /// Public lifecycle hook for registry operations such as unloading a dev
 /// override. It is a no-op when the extension has no live worker.
 pub fn stop_extension(ext_id: &str, reason: &str) {
-    if let Some(host) = HOST.get() {
-        crate::extension_view::destroy_for_extension(&host.app, ext_id);
-    }
     kill_worker(ext_id, reason);
 }
 
@@ -1715,13 +1410,10 @@ pub fn resolve_call_result(ext_id: &str, token: &str, call_id: u64, result: Resu
     }
 }
 
-// ── Hand-off (`docs/Extensions V1/PLAN.md` §3) ──────────────────────────────
+// ── Native action calls ────────────────────────────────────────────────────
 //
-// [GRAIN] V1-P0 kept this machinery `allow(dead_code)` through the recommendation
-// work; V1-P2 wires it back on. The pivot changed only *who decides* which
-// extension is called (the user accepting a recommendation, not a router), and
-// *what* it is handed (the full transcript, not extracted spans). Waking a cold
-// worker, the deadline pair, and the call/outcome shape are unchanged.
+// [GRAIN] Waking a cold worker, the deadline pair, and the call/outcome shape
+// for one declared action call.
 
 /// Absolute native operation budget, including validation, wake and reply.
 const NATIVE_OPERATION_DEADLINE: Duration = Duration::from_secs(20);
@@ -1745,35 +1437,12 @@ fn native_time_remaining(
 /// that, because the cost of being wrong is a failed request the user has to
 /// repeat, while the cost of waiting is a pill that says "working" for another
 /// moment.
-const HANDOFF_WAKE_DEADLINE: Duration = Duration::from_secs(3);
-/// An interactive request should return its finite text outcome quickly; unlike
-/// the initial request it has no network-sized interpretation phase.
+const COLD_WAKE_DEADLINE: Duration = Duration::from_secs(3);
 
-/// What a handed-off request produced.
-#[derive(Debug, PartialEq)]
-#[allow(dead_code)] // Legacy wire shape; whole-request execution is retired.
-pub enum HandOffOutcome {
-    /// The extension handled it. The optional line is a short result to show.
-    Done(Option<String>),
-    /// The extension is healthy but is not the right owner for this request.
-    /// Grain must reopen the chooser with this extension removed rather than
-    /// treating a routing correction as an execution failure.
-    Declined(String),
-    /// It could not, with a reason worth showing.
-    Failed(String),
-    /// The deadline passed after the call was already in flight.
-    ///
-    /// **Distinct from `Failed` on purpose.** For anything that leaves the
-    /// machine, a timeout does not mean it did not happen — the request may well
-    /// have been carried out. Reporting that as failure is a lie, and the one a
-    /// user is least able to recover from.
-    Unknown,
-}
-
-/// Wake the extension the request was handed to, if it is cold.
+/// Wake the extension a call is addressed to, if it is cold.
 ///
-/// Only that one. Warming every searchable extension when the key goes down is
-/// the tempting alternative and it violates destroy-if-not-in-use at exactly the
+/// Only that one. Warming every installed extension ahead of a call is the
+/// tempting alternative and it violates destroy-if-not-in-use at exactly the
 /// scale this feature is built for — twenty installed extensions would mean
 /// twenty worker spawns per press. Spawned with no activation payload: the
 /// request arrives as an explicit host call, not as a wake event.
@@ -1815,18 +1484,6 @@ fn wake_for_request(app: &AppHandle, ext_id: &str, expected_digest: &str) -> Opt
         );
     }
     spawn_worker(app, ext_id, &pack, granted, revision)
-}
-
-/// Hand the full request to the extension the user accepted (§3).
-///
-/// The extension receives the whole transcript, verbatim, and owns what happens
-/// next — interpretation, any `match.*` ranking, clarification, the result. Grain
-/// does not resolve anything first; that was the old routing model. What it does
-/// guarantee is that the extension is still enabled and awake.
-pub async fn hand_off(_app: &AppHandle, _ext_id: &str, _request: &str) -> HandOffOutcome {
-    HandOffOutcome::Failed(
-        "Whole-request extension hand-off is retired. Use a declared tool call.".into(),
-    )
 }
 
 /// Availability failures precede dispatch; transport failures carry certainty.
@@ -1960,8 +1617,7 @@ fn native_reply_if_current(
 }
 
 /// [GRAIN] Invoke one exact declared action on an extension worker (Extensions 2.0
-/// Phase 3b). Unlike [`hand_off`], which gives the worker the whole transcript,
-/// this sends the *chosen action id and validated arguments* — the V2 model. The
+/// Phase 3b). This sends the *chosen action id and validated arguments*; the
 /// worker's `"action"` handler runs the declared entrypoint and returns a
 /// structured result; the executor maps it to an `ActionOutcome`.
 ///
@@ -2003,7 +1659,7 @@ pub async fn run_action(
             ext_id,
             &token,
             native_time_remaining(expires, DispatchPhase::NotDispatched)?
-                .min(HANDOFF_WAKE_DEADLINE),
+                .min(COLD_WAKE_DEADLINE),
         )
         .await
     {
@@ -2666,7 +2322,7 @@ mod tests {
         assert!(read_pack_file(&path, false, Some(&hash), "com.x.hash", Some("1")).is_err());
     }
 
-    // ── The Extension Mode pool (`docs/Extensions V1/PLAN.md` §2) ───────────
+    // ── Manifest and record fixtures ──────────────────────────────────────
 
     fn pack_of(extra: &str) -> GrainPack {
         let json = format!(
@@ -2702,43 +2358,6 @@ mod tests {
             dev: None,
             trust: grain_sdk::Trust::UNTRUSTED_DEFAULT,
         }
-    }
-
-    const SEARCHABLE: &str = r#","kind":"searchable","recommend":{"purpose":"Play music",
-        "examples":["next song","pause the music"]}"#;
-
-    /// Most of the platform is `extending` — prompt layers, settings, App
-    /// Modes. Without the classification gate every one of them would compete
-    /// for "next song" against the extension that actually plays music.
-    #[test]
-    fn an_extending_extension_never_enters_the_pool() {
-        let pack = pack_of("");
-        assert!(!pack.manifest.kind.is_searchable(), "extending by default");
-        let mut out = Vec::new();
-        collect_actions(&record_for(&pack), &pack, &mut out);
-        assert!(out.is_empty(), "commands are its own business, not Grain's");
-    }
-
-    #[test]
-    fn a_searchable_extension_enters_the_pool() {
-        let pack = pack_of(SEARCHABLE);
-        let mut out = Vec::new();
-        collect_actions(&record_for(&pack), &pack, &mut out);
-        assert_eq!(out.len(), 1);
-        assert_eq!(out[0].extension_id, "com.x.p");
-    }
-
-    /// The rug pull, at the level that matters most: being pickable means
-    /// receiving everything the user said. An extension that rewrote what it
-    /// asks to be offered for drops out until the user reads the new version.
-    #[test]
-    fn a_rewritten_recommendation_drops_out_of_the_pool() {
-        let pack = pack_of(SEARCHABLE);
-        let mut stale = record_for(&pack);
-        stale.recommend_approved = Some("the-fingerprint-of-a-version-the-user-read".into());
-        let mut out = Vec::new();
-        collect_actions(&stale, &pack, &mut out);
-        assert!(out.is_empty());
     }
 
     fn worker(last_activity: u64, resident: bool) -> Worker {

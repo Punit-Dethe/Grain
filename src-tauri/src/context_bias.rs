@@ -22,8 +22,7 @@
 //!    makes the multilingual tokenizer drift, in the well-known failure where an
 //!    English utterance starts emitting CJK.
 //!
-//! The user's standing dictionary is followed by action vocabulary only when
-//! an extension action capture explicitly supplies it.
+//! The terms are the user's standing dictionary.
 //!
 //! # Cost
 //!
@@ -130,74 +129,9 @@ fn collapse_whitespace(s: &str) -> String {
 }
 
 /// Build the bias set for a transcription from the user's standing dictionary.
-///
-/// Kept separate from [`BiasSet::extend`] so action vocabulary can be layered
-/// on top without this module knowing about action sessions.
 pub fn from_custom_words(custom_words: &[String]) -> BiasSet {
     let mut set = BiasSet::new();
     set.extend(custom_words);
-    set
-}
-
-// ---------------------------------------------------------------------------
-// Per-session action vocabulary
-// ---------------------------------------------------------------------------
-
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Mutex;
-
-/// Action vocabulary waiting for the current action transcription.
-static ACTION_TERMS: Mutex<Vec<String>> = Mutex::new(Vec::new());
-
-/// A late cleanup must not erase vocabulary from a newer action session.
-static ACTION_GEN: AtomicU64 = AtomicU64::new(0);
-
-/// Seed this session's bias with action vocabulary (`docs/Extensions V1/PLAN.md` §3).
-///
-/// The dominant real-world failure in action routing is not the router, it is
-/// transcription of the words that identify the action — "skip" arriving as
-/// "skit", an extension name mangled entirely. The fix is free: the phrases are
-/// already declared in the manifest, already approved by the user, and already
-/// in memory in the host's index.
-///
-/// Static, host-owned, and no privacy cost: it reads nothing about what the
-/// user is doing. Biasing from an extension's own data (contacts, playlist names)
-/// would be a different question and is not built.
-///
-/// Synchronous because there is nothing to fetch: the terms are already here.
-pub fn arm_action_session(terms: Vec<String>) -> u64 {
-    let mut guard = ACTION_TERMS
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
-    let generation = ACTION_GEN.fetch_add(1, Ordering::SeqCst) + 1;
-    *guard = terms;
-    generation
-}
-
-/// Discard action vocabulary when a capture ends before transcription consumes
-/// it. Otherwise a cancelled/failed Extension Mode capture can bias the next,
-/// unrelated dictation.
-pub fn clear_action_session(generation: u64) {
-    if let Ok(mut guard) = ACTION_TERMS.lock() {
-        // A late cleanup must never erase a newer action session.
-        if ACTION_GEN.load(Ordering::SeqCst) == generation {
-            guard.clear();
-        }
-    }
-}
-
-/// The decoder prefix for this transcription, or `None` when there is nothing
-/// worth biasing with.
-///
-/// The single entry point the transcription path calls, so the upstream file
-/// carries one marked line and none of this module's lifecycle.
-///
-/// The standing dictionary goes first; explicit action vocabulary follows it.
-fn take_terms(settings: &grain_core::AppSettings) -> BiasSet {
-    let mut set = from_custom_words(&settings.custom_words);
-    if let Ok(mut guard) = ACTION_TERMS.lock() {
-        set.extend(std::mem::take(&mut *guard));
-    }
     set
 }
 
@@ -209,7 +143,7 @@ pub(crate) fn configure_run(
     vocabulary: bool,
     initial_prompt: bool,
 ) {
-    let terms = take_terms(settings);
+    let terms = from_custom_words(&settings.custom_words);
     if vocabulary {
         options.vocabulary = terms.bounded_terms();
     } else if initial_prompt {
@@ -233,8 +167,6 @@ pub(crate) fn was_prompted(options: &transcribe_cpp::RunOptions) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    static ACTION_TEST_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn empty_renders_to_none() {
@@ -326,7 +258,7 @@ mod tests {
         assert!(rendered.len() <= MAX_PROMPT_BYTES);
     }
 
-    /// Explicit action terms follow the standing dictionary.
+    /// Terms added later outrank earlier ones.
     #[test]
     fn later_sources_outrank_earlier_ones() {
         let mut set = from_custom_words(&["Standing".into()]);
@@ -336,30 +268,6 @@ mod tests {
         assert!(rendered.ends_with("ActionName"));
     }
 
-    /// Consuming action vocabulary must empty it for the next transcription.
-    #[test]
-    fn action_terms_are_consumed_exactly_once() {
-        let _lock = ACTION_TEST_LOCK.lock().unwrap();
-        *ACTION_TERMS.lock().unwrap() = vec!["Ephemeral".to_string()];
-
-        let mut first = BiasSet::new();
-        first.extend(std::mem::take(&mut *ACTION_TERMS.lock().unwrap()));
-        assert_eq!(first.render().unwrap(), "Ephemeral");
-
-        // Second read sees nothing — the stash gave up ownership.
-        assert!(ACTION_TERMS.lock().unwrap().is_empty());
-    }
-
-    /// A late cleanup must not clear a newer action session.
-    #[test]
-    fn stale_action_cleanup_preserves_newer_terms() {
-        let _lock = ACTION_TEST_LOCK.lock().unwrap();
-        let stale_generation = arm_action_session(vec!["Old".into()]);
-        let new_generation = arm_action_session(vec!["New".into()]);
-        clear_action_session(stale_generation);
-        assert_eq!(*ACTION_TERMS.lock().unwrap(), vec!["New".to_string()]);
-        clear_action_session(new_generation);
-    }
 }
 
 #[cfg(test)]

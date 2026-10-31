@@ -3,9 +3,8 @@
 //!
 //! Given what the user said (or a query the Agent authored), produce the
 //! **bounded hot set** of installed *actions* the Agent will select from. This
-//! is the V2 successor to [`crate::recommend`], which ranked whole *extensions*
-//! and handed the winner the transcript to interpret. Here Grain retrieves exact
-//! actions and the Agent picks one; the extension never guesses intent.
+//! retrieves exact actions and the Agent picks one; the extension never guesses
+//! intent.
 //!
 //! ## What is reused, and why it is not generic tool retrieval
 //!
@@ -20,8 +19,7 @@
 //!
 //! ## Three provenance tiers, kept apart on the result (not blended)
 //!
-//! Following [`crate::recommend`]'s hard-won lesson that a *named* hit and a
-//! *topical* guess are different kinds of evidence:
+//! A *named* hit and a *topical* guess are different kinds of evidence:
 //!
 //! - **Exact** — the user said the action's address (a declared alias, the
 //!   provider name, the title, or the canonical id). Near-certain; promoted
@@ -30,7 +28,7 @@
 //!   floor: it needs no model, so it works for the ~130 MB embedder most users
 //!   have not downloaded.
 //! - **Dense** — cosine from the host's embedder, injected per canonical id
-//!   exactly as `recommend` injects it. Absent = honestly degraded, not broken.
+//!   per canonical id. Absent = honestly degraded, not broken.
 //!
 //! Lexical and Dense are fused **by rank** (Reciprocal Rank Fusion), not by
 //! score, because BM25 and cosine live on different scales. Provenance rides out
@@ -129,8 +127,7 @@ fn is_stopword(token: &str) -> bool {
 const NEG_PENALTY: f32 = 0.5;
 
 /// The similarity a dense (cosine) score must clear to be a topical signal at
-/// all. Shared with [`crate::recommend::TOPICAL_FLOOR`] for shared embeddings:
-/// below this the asymmetric BGE geometry no longer separates related from
+/// all. Below this the asymmetric BGE geometry no longer separates related from
 /// unrelated, so the score is noise dressed as a match.
 pub const DENSE_FLOOR: f32 = 0.50;
 
@@ -262,8 +259,7 @@ impl ActionInput {
     }
 
     /// Normalised token runs that, if spoken as a contiguous run, *name* this
-    /// action: each alias, the title, and the canonical id. Matches
-    /// [`crate::recommend`]'s named-address surface, one level down at the action.
+    /// action: each alias, the title, and the canonical id.
     fn exact_runs(&self) -> Vec<Vec<String>> {
         let mut runs: Vec<Vec<String>> = Vec::new();
         let mut push = |text: &str| {
@@ -700,7 +696,7 @@ impl CapabilityIndex {
     /// tolerance. Query tokens are consulted rarest-first and the walk stops at
     /// the budget — a token half the corpus declares prunes nothing and carries
     /// almost no evidence, so giving it up drops only candidates that could not
-    /// have won. (Same discipline as [`crate::action_router`].)
+    /// have won.
     fn candidates(&self, query_tokens: &[&str]) -> Vec<u32> {
         let mut ordered: Vec<&str> = query_tokens.to_vec();
         ordered.sort_by(|a, b| {
@@ -896,8 +892,8 @@ pub struct RetrievalParams {
 
 /// Host-supplied state that changes too often to bake into the index: the
 /// injected dense scores, and the dynamic halves of eligibility (surface context
-/// and auth). Keyed by canonical id, exactly as [`crate::recommend`] injects
-/// semantic scores — the embedder and the surface matcher stay host-side.
+/// and auth). Keyed by canonical id — the embedder and the surface matcher stay
+/// host-side.
 #[derive(Clone, Debug)]
 pub struct RetrievalContext<'a> {
     pub dense: Option<&'a HashMap<String, f32>>,

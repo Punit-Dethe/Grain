@@ -47,9 +47,7 @@ pub(crate) fn capture_shortcut_conflicts(
             .iter()
             .filter(|(other, _)| {
                 other.as_str() != id
-                    && (ids.contains(&other.as_str())
-                        || (id == "prompt_record"
-                            && !grain_core::capture::shortcut_is_withheld(other)))
+                    && (ids.contains(&other.as_str()) || id == "prompt_record")
             })
             .any(|(_, binding)| {
                 binding
@@ -770,14 +768,6 @@ pub struct ExtensionCard {
     /// a capability governs *reach* and this governs *cost*, and hiding the
     /// second is how a lightweight-looking install turns out not to be.
     pub needs: Vec<String>,
-    /// The author permits Auto-send and explains why. The user's setting can
-    /// only remove this eligibility, never grant it to another extension.
-    pub auto_send_eligible: bool,
-    /// Effective per-extension state. This does not include the global beta
-    /// switch; it answers only whether this author-eligible extension is on the
-    /// user's deny-list.
-    pub auto_send_enabled: bool,
-    pub auto_send_note: Option<String>,
 }
 
 /// [GRAIN] The recommendation surface an extension declares
@@ -814,196 +804,6 @@ pub struct PromptLayerInfo {
     pub app: Vec<String>,
     pub website: Vec<String>,
     pub category: Vec<String>,
-}
-
-/// [GRAIN] Start or stop listening for a request
-/// (`docs/Extensions V1/PLAN.md` §3).
-///
-/// Grain's persisted `extension_mode` binding is the normal trigger. This
-/// command remains the trusted-surface seam for the same start/stop/cancel
-/// lifecycle; it does not create a second recording implementation.
-///
-/// One command for all three transitions rather than three, because the
-/// invoke-handler list lives in the Handy-derived `lib.rs` and every entry is a
-/// merge-conflict surface.
-#[tauri::command]
-#[specta::specta]
-pub fn grain_action_listen(app: AppHandle, phase: String) -> Result<bool, String> {
-    use crate::grain_actions::action_session;
-    match phase.as_str() {
-        "start" => match action_session::start(&app) {
-            Ok(()) => Ok(true),
-            // Quiet refusal: the build withholds the feature, something else
-            // owns the microphone, or nothing installed could answer.
-            Err(action_session::StartError::Disabled)
-            | Err(action_session::StartError::Busy)
-            | Err(action_session::StartError::NothingInstalled) => Ok(false),
-            Err(action_session::StartError::Unavailable(why)) => Err(why),
-        },
-        "stop" => {
-            action_session::stop(&app);
-            Ok(true)
-        }
-        "cancel" => Ok(action_session::cancel(&app)),
-        other => Err(format!("unknown action phase '{other}'")),
-    }
-}
-
-/// [GRAIN] Whether Extension Mode can recommend, and how well
-/// (`docs/Extensions V1/PLAN.md` §5).
-///
-/// The one query a surface needs to decide what to offer: is there anything to
-/// rank (`searchable`), and whether semantic retrieval is available or name-only
-/// until the shared embedding model is downloaded.
-#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, specta::Type)]
-pub struct ExtensionModeStatus {
-    /// Searchable, approved extensions installed. Zero means Extension Mode has
-    /// nothing to rank and the download is not worth offering.
-    pub searchable_count: u32,
-    /// `"ready" | "downloading" | "absent"`. `absent` is name-only mode (§5):
-    /// Extension Mode still works on names, and first use is where the download
-    /// is offered — this is what tells the surface to offer it.
-    pub model: String,
-}
-
-/// [GRAIN] Report Extension Mode readiness (`docs/Extensions V1/PLAN.md` §5).
-#[tauri::command]
-#[specta::specta]
-pub fn grain_extension_mode_status() -> ExtensionModeStatus {
-    use crate::grain_embed as embed;
-    let model = if embed::is_downloading() {
-        "downloading"
-    } else if embed::model_on_disk() {
-        "ready"
-    } else {
-        "absent"
-    };
-    ExtensionModeStatus {
-        searchable_count: crate::extension_host::searchable_count() as u32,
-        model: model.to_string(),
-    }
-}
-
-/// [GRAIN] Download the understanding model for Extension Mode
-/// (`docs/Extensions V1/PLAN.md` §5). The first-use offer calls this after the
-/// user consents; progress and completion arrive on the shared model events.
-///
-#[tauri::command]
-#[specta::specta]
-pub async fn grain_extension_mode_download_model(
-    app: AppHandle,
-    window: tauri::WebviewWindow,
-) -> Result<(), String> {
-    require_main_window(&window)?;
-    crate::grain_embed::download_model(app).await
-}
-
-/// [GRAIN] Flip the global Auto-send toggle (`docs/Extensions V1/PLAN.md` §5).
-/// Off by default and beta-gated — Auto-send only actually fires while
-/// `experimental_enabled` is also on. Turning it on authorises nothing by
-/// itself: a clear semantic match to an *author-eligible* extension the user has
-/// not individually disabled still has to happen.
-#[tauri::command]
-#[specta::specta]
-pub fn change_auto_send_setting(
-    app: AppHandle,
-    window: tauri::WebviewWindow,
-    enabled: bool,
-) -> Result<(), String> {
-    require_main_window(&window)?;
-    let mut settings = settings::get_settings(&app);
-    settings.auto_send_enabled = enabled;
-    settings::write_settings(&app, settings);
-    Ok(())
-}
-
-/// [GRAIN] Turn Auto-send off (or back on) for one extension (§5). The user may
-/// only make Auto-send *stricter* than the author allows: `enabled=false` adds
-/// the extension to the deny-list; `enabled=true` merely removes it, and has no
-/// effect on an extension the author never marked eligible.
-#[tauri::command]
-#[specta::specta]
-pub fn change_auto_send_for_extension(
-    app: AppHandle,
-    window: tauri::WebviewWindow,
-    id: String,
-    enabled: bool,
-) -> Result<(), String> {
-    require_main_window(&window)?;
-    grain_sdk::validate_extension_id(&id)?;
-    let pack = load_pack(&app, &id)?;
-    if !pack
-        .manifest
-        .auto_send
-        .as_ref()
-        .is_some_and(|declaration| declaration.eligible)
-    {
-        return Err("this extension does not declare Auto-send eligibility".into());
-    }
-    let mut settings = settings::get_settings(&app);
-    settings
-        .auto_send_disabled
-        .retain(|existing| existing != &id);
-    if !enabled {
-        settings.auto_send_disabled.push(id);
-    }
-    settings.auto_send_disabled.sort();
-    settings.auto_send_disabled.dedup();
-    settings::write_settings(&app, settings);
-    Ok(())
-}
-
-/// [GRAIN] The user declined the recommended extension; reopen with it struck
-/// out (`docs/Extensions V1/PLAN.md` §8 G2). The chooser re-ranks the same
-/// captured request and emits a fresh `extension-recommendation` — one keypress,
-/// not one re-recording. No-op if the pending request has moved on.
-#[tauri::command]
-#[specta::specta]
-pub async fn grain_extension_mode_decline(
-    app: AppHandle,
-    window: tauri::WebviewWindow,
-    presentation_id: u64,
-    extension_id: String,
-) -> Result<(), String> {
-    require_main_window(&window)?;
-    crate::grain_actions::action_session::decline(&app, presentation_id, &extension_id).await;
-    Ok(())
-}
-
-/// [GRAIN] The user accepted an extension; the full request is handed to it
-/// (`docs/Extensions V1/PLAN.md` §3). Wakes the extension, delivers the whole
-/// transcript, and records the outcome; the extension owns what happens next.
-#[tauri::command]
-#[specta::specta]
-pub fn grain_extension_mode_accept(
-    app: AppHandle,
-    window: tauri::WebviewWindow,
-    presentation_id: u64,
-    extension_id: String,
-) -> Result<(), String> {
-    require_main_window(&window)?;
-    crate::grain_actions::action_session::accept(&app, presentation_id, &extension_id)
-}
-
-/// [GRAIN] Read the action log, optionally clearing it first
-/// (`docs/Extensions V1/PLAN.md`).
-///
-/// The "why did that happen" surface. It holds what was heard, so it is capped,
-/// lives only in memory, and clearing it is one call with no confirmation
-/// dance — this is the user's own speech and asking twice before letting them
-/// delete it is the wrong default.
-#[tauri::command]
-#[specta::specta]
-pub fn grain_action_log(
-    window: tauri::WebviewWindow,
-    clear: bool,
-) -> Result<Vec<crate::grain_actions::action_log::ActionLogEntry>, String> {
-    require_main_window(&window)?;
-    if clear {
-        crate::grain_actions::action_log::clear();
-        return Ok(Vec::new());
-    }
-    Ok(crate::grain_actions::action_log::entries())
 }
 
 /// [GRAIN] One declared action, as the approval sheet and the extension card
@@ -1085,7 +885,6 @@ pub fn extensions_overview(app: AppHandle) -> Result<Vec<ExtensionCard>, String>
     // `extension_set_enabled` still accepts their ids for compatibility, but the
     // tab headers write those settings flags directly.
     let mut cards: Vec<ExtensionCard> = Vec::new();
-    let auto_send_disabled = settings::get_settings(&app).auto_send_disabled;
     // Installed packs — including the Agent centre layout, which is now a real
     // external pack (Phase 5C) rendered through this same path, not a
     // host-synthesised special case.
@@ -1116,8 +915,6 @@ pub fn extensions_overview(app: AppHandle) -> Result<Vec<ExtensionCard>, String>
                     kind: "extending",
                     recommend: None,
                     needs: Vec::new(),
-                    auto_send_eligible: false,
-                    auto_send_note: None,
                 }
             }
             // SPEC §6 last row: a broken/missing pack file renders an error
@@ -1143,8 +940,6 @@ pub fn extensions_overview(app: AppHandle) -> Result<Vec<ExtensionCard>, String>
             kind,
             recommend,
             needs,
-            auto_send_eligible,
-            auto_send_note,
         } = facts;
         cards.push(ExtensionCard {
             id: rec.id.clone(),
@@ -1183,9 +978,6 @@ pub fn extensions_overview(app: AppHandle) -> Result<Vec<ExtensionCard>, String>
             kind: kind.to_string(),
             recommend,
             needs,
-            auto_send_eligible,
-            auto_send_enabled: auto_send_eligible && !auto_send_disabled.contains(&rec.id),
-            auto_send_note,
             has_detail,
             slots: rec.slots.clone(),
         });
@@ -1209,8 +1001,6 @@ struct PackFacts {
     kind: &'static str,
     recommend: Option<RecommendInfo>,
     needs: Vec<String>,
-    auto_send_eligible: bool,
-    auto_send_note: Option<String>,
 }
 
 impl Default for PackFacts {
@@ -1230,8 +1020,6 @@ impl Default for PackFacts {
             kind: grain_sdk::manifest::ExtensionKind::Extending.as_str(),
             recommend: None,
             needs: Vec::new(),
-            auto_send_eligible: false,
-            auto_send_note: None,
         }
     }
 }
@@ -2266,20 +2054,10 @@ pub async fn extension_uninstall(
     // only the removed grant, never a replacement login or active dev account.
     let credential_cleanup = crate::grain_auth::purge_extension(&id, session);
     crate::extension_host::refresh_index(&app);
-    if purge {
-        if let Some(ctx) = app.try_state::<std::sync::Arc<grain_core::AppContext>>() {
-            let _ = ctx.update_settings(|settings| {
-                settings
-                    .auto_send_disabled
-                    .retain(|disabled| disabled != &id);
-            });
-        }
-    }
     if dev_active {
         if purge {
             let _ = std::fs::remove_file(pack_path(&app, &id)?);
             crate::extension_icons::purge(&app, &id)?;
-            crate::extension_misroutes::purge(&app, &id);
         }
         return credential_cleanup.await;
     }
@@ -2303,7 +2081,6 @@ pub async fn extension_uninstall(
     if purge {
         let _ = std::fs::remove_file(pack_path(&app, &id)?);
         crate::extension_icons::purge(&app, &id)?;
-        crate::extension_misroutes::purge(&app, &id);
     }
     crate::extension_host::refresh_index(&app);
     credential_cleanup.await

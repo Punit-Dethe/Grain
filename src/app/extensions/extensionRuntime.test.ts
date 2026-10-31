@@ -41,9 +41,6 @@ const card = (overrides: Partial<ExtensionCard> = {}): ExtensionCard => ({
   kind: "standalone",
   recommend: null,
   needs: [],
-  auto_send_eligible: false,
-  auto_send_enabled: false,
-  auto_send_note: null,
   ...overrides,
 });
 

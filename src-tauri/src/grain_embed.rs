@@ -2,8 +2,8 @@
 
 //! Opt-in BGE-small-en-v1.5 weights live in the shared Hugging Face cache.
 //! The tokenizer and Candle BERT model load on demand on a dedicated thread.
-//! Agent panels and a bounded retrieval TTL govern residency; idle teardown
-//! joins the thread and releases its weights.
+//! An open Agent panel governs residency; idle teardown joins the thread and
+//! releases its weights.
 
 use std::path::PathBuf;
 use std::sync::mpsc;
@@ -331,130 +331,18 @@ pub fn uninstall_model() -> Result<()> {
 pub fn shutdown_engine_if_idle(app: &AppHandle) {
     use tauri::Manager;
     let panel_open = app.get_webview_window(crate::agent::PANEL_LABEL).is_some();
-    if !panel_open && !extension_mode_warm() {
+    if !panel_open {
         let app = app.clone();
         // Dropping Engine joins its worker, including any pending inference.
         // Window destruction and the async reaper must not block on that join.
         tauri::async_runtime::spawn_blocking(move || {
             let mut slot = ENGINE.lock().unwrap();
-            // A new use may have refreshed the TTL while cleanup was queued.
-            if !extension_mode_warm() && app.get_webview_window(crate::agent::PANEL_LABEL).is_none()
-            {
+            // A panel may have reopened while cleanup was queued.
+            if app.get_webview_window(crate::agent::PANEL_LABEL).is_none() {
                 *slot = None;
             }
         });
     }
-}
-
-// ── Extension Mode witness (`docs/Extensions V1/PLAN.md` §6) ─────────────────
-//
-// This is the whole of §6's "Grain owns the embedder lifecycle": an extension
-// may declare `needs: ["semantic"]`, but it can never pin the model, set the
-// TTL, or keep it alive by polling. The one knob it gets is the honest
-// declaration; the arithmetic lives here.
-
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::time::Duration;
-
-/// How long the embedder is held warm after Extension Mode last touched it.
-///
-/// Long enough that the recommendation, an immediate accept, and a first
-/// `match.semantic` from the chosen extension all reuse one load; short enough
-/// that an idle Extension-Mode session does not sit on ~130 MB. Not
-/// author-settable (§6).
-pub const EXTENSION_MODE_TTL: Duration = Duration::from_secs(30);
-
-/// Unix-millis deadline the Extension-Mode witness holds the engine to; `0` =
-/// not warm.
-static EXTENSION_MODE_WARM_UNTIL_MS: AtomicU64 = AtomicU64::new(0);
-/// One reaper at a time.
-static REAPER_RUNNING: AtomicBool = AtomicBool::new(false);
-
-fn now_ms() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis() as u64)
-        .unwrap_or(0)
-}
-
-/// True while Extension Mode is holding the embedder warm.
-pub fn extension_mode_warm() -> bool {
-    now_ms() < EXTENSION_MODE_WARM_UNTIL_MS.load(Ordering::Relaxed)
-}
-
-/// Extension Mode is using — or about to use — the embedder: hold it warm for
-/// [`EXTENSION_MODE_TTL`] and spawn it now if the model is present, so the query
-/// does not pay the load. Idempotent and cheap; call it on the Extension-Mode
-/// keypress (§6, "warm if any searchable installed") and on every semantic use
-/// to refresh the TTL.
-///
-/// A no-op when the model is absent — name-only mode has nothing to warm, and
-/// setting a deadline would only schedule a reaper with nothing to reclaim.
-pub fn touch_extension_mode(app: &AppHandle) {
-    if !model_on_disk() {
-        return;
-    }
-    EXTENSION_MODE_WARM_UNTIL_MS.store(
-        now_ms() + EXTENSION_MODE_TTL.as_millis() as u64,
-        Ordering::Relaxed,
-    );
-    ensure_spawned();
-    spawn_reaper(app.clone());
-}
-
-/// Spawn the engine now if the model is on disk and it is not already resident,
-/// WITHOUT embedding anything — the proactive-warm half of [`touch_extension_mode`].
-/// [`embed`] still spawns lazily on its own, so this is an optimisation, never a
-/// correctness requirement.
-fn ensure_spawned() {
-    if !model_on_disk() {
-        return;
-    }
-    let mut slot = ENGINE.lock().unwrap();
-    if slot.is_none() {
-        match spawn_engine() {
-            Ok(engine) => *slot = Some(engine),
-            Err(error) => log::warn!("[GRAIN] embed: proactive warm failed: {error:#}"),
-        }
-    }
-}
-
-/// Ensure a single background task is watching the TTL, and reclaims the engine
-/// when it lapses. Re-reads the deadline each wake, so a `touch` that extends the
-/// warmth mid-sleep is honoured rather than fought. The reclaim goes through
-/// [`shutdown_engine_if_idle`], so an Agent panel still using the
-/// engine keeps it — Extension Mode only ever withdraws its own witness.
-fn spawn_reaper(app: AppHandle) {
-    if REAPER_RUNNING.swap(true, Ordering::SeqCst) {
-        return; // one reaper already watching
-    }
-    tauri::async_runtime::spawn(async move {
-        loop {
-            let remaining = EXTENSION_MODE_WARM_UNTIL_MS
-                .load(Ordering::Relaxed)
-                .saturating_sub(now_ms());
-            if remaining == 0 {
-                // A touch can refresh the deadline after the expiry check but
-                // before ownership is released. Either this task resumes its
-                // watch, or a concurrent touch has already started a new one.
-                if release_or_reclaim_reaper(&REAPER_RUNNING, extension_mode_warm) {
-                    continue;
-                }
-                shutdown_engine_if_idle(&app);
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(remaining)).await;
-        }
-    });
-}
-
-fn release_or_reclaim_reaper(running: &AtomicBool, is_warm: impl FnOnce() -> bool) -> bool {
-    // Acquire a racing touch's ownership update before reading its deadline.
-    running.swap(false, Ordering::SeqCst);
-    is_warm()
-        && running
-            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
-            .is_ok()
 }
 
 /// BGE v1.5's retrieval instruction. ASYMMETRIC by design: the model card
@@ -642,28 +530,6 @@ mod tests {
     use std::sync::atomic::{AtomicBool, Ordering};
 
     #[test]
-    fn late_touch_keeps_a_reaper_until_the_extended_deadline() {
-        let running = AtomicBool::new(true);
-        // The loop observed expiry, then a touch saw the old owner and extended
-        // the deadline without spawning another task.
-        assert!(super::release_or_reclaim_reaper(&running, || true));
-        assert!(running.load(Ordering::SeqCst));
-        assert!(!super::release_or_reclaim_reaper(&running, || false));
-        assert!(!running.load(Ordering::SeqCst));
-    }
-
-    #[test]
-    fn late_touch_with_a_new_reaper_does_not_create_duplicate_owners() {
-        let running = AtomicBool::new(true);
-        assert!(!super::release_or_reclaim_reaper(&running, || {
-            // A touch starts its own watcher after the old owner releases.
-            assert!(!running.swap(true, Ordering::SeqCst));
-            true
-        }));
-        assert!(running.load(Ordering::SeqCst));
-    }
-
-    #[test]
     fn engine_teardown_completes_pending_requests_and_joins_the_worker() {
         use super::{mpsc, Arc, Engine, Request};
 
@@ -710,21 +576,6 @@ mod tests {
         assert!(super::uninstall_model().is_err());
         super::DOWNLOAD.lock().unwrap().take();
         assert!(!super::is_downloading());
-    }
-
-    /// The Extension-Mode witness `shutdown_engine_if_idle` consults (§6): a past
-    /// or zero deadline reads as not-warm, a future one as warm. This is the
-    /// arithmetic that keeps the shared engine alive for the TTL and no longer.
-    #[test]
-    fn extension_mode_witness_tracks_its_ttl() {
-        use super::{extension_mode_warm, now_ms, EXTENSION_MODE_WARM_UNTIL_MS};
-        EXTENSION_MODE_WARM_UNTIL_MS.store(0, Ordering::Relaxed);
-        assert!(!extension_mode_warm(), "the default is not-warm");
-        EXTENSION_MODE_WARM_UNTIL_MS.store(now_ms() + 10_000, Ordering::Relaxed);
-        assert!(extension_mode_warm(), "a future deadline holds the engine");
-        EXTENSION_MODE_WARM_UNTIL_MS.store(now_ms().saturating_sub(1), Ordering::Relaxed);
-        assert!(!extension_mode_warm(), "a lapsed TTL releases it");
-        EXTENSION_MODE_WARM_UNTIL_MS.store(0, Ordering::Relaxed);
     }
 
     /// Verify asymmetric query embeddings rank relevant documents first. Prints the

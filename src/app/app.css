@@ -4803,22 +4803,6 @@ html[data-theme="light"] .dictionary-dialog .dictionary-save-button {
   }
 }
 
-.extension-recommendations {
-  margin-top: 44px;
-  padding-top: 28px;
-  position: relative;
-}
-
-.extension-recommendations::before {
-  content: "";
-  position: absolute;
-  left: 0;
-  right: 0;
-  top: 0;
-  height: 1px;
-  background: var(--hairline-soft);
-}
-
 .recommendation-heading {
   margin-bottom: 12px;
   display: flex;
@@ -6195,63 +6179,6 @@ article.studio-extension-card {
   color: var(--text-3);
 }
 
-.extension-auto-send-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 24px;
-}
-
-.extension-auto-send-copy {
-  min-width: 0;
-  max-width: 680px;
-}
-
-.extension-auto-send-copy > div:first-child {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.extension-auto-send-copy strong {
-  color: var(--text-2);
-  font-size: 13px;
-  font-weight: 550;
-}
-
-.extension-auto-send-copy > div:first-child > span {
-  padding: 2px 6px;
-  border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
-  border-radius: 999px;
-  color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 9%, transparent);
-  font-size: 8px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  line-height: 1;
-  text-transform: uppercase;
-}
-
-.extension-auto-send-copy p,
-.extension-auto-send-copy small {
-  margin: 5px 0 0;
-  display: block;
-  color: var(--text-3);
-  font-size: 12px;
-  line-height: 1.5;
-}
-
-.extension-auto-send-copy small {
-  color: var(--text-3);
-}
-
-.extension-auto-send-error {
-  margin-top: 7px;
-  color: var(--danger, #c45b5b);
-  font-size: 10.5px;
-  line-height: 1.4;
-}
-
 .extension-detail-readme-section {
   min-width: 0;
 }
@@ -6648,9 +6575,6 @@ html[data-theme="light"] .extension-empty-state {
   }
   .extension-permissions-pane {
     grid-column: 1 / -1;
-  }
-  .extension-auto-send-row {
-    align-items: flex-start;
   }
 }
 

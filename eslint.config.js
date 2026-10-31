@@ -34,16 +34,11 @@ const LEGACY_RAW_LISTEN = [
 ];
 
 // Permanent exemptions, not legacy: isolated Vite entries with deliberately
-// tiny command/event boundaries. The extension-view entry is Grain's own
-// recommendation and result UI; extension code never enters that page.
-// `commands` and
+// tiny command/event boundaries. `commands` and
 // `events` live in the same module, so importing either retains all ~204 command
-// wrappers; that is a real cost to pay on two pages that make five calls
-// between them. `bindings.ts` is the generated file the rules point everyone at.
-const STANDALONE_ENTRIES = [
-  "src/app/extension-host.ts",
-  "src/app/extension-view.tsx",
-];
+// wrappers; that is a real cost to pay on a page that makes a handful of calls.
+// `bindings.ts` is the generated file the rules point everyone at.
+const STANDALONE_ENTRIES = ["src/app/extension-host.ts"];
 const GENERATED = [...STANDALONE_ENTRIES, "src/app/bindings.ts"];
 
 const NO_RAW_INVOKE = {

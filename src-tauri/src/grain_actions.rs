@@ -25,23 +25,6 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use tauri::{AppHandle, Emitter, Manager};
 
-/// [GRAIN] The action log (`docs/Extensions V1/PLAN.md`).
-///
-/// A submodule for the same reason `context_detect::prompt_stack` is one: a peer
-/// module needs a line in the Handy-derived `lib.rs`, whose module block is a
-/// live merge-conflict surface (see `Upstream/UPSTREAM.md`). It also sits
-/// honestly here — this module owns Grain's own invocations, and the log is the
-/// record of what one of them did.
-#[path = "grain_action_log.rs"]
-pub(crate) mod action_log;
-
-/// [GRAIN] The Extension Mode session (`docs/Extensions V1/PLAN.md`) — a
-/// host-owned sibling of `extension_session` that captures raw ASR instead of
-/// pasting post-processed text. A submodule for the same divergence reason as
-/// [`action_log`].
-#[path = "grain_action_session.rs"]
-pub(crate) mod action_session;
-
 /// Monotonic id for the current recording session (pill events).
 pub(crate) static SESSION_ID: AtomicU64 = AtomicU64::new(0);
 
@@ -70,10 +53,6 @@ pub(crate) fn next_session_id() -> u64 {
 /// `RecordingStarted`. Emitted only after capture actually starts, so a failed
 /// start never shows a pill that must be torn down.
 pub(crate) fn emit_session_started(app: &AppHandle, session_id: u64, mode: SessionMode) {
-    // A fresh capture supersedes a pending Extension Mode chooser (or a
-    // handed-off request that might still decline back into it). Invalidate the
-    // host-side request before RecordingStarted clears the pill's local surface.
-    action_session::supersede(app);
     crate::bridge::emit(
         app,
         DaemonEvent::OverlayConfig {
@@ -105,30 +84,6 @@ pub(crate) fn emit_session_started(app: &AppHandle, session_id: u64, mode: Sessi
 pub(crate) fn session_started(app: &AppHandle, mode: SessionMode) -> u64 {
     let session_id = next_session_id();
     emit_session_started(app, session_id, mode);
-    session_id
-}
-
-/// Start the native capture-pill lifecycle for Extension Mode without arming
-/// dictation-only resources such as focused-field watching.
-/// Recommendation and everything after capture live in the prewarmed Tauri
-/// interaction window; this native surface never becomes a chooser.
-pub(crate) fn extension_mode_started(app: &AppHandle) -> u64 {
-    let session_id = next_session_id();
-    crate::bridge::emit(
-        app,
-        DaemonEvent::OverlayConfig {
-            position: get_settings(app).overlay_position,
-        },
-    );
-    crate::pill_icon::emit_for_session(app);
-    crate::bridge::emit(
-        app,
-        DaemonEvent::RecordingStarted {
-            session_id,
-            mode: SessionMode::Batch,
-            owner: None,
-        },
-    );
     session_id
 }
 
@@ -195,21 +150,18 @@ pub(crate) fn cancel_session(app: &AppHandle) {
     // here. Leaving them installed keeps observing foreground app/site changes
     // after Grain has returned to idle.
     crate::surface_watch::stop(app);
-    let extension_mode_cancelled = action_session::cancel(app);
     if let Some(rt) = app.try_state::<Arc<crate::rolling::RollingTranscriber>>() {
         rt.cancel_session();
     }
     if let Some(tm) = app.try_state::<Arc<TranscriptionManager>>() {
         tm.cancel_stream();
     }
-    if !extension_mode_cancelled {
-        crate::bridge::emit(
-            app,
-            DaemonEvent::SessionCancelled {
-                session_id: current_session_id(),
-            },
-        );
-    }
+    crate::bridge::emit(
+        app,
+        DaemonEvent::SessionCancelled {
+            session_id: current_session_id(),
+        },
+    );
 }
 
 // Summon the Agent — a voice-first AI scratchpad on the current selection.
@@ -242,52 +194,6 @@ impl ShortcutAction for SummonAgentAction {
     }
 
     fn stop(&self, _app: &AppHandle, _binding_id: &str, _shortcut_str: &str) {}
-}
-
-/// Extension Mode's dedicated capture key. Toggle mode uses one press to start
-/// and the next to stop; push-to-talk mirrors the normal capture preference and
-/// stops on release. The request session itself owns all recorder and pill
-/// cleanup so command and shortcut callers cannot drift apart.
-struct ExtensionModeAction;
-
-impl ShortcutAction for ExtensionModeAction {
-    fn start(&self, app: &AppHandle, _binding_id: &str, _shortcut_str: &str) {
-        if !get_settings(app).push_to_talk && action_session::is_recording() {
-            action_session::stop(app);
-            return;
-        }
-        match action_session::start_locked(app) {
-            Ok(()) => {}
-            // A stale/programmatic dispatch must not open a warning surface.
-            Err(action_session::StartError::Disabled) => {}
-            Err(action_session::StartError::Busy) => {
-                log::debug!("[GRAIN] extension mode: shortcut ignored while busy");
-            }
-            Err(action_session::StartError::NothingInstalled) => {
-                log::info!(
-                    "[GRAIN] extension mode: shortcut ignored; no searchable extension is installed"
-                );
-                if let Err(error) = crate::extension_view::present_unavailable(
-                    app,
-                    "No searchable extension is installed. Install or enable one from Extensions to use Extension Mode.",
-                ) {
-                    log::error!("[GRAIN] extension mode: could not show first-run guidance: {error}");
-                }
-            }
-            Err(action_session::StartError::Unavailable(reason)) => {
-                log::warn!("[GRAIN] extension mode: could not start: {reason}");
-                if let Err(error) = crate::extension_view::present_unavailable(app, &reason) {
-                    log::error!("[GRAIN] extension mode: could not show start failure: {error}");
-                }
-            }
-        }
-    }
-
-    fn stop(&self, app: &AppHandle, _binding_id: &str, _shortcut_str: &str) {
-        if get_settings(app).push_to_talk {
-            action_session::stop(app);
-        }
-    }
 }
 
 struct AgentSubmitAction;
@@ -871,10 +777,6 @@ pub(crate) fn register(map: &mut HashMap<String, Arc<dyn ShortcutAction>>) {
     map.insert(
         "summon_agent".to_string(),
         Arc::new(SummonAgentAction) as Arc<dyn ShortcutAction>,
-    );
-    map.insert(
-        "extension_mode".to_string(),
-        Arc::new(ExtensionModeAction) as Arc<dyn ShortcutAction>,
     );
     map.insert(
         "agent_submit".to_string(),

@@ -26,9 +26,6 @@ export function CapturePane() {
       <ExtensionAnchor anchor="models.after" />
       <CaptureModes />
 
-      {/* Extension Mode remains a backend shortcut, but its experimental
-          controls are not part of the production Capture settings. */}
-
       <SettingsGroup
         title={t("ui2.settings.groups.recording")}
         info={t("ui2.settings.groups.recordingInfo")}

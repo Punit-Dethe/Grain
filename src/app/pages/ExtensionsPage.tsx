@@ -472,8 +472,6 @@ function ExtensionDetail({
   const [readme, setReadme] = useState<string | null>(null);
   const [readmeLoading, setReadmeLoading] = useState(false);
   const [view, setView] = useState<"overview" | "settings">("overview");
-  const [autoSendBusy, setAutoSendBusy] = useState(false);
-  const [autoSendError, setAutoSendError] = useState<string | null>(null);
   const backButtonRef = useRef<HTMLButtonElement>(null);
   const [connectionActions, setConnectionActions] =
     useState<HTMLDivElement | null>(null);
@@ -496,7 +494,6 @@ function ExtensionDetail({
     setMediaIndex(0);
     setReadme(null);
     setView("overview");
-    setAutoSendError(null);
     if (selection.source !== "store") {
       setCatalogueEntry(null);
       void commands
@@ -571,20 +568,6 @@ function ExtensionDetail({
     : null;
   const trust = trustDetails(entry?.trust ?? card?.trust);
   const stars = (entry as StoreEntryWithOptionalStars | null)?.stars;
-
-  const updateAutoSend = async (enabled: boolean) => {
-    if (!card?.auto_send_eligible || autoSendBusy) return;
-    setAutoSendBusy(true);
-    setAutoSendError(null);
-    try {
-      unwrapResult(await commands.changeAutoSendForExtension(card.id, enabled));
-      await controller.refresh();
-    } catch (reason) {
-      setAutoSendError(String(reason));
-    } finally {
-      setAutoSendBusy(false);
-    }
-  };
 
   // This component only mounts after selection, so browse never fetches README
   // data and cleanup drops it again when the user leaves the detail page.
@@ -938,36 +921,6 @@ function ExtensionDetail({
                   >
                     Open settings
                   </button>
-                </div>
-              )}
-              {card.auto_send_eligible && (
-                <div className="extension-setting-row extension-auto-send-row">
-                  <div className="extension-auto-send-copy">
-                    <div>
-                      <strong>Allow Auto-send for this extension</strong>
-                      <span>Beta</span>
-                    </div>
-                    <p>
-                      {card.auto_send_note ||
-                        "The author marked this extension safe for automatic hand-off."}
-                    </p>
-                    <small>
-                      This applies only while the global Auto-send beta switch
-                      is enabled. Turning it off here makes the policy stricter.
-                    </small>
-                    {autoSendError && (
-                      <div className="extension-auto-send-error" role="alert">
-                        {autoSendError}
-                      </div>
-                    )}
-                  </div>
-                  <Switch
-                    checked={card.auto_send_enabled}
-                    disabled={!card.enabled}
-                    isUpdating={autoSendBusy}
-                    ariaLabel={`${card.auto_send_enabled ? "Disable" : "Enable"} Auto-send for ${card.name}`}
-                    onChange={(enabled) => void updateAutoSend(enabled)}
-                  />
                 </div>
               )}
             </section>

@@ -50,8 +50,6 @@ export default defineConfig(async ({ mode }) => ({
         main: resolve(__dirname, "index.html"),
         recordingOverlay: resolve(__dirname, "recording-overlay.html"),
         extensionHost: resolve(__dirname, "extension-host.html"),
-        // Grain-owned recommendation, progress, and result surface.
-        extensionView: resolve(__dirname, "extension-view.html"),
       },
     },
   },
