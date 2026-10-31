@@ -1,5 +1,10 @@
 # Extension platform: audit, reuse and execution plan
 
+**Legacy retirement, 31 October 2026:** the B5c physical-removal inventory,
+severity tiers and continuity log live in
+[LEGACY-RETIREMENT-PLAN.md](LEGACY-RETIREMENT-PLAN.md) on branch
+`cleanup/retire-legacy-extension-platform`. No code has been removed yet.
+
 ## Active forward work order — 15 October 2026
 
 Use [PLATFORM-STABILIZATION.md](PLATFORM-STABILIZATION.md) for the current six
