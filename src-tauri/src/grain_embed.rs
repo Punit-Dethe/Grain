@@ -300,11 +300,6 @@ impl Drop for Engine {
 
 static ENGINE: Mutex<Option<Engine>> = Mutex::new(None);
 
-/// Join the worker on application exit, releasing its weights before shutdown.
-pub fn shutdown_engine() {
-    *ENGINE.lock().unwrap() = None;
-}
-
 /// Uninstall the model from the shared HF cache (R4 — reclaim the ~130 MB).
 /// Drops the engine first: `model.safetensors` is mmap'd, and an mmap'd file
 /// can't be deleted on Windows. Removes the whole `models--…` repo dir

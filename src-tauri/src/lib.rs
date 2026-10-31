@@ -136,13 +136,6 @@ mod utils;
 pub use cli::CliArgs;
 pub use utils::env_flag_enabled;
 
-/// [GRAIN] Whether `--eval <golden.json>` was passed (Extensions V1 P3). Read by
-/// `main` *before* clap so the upstream `CliArgs` never has to know the flag —
-/// clap would reject it as unknown. When true, `main` skips `CliArgs::parse()`.
-pub fn eval_requested() -> bool {
-    grain_actions::eval::requested().is_some()
-}
-
 #[cfg(all(debug_assertions, not(feature = "agent-harness")))]
 mod grain_agent_probe;
 
@@ -984,9 +977,6 @@ pub fn run(cli_args: CliArgs) {
 
     // The headless path must run as its own instance (see the single-instance
     // note below), not forward to an already-running app.
-    // [GRAIN] `--eval <golden.json>` (Extensions V1 P3) is a headless subcommand
-    // too — read straight from the args so the upstream CliArgs never learns it.
-    let eval_request = crate::grain_actions::eval::requested();
     #[cfg(all(debug_assertions, not(feature = "agent-harness")))]
     let agent_probe = std::env::var_os("GRAIN_AGENT_PROBE_FILE").map(std::path::PathBuf::from);
     #[cfg(not(all(debug_assertions, not(feature = "agent-harness"))))]
@@ -994,7 +984,6 @@ pub fn run(cli_args: CliArgs) {
     let headless_mode = cli_args.transcribe_file.is_some()
         || cli_args.list_devices
         || cli_args.list_models
-        || eval_request.is_some()
         || agent_probe.is_some();
 
     #[allow(unused_mut)]
@@ -1116,24 +1105,6 @@ pub fn run(cli_args: CliArgs) {
                     let data_dir = crate::portable::app_data_dir(&app_handle)
                         .unwrap_or_else(|_| std::path::PathBuf::from("."));
                     app.manage(grain_core::AppContext::new(resource_dir, data_dir));
-                }
-                // [GRAIN] Extension eval (Extensions V1 P3) branches out here —
-                // it needs AppContext (for cache/env parity with the running app)
-                // and the embedder, but never the ASR stack below. Runs on its
-                // own thread and process::exits, same shape as transcription.
-                if let Some(golden) = eval_request.clone() {
-                    let handle = app_handle.clone();
-                    std::thread::spawn(move || {
-                        let code = run_headless_guarded(|| {
-                            crate::grain_actions::eval::run(&handle, &golden)
-                        });
-                        crate::grain_embed::shutdown_engine();
-                        use std::io::Write;
-                        let _ = std::io::stdout().flush();
-                        let _ = std::io::stderr().flush();
-                        std::process::exit(code);
-                    });
-                    return Ok(());
                 }
                 // The extension probe needs no ASR managers or inference engine.
                 #[cfg(all(debug_assertions, not(feature = "agent-harness")))]

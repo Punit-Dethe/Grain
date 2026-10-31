@@ -2,9 +2,8 @@
 //! (`docs/Extensions 2.0/PLAN.md` §7.5, `docs/Extensions 2.0/IMPLEMENTATION-NOTES.md`).
 //!
 //! Drives the real [`crate::capability_index::CapabilityIndex::retrieve`] over a
-//! held-out corpus, headless — no embedder, no Tauri, no filesystem. The
-//! successor to [`crate::recommend_eval`], which scored *extension* recommendation;
-//! this scores *action* retrieval into the Agent hot set.
+//! held-out corpus, headless — no embedder, no Tauri, no filesystem. It scores
+//! *action* retrieval into the Agent hot set.
 //!
 //! ## The objective, sharpened
 //!
@@ -19,8 +18,7 @@
 //!
 //! Runs lexical-only when no dense scores are injected — exactly what most users
 //! get, since the embedder is an opt-in download. Injected dense scores (aligned
-//! one row per case) drive the hybrid path when the host feeds the real embedder,
-//! the same split [`crate::recommend_eval`] already uses.
+//! one row per case) drive the hybrid path when the host feeds the real embedder.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::time::Instant;

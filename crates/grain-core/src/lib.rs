@@ -55,7 +55,7 @@ pub mod capability_agent;
 // [GRAIN] Capability Index V2 retrieval evaluation (docs/Extensions 2.0/PLAN.md
 // §7.5). Drives the real retriever over a held-out corpus, headless. Headline is
 // eligible Recall@K + fallback-rate + hot-set size — flood, not miss, is the
-// failure. Successor to `recommend_eval` (extension-level).
+// failure.
 pub mod capability_eval;
 // [GRAIN] The host-owned interaction contract (docs/Extensions 2.0/PLAN.md §9.2,
 // Amendments A & B). Structured, data-shaped interactions (confirm/choose/
@@ -75,18 +75,6 @@ pub mod tool_schema;
 // searchable extension should be offered a request. Pure and model-free: the
 // host injects semantic scores, so grain-core carries no embedder.
 pub mod recommend;
-// [GRAIN] Cross-extension recommendation evaluation. Separate from `eval`,
-// which measures one extension's private command matching; this drives the live
-// recommendation ranker over a whole installed pool, including no-match cases.
-pub mod recommend_eval;
-// [GRAIN] The `match.*` primitives an extension calls to rank its own commands
-// (docs/Extensions V1/PLAN.md §4). Pure: lexical ranking + a confidence policy.
-// `match.semantic` needs the embedder and stays host-side.
-pub mod matching;
-// [GRAIN] The author-facing eval core (docs/Extensions V1/PLAN.md §10 P3).
-// Pure: accuracy, confusion matrix, and an operating-point sweep over a labelled
-// test set. The headless `grain-ext eval` subcommand feeds it the real embedder.
-pub mod eval;
 
 pub use context::{settings_file_exists, AppContext};
 pub use grain_sdk::{DaemonEvent, PillAction, RecommendCandidate, SessionMode};

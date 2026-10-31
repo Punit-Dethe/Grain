@@ -28,14 +28,7 @@ fn main() {
     if handy_app_lib::engine_supervisor::is_worker_invocation() {
         std::process::exit(handy_app_lib::engine_supervisor::run_worker());
     }
-    // [GRAIN] `--eval <golden.json>` (Extensions V1 P3) is a headless subcommand
-    // clap does not know about. Detect it before parsing so the upstream CliArgs
-    // stays byte-identical; `run` reads the flag again to branch into eval.
-    let cli_args = if handy_app_lib::eval_requested() {
-        CliArgs::default()
-    } else {
-        CliArgs::parse()
-    };
 
+    let cli_args = CliArgs::parse();
     handy_app_lib::run(cli_args)
 }

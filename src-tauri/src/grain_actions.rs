@@ -42,19 +42,6 @@ pub(crate) mod action_log;
 #[path = "grain_action_session.rs"]
 pub(crate) mod action_session;
 
-/// [GRAIN] The headless `grain-ext eval` subcommand (`docs/Extensions V1/PLAN.md`
-/// §10 P3). A submodule for the same divergence reason as [`action_log`]: it
-/// needs a line in `lib.rs` otherwise, and that module block is a live
-/// merge-conflict surface.
-#[path = "grain_eval.rs"]
-pub(crate) mod eval;
-
-/// [GRAIN] Cross-extension recommendation mode for the same headless eval
-/// command. Kept beside `eval` because it loads whole extension pools while the
-/// original module continues to evaluate one extension's private commands.
-#[path = "grain_recommend_eval.rs"]
-pub(crate) mod recommend_eval;
-
 /// Monotonic id for the current recording session (pill events).
 pub(crate) static SESSION_ID: AtomicU64 = AtomicU64::new(0);
 
