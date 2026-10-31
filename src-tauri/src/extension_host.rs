@@ -660,20 +660,8 @@ struct Index {
     capability: grain_core::capability_index::CapabilityIndex,
 }
 
-/// Guards so the common case — no scripted extension enabled — costs exactly
-/// one relaxed atomic load on the paste path and per broadcast event. These are
-/// free-standing (not behind `HOST`) so the check needs no lock and no
-/// `OnceLock` deref.
-static HAS_ACTIVATIONS: AtomicBool = AtomicBool::new(false);
-static HAS_TRANSFORMS: AtomicBool = AtomicBool::new(false);
-/// Same guard for prompt layers: with none installed, a dictation pays one
-/// relaxed atomic load and never takes the index lock.
-static HAS_PROMPT_LAYERS: AtomicBool = AtomicBool::new(false);
-/// And for the `prompt.context` slot. A missing/invalid matching replacement
-/// falls back to Grain, but slot state still belongs in the prebuilt index path.
-static HAS_CONTEXT_SLOT: AtomicBool = AtomicBool::new(false);
-static HAS_MAIN_SLOT: AtomicBool = AtomicBool::new(false);
-/// And for declared actions, so a user with none pays one relaxed load.
+/// Free-standing guards (not behind `HOST`), so the check needs no lock and no
+/// `OnceLock` deref. With no declared actions, a lookup pays one relaxed load.
 static HAS_ACTIONS: AtomicBool = AtomicBool::new(false);
 /// And for the Extension Mode pool: with nothing searchable installed, the
 /// recommendation path is one relaxed load and never touches the index.
@@ -743,11 +731,6 @@ pub fn refresh_index(app: &AppHandle) {
     }
     HAS_ACTIONS.store(!actions.is_empty(), Ordering::Relaxed);
     HAS_RECOMMENDATIONS.store(false, Ordering::Relaxed);
-    HAS_ACTIVATIONS.store(false, Ordering::Relaxed);
-    HAS_TRANSFORMS.store(false, Ordering::Relaxed);
-    HAS_PROMPT_LAYERS.store(false, Ordering::Relaxed);
-    HAS_CONTEXT_SLOT.store(false, Ordering::Relaxed);
-    HAS_MAIN_SLOT.store(false, Ordering::Relaxed);
     *host.index.write().unwrap() = Index {
         actions: grain_core::action_router::ActionIndex::build(actions),
         capability: grain_core::capability_index::CapabilityIndex::build(capability_inputs),
@@ -853,47 +836,6 @@ fn collect_capability_actions(
         &pack.manifest,
         true,
     ));
-}
-
-/// Add one enabled extension to the Extension Mode pool, if it belongs there.
-///
-/// Two gates, the first two from [`collect_actions`] and for the same reasons —
-/// classification (§2) and the recommendation digest (disclosure). It does
-/// **not** gate on declaring an action: a translator is a legitimate searchable
-/// extension with no command catalogue at all (§3.1), and gating it out here
-/// would make the one example the plan uses for "recommend exists even with zero
-/// commands" unrankable.
-#[cfg(test)]
-fn collect_recommendation(
-    rec: &grain_core::extensions::ExtensionRecord,
-    pack: &GrainPack,
-    recommendations: &mut Vec<grain_core::recommend::IndexedRecommendation>,
-    examples: &mut Vec<(String, Vec<String>)>,
-    auto_send_eligible: &mut std::collections::HashSet<String>,
-) {
-    if !pack.manifest.kind.is_searchable() {
-        return;
-    }
-    let fingerprint = grain_core::extensions::recommendation_fingerprint(&pack.manifest);
-    if rec.recommend_approved.as_deref() != Some(fingerprint.as_str()) {
-        // collect_actions already logged the mismatch for a pack that also
-        // declares actions; a recommend-only pack would otherwise be silent.
-        return;
-    }
-    let Some(decl) = &pack.manifest.recommend else {
-        return;
-    };
-    recommendations.push(grain_core::recommend::IndexedRecommendation::with_name(
-        &rec.id,
-        &pack.manifest.name,
-        &decl.aliases,
-    ));
-    examples.push((rec.id.clone(), decl.examples.clone()));
-    // Author-declared Auto-send eligibility (§5). The user's deny-list and the
-    // global toggle are applied at decision time, not here.
-    if pack.manifest.auto_send.as_ref().is_some_and(|a| a.eligible) {
-        auto_send_eligible.insert(rec.id.clone());
-    }
 }
 
 /// The pooled extensions whose author marked them Auto-send eligible (§5). The
@@ -1388,47 +1330,6 @@ pub fn start(app: AppHandle, _ctx: Arc<AppContext>) {
             reap_idle();
         }
     });
-}
-
-// ── Activation ──────────────────────────────────────────────────────────────
-
-/// Explicit daemon-event variants an activation list wakes on. `onTransform`
-/// warming is added separately only after its own capability grant is checked.
-#[cfg(test)]
-fn declared_event_variants(activation: &[String]) -> Vec<String> {
-    let mut out: Vec<String> = activation
-        .iter()
-        .filter_map(|a| {
-            if let Some(v) = a.strip_prefix("onEvent:") {
-                Some(v.to_string())
-            } else {
-                None // onStartup / onShortcut / onTransform are handled elsewhere
-            }
-        })
-        .collect();
-    out.sort();
-    out.dedup();
-    out
-}
-
-#[cfg(test)]
-fn declares_transform(activation: &[String]) -> bool {
-    activation.iter().any(|a| a == "onTransform")
-}
-
-#[cfg(test)]
-fn declares_startup(activation: &[String]) -> bool {
-    activation.iter().any(|a| a == "onStartup")
-}
-
-#[cfg(test)]
-fn has_resident_grant(activation: &[String], granted: &[String]) -> bool {
-    declares_startup(activation) && has_grant(granted, "resident")
-}
-
-#[cfg(test)]
-fn has_grant(granted: &[String], capability: &str) -> bool {
-    granted.iter().any(|grant| grant == capability)
 }
 
 // ── Worker lifecycle ────────────────────────────────────────────────────────
@@ -1938,24 +1839,6 @@ pub enum SessionStageOutput {
     Handled,
 }
 
-#[cfg(test)]
-fn parse_session_stage_output(value: Value) -> Result<SessionStageOutput, String> {
-    if let Some(text) = value.as_str() {
-        return Ok(SessionStageOutput::Text(text.to_string()));
-    }
-    if value
-        .get("handled")
-        .and_then(Value::as_bool)
-        .unwrap_or(false)
-    {
-        return Ok(SessionStageOutput::Handled);
-    }
-    if let Some(text) = value.get("text").and_then(Value::as_str) {
-        return Ok(SessionStageOutput::Text(text.to_string()));
-    }
-    Err("session stage returned neither text nor handled=true".into())
-}
-
 /// Keep the owning worker warm for the recording. The activation payload is
 /// data only; the session's identity still comes from its minted token.
 pub fn wake_for_session(_app: &AppHandle, _ext_id: &str, _mode: &str) {}
@@ -2023,45 +1906,6 @@ pub enum HandOffOutcome {
     /// have been carried out. Reporting that as failure is a lie, and the one a
     /// user is least able to recover from.
     Unknown,
-}
-
-#[cfg(test)]
-fn validate_request_reply_shape(value: &Value) -> Result<(), String> {
-    let object = value
-        .as_object()
-        .ok_or("extension request replies must be objects")?;
-    const ALLOWED: [&str; 3] = ["message", "decline", "error"];
-    if let Some(key) = object.keys().find(|key| !ALLOWED.contains(&key.as_str())) {
-        return Err(format!("unsupported extension request reply field '{key}'"));
-    }
-    if object.len() > 1 {
-        return Err("extension request reply contains multiple outcomes".into());
-    }
-    for key in ["message", "decline", "error"] {
-        if object.get(key).is_some_and(|value| !value.is_string()) {
-            return Err(format!("extension request reply '{key}' must be a string"));
-        }
-    }
-    Ok(())
-}
-
-#[cfg(test)]
-fn parse_handoff_outcome(value: Value) -> HandOffOutcome {
-    if let Err(reason) = validate_request_reply_shape(&value) {
-        return HandOffOutcome::Failed(reason);
-    }
-    if let Some(reason) = value.get("decline").and_then(Value::as_str) {
-        return HandOffOutcome::Declined(reason.to_string());
-    }
-    if let Some(error) = value.get("error").and_then(Value::as_str) {
-        return HandOffOutcome::Failed(error.to_string());
-    }
-    HandOffOutcome::Done(
-        value
-            .get("message")
-            .and_then(Value::as_str)
-            .map(str::to_string),
-    )
 }
 
 /// Wake the extension the request was handed to, if it is cold.
@@ -3040,61 +2884,6 @@ mod tests {
         });
     }
 
-    /// The index is keyed by `DaemonEvent::variant_name`, so the variants an
-    /// activation expands to must be spelled exactly the way events report
-    /// themselves — otherwise an activation silently never fires.
-    #[test]
-    fn activation_variants_match_real_event_names() {
-        let done = DaemonEvent::TranscriptionComplete {
-            session_id: 1,
-            text: "hi".into(),
-        };
-
-        let on_event = vec!["onEvent:TranscriptionComplete".to_string()];
-        assert_eq!(
-            declared_event_variants(&on_event),
-            vec![done.variant_name()]
-        );
-        assert!(!declares_transform(&on_event));
-
-        // onTransform warming is indexed separately after its grant check.
-        let transform = vec!["onTransform".to_string()];
-        assert!(declared_event_variants(&transform).is_empty());
-        assert!(declares_transform(&transform));
-        assert!(!declares_startup(&transform));
-
-        // Non-event clauses contribute nothing to the event index.
-        assert!(declared_event_variants(&["onStartup".to_string()]).is_empty());
-        assert!(declares_startup(&["onStartup".to_string()]));
-        assert!(declared_event_variants(&[]).is_empty());
-
-        // Duplicate explicit declarations collapse before indexing.
-        let both = vec![
-            "onEvent:RecordingStarted".to_string(),
-            "onEvent:RecordingStarted".to_string(),
-        ];
-        assert_eq!(declared_event_variants(&both).len(), 1);
-    }
-
-    #[test]
-    fn activation_index_requires_the_matching_user_grant() {
-        let granted = vec!["events:sessions".to_string()];
-        assert!(has_grant(&granted, "events:sessions"));
-        assert!(!has_grant(&granted, "events:transcripts"));
-        assert!(!has_grant(&granted, "transform:transcript"));
-        let startup = vec!["onStartup".to_string()];
-        assert!(!has_resident_grant(&startup, &granted));
-        assert!(has_resident_grant(&startup, &["resident".to_string()]));
-    }
-
-    /// The whole point of the index: with nothing enabled, the paste path and
-    /// the event bus must be a single atomic load — no registry, no disk.
-    #[test]
-    fn hot_paths_are_guarded_off_by_default() {
-        assert!(!HAS_TRANSFORMS.load(Ordering::Relaxed));
-        assert!(!HAS_ACTIVATIONS.load(Ordering::Relaxed));
-    }
-
     #[test]
     fn installed_pack_hash_is_rechecked_before_runtime_load() {
         let directory = tempfile::tempdir().unwrap();
@@ -3183,132 +2972,6 @@ mod tests {
         let mut out = Vec::new();
         collect_actions(&stale, &pack, &mut out);
         assert!(out.is_empty());
-    }
-
-    fn pool_of(pack: &GrainPack, rec: &grain_core::extensions::ExtensionRecord) -> Vec<String> {
-        let mut recommendations = Vec::new();
-        let mut examples = Vec::new();
-        let mut eligible = std::collections::HashSet::new();
-        collect_recommendation(
-            rec,
-            pack,
-            &mut recommendations,
-            &mut examples,
-            &mut eligible,
-        );
-        recommendations
-            .into_iter()
-            .map(|r| r.extension_id)
-            .collect()
-    }
-
-    #[test]
-    fn an_extending_extension_is_not_in_the_recommendation_pool() {
-        let pack = pack_of("");
-        assert!(pool_of(&pack, &record_for(&pack)).is_empty());
-    }
-
-    #[test]
-    fn a_searchable_extension_is_in_the_recommendation_pool() {
-        let pack = pack_of(SEARCHABLE);
-        assert_eq!(pool_of(&pack, &record_for(&pack)), vec!["com.x.p"]);
-    }
-
-    /// The translator case (§3.1): a searchable extension with no command
-    /// catalogue at all is still rankable — `recommend` exists even with zero
-    /// actions, and gating the pool on actions would make it unreachable.
-    #[test]
-    fn a_searchable_extension_with_no_actions_is_still_pooled() {
-        let json = r#"{"manifest":{"id":"com.x.t","name":"T","version":"1.0",
-            "tier":"scripted","entry_source":"export default {}",
-            "kind":"searchable","recommend":{"purpose":"Translate text",
-              "examples":["translate this to french","how do you say hello in spanish"]}}}"#;
-        let pack: GrainPack = serde_json::from_str(json).expect("fixture parses");
-        assert!(pack.manifest.contributes.actions.is_empty());
-        let mut rec = record_for(&pack);
-        rec.id = "com.x.t".into();
-        let mut recommendations = Vec::new();
-        let mut examples = Vec::new();
-        let mut eligible = std::collections::HashSet::new();
-        collect_recommendation(
-            &rec,
-            &pack,
-            &mut recommendations,
-            &mut examples,
-            &mut eligible,
-        );
-        assert_eq!(
-            recommendations.len(),
-            1,
-            "a translator is a real searchable extension"
-        );
-        assert_eq!(
-            examples[0].1.len(),
-            2,
-            "its examples are carried for embedding"
-        );
-    }
-
-    #[test]
-    fn a_rewritten_recommendation_drops_out_of_the_recommendation_pool() {
-        let pack = pack_of(SEARCHABLE);
-        let mut stale = record_for(&pack);
-        stale.recommend_approved = Some("a-version-the-user-never-read".into());
-        assert!(pool_of(&pack, &stale).is_empty());
-    }
-
-    #[test]
-    fn a_handoff_reply_distinguishes_done_decline_error_and_bare() {
-        // An extension's onRequest reply: `{message}` and a bare `{}` are both
-        // "handled"; only an explicit `{error}` is a failure. A timeout is
-        // Unknown and is decided by the caller, never parsed from a reply.
-        assert_eq!(
-            parse_handoff_outcome(json!({ "message": "opened your dashboard" })),
-            HandOffOutcome::Done(Some("opened your dashboard".into()))
-        );
-        assert_eq!(parse_handoff_outcome(json!({})), HandOffOutcome::Done(None));
-        assert_eq!(
-            parse_handoff_outcome(json!({ "decline": "not a music request" })),
-            HandOffOutcome::Declined("not a music request".into())
-        );
-        assert_eq!(
-            parse_handoff_outcome(json!({ "error": "no such site" })),
-            HandOffOutcome::Failed("no such site".into())
-        );
-    }
-
-    #[test]
-    fn visual_replies_are_rejected_even_when_the_tree_looks_valid() {
-        let reply = json!({
-            "view": {
-                "version": 1,
-                "title": "Review issue",
-                "root": { "type": "text", "text": "Ready" },
-                "actions": []
-            }
-        });
-        assert!(matches!(
-            parse_handoff_outcome(reply),
-            HandOffOutcome::Failed(_)
-        ));
-        assert!(matches!(
-            parse_handoff_outcome(json!({
-                "view": {
-                    "version": 1,
-                    "title": "Forged",
-                    "root": { "type": "html", "markup": "<script />" }
-                }
-            })),
-            HandOffOutcome::Failed(_)
-        ));
-        assert!(matches!(
-            parse_handoff_outcome(json!({ "message": "done", "error": "also failed" })),
-            HandOffOutcome::Failed(_)
-        ));
-        assert!(matches!(
-            parse_handoff_outcome(json!({ "html": "<button>forged</button>" })),
-            HandOffOutcome::Failed(_)
-        ));
     }
 
     fn worker(last_activity: u64, resident: bool) -> Worker {
@@ -3447,23 +3110,6 @@ mod tests {
                 "deadline exceeded"
             );
         });
-    }
-
-    #[test]
-    fn session_stage_parses_replace_suppress_and_rejects_ambiguous_output() {
-        assert_eq!(
-            parse_session_stage_output(json!("changed")).unwrap(),
-            SessionStageOutput::Text("changed".into())
-        );
-        assert_eq!(
-            parse_session_stage_output(json!({ "text": "changed" })).unwrap(),
-            SessionStageOutput::Text("changed".into())
-        );
-        assert_eq!(
-            parse_session_stage_output(json!({ "handled": true })).unwrap(),
-            SessionStageOutput::Handled
-        );
-        assert!(parse_session_stage_output(Value::Null).is_err());
     }
 
     #[test]
