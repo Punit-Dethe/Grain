@@ -4,17 +4,13 @@
 //! printing or exiting. CI and the local CLI therefore consume identical code
 //! and can choose their own presentation without duplicating policy.
 
-use std::collections::HashSet;
 use std::fmt;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
 use base64::Engine as _;
 use grain_sdk::compatibility::api_requirement_supported;
-use grain_sdk::{
-    daemon_event_capability, ExtensionProjectManifest, GrainPack, PackPayloads, Tier,
-    DAEMON_EVENT_VARIANTS, GRAIN_API_VERSION,
-};
+use grain_sdk::{ExtensionProjectManifest, GrainPack, PackPayloads, Tier, GRAIN_API_VERSION};
 
 pub mod listing;
 
@@ -159,34 +155,9 @@ pub fn read_mcp_descriptor(root: &Path) -> Result<grain_sdk::mcp::McpDescriptor,
 
 const IGNORED_DIRECTORIES: &[&str] = &[".git", "dist", "node_modules", "target"];
 
-/// [GRAIN] Whether a finding blocks.
-///
-/// Added with the Extensions V1 recommendation checks, which need a verdict the
-/// old shape could not express: a `recommend` block can be perfectly valid and
-/// still rank badly. Refusing to submit over it would be wrong, and staying
-/// silent leaves the author with the one failure they cannot debug from their
-/// own extension in isolation — ranking is global, so a greedy declaration only
-/// shows up on someone else's machine.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
-pub enum Severity {
-    #[default]
-    Error,
-    Warning,
-}
-
-impl Severity {
-    fn label(self) -> &'static str {
-        match self {
-            Severity::Error => "error",
-            Severity::Warning => "warning",
-        }
-    }
-}
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Finding {
     pub code: &'static str,
-    pub severity: Severity,
     pub path: PathBuf,
     pub line: Option<usize>,
     pub column: Option<usize>,
@@ -197,18 +168,10 @@ impl Finding {
     fn project(code: &'static str, path: impl Into<PathBuf>, message: impl Into<String>) -> Self {
         Self {
             code,
-            severity: Severity::Error,
             path: path.into(),
             line: None,
             column: None,
             message: message.into(),
-        }
-    }
-
-    fn advice(code: &'static str, path: impl Into<PathBuf>, message: impl Into<String>) -> Self {
-        Self {
-            severity: Severity::Warning,
-            ..Finding::project(code, path, message)
         }
     }
 }
@@ -222,13 +185,7 @@ impl fmt::Display for Finding {
                 write!(formatter, ":{column}")?;
             }
         }
-        write!(
-            formatter,
-            " {} [{}] {}",
-            self.severity.label(),
-            self.code,
-            self.message
-        )
+        write!(formatter, " error [{}] {}", self.code, self.message)
     }
 }
 
@@ -239,18 +196,9 @@ pub struct DoctorReport {
 }
 
 impl DoctorReport {
-    /// Nothing that blocks. Warnings are printed and do not fail the run —
-    /// a check that cannot say "this is legal but will rank badly" without
-    /// refusing the submission would just be turned off.
+    /// Every finding blocks submission.
     pub fn is_clean(&self) -> bool {
-        !self.findings.iter().any(|f| f.severity == Severity::Error)
-    }
-
-    fn errors(&self) -> usize {
-        self.findings
-            .iter()
-            .filter(|f| f.severity == Severity::Error)
-            .count()
+        self.findings.is_empty()
     }
 }
 
@@ -265,9 +213,8 @@ impl fmt::Display for DoctorReport {
         }
         writeln!(
             formatter,
-            "doctor: {} error(s), {} warning(s) ({} files checked)",
-            self.errors(),
-            self.findings.len() - self.errors(),
+            "doctor: {} error(s) ({} files checked)",
+            self.findings.len(),
             self.files_checked
         )?;
         for finding in &self.findings {
@@ -455,8 +402,7 @@ fn check_manifest(root: &Path, report: &mut DoctorReport) {
     check_entry(root, &project, report);
     check_api_version(&project, report);
     check_pack_contract(&project, report);
-    check_activations(&project, report);
-    check_recommendation(&project, report);
+    check_actions(&project, report);
     check_icon(root, &project, report);
 }
 
@@ -546,110 +492,6 @@ fn check_icon(root: &Path, project: &ExtensionProjectManifest, report: &mut Doct
             "icon is not a PNG",
         )),
     }
-}
-
-/// [GRAIN] Advice on the recommendation surface (`docs/Extensions V1/PLAN.md`
-/// §2, §3.1, G3). Warnings, never errors: everything here is a legal manifest
-/// that will behave worse than the author expects.
-///
-/// These exist because ranking is **global**. An author testing their own
-/// extension in isolation sees none of these problems — a thin example set
-/// ranks fine when it is the only thing installed, and an alias that is really
-/// a verb wins every time nothing competes for it. The first machine where it
-/// misbehaves belongs to someone else.
-fn check_recommendation(project: &ExtensionProjectManifest, report: &mut DoctorReport) {
-    let manifest = &project.manifest;
-
-    let Some(recommend) = &manifest.recommend else {
-        return;
-    };
-
-    // Semantic ranking buys exactly one thing: paraphrase. Two examples cannot
-    // cover it, so an extension declaring them is relying on the user happening
-    // to say one of two sentences.
-    if recommend.examples.len() < RECOMMEND_EXAMPLES_ADVISED {
-        report.findings.push(Finding::advice(
-            "W_RECOMMEND_THIN",
-            "manifest.json",
-            format!(
-                "recommend.examples has {} entr(ies); {RECOMMEND_EXAMPLES_ADVISED} or more is \
-                 advised. They are embedded, not matched literally, so their job is to span the \
-                 ways someone might ask — not to enumerate commands.",
-                recommend.examples.len()
-            ),
-        ));
-    }
-
-    // Validation already rejects exact repeats. This catches the version that
-    // still counts as several examples while covering one phrasing.
-    for (left, right) in near_duplicate_pairs(&recommend.examples) {
-        report.findings.push(Finding::advice(
-            "W_RECOMMEND_NARROW",
-            "manifest.json",
-            format!(
-                "recommend.examples '{left}' and '{right}' are near-identical, so they add one \
-                 phrasing between them rather than two"
-            ),
-        ));
-    }
-
-    // Lexical matching's whole remaining job is detecting that the user NAMED
-    // the extension (§5). An "alias" that is really a verb from its own example
-    // set turns that into a trigger on ordinary speech.
-    for alias in &recommend.aliases {
-        let normalised = alias.trim().to_lowercase();
-        if normalised.is_empty() {
-            continue;
-        }
-        if recommend
-            .examples
-            .iter()
-            .any(|example| words(example).any(|word| word == normalised))
-        {
-            report.findings.push(Finding::advice(
-                "W_RECOMMEND_ALIAS",
-                "manifest.json",
-                format!(
-                    "alias '{alias}' also appears as an ordinary word in recommend.examples. \
-                     Aliases are how Grain detects that the user NAMED this extension; a common \
-                     word there fires on speech that was never about it."
-                ),
-            ));
-        }
-    }
-}
-
-/// How many example phrasings a searchable extension is advised to declare.
-/// Below this, the embedding has nothing to generalise from.
-const RECOMMEND_EXAMPLES_ADVISED: usize = 3;
-
-/// How much of two examples' words must coincide before they count as one
-/// phrasing. High on purpose — "next song" and "next track" are genuinely two
-/// phrasings, and flagging those would teach authors to ignore this.
-const NEAR_DUPLICATE_RATIO: f32 = 0.8;
-
-fn words(text: &str) -> impl Iterator<Item = String> + '_ {
-    text.split(|c: char| !c.is_alphanumeric())
-        .filter(|w| !w.is_empty())
-        .map(str::to_lowercase)
-}
-
-fn near_duplicate_pairs(examples: &[String]) -> Vec<(&str, &str)> {
-    let sets: Vec<HashSet<String>> = examples.iter().map(|e| words(e).collect()).collect();
-    let mut out = Vec::new();
-    for a in 0..examples.len() {
-        for b in (a + 1)..examples.len() {
-            let smaller = sets[a].len().min(sets[b].len());
-            if smaller == 0 {
-                continue;
-            }
-            let shared = sets[a].intersection(&sets[b]).count();
-            if shared as f32 / smaller as f32 >= NEAR_DUPLICATE_RATIO {
-                out.push((examples[a].as_str(), examples[b].as_str()));
-            }
-        }
-    }
-    out
 }
 
 fn check_entry(root: &Path, project: &ExtensionProjectManifest, report: &mut DoctorReport) {
@@ -752,99 +594,12 @@ fn check_pack_contract(project: &ExtensionProjectManifest, report: &mut DoctorRe
     }
 }
 
-fn check_activations(project: &ExtensionProjectManifest, report: &mut DoctorReport) {
-    if !matches!(project.manifest.tier, Tier::Scripted | Tier::Native) {
-        return;
-    }
-    // A declared session mode is itself an activation path: the host registers
-    // its contributed shortcut and wakes the owner for the slow stage without
-    // an `activation` array entry (Phase 4).
-    //
-    // Declared actions are the same, and deliberately so — there is no
-    // `onAction:<id>` to write. A second place to say "and please actually wake
-    // me for this" is a second place to forget, and the failure mode is an
-    // action that routes, wins, and then silently does nothing.
-    if project.manifest.activation.is_empty()
-        && project.manifest.contributes.session_mode.is_none()
-        && project.manifest.contributes.actions.is_empty()
-    {
+fn check_actions(project: &ExtensionProjectManifest, report: &mut DoctorReport) {
+    if project.manifest.contributes.actions.is_empty() {
         report.findings.push(Finding::project(
-            "E_ACTIVATION",
+            "E_ACTIONS",
             "manifest.json",
-            "runtime extensions require at least one activation, a sessionMode, or an action",
-        ));
-        return;
-    }
-
-    let shortcut_ids = project
-        .manifest
-        .contributes
-        .shortcuts
-        .iter()
-        .map(|shortcut| shortcut.id.as_str())
-        .collect::<HashSet<_>>();
-    let mut seen = HashSet::new();
-    for activation in &project.manifest.activation {
-        if !seen.insert(activation.as_str()) {
-            report.findings.push(Finding::project(
-                "E_ACTIVATION",
-                "manifest.json",
-                format!("duplicate activation '{activation}'"),
-            ));
-            continue;
-        }
-        match activation.as_str() {
-            "onTransform" => {
-                require_activation_capability(project, activation, "transform:transcript", report)
-            }
-            "onStartup" => require_activation_capability(project, activation, "resident", report),
-            value if value.starts_with("onEvent:") => {
-                let event = &value["onEvent:".len()..];
-                if !DAEMON_EVENT_VARIANTS.contains(&event) {
-                    report.findings.push(Finding::project(
-                        "E_ACTIVATION",
-                        "manifest.json",
-                        format!("unknown daemon event '{event}'"),
-                    ));
-                } else if let Some(capability) = daemon_event_capability(event) {
-                    require_activation_capability(project, activation, capability, report);
-                }
-            }
-            value if value.starts_with("onShortcut:") => {
-                let shortcut = &value["onShortcut:".len()..];
-                if shortcut.is_empty() || !shortcut_ids.contains(shortcut) {
-                    report.findings.push(Finding::project(
-                        "E_ACTIVATION",
-                        "manifest.json",
-                        format!("activation '{value}' has no matching contributed shortcut"),
-                    ));
-                }
-            }
-            _ => report.findings.push(Finding::project(
-                "E_ACTIVATION",
-                "manifest.json",
-                format!("unsupported activation '{activation}'"),
-            )),
-        }
-    }
-}
-
-fn require_activation_capability(
-    project: &ExtensionProjectManifest,
-    activation: &str,
-    capability: &str,
-    report: &mut DoctorReport,
-) {
-    if !project
-        .manifest
-        .permissions
-        .iter()
-        .any(|permission| permission == capability)
-    {
-        report.findings.push(Finding::project(
-            "E_CAPABILITY",
-            "manifest.json",
-            format!("activation '{activation}' requires permission '{capability}'"),
+            "native tool extensions require at least one declared action",
         ));
     }
 }
@@ -963,7 +718,6 @@ fn scan_unicode(path: &Path, text: &str, findings: &mut Vec<Finding>) {
         if let Some(name) = forbidden_unicode_name(character) {
             findings.push(Finding {
                 code: "E_UNICODE",
-                severity: Severity::Error,
                 path: path.to_path_buf(),
                 line: Some(line),
                 column: Some(column),
@@ -1016,11 +770,8 @@ fn display_path(path: &Path) -> String {
 
 fn sort_findings(findings: &mut [Finding]) {
     findings.sort_by(|left, right| {
-        // Errors before warnings: what blocks the submission is what the author
-        // has to read, and it must not sit below advice about phrasing.
-        left.severity
-            .cmp(&right.severity)
-            .then_with(|| display_path(&left.path).cmp(&display_path(&right.path)))
+        display_path(&left.path)
+            .cmp(&display_path(&right.path))
             .then(left.line.cmp(&right.line))
             .then(left.column.cmp(&right.column))
             .then(left.code.cmp(right.code))
@@ -1124,7 +875,7 @@ mod tests {
             r#"{
               "id":"com.example.clean","name":"Clean","version":"0.1.0",
               "grainApi":"^1.0","tier":"scripted","entry":"dist/main.js","icon":"icon.png",
-              "permissions":[],"activation":[],
+              "permissions":[],
               "contributes":{"actions":[{"id":"read","title":"Read","risk":"safe","utterances":["read data"]}]}
             }"#,
         )
@@ -1187,61 +938,24 @@ mod tests {
     }
 
     #[test]
-    fn manifest_capability_activation_and_budget_failures_accumulate() {
+    fn manifest_and_missing_action_failures_accumulate() {
         let directory = scaffold();
         fs::write(
             directory.path().join("manifest.json"),
             r#"{
               "id":"com.example.bad","name":"Bad","version":"0.1.0",
               "grainApi":"^1.0","tier":"scripted","entry":"dist/main.js",
-              "permissions":["not-real","surface:overlay"],
-              "activation":["onShortcut:missing","onEvent:NoSuchEvent"],
-              "surfaces":{"overlay":{"size":[900,600],"timeout_ms":20000,"ui_source":"<p>x</p>"}},
-              "contributes":{"shortcuts":[{"id":"open","label":"Open"}]}
+              "permissions":["not-real"]
             }"#,
         )
         .unwrap();
         let report = doctor(directory.path());
-        for code in ["E_MANIFEST", "E_ACTIVATION"] {
+        for code in ["E_MANIFEST", "E_ACTIONS"] {
             assert!(
                 report.findings.iter().any(|finding| finding.code == code),
                 "missing {code}: {report}"
             );
         }
-    }
-
-    #[test]
-    fn event_and_transform_activations_require_their_permissions() {
-        let directory = scaffold();
-        fs::write(
-            directory.path().join("manifest.json"),
-            r#"{
-              "id":"com.example.unguarded","name":"Unguarded","version":"0.1.0",
-              "grainApi":"^1.0","tier":"scripted","entry":"dist/main.js",
-              "permissions":[],
-              "activation":["onEvent:TranscriptionComplete","onTransform"]
-            }"#,
-        )
-        .unwrap();
-        let report = doctor(directory.path());
-        let messages = report
-            .findings
-            .iter()
-            .filter(|finding| finding.code == "E_CAPABILITY")
-            .map(|finding| finding.message.as_str())
-            .collect::<Vec<_>>();
-        assert!(
-            messages
-                .iter()
-                .any(|message| message.contains("events:transcripts")),
-            "{report}"
-        );
-        assert!(
-            messages
-                .iter()
-                .any(|message| message.contains("transform:transcript")),
-            "{report}"
-        );
     }
 
     #[test]
@@ -1287,32 +1001,38 @@ mod tests {
     }
 
     #[test]
-    fn a_declared_action_is_a_valid_runtime_activation_path() {
-        // The shape `grain.voice-actions` ships: no activation array at all,
-        // woken only because the user picked it. There is deliberately no
-        // `onAction:` to write, so an extension that does nothing but actions
-        // must pass with an empty activation list — otherwise every such author
-        // is pushed into declaring something they do not need.
+    fn declared_actions_are_sufficient_for_tools() {
         let directory = tempfile::tempdir().unwrap();
-        fs::write(directory.path().join("manifest.json"), SEARCHABLE).unwrap();
+        fs::write(directory.path().join("manifest.json"), TOOLS).unwrap();
         write_icon(directory.path());
 
         let report = doctor(directory.path());
         assert!(report.findings.is_empty(), "{report}");
     }
 
-    /// A well-formed searchable extension, as the checks below vary it. Pair with
+    #[test]
+    fn tools_without_actions_cannot_be_packaged() {
+        let directory = scaffold();
+        let path = directory.path().join("manifest.json");
+        let mut manifest: serde_json::Value =
+            serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        manifest["contributes"]["actions"] = serde_json::json!([]);
+        fs::write(path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+
+        let report = doctor(directory.path());
+        assert!(!report.is_clean());
+        assert!(codes(&report).contains(&"E_ACTIONS"), "{report}");
+        assert!(build_pack(directory.path())
+            .unwrap_err()
+            .contains("E_ACTIONS"));
+    }
+
+    /// A well-formed tool extension, as the checks below vary it. Pair with
     /// [`write_icon`] — every submittable extension needs one (§13.3).
-    const SEARCHABLE: &str = r#"{
+    const TOOLS: &str = r#"{
       "id":"com.example.open","name":"Open","version":"1.1.0",
       "grainApi":"^1.0","tier":"scripted","entry":"dist/main.js","icon":"icon.png",
-      "permissions":["storage"],"activation":[],
-      "kind":"searchable",
-      "recommend":{
-        "purpose":"Open the apps and sites you set up",
-        "examples":["open my dashboard","launch the design tool","take me to the wiki"],
-        "aliases":["shortcuts"]
-      },
+      "permissions":["storage"],
       "contributes":{"actions":[{
         "id":"open","title":"Open a site you set up",
         "risk":"safe","utterances":["open {target}","launch {target}"],
@@ -1320,7 +1040,7 @@ mod tests {
     }"#;
 
     fn variant(replace: &[(&str, &str)]) -> tempfile::TempDir {
-        let mut manifest = SEARCHABLE.to_string();
+        let mut manifest = TOOLS.to_string();
         for (from, to) in replace {
             assert!(manifest.contains(from), "fixture no longer contains {from}");
             manifest = manifest.replace(from, to);
@@ -1333,69 +1053,6 @@ mod tests {
 
     fn codes(report: &DoctorReport) -> Vec<&'static str> {
         report.findings.iter().map(|f| f.code).collect()
-    }
-
-    #[test]
-    fn tools_do_not_require_whole_request_recommendation() {
-        // The likeliest confusion after V1: an author declares actions, ships
-        // `extending` by omission, and nothing they say out loud reaches it.
-        let directory = variant(&[(
-            r#""kind":"searchable",
-      "recommend":{
-        "purpose":"Open the apps and sites you set up",
-        "examples":["open my dashboard","launch the design tool","take me to the wiki"],
-        "aliases":["shortcuts"]
-      },"#,
-            "",
-        )]);
-        let report = doctor(directory.path());
-        assert!(!codes(&report).contains(&"W_KIND_UNRANKED"), "{report}");
-        assert!(
-            report.is_clean(),
-            "declaring commands without being searchable is legal, just useless: {report}"
-        );
-    }
-
-    #[test]
-    fn a_thin_example_set_is_advice_not_a_refusal() {
-        let directory = variant(&[(
-            r#""examples":["open my dashboard","launch the design tool","take me to the wiki"]"#,
-            r#""examples":["open my dashboard","take me to the wiki"]"#,
-        )]);
-        let report = doctor(directory.path());
-        assert!(codes(&report).contains(&"W_RECOMMEND_THIN"), "{report}");
-        assert!(report.is_clean(), "{report}");
-    }
-
-    #[test]
-    fn two_examples_that_say_the_same_thing_count_as_one() {
-        // Validation rejects an exact repeat. This is the version that gets
-        // past it while still covering a single phrasing — the author believes
-        // they declared three and the embedding sees two.
-        let directory = variant(&[(
-            r#""take me to the wiki""#,
-            r#""take me to the wiki","take me to wiki""#,
-        )]);
-        let report = doctor(directory.path());
-        assert!(codes(&report).contains(&"W_RECOMMEND_NARROW"), "{report}");
-    }
-
-    #[test]
-    fn near_duplicate_detection_leaves_genuinely_different_phrasings_alone() {
-        // "next song" / "next track" must NOT fire, or authors learn to ignore
-        // this check — which is worse than not having it.
-        let report = doctor(variant(&[]).path());
-        assert!(!codes(&report).contains(&"W_RECOMMEND_NARROW"), "{report}");
-    }
-
-    #[test]
-    fn an_alias_that_is_really_a_verb_is_flagged() {
-        // Lexical's whole remaining job is detecting that the user NAMED the
-        // extension. An alias drawn from its own example sentences turns that
-        // into a trigger on ordinary speech.
-        let directory = variant(&[(r#""aliases":["shortcuts"]"#, r#""aliases":["launch"]"#)]);
-        let report = doctor(directory.path());
-        assert!(codes(&report).contains(&"W_RECOMMEND_ALIAS"), "{report}");
     }
 
     #[test]
@@ -1412,7 +1069,7 @@ mod tests {
     #[test]
     fn a_declared_icon_that_is_not_on_disk_is_an_error() {
         let directory = tempfile::tempdir().unwrap();
-        fs::write(directory.path().join("manifest.json"), SEARCHABLE).unwrap();
+        fs::write(directory.path().join("manifest.json"), TOOLS).unwrap();
         // Deliberately do NOT write_icon.
         let report = doctor(directory.path());
         let icon = report
@@ -1426,7 +1083,7 @@ mod tests {
     #[test]
     fn an_icon_of_the_wrong_size_is_rejected() {
         let directory = tempfile::tempdir().unwrap();
-        fs::write(directory.path().join("manifest.json"), SEARCHABLE).unwrap();
+        fs::write(directory.path().join("manifest.json"), TOOLS).unwrap();
         fs::write(directory.path().join("icon.png"), fake_png(256)).unwrap();
         let report = doctor(directory.path());
         let icon = report
@@ -1440,7 +1097,7 @@ mod tests {
     #[test]
     fn a_non_png_icon_is_rejected() {
         let directory = tempfile::tempdir().unwrap();
-        fs::write(directory.path().join("manifest.json"), SEARCHABLE).unwrap();
+        fs::write(directory.path().join("manifest.json"), TOOLS).unwrap();
         fs::write(
             directory.path().join("icon.png"),
             b"GIF89a not really a png",
@@ -1458,7 +1115,7 @@ mod tests {
     #[test]
     fn a_valid_512_master_passes() {
         // The happy path: the fixture ships a 512×512 PNG and the icon check is
-        // silent. (variant writes the icon; SEARCHABLE declares it.)
+        // silent. (variant writes the icon; TOOLS declares it.)
         let report = doctor(variant(&[]).path());
         assert!(!codes(&report).contains(&"E_ICON"), "{report}");
     }
@@ -1466,7 +1123,7 @@ mod tests {
     #[test]
     fn a_truncated_png_with_a_valid_ihdr_is_rejected() {
         let directory = tempfile::tempdir().unwrap();
-        fs::write(directory.path().join("manifest.json"), SEARCHABLE).unwrap();
+        fs::write(directory.path().join("manifest.json"), TOOLS).unwrap();
         let mut bytes = vec![0u8; 24];
         bytes[..8].copy_from_slice(&[0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a]);
         bytes[12..16].copy_from_slice(b"IHDR");
@@ -1500,28 +1157,6 @@ mod tests {
         assert_eq!(
             grain_sdk::png_dimensions(&icon),
             Some((grain_sdk::ICON_MASTER_DIM, grain_sdk::ICON_MASTER_DIM))
-        );
-    }
-
-    #[test]
-    fn a_blocking_finding_sorts_above_advice() {
-        // The author has to read what stops the submission before advice about
-        // phrasing, however the paths happen to sort.
-        let directory = variant(&[
-            (
-                r#""permissions":["storage"]"#,
-                r#""permissions":["not-real"]"#,
-            ),
-            (r#""aliases":["shortcuts"]"#, r#""aliases":["launch"]"#),
-        ]);
-        let report = doctor(directory.path());
-        assert!(!report.is_clean(), "{report}");
-        assert!(codes(&report).contains(&"W_RECOMMEND_ALIAS"), "{report}");
-        assert_eq!(report.findings[0].severity, Severity::Error, "{report}");
-        assert_eq!(
-            report.findings.last().unwrap().severity,
-            Severity::Warning,
-            "{report}"
         );
     }
 

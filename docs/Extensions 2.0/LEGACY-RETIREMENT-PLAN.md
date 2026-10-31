@@ -378,3 +378,20 @@ slot registry, prompt-layer approvals/fingerprints and `recommend_approved`,
 declared actions directly, then trim the SDK manifest and CLI scaffold together.
 The index `extends` decision, action conditions/rules decision and unused embedding
 model decision remain as listed above. Do not revisit M7.
+
+**1 November 2026, session 3 continued: author checker retirement complete.**
+
+- Removed recommendation advice, near-duplicate phrase scoring and activation
+  event/capability/shortcut validation. `doctor` and packaging now require a
+  declared action directly (`E_ACTIONS`); MCP descriptor checks are unchanged.
+  Removed the now-unused warning severity/advice path; findings remain stable,
+  deterministically sorted errors. Fixtures describe current tools only.
+- Removed seven obsolete tests and added a missing-actions packaging refusal
+  regression. Full workspace check/tests pass; checker tests 29 -> 23, CLI 23,
+  registry tools 99. Clippy exits zero with only the two existing `listing.rs`
+  warnings; strict Clippy fails at those unchanged lines (33, 146). Scoped diff
+  review, rustfmt and whitespace checks pass. No runtime/UI changes in this unit.
+- Next: SDK manifest fields and CLI scaffold together (the scaffold constructs
+  `ExtensionManifest` directly, so its fields must change with that struct).
+  Three remaining product decisions have been presented to the user; SDK edits
+  independent of those decisions can proceed. No change to M7.
