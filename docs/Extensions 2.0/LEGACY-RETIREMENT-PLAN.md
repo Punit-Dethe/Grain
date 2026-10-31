@@ -128,3 +128,41 @@ diff review. Real-app smoke (Agent tool call, dictation start/cancel) after M1/M
 L8 → L5 → L1 → L2 → L3 → L7 → L4 → L6, one commit each, verifying after each.
 Report Tier 2/3 decisions (M6 visual change, `net.fetch` `secret` behaviour,
 Tier 3 scope) to the user before starting them.
+
+**31 October 2026, session 2 (Windows machine with Rust).**
+
+- Toolchain: cargo/rustc 1.96 (MSVC), VS 18 BuildTools. The app builds into
+  `C:/gt` (gitignored `src-tauri/.cargo/config.toml`, short path for
+  ggml-vulkan); the workspace builds into `C:\t`.
+- **App unit tests need a comctl32 v6 manifest on Windows.** The `cargo test`
+  executable imports `TaskDialogIndirect` but has no embedded manifest, so
+  Windows refuses to start it with `STATUS_ENTRYPOINT_NOT_FOUND`
+  (`0xc0000139`). That is the failure recorded in
+  `Upstream/REVIEW-2026-09-23.md`. Local workaround (not committed): copy the
+  test exe out of `deps`, place a side-by-side `.exe.manifest` that depends on
+  `Microsoft.Windows.Common-Controls` 6.0.0.0, and run it with `C:\gt\debug`
+  on `PATH`. A permanent fix would embed that manifest into test builds.
+- Baseline on `4ca98265`: workspace `check --all-targets` and `test` pass;
+  workspace `clippy --all-targets -D warnings` fails on two pre-existing lints
+  in `grain-sdk/src/manifest.rs` test code (3194, 3242); app `check` passes;
+  app `clippy --all-targets` exits 0 with 74 lib / 104 lib-test warnings; app
+  lib tests 771 pass / 23 ignored; `cargo fmt --check` has one pre-existing
+  diff (`grain_audio_journal.rs:144`); `Upstream/ratchet.py` already fails
+  (`lib.rs` 1302 → 1376 and `Cargo.toml` 142 → 156 lines vs merge base). The
+  frontend matched session 1.
+- Done, each verified and pushed:
+  - **L8** `9a5cd01c`: lib.rs comments only.
+  - **L5** `a681e3e4`: five always-false guards, the test-only recommendation,
+    activation, hand-off and session-stage helpers and their 10 tests. App
+    tests 771 → 761; Clippy lib-test warnings 104 → 103.
+  - **L1** `c3b60c0a`: `extension_companion.rs`, `grain_process.rs`,
+    `RuntimeKind`, companion branches in spawn/kill/detach,
+    `companion_gave_up`, the unused `spawn_worker` activation argument, and
+    the load-unpacked Native arm (now refused by `validate_dev`; the refusal
+    test also covers a missing binary). App tests 761 → 759; Clippy warnings
+    72 lib / 101 lib-test; no new fmt diffs; `lib.rs` shrinks.
+- New finding (not in the inventory): `extension_icons::materialize_pack`
+  still writes a 64² `pill.rgba` for every install, but nothing reads it since
+  recommendation delivery was retired. Removing it is a small Tier 1 follow-up.
+
+**Next:** L2 → L3 → L7 → L4 → L6.
