@@ -2365,50 +2365,10 @@ toggle_seq: string; repository: string | null;
  */
 capabilities: string[];
 /**
- * [GRAIN] Non-visual behavior slots this extension takes over.
+ * [GRAIN] The tools this extension gives the Agent, so the card can show
+ * them again after the approval sheet closes.
  */
-slots: string[];
-/**
- * [GRAIN] Prompt layers this pack contributes.
- *
- * Carried on the card because **attribution is not optional for this
- * contribution**: a prompt layer changes what the model does to the user's
- * own words, and unlike a capability it is invisible once approved. The
- * approval sheet is where the user first reads it; this is where they can
- * go back and read it again without uninstalling anything.
- */
-prompt_layers: PromptLayerInfo[];
-/**
- * [GRAIN] What this extension can do when asked out loud
- * (`docs/Extensions V1/PLAN.md` §5).
- *
- * Here for the same reason as `prompt_layers`, and a stronger one: the
- * approval sheet is a single moment, and "what can this thing do" is
- * exactly what someone wants to look up again a week later without
- * uninstalling it to find out.
- */
-actions: ActionInfo[];
-/**
- * [GRAIN] `"searchable" | "standalone" | "extending"`
- * (`docs/Extensions V1/PLAN.md` §2). Declared, never inferred.
- *
- * The card carries it because it is the difference between an extension
- * that can be handed what the user said and one that cannot, and that is
- * not visible from anything else on the row.
- */
-kind: string;
-/**
- * [GRAIN] What Grain ranks this extension by. `None` for anything that is
- * not `searchable` — validation guarantees the two agree.
- */
-recommend: RecommendInfo | null;
-/**
- * [GRAIN] Resources this extension asks Grain to have ready, e.g.
- * `semantic` for the ~130 MB embedding model (§6). Card-visible by design:
- * a capability governs *reach* and this governs *cost*, and hiding the
- * second is how a lightweight-looking install turns out not to be.
- */
-needs: string[] }
+actions: ActionInfo[] }
 export type ExtensionDeveloperStatus = { enabled: boolean; loaded: DeveloperExtension[] }
 export type GpuDeviceOption = { id: string; name: string; total_vram_mb: number }
 export type GrainEmbedModelCancelled = null
@@ -2609,38 +2569,6 @@ enabled?: boolean }
  * model map (model names are not secret).
  */
 export type PpPoolView = { fallback_enabled: boolean; providers: PostProcessProvider[]; selected_provider_id: string; configured_provider_ids: string[]; providers_with_keys: string[]; models: Partial<{ [key in string]: string }> }
-/**
- * [GRAIN] One contributed prompt layer, as every surface that shows one needs
- * it: the approval sheet, the extension card, and the prompt-stack view.
- *
- * One type for all three deliberately. The sheet's copy and the card's copy
- * drifting apart would mean the user approved one wording and can later only
- * review another.
- */
-export type PromptLayerInfo = { id: string;
-/**
- * `additive` | `main` | `context`.
- */
-target: string;
-/**
- * The instruction, verbatim. Never summarised anywhere it is displayed.
- */
-text: string;
-/**
- * No conditions at all — it applies to every dictation.
- */
-everywhere: boolean; app: string[]; website: string[]; category: string[] }
-/**
- * [GRAIN] The recommendation surface an extension declares
- * (`docs/Extensions V1/PLAN.md` §3.1).
- *
- * Carried whole rather than pre-formatted: `purpose` is a plain line anyone
- * can read, while `examples` are the greedy-declaration surface store review
- * has to see (G3). Whether the in-app card renders the examples is a UI
- * question still open in the plan (§11) — the backend answering it by omission
- * would settle it silently.
- */
-export type RecommendInfo = { purpose: string; examples: string[]; aliases: string[]; entities: string[] }
 /**
  * A recording could not start or could not finish. Mirrors
  * `actions::RecordingErrorEvent`.

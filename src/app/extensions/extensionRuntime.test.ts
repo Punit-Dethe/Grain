@@ -85,44 +85,9 @@ describe("extension collection helpers", () => {
       approvalDigest: "a".repeat(64),
       reviewedName: "Test tools",
       permissions: ["storage", "open:url"],
-      promptLayers: [],
       actions: [],
       authentication: null,
-      recommendation: false,
     });
-  });
-
-  it("parses an approval that is only about prompt text", () => {
-    // An inert pack asks for no capability at all, so a parser keyed on
-    // permissions alone would read this as "nothing to approve" and the enable
-    // would fail with a raw JSON string.
-    expect(
-      parseApprovalRequest(
-        reviewError(
-          '{"needsPermissions":[],"needsPromptLayers":[{"id":"jira","target":"additive","text":"Be terse.","everywhere":false,"app":[],"website":["jira."],"category":[]}]}',
-        ),
-      ),
-    ).toEqual({
-      approvalDigest: "a".repeat(64),
-      reviewedName: "Test tools",
-      permissions: [],
-      promptLayers: [
-        {
-          id: "jira",
-          target: "additive",
-          text: "Be terse.",
-          everywhere: false,
-          app: [],
-          website: ["jira."],
-          category: [],
-        },
-      ],
-      actions: [],
-      authentication: null,
-      recommendation: false,
-    });
-    expect(parseApprovalRequest('{"needsPermissions":[]}')).toBeNull();
-    expect(parseApprovalRequest("not json")).toBeNull();
   });
 
   it("parses an approval that is only about what an extension can do", () => {
@@ -138,18 +103,9 @@ describe("extension collection helpers", () => {
     expect(parsed?.actions[0]?.title).toBe("Skip to the next track");
   });
 
-  it("opens approval for recommendation or authentication alone", () => {
-    expect(
-      parseApprovalRequest(reviewError('{"needsRecommendation":true}')),
-    ).toEqual({
-      approvalDigest: "a".repeat(64),
-      reviewedName: "Test tools",
-      permissions: [],
-      promptLayers: [],
-      actions: [],
-      authentication: null,
-      recommendation: true,
-    });
+  it("opens approval for authentication alone", () => {
+    expect(parseApprovalRequest('{"needsPermissions":[]}')).toBeNull();
+    expect(parseApprovalRequest("not json")).toBeNull();
     expect(
       parseApprovalRequest(
         reviewError(
@@ -160,7 +116,6 @@ describe("extension collection helpers", () => {
       approvalDigest: "a".repeat(64),
       reviewedName: "Test tools",
       permissions: [],
-      promptLayers: [],
       actions: [],
       authentication: {
         provider_name: "GitHub",
@@ -169,7 +124,6 @@ describe("extension collection helpers", () => {
         authorization_host: "github.com",
         token_host: "github.com",
       },
-      recommendation: false,
     });
     expect(
       parseApprovalRequest(

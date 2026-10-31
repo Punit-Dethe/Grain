@@ -1,10 +1,4 @@
-import type {
-  ActionInfo,
-  ExtensionCard,
-  PromptLayerInfo,
-  Result,
-  StoreEntry,
-} from "@/bindings";
+import type { ActionInfo, ExtensionCard, Result, StoreEntry } from "@/bindings";
 
 const NEVER_TOGGLED = "18446744073709551615";
 
@@ -41,10 +35,8 @@ export interface ApprovalRequest {
   approvalDigest: string;
   reviewedName: string;
   permissions: string[];
-  promptLayers: PromptLayerInfo[];
   actions: ActionInfo[];
   authentication: AuthenticationApproval | null;
-  recommendation: boolean;
 }
 
 export interface AuthenticationApproval {
@@ -58,7 +50,7 @@ export interface AuthenticationApproval {
 /**
  * The single structured error an enable can be refused with.
  *
- * Capabilities, prompt layers and actions arrive together and are shown in one
+ * Capabilities, actions and the account connection arrive together and are shown in one
  * sheet: two sheets in a row for one enable is how a user learns to click
  * Approve without reading, which defeats the point of asking.
  */
@@ -68,10 +60,8 @@ export function parseApprovalRequest(error: unknown): ApprovalRequest | null {
       approvalDigest?: unknown;
       reviewedName?: unknown;
       needsPermissions?: unknown;
-      needsPromptLayers?: unknown;
       needsActions?: unknown;
       needsAuthentication?: unknown;
-      needsRecommendation?: unknown;
     };
     if (
       typeof parsed.approvalDigest !== "string" ||
@@ -82,9 +72,6 @@ export function parseApprovalRequest(error: unknown): ApprovalRequest | null {
       return null;
     const permissions = Array.isArray(parsed.needsPermissions)
       ? (parsed.needsPermissions as string[])
-      : [];
-    const promptLayers = Array.isArray(parsed.needsPromptLayers)
-      ? (parsed.needsPromptLayers as PromptLayerInfo[])
       : [];
     const actions = Array.isArray(parsed.needsActions)
       ? (parsed.needsActions as ActionInfo[])
@@ -110,23 +97,13 @@ export function parseApprovalRequest(error: unknown): ApprovalRequest | null {
     // A malformed account request must never be approved under a sheet that
     // only happens to show its other permissions.
     if (rawAuthentication != null && !authentication) return null;
-    const recommendation = parsed.needsRecommendation === true;
-    if (
-      !permissions.length &&
-      !promptLayers.length &&
-      !actions.length &&
-      !authentication &&
-      !recommendation
-    )
-      return null;
+    if (!permissions.length && !actions.length && !authentication) return null;
     return {
       approvalDigest: parsed.approvalDigest,
       reviewedName: parsed.reviewedName,
       permissions,
-      promptLayers,
       actions,
       authentication,
-      recommendation,
     };
   } catch {
     return null;

@@ -732,75 +732,9 @@ pub struct ExtensionCard {
     /// Manifest-declared capabilities. The installed UI needs these even for
     /// local/imported packs which have no signed-store catalogue entry.
     pub capabilities: Vec<String>,
-    /// [GRAIN] Non-visual behavior slots this extension takes over.
-    pub slots: Vec<String>,
-    /// [GRAIN] Prompt layers this pack contributes.
-    ///
-    /// Carried on the card because **attribution is not optional for this
-    /// contribution**: a prompt layer changes what the model does to the user's
-    /// own words, and unlike a capability it is invisible once approved. The
-    /// approval sheet is where the user first reads it; this is where they can
-    /// go back and read it again without uninstalling anything.
-    pub prompt_layers: Vec<PromptLayerInfo>,
-    /// [GRAIN] What this extension can do when asked out loud
-    /// (`docs/Extensions V1/PLAN.md` §5).
-    ///
-    /// Here for the same reason as `prompt_layers`, and a stronger one: the
-    /// approval sheet is a single moment, and "what can this thing do" is
-    /// exactly what someone wants to look up again a week later without
-    /// uninstalling it to find out.
+    /// [GRAIN] The tools this extension gives the Agent, so the card can show
+    /// them again after the approval sheet closes.
     pub actions: Vec<ActionInfo>,
-    /// [GRAIN] `"searchable" | "standalone" | "extending"`
-    /// (`docs/Extensions V1/PLAN.md` §2). Declared, never inferred.
-    ///
-    /// The card carries it because it is the difference between an extension
-    /// that can be handed what the user said and one that cannot, and that is
-    /// not visible from anything else on the row.
-    pub kind: String,
-    /// [GRAIN] What Grain ranks this extension by. `None` for anything that is
-    /// not `searchable` — validation guarantees the two agree.
-    pub recommend: Option<RecommendInfo>,
-    /// [GRAIN] Resources this extension asks Grain to have ready, e.g.
-    /// `semantic` for the ~130 MB embedding model (§6). Card-visible by design:
-    /// a capability governs *reach* and this governs *cost*, and hiding the
-    /// second is how a lightweight-looking install turns out not to be.
-    pub needs: Vec<String>,
-}
-
-/// [GRAIN] The recommendation surface an extension declares
-/// (`docs/Extensions V1/PLAN.md` §3.1).
-///
-/// Carried whole rather than pre-formatted: `purpose` is a plain line anyone
-/// can read, while `examples` are the greedy-declaration surface store review
-/// has to see (G3). Whether the in-app card renders the examples is a UI
-/// question still open in the plan (§11) — the backend answering it by omission
-/// would settle it silently.
-#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, specta::Type)]
-pub struct RecommendInfo {
-    pub purpose: String,
-    pub examples: Vec<String>,
-    pub aliases: Vec<String>,
-    pub entities: Vec<String>,
-}
-
-/// [GRAIN] One contributed prompt layer, as every surface that shows one needs
-/// it: the approval sheet, the extension card, and the prompt-stack view.
-///
-/// One type for all three deliberately. The sheet's copy and the card's copy
-/// drifting apart would mean the user approved one wording and can later only
-/// review another.
-#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, specta::Type)]
-pub struct PromptLayerInfo {
-    pub id: String,
-    /// `additive` | `main` | `context`.
-    pub target: String,
-    /// The instruction, verbatim. Never summarised anywhere it is displayed.
-    pub text: String,
-    /// No conditions at all — it applies to every dictation.
-    pub everywhere: bool,
-    pub app: Vec<String>,
-    pub website: Vec<String>,
-    pub category: Vec<String>,
 }
 
 /// [GRAIN] One declared action, as the approval sheet and the extension card
@@ -905,11 +839,7 @@ pub fn extensions_overview(app: AppHandle) -> Result<Vec<ExtensionCard>, String>
                         grain_sdk::Tier::Scripted => "scripted",
                         grain_sdk::Tier::Native => "native",
                     },
-                    prompt_layers: Vec::new(),
                     actions,
-                    kind: "extending",
-                    recommend: None,
-                    needs: Vec::new(),
                 }
             }
             // SPEC §6 last row: a broken/missing pack file renders an error
@@ -929,11 +859,7 @@ pub fn extensions_overview(app: AppHandle) -> Result<Vec<ExtensionCard>, String>
             repository,
             capabilities,
             tier,
-            prompt_layers,
             actions,
-            kind,
-            recommend,
-            needs,
         } = facts;
         cards.push(ExtensionCard {
             id: rec.id.clone(),
@@ -967,12 +893,7 @@ pub fn extensions_overview(app: AppHandle) -> Result<Vec<ExtensionCard>, String>
             toggle_seq: rec.toggle_seq.to_string(),
             repository,
             capabilities,
-            prompt_layers,
             actions,
-            kind: kind.to_string(),
-            recommend,
-            needs,
-            slots: rec.slots.clone(),
         });
     }
     Ok(cards)
@@ -988,11 +909,7 @@ struct PackFacts {
     repository: Option<String>,
     capabilities: Vec<String>,
     tier: &'static str,
-    prompt_layers: Vec<PromptLayerInfo>,
     actions: Vec<ActionInfo>,
-    kind: &'static str,
-    recommend: Option<RecommendInfo>,
-    needs: Vec<String>,
 }
 
 impl Default for PackFacts {
@@ -1003,14 +920,7 @@ impl Default for PackFacts {
             repository: None,
             capabilities: Vec::new(),
             tier: "pack",
-            prompt_layers: Vec::new(),
             actions: Vec::new(),
-            // An unreadable pack is `extending`, i.e. NOT rankable. The
-            // degraded direction has to be the one that keeps a manifest Grain
-            // could not parse out of the pool.
-            kind: grain_sdk::manifest::ExtensionKind::Extending.as_str(),
-            recommend: None,
-            needs: Vec::new(),
         }
     }
 }
@@ -1118,10 +1028,8 @@ pub fn extension_set_enabled(
                         "approvalDigest": approval_digest,
                         "reviewedName": pack.manifest.name,
                         "needsPermissions": missing,
-                        "needsPromptLayers": [],
                         "needsActions": actions,
                         "needsAuthentication": authentication,
-                        "needsRecommendation": false,
                     })
                     .to_string());
                 }
