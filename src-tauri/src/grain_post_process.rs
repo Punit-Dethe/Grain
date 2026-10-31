@@ -25,40 +25,6 @@ use tauri::{AppHandle, Manager};
 
 const LEGACY_CONTEXT_INPUT: &str = "\n\nDictation input JSON: ${output}";
 
-/// Result of the extension-owned slow stage. On every failure `text` is the
-/// exact stage input and `handled` is false: a worker may change words, but it
-/// can never lose them by crashing, timing out, or reloading.
-pub(crate) struct ExtensionSessionStage {
-    pub text: String,
-    pub handled: bool,
-}
-
-pub(crate) async fn run_extension_session_stage(
-    ext_id: &str,
-    mode: &str,
-    text: &str,
-) -> ExtensionSessionStage {
-    match crate::extension_host::run_session_stage(ext_id, mode, text).await {
-        Ok(crate::extension_host::SessionStageOutput::Text(output)) => ExtensionSessionStage {
-            text: output,
-            handled: false,
-        },
-        Ok(crate::extension_host::SessionStageOutput::Handled) => ExtensionSessionStage {
-            text: String::new(),
-            handled: true,
-        },
-        Err(error) => {
-            log::warn!(
-                "[GRAIN] extension session stage '{ext_id}/{mode}' failed ({error}) — using original text"
-            );
-            ExtensionSessionStage {
-                text: text.to_string(),
-                handled: false,
-            }
-        }
-    }
-}
-
 pub(crate) async fn post_process_transcription(
     app: &AppHandle,
     settings: &AppSettings,

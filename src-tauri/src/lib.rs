@@ -47,8 +47,6 @@ mod events_server; // [GRAIN] authenticated loopback WebSocket for native worker
 mod extension_host; // [GRAIN] extension worker lifecycle (SPEC 3.1) — supervisor, activation, reaper
 mod extension_icons; // [GRAIN] verified master icon -> installed extension card icon
 mod extension_misroutes; // [GRAIN] bounded decline counters -> conservative topical rerank
-mod extension_session; // [GRAIN] host-owned extension recording modes + bounded slow stage (Phase 4)
-mod extension_shortcuts; // [GRAIN] contributed global shortcuts, namespaced `ext:<id>:<sid>` (SPEC 3.3)
 mod extension_view; // [GRAIN] host-rendered standard Extension Mode component tree
 mod grain_actions; // [GRAIN] Grain's shortcut actions (rolling, Native ASR, switcher, agent)
 mod grain_audio_journal; // [GRAIN] bounded-RAM PCM backing for rolling sessions

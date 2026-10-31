@@ -2297,12 +2297,9 @@ pub async fn extension_uninstall(
                 .join(format!("{id}.approved-apps.json")),
         );
     }
-    // Disable keeps a rebind; uninstall is the transaction that clears it
-    // (SPEC §6: shortcuts unregistered, slots released, storage wiped).
     if let Some(generation) = old_generation {
         crate::extension_host::stop_extension_generation(&id, generation, "extension uninstalled");
     }
-    crate::extension_shortcuts::forget(&app, &id);
     if purge {
         let _ = std::fs::remove_file(pack_path(&app, &id)?);
         crate::extension_icons::purge(&app, &id)?;

@@ -104,7 +104,7 @@ pub(crate) fn start_locked(app: &AppHandle) -> Result<(), StartError> {
     }
     let recording = Arc::clone(&app.state::<Arc<AudioRecordingManager>>());
     let transcription = Arc::clone(&app.state::<Arc<TranscriptionManager>>());
-    if is_active() || recording.is_recording() || crate::extension_session::is_active() {
+    if is_active() || recording.is_recording() {
         return Err(StartError::Busy);
     }
 

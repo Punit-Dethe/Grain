@@ -704,9 +704,6 @@ pub fn refresh_index(app: &AppHandle) {
         capability: grain_core::capability_index::CapabilityIndex::build(capability_inputs),
         ..Index::default()
     };
-    // Reconcile old registrations to an empty set; enabling tools creates no
-    // event subscription, resident worker, prompt layer or shortcut.
-    crate::extension_shortcuts::sync(app);
 }
 
 /// Compile one enabled extension's declared prompt layers into the index.
@@ -1595,9 +1592,6 @@ fn reap_idle() {
         None => return,
     };
     for (id, token) in host.workers.idle_victims(now_secs(), IDLE_REAP_SECS) {
-        if crate::extension_session::is_owned_by(&id) {
-            continue;
-        }
         kill_worker_checked(
             &id,
             "idle timeout",
@@ -1719,29 +1713,6 @@ pub fn resolve_call_result(ext_id: &str, token: &str, call_id: u64, result: Resu
     if let Some(host) = HOST.get() {
         host.workers.resolve(ext_id, token, call_id, result);
     }
-}
-
-// ── Host-initiated calls ─────────────────────────────────────────────────────
-
-#[allow(dead_code)] // Retired command compatibility until surface cleanup.
-#[derive(Debug, PartialEq, Eq)]
-pub enum SessionStageOutput {
-    Text(String),
-    Handled,
-}
-
-/// Keep the owning worker warm for the recording. The activation payload is
-/// data only; the session's identity still comes from its minted token.
-pub fn wake_for_session(_app: &AppHandle, _ext_id: &str, _mode: &str) {}
-
-/// Run the owner-controlled slow stage. Failure is deliberately returned to
-/// the caller, which falls back to the exact input text.
-pub async fn run_session_stage(
-    _ext_id: &str,
-    _mode: &str,
-    _text: &str,
-) -> Result<SessionStageOutput, String> {
-    Err("Extension recording sessions are retired.".into())
 }
 
 // ── Hand-off (`docs/Extensions V1/PLAN.md` §3) ──────────────────────────────
@@ -2141,21 +2112,6 @@ fn native_call_failure(error: &str, dispatched: bool) -> grain_core::execution::
         },
     )
 }
-
-/// User cancellation is immediate: notify the handler's AbortSignal and drop
-/// the Rust waiter. The worker may finish later; its response has no recipient.
-pub fn cancel_session_stage(_ext_id: &str, _reason: &str) {}
-
-/// How long the host waits for a worker to *acknowledge* a shortcut. The
-/// runtime acknowledges on receipt and runs the handler detached, so this
-/// covers delivery only — a shortcut that opens an LLM call is not "slow".
-
-/// A contributed shortcut fired (SPEC §3.3). Wakes the extension if it is cold,
-/// otherwise hands the press to the running worker.
-///
-/// Everything happens on the async runtime: the caller is the global-shortcut
-/// dispatch path, where blocking hangs every hotkey in the app.
-pub fn wake_for_shortcut(_app: &AppHandle, _ext_id: &str, _shortcut_id: &str) {}
 
 /// Whether `id` is an explicitly loaded-unpacked project. Diagnostic call
 /// logging uses this cheap registry lookup so installed extensions add no log

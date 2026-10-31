@@ -70,15 +70,6 @@ pub(crate) fn next_session_id() -> u64 {
 /// `RecordingStarted`. Emitted only after capture actually starts, so a failed
 /// start never shows a pill that must be torn down.
 pub(crate) fn emit_session_started(app: &AppHandle, session_id: u64, mode: SessionMode) {
-    emit_session_started_with_owner(app, session_id, mode, None);
-}
-
-fn emit_session_started_with_owner(
-    app: &AppHandle,
-    session_id: u64,
-    mode: SessionMode,
-    owner: Option<String>,
-) {
     // A fresh capture supersedes a pending Extension Mode chooser (or a
     // handed-off request that might still decline back into it). Invalidate the
     // host-side request before RecordingStarted clears the pill's local surface.
@@ -98,15 +89,13 @@ fn emit_session_started_with_owner(
     // paste target, and the pill should end up agreeing with post-processing
     // (which resolves its context at paste time, after every switch).
     crate::surface_watch::start(app);
-    if owner.is_none() {
-        crate::prompt_record::capture_started(app, session_id);
-    }
+    crate::prompt_record::capture_started(app, session_id);
     crate::bridge::emit(
         app,
         DaemonEvent::RecordingStarted {
             session_id,
             mode,
-            owner,
+            owner: None,
         },
     );
 }
@@ -116,14 +105,6 @@ fn emit_session_started_with_owner(
 pub(crate) fn session_started(app: &AppHandle, mode: SessionMode) -> u64 {
     let session_id = next_session_id();
     emit_session_started(app, session_id, mode);
-    session_id
-}
-
-/// Extension sessions always use the batch capture presentation; the owner is
-/// a host-derived fact rendered by the pill, never extension-supplied UI.
-pub(crate) fn extension_session_started(app: &AppHandle, owner: &str) -> u64 {
-    let session_id = next_session_id();
-    emit_session_started_with_owner(app, session_id, SessionMode::Batch, Some(owner.to_string()));
     session_id
 }
 
@@ -214,7 +195,6 @@ pub(crate) fn cancel_session(app: &AppHandle) {
     // here. Leaving them installed keeps observing foreground app/site changes
     // after Grain has returned to idle.
     crate::surface_watch::stop(app);
-    crate::extension_session::cancel(app);
     let extension_mode_cancelled = action_session::cancel(app);
     if let Some(rt) = app.try_state::<Arc<crate::rolling::RollingTranscriber>>() {
         rt.cancel_session();
