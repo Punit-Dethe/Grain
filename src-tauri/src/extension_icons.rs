@@ -1,9 +1,8 @@
-//! Extension icon materialisation and recommendation delivery.
+//! Extension icon materialisation.
 //!
-//! Authors ship one verified 512² PNG master. The host writes that master to
-//! the installed asset cache and derives the pill's one fixed, premultiplied
-//! 64² RGBA payload. Only the tiny derived file is read during recommendation;
-//! decoded masters are never retained in process state.
+//! Authors ship one verified 512² PNG master. The host writes that master and
+//! a 128² UI derivative to the installed asset cache; the extension cards read
+//! only the derivative. Decoded masters are never retained in process state.
 
 use std::path::{Component, Path, PathBuf};
 use std::sync::Mutex;
@@ -11,12 +10,10 @@ use std::sync::Mutex;
 use base64::Engine as _;
 use grain_core::AppContext;
 use grain_sdk::{GrainPack, ICON_MASTER_DIM, ICON_MAX_BYTES};
-use image::GenericImageView as _;
 use sha2::{Digest, Sha256};
 use tauri::{AppHandle, Manager};
 
 const MASTER_FILE: &str = "icon.png";
-const PILL_FILE: &str = "pill.rgba";
 const UI_FILE: &str = "ui.png";
 const UI_ICON_DIM: u32 = 128;
 const DEV_CACHE_DIRECTORY: &str = ".dev-icons-v1";
@@ -100,18 +97,6 @@ fn decode_master(png: &[u8]) -> Result<image::DynamicImage, String> {
         .map_err(|error| format!("decode extension icon: {error}"))
 }
 
-fn derive_pill_rgba_from(image: &image::DynamicImage) -> Result<Vec<u8>, String> {
-    let (width, height) = image.dimensions();
-    let rgba = image.to_rgba8();
-    crate::pill_icon::to_icon(rgba.as_raw(), width as usize, height as usize)
-        .ok_or_else(|| "could not derive extension icon".to_string())
-}
-
-#[cfg(test)]
-fn derive_pill_rgba(png: &[u8]) -> Result<Vec<u8>, String> {
-    derive_pill_rgba_from(&decode_master(png)?)
-}
-
 fn derive_ui_png_from(image: &image::DynamicImage) -> Result<Vec<u8>, String> {
     let scaled = image.resize_exact(
         UI_ICON_DIM,
@@ -135,8 +120,8 @@ fn is_ui_png(bytes: &[u8]) -> bool {
         .is_ok_and(|dimensions| dimensions == (UI_ICON_DIM, UI_ICON_DIM))
 }
 
-/// Decode and persist a pack's master + fixed pill derivative. Missing artwork
-/// is allowed for pre-icon-contract packs; malformed embedded artwork is not.
+/// Decode and persist a pack's master + UI derivative. Missing artwork is
+/// allowed for pre-icon-contract packs; malformed embedded artwork is not.
 pub fn materialize_pack(app: &AppHandle, pack: &GrainPack) -> Result<(), String> {
     let _guard = ASSET_LOCK
         .lock()
@@ -147,15 +132,12 @@ pub fn materialize_pack(app: &AppHandle, pack: &GrainPack) -> Result<(), String>
         purge_unlocked(app, &pack.manifest.id)?;
         return Ok(());
     };
-    let image = decode_master(&png)?;
-    let rgba = derive_pill_rgba_from(&image)?;
-    let ui_png = derive_ui_png_from(&image)?;
+    let ui_png = derive_ui_png(&png)?;
     // One installed version is active at a time. Replacing its tiny asset tree
     // keeps repeated extension updates constant-space on disk.
     purge_unlocked(app, &pack.manifest.id)?;
     let dir = version_dir(app, &pack.manifest.id, &pack.manifest.version)?;
     write_atomic(&dir.join(MASTER_FILE), &png)?;
-    write_atomic(&dir.join(PILL_FILE), &rgba)?;
     write_atomic(&dir.join(UI_FILE), &ui_png)
 }
 
@@ -304,7 +286,7 @@ mod tests {
         header[12..16].copy_from_slice(b"IHDR");
         header[16..20].copy_from_slice(&ICON_MASTER_DIM.to_be_bytes());
         header[20..24].copy_from_slice(&ICON_MASTER_DIM.to_be_bytes());
-        assert!(derive_pill_rgba(&header).is_err());
+        assert!(decode_master(&header).is_err());
     }
 
     #[test]
