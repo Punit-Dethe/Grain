@@ -38,8 +38,8 @@ pub use distribution::{
 };
 pub use error::{HostError, HostErrorCode};
 pub use event::{
-    daemon_event_capability, DaemonEvent, OverlayPosition, PillAction, RecommendCandidate,
-    ResolvedTheme, SessionMode, DAEMON_EVENT_VARIANTS, PILL_ICON_PX,
+    daemon_event_capability, DaemonEvent, OverlayPosition, PillAction, ResolvedTheme, SessionMode,
+    DAEMON_EVENT_VARIANTS, PILL_ICON_PX,
 };
 pub use flagged::{flagged_combinations, FlaggedCombination};
 pub use manifest::{
