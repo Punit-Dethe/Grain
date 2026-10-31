@@ -1190,44 +1190,6 @@ async extensionSettingsSections() : Promise<Result<ExtensionSettingsSection[], s
 }
 },
 /**
- * [GRAIN] Phase 5C: the `app_path` settings control's native picker. Opens the
- * OS file chooser and, on a pick, records the path as **approved for this
- * extension** (the same user-mediated approval `open:app` requires) so a rule
- * the user builds here can actually launch. Returns the chosen path or `None`.
- */
-async extensionPickApp(id: string) : Promise<Result<string | null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("extension_pick_app", { id }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * [GRAIN] Phase 5C: capture the FOREGROUND app for an `app_path` control (the
- * user switches to their target app during the control's countdown, then this
- * snapshots it). Records the path as approved for this extension's `open:app`,
- * exactly like the file picker. Returns the executable path, or `None`.
- */
-async extensionCaptureApp(id: string) : Promise<Result<string | null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("extension_capture_app", { id }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * Resolve a declaration list against what is stored. Split out so
- * [`extension_settings_sections`] reads each pack once rather than twice.
- * The live state of one extension's contributed shortcuts (SPEC §3.3), so the
- * settings section can show a chord that is registered — and name the holder
- * of one that isn't, rather than leaving a dead hotkey unexplained.
- */
-async extensionShortcutsStatus(id: string) : Promise<ShortcutStatus[]> {
-    return await TAURI_INVOKE("extension_shortcuts_status", { id });
-},
-/**
  * [GRAIN] Start or stop listening for a request
  * (`docs/Extensions V1/PLAN.md` §3).
  *
@@ -1340,22 +1302,6 @@ async changeAutoSendForExtension(id: string, enabled: boolean) : Promise<Result<
     else return { status: "error", error: e  as any };
 }
 },
-/**
- * Write one schema-declared setting from the host's own control.
- *
- * Validated against the same schema as `host_api`'s `settings.set`, and
- * returns the row actually stored — a clamped number or a normalised colour
- * comes straight back, so the control shows the truth rather than what was
- * typed.
- */
-async extensionSettingSet(id: string, key: string, value: JsonValue) : Promise<Result<ExtensionSettingRow, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("extension_setting_set", { id, key, value }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
 async extensionViewInit() : Promise<ExtensionViewInit | null> {
     return await TAURI_INVOKE("extension_view_init");
 },
@@ -1428,17 +1374,6 @@ async extensionViewClose(sessionId: number) : Promise<Result<null, string>> {
 async extensionImportPack(path: string) : Promise<Result<string, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("extension_import_pack", { path }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * Export an installed pack to `dest` (SPEC §5.1 "shareable data packs").
- */
-async extensionExportPack(id: string, dest: string) : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("extension_export_pack", { id, dest }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -3225,23 +3160,6 @@ uncovered_bindings: string[];
 recorder_blocked: boolean }
 export type SelectOptionDto = { value: string; label: string }
 export type ShortcutBinding = { id: string; name: string; description: string; default_binding: string; current_binding: string }
-/**
- * One declared shortcut's live state, for the extension's settings section.
- */
-export type ShortcutStatus = { id: string; label: string;
-/**
- * The chord currently bound, or empty when the extension suggested none.
- */
-binding: string;
-/**
- * False when the chord is taken — SPEC §3.3: the later registrant is
- * inactive until rebound, and both rows say so.
- */
-active: boolean;
-/**
- * Who holds the chord, when inactive.
- */
-conflicts_with: string | null }
 export type ShowOverlay = string
 /**
  * [GRAIN] A voice snippet: when the (normalized) trigger phrase appears in a

@@ -2003,19 +2003,6 @@ pub fn extension_settings_schema(
     Ok(Vec::new())
 }
 
-/// Resolve a declaration list against what is stored. Split out so
-/// [`extension_settings_sections`] reads each pack once rather than twice.
-
-/// The live state of one extension's contributed shortcuts (SPEC §3.3), so the
-/// settings section can show a chord that is registered — and name the holder
-/// of one that isn't, rather than leaving a dead hotkey unexplained.
-#[tauri::command]
-#[specta::specta]
-pub fn extension_shortcuts_status(id: String) -> Vec<crate::extension_shortcuts::ShortcutStatus> {
-    let _ = id;
-    Vec::new()
-}
-
 /// One enabled extension's settings, ready to render.
 #[derive(serde::Serialize, specta::Type)]
 pub struct ExtensionSettingsSection {
@@ -2037,29 +2024,6 @@ pub fn extension_settings_sections(
 ) -> Result<Vec<ExtensionSettingsSection>, String> {
     let _ = app;
     Ok(Vec::new())
-}
-
-/// Write one schema-declared setting from the host's own control.
-///
-/// Validated against the same schema as `host_api`'s `settings.set`, and
-/// returns the row actually stored — a clamped number or a normalised colour
-/// comes straight back, so the control shows the truth rather than what was
-/// typed.
-#[tauri::command]
-#[specta::specta]
-pub fn extension_setting_set(
-    app: AppHandle,
-    window: tauri::WebviewWindow,
-    id: String,
-    key: String,
-    value: serde_json::Value,
-) -> Result<ExtensionSettingRow, String> {
-    require_main_window(&window)?;
-    let _ = (app, id, key, value);
-    Err(
-        "Extension settings contributions are retired. Use account/connection configuration."
-            .into(),
-    )
 }
 
 /// Import a `.grainpack` file (SPEC §1.1 tier A-inert). Validates, copies into
@@ -2195,38 +2159,6 @@ pub fn extension_import_pack(
     Ok(id)
 }
 
-/// [GRAIN] Phase 5C: the `app_path` settings control's native picker. Opens the
-/// OS file chooser and, on a pick, records the path as **approved for this
-/// extension** (the same user-mediated approval `open:app` requires) so a rule
-/// the user builds here can actually launch. Returns the chosen path or `None`.
-#[tauri::command]
-#[specta::specta]
-pub async fn extension_pick_app(
-    app: AppHandle,
-    window: tauri::WebviewWindow,
-    id: String,
-) -> Result<Option<String>, String> {
-    require_main_window(&window)?;
-    let _ = (app, id);
-    Err("Extension application access is retired. Context belongs to the agent.".into())
-}
-
-/// [GRAIN] Phase 5C: capture the FOREGROUND app for an `app_path` control (the
-/// user switches to their target app during the control's countdown, then this
-/// snapshots it). Records the path as approved for this extension's `open:app`,
-/// exactly like the file picker. Returns the executable path, or `None`.
-#[tauri::command]
-#[specta::specta]
-pub fn extension_capture_app(
-    app: AppHandle,
-    window: tauri::WebviewWindow,
-    id: String,
-) -> Result<Option<String>, String> {
-    require_main_window(&window)?;
-    let _ = (app, id);
-    Err("Extension application access is retired. Context belongs to the agent.".into())
-}
-
 /// Approve the reviewed tool permissions, declarations and account configuration,
 /// then enable the extension in the same checked registry mutation.
 ///
@@ -2351,21 +2283,6 @@ pub fn extension_take_slot(
     let _ = (app, id, slot);
     require_main_window(&window)?;
     Err("Extension feature slots are retired. Extensions provide tools only.".into())
-}
-
-/// Export an installed pack to `dest` (SPEC §5.1 "shareable data packs").
-#[tauri::command]
-#[specta::specta]
-pub fn extension_export_pack(
-    app: AppHandle,
-    window: tauri::WebviewWindow,
-    id: String,
-    dest: String,
-) -> Result<(), String> {
-    require_main_window(&window)?;
-    std::fs::copy(pack_path(&app, &id)?, &dest)
-        .map(|_| ())
-        .map_err(|e| e.to_string())
 }
 
 /// Uninstall a pack. `purge` also deletes the stored pack file; without it the
