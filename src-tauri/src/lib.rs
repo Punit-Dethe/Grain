@@ -44,7 +44,6 @@ mod dev_extensions; // [GRAIN] validated load-unpacked project reader
 pub mod engine_supervisor;
 mod events_auth; // [GRAIN] token identity + capability filter for the events WS (SPEC 7.1)
 mod events_server; // [GRAIN] authenticated loopback WebSocket for native workers and developer control
-mod extension_companion; // [GRAIN] developer-only native companion process supervisor (Phase 4)
 mod extension_host; // [GRAIN] extension worker lifecycle (SPEC 3.1) — supervisor, activation, reaper
 mod extension_icons; // [GRAIN] verified master icon -> installed extension card icon
 mod extension_lab; // [GRAIN] debug-only real-runtime recommendation corpus
@@ -73,13 +72,12 @@ mod grain_mcp; // [GRAIN] stateless hosted MCP development providers (2026-07-28
 mod grain_onboarding; // [GRAIN] where a launching app lands: onboarding / permissions / app
 mod grain_overlay; // [GRAIN] presentation adapter; handy/overlay.rs owns native window lifecycle
 mod grain_post_process; // [GRAIN] multi-provider post-processing (rewrite of upstream's single-provider path)
-#[cfg(windows)]
-mod grain_process; // [GRAIN] Windows Job Object ownership for extension companion processes
-                   // [GRAIN] Settings facade over grain-core's owned AppContext — Grain's
-                   // replacement for upstream's tauri-plugin-store `settings.rs`, which stays on
-                   // disk UN-COMPILED (no `mod settings;`) so upstream's settings changes merge
-                   // cleanly; port anything relevant into `crates/grain-core`. The alias keeps
-                   // every `crate::settings::` path working.
+
+// [GRAIN] Settings facade over grain-core's owned AppContext — Grain's
+// replacement for upstream's tauri-plugin-store `settings.rs`, which stays on
+// disk UN-COMPILED (no `mod settings;`) so upstream's settings changes merge
+// cleanly; port anything relevant into `crates/grain-core`. The alias keeps
+// every `crate::settings::` path working.
 mod grain_settings;
 mod grain_store; // [GRAIN] Phase 5A: signed-catalogue store client (verify, install, revoke)
 mod grain_theme; // [GRAIN] one resolved colour scheme for every surface (was localStorage)
@@ -1379,7 +1377,6 @@ pub fn run(cli_args: CliArgs) {
                 }
             }
             if let tauri::RunEvent::Exit = &event {
-                extension_companion::stop_all();
                 if let Some(ctx) = app
                     .try_state::<Arc<grain_core::AppContext>>()
                     .filter(|_| !headless_mode)

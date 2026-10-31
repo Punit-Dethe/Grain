@@ -18,8 +18,6 @@ pub struct LoadedDevProject {
     /// Canonical built JavaScript entry. The worker host keeps only this path
     /// and resolves its source-map reference lazily if the worker throws.
     pub entry_path: Option<PathBuf>,
-    /// Canonical current-platform companion executable for native projects.
-    pub companion_path: Option<PathBuf>,
     pub pack: GrainPack,
 }
 
@@ -49,7 +47,7 @@ pub fn load_project(root: &Path) -> Result<LoadedDevProject, String> {
         return Err(grain_sdk::compatibility::UNSUPPORTED_EXTENSION_API.into());
     }
 
-    let (entry_path, companion_path) = match project.manifest.tier {
+    let entry_path = match project.manifest.tier {
         Tier::Scripted => {
             let entry_path = canonical_project_file(&root, &project.entry, "entry")?;
             let entry_meta = std::fs::metadata(&entry_path)
@@ -59,38 +57,12 @@ pub fn load_project(root: &Path) -> Result<LoadedDevProject, String> {
             }
             project.manifest.entry_source = std::fs::read_to_string(&entry_path)
                 .map_err(|error| format!("read entry '{}': {error}", project.entry))?;
-            (Some(entry_path), None)
+            Some(entry_path)
         }
-        Tier::Native => {
-            if !project.entry.trim().is_empty() {
-                return Err("native extensions use 'companion', not 'entry'".into());
-            }
-            let companion = project
-                .manifest
-                .companion
-                .as_ref()
-                .ok_or("native extensions require a companion binary map")?;
-            for path in [
-                companion.windows.as_deref(),
-                companion.macos.as_deref(),
-                companion.linux.as_deref(),
-            ]
-            .into_iter()
-            .flatten()
-            {
-                validate_relative_path(path, "companion binary")?;
-            }
-            let current = companion.current_platform().ok_or_else(|| {
-                "native extension has no companion binary for this platform".to_string()
-            })?;
-            (
-                None,
-                Some(canonical_project_file(&root, current, "companion binary")?),
-            )
-        }
+        // Native companion executables are retired. Nothing on disk is opened;
+        // `validate_dev` below refuses the manifest with the tool-only error.
+        Tier::Native => None,
         Tier::Pack => return Err("load unpacked does not accept data-only packs".into()),
-        // A builtin's implementation is compiled into Grain, so there is nothing
-        // on disk for load-unpacked to run.
     };
 
     let pack = GrainPack {
@@ -102,7 +74,6 @@ pub fn load_project(root: &Path) -> Result<LoadedDevProject, String> {
     Ok(LoadedDevProject {
         root,
         entry_path,
-        companion_path,
         pack,
     })
 }
@@ -169,7 +140,6 @@ mod tests {
             loaded.entry_path,
             Some(dir.path().join("src/main.ts").canonicalize().unwrap())
         );
-        assert!(loaded.companion_path.is_none());
     }
 
     #[test]
@@ -219,6 +189,12 @@ mod tests {
         )
         .unwrap();
 
+        assert!(load_project(dir.path())
+            .unwrap_err()
+            .contains("native companion executables"));
+
+        // Refusal comes from manifest validation, not from inspecting the binary.
+        std::fs::remove_file(dir.path().join(binary)).unwrap();
         assert!(load_project(dir.path())
             .unwrap_err()
             .contains("native companion executables"));
