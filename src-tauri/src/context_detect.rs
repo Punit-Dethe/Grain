@@ -349,94 +349,6 @@ fn instruction_for<'a>(ctx: &ActiveContext, settings: &'a AppSettings) -> Option
     ctx.category.instruction(settings).map(|text| (text, false))
 }
 
-/// Whether a contributed prompt layer's conditions hold for this surface.
-///
-/// # Why the HOST evaluates this
-///
-/// The obvious alternative — hand the extension the context and let it decide —
-/// would make "add a line to my prompt" a way to read the user's foreground
-/// application and browsing history. Evaluating here means an inert pack can
-/// target Jira without ever being told the user opened Jira, and **the extension
-/// is never informed whether it matched**: no callback, no event, no return
-/// value. Contributing a layer stays strictly weaker than `context:app`, which
-/// is a separate grant with its own permission line.
-///
-/// # Semantics
-///
-/// Fields intersect, members alternate: every non-empty field must have one
-/// member that matches. An empty `when` matches everything, which is legitimate
-/// (a pack whose rule is genuinely universal) and is why the permission sheet
-/// says so loudly.
-///
-/// A conditional layer with **no context at all** does not match. Detection only
-/// runs when context awareness is on, so a targeted layer is inert while that
-/// setting is off — stated here because "my layer never fires" is otherwise a
-/// mystery, and answering it in the UI is a later, separate job.
-pub fn layer_matches(when: &grain_sdk::manifest::LayerWhen, ctx: Option<&ActiveContext>) -> bool {
-    if when.is_unconditional() {
-        return true;
-    }
-    let Some(ctx) = ctx else {
-        return false;
-    };
-    if !when.app.is_empty() {
-        let hit = when.app.iter().any(|target| {
-            let target = target.trim();
-            !target.is_empty()
-                && ((!ctx.exe.is_empty() && target.eq_ignore_ascii_case(&ctx.exe))
-                    || ctx
-                        .aumid
-                        .as_deref()
-                        .is_some_and(|aumid| target.eq_ignore_ascii_case(aumid)))
-        });
-        if !hit {
-            return false;
-        }
-    }
-    if !when.website.is_empty() {
-        // The same confidence bar the user's own site profiles clear. A
-        // `Probable` host was found by scanning the window and can belong to a
-        // tab the user is not typing into — and a layer firing on the wrong
-        // site is worse than one that stays quiet.
-        let host = ctx
-            .url_host
-            .as_deref()
-            .filter(|_| ctx.confidence.allows_site_category());
-        let Some(host) = host else {
-            return false;
-        };
-        let host = host.trim().trim_start_matches("www.");
-        if !when
-            .website
-            .iter()
-            .any(|pattern| host_matches(host, pattern.trim()))
-        {
-            return false;
-        }
-    }
-    if !when.category.is_empty() {
-        let Some(id) = ctx.category.profile_id() else {
-            // `Other` has no profile id, so naming it is the way to target
-            // "a surface Grain has no opinion about".
-            return when.category.iter().any(|c| c == "other");
-        };
-        if !when.category.iter().any(|c| c == id) {
-            return false;
-        }
-    }
-    if let Some(field) = when.field.as_deref() {
-        let want = match field {
-            "single_line" => FieldKind::SingleLine,
-            "multi_line" => FieldKind::MultiLine,
-            _ => return false,
-        };
-        if ctx.field != want {
-            return false;
-        }
-    }
-    true
-}
-
 /// Address-bar host → category. **This is the table that makes context awareness
 /// work at all for most people**: email, chat, docs and social overwhelmingly
 /// live in a browser tab, and until this existed every one of them resolved to
@@ -1214,9 +1126,6 @@ pub struct ActiveContext {
     /// Browser address-bar host, when the foreground app is a browser and UI
     /// Automation resolved it (e.g. `mail.google.com`). `None` otherwise.
     pub url_host: Option<String>,
-    /// The shape of the field the caret is in. Drives the one-line punctuation
-    /// suppression — see [`FieldKind::SingleLine`].
-    pub field: FieldKind,
     /// The ARIA landmark of the nearest enclosing region ("main",
     /// "complementary", …), when the surface exposes one.
     pub region: Option<String>,
@@ -1649,7 +1558,6 @@ mod windows_impl {
                     aumid,
                     category,
                     url_host: scan.url_host,
-                    field: scan.field,
                     region: scan.region,
                     confidence: scan.confidence,
                 }),
@@ -2866,7 +2774,6 @@ mod tests {
             aumid: None,
             category,
             url_host: None,
-            field: FieldKind::Unknown,
             region: None,
             confidence: Confidence::Guess,
         }
@@ -3097,17 +3004,6 @@ mod tests {
         assert!(bare.ends_with(
             "Return only the final output — no labels, notes, explanations, or surrounding text."
         ));
-    }
-
-    /// The field shape remains routing metadata, not dictated text.
-    #[test]
-    fn field_shape_does_not_change_the_prompt() {
-        let mut s = AppSettings::default();
-        s.context_awareness_enabled = true;
-        let mut c = ctx("unknownapp", AppCategory::Other);
-        c.field = FieldKind::SingleLine;
-        let out = compose("BASE", &s, Some(&c), None);
-        assert!(!out.contains("SINGLE-LINE"));
     }
 
     /// A site may only override the app category on structural evidence. This is
@@ -3386,71 +3282,6 @@ mod tests {
         ));
     }
 
-    fn when(json: &str) -> grain_sdk::manifest::LayerWhen {
-        serde_json::from_str(json).expect("valid when clause")
-    }
-
-    #[test]
-    fn an_unconditional_layer_matches_even_with_no_context() {
-        assert!(layer_matches(&when("{}"), None));
-    }
-
-    #[test]
-    fn a_targeted_layer_needs_a_context_to_match() {
-        // Detection only runs when context awareness is on, so a targeted layer
-        // is inert while that setting is off. Asserted rather than assumed:
-        // "my layer never fires" is otherwise a mystery.
-        assert!(!layer_matches(&when(r#"{"app":["code"]}"#), None));
-    }
-
-    #[test]
-    fn layer_fields_intersect_and_members_alternate() {
-        let mut c = ctx("code", AppCategory::Technical);
-        c.field = FieldKind::MultiLine;
-
-        assert!(layer_matches(&when(r#"{"app":["nvim","code"]}"#), Some(&c)));
-        assert!(!layer_matches(&when(r#"{"app":["nvim"]}"#), Some(&c)));
-        // Both fields must hold, not either.
-        assert!(layer_matches(
-            &when(r#"{"app":["code"],"category":["technical"]}"#),
-            Some(&c)
-        ));
-        assert!(!layer_matches(
-            &when(r#"{"app":["code"],"category":["email"]}"#),
-            Some(&c)
-        ));
-        assert!(layer_matches(&when(r#"{"field":"multi_line"}"#), Some(&c)));
-        assert!(!layer_matches(
-            &when(r#"{"field":"single_line"}"#),
-            Some(&c)
-        ));
-    }
-
-    #[test]
-    fn a_layer_site_match_is_dot_bounded_and_needs_exact_confidence() {
-        let mut c = ctx("chrome", AppCategory::Other);
-        c.url_host = Some("jira.acme.com".into());
-        c.confidence = Confidence::Exact;
-
-        assert!(layer_matches(&when(r#"{"website":["jira."]}"#), Some(&c)));
-        assert!(layer_matches(
-            &when(r#"{"website":["acme.com"]}"#),
-            Some(&c)
-        ));
-        // The attack the dot boundary exists for.
-        c.url_host = Some("notacme.com".into());
-        assert!(!layer_matches(
-            &when(r#"{"website":["acme.com"]}"#),
-            Some(&c)
-        ));
-
-        // A host found by scanning the window can belong to a tab the user is
-        // not typing into, so it may not fire a third party's layer.
-        c.url_host = Some("jira.acme.com".into());
-        c.confidence = Confidence::Probable;
-        assert!(!layer_matches(&when(r#"{"website":["jira."]}"#), Some(&c)));
-    }
-
     #[test]
     fn contributed_layers_are_capped_by_count_then_bytes() {
         let s = AppSettings::default();
@@ -3512,8 +3343,7 @@ mod tests {
     fn the_context_slot_replaces_grains_guess_only() {
         let mut s = AppSettings::default();
         s.context_awareness_enabled = true;
-        let mut c = ctx("code", AppCategory::Technical);
-        c.field = FieldKind::SingleLine;
+        let c = ctx("code", AppCategory::Technical);
 
         let held = Contributions {
             context: Some(ContributedLayer {
