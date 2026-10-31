@@ -82,6 +82,18 @@ into live paths but inert.
   `RETIRED_DEFAULT_PROMPT_IDS`, `load_secrets` legacy map, `extensions_imported_v1`):
   confirm scope with the user first.
 
+### Added in session 2 (gap check)
+
+| Unit | Tier | Files | Notes |
+| --- | --- | --- | --- |
+| M7 Agent per-call confirmation | 2 | `action_exec.rs` `Dispatch`, `run_or_confirm(_opt)`, `PendingCalls::insert`, `MAX_PENDING`, `execute_revalidated`, `confirm_interaction`, `to_agent_confirm`, test-only `run_agent_call`; `agent.rs` pending-action run control (`publish_pending`, `take_pending`, `clear_pending_action`, `AgentConfirm`, `confirm_action`), `resume`, `discard`, `CONFIRM_TTL_MS`, `agent_confirm_action` command; frontend `AgentPanel.tsx` confirm card | The Agent auto-approves enabled tools (`run_agent_calls`), and nothing in production inserts a pending call, so the confirm card cannot appear. Removing it touches the Agent panel UI; needs user approval. |
+| Prompt priority leftovers | 3 | `toggle_seq`/`builtin_toggle_seq` in grain-core (contributed-layer and shortcut arbitration order), `Contributions`/`ContributedLayer` in `context_detect::compose_prompt`, `prompt_contributions` (M3) | `toggle_seq` also orders enabled cards on the Extensions page (`sortExtensionCards`), so keep or replace that ordering deliberately. Grain's own priority line (spoken instruction > context profile > main prompt) is core and stays. |
+
+Corrections to the session 1 inventory: `Submission` in registry tools is not
+dead (`publish` parses `submission.toml` with it). `extension_settings_sections`
+is still called by `ExtensionsPage` (`refresh`), so it belongs to M6, not L3.
+`grain_embed.rs:367` still mentions `match.semantic`; fix it with M1.
+
 ## Verification requirements
 
 Per unit: `cargo check --all-targets` and affected `cargo test` for `src-tauri`
@@ -166,3 +178,40 @@ Tier 3 scope) to the user before starting them.
   recommendation delivery was retired. Removing it is a small Tier 1 follow-up.
 
 **Next:** L2 → L3 → L7 → L4 → L6.
+
+**31 October 2026, session 2 continued: batch 1 (rest of Tier 1).** The user
+asked for batches with one real-app test pass per batch, and for full
+retirement rather than leaving machinery in place.
+
+- Commits: L2 `9fc06d06` (Recommendation Lab), L3 `c9e68d62` (five caller-less
+  stub commands), L7 `c190e2bb` (registry `retire`), L4 `3eb5d5f6` (retired
+  host API arms, document store, settings namespace, open/app approval, the
+  extension LLM completions and the Windows UIA whole-window text reader), L6
+  `d4407140` (slot takeover dialog, `extension_take_slot`, dead frontend
+  helpers, retired capability labels), `3c4b7c66` (unused `pill.rgba`),
+  `e148a877` (`layer_matches` and `ActiveContext.field`).
+- Deliberate behaviour choice: uninstall purge removes only
+  `<id>.storage.json`; old `<id>.docs` directories are no longer touched
+  (clean-break policy).
+- Verification after the batch: workspace tests pass; `grain-registry-tools`
+  strict Clippy (`--no-deps`) clean; workspace strict Clippy still fails only
+  on pre-existing lints in untouched crates (`grain-extension-checks`
+  `listing.rs:33,146`, `grain-sdk` `manifest.rs:3194,3242`); app Clippy exit 0
+  with 69 lib / 99 lib-test warnings (baseline 74/104); app lib tests 748 pass /
+  23 ignored (each drop accounted for by removed tests); vitest 19 files / 115
+  tests (11 removed tests); tsc pass; eslint only the pre-existing error;
+  parity OK; no new rustfmt diffs; `src-tauri/src/handy/` and
+  `src-tauri/Cargo.toml` untouched; `lib.rs` 1584 → 1571 lines.
+- Tooling notes: regenerate bindings with `C:\t\logs\regen-bindings.ps1`
+  (local, uncommitted). It runs the export test through the comctl32 manifest
+  workaround, strips trailing whitespace, and restores 7 doc lines that
+  `agent.rs` carries double-encoded so they keep their committed spelling.
+  `agent.rs` itself has that encoding damage; fixing it is a separate cleanup.
+  `prettier --check` warnings on CRLF working copies are line-ending noise
+  (`.prettierrc` is `endOfLine: lf`); the LF-normalised files pass.
+
+**Next: batch 2 (Tier 2),** ordered lowest risk first: M3 no-op pipeline stubs
+→ M5 headless `--eval` → M4 startup migrations → M2 sessions and contributed
+shortcuts (`handy/` hooks, run `Upstream/ratchet.py`) → M1 Extension Mode →
+M6 settings contribution UI → M7 Agent confirmation. M6 and M7 change visible
+UI and need the user's decision first.
