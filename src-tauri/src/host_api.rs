@@ -29,30 +29,12 @@ use reqwest::header::{
 use reqwest::{Method, StatusCode, Url};
 use serde_json::{json, Value};
 use tauri::{AppHandle, Manager};
-use tauri_plugin_opener::OpenerExt;
 use zeroize::{Zeroize, Zeroizing};
 
 use crate::events_auth::{CapabilitySet, ClientIdentity};
 
-/// Per-extension storage quota (SPEC §3.4). 200 MB, generous for KV + docs.
+/// Per-extension storage quota (SPEC §3.4).
 const STORAGE_QUOTA_BYTES: u64 = 200 * 1024 * 1024;
-
-/// Cap on texts per `embed` call. The engine holds every input's tokens in
-/// memory at once, so an unbounded batch is a memory-exhaustion lever; a
-/// low-RAM device would rather the extension chunk its work.
-const EMBED_MAX_BATCH: usize = 64;
-
-/// `match.*` accepts author-supplied command corpora. Bound every dimension
-/// before scoring or embedding so a capability-free helper cannot become a
-/// CPU/RAM exhaustion path. These limits comfortably cover a large extension
-/// (64 commands × several phrasings) while keeping one semantic request finite.
-const MATCH_MAX_CANDIDATES: usize = 64;
-const MATCH_MAX_PHRASES_PER_CANDIDATE: usize = 16;
-const MATCH_MAX_TOTAL_PHRASES: usize = 256;
-const MATCH_MAX_QUERY_BYTES: usize = 8 * 1024;
-const MATCH_MAX_PHRASE_BYTES: usize = 2 * 1024;
-const MATCH_MAX_TOTAL_PHRASE_BYTES: usize = 128 * 1024;
-const MATCH_MAX_ID_BYTES: usize = 128;
 
 /// Extension egress is intentionally small and bounded. API-shaped responses
 /// fit comfortably; bulk transfer belongs in a purpose-built host capability.
@@ -64,10 +46,6 @@ const NET_MAX_HEADERS: usize = 64;
 
 static EXTENSION_HTTP: OnceLock<reqwest::Client> = OnceLock::new();
 
-/// Reserved key inside the storage file for the extension's own settings
-/// namespace (`ext.<id>.*`). There is no path to `AppSettings` — this is the
-/// entire "settings" surface an extension has (SPEC §4.2).
-const SETTINGS_KEY: &str = "__settings";
 pub(crate) const SECRET_REDACTED: &str = "[REDACTED]";
 
 pub(crate) fn extension_secret_key(ext_id: &str, key: &str) -> String {
@@ -78,7 +56,6 @@ type HostResult<T> = Result<T, HostError>;
 
 #[derive(Debug)]
 pub enum ExtStorageError {
-    InvalidArgument(String),
     Quota(String),
     Io(String),
     Serialization(String),
@@ -87,10 +64,9 @@ pub enum ExtStorageError {
 impl fmt::Display for ExtStorageError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::InvalidArgument(message)
-            | Self::Quota(message)
-            | Self::Io(message)
-            | Self::Serialization(message) => formatter.write_str(message),
+            Self::Quota(message) | Self::Io(message) | Self::Serialization(message) => {
+                formatter.write_str(message)
+            }
         }
     }
 }
@@ -123,152 +99,25 @@ pub fn required_capability(method: &str) -> Option<&'static str> {
 /// and round-trip behavior are unit-tested directly.
 pub struct ExtStorage {
     path: PathBuf,
-    /// `<data>/extensions/<id>.docs/` — the document store's own directory, one
-    /// file per document, so a large collection is not one blob rewritten on
-    /// every edit (SPEC §3.4: notes are documents, not KV values).
-    docs_dir: PathBuf,
 }
 
 impl ExtStorage {
     pub fn new(data_dir: &std::path::Path, ext_id: &str) -> Self {
-        let ext_dir = data_dir.join("extensions");
         Self {
-            path: ext_dir.join(format!("{ext_id}.storage.json")),
-            docs_dir: ext_dir.join(format!("{ext_id}.docs")),
+            path: data_dir
+                .join("extensions")
+                .join(format!("{ext_id}.storage.json")),
         }
     }
 
-    /// Uninstall boundary: remove both KV/settings and document storage. Missing
-    /// paths are already clean and therefore succeed.
+    /// Uninstall boundary: remove the storage file. A missing file is already
+    /// clean and therefore succeeds.
     pub fn purge(&self) -> StorageResult<()> {
         match std::fs::remove_file(&self.path) {
-            Ok(()) => {}
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(error) => return Err(ExtStorageError::Io(error.to_string())),
-        }
-        match std::fs::remove_dir_all(&self.docs_dir) {
-            Ok(()) => {}
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(error) => return Err(ExtStorageError::Io(error.to_string())),
-        }
-        Ok(())
-    }
-
-    /// A document key sanitized to a single safe filename. Rejects anything that
-    /// could escape the store's directory or collide across keys — the whole
-    /// point of a per-document file is undone if a key can be `../../secrets`.
-    /// Pure and total, so it is exhaustively unit-tested.
-    pub fn safe_doc_name(key: &str) -> StorageResult<String> {
-        let key = key.trim();
-        if key.is_empty() {
-            return Err(ExtStorageError::InvalidArgument(
-                "a document key must not be empty".into(),
-            ));
-        }
-        if key.len() > 200 {
-            return Err(ExtStorageError::InvalidArgument(
-                "a document key is at most 200 characters".into(),
-            ));
-        }
-        // Allowlist, not denylist: only characters that are unambiguously safe
-        // in a filename on every platform, and never a path separator or dot-run.
-        if !key
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
-        {
-            return Err(ExtStorageError::InvalidArgument(
-                "a document key may contain only letters, digits, '-', '_' and '.'".into(),
-            ));
-        }
-        // `.` and `..` (and any all-dots name) are path traversal, not documents.
-        if key.chars().all(|c| c == '.') {
-            return Err(ExtStorageError::InvalidArgument(
-                "a document key must not be all dots".into(),
-            ));
-        }
-        Ok(format!("{key}.json"))
-    }
-
-    fn doc_path(&self, key: &str) -> StorageResult<PathBuf> {
-        Ok(self.docs_dir.join(Self::safe_doc_name(key)?))
-    }
-
-    /// Total bytes the document store currently occupies (for the quota).
-    fn docs_bytes(&self) -> StorageResult<u64> {
-        let entries = match std::fs::read_dir(&self.docs_dir) {
-            Ok(entries) => entries,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(0),
-            Err(error) => return Err(ExtStorageError::Io(error.to_string())),
-        };
-        let mut total = 0_u64;
-        for entry in entries {
-            let entry = entry.map_err(|error| ExtStorageError::Io(error.to_string()))?;
-            let metadata = entry
-                .metadata()
-                .map_err(|error| ExtStorageError::Io(error.to_string()))?;
-            total = total.saturating_add(metadata.len());
-        }
-        Ok(total)
-    }
-
-    pub fn doc_get(&self, key: &str) -> StorageResult<Value> {
-        let path = self.doc_path(key)?;
-        match std::fs::read_to_string(&path) {
-            Ok(raw) => serde_json::from_str(&raw)
-                .map_err(|error| ExtStorageError::Serialization(error.to_string())),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Value::Null),
-            Err(error) => Err(ExtStorageError::Io(error.to_string())),
-        }
-    }
-
-    pub fn doc_put(&self, key: &str, value: Value) -> StorageResult<()> {
-        let path = self.doc_path(key)?;
-        let json = serde_json::to_string(&value)
-            .map_err(|error| ExtStorageError::Serialization(error.to_string()))?;
-        // Quota covers the doc store as a whole; charge the NEW size of this doc
-        // against the total minus whatever this key used to occupy.
-        let prev = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
-        let projected = self.docs_bytes()?.saturating_sub(prev) + json.len() as u64;
-        if projected > STORAGE_QUOTA_BYTES {
-            return Err(ExtStorageError::Quota(format!(
-                "document storage quota exceeded ({} MB max)",
-                STORAGE_QUOTA_BYTES / (1024 * 1024)
-            )));
-        }
-        std::fs::create_dir_all(&self.docs_dir)
-            .map_err(|error| ExtStorageError::Io(error.to_string()))?;
-        std::fs::write(&path, json).map_err(|error| ExtStorageError::Io(error.to_string()))
-    }
-
-    pub fn doc_delete(&self, key: &str) -> StorageResult<()> {
-        let path = self.doc_path(key)?;
-        match std::fs::remove_file(&path) {
             Ok(()) => Ok(()),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
             Err(error) => Err(ExtStorageError::Io(error.to_string())),
         }
-    }
-
-    /// Every document key currently stored (without the `.json` suffix), sorted.
-    pub fn doc_list(&self) -> StorageResult<Vec<String>> {
-        let entries = match std::fs::read_dir(&self.docs_dir) {
-            Ok(entries) => entries,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
-            Err(error) => return Err(ExtStorageError::Io(error.to_string())),
-        };
-        let mut keys = Vec::new();
-        for entry in entries {
-            let entry = entry.map_err(|error| ExtStorageError::Io(error.to_string()))?;
-            if let Some(key) = entry
-                .file_name()
-                .to_str()
-                .and_then(|name| name.strip_suffix(".json"))
-            {
-                keys.push(key.to_string());
-            }
-        }
-        keys.sort();
-        Ok(keys)
     }
 
     fn load(&self) -> StorageResult<BTreeMap<String, Value>> {
@@ -313,29 +162,6 @@ impl ExtStorage {
         let mut map = self.load()?;
         map.remove(key);
         self.save(&map)
-    }
-
-    /// The extension's own settings namespace (a nested object under one
-    /// reserved key — never `AppSettings`).
-    ///
-    /// Public because the host's settings controls write here too: one store,
-    /// one way in, so the schema cannot be enforced on one path and not the
-    /// other.
-    pub fn settings_get(&self, key: &str) -> StorageResult<Value> {
-        Ok(self
-            .get(SETTINGS_KEY)?
-            .get(key)
-            .cloned()
-            .unwrap_or(Value::Null))
-    }
-
-    pub fn settings_set(&self, key: &str, value: Value) -> StorageResult<()> {
-        let mut ns = match self.get(SETTINGS_KEY)? {
-            Value::Object(m) => m,
-            _ => serde_json::Map::new(),
-        };
-        ns.insert(key.to_string(), value);
-        self.set(SETTINGS_KEY, Value::Object(ns))
     }
 }
 
@@ -412,7 +238,6 @@ fn authorize_net_url(identity: &ClientIdentity, raw_url: &str) -> HostResult<Url
 
 fn storage_error(error: ExtStorageError) -> HostError {
     match error {
-        ExtStorageError::InvalidArgument(message) => invalid_argument(message),
         ExtStorageError::Quota(message) => typed_error(
             HostErrorCode::Quota,
             message,
@@ -446,235 +271,6 @@ fn param_nonempty_str(params: &Value, key: &str) -> HostResult<String> {
     } else {
         Ok(value)
     }
-}
-
-fn param_strings(params: &Value, key: &str) -> HostResult<Vec<String>> {
-    let values = params
-        .get(key)
-        .and_then(Value::as_array)
-        .ok_or_else(|| invalid_argument(format!("'{key}' must be an array of strings")))?;
-    values
-        .iter()
-        .enumerate()
-        .map(|(index, value)| {
-            value
-                .as_str()
-                .map(str::to_string)
-                .ok_or_else(|| invalid_argument(format!("'{key}[{index}]' must be a string")))
-        })
-        .collect()
-}
-
-fn param_match_text(params: &Value) -> HostResult<String> {
-    let text = param_str(params, "text")?;
-    if text.len() > MATCH_MAX_QUERY_BYTES {
-        return Err(invalid_argument(format!(
-            "'text' exceeds the {MATCH_MAX_QUERY_BYTES}-byte match limit"
-        )));
-    }
-    Ok(text)
-}
-
-/// Parse `candidates: [{ id, <phrase_key>: [string] }]` for the match
-/// primitives. `phrase_key` is `"phrases"` for lexical, `"examples"` for
-/// semantic — one shape under two honest names. Empty phrase strings are dropped
-/// rather than embedded/scored.
-fn param_named_phrase_lists(
-    params: &Value,
-    phrase_key: &str,
-) -> HostResult<Vec<(String, Vec<String>)>> {
-    let array = params
-        .get("candidates")
-        .and_then(Value::as_array)
-        .ok_or_else(|| invalid_argument("'candidates' must be an array"))?;
-    if array.len() > MATCH_MAX_CANDIDATES {
-        return Err(invalid_argument(format!(
-            "'candidates' accepts at most {MATCH_MAX_CANDIDATES} entries"
-        )));
-    }
-    let mut seen_ids = std::collections::HashSet::with_capacity(array.len());
-    let mut total_phrases = 0usize;
-    let mut total_phrase_bytes = 0usize;
-    let mut parsed = Vec::with_capacity(array.len());
-    for (index, candidate) in array.iter().enumerate() {
-        let id = candidate.get("id").and_then(Value::as_str).ok_or_else(|| {
-            invalid_argument(format!("'candidates[{index}].id' must be a string"))
-        })?;
-        if id.is_empty() || id.len() > MATCH_MAX_ID_BYTES {
-            return Err(invalid_argument(format!(
-                "'candidates[{index}].id' must contain 1-{MATCH_MAX_ID_BYTES} bytes"
-            )));
-        }
-        if !seen_ids.insert(id) {
-            return Err(invalid_argument(format!(
-                "duplicate match candidate id '{id}'"
-            )));
-        }
-        let values = candidate
-            .get(phrase_key)
-            .and_then(Value::as_array)
-            .ok_or_else(|| {
-                invalid_argument(format!(
-                    "'candidates[{index}].{phrase_key}' must be an array of strings"
-                ))
-            })?;
-        if values.len() > MATCH_MAX_PHRASES_PER_CANDIDATE {
-            return Err(invalid_argument(format!(
-                "'candidates[{index}].{phrase_key}' accepts at most {MATCH_MAX_PHRASES_PER_CANDIDATE} entries"
-            )));
-        }
-        let mut phrases = Vec::with_capacity(values.len());
-        for (phrase_index, value) in values.iter().enumerate() {
-            let phrase = value.as_str().ok_or_else(|| {
-                invalid_argument(format!(
-                    "'candidates[{index}].{phrase_key}[{phrase_index}]' must be a string"
-                ))
-            })?;
-            if phrase.len() > MATCH_MAX_PHRASE_BYTES {
-                return Err(invalid_argument(format!(
-                    "'candidates[{index}].{phrase_key}[{phrase_index}]' exceeds {MATCH_MAX_PHRASE_BYTES} bytes"
-                )));
-            }
-            if phrase.trim().is_empty() {
-                continue;
-            }
-            total_phrases += 1;
-            total_phrase_bytes += phrase.len();
-            if total_phrases > MATCH_MAX_TOTAL_PHRASES
-                || total_phrase_bytes > MATCH_MAX_TOTAL_PHRASE_BYTES
-            {
-                return Err(invalid_argument(format!(
-                    "the match corpus exceeds {MATCH_MAX_TOTAL_PHRASES} phrases or {MATCH_MAX_TOTAL_PHRASE_BYTES} bytes"
-                )));
-            }
-            phrases.push(phrase.to_string());
-        }
-        parsed.push((id.to_string(), phrases));
-    }
-    Ok(parsed)
-}
-
-/// Parse `candidates: [{ id, score }]` for `match.decide`.
-fn param_scored_candidates(params: &Value) -> HostResult<Vec<(String, f32)>> {
-    let array = params
-        .get("candidates")
-        .and_then(Value::as_array)
-        .ok_or_else(|| invalid_argument("'candidates' must be an array"))?;
-    if array.len() > MATCH_MAX_CANDIDATES {
-        return Err(invalid_argument(format!(
-            "'candidates' accepts at most {MATCH_MAX_CANDIDATES} entries"
-        )));
-    }
-    let mut seen_ids = std::collections::HashSet::with_capacity(array.len());
-    array
-        .iter()
-        .enumerate()
-        .map(|(index, candidate)| {
-            let id = candidate.get("id").and_then(Value::as_str).ok_or_else(|| {
-                invalid_argument(format!("'candidates[{index}].id' must be a string"))
-            })?;
-            if id.is_empty() || id.len() > MATCH_MAX_ID_BYTES {
-                return Err(invalid_argument(format!(
-                    "'candidates[{index}].id' must contain 1-{MATCH_MAX_ID_BYTES} bytes"
-                )));
-            }
-            if !seen_ids.insert(id) {
-                return Err(invalid_argument(format!(
-                    "duplicate match candidate id '{id}'"
-                )));
-            }
-            let score = candidate
-                .get("score")
-                .and_then(Value::as_f64)
-                .ok_or_else(|| {
-                    invalid_argument(format!("'candidates[{index}].score' must be a number"))
-                })?;
-            // Semantic cosine is naturally -1..=1. Keeping that full range is
-            // required for the documented semantic -> decide composition.
-            if !score.is_finite() || !(-1.0..=1.0).contains(&score) {
-                return Err(invalid_argument(format!(
-                    "'candidates[{index}].score' must be between -1 and 1"
-                )));
-            }
-            Ok((id.to_string(), score as f32))
-        })
-        .collect()
-}
-
-/// Parse `policy: { minConfidence, margin }`, with defaults for an omitted
-/// policy. There is no universal threshold (§8 G4), so these defaults are a
-/// starting point an author overrides after measuring with `grain-ext eval`.
-fn param_decide_policy(params: &Value) -> HostResult<grain_core::matching::DecidePolicy> {
-    let policy = match params.get("policy") {
-        None | Some(Value::Null) => None,
-        Some(value) => Some(
-            value
-                .as_object()
-                .ok_or_else(|| invalid_argument("'policy' must be an object"))?,
-        ),
-    };
-    let field = |key: &str, default: f32| -> HostResult<f32> {
-        let Some(value) = policy.and_then(|object| object.get(key)) else {
-            return Ok(default);
-        };
-        let value = value
-            .as_f64()
-            .ok_or_else(|| invalid_argument(format!("'policy.{key}' must be a number")))?;
-        if !value.is_finite() || !(0.0..=1.0).contains(&value) {
-            return Err(invalid_argument(format!(
-                "'policy.{key}' must be between 0 and 1"
-            )));
-        }
-        Ok(value as f32)
-    };
-    Ok(grain_core::matching::DecidePolicy {
-        min_confidence: field("minConfidence", 0.5)?,
-        margin: field("margin", 0.1)?,
-    })
-}
-
-/// Cosine of two vectors the embedder already L2-normalised — a dot product.
-/// Length-guarded so a mismatched pair scores 0 instead of panicking.
-fn cosine(a: &[f32], b: &[f32]) -> f32 {
-    if a.len() != b.len() {
-        return 0.0;
-    }
-    a.iter().zip(b).map(|(x, y)| x * y).sum()
-}
-
-/// Score each candidate's best example against the query, best-first, with each
-/// entry's margin to the next. Blocking (model inference) — runs on the blocking
-/// pool. The pure counterpart of `grain_core::matching::lexical_rank`, kept host
-/// -side because it needs the embedder.
-fn semantic_match(text: &str, candidates: &[(String, Vec<String>)]) -> anyhow::Result<Vec<Value>> {
-    let query = crate::grain_embed::embed_query(text.to_string())?;
-    let mut scored: Vec<(String, f32)> = Vec::new();
-    for (id, examples) in candidates {
-        if examples.is_empty() {
-            continue;
-        }
-        let vectors = crate::grain_embed::embed(examples.clone())?;
-        let best = vectors
-            .iter()
-            .map(|v| cosine(&query, v))
-            .fold(f32::MIN, f32::max);
-        scored.push((id.clone(), best));
-    }
-    scored.sort_by(|a, b| {
-        b.1.partial_cmp(&a.1)
-            .unwrap_or(std::cmp::Ordering::Equal)
-            .then_with(|| a.0.cmp(&b.0))
-    });
-    Ok(scored
-        .iter()
-        .enumerate()
-        .map(|(index, (id, score))| {
-            let margin = scored
-                .get(index + 1)
-                .map_or(*score, |(_, next)| score - next);
-            json!({ "id": id, "score": score, "margin": margin })
-        })
-        .collect())
 }
 
 fn authorize(identity: &ClientIdentity, method: &str, params: &Value) -> HostResult<()> {
@@ -722,15 +318,12 @@ fn validate_request(method: &str, params: &Value) -> HostResult<()> {
         "log.info" | "log.warn" => {
             param_str(params, "msg")?;
         }
-        "storage.get" | "storage.delete" | "doc.get" | "doc.delete" | "settings.get" => {
+        "storage.get" | "storage.delete" => {
             param_nonempty_str(params, "key")?;
         }
-        "storage.set" | "doc.put" | "settings.set" => {
+        "storage.set" => {
             param_nonempty_str(params, "key")?;
             param_value(params, "value")?;
-        }
-        "llm.complete" => {
-            param_nonempty_str(params, "prompt")?;
         }
         "net.fetch" => {
             param_nonempty_str(params, "url")?;
@@ -787,38 +380,6 @@ fn validate_request(method: &str, params: &Value) -> HostResult<()> {
             }
         }
         "auth.status" | "auth.connect" | "auth.disconnect" => {}
-        "embed" => {
-            let texts = param_strings(params, "texts")?;
-            if texts.len() > EMBED_MAX_BATCH {
-                return Err(invalid_argument(format!(
-                    "'texts' accepts at most {EMBED_MAX_BATCH} items"
-                )));
-            }
-        }
-        "match.lexical" => {
-            param_match_text(params)?;
-            param_named_phrase_lists(params, "phrases")?;
-        }
-        "match.semantic" => {
-            param_match_text(params)?;
-            param_named_phrase_lists(params, "examples")?;
-        }
-        "match.decide" => {
-            param_scored_candidates(params)?;
-            param_decide_policy(params)?;
-        }
-        "session.start" => {
-            param_nonempty_str(params, "mode")?;
-        }
-        "open.url" => {
-            // Full validation (scheme allowlist) happens in dispatch; here we
-            // only require a non-empty string so a typed error is returned early.
-            param_nonempty_str(params, "url")?;
-        }
-        "open.app" => {
-            param_nonempty_str(params, "path")?;
-        }
-        "doc.list" | "capture.selection" | "capture.app" | "open.pickApp" => {}
         _ => return Err(unknown_method(method)),
     }
     Ok(())
@@ -1164,117 +725,6 @@ pub async fn dispatch(
                 .map_err(storage_error)?;
             Ok(Value::Null)
         }
-        // [GRAIN] SPEC §3.4: the document store — one file per key, so a large
-        // note collection is not one blob rewritten on every edit. Same
-        // `storage` grant, same quota; the key is a path-safe filename.
-        "doc.get" => store
-            .doc_get(&param_str(&params, "key")?)
-            .map_err(storage_error),
-        "doc.put" => {
-            let key = param_str(&params, "key")?;
-            let value = param_value(&params, "value")?;
-            store.doc_put(&key, value).map_err(storage_error)?;
-            Ok(Value::Null)
-        }
-        "doc.delete" => {
-            store
-                .doc_delete(&param_str(&params, "key")?)
-                .map_err(storage_error)?;
-            Ok(Value::Null)
-        }
-        "doc.list" => Ok(json!({ "keys": store.doc_list().map_err(storage_error)? })),
-        "settings.get" => {
-            let key = param_str(&params, "key")?;
-            if crate::grain_commands::setting_decl(app, &identity.id, &key)
-                .is_some_and(|decl| matches!(decl.kind, grain_sdk::SettingKind::Secret))
-            {
-                let marker = if ctx
-                    .extension_secret(&extension_secret_key(&identity.id, &key))
-                    .is_some()
-                {
-                    SECRET_REDACTED
-                } else {
-                    ""
-                };
-                return Ok(Value::String(marker.to_string()));
-            }
-            let stored = store.settings_get(&key).map_err(storage_error)?;
-            // A declared setting reads back through the schema, so a value left
-            // behind by an older version resolves to something the extension's
-            // own declaration says is legal.
-            Ok(
-                match crate::grain_commands::setting_decl(app, &identity.id, &key) {
-                    Some(decl) => grain_sdk::settings_schema::resolve(&decl, Some(&stored)).value,
-                    None => stored,
-                },
-            )
-        }
-        "settings.set" => {
-            let key = param_str(&params, "key")?;
-            let value = param_value(&params, "value")?;
-            // [GRAIN] SPEC §4.1: the schema is enforced HERE, not only in the
-            // settings form — this is the same namespace the host's own
-            // controls write to, and the extension can reach it directly. A
-            // schema policed only in React is not policed at all.
-            //
-            // An *undeclared* key is free-form on purpose: the schema says what
-            // the host renders, not everything the extension may remember.
-            let value = match crate::grain_commands::setting_decl(app, &identity.id, &key) {
-                Some(decl) => {
-                    let accepted = grain_sdk::settings_schema::coerce(&decl, &value)
-                        .map_err(|error| invalid_argument(format!("'{key}': {error}")))?
-                        .value;
-                    if matches!(decl.kind, grain_sdk::SettingKind::Secret) {
-                        let secret = accepted
-                            .as_str()
-                            .ok_or_else(|| invalid_argument("secret value must be text"))?;
-                        ctx.set_extension_secret(
-                            extension_secret_key(&identity.id, &key),
-                            secret.to_string(),
-                        )
-                        .map_err(|error| internal_error(format!("secret write failed: {error}")))?;
-                        return Ok(Value::Null);
-                    }
-                    accepted
-                }
-                None => value,
-            };
-            store.settings_set(&key, value).map_err(storage_error)?;
-            Ok(Value::Null)
-        }
-        "llm.complete" => {
-            let prompt = param_str(&params, "prompt")?;
-            // [GRAIN] Optional image, as returned by `capture.screenImage` (or
-            // any base64 the extension already holds). No extra grant is needed
-            // to SEND one — obtaining it is what `capture:screen-image` gates,
-            // and an extension that already has an image by other means is
-            // already trusted with it.
-            //
-            // A model that cannot take images is handled below the boundary:
-            // the same request is retried without it and the extension still
-            // gets an answer. That is why there is no "does this model support
-            // vision" query for extensions to get wrong.
-            let image = params.get("image").and_then(Value::as_object);
-            let text = match image {
-                Some(image) => {
-                    let base64 = image
-                        .get("base64")
-                        .and_then(Value::as_str)
-                        .ok_or_else(|| invalid_argument("image.base64 must be a string"))?;
-                    let mime = image
-                        .get("mime")
-                        .and_then(Value::as_str)
-                        .unwrap_or("image/png");
-                    crate::grain_post_process::complete_for_extension_with_image(
-                        app, &prompt, mime, base64,
-                    )
-                    .await
-                }
-                None => crate::grain_post_process::complete_for_extension(app, &prompt).await,
-            }
-            .map_err(|error| service_error("LLM provider", error))?;
-            Ok(json!({ "text": text }))
-        }
         "net.fetch" => {
             if params.get("auth").and_then(Value::as_bool) == Some(true) {
                 let raw_url = param_nonempty_str(&params, "url")?;
@@ -1338,335 +788,8 @@ pub async fn dispatch(
             .map_err(internal_error)?;
             Ok(Value::Null)
         }
-        "embed" => {
-            crate::grain_embed::touch_extension_mode(app);
-            let texts = param_strings(&params, "texts")?;
-            let vectors = tokio::task::spawn_blocking(move || crate::grain_embed::embed(texts))
-                .await
-                .map_err(|error| internal_error(format!("embed task failed: {error}")))?
-                .map_err(|error| service_error("embedding model", error.to_string()))?;
-            Ok(json!({ "vectors": vectors }))
-        }
-        // ── match.* — the extension ranks its own commands (§4) ─────────────
-        "match.lexical" => {
-            // Lexical rank over the extension's own phrases. Pure, no model, no
-            // capability. Same scorer Grain uses for its own lexical leg.
-            let text = param_match_text(&params)?;
-            let candidates = param_named_phrase_lists(&params, "phrases")?;
-            let ranked = grain_core::matching::lexical_rank(&text, &candidates);
-            Ok(json!({
-                "matches": ranked
-                    .iter()
-                    .map(|m| json!({ "id": m.id, "score": m.score }))
-                    .collect::<Vec<_>>(),
-            }))
-        }
-        "match.decide" => {
-            // A confidence policy over any scored candidates — pure. The
-            // primitive that turns a ranking into pick / ask / decline, so an
-            // author never hand-writes a threshold check.
-            let candidates = param_scored_candidates(&params)?;
-            let policy = param_decide_policy(&params)?;
-            Ok(match grain_core::matching::decide(&candidates, &policy) {
-                grain_core::matching::Decision::Pick(id) => json!({ "pick": id }),
-                grain_core::matching::Decision::Ambiguous(ids) => json!({ "ambiguous": ids }),
-                grain_core::matching::Decision::None => json!({ "none": true }),
-            })
-        }
-        "match.semantic" => {
-            // Semantic rank over the extension's own examples. Needs the
-            // embedder, so it lives here rather than in grain-core — but it
-            // reaches nothing beyond the supplied examples, which is why it takes
-            // no capability. Loads the model on demand and refreshes the TTL
-            // (§6): calling it while cold is never the extension's problem.
-            let text = param_match_text(&params)?;
-            let candidates = param_named_phrase_lists(&params, "examples")?;
-            if candidates.is_empty() {
-                return Ok(json!({ "matches": [] }));
-            }
-            crate::grain_embed::touch_extension_mode(app);
-            let matches = tokio::task::spawn_blocking(move || semantic_match(&text, &candidates))
-                .await
-                .map_err(|error| internal_error(format!("semantic match task failed: {error}")))?
-                .map_err(|error| service_error("embedding model", error.to_string()))?;
-            Ok(json!({ "matches": matches }))
-        }
-        "capture.selection" => {
-            let app2 = app.clone();
-            let text =
-                tokio::task::spawn_blocking(move || crate::agent::capture_selection_result(&app2))
-                    .await
-                    .map_err(|error| internal_error(format!("capture task failed: {error}")))?
-                    .map_err(|error| {
-                        unavailable(
-                            format!("selection capture failed: {error}"),
-                            "Focus an app with selectable text and retry the call.",
-                        )
-                    })?;
-            Ok(json!({ "text": text }))
-        }
-        "capture.app" => {
-            // [GRAIN] Phase 5C: a one-shot snapshot of the foreground app — the
-            // primitive a context-aware extension is built on. Reuses Grain's
-            // own detector; `null` when nothing resolves. Privacy-gated by
-            // `capture:app`.
-            let detected = tokio::task::spawn_blocking(crate::grain_commands::detect_active_app)
-                .await
-                .map_err(|e| internal_error(format!("app detect failed: {e}")))?;
-            Ok(match detected {
-                Some(a) => json!({
-                    "name": a.name,
-                    "exe": a.exe,
-                    "exePath": a.exe_path,
-                    "urlHost": a.url_host,
-                }),
-                None => Value::Null,
-            })
-        }
-        "capture.screenText" => {
-            // [GRAIN] The foreground window's visible text, from its
-            // accessibility tree — never a screenshot. `null` when the surface
-            // exposes nothing readable. Gated by `capture:screen-text`.
-            //
-            // `spawn_blocking` because this is a synchronous COM/UIA traversal:
-            // running it on the async runtime would park a worker thread for the
-            // duration of a cross-process tree walk.
-            let text = tokio::task::spawn_blocking(crate::context_detect::read_window_text)
-                .await
-                .map_err(|e| internal_error(format!("screen text read failed: {e}")))?;
-            Ok(match text {
-                Some(text) => json!({ "text": text }),
-                None => Value::Null,
-            })
-        }
-        "capture.screenImage" => {
-            // [GRAIN] The foreground window as a PNG data URI. Gated by
-            // `capture:screen-image`, the widest capture grant there is.
-            //
-            // Core has no caller for this and is not meant to grow one: the
-            // decision to photograph the user's screen belongs to an extension
-            // they installed on purpose. See `context_screen` for the reasoning.
-            //
-            // `spawn_blocking` because GDI capture plus PNG encoding is CPU work
-            // measured in tens of milliseconds — long enough to matter on an
-            // async worker.
-            let captured =
-                tokio::task::spawn_blocking(crate::context_screen::capture_foreground_window)
-                    .await
-                    .map_err(|e| internal_error(format!("screen capture failed: {e}")))?;
-            Ok(match captured {
-                Some(image) => json!({
-                    "mime": image.mime,
-                    "width": image.width,
-                    "height": image.height,
-                    "base64": image.to_base64(),
-                }),
-                None => Value::Null,
-            })
-        }
-        "session.start" => {
-            let mode = param_str(&params, "mode")?;
-            match crate::extension_session::start(app, &identity.id, &mode) {
-                Ok(session_id) => Ok(json!({ "sessionId": session_id })),
-                Err(crate::extension_session::StartError::Busy) => Err(typed_error(
-                    HostErrorCode::SessionBusy,
-                    "Another recording session is already running.",
-                    "Wait for the current session to finish or cancel it, then retry.",
-                )),
-                Err(crate::extension_session::StartError::InvalidMode) => Err(invalid_argument(
-                    format!("'{mode}' is not this extension's contributed session mode"),
-                )),
-                Err(crate::extension_session::StartError::Unavailable(error)) => Err(unavailable(
-                    format!("session could not start: {error}"),
-                    "Check microphone access and that the extension is still enabled.",
-                )),
-            }
-        }
-        // [GRAIN] Phase 5C — launch side effects. Security is enforced HERE, in
-        // Rust, never trusted to the extension (SPEC §7.2).
-        "open.url" => {
-            // Scheme allowlist: http/https/mailto/tel ONLY. A decade of Electron
-            // `openExternal` RCEs and Tauri's own shell-open advisory
-            // (GHSA-c9pr-q8gx-3mgp) all trace to opening a URL whose scheme was
-            // not restricted — `file:`, `javascript:`, custom URI handlers, etc.
-            let raw = param_nonempty_str(&params, "url")?;
-            let url = validate_open_url(&raw)?;
-            // The opener plugin hands the URL to the OS default handler; it does
-            // not spawn a shell, so there is no argument/command injection path.
-            app.opener()
-                .open_url(url, None::<String>)
-                .map_err(|error| {
-                    unavailable(
-                        format!("could not open the link: {error}"),
-                        "The URL was valid but the OS could not open it.",
-                    )
-                })?;
-            Ok(Value::Null)
-        }
-        "open.pickApp" => {
-            // User-mediated app choice: the ONLY way a path becomes launchable.
-            // The extension cannot supply a path here — the user picks it in
-            // Grain's native chooser, and we record it as approved for this
-            // extension so a later `open.app` can run it.
-            let app2 = app.clone();
-            let picked = tokio::task::spawn_blocking(move || {
-                use tauri_plugin_dialog::DialogExt;
-                app2.dialog().file().blocking_pick_file()
-            })
-            .await
-            .map_err(|error| internal_error(format!("picker task failed: {error}")))?;
-            let path = picked
-                .and_then(|f| f.into_path().ok())
-                .map(|p| p.to_string_lossy().to_string());
-            if let Some(ref p) = path {
-                approve_app(&data_dir, &identity.id, p)
-                    .map_err(|e| internal_error(format!("could not record approval: {e}")))?;
-            }
-            Ok(json!({ "path": path }))
-        }
-        "open.app" => {
-            let path = param_nonempty_str(&params, "path")?;
-            // The extension may launch ONLY a path the user picked through
-            // `open.pickApp`. An arbitrary path (including the extension's own
-            // bundled files) is refused — this is what stops `open:app` from
-            // being a sandbox escape / RCE.
-            if !is_app_approved(&data_dir, &identity.id, &path) {
-                return Err(typed_error(
-                    HostErrorCode::CapabilityDenied,
-                    "This app was not approved by the user.",
-                    "Call open.pickApp() so the user chooses the application; only a user-picked app can be launched.",
-                ));
-            }
-            app.opener()
-                .open_path(path.clone(), None::<String>)
-                .map_err(|error| {
-                    unavailable(
-                        format!("could not launch the app: {error}"),
-                        "The app path was approved but the OS could not open it (it may have moved).",
-                    )
-                })?;
-            Ok(Value::Null)
-        }
         other => Err(unknown_method(other)),
     }
-}
-
-/// Validate a URL for `open:url`. Returns the accepted URL string, or a typed
-/// error. **Scheme allowlist only** — the single most important control here
-/// (Electron `openExternal` / Tauri shell-open RCE history): `file:`,
-/// `javascript:`, `data:`, `vbscript:` and any custom URI handler are refused,
-/// because the OS routes them to handlers that can execute code or read files.
-fn validate_open_url(raw: &str) -> HostResult<String> {
-    const ALLOWED: &[&str] = &["http", "https", "mailto", "tel"];
-    let url = Url::parse(raw.trim())
-        .map_err(|error| invalid_argument(format!("invalid URL: {error}")))?;
-    let scheme = url.scheme().to_ascii_lowercase();
-    if !ALLOWED.contains(&scheme.as_str()) {
-        return Err(typed_error(
-            HostErrorCode::InvalidArgument,
-            format!("scheme '{scheme}' is not allowed"),
-            "open.url accepts only http, https, mailto and tel links.",
-        ));
-    }
-    // Defence in depth: reject embedded credentials (phishing / SSRF-ish).
-    if !url.username().is_empty() || url.password().is_some() {
-        return Err(invalid_argument("URLs must not contain credentials"));
-    }
-    Ok(url.to_string())
-}
-
-/// Where a per-extension set of user-approved launchable app paths lives. This
-/// file is written ONLY by the host (via `open.pickApp`); the extension has no
-/// API that can add to it, so it cannot self-approve an app to launch.
-fn approved_apps_path(data_dir: &std::path::Path, ext_id: &str) -> std::path::PathBuf {
-    data_dir
-        .join("extensions")
-        .join(format!("{ext_id}.approved-apps.json"))
-}
-
-fn read_approved_apps(data_dir: &std::path::Path, ext_id: &str) -> Vec<String> {
-    use std::io::Read;
-
-    const MAX_BYTES: u64 = 256 * 1024;
-    const MAX_APPS: usize = 128;
-    if grain_sdk::validate_extension_id(ext_id).is_err() {
-        return Vec::new();
-    }
-    let Ok(file) = std::fs::File::open(approved_apps_path(data_dir, ext_id)) else {
-        return Vec::new();
-    };
-    let mut bytes = Vec::new();
-    if file.take(MAX_BYTES + 1).read_to_end(&mut bytes).is_err() || bytes.len() as u64 > MAX_BYTES {
-        return Vec::new();
-    }
-    let Ok(mut approved) = serde_json::from_slice::<Vec<String>>(&bytes) else {
-        return Vec::new();
-    };
-    approved.retain(|path| !path.is_empty() && path.len() <= 32 * 1024);
-    approved.sort();
-    approved.dedup();
-    approved.truncate(MAX_APPS);
-    approved
-}
-
-fn is_app_approved(data_dir: &std::path::Path, ext_id: &str, path: &str) -> bool {
-    read_approved_apps(data_dir, ext_id)
-        .iter()
-        .any(|p| p == path)
-}
-
-pub(crate) fn approve_app(
-    data_dir: &std::path::Path,
-    ext_id: &str,
-    path: &str,
-) -> std::io::Result<()> {
-    use std::io::Write;
-
-    static APPROVED_APPS_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-    const MAX_APPS: usize = 128;
-    const MAX_BYTES: usize = 256 * 1024;
-    grain_sdk::validate_extension_id(ext_id)
-        .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidInput, error))?;
-    if path.is_empty() || path.len() > 32 * 1024 {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidInput,
-            "approved app path is invalid",
-        ));
-    }
-    let _guard = APPROVED_APPS_LOCK
-        .lock()
-        .map_err(|_| std::io::Error::other("approved-app lock is unavailable"))?;
-    let mut approved = read_approved_apps(data_dir, ext_id);
-    if !approved.iter().any(|p| p == path) {
-        if approved.len() >= MAX_APPS {
-            return Err(std::io::Error::other("approved-app limit reached"));
-        }
-        approved.push(path.to_string());
-    }
-    let file = approved_apps_path(data_dir, ext_id);
-    if let Some(parent) = file.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    let bytes = serde_json::to_vec(&approved)?;
-    if bytes.len() > MAX_BYTES {
-        return Err(std::io::Error::other("approved-app storage limit reached"));
-    }
-    let temp = file.with_extension(format!("tmp-{}", uuid::Uuid::new_v4().simple()));
-    let mut output = std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&temp)?;
-    if let Err(error) = output.write_all(&bytes).and_then(|_| output.sync_all()) {
-        let _ = std::fs::remove_file(&temp);
-        return Err(error);
-    }
-    drop(output);
-    if file.exists() {
-        std::fs::remove_file(&file)?;
-    }
-    std::fs::rename(&temp, file).inspect_err(|_| {
-        let _ = std::fs::remove_file(&temp);
-    })
 }
 
 #[cfg(test)]
@@ -1746,65 +869,6 @@ mod tests {
             role: crate::events_auth::ClientRole::Worker,
             caps: CapabilitySet::Named(caps.iter().map(|s| s.to_string()).collect::<HashSet<_>>()),
         }
-    }
-
-    #[test]
-    fn open_url_allows_only_safe_schemes() {
-        // Accepted: the four safe schemes.
-        for ok in [
-            "https://example.com/x",
-            "http://example.com",
-            "mailto:a@example.com",
-            "tel:+15551234",
-        ] {
-            assert!(validate_open_url(ok).is_ok(), "{ok} should be allowed");
-        }
-        // Rejected: every known `openExternal`/shell-open RCE vector.
-        for bad in [
-            "file:///etc/passwd",
-            "file:///C:/Windows/System32/calc.exe",
-            "javascript:alert(1)",
-            "data:text/html,<script>alert(1)</script>",
-            "vbscript:msgbox(1)",
-            "smb://attacker/share",
-            "vscode://x",
-            "ms-msdt:/id",
-            "chrome://settings",
-            "\\\\attacker\\share",
-            "example.com", // no scheme — must be explicit, never guessed
-        ] {
-            let err = validate_open_url(bad).unwrap_err();
-            assert_eq!(
-                err.code,
-                HostErrorCode::InvalidArgument,
-                "{bad} must be refused"
-            );
-        }
-        // Credentials are refused even on an allowed scheme.
-        assert!(validate_open_url("https://user:pw@example.com").is_err());
-    }
-
-    #[test]
-    fn open_app_only_launches_user_approved_paths() {
-        let dir = tempfile::tempdir().unwrap();
-        let data = dir.path();
-        let id = "com.example.actions";
-        let evil = "C:/Windows/System32/cmd.exe";
-        // Nothing is approved by default — an arbitrary path is refused.
-        assert!(!is_app_approved(data, id, evil));
-        // Only a path recorded via the user-mediated picker becomes launchable,
-        // and only for the extension that picked it.
-        let good = "C:/Program Files/Editor/editor.exe";
-        approve_app(data, id, good).unwrap();
-        assert!(is_app_approved(data, id, good));
-        assert!(
-            !is_app_approved(data, id, evil),
-            "approval is per-path, exact"
-        );
-        assert!(
-            !is_app_approved(data, "com.other.ext", good),
-            "approval is per-extension"
-        );
     }
 
     #[test]
@@ -1939,7 +1003,7 @@ mod tests {
     }
 
     #[test]
-    fn storage_roundtrip_and_settings_namespace() {
+    fn storage_roundtrip() {
         let dir = tempfile::tempdir().unwrap();
         let s = ExtStorage::new(dir.path(), "com.example.a");
         assert_eq!(s.get("k").unwrap(), Value::Null);
@@ -1947,26 +1011,17 @@ mod tests {
         assert_eq!(s.get("k").unwrap(), json!({"n": 1}));
         s.delete("k").unwrap();
         assert_eq!(s.get("k").unwrap(), Value::Null);
-
-        // Settings namespace is isolated under its own reserved key.
-        s.settings_set("theme", json!("dark")).unwrap();
-        assert_eq!(s.settings_get("theme").unwrap(), json!("dark"));
-        assert_eq!(s.get("theme").unwrap(), Value::Null); // not a top-level key
     }
 
     #[test]
-    fn uninstall_purge_removes_kv_settings_and_documents() {
+    fn uninstall_purge_removes_storage() {
         let dir = tempfile::tempdir().unwrap();
         let store = ExtStorage::new(dir.path(), "com.example.removed");
         store.set("key", json!("value")).unwrap();
-        store.settings_set("theme", json!("dark")).unwrap();
-        store.doc_put("note", json!({"text": "hello"})).unwrap();
         assert!(store.path.exists());
-        assert!(store.docs_dir.exists());
 
         store.purge().unwrap();
         assert!(!store.path.exists());
-        assert!(!store.docs_dir.exists());
         // Idempotent cleanup keeps uninstall retries safe.
         store.purge().unwrap();
     }
@@ -1992,66 +1047,5 @@ mod tests {
         let error = storage_error(s.get("k").unwrap_err());
         assert_eq!(error.code, HostErrorCode::Internal);
         assert_typed(&error);
-    }
-
-    #[test]
-    fn document_keys_cannot_escape_the_store() {
-        // The security-critical part: a key is a filename, never a path.
-        for bad in [
-            "",
-            "  ",
-            "../secrets",
-            "a/b",
-            "a\\b",
-            ".",
-            "..",
-            "...",
-            "a b",
-            "a:b",
-            "note\0",
-            &"x".repeat(201),
-        ] {
-            assert!(
-                ExtStorage::safe_doc_name(bad).is_err(),
-                "key {bad:?} must be rejected"
-            );
-        }
-        for ok in ["note", "note-1", "note_1", "a.b", "2026-07-22", "Z9"] {
-            assert_eq!(ExtStorage::safe_doc_name(ok).unwrap(), format!("{ok}.json"));
-        }
-    }
-
-    #[test]
-    fn document_store_roundtrips_and_lists() {
-        let dir = tempfile::tempdir().unwrap();
-        let s = ExtStorage::new(dir.path(), "com.example.docs");
-        assert_eq!(s.doc_get("a").unwrap(), Value::Null); // absent → null
-        assert!(s.doc_list().unwrap().is_empty());
-
-        s.doc_put("a", json!({"body": "one"})).unwrap();
-        s.doc_put("b", json!({"body": "two"})).unwrap();
-        assert_eq!(s.doc_get("a").unwrap(), json!({"body": "one"}));
-        assert_eq!(
-            s.doc_list().unwrap(),
-            vec!["a".to_string(), "b".to_string()]
-        );
-
-        // A document is its own file — the KV store is untouched by doc writes.
-        assert_eq!(s.get("a").unwrap(), Value::Null);
-
-        s.doc_delete("a").unwrap();
-        assert_eq!(s.doc_get("a").unwrap(), Value::Null);
-        assert_eq!(s.doc_list().unwrap(), vec!["b".to_string()]);
-        // Deleting an absent document is not an error.
-        assert!(s.doc_delete("gone").is_ok());
-    }
-
-    #[test]
-    fn document_put_rejects_an_unsafe_key_before_touching_disk() {
-        let dir = tempfile::tempdir().unwrap();
-        let s = ExtStorage::new(dir.path(), "com.example.docs");
-        assert!(s.doc_put("../escape", json!(1)).is_err());
-        assert!(s.doc_get("../escape").is_err());
-        assert!(s.doc_delete("../escape").is_err());
     }
 }

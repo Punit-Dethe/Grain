@@ -1500,38 +1500,6 @@ pub(crate) fn capture_stop_context() -> StopContext {
     }
 }
 
-/// Cap on the text harvested from a whole window. Big enough for an email
-/// thread or an article, small enough that it cannot dominate a model's context.
-pub const MAX_WINDOW_TEXT_CHARS: usize = 4000;
-
-/// Read the visible text of the foreground window from its accessibility tree.
-///
-/// # Why not a screenshot
-///
-/// This is what "read my screen" costs elsewhere in this market: a screen
-/// recording permission, a frame encoded and shipped to a vision model, and in
-/// one competitor's case a public trust incident. The accessibility tree already
-/// holds the text, structured, with no permission prompt on Windows, no image
-/// ever created, and no other application in frame — only the window the user is
-/// actually typing into.
-///
-/// It genuinely misses things a screenshot would catch (canvas, video, scanned
-/// PDFs, Figma). That is what the image path is for; this is the one that should
-/// be reached for first.
-///
-/// `None` on unsupported platforms or when nothing readable was found. Password
-/// fields are skipped, as everywhere else.
-pub fn read_window_text() -> Option<String> {
-    #[cfg(windows)]
-    {
-        uia::read_window_text()
-    }
-    #[cfg(not(windows))]
-    {
-        None
-    }
-}
-
 /// Whether the focused text range is non-empty, without reading its contents.
 /// Used only to label a finite result action honestly as Replace vs Insert.
 pub fn focused_has_selection() -> bool {
@@ -1803,11 +1771,6 @@ mod uia {
     /// per rendered tab (plus the odd embedded frame), so this is generous;
     /// it only exists so a pathological page cannot make the scan unbounded.
     const MAX_DOCUMENT_SCAN: i32 = 16;
-
-    /// Upper bound on elements inspected per control type when harvesting a
-    /// whole window's text. A busy page has thousands; the character cap would
-    /// stop us anyway, but this bounds the tree traversal itself.
-    const MAX_WINDOW_ELEMENT_SCAN: i32 = 400;
 
     /// RAII COM init: balances a successful `CoInitializeEx` with `CoUninitialize`.
     /// If the thread was already in a different apartment (`RPC_E_CHANGED_MODE`),
@@ -2328,73 +2291,6 @@ mod uia {
                     .or_else(|| read_name(&edit))
                     .and_then(|v| host_from_url(&v))
             })
-    }
-
-    /// Harvest the foreground window's visible text from its accessibility tree.
-    ///
-    /// Collects `Text`, `Edit` and `Document` elements — static labels and prose
-    /// come through as `Text`, editable and document content through the other
-    /// two — and stops at [`MAX_WINDOW_TEXT_CHARS`].
-    ///
-    /// Two things it deliberately does NOT do. It never touches a password
-    /// field, checked per element rather than assumed from the control type. And
-    /// it de-duplicates, because accessibility trees repeat the same string at
-    /// several levels (a button's label appears on the button, its text child,
-    /// and often a wrapper) and a naive harvest is mostly the same words over and
-    /// over — which wastes exactly the context budget this is spending.
-    pub(in crate::context_detect) fn read_window_text() -> Option<String> {
-        unsafe {
-            let _com = ComGuard::init();
-            let automation: IUIAutomation =
-                CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER).ok()?;
-            let hwnd = super::windows_impl::foreground_window()?;
-
-            let mut out = String::new();
-            // Tracked incrementally rather than recomputed. `out.chars().count()`
-            // is O(len), and checking it per element made the harvest quadratic
-            // in the amount of text collected — on a busy page, the dominant cost.
-            let mut collected = 0usize;
-            let mut seen = std::collections::HashSet::new();
-
-            'outer: for control_type in [
-                UIA_TextControlTypeId.0,
-                UIA_EditControlTypeId.0,
-                UIA_DocumentControlTypeId.0,
-            ] {
-                for element in
-                    descendants_of_type(&automation, hwnd, control_type, MAX_WINDOW_ELEMENT_SCAN)
-                {
-                    if collected >= super::MAX_WINDOW_TEXT_CHARS {
-                        // Full: stop entirely rather than fall through to another
-                        // whole-tree scan whose results cannot be used.
-                        break 'outer;
-                    }
-                    if is_password(&element) {
-                        continue;
-                    }
-                    // Static text carries its content in Name; editable and
-                    // document elements carry it in Value.
-                    let Some(text) = read_value(&element).or_else(|| read_name(&element)) else {
-                        continue;
-                    };
-                    let text = text.trim();
-                    let len = text.chars().count();
-                    if len < 2 {
-                        continue;
-                    }
-                    if !seen.insert(text.to_string()) {
-                        continue;
-                    }
-                    out.push_str(text);
-                    out.push('\n');
-                    collected += len + 1;
-                }
-            }
-
-            let out: String = out.chars().take(super::MAX_WINDOW_TEXT_CHARS).collect();
-            let out = out.trim().to_string();
-            (!out.is_empty()).then_some(out)
-        }
     }
 
     pub(in crate::context_detect) fn focused_has_selection() -> bool {

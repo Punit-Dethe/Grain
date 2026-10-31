@@ -6,23 +6,17 @@
 //! produce. It cannot be filtered the way text can: a screenshot carries whatever
 //! happened to be on the window — a password manager mid-reveal, someone else's
 //! message, a medical record — and unlike the accessibility tree there is no
-//! per-element flag to skip. So a caller has to *earn* a frame, and there are
-//! exactly two that have:
+//! per-element flag to skip. So a caller has to *earn* a frame, and exactly one
+//! has: **the Agent**, and only under `agent_screen_image` — a setting that is
+//! OFF by default, lives inside the Agent's own experimentation panel, and is
+//! read at the moment of capture rather than cached anywhere. Nothing captures
+//! on a schedule, nothing captures in the background: a frame exists only
+//! because the user pressed the summon key themselves, and it is dropped when
+//! that session ends.
 //!
-//! - **An extension** the user deliberately installed and deliberately granted
-//!   `capture:screen-image` (`host_api`). The decision, the blast radius and the
-//!   responsibility sit with a component the user opted into.
-//! - **The Agent**, and only under `agent_screen_image` — a setting that is OFF
-//!   by default, lives inside the Agent's own experimentation panel, and is read
-//!   at the moment of capture rather than cached anywhere. This is the
-//!   "experimentation flag with its own consent surface" this module always said
-//!   a built-in would have to arrive through. Nothing captures on a schedule,
-//!   nothing captures in the background: a frame exists only because the user
-//!   pressed the summon key themselves, and it is dropped when that session ends.
-//!
-//! Both paths photograph ONE window and hand the bytes straight to the model the
-//! user configured. Nothing else in core may call in here — a new caller is a new
-//! consent surface, not a convenience.
+//! It photographs ONE window and hands the bytes straight to the model the user
+//! configured. Nothing else may call in here — a new caller is a new consent
+//! surface, not a convenience.
 //!
 //! # What the capture is bounded to
 //!
