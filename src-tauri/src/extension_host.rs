@@ -1658,8 +1658,7 @@ pub async fn run_action(
         .wait_connected(
             ext_id,
             &token,
-            native_time_remaining(expires, DispatchPhase::NotDispatched)?
-                .min(COLD_WAKE_DEADLINE),
+            native_time_remaining(expires, DispatchPhase::NotDispatched)?.min(COLD_WAKE_DEADLINE),
         )
         .await
     {
@@ -1990,8 +1989,7 @@ pub fn reload_dev_extension(
         ));
     }
 
-    let slots_changed = prior.slots != loaded.pack.manifest.slots;
-    let enabled = prior.enabled && !slots_changed;
+    let enabled = prior.enabled;
     let requested = &loaded.pack.manifest.permissions;
     let granted = prior
         .granted
@@ -2008,17 +2006,7 @@ pub fn reload_dev_extension(
             installed_version: loaded.pack.manifest.version.clone(),
             artifact_sha256: None,
             granted: granted.clone(),
-            slots: loaded.pack.manifest.slots.clone(),
-            // A hot reload re-approves, for the same reason the initial dev load
-            // does: this is the author's own project on their own disk, and the
-            // prompt text is the thing they are iterating on.
-            prompt_layers_approved: (!loaded.pack.manifest.contributes.prompt_layers.is_empty())
-                .then(|| {
-                    grain_core::extensions::prompt_layers_fingerprint(
-                        &loaded.pack.manifest.contributes.prompt_layers,
-                    )
-                }),
-            // Same reasoning for actions, and the same limit: this shortcut exists
+            // Dev reload approves the author's own actions. This shortcut exists
             // only for a load-unpacked project on the author's own disk.
             actions_approved: (!loaded.pack.manifest.contributes.actions.is_empty()).then(|| {
                 grain_core::extensions::actions_fingerprint(
@@ -2033,13 +2021,6 @@ pub fn reload_dev_extension(
                 .as_ref()
                 .map(grain_core::extensions::authentication_fingerprint),
             authentication_session: prior.authentication_session.clone(),
-            // And for what the extension is ranked by. Same shortcut, same limit.
-            recommend_approved: loaded
-                .pack
-                .manifest
-                .kind
-                .is_searchable()
-                .then(|| grain_core::extensions::recommendation_fingerprint(&loaded.pack.manifest)),
             dev: prior.dev,
             // A dev hot-reload preserves the record's rung (a load-unpacked project
             // is `dev`); trust is never changed by a reload.
@@ -2343,18 +2324,11 @@ mod tests {
             installed_version: "1.0".into(),
             artifact_sha256: None,
             granted: vec![],
-            prompt_layers_approved: None,
             actions_approved: Some(grain_core::extensions::actions_fingerprint(
                 &pack.manifest.contributes.actions,
             )),
             authentication_approved: None,
             authentication_session: None,
-            recommend_approved: pack
-                .manifest
-                .kind
-                .is_searchable()
-                .then(|| grain_core::extensions::recommendation_fingerprint(&pack.manifest)),
-            slots: vec![],
             dev: None,
             trust: grain_sdk::Trust::UNTRUSTED_DEFAULT,
         }

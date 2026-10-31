@@ -1767,7 +1767,6 @@ mod tests {
                             &latest,
                             vec![],
                             None,
-                            vec![],
                             install::ApprovalDigests::default(),
                         );
                         record.installed_version = version.into();
@@ -2097,7 +2096,7 @@ mod tests {
                 if mode == "disable_record" || mode == "replace_record" {
                     let record = install::plan_record(
                         &state.index.read().unwrap().as_ref().unwrap().entries[0],
-                        vec![], None, vec![], install::ApprovalDigests::default(),
+                        vec![], None, install::ApprovalDigests::default(),
                     );
                     reg.install(record).unwrap();
                     reg.set_enabled("com.example.tools", true).unwrap();

@@ -46,8 +46,7 @@ pub(crate) fn capture_shortcut_conflicts(
             .bindings
             .iter()
             .filter(|(other, _)| {
-                other.as_str() != id
-                    && (ids.contains(&other.as_str()) || id == "prompt_record")
+                other.as_str() != id && (ids.contains(&other.as_str()) || id == "prompt_record")
             })
             .any(|(_, binding)| {
                 binding
@@ -1246,14 +1245,11 @@ mod imported_update_security_tests {
             installed_version: pack.manifest.version.clone(),
             artifact_sha256: None,
             granted: pack.manifest.permissions.clone(),
-            prompt_layers_approved: None,
             actions_approved: None,
             authentication_approved: Some(grain_core::extensions::authentication_fingerprint(
                 pack.manifest.contributes.authentication.as_ref().unwrap(),
             )),
             authentication_session: None,
-            recommend_approved: None,
-            slots: Vec::new(),
             dev: None,
             trust: grain_sdk::Trust::Dev,
         }
@@ -1459,15 +1455,7 @@ fn register_unpacked_project(
         installed_version: loaded.pack.manifest.version.clone(),
         artifact_sha256: None,
         granted,
-        slots: loaded.pack.manifest.slots.clone(),
-        // Dev records approve their own prompt layers. The user pointed Grain
-        // at a folder on their own disk, which is the same act as approving it,
-        // and the alternative is a permission sheet on every iteration of a
-        // sentence the author is actively writing. Store and manual-import
-        // packs get no such shortcut — see `extension_import_pack`.
-        prompt_layers_approved: (!loaded.pack.manifest.contributes.prompt_layers.is_empty()).then(
-            || ext::prompt_layers_fingerprint(&loaded.pack.manifest.contributes.prompt_layers),
-        ),
+        // Loading the author's own project approves its current actions.
         actions_approved: (!loaded.pack.manifest.contributes.actions.is_empty())
             .then(|| ext::actions_fingerprint(&loaded.pack.manifest.contributes.actions)),
         authentication_approved: loaded
@@ -1479,12 +1467,6 @@ fn register_unpacked_project(
             .map(ext::authentication_fingerprint),
         // The registry carries only the same dev project's account forward.
         authentication_session: None,
-        recommend_approved: loaded
-            .pack
-            .manifest
-            .kind
-            .is_searchable()
-            .then(|| ext::recommendation_fingerprint(&loaded.pack.manifest)),
         dev: None,
         // Load-unpacked is the `dev` rung: never promotable, never verified.
         trust: grain_sdk::Trust::Dev,
@@ -1633,7 +1615,7 @@ pub fn extension_import_pack(
         ext::ExtensionRecord {
             id: id.clone(),
             // Re-import is an update, not an approval. Any newly requested grant or
-            // changed prompt/action/auth/recommendation digest holds the pack off
+            // changed action/auth digest holds the pack off
             // until the settings sheet has shown the new contract.
             enabled: stays_enabled,
             execution_generation: 0,
@@ -1651,15 +1633,6 @@ pub fn extension_import_pack(
                         .collect()
                 })
                 .unwrap_or_default(),
-            slots: pack.manifest.slots.clone(),
-            // A manually imported pack is a third-party file, so its prompt text is
-            // NOT approved by importing it: the prior approval is carried forward
-            // and a re-import with changed wording therefore stops matching, holds
-            // the enable, and shows the user what changed. This is the update path
-            // the rug-pull incidents of 2025 walked through.
-            prompt_layers_approved: prior
-                .as_ref()
-                .and_then(|r| r.prompt_layers_approved.clone()),
             // Carried, never recomputed. Importing is not approving: if the
             // declaration changed, this stops matching, the actions go inert, and
             // the enable path shows the user what is different.
@@ -1670,11 +1643,6 @@ pub fn extension_import_pack(
             authentication_session: prior
                 .as_ref()
                 .and_then(|r| r.authentication_session.clone()),
-            // Carried for the same reason, and the stake is higher: what this one
-            // gates is whether the extension is eligible to be handed the user's
-            // words at all. `None` means never approved, so an import that has not
-            // been reviewed under this contract simply is not ranked.
-            recommend_approved: prior.as_ref().and_then(|r| r.recommend_approved.clone()),
             dev: None,
             // A manually imported local file is UNTRUSTED, always — even if a
             // store-verified record for this id existed. Trust comes only from the
@@ -1783,7 +1751,6 @@ fn reviewed_grant_record(
             rec.granted.push(p);
         }
     }
-    rec.prompt_layers_approved = None;
     // Recomputed from disk, never taken from the caller — the fingerprint IS the
     // grant, so accepting one over the wire would let a caller approve a
     // declaration the user never saw.
@@ -1794,7 +1761,6 @@ fn reviewed_grant_record(
         .authentication
         .as_ref()
         .map(ext::authentication_fingerprint);
-    rec.recommend_approved = None;
     if manifest
         .permissions
         .iter()

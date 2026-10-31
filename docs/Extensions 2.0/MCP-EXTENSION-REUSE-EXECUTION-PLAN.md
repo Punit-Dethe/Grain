@@ -3,7 +3,9 @@
 **Legacy retirement, 31 October 2026:** the B5c physical-removal inventory,
 severity tiers and continuity log live in
 [LEGACY-RETIREMENT-PLAN.md](LEGACY-RETIREMENT-PLAN.md) on branch
-`cleanup/retire-legacy-extension-platform`. No code has been removed yet.
+`cleanup/retire-legacy-extension-platform`. Tier 1 and Tier 2 removal are complete
+(M7 excluded by the user); Tier 3 is in progress. Use that continuity log for the
+current checkpoint and remaining work; earlier inventories below are historical.
 
 ## Active forward work order — 15 October 2026
 

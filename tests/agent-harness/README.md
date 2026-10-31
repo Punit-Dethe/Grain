@@ -729,6 +729,12 @@ The deliberate fault withholds navigation away from the real loading Store page.
 
 ### Registry recovery scenarios
 
+**1 November retirement checkpoint:** these scenarios use the current first-round
+tool schemas and automatic Agent execution. Installation/action declaration
+consent, exact dispatch/result checks, restart ownership, quarantine and save
+failure assertions remain required. The registry checkpoint passes all three
+cases; the `lost-pointer` negative control fails as intended, with cleanup Pass.
+
 | ID                             | What is asserted                                                                                                                                                                                                                                                            |
 | ------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `native.registry-refusal`      | Malformed, future-version, inconsistent-identity and oversized registry startup preserve the file, refuse extension operations, record a diagnostic and spawn no worker. Restored bytes recover actual greetings through real restarts.                                     |

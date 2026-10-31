@@ -537,15 +537,11 @@ async function request(instruction = "hello", { timeoutMs = 20000 } = {}) {
   return page;
 }
 async function greeting(revision = "one") {
+  await closePanel();
   const before = await status();
-  const page = await request();
-  assert.equal(
-    events(await status(), "dispatched").length,
-    events(before, "dispatched").length,
-    "Tool dispatched before approval",
-  );
-  await activate(page.locator(".agc-confirm-actions .agc-action-btn"));
-  await waitFor("Approved greeting", async () => {
+  await invoke("agent_harness_submit", { instruction: "hello" });
+  const page = await panel();
+  await waitFor("Automatically approved greeting", async () => {
     const snapshot = await status();
     return (
       events(snapshot, "completed", "hello").length ===
@@ -558,10 +554,11 @@ async function greeting(revision = "one") {
     .first()
     .waitFor({ state: "visible", timeout: 15000 });
   const after = await status();
+  assert.equal(after.agent.pendingApproval, false);
   assert.equal(
     events(after, "dispatched", "hello").length,
     events(before, "dispatched", "hello").length + 1,
-    "Approval must dispatch once",
+    "Greeting must dispatch once",
   );
   assert.equal(
     after.worker.current.pending,
@@ -1887,8 +1884,11 @@ try {
   model = await startModel({
     fault: options.fault,
     liveConfig,
-    storeCheckpoint: selected.every((scenario) =>
-      ["store", "store-mcp"].includes(scenario.suite),
+    // Registry recovery uses the same first-round tool schemas as the store.
+    storeCheckpoint: selected.every(
+      (scenario) =>
+        ["store", "store-mcp", "registry-recovery"].includes(scenario.suite) ||
+        scenario.id === "native.registry-refusal",
     ),
   });
   if (

@@ -203,25 +203,18 @@ pub fn stage_artifact(
 /// - `digests`: what the incoming pack declares, so an update that changed any
 ///   of it can be held disabled until the user approves the new declaration.
 ///
-/// A struct rather than three positional `Option<String>` arguments: they are
-/// mutually indistinguishable to the compiler, and transposing two of them
-/// would silently approve one declaration against another's fingerprint.
+/// The digest values share a type; named fields prevent accidentally
+/// transposing action and authentication approvals.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ApprovalDigests {
-    pub prompt_layers: Option<String>,
     pub actions: Option<String>,
     pub authentication: Option<String>,
-    /// [GRAIN] The Extension Mode hand-off contract
-    /// (`extensions::recommendation_fingerprint`). Always `Some` for a
-    /// searchable extension, `None` otherwise.
-    pub recommend: Option<String>,
 }
 
 pub fn plan_record(
     entry: &IndexEntry,
     granted: Vec<String>,
     prior: Option<&ExtensionRecord>,
-    slots: Vec<String>,
     digests: ApprovalDigests,
 ) -> ExtensionRecord {
     // A removed declaration removes its grant too. Keeping stale grants would
@@ -236,35 +229,13 @@ pub fn plan_record(
     // approved (SPEC Â§6). A fresh install is disabled anyway (enable is the
     // user's explicit second step).
     let adds_permissions = entry.capabilities.iter().any(|cap| !granted.contains(cap));
-    // Changed prompt-layer text is the same event, and needs saying separately
-    // because it widens nothing a capability list can express: the pack asks for
-    // no new permission, it just changes the words it puts in front of the model
-    // when the user dictates. Approval that does not survive an update is
-    // approval of a version nobody is running â€” CVE-2025-54136's exact lesson.
-    let approved = prior.and_then(|r| r.prompt_layers_approved.clone());
-    let changes_prompt_layers =
-        digests.prompt_layers.is_some() && digests.prompt_layers != approved;
-    // Changed actions are the same event again, and the sharpest of the three:
-    // what an update can quietly alter here is not a permission or a sentence
-    // but what pressing the key DOES â€” a `confirm` that became `safe`, a scope
-    // that widened, a phrase that now captures a request it never used to.
+    // Changed actions require renewed approval even without new permissions.
     let approved_actions = prior.and_then(|r| r.actions_approved.clone());
     let changes_actions = digests.actions.is_some() && digests.actions != approved_actions;
     let approved_authentication = prior.and_then(|r| r.authentication_approved.clone());
     let changes_authentication =
         digests.authentication.is_some() && digests.authentication != approved_authentication;
-    // [GRAIN] And once more for the Extensions V1 hand-off contract, which is
-    // the widest of the three: what a change here alters is not what the
-    // extension can DO but what it gets to HEAR, since being recommended means
-    // receiving the whole transcript verbatim.
-    let approved_recommend = prior.and_then(|r| r.recommend_approved.clone());
-    let changes_recommend = digests.recommend.is_some() && digests.recommend != approved_recommend;
-    let enabled = prior_enabled
-        && !adds_permissions
-        && !changes_prompt_layers
-        && !changes_actions
-        && !changes_authentication
-        && !changes_recommend;
+    let enabled = prior_enabled && !adds_permissions && !changes_actions && !changes_authentication;
 
     ExtensionRecord {
         id: entry.id.clone(),
@@ -274,19 +245,10 @@ pub fn plan_record(
         installed_version: entry.version.clone(),
         artifact_sha256: Some(entry.sha256.clone()),
         granted,
-        // Slots come from the pack manifest we just installed â€” not the prior
-        // record — so an update that changes them is reflected, and a fresh
-        // store install actually claims what it declares (SPEC §3.2).
-        slots,
-        // The PRIOR approval is carried forward untouched. Installing is not
-        // approving: if the text changed, this no longer matches the
-        // declaration, the layers stay inert, and the enable path shows the user
-        // the new wording.
-        prompt_layers_approved: approved,
+        // Installing carries prior approval; it never grants new consent.
         actions_approved: approved_actions,
         authentication_approved: approved_authentication,
         authentication_session: prior.and_then(|record| record.authentication_session.clone()),
-        recommend_approved: approved_recommend,
         dev: None,
         // THE trust assignment. Sourced only from the verified entry, bound to
         // this exact (id, version, sha256): a verified 1.0 confers nothing on
@@ -325,12 +287,8 @@ pub fn install_from_verified_entry_if_current(
         .map(|r| r.granted.clone())
         .unwrap_or_default();
     let manifest = manifest_of(bytes);
-    let slots = manifest
-        .as_ref()
-        .map(|m| m.slots.clone())
-        .unwrap_or_default();
     let digests = manifest.as_ref().map(declared_digests).unwrap_or_default();
-    let record = plan_record(entry, granted, prior.as_ref(), slots, digests);
+    let record = plan_record(entry, granted, prior.as_ref(), digests);
     reg.install_if_current(record, revision)
         .map_err(|e| InstallError::Io(e.to_string()))?;
     Ok(dir)
@@ -342,12 +300,10 @@ pub fn install_from_verified_entry_if_current(
 /// Best-effort: an unreadable manifest yields `None` rather than failing the
 /// install, because the artifact already passed hash + extraction, so a pack
 /// whose manifest will not parse is one that fails later and louder. Every
-/// caller degrades in the safe direction — no slots claimed, and no approval
-/// digest, which means a declaration that cannot be read is never treated as
-/// approved.
+/// caller degrades in the safe direction: a declaration that cannot be read
+/// has no approval digest and is never treated as approved.
 ///
-/// One parse for all four derived values. Three separate readers is three
-/// chances for them to disagree about what the same bytes said.
+/// Parse once so the approval digests describe the same manifest.
 fn manifest_of(bytes: &[u8]) -> Option<grain_sdk::ExtensionManifest> {
     use grain_sdk::{ExtensionManifest, GrainPack};
     match pack::detect_shape(bytes) {
@@ -373,8 +329,6 @@ fn manifest_of(bytes: &[u8]) -> Option<grain_sdk::ExtensionManifest> {
 fn declared_digests(m: &grain_sdk::ExtensionManifest) -> ApprovalDigests {
     use crate::extensions as ext;
     ApprovalDigests {
-        prompt_layers: (!m.contributes.prompt_layers.is_empty())
-            .then(|| ext::prompt_layers_fingerprint(&m.contributes.prompt_layers)),
         actions: (!m.contributes.actions.is_empty())
             .then(|| ext::actions_fingerprint(&m.contributes.actions)),
         authentication: m
@@ -382,14 +336,6 @@ fn declared_digests(m: &grain_sdk::ExtensionManifest) -> ApprovalDigests {
             .authentication
             .as_ref()
             .map(ext::authentication_fingerprint),
-        // [GRAIN] Unlike the other two this is keyed off `kind`, not off a list
-        // being non-empty: what needs approving is being ELIGIBLE to receive the
-        // user's words at all, and validation already guarantees a searchable
-        // extension carries a `recommend` block.
-        recommend: m
-            .kind
-            .is_searchable()
-            .then(|| ext::recommendation_fingerprint(m)),
     }
 }
 
@@ -512,7 +458,7 @@ mod tests {
         let update = entry(&first_entry.id, "1", Trust::Verified, &[], &changed);
         let new = stage_artifact(&root, &update, &changed, ExtractLimits::default()).unwrap();
         reg.set_enabled(&first_entry.id, false).unwrap();
-        let record = plan_record(&update, vec![], None, vec![], ApprovalDigests::default());
+        let record = plan_record(&update, vec![], None, ApprovalDigests::default());
         assert!(reg.install_if_current(record.clone(), revision).is_err());
         assert_eq!(
             std::fs::read(old.join("pack.grainpack.json")).unwrap(),
@@ -658,12 +604,9 @@ mod tests {
             installed_version: "1.0.0".into(),
             artifact_sha256: None,
             granted: vec![],
-            prompt_layers_approved: None,
             actions_approved: None,
             authentication_approved: None,
             authentication_session: None,
-            recommend_approved: None,
-            slots: vec![],
             dev: None,
             trust: Trust::UNTRUSTED_DEFAULT,
         };
@@ -677,7 +620,7 @@ mod tests {
         // Property 2: trust flows from a verified entry through plan_record.
         let bytes = b"{\"id\":\"com.example.ok\"}";
         let e = entry("com.example.ok", "1.0.0", Trust::Verified, &[], bytes);
-        let record = plan_record(&e, vec![], None, vec![], ApprovalDigests::default());
+        let record = plan_record(&e, vec![], None, ApprovalDigests::default());
         assert_eq!(record.trust, Trust::Verified);
         assert_eq!(record.installed_version, "1.0.0");
     }
@@ -689,24 +632,12 @@ mod tests {
         // record is untrusted even though the prior 1.0 was verified.
         let prior_bytes = b"{\"v\":\"1.0\"}";
         let prior_entry = entry("com.example.x", "1.0.0", Trust::Verified, &[], prior_bytes);
-        let prior = plan_record(
-            &prior_entry,
-            vec![],
-            None,
-            vec![],
-            ApprovalDigests::default(),
-        );
+        let prior = plan_record(&prior_entry, vec![], None, ApprovalDigests::default());
         assert_eq!(prior.trust, Trust::Verified);
 
         let new_bytes = b"{\"v\":\"1.1\"}";
         let new_entry = entry("com.example.x", "1.1.0", Trust::Dev, &[], new_bytes);
-        let updated = plan_record(
-            &new_entry,
-            vec![],
-            Some(&prior),
-            vec![],
-            ApprovalDigests::default(),
-        );
+        let updated = plan_record(&new_entry, vec![], Some(&prior), ApprovalDigests::default());
         assert_eq!(
             updated.trust,
             Trust::Dev,
@@ -827,70 +758,8 @@ mod tests {
         );
     }
 
-    /// The rug pull (PLAN Â§T1 / CVE-2025-54136). A pack whose prompt layer text
-    /// changes asks for no new capability, so nothing in the permission diff
-    /// would notice â€” and the layer is the part that decides what the model does
-    /// to the user's own words.
-    #[test]
-    fn update_with_changed_prompt_layers_holds_disabled() {
-        let approved = ExtensionRecord {
-            id: "com.example.x".into(),
-            enabled: true,
-            execution_generation: 0,
-            toggle_seq: 1,
-            installed_version: "1.0.0".into(),
-            artifact_sha256: None,
-            granted: vec![],
-            prompt_layers_approved: Some("fingerprint-of-1.0".into()),
-            actions_approved: None,
-            authentication_approved: None,
-            authentication_session: None,
-            recommend_approved: None,
-            slots: vec![],
-            dev: None,
-            trust: Trust::Verified,
-        };
-        let e = entry("com.example.x", "1.1.0", Trust::Verified, &[], b"{}");
-
-        let unchanged = plan_record(
-            &e,
-            vec![],
-            Some(&approved),
-            vec![],
-            ApprovalDigests {
-                prompt_layers: Some("fingerprint-of-1.0".into()),
-                ..Default::default()
-            },
-        );
-        assert!(
-            unchanged.enabled,
-            "an update that leaves the wording alone stays enabled"
-        );
-
-        let changed = plan_record(
-            &e,
-            vec![],
-            Some(&approved),
-            vec![],
-            ApprovalDigests {
-                prompt_layers: Some("fingerprint-of-1.1".into()),
-                ..Default::default()
-            },
-        );
-        assert!(
-            !changed.enabled,
-            "changed prompt text must hold the update until the user reads it"
-        );
-        assert_eq!(
-            changed.prompt_layers_approved.as_deref(),
-            Some("fingerprint-of-1.0"),
-            "installing is not approving â€” the prior approval is carried, not overwritten"
-        );
-    }
-
-    /// The same rug pull, one step sharper: what an update changes here is not
-    /// wording but **what happens**. A `confirm` that quietly became `safe` asks
-    /// for no new capability and changes no sentence the user would notice.
+    /// Changing an action's behavior requires renewed approval even when
+    /// the update requests no new capability.
     #[test]
     fn update_with_changed_actions_holds_disabled() {
         let approved = ExtensionRecord {
@@ -901,12 +770,9 @@ mod tests {
             installed_version: "1.0.0".into(),
             artifact_sha256: None,
             granted: vec![],
-            prompt_layers_approved: None,
             actions_approved: Some("actions-of-1.0".into()),
             authentication_approved: None,
             authentication_session: None,
-            recommend_approved: None,
-            slots: vec![],
             dev: None,
             trust: Trust::Verified,
         };
@@ -916,7 +782,6 @@ mod tests {
             &e,
             vec![],
             Some(&approved),
-            vec![],
             ApprovalDigests {
                 actions: Some("actions-of-1.0".into()),
                 ..Default::default()
@@ -931,7 +796,6 @@ mod tests {
             &e,
             vec![],
             Some(&approved),
-            vec![],
             ApprovalDigests {
                 actions: Some("actions-of-1.1".into()),
                 ..Default::default()
@@ -948,114 +812,44 @@ mod tests {
         );
     }
 
-    /// The rug pull once more, on the declaration that decides **who hears the
-    /// user's words**. A searchable extension is ranked by text it wrote itself;
-    /// rewriting that text after approval is how an installed extension quietly
-    /// starts receiving requests it was never reviewed to receive.
     #[test]
-    fn update_with_changed_recommendation_holds_disabled() {
-        let approved = ExtensionRecord {
-            id: "com.example.x".into(),
-            enabled: true,
-            execution_generation: 0,
-            toggle_seq: 1,
-            installed_version: "1.0.0".into(),
-            artifact_sha256: None,
-            granted: vec![],
-            prompt_layers_approved: None,
-            actions_approved: None,
-            authentication_approved: None,
-            authentication_session: None,
-            recommend_approved: Some("recommend-of-1.0".into()),
-            slots: vec![],
-            dev: None,
-            trust: Trust::Verified,
-        };
-        let e = entry("com.example.x", "1.1.0", Trust::Verified, &[], b"{}");
+    fn updates_require_independent_action_and_authentication_approval() {
+        let e = entry("com.example.x", "1.1.0", Trust::Verified, &["auth"], b"{}");
+        let mut approved = plan_record(&e, vec!["auth".into()], None, ApprovalDigests::default());
+        approved.enabled = true;
+        approved.toggle_seq = 7;
+        approved.actions_approved = Some("actions-of-1.0".into());
+        approved.authentication_approved = Some("auth-of-1.0".into());
+        approved.authentication_session = Some("a".repeat(32));
 
-        let unchanged = plan_record(
-            &e,
-            vec![],
-            Some(&approved),
-            vec![],
-            ApprovalDigests {
-                recommend: Some("recommend-of-1.0".into()),
-                ..Default::default()
-            },
-        );
-        assert!(
-            unchanged.enabled,
-            "an update that leaves what it is ranked by alone stays enabled"
-        );
-
-        let changed = plan_record(
-            &e,
-            vec![],
-            Some(&approved),
-            vec![],
-            ApprovalDigests {
-                recommend: Some("recommend-of-1.1".into()),
-                ..Default::default()
-            },
-        );
-        assert!(
-            !changed.enabled,
-            "a rewritten recommendation must hold the update until the user reads it"
-        );
-        assert_eq!(
-            changed.recommend_approved.as_deref(),
-            Some("recommend-of-1.0"),
-            "installing is not approving — the prior approval is carried, not overwritten"
-        );
-    }
-
-    /// The three approvals are independent on purpose: re-asking about what an
-    /// extension can DO because it reworded a prompt layer is how a user learns
-    /// to click through all of them.
-    #[test]
-    fn the_three_approvals_do_not_drag_each_other() {
-        let approved = ExtensionRecord {
-            id: "com.example.x".into(),
-            enabled: true,
-            execution_generation: 0,
-            toggle_seq: 1,
-            installed_version: "1.0.0".into(),
-            artifact_sha256: None,
-            granted: vec![],
-            prompt_layers_approved: Some("layers-of-1.0".into()),
-            actions_approved: Some("actions-of-1.0".into()),
-            authentication_approved: None,
-            authentication_session: None,
-            recommend_approved: Some("recommend-of-1.0".into()),
-            slots: vec![],
-            dev: None,
-            trust: Trust::Verified,
-        };
-        let e = entry("com.example.x", "1.1.0", Trust::Verified, &[], b"{}");
-
-        let reworded = plan_record(
-            &e,
-            vec![],
-            Some(&approved),
-            vec![],
-            ApprovalDigests {
-                prompt_layers: Some("layers-of-1.1".into()),
-                actions: Some("actions-of-1.0".into()),
-                authentication: None,
-                recommend: Some("recommend-of-1.0".into()),
-            },
-        );
-        assert!(!reworded.enabled);
-        assert_eq!(
-            reworded.actions_approved.as_deref(),
-            Some("actions-of-1.0"),
-            "the untouched approval is preserved, not reset by its neighbour"
-        );
-        assert_eq!(
-            reworded.recommend_approved.as_deref(),
-            Some("recommend-of-1.0"),
-            "nor by its other neighbour"
-        );
+        for (actions, authentication, enabled) in [
+            ("actions-of-1.0", "auth-of-1.0", true),
+            ("actions-of-1.1", "auth-of-1.0", false),
+            ("actions-of-1.0", "auth-of-1.1", false),
+            ("actions-of-1.1", "auth-of-1.1", false),
+        ] {
+            let updated = plan_record(
+                &e,
+                approved.granted.clone(),
+                Some(&approved),
+                ApprovalDigests {
+                    actions: Some(actions.into()),
+                    authentication: Some(authentication.into()),
+                },
+            );
+            assert_eq!(updated.enabled, enabled, "{actions}, {authentication}");
+            assert_eq!(updated.actions_approved, approved.actions_approved);
+            assert_eq!(
+                updated.authentication_approved,
+                approved.authentication_approved
+            );
+            assert_eq!(
+                updated.authentication_session,
+                approved.authentication_session
+            );
+            assert_eq!(updated.toggle_seq, approved.toggle_seq);
+            assert_eq!(updated.granted, approved.granted);
+        }
     }
 
     #[test]

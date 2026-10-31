@@ -337,3 +337,44 @@ slot registry, prompt-layer approvals/fingerprints and `recommend_approved`,
   session 2 tooling notes). Local helper scripts live in `C:\t\logs\`
   (`edit.ps1`, `cut.ps1`, `regen-bindings.ps1`, `run-app-tests.ps1`).
 - The user has not yet run the real-app checks for batch 2 or batch 3.
+
+**1 November 2026, session 3: T5 registry retirement complete.**
+
+- Removed the slot registry/API and claims from enable, replacement, developer
+  override/unload, uninstall, quarantine and rollback; removed built-in toggle
+  bookkeeping and prompt-layer/recommendation approval fields and fingerprints.
+  `plan_record` no longer accepts slots; both store test callers were updated.
+  No migration, tombstone or compatibility parameter was added.
+- Retained installed-card `toggle_seq`/`next_toggle_seq`, action/authentication
+  approvals and account ownership, revision/generation checks, bounded atomic
+  persistence, refusal behavior and rollback. The action fingerprint algorithm is
+  unchanged. Removed 15 obsolete tests and added one action/authentication
+  independence regression: grain-core 268 -> 254 tests. M7 stays untouched.
+- Verification: workspace check and tests pass; grain-core strict Clippy passes;
+  normal app all-target and `agent-harness` feature checks pass; app Clippy exits
+  zero (69 lib / 86 lib-test warnings, none in changed logic); app tests 699 pass /
+  23 ignored; tsc, 101 Vitest tests, production frontend build, parity and upstream
+  policy pass. Workspace strict Clippy still fails at the two existing SDK test
+  lints; ESLint retains its existing settingsStore.test.ts raw-invoke error;
+  ratchet retains the unchanged Cargo.toml 142 -> 156 and lib.rs 1302 -> 1305 failures.
+- The maintained Windows test runner still exited `0xc0000139` here despite its
+  embedded manifest. The previously recorded local copy/sidecar workaround in
+  `C:\t\logs\run-app-tests.ps1` successfully ran the complete app tests.
+- Adapted the maintained harness greeting to automatic Agent execution and reused
+  its existing first-round-schema model adapter for registry recovery. Initial
+  runs exposed the old confirmation-card and forced-discovery assumptions;
+  neither was a product regression. No product Agent/confirmation UI changed.
+  Runner self-tests: 80 pass. Final real-app registry checkpoint: 3/3 pass, with
+  exact result/dispatch, restart/quarantine and real Windows save-lock assertions.
+  The `lost-pointer` negative control failed at its expected pointer assertion.
+  Both final positive and negative reports record cleanup Pass; ordinary profiles
+  and credentials were not used. Evidence (ignored):
+  `tests/agent-harness/.runs/retirement-t5-20261101/run-S7eAgU/evidence/report.md`
+  and `run-VGGxyZ/evidence/report.md`; earlier failures remain preserved.
+- This checkpoint accepts the affected registry/native-call boundary, not the
+  entire batch 2/3 or ordinary microphone/dictation visual checks.
+
+**Next:** remove recommendation/activation checks from the author checker, require
+declared actions directly, then trim the SDK manifest and CLI scaffold together.
+The index `extends` decision, action conditions/rules decision and unused embedding
+model decision remain as listed above. Do not revisit M7.
