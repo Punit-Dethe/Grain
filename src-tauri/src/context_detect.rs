@@ -39,7 +39,7 @@ use std::fmt::Write as _;
 #[path = "prompt_stack.rs"]
 pub(crate) mod prompt_stack;
 
-use prompt_stack::{Contributions, PromptStack};
+use prompt_stack::PromptStack;
 
 /// [GRAIN] The installed-application catalogue behind the context-profile app
 /// picker.
@@ -335,18 +335,15 @@ pub(crate) fn is_supported_site(host: &str, settings: &AppSettings) -> bool {
 /// Resolved HERE rather than during detection so that `detect_active_context`
 /// keeps its signature and its callers — the pill's icon path calls it too, and
 /// does not want to read settings to find out what an app is called.
-/// The boolean records whether the user selected the target. It is retained only
-/// for the current extension context-slot behavior; it no longer changes prompt
-/// authority. See [`prompt_stack::Tier`].
-fn instruction_for<'a>(ctx: &ActiveContext, settings: &'a AppSettings) -> Option<(&'a str, bool)> {
+fn instruction_for<'a>(ctx: &ActiveContext, settings: &'a AppSettings) -> Option<&'a str> {
     if let Some(profile) = custom_profile_for(ctx, settings) {
         let text = profile.instruction.trim();
         // An empty custom instruction still WINS — it means "say nothing here",
         // which is a real thing to want for one noisy app, and falling back to
         // the built-in would quietly ignore the profile the user made.
-        return (!text.is_empty()).then_some((text, true));
+        return (!text.is_empty()).then_some(text);
     }
-    ctx.category.instruction(settings).map(|text| (text, false))
+    ctx.category.instruction(settings)
 }
 
 /// Address-bar host → category. **This is the table that makes context awareness
@@ -1168,16 +1165,14 @@ impl ActiveContext {
 /// main prompt and terminal output contract. Otherwise configurable layers are
 /// rendered from lowest to highest authority before the terminal contract.
 ///
-/// See `docs/Prompt Priority/PLAN.md` for the tier ladder and the rule that
-/// nothing a third party contributes may outrank what the user typed or spoke.
+/// See `docs/Prompt Priority/PLAN.md` for the tier ladder.
 pub fn compose_prompt(
     base: &str,
     settings: &AppSettings,
     ctx: Option<&ActiveContext>,
     spoken_instruction: Option<&str>,
-    contributed: &Contributions,
 ) -> String {
-    compose_prompt_inner(base, settings, ctx, spoken_instruction, contributed, false)
+    compose_prompt_inner(base, settings, ctx, spoken_instruction, false)
 }
 
 pub(crate) fn compose_insertion_prompt(
@@ -1185,9 +1180,8 @@ pub(crate) fn compose_insertion_prompt(
     settings: &AppSettings,
     ctx: Option<&ActiveContext>,
     spoken_instruction: Option<&str>,
-    contributed: &Contributions,
 ) -> String {
-    compose_prompt_inner(base, settings, ctx, spoken_instruction, contributed, true)
+    compose_prompt_inner(base, settings, ctx, spoken_instruction, true)
 }
 
 fn compose_prompt_inner(
@@ -1195,7 +1189,6 @@ fn compose_prompt_inner(
     settings: &AppSettings,
     ctx: Option<&ActiveContext>,
     spoken_instruction: Option<&str>,
-    contributed: &Contributions,
     insertion: bool,
 ) -> String {
     let spoken = spoken_instruction
@@ -1212,18 +1205,10 @@ fn compose_prompt_inner(
     // The user's edited instruction when there is one, otherwise the shipped
     // default. Profile selection happens here; prompt composition deliberately
     // does not distinguish built-in, edited and custom origins.
-    let extension_context = ctx.and_then(|_| contributed.context.as_ref());
-    // A valid, approved matching context plug replaces the whole provider for
-    // this dictation. If it has no matching rule, Grain safely falls back to
-    // its own selected profile rather than allowing a broken extension to erase
-    // context by merely occupying a slot.
-    let rule = extension_context
-        .is_none()
-        .then(|| ctx.and_then(|c| instruction_for(c, settings)))
-        .flatten();
-    let has_ctx = extension_context.is_some() || rule.is_some();
+    let rule = ctx.and_then(|c| instruction_for(c, settings));
+    let has_ctx = rule.is_some();
 
-    if spoken.is_none() && !has_ctx && contributed.layers.is_empty() {
+    if spoken.is_none() && !has_ctx {
         // The quiet case that most looks like a bug: the feature is on,
         // detection may even have succeeded, but the app resolved to `Other`,
         // which adds no profile by design. Said out loud only to someone who
@@ -1250,7 +1235,7 @@ fn compose_prompt_inner(
             // multi-tab or split-view window can belong to a tab the user is NOT
             // typing into — and naming the wrong site is worse than naming none.
             // It stays on `ActiveContext` either way, with its confidence, so
-            // callers that want it (the extension API) can judge for themselves.
+            // other callers (site profiles, the pill icon) can judge for themselves.
             if let Some(host) = c
                 .url_host
                 .as_deref()
@@ -1265,83 +1250,12 @@ fn compose_prompt_inner(
             }
             stack.push_surface_facts(facts);
         }
-        if let Some(layer) = extension_context {
-            if !stack.push_extension_context(&layer.ext_id, &layer.text) {
-                log::warn!(
-                    "[GRAIN] prompt: refused context replacement from {}",
-                    layer.ext_id
-                );
-            }
-        } else if let Some((line, _user_selected_target)) = rule {
+        if let Some(line) = rule {
             stack.push_rule(line);
         }
     }
 
-    // Contributed layers, in the order the caller resolved them (toggle order),
-    // under two ceilings.
-    //
-    // The COUNT ceiling comes first and is the one that matters: multi-
-    // constraint benchmarks show instruction-following falling off past roughly
-    // fifteen constraints, and Grain aims at small local models, so four
-    // third-party rules is already generous next to the two or three Grain adds
-    // itself. Overflow is dropped deterministically and loudly — never silently,
-    // never dependent on which extension happened to load first.
-    let mut spent = 0usize;
-    let mut used = 0usize;
-    let mut used_by_extension: std::collections::HashMap<&str, usize> =
-        std::collections::HashMap::new();
-    for layer in &contributed.layers {
-        if used >= prompt_stack::MAX_CONTRIBUTED_LAYERS {
-            log::warn!(
-                "[GRAIN] prompt: dropped layer from {} — at the {} layer ceiling",
-                layer.ext_id,
-                prompt_stack::MAX_CONTRIBUTED_LAYERS
-            );
-            continue;
-        }
-        let extension_used = used_by_extension
-            .get(layer.ext_id.as_str())
-            .copied()
-            .unwrap_or_default();
-        if extension_used >= prompt_stack::MAX_CONTRIBUTED_LAYERS_PER_EXTENSION {
-            log::warn!(
-                "[GRAIN] prompt: dropped layer from {} — at the per-extension {} layer ceiling",
-                layer.ext_id,
-                prompt_stack::MAX_CONTRIBUTED_LAYERS_PER_EXTENSION
-            );
-            continue;
-        }
-        if spent + layer.text.len() > prompt_stack::MAX_CONTRIBUTED_BYTES {
-            log::warn!(
-                "[GRAIN] prompt: dropped layer from {} — at the {}-byte ceiling",
-                layer.ext_id,
-                prompt_stack::MAX_CONTRIBUTED_BYTES
-            );
-            continue;
-        }
-        if stack.push_extension_layer(&layer.ext_id, &layer.text) {
-            spent += layer.text.len();
-            used += 1;
-            used_by_extension.insert(layer.ext_id.as_str(), extension_used + 1);
-        } else {
-            log::warn!(
-                "[GRAIN] prompt: refused layer from {} — text failed the contribution screen",
-                layer.ext_id
-            );
-        }
-    }
-
-    if let Some(layer) = &contributed.main {
-        if !stack.push_extension_main(&layer.ext_id, &layer.text) {
-            log::warn!(
-                "[GRAIN] prompt: refused main replacement from {}; using Grain's main prompt",
-                layer.ext_id
-            );
-            stack.push_base(base);
-        }
-    } else {
-        stack.push_base(base);
-    }
+    stack.push_base(base);
     // Host-owned response envelope: always last and independent of every
     // replaceable/user-editable prompt source.
     if insertion {
@@ -2690,7 +2604,6 @@ mod site_table_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use prompt_stack::ContributedLayer;
 
     #[test]
     fn stop_caret_preserves_empty_and_seam_whitespace() {
@@ -2721,47 +2634,23 @@ mod tests {
             &settings,
             None,
             Some("Make this concise"),
-            &Contributions::default(),
         );
         let spoken = prompt.find("Make this concise").unwrap();
         let insertion = prompt.find("Return only the dictated span").unwrap();
         let terminal = prompt.rfind("Return only the final output").unwrap();
         assert!(spoken < insertion && insertion < terminal);
-        assert!(
-            !compose_prompt("BASE", &settings, None, None, &Contributions::default(),)
-                .contains("dictated span")
-        );
+        assert!(!compose_prompt("BASE", &settings, None, None).contains("dictated span"));
     }
 
-    /// `compose_prompt` with no contributed layers — the shape almost every
-    /// test here wants, kept as a helper so adding a parameter to the real
-    /// function does not mean editing forty call sites.
+    /// `compose_prompt` under its test name, kept as a helper so a future
+    /// parameter does not mean editing forty call sites.
     fn compose(
         base: &str,
         settings: &AppSettings,
         ctx: Option<&ActiveContext>,
         spoken: Option<&str>,
     ) -> String {
-        compose_prompt(base, settings, ctx, spoken, &Contributions::default())
-    }
-
-    /// `compose_prompt` with contributed layers and no slot claim.
-    fn compose_with(
-        base: &str,
-        settings: &AppSettings,
-        ctx: Option<&ActiveContext>,
-        layers: Vec<ContributedLayer>,
-    ) -> String {
-        compose_prompt(
-            base,
-            settings,
-            ctx,
-            None,
-            &Contributions {
-                layers,
-                ..Default::default()
-            },
-        )
+        compose_prompt(base, settings, ctx, spoken)
     }
 
     use grain_core::AppSettings;
@@ -3280,177 +3169,6 @@ mod tests {
             "Conflict priority (highest first): spoken instruction > active context profile > \
              main dictation prompt."
         ));
-    }
-
-    #[test]
-    fn contributed_layers_are_capped_by_count_then_bytes() {
-        let s = AppSettings::default();
-        let many: Vec<ContributedLayer> = (0..8)
-            .map(|i| ContributedLayer {
-                ext_id: format!("com.acme.p{i}"),
-                text: format!("Rule number {i}."),
-            })
-            .collect();
-        let out = compose_with("BASE", &s, None, many);
-        let applied = out.matches("(com.acme.p").count();
-        assert_eq!(
-            applied,
-            prompt_stack::MAX_CONTRIBUTED_LAYERS,
-            "the count ceiling is what protects instruction-following"
-        );
-
-        let fat = vec![
-            ContributedLayer {
-                ext_id: "com.acme.big".into(),
-                text: "x".repeat(prompt_stack::MAX_CONTRIBUTED_BYTES),
-            },
-            ContributedLayer {
-                ext_id: "com.acme.small".into(),
-                text: "Prefer British spelling.".into(),
-            },
-        ];
-        let out = compose_with("BASE", &s, None, fat);
-        assert!(out.contains("(com.acme.big)"));
-        assert!(
-            !out.contains("(com.acme.small)"),
-            "the byte ceiling drops the overflow"
-        );
-    }
-
-    #[test]
-    fn one_extension_cannot_consume_the_global_additive_budget() {
-        let layers = (0..4)
-            .map(|index| ContributedLayer {
-                ext_id: "com.acme.greedy".into(),
-                text: format!("Narrow rule {index}."),
-            })
-            .chain(std::iter::once(ContributedLayer {
-                ext_id: "com.acme.other".into(),
-                text: "Use British spelling.".into(),
-            }))
-            .collect();
-        let out = compose_with("BASE", &AppSettings::default(), None, layers);
-        assert_eq!(
-            out.matches("(com.acme.greedy)").count(),
-            prompt_stack::MAX_CONTRIBUTED_LAYERS_PER_EXTENSION
-        );
-        assert!(out.contains("(com.acme.other)"));
-    }
-
-    /// Door 2. The slot governs Grain's OPINION about the surface and nothing
-    /// else — claiming it is taking responsibility for that one line.
-    #[test]
-    fn the_context_slot_replaces_grains_guess_only() {
-        let mut s = AppSettings::default();
-        s.context_awareness_enabled = true;
-        let c = ctx("code", AppCategory::Technical);
-
-        let held = Contributions {
-            context: Some(ContributedLayer {
-                ext_id: "com.acme.ctx".into(),
-                text: "Match the file's existing style.".into(),
-            }),
-            ..Default::default()
-        };
-        let out = compose_prompt("BASE", &s, Some(&c), None, &held);
-
-        assert!(
-            !out.contains("exactly as spoken"),
-            "the claimant speaks for the surface now"
-        );
-        assert!(out.contains(
-            "Profile instruction from extension (com.acme.ctx): Match the file's existing style."
-        ));
-        assert!(out.contains("Return only the final output"));
-    }
-
-    #[test]
-    fn the_context_slot_replaces_the_selected_context_provider() {
-        let mut s = AppSettings::default();
-        s.context_awareness_enabled = true;
-        s.context_custom_profiles.push(custom(
-            "mine",
-            "Bullet points only.",
-            "application",
-            "figma",
-        ));
-
-        let held = Contributions {
-            context: Some(ContributedLayer {
-                ext_id: "com.acme.ctx".into(),
-                text: "Use the project's design vocabulary.".into(),
-            }),
-            ..Default::default()
-        };
-        let out = compose_prompt(
-            "BASE",
-            &s,
-            Some(&ctx("figma", AppCategory::Other)),
-            None,
-            &held,
-        );
-        assert!(out.contains("Use the project's design vocabulary."));
-        assert!(!out.contains("Bullet points only."));
-    }
-
-    #[test]
-    fn an_invalid_or_nonmatching_context_replacement_falls_back_to_grain() {
-        let s = AppSettings {
-            context_awareness_enabled: true,
-            ..Default::default()
-        };
-        let held = Contributions::default();
-        let out = compose_prompt(
-            "BASE",
-            &s,
-            Some(&ctx("code", AppCategory::Technical)),
-            None,
-            &held,
-        );
-        assert!(out.contains("[Active context profile]"));
-        assert!(out.contains("A technical surface"));
-    }
-
-    #[test]
-    fn the_main_slot_replaces_only_the_main_prompt() {
-        let held = Contributions {
-            main: Some(ContributedLayer {
-                ext_id: "com.acme.main".into(),
-                text: "Preserve the speaker's wording.".into(),
-            }),
-            ..Default::default()
-        };
-        let out = compose_prompt(
-            "GRAIN BASE",
-            &AppSettings::default(),
-            None,
-            Some("make it a haiku"),
-            &held,
-        );
-        assert!(!out.contains("GRAIN BASE"));
-        assert!(out.contains("[Main dictation prompt from extension: com.acme.main]"));
-        assert!(out.contains("make it a haiku"));
-        assert!(out.ends_with("no labels, notes, explanations, or surrounding text."));
-    }
-
-    #[test]
-    fn contributed_layers_apply_without_context_awareness() {
-        // An unconditional layer is its own feature, not part of context
-        // awareness, so it must not be gated on that toggle — and whatever adds
-        // reference material must still be followed by the output contract.
-        let s = AppSettings::default();
-        assert!(!s.context_awareness_enabled);
-        let out = compose_with(
-            "BASE",
-            &s,
-            None,
-            vec![ContributedLayer {
-                ext_id: "com.acme.jira".into(),
-                text: "Write in imperative mood.".into(),
-            }],
-        );
-        assert!(out.contains("(com.acme.jira) Write in imperative mood."));
-        assert!(out.contains("Return only the final output"));
     }
 
     /// A packaged (Store / MSIX) app is named by its AppUserModelID, because it

@@ -1087,21 +1087,6 @@ pub fn action_vocabulary() -> Vec<String> {
     terms
 }
 
-/// What installed extensions bring to this dictation: additive layers in toggle
-/// order plus the approved replacements supplied by current slot occupants.
-///
-/// Called once per finalized transcript, off the paste path. With nothing
-/// installed — the overwhelmingly common case — this is one relaxed atomic load
-/// and an empty struct: no lock, no disk, no clone of the registry.
-/// Migration compatibility shim. Context belongs to the agent/core, and
-/// extension metadata can never replace or augment a Grain prompt.
-pub fn prompt_contributions(
-    _app: &AppHandle,
-    _ctx: Option<&crate::context_detect::ActiveContext>,
-) -> crate::context_detect::prompt_stack::Contributions {
-    crate::context_detect::prompt_stack::Contributions::default()
-}
-
 /// Supervisor → worker: create a Web Worker for this extension.
 #[derive(Clone, Serialize)]
 struct SpawnPayload {
@@ -1736,17 +1721,7 @@ pub fn resolve_call_result(ext_id: &str, token: &str, call_id: u64, result: Resu
     }
 }
 
-// ── Host-initiated calls + the transform pipeline ────────────────────────────
-
-/// The transform pipeline (SPEC §3.1, §3.3). Runs every enabled `onTransform`
-/// extension in **toggle order**, each under a hard 150 ms deadline. A worker
-/// that is cold, slow, or errors leaves the text unchanged and takes a strike
-/// (3 → auto-disable). An empty-string reply suppresses the paste (the
-/// documented output-suppression behavior). Never blocks the paste path on a
-/// cold spawn.
-pub async fn run_transforms(_app: &AppHandle, text: String) -> String {
-    text
-}
+// ── Host-initiated calls ─────────────────────────────────────────────────────
 
 #[allow(dead_code)] // Retired command compatibility until surface cleanup.
 #[derive(Debug, PartialEq, Eq)]

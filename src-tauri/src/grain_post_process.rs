@@ -129,26 +129,15 @@ pub(crate) async fn post_process_transcription(
             override_settings
         });
     let prompt_settings = prompt_settings_override.as_ref().unwrap_or(settings);
-    // Contributed layers are resolved HERE, where the context already exists,
-    // and matched by the host — the extension is never told what surface the
-    // user is on, nor whether its layer fired. See `context_detect::layer_matches`.
-    let contributed = crate::extension_host::prompt_contributions(app, ctx);
     let mut prompt = if caret.is_some() {
         crate::context_detect::compose_insertion_prompt(
             &prompt,
             prompt_settings,
             ctx,
             spoken_prompt,
-            &contributed,
         )
     } else {
-        crate::context_detect::compose_prompt(
-            &prompt,
-            prompt_settings,
-            ctx,
-            spoken_prompt,
-            &contributed,
-        )
+        crate::context_detect::compose_prompt(&prompt, prompt_settings, ctx, spoken_prompt)
     };
     // Legacy chat providers substitute ${output} in the prompt instead of
     // sending a separate user turn. Custom prompts may omit that placeholder.

@@ -212,7 +212,7 @@ async fn finish(
         return;
     }
 
-    let transformed = crate::extension_host::run_transforms(&app, transcription.clone()).await;
+    let transformed = transcription.clone();
     let stage = crate::grain_post_process::run_extension_session_stage(
         &session.ext_id,
         &session.mode_id,
