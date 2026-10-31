@@ -2432,12 +2432,6 @@ paste_catch_enabled?: boolean;
  */
 paste_catch_hold_ms?: number;
 /**
- * [GRAIN] One-time marker for the extension-platform settings import above
- * (SPEC §10.1 upgrade rule). False in files written before the platform;
- * `load_settings` performs the import exactly once and sets it.
- */
-extensions_imported_v1?: boolean;
-/**
  * [GRAIN] Explicit human-controlled authoring mode (Phase 3.5). This is
  * separate from diagnostic `debug_mode`: only this switch allows native
  * folder selection and load-unpacked projects. OFF by default.

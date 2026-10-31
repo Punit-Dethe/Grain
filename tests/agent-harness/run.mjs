@@ -173,7 +173,6 @@ if (
     "unclosed-store",
     "lost-pointer",
     "stringified-number",
-    "lost-migration-archive",
     "wrong-account",
     "abandoned-auth",
     "wrong-owner",
@@ -307,13 +306,6 @@ if (
 )
   throw new Error(
     "stringified-number requires --scenario native.typed-contract",
-  );
-if (
-  options.fault === "lost-migration-archive" &&
-  options.scenario !== "native.legacy-migration"
-)
-  throw new Error(
-    "lost-migration-archive requires --scenario native.legacy-migration",
   );
 if (
   options.fault === "missing-escape" &&
@@ -2126,7 +2118,7 @@ try {
         join(root, "fixture/manifest.json"),
       );
       if (
-        scenario.id !== "native.legacy-migration" &&
+        scenario.id !== "native.legacy-quarantine" &&
         scenario.suite !== "native-auth" &&
         scenario.suite !== "mcp" &&
         scenario.suite !== "mcp-conformance" &&

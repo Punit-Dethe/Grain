@@ -825,11 +825,6 @@ pub struct AppSettings {
     /// else's clipboard stays defensible.
     #[serde(default = "default_paste_catch_hold_ms")]
     pub paste_catch_hold_ms: u64,
-    /// [GRAIN] One-time marker for the extension-platform settings import above
-    /// (SPEC §10.1 upgrade rule). False in files written before the platform;
-    /// `load_settings` performs the import exactly once and sets it.
-    #[serde(default)]
-    pub extensions_imported_v1: bool,
     /// [GRAIN] Explicit human-controlled authoring mode (Phase 3.5). This is
     /// separate from diagnostic `debug_mode`: only this switch allows native
     /// folder selection and load-unpacked projects. OFF by default.
@@ -1759,7 +1754,6 @@ pub fn get_default_settings() -> AppSettings {
         agent_enabled: false,
         paste_catch_enabled: default_paste_catch_enabled(),
         paste_catch_hold_ms: default_paste_catch_hold_ms(),
-        extensions_imported_v1: false,
         extension_developer_mode: false,
         mcp_enabled_providers: Vec::new(),
         mcp_oauth_client_ids: HashMap::new(),

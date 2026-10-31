@@ -368,7 +368,6 @@ export function installationHandlers(ctx) {
         const saved = await readFile(path);
         for (const bytes of [
           Buffer.from("{broken registry"),
-          Buffer.from('{"tool_only_migration_version":999,"records":{}}'),
           Buffer.from(
             '{"records":{"wrong":{"id":"different","enabled":true}}}',
           ),

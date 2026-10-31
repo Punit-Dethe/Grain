@@ -42,10 +42,6 @@ fn next_execution_generation() -> Result<u64> {
         .map_err(|_| anyhow::anyhow!("extension execution generation exhausted"))
 }
 
-/// Retired visual-only pack. Kept only long enough to remove stale local
-/// registry state; both Agent layouts now belong to native settings.
-const RETIRED_AGENT_CENTER_VARIANT_ID: &str = "grain.agent-center-layout";
-
 /// Reserved occupant id standing for Grain's own built-in behaviour in a slot.
 /// SPEC §3.2: "core defaults are occupants" — so a slot is never *free*, and the
 /// first extension to claim one still faces an explicit takeover prompt rather
@@ -696,8 +692,6 @@ struct RegistryFile {
     /// any removal, without retaining a tombstone for every historical id.
     #[serde(skip)]
     removal_epoch: u64,
-    #[serde(default)]
-    tool_only_migration_version: u32,
     /// Persistent refusal reasons. A restart or old grant must not reactivate
     /// an incompatible package; a validated replacement clears quarantine.
     #[serde(default)]
@@ -826,30 +820,6 @@ impl RecordRevision {
 }
 
 impl ExtensionsRegistry {
-    /// Checkpoint only after archival and settings persistence succeed. Validation
-    /// still runs on every startup; this version never bypasses the live profile.
-    pub fn finish_tool_only_migration(&self) -> Result<()> {
-        let _save = self.save_gate.lock().unwrap();
-        let mut state = self.state.write().unwrap();
-        if state.tool_only_migration_version == 1 {
-            return Ok(());
-        }
-        if state.tool_only_migration_version > 1 {
-            anyhow::bail!("unsupported extension migration version");
-        }
-        let previous = state.tool_only_migration_version;
-        state.tool_only_migration_version = 1;
-        let saved = persist_registry(&self.path, &state);
-        if saved.is_err() {
-            state.tool_only_migration_version = previous;
-        }
-        saved
-    }
-
-    pub fn tool_only_migration_version(&self) -> u32 {
-        self.state.read().unwrap().tool_only_migration_version
-    }
-
     pub fn quarantine_reason(&self, id: &str) -> Option<String> {
         self.state.read().unwrap().quarantined.get(id).cloned()
     }
@@ -884,15 +854,9 @@ impl ExtensionsRegistry {
     }
 
     /// Load (or initialize) the registry.
-    ///
-    /// `settings_file_preexisted` is retained for call compatibility. Visual
-    /// extension records are retired during load; Grain now owns its appearance.
-    pub fn load(data_dir: &Path, _settings_file_preexisted: bool) -> Result<Self> {
+    pub fn load(data_dir: &Path) -> Result<Self> {
         let path = data_dir.join(EXTENSIONS_FILE);
         let mut state = read_registry(&path)?;
-        if state.tool_only_migration_version > 1 {
-            anyhow::bail!("unsupported extension migration version; registry preserved, extensions unavailable");
-        }
         if state.records.iter().any(|(id, record)| id != &record.id) {
             anyhow::bail!("inconsistent extension registry identity; registry preserved, extensions unavailable");
         }
@@ -913,7 +877,6 @@ impl ExtensionsRegistry {
     /// and variants are deliberately discarded: appearance is native-only.
     fn heal_slots(&self) {
         let mut state = self.state.write().unwrap();
-        state.records.remove(RETIRED_AGENT_CENTER_VARIANT_ID);
         for record in state.records.values_mut() {
             record
                 .slots
@@ -1684,7 +1647,7 @@ mod tests {
     #[test]
     fn reviewed_activation_and_normal_enable_refuse_stale_or_retired_owners() {
         let dir = tmp();
-        let reg = ExtensionsRegistry::load(dir.path(), false).unwrap();
+        let reg = ExtensionsRegistry::load(dir.path()).unwrap();
         reg.install(pack("tools", &[])).unwrap();
         let old = reg.record_revision("tools");
         reg.set_enabled("tools", false).unwrap(); // explicit refusal while already off
@@ -1731,7 +1694,7 @@ mod tests {
             "dev_replace",
         ] {
             let dir = tmp();
-            let reg = ExtensionsRegistry::load(dir.path(), false).unwrap();
+            let reg = ExtensionsRegistry::load(dir.path()).unwrap();
             reg.install(pack("tools", &[])).unwrap();
             reg.set_enabled("tools", true).unwrap();
             if mode == "restore" || mode == "dev_replace" {
@@ -1791,7 +1754,7 @@ mod tests {
     #[test]
     fn vacant_revision_remembers_removal_without_retaining_tombstones() {
         let dir = tmp();
-        let reg = ExtensionsRegistry::load(dir.path(), false).unwrap();
+        let reg = ExtensionsRegistry::load(dir.path()).unwrap();
         let before = reg.record_revision("tools");
         reg.install(pack("tools", &[])).unwrap();
         reg.uninstall("tools").unwrap();
@@ -1822,7 +1785,7 @@ mod tests {
     fn revision_includes_parked_updates_and_removal() {
         for remove in [false, true] {
             let dir = tmp();
-            let reg = ExtensionsRegistry::load(dir.path(), false).unwrap();
+            let reg = ExtensionsRegistry::load(dir.path()).unwrap();
             reg.install(pack("tools", &[])).unwrap();
             reg.load_dev(pack("tools", &[]), dir.path().join("project"))
                 .unwrap();
@@ -1846,7 +1809,7 @@ mod tests {
     #[test]
     fn concurrent_revision_writers_have_one_winner_and_save_safely() {
         let dir = tmp();
-        let reg = std::sync::Arc::new(ExtensionsRegistry::load(dir.path(), false).unwrap());
+        let reg = std::sync::Arc::new(ExtensionsRegistry::load(dir.path()).unwrap());
         reg.install(pack("tools", &[])).unwrap();
         let revision = reg.record_revision("tools");
         let barrier = std::sync::Arc::new(std::sync::Barrier::new(3));
@@ -1885,7 +1848,7 @@ mod tests {
         for thread in threads {
             thread.join().unwrap();
         }
-        let loaded = ExtensionsRegistry::load(dir.path(), false).unwrap();
+        let loaded = ExtensionsRegistry::load(dir.path()).unwrap();
         assert_eq!(
             loaded.record("tools").unwrap().installed_version,
             reg.record("tools").unwrap().installed_version
@@ -1895,7 +1858,7 @@ mod tests {
     #[test]
     fn publication_holds_registry_ownership_until_worker_is_visible() {
         let dir = tmp();
-        let reg = ExtensionsRegistry::load(dir.path(), false).unwrap();
+        let reg = ExtensionsRegistry::load(dir.path()).unwrap();
         reg.install(pack("tools", &[])).unwrap();
         let revision = reg.record_revision("tools");
         let generation = reg
@@ -1914,7 +1877,7 @@ mod tests {
     #[test]
     fn failed_save_keeps_new_revision_and_disabled_slot_release() {
         let dir = tmp();
-        let reg = ExtensionsRegistry::load(dir.path(), false).unwrap();
+        let reg = ExtensionsRegistry::load(dir.path()).unwrap();
         reg.install(pack("tools", &["output.destination"])).unwrap();
         reg.take_slot("tools", "output.destination").unwrap();
         reg.set_enabled("tools", true).unwrap();
@@ -1932,7 +1895,7 @@ mod tests {
     #[test]
     fn quarantine_survives_restart_and_disables_parked_dev_state() {
         let dir = tmp();
-        let reg = ExtensionsRegistry::load(dir.path(), false).unwrap();
+        let reg = ExtensionsRegistry::load(dir.path()).unwrap();
         let mut legacy = pack("com.x.old", &["prompt.main"]);
         legacy.enabled = true;
         legacy.granted = vec!["capture:screen-image".into(), "resident".into()];
@@ -1944,7 +1907,7 @@ mod tests {
         reg.quarantine("com.x.old", "retired context access")
             .unwrap();
         drop(reg);
-        let reg = ExtensionsRegistry::load(dir.path(), true).unwrap();
+        let reg = ExtensionsRegistry::load(dir.path()).unwrap();
         assert!(!reg.is_enabled("com.x.old"));
         assert!(reg.record("com.x.old").unwrap().granted.is_empty());
         assert!(reg.slots_held("com.x.old").is_empty());
@@ -1954,79 +1917,6 @@ mod tests {
         assert!(reg.set_enabled("com.x.old", true).is_err());
     }
 
-    #[test]
-    fn interrupted_binding_retirement_preserves_chords_and_checkpoints_after_commit() {
-        let dir = tmp();
-        let reg = ExtensionsRegistry::load(dir.path(), false).unwrap();
-        let mut settings = crate::settings::AppSettings::default();
-        let core_before = serde_json::to_value(&settings.bindings).unwrap();
-        let binding = crate::settings::ShortcutBinding {
-            id: "ext:com.example.old:open".into(),
-            name: "Open".into(),
-            description: "Edited".into(),
-            default_binding: "".into(),
-            current_binding: "Ctrl+Shift+J".into(),
-        };
-        settings.bindings.insert(binding.id.clone(), binding);
-        archive_retired_bindings(dir.path(), &settings).unwrap();
-        assert_eq!(reg.tool_only_migration_version(), 0);
-        archive_retired_bindings(dir.path(), &settings).unwrap(); // interrupted before settings commit
-        retire_extension_bindings(&mut settings);
-        assert_eq!(
-            serde_json::to_value(&settings.bindings).unwrap(),
-            core_before
-        );
-        reg.finish_tool_only_migration().unwrap();
-        reg.finish_tool_only_migration().unwrap();
-        drop(reg);
-        let reg = ExtensionsRegistry::load(dir.path(), true).unwrap();
-        assert_eq!(reg.tool_only_migration_version(), 1);
-        let archive: Vec<serde_json::Value> = serde_json::from_slice(
-            &fs::read(dir.path().join("retired-extension-bindings.json")).unwrap(),
-        )
-        .unwrap();
-        assert_eq!(archive.len(), 1);
-        assert_eq!(archive[0][1]["current_binding"], "Ctrl+Shift+J");
-    }
-
-    #[test]
-    fn a_failed_checkpoint_write_remains_retryable_in_the_same_process() {
-        let dir = tmp();
-        let reg = ExtensionsRegistry::load(dir.path(), false).unwrap();
-        let original = fs::read(&reg.path).unwrap();
-        fs::remove_file(&reg.path).unwrap();
-        fs::create_dir(&reg.path).unwrap(); // deterministic rename failure
-        assert!(reg.finish_tool_only_migration().is_err());
-        assert_eq!(reg.tool_only_migration_version(), 0);
-        fs::remove_dir(&reg.path).unwrap();
-        fs::write(&reg.path, original).unwrap();
-        reg.finish_tool_only_migration().unwrap();
-        assert_eq!(reg.tool_only_migration_version(), 1);
-    }
-
-    #[test]
-    fn a_corrupt_binding_archive_cannot_be_overwritten_or_marked_migrated() {
-        let dir = tmp();
-        let reg = ExtensionsRegistry::load(dir.path(), false).unwrap();
-        let mut settings = crate::settings::AppSettings::default();
-        let binding = crate::settings::ShortcutBinding {
-            id: "ext:com.example.old:open".into(),
-            name: "Open".into(),
-            description: "".into(),
-            default_binding: "".into(),
-            current_binding: "Ctrl+J".into(),
-        };
-        settings.bindings.insert(binding.id.clone(), binding);
-        let path = dir.path().join("retired-extension-bindings.json");
-        fs::write(&path, "preserve malformed archive").unwrap();
-        assert!(archive_retired_bindings(dir.path(), &settings).is_err());
-        assert_eq!(
-            fs::read_to_string(path).unwrap(),
-            "preserve malformed archive"
-        );
-        assert_eq!(reg.tool_only_migration_version(), 0);
-    }
-
     fn tmp() -> tempfile::TempDir {
         tempfile::tempdir().unwrap()
     }
@@ -2034,7 +1924,7 @@ mod tests {
     #[test]
     fn synchronous_admission_holds_read_lock_only_until_callback_returns() {
         let dir = tmp();
-        let registry = ExtensionsRegistry::load(dir.path(), false).unwrap();
+        let registry = ExtensionsRegistry::load(dir.path()).unwrap();
         registry.install(pack("tools", &[])).unwrap();
         registry.set_enabled("tools", true).unwrap();
         let admitted = registry.with_record_locked("tools", |record| {
@@ -2059,10 +1949,6 @@ mod tests {
         let dir = tmp();
         let stale = r#"{
           "records": {
-            "grain.agent-center-layout": {
-              "id": "grain.agent-center-layout", "enabled": true,
-              "slots": [], "variant_slots": ["agent.reply-surface"]
-            },
             "com.example.visual": {
               "id": "com.example.visual", "enabled": true,
               "slots": ["pill.theme", "output.destination"],
@@ -2071,14 +1957,13 @@ mod tests {
           },
           "slot_claims": {
             "pill.theme": "com.example.visual",
-            "agent.reply-surface": "grain.agent-center-layout",
+            "agent.reply-surface": "com.example.visual",
             "output.destination": "com.example.visual"
           }
         }"#;
         fs::write(dir.path().join(EXTENSIONS_FILE), stale).unwrap();
 
-        let reg = ExtensionsRegistry::load(dir.path(), false).unwrap();
-        assert!(!reg.is_installed(RETIRED_AGENT_CENTER_VARIANT_ID));
+        let reg = ExtensionsRegistry::load(dir.path()).unwrap();
         assert_eq!(
             reg.record("com.example.visual").unwrap().slots,
             vec!["output.destination".to_string()]
@@ -2094,7 +1979,7 @@ mod tests {
     #[test]
     fn toggle_order_is_enable_order_and_reenable_moves_to_end() {
         let dir = tmp();
-        let reg = ExtensionsRegistry::load(dir.path(), false).unwrap();
+        let reg = ExtensionsRegistry::load(dir.path()).unwrap();
         for id in ["a", "b"] {
             reg.install(pack(id, &[])).unwrap();
         }
@@ -2141,7 +2026,7 @@ mod tests {
     #[test]
     fn native_account_publication_is_revision_checked_and_persistent() {
         let dir = tmp();
-        let reg = ExtensionsRegistry::load(dir.path(), false).unwrap();
+        let reg = ExtensionsRegistry::load(dir.path()).unwrap();
         let mut record = pack("account", &[]);
         record.enabled = true;
         record.granted = vec!["auth".into()];
@@ -2177,7 +2062,7 @@ mod tests {
         assert!(reg
             .set_authentication_session_if_current("account", revision, None, || Some(()))
             .is_err());
-        let restarted = ExtensionsRegistry::load(dir.path(), false).unwrap();
+        let restarted = ExtensionsRegistry::load(dir.path()).unwrap();
         assert_eq!(
             restarted.record("account").unwrap().authentication_session,
             Some(session)
@@ -2186,7 +2071,7 @@ mod tests {
         restarted
             .set_authentication_session_if_current("account", revision, None, || Some(()))
             .unwrap();
-        assert!(ExtensionsRegistry::load(dir.path(), false)
+        assert!(ExtensionsRegistry::load(dir.path())
             .unwrap()
             .record("account")
             .unwrap()
@@ -2197,7 +2082,7 @@ mod tests {
     #[test]
     fn native_login_refuses_disabled_ungranted_and_invalid_sessions() {
         let dir = tmp();
-        let reg = ExtensionsRegistry::load(dir.path(), false).unwrap();
+        let reg = ExtensionsRegistry::load(dir.path()).unwrap();
         reg.install(pack("account", &[])).unwrap();
         let revision = reg.record_revision("account");
         assert!(reg
@@ -2234,7 +2119,7 @@ mod tests {
     #[test]
     fn native_logout_save_failure_keeps_the_in_memory_account_disconnected() {
         let dir = tmp();
-        let reg = ExtensionsRegistry::load(dir.path(), false).unwrap();
+        let reg = ExtensionsRegistry::load(dir.path()).unwrap();
         let mut record = pack("account", &[]);
         record.authentication_session = Some("a".repeat(32));
         reg.install(record).unwrap();
@@ -2257,7 +2142,7 @@ mod tests {
     #[test]
     fn installed_and_development_accounts_are_separate_and_exactly_removed() {
         let dir = tmp();
-        let reg = ExtensionsRegistry::load(dir.path(), false).unwrap();
+        let reg = ExtensionsRegistry::load(dir.path()).unwrap();
         let mut installed = pack("account", &[]);
         installed.enabled = true;
         installed.granted = vec!["auth".into()];
@@ -2321,7 +2206,7 @@ mod tests {
     fn native_confirmation_expires_across_enablement_source_and_grant_changes() {
         use crate::execution::{PreparedCall, RiskClass, SideEffect, Stale};
         let dir = tmp();
-        let reg = ExtensionsRegistry::load(dir.path(), false).unwrap();
+        let reg = ExtensionsRegistry::load(dir.path()).unwrap();
         let manifest: grain_sdk::ExtensionManifest = serde_json::from_value(serde_json::json!({
             "id": "com.example.tools", "name": "Tools", "version": "1.0.0",
             "tier": "scripted", "entry_source": "grain.actions({write: () => 'hello'});",
@@ -2401,7 +2286,7 @@ mod tests {
     #[test]
     fn dev_only_record_disappears_on_unload() {
         let dir = tmp();
-        let reg = ExtensionsRegistry::load(dir.path(), false).unwrap();
+        let reg = ExtensionsRegistry::load(dir.path()).unwrap();
         reg.load_dev(pack("com.x.dev", &[]), dir.path().join("project"))
             .unwrap();
 
@@ -2418,7 +2303,7 @@ mod tests {
     #[test]
     fn dev_override_restores_settings_with_a_fresh_execution_identity() {
         let dir = tmp();
-        let reg = ExtensionsRegistry::load(dir.path(), false).unwrap();
+        let reg = ExtensionsRegistry::load(dir.path()).unwrap();
         let mut installed = pack("com.x.dev", &[]);
         installed.enabled = true;
         installed.toggle_seq = 7;
@@ -2449,7 +2334,7 @@ mod tests {
     #[test]
     fn identical_replacements_and_restoration_never_resurrect_a_native_confirmation() {
         let dir = tmp();
-        let reg = ExtensionsRegistry::load(dir.path(), false).unwrap();
+        let reg = ExtensionsRegistry::load(dir.path()).unwrap();
         let manifest: grain_sdk::ExtensionManifest = serde_json::from_value(serde_json::json!({
             "id": "com.x.dev", "name": "Tools", "version": "1", "tier": "scripted",
             "entry_source": "grain.actions({hello: () => 'hello'});"
@@ -2499,7 +2384,7 @@ mod tests {
     #[test]
     fn execution_generation_is_host_owned_and_registry_reload_renews_it() {
         let dir = tmp();
-        let reg = ExtensionsRegistry::load(dir.path(), false).unwrap();
+        let reg = ExtensionsRegistry::load(dir.path()).unwrap();
         let mut input = serde_json::to_value(pack("tools", &[])).unwrap();
         input["execution_generation"] = serde_json::json!(u64::MAX);
         let input: ExtensionRecord = serde_json::from_value(input).unwrap();
@@ -2519,7 +2404,7 @@ mod tests {
         assert!(!fs::read_to_string(dir.path().join(EXTENSIONS_FILE))
             .unwrap()
             .contains("execution_generation"));
-        let reloaded = ExtensionsRegistry::load(dir.path(), false).unwrap();
+        let reloaded = ExtensionsRegistry::load(dir.path()).unwrap();
         let third = reloaded.record("tools").unwrap();
         assert_ne!(second.execution_generation, third.execution_generation);
         assert_eq!(
@@ -2531,7 +2416,7 @@ mod tests {
     #[test]
     fn resource_disable_refuses_stale_execution_generations() {
         let dir = tmp();
-        let reg = ExtensionsRegistry::load(dir.path(), false).unwrap();
+        let reg = ExtensionsRegistry::load(dir.path()).unwrap();
         reg.install(pack("tools", &[])).unwrap();
         reg.set_enabled("tools", true).unwrap();
         let first = reg.record("tools").unwrap();
@@ -2567,7 +2452,7 @@ mod tests {
     #[test]
     fn failed_enabled_replacement_preserves_owner_but_failed_disable_invalidates_it() {
         let dir = tmp();
-        let reg = ExtensionsRegistry::load(dir.path(), false).unwrap();
+        let reg = ExtensionsRegistry::load(dir.path()).unwrap();
         reg.install(pack("tools", &[])).unwrap();
         reg.set_enabled("tools", true).unwrap();
         let before = reg.record("tools").unwrap();
@@ -2595,7 +2480,7 @@ mod tests {
     #[test]
     fn replacing_a_dev_path_does_not_nest_or_lose_the_installed_backup() {
         let dir = tmp();
-        let reg = ExtensionsRegistry::load(dir.path(), false).unwrap();
+        let reg = ExtensionsRegistry::load(dir.path()).unwrap();
         let mut installed = pack("com.x.dev", &[]);
         installed.installed_version = "store".into();
         reg.install(installed).unwrap();
@@ -2611,7 +2496,7 @@ mod tests {
     #[test]
     fn replacing_a_dev_only_path_still_disappears_on_unload() {
         let dir = tmp();
-        let reg = ExtensionsRegistry::load(dir.path(), false).unwrap();
+        let reg = ExtensionsRegistry::load(dir.path()).unwrap();
         reg.load_dev(pack("com.x.dev", &[]), dir.path().join("one"))
             .unwrap();
         reg.load_dev(pack("com.x.dev", &[]), dir.path().join("two"))
@@ -2624,7 +2509,7 @@ mod tests {
     #[test]
     fn uninstall_during_dev_override_removes_only_installed_copy() {
         let dir = tmp();
-        let reg = ExtensionsRegistry::load(dir.path(), false).unwrap();
+        let reg = ExtensionsRegistry::load(dir.path()).unwrap();
         let mut installed = pack("com.x.dev", &[]);
         installed.installed_version = "store".into();
         reg.install(installed).unwrap();
@@ -2642,7 +2527,7 @@ mod tests {
     fn final_owner_removal_clears_only_its_quarantine_and_allows_fresh_dev() {
         for parked in [false, true] {
             let dir = tmp();
-            let reg = ExtensionsRegistry::load(dir.path(), false).unwrap();
+            let reg = ExtensionsRegistry::load(dir.path()).unwrap();
             reg.install(pack("tools", &[])).unwrap();
             reg.install(pack("other", &[])).unwrap();
             reg.quarantine("other", "other owner's refusal").unwrap();
@@ -2661,7 +2546,7 @@ mod tests {
             }
             assert!(reg.record("tools").is_none());
             assert!(reg.quarantine_reason("tools").is_none());
-            let restarted = ExtensionsRegistry::load(dir.path(), true).unwrap();
+            let restarted = ExtensionsRegistry::load(dir.path()).unwrap();
             assert!(restarted.quarantine_reason("tools").is_none());
             assert_eq!(
                 restarted.quarantine_reason("other").as_deref(),
@@ -2678,7 +2563,7 @@ mod tests {
     fn failed_uninstall_restores_owner_quarantine_slots_and_revision() {
         for mode in ["plain", "quarantined", "parked"] {
             let dir = tmp();
-            let reg = ExtensionsRegistry::load(dir.path(), false).unwrap();
+            let reg = ExtensionsRegistry::load(dir.path()).unwrap();
             reg.install(pack("tools", &["output.destination"])).unwrap();
             reg.take_slot("tools", "output.destination").unwrap();
             reg.install(pack("other", &[])).unwrap();
@@ -2702,7 +2587,7 @@ mod tests {
             assert_eq!(reg.quarantine_reason("tools"), refusal);
             assert_eq!(reg.slot_occupant("output.destination"), occupant);
             restore_registry_file(&reg, &saved);
-            let restarted = ExtensionsRegistry::load(dir.path(), true).unwrap();
+            let restarted = ExtensionsRegistry::load(dir.path()).unwrap();
             assert_eq!(
                 serde_json::to_value(restarted.record("tools")).unwrap(),
                 before
@@ -2715,7 +2600,7 @@ mod tests {
     #[test]
     fn updating_effective_dev_record_preserves_its_installed_backup() {
         let dir = tmp();
-        let reg = ExtensionsRegistry::load(dir.path(), false).unwrap();
+        let reg = ExtensionsRegistry::load(dir.path()).unwrap();
         let mut installed = pack("com.x.dev", &[]);
         installed.installed_version = "store".into();
         reg.install(installed).unwrap();
@@ -2734,7 +2619,7 @@ mod tests {
     #[test]
     fn core_defaults_occupy_every_known_slot() {
         let dir = tmp();
-        let reg = ExtensionsRegistry::load(dir.path(), false).unwrap();
+        let reg = ExtensionsRegistry::load(dir.path()).unwrap();
         for slot in grain_sdk::manifest::KNOWN_SLOTS {
             assert_eq!(
                 reg.slot_occupant(slot).as_deref(),
@@ -2748,7 +2633,7 @@ mod tests {
     #[test]
     fn claim_conflicts_then_takeover_then_release() {
         let dir = tmp();
-        let reg = ExtensionsRegistry::load(dir.path(), false).unwrap();
+        let reg = ExtensionsRegistry::load(dir.path()).unwrap();
         reg.install(pack("a", &["output.destination"])).unwrap();
         reg.install(pack("b", &["output.destination"])).unwrap();
 
@@ -2795,7 +2680,7 @@ mod tests {
     #[test]
     fn taking_an_undeclared_slot_is_refused() {
         let dir = tmp();
-        let reg = ExtensionsRegistry::load(dir.path(), false).unwrap();
+        let reg = ExtensionsRegistry::load(dir.path()).unwrap();
         reg.install(pack("a", &["output.destination"])).unwrap();
         assert!(reg.take_slot("a", "prompt.main").is_err());
         assert!(reg.take_slot("ghost", "output.destination").is_err());
@@ -2808,7 +2693,7 @@ mod tests {
     #[test]
     fn an_update_that_drops_a_slot_releases_it() {
         let dir = tmp();
-        let reg = ExtensionsRegistry::load(dir.path(), false).unwrap();
+        let reg = ExtensionsRegistry::load(dir.path()).unwrap();
         reg.install(pack("a", &["output.destination"])).unwrap();
         reg.take_slot("a", "output.destination").unwrap();
         reg.set_enabled("a", true).unwrap();
@@ -2832,7 +2717,7 @@ mod tests {
     #[test]
     fn uninstall_releases_slots() {
         let dir = tmp();
-        let reg = ExtensionsRegistry::load(dir.path(), false).unwrap();
+        let reg = ExtensionsRegistry::load(dir.path()).unwrap();
         reg.install(pack("a", &["output.destination"])).unwrap();
         reg.take_slot("a", "output.destination").unwrap();
         assert_eq!(reg.slots_held("a").len(), 1);
@@ -2848,12 +2733,12 @@ mod tests {
     fn slot_claims_survive_a_reload() {
         let dir = tmp();
         {
-            let reg = ExtensionsRegistry::load(dir.path(), false).unwrap();
+            let reg = ExtensionsRegistry::load(dir.path()).unwrap();
             reg.install(pack("a", &["output.destination"])).unwrap();
             reg.take_slot("a", "output.destination").unwrap();
             reg.set_enabled("a", true).unwrap();
         }
-        let reg = ExtensionsRegistry::load(dir.path(), false).unwrap();
+        let reg = ExtensionsRegistry::load(dir.path()).unwrap();
         assert_eq!(
             reg.slot_occupant("output.destination").as_deref(),
             Some("a")
@@ -2865,39 +2750,38 @@ mod tests {
     fn persistence_roundtrip() {
         let dir = tmp();
         {
-            let reg = ExtensionsRegistry::load(dir.path(), false).unwrap();
+            let reg = ExtensionsRegistry::load(dir.path()).unwrap();
             let mut rec = pack("x", &[]);
             rec.installed_version = "2.0".into();
             reg.install(rec).unwrap();
             reg.set_enabled("x", true).unwrap();
         }
-        let reg = ExtensionsRegistry::load(dir.path(), false).unwrap();
+        let reg = ExtensionsRegistry::load(dir.path()).unwrap();
         assert!(reg.is_enabled("x"));
         assert_eq!(reg.record("x").unwrap().installed_version, "2.0");
         // Damaged state remains recoverable and cannot silently initialize.
         let path = dir.path().join(EXTENSIONS_FILE);
         fs::write(&path, "{not json").unwrap();
-        assert!(ExtensionsRegistry::load(dir.path(), false).is_err());
+        assert!(ExtensionsRegistry::load(dir.path()).is_err());
         assert_eq!(fs::read_to_string(&path).unwrap(), "{not json");
     }
 
     #[test]
-    fn registry_load_refuses_future_versions_and_inconsistent_identity_without_writes() {
+    fn registry_load_refuses_inconsistent_identity_without_writes() {
         let dir = tmp();
         let path = dir.path().join(EXTENSIONS_FILE);
         for value in [
-            serde_json::json!({"tool_only_migration_version":2}),
             serde_json::json!({"records":{"one":{"id":"other","enabled":true}}}),
             serde_json::json!({"records":[]}),
         ] {
             let bytes = serde_json::to_vec(&value).unwrap();
             fs::write(&path, &bytes).unwrap();
-            assert!(ExtensionsRegistry::load(dir.path(), false).is_err());
+            assert!(ExtensionsRegistry::load(dir.path()).is_err());
             assert_eq!(fs::read(&path).unwrap(), bytes);
             assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 1);
         }
         fs::remove_file(&path).unwrap();
-        let fresh = ExtensionsRegistry::load(dir.path(), false).unwrap();
+        let fresh = ExtensionsRegistry::load(dir.path()).unwrap();
         assert!(fresh.records().is_empty());
     }
 
@@ -2908,13 +2792,13 @@ mod tests {
         let file = fs::File::create(&path).unwrap();
         file.set_len(REGISTRY_MAX_BYTES as u64 + 1).unwrap();
         drop(file);
-        assert!(ExtensionsRegistry::load(dir.path(), false).is_err());
+        assert!(ExtensionsRegistry::load(dir.path()).is_err());
         assert_eq!(
             fs::metadata(&path).unwrap().len(),
             REGISTRY_MAX_BYTES as u64 + 1
         );
         fs::remove_file(&path).unwrap();
-        let reg = ExtensionsRegistry::load(dir.path(), false).unwrap();
+        let reg = ExtensionsRegistry::load(dir.path()).unwrap();
         let original = fs::read(&path).unwrap();
         let mut oversized = RegistryFile::default();
         oversized
@@ -3011,7 +2895,7 @@ mod tests {
     #[test]
     fn failed_native_account_switch_preserves_old_pointer_generation_and_restart() {
         let dir = tmp();
-        let reg = ExtensionsRegistry::load(dir.path(), false).unwrap();
+        let reg = ExtensionsRegistry::load(dir.path()).unwrap();
         let mut record = pack("account", &[]);
         record.enabled = true;
         record.granted = vec!["auth".into()];
@@ -3042,7 +2926,7 @@ mod tests {
         fs::remove_dir(&reg.path).unwrap();
         fs::write(&reg.path, original).unwrap();
         assert_eq!(
-            ExtensionsRegistry::load(dir.path(), false)
+            ExtensionsRegistry::load(dir.path())
                 .unwrap()
                 .record("account")
                 .unwrap()
@@ -3057,7 +2941,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            ExtensionsRegistry::load(dir.path(), false)
+            ExtensionsRegistry::load(dir.path())
                 .unwrap()
                 .record("account")
                 .unwrap()
@@ -3082,7 +2966,7 @@ mod tests {
     fn failed_enable_and_grant_restore_record_and_toggle_order_before_retry() {
         for grant in [false, true] {
             let dir = tmp();
-            let reg = ExtensionsRegistry::load(dir.path(), false).unwrap();
+            let reg = ExtensionsRegistry::load(dir.path()).unwrap();
             reg.install(pack("other", &[])).unwrap();
             reg.set_enabled("other", true).unwrap();
             let record = pack("tools", &[]);
@@ -3113,13 +2997,13 @@ mod tests {
                 Some(CORE_DEFAULT)
             );
             restore_registry_file(&reg, &saved);
-            let restarted = ExtensionsRegistry::load(dir.path(), false).unwrap();
+            let restarted = ExtensionsRegistry::load(dir.path()).unwrap();
             assert!(!restarted.is_enabled("tools"));
             assert!(restarted.record("tools").unwrap().granted.is_empty());
             assert!(activate().unwrap());
             assert!(reg.is_enabled("tools"));
             assert_ne!(reg.record_revision("tools"), revision);
-            let restarted = ExtensionsRegistry::load(dir.path(), false).unwrap();
+            let restarted = ExtensionsRegistry::load(dir.path()).unwrap();
             assert!(restarted.is_enabled("tools"));
             if grant {
                 assert_eq!(restarted.record("tools").unwrap().granted, vec!["auth"]);
@@ -3131,7 +3015,7 @@ mod tests {
     fn failed_enabled_install_restores_absence_parked_owner_and_quarantine() {
         for mode in ["new", "installed", "parked", "quarantined", "oversized"] {
             let dir = tmp();
-            let reg = ExtensionsRegistry::load(dir.path(), false).unwrap();
+            let reg = ExtensionsRegistry::load(dir.path()).unwrap();
             if mode != "new" {
                 let mut installed = pack("tools", &[]);
                 installed.enabled = true;
@@ -3179,7 +3063,7 @@ mod tests {
             } else {
                 restore_registry_file(&reg, &saved);
             }
-            let restarted = ExtensionsRegistry::load(dir.path(), false).unwrap();
+            let restarted = ExtensionsRegistry::load(dir.path()).unwrap();
             assert_eq!(
                 serde_json::to_value(restarted.record("tools")).unwrap(),
                 before,
@@ -3193,7 +3077,7 @@ mod tests {
     fn failed_dev_switch_and_restore_keep_separate_account_owners_and_restart_state() {
         for unload in [false, true] {
             let dir = tmp();
-            let reg = ExtensionsRegistry::load(dir.path(), false).unwrap();
+            let reg = ExtensionsRegistry::load(dir.path()).unwrap();
             let mut installed = pack("tools", &["output.destination"]);
             installed.enabled = true;
             installed.granted = vec!["auth".into()];
@@ -3236,7 +3120,7 @@ mod tests {
                 Some(CORE_DEFAULT)
             );
             restore_registry_file(&reg, &saved);
-            let restarted = ExtensionsRegistry::load(dir.path(), false).unwrap();
+            let restarted = ExtensionsRegistry::load(dir.path()).unwrap();
             assert_eq!(
                 serde_json::to_value(restarted.record("tools")).unwrap(),
                 before
@@ -3275,7 +3159,7 @@ mod tests {
     fn concurrent_approval_and_disable_finish_disabled_without_stale_publication() {
         for _ in 0..32 {
             let dir = tmp();
-            let reg = std::sync::Arc::new(ExtensionsRegistry::load(dir.path(), false).unwrap());
+            let reg = std::sync::Arc::new(ExtensionsRegistry::load(dir.path()).unwrap());
             reg.install(pack("tools", &[])).unwrap();
             let revision = reg.record_revision("tools");
             let mut approved = reg.record("tools").unwrap();
@@ -3304,7 +3188,7 @@ mod tests {
             assert!(reg
                 .set_enabled_at_revision("tools", true, revision)
                 .is_err());
-            assert!(!ExtensionsRegistry::load(dir.path(), false)
+            assert!(!ExtensionsRegistry::load(dir.path())
                 .unwrap()
                 .is_enabled("tools"));
         }
@@ -3313,7 +3197,7 @@ mod tests {
     #[test]
     fn enable_counter_exhaustion_changes_no_identity_or_claim() {
         let dir = tmp();
-        let reg = ExtensionsRegistry::load(dir.path(), false).unwrap();
+        let reg = ExtensionsRegistry::load(dir.path()).unwrap();
         reg.install(pack("tools", &[])).unwrap();
         reg.state.write().unwrap().next_toggle_seq = u64::MAX;
         let revision = reg.record_revision("tools");
@@ -3326,116 +3210,6 @@ mod tests {
         assert!(!reg.is_enabled("tools"));
         assert!(reg.slots_held("tools").is_empty());
     }
-}
-
-// ── Tier-A pack application (Phase 1: prompt packs) ─────────────────────────
-
-/// Apply a prompt pack to settings: entries land in the user's prompt list
-/// under `ext:<extid>:<id>` (SPEC #15 — namespaced, so collisions with user
-/// prompts or other packs are unrepresentable). Idempotent: re-applying the
-/// same pack replaces its own entries.
-pub fn apply_prompt_pack(
-    _settings: &mut crate::settings::AppSettings,
-    _ext_id: &str,
-    _entries: &[grain_sdk::PromptPackEntry],
-) {
-    // Deserialization/migration compatibility only. No caller, including an
-    // old import/restore command, may activate a retired prompt payload.
-}
-
-/// Detach legacy extension-owned prompt state after the host archives it.
-/// First-party and user-authored entries without the reserved prefix survive.
-pub fn retire_extension_prompts(settings: &mut crate::settings::AppSettings) {
-    settings
-        .post_process_prompts
-        .retain(|prompt| !prompt.id.starts_with("ext:"));
-    if settings
-        .post_process_selected_prompt_id
-        .as_ref()
-        .is_some_and(|id| id.starts_with("ext:"))
-    {
-        settings.post_process_selected_prompt_id = settings
-            .post_process_prompts
-            .first()
-            .map(|prompt| prompt.id.clone());
-    }
-}
-
-/// Archive before detaching prompt state. Existing edited entries are never
-/// overwritten; rerunning after interruption deduplicates exact records.
-pub fn archive_retired_prompts(
-    data_dir: &Path,
-    settings: &crate::settings::AppSettings,
-) -> Result<()> {
-    let prompts: Vec<_> = settings
-        .post_process_prompts
-        .iter()
-        .filter(|p| p.id.starts_with("ext:"))
-        .collect();
-    if prompts.is_empty() {
-        return Ok(());
-    }
-    let path = data_dir.join("retired-extension-prompts.json");
-    let mut preserved: Vec<crate::settings::LLMPrompt> = if path.exists() {
-        if fs::metadata(&path)?.len() > 8 * 1024 * 1024 {
-            anyhow::bail!("retired prompt archive exceeds 8 MiB");
-        }
-        serde_json::from_slice(&fs::read(&path)?)?
-    } else {
-        Vec::new()
-    };
-    for prompt in prompts {
-        if !preserved.iter().any(|old| {
-            old.id == prompt.id && old.name == prompt.name && old.prompt == prompt.prompt
-        }) {
-            preserved.push(prompt.clone());
-        }
-    }
-    let bytes = serde_json::to_vec_pretty(&preserved)?;
-    if bytes.len() > 8 * 1024 * 1024 {
-        anyhow::bail!("retired prompt archive exceeds 8 MiB");
-    }
-    atomic_write(&path, &bytes)
-}
-
-/// Preserve custom chords before detaching the extension binding namespace.
-/// Archives are inert and deduplicate exact key/value pairs on interrupted restart.
-pub fn archive_retired_bindings(
-    data_dir: &Path,
-    settings: &crate::settings::AppSettings,
-) -> Result<()> {
-    let retired: Vec<serde_json::Value> = settings
-        .bindings
-        .iter()
-        .filter(|(key, _)| key.starts_with("ext:"))
-        .map(|(key, binding)| serde_json::to_value((key, binding)))
-        .collect::<std::result::Result<_, _>>()?;
-    if retired.is_empty() {
-        return Ok(());
-    }
-    let path = data_dir.join("retired-extension-bindings.json");
-    let mut preserved: Vec<serde_json::Value> = if path.exists() {
-        if fs::metadata(&path)?.len() > 8 * 1024 * 1024 {
-            anyhow::bail!("retired binding archive exceeds 8 MiB");
-        }
-        serde_json::from_slice(&fs::read(&path)?)?
-    } else {
-        Vec::new()
-    };
-    for value in retired {
-        if !preserved.contains(&value) {
-            preserved.push(value);
-        }
-    }
-    let bytes = serde_json::to_vec_pretty(&preserved)?;
-    if bytes.len() > 8 * 1024 * 1024 {
-        anyhow::bail!("retired binding archive exceeds 8 MiB");
-    }
-    atomic_write(&path, &bytes)
-}
-
-pub fn retire_extension_bindings(settings: &mut crate::settings::AppSettings) {
-    settings.bindings.retain(|id, _| !id.starts_with("ext:"));
 }
 
 /// Refuse damaged state rather than silently discarding installed metadata.
@@ -3574,107 +3348,5 @@ pub(crate) fn atomic_write_with(
                 }
             }
         }
-    }
-}
-
-/// Remove a pack's prompts (disable/uninstall). If the removed pack's prompt
-/// was the SELECTED one, selection falls back to the first remaining prompt —
-/// never a dangling id (the §10.2 restore principle, applied to prompts).
-pub fn remove_prompt_pack(settings: &mut crate::settings::AppSettings, ext_id: &str) {
-    let prefix = format!("ext:{ext_id}:");
-    settings
-        .post_process_prompts
-        .retain(|p| !p.id.starts_with(&prefix));
-    if let Some(sel) = &settings.post_process_selected_prompt_id {
-        if sel.starts_with(&prefix) {
-            settings.post_process_selected_prompt_id =
-                settings.post_process_prompts.first().map(|p| p.id.clone());
-        }
-    }
-}
-
-#[cfg(test)]
-mod pack_tests {
-    use super::*;
-    use crate::settings::AppSettings;
-    use grain_sdk::PromptPackEntry;
-
-    #[test]
-    fn retirement_archives_edited_prompts_once_and_heals_active_selection() {
-        let dir = tempfile::tempdir().unwrap();
-        let mut settings = AppSettings::default();
-        let user = crate::settings::LLMPrompt {
-            id: "user".into(),
-            name: "User".into(),
-            prompt: "My words".into(),
-        };
-        settings.post_process_prompts.push(user);
-        settings
-            .post_process_prompts
-            .push(crate::settings::LLMPrompt {
-                id: "ext:com.x.old:formal".into(),
-                name: "Edited".into(),
-                prompt: "User edited pack text".into(),
-            });
-        settings.post_process_selected_prompt_id = Some("ext:com.x.old:formal".into());
-        archive_retired_prompts(dir.path(), &settings).unwrap();
-        archive_retired_prompts(dir.path(), &settings).unwrap(); // restart before settings commit
-        retire_extension_prompts(&mut settings);
-        retire_extension_prompts(&mut settings);
-        assert!(settings.post_process_prompts.iter().any(|p| p.id == "user"));
-        assert!(!settings
-            .post_process_prompts
-            .iter()
-            .any(|p| p.id.starts_with("ext:")));
-        assert!(!settings
-            .post_process_selected_prompt_id
-            .as_deref()
-            .unwrap_or("")
-            .starts_with("ext:"));
-        let archived: Vec<crate::settings::LLMPrompt> = serde_json::from_slice(
-            &fs::read(dir.path().join("retired-extension-prompts.json")).unwrap(),
-        )
-        .unwrap();
-        assert_eq!(archived.len(), 1);
-        assert_eq!(archived[0].prompt, "User edited pack text");
-        assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 1);
-    }
-
-    fn entries() -> Vec<PromptPackEntry> {
-        vec![PromptPackEntry {
-            id: "formal".into(),
-            name: "Formal".into(),
-            prompt: "Rewrite formally.".into(),
-        }]
-    }
-
-    #[test]
-    fn retired_apply_cannot_change_user_prompts() {
-        let mut settings = AppSettings::default();
-        let before = serde_json::to_value(&settings).unwrap();
-        apply_prompt_pack(&mut settings, "com.x.zh", &entries());
-        apply_prompt_pack(&mut settings, "com.x.zh", &entries());
-        assert_eq!(serde_json::to_value(settings).unwrap(), before);
-    }
-
-    #[test]
-    fn remove_clears_entries_and_heals_selection() {
-        let mut s = AppSettings::default();
-        apply_prompt_pack(&mut s, "com.x.zh", &entries());
-        s.post_process_selected_prompt_id = Some("ext:com.x.zh:formal".into());
-        remove_prompt_pack(&mut s, "com.x.zh");
-        assert!(!s
-            .post_process_prompts
-            .iter()
-            .any(|p| p.id.starts_with("ext:com.x.zh:")));
-        // Selection healed to a real prompt, not left dangling.
-        let sel = s.post_process_selected_prompt_id.clone();
-        assert!(
-            sel.is_none()
-                || s.post_process_prompts
-                    .iter()
-                    .any(|p| Some(&p.id) == sel.as_ref())
-        );
-        assert_ne!(sel.as_deref(), Some("ext:com.x.zh:formal"));
     }
 }

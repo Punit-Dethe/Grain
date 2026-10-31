@@ -2466,65 +2466,18 @@ pub fn reload_dev_extension(
     })
 }
 
-// ── Retired built-ins ───────────────────────────────────────────────────────
-
-/// Packs Grain used to seed into every install and no longer ships.
-///
-/// `grain.auto-categorize` was a dogfood sample proving the scripted runtime end
-/// to end — worker spawn on an event, `llm` + `storage` host calls, capability
-/// enforcement, the idle reaper. It did its job, but it was seeded on every
-/// launch, so it sat under "Installed · not active" in everyone's list forever,
-/// as a demo nobody asked for.
-const RETIRED_BUILTINS: &[&str] = &["grain.auto-categorize", "grain.agent-center-layout"];
-
-/// Disable legacy bundled integrations while preserving artifacts and user data.
-/// A fresh install never receives these packages.
-fn retire_builtin_packs(app: &AppHandle) -> Result<(), String> {
+/// Validate every installed extension record once at startup, before HOST
+/// starts. Disabled records are checked too, so an incompatible artifact keeps
+/// a persistent refusal reason and no stale grant survives a restart.
+pub fn quarantine_invalid_extensions(app: &AppHandle) -> Result<(), String> {
     let Some(reg) = app.try_state::<Arc<grain_core::extensions::ExtensionsRegistry>>() else {
         return Ok(());
     };
-    for id in RETIRED_BUILTINS {
-        if reg.dev_path(id).is_none() && reg.is_installed(id) {
-            reg.quarantine(id, "Retired bundled extension; tools only are supported.")
+    for record in reg.records() {
+        if let Err(reason) = load_manifest_result(app, &record.id) {
+            reg.quarantine(&record.id, &reason)
                 .map_err(|error| error.to_string())?;
         }
-    }
-    Ok(())
-}
-
-/// Bring the installed set in line with what this build actually ships. Called
-/// once after `AppContext` + `ExtensionsRegistry` are managed.
-///
-/// Grain used to SEED scripted packs from inside the binary here. It no longer
-/// does: first-party extensions are real packs in the catalogue, installed the
-/// same way anyone else's are, so this only has to clean up after the ones that
-/// were seeded into existing installs.
-pub fn reconcile_builtin_packs(app: &AppHandle) -> Result<(), String> {
-    // Runs before HOST starts. Validate disabled records too so legacy artifacts
-    // retain a persistent refusal reason and old grants cannot survive restart.
-    if let Some(reg) = app.try_state::<Arc<grain_core::extensions::ExtensionsRegistry>>() {
-        for record in reg.records() {
-            if let Err(reason) = load_manifest_result(app, &record.id) {
-                reg.quarantine(&record.id, &reason)
-                    .map_err(|error| error.to_string())?;
-            }
-        }
-    }
-    if let Some(ctx) = app.try_state::<Arc<AppContext>>() {
-        grain_core::extensions::archive_retired_prompts(&ctx.data_dir, &ctx.settings())
-            .map_err(|error| format!("preserve retired extension prompts: {error}"))?;
-        grain_core::extensions::archive_retired_bindings(&ctx.data_dir, &ctx.settings())
-            .map_err(|error| format!("preserve retired extension bindings: {error}"))?;
-        ctx.update_settings(|settings| {
-            grain_core::extensions::retire_extension_prompts(settings);
-            grain_core::extensions::retire_extension_bindings(settings);
-        })
-        .map_err(|error| error.to_string())?;
-    }
-    retire_builtin_packs(app)?;
-    if let Some(reg) = app.try_state::<Arc<grain_core::extensions::ExtensionsRegistry>>() {
-        reg.finish_tool_only_migration()
-            .map_err(|error| error.to_string())?;
     }
     Ok(())
 }
@@ -3234,8 +3187,7 @@ mod tests {
             ] {
                 let directory = tempfile::tempdir().unwrap();
                 let registry =
-                    grain_core::extensions::ExtensionsRegistry::load(directory.path(), false)
-                        .unwrap();
+                    grain_core::extensions::ExtensionsRegistry::load(directory.path()).unwrap();
                 let pack = pack_of("");
                 let mut record = record_for(&pack);
                 record.enabled = false;
@@ -3863,8 +3815,7 @@ mod tests {
     #[test]
     fn resource_disable_requires_both_registry_and_worker_ownership() {
         let directory = tempfile::tempdir().unwrap();
-        let registry =
-            grain_core::extensions::ExtensionsRegistry::load(directory.path(), false).unwrap();
+        let registry = grain_core::extensions::ExtensionsRegistry::load(directory.path()).unwrap();
         let pack = pack_of("");
         registry.install(record_for(&pack)).unwrap();
         registry.set_enabled(&pack.manifest.id, true).unwrap();

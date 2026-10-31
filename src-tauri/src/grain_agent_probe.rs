@@ -51,11 +51,8 @@ async fn run(app: &AppHandle, request: Request) -> Result<Value, String> {
     // Only MCP state is needed. Native workers deliberately remain unavailable;
     // their real-app acceptance stays in the maintained harness.
     app.manage(Arc::new(
-        grain_core::extensions::ExtensionsRegistry::load(
-            &context.data_dir,
-            grain_core::settings_file_exists(&context.data_dir),
-        )
-        .map_err(|_| "Cannot load the extension registry")?,
+        grain_core::extensions::ExtensionsRegistry::load(&context.data_dir)
+            .map_err(|_| "Cannot load the extension registry")?,
     ));
     app.manage(Arc::new(crate::grain_store::StoreState::init(
         &context.data_dir,

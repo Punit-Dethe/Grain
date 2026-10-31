@@ -1665,8 +1665,7 @@ mod tests {
         assert!(credentials.contains_key(id) && credentials.contains_key("unrelated"));
         std::fs::remove_dir(&path).unwrap();
         std::fs::write(&path, original).unwrap();
-        let restarted =
-            grain_core::extensions::ExtensionsRegistry::load(directory.path(), false).unwrap();
+        let restarted = grain_core::extensions::ExtensionsRegistry::load(directory.path()).unwrap();
         assert_eq!(
             restarted.record(id).unwrap().authentication_session,
             Some("a".repeat(32))
@@ -1703,8 +1702,7 @@ mod tests {
             credentials.get(&session_key(id, &"b".repeat(32)).unwrap()),
             Some(&"candidate grant")
         );
-        let restarted =
-            grain_core::extensions::ExtensionsRegistry::load(directory.path(), false).unwrap();
+        let restarted = grain_core::extensions::ExtensionsRegistry::load(directory.path()).unwrap();
         assert_eq!(
             restarted.record(id).unwrap().authentication_session,
             Some("b".repeat(32))
@@ -1755,7 +1753,7 @@ mod tests {
     fn prepared_fixture() -> (tempfile::TempDir, PreparedConnect) {
         let dir = tempfile::tempdir().unwrap();
         let registry =
-            Arc::new(grain_core::extensions::ExtensionsRegistry::load(dir.path(), false).unwrap());
+            Arc::new(grain_core::extensions::ExtensionsRegistry::load(dir.path()).unwrap());
         let record = serde_json::from_value(serde_json::json!({
             "id": "com.example.tools", "enabled": true, "installed_version": "1",
             "granted": ["auth"]

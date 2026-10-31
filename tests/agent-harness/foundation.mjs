@@ -247,12 +247,11 @@ export function foundationHandlers(ctx) {
           await writeFile(manifestPath, original);
         }
       },
-      async "native.legacy-migration"() {
+      async "native.legacy-quarantine"() {
         assertWithin(await realpath(root), await realpath(data));
-        await ctx.imported("migration-baseline");
+        await ctx.imported("quarantine-baseline");
         await ctx.allow();
-        await greeting("migration-baseline");
-        const settings = await read("grain.settings.json");
+        await greeting("quarantine-baseline");
         const registry = await read("extensions.json");
         const record = registry.records[FIXTURE_ID];
         const artifactName = `extensions/${FIXTURE_ID}/${record.installed_version}/${record.artifact_sha256}/pack.grainpack.json`;
@@ -261,39 +260,12 @@ export function foundationHandlers(ctx) {
         const bytes = Buffer.from(JSON.stringify(legacy));
         const hash = createHash("sha256").update(bytes).digest("hex");
         const legacyArtifact = `extensions/${FIXTURE_ID}/${record.installed_version}/${hash}/pack.grainpack.json`;
-        const user = {
-          id: "harness-user-prompt",
-          name: "My own prompt",
-          prompt: "Preserve my independent instructions",
-        };
-        const retired = {
-          id: `ext:${FIXTURE_ID}:edited`,
-          name: "Edited legacy prompt",
-          prompt: "User-edited legacy text",
-        };
-        const key = `ext:${FIXTURE_ID}:hello`;
-        const binding = {
-          id: key,
-          name: "Edited binding",
-          description: "Legacy fixture only",
-          default_binding: "Ctrl+J",
-          current_binding: "Ctrl+Shift+J",
-        };
-        const sentinel = path("migration-user-data.txt");
-        async function seed(prompt, interrupted) {
+        const sentinel = path("quarantine-user-data.txt");
+        async function seed() {
           const seeded = structuredClone(registry);
-          seeded.tool_only_migration_version = 0;
           seeded.records[FIXTURE_ID].artifact_sha256 = hash;
           seeded.records[FIXTURE_ID].enabled = true;
           seeded.records[FIXTURE_ID].granted = ["capture"];
-          const old = structuredClone(settings);
-          old.post_process_prompts = [
-            ...settings.post_process_prompts,
-            user,
-            prompt,
-          ];
-          old.post_process_selected_prompt_id = prompt.id;
-          old.bindings[key] = binding;
           await mkdir(
             assertWithin(
               root,
@@ -306,18 +278,10 @@ export function foundationHandlers(ctx) {
           );
           await writeFile(path(legacyArtifact), bytes);
           await write("extensions.json", seeded);
-          await write("grain.settings.json", old);
-          if (interrupted) {
-            // Equivalent durable checkpoint: archives published, old active
-            // settings/registry still present. Startup must finish idempotently.
-            await write("retired-extension-prompts.json", [retired, prompt]);
-            await write("retired-extension-bindings.json", [[key, binding]]);
-          }
         }
-        async function verify(expectedPrompts) {
-          const migrated = await read("extensions.json");
-          const old = migrated.records[FIXTURE_ID];
-          assert.equal(migrated.tool_only_migration_version, 1);
+        async function verify() {
+          const quarantined = await read("extensions.json");
+          const old = quarantined.records[FIXTURE_ID];
           assert.equal(
             old.enabled,
             false,
@@ -326,37 +290,9 @@ export function foundationHandlers(ctx) {
           assert.deepEqual(old.granted, []);
           assert.equal(old.actions_approved, undefined);
           assert.ok(
-            migrated.quarantined[FIXTURE_ID],
+            quarantined.quarantined[FIXTURE_ID],
             "No persistent retirement reason",
           );
-          const active = await read("grain.settings.json");
-          assert.deepEqual(active.post_process_prompts, [
-            ...settings.post_process_prompts,
-            user,
-          ]);
-          assert.ok(
-            active.post_process_prompts.some(
-              (prompt) => prompt.id === active.post_process_selected_prompt_id,
-            ),
-          );
-          assert.ok(!active.post_process_selected_prompt_id.startsWith("ext:"));
-          assert.ok(
-            !Object.keys(active.bindings).some((value) =>
-              value.startsWith("ext:"),
-            ),
-          );
-          assert.deepEqual(
-            active.bindings,
-            settings.bindings,
-            "Migration changed first-party shortcut bindings",
-          );
-          assert.deepEqual(
-            await read("retired-extension-prompts.json"),
-            expectedPrompts,
-          );
-          assert.deepEqual(await read("retired-extension-bindings.json"), [
-            [key, binding],
-          ]);
           assert.deepEqual(
             await readFile(path(legacyArtifact)),
             bytes,
@@ -367,22 +303,13 @@ export function foundationHandlers(ctx) {
             "Preserved inert user data",
           );
           assert.equal((await status()).worker.count, 0);
-          return {
-            promptArchive: await readFile(
-              path("retired-extension-prompts.json"),
-            ),
-            bindingArchive: await readFile(
-              path("retired-extension-bindings.json"),
-            ),
-          };
+          return quarantined;
         }
-        await restart("upgrade:fresh-archive", async () => {
+        await restart("upgrade:legacy-artifact", async () => {
           await writeFile(sentinel, "Preserved inert user data");
-          await seed(retired, false);
+          await seed();
         });
-        if (ctx.fault === "lost-migration-archive")
-          await write("retired-extension-prompts.json", []);
-        const first = await verify([retired]);
+        const first = await verify();
         await assert.rejects(
           fixture("enable"),
           /quarantined|retired|tools only/i,
@@ -390,20 +317,10 @@ export function foundationHandlers(ctx) {
         assert.equal((await status()).fixtureEnabled, false);
         await restart("upgrade:repeat");
         assert.deepEqual(
-          await verify([retired]),
+          await verify(),
           first,
-          "Restart changed inert archive bytes",
+          "Restart changed the quarantined registry",
         );
-        const edited = {
-          ...retired,
-          prompt: "A second user edit survives interruption",
-        };
-        await restart("upgrade:interrupted-checkpoint", () =>
-          seed(edited, true),
-        );
-        const second = await verify([retired, edited]);
-        await restart("upgrade:interrupted-repeat");
-        assert.deepEqual(await verify([retired, edited]), second);
         const beforeRemoval = await read("extensions.json");
         await withRegistryLock(ctx, async () => {
           await assert.rejects(
@@ -418,11 +335,9 @@ export function foundationHandlers(ctx) {
         );
         assert.deepEqual(await read("extensions.json"), beforeRemoval);
         await restart("upgrade:failed-uninstall-preserved");
-        assert.deepEqual(await verify([retired, edited]), second);
+        assert.deepEqual(await verify(), first);
         evidence.push({
-          stage: "archives-preserved",
-          promptVersions: 2,
-          bindingEntries: 1,
+          stage: "quarantine-preserved",
           retiredDispatches: 0,
         });
         // Remove only through the actual host, then prove normal tools recover.

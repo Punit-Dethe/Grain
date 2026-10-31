@@ -1753,8 +1753,7 @@ mod tests {
                     roots.base_urls = vec![format!("http://{}/", listener.local_addr().unwrap())];
                     roots.mirrors.clear();
                 }
-                let native =
-                    grain_core::extensions::ExtensionsRegistry::load(data.path(), false).unwrap();
+                let native = grain_core::extensions::ExtensionsRegistry::load(data.path()).unwrap();
                 let remote = ConnectionRegistry::load(data.path()).unwrap();
                 let client = reqwest::Client::new();
                 for (requested, installed, expected) in [
@@ -2027,7 +2026,7 @@ mod tests {
         transport_roots.mirrors.clear();
         *state.roots.write().unwrap() = transport_roots;
         *state.index.write().unwrap() = Some(index);
-        let reg = grain_core::extensions::ExtensionsRegistry::load(&data, false).unwrap();
+        let reg = grain_core::extensions::ExtensionsRegistry::load(&data).unwrap();
         let ext_root = data.join("extensions");
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_millis(300))
@@ -2094,7 +2093,7 @@ mod tests {
                     roots.base_urls = vec![format!("http://{}/", listener.local_addr().unwrap())];
                     roots.mirrors.clear();
                 }
-                let reg = grain_core::extensions::ExtensionsRegistry::load(&data, false).unwrap();
+                let reg = grain_core::extensions::ExtensionsRegistry::load(&data).unwrap();
                 if mode == "disable_record" || mode == "replace_record" {
                     let record = install::plan_record(
                         &state.index.read().unwrap().as_ref().unwrap().entries[0],
@@ -2396,7 +2395,7 @@ mod tests {
                 roots.base_urls = vec![format!("http://{}/", listener.local_addr().unwrap())];
                 roots.mirrors.clear();
             }
-            let reg = grain_core::extensions::ExtensionsRegistry::load(&data, false).unwrap();
+            let reg = grain_core::extensions::ExtensionsRegistry::load(&data).unwrap();
             let root = data.join("extensions");
             let error = rt
                 .block_on(install_entry(

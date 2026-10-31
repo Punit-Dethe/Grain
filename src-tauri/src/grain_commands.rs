@@ -1282,7 +1282,7 @@ pub fn extension_set_enabled(
                 let persisted = reg
                     .set_enabled(pack_id, false)
                     .map_err(|error| error.to_string());
-                stop_extension_runtime(&app, pack_id, "extension disabled");
+                stop_extension_runtime(pack_id, "extension disabled");
                 crate::extension_host::refresh_index(&app);
                 // The in-memory disable already took effect. Disk failure must
                 // still retire its worker/account before reporting persistence.
@@ -1462,7 +1462,7 @@ mod imported_update_security_tests {
     #[test]
     fn reviewed_grants_and_activation_have_one_owner_and_reject_replay() {
         let dir = tempfile::tempdir().unwrap();
-        let registry = grain_core::extensions::ExtensionsRegistry::load(dir.path(), false).unwrap();
+        let registry = grain_core::extensions::ExtensionsRegistry::load(dir.path()).unwrap();
         let pack = auth_pack("https://login.example.com/oauth/token");
         let mut record = approved_record(&pack);
         record.enabled = false;
@@ -1501,7 +1501,7 @@ mod imported_update_security_tests {
     #[test]
     fn explicit_disable_and_late_replacement_defeat_review_before_commit() {
         let dir = tempfile::tempdir().unwrap();
-        let registry = grain_core::extensions::ExtensionsRegistry::load(dir.path(), false).unwrap();
+        let registry = grain_core::extensions::ExtensionsRegistry::load(dir.path()).unwrap();
         let pack = auth_pack("https://login.example.com/oauth/token");
         let mut record = approved_record(&pack);
         record.enabled = false;
@@ -1673,29 +1673,9 @@ pub fn extension_developer_status(app: AppHandle) -> Result<ExtensionDeveloperSt
     })
 }
 
-fn stop_extension_runtime(app: &AppHandle, id: &str, reason: &str) {
-    use grain_core::extensions as ext;
+fn stop_extension_runtime(id: &str, reason: &str) {
     crate::extension_host::stop_extension(id, reason);
     crate::grain_auth::cancel_extension(id);
-    if let Some(ctx) = app.try_state::<std::sync::Arc<grain_core::AppContext>>() {
-        let _ = ctx.update_settings(|state| ext::remove_prompt_pack(state, id));
-    }
-}
-
-fn restore_enabled_extension(app: &AppHandle, id: &str) -> Result<(), String> {
-    use grain_core::extensions as ext;
-    let reg = app
-        .try_state::<std::sync::Arc<ext::ExtensionsRegistry>>()
-        .ok_or("extensions registry unavailable")?;
-    if !reg.is_enabled(id) {
-        return Ok(());
-    }
-    let pack = load_pack(app, id)?;
-    if let Some(ctx) = app.try_state::<std::sync::Arc<grain_core::AppContext>>() {
-        ctx.update_settings(|state| ext::apply_prompt_pack(state, id, &pack.payloads.prompts))
-            .map_err(|error| error.to_string())?;
-    }
-    Ok(())
 }
 
 pub(crate) fn require_main_window(window: &tauri::WebviewWindow) -> Result<(), String> {
@@ -1724,9 +1704,8 @@ pub fn extension_set_developer_mode(
         crate::grain_mcp::invalidate_development_sessions(&app);
         let ids: Vec<String> = reg.dev_records().into_iter().map(|(id, _)| id).collect();
         for id in ids {
-            stop_extension_runtime(&app, &id, "developer mode disabled");
+            stop_extension_runtime(&id, "developer mode disabled");
             reg.unload_dev(&id).map_err(|error| error.to_string())?;
-            restore_enabled_extension(&app, &id)?;
         }
         if let Err(error) = crate::extension_icons::purge_dev_cache(&app) {
             log::warn!("[GRAIN] developer icon-cache cleanup failed: {error}");
@@ -1900,13 +1879,12 @@ pub fn extension_unload_dev(
     if reg.dev_path(&id).is_none() {
         return Err(format!("'{id}' is not a load-unpacked extension"));
     }
-    stop_extension_runtime(&app, &id, "load-unpacked project unloaded");
+    stop_extension_runtime(&id, "load-unpacked project unloaded");
     reg.unload_dev(&id).map_err(|error| {
         #[cfg(feature = "agent-harness")]
         log::warn!("[agent-harness] developer unload failed: {error:#}");
         error.to_string()
     })?;
-    restore_enabled_extension(&app, &id)?;
     if let Err(error) = crate::extension_icons::purge_dev_cache(&app) {
         log::warn!("[GRAIN] developer icon-cache cleanup failed: {error}");
     }
@@ -2142,19 +2120,6 @@ pub fn extension_import_pack(
             crate::grain_auth::cancel_extension_generation(&id, prior.execution_generation);
         }
     }
-    // An enabled pack's payloads refresh in place (apply is idempotent).
-    if stays_enabled && !dev_active {
-        if let Some(ctx) = app.try_state::<std::sync::Arc<grain_core::AppContext>>() {
-            if let Err(error) =
-                ctx.update_settings(|s| ext::apply_prompt_pack(s, &id, &pack.payloads.prompts))
-            {
-                let _ = reg.set_enabled(&id, false);
-                stop_extension_runtime(&app, &id, "extension update could not apply safely");
-                crate::extension_host::refresh_index(&app);
-                return Err(error.to_string());
-            }
-        }
-    }
     crate::extension_host::refresh_index(&app);
     Ok(id)
 }
@@ -2319,7 +2284,6 @@ pub async fn extension_uninstall(
         return credential_cleanup.await;
     }
     if let Some(ctx) = app.try_state::<std::sync::Arc<grain_core::AppContext>>() {
-        let _ = ctx.update_settings(|s| ext::remove_prompt_pack(s, &id));
         crate::host_api::ExtStorage::new(&ctx.data_dir, &id)
             .purge()
             .map_err(|error| error.to_string())?;

@@ -1159,15 +1159,8 @@ pub fn run(cli_args: CliArgs) {
                     .unwrap_or_else(|_| std::path::PathBuf::from("."));
                 let data_dir = crate::portable::app_data_dir(&app.handle())
                     .unwrap_or_else(|_| std::path::PathBuf::from("."));
-                // [GRAIN] Extension platform: capture whether this is an
-                // upgrade BEFORE AppContext persists defaults (SPEC §10.1 —
-                // the registry's one-time import keys off it).
-                let settings_preexisted = grain_core::settings_file_exists(&data_dir);
                 app.manage(grain_core::AppContext::new(resource_dir, data_dir.clone()));
-                match grain_core::extensions::ExtensionsRegistry::load(
-                    &data_dir,
-                    settings_preexisted,
-                ) {
+                match grain_core::extensions::ExtensionsRegistry::load(&data_dir) {
                     Ok(reg) => {
                         app.manage(std::sync::Arc::new(reg));
                     }
@@ -1181,9 +1174,9 @@ pub fn run(cli_args: CliArgs) {
                 #[cfg(feature = "agent-harness")]
                 let store = grain_store::StoreState::init_harness(&data_dir);
                 app.manage(std::sync::Arc::new(store));
-                // [GRAIN] Reconcile built-ins with what this build ships,
-                // now that AppContext + the registry are managed. Default off.
-                extension_host::reconcile_builtin_packs(&app.handle())
+                // [GRAIN] Quarantine incompatible installed extensions now that
+                // AppContext + the registry are managed.
+                extension_host::quarantine_invalid_extensions(&app.handle())
                     .map_err(std::io::Error::other)?;
             }
 

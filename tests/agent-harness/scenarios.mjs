@@ -124,11 +124,11 @@ export const scenarios = [
       "Real native typed/optional arguments round-trip; changed declaration without reload refuses the old approval",
   },
   {
-    id: "native.legacy-migration",
+    id: "native.legacy-quarantine",
     suite: "native-foundation",
     checks: [2],
     description:
-      "Real upgrade/restarts quarantine legacy privileges and preserve edited prompt/binding archives exactly once",
+      "Real restarts quarantine an installed extension with retired privileges, preserve its artifact and refuse re-enable",
   },
   {
     id: "native.cold-warm",
@@ -468,7 +468,7 @@ export const EXTENSION_CONTRACT_CHECKPOINT = [
   "native.author-results",
   "native.api-compatibility",
   "native.typed-contract",
-  "native.legacy-migration",
+  "native.legacy-quarantine",
   "native.cli-package-ownership",
   "native.owner-restoration",
   "native.auth-fixture",

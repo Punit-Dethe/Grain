@@ -494,7 +494,7 @@ mod tests {
     #[test]
     fn losing_registry_writer_and_failed_persistence_keep_complete_artifacts() {
         let dir = tmp();
-        let reg = ExtensionsRegistry::load(dir.path(), false).unwrap();
+        let reg = ExtensionsRegistry::load(dir.path()).unwrap();
         let root = dir.path().join("extensions");
         let first = tool_pack("com.example.tools", "1", &[]);
         let first_entry = entry("com.example.tools", "1", Trust::Verified, &[], &first);
@@ -537,7 +537,7 @@ mod tests {
         );
         std::fs::remove_dir(&registry_path).unwrap();
         std::fs::write(&registry_path, persisted).unwrap();
-        let restarted = ExtensionsRegistry::load(dir.path(), false).unwrap();
+        let restarted = ExtensionsRegistry::load(dir.path()).unwrap();
         assert_eq!(
             restarted
                 .record(&first_entry.id)
@@ -554,7 +554,7 @@ mod tests {
     #[test]
     fn stale_verified_install_cannot_stage_or_restore_disabled_record() {
         let dir = tmp();
-        let reg = ExtensionsRegistry::load(dir.path(), false).unwrap();
+        let reg = ExtensionsRegistry::load(dir.path()).unwrap();
         let bytes = tool_pack("com.example.tools", "1", &[]);
         let entry = entry("com.example.tools", "1", Trust::Verified, &[], &bytes);
         let root = dir.path().join("extensions");
@@ -647,7 +647,7 @@ mod tests {
         // Here we prove the manual import default directly: a record built
         // WITHOUT a verified entry is `UNTRUSTED_DEFAULT`, whatever the bytes say.
         let dir = tmp();
-        let reg = ExtensionsRegistry::load(dir.path(), false).unwrap();
+        let reg = ExtensionsRegistry::load(dir.path()).unwrap();
         // Simulate the manual import path: construct a record the way
         // grain_commands::extension_import does â€” no entry, untrusted default.
         let rec = ExtensionRecord {
@@ -784,7 +784,7 @@ mod tests {
     #[test]
     fn json_pack_installs_to_its_version_dir() {
         let dir = tmp();
-        let reg = ExtensionsRegistry::load(dir.path(), false).unwrap();
+        let reg = ExtensionsRegistry::load(dir.path()).unwrap();
         let bytes = tool_pack("com.example.x", "2.0.0", &[]);
         let e = entry("com.example.x", "2.0.0", Trust::Verified, &[], &bytes);
         let out =
@@ -801,7 +801,7 @@ mod tests {
     #[test]
     fn update_with_new_permissions_holds_disabled() {
         let dir = tmp();
-        let reg = ExtensionsRegistry::load(dir.path(), false).unwrap();
+        let reg = ExtensionsRegistry::load(dir.path()).unwrap();
         // Prior 1.0 enabled with no capabilities.
         let b1 = tool_pack("com.example.x", "1.0.0", &[]);
         let e1 = entry("com.example.x", "1.0.0", Trust::Verified, &[], &b1);
@@ -1061,7 +1061,7 @@ mod tests {
     #[test]
     fn update_with_same_permissions_keeps_enabled() {
         let dir = tmp();
-        let reg = ExtensionsRegistry::load(dir.path(), false).unwrap();
+        let reg = ExtensionsRegistry::load(dir.path()).unwrap();
         let b1 = tool_pack("com.example.x", "1.0.0", &["storage"]);
         let e1 = entry("com.example.x", "1.0.0", Trust::Verified, &["storage"], &b1);
         install_from_verified_entry(&reg, dir.path(), &e1, &b1, ExtractLimits::default()).unwrap();
@@ -1083,7 +1083,7 @@ mod tests {
     #[test]
     fn update_drops_grants_that_are_no_longer_declared() {
         let dir = tmp();
-        let reg = ExtensionsRegistry::load(dir.path(), false).unwrap();
+        let reg = ExtensionsRegistry::load(dir.path()).unwrap();
         let b1 = tool_pack("com.example.x", "1.0.0", &["storage"]);
         let e1 = entry("com.example.x", "1.0.0", Trust::Verified, &["storage"], &b1);
         install_from_verified_entry(&reg, dir.path(), &e1, &b1, ExtractLimits::default()).unwrap();
@@ -1106,7 +1106,7 @@ mod tests {
         // The no-transitive-install invariant: installing one entry touches
         // exactly one id.
         let dir = tmp();
-        let reg = ExtensionsRegistry::load(dir.path(), false).unwrap();
+        let reg = ExtensionsRegistry::load(dir.path()).unwrap();
         let bytes = tool_pack("com.example.a", "1.0.0", &[]);
         let e = entry("com.example.a", "1.0.0", Trust::Verified, &[], &bytes);
         install_from_verified_entry(&reg, dir.path(), &e, &bytes, ExtractLimits::default())
