@@ -261,3 +261,79 @@ UI and need the user's decision first.
 slot registry, prompt-layer approvals/fingerprints and `recommend_approved`,
 `toggle_seq` prompt arbitration, SDK `ExtensionRecommend` events, card
 `recommend`/`needs`/`kind`.
+
+**31 October 2026, session 2 end: batch 3 (Tier 3) in progress.**
+
+- User decisions this session: **M7 is dropped.** Leave Agent auto-approval,
+  `action_exec` confirm code, `agent.rs` pending-action control and the
+  AgentPanel confirm card exactly as they are. A cancelled sub-agent had
+  rewritten them and gutted `tests/agent-harness/`; all of that was discarded
+  (`git checkout`), nothing from it was committed. Do the rest of Tier 3.
+- Batch 3 commits so far (local, pushed with this log):
+  - `5a69272c` SDK: removed `DaemonEvent::ExtensionRecommend`/`Clear`,
+    `RecommendCandidate`, and the `PillAction` chooser variants
+    (`ExtensionChoose`/`Cancel`/`DownloadModel`). Wire is externally-tagged
+    JSON, so no renumbering risk. grain-sdk tests 82 pass.
+  - `743bb161` ExtensionCard lost `kind`, `recommend`, `needs`,
+    `prompt_layers`, `slots` (+ `RecommendInfo`, `PromptLayerInfo`,
+    `PackFacts` fields); the enable approval error lost `needsPromptLayers`/
+    `needsRecommendation`; the TS `ApprovalRequest` parser and its tests
+    followed. Bindings regenerated; tsc clean; vitest 101 pass.
+- **Next unit (T5, planned, not started; tree clean at `743bb161`):**
+  grain-core registry cleanup. Remove the built-in toggle order
+  (`builtin_toggle_seq`, `touch_builtin_toggle`, `toggle_seq(id)`, no
+  production callers), the slot registry (`CORE_DEFAULT`, `slot_claims`,
+  `slot_occupant`, `slots_held`, `slot_conflict`, `SlotConflict`,
+  `take_slot`, `release_slots_locked`, `set_slot_claim`, `heal_slots`, slot
+  parts of `RecordEditSnapshot`, `ExtensionRecord.slots`, the `slots`
+  parameter of `install::plan_record`), and the legacy approval fingerprints
+  (`prompt_layers_approved`, `recommend_approved`,
+  `prompt_layers_fingerprint`, `recommendation_fingerprint`,
+  `ApprovalDigests.prompt_layers/recommend`). Keep `ExtensionRecord.toggle_seq`
+  /`next_toggle_seq` (card sort), `actions_approved`,
+  `authentication_*`, and do not change what `actions_fingerprint` hashes.
+  Files: `crates/grain-core/src/extensions.rs`, `install.rs`,
+  `src-tauri/src/extension_host.rs` (dev-reload `slots_changed`, record
+  construction, `record_for` test helper), `grain_commands.rs` (record
+  construction at three sites, the approve path setting the fields to
+  `None`), plus the two test calls of `plan_record` in
+  `src-tauri/src/grain_store.rs` (~1766, ~2098: drop the 4th `vec![]`).
+  Keep `toggle_order_is_enable_order_and_reenable_moves_to_end` rewritten on
+  `record(id).toggle_seq`. About 15 slot/prompt/recommend tests go
+  (grain-core 268 → ~253). A full line-by-line plan is in the local file
+  `C:\t\logs\t5-continuity.md` (not in the repo).
+- **Remaining Tier 3 after T5, in order:**
+  1. `grain-extension-checks` `check_recommendation`, `check_activations`
+     (rewrite as an actions-required check); trim the `grain-ext-cli`
+     scaffold (`kind`, `recommend`, `auto_send`, `needs`, `activation`,
+     `surfaces`, `slots`, `variant_slots`, `settings`, `session_mode`,
+     `companion`).
+  2. `grain-registry-tools` `extends()` use (main.rs ~1020): it always yields
+     `[]`; removing it changes the signed index `extends` metadata, so decide
+     whether to drop the index field or keep it empty.
+  3. SDK manifest fields and dead validators (`recommend`, `autoSend`,
+     `needs`, `kind`, `activation`, `surfaces`, `slots`, `variant_slots`,
+     `KNOWN_SLOTS`, settings/shortcuts/sessionMode with `SettingDecl`,
+     `promptLayers`, `PackPayloads.prompts`/`pill_theme`,
+     `settings_schema.rs`, `ANCHORS`, `extends()`, retired
+     `KNOWN_CAPABILITIES`, `validate_phase3`/`validate_classification`/
+     `validate_prompt_layers` arms). Then `companion` (update
+     `capability_index.rs:985-989`), then `Tier::Pack`/`Native` (grain_commands
+     tier strings, `IndexEntry.tier`, `validate_inner`). Do NOT add
+     `deny_unknown_fields`: the store blob fixture
+     (`src-tauri/tests/fixtures/store/blob/10046c61….grainpack`, hash-named)
+     contains `activation`, the harness lifecycle fixture contains
+     `kind`/`activation`/`surfaces`/`slots`/`variant_slots`/`when`, and
+     `ExtensionProjectManifest` uses `#[serde(flatten)]`. Removed keys are
+     simply ignored, so old artifacts still parse; the precise "Retired
+     extension feature" errors for them disappear (accepted, clean break).
+     Check `validate_prompt_contribution_text` and `settings_schema::Accepted`
+     callers first. Regenerate the lifecycle fixture.
+  4. Ask the user before `ActionDecl.when`/`agent_rules`/`LayerWhen`:
+     dropping them from `actions_fingerprint` forces re-approval of every
+     installed extension.
+  5. Ask the user about the embedding model (no consumer since M1).
+- Verification recipe is unchanged (see "Verification requirements" and the
+  session 2 tooling notes). Local helper scripts live in `C:\t\logs\`
+  (`edit.ps1`, `cut.ps1`, `regen-bindings.ps1`, `run-app-tests.ps1`).
+- The user has not yet run the real-app checks for batch 2 or batch 3.
