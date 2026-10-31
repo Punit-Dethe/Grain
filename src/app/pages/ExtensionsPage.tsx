@@ -24,9 +24,6 @@ import {
   type ConnectionView,
   type ExtensionCard,
   type ExtensionDeveloperStatus,
-  type ExtensionSettingField,
-  type ExtensionSettingRow,
-  type ExtensionSettingsSection,
   type StoreEntry,
   type StoreMedia,
   type StoreView,
@@ -39,14 +36,6 @@ import { Markdown } from "@/components/markdown/Markdown";
 import "@/components/markdown/markdown.css";
 import { DeveloperSection } from "@/components/settings/experimentations/DeveloperSection";
 import { Switch } from "@/components/ui/Switch";
-import {
-  ANCHORS,
-  ExtensionSettings,
-  ExtensionShortcuts,
-  type SettingField,
-  type SettingRow,
-  type SettingsSection,
-} from "@/components/settings/experimentations/ExtensionSettings";
 import { useSettings } from "@/hooks/useSettings";
 import {
   hashForRoute,
@@ -56,7 +45,6 @@ import {
 import { ExtensionApprovalDetails } from "../extensions/ExtensionApprovalDetails";
 import {
   capabilityLabel,
-  extensionDestination,
   filterExtensions,
   nextMediaIndex,
   parseApprovalRequest,
@@ -66,47 +54,11 @@ import {
   type ApprovalRequest,
 } from "../extensions/extensionRuntime";
 
-const SETTING_KINDS = new Set<SettingRow["kind"]>([
-  "bool",
-  "string",
-  "secret",
-  "number",
-  "select",
-  "shortcut",
-  "color",
-  "slider",
-  "app_path",
-  "url",
-  "list",
-  "unsupported",
-]);
-
-function adaptSettingField(field: ExtensionSettingField): SettingField {
-  return {
-    ...field,
-    kind: SETTING_KINDS.has(field.kind as SettingRow["kind"])
-      ? (field.kind as SettingRow["kind"])
-      : "unsupported",
-    fields: field.fields.map(adaptSettingField),
-  };
-}
-
-function adaptSettingRow(row: ExtensionSettingRow): SettingRow {
-  return {
-    ...row,
-    kind: SETTING_KINDS.has(row.kind as SettingRow["kind"])
-      ? (row.kind as SettingRow["kind"])
-      : "unsupported",
-    fields: row.fields.map(adaptSettingField),
-  };
-}
-
 interface InstalledController {
   cards: ExtensionCard[];
   connections: ConnectionView[];
   accounts: Record<string, McpProviderStatus>;
   listings: Record<string, StoreEntry>;
-  sections: ExtensionSettingsSection[];
   covers: Record<string, StoreMedia>;
   loading: boolean;
   error: string | null;
@@ -129,7 +81,6 @@ function useInstalledExtensions(): InstalledController {
     {},
   );
   const [listings, setListings] = useState<Record<string, StoreEntry>>({});
-  const [sections, setSections] = useState<ExtensionSettingsSection[]>([]);
   const [covers, setCovers] = useState<Record<string, StoreMedia>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -139,12 +90,8 @@ function useInstalledExtensions(): InstalledController {
   >(null);
 
   const refresh = useCallback(async () => {
-    const [overview, nextSections, remote] = await Promise.all([
+    const [overview, remote] = await Promise.all([
       commands.extensionsOverview().then(unwrapResult),
-      commands
-        .extensionSettingsSections()
-        .then(unwrapResult)
-        .catch(() => []),
       commands
         .mcpConnectionsList()
         .then(unwrapResult)
@@ -192,7 +139,6 @@ function useInstalledExtensions(): InstalledController {
     setConnections(nextConnections);
     setAccounts(Object.fromEntries(nextAccounts.flat()));
     setListings(Object.fromEntries(nextListings.flat()));
-    setSections(nextSections);
     setCovers(
       Object.fromEntries(
         nextCovers.map((cover) => [
@@ -345,7 +291,6 @@ function useInstalledExtensions(): InstalledController {
     connections,
     accounts,
     listings,
-    sections,
     covers,
     loading,
     error,
@@ -563,9 +508,6 @@ function ExtensionDetail({
     ? storeInstallAction(entry, installedVersion)
     : null;
   const current = installAction === "Installed";
-  const destination = card
-    ? extensionDestination(card, controller.sections)
-    : null;
   const trust = trustDetails(entry?.trust ?? card?.trust);
   const stars = (entry as StoreEntryWithOptionalStars | null)?.stars;
 
@@ -908,21 +850,6 @@ function ExtensionDetail({
                   onChange={() => void controller.toggle(card)}
                 />
               </div>
-              {destination && destination.kind !== "preview" && (
-                <div className="extension-setting-row">
-                  <div>
-                    <h3>Extension preferences</h3>
-                    <p>Configure this extension’s own settings.</p>
-                  </div>
-                  <button
-                    className="button"
-                    type="button"
-                    onClick={() => routeToDestination(destination)}
-                  >
-                    Open settings
-                  </button>
-                </div>
-              )}
             </section>
           )}
           {!card && !installedMcp && (
@@ -934,29 +861,6 @@ function ExtensionDetail({
       </div>
     </article>
   );
-}
-
-function routeToDestination(
-  destination: ReturnType<typeof extensionDestination>,
-) {
-  if (destination.kind === "agent") {
-    window.location.hash = hashForRoute({ page: "agent" }).slice(1);
-  } else if (destination.kind === "tools") {
-    window.location.hash = hashForRoute({
-      page: "tools",
-      section: destination.section,
-    }).slice(1);
-  } else if (destination.kind === "settings") {
-    window.location.hash = hashForRoute({
-      page: "settings",
-      section: destination.section,
-    }).slice(1);
-  } else if (destination.kind === "extension-settings") {
-    window.location.hash = hashForRoute({
-      page: "extension-settings",
-      extensionId: destination.extensionId,
-    }).slice(1);
-  }
 }
 
 function InstalledList({
@@ -1544,106 +1448,6 @@ export function ExtensionsPage({ view }: { view: ExtensionViewId }) {
       )}
 
       {controller.permissionDialog}
-    </section>
-  );
-}
-
-export function ExtensionSettingsPage({
-  extensionId,
-}: {
-  extensionId: string;
-}) {
-  const [sections, setSections] = useState<ExtensionSettingsSection[]>([]);
-  const [cards, setCards] = useState<ExtensionCard[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  const refresh = useCallback(async () => {
-    const [rows, nextCards] = await Promise.all([
-      commands.extensionSettingsSchema(extensionId).then(unwrapResult),
-      commands.extensionsOverview().then(unwrapResult),
-    ]);
-    const cardName = nextCards.find((card) => card.id === extensionId)?.name;
-    setSections([{ id: extensionId, name: cardName ?? extensionId, rows }]);
-    setCards(nextCards);
-  }, [extensionId]);
-
-  useEffect(() => {
-    let alive = true;
-    void refresh()
-      .catch((reason) => alive && setError(String(reason)))
-      .finally(() => alive && setLoading(false));
-    return () => {
-      alive = false;
-    };
-  }, [refresh]);
-
-  const section = sections.find((candidate) => candidate.id === extensionId);
-  const card = cards.find((candidate) => candidate.id === extensionId);
-  const ownRows =
-    section?.rows.filter(
-      (row) =>
-        !row.anchor || !(ANCHORS as readonly string[]).includes(row.anchor),
-    ) ?? [];
-  const adaptedSection: SettingsSection | null = section
-    ? {
-        id: section.id,
-        name: section.name,
-        rows: section.rows.map(adaptSettingRow),
-      }
-    : null;
-  const adaptedOwnRows = ownRows.map(adaptSettingRow);
-
-  return (
-    <section
-      className="page active extension-settings-workspace"
-      data-page-panel="extension-settings"
-    >
-      <div className="page-wrap extension-settings-page-wrap">
-        <div className="extension-settings-toolbar">
-          <button
-            className="button ghost"
-            type="button"
-            onClick={() => {
-              window.location.hash = hashForRoute({
-                page: "extensions",
-                view: "installed",
-              }).slice(1);
-            }}
-          >
-            <ChevronLeft size={15} />
-            Extensions
-          </button>
-        </div>
-        <div className="extension-settings-content">
-          <header className="extension-settings-heading">
-            <div className="eyebrow">Extension settings</div>
-            <h1>{card?.name ?? section?.name ?? extensionId}</h1>
-            <p>
-              Configuration provided by this extension. Identity, version,
-              README, and permissions remain in its preview.
-            </p>
-          </header>
-          {loading ? (
-            <div className="extension-state" role="status">
-              Loading extension settings…
-            </div>
-          ) : error ? (
-            <div className="extension-inline-error">{error}</div>
-          ) : adaptedSection && adaptedOwnRows.length ? (
-            <ExtensionSettings
-              section={adaptedSection}
-              rows={adaptedOwnRows}
-              onChanged={() => void refresh()}
-            />
-          ) : (
-            <div className="extension-state">
-              This extension has no standalone settings.
-            </div>
-          )}
-          {card && <ExtensionShortcuts id={card.id} />}
-        </div>
-      </div>
     </section>
   );
 }

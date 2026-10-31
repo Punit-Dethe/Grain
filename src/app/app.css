@@ -6445,50 +6445,6 @@ article.studio-extension-card {
   justify-content: flex-end;
 }
 
-.extension-settings-workspace {
-  padding: 0;
-  overflow: hidden;
-}
-
-.extension-settings-page-wrap {
-  width: 100%;
-  height: 100%;
-  max-width: none;
-}
-
-.extension-settings-toolbar {
-  height: 58px;
-  padding: 0 28px;
-  display: flex;
-  align-items: center;
-  border-bottom: 1px solid var(--hairline-soft);
-}
-
-.extension-settings-content {
-  width: min(860px, 100%);
-  height: calc(100% - 58px);
-  margin: 0 auto;
-  padding: 40px 34px 72px;
-  overflow: auto;
-}
-
-.extension-settings-heading {
-  margin-bottom: 28px;
-}
-
-.extension-settings-heading h1 {
-  font-size: 28px;
-  font-weight: 630;
-}
-
-.extension-settings-heading p {
-  max-width: 680px;
-  margin-top: 8px;
-  color: var(--text-3);
-  font-size: 12.5px;
-  line-height: 1.6;
-}
-
 html[data-theme="light"] .tools-sidebar-pane {
   background: rgba(245, 244, 240, 0.82);
 }
@@ -6608,9 +6564,6 @@ html[data-theme="light"] .extension-empty-state {
   }
   .extension-toolbar .search-field {
     width: 100%;
-  }
-  .extension-settings-content {
-    padding: 30px 22px 60px;
   }
   .extension-detail-intro {
     align-items: stretch;

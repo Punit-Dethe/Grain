@@ -1141,38 +1141,6 @@ async mcpConnectionClearClientCredentials(id: string, expectedRevision: string) 
 }
 },
 /**
- * The settings an extension declares, resolved against what is stored
- * (SPEC §4.1, levels 1–2). Ordered by `order`, ties on declaration order, so
- * the host renders straight down the list.
- *
- * Controls this build doesn't understand are dropped rather than drawn blank;
- * their stored values stay untouched for a build that does understand them.
- */
-async extensionSettingsSchema(id: string) : Promise<Result<ExtensionSettingRow[], string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("extension_settings_schema", { id }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * Every **enabled** extension's declared settings, in toggle order.
- *
- * One pass over the packs answers all five anchors, so opening a settings tab
- * costs one read rather than one per anchor. Disabled extensions are absent
- * entirely (SPEC §6: disable makes anchored sections disappear) — their values
- * are retained on disk, just not rendered.
- */
-async extensionSettingsSections() : Promise<Result<ExtensionSettingsSection[], string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("extension_settings_sections") };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
  * Import a `.grainpack` file (SPEC §1.1 tier A-inert). Validates, copies into
  * the extensions dir, registers it DISABLED — enabling is the user's explicit
  * second step in Overview, where toggle order is assigned.
@@ -2397,11 +2365,6 @@ toggle_seq: string; repository: string | null;
  */
 capabilities: string[];
 /**
- * The pack declares settings or shortcuts, so it has a section of its own
- * worth opening. Free to compute — Overview already reads every manifest.
- */
-has_detail: boolean;
-/**
  * [GRAIN] Non-visual behavior slots this extension takes over.
  */
 slots: string[];
@@ -2447,63 +2410,6 @@ recommend: RecommendInfo | null;
  */
 needs: string[] }
 export type ExtensionDeveloperStatus = { enabled: boolean; loaded: DeveloperExtension[] }
-/**
- * [GRAIN] Phase 5C: the SCHEMA of one field (no value), crossed to the host
- * renderer so it can draw a `list` row's inputs, or an `app_path`/`url` field.
- * Recursive: a list field carries its own `fields` so lists nest.
- */
-export type ExtensionSettingField = { key: string; label: string; description: string; kind: string; min: number | null; max: number | null; step: number | null; options: SelectOptionDto[];
-/**
- * Sub-field schema for a `list` field (empty otherwise).
- */
-fields: ExtensionSettingField[];
-/**
- * Singular noun for a `list`'s Add button / row header.
- */
-item_label: string | null }
-/**
- * Flatten a declaration into its renderer schema (no value). Shared by
- * top-level rows and nested list fields.
- * One row of an extension's settings section: the declaration flattened into
- * exactly what a control needs, plus the value to show.
- *
- * Deliberately NOT the manifest type: `SettingKind` is an internally-tagged
- * enum with per-variant fields, which crosses the bindings boundary as an
- * awkward union. The renderer wants `kind` plus optional extras, so that is
- * what it gets.
- */
-export type ExtensionSettingRow = { key: string; label: string; description: string;
-/**
- * `bool | string | secret | number | select | shortcut | color | slider`.
- */
-kind: string;
-/**
- * Where the section renders (SPEC §4.3). An anchor this build doesn't know
- * is passed through untouched — the frontend falls back to the extension's
- * own section, because settings are never lost.
- */
-anchor: string | null; order: number;
-/**
- * The resolved current value: bool, number, or string per `kind`.
- */
-value: JsonValue;
-/**
- * Set when a stored value had to be reset — a change the user did not make
- * must never be silent.
- */
-notice: string | null; min: number | null; max: number | null; step: number | null; options: SelectOptionDto[];
-/**
- * Sub-field schema for a `list` row (empty otherwise).
- */
-fields: ExtensionSettingField[];
-/**
- * Singular noun for a `list`'s Add button / row header.
- */
-item_label: string | null }
-/**
- * One enabled extension's settings, ready to render.
- */
-export type ExtensionSettingsSection = { id: string; name: string; rows: ExtensionSettingRow[] }
 export type GpuDeviceOption = { id: string; name: string; total_vram_mb: number }
 export type GrainEmbedModelCancelled = null
 export type GrainEmbedModelComplete = null
@@ -2544,7 +2450,6 @@ target: string;
  * icons want the most specific one.
  */
 icon_id: string }
-export type JsonValue = null | boolean | number | string | JsonValue[] | Partial<{ [key in string]: JsonValue }>
 export type KeyboardDiagnosticReport = { secure_input_enabled: boolean; culprit_pid: number | null; culprit_name: string | null;
 /**
  * Counts only — key identity is deliberately never captured.
@@ -2796,7 +2701,6 @@ uncovered_bindings: string[];
  * warning banner appears and explains why recording refused.
  */
 recorder_blocked: boolean }
-export type SelectOptionDto = { value: string; label: string }
 export type ShortcutBinding = { id: string; name: string; description: string; default_binding: string; current_binding: string }
 export type ShowOverlay = string
 /**

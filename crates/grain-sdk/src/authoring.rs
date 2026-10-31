@@ -116,10 +116,8 @@ export interface GrainApi {
         method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "HEAD" | "OPTIONS";
         headers?: Record<string, string>;
         body?: string;
-        secret?: { key: string; header: string; prefix?: string };
         /** Use this extension's single vaulted account. Grain attaches its Bearer token;
-         * the token itself is never returned to extension code. Mutually
-         * exclusive with `secret`. */
+         * the token itself is never returned to extension code. */
         auth?: true;
       },
     ): Promise<{

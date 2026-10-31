@@ -38,21 +38,11 @@ export type AppRoute =
   | { page: "agent" }
   | { page: "settings"; section: SettingsSectionId }
   | { page: "tools"; section: ToolSectionId }
-  | { page: "extensions"; view: ExtensionViewId }
-  | { page: "extension-settings"; extensionId: string };
+  | { page: "extensions"; view: ExtensionViewId };
 
 const settingsSections = new Set<string>(SETTINGS_SECTION_IDS);
 const toolSections = new Set<string>(TOOL_SECTION_IDS);
 const extensionViews = new Set<string>(EXTENSION_VIEW_IDS);
-
-function decodeRouteSegment(segment: string): string | null {
-  try {
-    const decoded = decodeURIComponent(segment).trim();
-    return decoded.length > 0 ? decoded : null;
-  } catch {
-    return null;
-  }
-}
 
 export function routeFromHash(hash: string): AppRoute {
   const path = hash.replace(/^#/, "").split(/[?#]/, 1)[0].replace(/\/+$/, "");
@@ -86,12 +76,6 @@ export function routeFromHash(hash: string): AppRoute {
     };
   }
 
-  const extensionSettingsMatch = path.match(/^\/extension-settings\/([^/]+)$/);
-  if (extensionSettingsMatch) {
-    const extensionId = decodeRouteSegment(extensionSettingsMatch[1]);
-    if (extensionId) return { page: "extension-settings", extensionId };
-  }
-
   const settingsMatch = path.match(/^\/settings\/([^/]+)$/);
   if (settingsMatch && settingsSections.has(settingsMatch[1])) {
     return {
@@ -107,16 +91,9 @@ export function hashForRoute(route: AppRoute): string {
   if (route.page === "settings") return `#/settings/${route.section}`;
   if (route.page === "tools") return `#/tools/${route.section}`;
   if (route.page === "extensions") return `#/extensions/${route.view}`;
-  if (route.page === "extension-settings") {
-    return `#/extension-settings/${encodeURIComponent(route.extensionId)}`;
-  }
   return `#/${route.page}`;
 }
 
 export function routeUsesCompactGlobalRail(route: AppRoute): boolean {
-  return (
-    route.page === "settings" ||
-    route.page === "tools" ||
-    route.page === "extension-settings"
-  );
+  return route.page === "settings" || route.page === "tools";
 }

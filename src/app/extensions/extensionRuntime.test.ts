@@ -6,64 +6,13 @@ const reviewError = (body: string): string =>
     approvalDigest: "a".repeat(64),
     reviewedName: "Test tools",
   });
-import type {
-  ExtensionCard,
-  ExtensionSettingRow,
-  ExtensionSettingsSection,
-  StoreEntry,
-} from "@/bindings";
+import type { StoreEntry } from "@/bindings";
 import {
-  extensionDestination,
   filterExtensions,
   nextMediaIndex,
   parseApprovalRequest,
   storeInstallAction,
 } from "./extensionRuntime";
-
-const card = (overrides: Partial<ExtensionCard> = {}): ExtensionCard => ({
-  id: "example.pack",
-  name: "Example Pack",
-  description: "An example extension",
-  icon: null,
-  version: "1.0.0",
-  tier: "scripted",
-  trust: "community",
-  overrides_installed: false,
-  overridden_version: null,
-  enabled: true,
-  toggle_seq: "1",
-  repository: null,
-  capabilities: [],
-  has_detail: false,
-  slots: [],
-  prompt_layers: [],
-  actions: [],
-  kind: "standalone",
-  recommend: null,
-  needs: [],
-  ...overrides,
-});
-
-const row = (anchor: string | null): ExtensionSettingRow => ({
-  key: "enabled",
-  label: "Enabled",
-  description: "",
-  kind: "bool",
-  anchor,
-  order: 0,
-  value: true,
-  notice: null,
-  min: null,
-  max: null,
-  step: null,
-  options: [],
-  fields: [],
-  item_label: null,
-});
-
-const sections = (anchor: string | null): ExtensionSettingsSection[] => [
-  { id: "example.pack", name: "Example Pack", rows: [row(anchor)] },
-];
 
 const entry = (overrides: Partial<StoreEntry> = {}): StoreEntry => ({
   id: "example.pack",
@@ -108,32 +57,6 @@ describe("store update actions", () => {
         storeInstallAction({ ...listing, previous_versions: [] }, "2.0.0"),
       ).toBe("No update available");
     }
-  });
-});
-
-describe("extension destination routing", () => {
-  it.each([
-    ["snippets.after", { kind: "tools", section: "snippets" }],
-    ["context.after", { kind: "tools", section: "context" }],
-    ["agent.after", { kind: "agent" }],
-    [
-      "dictation.pipeline.after",
-      { kind: "settings", section: "post-processing" },
-    ],
-    ["models.after", { kind: "settings", section: "capture" }],
-  ])("routes %s contributions", (anchor, expected) => {
-    expect(extensionDestination(card(), sections(anchor))).toEqual(expected);
-  });
-
-  it("uses standalone settings for unanchored rows", () => {
-    expect(extensionDestination(card(), sections(null))).toEqual({
-      kind: "extension-settings",
-      extensionId: "example.pack",
-    });
-  });
-
-  it("opens a preview when no configuration destination exists", () => {
-    expect(extensionDestination(card(), [])).toEqual({ kind: "preview" });
   });
 });
 
@@ -276,16 +199,5 @@ describe("extension collection helpers", () => {
       parseApprovalRequest(reviewError('{"needsPermissions":["storage"]}'))
         ?.approvalDigest,
     ).toBe("a".repeat(64));
-  });
-});
-
-describe("extension settings routing", () => {
-  it("still prefers an extension's own page when it has one", () => {
-    expect(
-      extensionDestination(
-        card({ id: "with.page", has_detail: true, slots: [] }),
-        [],
-      ),
-    ).toEqual({ kind: "extension-settings", extensionId: "with.page" });
   });
 });

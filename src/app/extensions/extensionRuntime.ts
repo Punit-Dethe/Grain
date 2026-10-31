@@ -1,7 +1,6 @@
 import type {
   ActionInfo,
   ExtensionCard,
-  ExtensionSettingsSection,
   PromptLayerInfo,
   Result,
   StoreEntry,
@@ -24,16 +23,6 @@ export function storeInstallAction(
 const CAPABILITY_LABELS: Record<string, string> = {
   storage: "Store its own data on this device",
 };
-
-export type ExtensionDestination =
-  | { kind: "tools"; section: "snippets" | "context" }
-  | { kind: "agent" }
-  | {
-      kind: "settings";
-      section: "post-processing" | "capture";
-    }
-  | { kind: "extension-settings"; extensionId: string }
-  | { kind: "preview" };
 
 export type ToolSection = "dictionary" | "snippets" | "context" | "agent";
 
@@ -156,83 +145,6 @@ export function sortExtensionCards<
     const order = sequence(left) - sequence(right);
     return order !== 0 ? order : left.name.localeCompare(right.name);
   });
-}
-
-/**
- * Where each host-owned settings contribution is configured.
- *
- * A destination id is what an extension *declares* it extends — a behavior slot
- * ([`KNOWN_SLOTS`]), an anchor its settings rows attach to ([`ANCHORS`]), or the
- * surface its payload feeds. This one table turns that declaration into a place
- * in the app, and it answers both halves of the same question:
- *
- *  - an **installed** card opens the surface it changes, and
- *  - a **store** card is recommended beside that surface.
- *
- * Those used to be two mechanisms. Routing read anchors; recommendations scored
- * keywords against the extension's prose — which put a prompt pack under Agent
- * because its description says "prompt", and put App Modes nowhere because it
- * never says "context", though its manifest anchors it to `context.after`. A
- * new extension is placed correctly by declaring a surface, and by nothing else.
- *
- * Extensions can take behavior slots, contribute rows at a host anchor, or get
- * a normal Grain-rendered settings page of their own.
- */
-const SURFACE_DESTINATIONS: Record<string, ExtensionDestination> = {
-  "agent.after": { kind: "agent" },
-  "snippets.after": { kind: "tools", section: "snippets" },
-  "context.after": { kind: "tools", section: "context" },
-  "dictation.pipeline.after": { kind: "settings", section: "post-processing" },
-  "dictation.prompts": { kind: "settings", section: "post-processing" },
-  "models.after": { kind: "settings", section: "capture" },
-};
-
-const ANCHOR_SURFACES = new Set(
-  Object.keys(SURFACE_DESTINATIONS).filter((surface) =>
-    surface.endsWith(".after"),
-  ),
-);
-
-/** Every surface an installed extension extends: slots it claims, plus the
- *  anchors its contributed settings rows attach to. */
-function installedSurfaces(
-  card: Pick<ExtensionCard, "id"> & { slots?: string[] },
-  sections: ExtensionSettingsSection[],
-): string[] {
-  const section = sections.find((candidate) => candidate.id === card.id);
-  const anchors = (section?.rows ?? [])
-    .map((row) => row.anchor)
-    .filter((anchor): anchor is string => Boolean(anchor));
-  return [...(card.slots ?? []), ...anchors];
-}
-
-export function destinationForSurfaces(
-  surfaces: readonly string[],
-): ExtensionDestination | null {
-  for (const surface of surfaces) {
-    const destination = SURFACE_DESTINATIONS[surface];
-    if (destination) return destination;
-  }
-  return null;
-}
-
-export function extensionDestination(
-  card: Pick<ExtensionCard, "id" | "has_detail"> & { slots?: string[] },
-  sections: ExtensionSettingsSection[],
-): ExtensionDestination {
-  const destination = destinationForSurfaces(installedSurfaces(card, sections));
-  if (destination) return destination;
-
-  // Rows that anchor nowhere are the extension's own settings, so it gets a
-  // page rather than being folded into a host section.
-  const section = sections.find((candidate) => candidate.id === card.id);
-  const hasOwnRows = (section?.rows ?? []).some(
-    (row) => !row.anchor || !ANCHOR_SURFACES.has(row.anchor),
-  );
-  if (card.has_detail || hasOwnRows) {
-    return { kind: "extension-settings", extensionId: card.id };
-  }
-  return { kind: "preview" };
 }
 
 export function filterExtensions<

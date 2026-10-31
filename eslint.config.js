@@ -10,10 +10,8 @@ import tsParser from "@typescript-eslint/parser";
 // be effort spent on code with a known expiry. The rule exists to stop the NEW
 // tree from inheriting the habit.
 const LEGACY_RAW_INVOKE = [
-  "src/app/components/settings/experimentations/ExtensionSettings.tsx",
   "src/app/components/settings/experimentations/DeveloperSection.tsx",
   "src/app/components/settings/experimentations/AgentSection.tsx",
-  "src/app/components/settings/post-processing/PostProcessingSettings.tsx",
 ];
 
 // Files still subscribing to backend events by hand-typed string. Same rule as

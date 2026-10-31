@@ -28,7 +28,6 @@ const EVENT_CHANNEL_CAPACITY: usize = 256;
 /// Shared, headless application context. Cheaply cloneable via `Arc`.
 pub struct AppContext {
     settings: RwLock<AppSettings>,
-    extension_secrets: RwLock<SecretMap>,
     persistence: Mutex<()>,
     event_tx: broadcast::Sender<DaemonEvent>,
     /// Bundled, read-only assets (VAD model, feedback sounds).
@@ -43,14 +42,13 @@ impl AppContext {
     pub fn new(resource_dir: impl Into<PathBuf>, data_dir: impl Into<PathBuf>) -> Arc<Self> {
         let resource_dir = resource_dir.into();
         let data_dir = data_dir.into();
-        let (settings, extension_secrets) = load_settings(&data_dir).unwrap_or_else(|e| {
+        let settings = load_settings(&data_dir).unwrap_or_else(|e| {
             log::warn!("settings load failed ({e:#}); using defaults");
-            (AppSettings::default(), SecretMap::default())
+            AppSettings::default()
         });
         let (event_tx, _) = broadcast::channel(EVENT_CHANNEL_CAPACITY);
         Arc::new(Self {
             settings: RwLock::new(settings),
-            extension_secrets: RwLock::new(extension_secrets),
             persistence: Mutex::new(()),
             event_tx,
             resource_dir,
@@ -83,12 +81,7 @@ impl AppContext {
             let ret = f(&mut guard);
             (ret, guard.clone())
         };
-        let extension_secrets = self
-            .extension_secrets
-            .read()
-            .expect("extension secrets lock poisoned")
-            .clone();
-        save_settings(&self.data_dir, &snapshot, &extension_secrets)?;
+        save_settings(&self.data_dir, &snapshot)?;
         Ok(ret)
     }
 
@@ -99,72 +92,7 @@ impl AppContext {
             let mut guard = self.settings.write().expect("settings lock poisoned");
             *guard = settings;
         }
-        let extension_secrets = self
-            .extension_secrets
-            .read()
-            .expect("extension secrets lock poisoned")
-            .clone();
-        save_settings(&self.data_dir, &self.settings(), &extension_secrets)
-    }
-
-    /// Read a secret for a host-owned operation. Extension code never receives
-    /// this value; host APIs expose only whether a value exists.
-    pub fn extension_secret(&self, namespaced_key: &str) -> Option<String> {
-        self.extension_secrets
-            .read()
-            .expect("extension secrets lock poisoned")
-            .get(namespaced_key)
-            .cloned()
-            .filter(|value| !value.is_empty())
-    }
-
-    /// Set or clear one extension secret and atomically persist the separate
-    /// credential file alongside the current settings snapshot.
-    pub fn set_extension_secret(&self, namespaced_key: String, value: String) -> Result<()> {
-        let _persistence = self.persistence.lock().expect("persistence lock poisoned");
-        {
-            let mut secrets = self
-                .extension_secrets
-                .write()
-                .expect("extension secrets lock poisoned");
-            if value.is_empty() {
-                secrets.remove(&namespaced_key);
-            } else {
-                secrets.insert(namespaced_key, value);
-            }
-        }
-        save_settings(
-            &self.data_dir,
-            &self.settings(),
-            &self
-                .extension_secrets
-                .read()
-                .expect("extension secrets lock poisoned"),
-        )
-    }
-
-    /// Uninstall boundary: remove every credential under `ext.<id>.`.
-    pub fn purge_extension_secrets(&self, extension_id: &str) -> Result<usize> {
-        let _persistence = self.persistence.lock().expect("persistence lock poisoned");
-        let prefix = format!("ext.{extension_id}.");
-        let removed = {
-            let mut secrets = self
-                .extension_secrets
-                .write()
-                .expect("extension secrets lock poisoned");
-            let before = secrets.len();
-            secrets.retain(|key, _| !key.starts_with(&prefix));
-            before - secrets.len()
-        };
-        save_settings(
-            &self.data_dir,
-            &self.settings(),
-            &self
-                .extension_secrets
-                .read()
-                .expect("extension secrets lock poisoned"),
-        )?;
-        Ok(removed)
+        save_settings(&self.data_dir, &self.settings())
     }
 
     // -- events ------------------------------------------------------------
@@ -202,7 +130,7 @@ fn secrets_path(data_dir: &Path) -> PathBuf {
 
 /// Load settings + merge in the separately-stored secrets, applying provider
 /// migrations. Returns defaults (persisted) when no settings file exists yet.
-fn load_settings(data_dir: &Path) -> Result<(AppSettings, SecretMap)> {
+fn load_settings(data_dir: &Path) -> Result<AppSettings> {
     let path = settings_path(data_dir);
     let mut salvaged = false;
     let mut settings = if path.exists() {
@@ -224,7 +152,7 @@ fn load_settings(data_dir: &Path) -> Result<(AppSettings, SecretMap)> {
         }
     } else {
         let defaults = AppSettings::default();
-        save_settings(data_dir, &defaults, &SecretMap::default())?;
+        save_settings(data_dir, &defaults)?;
         defaults
     };
 
@@ -239,9 +167,9 @@ fn load_settings(data_dir: &Path) -> Result<(AppSettings, SecretMap)> {
     // file from the in-memory settings.
     let migrated = apply_settings_migrations(&mut settings);
     if ensure_post_process_defaults(&mut settings) || salvaged || migrated {
-        save_settings(data_dir, &settings, &secrets.extension_secrets)?;
+        save_settings(data_dir, &settings)?;
     }
-    Ok((settings, secrets.extension_secrets))
+    Ok(settings)
 }
 
 /// Rebuilds settings from a store value that failed to deserialize as a whole.
@@ -289,8 +217,6 @@ fn salvage_settings(stored: &serde_json::Value) -> AppSettings {
 struct StoredSecrets {
     #[serde(default)]
     post_process_api_keys: SecretMap,
-    #[serde(default)]
-    extension_secrets: SecretMap,
 }
 
 fn load_secrets(data_dir: &Path) -> Result<StoredSecrets> {
@@ -303,25 +229,20 @@ fn load_secrets(data_dir: &Path) -> Result<StoredSecrets> {
         serde_json::from_str(&raw).with_context(|| format!("parse {}", path.display()))?;
     // New format has the named sub-maps; anything else is a legacy bare map of
     // post-process keys.
-    if value.get("post_process_api_keys").is_some() || value.get("extension_secrets").is_some() {
+    if value.get("post_process_api_keys").is_some() {
         serde_json::from_value(value).with_context(|| format!("parse {}", path.display()))
     } else {
         let legacy: SecretMap = serde_json::from_value(value)
             .with_context(|| format!("parse legacy {}", path.display()))?;
         Ok(StoredSecrets {
             post_process_api_keys: legacy,
-            extension_secrets: SecretMap::default(),
         })
     }
 }
 
 /// Persist settings to JSON and secrets to the separate credential file. The
 /// main settings file is written with secrets stripped, so keys never land in it.
-fn save_settings(
-    data_dir: &Path,
-    settings: &AppSettings,
-    extension_secrets: &SecretMap,
-) -> Result<()> {
+fn save_settings(data_dir: &Path, settings: &AppSettings) -> Result<()> {
     fs::create_dir_all(data_dir)
         .with_context(|| format!("create data dir {}", data_dir.display()))?;
 
@@ -329,7 +250,6 @@ fn save_settings(
     let mut sanitized = settings.clone();
     let secrets = StoredSecrets {
         post_process_api_keys: std::mem::take(&mut sanitized.post_process_api_keys),
-        extension_secrets: extension_secrets.clone(),
     };
 
     let settings_json = serde_json::to_string_pretty(&sanitized)?;
@@ -405,33 +325,7 @@ mod tests {
             serde_json::from_str(&fs::read_to_string(data.join(SECRETS_FILE)).unwrap()).unwrap();
         assert!(secrets.get("stt_api_keys").is_none());
         assert_eq!(secrets["post_process_api_keys"]["openai"], "text-key");
-        assert_eq!(
-            secrets["extension_secrets"]["ext.example.api_key"],
-            "extension-key"
-        );
-    }
-
-    #[test]
-    fn extension_secrets_live_only_in_credentials_and_purge_by_namespace() {
-        let (ctx, dir) = ctx();
-        let key = "ext.com.example.weather.api_key";
-        ctx.set_extension_secret(key.into(), "top-secret".into())
-            .unwrap();
-        assert_eq!(ctx.extension_secret(key).as_deref(), Some("top-secret"));
-
-        let settings = fs::read_to_string(dir.path().join("data").join(SETTINGS_FILE)).unwrap();
-        assert!(!settings.contains("top-secret"));
-        assert!(!settings.contains("extension_secrets"));
-        let credentials = fs::read_to_string(dir.path().join("data").join(SECRETS_FILE)).unwrap();
-        assert!(credentials.contains("top-secret"));
-
-        assert_eq!(
-            ctx.purge_extension_secrets("com.example.weather").unwrap(),
-            1
-        );
-        assert!(ctx.extension_secret(key).is_none());
-        let credentials = fs::read_to_string(dir.path().join("data").join(SECRETS_FILE)).unwrap();
-        assert!(!credentials.contains("top-secret"));
+        assert!(secrets.get("extension_secrets").is_none());
     }
 
     /// Every field must survive a partial store: a missing key must never fail

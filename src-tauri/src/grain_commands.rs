@@ -732,9 +732,6 @@ pub struct ExtensionCard {
     /// Manifest-declared capabilities. The installed UI needs these even for
     /// local/imported packs which have no signed-store catalogue entry.
     pub capabilities: Vec<String>,
-    /// The pack declares settings or shortcuts, so it has a section of its own
-    /// worth opening. Free to compute — Overview already reads every manifest.
-    pub has_detail: bool,
     /// [GRAIN] Non-visual behavior slots this extension takes over.
     pub slots: Vec<String>,
     /// [GRAIN] Prompt layers this pack contributes.
@@ -898,13 +895,11 @@ pub fn extensions_overview(app: AppHandle) -> Result<Vec<ExtensionCard>, String>
                     .iter()
                     .map(ActionInfo::from_decl)
                     .collect();
-                let has_detail = !actions.is_empty();
                 PackFacts {
                     name: p.manifest.name,
                     description: p.manifest.description,
                     repository: p.manifest.repository,
                     capabilities: p.manifest.permissions,
-                    has_detail,
                     tier: match p.manifest.tier {
                         grain_sdk::Tier::Pack => "pack",
                         grain_sdk::Tier::Scripted => "scripted",
@@ -933,7 +928,6 @@ pub fn extensions_overview(app: AppHandle) -> Result<Vec<ExtensionCard>, String>
             description,
             repository,
             capabilities,
-            has_detail,
             tier,
             prompt_layers,
             actions,
@@ -978,7 +972,6 @@ pub fn extensions_overview(app: AppHandle) -> Result<Vec<ExtensionCard>, String>
             kind: kind.to_string(),
             recommend,
             needs,
-            has_detail,
             slots: rec.slots.clone(),
         });
     }
@@ -994,7 +987,6 @@ struct PackFacts {
     description: String,
     repository: Option<String>,
     capabilities: Vec<String>,
-    has_detail: bool,
     tier: &'static str,
     prompt_layers: Vec<PromptLayerInfo>,
     actions: Vec<ActionInfo>,
@@ -1010,7 +1002,6 @@ impl Default for PackFacts {
             description: String::new(),
             repository: None,
             capabilities: Vec::new(),
-            has_detail: false,
             tier: "pack",
             prompt_layers: Vec::new(),
             actions: Vec::new(),
@@ -1680,118 +1671,6 @@ pub fn extension_unload_dev(
     Ok(())
 }
 
-/// One declared setting, or `None` if the pack doesn't declare that key.
-///
-/// The lookup the schema's two enforcement points share — the host UI below and
-/// `host_api`'s `settings.get/set`, which the extension itself calls. Off the
-/// hot path by construction: settings are read when the page opens and written
-/// when someone moves a control, never per transcription or per event.
-pub(crate) fn setting_decl(app: &AppHandle, id: &str, key: &str) -> Option<grain_sdk::SettingDecl> {
-    let _ = (app, id, key);
-    None
-}
-
-#[derive(serde::Serialize, specta::Type, Clone)]
-pub struct SelectOptionDto {
-    pub value: String,
-    pub label: String,
-}
-
-/// [GRAIN] Phase 5C: the SCHEMA of one field (no value), crossed to the host
-/// renderer so it can draw a `list` row's inputs, or an `app_path`/`url` field.
-/// Recursive: a list field carries its own `fields` so lists nest.
-#[derive(serde::Serialize, specta::Type, Clone)]
-pub struct ExtensionSettingField {
-    pub key: String,
-    pub label: String,
-    pub description: String,
-    pub kind: String,
-    pub min: Option<f64>,
-    pub max: Option<f64>,
-    pub step: Option<f64>,
-    pub options: Vec<SelectOptionDto>,
-    /// Sub-field schema for a `list` field (empty otherwise).
-    pub fields: Vec<ExtensionSettingField>,
-    /// Singular noun for a `list`'s Add button / row header.
-    pub item_label: Option<String>,
-}
-
-/// Flatten a declaration into its renderer schema (no value). Shared by
-/// top-level rows and nested list fields.
-
-/// One row of an extension's settings section: the declaration flattened into
-/// exactly what a control needs, plus the value to show.
-///
-/// Deliberately NOT the manifest type: `SettingKind` is an internally-tagged
-/// enum with per-variant fields, which crosses the bindings boundary as an
-/// awkward union. The renderer wants `kind` plus optional extras, so that is
-/// what it gets.
-#[derive(serde::Serialize, specta::Type)]
-pub struct ExtensionSettingRow {
-    pub key: String,
-    pub label: String,
-    pub description: String,
-    /// `bool | string | secret | number | select | shortcut | color | slider`.
-    pub kind: String,
-    /// Where the section renders (SPEC §4.3). An anchor this build doesn't know
-    /// is passed through untouched — the frontend falls back to the extension's
-    /// own section, because settings are never lost.
-    pub anchor: Option<String>,
-    pub order: i32,
-    /// The resolved current value: bool, number, or string per `kind`.
-    pub value: serde_json::Value,
-    /// Set when a stored value had to be reset — a change the user did not make
-    /// must never be silent.
-    pub notice: Option<String>,
-    pub min: Option<f64>,
-    pub max: Option<f64>,
-    pub step: Option<f64>,
-    pub options: Vec<SelectOptionDto>,
-    /// Sub-field schema for a `list` row (empty otherwise).
-    pub fields: Vec<ExtensionSettingField>,
-    /// Singular noun for a `list`'s Add button / row header.
-    pub item_label: Option<String>,
-}
-
-/// The settings an extension declares, resolved against what is stored
-/// (SPEC §4.1, levels 1–2). Ordered by `order`, ties on declaration order, so
-/// the host renders straight down the list.
-///
-/// Controls this build doesn't understand are dropped rather than drawn blank;
-/// their stored values stay untouched for a build that does understand them.
-#[tauri::command]
-#[specta::specta]
-pub fn extension_settings_schema(
-    app: AppHandle,
-    id: String,
-) -> Result<Vec<ExtensionSettingRow>, String> {
-    load_pack(&app, &id)?;
-    Ok(Vec::new())
-}
-
-/// One enabled extension's settings, ready to render.
-#[derive(serde::Serialize, specta::Type)]
-pub struct ExtensionSettingsSection {
-    pub id: String,
-    pub name: String,
-    pub rows: Vec<ExtensionSettingRow>,
-}
-
-/// Every **enabled** extension's declared settings, in toggle order.
-///
-/// One pass over the packs answers all five anchors, so opening a settings tab
-/// costs one read rather than one per anchor. Disabled extensions are absent
-/// entirely (SPEC §6: disable makes anchored sections disappear) — their values
-/// are retained on disk, just not rendered.
-#[tauri::command]
-#[specta::specta]
-pub fn extension_settings_sections(
-    app: AppHandle,
-) -> Result<Vec<ExtensionSettingsSection>, String> {
-    let _ = app;
-    Ok(Vec::new())
-}
-
 /// Import a `.grainpack` file (SPEC §1.1 tier A-inert). Validates, copies into
 /// the extensions dir, registers it DISABLED — enabling is the user's explicit
 /// second step in Overview, where toggle order is assigned.
@@ -2064,8 +1943,6 @@ pub async fn extension_uninstall(
     if let Some(ctx) = app.try_state::<std::sync::Arc<grain_core::AppContext>>() {
         crate::host_api::ExtStorage::new(&ctx.data_dir, &id)
             .purge()
-            .map_err(|error| error.to_string())?;
-        ctx.purge_extension_secrets(&id)
             .map_err(|error| error.to_string())?;
         // [GRAIN] Phase 5C: forget any user-approved launchable app paths, so a
         // reinstalled extension starts with no launch approvals (SPEC §6).

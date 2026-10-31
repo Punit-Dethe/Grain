@@ -1473,8 +1473,6 @@ fn command_bindings() -> Builder<tauri::Wry> {
             grain_mcp::connections::mcp_connection_disconnect,
             grain_mcp::connections::mcp_connection_set_client_credentials,
             grain_mcp::connections::mcp_connection_clear_client_credentials,
-            grain_commands::extension_settings_schema,
-            grain_commands::extension_settings_sections,
             grain_commands::extension_import_pack,
             grain_commands::extension_uninstall,
             shortcut::change_lazy_stream_close_setting,

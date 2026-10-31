@@ -48,10 +48,6 @@ static EXTENSION_HTTP: OnceLock<reqwest::Client> = OnceLock::new();
 
 pub(crate) const SECRET_REDACTED: &str = "[REDACTED]";
 
-pub(crate) fn extension_secret_key(ext_id: &str, key: &str) -> String {
-    format!("ext.{ext_id}.{key}")
-}
-
 type HostResult<T> = Result<T, HostError>;
 
 #[derive(Debug)]
@@ -355,27 +351,16 @@ fn validate_request(method: &str, params: &Value) -> HostResult<()> {
                     )));
                 }
             }
-            if let Some(secret) = params.get("secret") {
-                let secret = secret
-                    .as_object()
-                    .ok_or_else(|| invalid_argument("'secret' must be an object"))?;
-                for key in ["key", "header"] {
-                    if !secret.get(key).is_some_and(Value::is_string) {
-                        return Err(invalid_argument(format!("'secret.{key}' must be a string")));
-                    }
-                }
-                if secret.get("prefix").is_some_and(|value| !value.is_string()) {
-                    return Err(invalid_argument("'secret.prefix' must be a string"));
-                }
+            // Extension-declared secret settings are retired; the only host-held
+            // credential a fetch can carry is the declared OAuth account.
+            if params.get("secret").is_some() {
+                return Err(invalid_argument(
+                    "'secret' is not supported; declare authentication and pass 'auth: true'",
+                ));
             }
             if let Some(auth) = params.get("auth") {
                 if auth.as_bool() != Some(true) {
                     return Err(invalid_argument("'auth' must be true when provided"));
-                }
-                if params.get("secret").is_some() {
-                    return Err(invalid_argument(
-                        "'auth' and 'secret' are mutually exclusive",
-                    ));
                 }
             }
         }
@@ -469,64 +454,17 @@ fn net_headers(params: &Value) -> HostResult<HeaderMap> {
     Ok(headers)
 }
 
-fn resolve_net_secret(
-    app: &AppHandle,
-    ctx: &grain_core::AppContext,
-    identity: &ClientIdentity,
-    params: &Value,
-) -> HostResult<Option<(HeaderName, HeaderValue)>> {
-    let Some(secret) = params.get("secret") else {
-        return Ok(None);
-    };
-    let secret = secret
-        .as_object()
-        .ok_or_else(|| invalid_argument("'secret' must be an object"))?;
-    let key = secret
-        .get("key")
-        .and_then(Value::as_str)
-        .filter(|key| !key.trim().is_empty())
-        .ok_or_else(|| invalid_argument("'secret.key' must not be empty"))?;
-    let declaration = crate::grain_commands::setting_decl(app, &identity.id, key)
-        .filter(|decl| matches!(decl.kind, grain_sdk::SettingKind::Secret))
-        .ok_or_else(|| invalid_argument(format!("'{key}' is not a declared secret setting")))?;
-    drop(declaration);
-    let value = ctx
-        .extension_secret(&extension_secret_key(&identity.id, key))
-        .ok_or_else(|| {
-            unavailable(
-                format!("secret setting '{key}' has no value"),
-                "Set the credential in the extension's settings, then retry the call.",
-            )
-        })?;
-    let raw_header = secret
-        .get("header")
-        .and_then(Value::as_str)
-        .unwrap_or_default();
-    let header = HeaderName::from_bytes(raw_header.as_bytes())
-        .map_err(|error| invalid_argument(format!("invalid secret header: {error}")))?;
-    if header_is_host_controlled(&header) {
-        return Err(invalid_argument(format!(
-            "header '{}' is controlled by the host",
-            header.as_str()
-        )));
-    }
-    let prefix = secret.get("prefix").and_then(Value::as_str).unwrap_or("");
-    let header_value = HeaderValue::from_str(&format!("{prefix}{value}"))
-        .map_err(|_| invalid_argument("secret prefix produced an invalid header value"))?;
-    Ok(Some((header, header_value)))
-}
-
 async fn proxy_fetch(
     identity: &ClientIdentity,
     params: &Value,
-    secret_header: Option<(HeaderName, HeaderValue)>,
+    credential_header: Option<(HeaderName, HeaderValue)>,
     auth_hosts: Option<&[String]>,
     redact_response: Option<Zeroizing<String>>,
 ) -> HostResult<Value> {
     let mut url = authorize_net_url(identity, &param_nonempty_str(params, "url")?)?;
     let mut method = net_method(params)?;
     let mut headers = net_headers(params)?;
-    if let Some((name, value)) = secret_header {
+    if let Some((name, value)) = credential_header {
         if headers.contains_key(&name) {
             return Err(invalid_argument(format!(
                 "header '{}' is controlled by the selected credential",
@@ -758,8 +696,7 @@ pub async fn dispatch(
                 )
                 .await
             } else {
-                let secret = resolve_net_secret(app, &ctx, identity, &params)?;
-                proxy_fetch(identity, &params, secret, None, None).await
+                proxy_fetch(identity, &params, None, None, None).await
             }
         }
         "auth.status" => {

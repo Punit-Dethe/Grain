@@ -79,26 +79,6 @@ describe("UI 2.0 hash navigation", () => {
     });
   });
 
-  it("round-trips an encoded standalone extension settings destination", () => {
-    const route = {
-      page: "extension-settings",
-      extensionId: "voice/actions local",
-    } as const;
-    expect(hashForRoute(route)).toBe(
-      "#/extension-settings/voice%2Factions%20local",
-    );
-    expect(routeFromHash(hashForRoute(route))).toEqual(route);
-  });
-
-  it("rejects missing or malformed standalone extension identifiers", () => {
-    expect(routeFromHash("#/extension-settings")).toEqual({
-      page: "overview",
-    });
-    expect(routeFromHash("#/extension-settings/%E0%A4%A")).toEqual({
-      page: "overview",
-    });
-  });
-
   it("keeps query and anchor targets out of route parsing", () => {
     expect(
       routeFromHash("#/settings/application?focus=history#retention"),
@@ -132,12 +112,6 @@ describe("UI 2.0 hash navigation", () => {
   it("marks only nested workspace routes for the compact global rail", () => {
     expect(
       routeUsesCompactGlobalRail({ page: "tools", section: "dictionary" }),
-    ).toBe(true);
-    expect(
-      routeUsesCompactGlobalRail({
-        page: "extension-settings",
-        extensionId: "voice-actions",
-      }),
     ).toBe(true);
     expect(
       routeUsesCompactGlobalRail({ page: "extensions", view: "installed" }),

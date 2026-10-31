@@ -33,7 +33,7 @@ import {
 import { SettingsPage } from "./pages/SettingsPage";
 import { ToolsPage } from "./pages/ToolsPage";
 import { AgentPage } from "./pages/AgentPage";
-import { ExtensionsPage, ExtensionSettingsPage } from "./pages/ExtensionsPage";
+import { ExtensionsPage } from "./pages/ExtensionsPage";
 import { HistoryCard, type HistoryViewMode } from "./history/HistoryCard";
 import {
   useHistoryController,
@@ -300,9 +300,7 @@ function Sidebar({
       </div>
       <nav className="nav-list">
         {NAV_ITEMS.map((item) => {
-          const active =
-            item.page === route.page ||
-            (item.page === "extensions" && route.page === "extension-settings");
+          const active = item.page === route.page;
           const href = "href" in item ? item.href : undefined;
           return (
             <button
@@ -687,8 +685,6 @@ function NextShell() {
           <AgentPage />
         ) : route.page === "extensions" ? (
           <ExtensionsPage view={route.view} />
-        ) : route.page === "extension-settings" ? (
-          <ExtensionSettingsPage extensionId={route.extensionId} />
         ) : (
           <OverviewPage history={history} />
         )}

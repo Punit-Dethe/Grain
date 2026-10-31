@@ -8,7 +8,6 @@ import { ShortcutInput } from "@/components/settings/ShortcutInput";
 import { SettingsGroup } from "@/components/ui/SettingsGroup";
 import { useSettings } from "@/hooks/useSettings";
 import { ModelPicker } from "@/components/settings/speech-to-text/ModelPicker";
-import { ExtensionAnchor } from "@/components/settings/experimentations/ExtensionSettings";
 
 /**
  * [GRAIN] Transcription — model selection, capture keys and AI processing.
@@ -23,7 +22,6 @@ export function CapturePane() {
   return (
     <div className="max-w-4xl w-full mx-auto space-y-7">
       <ModelPicker />
-      <ExtensionAnchor anchor="models.after" />
       <CaptureModes />
 
       <SettingsGroup
