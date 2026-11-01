@@ -31,8 +31,10 @@ backend tests and its four isolation/exit-code regressions. The repaired hosted
 workflow [41300313458](https://github.com/Punit-Dethe/Grain/actions/runs/41300313458)
 passed workspace, frontend and Windows-runner jobs. The real Linux backend
 compiled but found four Windows-path test failures (692 passed / 23 ignored).
-The bounded path-classifier/fixture correction is recorded below; its fresh
-hosted verification is the remaining gate. This is not yet a complete hosted Pass.
+The bounded path-classifier/fixture correction is recorded below; fresh run
+[41305891294](https://github.com/Punit-Dethe/Grain/actions/runs/41305891294) at
+`57170be8` has passed the same three jobs and is running the real Linux backend.
+That is the remaining gate. This is not yet a complete hosted Pass.
 
 The inventory below is the original audit; completion and corrected decisions
 are recorded in the continuity log, including superseded earlier holds.
@@ -791,3 +793,9 @@ protected publication and separately deferred live checks are not implied passed
   review, upstream policy and worktree ratchet pass. Existing unrelated local
   generated-binding edits are preserved and excluded. Push and dispatch a fresh
   hosted run for the final Linux verdict; do not infer it from Windows.
+
+**Session 5 final hosted run in progress:** run 41305891294 at `57170be8` has
+passed frontend, Linux workspace and Windows runner jobs. The real Linux backend
+check/tests started at 12:19:53 UTC. Windows all-target checking also passes with
+the correction (C:/t/logs/p5-all-targets.txt). Source work is pushed; only the
+hosted native verdict remains before recording final production verification.

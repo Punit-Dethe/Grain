@@ -5,8 +5,9 @@ severity tiers and continuity log live in
 [LEGACY-RETIREMENT-PLAN.md](LEGACY-RETIREMENT-PLAN.md) on branch
 `cleanup/retire-legacy-extension-platform`. All in-scope retirement implementation
 is complete (M7 excluded by the user), including embedding and obsolete package
-paths. Use that continuity log for production verification and remaining manual
-acceptance; earlier inventories below are historical.
+paths. The user has accepted settings without embedding and microphone/dictation
+start/cancel. Use that continuity log for the final hosted production verification;
+earlier inventories below are historical.
 
 ## Active forward work order — 15 October 2026
 

@@ -787,10 +787,14 @@ live Notion 0.1.2 update are complete. Remaining future operator decisions are:
 
 The deferred Linear expiry observation, advanced provider tool families, custom
 MCP release exposure, extra first-party extensions, automatic background updates,
-embeddings, elaborate marketplace analytics and a web publisher portal are **not
+elaborate marketplace analytics and a web publisher portal are **not
 prerequisites for these six blocks**. Custom MCP implementation must remain intact
 and compatible with the supported shared connection path. No compatibility work
 for obsolete unpublished extension formats is added.
+
+The unused embedding workflow was fully retired on the cleanup branch; it is not
+a deferred installation or release requirement. See
+[legacy retirement](LEGACY-RETIREMENT-PLAN.md) for completion and verification.
 
 ## References and why this approach
 
