@@ -35,6 +35,7 @@ export type ExtensionViewId = (typeof EXTENSION_VIEW_IDS)[number];
 export type AppRoute =
   | { page: "overview" }
   | { page: "history" }
+  | { page: "meet" }
   | { page: "agent" }
   | { page: "settings"; section: SettingsSectionId }
   | { page: "tools"; section: ToolSectionId }
@@ -48,6 +49,7 @@ export function routeFromHash(hash: string): AppRoute {
   const path = hash.replace(/^#/, "").split(/[?#]/, 1)[0].replace(/\/+$/, "");
 
   if (path === "/history") return { page: "history" };
+  if (path === "/meet") return { page: "meet" };
   if (path === "/agent" || path === "/tools/agent") return { page: "agent" };
   // Legacy destination from the brief period About was its own tab.
   if (path === "/about") return { page: "settings", section: "about" };

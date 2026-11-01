@@ -24,6 +24,9 @@ const CONTIGUOUS_NS: u64 = 1_000_000;
 const RESAMPLER_CHUNK: usize = 1024;
 const READ_FRAMES: usize = 4096;
 const MAX_TAIL_ROUNDS: usize = 16;
+/// Playback files cover the meeting clock, gaps included: at most 12 hours
+/// (16-bit, about 1.4 GB), which bounds the silence a long pause can add.
+const MAX_PLAYBACK_SAMPLES: u64 = 12 * 60 * 60 * RATE;
 
 /// One run of a track in analysis samples and on the meeting clock.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -167,7 +170,12 @@ pub fn prepare(session: &Path, track: &Track) -> Result<TrackAnalysis, Unprepare
                 .map_err(|e| failed(format!("Could not write analysis audio: {e}")))?;
             written += SEPARATOR_SAMPLES;
         }
-        let samples = write_run(session, track, run, &journal).map_err(failed)?;
+        let samples = write_run(session, track, run, &mut |samples: &[f32]| {
+            journal
+                .append(samples)
+                .map_err(|e| format!("Could not write analysis audio: {e}"))
+        })
+        .map_err(failed)?;
         pieces.push(Piece {
             analysis_start: written,
             samples,
@@ -183,13 +191,69 @@ pub fn prepare(session: &Path, track: &Track) -> Result<TrackAnalysis, Unprepare
     Ok(TrackAnalysis { journal, pieces })
 }
 
-/// Downmix and resample one run into the journal. Returns samples written,
-/// exactly `floor(frames * 16000 / rate)`.
+/// Write a track's playback file: 16 kHz mono 16-bit WAV on the meeting clock,
+/// so playback position equals transcript time. Gaps play as silence. Written
+/// to a temporary name and renamed, streaming one block at a time.
+pub fn write_playback(session: &Path, track: &Track, out: &Path) -> Result<(), String> {
+    let runs = runs(track);
+    let total: u64 = track.end_ns().saturating_mul(RATE) / 1_000_000_000;
+    if total > MAX_PLAYBACK_SAMPLES {
+        return Err("This recording is too long to prepare for playback".into());
+    }
+    let tmp = out.with_extension("wav.partial");
+    let spec = hound::WavSpec {
+        channels: 1,
+        sample_rate: ANALYSIS_SAMPLE_RATE,
+        bits_per_sample: 16,
+        sample_format: hound::SampleFormat::Int,
+    };
+    let result = (|| -> Result<(), String> {
+        let mut writer = hound::WavWriter::create(&tmp, spec)
+            .map_err(|e| format!("Could not create playback audio: {e}"))?;
+        let mut position = 0u64;
+        let silence = vec![0.0f32; READ_FRAMES];
+        for run in runs {
+            let start = run[0].start_ns.saturating_mul(RATE) / 1_000_000_000;
+            while position < start {
+                let n = ((start - position) as usize).min(READ_FRAMES);
+                write_pcm16(&mut writer, &silence[..n], &mut position)?;
+            }
+            write_run(session, track, run, &mut |samples| {
+                write_pcm16(&mut writer, samples, &mut position)
+            })?;
+        }
+        writer
+            .finalize()
+            .map_err(|e| format!("Could not finish playback audio: {e}"))
+    })();
+    if let Err(error) = result {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(error);
+    }
+    std::fs::rename(&tmp, out).map_err(|e| format!("Could not finish playback audio: {e}"))
+}
+
+fn write_pcm16<W: std::io::Write + std::io::Seek>(
+    writer: &mut hound::WavWriter<W>,
+    samples: &[f32],
+    position: &mut u64,
+) -> Result<(), String> {
+    for &sample in samples {
+        writer
+            .write_sample((sample.clamp(-1.0, 1.0) * 32767.0) as i16)
+            .map_err(|e| format!("Could not write playback audio: {e}"))?;
+    }
+    *position += samples.len() as u64;
+    Ok(())
+}
+
+/// Downmix and resample one run to 16 kHz mono, handing samples to `emit`.
+/// Returns samples emitted, exactly `floor(frames * 16000 / rate)`.
 fn write_run(
     session: &Path,
     track: &Track,
     run: &[Chunk],
-    journal: &PcmJournal,
+    mut emit: &mut dyn FnMut(&[f32]) -> Result<(), String>,
 ) -> Result<u64, String> {
     let rate = run[0].sample_rate;
     let channels = usize::from(run[0].channels);
@@ -197,11 +261,6 @@ fn write_run(
     let expected = resampled_len(frames, rate);
     let mut resampler = MonoResampler::new(rate)?;
     let mut mono = Vec::with_capacity(READ_FRAMES);
-    let mut emit = |samples: &[f32]| {
-        journal
-            .append(samples)
-            .map_err(|e| format!("Could not write analysis audio: {e}"))
-    };
     for chunk in run {
         let path = chunk_path(session, track, chunk);
         let reader = hound::WavReader::open(&path)
@@ -504,6 +563,36 @@ mod tests {
         let path = analysis.journal.path().to_path_buf();
         drop(analysis);
         assert!(!path.exists(), "analysis audio is disposable");
+    }
+
+    #[test]
+    fn playback_follows_the_meeting_clock_with_silent_gaps() {
+        let root = tempfile::tempdir().unwrap();
+        const S: u64 = 1_000_000_000;
+        // 2 s at 48 kHz, a 3 s gap, then 1 s at 16 kHz.
+        let (dir, manifest) = record(
+            root.path(),
+            &[(0, 48_000, 2, 96_000), (5 * S, 16_000, 1, 16_000)],
+        );
+        let out = dir.join("playback.wav");
+        write_playback(&dir, &manifest.tracks[0], &out).unwrap();
+        let reader = hound::WavReader::open(&out).unwrap();
+        assert_eq!(
+            (reader.spec().sample_rate, reader.spec().bits_per_sample),
+            (16_000, 16)
+        );
+        let samples: Vec<i16> = reader.into_samples::<i16>().map(Result::unwrap).collect();
+        assert_eq!(samples.len(), 6 * 16_000, "playback length is meeting time");
+        assert!(samples[16_000 * 2 + 100..16_000 * 5 - 100]
+            .iter()
+            .all(|&s| s == 0));
+        assert!(samples[16_000..16_000 + 2_000]
+            .iter()
+            .any(|&s| s.abs() > 1_000));
+        assert!(samples[16_000 * 5 + 1_000..16_000 * 5 + 3_000]
+            .iter()
+            .any(|&s| s.abs() > 1_000));
+        assert!(!dir.join("playback.wav.partial").exists());
     }
 
     #[test]

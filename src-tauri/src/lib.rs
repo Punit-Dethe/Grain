@@ -1566,6 +1566,7 @@ fn command_bindings() -> Builder<tauri::Wry> {
             grain_meet::commands::meet_cancel_processing,
             grain_meet::commands::meet_transcript,
             grain_meet::commands::meet_delete,
+            grain_meet::commands::meet_playback_audio,
             grain_meet::commands::meet_diarizer_installed,
             grain_meet::commands::meet_download_diarizer,
         ])

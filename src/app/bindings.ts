@@ -1938,6 +1938,18 @@ async meetDelete(sessionId: string) : Promise<Result<null, string>> {
 }
 },
 /**
+ * A recorded track's playback file (created on first request), aligned to the
+ * meeting clock. Only that one file is opened to the webview.
+ */
+async meetPlaybackAudio(sessionId: string, track: number) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meet_playback_audio", { sessionId, track }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Whether the pinned speaker model is installed.
  */
 async meetDiarizerInstalled() : Promise<Result<boolean, string>> {

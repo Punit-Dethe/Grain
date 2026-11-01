@@ -22,7 +22,8 @@ export type QuickIconName =
   | "search"
   | "panel"
   | "folder"
-  | "star";
+  | "star"
+  | "mic";
 
 export type QuickKind = "navigate" | "section" | "setting";
 
@@ -46,6 +47,8 @@ export interface QuickItem {
 interface NavDef {
   id: string;
   title: string;
+  /** Overrides `title` with a localized string (e.g. a product name). */
+  titleKey?: string;
   icon: QuickIconName;
   route: AppRoute;
   keywords: string[];
@@ -65,6 +68,14 @@ const NAV_DEFS: NavDef[] = [
     icon: "clock",
     route: { page: "history" },
     keywords: ["transcripts", "past recordings", "log"],
+  },
+  {
+    id: "meet",
+    title: "Meetings",
+    titleKey: "ui2.meet.name",
+    icon: "mic",
+    route: { page: "meet" },
+    keywords: ["meetings", "record meeting", "calls", "speakers", "minutes"],
   },
   {
     id: "personalize",
@@ -431,7 +442,7 @@ export function buildQuickItems(
     items.push({
       id: `navigate:${nav.id}`,
       kind: "navigate",
-      title: nav.title,
+      title: nav.titleKey ? t(nav.titleKey) : nav.title,
       icon: nav.icon,
       metaLabel: "Page",
       route: nav.route,

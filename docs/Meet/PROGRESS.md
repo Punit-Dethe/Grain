@@ -209,3 +209,30 @@ Validation:
 - 56 unit tests pass. The recorder tests cover burst delivery placed by frame count, single-meeting refusal, routing ending at finish, source-loss restart with a `SourceLost` gap, an overflow gap, and a stall without a gap.
 - The real-model pipeline test still passes (Vulkan: 96 s in 2.7 s).
 - **Not yet run:** a recording from a physical microphone in the running app, including device unplug, sleep/resume and low disk. It needs the Meet UI (Step 6) or the agent harness, and remains a Step 4 acceptance item. Dictation refusal during a meeting is enforced but only logged; the visible reason belongs to the Meet UI.
+
+## Increment 6: meeting workspace UI (Step 6, first pass)
+
+Built on `feat/grain-meet` against the current interface. The user-facing name is the single string `ui2.meet.name` ("Recall"), used by the sidebar, page title and Quick Panel. Everything internal stays Meet.
+
+- **Navigation.** The `#/meet` route, a sidebar entry with a microphone icon (below History), and a Quick Panel entry with meeting keywords.
+- **Page** (`src/app/pages/MeetPage.tsx`, `src/app/meet/`):
+  - Recorder: an optional title, start and stop, elapsed time, a no-audio warning while the microphone is silent, and write errors.
+  - Speaker-model notice with a download and its progress.
+  - Last processing error.
+  - Meeting list: date, duration and state (recording, processing, transcribed, not processed).
+  - Detail view:
+    - transcribe, transcribe again and cancel, with the live stage;
+    - copy the transcript as `[time] Speaker: text`;
+    - delete, after a native confirmation;
+    - on-demand audio, where clicking a turn's timestamp seeks the player;
+    - transcript search;
+    - per-track notes for missing speakers, failure, over-length or empty tracks.
+  - Turns group consecutive words by speaker and split on a 1.5 s pause. Words from different tracks interleave by time and are never merged. Overlap is labelled "Several speakers".
+- **Playback backend.** `meet_playback_audio` writes a 16 kHz 16-bit WAV per track on the meeting clock, so gaps play as silence and player time equals transcript time. It streams one block at a time and caps the file at 12 hours. It opens exactly that file to the asset protocol (and the fs scope on Linux).
+- **Strings.** English only, under `ui2.meet.*`; other locales fall back by design.
+
+Validation:
+- 107 frontend unit tests pass, including new turn-building, formatting, export and filter tests and the route round-trip.
+- `tsc`, the production `vite build`, ESLint on the changed files, Prettier, `ui_parity.py` and the divergence ratchet all pass.
+- 24 Meet backend tests pass, including the playback-timeline test.
+- **Not yet done:** speaker renaming (needs separate user-edit storage, per the plan), export formats beyond copied text, and a review by the user of the running app.

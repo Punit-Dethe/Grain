@@ -13,6 +13,7 @@ use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Manager};
 use tauri_specta::Event;
 
+use super::analysis;
 use super::processing::{self, Models, Stage};
 use super::recorder::{self, Recording};
 use super::storage::{self, SessionState};
@@ -468,6 +469,47 @@ pub fn meet_delete(app: AppHandle, session_id: String) -> Result<(), String> {
         }
     })?;
     std::fs::remove_dir_all(&dir).map_err(|e| format!("Could not delete the meeting: {e}"))
+}
+
+/// A recorded track's playback file (created on first request), aligned to the
+/// meeting clock. Only that one file is opened to the webview.
+#[tauri::command]
+#[specta::specta]
+pub async fn meet_playback_audio(
+    app: AppHandle,
+    session_id: String,
+    track: u32,
+) -> Result<String, String> {
+    let dir = storage::session_dir(&meetings_root(&app)?, &session_id)?;
+    let path = tauri::async_runtime::spawn_blocking(move || -> Result<PathBuf, String> {
+        let manifest = storage::load_manifest(&dir)?;
+        if manifest.state != SessionState::Recorded {
+            return Err("Finish the recording before playing it".into());
+        }
+        let source = manifest
+            .tracks
+            .iter()
+            .find(|t| t.id == track)
+            .ok_or("This meeting has no such track")?;
+        let folder = dir.join("playback");
+        std::fs::create_dir_all(&folder)
+            .map_err(|e| format!("Could not prepare playback audio: {e}"))?;
+        let path = folder.join(format!("{track}.wav"));
+        if !path.is_file() {
+            analysis::write_playback(&dir, source, &path)?;
+        }
+        Ok(path)
+    })
+    .await
+    .map_err(|e| e.to_string())??;
+    app.asset_protocol_scope()
+        .allow_file(&path)
+        .map_err(|e| e.to_string())?;
+    {
+        use tauri_plugin_fs::FsExt;
+        let _ = app.fs_scope().allow_file(&path);
+    }
+    Ok(path.to_string_lossy().into_owned())
 }
 
 /// Whether the pinned speaker model is installed.

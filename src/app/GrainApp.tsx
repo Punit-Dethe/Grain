@@ -33,6 +33,7 @@ import {
 import { SettingsPage } from "./pages/SettingsPage";
 import { ToolsPage } from "./pages/ToolsPage";
 import { AgentPage } from "./pages/AgentPage";
+import { MeetPage } from "./pages/MeetPage";
 import { ExtensionsPage } from "./pages/ExtensionsPage";
 import { HistoryCard, type HistoryViewMode } from "./history/HistoryCard";
 import {
@@ -138,7 +139,8 @@ type IconName =
   | "pause"
   | "star"
   | "refresh"
-  | "trash";
+  | "trash"
+  | "mic";
 
 function Icon({ name, small = false }: { name: IconName; small?: boolean }) {
   return (
@@ -173,6 +175,10 @@ function IconSprite() {
       <symbol id="i-clock" viewBox="0 0 24 24">
         <circle cx="12" cy="12" r="9" />
         <path d="M12 7v5l3.5 2" />
+      </symbol>
+      <symbol id="i-mic" viewBox="0 0 24 24">
+        <rect x="9" y="3" width="6" height="11" rx="3" />
+        <path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21M8.5 21h7" />
       </symbol>
       <symbol id="i-command" viewBox="0 0 24 24">
         <path d="M9 6a3 3 0 1 0-3 3h3zM15 6a3 3 0 1 1 3 3h-3zM9 15H6a3 3 0 1 0 3 3zM15 15h3a3 3 0 1 1-3 3zM9 9h6v6H9z" />
@@ -234,6 +240,14 @@ function IconSprite() {
 const NAV_ITEMS = [
   { page: "overview", label: "Overview", icon: "home", href: "#/overview" },
   { page: "history", label: "History", icon: "clock", href: "#/history" },
+  // The meeting workspace's user-facing name is the one `ui2.meet.name` string.
+  {
+    page: "meet",
+    label: "",
+    labelKey: "ui2.meet.name",
+    icon: "mic",
+    href: "#/meet",
+  },
   {
     page: "tools",
     label: "Personalize",
@@ -268,6 +282,7 @@ function Sidebar({
   const loading = useModelStore((state) => state.loading);
   const isModelLoaded = useModelStore((state) => state.isModelLoaded);
   const { settings } = useSettings();
+  const { t } = useTranslation();
   const modelStatus = useMemo(() => {
     return getModelIndicatorStatus({
       loading,
@@ -302,13 +317,14 @@ function Sidebar({
         {NAV_ITEMS.map((item) => {
           const active = item.page === route.page;
           const href = "href" in item ? item.href : undefined;
+          const label = "labelKey" in item ? t(item.labelKey) : item.label;
           return (
             <button
               key={item.page}
               type="button"
               className={`nav-item${active ? " active" : ""}`}
               data-page={item.page}
-              title={item.label}
+              title={label}
               disabled={!href}
               aria-current={active ? "page" : undefined}
               onClick={() => {
@@ -316,7 +332,7 @@ function Sidebar({
               }}
             >
               <Icon name={item.icon} />
-              <span>{item.label}</span>
+              <span>{label}</span>
             </button>
           );
         })}
@@ -677,6 +693,8 @@ function NextShell() {
       <main className="main">
         {route.page === "history" ? (
           <HistorySettings variant="next" controller={history} />
+        ) : route.page === "meet" ? (
+          <MeetPage />
         ) : route.page === "settings" ? (
           <SettingsPage section={route.section} />
         ) : route.page === "tools" ? (

@@ -1092,6 +1092,65 @@
           "description": "Choose Standard or Streaming for the AI shortcut."
         }
       }
+    },
+    "meet": {
+      "name": "Recall",
+      "eyebrow": "Meetings",
+      "subtitle": "Record a meeting, then get a local transcript with speakers and timestamps.",
+      "processFailed": "Processing failed",
+      "recorder": {
+        "titleLabel": "Meeting title",
+        "titlePlaceholder": "Meeting title (optional)",
+        "start": "Start recording",
+        "stop": "Stop recording",
+        "recording": "Recording",
+        "noAudio": "No audio from the microphone. Reconnecting…"
+      },
+      "speakerModel": {
+        "title": "Speaker detection needs a model",
+        "body": "Download the speaker model (139 MB) once to label who spoke. Recording works without it.",
+        "download": "Download",
+        "downloading": "Downloading… {{percent}}%",
+        "ready": "Speaker model installed"
+      },
+      "list": {
+        "loading": "Loading meetings…",
+        "loadError": "Meetings could not be loaded.",
+        "retry": "Try again",
+        "empty": "No meetings yet. Start a recording to begin.",
+        "recording": "Recording",
+        "processing": "Processing",
+        "transcribed": "Transcribed",
+        "notProcessed": "Not processed"
+      },
+      "detail": {
+        "pick": "Select a meeting to see its transcript.",
+        "process": "Transcribe",
+        "reprocess": "Transcribe again",
+        "cancel": "Cancel",
+        "copy": "Copy transcript",
+        "copied": "Transcript copied",
+        "delete": "Delete",
+        "deleteConfirm": "Delete this meeting? Its recording and transcripts are removed permanently.",
+        "loadAudio": "Load audio",
+        "search": "Search this transcript",
+        "noMatches": "Nothing in this transcript matches.",
+        "noTranscript": "Not transcribed yet. Transcribe it to see who said what.",
+        "unknownSpeaker": "Unknown speaker",
+        "overlap": "Several speakers"
+      },
+      "stage": {
+        "Preparing": "Preparing audio…",
+        "IdentifyingSpeakers": "Identifying speakers…",
+        "Transcribing": "Transcribing…",
+        "Publishing": "Saving transcript…"
+      },
+      "status": {
+        "empty": "A track has no audio.",
+        "speakersUnavailable": "Speakers could not be identified; the text is shown without them.",
+        "tooLong": "A track is {{minutes}} minutes long; tracks of up to {{limit}} minutes can be transcribed. Its audio is kept.",
+        "failed": "A track could not be transcribed: {{reason}}"
+      }
     }
   },
   "overlay": {
