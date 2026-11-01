@@ -1,6 +1,6 @@
 {
   "src-tauri/.gitignore": 4,
-  "src-tauri/Cargo.toml": 152,
+  "src-tauri/Cargo.toml": 153,
   "src-tauri/build.rs": 12,
   "src-tauri/capabilities/default.json": 16,
   "src-tauri/capabilities/desktop.json": 2,
