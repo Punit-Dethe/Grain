@@ -14,11 +14,12 @@ use transcribe_cpp::{Backend, DiarizeOptions, SpeakerSegment};
 /// Analysis audio is 16 kHz mono float32 PCM, the native diarizer contract.
 pub const ANALYSIS_SAMPLE_RATE: u32 = 16_000;
 
-/// Provisional technical ceiling for one diarized analysis file: two hours of
-/// one track (460.8 MB of float32 PCM in the worker). It bounds a single
-/// allocation; it is not a supported-duration promise. Revise it only with the
-/// measured process-tree memory envelope.
-pub const MAX_ANALYSIS_SAMPLES: u64 = 2 * 60 * 60 * ANALYSIS_SAMPLE_RATE as u64;
+/// FluidMeet's whole-track ceiling (`MeetingEpochAudioMaterializer.conservativeSampleLimit`):
+/// 256 Mi float32 samples (1 GiB), about 280 minutes of one 16 kHz track or
+/// 140 minutes across two. Like FluidMeet, a track is diarized as one run so
+/// speaker slots stay continuous; it is never cut into independently diarized
+/// pieces. The bound covers retained PCM only, not native feature memory.
+pub const MAX_ANALYSIS_SAMPLES: u64 = 256 * 1024 * 1024;
 
 /// The native role a worker load creates.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]

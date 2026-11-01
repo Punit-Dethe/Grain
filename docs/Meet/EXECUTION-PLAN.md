@@ -205,6 +205,27 @@ The native diarization entry point currently accepts a full PCM slice and intern
 
 Suggested initial engineering targets, to validate in the feasibility report, are: a 60-minute dual-track meeting on a representative 8 GiB machine; recording overhead that does not grow with duration; at most 200 MiB incremental host RAM for recording without captions; and at most 2 GiB incremental total process-tree RAM during final processing. Measure VRAM separately on discrete GPUs and avoid double-counting unified memory. These are proposed gates, not current performance claims. If a target fails, record the result and adjust the supported envelope explicitly rather than silently relaxing the test.
 
+**Measured and decided (2 November 2026).** Sortformer peaks at about 1.2 GiB of worker memory per hour of one track (see [PROGRESS.md](PROGRESS.md)). The user chose to adopt FluidMeet's numbers rather than run further experiments, and to tune later. Diarize each whole track in one run and process tracks one at a time. The ceiling is FluidMeet's 256 Mi samples. No further duration experiments are planned for the first release.
+
+### FluidMeet tuning adopted for the first release
+
+Read from FluidVoice `dd37664`. FluidMeet diarizes and transcribes after recording; its optional live captions run no diarization. Use these values unchanged and tune later. "Grain status" says where each value applies.
+
+| Value | FluidMeet source | Grain status |
+| --- | --- | --- |
+| Diarize each track's whole audio in one run, one speaker state per track; never piece-wise | `MeetingParakeetNemotronBackend.runAttempt`, phase A | Worker bridge (done) |
+| Retained-PCM ceiling: 256 Mi float32 samples (1 GiB; about 140 min across two 16 kHz tracks) | `MeetingEpochAudioMaterializer.conservativeSampleLimit` | `grain_engine::MAX_ANALYSIS_SAMPLES` (done). Step 3 applies it to the whole attempt across tracks, including separators. |
+| Join a track's capture epochs with 0.5 s of silence before diarizing; map segments back per epoch | `epochJoinSilenceSeconds` | Step 3 |
+| Diarizer failure on an epoch: FluidMeet also skips its ASR | phase B | **Grain deviation, already in the plan:** still transcribe and mark speakers unavailable |
+| Pad ASR input shorter than 1 s with silence to 1 s; keep the original length for timing | `asrInput` | Step 3 |
+| Storage chunk: 60 s (minimum 60 s); rotate early on a clock boundary or a gap over 0.5 s | `MeetingCaptureConfiguration.defaultChunkDuration`, `MeetingAudioChunkWriter` | Steps 1 and 4 |
+| Word assignment noise floor: min(80 ms, 20% of the word's duration) | `nemotronCadenceMaximumFloorSeconds`, `boundaryNoiseThresholdSeconds` | Step 3 |
+| Dominance: leader at least 50% coverage, runner-up at most 20%, leader at least 2x runner-up; otherwise ambiguous. A sole candidate above the floor assigns. Same-speaker intervals are unioned before measuring. | `SpeakerDominancePolicy`, `coverageSeconds` | Step 3 |
+| Boundary recovery: 80 ms hop, words up to 1.2 s; recover one adjacent boundary word, never a run of text in silence | `MeetingWordBoundaryRecovery` | Step 3 |
+| A secondary speaker needs at least 10 words and 5 s across its epochs to get its own label | `MeetingTranscriptAssembler.minimumSpeakerWords/Seconds` | Step 3 |
+
+FluidMeet's 80 ms cadence matches Sortformer v2.1's 80 ms output frames, so the assignment numbers carry over unchanged.
+
 ## 7. Transcript and speaker correctness
 
 Use a compact canonical result with these concepts:
