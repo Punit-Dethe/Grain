@@ -16,6 +16,26 @@ the default: normal 3-way merge, preferring upstream in the STT core.
 > live at `src-tauri/src/handy/…` in Grain (declared via `#[path]`, contents
 > unchanged). `Upstream/ratchet.py` maps between the two.
 
+## Catalogue integration — 2 November 2026
+
+The #2299 integration adopts the shared model catalogue and cache fixes.
+Grain pins the integration commit's models package 0.2.2. Its ASR catalogue is
+identical to fetched Handy main's 0.2.3; the later language-ID default-quant
+change stays with the held language-detection work. The JSON remains an exact
+package copy. The catalogue's two narrow test adaptations account for
+the relocated Cargo.toml and Grain's exact `=0.4.0` native dependency pin.
+Keep the portable current-cache-only policy: cache-file deletion must not
+restore the intentionally retired pre-release migration into a shared legacy
+cache. Do not restore the retired ONNX migration table or its UI-only test.
+Existing Standard/Streaming ownership and quant metadata stay intact.
+See SYNC-2026-11-02.md for the source boundary and verification evidence.
+New-base budget differences are reviewed after recording the staged merge;
+do not grant thousands of lines of temporary headroom against the old base.
+The assessed new-base measurements are 4 lines for catalogue test paths/version
+parsing, model manager 197 to 228 (current-cache-only deletion
+and omission of the retired ONNX migration test), and portable 27 to 28 (the
+same existing migration retirement against upstream's added accessor).
+
 ## Verification budget reconciliation — 1 November 2026
 
 Reviewed the full current Cargo.toml difference against the actual merge base
@@ -185,7 +205,8 @@ conflict rules.
 | `audio_toolkit/text.rs` | Moderate (+104): custom-words extensions | Merge; watch word-boundary semantics |
 | `commands/models.rs`, `managers/history.rs`, `clipboard.rs`, `cli.rs`, `utils.rs` | Light. `clipboard.rs` also has Grain's Agent/Paste Catch hooks; **2026-08-22:** #1817/#1892's post-xdotool keyup cleanup is ported in addition to `--clearmodifiers`, because the latter can re-latch a modifier released during synthetic typing | Merge normally; keep Grain paste interceptors and upstream's explicit modifier cleanup |
 | `catalog/catalog.json` | Matches the last integrated upstream blob after removing accidental formatting-only drift on 2026-08-21. It is **generated upstream** by `scripts/gen_catalog.py`, which Grain deliberately does not vendor. Current `upstream/main` has pending generated model additions, so blob audits will report ancestry/content drift until the final sync takes that file. | **Take current upstream's version verbatim at sync.** Never hand-edit or reformat this file, and do not add a divergence budget for it. |
-| `catalog/mod.rs`, `managers/gguf_meta.rs`, `managers/model_capabilities.rs` | Converged (byte-identical to upstream) — re-verified by blob hash 2026-08-02 | Merge freely. Do not "fix" upstream's comments here (e.g. `catalog/mod.rs` refers to `gen_catalog.py`, which is correct in upstream's tree) — editing them would re-open a conflict for no gain |
+| `managers/gguf_meta.rs`, `managers/model_capabilities.rs` | Converged (byte-identical to the assessed upstream baseline). | Merge freely. |
+| `catalog/mod.rs` | Shared catalogue reader; two test-only adaptations resolve Grain's relocated manifest and exact engine-version pin. | Merge freely and preserve those narrow test adaptations. |
 | `audio_toolkit/audio/resampler.rs` | **Not converged (+166/−13)** — the row above used to claim it was, for ~2 weeks. It carries the resampler tail-drop drain (`output_delay`), a real fix logged as [UPSTREAMABLE.md](UPSTREAMABLE.md) #1: `FftFixedIn` holds `output_delay()` frames in its FFT delay line, so end-of-stream dropped the last ~30–60 ms — inaudible to local ASR, a clipped final word for cloud STT | Merge upstream freely; **keep the drain**. Do not restore upstream's `finish()` |
 | `audio_toolkit/mod.rs` | Grain-only `snippets`/`grain_text` module exports. | Merge upstream freely; keep the marked module exports. |
 | `audio_toolkit/audio/mod.rs` | Converged after conditioning removal on 2026-09-26. | Take upstream verbatim. |

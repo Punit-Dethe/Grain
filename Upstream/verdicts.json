@@ -913,6 +913,21 @@
       "evidence": "Grain bun.lock already has ~2.10.1 and bun install --frozen-lockfile passed its Nix derivative check"
     }
   },
+  "93c9ee05efe294cf2a56bd534b77ea1079f21b77": {
+    "suppressed_review": {
+      "outcome": "adapted",
+      "problem": "Generated catalogue, lockfiles and CI could silently disagree after adopting the shared model package.",
+      "destinations": [
+        "src-tauri/src/handy/catalog/mod.rs",
+        "scripts/sync-catalog.ts",
+        "package.json",
+        ".github/workflows/code-quality.yml",
+        ".nix/bun.nix",
+        "Upstream/SYNC-2026-11-02.md"
+      ],
+      "evidence": "Pinned models 0.2.2 from this staged source boundary; its ASR entries match newer 0.2.3 while the held language-ID metadata stays deferred. Byte parity, Rust check, 704 backend tests, 16 final-snapshot catalogue tests, 102 frontend tests and 28 process tests pass. Regenerated the existing stale Nix derivative with bun2nix 2.1.2; Linux Nix evaluation and real model inference remain unvalidated."
+    }
+  },
   "96afb0cf335d0c6b5d6d92c9af9e14f4c3f4ef0b": {
     "notes": "memory.rs (glibc allocator tuning) git mv'd into handy/ with #[path]; trim_freed_memory() hook ported by hand into Grain's diverged FinishGuard::drop (merge left actions.rs untouched)."
   },

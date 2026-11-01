@@ -417,6 +417,19 @@ same commit.
 
 ## Sync log
 
+### November 2 catalogue checkpoint
+
+Integrated #2299 through `93c9ee05` on `sync/handy-audit-20261102`, retaining
+Grain UI and the current paired native fork. The shared models 0.2.2 snapshot
+contains the same ASR entries as fetched Handy main's 0.2.3; language detection
+remains held. Package parity, Rust compilation, 704 backend tests (23 opt-in
+skips), 16 final-snapshot catalogue tests, 102 frontend tests, 28 upstream
+process tests and all five preflight gates pass. The existing Windows Cargo
+manifest runner is required. Regenerated the existing Nix derivative/hash;
+Linux Nix evaluation, native macOS/Linux execution and real model inference
+are not claimed. The staged baseline is 38 reviewed diverged files. Seven
+newer Handy commits remain outside ancestry; see `SYNC-2026-11-02.md`.
+
 ### October 17 full integration
 
 Merged the complete 34-commit range through `9e57a0d7` on

@@ -7,6 +7,8 @@ on:
       - "src/**"
       - "package.json"
       - "bun.lock"
+      - "scripts/sync-catalog.ts"
+      - "src-tauri/src/handy/catalog/**"
       - ".eslintrc*"
       - "eslint.config.*"
       - ".prettierrc*"
@@ -18,6 +20,8 @@ on:
       - "src/**"
       - "package.json"
       - "bun.lock"
+      - "scripts/sync-catalog.ts"
+      - "src-tauri/src/handy/catalog/**"
       - ".eslintrc*"
       - "eslint.config.*"
       - ".prettierrc*"
@@ -44,6 +48,9 @@ jobs:
 
       - name: Check translation consistency
         run: bun run check:translations
+
+      - name: Check bundled model catalogue
+        run: bun run check:catalog
 
       - name: Run ESLint
         run: bun run lint
