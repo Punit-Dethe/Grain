@@ -735,3 +735,17 @@ model decision remain as listed above. Do not revisit M7.
   tool), workflow structure checks and formatting pass. Full workspace tests and
   production frontend build pass locally. Hosted CI execution follows the push;
   do not infer a Linux backend result from the local Windows test pass.
+
+**1 November 2026, session 5 continued: hosted cross-platform discovery (P4).**
+
+- Dispatched the repaired workflow on Grain explicitly (41300107744). Frontend
+  and Windows runner regressions passed. Linux workspace Clippy exposed the
+  pre-existing tracked root .cargo/config.toml with a Windows C:\t target path;
+  Cargo failed joining that colon-containing path into Linux LD_LIBRARY_PATH.
+- Removed only that machine-local file from Git's index and ignored it, matching
+  the existing per-app local configuration policy. The actual Windows file and
+  cache path remain unchanged. Hosted checkouts now use platform-native Cargo
+  defaults. Added .cargo inputs to CI path triggers. No application code changed.
+- Cancelled the superseded owned run before native compilation continued; it
+  remains failure evidence. Actionlint/whitespace pass. Dispatch the fixed commit
+  for the actual Linux workspace/backend checkpoint; no Pass is inferred yet.
