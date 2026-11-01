@@ -512,4 +512,99 @@ mod tests {
         assert_eq!(transcript::latest(&dir).unwrap().unwrap(), revision);
         engine.unload().wait();
     }
+
+    /// Diagnostic: record any WAV (`GRAIN_MEET_PROBE_AUDIO`) the way capture
+    /// does, at its native rate in 10 ms blocks, process it, and print the
+    /// transcript. Run by hand with `--ignored --nocapture`.
+    #[test]
+    #[ignore = "diagnostic; requires the worker, models and a WAV"]
+    fn probe_meeting_transcript() {
+        let path = env_path("GRAIN_MEET_PROBE_AUDIO");
+        let mut reader = hound::WavReader::open(&path).unwrap();
+        let spec = reader.spec();
+        let samples: Vec<f32> = match spec.sample_format {
+            hound::SampleFormat::Float => reader.samples::<f32>().map(Result::unwrap).collect(),
+            hound::SampleFormat::Int => {
+                let scale = (1u64 << (spec.bits_per_sample - 1)) as f32;
+                reader
+                    .samples::<i32>()
+                    .map(|s| s.unwrap() as f32 / scale)
+                    .collect()
+            }
+        };
+        let root = tempfile::tempdir().unwrap();
+        let mut writer = SessionWriter::create(root.path(), "Probe").unwrap();
+        let track = writer
+            .add_track(TrackSource::Microphone {
+                device: "probe".into(),
+            })
+            .unwrap();
+        let block = spec.sample_rate as usize / 100 * usize::from(spec.channels);
+        for (i, chunk) in samples.chunks(block).enumerate() {
+            let usable = chunk.len() - chunk.len() % usize::from(spec.channels);
+            writer
+                .append(
+                    track,
+                    Block {
+                        start_ns: i as u64 * 10_000_000,
+                        sample_rate: spec.sample_rate,
+                        channels: spec.channels,
+                        samples: &chunk[..usable],
+                        discontinuity: None,
+                    },
+                )
+                .unwrap();
+        }
+        let dir = writer.dir().to_path_buf();
+        writer.finish().unwrap();
+        let backend = match std::env::var("GRAIN_MEET_TEST_BACKEND")
+            .as_deref()
+            .unwrap_or("cpu")
+        {
+            "vulkan" => transcribe_cpp::Backend::Vulkan,
+            _ => transcribe_cpp::Backend::Cpu,
+        };
+        let engine = EngineSupervisor::new(true);
+        let cancelled = AtomicBool::new(false);
+        let attempt = MeetingEngine {
+            engine: &engine,
+            mark: engine.cancel_mark(),
+            cancelled: &cancelled,
+            backend,
+            device: DeviceSelector::Auto,
+            role: std::cell::Cell::new(None),
+        };
+        let models = Models {
+            diarizer: env_path("GRAIN_MEET_TEST_DIARIZER"),
+            asr: env_path("GRAIN_MEET_TEST_ASR"),
+        };
+        let revision = process(&dir, &attempt, &models, "probe", &|_| {}).unwrap();
+        for t in &revision.tracks {
+            println!("track {} status {:?}", t.track, t.status);
+            println!("  text: {}", t.text);
+            for a in &t.activity {
+                println!(
+                    "  activity slot {} {:>6}..{:>6} ms",
+                    a.slot,
+                    a.start_ns / 1_000_000,
+                    a.end_ns / 1_000_000
+                );
+            }
+            let mut line = String::new();
+            let mut who = None;
+            for w in &t.words {
+                if who != Some(w.speaker.clone()) {
+                    if !line.is_empty() {
+                        println!("{line}");
+                    }
+                    line = format!("[{:>6} ms] {:?}:", w.start_ms, w.speaker);
+                    who = Some(w.speaker.clone());
+                }
+                line.push(' ');
+                line.push_str(&w.text);
+            }
+            println!("{line}");
+        }
+        engine.unload().wait();
+    }
 }
