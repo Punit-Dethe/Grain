@@ -1,7 +1,7 @@
 # Grain Meet: transcribe.cpp version and diarizer decision
 
 **Prepared:** 2 November 2026, on `feat/grain-meet` at `9694fd44`.
-**Status:** research complete. The recommendation in section 5 is **proposed and awaits user approval**; no native or application change has been made for it.
+**Status:** research complete. **Decision (2 November 2026, user): keep Sortformer v2.1 for the first implementation.** The Nemotron 3 backport in section 5 is the recorded route for a later upgrade, not current work. No native change is made.
 
 ## 1. Questions
 
@@ -86,9 +86,9 @@ This shows that the port runs on Windows CPU and Vulkan. It does not establish a
 - **It is an independent implementation with an incompatible GGUF schema under the same arch key `nemotron3_diar`.** For example, PR tensor names are `enc.pre_encode.proj`, `diar.encoder_proj` and `diar.single_spk_head`; Glimpse names are `enc.embed.proj`, `diar.proj` and `diar.head.out`. A Glimpse GGUF will not load in a future upstream release built from #175, and the reverse is also true.
 - It has no Windows or Vulkan evidence.
 
-## 5. Proposed decision
+## 5. Upgrade route for later (not current work)
 
-**Start Grain Meet on Nemotron 3 Diarization. Backport the Glimpse diarization slice onto Grain's own fork, which stays on upstream 0.4.0 plus the Flow patch.** Do not move Grain to the Glimpse fork, to upstream 0.4.1, or to PR #175.
+Recorded so the later upgrade starts from evidence. The user kept Sortformer v2.1 for now. The analysis below was the proposal at research time: **when upgrading, backport the Glimpse diarization slice onto Grain's own fork, which stays on upstream 0.4.0 plus the Flow patch.** Do not move Grain to the Glimpse fork, to upstream 0.4.1, or to PR #175.
 
 | Option | Speakers / AMI DER | Native work | Handy constraint | Verdict |
 | --- | --- | --- | --- | --- |

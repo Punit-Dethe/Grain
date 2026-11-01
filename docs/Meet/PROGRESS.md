@@ -65,7 +65,7 @@ text parity. Frontend files were untouched; no new frontend acceptance is claime
 
 - The pinned source passes the native Sortformer Rust tests on Windows CPU and Vulkan.
 - The Glimpse Nemotron 3 port runs on the same machine on CPU and Vulkan with identical fixture segments.
-- The proposal to start on Nemotron 3 through a native backport awaits user approval.
+- The proposal to start on Nemotron 3 was declined for now: **the first implementation keeps Sortformer v2.1**. Nemotron 3 is a later upgrade.
 - Work on the role-aware worker bridge started and is paused. It is uncommitted in the local worktree, and has not been compiled or tested.
 
 No Sortformer/Parakeet model execution, real-worker role switching, final word
