@@ -1405,7 +1405,7 @@ html[data-theme="light"] .hero {
   grid-row: 2;
   z-index: 0;
   min-width: 0;
-  padding: 24px;
+  padding: 12px 24px;
 }
 
 .hero-start .overview-shortcut-strip {
@@ -1542,7 +1542,7 @@ html[data-theme="light"] .hero {
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 8px;
   padding-inline: 20px;
 }
 .overview-shortcut:first-child {
@@ -1656,7 +1656,7 @@ html[data-theme="light"] .hero {
   font-weight: 600;
 }
 .overview-shortcut-info p {
-  margin: 0 0 12px;
+  margin: 0 0 8px;
   color: var(--text-3);
   font-size: 11.5px;
   line-height: 1.5;
@@ -1677,7 +1677,7 @@ html[data-theme="light"] .overview-shortcut-keys .overview-shortcut-key {
 @container overview-strip (max-width: 640px) {
   .overview-shortcut-layout {
     grid-template-columns: minmax(0, 1fr);
-    gap: 20px;
+    gap: 12px;
   }
   .overview-shortcut-info {
     display: flex;
@@ -1685,7 +1685,7 @@ html[data-theme="light"] .overview-shortcut-keys .overview-shortcut-key {
     justify-content: space-between;
     gap: 20px;
     padding-inline-end: 0;
-    padding-block-end: 16px;
+    padding-block-end: 12px;
     border-inline-end: 0;
     border-block-end: 1px solid var(--hairline);
   }

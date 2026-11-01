@@ -1,5 +1,13 @@
 # Extension implementation: progress, changes and user testing
 
+**Compact lower hero section, 2 November:** user requests a shorter Start here
+section and larger image within the same overall hero. Halve its vertical padding
+from 24px to 12px, tighten shortcut label/key and note/button gaps, and reduce
+stacked-layout separation at narrow widths. Keep horizontal padding, 40px shortcut
+targets, current 400–490px / 50vh hero sizing and two-row grid. The flexible image
+row receives the recovered space automatically; no hardcoded footer height clips
+wrapped/localized text. No release/version change; visual acceptance remains Pending.
+
 **Nested overview surfaces, 2 November:** user replaces the inset-panel direction
 with one sidebar-colored outer hero and a nested top image flush to its top/left/
 right edges. Preserve the 400–490px / 50vh hero height; both outer and image use
