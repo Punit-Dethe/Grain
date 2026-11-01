@@ -1,5 +1,30 @@
 # Extension implementation: progress, changes and user testing
 
+**Windows 0.0.10 rerelease complete and verified, 2 November 2026:** run
+[41340263217](https://github.com/Punit-Dethe/Grain/actions/runs/41340263217) is
+**Success**. The public release now serves the rebuilt Windows x64 installer,
+signature and updater feed. The actual version tag resolves to built source
+`42d537dfdcb698cdb75488bf9de530ea46f45555`; release notes record that source and
+manual same-version reinstall instructions. Earlier In-progress records below
+are superseded by this completed result, not by an inferred pass.
+
+Downloaded all three assets into
+`C:\Users\watrm\Downloads\Grain-v0.0.10-rerelease-20261102` and verified their
+SHA256s against GitHub's current asset digests. Installer digest:
+`326ac9aae14958080e8b3c4209ef25c75f5c7f378c6846a36afd9a3bd561ad64`.
+The anonymous public latest feed equals the downloaded feed, version is 0.0.10,
+its installer URL is correct, and embedded signature text matches the .sig asset.
+No cryptographic verification beyond CI's existing signing checks is claimed.
+Packaged install/sign-in/read acceptance remains for the user; no app was launched.
+
+The red checks the user noticed are separate automatic main-branch CI, not this
+Windows release failure. Main Branch Build 41340371700 has Windows x64 and all
+Linux jobs Pass, but macOS certificate import fails (SecKeychainItemImport) and
+Windows ARM64 packaging lacks transcribe-libs. Code quality 41340263701 reports
+24 Prettier files; Nix 41340263681 reports stale bun.nix. These also appeared on
+the earlier main baseline; do not disable them or claim repository-wide green CI.
+No additional release/rebuild is needed for the successful Windows x64 installer.
+
 **0.0.10 rerelease dispatched, 2 November 2026:** tested fix
 `42d537dfdcb698cdb75488bf9de530ea46f45555` is pushed to main and
 `fix/store-release-install-20261102`. The completed retirement commit `30a4e74d`

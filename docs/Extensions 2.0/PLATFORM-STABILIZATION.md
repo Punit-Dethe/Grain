@@ -47,8 +47,12 @@ check before evidence exists; no old machinery or alpha branch is restored.
 
 **Status:** fix `42d537df` is now on main; exact-source release run
 [41340263217](https://github.com/Punit-Dethe/Grain/actions/runs/41340263217) is
-In progress with both rerelease/publication inputs explicitly selected.
-Release completion and packaged verification remain Pending.
+**Success** with both rerelease/publication inputs explicitly selected. The public
+Windows x64 installer, asset hashes, updater feed and actual version tag are
+verified; exact evidence/local download are in the latest progress entry.
+Only the user's packaged install/account/read check remains Pending. Separate
+automatic macOS/ARM64/formatting/Nix CI failures are recorded there; they did not
+fail the Windows release and are not silently counted as resolved.
 
 **Navigation update, 31 October:** the user now requests the Extensions sidebar
 entry in the normal app. Removed only the old build-mode visibility condition;
