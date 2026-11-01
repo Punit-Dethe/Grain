@@ -1,5 +1,17 @@
 # Extension implementation: progress, changes and user testing
 
+**0.0.10 rerelease dispatched, 2 November 2026:** tested fix
+`42d537dfdcb698cdb75488bf9de530ea46f45555` is pushed to main and
+`fix/store-release-install-20261102`. The completed retirement commit `30a4e74d`
+remains an ancestor. [Release run 41340263217](https://github.com/Punit-Dethe/Grain/actions/runs/41340263217)
+is **In progress**, pinned to that main SHA, with explicit
+`draft=false,rerelease=true`. It will replace the existing public 0.0.10 assets
+through the existing signed release pipeline and retarget the tag only in its
+successful finish step. Do not count publication/tag/feed verification or a
+packaged install/account check as Pass before their evidence exists. The old
+release backup listed below remains available. No user account sign-in is needed
+while CI builds; already installed 0.0.10 users must manually run the new installer.
+
 **Normal release store installation fix, 2 November 2026:** based exclusively on
 current main `44cd5c7d85ccb196d453ffdce91a824a09b160a5`, including the completed
 legacy extension retirement and latest overview changes. No old branch is merged

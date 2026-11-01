@@ -45,6 +45,11 @@ updater feed and tag/source identity. Old public files are backed up before
 replacement. Do not credit the re-release or the user's packaged install/sign-in
 check before evidence exists; no old machinery or alpha branch is restored.
 
+**Status:** fix `42d537df` is now on main; exact-source release run
+[41340263217](https://github.com/Punit-Dethe/Grain/actions/runs/41340263217) is
+In progress with both rerelease/publication inputs explicitly selected.
+Release completion and packaged verification remain Pending.
+
 **Navigation update, 31 October:** the user now requests the Extensions sidebar
 entry in the normal app. Removed only the old build-mode visibility condition;
 the existing Installed/Store destinations are enabled in normal builds too.
