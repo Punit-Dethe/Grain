@@ -29,9 +29,10 @@ Session 5 cleared workspace strict Clippy, frontend ESLint and the reviewed
 dependency ratchet. The maintained Windows Cargo runner now passes all 696
 backend tests and its four isolation/exit-code regressions. The repaired hosted
 workflow [41300313458](https://github.com/Punit-Dethe/Grain/actions/runs/41300313458)
-has passed workspace, frontend and Windows-runner jobs; the real Linux backend
-job is still compiling at this recorded checkpoint. See the latest continuity
-entry for exact status and evidence; it is not yet a complete hosted Pass.
+passed workspace, frontend and Windows-runner jobs. The real Linux backend
+compiled but found four Windows-path test failures (692 passed / 23 ignored).
+The bounded path-classifier/fixture correction is recorded below; its fresh
+hosted verification is the remaining gate. This is not yet a complete hosted Pass.
 
 The inventory below is the original audit; completion and corrected decisions
 are recorded in the continuity log, including superseded earlier holds.
@@ -771,3 +772,22 @@ passed for Application settings without embedding and microphone/dictation
 start/cancel. This closes the carried manual acceptance for this cleanup. The
 Linux native CI job remains the final active verification; public-release custody,
 protected publication and separately deferred live checks are not implied passed.
+
+**1 November 2026, session 5 continued: native Linux path checkpoint (P5).**
+
+- Hosted run 41300313458 completed: workspace strict Clippy/tests, frontend
+  lint/tests/build and Windows runner regressions passed. Native Linux all-target
+  checking and the real native link succeeded; library tests reported 692 passed,
+  four failed and 23 ignored. All four failures used Windows paths with the host
+  OS's Path parser; this is actual cross-platform evidence, not a native build
+  or embedding-retirement failure.
+- Made the pure Windows Start-menu classifier split Windows separators before
+  stem parsing on any test host, and strengthened exact-stem assertions including
+  forward slashes/uppercase EXE. Native profile and icon tests now use native
+  absolute paths on each OS. UNC/relative-path rejection remains unchanged;
+  no tests are disabled and no Handy source is modified.
+- All 696 Windows backend tests pass again / 23 ignored using the maintained
+  runner (C:/t/logs/p5-app-tests.txt). Scoped rustfmt/whitespace, graph-assisted
+  review, upstream policy and worktree ratchet pass. Existing unrelated local
+  generated-binding edits are preserved and excluded. Push and dispatch a fresh
+  hosted run for the final Linux verdict; do not infer it from Windows.

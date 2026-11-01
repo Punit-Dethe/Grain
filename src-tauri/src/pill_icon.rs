@@ -1228,10 +1228,12 @@ mod site_fetch {
                 k("Claude_pzs8sxrjxfjjc!Claude"),
                 Some(IconKey::Id(_))
             ));
-            assert!(matches!(
-                k(r"C:\Program Files\Google\Chrome\Application\chrome.exe"),
-                Some(IconKey::Path(_))
-            ));
+            let native_path = if cfg!(windows) {
+                r"C:\Program Files\Google\Chrome\Application\chrome.exe"
+            } else {
+                "/usr/bin/chrome"
+            };
+            assert!(matches!(k(native_path), Some(IconKey::Path(_))));
             // A UNC path would make an icon lookup into a network request.
             assert_eq!(k(r"\\attacker.test\share\payload.exe"), None);
             assert_eq!(k("//attacker.test/share/payload.exe"), None);

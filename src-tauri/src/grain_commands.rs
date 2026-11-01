@@ -425,7 +425,13 @@ mod custom_profile_target_tests {
     /// detector compares against, or the profile silently never matches.
     #[test]
     fn an_application_target_becomes_an_exe_stem() {
-        assert_eq!(normalise_exe(r"C:\Program Files\Figma\Figma.exe"), "figma");
+        let native_path = if cfg!(windows) {
+            r"C:\Program Files\Figma\Figma.exe"
+        } else {
+            "/opt/Figma/Figma.exe"
+        };
+        assert_eq!(normalise_exe(native_path), "figma");
+        assert_eq!(normalise_exe(&format!("\"{native_path}\"")), "figma");
         assert_eq!(normalise_exe("Figma.exe"), "figma");
         assert_eq!(normalise_exe("  figma  "), "figma");
         assert_eq!(normalise_exe("\"Code.exe\""), "code");
