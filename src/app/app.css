@@ -1356,6 +1356,7 @@ html[data-theme="light"] .hero {
 .hero-art {
   position: relative;
   grid-row: 1;
+  margin: 12px 12px 0;
   z-index: 1;
   overflow: hidden;
   border-radius: var(--hero-radius);
