@@ -1335,19 +1335,17 @@ html[data-theme="dark"] .grain-root .toggle.on span {
 
 /* Overview */
 .hero {
-  --hero-start-background: var(--bg-2);
   position: relative;
+  isolation: isolate;
   display: flex;
   flex-direction: column;
-  min-height: clamp(460px, 56vh, 560px);
+  justify-content: flex-end;
+  min-height: clamp(340px, 43vh, 420px);
+  padding-top: 132px;
   overflow: hidden;
   border-radius: var(--hero-radius);
   background: var(--bg-2, #15171c);
   border: 1px solid var(--hairline, rgba(255, 255, 255, 0.07));
-}
-
-.grain-root[data-theme="dark"] .hero {
-  --hero-start-background: #292929;
 }
 
 html[data-theme="light"] .hero {
@@ -1356,10 +1354,9 @@ html[data-theme="light"] .hero {
 }
 
 .hero-art {
-  position: relative;
-  isolation: isolate;
-  flex: 1 0 clamp(260px, 32vh, 340px);
-  background: var(--hero-start-background);
+  position: absolute;
+  inset: 0;
+  z-index: 0;
 }
 
 .hero-image {
@@ -1378,10 +1375,10 @@ html[data-theme="light"] .hero {
   right: 0;
   bottom: 0;
   left: 0;
-  height: 80px;
+  height: 65%;
   background: linear-gradient(
     to top,
-    var(--hero-start-background) 1px,
+    rgba(0, 0, 0, 0.28),
     transparent 100%
   );
   pointer-events: none;
@@ -1416,9 +1413,22 @@ html[data-theme="light"] .hero {
 }
 
 .hero-start {
+  position: relative;
+  z-index: 1;
   flex: 0 0 auto;
-  padding: 24px;
-  background: var(--hero-start-background);
+  min-width: 0;
+  margin: 20px;
+  padding: 20px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 16px;
+  background: rgba(32, 32, 32, 0.88);
+  -webkit-backdrop-filter: blur(18px) saturate(115%);
+  backdrop-filter: blur(18px) saturate(115%);
+}
+
+html[data-theme="light"] .hero-start {
+  border-color: rgba(255, 255, 255, 0.7);
+  background: rgba(252, 252, 251, 0.94);
 }
 
 .hero-start .overview-shortcut-strip {

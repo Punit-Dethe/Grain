@@ -1,5 +1,21 @@
 # Extension implementation: progress, changes and user testing
 
+**Overview layout / release hold, 2 November 2026:** the user explicitly requests
+no further release now; intended next delivery is 0.0.11 in a few days. No version,
+tag, release or installer workflow is changed or dispatched for this UI work.
+Branch `ui/overview-glass-panel-20261102` starts from current main `41102e87`.
+
+Shortened the overview hero's preferred minimum range from 460–560px to 340–420px.
+Artwork fills the hero behind a bottom-inset Start here panel with four rounded
+corners, theme-specific translucent fill and 18px backdrop blur. The panel stays
+in document flow so narrow layouts, zoom and longer text can increase the section
+height; existing container-query shortcut reflow, focus order, buttons and image
+switching are retained. Only overview CSS changes; no legacy machinery returns.
+102 frontend tests and the TypeScript/Vite build pass; the one mechanical layout
+scan has no findings. No browser automation, visual replica, new tests or backend
+rebuild. Visual acceptance in the real app remains Pending before merging this
+UI branch for 0.0.11.
+
 **Windows 0.0.10 rerelease complete and verified, 2 November 2026:** run
 [41340263217](https://github.com/Punit-Dethe/Grain/actions/runs/41340263217) is
 **Success**. The public release now serves the rebuilt Windows x64 installer,
