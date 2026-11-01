@@ -425,6 +425,7 @@ function OverviewPage({ history }: { history: HistoryController }) {
               src={OVERVIEW_HERO_IMAGES[heroImageIndex].src}
               alt={OVERVIEW_HERO_IMAGES[heroImageIndex].alt}
             />
+            <h2 className="hero-image-title">Just use voice</h2>
             <button
               className="hero-image-toggle"
               type="button"
