@@ -23,7 +23,7 @@ pub(crate) struct State {
     frames: AtomicU64,
     mark: Mutex<Option<usize>>,
     /// Set just before a meeting starts capture; the next non-retaining
-    /// recording routes its frames to Grain Recall instead of Flow.
+    /// recording routes its frames to Grain Meet instead of Flow.
     meeting_armed: AtomicBool,
     meeting: AtomicBool,
 }
@@ -49,14 +49,14 @@ impl State {
     pub(crate) fn arm_meeting(&self, armed: bool) {
         self.meeting_armed.store(armed, Ordering::Release);
     }
-    /// Continuous journal-only capture (Flow or Recall): no VAD, no retention.
+    /// Continuous journal-only capture (Flow or Meet): no VAD, no retention.
     pub(crate) fn flow(&self) -> bool {
         !self.retain.load(Ordering::Acquire)
     }
     pub(crate) fn feed(&self, app: &tauri::AppHandle, frame: &[f32]) {
         self.frames.fetch_add(frame.len() as u64, Ordering::AcqRel);
         if self.meeting.load(Ordering::Acquire) {
-            crate::grain_recall::recorder::feed(frame);
+            crate::grain_meet::recorder::feed(frame);
         } else if self.flow() {
             if let Some(rolling) =
                 app.try_state::<std::sync::Arc<crate::rolling::RollingTranscriber>>()

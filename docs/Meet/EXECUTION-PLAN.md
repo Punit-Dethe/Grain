@@ -1,16 +1,14 @@
-# Grain Recall — execution plan
+﻿# Grain Meet — execution plan
 
 **Status:** implementation started on `feat/grain-meet`; structured TDT evidence increment implemented. Step 0 model/worker feasibility and benchmarks remain incomplete. See [progress and validation](PROGRESS.md).
 **Diarizer decision (2 November 2026, user):** keep Sortformer v2.1 for the first implementation. The Nemotron 3 backport researched in [DIARIZER-RESEARCH.md](DIARIZER-RESEARCH.md) is deferred to a later upgrade. No native fork change is planned now.
 **Prepared:** 1 November 2026.
 **Reference:** FluidVoice’s FluidMeet workflow and implementation, adapted to Grain’s existing Rust/Tauri application and `transcribe.cpp 0.4` runtime.
-**Name (2 November 2026, user):** the feature is called **Recall** (originally drafted as Grain Meet). The branch remains `feat/grain-meet`. A recorded session is still called a meeting.
-**UI base (2 November 2026, user):** the Recall UI is built on `feat/grain-meet` against the current interface, not on `ui/grain-2.0`.
 **Primary constraint:** preserve the Handy backend boundary and keep memory use, new dependencies, and long-term maintenance small.
 
 ## 1. The decision
 
-Build Grain Recall as a first-party Grain workspace for recording, reviewing, and transcribing meetings locally. Follow FluidVoice’s architecture: preserve the recording first, identify speakers in a dedicated pass, transcribe with Parakeet in a separate pass, then join the evidence into a speaker-attributed transcript. Optional live captions and summaries come after the reliable recording and final-transcript path.
+Build Grain Meet as a first-party Grain workspace for recording, reviewing, and transcribing meetings locally. Follow FluidVoice’s architecture: preserve the recording first, identify speakers in a dedicated pass, transcribe with Parakeet in a separate pass, then join the evidence into a speaker-attributed transcript. Optional live captions and summaries come after the reliable recording and final-transcript path.
 
 **Use Parakeet TDT v3 plus the standalone Sortformer v2.1 diarizer already supported by Grain’s pinned native runtime for the first implementation.** Run the models sequentially in the existing isolated worker. Keep the backend contract independent of the particular diarizer so Nemotron 3 can replace Sortformer later without changing capture, storage, the transcript format, or the UI. Nemotron 3 uses the same native DIARIZE call and run extension, so that upgrade does not change the Grain worker bridge. [G2, N1, D1]
 
@@ -20,7 +18,7 @@ The bundled English Multitalker model is an optional comparison candidate. It is
 
 ### What the first usable release includes
 
-- A **Recall** workspace with a meeting list and meeting detail view.
+- A **Meet** workspace with a meeting list and meeting detail view.
 - Explicit **Online call** and **In-room meeting** capture modes.
 - Online capture keeps microphone and selected application audio separate. Room capture keeps the microphone as its own track.
 - Durable, recoverable audio; visible recording status, elapsed time, and per-source activity.
@@ -55,7 +53,7 @@ These conclusions come from the pinned source, not from successful runtime measu
 
 The reference is `altic-dev/FluidVoice` at `dd3766444971547650e677289208487b3c92e330`. Its production meeting runtime explicitly describes the loaded-model sequence as diarization, release, Parakeet, release. Its recording and optional live-caption paths are separate from final processing. [F1–F5]
 
-| FluidVoice pattern | Grain Recall implementation decision |
+| FluidVoice pattern | Grain Meet implementation decision |
 | --- | --- |
 | Separate microphone and application tracks. | Preserve source identity through recording, analysis, playback, and export. Never mix these tracks before speaker attribution. |
 | PCM-first recording in durable chunks. | Store recoverable chunks and a session manifest; process from saved audio. |
@@ -87,7 +85,7 @@ The diagram shows processing dependencies. Recording completes independently of 
 
 ### Code placement
 
-Use a Grain-owned `src-tauri/src/grain_recall/` module, split by responsibility only as implementation requires:
+Use a Grain-owned `src-tauri/src/grain_meet/` module, split by responsibility only as implementation requires:
 
 | Area | Responsibility |
 | --- | --- |
@@ -98,9 +96,9 @@ Use a Grain-owned `src-tauri/src/grain_recall/` module, split by responsibility 
 | `transcript.rs` | Pure evidence assembly, speaker assignment, transcript revisions and user edits. |
 | `export.rs` | Transcript and audio export using the canonical saved result. |
 
-Keep frontend views and state under a Grain-owned feature directory such as `src/features/recall/`, integrated through the existing navigation. These paths are proposed, not files that already exist. Reuse established components, settings, localization, model downloads, and command generation.
+Keep frontend views and state under a Grain-owned feature directory such as `src/features/meet/`, integrated through the existing navigation. These paths are proposed, not files that already exist. Reuse established components, settings, localization, model downloads, and command generation.
 
-Use existing `grain_engine.rs`, `grain_transcription.rs`, and `grain_transcription_manager.rs` for the narrow runtime bridge and ownership changes. Extract a shared primitive into an existing Grain crate only when both current dictation and Recall actually need it. Do not begin with a new crate, plugin platform, event bus, daemon, or general job framework.
+Use existing `grain_engine.rs`, `grain_transcription.rs`, and `grain_transcription_manager.rs` for the narrow runtime bridge and ownership changes. Extract a shared primitive into an existing Grain crate only when both current dictation and Meet actually need it. Do not begin with a new crate, plugin platform, event bus, daemon, or general job framework.
 
 ### Handy boundary
 
@@ -308,15 +306,15 @@ Implement the dependencies in order. Documentation and feasibility decisions sho
 | **3. Saved-audio final pipeline** | Two-pass processing, bounded Parakeet results, attribution, revision publication, transcript-only degradation. | Reference fixtures produce timed transcripts; no boundary-word loss; speaker continuity survives storage chunking; failures remain visible. |
 | **4. Microphone capture** | Real recording to the same store, source lifecycle and recovery. | A full-length room recording survives stop, restart, source loss and low-disk tests. |
 | **5. Windows online capture** | Selected-application audio plus microphone, synchronized maps and source selection. | Two-source fixtures, browser calls, device changes, source exits and echo cases pass on supported Windows builds. |
-| **6. Recall workspace** | List, recorder, detail, playback, rename/search/export/retry/delete; generated Tauri bindings. | Real-app journeys pass and the user reviews the concrete UI. No browser-only replica is used for acceptance. |
+| **6. Meet workspace** | List, recorder, detail, playback, rename/search/export/retry/delete; generated Tauri bindings. | Real-app journeys pass and the user reviews the concrete UI. No browser-only replica is used for acceptance. |
 | **7. Hardening and first release** | Resource audit, performance envelope, fault tests, packaging/model-download checks and documentation. | All mandatory gates below pass. Unsupported platforms/modes remain capability-gated. |
 | **8. Platform expansion** | macOS online capture, then validated Linux modes through the same interfaces. | The same core acceptance suite passes per enabled platform. |
 | **9. Optional experience parity** | Summaries. *(Live captions skipped by user decision, 2 November 2026.)* | Each meets its own memory, isolation, cleanup and correctness gates; neither weakens recording. |
 | **10. Model improvements** | Controlled Parakeet Ultra and Nemotron 3 comparisons. | Promote only on demonstrated value, compatibility and acceptable maintenance cost. |
 
-Steps 1–3 form the first end-to-end technical milestone: **saved audio to a reviewable speaker-attributed transcript**. Steps 4–7 produce the first usable Grain Recall release. Product UI sketches can inform the contracts early, but visual polish should not precede proof that the recording and inference path works.
+Steps 1–3 form the first end-to-end technical milestone: **saved audio to a reviewable speaker-attributed transcript**. Steps 4–7 produce the first usable Grain Meet release. Product UI sketches can inform the contracts early, but visual polish should not precede proof that the recording and inference path works.
 
-At kickoff, follow current branch policy. The inspected repository requires UI 2.0 overhaul work on `ui/grain-2.0`; do not silently mix an overhaul with the cleanup branch or push directly to `main`. Keep the Recall backend work isolated and resolve the actual UI integration base before landing its view changes. Preserve unrelated work. [G1]
+At kickoff, follow current branch policy. The inspected repository requires UI 2.0 overhaul work on `ui/grain-2.0`; do not silently mix an overhaul with the cleanup branch or push directly to `main`. Keep the Meet backend work isolated and resolve the actual UI integration base before landing its view changes. Preserve unrelated work. [G1]
 
 ## 11. Acceptance gates
 

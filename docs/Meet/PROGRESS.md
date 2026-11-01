@@ -1,4 +1,4 @@
-# Grain Recall implementation progress
+﻿# Grain Meet implementation progress
 
 ## Increment 1: structured bounded TDT evidence
 
@@ -74,8 +74,8 @@ Implemented on `feat/grain-meet`; Sortformer v2.1 kept as the first diarizer (us
   - Diarization against an ASR model.
   - Loading a model in a role it does not serve.
 - **Ownership.**
-  - `Use::Meeting(attempt)` is an exclusive inference lease. `cancel_grain_recalling` cancels only the current attempt.
-  - `with_grain_recalling_engine` releases the dictation model first and freezes the device policy. On every exit it unloads the last role, releases the lease, and restores readiness from the current settings.
+  - `Use::Meeting(attempt)` is an exclusive inference lease. `cancel_grain_meeting` cancels only the current attempt.
+  - `with_grain_meeting_engine` releases the dictation model first and freezes the device policy. On every exit it unloads the last role, releases the lease, and restores readiness from the current settings.
 - **Evidence validation.** Native speaker segments are checked: speaker ids must be in 1..=max and intervals well formed. Overshoot of up to one 80 ms diarizer frame past the audio end is clamped; anything else is rejected.
 - **Handy hooks:** supervisor 81 → 90, worker 7 → 8, transcription manager 90 → 91. Reviewed in `Upstream/UPSTREAM-DIVERGENCE.md`.
 - **Not yet wired:** these are not connected to any command. The saved-audio pipeline (Step 3) is their caller.
@@ -90,11 +90,11 @@ Implemented on `feat/grain-meet`; Sortformer v2.1 kept as the first diarizer (us
   - The 12 s fixture gives 2 speakers and 5 segments.
   - Cancelling a 10-minute run in flight kills the worker and rejects the old epoch. A fresh attempt respawns the **diarizer** role and completes.
   - A GPU fault injected during diarization (`abort@diarize`, GPU only) is retried in a CPU-only worker with the diarizer role.
-- Reproduce the role and fault tests with `cargo test --lib -- --ignored --test-threads=1 meeting_worker_tests`. Set `HANDY_TRANSCRIBE_WORKER_EXE`, `GRAIN_RECALL_TEST_{DIARIZER,ASR,AUDIO,BACKEND}`, and use the Windows runner config.
+- Reproduce the role and fault tests with `cargo test --lib -- --ignored --test-threads=1 meeting_worker_tests`. Set `HANDY_TRANSCRIBE_WORKER_EXE`, `GRAIN_MEET_TEST_{DIARIZER,ASR,AUDIO,BACKEND}`, and use the Windows runner config.
 
 ### Diarization resources (one track, repeated fixture audio)
 
-Measured with `scripts/grain_recall_diarize_probe.ps1`. The figures are the worker process's peak working set / peak private commit, which include the analysis buffer, native features and model weights. VRAM was not measured. Repeated audio stresses memory, not recognition quality.
+Measured with `scripts/grain_meet_diarize_probe.ps1`. The figures are the worker process's peak working set / peak private commit, which include the analysis buffer, native features and model weights. VRAM was not measured. Repeated audio stresses memory, not recognition quality.
 
 | Audio | CPU peak WS / private | CPU speed | Vulkan host peak WS / private | Vulkan speed |
 | ---: | ---: | ---: | ---: | ---: |
@@ -115,7 +115,7 @@ Host memory grows about **1.2 GiB per hour of one track** on both backends. Of t
 
 ## Increment 3: durable meeting storage (Step 1)
 
-Implemented in Grain-owned `src-tauri/src/grain_recall/` (`storage.rs`, `wav.rs`). Not yet called by capture (Step 4) or processing (Step 3).
+Implemented in Grain-owned `src-tauri/src/grain_meet/` (`storage.rs`, `wav.rs`). Not yet called by capture (Step 4) or processing (Step 3).
 
 - **Layout.** One directory per meeting, named by a UUID that is validated on every open (path syntax is refused). It holds a versioned `manifest.json` and per-track float32 WAV chunks at the native capture rate and channel count.
 - **FluidMeet values.** Chunks rotate every 60 s, and early when the format changes, when capture reports a discontinuity, or when capture resumes more than 0.5 s late.
@@ -143,7 +143,7 @@ Validation: 9 new unit tests pass.
 
 ## Increment 4: saved-audio pipeline (Step 3)
 
-Implemented in `src-tauri/src/grain_recall/` (`analysis.rs`, `transcript.rs`, `processing.rs`). `processing::process` turns a recorded session into a published transcript revision through a `MeetingEngine`. It is not yet exposed as a Tauri command.
+Implemented in `src-tauri/src/grain_meet/` (`analysis.rs`, `transcript.rs`, `processing.rs`). `processing::process` turns a recorded session into a published transcript revision through a `MeetingEngine`. It is not yet exposed as a Tauri command.
 
 - **Analysis audio.**
   - Each track becomes one disposable 16 kHz mono float32 file (Grain's `PcmJournal`, deleted when the attempt ends). The diarizer and bounded Parakeet both read this file. The worker's analysis contract changed from WAV to these raw float32 files.
@@ -182,9 +182,9 @@ Validation:
 - Reproduce with `cargo test --lib -- --ignored --test-threads=1 saved_meeting_becomes`, using the same environment as Increment 2.
 - Quality evidence is limited to the repeated public fixture; representative meetings are still needed.
 
-## Increment 5: microphone recording and Recall commands (Step 4)
+## Increment 5: microphone recording and Meet commands (Step 4)
 
-Implemented in `grain_recall/recorder.rs` and `grain_recall/commands.rs`, plus Grain-owned seams in `grain_audio.rs` and `grain_audio_manager.rs`.
+Implemented in `grain_meet/recorder.rs` and `grain_meet/commands.rs`, plus Grain-owned seams in `grain_audio.rs` and `grain_audio_manager.rs`.
 
 - **One microphone stream.** A meeting records through the shared dictation recorder: Handy's 16 kHz mono speech stream, without VAD, mute, cues or RAM retention. No second device stream is opened.
   - The recorder's `Idle` check makes dictation, Flow and Agent refuse while a meeting records, and a meeting refuses while they record. Meeting start takes the same `capture_start_guard` as dictation.
@@ -196,16 +196,16 @@ Implemented in `grain_recall/recorder.rs` and `grain_recall/commands.rs`, plus G
   - A restart can never revive a stopped meeting: `live` is held across start, stop and restart.
   - A write failure stops capture and keeps committed audio.
 - **Commands.**
-  - Recording: `recall_status`, `recall_start_recording` and `recall_stop_recording`.
-  - Listing: `recall_list` lists meetings newest first, and recovers sessions interrupted by a crash on first listing (it never restarts capture).
-  - Processing: `recall_process` runs in the background under the meeting inference lease, with stage reporting. `recall_cancel_processing` keeps the recording. `recall_transcript` returns the latest revision.
-  - `recall_delete` is refused while the meeting is recording or processing.
-  - Speaker model: `recall_diarizer_installed`, and `recall_download_diarizer`, which fetches the pinned Sortformer Q8_0 and verifies its size and SHA-256 before installing it.
+  - Recording: `meet_status`, `meet_start_recording` and `meet_stop_recording`.
+  - Listing: `meet_list` lists meetings newest first, and recovers sessions interrupted by a crash on first listing (it never restarts capture).
+  - Processing: `meet_process` runs in the background under the meeting inference lease, with stage reporting. `meet_cancel_processing` keeps the recording. `meet_transcript` returns the latest revision.
+  - `meet_delete` is refused while the meeting is recording or processing.
+  - Speaker model: `meet_diarizer_installed`, and `meet_download_diarizer`, which fetches the pinned Sortformer Q8_0 and verifies its size and SHA-256 before installing it.
   - Processing requires a reviewed Parakeet TDT v2/v3 model selected and downloaded.
-- **Events:** `recall-status-changed` (the full status) and `recall-diarizer-progress`. TypeScript bindings are regenerated.
+- **Events:** `meet-status-changed` (the full status) and `meet-diarizer-progress`. TypeScript bindings are regenerated.
 - **Handy hook:** `lib.rs` 1297 → 1310 (command and event registration only).
 
 Validation:
 - 56 unit tests pass. The recorder tests cover burst delivery placed by frame count, single-meeting refusal, routing ending at finish, source-loss restart with a `SourceLost` gap, an overflow gap, and a stall without a gap.
 - The real-model pipeline test still passes (Vulkan: 96 s in 2.7 s).
-- **Not yet run:** a recording from a physical microphone in the running app, including device unplug, sleep/resume and low disk. It needs the Recall UI (Step 6) or the agent harness, and remains a Step 4 acceptance item. Dictation refusal during a meeting is enforced but only logged; the visible reason belongs to the Recall UI.
+- **Not yet run:** a recording from a physical microphone in the running app, including device unplug, sleep/resume and low disk. It needs the Meet UI (Step 6) or the agent harness, and remains a Step 4 acceptance item. Dictation refusal during a meeting is enforced but only logged; the visible reason belongs to the Meet UI.

@@ -1,4 +1,4 @@
-//! Tauri commands and the status event for Grain Recall.
+//! Tauri commands and the status event for Grain Meet.
 //!
 //! One meeting may record and one attempt may process at a time. Recording
 //! uses the shared microphone, so dictation and a meeting refuse each other.
@@ -22,7 +22,7 @@ use crate::managers::model::ModelManager;
 use crate::managers::transcription::TranscriptionManager;
 
 /// The recorder owner id for meeting capture.
-const RECALL_BINDING: &str = "grain_recall";
+const MEET_BINDING: &str = "grain_meet";
 
 /// The first-release diarizer: Sortformer v2.1 Q8_0, pinned by revision and hash.
 const DIARIZER_FILE: &str = "diar_streaming_sortformer_4spk-v2.1-Q8_0.gguf";
@@ -47,20 +47,20 @@ pub struct ProcessingStatus {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Type)]
-pub struct RecallStatus {
+pub struct MeetStatus {
     pub recording: Option<RecordingStatus>,
     pub processing: Option<ProcessingStatus>,
     /// The last processing failure, until the next attempt starts.
     pub last_error: Option<String>,
 }
 
-/// Grain Recall state changed; the payload is the full current status.
+/// Grain Meet state changed; the payload is the full current status.
 #[derive(Clone, Debug, Serialize, Deserialize, Type, tauri_specta::Event)]
-pub struct RecallStatusChanged(pub RecallStatus);
+pub struct MeetStatusChanged(pub MeetStatus);
 
 /// Diarizer download progress in bytes.
 #[derive(Clone, Debug, Serialize, Deserialize, Type, tauri_specta::Event)]
-pub struct RecallDiarizerProgress {
+pub struct MeetDiarizerProgress {
     pub downloaded: u64,
     pub total: u64,
 }
@@ -116,12 +116,12 @@ fn diarizer_path(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(crate::portable::app_data_dir(app)
         .map_err(|e| e.to_string())?
         .join("models")
-        .join("grain-recall")
+        .join("grain-meet")
         .join(DIARIZER_FILE))
 }
 
-fn snapshot(state: &State) -> RecallStatus {
-    RecallStatus {
+fn snapshot(state: &State) -> MeetStatus {
+    MeetStatus {
         recording: state.active.as_ref().map(|active| {
             let progress = &active.recording.progress;
             RecordingStatus {
@@ -147,7 +147,7 @@ fn snapshot(state: &State) -> RecallStatus {
 
 fn emit_status(app: &AppHandle) {
     let status = snapshot(&state());
-    let _ = RecallStatusChanged(status).emit(app);
+    let _ = MeetStatusChanged(status).emit(app);
 }
 
 /// The shared microphone, seen from the meeting writer. `live` is held while
@@ -164,11 +164,11 @@ impl recorder::Source for MicSource {
             return Ok(());
         }
         let audio = self.app.state::<Arc<AudioRecordingManager>>();
-        if audio.grain_recording_owner_is(RECALL_BINDING) {
-            audio.stop_recording(RECALL_BINDING, audio.cancel_generation());
+        if audio.grain_recording_owner_is(MEET_BINDING) {
+            audio.stop_recording(MEET_BINDING, audio.cancel_generation());
         }
         audio
-            .try_start_meeting_recording(RECALL_BINDING)
+            .try_start_meeting_recording(MEET_BINDING)
             .map(|_| ())
             .map_err(|e| e.to_string())
     }
@@ -182,21 +182,21 @@ impl recorder::Source for MicSource {
 
 fn stop_microphone(app: &AppHandle) {
     let audio = app.state::<Arc<AudioRecordingManager>>();
-    if audio.grain_recording_owner_is(RECALL_BINDING) {
-        audio.stop_recording(RECALL_BINDING, audio.cancel_generation());
+    if audio.grain_recording_owner_is(MEET_BINDING) {
+        audio.stop_recording(MEET_BINDING, audio.cancel_generation());
     }
 }
 
 #[tauri::command]
 #[specta::specta]
-pub fn recall_status() -> RecallStatus {
+pub fn meet_status() -> MeetStatus {
     snapshot(&state())
 }
 
 /// List meetings, newest first, recovering any interrupted by a crash.
 #[tauri::command]
 #[specta::specta]
-pub fn recall_list(app: AppHandle) -> Result<Vec<MeetingSummary>, String> {
+pub fn meet_list(app: AppHandle) -> Result<Vec<MeetingSummary>, String> {
     let root = meetings_root(&app)?;
     let active = state()
         .active
@@ -240,7 +240,7 @@ pub fn recall_list(app: AppHandle) -> Result<Vec<MeetingSummary>, String> {
 /// Start recording the microphone into a new meeting. Returns its id.
 #[tauri::command]
 #[specta::specta]
-pub fn recall_start_recording(app: AppHandle, title: Option<String>) -> Result<String, String> {
+pub fn meet_start_recording(app: AppHandle, title: Option<String>) -> Result<String, String> {
     // Serialized with dictation startup, which checks the same recorder.
     let _start = crate::grain_actions::capture_start_guard();
     if crate::grain_actions::dictation_start_blocked(&app) {
@@ -273,7 +273,7 @@ pub fn recall_start_recording(app: AppHandle, title: Option<String>) -> Result<S
     let started = {
         let _live = live.lock().unwrap_or_else(|e| e.into_inner());
         app.state::<Arc<AudioRecordingManager>>()
-            .try_start_meeting_recording(RECALL_BINDING)
+            .try_start_meeting_recording(MEET_BINDING)
     };
     if let Err(error) = started {
         *live.lock().unwrap_or_else(|e| e.into_inner()) = false;
@@ -292,7 +292,7 @@ pub fn recall_start_recording(app: AppHandle, title: Option<String>) -> Result<S
 /// Stop the current recording and seal its session.
 #[tauri::command]
 #[specta::specta]
-pub fn recall_stop_recording(app: AppHandle) -> Result<MeetingSummary, String> {
+pub fn meet_stop_recording(app: AppHandle) -> Result<MeetingSummary, String> {
     let active = state().active.take().ok_or("No meeting is recording")?;
     {
         let mut live = active.live.lock().unwrap_or_else(|e| e.into_inner());
@@ -319,7 +319,7 @@ pub fn recall_stop_recording(app: AppHandle) -> Result<MeetingSummary, String> {
 /// Start processing a recorded meeting in the background.
 #[tauri::command]
 #[specta::specta]
-pub fn recall_process(app: AppHandle, session_id: String) -> Result<(), String> {
+pub fn meet_process(app: AppHandle, session_id: String) -> Result<(), String> {
     let root = meetings_root(&app)?;
     let dir = storage::session_dir(&root, &session_id)?;
     if storage::load_manifest(&dir)?.state != SessionState::Recorded {
@@ -361,7 +361,7 @@ pub fn recall_process(app: AppHandle, session_id: String) -> Result<(), String> 
     emit_status(&app);
     let thread_app = app.clone();
     let spawned = std::thread::Builder::new()
-        .name("grain-recall-process".into())
+        .name("grain-meet-process".into())
         .spawn(move || {
             let app = thread_app;
             let models = Models { diarizer, asr };
@@ -376,7 +376,7 @@ pub fn recall_process(app: AppHandle, session_id: String) -> Result<(), String> 
                 }
                 emit_status(&app);
             };
-            let result = manager.with_grain_recalling_engine(attempt_id, &cancelled, |engine| {
+            let result = manager.with_grain_meeting_engine(attempt_id, &cancelled, |engine| {
                 processing::process(&dir, engine, &models, &attempt_id.to_string(), &on_stage)
                     .map_err(anyhow::Error::msg)
             });
@@ -412,7 +412,7 @@ pub fn recall_process(app: AppHandle, session_id: String) -> Result<(), String> 
 /// Stop the current processing attempt. Its recording is kept.
 #[tauri::command]
 #[specta::specta]
-pub fn recall_cancel_processing(app: AppHandle) -> Result<(), String> {
+pub fn meet_cancel_processing(app: AppHandle) -> Result<(), String> {
     let attempt = {
         let guard = state();
         let attempt = guard
@@ -423,14 +423,14 @@ pub fn recall_cancel_processing(app: AppHandle) -> Result<(), String> {
         attempt.attempt_id
     };
     app.state::<Arc<TranscriptionManager>>()
-        .cancel_grain_recalling(attempt);
+        .cancel_grain_meeting(attempt);
     Ok(())
 }
 
 /// The newest published transcript of a meeting, if any.
 #[tauri::command]
 #[specta::specta]
-pub fn recall_transcript(
+pub fn meet_transcript(
     app: AppHandle,
     session_id: String,
 ) -> Result<Option<TranscriptRevision>, String> {
@@ -440,7 +440,7 @@ pub fn recall_transcript(
 /// Delete a meeting's audio and transcripts. Refused while it is in use.
 #[tauri::command]
 #[specta::specta]
-pub fn recall_delete(app: AppHandle, session_id: String) -> Result<(), String> {
+pub fn meet_delete(app: AppHandle, session_id: String) -> Result<(), String> {
     let dir = storage::session_dir(&meetings_root(&app)?, &session_id)?;
     {
         let guard = state();
@@ -473,7 +473,7 @@ pub fn recall_delete(app: AppHandle, session_id: String) -> Result<(), String> {
 /// Whether the pinned speaker model is installed.
 #[tauri::command]
 #[specta::specta]
-pub fn recall_diarizer_installed(app: AppHandle) -> Result<bool, String> {
+pub fn meet_diarizer_installed(app: AppHandle) -> Result<bool, String> {
     Ok(diarizer_path(&app)?.is_file())
 }
 
@@ -481,7 +481,7 @@ pub fn recall_diarizer_installed(app: AppHandle) -> Result<bool, String> {
 /// it is installed.
 #[tauri::command]
 #[specta::specta]
-pub async fn recall_download_diarizer(app: AppHandle) -> Result<(), String> {
+pub async fn meet_download_diarizer(app: AppHandle) -> Result<(), String> {
     use futures_util::StreamExt;
     use sha2::{Digest, Sha256};
     use std::io::Write;
@@ -529,7 +529,7 @@ pub async fn recall_download_diarizer(app: AppHandle) -> Result<(), String> {
             hasher.update(&chunk);
             file.write_all(&chunk)
                 .map_err(|e| format!("Could not save the speaker model: {e}"))?;
-            let _ = RecallDiarizerProgress {
+            let _ = MeetDiarizerProgress {
                 downloaded,
                 total: DIARIZER_BYTES,
             }
@@ -559,8 +559,8 @@ mod tests {
 
     #[test]
     fn event_names_are_stable() {
-        assert_eq!(RecallStatusChanged::NAME, "recall-status-changed");
-        assert_eq!(RecallDiarizerProgress::NAME, "recall-diarizer-progress");
+        assert_eq!(MeetStatusChanged::NAME, "meet-status-changed");
+        assert_eq!(MeetDiarizerProgress::NAME, "meet-diarizer-progress");
     }
 
     #[test]
