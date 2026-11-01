@@ -61,6 +61,13 @@ text parity. Frontend files were untouched; no new frontend acceptance is claime
 
 ## Step 0 remains open
 
+**2 November 2026 research update:** the transcribe.cpp pin, its Sortformer v2.1 support, and the Nemotron 3 options are documented in [DIARIZER-RESEARCH.md](DIARIZER-RESEARCH.md).
+
+- The pinned source passes the native Sortformer Rust tests on Windows CPU and Vulkan.
+- The Glimpse Nemotron 3 port runs on the same machine on CPU and Vulkan with identical fixture segments.
+- The proposal to start on Nemotron 3 through a native backport awaits user approval.
+- Work on the role-aware worker bridge started and is paused. It is uncommitted in the local worktree, and has not been compiled or tested.
+
 No Sortformer/Parakeet model execution, real-worker role switching, final word
 assembly, cancellation during native execution, accelerated fallback, recognition
 quality, or 10/60/120-minute process-tree memory measurements have passed yet.

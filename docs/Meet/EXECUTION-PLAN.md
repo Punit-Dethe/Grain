@@ -1,6 +1,7 @@
 # Grain Meet — execution plan
 
 **Status:** implementation started on `feat/grain-meet`; structured TDT evidence increment implemented. Step 0 model/worker feasibility and benchmarks remain incomplete. See [progress and validation](PROGRESS.md).
+**Diarizer revision (2 November 2026, proposed, awaiting user approval):** start on Nemotron 3 Diarization by backporting the Glimpse fork's diarization slice onto Grain's transcribe.cpp 0.4.0 fork, instead of starting on Sortformer v2.1. Evidence, options and accepted divergences are in [DIARIZER-RESEARCH.md](DIARIZER-RESEARCH.md). Text below marked *(revised)* reflects that proposal; until it is approved, Sortformer v2.1 remains the documented fallback.
 **Prepared:** 1 November 2026.
 **Reference:** FluidVoice’s FluidMeet workflow and implementation, adapted to Grain’s existing Rust/Tauri application and `transcribe.cpp 0.4` runtime.
 **Primary constraint:** preserve the Handy backend boundary and keep memory use, new dependencies, and long-term maintenance small.
@@ -9,9 +10,9 @@
 
 Build Grain Meet as a first-party Grain workspace for recording, reviewing, and transcribing meetings locally. Follow FluidVoice’s architecture: preserve the recording first, identify speakers in a dedicated pass, transcribe with Parakeet in a separate pass, then join the evidence into a speaker-attributed transcript. Optional live captions and summaries come after the reliable recording and final-transcript path.
 
-**Use Parakeet TDT v3 plus the standalone Sortformer v2.1 diarizer already supported by Grain’s pinned native runtime for the first implementation.** Run the models sequentially in the existing isolated worker. Keep the backend contract independent of the particular diarizer so Nemotron 3 can replace Sortformer later without changing capture, storage, the transcript format, or the UI.
+*(revised)* **Use Parakeet TDT v3 plus the standalone Nemotron 3 Diarization model (Streaming Sortformer v3, eight speaker slots), backported into Grain’s transcribe.cpp 0.4.0 fork from the validated Glimpse port.** It is the model family FluidMeet uses. Run the models sequentially in the existing isolated worker. Nemotron 3 uses the same native DIARIZE call and run extension as Sortformer v2.1. The backend contract stays independent of the particular diarizer, so a future upstream Nemotron 3 implementation can replace the backport without changing capture, storage, the transcript format, or the UI. [G2, N1, N6, N7, D1]
 
-This gives us FluidMeet’s product architecture, with an explicit initial difference: FluidVoice uses Nemotron 3, which offers eight speaker slots; the initial Grain backend has four slots per analyzed track. The four-slot limit is not a promise to identify an unlimited succession of people. Grain must describe this limit honestly and preserve uncertain attribution. Exact Nemotron 3 parity is a separate upgrade milestone, subject to a compatible native port and measurements. [F1, F2, N1, N4, N5]
+The eight-slot limit applies per analyzed track. It is not a promise to identify an unlimited succession of people: Grain must describe the limit honestly and preserve uncertain attribution. *(Superseded proposal: start on Sortformer v2.1, which has four slots and is already in the pinned runtime, and upgrade later. It remains a fallback if the backport fails its Step 0 gates.)* [F1, F2, N1, N4, N5]
 
 The bundled English Multitalker model is an optional comparison candidate. It is not the selected implementation path: the user has chosen the separate-diarizer-plus-Parakeet approach used by FluidVoice. Do not introduce a second inference runtime to get the first release working.
 
@@ -32,19 +33,19 @@ Live captions, automatic speaker matching between meetings, automatic meeting de
 
 Freeze the implementation baseline before coding. At inspection, Grain `main` is `1ae535976d2cf2deeabefd038f2ab2e038ff7ed9`; the extension-cleanup branch is `30a4e74d4b189b374b2664121de0def2e56e0b25`. The latter contains the inspected integration seams. Do not silently treat it as already merged or build against a different branch’s APIs. Recheck these refs at kickoff and branch from the agreed integration head. [G1]
 
-The native manifest pins `Punit-Dethe/transcribe.cpp` at `eeffcc3887018015d04d20e61d3698a33d790f24`, version `0.4.0`, contract revision `5`, patch identity `grain-flow-tdt`. The first implementation should keep that pin unless the feasibility work establishes a specific missing capability. [G2]
+The native manifest pins `Punit-Dethe/transcribe.cpp` at `eeffcc3887018015d04d20e61d3698a33d790f24`, version `0.4.0`, contract revision `5`, patch identity `grain-flow-tdt`. Verified on 2 November 2026: this revision is upstream tag v0.4.0 (`f1dcd15`) plus 5 Grain Flow commits, and Handy `main` uses the same crates.io 0.4.0 release. Upstream has since released 0.4.1; Grain stays on 0.4.0 with Handy. *(revised)* The one missing capability is Nemotron 3 Diarization, added as a second Grain patch on the same 0.4.0 base, with contract revision 6 and ABI ID 31 for the diarize-stream params. See [DIARIZER-RESEARCH.md](DIARIZER-RESEARCH.md). [G2, N6, D1]
 
 | Verified code fact | Consequence for this plan |
 | --- | --- |
 | Grain already has a subprocess inference supervisor, cancellation epochs, recovery, and CPU fallback. | Extend its existing lifecycle; avoid another worker service or scheduler. |
 | The worker currently stores an ASR `Session` and loads models through `.session()`. | Standalone diarization needs a role-aware load/dispatch bridge; exposing a model download alone is insufficient. |
-| Native Rust already exports `DiarizeSession`, `DiarizeOptions`, and speaker segments. | No new model port is needed for the initial Sortformer backend. |
+| Native Rust already exports `DiarizeSession`, `DiarizeOptions`, and speaker segments. | Verified on Windows CPU and Vulkan with pinned Sortformer v2.1 (native Rust tests, 2 November 2026). *(revised)* Nemotron 3 needs the backported arch; its offline call is the same API, so the Grain bridge is unchanged. |
 | Native Parakeet builds timed tokens, words, and segments. | Preserve structured output through the Grain adapter instead of reducing it to a string. |
 | Grain’s bounded TDT adapter retains timed tokens internally but its public final rendering returns text. | Add a structured-result path in Grain-owned code, with exact-text regression checks for existing Flow. |
 | The current Grain worker-query extension uses a 30-second call timeout. | Meeting tasks need operation- and duration-aware deadlines through the same supervisor. |
 | The PCM wire format builds complete frames and accepts sections up to 1 GiB. | That limit is not a safe memory budget. Avoid sending an entire meeting through this path. |
 | `PcmJournal` is temporary and deletes itself with its owner. | Reuse its range-reading principles, but create explicitly durable meeting storage. |
-| Native standalone diarization takes one complete PCM slice per run. | A streaming model architecture does not establish a public incremental API or bounded end-to-end memory. |
+| Native standalone diarization takes one complete PCM slice per run. | A streaming model architecture does not establish a public incremental API or bounded end-to-end memory. Glimpse documents about 1.5 GB peak per hour for whole-clip Nemotron 3 diarization. The backported push-audio API keeps only per-frame activity and is the bounded fallback if the offline path fails the memory gate. |
 
 These conclusions come from the pinned source, not from successful runtime measurements. [G3–G6, N1–N3]
 
@@ -164,7 +165,7 @@ The first backend executes this sequence:
 
 1. Validate committed audio and available model artifacts; acquire exclusive inference ownership.
 2. Prepare reusable 16 kHz mono analysis files and exact source-to-analysis maps, processing one track at a time.
-3. Load Sortformer using `DiarizeSession`; analyze tracks serially, with independent speaker state for each identity scope. Persist speaker evidence.
+3. Load the diarizer (*(revised)* Nemotron 3) using `DiarizeSession` at the offline `VeryHighLatency` preset; analyze tracks serially, with independent speaker state for each identity scope. Persist speaker evidence.
 4. Release the diarizer and drain native resources before proceeding.
 5. Load the existing Parakeet v3 model; transcribe each track with structured timing output and bounded audio windows where validated.
 6. Release Parakeet; join the saved evidence and atomically publish a transcript revision.
@@ -276,7 +277,7 @@ Implement the dependencies in order. Documentation and feasibility decisions sho
 
 | Step | Deliverable | Exit criterion |
 | --- | --- | --- |
-| **0. Feasibility and baseline** | Freeze refs, inspect actual target packaging, exercise Sortformer and timed v3 through the current runtime, measure memory, capture a minimal role-bridge design. | A reproducible evidence report identifies supported backends, timing quality, cancellation behavior, duration/RAM envelope, and exact required hooks. No unsupported assumptions remain on the critical path. |
+| **0. Feasibility and baseline** | Freeze refs, inspect actual target packaging, *(revised)* backport the Nemotron 3 diarization slice into the Grain native fork (contract 6) with native CI on Windows/Linux/macOS, exercise Nemotron 3 and timed v3 through the current runtime, measure memory, capture a minimal role-bridge design. | A reproducible evidence report identifies supported backends, CPU/Vulkan parity, timing quality, cancellation behavior, duration/RAM envelope, and exact required hooks. No unsupported assumptions remain on the critical path. If the backport fails these gates, fall back to Sortformer v2.1 and record why. |
 | **1. Canonical contracts and storage** | Grain-owned types, session manifest, durable chunk writer, time maps, recovery and saved-audio fixtures. | Crash/partial-file recovery works; every range is accounted for; no model dependency is needed to inspect saved sessions. |
 | **2. Worker role bridge** | DIARIZE loading, structured ASR calls, file-backed input, deadlines and meeting leases using the existing supervisor. | ASR → diarization → ASR, cancellation, wrong-role errors and CPU fallback pass through the real worker with one resident role. |
 | **3. Saved-audio final pipeline** | Two-pass processing, bounded Parakeet results, attribution, revision publication, transcript-only degradation. | Reference fixtures produce timed transcripts; no boundary-word loss; speaker continuity survives storage chunking; failures remain visible. |
@@ -286,7 +287,7 @@ Implement the dependencies in order. Documentation and feasibility decisions sho
 | **7. Hardening and first release** | Resource audit, performance envelope, fault tests, packaging/model-download checks and documentation. | All mandatory gates below pass. Unsupported platforms/modes remain capability-gated. |
 | **8. Platform expansion** | macOS online capture, then validated Linux modes through the same interfaces. | The same core acceptance suite passes per enabled platform. |
 | **9. Optional experience parity** | Provisional live captions and then summaries. | Each meets its own memory, isolation, cleanup and correctness gates; neither weakens recording. |
-| **10. Model improvements** | Controlled Parakeet Ultra and Nemotron 3 comparisons. | Promote only on demonstrated value, compatibility and acceptable maintenance cost. |
+| **10. Model improvements** | Controlled Parakeet Ultra comparison; *(revised)* replace the Nemotron 3 backport with upstream's implementation once Handy adopts a transcribe.cpp release that contains it. | Promote only on demonstrated value, compatibility and acceptable maintenance cost. |
 
 Steps 1–3 form the first end-to-end technical milestone: **saved audio to a reviewable speaker-attributed transcript**. Steps 4–7 produce the first usable Grain Meet release. Product UI sketches can inform the contracts early, but visual polish should not precede proof that the recording and inference path works.
 
@@ -325,13 +326,13 @@ Use existing harness infrastructure where it covers the new journey; add narrowl
 
 | Candidate | Why consider it | Promotion rule |
 | --- | --- | --- |
-| **Nemotron 3 diarization** | Exact model-family parity with FluidVoice, eight slots and stronger published diarization results. | Reassess the upstream port first. Adapt/port only the missing native capability against the current role API; verify CPU and shipped GPU backends, cancellation, long-form memory, artifact schema and ABI packaging. Benchmark the same saved meetings against Sortformer. |
+| **Upstream Nemotron 3** *(revised)* | Nemotron 3 is the baseline through the Glimpse backport. Upstream PR #175 is a separate implementation with an incompatible GGUF schema under the same arch key. | When Handy adopts a transcribe.cpp release containing Nemotron 3, replace the backport and its artifact in one change. Re-run the same saved-meeting DER and attribution benchmarks before promoting it. |
 | **Parakeet Ultra** | A compatible-family ASR candidate that may improve meeting recognition. | Treat as a final-ASR experiment. Verify actual model capabilities and timing/long-form behavior; do not silently add it to the Flow whitelist or assume native buffered-contract parity. Promote only after matched evaluation. |
 | **Cross-scope speaker matching** | Reconnect a person after a genuine reset. | Add only if observed continuity failures justify an embedding dependency and its memory/lifecycle cost. Keep manual aliases first. |
 | **Concurrent model execution** | Potentially lower completion time on large machines. | Consider only after sequential profiling shows a user-visible benefit within the RAM budget. It is not required for the first workflow. |
 | **Multitalker ASR** | An alternative for difficult English overlapping speech. | Optional research track with its own language/capability limits; do not replace the selected paired backend without comparative evidence. |
 
-At inspection, native Nemotron 3 PR #175 is open, unmerged and reports merge conflicts. Its existence is not a working integration in Grain’s pinned runtime. The first upgrade task is a compatibility review, not a model-URL change. [N4]
+At inspection, native Nemotron 3 PR #175 is open, unmerged and reports merge conflicts. Its existence is not a working integration in Grain’s pinned runtime. [N4] *(revised)* On 2 November 2026 it was still open, unmergeable, unchanged since 26 September and based on pre-0.4.0 main. Its documentation says it is pending tolerance review. The Glimpse fork's independent port is shipped, published with AMI DER 9.23%, and ran on this Windows machine on CPU and Vulkan. It is the source of the backport. [N6, N7, D1]
 
 Do not start with a FluidAudio/Core ML fork, a NeMo Python sidecar, a second C++ runtime, or automatic transcription/diarization model switching. Revisit an extra runtime only if a measured product requirement cannot reasonably be met by the existing one.
 
@@ -339,7 +340,7 @@ Do not start with a FluidAudio/Core ML fork, a NeMo Python sidecar, a second C++
 
 The next coding task should be **Step 0: a saved-audio feasibility slice**, followed by its evidence report. It should answer six concrete questions before UI work expands:
 
-1. Can the pinned Sortformer model run through a small role-aware extension of the real Grain worker?
+1. *(revised)* Can the backported Nemotron 3 model run through a small role-aware extension of the real Grain worker, with matching CPU and Vulkan results? (Sortformer v2.1 already passes the native Rust tests at the current pin.)
 2. Can Grain preserve Parakeet v3 word/token timing across its existing bounded decoding path without changing dictation text?
 3. What is peak memory for one track at 10, 60 and 120 minutes, including materialization and native features?
 4. Do cancellation, device fallback and model-role transitions release resources correctly?
@@ -372,5 +373,9 @@ All code links below identify the inspected revision. Repository state and avail
 - **N3 — Parakeet timing construction:** [capabilities.cpp](https://github.com/Punit-Dethe/transcribe.cpp/blob/eeffcc3887018015d04d20e61d3698a33d790f24/src/arch/parakeet/capabilities.cpp), [model.cpp](https://github.com/Punit-Dethe/transcribe.cpp/blob/eeffcc3887018015d04d20e61d3698a33d790f24/src/arch/parakeet/model.cpp).
 - **N4 — Native Nemotron 3 port:** [upstream PR #175](https://github.com/handy-computer/transcribe.cpp/pull/175), inspected head `e6672a8672913b47f1571c66c54bee789d028416`.
 - **N5 — NVIDIA model descriptions:** [Nemotron 3 Diarization](https://huggingface.co/nvidia/Nemotron-3-Diarization), [Sortformer v2.1](https://huggingface.co/nvidia/diar_streaming_sortformer_4spk-v2.1).
+- **N6 — Glimpse transcribe.cpp fork (MIT), Nemotron 3 port:** [glimpse-hq/transcribe.cpp@352b27f](https://github.com/glimpse-hq/transcribe.cpp/tree/352b27fb1b6c552dd261ad9de988b2a909046f0a). Diarization commits `a1e9f53`, `b893ed2`, `7cd197e` and `ba087c2`, slice taken at the 0.4.0 merge `4b3f456`. Validation is in its `docs/porting/families/nemotron3_diar.md`.
+- **N7 — Nemotron 3 GGUF artifact:** [Glimpse-Dictation/Nemotron-3-Diarization-gguf@273ebb0](https://huggingface.co/Glimpse-Dictation/Nemotron-3-Diarization-gguf/tree/273ebb0e65377f74576768257cd11f00c248c39d), `nemotron-3-diarization-Q8_0.gguf`, sha256 `877ff9e77e829e30158528cfaabf56188fca11d05349e09821b3033a97d31688`, OpenMDW-1.1.
+- **F9 — Glimpse application (AGPL-3.0, behavioral reference only):** [glimpse-hq/Glimpse@5b05ef1](https://github.com/glimpse-hq/Glimpse/tree/5b05ef1), [glimpse-speech 3.0.1 diarization.rs (MIT)](https://github.com/glimpse-hq/Glimpse-Speech/blob/42d601ea8850865a19b0c50b33847c81b5b416e6/src/diarization.rs).
+- **D1 — Grain diarizer research and local evidence (2 November 2026):** [DIARIZER-RESEARCH.md](DIARIZER-RESEARCH.md).
 - **P1 — Windows source capture:** [Microsoft application loopback sample](https://learn.microsoft.com/en-us/samples/microsoft/windows-classic-samples/applicationloopbackaudio-sample/), [process loopback parameters](https://learn.microsoft.com/en-us/windows/win32/api/audioclientactivationparams/ns-audioclientactivationparams-audioclient_process_loopback_params).
 - **P2 — macOS source capture:** [Apple ScreenCaptureKit](https://developer.apple.com/documentation/screencapturekit), [audio capture configuration](https://developer.apple.com/documentation/screencapturekit/scstreamconfiguration/capturesaudio).
