@@ -20,10 +20,11 @@ embedding, catalogue, API-admission and package-layout/archive follow-ups below.
 The final stamped real-app checkpoint passed 11 cases; both injected negative
 controls failed at the intended assertions, and all seven runs cleaned up.
 
-Remaining acceptance: user visual confirmation of Settings → Application and
-ordinary microphone/dictation start/cancel. These are not certified by the
-extension-focused automated checkpoint. M7 remains explicitly excluded by the
-user. Unrelated overlay/default-prompt/secrets migrations remain outside scope.
+Manual acceptance passed: on 1 November the user explicitly confirmed both
+Application settings without the embedding section and ordinary microphone/
+dictation start/cancel. This is the user's reported real-app acceptance, separate
+from the extension-focused automated checkpoint. M7 remains explicitly excluded
+by the user. Unrelated overlay/default-prompt/secrets migrations remain outside scope.
 Session 5 cleared workspace strict Clippy, frontend ESLint and the reviewed
 dependency ratchet. The maintained Windows Cargo runner now passes all 696
 backend tests and its four isolation/exit-code regressions. The repaired hosted
@@ -764,3 +765,9 @@ failing on the tracked Windows target path before the cancel request reached it;
 that attempt did not cancel any active process. All implementation/local checks
 are committed, with public-release controls and user visual/microphone acceptance
 still separate. Resume from this exact run rather than restarting accepted work.
+
+**Session 5 user acceptance, 1 November:** the user explicitly answered Both
+passed for Application settings without embedding and microphone/dictation
+start/cancel. This closes the carried manual acceptance for this cleanup. The
+Linux native CI job remains the final active verification; public-release custody,
+protected publication and separately deferred live checks are not implied passed.
