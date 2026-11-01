@@ -63,6 +63,7 @@ mod grain_engine;
 mod grain_llm_client;
 mod grain_locale; // [GRAIN] locale-tag resolution, owned in Rust (was duplicated in TS)
 mod grain_mcp; // [GRAIN] stateless hosted MCP development providers (2026-07-28 only)
+mod grain_meet; // [GRAIN] Grain Meet: durable meeting sessions and processing
 mod grain_onboarding; // [GRAIN] where a launching app lands: onboarding / permissions / app
 mod grain_overlay; // [GRAIN] presentation adapter; handy/overlay.rs owns native window lifecycle
 mod grain_post_process; // [GRAIN] multi-provider post-processing (rewrite of upstream's single-provider path)

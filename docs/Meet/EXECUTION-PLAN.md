@@ -1,4 +1,4 @@
-# Grain Meet — execution plan
+﻿# Grain Meet — execution plan
 
 **Status:** implementation started on `feat/grain-meet`; structured TDT evidence increment implemented. Step 0 model/worker feasibility and benchmarks remain incomplete. See [progress and validation](PROGRESS.md).
 **Diarizer decision (2 November 2026, user):** keep Sortformer v2.1 for the first implementation. The Nemotron 3 backport researched in [DIARIZER-RESEARCH.md](DIARIZER-RESEARCH.md) is deferred to a later upgrade. No native fork change is planned now.
@@ -27,7 +27,7 @@ The bundled English Multitalker model is an optional comparison candidate. It is
 - The ability to retain a recording and process it later when a model is unavailable.
 - A useful transcript even when speaker detection fails.
 
-Live captions, automatic speaker matching between meetings, automatic meeting detection, and AI summaries are subsequent milestones. Their absence does not prevent recording or a final transcript.
+Live captions are skipped for now (user decision, 2 November 2026). Automatic speaker matching between meetings, automatic meeting detection, and AI summaries are subsequent milestones. Their absence does not prevent recording or a final transcript.
 
 ## 2. The verified starting point
 
@@ -205,7 +205,7 @@ The native diarization entry point currently accepts a full PCM slice and intern
 
 Suggested initial engineering targets, to validate in the feasibility report, are: a 60-minute dual-track meeting on a representative 8 GiB machine; recording overhead that does not grow with duration; at most 200 MiB incremental host RAM for recording without captions; and at most 2 GiB incremental total process-tree RAM during final processing. Measure VRAM separately on discrete GPUs and avoid double-counting unified memory. These are proposed gates, not current performance claims. If a target fails, record the result and adjust the supported envelope explicitly rather than silently relaxing the test.
 
-**Measured and decided (2 November 2026).** Sortformer peaks at about 1.2 GiB of worker memory per hour of one track (see [PROGRESS.md](PROGRESS.md)). The user chose to adopt FluidMeet's numbers rather than run further experiments, and to tune later. Diarize each whole track in one run and process tracks one at a time. The ceiling is FluidMeet's 256 Mi samples. No further duration experiments are planned for the first release.
+**Measured and decided (2 November 2026).** Sortformer peaks at about 1.2 GiB of worker memory per hour of one track (see [PROGRESS.md](PROGRESS.md)). The user chose FluidMeet's approach, tuned later: diarize each whole track in one run and process tracks one at a time, with **a 90-minute cap per track** (`grain_engine::MAX_ANALYSIS_SAMPLES`, about 1.8 GiB peak). A longer track is kept, and its processing is refused with the limit stated. No further duration experiments are planned for the first release.
 
 ### FluidMeet tuning adopted for the first release
 
@@ -214,7 +214,7 @@ Read from FluidVoice `dd37664`. FluidMeet diarizes and transcribes after recordi
 | Value | FluidMeet source | Grain status |
 | --- | --- | --- |
 | Diarize each track's whole audio in one run, one speaker state per track; never piece-wise | `MeetingParakeetNemotronBackend.runAttempt`, phase A | Worker bridge (done) |
-| Retained-PCM ceiling: 256 Mi float32 samples (1 GiB; about 140 min across two 16 kHz tracks) | `MeetingEpochAudioMaterializer.conservativeSampleLimit` | `grain_engine::MAX_ANALYSIS_SAMPLES` (done). Step 3 applies it to the whole attempt across tracks, including separators. |
+| Retained-PCM ceiling: 256 Mi float32 samples (1 GiB; about 140 min across two 16 kHz tracks) | `MeetingEpochAudioMaterializer.conservativeSampleLimit` | **Grain deviation (user, 2 November 2026):** 90 minutes per track instead, from the measured memory |
 | Join a track's capture epochs with 0.5 s of silence before diarizing; map segments back per epoch | `epochJoinSilenceSeconds` | Step 3 |
 | Diarizer failure on an epoch: FluidMeet also skips its ASR | phase B | **Grain deviation, already in the plan:** still transcribe and mark speakers unavailable |
 | Pad ASR input shorter than 1 s with silence to 1 s; keep the original length for timing | `asrInput` | Step 3 |
@@ -282,6 +282,8 @@ If the app closes during recording, the next launch offers the recovered session
 
 ### Live preview milestone
 
+**Skipped (user decision, 2 November 2026):** no live preview or live transcription is built for now, even as a later step of this plan. The rest of this subsection is kept only as background.
+
 Only add captions after final processing passes the release gates. Feed a bounded tee after capture delivery; a slow preview may drop preview work but never block the authoritative recording. Show source-based labels and provisional text. Fully release preview inference before final processing.
 
 Reuse a validated existing streaming or bounded-batch capability. Never alternate two tracks through one persistent decoder state. On low-memory machines, leave previews off. If two independent contexts cannot fit the measured budget or the current worker contract, ship the recorded workflow first and document the capability gap. FluidVoice’s separate caption engines are an example of this isolation, not a mandate to add its Swift runtime. [F5]
@@ -307,7 +309,7 @@ Implement the dependencies in order. Documentation and feasibility decisions sho
 | **6. Meet workspace** | List, recorder, detail, playback, rename/search/export/retry/delete; generated Tauri bindings. | Real-app journeys pass and the user reviews the concrete UI. No browser-only replica is used for acceptance. |
 | **7. Hardening and first release** | Resource audit, performance envelope, fault tests, packaging/model-download checks and documentation. | All mandatory gates below pass. Unsupported platforms/modes remain capability-gated. |
 | **8. Platform expansion** | macOS online capture, then validated Linux modes through the same interfaces. | The same core acceptance suite passes per enabled platform. |
-| **9. Optional experience parity** | Provisional live captions and then summaries. | Each meets its own memory, isolation, cleanup and correctness gates; neither weakens recording. |
+| **9. Optional experience parity** | Summaries. *(Live captions skipped by user decision, 2 November 2026.)* | Each meets its own memory, isolation, cleanup and correctness gates; neither weakens recording. |
 | **10. Model improvements** | Controlled Parakeet Ultra and Nemotron 3 comparisons. | Promote only on demonstrated value, compatibility and acceptable maintenance cost. |
 
 Steps 1–3 form the first end-to-end technical milestone: **saved audio to a reviewable speaker-attributed transcript**. Steps 4–7 produce the first usable Grain Meet release. Product UI sketches can inform the contracts early, but visual polish should not precede proof that the recording and inference path works.

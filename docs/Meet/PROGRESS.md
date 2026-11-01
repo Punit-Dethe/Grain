@@ -67,7 +67,7 @@ Implemented on `feat/grain-meet`; Sortformer v2.1 kept as the first diarizer (us
   - The existing worker holds either Handy's ASR session or a Grain-owned Sortformer `DiarizeSession`, never both.
   - The role travels in `LoadSpec`, so crash, hang and GPU-loss recovery reloads the requested role.
   - Diarization reads a validated 16 kHz mono float32 analysis WAV by absolute path. Audio is never copied through the PCM frame. The worker re-checks the header, the declared length and that every sample is finite.
-  - The provisional ceiling is FluidMeet's 256 Mi samples per run (see the decision below). It bounds one allocation and is not a supported-duration promise.
+  - The processing cap is 90 minutes per track (see the decisions below). It bounds one allocation and is not a supported-duration promise.
 - **Deadlines.** Grain requests that carry audio use the supervisor's device-aware `run` deadline. The fixed 30 s floor still applies to queries.
 - **Wrong roles fail explicitly and are not retried:**
   - An ASR query against a diarizer.
@@ -109,6 +109,7 @@ Host memory grows about **1.2 GiB per hour of one track** on both backends. Of t
 - **Decision (2 November 2026, user): follow FluidMeet's numbers instead of running more experiments.** FluidMeet runs speaker detection after recording, not live; its live captions do no diarization. It diarizes each track's whole audio in **one run** ("one continuous state per track"), joining capture epochs with 0.5 s of silence. It never cuts a track into independently diarized pieces, because each piece would restart speaker numbering (speaker 1 in one piece is not speaker 1 in the next).
   - Grain now uses FluidMeet's ceiling: **256 Mi samples** (1 GiB of float32 PCM), about 280 minutes of one track or 140 minutes across two.
   - Like FluidMeet's, this bounds retained audio, not total memory. By the measurements above, a 140-minute track peaks near 3 GiB of host memory. Tune later if needed.
+  - **Superseded the same day:** the user then set a **90-minute per-track cap** in place of the 256 Mi-sample ceiling (see the plan's memory section).
   - The other FluidMeet numbers to adopt are listed in the plan's [FluidMeet tuning table](EXECUTION-PLAN.md#fluidmeet-tuning-adopted-for-the-first-release).
 - These are debug-build host measurements on one machine; a low-memory 8 GiB reference machine is still untested.
 
