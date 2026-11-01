@@ -1,5 +1,14 @@
 # Extension implementation: progress, changes and user testing
 
+**Nested overview surfaces, 2 November:** user replaces the inset-panel direction
+with one sidebar-colored outer hero and a nested top image flush to its top/left/
+right edges. Preserve the 400–490px / 50vh hero height; both outer and image use
+the same corner radius. The image casts a downward shadow over the outer surface;
+Start here sits below in that shared background with no separate panel border,
+overlap or black surround. Remove Just use voice and the image gradient. Existing
+shortcut controls, image switching and narrow reflow remain. This supersedes the
+prior panel/heading iterations. Keep changes on the UI branch for 0.0.11; no release.
+
 **Artwork lower edge, 2 November:** user requests the image end slightly below
 the top of Start here, with black beneath. Use two grid rows and a 12px panel
 overlap so the image ends 12px below the panel top without JS measurement. The
