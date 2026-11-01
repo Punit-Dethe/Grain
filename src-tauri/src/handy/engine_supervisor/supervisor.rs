@@ -112,6 +112,7 @@ pub struct LoadSpec {
     pub path: PathBuf,
     pub backend: Backend,
     pub device: DeviceSelector,
+    pub grain_role: crate::grain_engine::Role, // [GRAIN] Role a (re)load creates.
 }
 
 impl LoadSpec {
@@ -130,6 +131,7 @@ impl LoadSpec {
             path: self.path.clone(),
             backend: Backend::Cpu,
             device: DeviceSelector::Auto,
+            grain_role: self.grain_role, // [GRAIN]
         }
     }
 }
@@ -963,6 +965,7 @@ impl Owner {
         epoch: u64,
     ) -> Result<crate::grain_engine::Response, EngineError> {
         let cleanup = matches!(request, crate::grain_engine::Request::ResetFlow);
+        let samples = request.audio_samples(); // [GRAIN] Meeting work scales with its audio.
         let request = Request::Grain(request);
         let mut retried = false;
         loop {
@@ -974,7 +977,8 @@ impl Owner {
                 return Ok(crate::grain_engine::Response::Reset);
             }
             self.ensure_worker()?;
-            match self.call_work(&request, None, CALL_FLOOR, epoch) {
+            let deadline = samples.map_or(CALL_FLOOR, |n| self.deadlines().run(n)); // [GRAIN]
+            match self.call_work(&request, None, deadline, epoch) {
                 Ok(Response::Grain(response)) => return Ok(response),
                 Ok(other) => return Err(unexpected(&other).into()),
                 Err(failure) if failure.worker_lost() => {
@@ -1295,8 +1299,10 @@ impl Worker {
             backend: spec.backend,
             device: spec.device.clone(),
         };
+        let request = crate::grain_engine::load_request(spec).map_or(request, Request::Grain); // [GRAIN]
         match self.call(&request, None, LOAD_TIMEOUT)? {
-            Response::Loaded(info) => {
+            Response::Loaded(info)
+            | Response::Grain(crate::grain_engine::Response::Loaded(info)) => {
                 self.info = Some(info.clone());
                 Ok(info)
             }
@@ -1598,6 +1604,7 @@ mod tests {
             path: env_path("HANDY_TEST_MODEL"),
             backend: Backend::Auto,
             device: DeviceSelector::Auto,
+            grain_role: crate::grain_engine::Role::Asr, // [GRAIN]
         }
     }
 

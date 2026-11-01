@@ -93,7 +93,7 @@ Recorded so the later upgrade starts from evidence. The user kept Sortformer v2.
 | Option | Speakers / AMI DER | Native work | Handy constraint | Verdict |
 | --- | --- | --- | --- | --- |
 | A. Sortformer v2.1 now, Nemotron later | 4 / 15.99% | None | Unchanged | Works today, but we would do two diarizer integrations, tune assignment twice and migrate artifacts. Glimpse already retired this model. |
-| **B. Backport the Glimpse slice to 0.4.0 + Grain patch** | **8 / 9.23%** | About 2.7k lines, mostly additive new files | Unchanged: still upstream 0.4.0; Handy is unaffected | **Recommended.** Validated source; runs on our CPU and Vulkan; same API as Sortformer; includes the live API needed later. |
+| **B. Backport the Glimpse slice to 0.4.0 + Grain patch** | **8 / 9.23%** | About 2.7k lines, mostly additive new files | Unchanged: still upstream 0.4.0; Handy is unaffected | **Preferred upgrade route.** Validated source; runs on our CPU and Vulkan; same API as Sortformer; includes the live API needed later. |
 | C. Rebase PR #175 onto 0.4.0 | 8 / not published | Port a stale, conflicting branch; convert our own GGUF; finish its validation | Unchanged | The upstream maintainer's implementation, but unfinished and with no artifact. |
 | D. Switch Grain to the Glimpse fork | 8 / 9.23% | Replace the whole native base (0.4.1 + 589 commits) | Breaks it: base moves past Handy | Rejected. |
 | E. Upgrade to upstream 0.4.1 | No Nemotron 3 there | Rebase the Grain patch | Breaks it | Rejected, and it doesn't solve the problem. |
@@ -128,4 +128,4 @@ Why B over A: Nemotron 3 has 8 speaker slots instead of 4, its speaker confusion
   - The pinned Sortformer and Nemotron Q8_0 artifacts.
   - A copy of the `eeffcc3` source.
   - A detached worktree of the Glimpse fork at `352b27f`, containing the disposable `tests/grain_probe.rs`.
-- The role-aware worker bridge work started earlier on `feat/grain-meet` is **paused and uncommitted** in the `C:/Projects/Grain/grain-meet` worktree. It covers `grain_engine.rs`, `grain_transcription.rs` and small `[GRAIN]` hooks in `engine_supervisor/{worker,supervisor}.rs` and `managers/transcription.rs`. It is diarizer-agnostic (`DiarizeSession` and `max_speakers` come from the model), so it applies unchanged to Nemotron 3. It has not been compiled or tested yet.
+- The role-aware worker bridge work started earlier on `feat/grain-meet` is **paused and uncommitted** in the `C:/Projects/Grain/grain-meet` worktree. It covers `grain_engine.rs`, `grain_transcription.rs` and small `[GRAIN]` hooks in `engine_supervisor/{worker,supervisor}.rs` and `managers/transcription.rs`. It is diarizer-agnostic (`DiarizeSession` and `max_speakers` come from the model), so it applies unchanged to Nemotron 3. It is now implemented and validated with Sortformer v2.1; see PROGRESS.md, Increment 2.

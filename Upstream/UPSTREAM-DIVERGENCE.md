@@ -357,3 +357,22 @@ All v2 geometry, accumulation and model policy remain outside `handy/`; no
 new engine, thread, decoder policy or feature state is added to Handy code.
 The supervisor budget grows from 73 to 81 lines after reviewing this cleanup
 boundary. The native ABI and implementation live in the maintained source fork.
+
+## Grain Meet worker role bridge (2026-11-02)
+
+Meeting processing needs a standalone diarization model (Sortformer v2.1,
+native `DiarizeSession`) in the same isolated worker, one resident role at a
+time. Every native call, file validation and role policy lives in Grain-owned
+`grain_engine.rs`; ownership and cleanup live in `grain_transcription.rs` and
+`grain_transcription_manager.rs`. Reviewed Handy hooks:
+
+- `engine_supervisor/supervisor.rs` 81 → 90:
+  - `LoadSpec` gains `grain_role`, which its CPU copy preserves. This way crash, hang and GPU-loss recovery reloads the requested role instead of a stale dictation model.
+  - `Worker::load` sends Grain's role load for non-ASR specs and accepts its `Loaded` reply, so the existing `LoadedInfo`, deadlines and GPU fallback apply unchanged.
+  - Grain queries that carry audio get the existing device-aware `run` deadline instead of the fixed 30 s floor.
+  - The supervisor test helper fills the new field.
+- `engine_supervisor/worker.rs` 7 → 8: the Grain dispatch receives the ASR slot and a Grain role slot, so a role load frees the other role first. Handy's ASR `Load` clears the Grain slot.
+- `managers/transcription.rs` 90 → 91: the dictation `LoadSpec` names `Role::Asr`.
+
+No worker, thread, queue, retry policy or protocol variant is added. A
+diarizer reuses `Request::Grain`/`Response::Grain`.

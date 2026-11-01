@@ -615,6 +615,7 @@ impl TranscriptionManager {
                 path: model_path.clone(),
                 backend,
                 device,
+                grain_role: crate::grain_engine::Role::Asr, // [GRAIN]
             })
             .map_err(|e| {
                 let error_msg = format!("Failed to load model {}: {}", model_id, e);

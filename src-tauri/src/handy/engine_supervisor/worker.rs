@@ -80,17 +80,17 @@ pub fn run() -> i32 {
 
     let mut output = protocol_out;
     let mut session: Option<(Session, LoadedInfo)> = None;
+    let mut grain = crate::grain_engine::WorkerSlot::default(); // [GRAIN] Non-ASR role, never beside `session`.
 
     while let Ok(Incoming { request, pcm }) = requests.recv() {
         let finished_run = matches!(request, Request::Run { .. });
         let response = match request {
-            // [GRAIN] Query the same resident model; no second engine or handle.
-            Request::Grain(request) => match session.as_mut() {
-                Some((session, _)) => crate::grain_engine::dispatch(request, session)
+            // [GRAIN] Same worker and lifecycle; Grain owns non-ASR roles.
+            Request::Grain(request) => {
+                crate::grain_engine::dispatch(request, &mut session, &mut grain)
                     .map(Response::Grain)
-                    .unwrap_or_else(Response::Error),
-                None => not_loaded(),
-            },
+                    .unwrap_or_else(Response::Error)
+            }
             Request::Hello { list_devices } => match &init_error {
                 Some(message) => Response::Error(message.clone()),
                 None => Response::Hello {
@@ -110,6 +110,7 @@ pub fn run() -> i32 {
             } => {
                 // Free any previous model first to avoid holding two at once.
                 session = None;
+                grain.clear(); // [GRAIN]
                 match load(&path, backend, device) {
                     Ok(loaded) => {
                         let info = loaded.1.clone();

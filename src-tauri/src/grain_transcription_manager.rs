@@ -85,6 +85,72 @@ impl TranscriptionManager {
         self.grain.cancel_flow(session_id, || self.engine.cancel());
     }
 
+    /// Run one meeting processing attempt with exclusive ownership of the
+    /// shared engine. The dictation model is released first so only one model
+    /// is ever resident; `f` loads each role it needs through the
+    /// [`MeetingEngine`](crate::grain_transcription::MeetingEngine). On every
+    /// exit, success, error or panic, the last role is unloaded and the lease
+    /// released before normal readiness is restored from current settings.
+    #[allow(dead_code)] // Wired by the saved-audio pipeline (Step 3).
+    pub(crate) fn with_grain_meeting_engine<T>(
+        &self,
+        attempt_id: u64,
+        cancelled: &AtomicBool,
+        f: impl FnOnce(&crate::grain_transcription::MeetingEngine<'_>) -> Result<T>,
+    ) -> Result<T> {
+        {
+            let mut loading = self.is_loading.lock().unwrap();
+            while *loading {
+                if cancelled.load(Ordering::Acquire) {
+                    anyhow::bail!("Meeting processing cancelled");
+                }
+                loading = self
+                    .loading_condvar
+                    .wait_timeout(loading, Duration::from_millis(50))
+                    .unwrap()
+                    .0;
+            }
+        }
+        let lease = self
+            .grain
+            .claim(crate::grain_transcription::Use::Meeting(attempt_id))
+            .map_err(anyhow::Error::msg)?;
+        // Freeze the device policy exactly as a dictation load resolves it.
+        let settings = get_settings(&self.app_handle);
+        let accelerator = settings.transcribe_accelerator;
+        let (backend, device) =
+            match resolve_gpu_device(accelerator, settings.transcribe_gpu_device.as_deref()) {
+                Some(key) => (Backend::Auto, DeviceSelector::Key(key)),
+                None => (select_transcribe_backend(accelerator), DeviceSelector::Auto),
+            };
+        let restore = self.is_model_loaded() && self.get_current_model().is_some();
+        // Inside the lease: no dictation load can start until it is released.
+        self.begin_unload().wait();
+        let _cleanup = MeetingCleanup {
+            manager: self,
+            lease: Some(lease),
+            restore,
+        };
+        let engine = crate::grain_transcription::MeetingEngine {
+            engine: &self.engine,
+            mark: self.engine.cancel_mark(),
+            cancelled,
+            backend,
+            device,
+            role: std::cell::Cell::new(None),
+        };
+        f(&engine)
+    }
+
+    /// Stop the named attempt's in-flight native work. A stale id is a no-op.
+    #[allow(dead_code)] // Wired by the saved-audio pipeline (Step 3).
+    pub(crate) fn cancel_grain_meeting(&self, attempt_id: u64) {
+        self.grain
+            .cancel_owner(crate::grain_transcription::Use::Meeting(attempt_id), || {
+                self.engine.cancel()
+            });
+    }
+
     pub(crate) fn discard_recording_live(&self, samples: usize) -> Result<()> {
         self.finalize_live(samples).map(|_| ())
     }
@@ -93,5 +159,25 @@ impl TranscriptionManager {
         self.finalize_live(0).map(|outcome| {
             outcome.map(|outcome| finish_text(outcome, &get_settings(&self.app_handle)))
         })
+    }
+}
+
+/// Releases a meeting attempt's resources in order: the resident role first,
+/// then the lease, then the dictation model the user had loaded (re-read from
+/// current settings, so a model deselected meanwhile is never resurrected).
+#[allow(dead_code)] // Constructed only by the meeting engine scope above.
+struct MeetingCleanup<'a> {
+    manager: &'a TranscriptionManager,
+    lease: Option<crate::grain_transcription::Lease>,
+    restore: bool,
+}
+
+impl Drop for MeetingCleanup<'_> {
+    fn drop(&mut self) {
+        self.manager.engine.unload().wait();
+        drop(self.lease.take());
+        if self.restore {
+            self.manager.initiate_model_load();
+        }
     }
 }

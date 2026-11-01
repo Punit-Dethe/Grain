@@ -59,14 +59,63 @@ The tests inject inference outputs to exercise adapter logic. Compiling/linking
 the native library does not establish successful model execution or real-model
 text parity. Frontend files were untouched; no new frontend acceptance is claimed.
 
-## Step 0 remains open
+## Increment 2: worker role bridge (Sortformer v2.1)
+
+Implemented on `feat/grain-meet`; Sortformer v2.1 kept as the first diarizer (user decision, 2 November 2026).
+
+- **Worker roles.**
+  - The existing worker holds either Handy's ASR session or a Grain-owned Sortformer `DiarizeSession`, never both.
+  - The role travels in `LoadSpec`, so crash, hang and GPU-loss recovery reloads the requested role.
+  - Diarization reads a validated 16 kHz mono float32 analysis WAV by absolute path. Audio is never copied through the PCM frame. The worker re-checks the header, the declared length and that every sample is finite.
+  - The provisional ceiling is 2 hours per run. It bounds one allocation and is not a supported-duration promise.
+- **Deadlines.** Grain requests that carry audio use the supervisor's device-aware `run` deadline. The fixed 30 s floor still applies to queries.
+- **Wrong roles fail explicitly and are not retried:**
+  - An ASR query against a diarizer.
+  - Diarization against an ASR model.
+  - Loading a model in a role it does not serve.
+- **Ownership.**
+  - `Use::Meeting(attempt)` is an exclusive inference lease. `cancel_grain_meeting` cancels only the current attempt.
+  - `with_grain_meeting_engine` releases the dictation model first and freezes the device policy. On every exit it unloads the last role, releases the lease, and restores readiness from the current settings.
+- **Evidence validation.** Native speaker segments are checked: speaker ids must be in 1..=max and intervals well formed. Overshoot of up to one 80 ms diarizer frame past the audio end is clamped; anything else is rejected.
+- **Handy hooks:** supervisor 81 → 90, worker 7 → 8, transcription manager 90 → 91. Reviewed in `Upstream/UPSTREAM-DIVERGENCE.md`.
+- **Not yet wired:** these are not connected to any command. The saved-audio pipeline (Step 3) is their caller.
+
+### Validation (Windows 11, i5-14600KF, RTX 3080, Vulkan SDK 1.4.350)
+
+- 27 non-ignored engine, lease, supervisor-protocol and TDT unit tests pass through `scripts/run-rust-test.ps1`. This includes 8 new tests covering role mapping, analysis-WAV rules, worker dispatch without a model, serde round trips with NaN confidence, lease and stale cancellation, and segment validation.
+- Real-worker tests passed on **CPU and Vulkan**. They used the debug `handy.exe` worker, pinned Sortformer `diar_streaming_sortformer_4spk-v2.1-Q8_0.gguf` (sha256 `a5dacdc6…2442a9`) and Parakeet `parakeet-tdt-0.6b-v3-Q8_0.gguf` (sha256 `5859f779…2cc7`). The audio was the native `samples/sortformer-2spk-mix.wav` (provenance unrecorded upstream; engineering fixture only).
+  - The worker goes ASR → diarizer → ASR with one resident role.
+  - Wrong-role loads leave nothing loaded.
+  - Refused ASR work does not drop the diarizer.
+  - The 12 s fixture gives 2 speakers and 5 segments.
+  - Cancelling a 10-minute run in flight kills the worker and rejects the old epoch. A fresh attempt respawns the **diarizer** role and completes.
+  - A GPU fault injected during diarization (`abort@diarize`, GPU only) is retried in a CPU-only worker with the diarizer role.
+- Reproduce the role and fault tests with `cargo test --lib -- --ignored --test-threads=1 meeting_worker_tests`. Set `HANDY_TRANSCRIBE_WORKER_EXE`, `GRAIN_MEET_TEST_{DIARIZER,ASR,AUDIO,BACKEND}`, and use the Windows runner config.
+
+### Diarization resources (one track, repeated fixture audio)
+
+Measured with `scripts/grain_meet_diarize_probe.ps1`. The figures are the worker process's peak working set / peak private commit, which include the analysis buffer, native features and model weights. VRAM was not measured. Repeated audio stresses memory, not recognition quality.
+
+| Audio | CPU peak WS / private | CPU speed | Vulkan host peak WS / private | Vulkan speed |
+| ---: | ---: | ---: | ---: | ---: |
+| 10 min | 422 / 611 MiB | 29x | 254 / 964 MiB | 340x |
+| 60 min | 1,335 / 1,328 MiB | 29x | 1,244 / 1,365 MiB | 323x |
+| 120 min | 2,523 / 2,519 MiB | 27x | 2,432 / 2,555 MiB | 341x |
+
+Host memory grows about **1.2 GiB per hour of one track** on both backends. Of that, 230 MB per hour is the float32 analysis buffer; the rest is native whole-clip feature and activation memory.
+
+- A 60-minute track fits the plan's proposed 2 GiB incremental processing target.
+- A **120-minute track does not**. Tracks are processed one at a time, so a 60-minute dual-track meeting stays within the target.
+- **Decision required before Step 3:** either advertise a processing limit (about 90 minutes per track for 2 GiB), or diarize long tracks in bounded windows. Bounded windows need a native incremental API or a speaker-continuity strategy across windows, and the plan forbids resetting speaker state without one.
+- These are debug-build host measurements on one machine; a low-memory 8 GiB reference machine is still untested.
+
 
 **2 November 2026 research update:** the transcribe.cpp pin, its Sortformer v2.1 support, and the Nemotron 3 options are documented in [DIARIZER-RESEARCH.md](DIARIZER-RESEARCH.md).
 
 - The pinned source passes the native Sortformer Rust tests on Windows CPU and Vulkan.
 - The Glimpse Nemotron 3 port runs on the same machine on CPU and Vulkan with identical fixture segments.
 - The proposal to start on Nemotron 3 was declined for now: **the first implementation keeps Sortformer v2.1**. Nemotron 3 is a later upgrade.
-- Work on the role-aware worker bridge started and is paused. It is uncommitted in the local worktree, and has not been compiled or tested.
+- Work on the role-aware worker bridge is implemented and validated (Increment 2 above).
 
 No Sortformer/Parakeet model execution, real-worker role switching, final word
 assembly, cancellation during native execution, accelerated fallback, recognition
