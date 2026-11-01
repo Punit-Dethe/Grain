@@ -1,5 +1,12 @@
 # Extension implementation: progress, changes and user testing
 
+**Tighter opaque Start here panel, 2 November:** user requests smaller outer gaps
+and opacity instead of frost. Reduce the hero-panel inset from 20px to 8px; use
+solid dark/light fills, remove backdrop blur and the now-unnecessary glass text
+overrides. Keep the taller hero, rounded panel and internal padding. This
+supersedes the glass material direction; no release/version change. Build passes;
+real-app visual acceptance remains Pending on the same UI branch.
+
 **Glass layout restored with taller hero, 2 November:** user explicitly chooses
 the version immediately before the rollback (`0eddbe95`). Restore that exact
 frosted-panel/artwork/fade layout and change only the hero height from
