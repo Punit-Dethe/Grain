@@ -92,7 +92,7 @@ impl TranscriptionManager {
     /// exit, success, error or panic, the last role is unloaded and the lease
     /// released before normal readiness is restored from current settings.
     #[allow(dead_code)] // Wired by the saved-audio pipeline (Step 3).
-    pub(crate) fn with_grain_meeting_engine<T>(
+    pub(crate) fn with_grain_recalling_engine<T>(
         &self,
         attempt_id: u64,
         cancelled: &AtomicBool,
@@ -144,7 +144,7 @@ impl TranscriptionManager {
 
     /// Stop the named attempt's in-flight native work. A stale id is a no-op.
     #[allow(dead_code)] // Wired by the saved-audio pipeline (Step 3).
-    pub(crate) fn cancel_grain_meeting(&self, attempt_id: u64) {
+    pub(crate) fn cancel_grain_recalling(&self, attempt_id: u64) {
         self.grain
             .cancel_owner(crate::grain_transcription::Use::Meeting(attempt_id), || {
                 self.engine.cancel()

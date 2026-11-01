@@ -1,4 +1,4 @@
-# Grain Meet: transcribe.cpp version and diarizer decision
+# Grain Recall: transcribe.cpp version and diarizer decision
 
 **Prepared:** 2 November 2026, on `feat/grain-meet` at `9694fd44`.
 **Status:** research complete. **Decision (2 November 2026, user): keep Sortformer v2.1 for the first implementation.** The Nemotron 3 backport in section 5 is the recorded route for a later upgrade, not current work. No native change is made.
@@ -7,7 +7,7 @@
 
 1. Which transcribe.cpp source does Grain actually build?
 2. Does that source already expose a working Rust diarization interface for Sortformer v2.1?
-3. Should Grain Meet start on Nemotron 3 Diarization, the model FluidMeet uses, instead of Sortformer v2.1?
+3. Should Grain Recall start on Nemotron 3 Diarization, the model FluidMeet uses, instead of Sortformer v2.1?
 4. If so, which existing port do we reuse (the Glimpse fork or upstream PR #175), and how do we do it without moving off Handy's transcribe.cpp release?
 
 ## 2. Which transcribe.cpp Grain is on

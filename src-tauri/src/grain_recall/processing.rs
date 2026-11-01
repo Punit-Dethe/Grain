@@ -337,7 +337,7 @@ fn assemble_track(
 mod tests {
     use super::*;
     use crate::engine_supervisor::{DeviceSelector, EngineSupervisor};
-    use crate::grain_meet::storage::{Block, SessionWriter, TrackSource};
+    use crate::grain_recall::storage::{Block, SessionWriter, TrackSource};
     use std::sync::atomic::AtomicBool;
 
     fn env_path(name: &str) -> PathBuf {
@@ -347,7 +347,7 @@ mod tests {
     }
 
     fn fixture() -> Vec<f32> {
-        let mut reader = hound::WavReader::open(env_path("GRAIN_MEET_TEST_AUDIO")).unwrap();
+        let mut reader = hound::WavReader::open(env_path("GRAIN_RECALL_TEST_AUDIO")).unwrap();
         assert_eq!(
             (reader.spec().sample_rate, reader.spec().channels),
             (16_000, 1)
@@ -405,7 +405,7 @@ mod tests {
         let manifest = writer.finish().unwrap();
         assert!(manifest.tracks[0].chunks.len() >= 3);
 
-        let backend = match std::env::var("GRAIN_MEET_TEST_BACKEND")
+        let backend = match std::env::var("GRAIN_RECALL_TEST_BACKEND")
             .as_deref()
             .unwrap_or("cpu")
         {
@@ -426,7 +426,7 @@ mod tests {
         // A missing diarizer still yields text, published without speakers.
         let missing = Models {
             diarizer: dir.join("absent.gguf"),
-            asr: env_path("GRAIN_MEET_TEST_ASR"),
+            asr: env_path("GRAIN_RECALL_TEST_ASR"),
         };
         let degraded = process(&dir, &attempt, &missing, "attempt-1", &|_| {}).unwrap();
         assert_eq!(degraded.revision, 1);
@@ -444,8 +444,8 @@ mod tests {
         assert!(degraded.speakers.is_empty());
 
         let models = Models {
-            diarizer: env_path("GRAIN_MEET_TEST_DIARIZER"),
-            asr: env_path("GRAIN_MEET_TEST_ASR"),
+            diarizer: env_path("GRAIN_RECALL_TEST_DIARIZER"),
+            asr: env_path("GRAIN_RECALL_TEST_ASR"),
         };
         let stages = std::cell::RefCell::new(Vec::new());
         let started = std::time::Instant::now();

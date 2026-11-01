@@ -1857,15 +1857,15 @@ async isLaptop() : Promise<Result<boolean, string>> {
     else return { status: "error", error: e  as any };
 }
 },
-async meetStatus() : Promise<MeetStatus> {
-    return await TAURI_INVOKE("meet_status");
+async recallStatus() : Promise<RecallStatus> {
+    return await TAURI_INVOKE("recall_status");
 },
 /**
  * List meetings, newest first, recovering any interrupted by a crash.
  */
-async meetList() : Promise<Result<MeetingSummary[], string>> {
+async recallList() : Promise<Result<MeetingSummary[], string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("meet_list") };
+    return { status: "ok", data: await TAURI_INVOKE("recall_list") };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1874,9 +1874,9 @@ async meetList() : Promise<Result<MeetingSummary[], string>> {
 /**
  * Start recording the microphone into a new meeting. Returns its id.
  */
-async meetStartRecording(title: string | null) : Promise<Result<string, string>> {
+async recallStartRecording(title: string | null) : Promise<Result<string, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("meet_start_recording", { title }) };
+    return { status: "ok", data: await TAURI_INVOKE("recall_start_recording", { title }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1885,9 +1885,9 @@ async meetStartRecording(title: string | null) : Promise<Result<string, string>>
 /**
  * Stop the current recording and seal its session.
  */
-async meetStopRecording() : Promise<Result<MeetingSummary, string>> {
+async recallStopRecording() : Promise<Result<MeetingSummary, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("meet_stop_recording") };
+    return { status: "ok", data: await TAURI_INVOKE("recall_stop_recording") };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1896,9 +1896,9 @@ async meetStopRecording() : Promise<Result<MeetingSummary, string>> {
 /**
  * Start processing a recorded meeting in the background.
  */
-async meetProcess(sessionId: string) : Promise<Result<null, string>> {
+async recallProcess(sessionId: string) : Promise<Result<null, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("meet_process", { sessionId }) };
+    return { status: "ok", data: await TAURI_INVOKE("recall_process", { sessionId }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1907,9 +1907,9 @@ async meetProcess(sessionId: string) : Promise<Result<null, string>> {
 /**
  * Stop the current processing attempt. Its recording is kept.
  */
-async meetCancelProcessing() : Promise<Result<null, string>> {
+async recallCancelProcessing() : Promise<Result<null, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("meet_cancel_processing") };
+    return { status: "ok", data: await TAURI_INVOKE("recall_cancel_processing") };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1918,9 +1918,9 @@ async meetCancelProcessing() : Promise<Result<null, string>> {
 /**
  * The newest published transcript of a meeting, if any.
  */
-async meetTranscript(sessionId: string) : Promise<Result<TranscriptRevision | null, string>> {
+async recallTranscript(sessionId: string) : Promise<Result<TranscriptRevision | null, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("meet_transcript", { sessionId }) };
+    return { status: "ok", data: await TAURI_INVOKE("recall_transcript", { sessionId }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1929,9 +1929,9 @@ async meetTranscript(sessionId: string) : Promise<Result<TranscriptRevision | nu
 /**
  * Delete a meeting's audio and transcripts. Refused while it is in use.
  */
-async meetDelete(sessionId: string) : Promise<Result<null, string>> {
+async recallDelete(sessionId: string) : Promise<Result<null, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("meet_delete", { sessionId }) };
+    return { status: "ok", data: await TAURI_INVOKE("recall_delete", { sessionId }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1940,9 +1940,9 @@ async meetDelete(sessionId: string) : Promise<Result<null, string>> {
 /**
  * Whether the pinned speaker model is installed.
  */
-async meetDiarizerInstalled() : Promise<Result<boolean, string>> {
+async recallDiarizerInstalled() : Promise<Result<boolean, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("meet_diarizer_installed") };
+    return { status: "ok", data: await TAURI_INVOKE("recall_diarizer_installed") };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1952,9 +1952,9 @@ async meetDiarizerInstalled() : Promise<Result<boolean, string>> {
  * Download the pinned speaker model, verifying its size and SHA-256 before
  * it is installed.
  */
-async meetDownloadDiarizer() : Promise<Result<null, string>> {
+async recallDownloadDiarizer() : Promise<Result<null, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("meet_download_diarizer") };
+    return { status: "ok", data: await TAURI_INVOKE("recall_download_diarizer") };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1971,8 +1971,6 @@ grainOverlayContext: GrainOverlayContext,
 grainOverlayPosition: GrainOverlayPosition,
 hideOverlay: HideOverlay,
 historyUpdatePayload: HistoryUpdatePayload,
-meetDiarizerProgress: MeetDiarizerProgress,
-meetStatusChanged: MeetStatusChanged,
 micLevel: MicLevel,
 modelDeleted: ModelDeleted,
 modelDownloadCancelled: ModelDownloadCancelled,
@@ -1984,6 +1982,8 @@ modelStateChanged: ModelStateChanged,
 modelVerificationCompleted: ModelVerificationCompleted,
 modelVerificationStarted: ModelVerificationStarted,
 pasteError: PasteError,
+recallDiarizerProgress: RecallDiarizerProgress,
+recallStatusChanged: RecallStatusChanged,
 recordingError: RecordingError,
 recordingReady: RecordingReady,
 showOverlay: ShowOverlay,
@@ -1998,8 +1998,6 @@ grainOverlayContext: "grain-overlay-context",
 grainOverlayPosition: "grain-overlay-position",
 hideOverlay: "hide-overlay",
 historyUpdatePayload: "history-update-payload",
-meetDiarizerProgress: "meet-diarizer-progress",
-meetStatusChanged: "meet-status-changed",
 micLevel: "mic-level",
 modelDeleted: "model-deleted",
 modelDownloadCancelled: "model-download-cancelled",
@@ -2011,6 +2009,8 @@ modelStateChanged: "model-state-changed",
 modelVerificationCompleted: "model-verification-completed",
 modelVerificationStarted: "model-verification-started",
 pasteError: "paste-error",
+recallDiarizerProgress: "recall-diarizer-progress",
+recallStatusChanged: "recall-status-changed",
 recordingError: "recording-error",
 recordingReady: "recording-ready",
 showOverlay: "show-overlay",
@@ -2510,19 +2510,6 @@ state: string }
  * account tokens; this never supplies a client secret or callback override.
  */
 export type McpPublicOAuthClient = { clientId: string; issuer: string }
-/**
- * Diarizer download progress in bytes.
- */
-export type MeetDiarizerProgress = { downloaded: number; total: number }
-export type MeetStatus = { recording: RecordingStatus | null; processing: ProcessingStatus | null;
-/**
- * The last processing failure, until the next attempt starts.
- */
-last_error: string | null }
-/**
- * Grain Meet state changed; the payload is the full current status.
- */
-export type MeetStatusChanged = MeetStatus
 export type MeetingSummary = { id: string; title: string; created_unix_ms: number; state: SessionState; duration_ms: number; transcript_revision: number | null }
 export type MicLevel = number[]
 /**
@@ -2664,6 +2651,19 @@ enabled?: boolean }
  */
 export type PpPoolView = { fallback_enabled: boolean; providers: PostProcessProvider[]; selected_provider_id: string; configured_provider_ids: string[]; providers_with_keys: string[]; models: Partial<{ [key in string]: string }> }
 export type ProcessingStatus = { session_id: string; stage: Stage }
+/**
+ * Diarizer download progress in bytes.
+ */
+export type RecallDiarizerProgress = { downloaded: number; total: number }
+export type RecallStatus = { recording: RecordingStatus | null; processing: ProcessingStatus | null;
+/**
+ * The last processing failure, until the next attempt starts.
+ */
+last_error: string | null }
+/**
+ * Grain Recall state changed; the payload is the full current status.
+ */
+export type RecallStatusChanged = RecallStatus
 /**
  * A recording could not start or could not finish. Mirrors
  * `actions::RecordingErrorEvent`.

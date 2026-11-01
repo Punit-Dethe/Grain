@@ -117,7 +117,7 @@ impl Recording {
         }
         let thread_progress = Arc::clone(&progress);
         let spawned = std::thread::Builder::new()
-            .name("grain-meet-writer".into())
+            .name("grain-recall-writer".into())
             .spawn(move || {
                 write_loop(
                     writer,

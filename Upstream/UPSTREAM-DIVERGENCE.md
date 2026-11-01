@@ -358,7 +358,7 @@ new engine, thread, decoder policy or feature state is added to Handy code.
 The supervisor budget grows from 73 to 81 lines after reviewing this cleanup
 boundary. The native ABI and implementation live in the maintained source fork.
 
-## Grain Meet worker role bridge (2026-11-02)
+## Grain Recall worker role bridge (2026-11-02)
 
 Meeting processing needs a standalone diarization model (Sortformer v2.1,
 native `DiarizeSession`) in the same isolated worker, one resident role at a
@@ -377,6 +377,6 @@ time. Every native call, file validation and role policy lives in Grain-owned
 No worker, thread, queue, retry policy or protocol variant is added. A
 diarizer reuses `Request::Grain`/`Response::Grain`.
 
-- `lib.rs` 1296 → 1297 (2026-11-02): one `mod grain_meet;` declaration for the Grain-owned meeting module, like every other `grain_*` module. No logic.
-- `Cargo.toml` 152 → 153 (2026-11-02): direct `rubato = "=5.0.0"` dependency for Grain Meet analysis resampling. The lockfile already carried this exact version through `handy-recorder`, whose resampler is private; no new crate is downloaded.
-- `lib.rs` 1297 → 1310 (2026-11-02): registers the ten Grain Meet commands and its two typed events in the existing `collect_commands!`/`collect_events!` lists, with one comment line. All logic is in `grain_meet/commands.rs`. The meeting microphone path adds no Handy hook: `grain_audio.rs` routes frames and `grain_audio_manager.rs` adds `try_start_meeting_recording` through the existing `[GRAIN]` include seams.
+- `lib.rs` 1296 → 1297 (2026-11-02): one `mod grain_recall;` declaration for the Grain-owned meeting module, like every other `grain_*` module. No logic.
+- `Cargo.toml` 152 → 153 (2026-11-02): direct `rubato = "=5.0.0"` dependency for Grain Recall analysis resampling. The lockfile already carried this exact version through `handy-recorder`, whose resampler is private; no new crate is downloaded.
+- `lib.rs` 1297 → 1310 (2026-11-02): registers the ten Grain Recall commands and its two typed events in the existing `collect_commands!`/`collect_events!` lists, with one comment line. All logic is in `grain_recall/commands.rs`. The meeting microphone path adds no Handy hook: `grain_audio.rs` routes frames and `grain_audio_manager.rs` adds `try_start_meeting_recording` through the existing `[GRAIN]` include seams.

@@ -31,7 +31,7 @@ impl AudioRecordingManager {
     }
 
     /// Continuous meeting capture on the shared recorder: frames go to Grain
-    /// Meet's writer, nothing is retained in RAM, and no VAD runs. The same
+    /// Recall's writer, nothing is retained in RAM, and no VAD runs. The same
     /// `Idle` check as dictation arbitrates the microphone.
     pub fn try_start_meeting_recording(
         &self,

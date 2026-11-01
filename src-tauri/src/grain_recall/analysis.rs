@@ -366,7 +366,7 @@ impl MonoResampler {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::grain_meet::storage::{Block, Manifest, SessionWriter, TrackSource};
+    use crate::grain_recall::storage::{Block, Manifest, SessionWriter, TrackSource};
 
     fn sine(rate: u32, frames: usize, hz: f64) -> Vec<f32> {
         (0..frames)

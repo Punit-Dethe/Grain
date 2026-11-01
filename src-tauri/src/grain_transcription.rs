@@ -464,7 +464,7 @@ mod meeting_worker_tests {
     }
 
     fn backend() -> transcribe_cpp::Backend {
-        match std::env::var("GRAIN_MEET_TEST_BACKEND")
+        match std::env::var("GRAIN_RECALL_TEST_BACKEND")
             .as_deref()
             .unwrap_or("cpu")
         {
@@ -476,7 +476,7 @@ mod meeting_worker_tests {
 
     /// Convert the fixture to the analysis contract, repeated `copies` times.
     fn analysis_wav(dir: &Path, name: &str, copies: usize) -> (PathBuf, usize) {
-        let mut reader = hound::WavReader::open(env_path("GRAIN_MEET_TEST_AUDIO")).unwrap();
+        let mut reader = hound::WavReader::open(env_path("GRAIN_RECALL_TEST_AUDIO")).unwrap();
         let spec = reader.spec();
         assert_eq!((spec.sample_rate, spec.channels), (16_000, 1));
         let pcm: Vec<f32> = match spec.sample_format {
@@ -525,8 +525,8 @@ mod meeting_worker_tests {
     #[test]
     #[ignore = "requires Grain worker executable, Sortformer, Parakeet and WAV fixtures"]
     fn worker_switches_roles_rejects_wrong_roles_and_recovers_after_cancel() {
-        let diarizer = env_path("GRAIN_MEET_TEST_DIARIZER");
-        let asr_model = env_path("GRAIN_MEET_TEST_ASR");
+        let diarizer = env_path("GRAIN_RECALL_TEST_DIARIZER");
+        let asr_model = env_path("GRAIN_RECALL_TEST_ASR");
         let dir = tempfile::tempdir().unwrap();
         let (fixture, fixture_samples) = analysis_wav(dir.path(), "fixture.wav", 1);
         let engine = EngineSupervisor::new(true);
@@ -632,7 +632,7 @@ mod meeting_worker_tests {
     #[ignore = "requires a GPU, the debug Grain worker and Sortformer fixtures"]
     fn gpu_loss_during_diarization_retries_the_diarizer_role_on_cpu() {
         if backend() != transcribe_cpp::Backend::Vulkan {
-            eprintln!("skip: set GRAIN_MEET_TEST_BACKEND=vulkan");
+            eprintln!("skip: set GRAIN_RECALL_TEST_BACKEND=vulkan");
             return;
         }
         let dir = tempfile::tempdir().unwrap();
@@ -642,7 +642,7 @@ mod meeting_worker_tests {
         let engine = EngineSupervisor::new(true);
         let cancelled = AtomicBool::new(false);
         let attempt = meeting(&engine, &cancelled);
-        let loaded = attempt.load(&env_path("GRAIN_MEET_TEST_DIARIZER"), Role::Diarize);
+        let loaded = attempt.load(&env_path("GRAIN_RECALL_TEST_DIARIZER"), Role::Diarize);
         let result = loaded.and_then(|info| {
             assert!(info.on_gpu);
             attempt.diarize(&fixture, offline())
@@ -660,13 +660,13 @@ mod meeting_worker_tests {
         engine.unload().wait();
     }
 
-    /// Resource probe: diarize `GRAIN_MEET_TEST_MINUTES` of repeated fixture
+    /// Resource probe: diarize `GRAIN_RECALL_TEST_MINUTES` of repeated fixture
     /// audio (default 10). Repetition stresses memory, not recognition quality.
     /// Measure the worker's peak memory externally while this runs.
     #[test]
     #[ignore = "requires Grain worker executable, Sortformer and WAV fixtures"]
     fn worker_diarizes_long_analysis_audio() {
-        let minutes: f64 = std::env::var("GRAIN_MEET_TEST_MINUTES")
+        let minutes: f64 = std::env::var("GRAIN_RECALL_TEST_MINUTES")
             .map(|m| m.parse().unwrap())
             .unwrap_or(10.0);
         let dir = tempfile::tempdir().unwrap();
@@ -677,7 +677,7 @@ mod meeting_worker_tests {
         let cancelled = AtomicBool::new(false);
         let attempt = meeting(&engine, &cancelled);
         let info = attempt
-            .load(&env_path("GRAIN_MEET_TEST_DIARIZER"), Role::Diarize)
+            .load(&env_path("GRAIN_RECALL_TEST_DIARIZER"), Role::Diarize)
             .unwrap();
         let started = Instant::now();
         let result = attempt.diarize(&long, offline()).unwrap();

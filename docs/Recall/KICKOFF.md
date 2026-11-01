@@ -1,4 +1,4 @@
-# Grain Meet kickoff
+# Grain Recall kickoff
 
 ## Branch and baseline
 
@@ -43,11 +43,11 @@ The cloud machine has Bun and Rust for frontend and headless tests. Desktop
 validation remains blocked by missing Linux GTK/WebKit/ALSA development libraries,
 unavailable administrator access, and no desktop display session. Results from
 onboarding on the previous checkout do not validate this cleanup baseline or
-Grain Meet. Native/model execution and hardware acceptance are unrun.
+Grain Recall. Native/model execution and hardware acceptance are unrun.
 
 Resolve those prerequisites and use licensed saved-audio fixtures for Step 0.
 Record actual measurements and the exact Handy hook inventory before advancing
 to production storage, capture, or UI. Preserve the backend boundary and use the
 existing inference supervisor. UI integration must follow the user's requested
-Meet branch and applicable repository guidance without mixing in an unrelated
+Recall branch and applicable repository guidance without mixing in an unrelated
 UI overhaul.

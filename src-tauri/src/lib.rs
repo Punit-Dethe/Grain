@@ -63,7 +63,7 @@ mod grain_engine;
 mod grain_llm_client;
 mod grain_locale; // [GRAIN] locale-tag resolution, owned in Rust (was duplicated in TS)
 mod grain_mcp; // [GRAIN] stateless hosted MCP development providers (2026-07-28 only)
-mod grain_meet; // [GRAIN] Grain Meet: durable meeting sessions and processing
+mod grain_recall; // [GRAIN] Grain Recall: durable meeting sessions and processing
 mod grain_onboarding; // [GRAIN] where a launching app lands: onboarding / permissions / app
 mod grain_overlay; // [GRAIN] presentation adapter; handy/overlay.rs owns native window lifecycle
 mod grain_post_process; // [GRAIN] multi-provider post-processing (rewrite of upstream's single-provider path)
@@ -1557,17 +1557,17 @@ fn command_bindings() -> Builder<tauri::Wry> {
             commands::history::update_history_limit,
             commands::history::update_recording_retention_period,
             helpers::clamshell::is_laptop,
-            // [GRAIN] Grain Meet.
-            grain_meet::commands::meet_status,
-            grain_meet::commands::meet_list,
-            grain_meet::commands::meet_start_recording,
-            grain_meet::commands::meet_stop_recording,
-            grain_meet::commands::meet_process,
-            grain_meet::commands::meet_cancel_processing,
-            grain_meet::commands::meet_transcript,
-            grain_meet::commands::meet_delete,
-            grain_meet::commands::meet_diarizer_installed,
-            grain_meet::commands::meet_download_diarizer,
+            // [GRAIN] Grain Recall.
+            grain_recall::commands::recall_status,
+            grain_recall::commands::recall_list,
+            grain_recall::commands::recall_start_recording,
+            grain_recall::commands::recall_stop_recording,
+            grain_recall::commands::recall_process,
+            grain_recall::commands::recall_cancel_processing,
+            grain_recall::commands::recall_transcript,
+            grain_recall::commands::recall_delete,
+            grain_recall::commands::recall_diarizer_installed,
+            grain_recall::commands::recall_download_diarizer,
         ])
         .events(collect_events![
             grain_update::UpdateAvailable,
@@ -1599,8 +1599,8 @@ fn command_bindings() -> Builder<tauri::Wry> {
             grain_events::RecordingError,
             grain_events::PasteError,
             grain_theme::ThemeChanged,
-            grain_meet::commands::MeetStatusChanged, // [GRAIN]
-            grain_meet::commands::MeetDiarizerProgress, // [GRAIN]
+            grain_recall::commands::RecallStatusChanged, // [GRAIN]
+            grain_recall::commands::RecallDiarizerProgress, // [GRAIN]
         ])
 }
 
