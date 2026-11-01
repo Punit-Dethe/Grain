@@ -1339,7 +1339,7 @@ html[data-theme="dark"] .grain-root .toggle.on span {
   isolation: isolate;
   display: grid;
   grid-template-rows: minmax(132px, 1fr) auto;
-  min-height: clamp(420px, 52vh, 510px);
+  min-height: clamp(400px, 50vh, 490px);
   overflow: hidden;
   border-radius: var(--hero-radius);
   background: #000;
