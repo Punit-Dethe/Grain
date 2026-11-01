@@ -1,9 +1,11 @@
-﻿# Grain Meet — execution plan
+# Grain Meet — execution plan
 
 **Status:** implementation started on `feat/grain-meet`; structured TDT evidence increment implemented. Step 0 model/worker feasibility and benchmarks remain incomplete. See [progress and validation](PROGRESS.md).
 **Diarizer decision (2 November 2026, user):** keep Sortformer v2.1 for the first implementation. The Nemotron 3 backport researched in [DIARIZER-RESEARCH.md](DIARIZER-RESEARCH.md) is deferred to a later upgrade. No native fork change is planned now.
 **Prepared:** 1 November 2026.
 **Reference:** FluidVoice’s FluidMeet workflow and implementation, adapted to Grain’s existing Rust/Tauri application and `transcribe.cpp 0.4` runtime.
+**User-facing name (2 November 2026, user):** the UI calls the feature **Recall** for now; the name is not final. It is a display string only, defined once in the frontend's localized strings, so it can change without touching anything else. Internally the feature stays **Meet**: the `grain_meet` module, `meet_*` commands, `meet-*` events, `docs/Meet` and the `feat/grain-meet` branch.
+**UI base (2 November 2026, user):** the UI is built on `feat/grain-meet` against the current interface, not on `ui/grain-2.0`.
 **Primary constraint:** preserve the Handy backend boundary and keep memory use, new dependencies, and long-term maintenance small.
 
 ## 1. The decision
