@@ -11,8 +11,8 @@
 
 The parent and native pin match the uploaded [execution plan](EXECUTION-PLAN.md).
 The uploaded plan is preserved with trailing whitespace normalized. This branch was created directly from
-the cleanup commit. No meeting application code or model benchmarks have been
-implemented in this kickoff.
+the cleanup commit. At kickoff, no meeting application code or model benchmarks had been
+implemented. See [progress](PROGRESS.md) for subsequent implementation.
 
 ## Initial review
 

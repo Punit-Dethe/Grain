@@ -1,6 +1,6 @@
 # Grain Meet — execution plan
 
-**Status:** proposed implementation plan; source research complete, implementation and model benchmarks not started.
+**Status:** implementation started on `feat/grain-meet`; structured TDT evidence increment implemented. Step 0 model/worker feasibility and benchmarks remain incomplete. See [progress and validation](PROGRESS.md).
 **Prepared:** 1 November 2026.
 **Reference:** FluidVoice’s FluidMeet workflow and implementation, adapted to Grain’s existing Rust/Tauri application and `transcribe.cpp 0.4` runtime.
 **Primary constraint:** preserve the Handy backend boundary and keep memory use, new dependencies, and long-term maintenance small.
