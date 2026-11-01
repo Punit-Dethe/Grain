@@ -715,3 +715,23 @@ model decision remain as listed above. Do not revisit M7.
 - Documented a Cargo array runner configuration in BUILD.md, verified verbatim
   against all 696 real backend tests / 23 ignored. No local C:/t helper is needed;
   no staging directory remained. This fixes test infrastructure, not product UI.
+
+**1 November 2026, session 5 continued: real CI and reviewed ratchet (P3).**
+
+- Replaced the broken CI source-copy/transcribe-rs deletion step with the real
+  locked backend build/tests and the maintained native build's Vulkan SDK setup.
+  Added current workspace strict Clippy/tests, frontend lint/tests/build and
+  Windows runner regression jobs. Paths cover both roots, frontend inputs and
+  runner scripts; jobs have read-only permissions, bounded time/resources, and
+  no signing/release/installer operation. Rust matches the maintained CLI pin.
+- Reviewed every Cargo.toml difference against the actual upstream merge base
+  9e57a0d7929fcc6417ea0d6e54c1b57f62635edd using UPSTREAM.md and the per-file map.
+  The existing composition seam measures 152 rather than the stale 142 budget:
+  native/MCP/OAuth, assets/vault, paired immutable native fork and gated harness
+  declarations are still required. Documented that semantic review and used the
+  runbook's explicit --update --accept-growth procedure. Seven existing hook/root
+  budgets tightened by 69 lines. No Handy source, dependency or native pin changed.
+- Ratchet and upstream policy now pass. Actionlint 1.7.7 (checksum-verified local
+  tool), workflow structure checks and formatting pass. Full workspace tests and
+  production frontend build pass locally. Hosted CI execution follows the push;
+  do not infer a Linux backend result from the local Windows test pass.

@@ -5,36 +5,124 @@ on:
     branches: [main]
     paths:
       - "src-tauri/**"
+      - "crates/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "src/**"
+      - "public/**"
+      - "*.html"
+      - "package.json"
+      - "bun.lock"
+      - "tsconfig*.json"
+      - "vite.config.ts"
+      - "eslint.config.js"
+      - "scripts/run-rust-test.ps1"
+      - "scripts/test_run_rust_test.py"
+      - ".github/workflows/test.yml"
   pull_request:
     paths:
       - "src-tauri/**"
+      - "crates/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "src/**"
+      - "public/**"
+      - "*.html"
+      - "package.json"
+      - "bun.lock"
+      - "tsconfig*.json"
+      - "vite.config.ts"
+      - "eslint.config.js"
+      - "scripts/run-rust-test.ps1"
+      - "scripts/test_run_rust_test.py"
+      - ".github/workflows/test.yml"
+
+permissions:
+  contents: read
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
+  frontend:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - run: bun run lint
+      - run: bun run test:unit
+      - run: bun run build
+
+  workspace:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      RUSTUP_TOOLCHAIN: 1.96.0
+    steps:
+      - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
+        with:
+          persist-credentials: false
+      - run: rustup toolchain install 1.96.0 --profile minimal --component clippy --no-self-update
+      - uses: swatinem/rust-cache@v2
+      - run: cargo clippy --locked --workspace --all-targets -- -D warnings
+      - run: cargo test --locked --workspace --all-targets
+
+  windows-test-runner:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    env:
+      RUSTUP_TOOLCHAIN: 1.96.0
+    steps:
+      - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
+        with:
+          persist-credentials: false
+      - run: rustup toolchain install 1.96.0 --profile minimal --no-self-update
+      - run: python -m unittest discover -s scripts -p test_run_rust_test.py -v
+
   rust-tests:
     runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      RUSTUP_TOOLCHAIN: 1.96.0
+      CARGO_BUILD_JOBS: 2
+      CMAKE_BUILD_PARALLEL_LEVEL: 2
+      GGML_NATIVE: "OFF"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
+        with:
+          persist-credentials: false
+
+      - run: rustup toolchain install 1.96.0 --profile minimal --no-self-update
 
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev libasound2-dev libssl-dev libgtk-layer-shell-dev
+          sudo apt-get install -y build-essential cmake ninja-build pkg-config \
+            libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev \
+            libasound2-dev libssl-dev libgtk-layer-shell-dev \
+            libopenblas-dev libx11-dev libxtst-dev libxrandr-dev \
+            libvulkan-dev mesa-vulkan-drivers
+
+      # Use the maintained native build's SDK provisioning, not a mock backend.
+      - uses: jakoch/install-vulkan-sdk-action@v1
+        with:
+          vulkan_version: 1.4.335.0
+          cache: true
 
       - uses: swatinem/rust-cache@v2
         with:
-          workspaces: "./src-tauri -> target"
-
-      - name: Use mock TranscriptionManager (CI only)
-        working-directory: src-tauri
-        run: |
-          # Swap to mock adapter - avoids compiling whisper/Vulkan
-          cp src/managers/transcription_mock.rs src/managers/transcription.rs
-          sed -i '/^transcribe-rs/d' Cargo.toml
+          workspaces: |
+            ./src-tauri -> target
+          shared-key: real-native-backend
 
       - name: Run Rust tests
         working-directory: src-tauri
-        run: cargo test
+        run: |
+          export LD_LIBRARY_PATH="$PWD/transcribe-libs${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+          cargo check --locked --all-targets
+          cargo test --locked --lib

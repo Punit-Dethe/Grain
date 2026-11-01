@@ -16,6 +16,25 @@ the default: normal 3-way merge, preferring upstream in the STT core.
 > live at `src-tauri/src/handy/…` in Grain (declared via `#[path]`, contents
 > unchanged). `Upstream/ratchet.py` maps between the two.
 
+## Verification budget reconciliation — 1 November 2026
+
+Reviewed the full current Cargo.toml difference against the actual merge base
+`9e57a0d7929fcc6417ea0d6e54c1b57f62635edd`, without merging upstream changes.
+The old 142-line manifest budget did not cover the current 152-line composition
+seam. This reconciliation records that measured state, following the runbook's
+explicit semantic-review/`--accept-growth` procedure. Other measured reductions
+from legacy retirement are tightened in the same budget update.
+
+The reviewed declarations are Grain identity and the gated acceptance binary;
+grain-core/SDK/TDT and the bounded PCM journal; async WS/native and MCP/OAuth
+transports; source maps, artwork, screen-image handling and OS credential vault;
+the existing Windows/Unix/macOS integration features; the paired immutable 0.4.0
+transcribe.cpp fork with existing per-target backends; and the recorder's
+test-only backend. The current parser, compression, updater/shortcut and tao
+fork declarations are retained as reviewed existing dependencies. This task
+changes none of those versions, features or native pins and adds no Handy-tree
+feature implementation. Embedding and extension ZIP dependencies are removed.
+
 ## Prompt Record shortcut seam (2026-10-04)
 
 `OVERLAY-MAINTENANCE.md` covers the restored F8 binding and its lifecycle.
