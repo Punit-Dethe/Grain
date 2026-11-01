@@ -1940,11 +1940,7 @@ title: string;
  * Whether performing this reads the resolved action back first. The single
  * most important thing on the row.
  */
-confirms: boolean;
-/**
- * No conditions at all — offered on every request.
- */
-everywhere: boolean; app: string[]; website: string[] }
+confirms: boolean }
 /**
  * [GRAIN] Agent auto-copy policy: which assistant replies are copied to the
  * clipboard automatically as they arrive. `First` (default) mirrors the

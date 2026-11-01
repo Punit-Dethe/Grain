@@ -522,3 +522,22 @@ model decision remain as listed above. Do not revisit M7.
   repository to inspect the real application.
 - Next: retire action conditions/rules and their hash inputs under the clean-break
   policy (fresh action approval required), then the signed-catalogue cleanup.
+
+**1 November 2026, session 4 continued: action contract cleanup (T10).**
+
+- Removed unused `LayerWhen`, action `when`/`agentRules`, their validation,
+  ceilings and approval DTO fields. Action digests now cover the current tool
+  contract directly; existing nonempty action approvals require renewed approval.
+  Added a regression against the former digest. No migration/hash fallback.
+- Kept risk, utterance, parameter, Unicode and network-sink checks. Repaired the
+  sink test to use a supported exact-host grant, proving safe raw text is refused
+  while a confirm declaration succeeds. Removed obsolete lifecycle fixture keys
+  and the redundant icon-only PackPayloads struct update.
+- Verification: workspace all-target tests pass (SDK 43, core 250 + three
+  benchmarks), five focused approval tests pass; SDK/core strict Clippy passes.
+  App 696 tests pass / 23 ignored. Regenerated bindings, tsc, 101 Vitest tests,
+  parity/policy and whitespace checks pass. Source graph and scoped diff reviewed.
+  Real-app acceptance will cover this together with the signed-catalogue unit.
+- Catalogue trace confirmed the old README publisher is isolated from the current
+  reviewed DESCRIPTION signing path and has no maintained caller. Remove it with
+  `extends`, retired IDs/categories and the README fallback in the next unit.

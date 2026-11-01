@@ -298,7 +298,6 @@ pub fn build_pack(root: &Path) -> Result<GrainPack, String> {
         manifest,
         payloads: PackPayloads {
             icon_png: Some(base64::engine::general_purpose::STANDARD.encode(icon_bytes)),
-            ..PackPayloads::default()
         },
     };
     pack.validate()?;

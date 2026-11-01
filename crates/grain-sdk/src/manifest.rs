@@ -116,43 +116,6 @@ fn default_redirect_methods() -> Vec<RedirectMethod> {
     vec![RedirectMethod::Loopback]
 }
 
-/// Host-evaluated match conditions. Every field is a set; a layer applies when
-/// EVERY non-empty field has a member that matches, so fields intersect and
-/// members alternate.
-#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
-pub struct LayerWhen {
-    /// Executable stems (`code`) or AppUserModelIDs, matched the same way the
-    /// user's own context profiles match an application.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub app: Vec<String>,
-    /// Address-bar hosts. `jira.` is a prefix wildcard, exactly as in Grain's
-    /// own site table, and matching is dot-bounded so `notgithub.com` cannot
-    /// inherit `github.com`'s layer.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub website: Vec<String>,
-    /// Detected profile names: `email`, `work`, `casual`, `technical`,
-    /// `ai_chat`, `other`.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub category: Vec<String>,
-    /// `single_line` or `multi_line`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub field: Option<String>,
-}
-
-impl LayerWhen {
-    pub fn is_unconditional(&self) -> bool {
-        self.app.is_empty()
-            && self.website.is_empty()
-            && self.category.is_empty()
-            && self.field.is_none()
-    }
-}
-
-/// The detected profiles a `when.category` may name. Mirrors `AppCategory` in
-/// the host; kept as strings because the sdk is the dependency leaf and must not
-/// learn about context detection.
-const LAYER_CATEGORIES: &[&str] = &["email", "work", "casual", "technical", "ai_chat", "other"];
-
 /// Characters that let reviewed text render as one thing and tokenize as
 /// another: C0/C1 controls (bar the ordinary whitespace an instruction may
 /// legitimately contain), bidi overrides, and zero-width joiners/spaces.
@@ -215,11 +178,6 @@ pub struct ActionDecl {
     /// Whether performing this needs a read-back first. Required, and never
     /// inferred — see [`ActionRisk`].
     pub risk: ActionRisk,
-    /// Surfaces this action is offered on. Empty = everywhere. Reuses the
-    /// prompt-layer matcher verbatim, so "next slide" can be scoped to a deck
-    /// without the extension ever learning what application the user is in.
-    #[serde(default)]
-    pub when: LayerWhen,
     /// Ways a user might ask for this, in English.
     ///
     /// `{param}` placeholders name a declared parameter and mark where its span
@@ -229,15 +187,6 @@ pub struct ActionDecl {
     pub utterances: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub params: Vec<ActionParamDecl>,
-    /// Short guidance hydrated into the Agent's context *only* when this action
-    /// is retrieved for a turn. Never in the permanent prompt.
-    #[serde(
-        default,
-        rename = "agentRules",
-        alias = "agent_rules",
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub agent_rules: Option<String>,
 }
 
 /// Irreversibility, which is a separate axis from confidence.
@@ -313,17 +262,9 @@ pub const ACTION_TITLE_MAX_BYTES: usize = 80;
 /// protocol identifier and must not contain deceptive punctuation or Unicode.
 pub const ACTION_ID_MAX_BYTES: usize = 64;
 
-/// Hard ceiling on `agentRules`, which ride into the Agent's context.
-pub const ACTION_AGENT_RULES_MAX_BYTES: usize = 300;
-
 /// Hard ceiling on parameters per action. An action needing five spans out of
 /// one spoken sentence is an Agent turn, not a route.
 pub const ACTION_PARAMS_MAX: usize = 4;
-
-/// Capabilities whose effect leaves the machine or changes the user's data, and
-/// which therefore cannot be driven by an unbounded span of what Grain *thought*
-/// it heard. See [`validate_actions`].
-const SIDE_EFFECT_CAPABILITIES: &[&str] = &["open:url", "open:app"];
 
 /// One piece of a parsed utterance template.
 ///
@@ -391,9 +332,9 @@ fn validate_actions(actions: &[ActionDecl], permissions: &[String]) -> Result<()
     // reach. `net:` counts: an exact-host grant still means the span is sent
     // somewhere. A RESOLVED entity does not, because the extension matched it
     // against its own catalogue first, so the value came from a bounded set.
-    let has_sink = permissions.iter().any(|p| {
-        SIDE_EFFECT_CAPABILITIES.contains(&p.as_str()) || network_capability_host(p).is_some()
-    });
+    let has_sink = permissions
+        .iter()
+        .any(|p| network_capability_host(p).is_some());
 
     let mut seen = std::collections::HashSet::new();
     for action in actions {
@@ -428,24 +369,6 @@ fn validate_actions(actions: &[ActionDecl], permissions: &[String]) -> Result<()
             ));
         }
 
-        if let Some(rules) = &action.agent_rules {
-            if rules.len() > ACTION_AGENT_RULES_MAX_BYTES {
-                return Err(format!(
-                    "action '{id}' agentRules is {} bytes; the limit is \
-                     {ACTION_AGENT_RULES_MAX_BYTES}",
-                    rules.len()
-                ));
-            }
-            if let Some(bad) = rules.chars().find(|c| is_deceptive_char(*c)) {
-                return Err(format!(
-                    "action '{id}' agentRules contains a control or direction-override character \
-                     (U+{:04X})",
-                    bad as u32
-                ));
-            }
-        }
-
-        validate_action_when(id, &action.when)?;
         let declared = validate_action_params(id, &action.params, has_sink, action.risk)?;
         validate_action_utterances(id, &action.utterances, &declared, &action.params)?;
     }
@@ -491,23 +414,6 @@ fn validate_no_self_collision(actions: &[ActionDecl]) -> Result<(), String> {
                     ));
                 }
             }
-        }
-    }
-    Ok(())
-}
-
-/// `when` reuses the prompt-layer vocabulary, so it reuses its checks too.
-fn validate_action_when(id: &str, when: &LayerWhen) -> Result<(), String> {
-    for category in &when.category {
-        if !LAYER_CATEGORIES.contains(&category.as_str()) {
-            return Err(format!("action '{id}' names unknown category '{category}'"));
-        }
-    }
-    if let Some(field) = &when.field {
-        if field != "single_line" && field != "multi_line" {
-            return Err(format!(
-                "action '{id}' field must be 'single_line' or 'multi_line'"
-            ));
         }
     }
     Ok(())
@@ -885,23 +791,6 @@ impl GrainPack {
         {
             return Err(crate::compatibility::UNSUPPORTED_EXTENSION_API.into());
         }
-        let c = &m.contributes;
-        let retired = if c.actions.iter().any(|action| action.agent_rules.is_some()) {
-            Some("agent prompt rules")
-        } else if c
-            .actions
-            .iter()
-            .any(|action| !action.when.is_unconditional())
-        {
-            Some("application and context scoped actions")
-        } else {
-            None
-        };
-        if let Some(feature) = retired {
-            return Err(format!(
-                "Retired extension feature: {feature}. Grain extensions now provide tools only."
-            ));
-        }
         for permission in &m.permissions {
             if !tool_permission_allowed(permission) {
                 return Err(format!("Retired or unsupported extension permission '{permission}'. Grain extensions now provide tools only."));
@@ -1064,42 +953,6 @@ mod tests {
         }
     }
 
-    #[test]
-    fn scoped_actions_remain_refused() {
-        let base = serde_json::json!({"manifest": {
-            "id":"com.example.tools","name":"Tools","version":"1",
-            "tier":"scripted","entry_source":"//",
-            "contributes":{"actions":[{"id":"read","title":"Read","risk":"confirm","utterances":["read data"]}]}
-        }});
-        for (pointer, value) in [
-            (
-                "/manifest/contributes/actions/0/when",
-                serde_json::json!({"app":["code"]}),
-            ),
-            (
-                "/manifest/contributes/actions/0/agentRules",
-                serde_json::json!("Change prompt"),
-            ),
-        ] {
-            let mut candidate = base.clone();
-            let (parent, key) = pointer.rsplit_once('/').unwrap();
-            candidate
-                .pointer_mut(parent)
-                .unwrap()
-                .as_object_mut()
-                .unwrap()
-                .insert(key.into(), value);
-            let candidate: GrainPack = serde_json::from_value(candidate).unwrap();
-            for result in [
-                candidate.validate(),
-                candidate.validate_dev(),
-                candidate.validate_trusted(),
-            ] {
-                assert!(result.is_err(), "{pointer}");
-            }
-        }
-    }
-
     fn pack(json: &str) -> Result<(), String> {
         serde_json::from_str::<GrainPack>(json)
             .map_err(|e| e.to_string())
@@ -1179,17 +1032,19 @@ mod tests {
 
     #[test]
     fn free_text_into_a_sink_cannot_be_safe() {
-        // "open {url}" in an extension that can open URLs is "open whatever
-        // Grain mishears". The router is not the weak link here; the acoustic
-        // model is.
+        // A network grant can send arbitrary misheard text to a remote host.
+        // A safe action must not accept an unbounded span for that sink.
         let open_anything = r#"[{"id":"open","title":"Open a link",
             "risk":"safe","utterances":["open {url}"],
             "params":[{"name":"url","kind":"text"}]}]"#;
-        assert!(pack_with_actions(r#"["open:url"]"#, open_anything).is_err());
+        assert!(pack_with_actions(r#"["net:api.example.com"]"#, open_anything).is_err());
 
         // The same declaration is fine once it reads the action back first.
         let confirmed = open_anything.replace(r#""risk":"safe""#, r#""risk":"confirm""#);
-        assert!(pack_with_actions(r#"["open:url"]"#, &confirmed).is_err());
+        assert_eq!(
+            pack_with_actions(r#"["net:api.example.com"]"#, &confirmed),
+            Ok(())
+        );
 
         // And fine as `safe` when there is no sink to feed.
         assert_eq!(pack_with_actions("[]", open_anything), Ok(()));
@@ -1290,16 +1145,6 @@ mod tests {
             )
         )
         .is_err());
-
-        let rules = "x".repeat(ACTION_AGENT_RULES_MAX_BYTES + 1);
-        assert!(pack_with_actions(
-            "[]",
-            &format!(
-                r#"[{{"id":"n","title":"Next","risk":"safe",
-                     "utterances":["next song"],"agentRules":"{rules}"}}]"#
-            )
-        )
-        .is_err());
     }
 
     #[test]
@@ -1315,7 +1160,7 @@ mod tests {
     }
 
     #[test]
-    fn action_ids_and_match_values_are_checked() {
+    fn action_ids_and_declarations_are_checked() {
         let with = |body: &str| pack_with_actions("[]", body);
         assert!(with(r#"[{"id":"","title":"N","risk":"safe","utterances":["next"]}]"#).is_err());
         assert!(with(r#"[{"id":"a:b","title":"N","risk":"safe","utterances":["next"]}]"#).is_err());
@@ -1335,12 +1180,6 @@ mod tests {
         assert!(with(
             r#"[{"id":"n","title":"N","risk":"safe",
                  "utterances":["Next Song","next song"]}]"#
-        )
-        .is_err());
-        // `when` reuses the prompt-layer vocabulary, so it reuses its checks.
-        assert!(with(
-            r#"[{"id":"n","title":"N","risk":"safe",
-                 "utterances":["next"],"when":{"category":["nope"]}}]"#
         )
         .is_err());
     }

@@ -212,11 +212,8 @@ pub fn approval_fingerprint(
 /// Uses length-prefixed SHA-256 framing: the input is attacker-controlled,
 /// so the hash must resist deliberately constructed collisions.
 ///
-/// Covers everything that decides **what happens and when**: id, title, risk,
-/// the whole `when`, every utterance, every parameter, and `agentRules`.
-/// Deliberately NOT a subset — the tempting economy is to hash only the risk
-/// tier, and then a widened `when` or a new utterance ships under the old
-/// approval.
+/// Covers the complete tool declaration: id, title, risk, utterances and
+/// parameters. Any change to the reviewed contract requires renewed approval.
 pub fn actions_fingerprint(actions: &[grain_sdk::manifest::ActionDecl]) -> String {
     use sha2::{Digest, Sha256};
     let mut hasher = Sha256::new();
@@ -237,21 +234,6 @@ pub fn actions_fingerprint(actions: &[grain_sdk::manifest::ActionDecl]) -> Strin
                 "confirm"
             },
         );
-        // Each list framed by its own length and closed with a separator, so a
-        // value moved between fields — which changes WHERE the action is
-        // offered — changes the digest.
-        for list in [
-            &action.when.app,
-            &action.when.website,
-            &action.when.category,
-        ] {
-            hasher.update((list.len() as u64).to_le_bytes());
-            for value in list {
-                field(&mut hasher, value);
-            }
-            hasher.update([0xfeu8]);
-        }
-        field(&mut hasher, action.when.field.as_deref().unwrap_or(""));
         hasher.update((action.utterances.len() as u64).to_le_bytes());
         for utterance in &action.utterances {
             field(&mut hasher, utterance.trim());
@@ -264,7 +246,6 @@ pub fn actions_fingerprint(actions: &[grain_sdk::manifest::ActionDecl]) -> Strin
             hasher.update([u8::from(param.resolve), u8::from(param.required)]);
         }
         hasher.update([0xfeu8]);
-        field(&mut hasher, action.agent_rules.as_deref().unwrap_or(""));
         hasher.update([0xffu8]);
     }
     format!("{:x}", hasher.finalize())
@@ -272,26 +253,15 @@ pub fn actions_fingerprint(actions: &[grain_sdk::manifest::ActionDecl]) -> Strin
 
 #[cfg(test)]
 mod action_fingerprint_tests {
-    use grain_sdk::manifest::{
-        ActionDecl, ActionParamDecl, ActionParamKind, ActionRisk, LayerWhen,
-    };
+    use grain_sdk::manifest::{ActionDecl, ActionParamDecl, ActionParamKind, ActionRisk};
 
-    fn action(risk: ActionRisk, when: LayerWhen, utterances: &[&str]) -> ActionDecl {
+    fn action(risk: ActionRisk, utterances: &[&str]) -> ActionDecl {
         ActionDecl {
             id: "next".into(),
             title: "Skip to the next track".into(),
             risk,
-            when,
             utterances: utterances.iter().map(|s| (*s).to_string()).collect(),
             params: Vec::new(),
-            agent_rules: None,
-        }
-    }
-
-    fn site(host: &str) -> LayerWhen {
-        LayerWhen {
-            website: vec![host.into()],
-            ..Default::default()
         }
     }
 
@@ -299,47 +269,17 @@ mod action_fingerprint_tests {
     fn dropping_the_read_back_requires_renewed_approval() {
         // The attack this exists for: ship `confirm`, get approved, then quietly
         // become `safe` in a patch release so the action fires with no prompt.
-        let approved = super::actions_fingerprint(&[action(
-            ActionRisk::Confirm,
-            LayerWhen::default(),
-            &["send it"],
-        )]);
-        let downgraded = super::actions_fingerprint(&[action(
-            ActionRisk::Safe,
-            LayerWhen::default(),
-            &["send it"],
-        )]);
+        let approved = super::actions_fingerprint(&[action(ActionRisk::Confirm, &["send it"])]);
+        let downgraded = super::actions_fingerprint(&[action(ActionRisk::Safe, &["send it"])]);
         assert_ne!(approved, downgraded);
     }
 
     #[test]
-    fn widening_where_an_action_is_offered_requires_renewed_approval() {
-        // Identical wording, identical risk — only the scope grew, from one site
-        // to every dictation surface. That is an escalation.
-        let scoped =
-            super::actions_fingerprint(&[action(ActionRisk::Safe, site("jira."), &["next song"])]);
-        let everywhere = super::actions_fingerprint(&[action(
-            ActionRisk::Safe,
-            LayerWhen::default(),
-            &["next song"],
-        )]);
-        assert_ne!(scoped, everywhere);
-    }
-
-    #[test]
     fn teaching_an_action_new_language_requires_renewed_approval() {
-        // A new utterance changes what the action captures out of everything the
-        // user says, which is the routing equivalent of widening `when`.
-        let taught = super::actions_fingerprint(&[action(
-            ActionRisk::Safe,
-            LayerWhen::default(),
-            &["next song", "do it"],
-        )]);
-        let original = super::actions_fingerprint(&[action(
-            ActionRisk::Safe,
-            LayerWhen::default(),
-            &["next song"],
-        )]);
+        // New utterances change the reviewed language associated with an action.
+        let taught =
+            super::actions_fingerprint(&[action(ActionRisk::Safe, &["next song", "do it"])]);
+        let original = super::actions_fingerprint(&[action(ActionRisk::Safe, &["next song"])]);
         assert_ne!(taught, original);
     }
 
@@ -359,7 +299,7 @@ mod action_fingerprint_tests {
             ..bounded.clone()
         };
         let with = |param: ActionParamDecl| {
-            let mut a = action(ActionRisk::Safe, LayerWhen::default(), &["play {artist}"]);
+            let mut a = action(ActionRisk::Safe, &["play {artist}"]);
             a.params = vec![param];
             super::actions_fingerprint(&[a])
         };
@@ -368,11 +308,17 @@ mod action_fingerprint_tests {
 
     #[test]
     fn an_unchanged_declaration_keeps_its_approval() {
-        let once =
-            super::actions_fingerprint(&[action(ActionRisk::Safe, site("jira."), &["next song"])]);
-        let twice =
-            super::actions_fingerprint(&[action(ActionRisk::Safe, site("jira."), &["next song"])]);
+        let once = super::actions_fingerprint(&[action(ActionRisk::Safe, &["next song"])]);
+        let twice = super::actions_fingerprint(&[action(ActionRisk::Safe, &["next song"])]);
         assert_eq!(once, twice);
+    }
+
+    #[test]
+    fn retired_contract_approval_does_not_approve_current_actions() {
+        // Digest from the former contract, including empty conditions/rules.
+        let previous = "16e41085eb1025119f37a2e93061bc888cd21aab022783090cdfd33e50023225";
+        let current = super::actions_fingerprint(&[action(ActionRisk::Safe, &["next song"])]);
+        assert_ne!(previous, current);
     }
 }
 

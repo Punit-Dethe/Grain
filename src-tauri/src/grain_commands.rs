@@ -752,10 +752,6 @@ pub struct ActionInfo {
     /// Whether performing this reads the resolved action back first. The single
     /// most important thing on the row.
     pub confirms: bool,
-    /// No conditions at all — offered on every request.
-    pub everywhere: bool,
-    pub app: Vec<String>,
-    pub website: Vec<String>,
 }
 
 #[derive(serde::Serialize, Clone)]
@@ -791,9 +787,6 @@ impl ActionInfo {
             id: decl.id.clone(),
             title: decl.title.clone(),
             confirms: !decl.risk.is_safe(),
-            everywhere: decl.when.is_unconditional(),
-            app: decl.when.app.clone(),
-            website: decl.when.website.clone(),
         }
     }
 }

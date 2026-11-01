@@ -95,7 +95,7 @@ describe("extension collection helpers", () => {
     // sheet would otherwise mention.
     const parsed = parseApprovalRequest(
       reviewError(
-        '{"needsPermissions":[],"needsActions":[{"id":"next","title":"Skip to the next track","confirms":false,"everywhere":true,"app":[],"website":[]}]}',
+        '{"needsPermissions":[],"needsActions":[{"id":"next","title":"Skip to the next track","confirms":false}]}',
       ),
     );
     expect(parsed?.actions).toHaveLength(1);
