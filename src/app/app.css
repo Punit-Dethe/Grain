@@ -1360,7 +1360,7 @@ html[data-theme="light"] .hero {
   z-index: 1;
   overflow: hidden;
   border-radius: var(--hero-radius);
-  box-shadow: 0 12px 16px -12px var(--hero-image-shadow);
+  box-shadow: 0 2px 10px 1px var(--hero-image-shadow);
 }
 
 .hero-image {
