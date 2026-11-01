@@ -1,5 +1,12 @@
 # Extension implementation: progress, changes and user testing
 
+**Glass layout restored with taller hero, 2 November:** user explicitly chooses
+the version immediately before the rollback (`0eddbe95`). Restore that exact
+frosted-panel/artwork/fade layout and change only the hero height from
+370–450px / 46vh to 420–510px / 52vh. Product diff against the selected version
+is one height declaration. This supersedes the prior split-layout request;
+retain the release hold and UI branch pending real-app visual acceptance.
+
 **Overview direction restored, 2 November:** user requests the layout from before
 the full-image/glass treatment, with only the fade removed. Restore exactly the
 pre-experiment hero CSS from `41102e87` (image above the solid Start here section,

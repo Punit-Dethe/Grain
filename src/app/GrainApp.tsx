@@ -425,6 +425,7 @@ function OverviewPage({ history }: { history: HistoryController }) {
               src={OVERVIEW_HERO_IMAGES[heroImageIndex].src}
               alt={OVERVIEW_HERO_IMAGES[heroImageIndex].alt}
             />
+            <div className="hero-gradient" aria-hidden="true" />
             <button
               className="hero-image-toggle"
               type="button"
