@@ -1361,6 +1361,7 @@ fn effective_language_for_model(
     match model_manager.get_model_info(model_id) {
         Some(info) => crate::managers::model::effective_language(
             &settings.selected_language,
+            &[], // [GRAIN] The preferred-language wizard is not part of Grain's onboarding.
             &info.supported_languages,
             info.supports_language_detection,
         ),
@@ -1873,7 +1874,7 @@ mod tests {
     #[test]
     fn non_chinese_output_is_never_converted() {
         let settings = AppSettings {
-            chinese_script: ChineseScript::Traditional,
+            chinese_script: ChineseScript::TraditionalTw,
             ..Default::default()
         };
         for evidence in [

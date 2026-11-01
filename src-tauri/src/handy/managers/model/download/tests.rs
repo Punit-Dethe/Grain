@@ -11,6 +11,22 @@ use tokio::net::{TcpListener, TcpStream};
 
 // ── SHA256 verification tests ─────────────────────────────────────────────
 
+#[test]
+fn transfer_rate_excludes_resumed_bytes_and_decays_when_stalled() {
+    let start = Instant::now();
+    let mut rate = RateMeter::new(1_000_000);
+    assert_eq!(rate.sample(1_000_000, start), None);
+    assert_eq!(rate.sample(1_001_000, start + Duration::from_secs(1)), None);
+    assert_eq!(
+        rate.sample(1_002_000, start + Duration::from_secs(2)),
+        Some(1000.0)
+    );
+    assert_eq!(
+        rate.sample(1_002_000, start + Duration::from_secs(8)),
+        Some(0.0)
+    );
+}
+
 /// Helper: write `data` to a temp file and return (TempDir, path).
 /// TempDir must be kept alive for the duration of the test.
 fn write_temp_file(data: &[u8]) -> (TempDir, std::path::PathBuf) {

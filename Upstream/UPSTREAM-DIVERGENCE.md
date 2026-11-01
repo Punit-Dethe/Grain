@@ -16,6 +16,32 @@ the default: normal 3-way merge, preferring upstream in the STT core.
 > live at `src-tauri/src/handy/…` in Grain (declared via `#[path]`, contents
 > unchanged). `Upstream/ratchet.py` maps between the two.
 
+## Onboarding backend integration — 2 November 2026
+
+#2303 is integrated through `0e5e9ca9` with Grain's owned permission/model/
+shortcut design and durable final-step completion. Relevant model progress,
+native microphone status/settings and regional Chinese-script behavior are
+adopted. Do not restore Handy's replacement Try-it demo, guessed-language
+wizard, injected JS global, migration defaults, app sizing or frontend assets.
+The new `handy/system_languages.rs` is retained byte-for-byte as an undeclared
+upstream reference; Grain does not mount its plugin or expose its globals.
+
+The completion command delegates to the owned fallible store; Core persists
+public settings before memory and does not rewrite credentials. Explicit
+recognition language stays authoritative (empty wizard-preference slices in
+shared/owned runtime adapters). Chinese defaults and output conversion are
+checked together in owned tests; the shared converter stays byte-identical.
+
+Reviewed new-base measurements: Cargo.toml 156 to 160 (no unused wizard OS
+reader dependencies), actions 762 to 848 and transcription coordinator 1619 to
+1669 (omit Try-it-only telemetry while retaining Grain lifecycle hooks),
+commands/mod.rs 16 to 21 (owned persistence delegate), download/tests.rs new
+16 (resumed/stalled rate regression), transcription manager 90 to 92 (explicit
+language policy), shortcut/mod.rs 429 to 441 (no unused spoken-language wizard
+command), lib.rs 1296 to 1321 (owned composition, not Handy wizard startup).
+commands/models.rs tightens 89 to 86. These are measured differences, not
+reserved feature headroom. See SYNC-2026-11-02.md for validation and limits.
+
 ## Non-blocking paste — 2 November 2026
 
 After integrating #2302 through `5a9451e7`, the shared clipboard retains Grain's

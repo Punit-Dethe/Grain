@@ -419,6 +419,16 @@ same commit.
 
 ### November 2 catalogue checkpoint
 
+The onboarding stage through `0e5e9ca9` (#2303) preserves Grain's existing
+design, adds durable final-step completion through the owned Core store,
+adopts native rate progress and regional Chinese output, and retains the
+shared silence status/microphone-settings improvements. Excludes the replacement
+Try-it wizard, OS-language JS injection and upgrade guesses. Windows checks
+pass 712 backend tests, 245 Core tests and 102 frontend tests; frontend build,
+binding export and all five upstream gates pass. The measured baseline is 39
+files. Native UI/macOS acceptance remains explicit in `SYNC-2026-11-02.md`;
+audio-file import is the next and last approved feature block, Settings-only.
+
 Integrated #2299 through `93c9ee05` on `sync/handy-audit-20261102`, retaining
 Grain UI and the current paired native fork. The shared models 0.2.2 snapshot
 contains the same ASR entries as fetched Handy main's 0.2.3; language detection

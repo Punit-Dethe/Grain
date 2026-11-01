@@ -1025,7 +1025,7 @@ async mcpConnectionImport(definitionJson: string) : Promise<Result<ConnectionVie
 }
 },
 /**
- * Signed-store acquisition in development and the dedicated extensions alpha.
+ * Signed-store acquisition in every supported application build.
  * Custom server configuration retains its separate development-only gate.
  */
 async storeMcpInstall(id: string, version: string) : Promise<Result<null, string>> {
@@ -1306,9 +1306,9 @@ async agentRun(messages: AgentMessage[], context: string | null) : Promise<Resul
 }
 },
 /**
- * [GRAIN] Resume a host-gated action confirmation (PLAN Amendment A, §2.5). The
+ * [GRAIN] Resume a host-gated action confirmation (PLAN Amendment A, Â§2.5). The
  * user approved (or declined) the exact prepared call named by `token`; the host
- * revalidates and replays *that* call — the model is never re-consulted, so its
+ * revalidates and replays *that* call â€” the model is never re-consulted, so its
  * nondeterminism cannot change what runs. Returns the receipt/result (or the
  * decline) rendered for the chat.
  */
@@ -1343,9 +1343,9 @@ async agentSetPanelMode(expanded: boolean) : Promise<Result<null, string>> {
  * [GRAIN] CENTER panel: the webview reports the exact content height it wants
  * and the backend sizes the window to match (clamped to the work area), keeping
  * it centred and top-anchored so it grows downward. No-op unless the center
- * layout is active. ASYNC for the same reason as [`agent_set_panel_mode`] —
+ * layout is active. ASYNC for the same reason as [`agent_set_panel_mode`] â€”
  * never resize a visible window from a sync command on the main thread
- * (tauri#3990) — so the height feedback loop stays smooth.
+ * (tauri#3990) â€” so the height feedback loop stays smooth.
  */
 async agentResizePanel(height: number) : Promise<Result<null, string>> {
     try {
@@ -1356,8 +1356,8 @@ async agentResizePanel(height: number) : Promise<Result<null, string>> {
 }
 },
 /**
- * Confirm (⏎ on the reply card): close the panel, refocus the summon target,
- * and paste `text` — the latest assistant reply — at the cursor. A selection
+ * Confirm (âŽ on the reply card): close the panel, refocus the summon target,
+ * and paste `text` â€” the latest assistant reply â€” at the cursor. A selection
  * still held in the target app is replaced by the paste.
  */
 async agentConfirmPaste(text: string) : Promise<Result<null, string>> {
@@ -1370,7 +1370,7 @@ async agentConfirmPaste(text: string) : Promise<Result<null, string>> {
 },
 /**
  * Consume the retained Quick-Agent conversation (the panel calls this on
- * mount). Non-empty only when the panel is reopening from a follow-up offer —
+ * mount). Non-empty only when the panel is reopening from a follow-up offer â€”
  * in that case the panel starts EXPANDED with this history.
  */
 async agentTakeConversation() : Promise<AgentMessage[]> {
@@ -1522,6 +1522,18 @@ async initializeEnigo() : Promise<Result<null, string>> {
 async initializeShortcuts() : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("initialize_shortcuts") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Mark onboarding as finished; called when its last screen closes, so quitting
+ * midway resumes the flow.
+ */
+async completeOnboarding() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("complete_onboarding") };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1989,7 +2001,11 @@ export type AppSettings = {
  * Missing in pre-schema settings files; the field-level default of zero
  * intentionally triggers one-time migrations instead of using `Self::default()`.
  */
-settings_schema_version?: number; bindings: Partial<{ [key in string]: ShortcutBinding }>; push_to_talk: boolean; audio_feedback: boolean; audio_feedback_volume?: number; sound_theme?: SoundTheme;
+settings_schema_version?: number; bindings: Partial<{ [key in string]: ShortcutBinding }>; push_to_talk: boolean;
+/**
+ * Setup is committed only after the final shortcut screen succeeds.
+ */
+onboarding_completed?: boolean; audio_feedback: boolean; audio_feedback_volume?: number; sound_theme?: SoundTheme;
 /**
  * [GRAIN] Which panel is visible when the main window opens.
  */
@@ -2182,7 +2198,7 @@ expires_at: string | null }
 export type AutoSubmitKey = "enter" | "ctrl_enter" | "cmd_enter"
 export type AvailableAccelerators = { transcribe: string[]; gpu_devices: GpuDeviceOption[] }
 export type BindingResponse = { success: boolean; binding: ShortcutBinding | null; error: string | null }
-export type ChineseScript = "as_transcribed" | "simplified" | "traditional"
+export type ChineseScript = "as_transcribed" | "simplified" | "traditional_tw" | "traditional_hk"
 export type ClipboardHandling = "dont_modify" | "copy_to_clipboard"
 /**
  * Host UI projection, deliberately omitting vault/account IDs and numeric u64
@@ -2402,7 +2418,7 @@ export type ModelDownloadComplete = string
 /**
  * Byte progress for a model download. Mirrors `managers::model::DownloadProgress`.
  */
-export type ModelDownloadProgress = { model_id: string; downloaded: number; total: number; percentage: number }
+export type ModelDownloadProgress = { model_id: string; downloaded: number; total: number; percentage: number; bytes_per_sec: number | null }
 /**
  * Archive extraction finished.
  */
@@ -2538,9 +2554,8 @@ export type RecordingRetentionPeriod = "never" | "preserve_limit" | "days_3" | "
  * `ThemeMode` preference that produces it.
  *
  * Only the resolved answer travels. A surface that received `System` would
- * have to ask the OS itself, and the pill, the capsule and a sandboxed
- * extension frame are three different toolkits with three different ways of
- * getting that wrong.
+ * have to ask the OS itself. The settings window, pill and Agent panel must
+ * paint the same resolved answer.
  */
 export type ResolvedTheme = "light" | "dark"
 /**

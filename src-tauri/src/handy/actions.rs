@@ -209,6 +209,7 @@ fn resolve_effective_language(app: &AppHandle, settings: &AppSettings) -> String
     match model_manager.get_model_info(&active_model) {
         Some(info) => crate::managers::model::effective_language(
             &settings.selected_language,
+            &[], // [GRAIN] Grain retains its explicit recognition-language control.
             &info.supported_languages,
             info.supports_language_detection,
         ),

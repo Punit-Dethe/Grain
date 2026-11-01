@@ -38,6 +38,7 @@ impl TranscriptionManager {
         let info = self.model_manager.get_model_info(model_id)?;
         let language = crate::managers::model::effective_language(
             intent,
+            &[],
             &info.supported_languages,
             info.supports_language_detection,
         );

@@ -43,7 +43,8 @@ pub enum ChineseScript {
     #[default]
     AsTranscribed,
     Simplified,
-    Traditional,
+    TraditionalTw,
+    TraditionalHk,
 }
 
 impl ChineseScript {
@@ -51,22 +52,18 @@ impl ChineseScript {
     pub fn for_locale(locale: &str) -> Option<Self> {
         let normalized = locale.to_lowercase().replace('_', "-");
         let subtags: Vec<_> = normalized.split('-').collect();
-        let traditional = match subtags.first().copied() {
-            Some("zh") => {
-                subtags.contains(&"hant")
-                    || (!subtags.contains(&"hans")
-                        && ["tw", "hk", "mo"]
-                            .iter()
-                            .any(|region| subtags.contains(region)))
-            }
-            Some("yue") => !subtags.contains(&"hans"),
+        let has = |subtag: &str| subtags.contains(&subtag);
+        let hong_kong = has("hk") || has("mo");
+        let script = match subtags.first().copied() {
+            Some("zh" | "yue") if has("hans") => Self::Simplified,
+            Some("zh") if hong_kong => Self::TraditionalHk,
+            Some("zh") if has("hant") || has("tw") => Self::TraditionalTw,
+            Some("zh") => Self::Simplified,
+            Some("yue") if has("tw") => Self::TraditionalTw,
+            Some("yue") => Self::TraditionalHk,
             _ => return None,
         };
-        Some(if traditional {
-            Self::Traditional
-        } else {
-            Self::Simplified
-        })
+        Some(script)
     }
 }
 
@@ -607,6 +604,9 @@ pub struct AppSettings {
     pub settings_schema_version: u32,
     pub bindings: HashMap<String, ShortcutBinding>,
     pub push_to_talk: bool,
+    /// Setup is committed only after the final shortcut screen succeeds.
+    #[serde(default)]
+    pub onboarding_completed: bool,
     pub audio_feedback: bool,
     #[serde(default = "default_audio_feedback_volume")]
     pub audio_feedback_volume: f32,
@@ -1653,6 +1653,7 @@ pub fn get_default_settings() -> AppSettings {
         update_checks_enabled: default_update_checks_enabled(),
         selected_model: "".to_string(),
         selected_asr_model: String::new(),
+        onboarding_completed: false,
         always_on_microphone: false,
         selected_microphone: None,
         selected_channel: None,

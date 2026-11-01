@@ -85,6 +85,18 @@ impl AppContext {
         Ok(ret)
     }
 
+    /// Commit setup only after its public settings have been durably saved.
+    pub fn complete_onboarding(&self) -> Result<()> {
+        let _persistence = self.persistence.lock().expect("persistence lock poisoned");
+        let mut next = self.settings();
+        next.onboarding_completed = true;
+        // Only this public setting changes. Credentials are neither rewritten nor
+        // published to the public JSON, and memory commits after the atomic save.
+        save_public_settings(&self.data_dir, &next)?;
+        *self.settings.write().expect("settings lock poisoned") = next;
+        Ok(())
+    }
+
     /// Replace settings wholesale and persist (the headless `write_settings`).
     pub fn replace_settings(&self, settings: AppSettings) -> Result<()> {
         let _persistence = self.persistence.lock().expect("persistence lock poisoned");
@@ -243,20 +255,26 @@ fn load_secrets(data_dir: &Path) -> Result<StoredSecrets> {
 /// Persist settings to JSON and secrets to the separate credential file. The
 /// main settings file is written with secrets stripped, so keys never land in it.
 fn save_settings(data_dir: &Path, settings: &AppSettings) -> Result<()> {
+    save_public_settings(data_dir, settings)?;
+    let secrets = StoredSecrets {
+        post_process_api_keys: settings.post_process_api_keys.clone(),
+    };
+    let secrets_json = serde_json::to_string_pretty(&secrets)?;
+    write_atomic(&secrets_path(data_dir), secrets_json.as_bytes())?;
+    Ok(())
+}
+
+fn save_public_settings(data_dir: &Path, settings: &AppSettings) -> Result<()> {
     fs::create_dir_all(data_dir)
         .with_context(|| format!("create data dir {}", data_dir.display()))?;
 
     // Split secrets out of the persisted settings.
     let mut sanitized = settings.clone();
-    let secrets = StoredSecrets {
-        post_process_api_keys: std::mem::take(&mut sanitized.post_process_api_keys),
-    };
+    sanitized.post_process_api_keys.clear();
 
     let settings_json = serde_json::to_string_pretty(&sanitized)?;
     write_atomic(&settings_path(data_dir), settings_json.as_bytes())?;
 
-    let secrets_json = serde_json::to_string_pretty(&secrets)?;
-    write_atomic(&secrets_path(data_dir), secrets_json.as_bytes())?;
     Ok(())
 }
 
@@ -276,6 +294,29 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let ctx = AppContext::new(dir.path().join("res"), dir.path().join("data"));
         (ctx, dir)
+    }
+
+    #[test]
+    fn completing_setup_persists_without_rewriting_credentials() {
+        let (ctx, dir) = ctx();
+        let before = fs::read(secrets_path(&dir.path().join("data"))).unwrap();
+        ctx.complete_onboarding().unwrap();
+        let reopened = AppContext::new(dir.path().join("res"), dir.path().join("data"));
+        assert!(reopened.settings().onboarding_completed);
+        assert_eq!(
+            before,
+            fs::read(secrets_path(&dir.path().join("data"))).unwrap()
+        );
+    }
+
+    #[test]
+    fn failed_setup_save_does_not_publish_completion_in_memory() {
+        let (ctx, dir) = ctx();
+        let path = settings_path(&dir.path().join("data"));
+        fs::remove_file(&path).unwrap();
+        fs::create_dir(&path).unwrap();
+        assert!(ctx.complete_onboarding().is_err());
+        assert!(!ctx.settings().onboarding_completed);
     }
 
     #[test]

@@ -126,6 +126,102 @@
       "evidence": "Exact 0.2.0 manifest declarations, vendored baseline provenance, and regenerated lockfile are checked by policy_check.py and Cargo. Historical vendor implementation is retired; current immutable pin/ABI evidence is in the maintained fork contract."
     }
   },
+  "0e5e9ca9363bcd41c0bd6244b2798f3022f5317d": {
+    "ports": {
+      "src-tauri/src/settings.rs": {
+        "outcome": "ported",
+        "destinations": [
+          "src-tauri/src/grain_settings.rs",
+          "crates/grain-core/src/settings.rs",
+          "crates/grain-core/src/context.rs",
+          "src/app/components/settings/ShowOverlay.tsx",
+          "src/app/components/settings/PillCloseButton.tsx",
+          "src/app/components/settings/PillAppIcon.tsx",
+          "src/app/stores/settingsStore.ts",
+          "crates/grain-core/src/capture.rs",
+          "src-tauri/src/grain_dictation_routing.rs",
+          "src/app/components/settings/capture/CaptureModes.tsx",
+          "crates/grain-core/src/providers.rs",
+          "src-tauri/src/grain_provider_commands.rs",
+          "src/app/stores/ppPoolStore.ts",
+          "src/app/components/settings/post-processing/pool/PostProcessingPool.tsx",
+          "src/app/components/settings/experimentations/AgentSection.tsx",
+          "src/app/components/settings/DecodeSettings.tsx"
+        ],
+        "evidence": "Core settings now own explicit completion and distinct Taiwan/Hong Kong script values, with generated UI contracts and the existing script selector adapted. Completion persists only public settings atomically before publishing memory; failure leaves setup incomplete and credentials unchanged. Two real-store regressions and setup-resume tests pass. Preferred-language wizard fields, guesses, migrations and acoustic language detection are not adopted."
+      },
+      "src-tauri/src/actions.rs": {
+        "outcome": "ported",
+        "destinations": [
+          "src-tauri/src/grain_post_process.rs",
+          "src-tauri/src/grain_actions.rs",
+          "src-tauri/src/grain_capture.rs",
+          "src-tauri/src/grain_overlay.rs",
+          "crates/grain-core/src/capture.rs",
+          "src-tauri/src/grain_dictation_routing.rs",
+          "src/app/components/settings/capture/CaptureModes.tsx"
+        ],
+        "evidence": "Updated the shared and Grain runtime language-resolution calls for the new API while keeping Grain explicit-language control. Handy Try-it outcome/speed events and shortcut-demo telemetry have no Grain consumer and are intentionally excluded; existing session-tagged bridge lifecycle and three non-blocking paste paths remain. No replacement onboarding design or duplicate event bus."
+      },
+      "src-tauri/src/audio_toolkit/audio/sink.rs": {
+        "outcome": "ported",
+        "destinations": [
+          "src-tauri/src/handy/managers/audio.rs",
+          "src-tauri/src/grain_capture.rs",
+          "src-tauri/src/grain_audio_journal.rs",
+          "src-tauri/src/grain_actions.rs",
+          "src-tauri/src/grain_audio.rs",
+          "src-tauri/src/grain_audio_manager.rs"
+        ],
+        "evidence": "Adopted all-zero versus no-samples capture status while preserving the journal-only/no-retained-copy hook and partial valid-tail contract. The real sink silence and journal regressions pass; no physical microphone or new Try-it UI acceptance is claimed."
+      },
+      "src-tauri/src/managers/audio.rs": {
+        "outcome": "ported",
+        "destinations": [
+          "src-tauri/src/grain_capture.rs",
+          "src-tauri/src/grain_actions.rs",
+          "src-tauri/src/agent.rs",
+          "src-tauri/src/grain_onboarding.rs",
+          "src-tauri/src/grain_audio.rs",
+          "src-tauri/src/grain_audio_manager.rs"
+        ],
+        "evidence": "Shared capture manager records silence status for each completed capture without changing Grain admission, readiness, cancellation, Flow or recorder ownership. Existing owned capture adapters compile and backend regressions pass. No guessed-language wizard or older deferred microphone lifecycle rewrite was restored."
+      },
+      "src-tauri/src/managers/transcription.rs": {
+        "outcome": "ported",
+        "destinations": [
+          "src-tauri/src/rolling.rs",
+          "src-tauri/src/tdt_flow.rs",
+          "crates/grain-tdt/src",
+          "src-tauri/src/grain_overlay.rs",
+          "src/app/overlay/RecordingOverlay.tsx",
+          "src-tauri/src/grain_transcription.rs",
+          "src-tauri/src/grain_transcription_manager.rs",
+          "src-tauri/src/grain_engine.rs",
+          "src-tauri/src/context_bias.rs"
+        ],
+        "evidence": "The active manager and owned grain_transcription_manager use the new effective-language API with an empty preference list, retaining existing explicit recognition intent and native capabilities. Distinct Chinese regional output types reach native conversion and settings. No acoustic language-ID model, worker or inference pass is added."
+      }
+    },
+    "frontend_review": {
+      "outcome": "adapted",
+      "problem": "Selecting/downloading a model could be mistaken for completed setup, download speed could count resumed bytes or freeze during stalls, and one Traditional Chinese choice hid regional output differences.",
+      "destinations": [
+        "src/app/components/onboarding/ShortcutsOnboarding.tsx",
+        "src/app/stores/modelStore.ts",
+        "src/app/components/settings/DecodeSettings.tsx",
+        "src-tauri/src/grain_onboarding.rs",
+        "crates/grain-core/src/context.rs"
+      ],
+      "evidence": "Grain keeps its existing permission/model/shortcut design. Its final Finish action persists completion with an error path; return/resume state is native. Native rate data replaces duplicate UI smoothing, and the existing script dropdown gains explicit regions. 712 backend, 245 Core, 102 frontend tests, binding export and frontend build pass. Native desktop/macOS acceptance remains pending."
+    },
+    "suppressed_review": {
+      "outcome": "not-applicable",
+      "problem": "The replacement Handy wizard changes font subsetting, frontend build inputs, language-coverage tooling and dependency derivatives.",
+      "destinations": [],
+      "evidence": "Grain retains its owned UI, existing CJK system-font fallback, build inputs, 0.2.2 catalogue parity tooling and lockfiles. No source dependency is needed for excluded frontend assets or the injected OS-language suggestion global. Native microphone settings, shared model progress and script fixes are adapted separately; no Handy app identity, migration UI or updater configuration is imported."
+    }
+  },
   "11c2bb1eb8eab5b0472e03d49a908a60010d8777": {
     "notes": "n/a - Grain kept its own bindings.ts typings, no optional bindings",
     "status": "Ignored"

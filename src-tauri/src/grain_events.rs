@@ -72,6 +72,7 @@ pub struct ModelDownloadProgress {
     pub downloaded: u64,
     pub total: u64,
     pub percentage: f64,
+    pub bytes_per_sec: Option<f64>,
 }
 
 /// A recording could not start or could not finish. Mirrors
@@ -187,6 +188,7 @@ mod tests {
             downloaded: 12,
             total: 100,
             percentage: 12.0,
+            bytes_per_sec: Some(1024.0),
         };
         let mirrored: ModelDownloadProgress =
             serde_json::from_str(&serde_json::to_string(&upstream).unwrap()).unwrap();
@@ -194,6 +196,7 @@ mod tests {
         assert_eq!(mirrored.downloaded, upstream.downloaded);
         assert_eq!(mirrored.total, upstream.total);
         assert_eq!(mirrored.percentage, upstream.percentage);
+        assert_eq!(mirrored.bytes_per_sec, upstream.bytes_per_sec);
 
         let upstream = crate::actions::RecordingErrorEvent {
             error_type: "no_input_device".into(),
