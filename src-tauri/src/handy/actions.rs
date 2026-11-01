@@ -556,35 +556,32 @@ impl ShortcutAction for TranscribeAction {
                                 crate::grain_actions::emit_processing_complete(&ah, session_id);
                                 change_tray_icon(&ah, TrayIconState::Idle);
                             } else {
-                                let ah_clone = ah.clone();
                                 let paste_time = Instant::now();
                                 let final_text = processed.final_text;
                                 let suppress_trailing_space = processed.suppress_trailing_space;
-                                ah.run_on_main_thread(move || {
-                                    match utils::paste_with_options(
-                                        final_text,
-                                        ah_clone.clone(),
-                                        suppress_trailing_space,
-                                    ) {
-                                        Ok(()) => debug!(
-                                            "Text pasted successfully in {:?}",
-                                            paste_time.elapsed()
-                                        ),
-                                        Err(e) => {
-                                            error!("Failed to paste transcription: {}", e);
-                                            let _ = ah_clone.emit("paste-error", ());
-                                        }
+                                // [GRAIN] Owned callers use the shared blocking pool;
+                                // only keyboard injection returns to the UI thread.
+                                match crate::grain_actions::paste_transcription(
+                                    ah.clone(),
+                                    final_text,
+                                    suppress_trailing_space,
+                                )
+                                .await
+                                {
+                                    Ok(()) => debug!(
+                                        "Text pasted successfully in {:?}",
+                                        paste_time.elapsed()
+                                    ),
+                                    Err(e) => {
+                                        error!("Failed to paste transcription: {}", e);
+                                        let _ = ah.emit("paste-error", ());
                                     }
-                                    crate::grain_actions::emit_processing_complete(
-                                        &ah_clone, session_id,
-                                    );
-                                    change_tray_icon(&ah_clone, TrayIconState::Idle);
-                                })
-                                .unwrap_or_else(|e| {
-                                    error!("Failed to run paste on main thread: {:?}", e);
-                                    crate::grain_actions::emit_processing_complete(&ah, session_id);
+                                }
+                                crate::grain_actions::emit_processing_complete(&ah, session_id);
+                                // [GRAIN] A finishing paste cannot reset a newer capture's tray.
+                                if crate::grain_actions::current_session_id() == session_id {
                                     change_tray_icon(&ah, TrayIconState::Idle);
-                                });
+                                }
                             }
                         }
                         Err(err) => {

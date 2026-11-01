@@ -730,6 +730,23 @@
   "5a7c0eac1ac250142b9fe58a898cbf79cf9f1814": {
     "notes": "Tauri dependency/fork decisions remain unchanged. Overlay migration 2026-10-04 compiles Handy overlay.rs and adopts its current NSPanel lifecycle and Dock/nonactivation handling; macOS platform acceptance is pending."
   },
+  "5a9451e70aedc90648ce2befd9d7e0304746f9c1": {
+    "ports": {
+      "src-tauri/src/actions.rs": {
+        "outcome": "ported",
+        "destinations": [
+          "src-tauri/src/grain_post_process.rs",
+          "src-tauri/src/grain_actions.rs",
+          "src-tauri/src/grain_capture.rs",
+          "src-tauri/src/grain_overlay.rs",
+          "crates/grain-core/src/capture.rs",
+          "src-tauri/src/grain_dictation_routing.rs",
+          "src/app/components/settings/capture/CaptureModes.tsx"
+        ],
+        "evidence": "Standard, Flow and Native ASR now await one Grain-owned spawn_blocking paste adapter; the shared clipboard serializes the complete options transaction and sends only keyboard injection to the UI thread. Agent quick/confirm paste already run on dedicated workers. Preserve caret-fit spacing, Agent-panel dictation and Paste Catch. Old-session completions retain tagged overlay events and cannot reset a newer tray; Flow terminal model errors are likewise session guarded. Windows Rust check and all 704 backend tests pass, including clipboard restoration and stale-overlay regressions. Native desktop/macOS acceptance is still pending. Capture admission, postprocessing and routing settings are unchanged."
+      }
+    }
+  },
   "5c77861f17a51996070b6b5e0a688d08a652e1e0": {
     "notes": "Bumped handy-keys to 0.3.4 for Pause/Break, PrintScreen/SysRq, and ContextMenu/Application key support on supported platforms.",
     "status": "Merged",

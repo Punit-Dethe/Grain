@@ -438,6 +438,16 @@ pass. Windows #2326 has no matching GradeChip surface in Grain. Final
 post-platform preflight passes all five gates. Native Mac/Linux acceptance
 remains pending; these two adapted ports do not close out intervening commits.
 
+The next staged merge integrates #2302 through `5a9451e7`: shared clipboard
+transactions stay serialized and macOS input injection stays on the main
+thread; Standard, Flow and Streaming wait through Grain's existing blocking
+pool instead of sleeping on the UI thread. Preserve the options/Agent/Paste
+Catch hooks and session-tagged completion, with tray/terminal-error guards.
+Windows Rust check and 704 backend tests pass (23 opt-in skips), as do all
+five final preflight gates. Desktop paste responsiveness/restoration and
+macOS native acceptance remain in the sync plan. Six newer commits remain
+outside ancestry; the reviewed baseline stays at 38 files.
+
 ### October 17 full integration
 
 Merged the complete 34-commit range through `9e57a0d7` on

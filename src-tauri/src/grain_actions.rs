@@ -107,6 +107,21 @@ pub(crate) fn emit_processing_complete(app: &AppHandle, session_id: u64) {
     );
 }
 
+/// Paste delays, scripts and clipboard restoration must not block the UI or an
+/// async executor thread. The shared clipboard module dispatches only input
+/// injection back to the UI thread, preserving macOS keyboard API requirements.
+pub(crate) async fn paste_transcription(
+    app: AppHandle,
+    text: String,
+    suppress_trailing_space: bool,
+) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        utils::paste_with_options(text, app, suppress_trailing_space)
+    })
+    .await
+    .map_err(|error| format!("Paste worker failed: {error}"))?
+}
+
 /// One capture owns the shared recorder at a time. The coordinator checks this
 /// before starting any dictation engine, including when Agent has released its
 /// microphone for typing but still owns the input card or reply panel.
@@ -452,22 +467,15 @@ impl ShortcutAction for RealtimeTranscribeAction {
             if final_text.trim().is_empty() {
                 change_tray_icon(&ah, TrayIconState::Idle);
             } else {
-                let ah_clone = ah.clone();
-                ah.run_on_main_thread(move || {
-                    if let Err(e) = utils::paste_with_options(
-                        final_text,
-                        ah_clone.clone(),
-                        suppress_trailing_space,
-                    ) {
-                        error!("Failed to paste real-time transcription: {e}");
-                        let _ = ah_clone.emit("paste-error", ());
-                    }
-                    change_tray_icon(&ah_clone, TrayIconState::Idle);
-                })
-                .unwrap_or_else(|e| {
-                    error!("Failed to run paste on main thread: {e:?}");
+                if let Err(e) =
+                    paste_transcription(ah.clone(), final_text, suppress_trailing_space).await
+                {
+                    error!("Failed to paste real-time transcription: {e}");
+                    let _ = ah.emit("paste-error", ());
+                }
+                if current_session_id() == session_id {
                     change_tray_icon(&ah, TrayIconState::Idle);
-                });
+                }
             }
 
             if audio_len > 0 {
@@ -503,7 +511,7 @@ impl ShortcutAction for RealtimeTranscribeAction {
             emit_processing_complete(&ah, session_id);
             // ProcessingComplete resets the session state; emit the terminal
             // failure afterwards so the pill remains visibly in fallback.
-            if let Some(error) = pipeline_error {
+            if let Some(error) = pipeline_error.filter(|_| current_session_id() == session_id) {
                 crate::bridge::emit(&ah, DaemonEvent::ModelError { error });
             }
         });
@@ -726,22 +734,15 @@ impl ShortcutAction for NativeAsrAction {
             if final_text.trim().is_empty() {
                 change_tray_icon(&ah, TrayIconState::Idle);
             } else {
-                let ah_clone = ah.clone();
-                ah.run_on_main_thread(move || {
-                    if let Err(e) = utils::paste_with_options(
-                        final_text,
-                        ah_clone.clone(),
-                        suppress_trailing_space,
-                    ) {
-                        error!("Failed to paste Native ASR transcription: {e}");
-                        let _ = ah_clone.emit("paste-error", ());
-                    }
-                    change_tray_icon(&ah_clone, TrayIconState::Idle);
-                })
-                .unwrap_or_else(|e| {
-                    error!("Failed to run paste on main thread: {e:?}");
+                if let Err(e) =
+                    paste_transcription(ah.clone(), final_text, suppress_trailing_space).await
+                {
+                    error!("Failed to paste Native ASR transcription: {e}");
+                    let _ = ah.emit("paste-error", ());
+                }
+                if current_session_id() == session_id {
                     change_tray_icon(&ah, TrayIconState::Idle);
-                });
+                }
             }
 
             // processing finished → pill/Studio Window hides.

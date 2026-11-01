@@ -16,6 +16,24 @@ the default: normal 3-way merge, preferring upstream in the STT core.
 > live at `src-tauri/src/handy/…` in Grain (declared via `#[path]`, contents
 > unchanged). `Upstream/ratchet.py` maps between the two.
 
+## Non-blocking paste — 2 November 2026
+
+After integrating #2302 through `5a9451e7`, the shared clipboard retains Grain's
+options entry point and marked routing hooks; put the upstream serialization
+lock there so all owned callers receive it. The two extra compared lines are
+the hook comment/spacing (clipboard budget 58 to 60).
+
+The shared actions module delegates paste scheduling through the existing
+Grain action adapter instead of adopting Handy's inline detached std-thread
+block. The adapter awaits the existing blocking pool, preserves Grain's
+caret-fit option and completion/history lifetime, and leaves OS injection on
+the main thread. Keep Grain's session ID when guarding late tray completion.
+The measured actions difference against this new base is 713 to 762; this
+counts Handy's omitted inline scheduling as well as the narrow owned hook,
+not new feature implementation inside the shared tree. Flow and Native ASR
+callers and the terminal-error session guard stay in grain_actions.rs.
+Windows compilation and 704 backend tests pass; desktop acceptance is pending.
+
 ## Platform dependency ports — 2 November 2026
 
 Adapted #2336's Debian OpenSSL runtime declaration and package audit to Grain's
