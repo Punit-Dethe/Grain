@@ -1,7 +1,7 @@
 # Grain Meet — execution plan
 
 **Status:** implementation started on `feat/grain-meet`; structured TDT evidence increment implemented. Step 0 model/worker feasibility and benchmarks remain incomplete. See [progress and validation](PROGRESS.md).
-**Diarizer decision (2 November 2026, user):** keep Sortformer v2.1 for the first implementation. The Nemotron 3 backport researched in [DIARIZER-RESEARCH.md](DIARIZER-RESEARCH.md) is deferred to a later upgrade. No native fork change is planned now.
+**Diarizer decision (2 November 2026, user, revised):** the diarizer is **Nemotron 3 Diarization** Q8_0, the model family FluidMeet and Glimpse use, so their tuning applies directly. It was backported from Glimpse's fork onto Grain's native fork as researched in [DIARIZER-RESEARCH.md](DIARIZER-RESEARCH.md) (option B): native pin `c8cf6b11dd5e67131b264025112293bda1bb8c86`, contract 6. Sortformer v2.1 is no longer used. Earlier mentions of Sortformer below describe the first implementation and its measurements.
 **Prepared:** 1 November 2026.
 **Reference:** FluidVoice’s FluidMeet workflow and implementation, adapted to Grain’s existing Rust/Tauri application and `transcribe.cpp 0.4` runtime.
 **User-facing name (2 November 2026, user):** the UI calls the feature **Recall** for now; the name is not final. It is a display string only, defined once in the frontend's localized strings, so it can change without touching anything else. Internally the feature stays **Meet**: the `grain_meet` module, `meet_*` commands, `meet-*` events, `docs/Meet` and the `feat/grain-meet` branch.
@@ -209,7 +209,7 @@ The native diarization entry point currently accepts a full PCM slice and intern
 
 Suggested initial engineering targets, to validate in the feasibility report, are: a 60-minute dual-track meeting on a representative 8 GiB machine; recording overhead that does not grow with duration; at most 200 MiB incremental host RAM for recording without captions; and at most 2 GiB incremental total process-tree RAM during final processing. Measure VRAM separately on discrete GPUs and avoid double-counting unified memory. These are proposed gates, not current performance claims. If a target fails, record the result and adjust the supported envelope explicitly rather than silently relaxing the test.
 
-**Measured and decided (2 November 2026).** Sortformer peaks at about 1.2 GiB of worker memory per hour of one track (see [PROGRESS.md](PROGRESS.md)). The user chose FluidMeet's approach, tuned later: diarize each whole track in one run and process tracks one at a time, with **a 90-minute cap per track** (`grain_engine::MAX_ANALYSIS_SAMPLES`, about 1.8 GiB peak). A longer track is kept, and its processing is refused with the limit stated. No further duration experiments are planned for the first release.
+**Measured and decided (2 November 2026).** Sortformer peaked at about 1.2 GiB of worker memory per hour of one track; Nemotron 3 peaks at 1.3 GiB at 60 minutes and 1.85 GiB at 90 minutes (see [PROGRESS.md](PROGRESS.md), Increment 8). The user chose FluidMeet's approach, tuned later: diarize each whole track in one run and process tracks one at a time, with **a 90-minute cap per track** (`grain_engine::MAX_ANALYSIS_SAMPLES`, about 1.8 GiB peak). A longer track is kept, and its processing is refused with the limit stated. No further duration experiments are planned for the first release.
 
 ### FluidMeet tuning adopted for the first release
 
@@ -228,7 +228,8 @@ Read from FluidVoice `dd37664`. FluidMeet diarizes and transcribes after recordi
 | Boundary recovery: 80 ms hop, words up to 1.2 s; recover one adjacent boundary word, never a run of text in silence | `MeetingWordBoundaryRecovery` | Step 3 |
 | A secondary speaker needs at least 10 words and 5 s across its epochs to get its own label | `MeetingTranscriptAssembler.minimumSpeakerWords/Seconds` | Step 3 |
 
-FluidMeet's 80 ms cadence matches Sortformer v2.1's 80 ms output frames, so the assignment numbers carry over unchanged.
+These are FluidMeet's values for Nemotron 3 (
+emotronCadenceMaximumFloorSeconds and the rest), the diarizer Grain now uses, so they apply unchanged.
 
 ## 7. Transcript and speaker correctness
 

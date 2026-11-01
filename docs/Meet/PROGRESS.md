@@ -267,3 +267,17 @@ Validation:
 - The ignored `real_devices_open_and_deliver` test passed on this machine: the default microphone delivered 48,000 frames in 1 s, and loopback of the default output delivered 48,960 frames at 48 kHz while a test tone played. Output device ids round-trip through `parse`.
 - Frontend: tsc, ESLint, Prettier, all vitest suites (including new `meetFormat` tests), the production build, `ui_parity.py` and the translation check pass. The impeccable detector reports nothing for the page and stylesheet.
 - **Not yet done:** a real meeting in the running app (two sources, device unplug, sleep/resume, low disk), the user's visual review, per-application capture, speaker renaming and export formats.
+
+## Increment 8: Nemotron 3 Diarization replaces Sortformer v2.1 (2026-11-02)
+
+User decision: use the diarizer FluidMeet and Glimpse use, so their tuning applies as-is, and compare against Glimpse on the same clip.
+
+- **Native:** the Glimpse diarization slice is backported onto Grain's fork as branch `grain/diarize-nemotron3`, commit `c8cf6b11dd5e67131b264025112293bda1bb8c86` (on top of `eeffcc3`). Contract 6, ABI `54c13920a14bb4b6`; the diarize-stream ABI struct is 31 because 29 is PKFW here. Both workspaces' pins, locks and `native/transcribe-fork.json` are updated; `scripts/transcribe_fork.py --check --metadata --official` passes.
+- **Grain:** `meet_download_diarizer` installs `nemotron-3-diarization-Q8_0.gguf` from `Glimpse-Dictation/Nemotron-3-Diarization-gguf@273ebb0`, verified by size and SHA-256. The offline call is unchanged (`VeryHighLatency`, which is 30.4 s chunks for Nemotron 3). No worker, storage, attribution or UI contract changed. FluidMeet's attribution numbers are its Nemotron 3 values and stay as they are.
+
+Validation (Windows 11, i5-14600KF, RTX 3080):
+- Native: 60 tests pass on static CPU; the CLI separates the 2-speaker fixture into 2 speakers and 5 segments.
+- Real worker, CPU and Vulkan: role switching, cancellation, GPU-loss retry on CPU, long-audio diarization and the saved-meeting pipeline pass. 737 lib tests pass.
+- **Synthetic 86 s conversation** (Jobs, JFK and a FLEURS speaker, each twice, captured at 48 kHz stereo through the meeting path): three speakers, each keeping its label when they return. Unassigned words fell from 9 with Sortformer to 2 (both the first word of a turn).
+- **Worker peak memory, one track:** 313 MiB at 10 min, 1,303 MiB at 60 min, 1,897 MiB at 90 min on CPU (1,838 MiB on Vulkan). Speed: 40x real time on CPU, 590x on Vulkan. The 90-minute cap stays.
+- **Known, not diarizer-related:** in the same clip Parakeet drops the last FLEURS turn (about 10 s) from the transcript text itself. Deferred by the user until after the Glimpse comparison.

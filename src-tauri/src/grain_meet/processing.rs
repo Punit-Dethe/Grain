@@ -37,8 +37,9 @@ pub struct Models {
     pub asr: PathBuf,
 }
 
-/// Sortformer's offline-file operating point (FluidMeet and Glimpse use the
-/// same offline point for whole-file diarization).
+/// The offline-file operating point: Nemotron 3's `VeryHighLatency` (30.4 s
+/// chunk plus lookahead), the point Glimpse runs for whole-file diarization.
+/// Nemotron 3 shares Sortformer's public extension, hence the names.
 fn offline() -> transcribe_cpp::DiarizeOptions {
     transcribe_cpp::DiarizeOptions {
         family: Some(transcribe_cpp::DiarizeExtension::Sortformer(
@@ -330,7 +331,7 @@ fn assemble_track(
     }
 }
 
-/// Real-worker pipeline checks: the built Grain executable, Sortformer v2.1,
+/// Real-worker pipeline checks: the built Grain executable, Nemotron 3 Diarization,
 /// a reviewed Parakeet model and a 16 kHz mono WAV fixture. Run with
 /// `--ignored --test-threads=1`.
 #[cfg(test)]
@@ -366,7 +367,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "requires Grain worker executable, Sortformer, Parakeet and WAV fixtures"]
+    #[ignore = "requires Grain worker executable, Nemotron 3 Diarization, Parakeet and WAV fixtures"]
     fn saved_meeting_becomes_a_speaker_attributed_transcript() {
         const S: u64 = 1_000_000_000;
         let pcm = fixture();

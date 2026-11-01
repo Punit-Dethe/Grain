@@ -86,7 +86,9 @@ This shows that the port runs on Windows CPU and Vulkan. It does not establish a
 - **It is an independent implementation with an incompatible GGUF schema under the same arch key `nemotron3_diar`.** For example, PR tensor names are `enc.pre_encode.proj`, `diar.encoder_proj` and `diar.single_spk_head`; Glimpse names are `enc.embed.proj`, `diar.proj` and `diar.head.out`. A Glimpse GGUF will not load in a future upstream release built from #175, and the reverse is also true.
 - It has no Windows or Vulkan evidence.
 
-## 5. Upgrade route for later (not current work)
+## 5. Upgrade route (implemented 2 November 2026)
+
+**Done:** option B below, as `grain/diarize-nemotron3` on the native fork, commit `c8cf6b11dd5e67131b264025112293bda1bb8c86` (contract 6, ABI `54c13920a14bb4b6`, `TRANSCRIBE_ABI_DIARIZE_STREAM_PARAMS` = 31). Grain downloads `Glimpse-Dictation/Nemotron-3-Diarization-gguf@273ebb0` (sha256 `877ff9e77e829e30158528cfaabf56188fca11d05349e09821b3033a97d31688`, 105,936,416 bytes). Mirroring the artifact to a Grain-controlled host (divergence 4) is still open before release.
 
 Recorded so the later upgrade starts from evidence. The user kept Sortformer v2.1 for now. The analysis below was the proposal at research time: **when upgrading, backport the Glimpse diarization slice onto Grain's own fork, which stays on upstream 0.4.0 plus the Flow patch.** Do not move Grain to the Glimpse fork, to upstream 0.4.1, or to PR #175.
 

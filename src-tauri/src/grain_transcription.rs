@@ -444,8 +444,8 @@ pub async fn change_vad_backend_setting(
     .map_err(|error| error.to_string())?
 }
 
-/// Real-worker role bridge checks: the built Grain executable, a Sortformer
-/// v2.1 diarizer, a reviewed Parakeet TDT model and a 16 kHz mono WAV. Run
+/// Real-worker role bridge checks: the built Grain executable, the Nemotron 3
+/// diarizer, a reviewed Parakeet TDT model and a 16 kHz mono WAV. Run
 /// with `--ignored --test-threads=1`; the fault test sets process environment.
 #[cfg(test)]
 mod meeting_worker_tests {
@@ -523,7 +523,7 @@ mod meeting_worker_tests {
     }
 
     #[test]
-    #[ignore = "requires Grain worker executable, Sortformer, Parakeet and WAV fixtures"]
+    #[ignore = "requires Grain worker executable, Nemotron 3 Diarization, Parakeet and WAV fixtures"]
     fn worker_switches_roles_rejects_wrong_roles_and_recovers_after_cancel() {
         let diarizer = env_path("GRAIN_MEET_TEST_DIARIZER");
         let asr_model = env_path("GRAIN_MEET_TEST_ASR");
@@ -554,7 +554,7 @@ mod meeting_worker_tests {
 
         // Diarizer: the ASR session is gone, ASR work is refused, not retried.
         let info = attempt.load(&diarizer, Role::Diarize).unwrap();
-        assert_eq!(info.arch, "sortformer");
+        assert_eq!(info.arch, "nemotron3_diar");
         assert_eq!(info.on_gpu, backend() != transcribe_cpp::Backend::Cpu);
         assert!(attempt.asr().is_err());
         let query = engine
@@ -567,7 +567,7 @@ mod meeting_worker_tests {
             .is_err());
         assert_eq!(
             engine.loaded().unwrap().arch,
-            "sortformer",
+            "nemotron3_diar",
             "a refusal is not a crash"
         );
 
@@ -580,7 +580,7 @@ mod meeting_worker_tests {
             speakers(&result),
             started.elapsed()
         );
-        assert_eq!(result.max_speakers, 4);
+        assert_eq!(result.max_speakers, 8);
         assert_eq!(result.samples, fixture_samples as u64);
         assert_eq!(speakers(&result).len(), 2, "two-speaker fixture");
 
@@ -619,7 +619,7 @@ mod meeting_worker_tests {
             again.segments.len(),
             started.elapsed()
         );
-        assert_eq!(engine.loaded().unwrap().arch, "sortformer");
+        assert_eq!(engine.loaded().unwrap().arch, "nemotron3_diar");
 
         // Back to ASR: ASR -> diarization -> ASR with one resident role.
         fresh.load(&asr_model, Role::Asr).unwrap();
@@ -629,7 +629,7 @@ mod meeting_worker_tests {
     }
 
     #[test]
-    #[ignore = "requires a GPU, the debug Grain worker and Sortformer fixtures"]
+    #[ignore = "requires a GPU, the debug Grain worker and Nemotron 3 fixtures"]
     fn gpu_loss_during_diarization_retries_the_diarizer_role_on_cpu() {
         if backend() != transcribe_cpp::Backend::Vulkan {
             eprintln!("skip: set GRAIN_MEET_TEST_BACKEND=vulkan");
@@ -653,7 +653,7 @@ mod meeting_worker_tests {
         assert_eq!(speakers(&result).len(), 2);
         let info = engine.loaded().unwrap();
         assert_eq!(
-            info.arch, "sortformer",
+            info.arch, "nemotron3_diar",
             "recovery reloads the diarizer role"
         );
         assert!(!info.on_gpu, "recovery runs on CPU");
@@ -664,7 +664,7 @@ mod meeting_worker_tests {
     /// audio (default 10). Repetition stresses memory, not recognition quality.
     /// Measure the worker's peak memory externally while this runs.
     #[test]
-    #[ignore = "requires Grain worker executable, Sortformer and WAV fixtures"]
+    #[ignore = "requires Grain worker executable, Nemotron 3 and WAV fixtures"]
     fn worker_diarizes_long_analysis_audio() {
         let minutes: f64 = std::env::var("GRAIN_MEET_TEST_MINUTES")
             .map(|m| m.parse().unwrap())

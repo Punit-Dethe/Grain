@@ -1129,7 +1129,7 @@
       },
       "speakerModel": {
         "title": "Speaker detection needs a model",
-        "body": "Download the speaker model (139 MB) once to label who spoke. Recording works without it.",
+        "body": "Download the speaker model (106 MB) once to label who spoke. Recording works without it.",
         "download": "Download",
         "downloading": "Downloading… {{percent}}%",
         "ready": "Speaker model installed"

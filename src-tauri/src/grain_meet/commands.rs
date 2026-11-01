@@ -23,11 +23,13 @@ use super::transcript::{self, TranscriptRevision};
 use crate::managers::model::ModelManager;
 use crate::managers::transcription::TranscriptionManager;
 
-/// The first-release diarizer: Sortformer v2.1 Q8_0, pinned by revision and hash.
-const DIARIZER_FILE: &str = "diar_streaming_sortformer_4spk-v2.1-Q8_0.gguf";
-const DIARIZER_URL: &str = "https://huggingface.co/handy-computer/diar_streaming_sortformer_4spk-v2.1-gguf/resolve/60ebab3ef7cae9869be0abcde13360347e96ba03/diar_streaming_sortformer_4spk-v2.1-Q8_0.gguf";
-const DIARIZER_SHA256: &str = "a5dacdc650790266c7a362e54e6bf51952015487edaa606c4e11632bc32442a9";
-const DIARIZER_BYTES: u64 = 139_310_336;
+/// The diarizer: Nemotron 3 Diarization Q8_0 (Streaming Sortformer v3, 8
+/// speakers, OpenMDW-1.1), the model family FluidMeet and Glimpse use. Pinned
+/// by revision, size and SHA-256.
+const DIARIZER_FILE: &str = "nemotron-3-diarization-Q8_0.gguf";
+const DIARIZER_URL: &str = "https://huggingface.co/Glimpse-Dictation/Nemotron-3-Diarization-gguf/resolve/273ebb0e65377f74576768257cd11f00c248c39d/nemotron-3-diarization-Q8_0.gguf";
+const DIARIZER_SHA256: &str = "877ff9e77e829e30158528cfaabf56188fca11d05349e09821b3033a97d31688";
+const DIARIZER_BYTES: u64 = 105_936_416;
 
 #[derive(Clone, Debug, Serialize, Deserialize, Type)]
 pub struct SourceStatus {
