@@ -1,5 +1,13 @@
 # Extension implementation: progress, changes and user testing
 
+**Overview visual correction, 2 November:** user reports the glass barely shows
+in dark mode and does not show in light mode. Increase the hero's preferred height
+by 30px (370–450px). Reduce the light panel fill from 94% to 66% opacity so artwork
+shows through, increase backdrop blur to 26px/saturation to 140%, and darken only
+the panel's light-theme text tokens for readability. Dark fill is retained. This
+supersedes the first implementation's too-opaque light treatment; visual acceptance
+remains Pending. No release/version change; keep this on the UI branch for 0.0.11.
+
 **Overview layout / release hold, 2 November 2026:** the user explicitly requests
 no further release now; intended next delivery is 0.0.11 in a few days. No version,
 tag, release or installer workflow is changed or dispatched for this UI work.
