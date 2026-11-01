@@ -430,6 +430,14 @@ Linux Nix evaluation, native macOS/Linux execution and real model inference
 are not claimed. The staged baseline is 38 reviewed diverged files. Seven
 newer Handy commits remain outside ancestry; see `SYNC-2026-11-02.md`.
 
+The same branch separately adapts #2336 Debian OpenSSL packaging and #2340
+Intel Mac CPU-only features, retaining Apple Silicon Metal and the paired
+fork. Both native layers' target features resolve correctly for both Mac and
+both Windows architectures; 11 contract tests and the Windows Rust check
+pass. Windows #2326 has no matching GradeChip surface in Grain. Final
+post-platform preflight passes all five gates. Native Mac/Linux acceptance
+remains pending; these two adapted ports do not close out intervening commits.
+
 ### October 17 full integration
 
 Merged the complete 34-commit range through `9e57a0d7` on

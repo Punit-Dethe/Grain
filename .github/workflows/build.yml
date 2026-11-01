@@ -491,6 +491,23 @@ jobs:
             echo "No AppImage found to process"
           fi
 
+      - name: Verify Debian OpenSSL runtime dependency
+        if: contains(inputs.platform, 'ubuntu')
+        shell: bash
+        run: |
+          base="${CARGO_TARGET_DIR:-src-tauri/target}"
+          if [[ -n "${{ inputs.target }}" ]]; then
+            base="$base/${{ inputs.target }}"
+          fi
+          shopt -s nullglob
+          for deb in "$base/${{ steps.build-profile.outputs.profile }}/bundle/deb/"*.deb; do
+            depends="$(dpkg-deb -f "$deb" Depends)"
+            if ! printf '%s\n' "$depends" | grep -Eq '(^|,)[[:space:]]*libssl3t64[[:space:]]*\|[[:space:]]*libssl3[[:space:]]*(,|$)'; then
+              echo "ERROR: $deb must declare libssl3t64 | libssl3. Depends: $depends"
+              exit 1
+            fi
+          done
+
       - name: Upload artifacts (Linux)
         if: inputs.upload-artifacts && contains(inputs.platform, 'ubuntu')
         uses: actions/upload-artifact@v4

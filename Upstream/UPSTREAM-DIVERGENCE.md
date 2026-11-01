@@ -16,6 +16,18 @@ the default: normal 3-way merge, preferring upstream in the STT core.
 > live at `src-tauri/src/handy/…` in Grain (declared via `#[path]`, contents
 > unchanged). `Upstream/ratchet.py` maps between the two.
 
+## Platform dependency ports — 2 November 2026
+
+Adapted #2336's Debian OpenSSL runtime declaration and package audit to Grain's
+owned config/workflow. Adapted #2340's per-architecture macOS native features:
+Apple Silicon Metal, Intel static CPU; preserve the paired immutable fork and
+Windows/Linux backends. Actual Cargo feature resolution and 11 contract tests
+verify both Mac and both Windows targets; native Mac/Linux acceptance remains
+pending. Against the current staged merge base, reviewed Cargo.toml divergence
+is 152 to 156 and owned tauri.conf.json divergence is 22 to 28. These are
+isolated adapted ports with exact source trailers, not ancestry close-outs of
+the intervening feature commits. See SYNC-2026-11-02.md.
+
 ## Catalogue integration — 2 November 2026
 
 The #2299 integration adopts the shared model catalogue and cache fixes.

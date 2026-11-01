@@ -369,6 +369,17 @@
       }
     }
   },
+  "2b3f7c816993a3f1b240479fe89e5b3064ed57c7": {
+    "suppressed_review": {
+      "outcome": "adapted",
+      "problem": "Debian packages may install without the OpenSSL 3 runtime required by their linked binary.",
+      "destinations": [
+        "src-tauri/tauri.conf.json",
+        ".github/workflows/build.yml"
+      ],
+      "evidence": "Added libssl3t64 | libssl3 to Grain Debian dependencies and a build-workflow dpkg-deb Depends audit. JSON/TOML validation and scoped formatting pass. No Debian installer has been built or run on this Windows machine."
+    }
+  },
   "2bdf9ac05724fd6fa22f28dabb664c54a43fae3c": {
     "frontend_review": {
       "outcome": "not-applicable",
@@ -807,6 +818,9 @@
       ],
       "evidence": "See Upstream/SYNC-2026-10-17.md: Windows backend 599 pass; real worker, streaming fault, VAD and exact-text v2/v3 Flow gates pass; frontend build, 117 tests, lint and parity pass. Physical device/UI and macOS/Linux app acceptance remain explicit."
     }
+  },
+  "7bfb2e2c934b798bcf6e3627653aed2439996f89": {
+    "notes": "Adapted #2340 on sync/handy-audit-20261102: Intel macOS is static CPU, Apple Silicon retains Metal; paired fork eeffcc3887018015d04d20e61d3698a33d790f24 and Windows/Linux features unchanged. Actual cargo-tree target resolution verifies both Mac and both Windows postures; 11 native contract regressions pass. Native macOS startup/inference remains unvalidated. This is an adapted port; upstream ancestry is still pending."
   },
   "7c31572d1973415a7115ff28226198a1d752cebe": {
     "frontend_review": {
@@ -1776,6 +1790,16 @@
   },
   "f79a907fc0d3a1ef689bc338de35ab0bcab68029": {
     "notes": "Added the cancel-generation infra Grain lacked; cancel now aborts in-flight LLM/paste"
+  },
+  "f81e7e70fb837a2d24db96ad69abc7969762876a": {
+    "frontend_review": {
+      "outcome": "not-applicable",
+      "problem": "Handy GradeChip labels are vertically misaligned on Windows.",
+      "destinations": [
+        "src/app/components/onboarding/ModelCard.tsx"
+      ],
+      "evidence": "Grain does not ship the upstream shared GradeChip component; its owned ModelCard uses separate markup and styling. No Handy UI was copied and no equivalent bug has been established."
+    }
   },
   "f96a7afb285c900879a2863ccce76d14e1a07fed": {
     "notes": "AUDIT 2026-07-17: was HALF-applied - run-extension gate was correct but the fuzzy-correction gate still used Feature::InitialPrompt, so custom words were silently dropped for non-whisper models advertising it. Fixed, and the same root cause fixed in the Grain-only rolling path (upstream fix could not reach it)."

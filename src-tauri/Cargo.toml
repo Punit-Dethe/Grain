@@ -191,10 +191,16 @@ transcribe-cpp = { version = "=0.4.0", default-features = false, features = [
   "vulkan",
 ] }
 
+# [GRAIN] Keep the paired native fork; mirror Handy #2340's per-arch posture.
+[target.'cfg(all(target_os = "macos", target_arch = "aarch64"))'.dependencies]
+transcribe-cpp = { version = "=0.4.0", default-features = false, features = ["metal"] }
+
+# Intel/AMD Metal shader initialization can hang model loading. Use static CPU.
+[target.'cfg(all(target_os = "macos", target_arch = "x86_64"))'.dependencies]
+transcribe-cpp = { version = "=0.4.0", default-features = false }
+
 [target.'cfg(target_os = "macos")'.dependencies]
 tauri-nspanel = { git = "https://github.com/ahkohd/tauri-nspanel", branch = "v2.1" }
-# [GRAIN] macOS links transcribe-cpp statically via Metal (ships no DLLs).
-transcribe-cpp = { version = "=0.4.0", default-features = false, features = ["metal"] }
 # Used by the receipt-sequenced ("reliable") paste path for lazy NSPasteboard
 # promises. Versions track what Tauri already pulls in.
 objc2 = "0.6"

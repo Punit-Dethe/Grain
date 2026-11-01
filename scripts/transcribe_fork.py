@@ -77,8 +77,12 @@ def check(pin: dict, metadata: bool, official: bool, target: str | None = None) 
                 features = set(filter(None, feature_text.split(",")))
                 required = {"dynamic-backends", "shared"}
                 if workspace.name == "src-tauri":
-                    required = ({"metal"} if "apple-darwin" in host else set()
-                                if host == "aarch64-pc-windows-msvc" else required | {"vulkan"})
+                    if host == "aarch64-apple-darwin":
+                        required = {"metal"}
+                    elif host in {"x86_64-apple-darwin", "aarch64-pc-windows-msvc"}:
+                        required = set()
+                    else:
+                        required |= {"vulkan"}
                 if workspace.name == "src-tauri" and name == "transcribe-cpp":
                     required.add("serde")  # JSON IPC to the isolated model worker.
                 require(features == required,
