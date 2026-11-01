@@ -478,3 +478,47 @@ model decision remain as listed above. Do not revisit M7.
   the coherent signed-catalogue unit after the `extends` decision.
 - Full batch 2/3 acceptance, ordinary dictation/microphone and any remaining
   user visual checks are not certified by these scoped automated results.
+
+**1 November 2026, session 4: embedding workflow fully retired.**
+
+- The user explicitly authorized removing the unused embedding workflow,
+  including Settings/download/install machinery, and continuing the remaining
+  retirement. Removed `grain_embed.rs`, its four commands/four events and generated
+  bindings, the Application settings group/component and English copy, and the
+  Agent-window teardown hook. Agent confirmation/auto-approval behavior is unchanged.
+  No startup migration or model-cleanup service was added. Shared `hf-hub` stays
+  because Handy's live ASR model downloads use it; no Handy source was changed.
+- Removed Candle core/nn/transformers and tokenizers dependencies. Cargo pruned
+  57 packages from the app lockfile, with zero added packages/version upgrades.
+  Removed the dormant dense retrieval arm, cosine floor, hybrid/RRF fusion,
+  injected-score context, ranks/provenance and evaluation metrics/API. Production
+  callers had always passed `None`; exact/lexical retrieval remains model-free.
+  Lexical assembly also no longer allocates fusion rank maps/id sets/result vectors.
+- Differential verification against the actual `e4413e79` retriever: all 410
+  comparisons across 41 corpus requests, five K values (including zero) and both
+  query sources match tool IDs, provenance, lexical ranks, exact score bits,
+  truncation and exclusions. Evidence: `C:\t\logs\t9-retrieval-parity.txt`;
+  the local probe imports the original source, not a recreated scoring algorithm.
+- Verification: workspace all-target check/tests pass (core 250 + three benchmark
+  tests, SDK 44, checker/CLI 23 each, registry tools 99); removed four dense unit
+  tests and one dense benchmark. App all-target check and 696 app tests pass /
+  23 ignored (three deleted embedding tests); core strict Clippy passes; app
+  Clippy exits zero with 57 lib / 84 lib-test warnings (was 69/86). A redundant
+  nested close condition exposed by removing the hook was merged, preserving
+  its short-circuit and existing pending-action cleanup. Bindings regenerated;
+  tsc, 101 Vitest tests, frontend build, parity/policy, rustfmt, scoped UI
+  Prettier and whitespace checks pass. Impeccable detector: no findings.
+- Existing lint/ratchet failures remain. Additional SDK-follow-up finding:
+  `grain-extension-checks::build_pack` still uses a now-redundant
+  `..PackPayloads::default()` after the payload struct became icon-only; remove
+  that with the remaining contract cleanup. The corpus JSON already failed
+  Prettier on HEAD; only its stale embedding explanation changed here.
+- Fresh real-app registry/native-call checkpoint: 3/3 Pass; lost-pointer fault
+  failed at its expected assertion; both cleanup Pass. Evidence (ignored):
+  `tests/agent-harness/.runs/retirement-t9-20261101/run-Pv7AQZ/evidence/report.md`
+  and `run-Ij8lHq/evidence/report.md`. This is scoped acceptance, not ordinary
+  microphone/dictation or full product certification. User visual confirmation
+  of Settings -> Application remains required; run `bun run tauri dev` from the
+  repository to inspect the real application.
+- Next: retire action conditions/rules and their hash inputs under the clean-break
+  policy (fresh action approval required), then the signed-catalogue cleanup.

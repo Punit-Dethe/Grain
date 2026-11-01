@@ -14,13 +14,9 @@
 //! **hot-set size** distribution (the flood signal), and near-neighbour
 //! **confusion**. Recall bought by dumping everything is not recall.
 //!
-//! ## Honest degradation
-//!
-//! Runs lexical-only when no dense scores are injected — exactly what most users
-//! get, since the embedder is an opt-in download. Injected dense scores (aligned
-//! one row per case) drive the hybrid path when the host feeds the real embedder.
+//! Evaluation uses the same model-free exact/lexical path as the host.
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, HashSet};
 use std::time::Instant;
 
 use serde::{Deserialize, Serialize};
@@ -93,8 +89,6 @@ pub struct Entry {
 pub enum ProvenanceKind {
     Exact,
     Lexical,
-    Dense,
-    Hybrid,
 }
 
 impl From<Provenance> for ProvenanceKind {
@@ -102,8 +96,6 @@ impl From<Provenance> for ProvenanceKind {
         match value {
             Provenance::Exact => Self::Exact,
             Provenance::Lexical => Self::Lexical,
-            Provenance::Dense => Self::Dense,
-            Provenance::Hybrid => Self::Hybrid,
         }
     }
 }
@@ -172,8 +164,6 @@ pub struct Metrics {
     pub hot_set_p95: usize,
     pub exact_tops: usize,
     pub lexical_tops: usize,
-    pub dense_tops: usize,
-    pub hybrid_tops: usize,
     pub retrieval_p50_micros: u64,
     pub retrieval_p95_micros: u64,
 }
@@ -195,53 +185,24 @@ pub struct Report {
 }
 
 /// Evaluate action retrieval over a corpus at hot-set size `k`.
-///
-/// `dense`, when present, is aligned one row per case (canonical id -> cosine),
-/// exactly as the host would inject it; `None` is honest lexical-only mode.
-/// Misaligned dense data is rejected rather than silently scored.
-pub fn evaluate(
-    index: &CapabilityIndex,
-    cases: &[Case],
-    k: usize,
-    dense: Option<&[HashMap<String, f32>]>,
-) -> Result<Report, String> {
-    if let Some(rows) = dense {
-        if rows.len() != cases.len() {
-            return Err(format!(
-                "dense score rows ({}) do not match cases ({})",
-                rows.len(),
-                cases.len()
-            ));
-        }
-    }
-
-    let results: Vec<CaseResult> = cases
-        .iter()
-        .enumerate()
-        .map(|(row, case)| run_case(index, case, k, dense.and_then(|d| d.get(row))))
-        .collect();
+pub fn evaluate(index: &CapabilityIndex, cases: &[Case], k: usize) -> Report {
+    let results: Vec<CaseResult> = cases.iter().map(|case| run_case(index, case, k)).collect();
 
     let metrics = metrics(results.iter());
     let slices = slice_metrics(&results);
     let confusion = confusion(&results);
-    Ok(Report {
+    Report {
         metrics,
         slices,
         confusion,
         results,
-    })
+    }
 }
 
-fn run_case(
-    index: &CapabilityIndex,
-    case: &Case,
-    k: usize,
-    dense: Option<&HashMap<String, f32>>,
-) -> CaseResult {
+fn run_case(index: &CapabilityIndex, case: &Case, k: usize) -> CaseResult {
     let context_ineligible: HashSet<String> = case.context_ineligible.iter().cloned().collect();
     let auth_missing: HashSet<String> = case.auth_missing.iter().cloned().collect();
     let ctx = RetrievalContext {
-        dense,
         context_ineligible: &context_ineligible,
         auth_missing: &auth_missing,
     };
@@ -355,8 +316,6 @@ fn metrics<'a>(results: impl Iterator<Item = &'a CaseResult>) -> Metrics {
         hot_set_p95: percentile(&sizes, 95),
         exact_tops: count_top(ProvenanceKind::Exact),
         lexical_tops: count_top(ProvenanceKind::Lexical),
-        dense_tops: count_top(ProvenanceKind::Dense),
-        hybrid_tops: count_top(ProvenanceKind::Hybrid),
         retrieval_p50_micros: percentile(&micros, 50),
         retrieval_p95_micros: percentile(&micros, 95),
     }
@@ -642,7 +601,7 @@ mod tests {
             ),
             case("tell me a joke", &[], &["no-match"]),
         ];
-        let report = evaluate(&index, &cases, 8, None).unwrap();
+        let report = evaluate(&index, &cases, 8);
         assert_eq!(report.metrics.in_scope_cases, 2);
         assert_eq!(report.metrics.no_match_cases, 1);
         assert_eq!(report.metrics.recall_at_k, Some(1.0));
@@ -662,16 +621,9 @@ mod tests {
             &["weather.today"],
             &["miss"],
         )];
-        let report = evaluate(&index, &cases, 8, None).unwrap();
+        let report = evaluate(&index, &cases, 8);
         assert_eq!(report.metrics.recall_at_k, Some(0.0));
         assert_eq!(report.metrics.fallback_rate, Some(1.0));
-    }
-
-    #[test]
-    fn injected_dense_rows_must_align_with_cases() {
-        let index = CapabilityIndex::build(small_corpus().inputs());
-        let cases = [case("skip this", &["spotify.next"], &[])];
-        assert!(evaluate(&index, &cases, 8, Some(&[])).is_err());
     }
 
     #[test]
@@ -682,7 +634,7 @@ mod tests {
         // it, that is recorded as a false exclusion rather than a plain miss.
         let mut c = case("skip this", &["spotify.next"], &["scoped"]);
         c.context_ineligible = vec!["spotify.next".to_string()];
-        let report = evaluate(&index, &[c], 8, None).unwrap();
+        let report = evaluate(&index, &[c], 8);
         assert_eq!(report.metrics.false_exclusions, 1);
         assert_eq!(report.metrics.recall_at_k, Some(0.0));
     }

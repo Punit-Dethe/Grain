@@ -5,8 +5,8 @@
     "Deliberately adversarial across slices: exact naming, paraphrase, ASR",
     "substitutions, near-neighbour actions within one extension and across two,",
     "multi-intent/incidental speech, requests nothing should serve, and actions",
-    "withheld by auth. Runs lexical-only in the checked-in test; feed real dense",
-    "scores to compare the hybrid path. canonical id = <namespace>.<action_id>,",
+    "withheld by auth. Uses the model-free exact and lexical retrieval path.",
+    "canonical id = <namespace>.<action_id>,",
     "namespace = last dotted segment of the extension id."
   ],
   "extensions": [

@@ -1099,20 +1099,6 @@
     "transcribing": "Transcribing...",
     "processing": "Processing..."
   },
-  "embeddingModel": {
-    "group": "Embedding model",
-    "info": "An optional model for finding relevant Agent instructions and extension actions by meaning.",
-    "title": "On-device embeddings",
-    "description": "BGE-small-en-v1.5 runs locally and downloads about 130 MB. Removing it frees disk space; semantic retrieval is unavailable until you download it again.",
-    "ready": "Installed",
-    "absent": "Not installed",
-    "downloading": "Downloading…",
-    "loading": "Checking…",
-    "progress": "Downloading {{percent}}%",
-    "download": "Download model",
-    "cancel": "Cancel download",
-    "uninstall": "Remove model"
-  },
   "handySync": {
     "apiFormat": "API format",
     "vadTitle": "Voice activity detector",

@@ -27,7 +27,7 @@ fn benchmark_corpus_holds_the_retrieval_invariants() {
         index.len()
     );
 
-    let report = evaluate(&index, &cases, K, None).expect("evaluate");
+    let report = evaluate(&index, &cases, K);
     let m = &report.metrics;
 
     eprintln!(
@@ -36,7 +36,7 @@ fn benchmark_corpus_holds_the_retrieval_invariants() {
          recall@{K}={:?} fallback={:?} top1={:?} mrr={:?}\n\
          false_exclusions={} no_match_nonempty={} no_match_exact_top={}\n\
          hot_set median={} p95={}  latency p50={}us p95={}us\n\
-         tops: exact={} lexical={} dense={} hybrid={}",
+         tops: exact={} lexical={}",
         m.cases,
         m.in_scope_cases,
         m.no_match_cases,
@@ -53,8 +53,6 @@ fn benchmark_corpus_holds_the_retrieval_invariants() {
         m.retrieval_p95_micros,
         m.exact_tops,
         m.lexical_tops,
-        m.dense_tops,
-        m.hybrid_tops,
     );
     eprintln!("\nper-slice recall@{K}:");
     for slice in &report.slices {
@@ -451,7 +449,7 @@ fn scale_conflict_and_multi_intent_hold() {
     );
 
     let cases = corpus.cases();
-    let report = evaluate(&index, &cases, K, None).expect("evaluate");
+    let report = evaluate(&index, &cases, K);
     let m = &report.metrics;
     eprintln!(
         "\n== Scale stress ({} actions, K={K}) ==\n\
@@ -506,7 +504,6 @@ fn scale_conflict_and_multi_intent_hold() {
     // action for BOTH — the retriever does not collapse to a single intent.
     let empty: HashSet<String> = HashSet::new();
     let ctx = RetrievalContext {
-        dense: None,
         context_ineligible: &empty,
         auth_missing: &empty,
     };
@@ -533,7 +530,7 @@ fn scale_conflict_and_multi_intent_hold() {
     );
 
     // Determinism at scale.
-    let again = evaluate(&index, &cases, K, None).expect("evaluate");
+    let again = evaluate(&index, &cases, K);
     for (a, b) in report.results.iter().zip(again.results.iter()) {
         let ia: Vec<&str> = a.hot_set.iter().map(|e| e.canonical_id.as_str()).collect();
         let ib: Vec<&str> = b.hot_set.iter().map(|e| e.canonical_id.as_str()).collect();
@@ -542,64 +539,13 @@ fn scale_conflict_and_multi_intent_hold() {
 }
 
 #[test]
-fn injected_dense_lifts_ranking_on_vocab_mismatch() {
-    // Validates the hybrid seam with the same per-case injection interface the
-    // host uses for recommend's semantic scores. Lexical alone ranks the right
-    // near-neighbour below a competitor on vocab-mismatch cases; a dense signal on
-    // exactly those cases must fuse (RRF) and lift it to top1 — proving dense is
-    // wired correctly and recovers precisely the gap the benchmark identified.
-    let corpus = Corpus::parse(CORPUS).expect("corpus parses");
-    let index = CapabilityIndex::build(corpus.inputs());
-    let cases = corpus.cases();
-
-    let lexical = evaluate(&index, &cases, K, None).expect("evaluate");
-
-    // Simulate the embedder: give the intended action a strong cosine on exactly
-    // the vocabulary-mismatch cases (where lexical ranking is weakest).
-    let dense: Vec<std::collections::HashMap<String, f32>> = cases
-        .iter()
-        .map(|c| {
-            let mut row = std::collections::HashMap::new();
-            if c.slices.iter().any(|s| s == "vocab-mismatch") {
-                if let Some(id) = c.expected.first() {
-                    row.insert(id.clone(), 0.8);
-                }
-            }
-            row
-        })
-        .collect();
-    let hybrid = evaluate(&index, &cases, K, Some(&dense)).expect("evaluate");
-
-    let vm_top1 = |report: &grain_core::capability_eval::Report| {
-        report
-            .slices
-            .iter()
-            .find(|s| s.name == "vocab-mismatch")
-            .and_then(|s| s.metrics.top1_accuracy)
-    };
-    assert!(
-        vm_top1(&lexical) < Some(1.0),
-        "precondition: lexical leaves ranking room"
-    );
-    assert_eq!(
-        vm_top1(&hybrid),
-        Some(1.0),
-        "dense must lift vocab-mismatch to top1"
-    );
-    assert!(
-        hybrid.metrics.top1_accuracy >= lexical.metrics.top1_accuracy,
-        "the hybrid must never rank worse overall than lexical alone"
-    );
-}
-
-#[test]
 fn retrieval_is_deterministic_over_the_corpus() {
     let corpus = Corpus::parse(CORPUS).expect("corpus parses");
     let index = CapabilityIndex::build(corpus.inputs());
     let cases = corpus.cases();
 
-    let first = evaluate(&index, &cases, K, None).expect("evaluate");
-    let second = evaluate(&index, &cases, K, None).expect("evaluate");
+    let first = evaluate(&index, &cases, K);
+    let second = evaluate(&index, &cases, K);
     for (a, b) in first.results.iter().zip(second.results.iter()) {
         let ids_a: Vec<&str> = a.hot_set.iter().map(|e| e.canonical_id.as_str()).collect();
         let ids_b: Vec<&str> = b.hot_set.iter().map(|e| e.canonical_id.as_str()).collect();

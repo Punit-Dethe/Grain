@@ -890,29 +890,27 @@ fn build_window(
             .map(|s| s.summon_gen.load(Ordering::SeqCst))
             .unwrap_or(0);
         window.on_window_event(move |event| {
-            if matches!(event, tauri::WindowEvent::Destroyed) {
-                if app.get_webview_window(PANEL_LABEL).is_none() {
-                    unregister_transient_shortcuts_deferred(&app);
-                    // [GRAIN] The session's screen frame dies with its last
-                    // surface â€” unless the pill is still offering "ask
-                    // follow-up", which reopens THIS conversation and would
-                    // otherwise reopen it blind.
-                    let state = app.try_state::<AgentState>();
-                    let offered = state
-                        .as_ref()
-                        .map(|s| s.followup_offer_active.load(Ordering::SeqCst))
-                        .unwrap_or(false);
-                    let still_ours = state
-                        .as_ref()
-                        .map(|s| s.summon_gen.load(Ordering::SeqCst) == built_for)
-                        .unwrap_or(false);
-                    if !offered && still_ours {
-                        clear_screen_image(&app);
-                        clear_pending_action(&app);
-                    }
+            if matches!(event, tauri::WindowEvent::Destroyed)
+                && app.get_webview_window(PANEL_LABEL).is_none()
+            {
+                unregister_transient_shortcuts_deferred(&app);
+                // [GRAIN] The session's screen frame dies with its last
+                // surface â€” unless the pill is still offering "ask
+                // follow-up", which reopens THIS conversation and would
+                // otherwise reopen it blind.
+                let state = app.try_state::<AgentState>();
+                let offered = state
+                    .as_ref()
+                    .map(|s| s.followup_offer_active.load(Ordering::SeqCst))
+                    .unwrap_or(false);
+                let still_ours = state
+                    .as_ref()
+                    .map(|s| s.summon_gen.load(Ordering::SeqCst) == built_for)
+                    .unwrap_or(false);
+                if !offered && still_ours {
+                    clear_screen_image(&app);
+                    clear_pending_action(&app);
                 }
-                // Release shared embeddings when no retrieval consumer remains.
-                crate::grain_embed::shutdown_engine_if_idle(&app);
             }
         });
     }

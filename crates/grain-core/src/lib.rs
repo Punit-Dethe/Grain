@@ -37,9 +37,8 @@ pub mod install;
 pub mod text;
 // [GRAIN] Capability Index V2 — the schema-projection action retriever
 // (docs/Extensions 2.0/PLAN.md §6–7). Pure and model-free: builds the hot set
-// the Agent selects from, with an eligibility pre-filter, exact/lexical/dense
-// provenance tiers, and host-injected dense scores fused by rank. The embedder
-// stays host-side.
+// the Agent selects from, with an eligibility pre-filter and model-free
+// exact/lexical provenance.
 pub mod capability_index;
 // [GRAIN] Capability Index V2 — Agent tool exposure (docs/Extensions 2.0/PLAN.md
 // §6.3, §6.4, §7.3). Pure: turns the hot set into model tool definitions with

@@ -5,33 +5,6 @@
 
 
 export const commands = {
-async grainEmbedModelStatus() : Promise<EmbedModelStatus> {
-    return await TAURI_INVOKE("grain_embed_model_status");
-},
-async grainEmbedDownloadModel() : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("grain_embed_download_model") };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async grainEmbedCancelDownload() : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("grain_embed_cancel_download") };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async grainEmbedUninstallModel() : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("grain_embed_uninstall_model") };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
 /**
  * Is there a newer release?
  *
@@ -1891,10 +1864,6 @@ async isLaptop() : Promise<Result<boolean, string>> {
 
 
 export const events = __makeEvents__<{
-grainEmbedModelCancelled: GrainEmbedModelCancelled,
-grainEmbedModelComplete: GrainEmbedModelComplete,
-grainEmbedModelError: GrainEmbedModelError,
-grainEmbedModelProgress: GrainEmbedModelProgress,
 grainOverlayCompactCloseHidden: GrainOverlayCompactCloseHidden,
 grainOverlayContext: GrainOverlayContext,
 grainOverlayPosition: GrainOverlayPosition,
@@ -1920,10 +1889,6 @@ themeChanged: ThemeChanged,
 updateAvailable: UpdateAvailable,
 updateDownloadProgress: UpdateDownloadProgress
 }>({
-grainEmbedModelCancelled: "grain-embed-model-cancelled",
-grainEmbedModelComplete: "grain-embed-model-complete",
-grainEmbedModelError: "grain-embed-model-error",
-grainEmbedModelProgress: "grain-embed-model-progress",
 grainOverlayCompactCloseHidden: "grain-overlay-compact-close-hidden",
 grainOverlayContext: "grain-overlay-context",
 grainOverlayPosition: "grain-overlay-position",
@@ -2329,7 +2294,6 @@ name: string;
  */
 url_host: string | null }
 export type DeveloperExtension = { id: string; path: string }
-export type EmbedModelStatus = "ready" | "downloading" | "absent"
 /**
  * One row of the Extensions Overview tab. Built-ins delegate their enabled
  * state to core settings flags (manifest-first, PLAN.md D4); installed packs
@@ -2371,10 +2335,6 @@ capabilities: string[];
 actions: ActionInfo[] }
 export type ExtensionDeveloperStatus = { enabled: boolean; loaded: DeveloperExtension[] }
 export type GpuDeviceOption = { id: string; name: string; total_vram_mb: number }
-export type GrainEmbedModelCancelled = null
-export type GrainEmbedModelComplete = null
-export type GrainEmbedModelError = string
-export type GrainEmbedModelProgress = { downloaded: number; total: number; percentage: number }
 export type GrainOverlayCompactCloseHidden = boolean
 export type GrainOverlayContext = OverlayPresentation
 export type GrainOverlayPosition = OverlayPosition

@@ -482,7 +482,6 @@ fn ranked_ids(
         .collect();
     let auth_missing = HashSet::new();
     let context = RetrievalContext {
-        dense: None,
         context_ineligible: &excluded,
         auth_missing: &auth_missing,
     };
@@ -1209,7 +1208,6 @@ mod tests {
         let hot = index.retrieve(
             "notion-search",
             &RetrievalContext {
-                dense: None,
                 context_ineligible: &empty,
                 auth_missing: &empty,
             },

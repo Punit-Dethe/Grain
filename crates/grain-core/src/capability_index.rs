@@ -17,23 +17,11 @@
 //! hash lookup finds the misheard form (SymSpell), and the matcher agrees with
 //! the index because both call [`crate::text::same_word`].
 //!
-//! ## Three provenance tiers, kept apart on the result (not blended)
+//! ## Exact and lexical provenance
 //!
-//! A *named* hit and a *topical* guess are different kinds of evidence:
-//!
-//! - **Exact** — the user said the action's address (a declared alias, the
-//!   provider name, the title, or the canonical id). Near-certain; promoted
-//!   deterministically, never outranked by a score.
-//! - **Lexical** — field-weighted BM25 over the schema projection. The always-on
-//!   floor: it needs no model, so it works for the ~130 MB embedder most users
-//!   have not downloaded.
-//! - **Dense** — cosine from the host's embedder, injected per canonical id
-//!   per canonical id. Absent = honestly degraded, not broken.
-//!
-//! Lexical and Dense are fused **by rank** (Reciprocal Rank Fusion), not by
-//! score, because BM25 and cosine live on different scales. Provenance rides out
-//! on every entry so the Agent — and the eval harness — can tell a certainty
-//! from a guess.
+//! Named actions are promoted deterministically above topical matches.
+//! Field-weighted BM25 supplies topical retrieval without a model download.
+//! Provenance stays on each result so the Agent can distinguish the two.
 //!
 //! ## Why "flood" is the failure mode, not "miss"
 //!
@@ -126,24 +114,18 @@ fn is_stopword(token: &str) -> bool {
 /// declared the boundary explicitly.
 const NEG_PENALTY: f32 = 0.5;
 
-/// The similarity a dense (cosine) score must clear to be a topical signal at
-/// all. Below this the asymmetric BGE geometry no longer separates related from
-/// unrelated, so the score is noise dressed as a match.
-pub const DENSE_FLOOR: f32 = 0.50;
-
-/// Reciprocal Rank Fusion constant. Ratel's value; the standard TREC default.
-/// Large enough that no single arm's top rank dominates the fusion.
-const RRF_K: f32 = 60.0;
+/// Offset for bounded lexical rank scores. Retains the established score scale
+/// while exact addresses remain decisively above topical matches.
+const LEXICAL_RANK_OFFSET: f32 = 60.0;
 
 /// How many candidate actions one query gathers before the postings walk stops.
 /// Generous for a mid-scale install (~100–200 actions) and small enough that a
 /// full corpus rebuild stays in milliseconds.
 const MAX_CANDIDATES: usize = 128;
 
-/// Exact hits sort above every fused score. The base keeps them ordered among
+/// Exact hits sort above every lexical rank score. The base keeps them ordered among
 /// themselves by how specific the matched address was (a longer alias run is a
-/// stronger naming than a one-word one) without ever interleaving with Lexical
-/// or Dense.
+/// stronger naming than a one-word one), above all topical results.
 const EXACT_SCORE_BASE: f32 = 1000.0;
 
 /// How many distinct extensions a one-word address may name and still be treated
@@ -553,87 +535,33 @@ impl CapabilityIndex {
                     .cmp(&self.docs[b.0].input.canonical_id)
             })
         });
-        let lexical_rank: HashMap<usize, usize> = lexical
-            .iter()
-            .enumerate()
-            .map(|(rank, (pos, _))| (*pos, rank + 1))
-            .collect();
-
-        // 4. Dense arm — injected cosine per canonical id, floored, non-exact.
-        let mut dense: Vec<(usize, f32)> = Vec::new();
-        if let Some(scores) = ctx.dense {
-            for &position in &candidates {
-                if exact_ids.contains(&position) {
-                    continue;
-                }
-                if let Some(&score) = scores.get(&self.docs[position].input.canonical_id) {
-                    if score.is_finite() && score >= DENSE_FLOOR {
-                        dense.push((position, score));
-                    }
-                }
-            }
-            dense.sort_by(|a, b| {
-                b.1.total_cmp(&a.1).then_with(|| {
-                    self.docs[a.0]
-                        .input
-                        .canonical_id
-                        .cmp(&self.docs[b.0].input.canonical_id)
-                })
-            });
-        }
-        let dense_rank: HashMap<usize, usize> = dense
-            .iter()
-            .enumerate()
-            .map(|(rank, (pos, _))| (*pos, rank + 1))
-            .collect();
-
-        // 5. Fuse Lexical ⊕ Dense by rank (RRF). Rank fusion, not score fusion:
-        //    BM25 and cosine are different scales and must not be added.
-        let mut fused_ids: Vec<usize> = lexical_rank
-            .keys()
-            .chain(dense_rank.keys())
-            .copied()
-            .collect::<HashSet<_>>()
-            .into_iter()
-            .collect();
-        let mut fused: Vec<Retrieved> = fused_ids
-            .drain(..)
-            .map(|position| {
-                let l = lexical_rank.get(&position).copied();
-                let d = dense_rank.get(&position).copied();
-                let rrf = l.map_or(0.0, |rank| 1.0 / (RRF_K + rank as f32))
-                    + d.map_or(0.0, |rank| 1.0 / (RRF_K + rank as f32));
-                let provenance = match (l.is_some(), d.is_some()) {
-                    (true, true) => Provenance::Hybrid,
-                    (true, false) => Provenance::Lexical,
-                    (false, true) => Provenance::Dense,
-                    (false, false) => unreachable!("a fused id came from one of the two arms"),
-                };
-                self.retrieved(position, provenance, rrf, l, d)
-            })
-            .collect();
-        fused.sort_by(|a, b| {
-            b.score
-                .total_cmp(&a.score)
-                .then_with(|| a.canonical_id.cmp(&b.canonical_id))
-        });
-
-        // 6. Assemble: exact hits (deterministic) first, then the fused
-        //    remainder, truncated to K. `truncated` is how many eligible matches
-        //    did not make the cut — a flood signal for the benchmark.
+        // Assemble exact addresses first, followed by lexical rank. No model,
+        // injected score maps or fusion allocations are needed.
         let mut entries: Vec<Retrieved> = Vec::with_capacity(params.k);
         for (position, run_len, tiebreak) in exact {
             // Run length dominates; the lexical tiebreak orders within a run
-            // length; all stay far above any fused score.
+            // length; all stay far above any lexical rank score.
             entries.push(self.retrieved(
                 position,
                 Provenance::Exact,
                 EXACT_SCORE_BASE + 100.0 * run_len as f32 + tiebreak,
                 None,
-                None,
             ));
         }
-        entries.extend(fused);
+        entries.extend(
+            lexical
+                .into_iter()
+                .enumerate()
+                .map(|(offset, (position, _))| {
+                    let rank = offset + 1;
+                    self.retrieved(
+                        position,
+                        Provenance::Lexical,
+                        1.0 / (LEXICAL_RANK_OFFSET + rank as f32),
+                        Some(rank),
+                    )
+                }),
+        );
         let matched = entries.len();
         entries.truncate(params.k);
         let truncated = matched.saturating_sub(entries.len());
@@ -816,7 +744,6 @@ impl CapabilityIndex {
         provenance: Provenance,
         score: f32,
         lexical_rank: Option<usize>,
-        dense_rank: Option<usize>,
     ) -> Retrieved {
         let input = &self.docs[position].input;
         Retrieved {
@@ -828,7 +755,6 @@ impl CapabilityIndex {
             provenance,
             score,
             lexical_rank,
-            dense_rank,
         }
     }
 }
@@ -890,13 +816,9 @@ pub struct RetrievalParams {
     pub k: usize,
 }
 
-/// Host-supplied state that changes too often to bake into the index: the
-/// injected dense scores, and the dynamic halves of eligibility (surface context
-/// and auth). Keyed by canonical id — the embedder and the surface matcher stay
-/// host-side.
+/// Host-owned context and authentication eligibility, keyed by canonical id.
 #[derive(Clone, Debug)]
 pub struct RetrievalContext<'a> {
-    pub dense: Option<&'a HashMap<String, f32>>,
     pub context_ineligible: &'a HashSet<String>,
     pub auth_missing: &'a HashSet<String>,
 }
@@ -907,8 +829,6 @@ pub struct RetrievalContext<'a> {
 pub enum Provenance {
     Exact,
     Lexical,
-    Dense,
-    Hybrid,
 }
 
 /// One action offered to the Agent.
@@ -920,11 +840,10 @@ pub struct Retrieved {
     pub title: String,
     pub risk: ActionRisk,
     pub provenance: Provenance,
-    /// Fused RRF score, or `EXACT_SCORE_BASE + run length` for an exact hit.
+    /// Lexical rank score, or `EXACT_SCORE_BASE + run length` for an exact hit.
     /// Comparable only for ordering, not as a probability.
     pub score: f32,
     pub lexical_rank: Option<usize>,
-    pub dense_rank: Option<usize>,
 }
 
 /// Why an eligible-looking action was kept out of the hot set. For diagnostics
@@ -1068,7 +987,7 @@ mod tests {
             noise,
         ]);
         let (c, a) = empty_ctx();
-        let hot = index.retrieve("find on service", &ctx(&c, &a, None), transcript(2));
+        let hot = index.retrieve("find on service", &ctx(&c, &a), transcript(2));
         assert_eq!(hot.entries[0].canonical_id, "service.search");
     }
 
@@ -1157,10 +1076,8 @@ mod tests {
     fn ctx<'a>(
         context_ineligible: &'a HashSet<String>,
         auth_missing: &'a HashSet<String>,
-        dense: Option<&'a HashMap<String, f32>>,
     ) -> RetrievalContext<'a> {
         RetrievalContext {
-            dense,
             context_ineligible,
             auth_missing,
         }
@@ -1173,10 +1090,6 @@ mod tests {
         }
     }
 
-    fn scores(pairs: &[(&str, f32)]) -> HashMap<String, f32> {
-        pairs.iter().map(|(id, s)| (id.to_string(), *s)).collect()
-    }
-
     #[test]
     fn a_spoken_alias_is_an_exact_hit_ranked_above_a_topical_one() {
         let index = CapabilityIndex::build(vec![
@@ -1185,18 +1098,14 @@ mod tests {
                 .examples(&["put on some music"]),
             action("com.grain.notes", "new")
                 .aliases(&["notes"])
-                .examples(&["jot something down"]),
+                .examples(&["play something"]),
         ]);
         let (c, a) = empty_ctx();
-        // A dense score tries to lift notes; the named spotify still wins.
-        let dense = scores(&[("notes.new", 0.9)]);
-        let hot = index.retrieve(
-            "spotify play something",
-            &ctx(&c, &a, Some(&dense)),
-            transcript(5),
-        );
+        let hot = index.retrieve("spotify play something", &ctx(&c, &a), transcript(5));
         assert_eq!(hot.entries[0].canonical_id, "spotify.play");
         assert_eq!(hot.entries[0].provenance, Provenance::Exact);
+        assert_eq!(hot.entries[1].canonical_id, "notes.new");
+        assert_eq!(hot.entries[1].provenance, Provenance::Lexical);
     }
 
     #[test]
@@ -1219,7 +1128,7 @@ mod tests {
                 .examples(&["put on music"]),
         ]);
         let (c, a) = empty_ctx();
-        let bare = index.retrieve("play", &ctx(&c, &a, None), transcript(5));
+        let bare = index.retrieve("play", &ctx(&c, &a), transcript(5));
         assert!(
             bare.entries
                 .iter()
@@ -1228,7 +1137,7 @@ mod tests {
             bare.ids()
         );
         // Naming the extension outright is still a decisive Exact hit.
-        let named = index.retrieve("spotify play", &ctx(&c, &a, None), transcript(5));
+        let named = index.retrieve("spotify play", &ctx(&c, &a), transcript(5));
         assert_eq!(named.entries[0].canonical_id, "spotify.play");
         assert_eq!(named.entries[0].provenance, Provenance::Exact);
     }
@@ -1240,7 +1149,7 @@ mod tests {
         ]);
         let (c, a) = empty_ctx();
         // "linear" heard with a dropped vowel.
-        let hot = index.retrieve("open a linar ticket", &ctx(&c, &a, None), transcript(5));
+        let hot = index.retrieve("open a linar ticket", &ctx(&c, &a), transcript(5));
         assert_eq!(hot.entries[0].canonical_id, "linear.issue");
         assert_eq!(hot.entries[0].provenance, Provenance::Exact);
     }
@@ -1261,7 +1170,7 @@ mod tests {
                 .examples(&["file a bug"]),
         ]);
         let (c, a) = empty_ctx();
-        let hot = index.retrieve("put on some jazz", &ctx(&c, &a, None), transcript(5));
+        let hot = index.retrieve("put on some jazz", &ctx(&c, &a), transcript(5));
         let ids = hot.ids();
         assert!(ids.contains(&"spotify.play"), "spotify missing: {ids:?}");
         assert!(ids.contains(&"apple.play"), "apple missing: {ids:?}");
@@ -1288,68 +1197,12 @@ mod tests {
         ]);
         let (c, a) = empty_ctx();
         // Shares only "play" with the music actions; nothing with weather.
-        let hot = index.retrieve("play", &ctx(&c, &a, None), transcript(5));
+        let hot = index.retrieve("play", &ctx(&c, &a), transcript(5));
         assert!(
             hot.entries.is_empty(),
             "a lone common token qualified: {:?}",
             hot.ids()
         );
-    }
-
-    #[test]
-    fn dense_recovers_a_vocabulary_mismatch_the_lexicon_misses() {
-        // "make a note of this" shares no token with a capture action under the
-        // "memo" namespace; only the embedder connects them.
-        let index = CapabilityIndex::build(vec![action("com.grain.memo", "capture")
-            .title("Capture")
-            .examples(&["save a thought"])]);
-        let (c, a) = empty_ctx();
-        let dense = scores(&[("memo.capture", 0.74)]);
-        let hot = index.retrieve(
-            "make a note of this",
-            &ctx(&c, &a, Some(&dense)),
-            transcript(5),
-        );
-        assert_eq!(hot.entries.len(), 1);
-        assert_eq!(hot.entries[0].canonical_id, "memo.capture");
-        assert_eq!(hot.entries[0].provenance, Provenance::Dense);
-    }
-
-    #[test]
-    fn a_below_floor_dense_score_is_not_a_match() {
-        let index =
-            CapabilityIndex::build(vec![action("com.grain.memo", "capture").title("Capture")]);
-        let (c, a) = empty_ctx();
-        let dense = scores(&[("memo.capture", 0.42)]);
-        let hot = index.retrieve(
-            "make a note of this",
-            &ctx(&c, &a, Some(&dense)),
-            transcript(5),
-        );
-        assert!(hot.entries.is_empty());
-    }
-
-    #[test]
-    fn a_hit_in_both_arms_outranks_a_hit_in_one() {
-        let index = CapabilityIndex::build(vec![
-            action("com.grain.github", "issue")
-                .title("Create issue")
-                .examples(&["file a bug report"]),
-            action("com.grain.linear", "issue")
-                .title("Create issue")
-                .examples(&["file a bug report"]),
-        ]);
-        let (c, a) = empty_ctx();
-        // Lexical will rank both; dense lifts github only, so github fuses higher.
-        let dense = scores(&[("github.issue", 0.8)]);
-        let hot = index.retrieve(
-            "file a bug report",
-            &ctx(&c, &a, Some(&dense)),
-            transcript(5),
-        );
-        assert_eq!(hot.entries[0].canonical_id, "github.issue");
-        assert_eq!(hot.entries[0].provenance, Provenance::Hybrid);
-        assert_eq!(hot.entries[1].provenance, Provenance::Lexical);
     }
 
     #[test]
@@ -1369,7 +1222,7 @@ mod tests {
         ]);
         let hot = index.retrieve(
             "play some jazz",
-            &ctx(&context_ineligible, &auth_missing, None),
+            &ctx(&context_ineligible, &auth_missing),
             transcript(5),
         );
         let ids = hot.ids();
@@ -1395,7 +1248,7 @@ mod tests {
         ]);
         let hot = index.retrieve(
             "next slide",
-            &ctx(&context_ineligible, &auth_missing, None),
+            &ctx(&context_ineligible, &auth_missing),
             transcript(5),
         );
         assert!(hot.entries.is_empty());
@@ -1404,7 +1257,7 @@ mod tests {
 
     #[test]
     fn a_declared_negative_boundary_demotes_a_matching_action() {
-        // The exposed score is an RRF rank score, so a penalty is observable as a
+        // The exposed score is a lexical rank score, so a penalty is observable as a
         // change in ORDER, not in a single action's number. Two equal actions;
         // `aaa` sorts first and leads a clean tie. The query mentions "delete",
         // which only `aaa` declares as a boundary, so the penalty must drop it
@@ -1429,7 +1282,7 @@ mod tests {
             candidate("com.grain.bbb", false),
         ]);
         assert_eq!(
-            clean.retrieve(q, &ctx(&c, &a, None), transcript(5)).ids()[0],
+            clean.retrieve(q, &ctx(&c, &a), transcript(5)).ids()[0],
             "aaa.archive"
         );
 
@@ -1439,9 +1292,7 @@ mod tests {
             candidate("com.grain.bbb", false),
         ]);
         assert_eq!(
-            penalised
-                .retrieve(q, &ctx(&c, &a, None), transcript(5))
-                .ids()[0],
+            penalised.retrieve(q, &ctx(&c, &a), transcript(5)).ids()[0],
             "bbb.archive",
             "the negative-boundary hit on 'delete' should demote aaa below bbb"
         );
@@ -1458,7 +1309,7 @@ mod tests {
             .collect();
         let index = CapabilityIndex::build(inputs);
         let (c, a) = empty_ctx();
-        let hot = index.retrieve("put on some jazz", &ctx(&c, &a, None), transcript(3));
+        let hot = index.retrieve("put on some jazz", &ctx(&c, &a), transcript(3));
         assert_eq!(hot.entries.len(), 3);
         assert_eq!(hot.truncated, 3, "six matched, three shown");
     }
@@ -1474,12 +1325,12 @@ mod tests {
         let (c, a) = empty_ctx();
         let forwards = CapabilityIndex::build(vec![a1.clone(), b1.clone()]).retrieve(
             "file a bug",
-            &ctx(&c, &a, None),
+            &ctx(&c, &a),
             transcript(5),
         );
         let backwards = CapabilityIndex::build(vec![b1, a1]).retrieve(
             "file a bug",
-            &ctx(&c, &a, None),
+            &ctx(&c, &a),
             transcript(5),
         );
         assert_eq!(
@@ -1500,12 +1351,8 @@ mod tests {
                 .examples(&["file a bug"]),
         ]);
         let (c, a) = empty_ctx();
-        let hot = index.search_actions(
-            "create an issue",
-            &ctx(&c, &a, None),
-            Some("com.grain.linear"),
-            5,
-        );
+        let hot =
+            index.search_actions("create an issue", &ctx(&c, &a), Some("com.grain.linear"), 5);
         assert_eq!(hot.ids(), vec!["linear.issue"]);
     }
 
@@ -1516,11 +1363,11 @@ mod tests {
         ]);
         let (c, a) = empty_ctx();
         assert!(index
-            .retrieve("", &ctx(&c, &a, None), transcript(5))
+            .retrieve("", &ctx(&c, &a), transcript(5))
             .entries
             .is_empty());
         assert!(index
-            .retrieve("...", &ctx(&c, &a, None), transcript(5))
+            .retrieve("...", &ctx(&c, &a), transcript(5))
             .entries
             .is_empty());
     }
@@ -1537,11 +1384,7 @@ mod tests {
         evil.when_to_use = "x".repeat(12000);
         let index = CapabilityIndex::build(vec![evil]);
         let (c, a) = empty_ctx();
-        let hot = index.retrieve(
-            "use gremlin to run the thing",
-            &ctx(&c, &a, None),
-            transcript(5),
-        );
+        let hot = index.retrieve("use gremlin to run the thing", &ctx(&c, &a), transcript(5));
         assert_eq!(hot.entries[0].canonical_id, "evil.run");
         assert_eq!(hot.entries[0].provenance, Provenance::Exact);
     }
@@ -1563,7 +1406,7 @@ mod tests {
             &long,
         ] {
             // The contract is only that nothing panics and the result is bounded.
-            let hot = index.retrieve(q, &ctx(&c, &a, None), transcript(8));
+            let hot = index.retrieve(q, &ctx(&c, &a), transcript(8));
             assert!(hot.entries.len() <= 8);
         }
     }
@@ -1586,7 +1429,7 @@ mod tests {
         ]);
         let hot = index.retrieve(
             "spotify play something",
-            &ctx(&context, &auth_missing, None),
+            &ctx(&context, &auth_missing),
             transcript(5),
         );
         let ids = hot.ids();
@@ -1618,7 +1461,7 @@ mod tests {
                 .examples(&["put on some music"]),
         ]);
         let (c, a) = empty_ctx();
-        let hot = index.retrieve("send jack message", &ctx(&c, &a, None), transcript(5));
+        let hot = index.retrieve("send jack message", &ctx(&c, &a), transcript(5));
         assert!(
             hot.ids().contains(&"slack.dm"),
             "a dropped word must not lose the match: {:?}",
@@ -1659,7 +1502,7 @@ mod tests {
         // And the projection retrieves: "skip this" names the next track.
         let index = CapabilityIndex::build(inputs);
         let (c, a) = empty_ctx();
-        let hot = index.retrieve("skip this", &ctx(&c, &a, None), transcript(5));
+        let hot = index.retrieve("skip this", &ctx(&c, &a), transcript(5));
         assert_eq!(hot.entries[0].canonical_id, "com.grain.spotify:next");
     }
 }

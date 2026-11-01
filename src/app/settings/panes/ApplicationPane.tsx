@@ -4,7 +4,6 @@ import { AppearanceMode } from "@/components/settings/AppearanceMode";
 import { AutostartToggle } from "@/components/settings/AutostartToggle";
 import DefaultPanel from "@/components/settings/DefaultPanel";
 import { ExperimentalToggle } from "@/components/settings/ExperimentalToggle";
-import { EmbeddingSettings } from "@/components/settings/EmbeddingSettings";
 import { HistoryLimit } from "@/components/settings/HistoryLimit";
 import { LazyStreamClose } from "@/components/settings/LazyStreamClose";
 import { PillAppIcon } from "@/components/settings/PillAppIcon";
@@ -67,13 +66,6 @@ export function ApplicationPane() {
       >
         <HistoryLimit descriptionMode="tooltip" grouped />
         <RecordingRetentionPeriodSelector descriptionMode="tooltip" grouped />
-      </SettingsGroup>
-
-      <SettingsGroup
-        title={t("embeddingModel.group")}
-        info={t("embeddingModel.info")}
-      >
-        <EmbeddingSettings />
       </SettingsGroup>
 
       {/* The switch that reveals the rest of the group leads it, so turning

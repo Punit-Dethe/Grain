@@ -59,7 +59,6 @@ mod grain_anthropic;
 mod grain_audio;
 mod grain_capture; // [GRAIN] shared first-sample readiness for owned capture callers
 mod grain_dictation_routing; // [GRAIN] model-selected Dictation action resolution
-mod grain_embed;
 mod grain_engine;
 mod grain_llm_client;
 mod grain_locale; // [GRAIN] locale-tag resolution, owned in Rust (was duplicated in TS)
@@ -1351,10 +1350,6 @@ pub fn run(cli_args: CliArgs) {
 fn command_bindings() -> Builder<tauri::Wry> {
     Builder::<tauri::Wry>::new()
         .commands(collect_commands![
-            grain_embed::grain_embed_model_status,
-            grain_embed::grain_embed_download_model,
-            grain_embed::grain_embed_cancel_download,
-            grain_embed::grain_embed_uninstall_model,
             grain_update::check_for_update,
             grain_update::get_cached_update,
             grain_update::install_update,
@@ -1563,10 +1558,6 @@ fn command_bindings() -> Builder<tauri::Wry> {
             helpers::clamshell::is_laptop,
         ])
         .events(collect_events![
-            grain_embed::GrainEmbedModelProgress,
-            grain_embed::GrainEmbedModelComplete,
-            grain_embed::GrainEmbedModelCancelled,
-            grain_embed::GrainEmbedModelError,
             grain_update::UpdateAvailable,
             grain_update::UpdateDownloadProgress,
             managers::history::HistoryUpdatePayload,
