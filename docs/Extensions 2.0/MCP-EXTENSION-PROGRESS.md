@@ -1,5 +1,13 @@
 # Extension implementation: progress, changes and user testing
 
+**Artwork lower edge, 2 November:** user requests the image end slightly below
+the top of Start here, with black beneath. Use two grid rows and a 12px panel
+overlap so the image ends 12px below the panel top without JS measurement. The
+hero's lower background is solid black in both themes; the panel remains opaque
+with 12px side/bottom insets and the same taller hero. Narrow content can still
+grow naturally. TypeScript/Vite build passes; real-app visual acceptance remains
+Pending. No release/version change.
+
 **Tighter opaque Start here panel, 2 November:** user requests smaller outer gaps
 and opacity instead of frost. Reduce the hero-panel inset from 20px to 8px; use
 solid dark/light fills, remove backdrop blur and the now-unnecessary glass text

@@ -1337,25 +1337,22 @@ html[data-theme="dark"] .grain-root .toggle.on span {
 .hero {
   position: relative;
   isolation: isolate;
-  display: flex;
-  flex-direction: column;
-  justify-content: flex-end;
+  display: grid;
+  grid-template-rows: minmax(132px, 1fr) auto;
   min-height: clamp(420px, 52vh, 510px);
-  padding-top: 132px;
   overflow: hidden;
   border-radius: var(--hero-radius);
-  background: var(--bg-2, #15171c);
+  background: #000;
   border: 1px solid var(--hairline, rgba(255, 255, 255, 0.07));
 }
 
 html[data-theme="light"] .hero {
-  background: #fcfcfb;
   border-color: #eeebe3;
 }
 
 .hero-art {
-  position: absolute;
-  inset: 0;
+  position: relative;
+  grid-row: 1;
   z-index: 0;
 }
 
@@ -1414,10 +1411,11 @@ html[data-theme="light"] .hero {
 
 .hero-start {
   position: relative;
+  grid-row: 2;
   z-index: 1;
-  flex: 0 0 auto;
   min-width: 0;
-  margin: 12px;
+  /* Artwork ends 12px below the panel's top; the lower surround stays black. */
+  margin: -12px 12px 12px;
   padding: 20px;
   border: 1px solid rgba(255, 255, 255, 0.16);
   border-radius: 16px;
