@@ -538,7 +538,7 @@ mod tests {
             capabilities: caps.iter().map(|c| c.to_string()).collect(),
             sha256: trust::sha256_hex(bytes),
             size: bytes.len() as u64,
-            min_grain_api: String::new(),
+            min_grain_api: "1.0".into(),
             repo: String::new(),
             source_commit: String::new(),
             author: String::new(),

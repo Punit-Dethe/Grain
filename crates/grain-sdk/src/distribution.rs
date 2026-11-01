@@ -406,11 +406,11 @@ mod tool_catalogue_tests {
     #[test]
     fn catalog_minimum_api_is_enforced_before_artifact_acquisition() {
         let mut entry = tool_entry();
-        for supported in ["", "0.9", "1.0", "1.0.0"] {
+        for supported in ["0.9", "1.0", "1.0.0"] {
             entry.min_grain_api = supported.into();
             entry.validate_installable().unwrap();
         }
-        for unsupported in ["1.0.1", "2.0", "^1.0", "latest", "01.0"] {
+        for unsupported in ["", "1.0.1", "2.0", "^1.0", "latest", "01.0"] {
             entry.min_grain_api = unsupported.into();
             entry.validate_tool_only().unwrap();
             assert_eq!(
@@ -423,7 +423,7 @@ mod tool_catalogue_tests {
     fn tool_entry() -> IndexEntry {
         serde_json::from_value(serde_json::json!({
             "id": "com.example.tools", "name": "Tools", "version": "1.0.0",
-            "tier": "scripted", "trust": "verified", "sha256": "00",
+            "tier": "scripted", "trust": "verified", "sha256": "00", "min_grain_api": "1.0",
             "capabilities": ["storage", "auth", "net:api.example.com"],
             "categories": ["tools"]
         }))

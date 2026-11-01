@@ -6,7 +6,6 @@ pub const EXTENSION_API_REQUIREMENT: &str = "^1.0";
 pub const UNSUPPORTED_EXTENSION_API: &str = "Extension requires an unsupported Grain API profile.";
 
 /// Shared by native author checks, developer loading and installed validation.
-/// Missing installed legacy metadata is handled explicitly by the caller.
 pub fn api_requirement_supported(requirement: &str, current: &str) -> bool {
     if requirement.len() > 64 {
         return false;
@@ -33,9 +32,6 @@ pub fn api_requirement_supported(requirement: &str, current: &str) -> bool {
 /// Catalog minimums are literal numeric versions, not ranges. Artifact
 /// validation remains mandatory even if the listing minimum is satisfied.
 pub fn minimum_api_supported(minimum: &str, current: &str) -> bool {
-    if minimum.is_empty() {
-        return true;
-    } // Existing catalog omitted metadata.
     matches!((numeric_version(minimum), numeric_version(current)), (Some(required), Some(current)) if required <= current)
 }
 
@@ -119,10 +115,10 @@ mod tests {
     }
     #[test]
     fn listing_minimums_do_not_authorize_future_or_range_profiles() {
-        for value in ["", "0.9", "1.0", "1.0.0"] {
+        for value in ["0.9", "1.0", "1.0.0"] {
             assert!(minimum_api_supported(value, "1.0"));
         }
-        for value in ["1.0.1", "2.0", "^1.0", "*", "1.0-beta", " 1.0 "] {
+        for value in ["", "1.0.1", "2.0", "^1.0", "*", "1.0-beta", " 1.0 "] {
             assert!(!minimum_api_supported(value, "1.0"));
         }
     }

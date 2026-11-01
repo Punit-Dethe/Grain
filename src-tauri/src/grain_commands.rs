@@ -804,13 +804,8 @@ pub fn extensions_overview(app: AppHandle) -> Result<Vec<ExtensionCard>, String>
     // each, and their master switch is that tab's header — listing them beside
     // installed packs implied they could be uninstalled and buried the list of
     // things the user actually chose to install.
-    //
-    // `extension_set_enabled` still accepts their ids for compatibility, but the
-    // tab headers write those settings flags directly.
     let mut cards: Vec<ExtensionCard> = Vec::new();
-    // Installed packs — including the Agent centre layout, which is now a real
-    // external pack (Phase 5C) rendered through this same path, not a
-    // host-synthesised special case.
+    // Installed tool packages, including quarantined records for recovery.
     for rec in reg.records() {
         let facts = match load_pack(&app, &rec.id) {
             Ok(p) => {
@@ -1203,6 +1198,7 @@ mod imported_update_security_tests {
                 "id": "com.example.secure",
                 "name": "Secure",
                 "version": "1.0.0",
+                "grainApi": "^1.0",
                 "tier": "scripted",
                 "entry_source": "export default {}",
                 "permissions": ["auth", "net:api.example.com"],

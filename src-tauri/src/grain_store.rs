@@ -2041,6 +2041,7 @@ mod tests {
                 let entry: IndexEntry = serde_json::from_value(serde_json::json!({
                     "id": "com.example.tools", "name": "Test tools", "version": "1.0.0",
                     "tier": "scripted", "trust": "verified", "sha256": hash,
+                    "min_grain_api": "1.0",
                     "size": bytes.len(), "categories": ["tools"]
                 })).unwrap();
                 assert_eq!(project_entries(std::slice::from_ref(&entry),
@@ -2333,6 +2334,7 @@ mod tests {
             let entry = serde_json::from_value(serde_json::json!({
                 "id": "com.example.tools", "name": "Tools", "version": "1.0.0",
                 "tier": "scripted", "trust": "verified", "sha256": "0".repeat(64), "size": 1
+                , "min_grain_api": "1.0"
             }))
             .unwrap();
             *state.index.write().unwrap() = Some(Index {

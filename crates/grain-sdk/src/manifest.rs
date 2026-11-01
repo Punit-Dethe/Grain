@@ -20,9 +20,7 @@ pub struct ExtensionManifest {
     pub id: String,
     pub name: String,
     pub version: String,
-    /// Native API requirement: supported numeric exact/caret grammar. Empty is
-    /// accepted only for existing installed legacy metadata; author projects
-    /// must declare an explicit compatible requirement.
+    /// Required native API profile, using supported numeric exact/caret grammar.
     #[serde(default, rename = "grainApi", alias = "grain_api")]
     pub grain_api: String,
     pub tier: Tier,
@@ -34,10 +32,8 @@ pub struct ExtensionManifest {
     /// master the author supplies; Grain downscales to every size it shows
     /// (pill row, card, store), so consistency is Grain's, not the author's.
     ///
-    /// **Required to submit to the store**, enforced by `doctor` / the registry
-    /// checks — not by [`validate`], so a pack built before this contract still
-    /// installs. Empty means "declares none", which only the submission path
-    /// rejects.
+    /// Required for store submission by `doctor` and registry checks. Local
+    /// tool packages may omit artwork.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub icon: String,
     #[serde(default)]
@@ -181,8 +177,7 @@ pub struct ActionDecl {
     /// Ways a user might ask for this, in English.
     ///
     /// `{param}` placeholders name a declared parameter and mark where its span
-    /// begins. Locale sets are a later additive field (`utterancesByLocale`),
-    /// reserved so nobody squats the name; this list is the `en` set.
+    /// begins.
     #[serde(default)]
     pub utterances: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -783,11 +778,7 @@ impl GrainPack {
     /// Admit tools, scoped storage/network and host-owned authentication only.
     pub fn validate_tool_only(&self) -> Result<(), String> {
         let m = &self.manifest;
-        if !m.grain_api.is_empty()
-            && !crate::compatibility::api_requirement_supported(
-                &m.grain_api,
-                crate::GRAIN_API_VERSION,
-            )
+        if !crate::compatibility::api_requirement_supported(&m.grain_api, crate::GRAIN_API_VERSION)
         {
             return Err(crate::compatibility::UNSUPPORTED_EXTENSION_API.into());
         }
@@ -894,16 +885,26 @@ mod tests {
             "entry_source":"grain.actions({read: async () => ({ok:null})});",
             "contributes":{"actions":[{"id":"read","title":"Read","risk":"confirm","utterances":["read data"]}]}
         }})).unwrap();
-        // Omitted installed metadata remains readable; new project readers
-        // independently require an explicit supported requirement.
-        for supported in ["", "^1.0", "^1.0.0", "1.0", "1.0.0"] {
+        // Missing metadata is refused at every runtime admission boundary.
+        for result in [
+            pack.validate_tool_only(),
+            pack.validate(),
+            pack.validate_dev(),
+            pack.validate_trusted(),
+        ] {
+            assert_eq!(
+                result.unwrap_err(),
+                crate::compatibility::UNSUPPORTED_EXTENSION_API
+            );
+        }
+        for supported in ["^1.0", "^1.0.0", "1.0", "1.0.0"] {
             pack.manifest.grain_api = supported.into();
             assert!(pack.validate_tool_only().is_ok());
             assert!(pack.validate().is_ok());
             assert!(pack.validate_dev().is_ok());
             assert!(pack.validate_trusted().is_ok());
         }
-        for unsupported in ["^2.0", "^1.0.1", "*", "latest", " ", "01.0", "+1.0"] {
+        for unsupported in ["", "^2.0", "^1.0.1", "*", "latest", " ", "01.0", "+1.0"] {
             pack.manifest.grain_api = unsupported.into();
             for result in [
                 pack.validate_tool_only(),
@@ -939,7 +940,7 @@ mod tests {
         ] {
             let candidate: GrainPack = serde_json::from_value(serde_json::json!({
                 "manifest": {"id":"com.example.tools","name":"Tools","version":"1",
-                    "tier":"scripted","entry_source":"//", "permissions":[permission]}
+                    "grainApi":"^1.0","tier":"scripted","entry_source":"//", "permissions":[permission]}
             }))
             .unwrap();
             for result in [
@@ -969,7 +970,7 @@ mod tests {
             ".com.example",
         ] {
             let json = format!(
-                r#"{{"manifest":{{"id":{id:?},"name":"P","version":"1.0","tier":"scripted","entry_source":"//"}}}}"#
+                r#"{{"manifest":{{"id":{id:?},"name":"P","version":"1.0","grainApi":"^1.0","tier":"scripted","entry_source":"//"}}}}"#
             );
             assert!(pack(&json).is_err(), "unsafe id passed: {id:?}");
         }
@@ -991,7 +992,7 @@ mod tests {
     /// action array spliced in.
     fn pack_with_actions(permissions: &str, actions: &str) -> Result<(), String> {
         pack(&format!(
-            r#"{{"manifest":{{"id":"com.x.a","name":"A","version":"1.0","tier":"scripted",
+            r#"{{"manifest":{{"id":"com.x.a","name":"A","version":"1.0","grainApi":"^1.0","tier":"scripted",
                 "entry_source":"//","permissions":{permissions},
                 "contributes":{{"actions":{actions}}}}}}}"#
         ))
@@ -1252,7 +1253,7 @@ mod tests {
     fn scripted_pack_passes_with_entry_and_known_caps() {
         assert_eq!(
             pack(
-                r#"{"manifest":{"id":"com.x.cat","name":"Cat","version":"1","tier":"scripted",
+                r#"{"manifest":{"id":"com.x.cat","name":"Cat","version":"1","grainApi":"^1.0","tier":"scripted",
                     "permissions":["storage","net:api.example.com"],
                     "entry_source":"grain.log.info('hi')"}}"#
             ),
@@ -1277,10 +1278,10 @@ mod tests {
         );
         // scripted without entry_source, and with an unknown capability
         assert!(pack(
-            r#"{"manifest":{"id":"com.x.y","name":"n","version":"1","tier":"scripted"}}"#
+            r#"{"manifest":{"id":"com.x.y","name":"n","version":"1","grainApi":"^1.0","tier":"scripted"}}"#
         )
         .is_err());
-        assert!(pack(r#"{"manifest":{"id":"com.x.y","name":"n","version":"1","tier":"scripted","entry_source":"x","permissions":["root"]}}"#).is_err());
+        assert!(pack(r#"{"manifest":{"id":"com.x.y","name":"n","version":"1","grainApi":"^1.0","tier":"scripted","entry_source":"x","permissions":["root"]}}"#).is_err());
         // tier-A pack must not carry code
         assert!(pack(r#"{"manifest":{"id":"com.x.y","name":"n","version":"1","tier":"pack","entry_source":"x"}}"#).is_err());
         assert!(
@@ -1290,7 +1291,7 @@ mod tests {
         // unknown fields from a newer contract are tolerated
         assert_eq!(
             pack(
-                r#"{"manifest":{"id":"com.x.y","name":"n","version":"1","tier":"scripted","entry_source":"x","futureField":1}}"#
+                r#"{"manifest":{"id":"com.x.y","name":"n","version":"1","grainApi":"^1.0","tier":"scripted","entry_source":"x","futureField":1}}"#
             ),
             Ok(())
         );
@@ -1299,7 +1300,7 @@ mod tests {
     #[test]
     fn only_trusted_catalogue_artifacts_may_claim_reserved_ids() {
         let pack: GrainPack = serde_json::from_str(
-            r#"{"manifest":{"id":"grain.first-party","name":"First party","version":"1","tier":"scripted","entry_source":"x"}}"#,
+            r#"{"manifest":{"id":"grain.first-party","name":"First party","version":"1","grainApi":"^1.0","tier":"scripted","entry_source":"x"}}"#,
         )
         .unwrap();
 
@@ -1333,18 +1334,18 @@ mod tests {
         }
 
         assert!(pack(
-            r#"{"manifest":{"id":"com.x.net","name":"n","version":"1","tier":"scripted","entry_source":"x","permissions":["net:api.example.com"]}}"#
+            r#"{"manifest":{"id":"com.x.net","name":"n","version":"1","grainApi":"^1.0","tier":"scripted","entry_source":"x","permissions":["net:api.example.com"]}}"#
         )
         .is_ok());
         assert!(pack(
-            r#"{"manifest":{"id":"com.x.net","name":"n","version":"1","tier":"scripted","entry_source":"x","permissions":["net:*.example.com"]}}"#
+            r#"{"manifest":{"id":"com.x.net","name":"n","version":"1","grainApi":"^1.0","tier":"scripted","entry_source":"x","permissions":["net:*.example.com"]}}"#
         )
         .is_err());
     }
 
     #[test]
     fn authentication_is_one_public_pkce_account_per_extension() {
-        let github = r#"{"manifest":{"id":"com.x.github","name":"GitHub","version":"1","tier":"scripted","entry_source":"x","permissions":["auth","net:api.github.com"],"contributes":{"authentication":{"type":"oauth2-pkce","providerName":"GitHub","clientId":"github-public","authorizationEndpoint":"https://github.com/login/oauth/authorize","tokenEndpoint":"https://github.com/login/oauth/access_token","scopes":["read:user"],"apiHosts":["api.github.com"]}}}}"#;
+        let github = r#"{"manifest":{"id":"com.x.github","name":"GitHub","version":"1","grainApi":"^1.0","tier":"scripted","entry_source":"x","permissions":["auth","net:api.github.com"],"contributes":{"authentication":{"type":"oauth2-pkce","providerName":"GitHub","clientId":"github-public","authorizationEndpoint":"https://github.com/login/oauth/authorize","tokenEndpoint":"https://github.com/login/oauth/access_token","scopes":["read:user"],"apiHosts":["api.github.com"]}}}}"#;
         assert_eq!(pack(github), Ok(()));
 
         let missing_host_grant = github.replace(",\"net:api.github.com\"", "");
@@ -1356,19 +1357,19 @@ mod tests {
         );
         assert!(serde_json::from_str::<GrainPack>(&with_secret).is_err());
 
-        let two_services = r#"{"manifest":{"id":"com.x.bridge","name":"Bridge","version":"1","tier":"scripted","entry_source":"x","permissions":["auth","net:api.github.com"],"contributes":{"authentication":[{"type":"oauth2-pkce","providerName":"GitHub","clientId":"github-public","authorizationEndpoint":"https://github.com/login/oauth/authorize","tokenEndpoint":"https://github.com/login/oauth/access_token","scopes":["read:user"],"apiHosts":["api.github.com"]},{"type":"oauth2-pkce","providerName":"Linear","clientId":"linear-public","authorizationEndpoint":"https://linear.app/oauth/authorize","tokenEndpoint":"https://api.linear.app/oauth/token","scopes":["read"],"apiHosts":["api.linear.app"]}]}}}"#;
+        let two_services = r#"{"manifest":{"id":"com.x.bridge","name":"Bridge","version":"1","grainApi":"^1.0","tier":"scripted","entry_source":"x","permissions":["auth","net:api.github.com"],"contributes":{"authentication":[{"type":"oauth2-pkce","providerName":"GitHub","clientId":"github-public","authorizationEndpoint":"https://github.com/login/oauth/authorize","tokenEndpoint":"https://github.com/login/oauth/access_token","scopes":["read:user"],"apiHosts":["api.github.com"]},{"type":"oauth2-pkce","providerName":"Linear","clientId":"linear-public","authorizationEndpoint":"https://linear.app/oauth/authorize","tokenEndpoint":"https://api.linear.app/oauth/token","scopes":["read"],"apiHosts":["api.linear.app"]}]}}}"#;
         assert!(serde_json::from_str::<GrainPack>(two_services).is_err());
 
         assert!(pack(&github.replace("\"auth\",", "")).is_err());
         assert!(pack(
-            r#"{"manifest":{"id":"com.x.auth","name":"Auth","version":"1","tier":"scripted","entry_source":"x","permissions":["auth"]}}"#
+            r#"{"manifest":{"id":"com.x.auth","name":"Auth","version":"1","grainApi":"^1.0","tier":"scripted","entry_source":"x","permissions":["auth"]}}"#
         )
         .is_err());
     }
 
     #[test]
     fn authentication_rejects_ambiguous_endpoints_and_reserved_parameter_case() {
-        let raw = r#"{"manifest":{"id":"com.x.auth","name":"Auth","version":"1","tier":"scripted","entry_source":"x","permissions":["auth","net:api.example.com"],"contributes":{"authentication":{"type":"oauth2-pkce","providerName":"Service","clientId":"public","authorizationEndpoint":"https://login.example.com/oauth/authorize","tokenEndpoint":"https://login.example.com/oauth/token","scopes":["read"],"apiHosts":["api.example.com"]}}}}"#;
+        let raw = r#"{"manifest":{"id":"com.x.auth","name":"Auth","version":"1","grainApi":"^1.0","tier":"scripted","entry_source":"x","permissions":["auth","net:api.example.com"],"contributes":{"authentication":{"type":"oauth2-pkce","providerName":"Service","clientId":"public","authorizationEndpoint":"https://login.example.com/oauth/authorize","tokenEndpoint":"https://login.example.com/oauth/token","scopes":["read"],"apiHosts":["api.example.com"]}}}}"#;
         let mut parsed: GrainPack = serde_json::from_str(raw).unwrap();
         parsed
             .manifest
@@ -1394,7 +1395,7 @@ mod tests {
     #[test]
     fn scripted_pack_entry_has_a_wire_size_ceiling() {
         let mut parsed: GrainPack = serde_json::from_str(
-            r#"{"manifest":{"id":"com.x.large","name":"Large","version":"1","tier":"scripted","entry_source":"x"}}"#,
+            r#"{"manifest":{"id":"com.x.large","name":"Large","version":"1","grainApi":"^1.0","tier":"scripted","entry_source":"x"}}"#,
         )
         .unwrap();
         parsed.manifest.entry_source = "x".repeat(PACK_ENTRY_MAX_BYTES + 1);

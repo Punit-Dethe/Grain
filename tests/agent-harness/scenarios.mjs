@@ -114,7 +114,7 @@ export const scenarios = [
     suite: "native-foundation",
     checks: [59],
     description:
-      "Unsupported installed/developer API profiles are refused without changing the working owner; legacy omitted profile still executes",
+      "Missing, empty and unsupported installed/developer API profiles are refused without changing the working owner",
   },
   {
     id: "native.typed-contract",

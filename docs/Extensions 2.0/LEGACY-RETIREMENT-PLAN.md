@@ -580,3 +580,26 @@ model decision remain as listed above. Do not revisit M7.
   stale overview comments. Retire those in the final contract sweep; unrelated
   overlay/default-prompt/secrets migrations and Agent confirmation (M7) remain
   outside this extension-platform task.
+
+**1 November 2026, session 4 continued: explicit API admission (T12).**
+
+- Removed the legacy-only allowance for an empty package grainApi and catalogue
+  minimum. All pack admission paths now refuse missing/empty/unsupported profiles;
+  exact/caret grammar and future-profile refusal stay unchanged. Updated fixture
+  constructors to explicitly declare the current profile so their existing
+  permission/auth/hash/publication tests reach the intended guard.
+- Extended the existing API tests to refuse omitted and empty metadata at all
+  runtime boundaries. Updated the existing real-app API scenario to preserve a
+  working owner after missing/empty/unsupported profile refusal; reused the
+  current first-round greeting adapter. No compatibility migration/default was
+  added. Empty deserialization defaults remain invalid and never authorize use.
+- Removed the Extension Mode binding tombstone and obsolete locale reservation;
+  corrected API/icon docs and overview comments about retired built-in handling.
+  Unrelated overlay/default-prompt/secrets migrations remain outside this task.
+- Verification: workspace all-target checks/tests, SDK/core strict Clippy, app
+  all-target check and 696 app tests / 23 ignored pass; tsc, 80 harness tests and
+  whitespace checks pass. Real-app API/registry/store checkpoint follows T13.
+- Audit follow-up: current import/store writers always publish content-addressed
+  artifacts, but extension_host still reads two old installation layouts and
+  uninstall still cleans a flat-file/approved-app format. Remove those fallback
+  paths next, retaining current immutable publication/ownership guarantees.

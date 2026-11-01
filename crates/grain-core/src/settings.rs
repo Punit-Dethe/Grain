@@ -1420,9 +1420,6 @@ pub fn ensure_post_process_defaults(settings: &mut AppSettings) -> bool {
         "transcribe_with_post_process",
         // Flow remains an internal action selected by the Dictation model.
         "transcribe_realtime",
-        // Extension Mode (speak a request, choose a searchable extension) retired
-        // with the V1 recommendation surface; the Agent owns extension calls now.
-        "extension_mode",
     ] {
         if settings.bindings.remove(id).is_some() {
             if id == "transcribe_realtime" {

@@ -2289,7 +2289,7 @@ mod tests {
     fn installed_pack_hash_is_rechecked_before_runtime_load() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("pack.grainpack.json");
-        let bytes = br#"{"manifest":{"id":"com.x.hash","name":"Hash","version":"1","tier":"scripted","entry_source":"x"}}"#;
+        let bytes = br#"{"manifest":{"id":"com.x.hash","name":"Hash","version":"1","grainApi":"^1.0","tier":"scripted","entry_source":"x"}}"#;
         std::fs::write(&path, bytes).unwrap();
         let hash = grain_core::trust::sha256_hex(bytes);
         assert!(read_pack_file(&path, false, Some(&hash), "com.x.hash", Some("1")).is_ok());
@@ -2305,7 +2305,7 @@ mod tests {
     fn pack_of(extra: &str) -> GrainPack {
         let json = format!(
             r#"{{"manifest":{{"id":"com.x.p","name":"P","version":"1.0",
-                 "tier":"scripted","entry_source":"export default {{}}",
+                 "grainApi":"^1.0","tier":"scripted","entry_source":"export default {{}}",
                  "contributes":{{"actions":[{{"id":"next","title":"Skip",
                    "risk":"safe","utterances":["next song"]}}]}}{extra}}}}}"#
         );

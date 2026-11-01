@@ -175,7 +175,7 @@ export function installationHandlers(ctx) {
         await closePanel();
         const registry = assertWithin(root, join(root, "data/extensions.json"));
         const saved = await readFile(registry);
-        for (const requirement of ["^2.0", "^1.0.1", "*"]) {
+        for (const requirement of ["", "^2.0", "^1.0.1", "*"]) {
           const pack = await fixturePackage(here, "api-refused");
           pack.manifest.grainApi =
             ctx.fault === "unsupported-api-as-current" ? "^1.0" : requirement;
@@ -227,15 +227,19 @@ export function installationHandlers(ctx) {
         await greeting("api-preserved");
         await note("developer-refused:working-owner-preserved");
         await closePanel();
-        const legacy = await fixturePackage(here, "api-legacy");
-        delete legacy.manifest.grainApi;
+        const missingApi = await fixturePackage(here, "api-missing");
+        delete missingApi.manifest.grainApi;
         await writeFile(
           assertWithin(root, join(root, "fixture.grainpack")),
-          JSON.stringify(legacy),
+          JSON.stringify(missingApi),
         );
-        await fixture("import");
-        await greeting("api-legacy");
-        await note("legacy-omitted-api:executed");
+        await assert.rejects(
+          fixture("import"),
+          /unsupported Grain API profile/i,
+        );
+        assert.deepEqual(await readFile(registry), saved);
+        await greeting("api-preserved");
+        await note("missing-api:refused-working-owner-preserved");
       },
       async "native.cli-package-ownership"() {
         const { packagedOwnership } = await import("./packaging.mjs");
