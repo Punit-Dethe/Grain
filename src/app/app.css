@@ -1335,13 +1335,19 @@ html[data-theme="dark"] .grain-root .toggle.on span {
 
 /* Overview */
 .hero {
+  --hero-start-background: var(--bg-2);
   position: relative;
-  height: clamp(352px, 44vh, 470px);
-  margin-bottom: -30px;
+  display: flex;
+  flex-direction: column;
+  min-height: clamp(460px, 56vh, 560px);
   overflow: hidden;
   border-radius: var(--hero-radius);
   background: var(--bg-2, #15171c);
   border: 1px solid var(--hairline, rgba(255, 255, 255, 0.07));
+}
+
+.grain-root[data-theme="dark"] .hero {
+  --hero-start-background: #292929;
 }
 
 html[data-theme="light"] .hero {
@@ -1349,16 +1355,41 @@ html[data-theme="light"] .hero {
   border-color: #eeebe3;
 }
 
+.hero-art {
+  position: relative;
+  isolation: isolate;
+  flex: 1 0 clamp(260px, 32vh, 340px);
+  background: var(--hero-start-background);
+}
+
 .hero-image {
+  position: absolute;
+  z-index: 0;
+  inset: 0;
   width: 100%;
   height: 100%;
   display: block;
   object-fit: cover;
 }
 
-.hero-image-toggle {
+.hero-gradient {
   position: absolute;
   z-index: 1;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 80px;
+  background: linear-gradient(
+    to top,
+    var(--hero-start-background) 1px,
+    transparent 100%
+  );
+  pointer-events: none;
+}
+
+.hero-image-toggle {
+  position: absolute;
+  z-index: 2;
   top: 16px;
   right: 16px;
   display: grid;
@@ -1384,47 +1415,17 @@ html[data-theme="light"] .hero {
   outline-offset: 2px;
 }
 
-.hero-content {
-  position: absolute;
-  right: 22px;
-  bottom: 32px;
-  left: 22px;
-  display: flex;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: 24px;
-}
-
-.hero-copy {
-  max-width: 600px;
-}
-
-.hero h2 {
-  max-width: 540px;
-  color: #fff;
-  font-size: clamp(25px, 2.7vw, 34px);
-  font-weight: 560;
-  line-height: 1.04;
-  letter-spacing: -0.043em;
-}
-
-.hero-actions {
-  display: flex;
+.hero-start {
   flex: 0 0 auto;
-  gap: 8px;
+  padding: 24px;
+  background: var(--hero-start-background);
 }
 
-.hero .button.primary {
-  color: #fff !important;
-  background: rgb(17 17 17 / 70%) !important;
-  border: 1px solid rgb(255 255 255 / 18%);
-  -webkit-backdrop-filter: blur(14px);
-  backdrop-filter: blur(14px);
-}
-
-.hero .button.primary:hover {
-  background: rgb(17 17 17 / 80%) !important;
-  border-color: rgb(255 255 255 / 28%);
+.hero-start .overview-shortcut-strip {
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
 }
 
 .section-head {
@@ -1433,11 +1434,6 @@ html[data-theme="light"] .hero {
   justify-content: space-between;
   gap: 18px;
   margin: 28px 0 12px;
-}
-
-.compact-section-head {
-  margin-top: 56px;
-  margin-bottom: 14px;
 }
 
 .section-head p {
@@ -1538,9 +1534,6 @@ html[data-theme="light"] .hero {
   background: var(--bg-2);
   container-type: inline-size;
   container-name: overview-strip;
-}
-.grain-root[data-theme="dark"] .overview-shortcut-strip {
-  background: #292929;
 }
 .grain-root[data-theme="dark"]
   .overview-shortcut-strip
