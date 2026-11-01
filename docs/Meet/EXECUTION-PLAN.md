@@ -211,6 +211,10 @@ Suggested initial engineering targets, to validate in the feasibility report, ar
 
 **Measured and decided (2 November 2026).** Sortformer peaked at about 1.2 GiB of worker memory per hour of one track; Nemotron 3 peaks at 1.3 GiB at 60 minutes and 1.85 GiB at 90 minutes (see [PROGRESS.md](PROGRESS.md), Increment 8). The user chose FluidMeet's approach, tuned later: diarize each whole track in one run and process tracks one at a time, with **a 90-minute cap per track** (`grain_engine::MAX_ANALYSIS_SAMPLES`, about 1.8 GiB peak). A longer track is kept, and its processing is refused with the limit stated. No further duration experiments are planned for the first release.
 
+### Word attribution follows Glimpse (user decision, 2 November 2026)
+
+Grain's native diarization output is byte-identical to Glimpse's for the same audio (both CLIs on the user's recording). The visible difference came from the word rules below, so Grain now uses Glimpse's: the slot with the most overlap, else the nearest turn; a lone word between two words of one speaker takes that speaker (within one recorded run); on a two-track meeting a slot under 5% of a track's words folds into the track's main slot. FluidMeet's dominance thresholds, boundary recovery and brief-speaker rule (rows marked Step 3 below) are retired. See PROGRESS.md, Increment 9.
+
 ### FluidMeet tuning adopted for the first release
 
 Read from FluidVoice `dd37664`. FluidMeet diarizes and transcribes after recording; its optional live captions run no diarization. Use these values unchanged and tune later. "Grain status" says where each value applies.

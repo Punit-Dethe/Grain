@@ -53,18 +53,16 @@ describe("buildTurns", () => {
             word("there.", 320, 600, { Speaker: 1 }),
             word("Hi!", 700, 900, { Speaker: 2 }),
             word("Again", 3_000, 3_300, { Speaker: 2 }),
-            word("maybe", 3_400, 3_600, { Ambiguous: [1, 2] }),
             word("hm", 3_700, 3_800, "Unassigned"),
           ],
         },
       ]),
     );
-    expect(turns.map((t) => [t.speakerId, t.text, t.ambiguous])).toEqual([
-      ["t0-s1", "Hello there.", false],
-      ["t0-s2", "Hi!", false],
-      ["t0-s2", "Again", false],
-      [null, "maybe", true],
-      [null, "hm", false],
+    expect(turns.map((t) => [t.speakerId, t.text])).toEqual([
+      ["t0-s1", "Hello there."],
+      ["t0-s2", "Hi!"],
+      ["t0-s2", "Again"],
+      [null, "hm"],
     ]);
     expect(turns[0]).toMatchObject({ startMs: 0, endMs: 600 });
   });

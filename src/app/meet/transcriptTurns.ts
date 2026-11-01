@@ -11,8 +11,6 @@ export interface Turn {
   track: number;
   /** The speaker id (`t{track}-s{slot}`), or null when not attributed. */
   speakerId: string | null;
-  /** True when several speakers overlap the turn's words. */
-  ambiguous: boolean;
   startMs: number;
   endMs: number;
   text: string;
@@ -21,20 +19,10 @@ export interface Turn {
 /** A pause this long starts a new turn even with the same speaker. */
 const TURN_PAUSE_MS = 1_500;
 
-function speakerKey(
-  track: number,
-  attribution: Attribution,
-): {
-  id: string | null;
-  ambiguous: boolean;
-} {
-  if (typeof attribution === "object" && "Speaker" in attribution) {
-    return { id: `t${track}-s${attribution.Speaker}`, ambiguous: false };
-  }
-  if (typeof attribution === "object" && "Ambiguous" in attribution) {
-    return { id: null, ambiguous: true };
-  }
-  return { id: null, ambiguous: false };
+function speakerKey(track: number, attribution: Attribution): string | null {
+  return typeof attribution === "object" && "Speaker" in attribution
+    ? `t${track}-s${attribution.Speaker}`
+    : null;
 }
 
 /**
@@ -50,12 +38,11 @@ export function buildTurns(revision: TranscriptRevision): Turn[] {
   const turns: Turn[] = [];
   const open = new Map<number, Turn>();
   for (const { track, word } of words) {
-    const speaker = speakerKey(track, word.speaker);
+    const speakerId = speakerKey(track, word.speaker);
     const current = open.get(track);
     const continues =
       current &&
-      current.speakerId === speaker.id &&
-      current.ambiguous === speaker.ambiguous &&
+      current.speakerId === speakerId &&
       word.start_ms - current.endMs < TURN_PAUSE_MS;
     if (current && continues) {
       current.text = `${current.text} ${word.text}`;
@@ -65,8 +52,7 @@ export function buildTurns(revision: TranscriptRevision): Turn[] {
     const turn: Turn = {
       key: `${track}-${word.start_ms}-${turns.length}`,
       track,
-      speakerId: speaker.id,
-      ambiguous: speaker.ambiguous,
+      speakerId,
       startMs: word.start_ms,
       endMs: word.end_ms,
       text: word.text,

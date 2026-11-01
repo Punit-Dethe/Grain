@@ -167,9 +167,11 @@ pub fn process(
     on_stage(Stage::Publishing);
 
     let mut tracks = Vec::with_capacity(manifest.tracks.len());
+    let two_parties = manifest.tracks.len() > 1;
     for (index, track) in manifest.tracks.iter().enumerate() {
         tracks.push(assemble_track(
             track.id,
+            two_parties,
             &prepared[index],
             &speakers[index],
             &texts[index],
@@ -244,6 +246,7 @@ fn transcribe(
 
 fn assemble_track(
     track: u32,
+    party_track: bool,
     prepared: &Result<TrackAnalysis, Unprepared>,
     speakers: &Result<Vec<Activity>, String>,
     text: &Result<(String, Vec<transcript::AnalysisWord>), String>,
@@ -302,7 +305,11 @@ fn assemble_track(
     let (status, attribution, activity) = match speakers {
         Ok(activity) => {
             let mut attribution = transcript::attribute(&words, activity);
-            transcript::fold_brief_speakers(&words, &mut attribution);
+            // Glimpse folds minor voices only on a track that stands for one
+            // party (microphone or system audio of a two-track meeting).
+            if party_track {
+                transcript::fold_minor_speakers(&mut attribution);
+            }
             (TrackStatus::Complete, attribution, activity.clone())
         }
         Err(reason) => (

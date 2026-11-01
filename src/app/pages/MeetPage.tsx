@@ -904,10 +904,6 @@ function MeetingDetail({
     }),
     [t],
   );
-  const overlap = useMemo<SpeakerLook>(
-    () => ({ label: t("ui2.meet.detail.overlap"), mark: "", tone: null }),
-    [t],
-  );
   const visible = useMemo(() => filterTurns(turns, query), [turns, query]);
   const currentKey = playback.playing ? turnAt(turns, playback.position) : null;
   const multiSource = new Set(meeting.sources).size > 1;
@@ -1031,9 +1027,7 @@ function MeetingDetail({
                 look={
                   turn.speakerId
                     ? (looks.get(turn.speakerId) ?? unknown)
-                    : turn.ambiguous
-                      ? overlap
-                      : unknown
+                    : unknown
                 }
                 source={
                   multiSource ? (meeting.sources[turn.track] ?? null) : null

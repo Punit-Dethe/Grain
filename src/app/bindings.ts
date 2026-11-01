@@ -2317,11 +2317,7 @@ agent_input_type_to_expand?: boolean;
 agent_panel_position?: AgentPanelPosition }
 export type Attribution = { Speaker: number } |
 /**
- * Several slots overlap the word without a clear leader.
- */
-{ Ambiguous: number[] } |
-/**
- * No credible slot (silence, crosstalk, or a voice too brief to name).
+ * The diarizer found no speech on this track.
  */
 "Unassigned" |
 /**

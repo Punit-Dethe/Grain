@@ -281,3 +281,22 @@ Validation (Windows 11, i5-14600KF, RTX 3080):
 - **Synthetic 86 s conversation** (Jobs, JFK and a FLEURS speaker, each twice, captured at 48 kHz stereo through the meeting path): three speakers, each keeping its label when they return. Unassigned words fell from 9 with Sortformer to 2 (both the first word of a turn).
 - **Worker peak memory, one track:** 313 MiB at 10 min, 1,303 MiB at 60 min, 1,897 MiB at 90 min on CPU (1,838 MiB on Vulkan). Speed: 40x real time on CPU, 590x on Vulkan. The 90-minute cap stays.
 - **Known, not diarizer-related:** in the same clip Parakeet drops the last FLEURS turn (about 10 s) from the transcript text itself. Deferred by the user until after the Glimpse comparison.
+
+## Increment 9: Glimpse's word attribution (2026-11-02)
+
+User report: on a 67 s system-audio-only recording, speakers looked split and swapped compared with Glimpse.
+
+Investigation:
+- Glimpse (`5b05ef1`, behavior only) diarizes each track once, offline, with Nemotron 3 Q8_0 at `VeryHighLatency`, exactly like Grain. It uses no speaker embeddings, clustering or re-identification.
+- Glimpse's native CLI (fork `352b27f`) and Grain's (`c8cf6b1`) were built and run on the user's recording: **byte-identical rows**, 6 speakers. Glimpse's input preparation (24 kHz storage, linear resample to 16 kHz) gives the same 6 speakers too. The diarizer is not the difference.
+- The difference is the word rules. With FluidMeet's dominance thresholds, boundary recovery and brief-speaker rule, 25 of 210 words (12%) were shown as "Several speakers" or "Unknown speaker", which broke sentences into fragments between speakers. Glimpse's rules assign every word.
+
+Change (`grain_meet/transcript.rs`, `processing.rs`):
+- A word takes the slot with the most summed overlap; with none, the nearest turn (Glimpse `voice_at`).
+- A lone word between two words of the same speaker takes that speaker, within one recorded run (Glimpse `assign_voices`).
+- On a two-track meeting, a slot under 5% of a track's words folds into that track's main slot (Glimpse `fold_minor_voices`). Single-track meetings keep every slot, as in Glimpse.
+- `Attribution::Ambiguous` and the FluidMeet constants are removed; `Unassigned` now means the diarizer found no speech on the track. The frontend loses its "Several speakers" path.
+
+Result on the user's recording: no "Unknown"/"Several speakers" fragments; every turn reads as one speaker. 737 lib tests and the real-model pipeline test pass.
+
+Not adopted yet from Glimpse: "You"/"Others" labels for single-voice tracks of a two-track meeting, and removal of microphone words that duplicate system audio ("bleed", for speaker setups). Both apply to two-track recordings only.

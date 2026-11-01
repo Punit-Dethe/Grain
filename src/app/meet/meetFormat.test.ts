@@ -25,7 +25,6 @@ function turn(key: string, startMs: number, endMs: number): Turn {
     key,
     track: 0,
     speakerId: null,
-    ambiguous: false,
     startMs,
     endMs,
     text: key,

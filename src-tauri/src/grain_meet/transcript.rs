@@ -1,12 +1,13 @@
 //! Speaker-attributed transcript evidence and its published revisions.
 //!
-//! Everything here is pure except revision storage. Attribution follows
-//! FluidMeet's policy (`MeetingParakeetNemotronBackend.assignment`,
-//! `MeetingWordBoundaryRecovery`, `MeetingTranscriptAssembler.makeSpeakers`),
-//! with Grain's explicit handling of point-timed words.
+//! Everything here is pure except revision storage. Word attribution follows
+//! Glimpse (`library/speakers.rs`: `voice_at`, `assign_voices`,
+//! `fold_minor_voices`), which runs the same Nemotron 3 diarizer on the same
+//! offline preset; Grain's native output is identical to Glimpse's for the
+//! same audio, so the rules decide the visible difference.
 
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -15,18 +16,8 @@ use crate::tdt_flow::WindowEvidence;
 
 pub const TRANSCRIPT_VERSION: u32 = 1;
 const TRANSCRIPTS: &str = "transcripts";
-/// FluidMeet `nemotronCadenceMaximumFloorSeconds`: one 80 ms diarizer frame.
-const CADENCE_NS: u64 = 80_000_000;
-/// FluidMeet `SpeakerDominancePolicy`.
-const LEADER_MIN_FRACTION: f64 = 0.5;
-const RUNNER_UP_MAX_FRACTION: f64 = 0.2;
-const LEADER_TO_RUNNER_UP: f64 = 2.0;
-/// FluidMeet `MeetingWordBoundaryRecovery`.
-const RECOVERY_HOP_NS: u64 = 80_000_000;
-const RECOVERY_MAX_WORD_NS: u64 = 1_200_000_000;
-/// FluidMeet `MeetingTranscriptAssembler.minimumSpeakerWords/Seconds`.
-const MIN_SPEAKER_WORDS: usize = 10;
-const MIN_SPEAKER_NS: u64 = 5_000_000_000;
+/// Glimpse `fold_minor_voices`: a slot under 1/20 (5%) of a track's words.
+const MINOR_SPEAKER_DIVISOR: usize = 20;
 
 /// A word assembled across bounded ASR windows, in analysis milliseconds.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -104,15 +95,14 @@ pub struct Activity {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
 pub enum Attribution {
     Speaker(i32),
-    /// Several slots overlap the word without a clear leader.
-    Ambiguous(Vec<i32>),
-    /// No credible slot (silence, crosstalk, or a voice too brief to name).
+    /// The diarizer found no speech on this track.
     Unassigned,
     /// Speaker detection did not run or failed for this track.
     Unavailable,
 }
 
-/// A word placed on the meeting clock, with its run for boundary recovery.
+/// A word placed on the meeting clock, with its recorded run (smoothing
+/// never crosses runs).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MeetingWord {
     pub text: String,
@@ -121,145 +111,83 @@ pub struct MeetingWord {
     pub piece: usize,
 }
 
-fn union_ns(mut intervals: Vec<(u64, u64)>) -> u64 {
-    intervals.sort_unstable();
-    let mut total = 0;
-    let mut current: Option<(u64, u64)> = None;
-    for (s, e) in intervals {
-        match current {
-            Some((cs, ce)) if s <= ce => current = Some((cs, ce.max(e))),
-            Some((cs, ce)) => {
-                total += ce - cs;
-                current = Some((s, e));
-            }
-            None => current = Some((s, e)),
-        }
-    }
-    total + current.map_or(0, |(s, e)| e - s)
-}
-
-/// FluidMeet's coverage attribution for one word.
+/// Glimpse's word rule (`speakers::voice_at`): the slot with the most total
+/// overlap; with no overlap (a pause, or a point-timed word), the nearest
+/// turn. A track with diarization never leaves a word without a speaker.
 pub fn assign(start_ns: u64, end_ns: u64, activity: &[Activity]) -> Attribution {
-    if end_ns <= start_ns {
-        // A point-timed word: only containment is evidence.
-        let slots: BTreeSet<i32> = activity
-            .iter()
-            .filter(|a| a.start_ns <= start_ns && start_ns <= a.end_ns)
-            .map(|a| a.slot)
-            .collect();
-        return match slots.len() {
-            0 => Attribution::Unassigned,
-            1 => Attribution::Speaker(*slots.first().expect("one slot")),
-            _ => Attribution::Ambiguous(slots.into_iter().collect()),
-        };
-    }
-    let duration = end_ns - start_ns;
-    let threshold = CADENCE_NS.min(duration / 5);
-    let mut by_slot: BTreeMap<i32, Vec<(u64, u64)>> = BTreeMap::new();
+    // Slots in first-appearance order; the last of equal totals wins, as in Glimpse.
+    let mut totals: Vec<(i32, u64)> = Vec::new();
     for a in activity {
-        let (s, e) = (a.start_ns.max(start_ns), a.end_ns.min(end_ns));
-        if e > s {
-            by_slot.entry(a.slot).or_default().push((s, e));
+        let overlap = a
+            .end_ns
+            .min(end_ns)
+            .saturating_sub(a.start_ns.max(start_ns));
+        if overlap == 0 {
+            continue;
+        }
+        match totals.iter_mut().find(|(slot, _)| *slot == a.slot) {
+            Some((_, total)) => *total += overlap,
+            None => totals.push((a.slot, overlap)),
         }
     }
-    let mut ranked: Vec<(i32, u64)> = by_slot
-        .into_iter()
-        .map(|(slot, intervals)| (slot, union_ns(intervals)))
-        .filter(|&(_, covered)| covered > threshold)
-        .collect();
-    ranked.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
-    match ranked.as_slice() {
-        [] => Attribution::Unassigned,
-        [(slot, _)] => Attribution::Speaker(*slot),
-        [(leader, lead), (_, runner), ..] => {
-            let d = duration as f64;
-            let (lead, runner) = (*lead as f64, *runner as f64);
-            if lead / d >= LEADER_MIN_FRACTION
-                && runner / d <= RUNNER_UP_MAX_FRACTION
-                && lead >= LEADER_TO_RUNNER_UP * runner
-            {
-                Attribution::Speaker(*leader)
+    if let Some(&(slot, _)) = totals.iter().max_by_key(|(_, total)| *total) {
+        return Attribution::Speaker(slot);
+    }
+    activity
+        .iter()
+        .min_by_key(|a| {
+            if a.end_ns <= start_ns {
+                start_ns - a.end_ns
             } else {
-                Attribution::Ambiguous(ranked.iter().map(|(slot, _)| *slot).collect())
+                a.start_ns.saturating_sub(end_ns)
             }
-        }
-    }
+        })
+        .map_or(Attribution::Unassigned, |a| Attribution::Speaker(a.slot))
 }
 
-/// Attribute every word of one track, then apply FluidMeet's boundary
-/// recovery: an unassigned word directly after a word anchored to a speaker
-/// whose activity ends at the word's onset inherits that speaker, unless any
-/// other speaker starts there. Recovered words never anchor further words.
+/// Attribute every word of one track, then smooth boundary jitter as Glimpse
+/// does: a lone word between two words of the same speaker takes that
+/// speaker. Smoothing stays within one recorded run (Glimpse: one segment).
 pub fn attribute(words: &[MeetingWord], activity: &[Activity]) -> Vec<Attribution> {
     let mut result: Vec<Attribution> = words
         .iter()
         .map(|w| assign(w.start_ns, w.end_ns, activity))
         .collect();
-    let mut recovered = vec![false; words.len()];
-    for i in 1..words.len() {
-        let (word, previous) = (&words[i], &words[i - 1]);
-        let Attribution::Speaker(slot) = result[i - 1] else {
-            continue;
-        };
-        if recovered[i - 1]
-            || result[i] != Attribution::Unassigned
-            || word.piece != previous.piece
-            || word.end_ns <= word.start_ns
-            || previous.end_ns <= previous.start_ns
-            || word.end_ns - word.start_ns > RECOVERY_MAX_WORD_NS
-            || word.start_ns.abs_diff(previous.end_ns) > RECOVERY_HOP_NS
-        {
-            continue;
-        }
-        let previous_duration = previous.end_ns - previous.start_ns;
-        let anchored = activity.iter().any(|a| {
-            a.slot == slot
-                && a.end_ns
-                    .min(previous.end_ns)
-                    .saturating_sub(a.start_ns.max(previous.start_ns))
-                    * 2
-                    >= previous_duration
-                && a.end_ns.abs_diff(word.start_ns) <= RECOVERY_HOP_NS
-        });
-        if !anchored {
-            continue;
-        }
-        let competing = activity.iter().any(|a| {
-            a.slot != slot
-                && a.end_ns.min(word.end_ns + RECOVERY_HOP_NS) > a.start_ns.max(previous.start_ns)
-        });
-        if !competing {
-            result[i] = Attribution::Speaker(slot);
-            recovered[i] = true;
+    for i in 1..words.len().saturating_sub(1) {
+        let same_run = words[i - 1].piece == words[i].piece && words[i].piece == words[i + 1].piece;
+        if same_run && result[i - 1] == result[i + 1] {
+            result[i] = result[i - 1].clone();
         }
     }
     result
 }
 
-/// FluidMeet's naming rule for one track: beside a substantial speaker
-/// (10 words or 5 s), a slot heard only briefly is not a person; its words
-/// stay in the transcript unassigned. A track where every slot is brief keeps
-/// them all.
-pub fn fold_brief_speakers(words: &[MeetingWord], attribution: &mut [Attribution]) {
-    let mut evidence: BTreeMap<i32, (usize, u64)> = BTreeMap::new();
-    for (word, attribution) in words.iter().zip(attribution.iter()) {
-        if let Attribution::Speaker(slot) = attribution {
-            let entry = evidence.entry(*slot).or_default();
-            entry.0 += word.text.split_whitespace().count();
-            entry.1 += word.end_ns.saturating_sub(word.start_ns);
+/// Glimpse's `fold_minor_voices`, for a track that belongs to a known party
+/// (the microphone or system audio of a two-track meeting): a slot holding
+/// under 5% of the track's attributed words is leftover bleed or noise, so its
+/// words go to the track's main slot.
+pub fn fold_minor_speakers(attribution: &mut [Attribution]) {
+    let mut counts: Vec<(i32, usize)> = Vec::new();
+    for a in attribution.iter() {
+        if let Attribution::Speaker(slot) = a {
+            match counts.iter_mut().find(|(known, _)| known == slot) {
+                Some((_, count)) => *count += 1,
+                None => counts.push((*slot, 1)),
+            }
         }
     }
-    let substantial: BTreeSet<i32> = evidence
+    let total: usize = counts.iter().map(|(_, count)| count).sum();
+    let Some(&(main, _)) = counts.iter().max_by_key(|(_, count)| *count) else {
+        return;
+    };
+    let minor: Vec<i32> = counts
         .iter()
-        .filter(|(_, (count, ns))| *count >= MIN_SPEAKER_WORDS || *ns >= MIN_SPEAKER_NS)
+        .filter(|(_, count)| count * MINOR_SPEAKER_DIVISOR < total)
         .map(|(slot, _)| *slot)
         .collect();
-    if substantial.is_empty() {
-        return;
-    }
-    for attribution in attribution.iter_mut() {
-        if matches!(attribution, Attribution::Speaker(slot) if !substantial.contains(slot)) {
-            *attribution = Attribution::Unassigned;
+    for a in attribution.iter_mut() {
+        if matches!(a, Attribution::Speaker(slot) if minor.contains(slot)) {
+            *a = Attribution::Speaker(main);
         }
     }
 }
@@ -536,64 +464,37 @@ mod tests {
     }
 
     #[test]
-    fn attribution_follows_fluidmeet_coverage_and_dominance() {
+    fn a_word_takes_the_slot_with_the_most_overlap_or_the_nearest_turn() {
         let activity = [act(1, 0, 1_000), act(2, 900, 2_000), act(3, 1_500, 1_510)];
-        // Sole candidate.
         assert_eq!(
             assign(100 * MS, 300 * MS, &activity),
             Attribution::Speaker(1)
         );
-        // Slot 2's 5 ms of a 55 ms word is under the floor min(80 ms, 20%).
-        assert_eq!(
-            assign(850 * MS, 905 * MS, &activity),
-            Attribution::Speaker(1)
-        );
-        // 100 ms each way across the change: no clear leader.
+        // 100 ms each way across the change: equal totals, the later slot wins
+        // (Glimpse's `max_by_key` keeps the last maximum).
         assert_eq!(
             assign(850 * MS, 1_050 * MS, &activity),
-            Attribution::Ambiguous(vec![1, 2])
+            Attribution::Speaker(2)
         );
-        // Leader 1000 ms, runner-up 100 ms (10%) of 1000 ms: dominance.
-        assert_eq!(
-            assign(0, 1_000 * MS, &[act(1, 0, 1_000), act(2, 900, 2_000)]),
-            Attribution::Speaker(1)
-        );
-        // Runner-up at 30% is above the 20% limit.
-        assert_eq!(
-            assign(0, 1_000 * MS, &[act(1, 0, 1_000), act(2, 700, 2_000)]),
-            Attribution::Ambiguous(vec![1, 2])
-        );
-        // Duplicate segments are unioned: 300 ms, not 900 ms, so no dominance.
+        // Overlap is summed per slot: 3 x 300 ms beats 100 ms.
         assert_eq!(
             assign(
                 0,
                 1_000 * MS,
-                &[
-                    act(1, 0, 300),
-                    act(1, 0, 300),
-                    act(1, 0, 300),
-                    act(2, 900, 1_000)
-                ]
+                &[act(1, 0, 300), act(1, 300, 600), act(2, 900, 1_000)]
             ),
-            Attribution::Ambiguous(vec![1, 2])
+            Attribution::Speaker(1)
         );
+        // In a pause, the nearest turn; a point-timed word inside a turn is 0 away.
         assert_eq!(
-            assign(3_000 * MS, 3_200 * MS, &activity),
-            Attribution::Unassigned
+            assign(2_300 * MS, 2_400 * MS, &activity),
+            Attribution::Speaker(2)
         );
-        // Point-timed words use containment, never a division by zero.
         assert_eq!(
             assign(500 * MS, 500 * MS, &activity),
             Attribution::Speaker(1)
         );
-        assert_eq!(
-            assign(950 * MS, 950 * MS, &activity),
-            Attribution::Ambiguous(vec![1, 2])
-        );
-        assert_eq!(
-            assign(2_500 * MS, 2_500 * MS, &activity),
-            Attribution::Unassigned
-        );
+        assert_eq!(assign(0, 100 * MS, &[]), Attribution::Unassigned);
     }
 
     fn word(text: &str, start_ms: u64, end_ms: u64, piece: usize) -> MeetingWord {
@@ -606,49 +507,48 @@ mod tests {
     }
 
     #[test]
-    fn boundary_recovery_extends_one_word_and_never_crosses_a_competitor() {
-        let activity = [act(1, 0, 1_000)];
+    fn a_lone_word_between_the_same_speaker_is_smoothed_within_a_run() {
+        let activity = [act(1, 0, 1_000), act(2, 1_000, 1_200), act(1, 1_200, 3_000)];
         let words = [
             word("so", 600, 1_000, 0),
-            word("yes", 1_040, 1_300, 0), // starts 40 ms after slot 1 ends
-            word("and", 1_310, 1_500, 0), // a recovered word never anchors
+            word("yes", 1_000, 1_200, 0),
+            word("and", 1_200, 1_500, 0),
         ];
         assert_eq!(
             attribute(&words, &activity),
-            vec![
-                Attribution::Speaker(1),
-                Attribution::Speaker(1),
-                Attribution::Unassigned
-            ]
+            vec![Attribution::Speaker(1); 3]
         );
-        // Another speaker starting at the boundary vetoes the inheritance.
-        let competing = [act(1, 0, 1_000), act(2, 1_200, 1_250)];
+        // Two words of the other slot are a real turn, not jitter.
+        let turn = [
+            word("so", 600, 1_000, 0),
+            word("no", 1_000, 1_100, 0),
+            word("way", 1_100, 1_200, 0),
+            word("and", 1_200, 1_500, 0),
+        ];
         assert_eq!(
-            attribute(&words[..2], &competing)[1],
-            Attribution::Unassigned
+            attribute(&turn, &activity)[1..3],
+            [Attribution::Speaker(2), Attribution::Speaker(2)]
         );
-        // Never across a run boundary or a large pause.
-        let other_run = [word("so", 600, 1_000, 0), word("yes", 1_040, 1_300, 1)];
-        assert_eq!(attribute(&other_run, &activity)[1], Attribution::Unassigned);
-        let pause = [word("so", 600, 1_000, 0), word("yes", 1_200, 1_300, 0)];
-        assert_eq!(attribute(&pause, &activity)[1], Attribution::Unassigned);
+        // Never across a recorded run boundary.
+        let runs = [
+            word("so", 600, 1_000, 0),
+            word("yes", 1_000, 1_200, 1),
+            word("and", 1_200, 1_500, 1),
+        ];
+        assert_eq!(attribute(&runs, &activity)[1], Attribution::Speaker(2));
     }
 
     #[test]
-    fn brief_voices_beside_a_real_speaker_are_left_unassigned() {
-        let mut words: Vec<MeetingWord> = (0..12)
-            .map(|i| word("hi", i * 300, i * 300 + 200, 0))
-            .collect();
-        words.push(word("cough", 4_000, 4_200, 0));
-        let mut attribution: Vec<Attribution> = (0..12).map(|_| Attribution::Speaker(1)).collect();
-        attribution.push(Attribution::Speaker(2));
-        fold_brief_speakers(&words, &mut attribution);
-        assert_eq!(attribution[12], Attribution::Unassigned);
-        assert_eq!(attribution[0], Attribution::Speaker(1));
-        // When every slot is brief, all keep their labels.
-        let mut few = vec![Attribution::Speaker(1), Attribution::Speaker(2)];
-        fold_brief_speakers(&words[..2], &mut few);
-        assert_eq!(few, vec![Attribution::Speaker(1), Attribution::Speaker(2)]);
+    fn minor_speakers_fold_into_the_main_one() {
+        let mut attribution: Vec<Attribution> = (0..20).map(|_| Attribution::Speaker(1)).collect();
+        attribution.push(Attribution::Speaker(2)); // 1 of 21 words: under 5%
+        attribution.extend((0..4).map(|_| Attribution::Speaker(3))); // 4 of 25: kept
+        fold_minor_speakers(&mut attribution);
+        assert_eq!(attribution[20], Attribution::Speaker(1));
+        assert_eq!(attribution[21], Attribution::Speaker(3));
+        let mut none = vec![Attribution::Unavailable];
+        fold_minor_speakers(&mut none);
+        assert_eq!(none, vec![Attribution::Unavailable]);
     }
 
     fn revision(number: u32) -> TranscriptRevision {

@@ -1175,7 +1175,6 @@
         "recordingTitle": "Recording",
         "recordingBody": "The transcript appears here after you stop and transcribe.",
         "unknownSpeaker": "Unknown speaker",
-        "overlap": "Several speakers",
         "playFrom": "Play from {{time}}",
         "progress": "Transcription progress"
       },
