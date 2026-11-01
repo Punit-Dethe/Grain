@@ -24,8 +24,13 @@ Remaining acceptance: user visual confirmation of Settings → Application and
 ordinary microphone/dictation start/cancel. These are not certified by the
 extension-focused automated checkpoint. M7 remains explicitly excluded by the
 user. Unrelated overlay/default-prompt/secrets migrations remain outside scope.
-Existing listing-module Clippy, settingsStore.test.ts ESLint and Cargo.toml
-ratchet failures remain; see the final continuity entry for exact checks/evidence.
+Session 5 cleared workspace strict Clippy, frontend ESLint and the reviewed
+dependency ratchet. The maintained Windows Cargo runner now passes all 696
+backend tests and its four isolation/exit-code regressions. The repaired hosted
+workflow [41300313458](https://github.com/Punit-Dethe/Grain/actions/runs/41300313458)
+has passed workspace, frontend and Windows-runner jobs; the real Linux backend
+job is still compiling at this recorded checkpoint. See the latest continuity
+entry for exact status and evidence; it is not yet a complete hosted Pass.
 
 The inventory below is the original audit; completion and corrected decisions
 are recorded in the continuity log, including superseded earlier holds.
@@ -746,6 +751,16 @@ model decision remain as listed above. Do not revisit M7.
   the existing per-app local configuration policy. The actual Windows file and
   cache path remain unchanged. Hosted checkouts now use platform-native Cargo
   defaults. Added .cargo inputs to CI path triggers. No application code changed.
-- Cancelled the superseded owned run before native compilation continued; it
-  remains failure evidence. Actionlint/whitespace pass. Dispatch the fixed commit
+- Attempted to cancel the superseded owned run, but both Linux jobs had already
+  failed on that path before compilation; it remains failure evidence.
+  Actionlint/whitespace pass. Dispatch the fixed commit
   for the actual Linux workspace/backend checkpoint; no Pass is inferred yet.
+
+**Session 5 hosted verification in progress:** corrected run 41300313458 at
+`e7a90ae8` has passed Linux workspace strict Clippy/tests, frontend lint/tests/
+production build, and Windows runner regressions. The real Linux native backend
+check/tests are still compiling. The earlier run completed with both Linux jobs
+failing on the tracked Windows target path before the cancel request reached it;
+that attempt did not cancel any active process. All implementation/local checks
+are committed, with public-release controls and user visual/microphone acceptance
+still separate. Resume from this exact run rather than restarting accepted work.

@@ -1,11 +1,12 @@
 # Extension platform: audit, reuse and execution plan
 
-**Legacy retirement, 31 October 2026:** the B5c physical-removal inventory,
+**Legacy retirement, 1 November 2026:** the B5c physical-removal inventory,
 severity tiers and continuity log live in
 [LEGACY-RETIREMENT-PLAN.md](LEGACY-RETIREMENT-PLAN.md) on branch
-`cleanup/retire-legacy-extension-platform`. Tier 1 and Tier 2 removal are complete
-(M7 excluded by the user); Tier 3 is in progress. Use that continuity log for the
-current checkpoint and remaining work; earlier inventories below are historical.
+`cleanup/retire-legacy-extension-platform`. All in-scope retirement implementation
+is complete (M7 excluded by the user), including embedding and obsolete package
+paths. Use that continuity log for production verification and remaining manual
+acceptance; earlier inventories below are historical.
 
 ## Active forward work order — 15 October 2026
 

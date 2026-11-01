@@ -280,6 +280,10 @@ $env:CARGO_TARGET_DIR = "C:\h"
 Artifacts then land in `C:\h\release\...` instead of the repo's
 `src-tauri\target\`.
 
+Keep machine-specific target paths in your local environment or ignored Cargo
+configuration. Shared checkouts use Cargo's platform-native default; an absolute
+Windows target path must not be committed into the shared configuration.
+
 Open a **new terminal** afterward — both the registry flag and the persisted
 environment variable are only picked up by freshly started processes. Then
 `bun run tauri dev` and `bun run tauri build` work normally.
