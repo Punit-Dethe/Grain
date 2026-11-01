@@ -382,9 +382,29 @@ const OVERVIEW_HERO_IMAGES = [
   },
 ] as const;
 
+const OVERVIEW_VISITED_KEY = "grain.overview.visited";
+// Keep the greeting stable when navigating away and back during this launch.
+const overviewGreeting = (() => {
+  try {
+    return localStorage.getItem(OVERVIEW_VISITED_KEY) === "true"
+      ? "Welcome back"
+      : "Welcome to Grain";
+  } catch {
+    return "Welcome to Grain";
+  }
+})();
+
 function OverviewPage({ history }: { history: HistoryController }) {
   const [mode, setMode] = useState<HistoryViewMode>("original");
   const [heroImageIndex, setHeroImageIndex] = useState(0);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(OVERVIEW_VISITED_KEY, "true");
+    } catch {
+      // A storage failure must not prevent the overview from opening.
+    }
+  }, []);
 
   const processedEntries = history.entries.filter(wasPostProcessRequested);
 
@@ -425,6 +445,7 @@ function OverviewPage({ history }: { history: HistoryController }) {
               src={OVERVIEW_HERO_IMAGES[heroImageIndex].src}
               alt={OVERVIEW_HERO_IMAGES[heroImageIndex].alt}
             />
+            <h2 className="hero-image-title">{overviewGreeting}</h2>
             <button
               className="hero-image-toggle"
               type="button"

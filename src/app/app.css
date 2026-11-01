@@ -1373,6 +1373,21 @@ html[data-theme="light"] .hero {
   object-fit: cover;
 }
 
+.hero-image-title {
+  position: absolute;
+  z-index: 1;
+  inset-inline: 24px;
+  bottom: 20px;
+  margin: 0;
+  color: #fff;
+  font-size: clamp(24px, 3vw, 36px);
+  font-weight: 650;
+  line-height: 1.15;
+  letter-spacing: -0.03em;
+  text-shadow: 0 2px 12px rgba(0, 0, 0, 0.5);
+  pointer-events: none;
+}
+
 .hero-image-toggle {
   position: absolute;
   z-index: 2;
