@@ -69,7 +69,7 @@ const PROTOTYPE_COPY = {
   quickPanelShortcut: "Ctrl K",
   original: "Original",
   processed: "AI processed",
-  quickActions: "Start here",
+  quickActions: "Just use voice",
   quickActionsBody:
     "Your keys, your words, and what Grain can be taught to do.",
   recent: "Recent transcriptions",
@@ -439,6 +439,7 @@ function OverviewPage({ history }: { history: HistoryController }) {
             </button>
           </div>
           <div className="hero-start">
+            <h2 className="hero-start-title">{PROTOTYPE_COPY.quickActions}</h2>
             <OverviewCards />
           </div>
         </section>
