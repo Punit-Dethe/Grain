@@ -686,3 +686,17 @@ model decision remain as listed above. Do not revisit M7.
   are still pending; do not infer them from extension acceptance. Launch the real
   app with `bun run tauri dev` from `C:\Projects\Grain\grain` and verify Application
   settings have no embedding section and remaining groups render correctly.
+
+**1 November 2026, session 5: production verification follow-through (P1).**
+
+- The user authorized continuing production-grade implementation. Retirement
+  source work is complete; the next bounded units close known verification gaps,
+  repair the Windows test runner and stale Rust CI, and review the stale manifest
+  ratchet. M7 and unrelated settings migrations remain excluded. User visual and
+  microphone/dictation results have been requested; no Pass is inferred.
+- Removed the test's raw invoke import while retaining the real generated-binding
+  error/transport coverage via a hoisted mock. Moved listing verification before
+  its test module and simplified the equivalent media-count comparison.
+- Verification: full workspace strict Clippy now passes; full frontend ESLint and
+  tsc pass; all 101 Vitest tests and checker/CLI tests pass. Scoped formatting and
+  whitespace pass. No runtime/visual behavior changed.

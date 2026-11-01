@@ -30,7 +30,7 @@ pub fn read_listing(root: &Path) -> Result<Listing, String> {
         let mut files = Vec::new();
         for entry in fs::read_dir(&directory).map_err(|e| e.to_string())? {
             let entry = entry.map_err(|e| e.to_string())?;
-            if files.len() >= LISTING_MEDIA_MAX_COUNT + 1 {
+            if files.len() > LISTING_MEDIA_MAX_COUNT {
                 return Err("Too many listing media assets.".into());
             }
             files.push(entry.path());
@@ -138,6 +138,21 @@ fn validate_description(description: &str) -> Result<(), String> {
         })
     {
         return Err("DESCRIPTION.md must contain visible, bounded UTF-8 Markdown.".into());
+    }
+    Ok(())
+}
+
+/// Validate a submitted review description against its source snapshot. This
+/// proves byte identity only, never Markdown render safety or source ownership.
+pub fn verify_submission_listing(root: &Path, submission: &SourceSubmission) -> Result<(), String> {
+    let path = root.join("DESCRIPTION.md");
+    reject_link(&path)?;
+    let bytes = super::read_bounded(&path, DESCRIPTION_MAX_BYTES as u64, "DESCRIPTION.md")?;
+    validate_description(std::str::from_utf8(&bytes).map_err(|_| "DESCRIPTION.md must be UTF-8")?)?;
+    if bytes.len() as u64 != submission.description_size
+        || digest(&bytes) != submission.description_sha256
+    {
+        return Err("DESCRIPTION.md differs from the submitted source snapshot.".into());
     }
     Ok(())
 }
@@ -281,19 +296,4 @@ mod tests {
         std::os::unix::fs::symlink("real.md", root.path().join("DESCRIPTION.md")).unwrap();
         assert!(read_listing(root.path()).is_err());
     }
-}
-
-/// Validate a submitted review description against its source snapshot. This
-/// proves byte identity only, never Markdown render safety or source ownership.
-pub fn verify_submission_listing(root: &Path, submission: &SourceSubmission) -> Result<(), String> {
-    let path = root.join("DESCRIPTION.md");
-    reject_link(&path)?;
-    let bytes = super::read_bounded(&path, DESCRIPTION_MAX_BYTES as u64, "DESCRIPTION.md")?;
-    validate_description(std::str::from_utf8(&bytes).map_err(|_| "DESCRIPTION.md must be UTF-8")?)?;
-    if bytes.len() as u64 != submission.description_size
-        || digest(&bytes) != submission.description_sha256
-    {
-        return Err("DESCRIPTION.md differs from the submitted source snapshot.".into());
-    }
-    Ok(())
 }

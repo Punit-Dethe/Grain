@@ -1,11 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { invoke } from "@tauri-apps/api/core";
 import type { AppSettings } from "@/bindings";
 import { useSettingsStore } from "./settingsStore";
 
+const invoke = vi.hoisted(() => vi.fn());
+
 vi.mock("@tauri-apps/api/core", async (original) => ({
   ...(await original<typeof import("@tauri-apps/api/core")>()),
-  invoke: vi.fn(),
+  invoke,
 }));
 
 beforeEach(() => {
