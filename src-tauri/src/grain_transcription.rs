@@ -211,6 +211,11 @@ pub(crate) struct MeetingEngine<'a> {
 
 #[cfg_attr(not(test), allow(dead_code))] // Wired by the saved-audio pipeline.
 impl<'a> MeetingEngine<'a> {
+    /// Whether the attempt's owner asked it to stop.
+    pub(crate) fn cancelled(&self) -> bool {
+        self.cancelled.load(std::sync::atomic::Ordering::Acquire)
+    }
+
     fn check_cancelled(&self) -> Result<(), String> {
         if self.cancelled.load(std::sync::atomic::Ordering::Acquire) {
             Err("Meeting processing cancelled".into())
@@ -482,22 +487,13 @@ mod meeting_worker_tests {
             hound::SampleFormat::Float => reader.samples::<f32>().map(|s| s.unwrap()).collect(),
         };
         let path = dir.join(name);
-        let mut writer = hound::WavWriter::create(
-            &path,
-            hound::WavSpec {
-                channels: 1,
-                sample_rate: 16_000,
-                bits_per_sample: 32,
-                sample_format: hound::SampleFormat::Float,
-            },
-        )
-        .unwrap();
+        let mut out = std::io::BufWriter::new(std::fs::File::create(&path).unwrap());
         for _ in 0..copies {
             for &sample in &pcm {
-                writer.write_sample(sample).unwrap();
+                std::io::Write::write_all(&mut out, &sample.to_le_bytes()).unwrap();
             }
         }
-        writer.finalize().unwrap();
+        std::io::Write::flush(&mut out).unwrap();
         (path, pcm.len() * copies)
     }
 

@@ -140,3 +140,44 @@ Validation: 9 new unit tests pass.
 - **Done:** Sortformer through the real worker, role switching, cancellation, GPU-loss recovery on CPU, and 10/60/120-minute worker memory on CPU and Vulkan (Increment 2).
 - **Decided:** whole-track diarization, as in FluidMeet; a 90-minute processing cap per track; live preview and live transcription skipped.
 - **Still open:** Parakeet word timing across bounded windows and final word assembly (Step 3); speaker-assignment quality on representative real meetings, which needs a licensed meeting fixture set; Linux/macOS worker runs; a low-memory reference machine.
+
+## Increment 4: saved-audio pipeline (Step 3)
+
+Implemented in `src-tauri/src/grain_meet/` (`analysis.rs`, `transcript.rs`, `processing.rs`). `processing::process` turns a recorded session into a published transcript revision through a `MeetingEngine`. It is not yet exposed as a Tauri command.
+
+- **Analysis audio.**
+  - Each track becomes one disposable 16 kHz mono float32 file (Grain's `PcmJournal`, deleted when the attempt ends). The diarizer and bounded Parakeet both read this file. The worker's analysis contract changed from WAV to these raw float32 files.
+  - Runs split at gaps and format changes. Runs are joined with FluidMeet's 0.5 s silence; separator time maps to no meeting time.
+  - Channels are averaged to mono. Resampling uses rubato with Handy's configuration (one 1024-frame FFT block, BlackmanHarris2), restarted per run. The leading filter delay is removed, so the length is exactly `floor(frames x 16000 / rate)` and the measured lag is zero at 16, 22.05, 44.1 and 48 kHz.
+  - The 90-minute cap is checked from the manifest before any audio is read.
+- **Phases.**
+  - Every track's analysis file is prepared first.
+  - Sortformer then runs over each whole track, one run per track, at the offline `VeryHighLatency` preset.
+  - Loading Parakeet releases the diarizer. Each track is transcribed through the existing structured `TdtAccumulator`, with a fresh decoder per track.
+  - Words are then attributed and the revision is published.
+- **Word assembly across windows.** A native word opens at every window's first token. A first token without the SentencePiece word marker continues the previous word, and the joined ids are detokenized once through the native tokenizer. All other words keep their native text.
+- **Attribution (FluidMeet values).**
+  - A coverage floor of min(80 ms, 20% of the word); same-slot intervals are unioned.
+  - Dominance: the leader covers at least 50%, the runner-up at most 20%, and the leader at least 2x the runner-up; otherwise the word is ambiguous.
+  - One-word boundary recovery: within 80 ms, words up to 1.2 s, vetoed by any competing onset; recovered words never anchor further words.
+  - A slot with fewer than 10 words and under 5 s beside a substantial speaker is left unassigned.
+  - Grain addition: point-timed words use containment, so nothing is divided by zero.
+- **Failure isolation.**
+  - A diarizer failure keeps the text and marks the track `SpeakersUnavailable`. FluidMeet would skip ASR here; Grain's plan keeps the text.
+  - An ASR failure marks the track `Failed` and keeps its speaker evidence.
+  - An over-cap track is `TooLong`; an empty track is `Empty`.
+  - Cancellation publishes nothing.
+- **Revisions.** `transcripts/NNNNNN.json` is written atomically and never overwritten; the newest revision is current. Each revision records the raw diarizer activity, the full-sequence ASR text, the model files and backends, and anonymous labels ("Speaker N") numbered across the meeting.
+- **Handy hook:** `Cargo.toml` 152 → 153 (a direct `rubato` dependency, same locked version).
+
+Validation:
+- 43 unit tests pass:
+  - analysis: resampler length and lag, run and separator mapping, cap before I/O;
+  - transcript: window-split words, coverage and dominance, union, point words, boundary recovery and vetoes, brief-voice folding, immutable revisions;
+  - storage, engine, lease and TDT.
+- The real-model pipeline test passes on **CPU (16.3 s) and Vulkan (6.5 s)** for a 96 s saved meeting (12 s two-speaker fixture repeated: a 72 s run across a 60 s chunk boundary, a 2 s gap, then a 24 s run):
+  - With a missing diarizer, revision 1 has text and every word `Unavailable`.
+  - With Sortformer, revision 2 is `Complete`: 96 words, 94 attributed, 2 speakers. The assembled words equal the reviewed full text, and no word falls in the gap.
+  - The role, cancellation and GPU-fault tests still pass with the raw analysis files.
+- Reproduce with `cargo test --lib -- --ignored --test-threads=1 saved_meeting_becomes`, using the same environment as Increment 2.
+- Quality evidence is limited to the repeated public fixture; representative meetings are still needed.

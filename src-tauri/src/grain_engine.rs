@@ -100,10 +100,10 @@ pub fn load_request(spec: &LoadSpec) -> Option<Request> {
     }
 }
 
-/// Build a diarization request for an analysis WAV, validating its header and
-/// size before any worker or model is involved.
+/// Build a diarization request for an analysis file, validating it before any
+/// worker or model is involved.
 pub fn diarize_request(audio: &Path, options: DiarizeOptions) -> Result<Request, String> {
-    let samples = analysis_header(audio)?;
+    let samples = analysis_samples(audio)?;
     Ok(Request::Diarize {
         audio: audio.to_path_buf(),
         samples,
@@ -111,8 +111,10 @@ pub fn diarize_request(audio: &Path, options: DiarizeOptions) -> Result<Request,
     })
 }
 
-/// Validate an analysis WAV's location and format. Returns its sample count.
-fn analysis_header(audio: &Path) -> Result<u64, String> {
+/// Validate an analysis file: an absolute regular file of raw little-endian
+/// 16 kHz mono float32 samples (Grain's `PcmJournal` layout, also read by the
+/// bounded Parakeet adapter). Returns its sample count.
+fn analysis_samples(audio: &Path) -> Result<u64, String> {
     if !audio.is_absolute() {
         return Err("Analysis audio must be an absolute path".into());
     }
@@ -121,26 +123,16 @@ fn analysis_header(audio: &Path) -> Result<u64, String> {
     if !metadata.is_file() {
         return Err("Analysis audio must be a regular file".into());
     }
-    let reader = hound::WavReader::open(audio)
-        .map_err(|error| format!("Analysis audio is not a readable WAV file: {error}"))?;
-    let spec = reader.spec();
-    if spec.sample_rate != ANALYSIS_SAMPLE_RATE
-        || spec.channels != 1
-        || spec.sample_format != hound::SampleFormat::Float
-        || spec.bits_per_sample != 32
-    {
-        return Err(format!(
-            "Analysis audio must be 16 kHz mono float32 WAV (found {} Hz, {} channels, {}-bit {:?})",
-            spec.sample_rate, spec.channels, spec.bits_per_sample, spec.sample_format
-        ));
+    if metadata.len() % 4 != 0 {
+        return Err("Analysis audio is not whole float32 samples".into());
     }
-    let samples = u64::from(reader.duration());
+    let samples = metadata.len() / 4;
     if samples == 0 {
         return Err("Analysis audio is empty".into());
     }
     if samples > MAX_ANALYSIS_SAMPLES {
         return Err(format!(
-            "Analysis audio is {} minutes; one diarization run accepts at most {} minutes",
+            "Analysis audio is {} minutes; one track can be processed for at most {} minutes",
             samples / (60 * u64::from(ANALYSIS_SAMPLE_RATE)),
             MAX_ANALYSIS_SAMPLES / (60 * u64::from(ANALYSIS_SAMPLE_RATE)),
         ));
@@ -148,27 +140,31 @@ fn analysis_header(audio: &Path) -> Result<u64, String> {
     Ok(samples)
 }
 
-/// Read a validated analysis WAV in the worker. One exact-capacity buffer; the
-/// header is re-validated because the file may have changed since the request.
+/// Read an analysis file in the worker into one exact-capacity buffer. The
+/// size is re-checked because the file may have changed since the request.
 fn read_analysis(audio: &Path, declared: u64) -> Result<Vec<f32>, String> {
-    let samples = analysis_header(audio)?;
+    use std::io::Read;
+    let samples = analysis_samples(audio)?;
     if samples != declared {
         return Err(format!(
             "Analysis audio changed: expected {declared} samples, found {samples}"
         ));
     }
-    let reader = hound::WavReader::open(audio)
-        .map_err(|error| format!("Analysis audio is not a readable WAV file: {error}"))?;
+    let mut file = std::io::BufReader::with_capacity(
+        64 * 1024,
+        std::fs::File::open(audio)
+            .map_err(|error| format!("Analysis audio is unavailable: {error}"))?,
+    );
     let mut pcm = Vec::with_capacity(samples as usize);
-    for sample in reader.into_samples::<f32>() {
-        let sample = sample.map_err(|error| format!("Analysis audio is truncated: {error}"))?;
+    let mut bytes = [0u8; 4];
+    for _ in 0..samples {
+        file.read_exact(&mut bytes)
+            .map_err(|error| format!("Analysis audio is truncated: {error}"))?;
+        let sample = f32::from_le_bytes(bytes);
         if !sample.is_finite() {
             return Err("Analysis audio contains a non-finite sample".into());
         }
         pcm.push(sample);
-    }
-    if pcm.len() as u64 != samples {
-        return Err("Analysis audio ended before its declared length".into());
     }
     Ok(pcm)
 }
@@ -556,24 +552,9 @@ mod tests {
             Request::Detokenize { tokens } if tokens == [0, 10, 442]));
     }
 
-    fn write_wav(path: &Path, spec: hound::WavSpec, samples: &[f32]) {
-        let mut writer = hound::WavWriter::create(path, spec).unwrap();
-        for &sample in samples {
-            match spec.sample_format {
-                hound::SampleFormat::Float => writer.write_sample(sample).unwrap(),
-                hound::SampleFormat::Int => writer.write_sample((sample * 32767.0) as i16).unwrap(),
-            }
-        }
-        writer.finalize().unwrap();
-    }
-
-    fn analysis_spec() -> hound::WavSpec {
-        hound::WavSpec {
-            channels: 1,
-            sample_rate: ANALYSIS_SAMPLE_RATE,
-            bits_per_sample: 32,
-            sample_format: hound::SampleFormat::Float,
-        }
+    fn write_raw(path: &Path, samples: &[f32]) {
+        let bytes: Vec<u8> = samples.iter().flat_map(|s| s.to_le_bytes()).collect();
+        std::fs::write(path, bytes).unwrap();
     }
 
     fn spec(role: Role) -> LoadSpec {
@@ -608,7 +589,7 @@ mod tests {
         assert_eq!(Request::FlowModel.audio_samples(), None);
         assert_eq!(Request::ResetFlow.audio_samples(), None);
         let diarize = Request::Diarize {
-            audio: PathBuf::from("a.wav"),
+            audio: PathBuf::from("a.f32le"),
             samples: 48_000,
             options: DiarizeOptions::default(),
         };
@@ -616,74 +597,56 @@ mod tests {
     }
 
     #[test]
-    fn analysis_audio_accepts_only_absolute_16k_mono_float_wav_within_bounds() {
+    fn analysis_audio_accepts_only_absolute_whole_float32_files_within_bounds() {
         let dir = tempfile::tempdir().unwrap();
-        let good = dir.path().join("good.wav");
-        write_wav(&good, analysis_spec(), &[0.0, 0.25, -0.5]);
+        let good = dir.path().join("good.f32le");
+        write_raw(&good, &[0.0, 0.25, -0.5]);
         let request = diarize_request(&good, DiarizeOptions::default()).unwrap();
         assert_eq!(request.audio_samples(), Some(3));
         assert_eq!(read_analysis(&good, 3).unwrap(), vec![0.0, 0.25, -0.5]);
 
-        let relative = diarize_request(Path::new("good.wav"), DiarizeOptions::default());
+        let relative = diarize_request(Path::new("good.f32le"), DiarizeOptions::default());
         assert!(relative.unwrap_err().contains("absolute"));
-        let missing = diarize_request(&dir.path().join("none.wav"), DiarizeOptions::default());
+        let missing = diarize_request(&dir.path().join("none"), DiarizeOptions::default());
         assert!(missing.unwrap_err().contains("unavailable"));
         assert!(diarize_request(dir.path(), DiarizeOptions::default())
             .unwrap_err()
             .contains("regular file"));
-
-        for (name, wrong) in [
-            (
-                "int.wav",
-                hound::WavSpec {
-                    bits_per_sample: 16,
-                    sample_format: hound::SampleFormat::Int,
-                    ..analysis_spec()
-                },
-            ),
-            (
-                "rate.wav",
-                hound::WavSpec {
-                    sample_rate: 48_000,
-                    ..analysis_spec()
-                },
-            ),
-            (
-                "stereo.wav",
-                hound::WavSpec {
-                    channels: 2,
-                    ..analysis_spec()
-                },
-            ),
-        ] {
-            let path = dir.path().join(name);
-            write_wav(&path, wrong, &[0.0, 0.0]);
-            let error = diarize_request(&path, DiarizeOptions::default()).unwrap_err();
-            assert!(error.contains("16 kHz mono float32"), "{name}: {error}");
-        }
-
-        let empty = dir.path().join("empty.wav");
-        write_wav(&empty, analysis_spec(), &[]);
+        let torn = dir.path().join("torn.f32le");
+        std::fs::write(&torn, [0u8; 6]).unwrap();
+        assert!(diarize_request(&torn, DiarizeOptions::default())
+            .unwrap_err()
+            .contains("whole float32"));
+        let empty = dir.path().join("empty.f32le");
+        write_raw(&empty, &[]);
         assert!(diarize_request(&empty, DiarizeOptions::default())
             .unwrap_err()
             .contains("empty"));
+        // The 90-minute cap, checked from the size alone.
+        let long = dir.path().join("long.f32le");
+        std::fs::File::create(&long)
+            .unwrap()
+            .set_len((MAX_ANALYSIS_SAMPLES + 1) * 4)
+            .unwrap();
+        let error = diarize_request(&long, DiarizeOptions::default()).unwrap_err();
+        assert!(error.contains("at most 90 minutes"), "{error}");
     }
 
     #[test]
     fn worker_rejects_changed_or_non_finite_analysis_audio() {
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("track.wav");
-        write_wav(&path, analysis_spec(), &[0.1, 0.2]);
+        let path = dir.path().join("track.f32le");
+        write_raw(&path, &[0.1, 0.2]);
         assert!(read_analysis(&path, 3).unwrap_err().contains("changed"));
-        write_wav(&path, analysis_spec(), &[0.1, f32::NAN]);
+        write_raw(&path, &[0.1, f32::NAN]);
         assert!(read_analysis(&path, 2).unwrap_err().contains("non-finite"));
     }
 
     #[test]
     fn worker_dispatch_without_a_model_reports_the_missing_role() {
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("track.wav");
-        write_wav(&path, analysis_spec(), &[0.0; 16]);
+        let path = dir.path().join("track.f32le");
+        write_raw(&path, &[0.0; 16]);
         let mut asr = None;
         let mut slot = WorkerSlot::default();
         let diarize = diarize_request(&path, DiarizeOptions::default()).unwrap();

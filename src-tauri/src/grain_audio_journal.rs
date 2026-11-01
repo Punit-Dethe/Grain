@@ -125,8 +125,7 @@ impl PcmJournal {
         Ok(())
     }
 
-    #[cfg(test)]
-    fn path(&self) -> &std::path::Path {
+    pub(crate) fn path(&self) -> &std::path::Path {
         &self.path
     }
 }
