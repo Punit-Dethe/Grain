@@ -1430,8 +1430,8 @@ html[data-theme="light"] .hero-start {
 .hero-start-title {
   position: absolute;
   z-index: 2;
-  left: 12px;
-  bottom: 24px;
+  left: 0;
+  bottom: calc(100% + 12px);
   margin: 0;
   color: #fff;
   font-size: 16px;

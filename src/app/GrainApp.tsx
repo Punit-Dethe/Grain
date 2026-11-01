@@ -437,9 +437,9 @@ function OverviewPage({ history }: { history: HistoryController }) {
             >
               <Icon name="refresh" small />
             </button>
-            <h2 className="hero-start-title">{PROTOTYPE_COPY.quickActions}</h2>
           </div>
           <div className="hero-start">
+            <h2 className="hero-start-title">{PROTOTYPE_COPY.quickActions}</h2>
             <OverviewCards />
           </div>
         </section>
