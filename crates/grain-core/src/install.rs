@@ -548,12 +548,10 @@ mod tests {
             stars: 0,
             description: String::new(),
             installs: 0,
-            readme: String::new(),
             listing: None,
             icon: None,
             media: Vec::new(),
             categories: Vec::new(),
-            extends: Vec::new(),
         }
     }
 
@@ -696,14 +694,10 @@ mod tests {
     #[test]
     fn retired_catalogue_metadata_cannot_stage_an_otherwise_valid_tool() {
         let bytes = tool_pack("com.example.x", "1.0.0", &[]);
-        for surface in [false, true] {
+        for category in ["prompts", "dictation", "future-category"] {
             let dir = tmp();
             let mut e = entry("com.example.x", "1.0.0", Trust::Verified, &[], &bytes);
-            if surface {
-                e.extends.push("future.host-surface".into());
-            } else {
-                e.categories.push("prompts".into());
-            }
+            e.categories.push(category.into());
             assert!(matches!(
                 stage_artifact(dir.path(), &e, &bytes, ExtractLimits::default()),
                 Err(InstallError::Manifest(_))

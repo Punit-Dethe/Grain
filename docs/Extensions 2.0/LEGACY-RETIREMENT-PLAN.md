@@ -541,3 +541,42 @@ model decision remain as listed above. Do not revisit M7.
 - Catalogue trace confirmed the old README publisher is isolated from the current
   reviewed DESCRIPTION signing path and has no maintained caller. Remove it with
   `extends`, retired IDs/categories and the README fallback in the next unit.
+
+**1 November 2026, session 4 continued: signed catalogue cleanup (T11).**
+
+- Removed IndexEntry/StoreEntry `extends`, retired built-in ID denylist and old
+  category vocabulary. Removed the isolated README `publish` command, its
+  Submission parser, manifest/media helpers and obsolete refusal test. The live
+  reviewed DESCRIPTION/native/MCP publishing and signing path stays intact.
+- Removed README document fallback, renamed the current host command/DTO to
+  `store_description`/`listing_document`, regenerated bindings and updated the
+  real UI/acceptance callers. Metadata-only cards remain valid, but media now
+  requires a bounded DESCRIPTION listing. Every media request, including cache
+  hits, requires a current signed reference and exact size; no hash-only fallback.
+  Native's existing wire encoding (omitted discriminator) remains supported along
+  with explicit MCP discrimination and refusal of unknown artifact formats.
+- Verification: workspace checks/tests pass (core 250 + three benchmarks, SDK 44,
+  registry 98 + CLI credential test); app check and 696 tests pass / 23 ignored.
+  SDK/core strict Clippy passes; app Clippy exits zero, unchanged 57/84 warnings.
+  Workspace strict Clippy retains the two existing listing.rs failures. tsc,
+  101 Vitest tests, frontend build, 80 harness tests, scoped formatting and policy
+  pass. ESLint's settingsStore.test.ts error persists. The lib.rs ratchet now
+  shrinks below baseline; only existing Cargo.toml growth remains.
+- Fresh real-app native store 3/3 Pass: `retirement-t11-20261101/run-VGmVpF`.
+  MCP store 3/3 Pass: `run-L7R8gv`; both cleanup Pass. Each path reads the signed
+  DESCRIPTION; native also proves an unlisted hash is rejected without network.
+  Full reports are the ignored `evidence/report.md` inside those run directories.
+- MCP acceptance first stopped on the Windows Python Store alias; reran with the
+  installed Python311/cryptography on PATH. A later run exposed an obsolete test
+  requiring Developer Mode for verified store updates. Updated only the oracle to
+  the existing source-aware policy: a genuine update with Developer Mode off
+  disables execution, retains unchanged account credentials, then explicitly
+  re-enables and performs one actual tool call. The first added oracle incorrectly
+  required fresh OAuth for a version-only update; corrected it after tracing
+  account_binding_changed and the existing account preservation tests. Product
+  account/access semantics were not changed. Earlier runs remain failure evidence.
+- Final audit found two compatibility-only empty API requirement allowances in
+  SDK package/catalogue admission, plus an Extension Mode binding tombstone and
+  stale overview comments. Retire those in the final contract sweep; unrelated
+  overlay/default-prompt/secrets migrations and Agent confirmation (M7) remain
+  outside this extension-platform task.

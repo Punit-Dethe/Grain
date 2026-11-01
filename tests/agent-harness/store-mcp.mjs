@@ -207,12 +207,14 @@ export function storeMcpHandlers(ctx) {
           await publish({ descriptorBytes: bytes });
           ctx.store().corruptListing();
           await assert.rejects(
-            ctx.invoke("store_readme", { sha256: ctx.store().listingHash }),
+            ctx.invoke("store_description", {
+              sha256: ctx.store().listingHash,
+            }),
             /media not reachable/,
           );
           ctx.store().corruptListing(false);
           assert.equal(
-            await ctx.invoke("store_readme", {
+            await ctx.invoke("store_description", {
               sha256: ctx.store().listingHash,
             }),
             ctx.store().listingText,
@@ -705,13 +707,22 @@ export function storeMcpHandlers(ctx) {
             await ctx.invoke("extension_set_developer_mode", {
               enabled: false,
             });
-            await assert.rejects(
-              ctx.invoke("store_mcp_update", {
-                connectionId: record.id,
-                expectedRevision: record.revision,
-                version: "3.0.0",
-              }),
-              /Developer|developer/,
+            const approvedAccount = (await row(record)).accountId;
+            await publish({
+              version: "4.0.0",
+              url: CONFIGURED_AUTH_ENDPOINT,
+              authentication: "oauth",
+            });
+            record = await update(record, "4.0.0");
+            assert.equal(record.state, "inactive");
+            assert.equal((await row(record)).accountId, approvedAccount);
+            assert.equal((await state(record)).connected, true);
+            await enable(record);
+            await read(
+              record,
+              null,
+              "mcpAccountVerified",
+              "mcp_configured_account_a",
             );
             await ctx.invoke("extension_set_developer_mode", { enabled: true });
             await remove(record);

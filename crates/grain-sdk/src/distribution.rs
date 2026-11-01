@@ -94,7 +94,7 @@ pub struct MetadataGeneration {
 /// One published extension version (DISTRIBUTION-PLAN §2.1).
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct IndexEntry {
-    /// Explicit signed artifact format. Missing means a legacy native package;
+    /// Signed artifact format. The native package encoding omits this field;
     /// unknown formats fail parsing rather than entering the native loader.
     #[serde(default, skip_serializing_if = "ArtifactKind::is_native")]
     pub artifact_kind: ArtifactKind,
@@ -143,12 +143,7 @@ pub struct IndexEntry {
     /// fetched, so there is no per-card query and nothing phoned home.
     #[serde(default)]
     pub installs: u64,
-    /// SHA-256 (in `media/<hash>.md`) of the extension's full README, shown on
-    /// its detail page. Empty = none. Fetched lazily on open, dropped on close.
-    #[serde(default)]
-    pub readme: String,
-    /// Explicit user-facing DESCRIPTION document. Missing preserves legacy
-    /// README catalogues; present listings never fall back to README.
+    /// User-facing DESCRIPTION document, fetched lazily and dropped on close.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub listing: Option<ListingDocument>,
     /// Square listing identity. Never substituted with a gallery cover.
@@ -163,17 +158,6 @@ pub struct IndexEntry {
     /// without fetching anything per card.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub categories: Vec<String>,
-    /// Host surfaces this extension extends, from
-    /// [`GrainPack::extends`](crate::GrainPack::extends) at publish time.
-    ///
-    /// Carried in the signed index because the store has to place a card it has
-    /// never downloaded: the manifest that declares this lives inside the
-    /// artifact, and browsing must not fetch artifacts. Categories answer "what
-    /// kind of thing is this" for the filter row; this answers "which part of
-    /// Grain does it change", which is a different question and the one that
-    /// decides where it is recommended.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub extends: Vec<String>,
 }
 
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -191,16 +175,17 @@ impl ArtifactKind {
 }
 
 impl IndexEntry {
-    /// Validate the new listing profile without narrowing legacy catalogues.
+    /// Validate DESCRIPTION and its signed, bounded media references.
     pub fn validate_listing(&self) -> Result<(), String> {
         let Some(document) = &self.listing else {
-            return Ok(());
+            return if self.media.is_empty() && self.icon.is_none() {
+                Ok(())
+            } else {
+                Err("Listing media requires a DESCRIPTION document.".into())
+            };
         };
-        if !self.readme.is_empty() || self.media.len() > crate::submission::LISTING_MEDIA_MAX_COUNT
-        {
-            return Err(
-                "Explicit DESCRIPTION listings cannot mix legacy README or excess media.".into(),
-            );
+        if self.media.len() > crate::submission::LISTING_MEDIA_MAX_COUNT {
+            return Err("Too many listing media assets.".into());
         }
         if self
             .media
@@ -236,7 +221,7 @@ impl IndexEntry {
     pub fn detail_document_hash(&self) -> &str {
         self.listing
             .as_ref()
-            .map_or(self.readme.as_str(), |document| document.sha256.as_str())
+            .map_or("", |document| document.sha256.as_str())
     }
 
     /// Cheap catalogue eligibility check, before any artifact or media fetch.
@@ -246,14 +231,6 @@ impl IndexEntry {
         if self.artifact_kind != ArtifactKind::Native {
             return Err("MCP descriptors require the MCP acquisition path.".into());
         }
-        // Match the retired built-ins at the host boundary, including old
-        // catalogues that omitted capabilities or host-surface metadata.
-        if matches!(
-            self.id.as_str(),
-            "grain.auto-categorize" | "grain.agent-center-layout"
-        ) {
-            return Err("This built-in extension is retired.".into());
-        }
         if let Some(permission) = self
             .capabilities
             .iter()
@@ -262,9 +239,6 @@ impl IndexEntry {
             return Err(format!(
                 "Retired or unsupported extension permission: {permission}"
             ));
-        }
-        if !self.extends.is_empty() {
-            return Err("Extension contributions to Grain host surfaces are retired.".into());
         }
         if self.categories.iter().any(|category| category != "tools") {
             return Err("Only the tools extension category is supported.".into());
@@ -291,7 +265,6 @@ impl IndexEntry {
         if self.artifact_kind != ArtifactKind::McpDescriptor
             || !matches!(self.trust, Trust::Verified | Trust::Core)
             || !self.capabilities.is_empty()
-            || !self.extends.is_empty()
             || self.categories.iter().any(|category| category != "tools")
             || self.size == 0
             || self.size > crate::mcp::MCP_DESCRIPTOR_MAX_BYTES as u64
@@ -319,14 +292,7 @@ impl IndexEntry {
 /// answer "what kind of thing is this", which is the only question a filter row
 /// can usefully ask before you have opened anything. A longer taxonomy would
 /// need the user to already know the catalogue to use it.
-pub const CATEGORIES: &[(&str, &str)] = &[
-    ("prompts", "Ships prompts you can select."),
-    (
-        "dictation",
-        "Changes what happens to your words on the way out.",
-    ),
-    ("tools", "Adds something Grain could not do before."),
-];
+pub const CATEGORIES: &[(&str, &str)] = &[("tools", "Adds tools to Grain.")];
 
 /// True when `c` is one of [`CATEGORIES`].
 pub fn is_category(c: &str) -> bool {
@@ -465,15 +431,8 @@ mod tool_catalogue_tests {
     }
 
     #[test]
-    fn explicit_listing_preserves_legacy_wire_and_validates_both_artifact_kinds() {
+    fn description_listing_validates_both_artifact_kinds() {
         let mut entry = tool_entry();
-        entry.readme = "legacy-document".into();
-        assert_eq!(entry.detail_document_hash(), "legacy-document");
-        assert!(serde_json::to_value(&entry)
-            .unwrap()
-            .get("listing")
-            .is_none());
-        entry.readme.clear();
         entry.listing = Some(ListingDocument {
             sha256: "a".repeat(64),
             size: 20,
@@ -498,21 +457,26 @@ mod tool_catalogue_tests {
             entry.detail_document_hash()
         );
         assert_eq!(roundtrip.media[0].size, 30);
-        for mcp in [false, true] {
-            let mut invalid = entry.clone();
-            invalid.artifact_kind = if mcp {
-                ArtifactKind::McpDescriptor
-            } else {
-                ArtifactKind::Native
-            };
-            invalid.readme = "cannot-fallback".into();
-            let error = if mcp {
-                invalid.validate_mcp_installable()
-            } else {
-                invalid.validate_tool_only()
-            };
-            assert!(error.unwrap_err().contains("README"));
-        }
+    }
+
+    #[test]
+    fn media_requires_a_bounded_description_listing() {
+        let mut entry = tool_entry();
+        entry.validate_listing().unwrap();
+        assert!(entry.detail_document_hash().is_empty());
+        let asset = MediaRef {
+            sha256: "b".repeat(64),
+            kind: "webp".into(),
+            size: 30,
+        };
+        entry.media.push(asset.clone());
+        assert!(entry.validate_listing().is_err());
+        entry.media.clear();
+        entry.icon = Some(MediaRef {
+            kind: "png".into(),
+            ..asset
+        });
+        assert!(entry.validate_listing().is_err());
     }
 
     #[test]
@@ -572,13 +536,6 @@ mod tool_catalogue_tests {
         let mut uncategorized = entry.clone();
         uncategorized.categories.clear();
         uncategorized.validate_tool_only().unwrap();
-        for id in ["grain.auto-categorize", "grain.agent-center-layout"] {
-            let mut retired = entry.clone();
-            retired.id = id.into();
-            retired.capabilities.clear();
-            retired.categories.clear();
-            assert!(retired.validate_tool_only().is_err(), "{id}");
-        }
         for permission in [
             "capture",
             "transform:transcript",
@@ -605,23 +562,13 @@ mod tool_catalogue_tests {
             retired.categories.push(category.into());
             assert!(retired.validate_tool_only().is_err(), "{category}");
         }
-        for surface in [
-            "pill.theme",
-            "agent.reply-surface",
-            "overrides:settings",
-            "future-surface",
-        ] {
-            let mut retired = entry.clone();
-            retired.extends.push(surface.into());
-            assert!(retired.validate_tool_only().is_err(), "{surface}");
-        }
     }
 
     #[test]
-    fn artifact_discriminator_preserves_legacy_encoding_and_refuses_unknown_formats() {
-        let legacy = tool_entry();
-        assert_eq!(legacy.artifact_kind, ArtifactKind::Native);
-        let mut wire = serde_json::to_value(&legacy).unwrap();
+    fn artifact_discriminator_supports_native_and_mcp_and_refuses_unknown_formats() {
+        let native = tool_entry();
+        assert_eq!(native.artifact_kind, ArtifactKind::Native);
+        let mut wire = serde_json::to_value(&native).unwrap();
         assert!(wire.get("artifact_kind").is_none());
         wire["artifact_kind"] = serde_json::json!("future-executable");
         assert!(serde_json::from_value::<IndexEntry>(wire.clone()).is_err());

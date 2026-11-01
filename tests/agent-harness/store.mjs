@@ -79,10 +79,20 @@ export function storeHandlers(ctx) {
     assert.equal(view.can_install, true);
     assert.equal(view.entries.length, 1);
     assert.equal(view.entries[0].id, ID);
-    assert.equal(view.entries[0].readme, store().listingHash);
+    assert.equal(view.entries[0].listing_document, store().listingHash);
     assert.equal(
-      await invoke("store_readme", { sha256: store().listingHash }),
+      await invoke("store_description", { sha256: store().listingHash }),
       store().listingText,
+    );
+    const before = store().journal.length;
+    await assert.rejects(
+      invoke("store_description", { sha256: "f".repeat(64) }),
+      /not referenced by the signed catalogue/,
+    );
+    assert.equal(
+      store().journal.length,
+      before,
+      "Unlisted media must not be fetched",
     );
     observations.push({
       stage: "explicit-description",

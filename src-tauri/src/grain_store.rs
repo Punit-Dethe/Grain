@@ -81,17 +81,13 @@ pub struct StoreEntry {
     /// the signed index — the client never counts or queries per card.
     pub installs: u64,
     /// User-facing DESCRIPTION document hash.
-    pub readme: String,
+    pub listing_document: String,
     /// Square listing icon, independently addressed from the wide gallery.
     pub icon: Option<StoreMedia>,
     /// Wide gallery: first image is the store-card cover, further previews lazy.
     pub media: Vec<StoreMedia>,
     /// What kind of thing this is, for the store's filter row.
     pub categories: Vec<String>,
-    /// Which parts of Grain this extension changes (slots claimed, settings
-    /// anchors, payload surfaces). Read straight from the signed index, so the
-    /// store can place a card without downloading its artifact.
-    pub extends: Vec<String>,
     /// Revocation state for this exact version, if any: "revoked" | "deprecated".
     pub revocation: Option<String>,
 }
@@ -460,7 +456,7 @@ fn project_entry(entries: &[IndexEntry], e: &IndexEntry, revocations: &Revocatio
         reviewed_commit: e.reviewed_commit.clone(),
         stars: e.stars,
         installs: e.installs,
-        readme: e.detail_document_hash().into(),
+        listing_document: e.detail_document_hash().into(),
         icon: e.icon.as_ref().map(|icon| StoreMedia {
             sha256: icon.sha256.clone(),
             kind: icon.kind.clone(),
@@ -474,7 +470,6 @@ fn project_entry(entries: &[IndexEntry], e: &IndexEntry, revocations: &Revocatio
             })
             .collect(),
         categories: e.categories.clone(),
-        extends: e.extends.clone(),
         revocation: revocations.state_for(&e.id, &e.version).map(|s| {
             match s {
                 RevocationState::Revoked => "revoked",
@@ -1384,7 +1379,7 @@ fn signed_listing_blob_size(
     // Lazy detail loading does not keep a catalogue resident after store close.
     match load_cached_index(&state.cache_dir, &roots, floor, now_unix()) {
         Ok((index, _)) => listing_blob_size(&index.entries, hash, ext),
-        Err(_) => Ok(None), // Existing legacy hash-only requests retain their limit.
+        Err(_) => Err("Signed catalogue unavailable for media lookup".into()),
     }
 }
 
@@ -1397,20 +1392,17 @@ async fn fetch_media(app: &AppHandle, sha256: &str, ext: &str) -> Result<Vec<u8>
         return Err("invalid media hash".into());
     }
     let state = store_state(app)?;
-    let expected_size = signed_listing_blob_size(&state, sha256, ext)?;
-    let budget = expected_size
-        .unwrap_or(STORE_MEDIA_MAX_BYTES)
-        .min(if ext == "png" {
-            grain_sdk::ICON_MAX_BYTES
-        } else {
-            STORE_MEDIA_MAX_BYTES
-        });
+    let expected_size = signed_listing_blob_size(&state, sha256, ext)?
+        .ok_or("Media is not referenced by the signed catalogue")?;
+    let budget = expected_size.min(if ext == "png" {
+        grain_sdk::ICON_MAX_BYTES
+    } else {
+        STORE_MEDIA_MAX_BYTES
+    });
     let name = format!("media/{sha256}.{ext}");
     let cache_path = state.cache_dir.join(format!("{sha256}.{ext}"));
     if let Some(bytes) = read_bounded_file(&cache_path, budget) {
-        if expected_size.is_none_or(|size| bytes.len() as u64 == size)
-            && grain_core::trust::sha256_hex(&bytes) == sha256
-        {
+        if bytes.len() as u64 == expected_size && grain_core::trust::sha256_hex(&bytes) == sha256 {
             return Ok(bytes);
         }
     }
@@ -1430,7 +1422,7 @@ async fn fetch_media(app: &AppHandle, sha256: &str, ext: &str) -> Result<Vec<u8>
     for base in &bases {
         if let Some(bytes) = fetch(&client, base, &name, budget).await {
             // Content integrity: the bytes MUST hash to the requested id.
-            if expected_size.is_some_and(|size| bytes.len() as u64 != size)
+            if bytes.len() as u64 != expected_size
                 || grain_core::trust::sha256_hex(&bytes) != sha256
             {
                 continue;
@@ -1443,7 +1435,7 @@ async fn fetch_media(app: &AppHandle, sha256: &str, ext: &str) -> Result<Vec<u8>
     Err("media not reachable".into())
 }
 
-/// One extension's catalogue metadata (description, installs, README + media
+/// One extension's catalogue metadata (description, installs, DESCRIPTION + media
 /// refs) from the CACHED signed index — no network, and the parsed index is
 /// dropped immediately, so an installed extension's detail page can show the
 /// same header as the store without keeping the catalogue resident.
@@ -1557,13 +1549,12 @@ pub async fn store_media(app: AppHandle, sha256: String, kind: String) -> Result
     Ok(format!("data:{mime};base64,{}", base64_encode(&bytes)))
 }
 
-/// An extension's detail Markdown (new DESCRIPTION or legacy README), by its
-/// media hash. Lazy, hash-checked and size-bound for explicit signed listings.
+/// An extension's DESCRIPTION Markdown, bound to the signed listing hash and size.
 #[tauri::command]
 #[specta::specta]
-pub async fn store_readme(app: AppHandle, sha256: String) -> Result<String, String> {
+pub async fn store_description(app: AppHandle, sha256: String) -> Result<String, String> {
     let bytes = fetch_media(&app, &sha256, "md").await?;
-    String::from_utf8(bytes).map_err(|_| "readme is not valid UTF-8".to_string())
+    String::from_utf8(bytes).map_err(|_| "DESCRIPTION is not valid UTF-8".to_string())
 }
 
 /// Install (or update to) a specific verified `(id, version)`. In-app click
@@ -1810,7 +1801,7 @@ mod tests {
             entries: Vec::new(),
         };
         assert_eq!(
-            project_entries(&[entry.clone()], &revocations)[0].readme,
+            project_entries(&[entry.clone()], &revocations)[0].listing_document,
             "b".repeat(64)
         );
         for kind in [
@@ -1841,7 +1832,7 @@ mod tests {
                     "native"
                 }
             );
-            assert_eq!(projected[0].readme, "b".repeat(64));
+            assert_eq!(projected[0].listing_document, "b".repeat(64));
             let mut privileged = entry.clone();
             privileged.capabilities = vec!["capture:screen-image".into()];
             assert!(project_covers(
@@ -1868,17 +1859,13 @@ mod tests {
             );
         }
         entry.artifact_kind = grain_sdk::distribution::ArtifactKind::Native;
-        entry.readme = "legacy".into();
-        assert!(project_entries(&[entry.clone()], &revocations).is_empty());
         entry.listing = None;
-        assert_eq!(
-            project_entries(&[entry.clone()], &revocations)[0].readme,
-            "legacy"
-        );
-        assert_eq!(
-            listing_blob_size(&[entry], &"c".repeat(64), "webp").unwrap(),
-            None
-        );
+        assert!(project_entries(&[entry.clone()], &revocations).is_empty());
+        entry.media.clear();
+        entry.icon = None;
+        assert!(project_entries(&[entry], &revocations)[0]
+            .listing_document
+            .is_empty());
     }
 
     fn tmp_data(label: &str) -> PathBuf {

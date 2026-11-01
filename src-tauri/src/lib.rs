@@ -1436,7 +1436,7 @@ fn command_bindings() -> Builder<tauri::Wry> {
             grain_store::store_browse,
             grain_store::store_close,
             grain_store::store_media,
-            grain_store::store_readme,
+            grain_store::store_description,
             grain_store::store_entry,
             grain_store::store_covers,
             grain_store::store_install,

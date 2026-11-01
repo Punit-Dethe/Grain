@@ -355,39 +355,6 @@ enum Cmd {
         #[arg(long)]
         v1: PathBuf,
     },
-    /// Publish a built `.grainpack` into a `v1/` tree: hash it, copy to
-    /// blob/<sha256>.grainpack, upsert its index entry, bump + sign the index.
-    Publish {
-        /// Publishing secret key (`publishing.key`).
-        #[arg(long)]
-        key: PathBuf,
-        /// The built artifact (JSON or ZIP `.grainpack`).
-        #[arg(long)]
-        pack: PathBuf,
-        /// Trust rung to assign: verified | core | experimental | dev.
-        #[arg(long, default_value = "verified")]
-        trust: String,
-        #[arg(long, default_value = "")]
-        repo: String,
-        #[arg(long, default_value = "")]
-        commit: String,
-        #[arg(long, default_value = "")]
-        author: String,
-        /// Days until the index `expires` (default 30).
-        #[arg(long, default_value_t = 30)]
-        expires_days: i64,
-        /// The `v1/` output directory.
-        #[arg(long)]
-        v1: PathBuf,
-        /// The extension's PROJECT folder. When given, publishing also picks up
-        /// the store listing from it, so an author only drops files in place:
-        ///   · `README.md`        → the detail page's README
-        ///   · `media/cover.webp` (or .gif) → the card's cover image
-        ///   · `media/*.webp|gif` → further screenshots, in filename order
-        /// Each is content-addressed into `v1/media/<sha256>.<ext>`.
-        #[arg(long)]
-        media_src: Option<PathBuf>,
-    },
     /// Set install counts on the index and re-sign it. This is the ONLY writer
     /// of `installs`: the counter lives server-side (the download endpoint
     /// aggregates blob fetches), CI feeds the totals in here, and the client
@@ -481,23 +448,6 @@ enum Cmd {
         #[arg(long)]
         out: PathBuf,
     },
-}
-
-/// The submission manifest an author writes (source pointer, never an artifact).
-/// Retained only for the legacy producer until E4 migration; new source
-/// admission uses the shared strict SourceSubmission contract instead.
-#[allow(dead_code)]
-#[derive(serde::Deserialize)]
-struct Submission {
-    id: String,
-    source_repo: String,
-    tag: String,
-    commit: String,
-    summary: String,
-    #[serde(default)]
-    categories: Vec<String>,
-    license: String,
-    contact: String,
 }
 
 fn check_submission(dir: PathBuf) -> Result<()> {
@@ -639,7 +589,6 @@ fn main() -> Result<()> {
                 | Cmd::Keygen { .. }
                 | Cmd::Sign { .. }
                 | Cmd::Roots { .. }
-                | Cmd::Publish { .. }
                 | Cmd::SetInstalls { .. }
         )
     {
@@ -795,28 +744,6 @@ fn main() -> Result<()> {
             base_urls,
             v1,
         } => roots(root_key, publishing_pub, base_urls, v1, unlock),
-        Cmd::Publish {
-            key,
-            pack,
-            trust,
-            repo,
-            commit,
-            author,
-            expires_days,
-            v1,
-            media_src,
-        } => publish(
-            key,
-            pack,
-            trust,
-            repo,
-            commit,
-            author,
-            expires_days,
-            v1,
-            media_src,
-            unlock,
-        ),
         Cmd::SetInstalls {
             key,
             sets,
@@ -993,263 +920,6 @@ fn roots(
     fs::write(v1.join("roots.json"), &doc)?;
     fs::write(v1.join("roots.json.minisig"), sig)?;
     println!("wrote {}/roots.json (+ .minisig)", v1.display());
-    Ok(())
-}
-
-/// Read the manifest out of a `.grainpack` (JSON embeds it; ZIP carries a
-/// `manifest.json` entry).
-/// Validate the artifact before deriving signed catalogue metadata. Tool
-/// packages declare no host-owned settings or prompt positions.
-fn manifest_of(bytes: &[u8]) -> Result<grain_sdk::ExtensionManifest> {
-    use grain_core::pack::{detect_shape, PackShape};
-    match detect_shape(bytes) {
-        PackShape::Json => {
-            let pack: grain_sdk::GrainPack =
-                serde_json::from_slice(bytes).context("parse JSON grainpack")?;
-            pack.validate_trusted()
-                .map_err(|error| anyhow::anyhow!("validate grainpack: {error}"))?;
-            Ok(pack.manifest)
-        }
-        PackShape::Zip => {
-            anyhow::bail!("Directory/native ZIP bundles are unsupported by the tool-only runtime; publish an embedded tool package")
-        }
-        PackShape::Unknown => {
-            anyhow::bail!("not a recognised .grainpack (first byte is not {{ or PK)")
-        }
-    }
-}
-
-#[allow(clippy::too_many_arguments)]
-/// Copy one file into `v1/media/<sha256>.<ext>` and return its hash + size.
-/// Content-addressed, so republishing identical bytes is a no-op and the client
-/// gets integrity for free.
-fn put_media(v1: &std::path::Path, file: &std::path::Path, ext: &str) -> Result<(String, u64)> {
-    let bytes = fs::read(file).with_context(|| format!("read {}", file.display()))?;
-    let sha256 = grain_core::trust::sha256_hex(&bytes);
-    let dir = v1.join("media");
-    fs::create_dir_all(&dir)?;
-    fs::write(dir.join(format!("{sha256}.{ext}")), &bytes)?;
-    Ok((sha256, bytes.len() as u64))
-}
-
-/// Collect an extension's store listing from its project folder (author-facing
-/// convention — no extra metadata file to write):
-///   · `README.md`                  → the detail page's README
-///   · `media/cover.{webp,gif}`     → the card's cover (sorted first)
-///   · `media/*.{webp,gif}`         → further screenshots, in filename order
-fn collect_media(
-    v1: &std::path::Path,
-    src: &std::path::Path,
-) -> Result<(String, Vec<grain_sdk::MediaRef>)> {
-    let mut readme = String::new();
-    let readme_path = src.join("README.md");
-    if readme_path.is_file() {
-        let (hash, _) = put_media(v1, &readme_path, "md")?;
-        readme = hash;
-    }
-
-    let mut media = Vec::new();
-    let media_dir = src.join("media");
-    if media_dir.is_dir() {
-        let mut files: Vec<PathBuf> = fs::read_dir(&media_dir)?
-            .flatten()
-            .map(|e| e.path())
-            .filter(|p| {
-                p.is_file()
-                    && matches!(
-                        p.extension()
-                            .and_then(|e| e.to_str())
-                            .map(str::to_ascii_lowercase)
-                            .as_deref(),
-                        Some("webp") | Some("gif")
-                    )
-            })
-            .collect();
-        // `cover.*` leads; the rest follow in filename order.
-        files.sort_by_key(|p| {
-            let name = p
-                .file_stem()
-                .and_then(|s| s.to_str())
-                .unwrap_or("")
-                .to_string();
-            (name != "cover", name)
-        });
-        for f in files {
-            let ext = f
-                .extension()
-                .and_then(|e| e.to_str())
-                .unwrap_or("webp")
-                .to_ascii_lowercase();
-            let (sha256, size) = put_media(v1, &f, &ext)?;
-            media.push(grain_sdk::MediaRef {
-                sha256,
-                kind: ext,
-                size,
-            });
-        }
-    }
-    Ok((readme, media))
-}
-
-#[allow(clippy::too_many_arguments)]
-fn publish(
-    key: PathBuf,
-    pack: PathBuf,
-    trust: String,
-    repo: String,
-    commit: String,
-    author: String,
-    expires_days: i64,
-    v1: PathBuf,
-    media_src: Option<PathBuf>,
-    unlock: &Unlock,
-) -> Result<()> {
-    if pack
-        .parent()
-        .is_some_and(|src| src.join("receipt.json").exists())
-        || media_src.as_ref().is_some_and(|src| {
-            src.join("submission.toml").exists() || src.join("receipt.json").exists()
-        })
-    {
-        anyhow::bail!("Source-pointer publication requires the E4 reviewed-build and DESCRIPTION/media migration; use check-submission for author metadata only.");
-    }
-    let generation = current_generation(&v1)?;
-    let bytes = fs::read(&pack).with_context(|| format!("read {}", pack.display()))?;
-    let manifest = manifest_of(&bytes)?;
-    let sha256 = grain_core::trust::sha256_hex(&bytes);
-
-    let trust = match trust.as_str() {
-        "core" => grain_sdk::Trust::Core,
-        "verified" => grain_sdk::Trust::Verified,
-        "experimental" => grain_sdk::Trust::Experimental,
-        "dev" => grain_sdk::Trust::Dev,
-        other => anyhow::bail!("unknown trust '{other}'"),
-    };
-
-    // Content-addressed blob.
-    let blob_dir = v1.join("blob");
-    fs::create_dir_all(&blob_dir)?;
-    fs::write(blob_dir.join(format!("{sha256}.grainpack")), &bytes)?;
-
-    // Load or start the index (we are the producer; no need to verify our own).
-    let index_path = v1.join("index.json");
-    let mut index: grain_sdk::Index = if index_path.exists() {
-        serde_json::from_slice(&fs::read(&index_path)?).context("parse existing index.json")?
-    } else {
-        grain_sdk::Index {
-            spec: 1,
-            version: 0,
-            expires: String::new(),
-            generation: None,
-            entries: Vec::new(),
-        }
-    };
-
-    let today = chrono::Utc::now();
-    // Pipeline-maintained fields (stars, installs) and detail media survive a
-    // re-publish of the same (id, version) — republishing the artifact must not
-    // reset its popularity or wipe its README/screenshots.
-    let prior = index
-        .entries
-        .iter()
-        .find(|e| e.id == manifest.id && e.version == manifest.version);
-    let (installs, stars, mut readme, mut media) = prior
-        .map(|e| (e.installs, e.stars, e.readme.clone(), e.media.clone()))
-        .unwrap_or_default();
-    // Re-publishing the identical artifact is not a new review, so the review
-    // date survives it. It moves only when the bytes do.
-    let reviewed_at = prior
-        .filter(|e| e.sha256 == sha256)
-        .map(|e| e.reviewed_at.clone())
-        .unwrap_or_else(|| today.format("%Y-%m-%d").to_string());
-    // A project folder supplies the listing (README + screenshots) by convention,
-    // and its submission.toml supplies the categories the store filters on — the
-    // author declares them once, in the file CI already validates.
-    let mut categories: Vec<String> = index
-        .entries
-        .iter()
-        .find(|e| e.id == manifest.id && e.version == manifest.version)
-        .map(|e| e.categories.clone())
-        .unwrap_or_default();
-    if let Some(src) = &media_src {
-        let (r, m) = collect_media(&v1, src)?;
-        if !r.is_empty() {
-            readme = r;
-        }
-        if !m.is_empty() {
-            media = m;
-        }
-        let sub = src.join("submission.toml");
-        if sub.exists() {
-            let raw = fs::read_to_string(&sub).context("read submission.toml")?;
-            let parsed: Submission = toml::from_str(&raw).context("parse submission.toml")?;
-            for c in &parsed.categories {
-                if !grain_sdk::is_category(c) {
-                    anyhow::bail!(
-                        "unknown category '{c}' — allowed: {}",
-                        grain_sdk::CATEGORIES
-                            .iter()
-                            .map(|(n, _)| *n)
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    );
-                }
-            }
-            categories = parsed.categories;
-        }
-    }
-    let entry = grain_sdk::IndexEntry {
-        artifact_kind: grain_sdk::distribution::ArtifactKind::Native,
-        id: manifest.id.clone(),
-        name: manifest.name.clone(),
-        version: manifest.version.clone(),
-        tier: manifest.tier.clone(),
-        trust,
-        capabilities: manifest.permissions.clone(),
-        description: manifest.description.clone(),
-        sha256,
-        size: bytes.len() as u64,
-        min_grain_api: manifest.grain_api.clone(),
-        repo,
-        source_commit: commit,
-        author,
-        reviewed_at,
-        reviewed_commit: String::new(),
-        updated_at: today.format("%Y-%m-%d").to_string(),
-        stars,
-        installs,
-        readme,
-        listing: None,
-        icon: None,
-        media,
-        categories,
-        extends: Vec::new(),
-    };
-
-    // Upsert by (id, version).
-    index
-        .entries
-        .retain(|e| !(e.id == entry.id && e.version == entry.version));
-    index.entries.push(entry);
-    index.generation = Some(generation);
-    index.version += 1;
-    index.expires = (today + chrono::Duration::days(expires_days))
-        .format("%Y-%m-%dT%H:%M:%SZ")
-        .to_string();
-
-    let json = format!("{}\n", serde_json::to_string_pretty(&index)?);
-    let doc = json.into_bytes();
-    let sig = sign_bytes(&key, &doc, unlock)?;
-    fs::write(&index_path, &doc)?;
-    fs::write(v1.join("index.json.minisig"), sig)?;
-
-    println!(
-        "published {} {} → {}/index.json (index version {})",
-        manifest.id,
-        manifest.version,
-        v1.display(),
-        index.version
-    );
     Ok(())
 }
 
@@ -1433,31 +1103,5 @@ mod submission_tests {
         fs::write(folder.join("DESCRIPTION.md"), "# Tools\n").unwrap();
         fs::rename(&folder, root.path().join("extensions/com.example.other")).unwrap();
         assert!(check_submission(root.path().into()).is_err());
-    }
-    #[test]
-    fn schema_one_sources_cannot_enter_the_legacy_signing_pipeline() {
-        for (marker, media) in [
-            ("submission.toml", true),
-            ("receipt.json", true),
-            ("receipt.json", false),
-        ] {
-            let root = tempfile::tempdir().unwrap();
-            fs::write(root.path().join(marker), "schema = 1").unwrap();
-            let error = publish(
-                root.path().join("missing.key"),
-                root.path().join("missing.grainpack"),
-                "verified".into(),
-                String::new(),
-                String::new(),
-                String::new(),
-                30,
-                root.path().join("v1"),
-                media.then(|| root.path().into()),
-                &Unlock::development(),
-            )
-            .unwrap_err();
-            assert!(error.to_string().contains("E4"));
-            assert!(!root.path().join("v1").exists());
-        }
     }
 }

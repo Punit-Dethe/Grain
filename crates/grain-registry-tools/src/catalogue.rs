@@ -77,7 +77,6 @@ pub(super) fn stage(
         updated_at: String::new(),
         stars: 0,
         installs: 0,
-        readme: String::new(),
         listing: Some(ListingDocument {
             sha256: source.description_sha256.clone(),
             size: source.description_size,
@@ -102,7 +101,6 @@ pub(super) fn stage(
             })
             .collect(),
         categories: source.categories.clone(),
-        extends: Vec::new(),
     };
     entry.validate_listing().map_err(anyhow::Error::msg)?;
     let submission = submission.canonicalize()?;

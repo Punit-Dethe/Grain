@@ -920,11 +920,7 @@ pub(crate) mod tests {
             let mut entry: grain_sdk::IndexEntry =
                 serde_json::from_value(candidate["entry"].clone()).unwrap();
             assert_eq!(entry.trust, grain_sdk::Trust::Dev);
-            assert!(
-                entry.readme.is_empty()
-                    && entry.reviewed_at.is_empty()
-                    && entry.reviewed_commit.is_empty()
-            );
+            assert!(entry.reviewed_at.is_empty() && entry.reviewed_commit.is_empty());
             assert_eq!(entry.min_grain_api, "1.0");
             assert_eq!(entry.source_commit, f.value.commit);
             assert_eq!(entry.categories, ["tools"]);

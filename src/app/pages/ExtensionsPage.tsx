@@ -414,8 +414,8 @@ function ExtensionDetail({
     selection.source === "store" ? selection.entry : null,
   );
   const [mediaIndex, setMediaIndex] = useState(0);
-  const [readme, setReadme] = useState<string | null>(null);
-  const [readmeLoading, setReadmeLoading] = useState(false);
+  const [listingDocument, setListingDocument] = useState<string | null>(null);
+  const [listingDocumentLoading, setListingDocumentLoading] = useState(false);
   const [view, setView] = useState<"overview" | "settings">("overview");
   const backButtonRef = useRef<HTMLButtonElement>(null);
   const [connectionActions, setConnectionActions] =
@@ -437,7 +437,7 @@ function ExtensionDetail({
   useEffect(() => {
     let alive = true;
     setMediaIndex(0);
-    setReadme(null);
+    setListingDocument(null);
     setView("overview");
     if (selection.source !== "store") {
       setCatalogueEntry(null);
@@ -456,7 +456,7 @@ function ExtensionDetail({
     return () => {
       alive = false;
       setCatalogueEntry(null);
-      setReadme(null);
+      setListingDocument(null);
     };
   }, [selection]);
 
@@ -511,32 +511,32 @@ function ExtensionDetail({
   const trust = trustDetails(entry?.trust ?? card?.trust);
   const stars = (entry as StoreEntryWithOptionalStars | null)?.stars;
 
-  // This component only mounts after selection, so browse never fetches README
+  // This component only mounts after selection, so browse never fetches DESCRIPTION
   // data and cleanup drops it again when the user leaves the detail page.
-  const readmeHash = entry?.readme;
+  const listingDocumentHash = entry?.listing_document;
   useEffect(() => {
-    setReadme(null);
-    if (!readmeHash) {
-      setReadmeLoading(false);
+    setListingDocument(null);
+    if (!listingDocumentHash) {
+      setListingDocumentLoading(false);
       return;
     }
     let live = true;
-    setReadmeLoading(true);
+    setListingDocumentLoading(true);
     commands
-      .storeReadme(readmeHash)
+      .storeDescription(listingDocumentHash)
       .then((result) => {
-        if (live) setReadme(unwrapResult(result));
+        if (live) setListingDocument(unwrapResult(result));
       })
       .catch(() => {
-        if (live) setReadme("");
+        if (live) setListingDocument("");
       })
       .finally(() => {
-        if (live) setReadmeLoading(false);
+        if (live) setListingDocumentLoading(false);
       });
     return () => {
       live = false;
     };
-  }, [readmeHash]);
+  }, [listingDocumentHash]);
 
   return (
     <article
@@ -719,12 +719,12 @@ function ExtensionDetail({
             aria-label={`${name} description`}
           >
             <div className="extension-detail-readme">
-              {readmeLoading ? (
+              {listingDocumentLoading ? (
                 <div className="extension-detail-muted" role="status">
                   Loading description…
                 </div>
-              ) : readme ? (
-                <Markdown markdown={readme} softBreaks />
+              ) : listingDocument ? (
+                <Markdown markdown={listingDocument} softBreaks />
               ) : (
                 <div className="extension-detail-muted">
                   A description document is not available for this extension.

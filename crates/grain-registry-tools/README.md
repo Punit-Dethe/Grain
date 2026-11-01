@@ -188,16 +188,8 @@ must independently bind the approved submission/source, trusted workflow/run,
 toolchain/build and exact artifact/listing digests. It must not run author code
 or promote a receipt merely because its JSON parses. Cryptographic CI/review
 verification and signing authority remain outside these local byte/staging tools.
-Signed catalogue deployment, complete serving paths, protections and key custody
-are the remaining E4 work. New schema-1 source submissions still refuse the
-legacy README-based publisher. Prepared receipt folders also refuse that publisher,
-even without `--media-src`, before key reads or output writes. No new publication
-command is activated here. The controlled signer below is a separate boundary.
-
-Old catalogue writers remain outside the new publishing path and are eligible
-for removal; there is no physical-removal hold. They are not a deployment procedure. Do not
-interpret the existence of a signature, local receipt or passing doctor as
-release acceptance.
+The former README-based `publish` command has been removed. Use the reviewed
+DESCRIPTION candidate and release workflow below for native and MCP publication.
 
 ## Reviewed candidate signing (E4b3 local boundary)
 

@@ -792,19 +792,18 @@ async storeMedia(sha256: string, kind: string) : Promise<Result<string, string>>
 }
 },
 /**
- * An extension's detail Markdown (new DESCRIPTION or legacy README), by its
- * media hash. Lazy, hash-checked and size-bound for explicit signed listings.
+ * An extension's DESCRIPTION Markdown, bound to the signed listing hash and size.
  */
-async storeReadme(sha256: string) : Promise<Result<string, string>> {
+async storeDescription(sha256: string) : Promise<Result<string, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("store_readme", { sha256 }) };
+    return { status: "ok", data: await TAURI_INVOKE("store_description", { sha256 }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
 },
 /**
- * One extension's catalogue metadata (description, installs, README + media
+ * One extension's catalogue metadata (description, installs, DESCRIPTION + media
  * refs) from the CACHED signed index — no network, and the parsed index is
  * dropped immediately, so an installed extension's detail page can show the
  * same header as the store without keeping the catalogue resident.
@@ -2629,7 +2628,7 @@ installs: number;
 /**
  * User-facing DESCRIPTION document hash.
  */
-readme: string;
+listing_document: string;
 /**
  * Square listing icon, independently addressed from the wide gallery.
  */
@@ -2642,12 +2641,6 @@ media: StoreMedia[];
  * What kind of thing this is, for the store's filter row.
  */
 categories: string[];
-/**
- * Which parts of Grain this extension changes (slots claimed, settings
- * anchors, payload surfaces). Read straight from the signed index, so the
- * store can place a card without downloading its artifact.
- */
-extends: string[];
 /**
  * Revocation state for this exact version, if any: "revoked" | "deprecated".
  */

@@ -31,11 +31,10 @@ const entry = (overrides: Partial<StoreEntry> = {}): StoreEntry => ({
   reviewed_commit: "",
   stars: 0,
   installs: 0,
-  readme: "",
+  listing_document: "",
   icon: null,
   media: [],
   categories: [],
-  extends: [],
   revocation: null,
   ...overrides,
 });
