@@ -1,5 +1,14 @@
 # Extension implementation: progress, changes and user testing
 
+**Overview direction restored, 2 November:** user requests the layout from before
+the full-image/glass treatment, with only the fade removed. Restore exactly the
+pre-experiment hero CSS from `41102e87` (image above the solid Start here section,
+original heights/spacing/colors); delete the gradient CSS and its decorative JSX
+element. The combined UI branch now differs from that baseline only by this fade
+removal in the product files. Earlier glass/height experiments below are superseded,
+not additional pending work. Build verification and real-app visual confirmation
+apply to this final layout. No release or version change.
+
 **Overview visual correction, 2 November:** user reports the glass barely shows
 in dark mode and does not show in light mode. Increase the hero's preferred height
 by 30px (370–450px). Reduce the light panel fill from 94% to 66% opacity so artwork
