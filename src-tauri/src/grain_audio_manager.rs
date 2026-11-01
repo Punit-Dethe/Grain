@@ -29,24 +29,6 @@ impl AudioRecordingManager {
         }
         self.grain_start_recording(binding_id, vad_policy, false)
     }
-
-    /// Continuous meeting capture on the shared recorder: frames go to Grain
-    /// Meet's writer, nothing is retained in RAM, and no VAD runs. The same
-    /// `Idle` check as dictation arbitrates the microphone.
-    pub fn try_start_meeting_recording(
-        &self,
-        binding_id: &str,
-    ) -> Result<RecordingReadiness, anyhow::Error> {
-        self.grain.arm_meeting(true);
-        let started = self.grain_start_recording(binding_id, VadPolicy::Disabled, false);
-        self.grain.arm_meeting(false);
-        started
-    }
-
-    /// Whether `binding_id` still owns an active recording.
-    pub fn grain_recording_owner_is(&self, binding_id: &str) -> bool {
-        matches!(&*self.state.lock().unwrap(), RecordingState::Recording { binding_id: owner } if owner == binding_id)
-    }
     pub fn arm_prompt_record(&self) -> bool {
         let Ok(state) = self.state.try_lock() else {
             return false;

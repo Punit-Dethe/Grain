@@ -233,6 +233,67 @@ pub fn write_playback(session: &Path, track: &Track, out: &Path) -> Result<(), S
     std::fs::rename(&tmp, out).map_err(|e| format!("Could not finish playback audio: {e}"))
 }
 
+/// Write the meeting's playback file: every track on the meeting clock,
+/// summed into one 16 kHz mono WAV so the microphone and system audio play
+/// together. Each track is first written alone (one block at a time), then
+/// the files are mixed sample by sample and removed.
+pub fn write_meeting_playback(session: &Path, tracks: &[Track], out: &Path) -> Result<(), String> {
+    match tracks {
+        [] => return Err("This meeting has no audio".into()),
+        [track] => return write_playback(session, track, out),
+        _ => {}
+    }
+    let parts: Vec<std::path::PathBuf> = (0..tracks.len())
+        .map(|i| out.with_extension(format!("{i}.part.wav")))
+        .collect();
+    let tmp = out.with_extension("wav.partial");
+    let result = (|| -> Result<(), String> {
+        for (track, part) in tracks.iter().zip(&parts) {
+            write_playback(session, track, part)?;
+        }
+        let readers = parts
+            .iter()
+            .map(|part| {
+                hound::WavReader::open(part)
+                    .map_err(|e| format!("Could not read playback audio: {e}"))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let total = readers.iter().map(|r| r.duration()).max().unwrap_or(0);
+        let spec = readers[0].spec();
+        let mut inputs: Vec<_> = readers
+            .into_iter()
+            .map(|r| r.into_samples::<i16>())
+            .collect();
+        let mut writer = hound::WavWriter::create(&tmp, spec)
+            .map_err(|e| format!("Could not create playback audio: {e}"))?;
+        for _ in 0..total {
+            let mut sum = 0i32;
+            for input in &mut inputs {
+                if let Some(sample) = input.next() {
+                    sum += i32::from(
+                        sample.map_err(|e| format!("Could not read playback audio: {e}"))?,
+                    );
+                }
+            }
+            let mixed = sum.clamp(i32::from(i16::MIN), i32::from(i16::MAX)) as i16;
+            writer
+                .write_sample(mixed)
+                .map_err(|e| format!("Could not write playback audio: {e}"))?;
+        }
+        writer
+            .finalize()
+            .map_err(|e| format!("Could not finish playback audio: {e}"))?;
+        std::fs::rename(&tmp, out).map_err(|e| format!("Could not finish playback audio: {e}"))
+    })();
+    for part in &parts {
+        let _ = std::fs::remove_file(part);
+    }
+    if result.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    result
+}
+
 fn write_pcm16<W: std::io::Write + std::io::Seek>(
     writer: &mut hound::WavWriter<W>,
     samples: &[f32],
@@ -593,6 +654,52 @@ mod tests {
             .iter()
             .any(|&s| s.abs() > 1_000));
         assert!(!dir.join("playback.wav.partial").exists());
+    }
+
+    #[test]
+    fn meeting_playback_sums_every_track_on_one_clock() {
+        let root = tempfile::tempdir().unwrap();
+        const S: u64 = 1_000_000_000;
+        let (dir, manifest) = record(
+            root.path(),
+            &[(0, 48_000, 2, 96_000), (5 * S, 16_000, 1, 16_000)],
+        );
+        let full = manifest.tracks[0].clone();
+        let mut short = full.clone();
+        short.chunks.truncate(1);
+        let single = dir.join("single.wav");
+        write_playback(&dir, &full, &single).unwrap();
+        let mixed = dir.join("meeting.wav");
+        write_meeting_playback(&dir, &[full, short], &mixed).unwrap();
+        let read = |path: &Path| -> Vec<i16> {
+            hound::WavReader::open(path)
+                .unwrap()
+                .into_samples::<i16>()
+                .map(Result::unwrap)
+                .collect()
+        };
+        let (single, mixed_samples) = (read(&single), read(&mixed));
+        assert_eq!(
+            mixed_samples.len(),
+            single.len(),
+            "the longest track sets the length"
+        );
+        let at = 16_000 + 1_000;
+        let expected = (i32::from(single[at]) * 2).clamp(-32_768, 32_767) as i16;
+        assert_eq!(mixed_samples[at], expected, "overlapping tracks add");
+        let late = 16_000 * 5 + 2_000;
+        assert_eq!(
+            mixed_samples[late], single[late],
+            "one track alone is unchanged"
+        );
+        let leftovers: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|name| name.contains("part"))
+            .collect();
+        assert!(leftovers.is_empty(), "{leftovers:?}");
+        assert!(write_meeting_playback(&dir, &[], &mixed).is_err());
     }
 
     #[test]

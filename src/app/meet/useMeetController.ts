@@ -4,8 +4,11 @@ import { readFile } from "@tauri-apps/plugin-fs";
 import {
   commands,
   events,
+  type MeetSources,
   type MeetStatus,
   type MeetingSummary,
+  type RecordingStatus,
+  type SourceSettings,
   type TranscriptRevision,
 } from "@/bindings";
 import { useOsType } from "@/hooks/useOsType";
@@ -15,6 +18,9 @@ const IDLE: MeetStatus = {
   processing: null,
   last_error: null,
 };
+
+/** How often the live recording panel refreshes its clock and meters. */
+const LIVE_POLL_MS = 100;
 
 function unwrap<T>(
   result: { status: "ok"; data: T } | { status: "error"; error: string },
@@ -28,9 +34,13 @@ export interface MeetController {
   meetings: MeetingSummary[];
   loading: boolean;
   loadError: string | null;
+  /** Recall's own audio sources; null until loaded. */
+  sources: MeetSources | null;
   diarizerInstalled: boolean | null;
   diarizerProgress: number | null;
   reload: () => Promise<void>;
+  refreshSources: () => Promise<void>;
+  setSources: (settings: SourceSettings) => Promise<void>;
   startRecording: (title: string | null) => Promise<string>;
   stopRecording: () => Promise<MeetingSummary>;
   process: (sessionId: string) => Promise<void>;
@@ -38,7 +48,7 @@ export interface MeetController {
   deleteMeeting: (sessionId: string) => Promise<void>;
   downloadDiarizer: () => Promise<void>;
   loadTranscript: (sessionId: string) => Promise<TranscriptRevision | null>;
-  loadPlayback: (sessionId: string, track: number) => Promise<string>;
+  loadPlayback: (sessionId: string) => Promise<string>;
 }
 
 export function useMeetController(): MeetController {
@@ -47,11 +57,16 @@ export function useMeetController(): MeetController {
   const [meetings, setMeetings] = useState<MeetingSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [sources, setSourcesState] = useState<MeetSources | null>(null);
   const [diarizerInstalled, setDiarizerInstalled] = useState<boolean | null>(
     null,
   );
   const [diarizerProgress, setDiarizerProgress] = useState<number | null>(null);
   const mountedRef = useRef(false);
+  const sourcesRef = useRef<MeetSources | null>(null);
+  useEffect(() => {
+    sourcesRef.current = sources;
+  }, [sources]);
 
   const reload = useCallback(async () => {
     try {
@@ -73,6 +88,15 @@ export function useMeetController(): MeetController {
     }
   }, []);
 
+  const refreshSources = useCallback(async () => {
+    try {
+      const next = unwrap(await commands.meetSources());
+      if (mountedRef.current) setSourcesState(next);
+    } catch (error) {
+      console.error("Failed to load meeting audio sources:", error);
+    }
+  }, []);
+
   useEffect(() => {
     mountedRef.current = true;
     let previous: MeetStatus = IDLE;
@@ -90,24 +114,29 @@ export function useMeetController(): MeetController {
       const { downloaded, total } = event.payload;
       setDiarizerProgress(total > 0 ? downloaded / total : null);
     });
+    // Devices come and go while the app is in the background.
+    const onFocus = () => void refreshSources();
+    window.addEventListener("focus", onFocus);
     void reload();
+    void refreshSources();
     return () => {
       mountedRef.current = false;
+      window.removeEventListener("focus", onFocus);
       void statusListener.then((cleanup) => cleanup());
       void progressListener.then((cleanup) => cleanup());
     };
-  }, [reload]);
+  }, [reload, refreshSources]);
 
-  // Elapsed time is computed by the backend; poll only while recording.
-  useEffect(() => {
-    if (!status.recording) return;
-    const timer = window.setInterval(() => {
-      void commands.meetStatus().then((next) => {
-        if (mountedRef.current) setStatus(next);
-      });
-    }, 1_000);
-    return () => window.clearInterval(timer);
-  }, [status.recording]);
+  const setSources = useCallback(async (settings: SourceSettings) => {
+    const previous = sourcesRef.current;
+    if (previous) setSourcesState({ ...previous, settings });
+    try {
+      unwrap(await commands.meetSetSources(settings));
+    } catch (error) {
+      if (mountedRef.current) setSourcesState(previous);
+      throw error;
+    }
+  }, []);
 
   const startRecording = useCallback(
     async (title: string | null) => {
@@ -156,8 +185,8 @@ export function useMeetController(): MeetController {
   );
 
   const loadPlayback = useCallback(
-    async (sessionId: string, track: number) => {
-      const path = unwrap(await commands.meetPlaybackAudio(sessionId, track));
+    async (sessionId: string) => {
+      const path = unwrap(await commands.meetPlaybackAudio(sessionId));
       if (osType === "linux") {
         const data = await readFile(path);
         return URL.createObjectURL(new Blob([data], { type: "audio/wav" }));
@@ -172,9 +201,12 @@ export function useMeetController(): MeetController {
     meetings,
     loading,
     loadError,
+    sources,
     diarizerInstalled,
     diarizerProgress,
     reload,
+    refreshSources,
+    setSources,
     startRecording,
     stopRecording,
     process,
@@ -184,4 +216,38 @@ export function useMeetController(): MeetController {
     loadTranscript,
     loadPlayback,
   };
+}
+
+/**
+ * The live recording status (clock, per-source levels), polled only while a
+ * recording runs and only by the component that shows it, so the rest of the
+ * page does not re-render ten times a second.
+ */
+export function useLiveRecording(
+  initial: RecordingStatus | null,
+): RecordingStatus | null {
+  const [live, setLive] = useState(initial);
+  const sessionId = initial?.session_id ?? null;
+  useEffect(() => {
+    if (!sessionId) {
+      setLive(null);
+      return;
+    }
+    let active = true;
+    let timer = 0;
+    const tick = async () => {
+      try {
+        const next = await commands.meetStatus();
+        if (active) setLive(next.recording);
+      } finally {
+        if (active) timer = window.setTimeout(tick, LIVE_POLL_MS);
+      }
+    };
+    void tick();
+    return () => {
+      active = false;
+      window.clearTimeout(timer);
+    };
+  }, [sessionId]);
+  return live;
 }

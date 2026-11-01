@@ -236,3 +236,34 @@ Validation:
 - `tsc`, the production `vite build`, ESLint on the changed files, Prettier, `ui_parity.py` and the divergence ratchet all pass.
 - 24 Meet backend tests pass, including the playback-timeline test.
 - **Not yet done:** speaker renaming (needs separate user-edit storage, per the plan), export formats beyond copied text, and a review by the user of the running app.
+
+## Increment 7: Recall's own sources, system audio, and the polished workspace (2026-11-02)
+
+User request: choose the microphone, system audio, or both for meetings, each with its own device, without touching dictation's microphone setting.
+
+- **Recall owns its capture** (`grain_meet/sources.rs`, `grain_meet/recorder.rs`). This supersedes the shared-recorder design of Increment 5; the `grain_audio.rs`/`grain_audio_manager.rs` meeting seams are removed.
+  - Settings live in `<app_data>/meetings/sources.json`: microphone on/off plus device, system audio on/off plus output device. At least one must be on. They never read or write dictation settings.
+  - Microphone: a separate `handy-recorder` instance at 48 kHz mono (the plan's common operating format), opened at Record and closed at Stop.
+  - System audio: WASAPI loopback of one output device through cpal 0.18 (already in the tree through rodio), on its own thread, Windows only. Other platforms show it as unavailable. Xrun, real-time-denied and default-route changes are not failures; other stream errors reopen the source.
+  - Because nothing is shared, dictation, Flow and Agent are no longer blocked while a meeting records.
+- **One writer, one clock.** Every source feeds one bounded queue (about 10 s for two sources) and one writer thread, each source to its own track.
+  - A microphone with no audio for 3 s is reopened and the loss is a `SourceLost` gap.
+  - Loopback delivers nothing while nothing plays, so a late resume is a new `GapReason::Silent` gap (known silence, compact on disk) and never reopens the device.
+  - Any source that fails to open fails the start and leaves no session.
+  - Peak levels are held between status reads (`fetch_max` on the f32 bits, `swap` on read) for the meters.
+  - A second Record while the first is still opening devices is refused.
+- **Playback** is one mixed file per meeting (`playback/meeting.wav`): each track is written on the meeting clock, then the tracks are summed sample by sample. `meet_playback_audio` lost its track argument.
+- **Commands:** `meet_sources` (settings plus current device lists, off the async runtime) and `meet_set_sources`. `MeetingSummary.sources` and `RecordingStatus.sources` (per-source device, level, recorded time, active) are new.
+- **Plan deviation (user-directed):** Step 5 asked for per-application loopback first, with whole-device loopback as a separately labelled choice. System audio here is the whole output device, labelled "System audio" with the device name. Per-application capture remains open in Step 5.
+- **UI** (`MeetPage.tsx`, `meet/meetFormat.ts`):
+  - Studio panel: title, Record, and two source tiles with switch and device picker; the last source left on cannot be switched off. With both on, a headphones hint covers echo.
+  - While recording: timer, Stop, and a live level meter and state per source. Only this panel polls status (every 100 ms); the rest of the page updates from events.
+  - Meeting list grouped by day (Today, Yesterday, date) with time, duration, source icons and state.
+  - Detail: date, duration and sources; Transcribe, Transcribe again, Cancel, Copy, Delete; processing as four steps; a custom player with scrubber; transcript with numbered speaker avatars, a speaker legend, search highlighting, the turn being heard highlighted, timestamp seek, and a per-turn source icon when the meeting has two sources.
+  - The eyebrow label above the page title is removed.
+
+Validation:
+- 27 Meet backend tests pass (737 lib tests in total). New: both sources to their own tracks, a failed open leaving nothing, loopback silence as a `Silent` gap with no reopen, a silent microphone reopened with `SourceLost`, a device failure reopening only that source, and the mixed playback file.
+- The ignored `real_devices_open_and_deliver` test passed on this machine: the default microphone delivered 48,000 frames in 1 s, and loopback of the default output delivered 48,960 frames at 48 kHz while a test tone played. Output device ids round-trip through `parse`.
+- Frontend: tsc, ESLint, Prettier, all vitest suites (including new `meetFormat` tests), the production build, `ui_parity.py` and the translation check pass. The impeccable detector reports nothing for the page and stylesheet.
+- **Not yet done:** a real meeting in the running app (two sources, device unplug, sleep/resume, low disk), the user's visual review, per-application capture, speaker renaming and export formats.

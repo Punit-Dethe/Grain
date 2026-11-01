@@ -1095,16 +1095,37 @@
     },
     "meet": {
       "name": "Recall",
-      "eyebrow": "Meetings",
-      "subtitle": "Record a meeting, then get a local transcript with speakers and timestamps.",
-      "processFailed": "Processing failed",
-      "recorder": {
+      "subtitle": "Record a call or meeting on this device, then get a transcript with speakers and timestamps.",
+      "processFailed": "Transcription failed",
+      "studio": {
+        "label": "New recording",
         "titleLabel": "Meeting title",
-        "titlePlaceholder": "Meeting title (optional)",
-        "start": "Start recording",
-        "stop": "Stop recording",
+        "titlePlaceholder": "Untitled meeting",
+        "record": "Record",
+        "starting": "Starting…"
+      },
+      "sources": {
+        "microphone": "Microphone",
+        "microphoneHint": "Your voice",
+        "microphoneDevice": "Microphone for recordings",
+        "systemAudio": "System audio",
+        "systemAudioHint": "Everyone else on the call, from your speakers",
+        "systemAudioDevice": "Output to record",
+        "followDefault": "System default",
+        "followDefaultNamed": "System default ({{name}})",
+        "disconnected": "Disconnected device",
+        "unsupported": "Not available on this system yet",
+        "keepOne": "Recordings need at least one source",
+        "headphones": "With both on, use headphones so the microphone does not pick up the call a second time."
+      },
+      "live": {
+        "label": "Recording in progress",
         "recording": "Recording",
-        "noAudio": "No audio from the microphone. Reconnecting…"
+        "afterStop": "The transcript is made on this device after you stop.",
+        "stop": "Stop",
+        "level": "{{source}} level",
+        "micSilent": "No audio from the microphone. Reconnecting…",
+        "systemWaiting": "Waiting for sound"
       },
       "speakerModel": {
         "title": "Speaker detection needs a model",
@@ -1114,14 +1135,26 @@
         "ready": "Speaker model installed"
       },
       "list": {
+        "label": "Meetings",
         "loading": "Loading meetings…",
         "loadError": "Meetings could not be loaded.",
         "retry": "Try again",
-        "empty": "No meetings yet. Start a recording to begin.",
-        "recording": "Recording",
-        "processing": "Processing",
-        "transcribed": "Transcribed",
-        "notProcessed": "Not processed"
+        "empty": "No meetings yet. Choose your sources and press Record.",
+        "today": "Today",
+        "yesterday": "Yesterday",
+        "state": {
+          "recording": "Recording",
+          "processing": "Transcribing",
+          "transcribed": "Transcribed",
+          "new": "Not transcribed"
+        }
+      },
+      "player": {
+        "play": "Play",
+        "pause": "Pause",
+        "position": "Playback position",
+        "preparing": "Preparing audio…",
+        "failed": "This recording could not be played."
       },
       "detail": {
         "pick": "Select a meeting to see its transcript.",
@@ -1130,14 +1163,27 @@
         "cancel": "Cancel",
         "copy": "Copy transcript",
         "copied": "Transcript copied",
-        "delete": "Delete",
+        "delete": "Delete meeting",
         "deleteConfirm": "Delete this meeting? Its recording and transcripts are removed permanently.",
-        "loadAudio": "Load audio",
         "search": "Search this transcript",
+        "speakers": "Speakers",
         "noMatches": "Nothing in this transcript matches.",
-        "noTranscript": "Not transcribed yet. Transcribe it to see who said what.",
+        "noSpeech": "No speech was found in this recording.",
+        "loading": "Loading transcript…",
+        "noTranscriptTitle": "Not transcribed yet",
+        "noTranscript": "Transcribe this meeting to see who said what. It runs on this device.",
+        "recordingTitle": "Recording",
+        "recordingBody": "The transcript appears here after you stop and transcribe.",
         "unknownSpeaker": "Unknown speaker",
-        "overlap": "Several speakers"
+        "overlap": "Several speakers",
+        "playFrom": "Play from {{time}}",
+        "progress": "Transcription progress"
+      },
+      "steps": {
+        "Preparing": "Prepare audio",
+        "IdentifyingSpeakers": "Find speakers",
+        "Transcribing": "Transcribe",
+        "Publishing": "Save"
       },
       "stage": {
         "Preparing": "Preparing audio…",

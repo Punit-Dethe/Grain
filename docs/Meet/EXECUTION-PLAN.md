@@ -151,6 +151,8 @@ Start with imported fixtures and microphone recording to exercise the shared pip
 
 Never silently switch a failed application source to microphone-only capture or to all desktop audio. Source selection must describe the actual scope. OS capability detection is more reliable than promising one minimum version from documentation alone. [P1, P2]
 
+*Status (2 November 2026, user decision):* Windows whole-output-device loopback shipped first as the "System audio" source, chosen per output device and independent of dictation's microphone. Per-application capture is still to do. See `PROGRESS.md`, Increment 7.
+
 ### Echo and duplication
 
 Headphones are the initial controlled acceptance case. Speakerphone recording requires separate tests for remote audio leaking into the local microphone. Keep the two raw tracks and timing evidence. Do not delete repeated phrases merely because their text matches: both participants may legitimately say the same words.

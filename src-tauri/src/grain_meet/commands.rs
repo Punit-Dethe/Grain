@@ -1,9 +1,10 @@
 //! Tauri commands and the status event for Grain Meet.
 //!
-//! One meeting may record and one attempt may process at a time. Recording
-//! uses the shared microphone, so dictation and a meeting refuse each other.
-//! Processing holds the exclusive inference lease, so dictation's model is
-//! released for its duration and restored afterwards.
+//! One meeting may record and one attempt may process at a time. A meeting
+//! records its own sources (see `sources`), so dictation and its microphone
+//! setting are untouched while it records. Processing holds the exclusive
+//! inference lease, so dictation's model is released for its duration and
+//! restored afterwards.
 
 use serde::{Deserialize, Serialize};
 use specta::Type;
@@ -15,15 +16,12 @@ use tauri_specta::Event;
 
 use super::analysis;
 use super::processing::{self, Models, Stage};
-use super::recorder::{self, Recording};
+use super::recorder::{DeviceOpener, Recording, SourceKind};
+use super::sources::{self, SourceDevice, SourceSettings};
 use super::storage::{self, SessionState};
 use super::transcript::{self, TranscriptRevision};
-use crate::managers::audio::AudioRecordingManager;
 use crate::managers::model::ModelManager;
 use crate::managers::transcription::TranscriptionManager;
-
-/// The recorder owner id for meeting capture.
-const MEET_BINDING: &str = "grain_meet";
 
 /// The first-release diarizer: Sortformer v2.1 Q8_0, pinned by revision and hash.
 const DIARIZER_FILE: &str = "diar_streaming_sortformer_4spk-v2.1-Q8_0.gguf";
@@ -32,12 +30,22 @@ const DIARIZER_SHA256: &str = "a5dacdc650790266c7a362e54e6bf51952015487edaa606c4
 const DIARIZER_BYTES: u64 = 139_310_336;
 
 #[derive(Clone, Debug, Serialize, Deserialize, Type)]
+pub struct SourceStatus {
+    pub kind: SourceKind,
+    /// The device being recorded.
+    pub name: String,
+    pub recorded_ms: u64,
+    /// Peak audio level since the previous status read, 0 to 1.
+    pub level: f32,
+    /// False while this source is not delivering audio.
+    pub active: bool,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, Type)]
 pub struct RecordingStatus {
     pub session_id: String,
     pub elapsed_ms: u64,
-    pub recorded_ms: u64,
-    /// False while the microphone is not delivering audio.
-    pub source_active: bool,
+    pub sources: Vec<SourceStatus>,
     pub error: Option<String>,
 }
 
@@ -74,11 +82,17 @@ pub struct MeetingSummary {
     pub state: SessionState,
     pub duration_ms: u64,
     pub transcript_revision: Option<u32>,
+    /// What each track recorded, in track order.
+    pub sources: Vec<SourceKind>,
 }
 
-struct Active {
-    recording: Recording,
-    live: Arc<Mutex<bool>>,
+/// Recall's audio sources and what this device can offer.
+#[derive(Clone, Debug, Serialize, Deserialize, Type)]
+pub struct MeetSources {
+    pub settings: SourceSettings,
+    pub microphones: Vec<SourceDevice>,
+    pub outputs: Vec<SourceDevice>,
+    pub system_audio_supported: bool,
 }
 
 struct Attempt {
@@ -90,13 +104,16 @@ struct Attempt {
 
 #[derive(Default)]
 struct State {
-    active: Option<Active>,
+    active: Option<Recording>,
+    /// A start is opening its devices; a second start is refused meanwhile.
+    starting: bool,
     processing: Option<Attempt>,
     last_error: Option<String>,
 }
 
 static STATE: Mutex<State> = Mutex::new(State {
     active: None,
+    starting: false,
     processing: None,
     last_error: None,
 });
@@ -123,20 +140,27 @@ fn diarizer_path(app: &AppHandle) -> Result<PathBuf, String> {
 
 fn snapshot(state: &State) -> MeetStatus {
     MeetStatus {
-        recording: state.active.as_ref().map(|active| {
-            let progress = &active.recording.progress;
-            RecordingStatus {
-                session_id: active.recording.session_id.clone(),
-                elapsed_ms: active.recording.started.elapsed().as_millis() as u64,
-                recorded_ms: progress.frames.load(Ordering::Acquire) * 1_000
-                    / u64::from(recorder::MIC_RATE),
-                source_active: progress.source_active.load(Ordering::Acquire),
-                error: progress
-                    .error
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .clone(),
-            }
+        recording: state.active.as_ref().map(|recording| RecordingStatus {
+            session_id: recording.session_id.clone(),
+            elapsed_ms: recording.started.elapsed().as_millis() as u64,
+            sources: recording
+                .progress
+                .sources
+                .iter()
+                .map(|source| SourceStatus {
+                    kind: source.kind,
+                    name: source.name.clone(),
+                    recorded_ms: source.frames_ns.load(Ordering::Acquire) / 1_000_000,
+                    level: f32::from_bits(source.level.swap(0, Ordering::AcqRel)),
+                    active: source.active.load(Ordering::Acquire),
+                })
+                .collect(),
+            error: recording
+                .progress
+                .error
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .clone(),
         }),
         processing: state.processing.as_ref().map(|attempt| ProcessingStatus {
             session_id: attempt.session_id.clone(),
@@ -151,41 +175,23 @@ fn emit_status(app: &AppHandle) {
     let _ = MeetStatusChanged(status).emit(app);
 }
 
-/// The shared microphone, seen from the meeting writer. `live` is held while
-/// starting or stopping, so a restart can never revive a stopped meeting.
-struct MicSource {
-    app: AppHandle,
-    live: Arc<Mutex<bool>>,
-}
-
-impl recorder::Source for MicSource {
-    fn restart(&self) -> Result<(), String> {
-        let live = self.live.lock().unwrap_or_else(|e| e.into_inner());
-        if !*live {
-            return Ok(());
-        }
-        let audio = self.app.state::<Arc<AudioRecordingManager>>();
-        if audio.grain_recording_owner_is(MEET_BINDING) {
-            audio.stop_recording(MEET_BINDING, audio.cancel_generation());
-        }
-        audio
-            .try_start_meeting_recording(MEET_BINDING)
-            .map(|_| ())
-            .map_err(|e| e.to_string())
-    }
-
-    fn stop(&self) {
-        let mut live = self.live.lock().unwrap_or_else(|e| e.into_inner());
-        *live = false;
-        stop_microphone(&self.app);
-    }
-}
-
-fn stop_microphone(app: &AppHandle) {
-    let audio = app.state::<Arc<AudioRecordingManager>>();
-    if audio.grain_recording_owner_is(MEET_BINDING) {
-        audio.stop_recording(MEET_BINDING, audio.cancel_generation());
-    }
+fn summary(dir: &std::path::Path, manifest: &storage::Manifest) -> Result<MeetingSummary, String> {
+    Ok(MeetingSummary {
+        id: manifest.id.clone(),
+        title: manifest.title.clone(),
+        created_unix_ms: manifest.created_unix_ms,
+        state: manifest.state,
+        duration_ms: manifest.duration_ns() / 1_000_000,
+        transcript_revision: transcript::latest_revision(dir)?,
+        sources: manifest
+            .tracks
+            .iter()
+            .map(|track| match track.source {
+                storage::TrackSource::Microphone { .. } => SourceKind::Microphone,
+                _ => SourceKind::SystemAudio,
+            })
+            .collect(),
+    })
 }
 
 #[tauri::command]
@@ -194,98 +200,115 @@ pub fn meet_status() -> MeetStatus {
     snapshot(&state())
 }
 
+/// Recall's source settings with the devices available right now. Listing
+/// devices can stall on some systems, so it runs off the async runtime.
+#[tauri::command]
+#[specta::specta]
+pub async fn meet_sources(app: AppHandle) -> Result<MeetSources, String> {
+    let root = meetings_root(&app)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        Ok(MeetSources {
+            settings: sources::load_settings(&root),
+            microphones: sources::list_microphones().unwrap_or_default(),
+            outputs: sources::list_outputs().unwrap_or_default(),
+            system_audio_supported: sources::system_audio_supported(),
+        })
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Save Recall's source settings. Dictation settings are never touched.
+#[tauri::command]
+#[specta::specta]
+pub fn meet_set_sources(app: AppHandle, settings: SourceSettings) -> Result<(), String> {
+    settings.validate()?;
+    sources::save_settings(&meetings_root(&app)?, &settings)
+}
+
 /// List meetings, newest first, recovering any interrupted by a crash.
 #[tauri::command]
 #[specta::specta]
 pub fn meet_list(app: AppHandle) -> Result<Vec<MeetingSummary>, String> {
     let root = meetings_root(&app)?;
-    let active = state()
-        .active
-        .as_ref()
-        .map(|a| a.recording.session_id.clone());
+    let active = state().active.as_ref().map(|r| r.session_id.clone());
     let mut out = Vec::new();
-    for summary in storage::list_sessions(&root)? {
-        let dir = storage::session_dir(&root, &summary.id)?;
-        let summary = if summary.state == SessionState::Recording
-            && active.as_deref() != Some(summary.id.as_str())
+    for listed in storage::list_sessions(&root)? {
+        let dir = storage::session_dir(&root, &listed.id)?;
+        let manifest = if listed.state == SessionState::Recording
+            && active.as_deref() != Some(listed.id.as_str())
         {
             match storage::recover(&dir) {
                 Ok((manifest, report)) => {
                     log::info!("Recovered interrupted meeting {}: {report:?}", manifest.id);
-                    storage::SessionSummary {
-                        duration_ms: manifest.duration_ns() / 1_000_000,
-                        state: manifest.state,
-                        ..summary
-                    }
+                    manifest
                 }
                 Err(error) => {
-                    log::warn!("Could not recover meeting {}: {error}", summary.id);
-                    summary
+                    log::warn!("Could not recover meeting {}: {error}", listed.id);
+                    continue;
                 }
             }
         } else {
-            summary
+            match storage::load_manifest(&dir) {
+                Ok(manifest) => manifest,
+                Err(_) => continue,
+            }
         };
-        out.push(MeetingSummary {
-            transcript_revision: transcript::latest_revision(&dir)?,
-            id: summary.id,
-            title: summary.title,
-            created_unix_ms: summary.created_unix_ms,
-            state: summary.state,
-            duration_ms: summary.duration_ms,
-        });
+        out.push(summary(&dir, &manifest)?);
     }
     Ok(out)
 }
 
-/// Start recording the microphone into a new meeting. Returns its id.
+/// Start recording the enabled sources into a new meeting. Returns its id.
 #[tauri::command]
 #[specta::specta]
-pub fn meet_start_recording(app: AppHandle, title: Option<String>) -> Result<String, String> {
-    // Serialized with dictation startup, which checks the same recorder.
-    let _start = crate::grain_actions::capture_start_guard();
-    if crate::grain_actions::dictation_start_blocked(&app) {
-        return Err("The microphone is in use by dictation or Agent; finish it first".into());
+pub async fn meet_start_recording(app: AppHandle, title: Option<String>) -> Result<String, String> {
+    {
+        let mut guard = state();
+        if guard.active.is_some() || guard.starting {
+            return Err("A meeting is already recording".into());
+        }
+        guard.starting = true;
     }
-    let mut guard = state();
-    if guard.active.is_some() {
-        return Err("A meeting is already recording".into());
+    struct Starting;
+    impl Drop for Starting {
+        fn drop(&mut self) {
+            state().starting = false;
+        }
     }
+    let _starting = Starting;
     let root = meetings_root(&app)?;
-    let settings = crate::settings::get_settings(&app);
-    let device = settings
-        .selected_microphone
-        .clone()
-        .unwrap_or_else(|| "Default microphone".to_string());
     let title = title
         .map(|t| t.trim().to_string())
         .filter(|t| !t.is_empty())
         .unwrap_or_else(|| "Meeting".to_string());
-    let live = Arc::new(Mutex::new(true));
-    let recording = Recording::begin(
-        &root,
-        &title,
-        device,
-        MicSource {
-            app: app.clone(),
-            live: Arc::clone(&live),
-        },
-    )?;
-    let started = {
-        let _live = live.lock().unwrap_or_else(|e| e.into_inner());
-        app.state::<Arc<AudioRecordingManager>>()
-            .try_start_meeting_recording(MEET_BINDING)
-    };
-    if let Err(error) = started {
-        *live.lock().unwrap_or_else(|e| e.into_inner()) = false;
-        let id = recording.session_id.clone();
-        drop(recording);
-        let _ = std::fs::remove_dir_all(storage::session_dir(&root, &id)?);
-        return Err(format!("Could not start the microphone: {error}"));
-    }
+    // Opening devices can block for seconds (Bluetooth); not on the runtime.
+    let recording = tauri::async_runtime::spawn_blocking(move || {
+        let settings = sources::load_settings(&root);
+        settings.validate()?;
+        let mut kinds = Vec::new();
+        if settings.microphone.enabled {
+            kinds.push((
+                SourceKind::Microphone,
+                sources::microphone_name(&settings.microphone),
+            ));
+        }
+        if settings.system_audio.enabled {
+            kinds.push((
+                SourceKind::SystemAudio,
+                sources::output_name(settings.system_audio.device_id.as_deref()),
+            ));
+        }
+        Recording::begin(&root, &title, &kinds, DeviceOpener(settings))
+    })
+    .await
+    .map_err(|e| e.to_string())??;
     let id = recording.session_id.clone();
-    guard.active = Some(Active { recording, live });
-    drop(guard);
+    {
+        let mut guard = state();
+        guard.active = Some(recording);
+        guard.starting = false;
+    }
     emit_status(&app);
     Ok(id)
 }
@@ -293,28 +316,15 @@ pub fn meet_start_recording(app: AppHandle, title: Option<String>) -> Result<Str
 /// Stop the current recording and seal its session.
 #[tauri::command]
 #[specta::specta]
-pub fn meet_stop_recording(app: AppHandle) -> Result<MeetingSummary, String> {
-    let active = state().active.take().ok_or("No meeting is recording")?;
-    {
-        let mut live = active.live.lock().unwrap_or_else(|e| e.into_inner());
-        *live = false;
-        stop_microphone(&app);
-    }
-    let result = active.recording.finish();
+pub async fn meet_stop_recording(app: AppHandle) -> Result<MeetingSummary, String> {
+    let recording = state().active.take().ok_or("No meeting is recording")?;
+    let result = tauri::async_runtime::spawn_blocking(move || recording.finish())
+        .await
+        .map_err(|e| e.to_string())?;
     emit_status(&app);
     let manifest = result?;
-    let root = meetings_root(&app)?;
-    Ok(MeetingSummary {
-        transcript_revision: transcript::latest_revision(&storage::session_dir(
-            &root,
-            &manifest.id,
-        )?)?,
-        duration_ms: manifest.duration_ns() / 1_000_000,
-        id: manifest.id,
-        title: manifest.title,
-        created_unix_ms: manifest.created_unix_ms,
-        state: manifest.state,
-    })
+    let dir = storage::session_dir(&meetings_root(&app)?, &manifest.id)?;
+    summary(&dir, &manifest)
 }
 
 /// Start processing a recorded meeting in the background.
@@ -448,7 +458,7 @@ pub fn meet_delete(app: AppHandle, session_id: String) -> Result<(), String> {
         if guard
             .active
             .as_ref()
-            .is_some_and(|a| a.recording.session_id == session_id)
+            .is_some_and(|r| r.session_id == session_id)
         {
             return Err("Stop the recording before deleting it".into());
         }
@@ -471,32 +481,23 @@ pub fn meet_delete(app: AppHandle, session_id: String) -> Result<(), String> {
     std::fs::remove_dir_all(&dir).map_err(|e| format!("Could not delete the meeting: {e}"))
 }
 
-/// A recorded track's playback file (created on first request), aligned to the
-/// meeting clock. Only that one file is opened to the webview.
+/// The meeting's playback file (created on first request): every track mixed
+/// on the meeting clock. Only that one file is opened to the webview.
 #[tauri::command]
 #[specta::specta]
-pub async fn meet_playback_audio(
-    app: AppHandle,
-    session_id: String,
-    track: u32,
-) -> Result<String, String> {
+pub async fn meet_playback_audio(app: AppHandle, session_id: String) -> Result<String, String> {
     let dir = storage::session_dir(&meetings_root(&app)?, &session_id)?;
     let path = tauri::async_runtime::spawn_blocking(move || -> Result<PathBuf, String> {
         let manifest = storage::load_manifest(&dir)?;
         if manifest.state != SessionState::Recorded {
             return Err("Finish the recording before playing it".into());
         }
-        let source = manifest
-            .tracks
-            .iter()
-            .find(|t| t.id == track)
-            .ok_or("This meeting has no such track")?;
         let folder = dir.join("playback");
         std::fs::create_dir_all(&folder)
             .map_err(|e| format!("Could not prepare playback audio: {e}"))?;
-        let path = folder.join(format!("{track}.wav"));
+        let path = folder.join("meeting.wav");
         if !path.is_file() {
-            analysis::write_playback(&dir, source, &path)?;
+            analysis::write_meeting_playback(&dir, &manifest.tracks, &path)?;
         }
         Ok(path)
     })

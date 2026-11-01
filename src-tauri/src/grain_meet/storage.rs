@@ -66,6 +66,9 @@ pub enum GapReason {
     Paused,
     /// Audio that was recorded is no longer on disk.
     Missing,
+    /// The source delivered nothing because nothing was playing (system
+    /// audio loopback). Known silence, kept compact on disk.
+    Silent,
     /// Capture resumed late without a stated reason.
     Unexplained,
 }
@@ -340,7 +343,11 @@ impl SessionWriter {
         if block.sample_rate == 0 || block.channels == 0 || block.channels > MAX_CHANNELS {
             return Err("audio block has an invalid format".into());
         }
-        if block.samples.len() % usize::from(block.channels) != 0 {
+        if !block
+            .samples
+            .len()
+            .is_multiple_of(usize::from(block.channels))
+        {
             return Err("audio block is not a whole number of frames".into());
         }
         let frames = (block.samples.len() / usize::from(block.channels)) as u64;

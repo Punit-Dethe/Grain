@@ -180,6 +180,13 @@ function IconSprite() {
         <rect x="9" y="3" width="6" height="11" rx="3" />
         <path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21M8.5 21h7" />
       </symbol>
+      <symbol id="i-speaker" viewBox="0 0 24 24">
+        <path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z" />
+        <path d="M15.5 9a4.2 4.2 0 0 1 0 6M18.5 6.5a8 8 0 0 1 0 11" />
+      </symbol>
+      <symbol id="i-stop" viewBox="0 0 24 24">
+        <rect x="6.5" y="6.5" width="11" height="11" rx="2" />
+      </symbol>
       <symbol id="i-command" viewBox="0 0 24 24">
         <path d="M9 6a3 3 0 1 0-3 3h3zM15 6a3 3 0 1 1 3 3h-3zM9 15H6a3 3 0 1 0 3 3zM15 15h3a3 3 0 1 1-3 3zM9 9h6v6H9z" />
       </symbol>

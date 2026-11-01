@@ -1872,7 +1872,30 @@ async meetList() : Promise<Result<MeetingSummary[], string>> {
 }
 },
 /**
- * Start recording the microphone into a new meeting. Returns its id.
+ * Recall's source settings with the devices available right now. Listing
+ * devices can stall on some systems, so it runs off the async runtime.
+ */
+async meetSources() : Promise<Result<MeetSources, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meet_sources") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Save Recall's source settings. Dictation settings are never touched.
+ */
+async meetSetSources(settings: SourceSettings) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meet_set_sources", { settings }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Start recording the enabled sources into a new meeting. Returns its id.
  */
 async meetStartRecording(title: string | null) : Promise<Result<string, string>> {
     try {
@@ -1938,12 +1961,12 @@ async meetDelete(sessionId: string) : Promise<Result<null, string>> {
 }
 },
 /**
- * A recorded track's playback file (created on first request), aligned to the
- * meeting clock. Only that one file is opened to the webview.
+ * The meeting's playback file (created on first request): every track mixed
+ * on the meeting clock. Only that one file is opened to the webview.
  */
-async meetPlaybackAudio(sessionId: string, track: number) : Promise<Result<string, string>> {
+async meetPlaybackAudio(sessionId: string) : Promise<Result<string, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("meet_playback_audio", { sessionId, track }) };
+    return { status: "ok", data: await TAURI_INVOKE("meet_playback_audio", { sessionId }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2526,6 +2549,10 @@ export type McpPublicOAuthClient = { clientId: string; issuer: string }
  * Diarizer download progress in bytes.
  */
 export type MeetDiarizerProgress = { downloaded: number; total: number }
+/**
+ * Recall's audio sources and what this device can offer.
+ */
+export type MeetSources = { settings: SourceSettings; microphones: SourceDevice[]; outputs: SourceDevice[]; system_audio_supported: boolean }
 export type MeetStatus = { recording: RecordingStatus | null; processing: ProcessingStatus | null;
 /**
  * The last processing failure, until the next attempt starts.
@@ -2535,8 +2562,17 @@ last_error: string | null }
  * Grain Meet state changed; the payload is the full current status.
  */
 export type MeetStatusChanged = MeetStatus
-export type MeetingSummary = { id: string; title: string; created_unix_ms: number; state: SessionState; duration_ms: number; transcript_revision: number | null }
+export type MeetingSummary = { id: string; title: string; created_unix_ms: number; state: SessionState; duration_ms: number; transcript_revision: number | null;
+/**
+ * What each track recorded, in track order.
+ */
+sources: SourceKind[] }
 export type MicLevel = number[]
+export type MicrophoneChoice = { enabled: boolean;
+/**
+ * A `handy-recorder` device id; `None` follows the system default.
+ */
+device_id: string | null }
 /**
  * The model's files were removed.
  */
@@ -2683,11 +2719,7 @@ export type ProcessingStatus = { session_id: string; stage: Stage }
 export type RecordingError = { error_type: string; detail: string | null }
 export type RecordingReady = null
 export type RecordingRetentionPeriod = "never" | "preserve_limit" | "days_3" | "weeks_2" | "months_3"
-export type RecordingStatus = { session_id: string; elapsed_ms: number; recorded_ms: number;
-/**
- * False while the microphone is not delivering audio.
- */
-source_active: boolean; error: string | null }
+export type RecordingStatus = { session_id: string; elapsed_ms: number; sources: SourceStatus[]; error: string | null }
 /**
  * [GRAIN] What to actually paint — the user's `theme` preference already
  * resolved against the OS. Lives in the SDK because it crosses the wire inside
@@ -2759,6 +2791,22 @@ export type ShowOverlay = string
  */
 export type Snippet = { id: string; trigger: string; replacement: string; enabled?: boolean }
 export type SoundTheme = "marimba" | "pop" | "custom"
+export type SourceDevice = { id: string; name: string; is_default: boolean }
+export type SourceKind = "Microphone" | "SystemAudio"
+export type SourceSettings = { microphone: MicrophoneChoice; system_audio: SystemAudioChoice }
+export type SourceStatus = { kind: SourceKind;
+/**
+ * The device being recorded.
+ */
+name: string; recorded_ms: number;
+/**
+ * Peak audio level since the previous status read, 0 to 1.
+ */
+level: number;
+/**
+ * False while this source is not delivering audio.
+ */
+active: boolean }
 export type Speaker = {
 /**
  * Stable within a revision: `t{track}-s{slot}`.
@@ -2875,6 +2923,11 @@ export type StreamTextEvent = { committed: string; tentative: string }
  * Semantic kind of "working" phase, used to localize the spinner label.
  */
 export type StreamWorkKind = "transcribing" | "polishing"
+export type SystemAudioChoice = { enabled: boolean;
+/**
+ * A cpal output device id; `None` follows the default output.
+ */
+device_id: string | null }
 /**
  * Broadcast when the effective colour scheme changes — either because the user
  * picked a different mode, or because the OS flipped while on `System`.

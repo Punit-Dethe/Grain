@@ -72,7 +72,7 @@ impl ChunkFile {
     /// Append interleaved frames. The sample count must be whole frames.
     pub fn append(&mut self, samples: &[f32]) -> io::Result<()> {
         let channels = usize::from(self.channels);
-        if samples.len() % channels != 0 {
+        if !samples.len().is_multiple_of(channels) {
             return Err(io::Error::other(
                 "audio block is not a whole number of frames",
             ));
