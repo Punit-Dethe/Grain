@@ -1219,7 +1219,7 @@ pub async fn store_mcp_update(
     Ok(())
 }
 
-/// Signed-store acquisition in development and the dedicated extensions alpha.
+/// Signed-store acquisition in every supported application build.
 /// Custom server configuration retains its separate development-only gate.
 #[tauri::command]
 #[specta::specta]

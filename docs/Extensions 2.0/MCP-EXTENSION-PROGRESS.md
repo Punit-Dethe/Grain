@@ -1,5 +1,46 @@
 # Extension implementation: progress, changes and user testing
 
+**Normal release store installation fix, 2 November 2026:** based exclusively on
+current main `44cd5c7d85ccb196d453ffdce91a824a09b160a5`, including the completed
+legacy extension retirement and latest overview changes. No old branch is merged
+and no retired machinery/file is restored. Sidebar navigation was already enabled;
+the reported "Store extensions are not available in this build" came from a
+separate host policy that still allowed store MCPs only in debug/alpha builds.
+
+The shared policy now permits verified signed-store records in normal release
+builds across install/update, account controls, discovery and execution. Custom
+records and built-in validation providers still require a debug build and Developer
+Mode; signed descriptor admission, main-window ownership, revision/provenance,
+vault binding, metadata freshness and revocation checks are unchanged. Updated
+the existing policy regression to cover release/debug and Developer Mode on/off.
+Normal release CI also validates and supplies the existing GitHub desktop OAuth
+registration: previously those build values were supplied only to alpha builds.
+No account tokens/private App key or new registration is introduced.
+
+Checks Pass: **102 frontend tests, 432 workspace tests, 696 backend tests**
+(23 existing backend tests ignored), normal TypeScript/Vite build, release
+readiness, relocation policy, scoped whitespace and Actionlint 1.7.12. The actual
+OAuth preflight passes seven dummy-credential cases; actual rerelease scripts
+pass six cases with a fake `gh`, including refusal of draft/immutable releases and
+changed tags. First host build hit an open app's DLL lock; the user closed Grain,
+then the complete host suite passed. No new harness/framework or live provider
+test was added. Graph coverage does not index these changes; inspected the actual
+diff and existing signed-store/runtime paths rather than treating its zero as audit.
+
+The user explicitly requests re-releasing **0.0.10**, so the version stays fixed.
+Backed up all three existing public assets and release metadata in
+`C:\Users\watrm\Downloads\Grain-v0.0.10-before-rerelease-20261102-17c46e`;
+downloaded hashes match GitHub's recorded digests. The old version tag points to
+`9deb7e509dea5ef8cc7f2eccc67b7ace8c5b6f10`. The existing release workflow gains an
+explicit `rerelease` opt-in (requires `draft=false` and a mutable public release),
+exact run-SHA checkout and serialized release jobs. After successful build/sign/
+publication and native verification, it refuses tag drift, retargets the exact
+version tag to the build source and records that source in release notes.
+This uses the job's GITHUB_TOKEN to avoid spawning another tag-triggered build.
+Actual run/publication results are recorded separately; fixture tests do not
+credit a completed release. Existing 0.0.10 users need the rebuilt installer:
+same-version replacements are not offered automatically by the updater.
+
 **Normal-build Extensions sidebar, 31 October 2026:** at the user's request,
 remove the old alpha/development-only sidebar condition and its unused visibility
 helper. Extensions now uses its existing enabled Installed-page destination in
