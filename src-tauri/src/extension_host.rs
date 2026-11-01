@@ -1823,14 +1823,13 @@ fn auto_disable(app: &AppHandle, ext_id: &str, token: &str, generation: u64, rea
     }
 }
 
-/// Load the effective extension source. A dev project is re-read from its
-/// canonical folder; otherwise this reads the installed `.grainpack.json`.
+/// Read an installed artifact with mandatory hash, id and version verification.
 fn read_pack_file(
     path: &std::path::Path,
     trusted: bool,
-    expected_sha256: Option<&str>,
+    expected_sha256: &str,
     expected_id: &str,
-    expected_version: Option<&str>,
+    expected_version: &str,
 ) -> Result<GrainPack, String> {
     use std::io::Read;
 
@@ -1845,11 +1844,8 @@ fn read_pack_file(
             grain_sdk::PACK_MAX_BYTES / (1024 * 1024)
         ));
     }
-    if let Some(expected) = expected_sha256 {
-        grain_core::trust::verify_artifact(&bytes, expected).map_err(|error| {
-            format!("installed extension artifact failed verification: {error}")
-        })?;
-    }
+    grain_core::trust::verify_artifact(&bytes, expected_sha256)
+        .map_err(|error| format!("installed extension artifact failed verification: {error}"))?;
     let pack: GrainPack = serde_json::from_slice(&bytes)
         .map_err(|error| format!("invalid extension pack: {error}"))?;
     if pack.manifest.id != expected_id {
@@ -1858,13 +1854,11 @@ fn read_pack_file(
             pack.manifest.id
         ));
     }
-    if let Some(version) = expected_version {
-        if pack.manifest.version != version {
-            return Err(format!(
-                "extension artifact version '{}' does not match installed version '{version}'",
-                pack.manifest.version
-            ));
-        }
+    if pack.manifest.version != expected_version {
+        return Err(format!(
+            "extension artifact version '{}' does not match installed version '{expected_version}'",
+            pack.manifest.version
+        ));
     }
     if trusted {
         pack.validate_trusted()?;
@@ -1915,40 +1909,8 @@ fn read_installed_pack(
         .map_err(|error| error.to_string())?
         .join("pack.grainpack.json");
     let trusted = record.trust != grain_sdk::Trust::Dev;
-    if artifact.exists() {
-        // A corrupt current artifact must fail, never fall back to stale bytes.
-        return read_pack_file(
-            &artifact,
-            trusted,
-            Some(hash),
-            id,
-            Some(&record.installed_version),
-        );
-    }
-    // Existing installations keep their old layout; every fallback is still
-    // checked against the recorded hash, id and version before use.
-    let legacy = ext_dir.join(format!("{id}.grainpack.json"));
-    if !trusted && legacy.exists() {
-        return read_pack_file(
-            &legacy,
-            false,
-            Some(hash),
-            id,
-            Some(&record.installed_version),
-        );
-    }
-    let versioned = grain_core::install::version_dir(ext_dir, id, &record.installed_version)
-        .join("pack.grainpack.json");
-    if versioned.exists() {
-        return read_pack_file(
-            &versioned,
-            trusted,
-            Some(hash),
-            id,
-            Some(&record.installed_version),
-        );
-    }
-    Err(format!("no pack file for '{id}'"))
+
+    read_pack_file(&artifact, trusted, hash, id, &record.installed_version)
 }
 
 pub fn load_manifest(app: &AppHandle, id: &str) -> Option<GrainPack> {
@@ -2077,7 +2039,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn installed_hash_owner_selects_immutable_bytes_before_legacy_layouts() {
+    fn installed_hash_owner_requires_its_immutable_bytes() {
         let dir = tempfile::tempdir().unwrap();
         let pack = pack_of("");
         let mut record = record_for(&pack);
@@ -2109,7 +2071,7 @@ mod tests {
     }
 
     #[test]
-    fn legacy_flat_and_versioned_packages_require_recorded_hash_on_restart() {
+    fn old_layouts_cannot_substitute_for_the_recorded_artifact() {
         for trusted in [false, true] {
             let dir = tempfile::tempdir().unwrap();
             let pack = pack_of("");
@@ -2129,8 +2091,19 @@ mod tests {
                 dir.path().join(format!("{}.grainpack.json", record.id))
             };
             std::fs::write(&path, &bytes).unwrap();
+            assert!(read_installed_pack(dir.path(), &record).is_err());
+            grain_core::install::publish_artifact(
+                dir.path(),
+                &record.id,
+                &record.installed_version,
+                record.artifact_sha256.as_deref().unwrap(),
+                &bytes,
+            )
+            .unwrap();
             assert!(read_installed_pack(dir.path(), &record).is_ok());
             std::fs::write(&path, b"changed").unwrap();
+            assert!(read_installed_pack(dir.path(), &record).is_ok());
+            record.artifact_sha256 = Some("a".repeat(64));
             assert!(read_installed_pack(dir.path(), &record).is_err());
             record.artifact_sha256 = None;
             assert!(read_installed_pack(dir.path(), &record).is_err());
@@ -2292,12 +2265,14 @@ mod tests {
         let bytes = br#"{"manifest":{"id":"com.x.hash","name":"Hash","version":"1","grainApi":"^1.0","tier":"scripted","entry_source":"x"}}"#;
         std::fs::write(&path, bytes).unwrap();
         let hash = grain_core::trust::sha256_hex(bytes);
-        assert!(read_pack_file(&path, false, Some(&hash), "com.x.hash", Some("1")).is_ok());
+        assert!(read_pack_file(&path, false, &hash, "com.x.hash", "1").is_ok());
+        assert!(read_pack_file(&path, false, &hash, "com.x.other", "1").is_err());
+        assert!(read_pack_file(&path, false, &hash, "com.x.hash", "2").is_err());
 
         let mut tampered = bytes.to_vec();
         tampered.push(b' ');
         std::fs::write(&path, tampered).unwrap();
-        assert!(read_pack_file(&path, false, Some(&hash), "com.x.hash", Some("1")).is_err());
+        assert!(read_pack_file(&path, false, &hash, "com.x.hash", "1").is_err());
     }
 
     // ── Manifest and record fixtures ──────────────────────────────────────

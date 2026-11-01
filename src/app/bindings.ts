@@ -1126,9 +1126,9 @@ async extensionImportPack(path: string) : Promise<Result<string, string>> {
 }
 },
 /**
- * Uninstall a pack. `purge` also deletes the stored pack file; without it the
- * file stays for lossless reinstall (SPEC §6 keep-by-default). Applied
- * payloads are always removed.
+ * Uninstall a tool package and remove its scoped storage/authentication.
+ * `purge` also clears derived artwork. Published immutable artifacts are never
+ * deleted here: a concurrent installation may already be staging those bytes.
  */
 async extensionUninstall(id: string, purge: boolean) : Promise<Result<null, string>> {
     try {

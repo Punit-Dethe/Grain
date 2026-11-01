@@ -603,3 +603,23 @@ model decision remain as listed above. Do not revisit M7.
   artifacts, but extension_host still reads two old installation layouts and
   uninstall still cleans a flat-file/approved-app format. Remove those fallback
   paths next, retaining current immutable publication/ownership guarantees.
+
+**1 November 2026, session 4 continued: installed layout retirement (T13).**
+
+- Removed flat-file and version-only package loader fallbacks. Runtime loads only
+  the exact recorded content-addressed artifact; hash/id/version verification is
+  mandatory in the reader signature. Missing/corrupt current bytes fail closed.
+  Tests prove matching old-layout bytes cannot substitute, and a changed old
+  shadow cannot affect the current owner. Added explicit wrong-id/version checks.
+- Removed uninstall's flat-package helper and retired approved-app cleanup.
+  Corrected install/artwork comments and generated uninstall docs. Current scoped
+  storage, account/worker retirement and optional artwork purge remain. Immutable
+  published artifacts remain untouched: deleting them here could race another
+  install that staged those bytes before committing its registry owner.
+- Verification: workspace tests and 696 app tests / 23 ignored pass; bindings
+  regenerated, source graph/diff and whitespace checked. Final normal checks and
+  real-app checkpoint will include the archive-removal follow-up below.
+- Final source trace found pack.rs's unused archive extractor, obsolete extraction
+  limits, and install.rs's ZIP manifest reader. The current stage function already
+  refuses all non-JSON artifacts; its existing 2 MiB package limit must survive
+  removal of the legacy ZIP machinery/dependency (T14).

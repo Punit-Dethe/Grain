@@ -56,8 +56,8 @@ pub fn version_dir(root: &Path, id: &str, version: &str) -> PathBuf {
     root.join(id).join(version)
 }
 
-/// New artifacts are addressed by content, so same-version replacements cannot
-/// overwrite another registry owner's bytes. Legacy version directories remain readable.
+/// Artifacts are addressed by content, so same-version replacements cannot
+/// overwrite another registry owner's bytes.
 pub fn artifact_dir(
     root: &Path,
     id: &str,

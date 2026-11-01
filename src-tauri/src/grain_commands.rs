@@ -1025,17 +1025,6 @@ pub fn extension_set_enabled(
     }
 }
 
-/// Where imported `.grainpack` files live: `<data>/extensions/<id>.grainpack.json`.
-fn pack_path(app: &AppHandle, id: &str) -> Result<std::path::PathBuf, String> {
-    grain_sdk::validate_extension_id(id)?;
-    let ctx = app
-        .try_state::<std::sync::Arc<grain_core::AppContext>>()
-        .ok_or("app context unavailable")?;
-    let dir = ctx.data_dir.join("extensions");
-    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    Ok(dir.join(format!("{id}.grainpack.json")))
-}
-
 pub(crate) fn load_pack(app: &AppHandle, id: &str) -> Result<grain_sdk::GrainPack, String> {
     crate::extension_host::load_manifest_result(app, id)
 }
@@ -1564,7 +1553,7 @@ pub fn extension_import_pack(
         return Err("validated .grainpack exceeds the storage limit".into());
     }
     // A declared embedded icon must fully decode before the import mutates the
-    // registry. This also writes the one fixed-size recommendation derivative.
+    // registry. Only the current settings artwork is materialized.
     crate::extension_icons::materialize_pack(&app, &pack)?;
 
     let reg = app
@@ -1753,9 +1742,9 @@ fn reviewed_grant_record(
     Ok(rec)
 }
 
-/// Uninstall a pack. `purge` also deletes the stored pack file; without it the
-/// file stays for lossless reinstall (SPEC §6 keep-by-default). Applied
-/// payloads are always removed.
+/// Uninstall a tool package and remove its scoped storage/authentication.
+/// `purge` also clears derived artwork. Published immutable artifacts are never
+/// deleted here: a concurrent installation may already be staging those bytes.
 #[tauri::command]
 #[specta::specta]
 pub async fn extension_uninstall(
@@ -1791,7 +1780,6 @@ pub async fn extension_uninstall(
     crate::extension_host::refresh_index(&app);
     if dev_active {
         if purge {
-            let _ = std::fs::remove_file(pack_path(&app, &id)?);
             crate::extension_icons::purge(&app, &id)?;
         }
         return credential_cleanup.await;
@@ -1800,19 +1788,11 @@ pub async fn extension_uninstall(
         crate::host_api::ExtStorage::new(&ctx.data_dir, &id)
             .purge()
             .map_err(|error| error.to_string())?;
-        // [GRAIN] Phase 5C: forget any user-approved launchable app paths, so a
-        // reinstalled extension starts with no launch approvals (SPEC §6).
-        let _ = std::fs::remove_file(
-            ctx.data_dir
-                .join("extensions")
-                .join(format!("{id}.approved-apps.json")),
-        );
     }
     if let Some(generation) = old_generation {
         crate::extension_host::stop_extension_generation(&id, generation, "extension uninstalled");
     }
     if purge {
-        let _ = std::fs::remove_file(pack_path(&app, &id)?);
         crate::extension_icons::purge(&app, &id)?;
     }
     crate::extension_host::refresh_index(&app);
