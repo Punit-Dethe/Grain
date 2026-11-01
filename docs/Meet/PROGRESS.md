@@ -1,4 +1,4 @@
-# Grain Meet implementation progress
+﻿# Grain Meet implementation progress
 
 ## Increment 1: structured bounded TDT evidence
 
@@ -113,23 +113,30 @@ Host memory grows about **1.2 GiB per hour of one track** on both backends. Of t
   - The other FluidMeet numbers to adopt are listed in the plan's [FluidMeet tuning table](EXECUTION-PLAN.md#fluidmeet-tuning-adopted-for-the-first-release).
 - These are debug-build host measurements on one machine; a low-memory 8 GiB reference machine is still untested.
 
+## Increment 3: durable meeting storage (Step 1)
 
-**2 November 2026 research update:** the transcribe.cpp pin, its Sortformer v2.1 support, and the Nemotron 3 options are documented in [DIARIZER-RESEARCH.md](DIARIZER-RESEARCH.md).
+Implemented in Grain-owned `src-tauri/src/grain_meet/` (`storage.rs`, `wav.rs`). Not yet called by capture (Step 4) or processing (Step 3).
 
-- The pinned source passes the native Sortformer Rust tests on Windows CPU and Vulkan.
-- The Glimpse Nemotron 3 port runs on the same machine on CPU and Vulkan with identical fixture segments.
-- The proposal to start on Nemotron 3 was declined for now: **the first implementation keeps Sortformer v2.1**. Nemotron 3 is a later upgrade.
-- Work on the role-aware worker bridge is implemented and validated (Increment 2 above).
+- **Layout.** One directory per meeting, named by a UUID that is validated on every open (path syntax is refused). It holds a versioned `manifest.json` and per-track float32 WAV chunks at the native capture rate and channel count.
+- **FluidMeet values.** Chunks rotate every 60 s, and early when the format changes, when capture reports a discontinuity, or when capture resumes more than 0.5 s late.
+- **Timeline.** Within a run, frame counts place the audio and capture-timestamp jitter is ignored. Missing intervals are explicit `Gap`s with a reason (source lost, overflow, device change, pause, missing, unexplained), never silence. A clock that jumps backwards never overlaps recorded audio.
+- **Durability.**
+  - The manifest is replaced atomically (write, sync, rename).
+  - A chunk is listed before its file exists, and marked sealed only after the file is synced and renamed.
+  - The active chunk is checkpointed every 5 s, so a process crash loses at most about 5 s per track.
+  - Power-loss safety is claimed only for sealed chunks.
+- **Recovery.** `recover` salvages every whole frame of an interrupted chunk, drops a torn partial frame and seals the session. Absent sealed audio becomes an explicit `Missing` gap. Recovery never deletes recorded audio, and running it twice changes nothing.
+- **Listing.** `list_sessions` reads manifests only, never audio. Corrupt or foreign entries are skipped and logged.
+- **Handy hook:** `lib.rs` 1296 → 1297, one `mod` declaration.
 
-No Sortformer/Parakeet model execution, real-worker role switching, final word
-assembly, cancellation during native execution, accelerated fallback, recognition
-quality, or 10/60/120-minute process-tree memory measurements have passed yet.
-No production duration or RAM envelope is established.
+Validation: 9 new unit tests pass.
+- WAV: sealed files read back through `hound`; checkpoints make an open chunk readable; salvage handles a torn tail and refuses a mismatched format.
+- Storage: 60 s rotation over 130 s of jittered blocks; gap and discontinuity handling; format change and a backwards clock; crash recovery after a simulated crash (no flush or drop); missing-audio gaps; manifest validation and listing.
+- With the engine, lease, supervisor-protocol and TDT tests, 36 pass in total.
 
-Next required work is a role-aware extension of the existing worker, followed
-by saved-audio model tests. Resolve the buildable real-worker prerequisite first:
-this cloud image lacks the documented Linux desktop development libraries and
-administrator access. A licensed/reproducible meeting fixture set and verified
-Sortformer/Parakeet artifacts are also needed for the model gates. Neither the
-CPU adapter runner nor documentation closes those gates. Do not expose capture
-or UI as ready until the execution plan's dependencies and acceptance checks pass.
+## Status of Step 0 and decisions
+
+- **transcribe.cpp and diarizer:** see [DIARIZER-RESEARCH.md](DIARIZER-RESEARCH.md). The pin is upstream 0.4.0 plus the Grain Flow patch, the same release Handy uses. Sortformer v2.1 is kept for now; Nemotron 3 is a later upgrade.
+- **Done:** Sortformer through the real worker, role switching, cancellation, GPU-loss recovery on CPU, and 10/60/120-minute worker memory on CPU and Vulkan (Increment 2).
+- **Decided:** whole-track diarization, as in FluidMeet; a 90-minute processing cap per track; live preview and live transcription skipped.
+- **Still open:** Parakeet word timing across bounded windows and final word assembly (Step 3); speaker-assignment quality on representative real meetings, which needs a licensed meeting fixture set; Linux/macOS worker runs; a low-memory reference machine.
