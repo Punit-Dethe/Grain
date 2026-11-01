@@ -938,3 +938,24 @@ but the residual inventory above remains open.
   s7-workspace-clippy.txt and s7-workspace-tests.txt. Hosted verdict follows.
 - Existing unrelated generated-binding edits are preserved. Only the required
   owner-field removal is staged from that file; no unrelated content is included.
+
+**Session 7 registry delivery and final wire-type pass:**
+
+- Registry cleanup committed/pushed as e858d50 on
+  codex/retire-legacy-extension-sources in Grain-Extention, based on fetched
+  main bcaa7cf. The isolated worktree is clean. Protected v1/publication proofs,
+  current GitHub/Notion sources, ownership, contributor/publisher/review guides
+  and CI/tool pins compare byte-identical to base; updated local README links
+  resolve. The current index names only com.grain.github and com.grain.notion.
+  No catalogue activation or signing was needed for source deletion.
+- Final SDK scan found the unused legacy PillAction enum and its core/SDK
+  exports: the native reverse handler was already retired and no product caller
+  remained. Removed that DTO and stale protocol examples. Kept raw old-action
+  rejection checks and all current worker/developer/handshake frame tests.
+  Current pill buttons use Tauri commands; Prompt Record, follow-up, cancel and
+  Agent input implementation remain unchanged.
+- Source commit acea9ec0 passed frontend/workspace/Windows-runner hosted jobs in
+  run 41318855516. Cancelled that owned run before treating native verification
+  as final, because the last wire-type removal requires a new source checkpoint.
+  Repeated workspace strict Clippy/all-target tests pass for the final DTO change.
+  Final Windows backend/all-target and hosted results follow below.

@@ -4,8 +4,8 @@
 //! Security model in one paragraph: the events server binds `127.0.0.1` only
 //! and gives **nothing** to a connection until it authenticates. The first
 //! frame a client sends must be a [`ClientHello`] carrying a per-client token
-//! the host minted for it (pill: injected at spawn via `GRAIN_EVENTS_TOKEN`;
-//! extension workers: injected at creation, each with its *own* token). The
+//! the host minted for it (workers: injected at creation, each with its own
+//! token; developer control: separately scoped). The
 //! server maps token → identity → capability set **server-side**; nothing in
 //! any later message can change who you are, so impersonating another client
 //! is not expressible. Unauthenticated connections are dropped on a short
@@ -27,11 +27,10 @@ pub const GRAIN_API_VERSION: &str = "1.0";
 // four message shapes over the same duplex text channel. They are wrapped in
 // [`HostFrame`] — an externally-tagged enum, so each serializes with an
 // unambiguous top-level key (`req` / `res` / `call` / `callres`) that cannot
-// collide with a `DaemonEvent` variant name, `PillAction`'s `action` tag, or
-// the hello/welcome field sets. The `protocol_frames_are_mutually_exclusive`
-// test is the guarantee.
+// collide with a `DaemonEvent` variant name or the hello/welcome field sets.
+// `protocol_frames_are_mutually_exclusive` verifies this separation.
 
-/// Worker → server: an API call (`grain.storage.get`, `grain.llm.complete`, …).
+/// Worker → server: an API call (`grain.storage.get`, `grain.net.fetch`, …).
 /// `id` correlates the [`ServerResponse`].
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ClientRequest {
@@ -52,8 +51,8 @@ pub struct ServerResponse {
     pub err: Option<HostError>,
 }
 
-/// Server → worker: a host-initiated call (a transform step, an event
-/// notification, a session result). The worker must answer with a
+/// Server → worker: a declared tool action or memory sample.
+/// The worker must answer with a
 /// [`HostCallResult`] carrying the same `call_id` before the host's deadline.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct HostCall {
@@ -96,7 +95,7 @@ pub enum HostFrame {
 pub struct ClientHello {
     /// The per-client secret minted by the host for this app run.
     pub token: String,
-    /// Human-readable label for logs/diagnostics (e.g. "pill"). Not identity.
+    /// Human-readable worker/developer label for diagnostics. Not identity.
     #[serde(default)]
     pub client: String,
     /// The contract version the client was built against (informational; the
@@ -156,12 +155,12 @@ mod tests {
 
         let full = ClientHello {
             token: "t".into(),
-            client: "pill".into(),
+            client: "com.example.tools".into(),
             grain_api: GRAIN_API_VERSION.into(),
         };
         let back: ClientHello =
             serde_json::from_str(&serde_json::to_string(&full).unwrap()).unwrap();
-        assert_eq!(back.client, "pill");
+        assert_eq!(back.client, "com.example.tools");
     }
 
     #[test]
@@ -210,8 +209,8 @@ mod tests {
 
     #[test]
     fn protocol_frames_are_mutually_exclusive() {
-        // The five wire shapes that share the duplex channel must never parse
-        // as one another, so the read loop can discriminate by trying each.
+        // Worker, developer and handshake frames stay distinct; daemon events
+        // and retired pill commands must never parse as worker calls.
         let host_req = serde_json::to_string(&HostFrame::Request(ClientRequest {
             id: 1,
             method: "log.info".into(),
@@ -226,18 +225,17 @@ mod tests {
         .unwrap();
         let event =
             serde_json::to_string(&crate::DaemonEvent::RecordingStopped { session_id: 1 }).unwrap();
-        let action = serde_json::to_string(&crate::PillAction::PromptRecord).unwrap();
+        let retired_action = r#"{"action":"prompt_record"}"#;
         let hello = r#"{"token":"abc"}"#.to_string();
 
         // A HostFrame is nothing else.
         assert!(serde_json::from_str::<crate::DaemonEvent>(&host_req).is_err());
-        assert!(serde_json::from_str::<crate::PillAction>(&host_req).is_err());
         assert!(serde_json::from_str::<ClientHello>(&host_req).is_err());
         assert!(serde_json::from_str::<HostFrame>(&host_callres).is_ok());
 
         // …and nothing else is a HostFrame.
         assert!(serde_json::from_str::<HostFrame>(&event).is_err());
-        assert!(serde_json::from_str::<HostFrame>(&action).is_err());
+        assert!(serde_json::from_str::<HostFrame>(retired_action).is_err());
         assert!(serde_json::from_str::<HostFrame>(&hello).is_err());
 
         let dev = serde_json::to_string(&DevControlFrame::DevReload {
@@ -248,6 +246,5 @@ mod tests {
         assert!(serde_json::from_str::<DevControlFrame>(&dev).is_ok());
         assert!(dev.contains("requestId") && dev.contains("extensionId"));
         assert!(serde_json::from_str::<HostFrame>(&dev).is_err());
-        assert!(serde_json::from_str::<crate::PillAction>(&dev).is_err());
     }
 }

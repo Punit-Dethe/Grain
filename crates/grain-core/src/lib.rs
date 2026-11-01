@@ -65,5 +65,5 @@ pub mod execution;
 pub mod tool_schema;
 
 pub use context::{settings_file_exists, AppContext};
-pub use grain_sdk::{DaemonEvent, PillAction, SessionMode};
+pub use grain_sdk::{DaemonEvent, SessionMode};
 pub use settings::{AppSettings, PostProcessProvider, SecretMap};

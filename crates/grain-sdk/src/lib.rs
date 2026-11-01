@@ -7,8 +7,7 @@
 //! lets the contract be versioned independently of Grain's internals.
 //!
 //! Contents:
-//! - [`event`] — the typed [`DaemonEvent`] stream the core broadcasts, and the
-//!   legacy [`PillAction`] wire types (the native reverse handler is retired).
+//! - [`event`] — the typed [`DaemonEvent`] stream for Grain-owned surfaces.
 //! - [`protocol`] — the authenticated-connection handshake for the local
 //!   WebSocket ([`ClientHello`] / [`ServerWelcome`], SPEC §7.1): identity is
 //!   bound to the *channel* by a per-client token presented in the first
@@ -35,9 +34,7 @@ pub use distribution::{
     Trust, CATEGORIES, DISTRIBUTION_SPEC, EXPIRY_CLOCK_SKEW_SECS,
 };
 pub use error::{HostError, HostErrorCode};
-pub use event::{
-    DaemonEvent, OverlayPosition, PillAction, ResolvedTheme, SessionMode, PILL_ICON_PX,
-};
+pub use event::{DaemonEvent, OverlayPosition, ResolvedTheme, SessionMode, PILL_ICON_PX};
 pub use manifest::{
     png_dimensions, validate_extension_id, validate_extension_version, AuthenticationDecl,
     AuthenticationType, Contributes, ExtensionManifest, GrainPack, PackPayloads, RedirectMethod,

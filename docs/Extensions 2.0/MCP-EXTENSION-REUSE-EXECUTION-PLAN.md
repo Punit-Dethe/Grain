@@ -13,11 +13,14 @@ passes all four jobs, including the real Linux native backend (696 tests passed 
 public-release/operator scope; earlier inventories below are historical.
 
 **Deeper audit, 1 November:** the follow-up in session 6 of that continuity log
-finds inert worker-residency state, unused Studio cards/CSS, unused SDK error
+found inert worker-residency state, unused Studio cards/CSS, unused SDK error
 vocabulary, stale references and obsolete core packages in the separate registry
-checkout. Functional removal remains verified; these residual cleanup items are
-open. First-party snippets/context/Agent image capture and current tool/MCP
-connections are live product behavior and remain intentional.
+checkout. The user authorized their removal; session 7 implements it, including
+dead event-activation/pill wire DTOs. Registry source cleanup is pushed on
+`codex/retire-legacy-extension-sources` at `e858d50`, preserving the current signed
+GitHub/Notion catalogue. Use the continuity log for final verification.
+First-party snippets/context/Agent image capture and current tool/MCP connections
+are live product behavior and remain intentional.
 
 ## Active forward work order — 15 October 2026
 
