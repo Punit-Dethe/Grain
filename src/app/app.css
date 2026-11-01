@@ -1419,12 +1419,12 @@ html[data-theme="light"] .hero {
   padding: 20px;
   border: 1px solid rgba(255, 255, 255, 0.16);
   border-radius: 16px;
-  background: #202020;
+  background: var(--bg-0);
 }
 
 html[data-theme="light"] .hero-start {
   border-color: rgba(255, 255, 255, 0.7);
-  background: #fcfcfb;
+  background: var(--bg-1);
 }
 
 .hero-start .overview-shortcut-strip {
