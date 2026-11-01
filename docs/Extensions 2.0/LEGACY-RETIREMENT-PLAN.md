@@ -700,3 +700,18 @@ model decision remain as listed above. Do not revisit M7.
 - Verification: full workspace strict Clippy now passes; full frontend ESLint and
   tsc pass; all 101 Vitest tests and checker/CLI tests pass. Scoped formatting and
   whitespace pass. No runtime/visual behavior changed.
+
+**1 November 2026, session 5 continued: reproducible Windows backend tests (P2).**
+
+- Reproduced the maintained Cargo runner's STATUS_ENTRYPOINT_NOT_FOUND launch
+  failure after its mt.exe mutation. It now runs a unique owned copy outside
+  deps with the checked-in Common Controls sidecar and native DLL search paths,
+  restores its environment, preserves the child exit code and removes only its
+  staging directory. Cargo's cached executable is never rewritten.
+- Added four standard unittest regressions using actual tiny Rust test binaries:
+  filter/argument forwarding, failing-test exit 101, non-Tauri passthrough and
+  concurrent staging. They also prove the original binary hash and unrelated
+  sibling directory survive. All four pass, including paths containing spaces.
+- Documented a Cargo array runner configuration in BUILD.md, verified verbatim
+  against all 696 real backend tests / 23 ignored. No local C:/t helper is needed;
+  no staging directory remained. This fixes test infrastructure, not product UI.

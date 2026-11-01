@@ -81,6 +81,32 @@ renderer compatibility; leaving it unset keeps crash protection on.
 
 ## Setup Instructions
 
+### Windows backend tests
+
+Run the real Tauri lib tests through the maintained Cargo runner. It supplies
+Common Controls v6 from an isolated executable copy and cleans that copy after
+each invocation. Cargo's cached binary is unchanged. From the repository root:
+
+```powershell
+$grainRunnerPath = (Resolve-Path scripts/run-rust-test.ps1).Path
+$grainRunnerArgs = ConvertTo-Json -Compress -InputObject @('powershell.exe', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $grainRunnerPath)
+$grainRunnerConfig = "target.x86_64-pc-windows-msvc.runner=$grainRunnerArgs"
+Push-Location src-tauri
+try {
+    cargo test --locked --lib --config $grainRunnerConfig
+} finally {
+    Pop-Location
+}
+```
+
+The array configuration preserves paths containing spaces. Append a test filter
+or `-- --test-threads=1` as needed. Runner regressions, including failure exit
+codes and concurrent cleanup, run with:
+
+```powershell
+py -m unittest discover -s scripts -p test_run_rust_test.py -v
+```
+
 ### 1. Clone the Repository
 
 ```bash
