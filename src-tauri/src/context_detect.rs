@@ -1103,9 +1103,8 @@ pub struct ActiveContext {
     pub app_name: String,
     /// Executable stem, lowercased, no extension — the process-matching key.
     pub exe: String,
-    /// Full executable path, when resolvable. Unlike `exe` (a stem for *matching*),
-    /// this is a *launchable* path — handed to extensions that need an app they
-    /// can actually open. Empty when unavailable.
+    /// Full executable path for the pill's application icon, when resolvable.
+    /// Empty when unavailable; `exe` remains the profile-matching key.
     pub exe_path: String,
     /// The foreground process's AppUserModelID, for a packaged (MSIX / Store)
     /// app. `None` for classic Win32, which is the common case and not a failure.

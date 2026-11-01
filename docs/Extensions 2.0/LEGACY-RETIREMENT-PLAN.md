@@ -35,10 +35,12 @@ real native Linux backend all-target check/library tests. Linux and Windows each
 pass 696 backend tests / 23 existing ignored cases; no test was disabled to clear
 CI. The four Linux path failures in the preceding run are corrected below.
 
-The user-requested deeper audit after P6 found residual cleanup, recorded in
-session 6 below. Do not describe this as zero obsolete code/assets remaining.
-Functional retirement and its production verification passed; the follow-up
-inventory has not been implemented. Separately, remaining
+The user-requested deeper audit after P6 found residual cleanup in session 6.
+Session 7 implements that follow-up while preserving built-in application
+features; local verification passes and fresh hosted verification follows the
+source push. The separate registry cleanup uses an isolated branch from fetched
+current main; its signed catalogue is already tool-only and remains unchanged.
+Separately, remaining
 public-release key custody/recovery, production publishing/source protections,
 the next approved publication's deployment pause and separately deferred live
 provider checks belong to the stabilization/operator work order, not retirement.
@@ -893,3 +895,46 @@ and prior verified behavior are unchanged; the unrelated local bindings.ts edits
 and separate registry worktree are preserved. The earlier claim that nothing at
 all remained to clean was too broad; the functional API removal is confirmed,
 but the residual inventory above remains open.
+
+**1 November 2026, session 7: authorized residual cleanup implementation.**
+
+- The user explicitly authorized removing the remaining extension machinery
+  while preserving built-in snippets, OS context/caret/app detection, Agent image
+  capture and current tool connections. M7 remains excluded. No feature code in
+  those built-in paths or Handy's tree is removed.
+- Removed Worker.resident, its always-false initialization and obsolete reaper
+  exemption, updating all 40 worker test fixtures. Existing pending-call, token,
+  generation, deadline, busy/idle and memory-policy coverage remains. RPC fixtures
+  now use current action names instead of retired transform/session-stage names.
+- Removed dead SDK event-activation tables/capability mapping/tag helpers and
+  their self-only tests after confirming no consumers outside that scaffolding.
+  Removed the always-empty recording extension-owner field from the event,
+  overlay projection and generated binding; kept recording events and built-in
+  icon/capture/Agent behavior. Removed three unused host error codes and their
+  authoring types, and corrected stale extension-setting/prompt/screen comments.
+- Deleted the unimported Studio extension card module and 87 unused card,
+  configure-popup, recommendation and prompt-contribution CSS selectors. A PostCSS
+  before/after comparison proved all 1,003 retained selector/declaration/ancestor
+  tuples unchanged. No visual design or real-app replica/harness was introduced.
+- The worker no longer forwards the retired net.fetch secret option. It rejects
+  the option locally rather than silently issuing an anonymous request; the host
+  still independently rejects raw secret parameters. A production-shim regression
+  verifies zero outgoing requests for rejected values and successful current
+  auth:true request/reply handling. Existing denial tests retain obsolete names.
+- Refreshed the separate registry's remote refs before choosing a base. Current
+  main is bcaa7cf and serves current GitHub/Notion MCP entries, unlike the stale
+  dirty registry/trusted-provenance checkout inspected in session 6. Created
+  C:/Projects/Grain/grain-registry-retirement on
+  codex/retire-legacy-extension-sources from origin/main. Removed the four obsolete
+  core source packages and generated static site, updated source-example docs.
+  Signed v1 data, publication proofs, GitHub/Notion submissions, ownership and all
+  CI/publishing tooling are byte-identical to that base. No publication/signing or
+  main merge is performed; the original registry checkout remains untouched.
+- Local verification: Windows backend 696 pass / 23 existing ignored;
+  workspace strict Clippy and all-target tests pass (SDK 42 after removing two
+  dead activation-helper tests); frontend lint/tsc/102 Vitest tests/production
+  build pass. Scoped Prettier/rustfmt, upstream policy, worktree ratchet and UI
+  settings parity pass. Evidence: C:/t/logs/s7-app-tests.txt, s7-app-check.txt,
+  s7-workspace-clippy.txt and s7-workspace-tests.txt. Hosted verdict follows.
+- Existing unrelated generated-binding edits are preserved. Only the required
+  owner-field removal is staged from that file; no unrelated content is included.

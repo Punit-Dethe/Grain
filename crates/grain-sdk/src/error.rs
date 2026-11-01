@@ -2,26 +2,19 @@
 
 use serde::{Deserialize, Serialize};
 
-/// Stable machine-readable error vocabulary. Codes are additive: existing
-/// variants are never repurposed, so extension recovery logic stays valid.
+/// Machine-readable failures emitted by the current host tool API.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum HostErrorCode {
     #[serde(rename = "E_CAPABILITY_DENIED")]
     CapabilityDenied,
     #[serde(rename = "E_TIMEOUT")]
     Timeout,
-    #[serde(rename = "E_SESSION_BUSY")]
-    SessionBusy,
     #[serde(rename = "E_QUOTA")]
     Quota,
     #[serde(rename = "E_RESPONSE_TOO_LARGE")]
     ResponseTooLarge,
-    #[serde(rename = "E_INVALID_MANIFEST")]
-    InvalidManifest,
     #[serde(rename = "E_INVALID_ARGUMENT")]
     InvalidArgument,
-    #[serde(rename = "E_NOT_IMPLEMENTED")]
-    NotImplemented,
     #[serde(rename = "E_UNKNOWN_METHOD")]
     UnknownMethod,
     #[serde(rename = "E_UNAVAILABLE")]
@@ -35,12 +28,9 @@ impl HostErrorCode {
         match self {
             Self::CapabilityDenied => "E_CAPABILITY_DENIED",
             Self::Timeout => "E_TIMEOUT",
-            Self::SessionBusy => "E_SESSION_BUSY",
             Self::Quota => "E_QUOTA",
             Self::ResponseTooLarge => "E_RESPONSE_TOO_LARGE",
-            Self::InvalidManifest => "E_INVALID_MANIFEST",
             Self::InvalidArgument => "E_INVALID_ARGUMENT",
-            Self::NotImplemented => "E_NOT_IMPLEMENTED",
             Self::UnknownMethod => "E_UNKNOWN_METHOD",
             Self::Unavailable => "E_UNAVAILABLE",
             Self::Internal => "E_INTERNAL",

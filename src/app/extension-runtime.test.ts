@@ -7,7 +7,9 @@ type ToolHandler = (...args: unknown[]) => unknown;
 interface ToolApi {
   actions(map: Record<string, ToolHandler>): void;
   storage: { get(key: string): Promise<unknown> };
-  net: { fetch(url: string): Promise<unknown> };
+  net: {
+    fetch(url: string, options?: Record<string, unknown>): Promise<unknown>;
+  };
 }
 
 // Executes the production worker wire shim. No app rendering or alternate UI path.
@@ -52,6 +54,27 @@ function worker() {
 }
 
 describe("tool-only production worker", () => {
+  it("rejects retired secret options locally without sending an anonymous request", async () => {
+    const { grain, socket } = worker();
+    const before = socket.sent.length;
+    for (const secret of ["old-setting", null, undefined]) {
+      await expect(
+        grain.net.fetch("https://api.example.com", { secret }),
+      ).rejects.toMatchObject({ code: "E_INVALID_ARGUMENT" });
+    }
+    expect(socket.sent).toHaveLength(before);
+
+    const fetch = grain.net.fetch("https://api.example.com", { auth: true });
+    const request = JSON.parse(socket.sent[socket.sent.length - 1]).req;
+    expect(request.method).toBe("net.fetch");
+    expect(request.params.auth).toBe(true);
+    expect(request.params).not.toHaveProperty("secret");
+    socket.onmessage?.({
+      data: JSON.stringify({ res: { id: request.id, ok: { status: 200 } } }),
+    });
+    await expect(fetch).resolves.toEqual({ status: 200 });
+  });
+
   it("preserves supported tagged results even when their payload is null or empty", async () => {
     const { grain, call } = worker();
     for (const result of [

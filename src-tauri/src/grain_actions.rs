@@ -69,14 +69,7 @@ pub(crate) fn emit_session_started(app: &AppHandle, session_id: u64, mode: Sessi
     // (which resolves its context at paste time, after every switch).
     crate::surface_watch::start(app);
     crate::prompt_record::capture_started(app, session_id);
-    crate::bridge::emit(
-        app,
-        DaemonEvent::RecordingStarted {
-            session_id,
-            mode,
-            owner: None,
-        },
-    );
+    crate::bridge::emit(app, DaemonEvent::RecordingStarted { session_id, mode });
 }
 
 /// [`next_session_id`] + [`emit_session_started`] — the whole pill-start step for

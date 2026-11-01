@@ -36,8 +36,7 @@ pub use distribution::{
 };
 pub use error::{HostError, HostErrorCode};
 pub use event::{
-    daemon_event_capability, DaemonEvent, OverlayPosition, PillAction, ResolvedTheme, SessionMode,
-    DAEMON_EVENT_VARIANTS, PILL_ICON_PX,
+    DaemonEvent, OverlayPosition, PillAction, ResolvedTheme, SessionMode, PILL_ICON_PX,
 };
 pub use manifest::{
     png_dimensions, validate_extension_id, validate_extension_version, AuthenticationDecl,

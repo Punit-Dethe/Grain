@@ -131,8 +131,8 @@ hf-hub = { git = "https://github.com/cjpais/hf-hub", branch = "cancellable-downl
 handy-keys = "0.3.4"
 ferrous-opencc = "0.2.3"
 clap = { version = "4", features = ["derive"] }
-# [GRAIN] `serde_json`: an extension setting's value is polymorphic by kind, so
-# it crosses as `JsonValue` rather than a JSON string the frontend must parse.
+# [GRAIN] `serde_json`: tool schemas and structured results cross command bindings
+# as `JsonValue` rather than JSON strings the frontend must parse.
 specta = { version = "=2.0.0-rc.22", features = ["serde_json"] }
 specta-typescript = "0.0.9"
 tauri-specta = { version = "=2.0.0-rc.21", features = ["derive", "typescript"] }

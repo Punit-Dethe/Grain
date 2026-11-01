@@ -107,7 +107,7 @@ mod tests {
             ClientIdentity {
                 id: "com.example.a".into(),
                 role: ClientRole::Worker,
-                caps: CapabilitySet::Named(["events:sessions".to_string()].into_iter().collect()),
+                caps: CapabilitySet::Named(["storage".to_string()].into_iter().collect()),
             },
         );
         reg
@@ -133,7 +133,7 @@ mod tests {
         assert_eq!(id.id, "com.example.a");
         assert_eq!(
             id.caps,
-            CapabilitySet::Named(["events:sessions".to_string()].into_iter().collect())
+            CapabilitySet::Named(["storage".to_string()].into_iter().collect())
         );
     }
 

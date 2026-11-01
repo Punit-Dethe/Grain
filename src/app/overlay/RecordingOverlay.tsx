@@ -28,7 +28,6 @@ const empty: OverlayPresentation = {
   agent: false,
   prompt_recording: false,
   app_icon_enabled: true,
-  owner: null,
   icon: null,
   notice: null,
   followup: null,
@@ -425,7 +424,7 @@ export function RecordingOverlay() {
   const listeningRow = (showTimer: boolean) => (
     <div className="sbase">
       {(presentation.app_icon_enabled || showTimer) && (
-        <div className="sbase-l" title={presentation.owner || undefined}>
+        <div className="sbase-l">
           {presentation.app_icon_enabled && presentation.icon ? (
             <img src={presentation.icon} alt="" />
           ) : (

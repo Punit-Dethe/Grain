@@ -496,8 +496,7 @@ fn validate_action_utterances(
                 trimmed.len()
             ));
         }
-        // Same equivalence rule as prompt-layer text: what the reviewer read
-        // must be what the router matches.
+        // What the reviewer read must be what the router matches.
         if let Some(bad) = trimmed.chars().find(|c| is_deceptive_char(*c)) {
             return Err(format!(
                 "action '{id}' utterance contains a control or direction-override character \
@@ -1009,9 +1008,8 @@ mod tests {
 
     #[test]
     fn an_action_needs_a_runtime_to_perform_it() {
-        // Unlike a prompt layer, which is text the host renders, an action has
-        // to be called. A pack that wins a route and has nothing to call is a
-        // dead end the user cannot diagnose.
+        // Only scripted tool packages have a callable runtime. Data-only pack
+        // tiers are not part of the current contract.
         assert!(pack(&format!(
             r#"{{"manifest":{{"id":"com.x.p","name":"P","version":"1.0","tier":"pack",
                 "contributes":{{"actions":{NEXT_TRACK}}}}}}}"#
@@ -1150,8 +1148,7 @@ mod tests {
 
     #[test]
     fn an_utterance_may_not_hide_what_a_reviewer_read() {
-        // Same equivalence rule as prompt-layer text: what the reviewer read
-        // must be what the router matches.
+        // What the reviewer read must be what the router matches.
         let bidi = format!(
             r#"[{{"id":"n","title":"Next","risk":"safe",
                  "utterances":["skip{}this"]}}]"#,

@@ -145,13 +145,20 @@ export const GRAIN_RUNTIME_JS = `(function () {
     net: {
       fetch: function (url, options) {
         options = options || {};
+        if (Object.prototype.hasOwnProperty.call(options, "secret")) {
+          return Promise.reject(asGrainError({
+            code: "E_INVALID_ARGUMENT",
+            message: "'secret' is not supported; declare authentication and pass 'auth: true'",
+            hint: "Use the extension's declared OAuth account.",
+            docs: ""
+          }));
+        }
         var request = {
           url: String(url),
           method: options.method == null ? "GET" : String(options.method),
           headers: options.headers == null ? {} : options.headers
         };
         if (options.body != null) request.body = String(options.body);
-        if (options.secret != null) request.secret = options.secret;
         if (options.auth === true) request.auth = true;
         return req("net.fetch", request);
       }

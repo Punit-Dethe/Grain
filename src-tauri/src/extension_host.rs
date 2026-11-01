@@ -132,8 +132,6 @@ struct Worker {
     /// Manifest/source and registry identity actually used by this worker.
     call_digest: Option<String>,
     execution_generation: u64,
-    /// `onStartup` workers are never reaped for idleness.
-    resident: bool,
     /// Consecutive over-budget heap samples for this worker generation.
     memory_strikes: u32,
     /// Epoch seconds of the last user call/connection; maintenance never renews it.
@@ -231,8 +229,7 @@ impl Workers {
     }
 
     fn is_idle(worker: &Worker, now: u64, idle_secs: u64) -> bool {
-        !worker.resident
-            && now.saturating_sub(worker.last_activity.load(Ordering::Relaxed)) > idle_secs
+        now.saturating_sub(worker.last_activity.load(Ordering::Relaxed)) > idle_secs
             && worker
                 .conn
                 .as_ref()
@@ -457,8 +454,7 @@ impl Workers {
         }
     }
 
-    /// Ids of workers idle longer than `idle_secs` with no pending calls and not
-    /// resident — the reaper's kill list.
+    /// Ids of workers idle longer than `idle_secs` with no pending calls.
     fn idle_victims(&self, now: u64, idle_secs: u64) -> Vec<(String, String)> {
         self.map
             .lock()
@@ -520,8 +516,7 @@ impl Workers {
             .collect()
     }
 
-    /// Stop waiting for every host-initiated call to this worker. Session
-    /// cancellation uses this to return immediately; late replies are ignored.
+    /// Test seam for cancelling queued tool calls; late replies are ignored.
     #[cfg(test)]
     fn cancel_pending(&self, ext_id: &str, reason: &str) {
         let pending = self
@@ -1043,10 +1038,6 @@ fn spawn_worker(
             // same server-side filter that gates the pill now gates this worker.
             let token =
                 crate::events_server::mint_worker_token(ext_id, caps.iter().cloned().collect());
-            // The declaration alone is not authority. Every spawn path (including a
-            // shortcut/event that happens to wake this worker) re-checks the grant so a
-            // stale/tampered registry cannot turn a denied worker into an immortal one.
-            let resident = false;
             let dev_source = dev_project.and_then(|project| {
                 project.entry_path.map(|entry| DevSource {
                     root: project.root,
@@ -1069,7 +1060,6 @@ fn spawn_worker(
                     token: token.clone(),
                     call_digest: Some(call_digest),
                     execution_generation: record.execution_generation,
-                    resident,
                     memory_strikes: 0,
                     last_activity: Arc::new(AtomicU64::new(now_secs())),
                     conn: None,
@@ -1084,7 +1074,7 @@ fn spawn_worker(
                 entry_source: pack.manifest.entry_source.clone(),
                 caps,
             };
-            log::info!("[ext:{ext_id}] life worker spawned (resident={resident})");
+            log::info!("[ext:{ext_id}] life worker spawned");
             let creation = sup.begin();
             if sup.ready {
                 let _ = app.emit_to(
@@ -1400,7 +1390,7 @@ pub fn detach_connection(ext_id: &str, token: &str) {
     kill_worker_inner(ext_id, "connection closed", Some(token), false);
 }
 
-/// Route a `HostCallResult` back to its awaiter (the transform/session caller).
+/// Route a `HostCallResult` back to its tool-call or memory-sample awaiter.
 pub fn resolve_call_result(ext_id: &str, token: &str, call_id: u64, result: Result<Value, String>) {
     if let Some(host) = HOST.get() {
         host.workers.resolve(ext_id, token, call_id, result);
@@ -2137,7 +2127,7 @@ mod tests {
     fn pending_capacity_preserves_existing_calls_and_never_queues_fifth() {
         rt().block_on(async {
             let workers = Workers::new();
-            workers.insert("tools", worker(now_secs(), false));
+            workers.insert("tools", worker(now_secs()));
             let (tx, mut rx) = mpsc::channel(WORKER_OUTBOUND_CAPACITY);
             workers.attach("tools", "tok", tx).unwrap();
             let mut queued = Vec::new();
@@ -2189,7 +2179,7 @@ mod tests {
     fn full_outbound_queue_refuses_without_pending_leak_and_closes_reliably() {
         rt().block_on(async {
             let workers = Workers::new();
-            workers.insert("tools", worker(now_secs(), false));
+            workers.insert("tools", worker(now_secs()));
             let (tx, mut rx) = mpsc::channel(WORKER_OUTBOUND_CAPACITY);
             workers.attach("tools", "tok", tx.clone()).unwrap();
             let mut closed = workers.connection_closed("tools", "tok").unwrap();
@@ -2236,7 +2226,7 @@ mod tests {
     fn duplicate_socket_cannot_replace_current_worker_connection() {
         rt().block_on(async {
             let workers = Workers::new();
-            workers.insert("tools", worker(now_secs(), false));
+            workers.insert("tools", worker(now_secs()));
             let (tx, mut rx) = mpsc::channel(WORKER_OUTBOUND_CAPACITY);
             workers.attach("tools", "tok", tx).unwrap();
             let (duplicate, mut duplicate_rx) = mpsc::channel(WORKER_OUTBOUND_CAPACITY);
@@ -2306,12 +2296,11 @@ mod tests {
         }
     }
 
-    fn worker(last_activity: u64, resident: bool) -> Worker {
+    fn worker(last_activity: u64) -> Worker {
         Worker {
             token: "tok".into(),
             call_digest: None,
             execution_generation: 0,
-            resident,
             memory_strikes: 0,
             last_activity: Arc::new(AtomicU64::new(last_activity)),
             conn: None,
@@ -2325,7 +2314,7 @@ mod tests {
         let mut record = record_for(&pack);
         let old_digest =
             grain_core::extensions::native_call_fingerprint(&record, &pack.manifest).unwrap();
-        let mut warm = worker(0, false);
+        let mut warm = worker(0);
         warm.execution_generation = record.execution_generation;
         warm.call_digest = Some(old_digest.clone());
         assert!(warm.matches_native_call(&record, &old_digest));
@@ -2350,11 +2339,11 @@ mod tests {
     #[test]
     fn host_rpc_token_cannot_borrow_a_replacement_workers_generation() {
         let workers = Workers::new();
-        let mut original = worker(0, false);
+        let mut original = worker(0);
         original.execution_generation = 10;
         workers.insert("account", original);
         assert_eq!(workers.generation_for_token("account", "tok"), Some(10));
-        let mut replacement = worker(0, false);
+        let mut replacement = worker(0);
         replacement.token = "new-token".into();
         replacement.execution_generation = 20;
         workers.insert("account", replacement);
@@ -2383,7 +2372,7 @@ mod tests {
         rt().block_on(async {
             let workers = Workers::new();
             let (out_tx, mut out_rx) = mpsc::channel::<Message>(WORKER_OUTBOUND_CAPACITY);
-            workers.insert("com.x.a", worker(now_secs(), false));
+            workers.insert("com.x.a", worker(now_secs()));
             workers.attach("com.x.a", "tok", out_tx).unwrap();
 
             // The fake worker: read the outbound HostCall, answer via resolve().
@@ -2395,7 +2384,7 @@ mod tests {
                 };
                 let call_id = match serde_json::from_str::<HostFrame>(&txt).unwrap() {
                     HostFrame::Call(c) => {
-                        assert_eq!(c.method, "transform");
+                        assert_eq!(c.method, "action");
                         assert_eq!(c.params, json!({ "text": "hi" }));
                         c.call_id
                     }
@@ -2407,7 +2396,7 @@ mod tests {
             let (res, _) = tokio::join!(
                 workers.call(
                     "com.x.a",
-                    "transform",
+                    "action",
                     json!({ "text": "hi" }),
                     Duration::from_secs(2),
                 ),
@@ -2424,18 +2413,18 @@ mod tests {
             // Not connected → immediate error, no hang.
             assert_eq!(
                 workers
-                    .call("ghost", "transform", json!({}), Duration::from_millis(20))
+                    .call("ghost", "action", json!({}), Duration::from_millis(20))
                     .await
                     .unwrap_err(),
                 "worker not connected"
             );
             // Connected but silent → the deadline fires (never blocks the paste).
             let (out_tx, _keep) = mpsc::channel::<Message>(WORKER_OUTBOUND_CAPACITY);
-            workers.insert("com.x.a", worker(now_secs(), false));
+            workers.insert("com.x.a", worker(now_secs()));
             workers.attach("com.x.a", "tok", out_tx).unwrap();
             assert_eq!(
                 workers
-                    .call("com.x.a", "transform", json!({}), Duration::from_millis(20))
+                    .call("com.x.a", "action", json!({}), Duration::from_millis(20))
                     .await
                     .unwrap_err(),
                 "deadline exceeded"
@@ -2448,23 +2437,23 @@ mod tests {
         rt().block_on(async {
             let workers = Workers::new();
             let (out_tx, mut out_rx) = mpsc::channel::<Message>(WORKER_OUTBOUND_CAPACITY);
-            workers.insert("com.x.a", worker(now_secs(), false));
+            workers.insert("com.x.a", worker(now_secs()));
             workers.attach("com.x.a", "tok", out_tx).unwrap();
 
             let cancel = async {
-                out_rx.recv().await.expect("stage call emitted");
-                workers.cancel_pending("com.x.a", "session cancelled");
+                out_rx.recv().await.expect("tool call emitted");
+                workers.cancel_pending("com.x.a", "tool cancelled");
             };
             let (result, _) = tokio::join!(
                 workers.call(
                     "com.x.a",
-                    "sessionStage",
+                    "action",
                     json!({ "text": "keep me" }),
                     Duration::from_secs(30),
                 ),
                 cancel,
             );
-            assert_eq!(result.unwrap_err(), "session cancelled");
+            assert_eq!(result.unwrap_err(), "tool cancelled");
         });
     }
 
@@ -2478,7 +2467,7 @@ mod tests {
                 let workers = Workers::new();
                 let (out_tx, mut out_rx) = mpsc::channel(WORKER_OUTBOUND_CAPACITY);
                 if mode != "absent" {
-                    workers.insert("tools", worker(now_secs(), false));
+                    workers.insert("tools", worker(now_secs()));
                     workers.attach("tools", "tok", out_tx).unwrap();
                 }
                 if mode == "closed" {
@@ -2598,7 +2587,7 @@ mod tests {
             let digest =
                 grain_core::extensions::native_call_fingerprint(&record, &pack.manifest).unwrap();
             let workers = Workers::new();
-            workers.insert(&record.id, worker(now_secs(), false));
+            workers.insert(&record.id, worker(now_secs()));
             let (out_tx, mut out_rx) = mpsc::channel(WORKER_OUTBOUND_CAPACITY);
             workers.attach(&record.id, "tok", out_tx).unwrap();
             for arguments in [
@@ -2728,7 +2717,7 @@ mod tests {
                 )
                 .unwrap();
                 let workers = Workers::new();
-                let mut spawned = worker(now_secs(), false);
+                let mut spawned = worker(now_secs());
                 spawned.call_digest = Some(if mode == "source_worker" {
                     "old-source".into()
                 } else {
@@ -2746,7 +2735,7 @@ mod tests {
                         registry.set_enabled(&pack.manifest.id, true).unwrap();
                     }
                     "replaced" => {
-                        let mut replacement = worker(now_secs(), false);
+                        let mut replacement = worker(now_secs());
                         replacement.token = "replacement".into();
                         workers.insert(&pack.manifest.id, replacement);
                     }
@@ -2843,7 +2832,7 @@ mod tests {
                         );
                         assert!(!dispatched.load(Ordering::Acquire));
                         assert!(out_rx.try_recv().is_err());
-                        let mut replacement = worker(now_secs(), false);
+                        let mut replacement = worker(now_secs());
                         replacement.token = "fresh".into();
                         replacement.call_digest = Some(current_digest.clone());
                         workers.insert(&pack.manifest.id, replacement);
@@ -2963,7 +2952,7 @@ mod tests {
                 "success",
             ] {
                 let workers = Workers::new();
-                workers.insert("tools", worker(now_secs(), false));
+                workers.insert("tools", worker(now_secs()));
                 let (out_tx, mut out_rx) = mpsc::channel(WORKER_OUTBOUND_CAPACITY);
                 workers.attach("tools", "tok", out_tx).unwrap();
                 let mut owner = NativeCallOwner::new(|| {
@@ -2991,7 +2980,7 @@ mod tests {
                 match mode {
                     "cancel" | "replacement" => {
                         if mode == "replacement" {
-                            let mut replacement = worker(now_secs(), false);
+                            let mut replacement = worker(now_secs());
                             replacement.token = "new".into();
                             workers.insert("tools", replacement);
                         }
@@ -3039,7 +3028,7 @@ mod tests {
         rt().block_on(async {
             for replace in [false, true] {
                 let workers = Arc::new(Workers::new());
-                workers.insert("tools", worker(now_secs(), false));
+                workers.insert("tools", worker(now_secs()));
                 let (out_tx, mut out_rx) = mpsc::channel(WORKER_OUTBOUND_CAPACITY);
                 workers.attach("tools", "tok", out_tx).unwrap();
                 let owned = workers.clone();
@@ -3073,7 +3062,7 @@ mod tests {
                     .clone();
                 assert_eq!(pending.lock().unwrap().len(), 1);
                 if replace {
-                    let mut replacement = worker(now_secs(), false);
+                    let mut replacement = worker(now_secs());
                     replacement.token = "replacement".into();
                     workers.insert("tools", replacement);
                 }
@@ -3096,7 +3085,7 @@ mod tests {
         rt().block_on(async {
             for replace in [false, true] {
                 let workers = Workers::new();
-                workers.insert("tools", worker(now_secs(), false));
+                workers.insert("tools", worker(now_secs()));
                 let (out_tx, mut out_rx) = mpsc::channel(WORKER_OUTBOUND_CAPACITY);
                 workers.attach("tools", "tok", out_tx).unwrap();
                 let pending = workers
@@ -3128,7 +3117,7 @@ mod tests {
                 let close = async {
                     assert!(matches!(out_rx.recv().await, Some(Message::Text(_))));
                     if replace {
-                        let mut replacement = worker(now_secs(), false);
+                        let mut replacement = worker(now_secs());
                         replacement.token = "new".into();
                         workers.insert("tools", replacement);
                     }
@@ -3155,11 +3144,10 @@ mod tests {
     }
 
     #[test]
-    fn reaper_picks_only_stale_free_nonresident_workers() {
+    fn reaper_picks_only_stale_free_workers() {
         let workers = Workers::new();
-        workers.insert("stale", worker(0, false)); // ancient
-        workers.insert("fresh", worker(now_secs(), false)); // just active
-        workers.insert("resident", worker(0, true)); // never reaped
+        workers.insert("stale", worker(0)); // ancient
+        workers.insert("fresh", worker(now_secs())); // just active
         let victims = workers.idle_victims(now_secs(), IDLE_REAP_SECS);
         assert_eq!(victims, vec![("stale".to_string(), "tok".to_string())]);
     }
@@ -3168,7 +3156,7 @@ mod tests {
     fn idle_removal_rechecks_pending_activity_and_token_after_selection() {
         rt().block_on(async {
             let workers = Workers::new();
-            workers.insert("tools", worker(0, false));
+            workers.insert("tools", worker(0));
             let (tx, mut rx) = mpsc::channel(WORKER_OUTBOUND_CAPACITY);
             let activity = workers.attach("tools", "tok", tx).unwrap();
             activity.store(0, Ordering::Relaxed);
@@ -3199,7 +3187,7 @@ mod tests {
             assert!(workers
                 .remove_if_idle("tools", "tok", now_secs(), IDLE_REAP_SECS)
                 .is_none());
-            let mut replacement = worker(0, false);
+            let mut replacement = worker(0);
             replacement.token = "new".into();
             workers.insert("tools", replacement);
             assert!(workers
@@ -3250,7 +3238,7 @@ mod tests {
                 });
             }
             let workers = Workers::new();
-            workers.insert("tools", worker(now_secs(), false));
+            workers.insert("tools", worker(now_secs()));
             let (tx, mut rx) = mpsc::channel(WORKER_OUTBOUND_CAPACITY);
             workers.attach("tools", "tok", tx).unwrap();
             let dispatched = AtomicBool::new(false);
@@ -3292,7 +3280,7 @@ mod tests {
     fn maintenance_samples_do_not_keep_an_idle_worker_alive() {
         rt().block_on(async {
             let workers = Workers::new();
-            workers.insert("tools", worker(0, false));
+            workers.insert("tools", worker(0));
             let (tx, mut rx) = mpsc::channel(WORKER_OUTBOUND_CAPACITY);
             let activity = workers.attach("tools", "tok", tx).unwrap();
             activity.store(0, Ordering::Relaxed);
@@ -3345,7 +3333,7 @@ mod tests {
             .unwrap()
             .execution_generation;
         let workers = Workers::new();
-        let mut replacement = worker(now_secs(), false);
+        let mut replacement = worker(now_secs());
         replacement.token = "new".into();
         replacement.execution_generation = generation;
         workers.insert(&pack.manifest.id, replacement);
@@ -3358,7 +3346,7 @@ mod tests {
             "same registry generation, different worker survives"
         );
         assert!(workers.owns_token(&pack.manifest.id, "new"));
-        let mut current = worker(now_secs(), false);
+        let mut current = worker(now_secs());
         current.execution_generation = generation;
         workers.insert(&pack.manifest.id, current);
         registry
@@ -3407,12 +3395,12 @@ mod tests {
         assert!(parse_heap_sample(json!({"supported": true})).is_err());
 
         let workers = Workers::new();
-        workers.insert("leak", worker(0, false));
+        workers.insert("leak", worker(0));
         assert_eq!(workers.record_memory_strike("leak", "tok"), Some(1));
         assert_eq!(workers.record_memory_strike("leak", "tok"), Some(2));
         workers.clear_memory_strikes("leak", "tok");
         assert_eq!(workers.record_memory_strike("leak", "tok"), Some(1));
-        let mut replacement = worker(0, false);
+        let mut replacement = worker(0);
         replacement.token = "replacement".into();
         replacement.memory_strikes = 2;
         workers.insert("leak", replacement);
@@ -3424,7 +3412,7 @@ mod tests {
     #[test]
     fn stale_worker_token_cannot_attach_or_remove_replacement() {
         let workers = Workers::new();
-        let mut replacement = worker(now_secs(), false);
+        let mut replacement = worker(now_secs());
         replacement.token = "new-token".into();
         workers.insert("a", replacement);
         let (out_tx, _out_rx) = mpsc::channel::<Message>(WORKER_OUTBOUND_CAPACITY);
@@ -3438,11 +3426,11 @@ mod tests {
     #[test]
     fn stale_failure_and_queued_spawn_cannot_own_a_replacement_worker() {
         let workers = Workers::new();
-        let mut old = worker(0, false);
+        let mut old = worker(0);
         old.token = "old".into();
         workers.insert("tools", old);
         assert!(workers.owns_token("tools", "old"));
-        let mut replacement = worker(1, false);
+        let mut replacement = worker(1);
         replacement.token = "new".into();
         workers.insert("tools", replacement);
         assert!(!workers.owns_token("tools", "old"));
@@ -3455,7 +3443,7 @@ mod tests {
     fn replaced_worker_cannot_receive_a_waiting_or_prepared_call() {
         rt().block_on(async {
             let workers = Workers::new();
-            let mut replacement = worker(now_secs(), false);
+            let mut replacement = worker(now_secs());
             replacement.token = "new".into();
             workers.insert("tools", replacement);
             let (out_tx, mut out_rx) = mpsc::channel(WORKER_OUTBOUND_CAPACITY);
@@ -3494,7 +3482,7 @@ mod tests {
     fn stale_socket_reply_cannot_resolve_same_call_id_in_replacement() {
         rt().block_on(async {
             let workers = Workers::new();
-            let mut replacement = worker(now_secs(), false);
+            let mut replacement = worker(now_secs());
             replacement.token = "new".into();
             workers.insert("tools", replacement);
             let (out_tx, mut out_rx) = mpsc::channel(WORKER_OUTBOUND_CAPACITY);
@@ -3538,7 +3526,7 @@ mod tests {
     fn dropping_call_future_releases_pending_entry_without_waiting_for_deadline() {
         rt().block_on(async {
             let workers = Workers::new();
-            workers.insert("tools", worker(now_secs(), false));
+            workers.insert("tools", worker(now_secs()));
             let (out_tx, mut out_rx) = mpsc::channel(WORKER_OUTBOUND_CAPACITY);
             workers.attach("tools", "tok", out_tx).unwrap();
             let mut call = Box::pin(workers.call_owned(
@@ -3568,7 +3556,7 @@ mod tests {
     fn closed_worker_channel_releases_pending_entry() {
         rt().block_on(async {
             let workers = Workers::new();
-            workers.insert("tools", worker(now_secs(), false));
+            workers.insert("tools", worker(now_secs()));
             let (out_tx, out_rx) = mpsc::channel(WORKER_OUTBOUND_CAPACITY);
             workers.attach("tools", "tok", out_tx).unwrap();
             drop(out_rx);
@@ -3632,13 +3620,13 @@ mod tests {
     #[test]
     fn supervisor_failure_snapshot_cannot_remove_replacement() {
         let workers = Workers::new();
-        let mut scripted = worker(now_secs(), false);
+        let mut scripted = worker(now_secs());
         scripted.token = "old".into();
         workers.insert("tools", scripted);
         let victims = workers.scripted_tokens();
         assert_eq!(victims, vec![("tools".into(), "old".into())]);
         workers.remove("tools");
-        let mut replacement = worker(now_secs(), false);
+        let mut replacement = worker(now_secs());
         replacement.token = "new".into();
         workers.insert("tools", replacement);
         for (id, token) in victims {
@@ -3654,7 +3642,7 @@ mod tests {
             if generation > 0 {
                 assert!(workers.remove("dev").is_some());
             }
-            let mut next = worker(now_secs(), false);
+            let mut next = worker(now_secs());
             next.token = format!("token-{generation}");
             workers.insert("dev", next);
             assert_eq!(workers.len(), 1);

@@ -24,7 +24,6 @@ pub struct OverlayPresentation {
     pub agent: bool,
     pub prompt_recording: bool,
     pub app_icon_enabled: bool,
-    pub owner: Option<String>,
     pub icon: Option<String>,
     pub notice: Option<String>,
     pub followup: Option<String>,
@@ -329,11 +328,8 @@ fn on_event_main(app: &AppHandle, event: &DaemonEvent) {
     {
         let mut value = ctx.presentation.lock().unwrap();
         match event {
-            DaemonEvent::RecordingStarted {
-                session_id, owner, ..
-            } => {
+            DaemonEvent::RecordingStarted { session_id, .. } => {
                 value.session_id = *session_id;
-                value.owner = owner.clone();
             }
             DaemonEvent::RecordingStopped { session_id } if *session_id == value.session_id => {
                 value.ready = false;

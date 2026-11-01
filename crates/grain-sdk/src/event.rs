@@ -7,78 +7,10 @@
 
 use serde::{Deserialize, Serialize};
 
-/// Serde variant names accepted by `onEvent:<Variant>` activations.
-///
-/// This vocabulary lives beside [`DaemonEvent`] so author tooling and registry
-/// CI do not maintain their own copies of the public event contract.
-// NOTE: hand-maintained, and — unlike `variant_name` below — the compiler will
-// NOT tell you when it is out of date. A variant missing from this list gets
-// `daemon_event_capability(..) == None`, which `events_auth::required_capability`
-// turns into a panic on the first broadcast. Add the name here in the same edit
-// that adds the variant.
-pub const DAEMON_EVENT_VARIANTS: &[&str] = &[
-    "RecordingStarted",
-    "RecordingStopped",
-    "SessionCancelled",
-    "PromptRecordingChanged",
-    "ChunkComplete",
-    "TranscriptionComplete",
-    "ProcessingComplete",
-    "ModelLoading",
-    "ModelLoaded",
-    "ModelUnloaded",
-    "ModelError",
-    "ModelDownloadProgress",
-    "AudioLevel",
-    "ActionChoice",
-    "ActionChoiceClosed",
-    "ActionResult",
-    "AgentFollowupOffer",
-    "AgentFollowupClear",
-    "AgentInputShow",
-    "AgentInputHide",
-    "AgentInputSubmitRequest",
-    "ShowOverlay",
-    "HideOverlay",
-    "PasteError",
-    "PasteMissed",
-    "PasteMissedClear",
-    "PasteCatchDisabled",
-    "OverlayConfig",
-    "ThemeConfig",
-    "AsrStreamText",
-    "AsrPartial",
-    "AsrCommit",
-    "AsrSegmentFinal",
-    "AsrSessionFinal",
-    "AsrError",
-    "ExtensionDisabled",
-    "PillIcon",
-];
-
 /// Edge length of the icon the core hands the pill, in pixels. Fixed so the
 /// wire payload is always exactly `PILL_ICON_PX² × 4` bytes and neither side has
 /// to negotiate a size; the pill scales it down to its fixed application-icon slot.
 pub const PILL_ICON_PX: usize = 64;
-
-/// Capability required to receive (or be woken by) a daemon event variant.
-/// Unknown names return `None` so manifest tooling can reject them rather than
-/// silently assigning a broad capability.
-pub fn daemon_event_capability(variant: &str) -> Option<&'static str> {
-    match variant {
-        "ChunkComplete"
-        | "TranscriptionComplete"
-        | "ProcessingComplete"
-        | "AsrStreamText"
-        | "AsrPartial"
-        | "AsrCommit"
-        | "AsrSegmentFinal"
-        | "AsrSessionFinal" => Some("events:transcripts"),
-        "AudioLevel" => Some("events:audio-levels"),
-        known if DAEMON_EVENT_VARIANTS.contains(&known) => Some("events:sessions"),
-        _ => None,
-    }
-}
 
 /// Where the recording pill anchors on screen. Visibility is OverlayStyle. Lives in the
 /// SDK because it crosses the wire inside [`DaemonEvent::OverlayConfig`]; it is
@@ -97,9 +29,8 @@ pub enum OverlayPosition {
 /// `ThemeMode` preference that produces it.
 ///
 /// Only the resolved answer travels. A surface that received `System` would
-/// have to ask the OS itself, and the pill, the capsule and a sandboxed
-/// extension frame are three different toolkits with three different ways of
-/// getting that wrong.
+/// have to ask the OS itself. The settings window, pill and Agent panel must
+/// paint the same resolved answer.
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone, Copy, PartialEq, Eq, specta::Type)]
 #[serde(rename_all = "lowercase")]
 pub enum ResolvedTheme {
@@ -131,11 +62,6 @@ pub enum DaemonEvent {
     RecordingStarted {
         session_id: u64,
         mode: SessionMode,
-        /// Present only when a third-party extension owns the slow stage. The
-        /// pill renders this host-derived display name; extension code controls
-        /// neither the indicator nor its layout.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        owner: Option<String>,
     },
     RecordingStopped {
         session_id: u64,
@@ -282,7 +208,7 @@ pub enum DaemonEvent {
 
     /// [GRAIN] Which colour scheme every surface should paint. Emitted when the
     /// user changes the preference and when the OS flips under `System`, so the
-    /// pill and extension surfaces restyle without polling.
+    /// settings window, pill and Agent panel restyle without polling.
     ThemeConfig {
         theme: ResolvedTheme,
     },
@@ -336,7 +262,7 @@ pub enum DaemonEvent {
     },
 
     /// [GRAIN] Extension platform (SPEC §3.3): a scripted extension was
-    /// auto-disabled after repeatedly failing its transform deadline (3 strikes).
+    /// disabled after violating the tool worker resource policy.
     /// The Overview UI shows the reason; the user re-enables explicitly.
     ExtensionDisabled {
         id: String,
@@ -357,116 +283,6 @@ pub enum DaemonEvent {
         #[serde(default)]
         rgba: Option<String>,
     },
-}
-
-impl DaemonEvent {
-    /// The serde (externally-tagged) variant name, **without serializing**.
-    ///
-    /// The extension host matches `onEvent:<Variant>` activations against this
-    /// on every broadcast — including `AudioLevel`, which fires many times a
-    /// second while recording — so it must not allocate. Serializing the event
-    /// just to read its tag was measurably the wrong thing.
-    ///
-    /// The match is exhaustive on purpose: adding a variant without naming it
-    /// here is a compile error, never a silently unmatchable activation.
-    pub fn variant_name(&self) -> &'static str {
-        use DaemonEvent::*;
-        match self {
-            RecordingStarted { .. } => "RecordingStarted",
-            RecordingStopped { .. } => "RecordingStopped",
-            SessionCancelled { .. } => "SessionCancelled",
-            PromptRecordingChanged { .. } => "PromptRecordingChanged",
-            ChunkComplete { .. } => "ChunkComplete",
-            TranscriptionComplete { .. } => "TranscriptionComplete",
-            ProcessingComplete { .. } => "ProcessingComplete",
-            ModelLoading { .. } => "ModelLoading",
-            ModelLoaded { .. } => "ModelLoaded",
-            ModelUnloaded => "ModelUnloaded",
-            ModelError { .. } => "ModelError",
-            ModelDownloadProgress { .. } => "ModelDownloadProgress",
-            ThemeConfig { .. } => "ThemeConfig",
-            AudioLevel { .. } => "AudioLevel",
-            ActionChoice { .. } => "ActionChoice",
-            ActionChoiceClosed => "ActionChoiceClosed",
-            ActionResult { .. } => "ActionResult",
-            AgentFollowupOffer { .. } => "AgentFollowupOffer",
-            AgentFollowupClear => "AgentFollowupClear",
-            AgentInputShow { .. } => "AgentInputShow",
-            AgentInputHide => "AgentInputHide",
-            AgentInputSubmitRequest => "AgentInputSubmitRequest",
-            ShowOverlay => "ShowOverlay",
-            HideOverlay => "HideOverlay",
-            PasteError { .. } => "PasteError",
-            PasteMissed { .. } => "PasteMissed",
-            PasteMissedClear => "PasteMissedClear",
-            PasteCatchDisabled => "PasteCatchDisabled",
-            OverlayConfig { .. } => "OverlayConfig",
-            AsrStreamText { .. } => "AsrStreamText",
-            AsrPartial { .. } => "AsrPartial",
-            AsrCommit { .. } => "AsrCommit",
-            AsrSegmentFinal { .. } => "AsrSegmentFinal",
-            AsrSessionFinal { .. } => "AsrSessionFinal",
-            AsrError { .. } => "AsrError",
-            ExtensionDisabled { .. } => "ExtensionDisabled",
-            PillIcon { .. } => "PillIcon",
-        }
-    }
-}
-
-#[cfg(test)]
-mod variant_name_tests {
-    use super::*;
-
-    /// The name must equal serde's own tag, or activations silently never fire.
-    #[test]
-    fn variant_name_matches_the_serde_tag() {
-        let cases = vec![
-            DaemonEvent::RecordingStarted {
-                session_id: 1,
-                mode: SessionMode::Dictation,
-                owner: None,
-            },
-            DaemonEvent::TranscriptionComplete {
-                session_id: 1,
-                text: "x".into(),
-            },
-            DaemonEvent::ModelUnloaded,
-            DaemonEvent::AudioLevel { levels: vec![] },
-            DaemonEvent::ThemeConfig {
-                theme: ResolvedTheme::Dark,
-            },
-        ];
-        for ev in cases {
-            let tag = match serde_json::to_value(&ev).unwrap() {
-                serde_json::Value::String(s) => s,
-                serde_json::Value::Object(m) => m.keys().next().unwrap().clone(),
-                other => panic!("unexpected shape: {other:?}"),
-            };
-            assert_eq!(ev.variant_name(), tag);
-            assert!(daemon_event_capability(&tag).is_some());
-        }
-    }
-
-    #[test]
-    fn event_capability_mapping_distinguishes_payload_classes() {
-        assert_eq!(
-            daemon_event_capability("TranscriptionComplete"),
-            Some("events:transcripts")
-        );
-        assert_eq!(
-            daemon_event_capability("RecordingStarted"),
-            Some("events:sessions")
-        );
-        assert_eq!(
-            daemon_event_capability("AudioLevel"),
-            Some("events:audio-levels")
-        );
-        assert_eq!(
-            daemon_event_capability("AgentInputShow"),
-            Some("events:sessions")
-        );
-        assert_eq!(daemon_event_capability("NotARealEvent"), None);
-    }
 }
 
 /// [GRAIN] The reverse channel: actions the pill sends BACK to the core over the

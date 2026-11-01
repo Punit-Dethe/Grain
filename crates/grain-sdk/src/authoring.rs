@@ -34,12 +34,9 @@ pub const GRAIN_API_TYPESCRIPT: &str = r#"export type JsonValue =
 export type GrainErrorCode =
   | "E_CAPABILITY_DENIED"
   | "E_TIMEOUT"
-  | "E_SESSION_BUSY"
   | "E_QUOTA"
   | "E_RESPONSE_TOO_LARGE"
-  | "E_INVALID_MANIFEST"
   | "E_INVALID_ARGUMENT"
-  | "E_NOT_IMPLEMENTED"
   | "E_UNKNOWN_METHOD"
   | "E_UNAVAILABLE"
   | "E_INTERNAL";

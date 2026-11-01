@@ -186,8 +186,7 @@ mod stop_context_tests {
     }
 }
 
-/// The default single-provider path, shared by ordinary post-processing and
-/// extension completions.
+/// The default single-provider path for ordinary post-processing.
 async fn run_single_provider(
     app: &AppHandle,
     settings: &AppSettings,
