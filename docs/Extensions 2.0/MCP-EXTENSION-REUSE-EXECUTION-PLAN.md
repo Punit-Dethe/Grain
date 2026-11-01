@@ -12,6 +12,13 @@ passes all four jobs, including the real Linux native backend (696 tests passed 
 23 existing ignored). Use that continuity log for final evidence and the separate
 public-release/operator scope; earlier inventories below are historical.
 
+**Deeper audit, 1 November:** the follow-up in session 6 of that continuity log
+finds inert worker-residency state, unused Studio cards/CSS, unused SDK error
+vocabulary, stale references and obsolete core packages in the separate registry
+checkout. Functional removal remains verified; these residual cleanup items are
+open. First-party snippets/context/Agent image capture and current tool/MCP
+connections are live product behavior and remain intentional.
+
 ## Active forward work order — 15 October 2026
 
 Use [PLATFORM-STABILIZATION.md](PLATFORM-STABILIZATION.md) for the current six

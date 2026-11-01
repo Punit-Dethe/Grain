@@ -15,7 +15,7 @@ next unit.
 
 ## Current checkpoint — 1 November 2026
 
-Implementation in scope is complete: Tier 1, M1–M6 and Tier 3, plus the
+The planned functional retirement is verified: Tier 1, M1–M6 and Tier 3, plus the
 embedding, catalogue, API-admission and package-layout/archive follow-ups below.
 The final stamped real-app checkpoint passed 11 cases; both injected negative
 controls failed at the intended assertions, and all seven runs cleaned up.
@@ -35,7 +35,10 @@ real native Linux backend all-target check/library tests. Linux and Windows each
 pass 696 backend tests / 23 existing ignored cases; no test was disabled to clear
 CI. The four Linux path failures in the preceding run are corrected below.
 
-All in-scope implementation and production verification are complete. Remaining
+The user-requested deeper audit after P6 found residual cleanup, recorded in
+session 6 below. Do not describe this as zero obsolete code/assets remaining.
+Functional retirement and its production verification passed; the follow-up
+inventory has not been implemented. Separately, remaining
 public-release key custody/recovery, production publishing/source protections,
 the next approved publication's deployment pause and separately deferred live
 provider checks belong to the stabilization/operator work order, not retirement.
@@ -824,3 +827,69 @@ hosted native verdict remains before recording final production verification.
   M7 remains excluded. Public-release/operator decisions and unrelated settings
   migrations remain outside scope. Existing unrelated src/app/bindings.ts edits
   are preserved and excluded from these commits; no claim is made about them.
+
+**1 November 2026, session 6: deeper retirement audit (read-only source review).**
+
+- The user asked specifically about prompt priority, snippets, OS context,
+  Agent connections, image/OCR/screen access, then expanded the audit to all
+  extension machinery. Used graph architecture/search/dead-code queries first;
+  its stale deleted-file nodes and missing macro call edges required direct
+  tracked-source, command-registration, manifest, runtime, dependency, capability
+  and packaging checks. Graph dead-code suggestions were not treated as proof:
+  worker connection/RPC handlers, registry types and harness snapshots have
+  actual live callers and stay.
+- Confirmed removed from the application: extension prompt contributions and
+  priority arbitration, settings/shortcut/session/surface/companion contracts,
+  ambient activation/transcript access, extension LLM/embedding/matching, generic
+  OS execution/open helpers and capture app/selection/screen text/image APIs.
+  Host methods are allowlisted to log/storage/net/auth; the production worker
+  exposes those plus declared actions. Denial tests deliberately retain old API
+  names and must remain. No OCR engine/module or embedding model dependency was
+  found in the application implementation/build inputs.
+- Intentionally retained first-party behavior: prompt priority (spoken > active
+  profile > main), snippets in the dictation text pipeline, OS focus/caret/app/
+  browser detection, paste verification/icons, Agent's opt-in single-window image,
+  and native/MCP tool connections. The full executable path is used by pill icons;
+  it is not dead just because its comment still describes an extension caller.
+  toggle_seq now orders extension cards rather than prompt arbitration. M7 stays
+  explicitly excluded. Iconless local tool packages and current MCP protocol
+  support are also intentional, not obsolete compatibility to delete.
+
+Residual follow-up inventory (not yet changed):
+
+1. Worker residency scaffolding in src-tauri/src/extension_host.rs: Worker.resident
+   is false at the only production construction site, but is_idle still has the
+   old never-reap exemption; test construction and a resident-worker test retain
+   the retired onStartup model. Remove the flag/exemption and update reaper tests,
+   preserving pending-call/activity/generation ownership checks.
+2. Unimported src/app/extensions/StudioExtensionCard.tsx (both exported card
+   components) and unreferenced Studio extension/recommendation/prompt-layer CSS
+   in src/app/app.css. Confirm each selector and preserve shared/live selectors;
+   this should produce no visual behavior change.
+3. Unemitted SDK host error variants SessionBusy, InvalidManifest and
+   NotImplemented, mirrored in GRAIN_API_TYPESCRIPT. There are no host emitters
+   in the checked source; remove unused vocabulary consistently rather than
+   reserving obsolete names for unpublished clients.
+4. Stale extension-setting/prompt-layer/app-opening references in Cargo.toml,
+   SDK manifest/event comments, context_detect and grain_post_process; worker RPC
+   tests still use fictional transform/sessionStage method names. Keep rejection
+   tests and actual RPC/cancellation coverage. The worker's secret option forwards
+   to an explicit backend rejection, not a surviving secret-resolution workflow;
+   preserve fail-closed behavior if simplifying that adapter.
+5. The separate, ignored grain-extensions registry checkout still tracks four
+   obsolete core package sources: grain.starter-prompts (prompt payload),
+   grain.app-modes (transform/capture/LLM/settings), grain.voice-actions (open/app/
+   capture/settings), and grain.agent-center-layout (pack tier). Its local
+   v1/index.json lists those entries. This is registry/trusted-provenance at
+   2a074ad, not this application branch; it has pre-existing edits/deletions and
+   an untracked example. No registry files, signatures, branches or publication
+   were changed, and no claim is made about current public delivery. Audit and
+   clean the owning registry branch/source/docs/catalogue through its maintained
+   process without overwriting those changes or treating old signed bytes as a
+   current app execution path.
+
+Only this audit/continuity documentation was updated. Application runtime source
+and prior verified behavior are unchanged; the unrelated local bindings.ts edits
+and separate registry worktree are preserved. The earlier claim that nothing at
+all remained to clean was too broad; the functional API removal is confirmed,
+but the residual inventory above remains open.
