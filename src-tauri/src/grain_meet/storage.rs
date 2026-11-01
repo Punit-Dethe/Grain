@@ -39,7 +39,7 @@ pub const CHECKPOINT_SECONDS: u64 = 5;
 const MAX_CHANNELS: u16 = 8;
 const NANOS: u128 = 1_000_000_000;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
 pub enum SessionState {
     /// Capture may still append; unsealed chunks may exist.
     Recording,

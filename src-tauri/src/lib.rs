@@ -1557,6 +1557,17 @@ fn command_bindings() -> Builder<tauri::Wry> {
             commands::history::update_history_limit,
             commands::history::update_recording_retention_period,
             helpers::clamshell::is_laptop,
+            // [GRAIN] Grain Meet.
+            grain_meet::commands::meet_status,
+            grain_meet::commands::meet_list,
+            grain_meet::commands::meet_start_recording,
+            grain_meet::commands::meet_stop_recording,
+            grain_meet::commands::meet_process,
+            grain_meet::commands::meet_cancel_processing,
+            grain_meet::commands::meet_transcript,
+            grain_meet::commands::meet_delete,
+            grain_meet::commands::meet_diarizer_installed,
+            grain_meet::commands::meet_download_diarizer,
         ])
         .events(collect_events![
             grain_update::UpdateAvailable,
@@ -1588,6 +1599,8 @@ fn command_bindings() -> Builder<tauri::Wry> {
             grain_events::RecordingError,
             grain_events::PasteError,
             grain_theme::ThemeChanged,
+            grain_meet::commands::MeetStatusChanged, // [GRAIN]
+            grain_meet::commands::MeetDiarizerProgress, // [GRAIN]
         ])
 }
 

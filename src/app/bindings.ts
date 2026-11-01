@@ -1856,6 +1856,109 @@ async isLaptop() : Promise<Result<boolean, string>> {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
+},
+async meetStatus() : Promise<MeetStatus> {
+    return await TAURI_INVOKE("meet_status");
+},
+/**
+ * List meetings, newest first, recovering any interrupted by a crash.
+ */
+async meetList() : Promise<Result<MeetingSummary[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meet_list") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Start recording the microphone into a new meeting. Returns its id.
+ */
+async meetStartRecording(title: string | null) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meet_start_recording", { title }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Stop the current recording and seal its session.
+ */
+async meetStopRecording() : Promise<Result<MeetingSummary, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meet_stop_recording") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Start processing a recorded meeting in the background.
+ */
+async meetProcess(sessionId: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meet_process", { sessionId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Stop the current processing attempt. Its recording is kept.
+ */
+async meetCancelProcessing() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meet_cancel_processing") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * The newest published transcript of a meeting, if any.
+ */
+async meetTranscript(sessionId: string) : Promise<Result<TranscriptRevision | null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meet_transcript", { sessionId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Delete a meeting's audio and transcripts. Refused while it is in use.
+ */
+async meetDelete(sessionId: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meet_delete", { sessionId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Whether the pinned speaker model is installed.
+ */
+async meetDiarizerInstalled() : Promise<Result<boolean, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meet_diarizer_installed") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Download the pinned speaker model, verifying its size and SHA-256 before
+ * it is installed.
+ */
+async meetDownloadDiarizer() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meet_download_diarizer") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
 }
 }
 
@@ -1868,6 +1971,8 @@ grainOverlayContext: GrainOverlayContext,
 grainOverlayPosition: GrainOverlayPosition,
 hideOverlay: HideOverlay,
 historyUpdatePayload: HistoryUpdatePayload,
+meetDiarizerProgress: MeetDiarizerProgress,
+meetStatusChanged: MeetStatusChanged,
 micLevel: MicLevel,
 modelDeleted: ModelDeleted,
 modelDownloadCancelled: ModelDownloadCancelled,
@@ -1893,6 +1998,8 @@ grainOverlayContext: "grain-overlay-context",
 grainOverlayPosition: "grain-overlay-position",
 hideOverlay: "hide-overlay",
 historyUpdatePayload: "history-update-payload",
+meetDiarizerProgress: "meet-diarizer-progress",
+meetStatusChanged: "meet-status-changed",
 micLevel: "mic-level",
 modelDeleted: "model-deleted",
 modelDownloadCancelled: "model-download-cancelled",
@@ -1940,6 +2047,10 @@ title: string;
  * most important thing on the row.
  */
 confirms: boolean }
+/**
+ * One speaker slot's activity on the meeting clock.
+ */
+export type Activity = { slot: number; start_ns: number; end_ns: number }
 /**
  * [GRAIN] Agent auto-copy policy: which assistant replies are copied to the
  * clipboard automatically as they arrive. `First` (default) mirrors the
@@ -2169,6 +2280,19 @@ agent_input_type_to_expand?: boolean;
  * and grows downward. Default `side`; the center panel is in development.
  */
 agent_panel_position?: AgentPanelPosition }
+export type Attribution = { Speaker: number } |
+/**
+ * Several slots overlap the word without a clear leader.
+ */
+{ Ambiguous: number[] } |
+/**
+ * No credible slot (silence, crosstalk, or a voice too brief to name).
+ */
+"Unassigned" |
+/**
+ * Speaker detection did not run or failed for this track.
+ */
+"Unavailable"
 export type AudioDevice = { index: string; name: string; is_default: boolean }
 export type AuthConnection = { provider_name: string; authorization_host: string; token_host: string; scopes: string[]; api_hosts: string[];
 /**
@@ -2386,6 +2510,20 @@ state: string }
  * account tokens; this never supplies a client secret or callback override.
  */
 export type McpPublicOAuthClient = { clientId: string; issuer: string }
+/**
+ * Diarizer download progress in bytes.
+ */
+export type MeetDiarizerProgress = { downloaded: number; total: number }
+export type MeetStatus = { recording: RecordingStatus | null; processing: ProcessingStatus | null;
+/**
+ * The last processing failure, until the next attempt starts.
+ */
+last_error: string | null }
+/**
+ * Grain Meet state changed; the payload is the full current status.
+ */
+export type MeetStatusChanged = MeetStatus
+export type MeetingSummary = { id: string; title: string; created_unix_ms: number; state: SessionState; duration_ms: number; transcript_revision: number | null }
 export type MicLevel = number[]
 /**
  * The model's files were removed.
@@ -2413,6 +2551,7 @@ export type ModelExtractionCompleted = string
 export type ModelExtractionStarted = string
 export type ModelInfo = { id: string; name: string; description: string; filename: string; source: ModelSource; size_mb: number; is_downloaded: boolean; is_downloading: boolean; partial_size: number; accuracy_score: number; speed_score: number; supports_translation: boolean; is_recommended: boolean; supported_languages: string[]; supports_language_selection: boolean; is_custom: boolean; supports_streaming: boolean; supports_language_detection: boolean }
 export type ModelLoadStatus = { is_loading: boolean; is_loaded: boolean; current_model: string | null }
+export type ModelRef = { file: string; arch: string; variant: string; backend: string }
 /**
  * Where a model comes from and how Handy obtains it — the routing discriminant
  * for downloading and on-disk resolution.
@@ -2524,6 +2663,7 @@ enabled?: boolean }
  * model map (model names are not secret).
  */
 export type PpPoolView = { fallback_enabled: boolean; providers: PostProcessProvider[]; selected_provider_id: string; configured_provider_ids: string[]; providers_with_keys: string[]; models: Partial<{ [key in string]: string }> }
+export type ProcessingStatus = { session_id: string; stage: Stage }
 /**
  * A recording could not start or could not finish. Mirrors
  * `actions::RecordingErrorEvent`.
@@ -2531,6 +2671,11 @@ export type PpPoolView = { fallback_enabled: boolean; providers: PostProcessProv
 export type RecordingError = { error_type: string; detail: string | null }
 export type RecordingReady = null
 export type RecordingRetentionPeriod = "never" | "preserve_limit" | "days_3" | "weeks_2" | "months_3"
+export type RecordingStatus = { session_id: string; elapsed_ms: number; recorded_ms: number;
+/**
+ * False while the microphone is not delivering audio.
+ */
+source_active: boolean; error: string | null }
 /**
  * [GRAIN] What to actually paint — the user's `theme` preference already
  * resolved against the OS. Lives in the SDK because it crosses the wire inside
@@ -2538,9 +2683,8 @@ export type RecordingRetentionPeriod = "never" | "preserve_limit" | "days_3" | "
  * `ThemeMode` preference that produces it.
  *
  * Only the resolved answer travels. A surface that received `System` would
- * have to ask the OS itself, and the pill, the capsule and a sandboxed
- * extension frame are three different toolkits with three different ways of
- * getting that wrong.
+ * have to ask the OS itself. The settings window, pill and Agent panel must
+ * paint the same resolved answer.
  */
 export type ResolvedTheme = "light" | "dark"
 /**
@@ -2584,6 +2728,15 @@ uncovered_bindings: string[];
  * warning banner appears and explains why recording refused.
  */
 recorder_blocked: boolean }
+export type SessionState =
+/**
+ * Capture may still append; unsealed chunks may exist.
+ */
+"Recording" |
+/**
+ * Every chunk is sealed; the recording is complete or recovered.
+ */
+"Recorded"
 export type ShortcutBinding = { id: string; name: string; description: string; default_binding: string; current_binding: string }
 export type ShowOverlay = string
 /**
@@ -2594,6 +2747,19 @@ export type ShowOverlay = string
  */
 export type Snippet = { id: string; trigger: string; replacement: string; enabled?: boolean }
 export type SoundTheme = "marimba" | "pop" | "custom"
+export type Speaker = {
+/**
+ * Stable within a revision: `t{track}-s{slot}`.
+ */
+id: string; track: number; slot: number;
+/**
+ * Anonymous label, numbered across the meeting.
+ */
+label: string }
+/**
+ * The phase an attempt is in, for progress display.
+ */
+export type Stage = "Preparing" | "IdentifyingSpeakers" | "Transcribing" | "Publishing"
 /**
  * One installed extension's square listing icon reference (existing API name).
  */
@@ -2718,6 +2884,33 @@ export type ThemeMode = "system" | "light" | "dark"
  * immediately *and* show the right radio button without a second round trip.
  */
 export type ThemeState = { mode: ThemeMode; resolved: ResolvedTheme }
+export type TrackStatus = "Complete" |
+/**
+ * Text without speakers; the transcript is still useful.
+ */
+{ SpeakersUnavailable: { reason: string } } |
+/**
+ * No text for this track; its audio is kept for a retry.
+ */
+{ Failed: { reason: string } } |
+/**
+ * Longer than the per-track processing cap; its audio is kept.
+ */
+{ TooLong: { minutes: number; limit_minutes: number } } |
+/**
+ * The track holds no audio.
+ */
+"Empty"
+export type TrackTranscript = { track: number; status: TrackStatus;
+/**
+ * The reviewed full-sequence text of the track's ASR.
+ */
+text: string; words: Word[];
+/**
+ * Raw diarizer activity kept as evidence, so attribution can be
+ * recomputed without repeating capture or inference.
+ */
+activity: Activity[] }
 /**
  * Compute preference for transcribe-cpp (whisper-family GGUF) model loads.
  * Renamed from `WhisperAcceleratorSetting` when the batch path moved from
@@ -2726,6 +2919,7 @@ export type ThemeState = { mode: ThemeMode; resolved: ResolvedTheme }
  * field-level `alias` on [`AppSettings::transcribe_accelerator`].
  */
 export type TranscribeAcceleratorSetting = "auto" | "cpu" | "gpu"
+export type TranscriptRevision = { version: number; revision: number; session_id: string; attempt_id: string; created_unix_ms: number; diarizer: ModelRef | null; asr: ModelRef | null; speakers: Speaker[]; tracks: TrackTranscript[] }
 export type TypingTool = "auto" | "wtype" | "kwtype" | "dotool" | "ydotool" | "xdotool"
 /**
  * A newly discovered release. The cache covers WebViews created after this
@@ -2758,6 +2952,11 @@ notes: string | null;
 date: string | null }
 export type VadBackend = "silero" | "earshot"
 export type WindowsMicrophonePermissionStatus = { supported: boolean; overall_access: PermissionAccess; device_access: PermissionAccess; app_access: PermissionAccess; desktop_app_access: PermissionAccess }
+export type Word = { text: string;
+/**
+ * Meeting clock, milliseconds from the session start.
+ */
+start_ms: number; end_ms: number; speaker: Attribution }
 
 /** tauri-specta globals **/
 

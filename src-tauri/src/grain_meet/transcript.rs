@@ -94,14 +94,14 @@ pub fn assemble_words(
 }
 
 /// One speaker slot's activity on the meeting clock.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
 pub struct Activity {
     pub slot: i32,
     pub start_ns: u64,
     pub end_ns: u64,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
 pub enum Attribution {
     Speaker(i32),
     /// Several slots overlap the word without a clear leader.
@@ -266,7 +266,7 @@ pub fn fold_brief_speakers(words: &[MeetingWord], attribution: &mut [Attribution
 
 // --- Published revisions ---------------------------------------------------
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
 pub enum TrackStatus {
     Complete,
     /// Text without speakers; the transcript is still useful.
@@ -286,7 +286,7 @@ pub enum TrackStatus {
     Empty,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
 pub struct Word {
     pub text: String,
     /// Meeting clock, milliseconds from the session start.
@@ -295,7 +295,7 @@ pub struct Word {
     pub speaker: Attribution,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
 pub struct Speaker {
     /// Stable within a revision: `t{track}-s{slot}`.
     pub id: String,
@@ -305,7 +305,7 @@ pub struct Speaker {
     pub label: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
 pub struct TrackTranscript {
     pub track: u32,
     pub status: TrackStatus,
@@ -317,7 +317,7 @@ pub struct TrackTranscript {
     pub activity: Vec<Activity>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
 pub struct ModelRef {
     pub file: String,
     pub arch: String,
@@ -325,7 +325,7 @@ pub struct ModelRef {
     pub backend: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
 pub struct TranscriptRevision {
     pub version: u32,
     pub revision: u32,
@@ -389,6 +389,11 @@ fn revisions(session: &Path) -> Result<Vec<u32>, String> {
 
 pub fn next_revision(session: &Path) -> Result<u32, String> {
     Ok(revisions(session)?.last().map_or(1, |last| last + 1))
+}
+
+/// The newest revision number without reading any transcript.
+pub fn latest_revision(session: &Path) -> Result<Option<u32>, String> {
+    Ok(revisions(session)?.last().copied())
 }
 
 /// Publish a revision atomically. Earlier revisions are never modified.

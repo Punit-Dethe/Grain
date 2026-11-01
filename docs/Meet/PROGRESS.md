@@ -181,3 +181,31 @@ Validation:
   - The role, cancellation and GPU-fault tests still pass with the raw analysis files.
 - Reproduce with `cargo test --lib -- --ignored --test-threads=1 saved_meeting_becomes`, using the same environment as Increment 2.
 - Quality evidence is limited to the repeated public fixture; representative meetings are still needed.
+
+## Increment 5: microphone recording and Meet commands (Step 4)
+
+Implemented in `grain_meet/recorder.rs` and `grain_meet/commands.rs`, plus Grain-owned seams in `grain_audio.rs` and `grain_audio_manager.rs`.
+
+- **One microphone stream.** A meeting records through the shared dictation recorder: Handy's 16 kHz mono speech stream, without VAD, mute, cues or RAM retention. No second device stream is opened.
+  - The recorder's `Idle` check makes dictation, Flow and Agent refuse while a meeting records, and a meeting refuses while they record. Meeting start takes the same `capture_start_guard` as dictation.
+  - **Deliberate choice:** the microphone track is stored at the models' 16 kHz instead of 48 kHz. Room-mode playback is therefore speech quality. 48 kHz application audio is a Step 5 capture concern.
+- **Delivery path.** On the recorder's delivery thread, `feed` only copies each frame into a bounded queue (about 10 s) and never blocks. A full queue drops the frame and counts it.
+- **Writer thread.**
+  - Within a run, frame counts are the clock. A delivery stall that the recorder's ring absorbed is not a gap.
+  - A known loss becomes an explicit gap placed by arrival time: `Overflow` after dropped frames, or `SourceLost` after 3 s without audio. A silent source is restarted at most every 5 s.
+  - A restart can never revive a stopped meeting: `live` is held across start, stop and restart.
+  - A write failure stops capture and keeps committed audio.
+- **Commands.**
+  - Recording: `meet_status`, `meet_start_recording` and `meet_stop_recording`.
+  - Listing: `meet_list` lists meetings newest first, and recovers sessions interrupted by a crash on first listing (it never restarts capture).
+  - Processing: `meet_process` runs in the background under the meeting inference lease, with stage reporting. `meet_cancel_processing` keeps the recording. `meet_transcript` returns the latest revision.
+  - `meet_delete` is refused while the meeting is recording or processing.
+  - Speaker model: `meet_diarizer_installed`, and `meet_download_diarizer`, which fetches the pinned Sortformer Q8_0 and verifies its size and SHA-256 before installing it.
+  - Processing requires a reviewed Parakeet TDT v2/v3 model selected and downloaded.
+- **Events:** `meet-status-changed` (the full status) and `meet-diarizer-progress`. TypeScript bindings are regenerated.
+- **Handy hook:** `lib.rs` 1297 → 1310 (command and event registration only).
+
+Validation:
+- 56 unit tests pass. The recorder tests cover burst delivery placed by frame count, single-meeting refusal, routing ending at finish, source-loss restart with a `SourceLost` gap, an overflow gap, and a stall without a gap.
+- The real-model pipeline test still passes (Vulkan: 96 s in 2.7 s).
+- **Not yet run:** a recording from a physical microphone in the running app, including device unplug, sleep/resume and low disk. It needs the Meet UI (Step 6) or the agent harness, and remains a Step 4 acceptance item. Dictation refusal during a meeting is enforced but only logged; the visible reason belongs to the Meet UI.

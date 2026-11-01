@@ -9,7 +9,9 @@
 #![cfg_attr(not(test), allow(dead_code))]
 
 pub mod analysis;
+pub mod commands;
 pub mod processing;
+pub mod recorder;
 pub mod storage;
 pub mod transcript;
 mod wav;

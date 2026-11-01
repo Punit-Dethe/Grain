@@ -379,3 +379,4 @@ diarizer reuses `Request::Grain`/`Response::Grain`.
 
 - `lib.rs` 1296 → 1297 (2026-11-02): one `mod grain_meet;` declaration for the Grain-owned meeting module, like every other `grain_*` module. No logic.
 - `Cargo.toml` 152 → 153 (2026-11-02): direct `rubato = "=5.0.0"` dependency for Grain Meet analysis resampling. The lockfile already carried this exact version through `handy-recorder`, whose resampler is private; no new crate is downloaded.
+- `lib.rs` 1297 → 1310 (2026-11-02): registers the ten Grain Meet commands and its two typed events in the existing `collect_commands!`/`collect_events!` lists, with one comment line. All logic is in `grain_meet/commands.rs`. The meeting microphone path adds no Handy hook: `grain_audio.rs` routes frames and `grain_audio_manager.rs` adds `try_start_meeting_recording` through the existing `[GRAIN]` include seams.

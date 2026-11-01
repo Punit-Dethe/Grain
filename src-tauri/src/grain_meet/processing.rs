@@ -22,6 +22,15 @@ use crate::tdt_flow::{TdtAccumulator, TdtRunConfig};
 
 pub const CANCELLED: &str = "Meeting processing cancelled";
 
+/// The phase an attempt is in, for progress display.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, specta::Type)]
+pub enum Stage {
+    Preparing,
+    IdentifyingSpeakers,
+    Transcribing,
+    Publishing,
+}
+
 pub struct Models {
     pub diarizer: PathBuf,
     /// A reviewed Parakeet TDT v2/v3 model (the Flow contract).
@@ -65,6 +74,7 @@ pub fn process(
     engine: &MeetingEngine<'_>,
     models: &Models,
     attempt_id: &str,
+    on_stage: &dyn Fn(Stage),
 ) -> Result<TranscriptRevision, String> {
     let stop = |engine: &MeetingEngine<'_>| -> Result<(), String> {
         if engine.cancelled() {
@@ -78,6 +88,7 @@ pub fn process(
         return Err("Finish or recover the recording before processing it".into());
     }
 
+    on_stage(Stage::Preparing);
     // Analysis audio: disk-backed, deleted when this attempt ends.
     let mut prepared: Vec<Result<TrackAnalysis, Unprepared>> =
         Vec::with_capacity(manifest.tracks.len());
@@ -94,6 +105,7 @@ pub fn process(
         .map(|_| Err("No audio".to_string()))
         .collect();
     if any_audio {
+        on_stage(Stage::IdentifyingSpeakers);
         match engine.load(&models.diarizer, Role::Diarize) {
             Ok(info) => {
                 diarizer = Some(model_ref(&models.diarizer, &info));
@@ -125,6 +137,7 @@ pub fn process(
         .map(|_| Err("No audio".to_string()))
         .collect();
     if any_audio {
+        on_stage(Stage::Transcribing);
         match engine.load(&models.asr, Role::Asr) {
             Ok(info) => {
                 asr = Some(model_ref(&models.asr, &info));
@@ -150,6 +163,7 @@ pub fn process(
         }
     }
     stop(engine)?;
+    on_stage(Stage::Publishing);
 
     let mut tracks = Vec::with_capacity(manifest.tracks.len());
     for (index, track) in manifest.tracks.iter().enumerate() {
@@ -414,7 +428,7 @@ mod tests {
             diarizer: dir.join("absent.gguf"),
             asr: env_path("GRAIN_MEET_TEST_ASR"),
         };
-        let degraded = process(&dir, &attempt, &missing, "attempt-1").unwrap();
+        let degraded = process(&dir, &attempt, &missing, "attempt-1", &|_| {}).unwrap();
         assert_eq!(degraded.revision, 1);
         let t = &degraded.tracks[0];
         assert!(
@@ -433,14 +447,27 @@ mod tests {
             diarizer: env_path("GRAIN_MEET_TEST_DIARIZER"),
             asr: env_path("GRAIN_MEET_TEST_ASR"),
         };
+        let stages = std::cell::RefCell::new(Vec::new());
         let started = std::time::Instant::now();
-        let revision = process(&dir, &attempt, &models, "attempt-2").unwrap();
+        let revision = process(&dir, &attempt, &models, "attempt-2", &|stage| {
+            stages.borrow_mut().push(stage)
+        })
+        .unwrap();
         eprintln!(
             "processed {} s of audio in {:?}",
             (first_run + 2) * seconds,
             started.elapsed()
         );
         assert_eq!(revision.revision, 2);
+        assert_eq!(
+            *stages.borrow(),
+            [
+                Stage::Preparing,
+                Stage::IdentifyingSpeakers,
+                Stage::Transcribing,
+                Stage::Publishing
+            ]
+        );
         let t = &revision.tracks[0];
         assert_eq!(t.status, TrackStatus::Complete);
         // Cross-window word assembly loses and duplicates nothing.
