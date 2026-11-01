@@ -932,6 +932,46 @@
       "evidence": "See Upstream/SYNC-2026-10-17.md: Windows backend 599 pass; real worker, streaming fault, VAD and exact-text v2/v3 Flow gates pass; frontend build, 117 tests, lint and parity pass. Physical device/UI and macOS/Linux app acceptance remain explicit."
     }
   },
+  "73c095857bc4eadff097f64767c40ad129cc372d": {
+    "ports": {
+      "src-tauri/src/managers/transcription.rs": {
+        "outcome": "ported",
+        "destinations": [
+          "src-tauri/src/rolling.rs",
+          "src-tauri/src/tdt_flow.rs",
+          "crates/grain-tdt/src",
+          "src-tauri/src/grain_overlay.rs",
+          "src/app/overlay/RecordingOverlay.tsx",
+          "src-tauri/src/grain_transcription.rs",
+          "src-tauri/src/grain_transcription_manager.rs",
+          "src-tauri/src/grain_engine.rs",
+          "src-tauri/src/context_bias.rs"
+        ],
+        "evidence": "Adopt file chunks/history jobs through the existing engine; Grain-owned lease/context adapters cover Standard/Flow/Streaming with per-chunk yielding. No new engine or multi-model scheduling. 721 backend and 102 frontend tests pass; native UI acceptance recorded in SYNC-2026-11-02.md."
+      }
+    },
+    "frontend_review": {
+      "outcome": "adapted",
+      "problem": "File import/status and model lock controls must work through Grain-owned UI rather than upstream drop/history/footer widgets.",
+      "destinations": [
+        "src/app/components/settings/FileTranscriptionSettings.tsx",
+        "src/app/settings/panes/ApplicationPane.tsx",
+        "src/app/bindings.ts",
+        "src-tauri/src/grain_file_transcription.rs"
+      ],
+      "evidence": "Settings-only picker/progress/cancel with listener cleanup and active queue snapshot; existing History retains output/retry and settings commands enforce model holds. Frontend build and 102 tests pass; native UI acceptance is recorded separately."
+    },
+    "suppressed_review": {
+      "outcome": "adapted",
+      "problem": "File decoding adds native audio dependencies and requires command/event composition without replacing Grain identity or native fork.",
+      "destinations": [
+        "src-tauri/Cargo.toml",
+        "src-tauri/Cargo.lock",
+        "src-tauri/src/lib.rs"
+      ],
+      "evidence": "Added Symphonia AAC/ALAC/MP4/AIFF and Rubato using upstream versions; regenerated only root Cargo lock, preserved paired native fork/ABI pins and Grain feature posture. Registered native file/history job commands/events in Grain composition; no installer/release workflows changed."
+    }
+  },
   "7bfb2e2c934b798bcf6e3627653aed2439996f89": {
     "notes": "Adapted #2340 on sync/handy-audit-20261102: Intel macOS is static CPU, Apple Silicon retains Metal; paired fork eeffcc3887018015d04d20e61d3698a33d790f24 and Windows/Linux features unchanged. Actual cargo-tree target resolution verifies both Mac and both Windows postures; 11 native contract regressions pass. Native macOS startup/inference remains unvalidated. This is an adapted port; upstream ancestry is still pending."
   },

@@ -69,6 +69,11 @@ env_filter = "0.1.0"
 tokio = { version = "1.43.0", features = ["net", "io-util", "sync", "time"] }
 enigo = "0.6.1"
 rodio = { version = "0.23.0", default-features = false, features = ["playback", "wav", "flac", "mp3", "vorbis"] }
+# Decodes files for transcription. rodio's version, plus the M4A/MP4 (AAC,
+# ALAC) and AIFF support rodio leaves out.
+symphonia = { version = "0.5.5", features = ["aac", "alac", "isomp4", "mp3", "aiff"] }
+# Resamples a decoded file to 16 kHz; the version handy-recorder already uses.
+rubato = "5"
 handy-recorder = "0.1"
 earshot = "1.2.2"
 libc = "0.2"

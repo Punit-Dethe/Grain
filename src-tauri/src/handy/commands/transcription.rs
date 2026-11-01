@@ -37,6 +37,7 @@ pub fn get_model_load_status(
 pub fn unload_model_manually(
     transcription_manager: State<Arc<TranscriptionManager>>,
 ) -> Result<(), String> {
+    transcription_manager.ensure_model_unlocked()?;
     if transcription_manager.request_unload() {
         // [GRAIN] Surface busy leases instead of false success.
         Ok(())

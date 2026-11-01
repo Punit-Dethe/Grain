@@ -434,3 +434,49 @@ All v2 geometry, accumulation and model policy remain outside `handy/`; no
 new engine, thread, decoder policy or feature state is added to Handy code.
 The supervisor budget grows from 73 to 81 lines after reviewing this cleanup
 boundary. The native ABI and implementation live in the maintained source fork.
+
+## Settings-only file transcription adaptation (2026-11-02, #2315)
+
+Keep Handy's decoder/history/chunking implementation. Grain's only import UI
+lives in Application settings; upstream file-drop, footer status and History
+import UI stay frozen out. `grain_file_transcription.rs` owns the import duration,
+decode admission and actual Grain capture-state policy. The decoder calls a
+marked duration hook after each bounded packet.
+
+`grain_transcription_jobs.rs` contains queue-worker startup/snapshot adapters;
+marked shared hooks replace the permanent idle thread with lazy startup/atomic
+idle exit. Job events publish under admission locking to prevent terminal/queued
+inversion; cancellation has an explicit status. File names use UUIDs. The shared
+post-processing call receives Grain's absent Prompt Record arguments, and tray
+refreshes receive Grain's locale argument. These are reviewed integration hooks,
+not a second decoder, engine, harness or scheduler.
+
+`grain_transcription_manager.rs` and `grain_transcription.rs` own background
+model admission. Shared batch context factoring must retain the inference lease
+for the entire foreground decode, wait for loading before acquiring it, and
+avoid waiting for a foreground loader while holding the background lease.
+Background chunks revalidate the Standard model after dictation. The public
+loader keeps its normal admission hook; an internal held-lease implementation
+allows the already-admitted chunk to use the same loading code. The user plans
+a single selected dictation model: do not build out multi-model scheduling.
+
+New shared-file differences and the manager/lib/tray budget changes are accepted
+only for the marked hooks above, the native job cancellation contract, and the
+existing fallible History retry command. Shared history/decoder/resampler logic
+otherwise stays upstream-owned. No native fork or ABI change is included.
+
+Reviewed post-merge ratchet changes against #2315:
+
+| Shared path | Previous → accepted lines | Reason |
+| --- | --- | --- |
+| audio_toolkit/audio/decode.rs | new → 2 | Calls owned decoded-duration limit at both input paths. |
+| managers/transcription.rs | 92 → 120 | Shared lease/held-loader/context seams; foreground admission lives in owned code. |
+| managers/transcription/job.rs | new → 38 | Two owned background context/chunk hooks replace Handy's single-model/retry assumption. |
+| managers/transcription_jobs.rs | new → 94 | Lazy worker/snapshot include, idle exit, ordered/cancelled events, UUID names and owned policy calls; decoder/queue algorithm retained. |
+| tray.rs | 642 → 659 | Grain's tray composition replaces the upstream job-state tray change; one History fixture field. |
+| lib.rs | 1321 → 1335 | Grain composition registers jobs/commands/events and guards tray unload. |
+| commands/history.rs | 13 → 6 | Old synchronous retry adapter removed; keep fallible command result. |
+| commands/models.rs | 86 → 78 | Adopt upstream blocking-pool unload and active-job guard. |
+
+No deleted upstream file, stray root source, native fork change or unassessed
+feature is being accepted by this budget update.

@@ -50,11 +50,12 @@ mod grain_actions; // [GRAIN] Grain's shortcut actions (rolling, Native ASR, swi
 mod grain_audio_journal; // [GRAIN] bounded-RAM PCM backing for rolling sessions
 mod grain_auth; // [GRAIN] host-owned extension OAuth + OS credential vault
 mod grain_commands; // [GRAIN] Grain-only Tauri settings commands (moved out of shortcut/mod.rs)
-mod grain_events; // [GRAIN] typed payloads for the webview event surface (see the module docs)
-                  // [GRAIN] Multi-provider LLM client — Grain's rewrite of upstream's
-                  // single-provider `llm_client.rs`. Upstream's file stays on disk untouched and
-                  // UN-COMPILED (no `mod llm_client;`) so upstream merges land conflict-free;
-                  // the alias keeps every `crate::llm_client::` path working.
+mod grain_events;
+mod grain_file_transcription; // [GRAIN] typed payloads for the webview event surface (see the module docs)
+                              // [GRAIN] Multi-provider LLM client — Grain's rewrite of upstream's
+                              // single-provider `llm_client.rs`. Upstream's file stays on disk untouched and
+                              // UN-COMPILED (no `mod llm_client;`) so upstream merges land conflict-free;
+                              // the alias keeps every `crate::llm_client::` path working.
 mod grain_anthropic;
 mod grain_audio;
 mod grain_capture; // [GRAIN] shared first-sample readiness for owned capture callers
@@ -144,6 +145,7 @@ use managers::audio::AudioRecordingManager;
 use managers::history::HistoryManager;
 use managers::model::ModelManager;
 use managers::transcription::TranscriptionManager;
+use managers::transcription_jobs::TranscriptionJobManager;
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::Arc;
 use tauri::image::Image;
@@ -441,6 +443,7 @@ fn initialize_core_logic(app_handle: &AppHandle) {
     app_handle.manage(model_manager.clone());
     app_handle.manage(transcription_manager.clone());
     app_handle.manage(history_manager.clone());
+    app_handle.manage(TranscriptionJobManager::new(app_handle));
     app_handle.manage(tray::CurrentTrayIconState::new());
     // [GRAIN] Flow owns capture scheduling but no model engine. Its serial worker
     // leases the shared TranscriptionManager model for stateless Parakeet TDT
@@ -572,6 +575,10 @@ fn initialize_core_logic(app_handle: &AppHandle) {
             }
             "unload_model" => {
                 let transcription_manager = app.state::<Arc<TranscriptionManager>>();
+                if let Err(error) = transcription_manager.ensure_model_unlocked() {
+                    log::warn!("{error}");
+                    return;
+                }
                 if !transcription_manager.is_model_loaded() {
                     log::warn!("No model is currently loaded.");
                     return;
@@ -1554,6 +1561,9 @@ fn command_bindings() -> Builder<tauri::Wry> {
             commands::history::get_audio_file_path,
             commands::history::delete_history_entry,
             commands::history::retry_history_entry_transcription,
+            commands::history::cancel_history_entry_transcription,
+            commands::history::transcribe_file,
+            grain_file_transcription::get_transcription_jobs,
             commands::history::update_history_limit,
             commands::history::update_recording_retention_period,
             helpers::clamshell::is_laptop,
@@ -1562,6 +1572,7 @@ fn command_bindings() -> Builder<tauri::Wry> {
             grain_update::UpdateAvailable,
             grain_update::UpdateDownloadProgress,
             managers::history::HistoryUpdatePayload,
+            managers::transcription_jobs::TranscriptionJob,
             // Typed live-caption events used by the recording WebView.
             managers::transcription::StreamPhaseEvent,
             managers::transcription::StreamTextEvent,
