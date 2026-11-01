@@ -1406,7 +1406,7 @@ html[data-theme="light"] .hero {
   grid-row: 2;
   z-index: 0;
   min-width: 0;
-  padding: 12px 24px;
+  padding: 16px 24px 12px;
 }
 
 .hero-start .overview-shortcut-strip {
