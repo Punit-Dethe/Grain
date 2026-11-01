@@ -387,10 +387,10 @@ const OVERVIEW_VISITED_KEY = "grain.overview.visited";
 const overviewGreeting = (() => {
   try {
     return localStorage.getItem(OVERVIEW_VISITED_KEY) === "true"
-      ? "Welcome back"
-      : "Welcome to Grain";
+      ? "Hey there, welcome back."
+      : "Hey there, welcome to Grain. Let's get started.";
   } catch {
-    return "Welcome to Grain";
+    return "Hey there, welcome to Grain. Let's get started.";
   }
 })();
 

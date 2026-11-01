@@ -1380,7 +1380,7 @@ html[data-theme="light"] .hero {
   bottom: 20px;
   margin: 0;
   color: #fff;
-  font-size: clamp(24px, 3vw, 36px);
+  font-size: clamp(20px, 2vw, 26px);
   font-weight: 650;
   line-height: 1.15;
   letter-spacing: -0.03em;
