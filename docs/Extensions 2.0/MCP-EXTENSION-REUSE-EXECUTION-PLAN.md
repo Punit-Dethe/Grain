@@ -7,7 +7,7 @@ severity tiers and continuity log live in
 is complete (M7 excluded by the user), including embedding and obsolete package
 paths. The user has accepted settings without embedding and microphone/dictation
 start/cancel. Production verification is complete: hosted run
-[41305891294](https://github.com/Punit-Dethe/Grain/actions/runs/41305891294)
+[41319312961](https://github.com/Punit-Dethe/Grain/actions/runs/41319312961)
 passes all four jobs, including the real Linux native backend (696 tests passed /
 23 existing ignored). Use that continuity log for final evidence and the separate
 public-release/operator scope; earlier inventories below are historical.
@@ -18,7 +18,10 @@ vocabulary, stale references and obsolete core packages in the separate registry
 checkout. The user authorized their removal; session 7 implements it, including
 dead event-activation/pill wire DTOs. Registry source cleanup is pushed on
 `codex/retire-legacy-extension-sources` at `e858d50`, preserving the current signed
-GitHub/Notion catalogue. Use the continuity log for final verification.
+GitHub/Notion catalogue. Final application source `bfaab840` passes all four hosted
+jobs, alongside Windows verification. The residual inventory is closed on these
+delivered branches; the original dirty registry checkout is preserved. Use the
+continuity log for final evidence and separate public-release/operator scope.
 First-party snippets/context/Agent image capture and current tool/MCP connections
 are live product behavior and remain intentional.
 

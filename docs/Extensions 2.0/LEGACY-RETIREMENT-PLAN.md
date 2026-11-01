@@ -28,18 +28,21 @@ by the user. Unrelated overlay/default-prompt/secrets migrations remain outside 
 Session 5 cleared workspace strict Clippy, frontend ESLint and the reviewed
 dependency ratchet. The maintained Windows Cargo runner now passes all 696
 backend tests and its four isolation/exit-code regressions. The repaired hosted
-workflow [41305891294](https://github.com/Punit-Dethe/Grain/actions/runs/41305891294)
-at source commit `57170be8` passed all four jobs: frontend lint/tests/production
+workflow [41319312961](https://github.com/Punit-Dethe/Grain/actions/runs/41319312961)
+at final source commit `bfaab840` passed all four jobs: frontend lint/102 tests/production
 build, Linux workspace strict Clippy/tests, Windows runner regressions and the
 real native Linux backend all-target check/library tests. Linux and Windows each
 pass 696 backend tests / 23 existing ignored cases; no test was disabled to clear
 CI. The four Linux path failures in the preceding run are corrected below.
 
 The user-requested deeper audit after P6 found residual cleanup in session 6.
-Session 7 implements that follow-up while preserving built-in application
-features; local verification passes and fresh hosted verification follows the
-source push. The separate registry cleanup uses an isolated branch from fetched
-current main; its signed catalogue is already tool-only and remains unchanged.
+Session 7 completes that follow-up while preserving built-in application
+features; local and final hosted verification pass. The separate registry source
+cleanup is committed/pushed at `e858d50` on `codex/retire-legacy-extension-sources`
+from fetched main; its signed catalogue is already tool-only and remains unchanged.
+No implementation or acceptance item remains for this cleanup. Old API names in
+denial tests are intentional; the original dirty registry checkout is preserved,
+so its obsolete files are not presented as the cleaned registry branch.
 Separately, remaining
 public-release key custody/recovery, production publishing/source protections,
 the next approved publication's deployment pause and separately deferred live
@@ -959,3 +962,39 @@ but the residual inventory above remains open.
   as final, because the last wire-type removal requires a new source checkpoint.
   Repeated workspace strict Clippy/all-target tests pass for the final DTO change.
   Final Windows backend/all-target and hosted results follow below.
+
+**1 November 2026, session 7 complete: final residual-cleanup verification Pass.**
+
+- Application source delivery: acea9ec0 removes residual extension state/UI and
+  bfaab840 removes the dead pill command wire contract. Final run
+  [41319312961](https://github.com/Punit-Dethe/Grain/actions/runs/41319312961)
+  at bfaab840 passes all four hosted jobs. Linux locked all-target checking and
+  real native library tests pass: 696 passed / 23 existing ignored, 34.27s test
+  execution (C:/t/logs/s7-final-linux-ci.txt). No mock transcription backend or
+  new ignored test was introduced. The superseded run is recorded as cancelled.
+- Windows final source also passes 696 backend tests / 23 existing ignored and
+  all-target checking (s7b-app-tests.txt / s7b-app-check.txt). Workspace strict
+  Clippy/all-target tests pass locally and on Linux; frontend lint/tsc/102 unit
+  tests/production build and the four Windows runner regressions pass. Scoped
+  formatting, graph-assisted review, UI settings parity, upstream policy and
+  ratchet pass. All owned test staging directories are gone.
+- Compared protected built-in Agent/image/prompt/snippet/context integration,
+  OS focus/paste/icon, Handy and MCP implementation files against pre-cleanup
+  6077f968: byte-identical. context_detect changes only its stale executable-path
+  comment. The only overlay change removes a tooltip fed by the always-empty
+  extension owner, with its unused projection/schema field. No visual design
+  change or repeat user approval is required for unused code/style deletion.
+- Registry source delivery: e858d50 on codex/retire-legacy-extension-sources is
+  pushed and clean at C:/Projects/Grain/grain-registry-retirement. Four obsolete
+  packages, old config pages and generated static storefront are deleted; docs
+  describe current source submissions. Signed catalogue/proofs, current
+  GitHub/Notion submissions, publisher/ownership/CI data are byte-identical to
+  fetched main bcaa7cf. Index SHA256 remains
+  c248d85d4c4f13eb7f2dde9c167e526ded31f903ebc2f88dd453ac8d80285c01.
+- Preserved the original dirty registry tracked diff by SHA256 comparison and
+  unrelated binding edits by exact byte comparison against the saved baseline,
+  applying only the required owner-field removal. Those changes remain outside
+  these commits. No branch merge, signature, deployment or publication occurred.
+  Session 6's residual inventory is closed on the delivered branches. Built-in
+  application features, current tool/MCP capability and M7 are retained; only
+  the already-separated public-release/operator work remains deferred.
