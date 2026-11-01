@@ -9,8 +9,8 @@
 //! trusted, because trust is read from the signature-verified index here and
 //! nowhere else.
 //!
-//! The on-disk transaction (staging â†’ path-safe extraction â†’ atomic rename)
-//! lives in [`stage_artifact`]; the registry side (record with trust, held
+//! The on-disk transaction (validation, private staging and immutable publication)
+//! lives in `stage_artifact`; the registry side (record with trust, held
 //! disabled on a new-permission update, previous version retained) lives in
 //! [`plan_record`] / [`install_from_verified_entry`].
 
@@ -19,7 +19,6 @@ use std::path::{Path, PathBuf};
 use grain_sdk::distribution::IndexEntry;
 
 use crate::extensions::{ExtensionRecord, ExtensionsRegistry};
-use crate::pack::{self, ExtractLimits, PackShape};
 use crate::trust::{self, TrustError};
 
 /// Why an install/update was refused.
@@ -27,8 +26,6 @@ use crate::trust::{self, TrustError};
 pub enum InstallError {
     /// The downloaded artifact's hash did not match the verified index entry.
     Hash(TrustError),
-    /// The artifact could not be safely extracted.
-    Pack(pack::PackError),
     /// A filesystem step failed.
     Io(String),
     /// The artifact does not satisfy the live tool-only contract or signed identity.
@@ -39,7 +36,6 @@ impl std::fmt::Display for InstallError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             InstallError::Hash(e) => write!(f, "artifact verification failed: {e}"),
-            InstallError::Pack(e) => write!(f, "unpack failed: {e}"),
             InstallError::Io(e) => write!(f, "io error: {e}"),
             InstallError::Manifest(e) => write!(f, "extension refused: {e}"),
         }
@@ -136,18 +132,17 @@ pub fn publish_artifact(
     Ok(destination)
 }
 
-/// Verify the artifact hash, then unpack it into its versioned directory via a
-/// staging dir and an atomic rename. Returns the final version directory.
+/// Verify the complete embedded package before publishing its immutable bytes.
+/// Return the artifact directory and approval digests from that same validation.
 ///
 /// `bytes` is the already-downloaded `.grainpack`. The index entry was already
 /// signature-verified by [`crate::trust::verify_index`]; here we bind those
-/// exact bytes to the entry with SHA-256 before a single byte is unpacked.
-pub fn stage_artifact(
+/// exact bytes to the entry with SHA-256 before any filesystem mutation.
+fn stage_artifact(
     root: &Path,
     entry: &IndexEntry,
     bytes: &[u8],
-    limits: ExtractLimits,
-) -> Result<PathBuf, InstallError> {
+) -> Result<(PathBuf, ApprovalDigests), InstallError> {
     grain_sdk::validate_extension_id(&entry.id).map_err(InstallError::Io)?;
     grain_sdk::validate_extension_version(&entry.version).map_err(InstallError::Io)?;
     entry
@@ -157,12 +152,12 @@ pub fn stage_artifact(
 
     // Validate before filesystem mutation. Unsupported directory/native bundles
     // cannot be installed as if the embedded-script runtime could execute them.
-    if pack::detect_shape(bytes) != PackShape::Json {
+    if bytes.first() != Some(&b'{') {
         return Err(InstallError::Manifest(
             "Only embedded tool-only JSON packages are supported.".into(),
         ));
     }
-    if bytes.len() as u64 > limits.max_entry_size.min(2 * 1024 * 1024) {
+    if bytes.len() as u64 > 2 * 1024 * 1024 {
         return Err(InstallError::Manifest(
             "Tool package exceeds the 2 MiB import budget.".into(),
         ));
@@ -188,7 +183,9 @@ pub fn stage_artifact(
         ));
     }
 
-    publish_artifact(root, &entry.id, &entry.version, &entry.sha256, bytes)
+    let digests = declared_digests(&parsed.manifest);
+    let directory = publish_artifact(root, &entry.id, &entry.version, &entry.sha256, bytes)?;
+    Ok((directory, digests))
 }
 
 /// Build the registry record for a verified index entry. **This is the sole
@@ -264,10 +261,9 @@ pub fn install_from_verified_entry(
     root: &Path,
     entry: &IndexEntry,
     bytes: &[u8],
-    limits: ExtractLimits,
 ) -> Result<PathBuf, InstallError> {
     let revision = reg.record_revision(&entry.id);
-    install_from_verified_entry_if_current(reg, root, entry, bytes, limits, revision)
+    install_from_verified_entry_if_current(reg, root, entry, bytes, revision)
 }
 
 pub fn install_from_verified_entry_if_current(
@@ -275,49 +271,20 @@ pub fn install_from_verified_entry_if_current(
     root: &Path,
     entry: &IndexEntry,
     bytes: &[u8],
-    limits: ExtractLimits,
     revision: crate::extensions::RecordRevision,
 ) -> Result<PathBuf, InstallError> {
     reg.with_current_record(&entry.id, revision, |_| ())
         .map_err(|error| InstallError::Io(error.to_string()))?;
-    let dir = stage_artifact(root, entry, bytes, limits)?;
+    let (dir, digests) = stage_artifact(root, entry, bytes)?;
     let prior = reg.installed_record(&entry.id);
     let granted = prior
         .as_ref()
         .map(|r| r.granted.clone())
         .unwrap_or_default();
-    let manifest = manifest_of(bytes);
-    let digests = manifest.as_ref().map(declared_digests).unwrap_or_default();
     let record = plan_record(entry, granted, prior.as_ref(), digests);
     reg.install_if_current(record, revision)
         .map_err(|e| InstallError::Io(e.to_string()))?;
     Ok(dir)
-}
-
-/// Read the manifest a pack declares, from its bytes. A JSON pack embeds the
-/// manifest; a ZIP pack carries `manifest.json`.
-///
-/// Best-effort: an unreadable manifest yields `None` rather than failing the
-/// install, because the artifact already passed hash + extraction, so a pack
-/// whose manifest will not parse is one that fails later and louder. Every
-/// caller degrades in the safe direction: a declaration that cannot be read
-/// has no approval digest and is never treated as approved.
-///
-/// Parse once so the approval digests describe the same manifest.
-fn manifest_of(bytes: &[u8]) -> Option<grain_sdk::ExtensionManifest> {
-    use grain_sdk::{ExtensionManifest, GrainPack};
-    match pack::detect_shape(bytes) {
-        PackShape::Json => serde_json::from_slice::<GrainPack>(bytes)
-            .ok()
-            .map(|p| p.manifest),
-        PackShape::Zip => {
-            let mut archive = zip_manifest_json(bytes)?;
-            let m: Result<ExtensionManifest, _> = serde_json::from_slice(&archive);
-            archive.clear();
-            m.ok()
-        }
-        PackShape::Unknown => None,
-    }
 }
 
 /// The approval digests a manifest's declarations imply.
@@ -337,21 +304,6 @@ fn declared_digests(m: &grain_sdk::ExtensionManifest) -> ApprovalDigests {
             .as_ref()
             .map(ext::authentication_fingerprint),
     }
-}
-
-/// Extract just the `manifest.json` bytes from a ZIP pack, in memory.
-fn zip_manifest_json(bytes: &[u8]) -> Option<Vec<u8>> {
-    use std::io::Read;
-    const MAX_MANIFEST_BYTES: u64 = 1024 * 1024;
-
-    let mut archive = zip::ZipArchive::new(std::io::Cursor::new(bytes)).ok()?;
-    let mut file = archive.by_name("manifest.json").ok()?;
-    let mut buf = Vec::new();
-    file.by_ref()
-        .take(MAX_MANIFEST_BYTES + 1)
-        .read_to_end(&mut buf)
-        .ok()?;
-    (buf.len() as u64 <= MAX_MANIFEST_BYTES).then_some(buf)
 }
 
 #[cfg(test)]
@@ -444,19 +396,12 @@ mod tests {
         let root = dir.path().join("extensions");
         let first = tool_pack("com.example.tools", "1", &[]);
         let first_entry = entry("com.example.tools", "1", Trust::Verified, &[], &first);
-        let old = install_from_verified_entry(
-            &reg,
-            &root,
-            &first_entry,
-            &first,
-            ExtractLimits::default(),
-        )
-        .unwrap();
+        let old = install_from_verified_entry(&reg, &root, &first_entry, &first).unwrap();
         let revision = reg.record_revision(&first_entry.id);
         let mut changed = first.clone();
         changed.push(b' ');
         let update = entry(&first_entry.id, "1", Trust::Verified, &[], &changed);
-        let new = stage_artifact(&root, &update, &changed, ExtractLimits::default()).unwrap();
+        let (new, _) = stage_artifact(&root, &update, &changed).unwrap();
         reg.set_enabled(&first_entry.id, false).unwrap();
         let record = plan_record(&update, vec![], None, ApprovalDigests::default());
         assert!(reg.install_if_current(record.clone(), revision).is_err());
@@ -504,7 +449,7 @@ mod tests {
         let bytes = tool_pack("com.example.tools", "1", &[]);
         let entry = entry("com.example.tools", "1", Trust::Verified, &[], &bytes);
         let root = dir.path().join("extensions");
-        install_from_verified_entry(&reg, &root, &entry, &bytes, ExtractLimits::default()).unwrap();
+        install_from_verified_entry(&reg, &root, &entry, &bytes).unwrap();
         reg.set_enabled(&entry.id, true).unwrap();
         let revision = reg.record_revision(&entry.id);
         reg.set_enabled(&entry.id, false).unwrap();
@@ -513,14 +458,8 @@ mod tests {
         update.version = "2".into();
         update.sha256 = trust::sha256_hex(&replacement);
         update.size = replacement.len() as u64;
-        let result = install_from_verified_entry_if_current(
-            &reg,
-            &root,
-            &update,
-            &replacement,
-            ExtractLimits::default(),
-            revision,
-        );
+        let result =
+            install_from_verified_entry_if_current(&reg, &root, &update, &replacement, revision);
         assert!(result.unwrap_err().to_string().contains("changed"));
         assert!(!root.join(&entry.id).join("2").exists());
         assert!(!reg.is_enabled(&entry.id));
@@ -574,8 +513,7 @@ mod tests {
         e.min_grain_api = "2.0".into();
         e.validate_tool_only().unwrap(); // Browsing remains possible.
                                          // An invalid artifact must not obscure the earlier compatibility refusal.
-        let error =
-            stage_artifact(dir.path(), &e, b"invalid", ExtractLimits::default()).unwrap_err();
+        let error = stage_artifact(dir.path(), &e, b"invalid").unwrap_err();
         assert!(matches!(error, InstallError::Manifest(ref message)
             if message == grain_sdk::compatibility::UNSUPPORTED_EXTENSION_API));
         assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
@@ -651,10 +589,37 @@ mod tests {
         let bytes = b"{\"id\":\"x\"}";
         let mut e = entry("com.example.x", "1.0.0", Trust::Verified, &[], bytes);
         e.sha256 = "0000".into(); // wrong
-        let err = stage_artifact(dir.path(), &e, bytes, ExtractLimits::default())
-            .expect_err("bad hash must refuse");
+        let err = stage_artifact(dir.path(), &e, bytes).expect_err("bad hash must refuse");
         assert!(matches!(err, InstallError::Hash(_)));
         assert!(!version_dir(dir.path(), "com.example.x", "1.0.0").exists());
+    }
+
+    #[test]
+    fn embedded_package_format_and_byte_budget_are_enforced_before_publication() {
+        let dir = tmp();
+        for bytes in [b"PK\x03\x04".as_slice(), b"[]", b"not JSON"] {
+            let metadata = entry("com.example.x", "1.0.0", Trust::Verified, &[], bytes);
+            assert!(matches!(
+                stage_artifact(dir.path(), &metadata, bytes),
+                Err(InstallError::Manifest(_))
+            ));
+            assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
+        }
+        let mut bytes = tool_pack("com.example.x", "1.0.0", &[]);
+        bytes.resize(2 * 1024 * 1024 + 1, b' ');
+        let metadata = entry("com.example.x", "1.0.0", Trust::Verified, &[], &bytes);
+        assert!(stage_artifact(dir.path(), &metadata, &bytes)
+            .unwrap_err()
+            .to_string()
+            .contains("2 MiB"));
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
+        bytes.pop();
+        let metadata = entry("com.example.x", "1.0.0", Trust::Verified, &[], &bytes);
+        let (directory, _) = stage_artifact(dir.path(), &metadata, &bytes).unwrap();
+        assert_eq!(
+            std::fs::read(directory.join("pack.grainpack.json")).unwrap(),
+            bytes
+        );
     }
 
     #[test]
@@ -670,7 +635,7 @@ mod tests {
                 &bytes,
             );
             assert!(matches!(
-                stage_artifact(dir.path(), &e, &bytes, ExtractLimits::default()),
+                stage_artifact(dir.path(), &e, &bytes),
                 Err(InstallError::Manifest(_))
             ));
             assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
@@ -684,10 +649,10 @@ mod tests {
             &["storage"],
             &bytes,
         );
-        assert!(stage_artifact(dir.path(), &e, &bytes, ExtractLimits::default()).is_err());
+        assert!(stage_artifact(dir.path(), &e, &bytes).is_err());
         let bytes = tool_pack("com.example.x", "1.0.0", &["storage"]);
         let e = entry("com.example.x", "1.0.0", Trust::Verified, &[], &bytes);
-        assert!(stage_artifact(dir.path(), &e, &bytes, ExtractLimits::default()).is_err());
+        assert!(stage_artifact(dir.path(), &e, &bytes).is_err());
         assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
     }
 
@@ -699,7 +664,7 @@ mod tests {
             let mut e = entry("com.example.x", "1.0.0", Trust::Verified, &[], &bytes);
             e.categories.push(category.into());
             assert!(matches!(
-                stage_artifact(dir.path(), &e, &bytes, ExtractLimits::default()),
+                stage_artifact(dir.path(), &e, &bytes),
                 Err(InstallError::Manifest(_))
             ));
             assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
@@ -712,9 +677,7 @@ mod tests {
         let reg = ExtensionsRegistry::load(dir.path()).unwrap();
         let bytes = tool_pack("com.example.x", "2.0.0", &[]);
         let e = entry("com.example.x", "2.0.0", Trust::Verified, &[], &bytes);
-        let out =
-            install_from_verified_entry(&reg, dir.path(), &e, &bytes, ExtractLimits::default())
-                .expect("install");
+        let out = install_from_verified_entry(&reg, dir.path(), &e, &bytes).expect("install");
         assert!(out.join("pack.grainpack.json").exists());
         let rec = reg.record("com.example.x").unwrap();
         assert_eq!(rec.installed_version, "2.0.0");
@@ -730,7 +693,7 @@ mod tests {
         // Prior 1.0 enabled with no capabilities.
         let b1 = tool_pack("com.example.x", "1.0.0", &[]);
         let e1 = entry("com.example.x", "1.0.0", Trust::Verified, &[], &b1);
-        install_from_verified_entry(&reg, dir.path(), &e1, &b1, ExtractLimits::default()).unwrap();
+        install_from_verified_entry(&reg, dir.path(), &e1, &b1).unwrap();
         reg.set_enabled("com.example.x", true).unwrap();
         assert!(reg.is_enabled("com.example.x"));
 
@@ -743,7 +706,7 @@ mod tests {
             &["net:api.example.com"],
             &b2,
         );
-        install_from_verified_entry(&reg, dir.path(), &e2, &b2, ExtractLimits::default()).unwrap();
+        install_from_verified_entry(&reg, dir.path(), &e2, &b2).unwrap();
         let rec = reg.record("com.example.x").unwrap();
         assert_eq!(rec.installed_version, "1.1.0");
         assert!(
@@ -852,7 +815,7 @@ mod tests {
         let reg = ExtensionsRegistry::load(dir.path()).unwrap();
         let b1 = tool_pack("com.example.x", "1.0.0", &["storage"]);
         let e1 = entry("com.example.x", "1.0.0", Trust::Verified, &["storage"], &b1);
-        install_from_verified_entry(&reg, dir.path(), &e1, &b1, ExtractLimits::default()).unwrap();
+        install_from_verified_entry(&reg, dir.path(), &e1, &b1).unwrap();
         // Grant the capability, then enable.
         let mut rec = reg.record("com.example.x").unwrap();
         rec.granted = vec!["storage".into()];
@@ -861,7 +824,7 @@ mod tests {
 
         let b2 = tool_pack("com.example.x", "1.2.0", &["storage"]);
         let e2 = entry("com.example.x", "1.2.0", Trust::Verified, &["storage"], &b2);
-        install_from_verified_entry(&reg, dir.path(), &e2, &b2, ExtractLimits::default()).unwrap();
+        install_from_verified_entry(&reg, dir.path(), &e2, &b2).unwrap();
         assert!(
             reg.is_enabled("com.example.x"),
             "an update that adds no permissions stays enabled"
@@ -874,14 +837,14 @@ mod tests {
         let reg = ExtensionsRegistry::load(dir.path()).unwrap();
         let b1 = tool_pack("com.example.x", "1.0.0", &["storage"]);
         let e1 = entry("com.example.x", "1.0.0", Trust::Verified, &["storage"], &b1);
-        install_from_verified_entry(&reg, dir.path(), &e1, &b1, ExtractLimits::default()).unwrap();
+        install_from_verified_entry(&reg, dir.path(), &e1, &b1).unwrap();
         let mut record = reg.record("com.example.x").unwrap();
         record.granted = vec!["storage".into(), "capture:selection".into()];
         reg.install(record).unwrap();
 
         let b2 = tool_pack("com.example.x", "2.0.0", &["storage"]);
         let e2 = entry("com.example.x", "2.0.0", Trust::Verified, &["storage"], &b2);
-        install_from_verified_entry(&reg, dir.path(), &e2, &b2, ExtractLimits::default()).unwrap();
+        install_from_verified_entry(&reg, dir.path(), &e2, &b2).unwrap();
 
         assert_eq!(
             reg.record("com.example.x").unwrap().granted,
@@ -897,8 +860,7 @@ mod tests {
         let reg = ExtensionsRegistry::load(dir.path()).unwrap();
         let bytes = tool_pack("com.example.a", "1.0.0", &[]);
         let e = entry("com.example.a", "1.0.0", Trust::Verified, &[], &bytes);
-        install_from_verified_entry(&reg, dir.path(), &e, &bytes, ExtractLimits::default())
-            .unwrap();
+        install_from_verified_entry(&reg, dir.path(), &e, &bytes).unwrap();
         assert!(reg.is_installed("com.example.a"));
         assert_eq!(reg.records().len(), 1, "install touched exactly one id");
     }

@@ -20,7 +20,6 @@ use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard, RwLock};
 
 use grain_core::install::{self, InstallError};
-use grain_core::pack::ExtractLimits;
 use grain_core::store_cache::{self, Metadata, SignedDocument};
 use grain_core::trust::{self, IndexStatus, TrustError};
 use grain_sdk::distribution::{Index, IndexEntry, RevocationState, Revocations, Roots};
@@ -1040,15 +1039,8 @@ async fn install_entry_with_clock(
     if state.revocation_state(id, version) == Some(RevocationState::Revoked) {
         return Err(format!("{id} {version} has been revoked"));
     }
-    install::install_from_verified_entry_if_current(
-        reg,
-        ext_root,
-        &entry,
-        &bytes,
-        ExtractLimits::default(),
-        record_revision,
-    )
-    .map_err(|e: InstallError| e.to_string())
+    install::install_from_verified_entry_if_current(reg, ext_root, &entry, &bytes, record_revision)
+        .map_err(|e: InstallError| e.to_string())
 }
 
 // ── Tauri commands ─────────────────────────────────────────────────────────

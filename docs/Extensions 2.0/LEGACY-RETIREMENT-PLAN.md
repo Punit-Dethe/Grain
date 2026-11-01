@@ -13,6 +13,23 @@ slots/prompt layers, retired host APIs) without changing current behaviour.
 Order: lowest severity first, one coherent commit per unit, verified before the
 next unit.
 
+## Current checkpoint — 1 November 2026
+
+Implementation in scope is complete: Tier 1, M1–M6 and Tier 3, plus the
+embedding, catalogue, API-admission and package-layout/archive follow-ups below.
+The final stamped real-app checkpoint passed 11 cases; both injected negative
+controls failed at the intended assertions, and all seven runs cleaned up.
+
+Remaining acceptance: user visual confirmation of Settings → Application and
+ordinary microphone/dictation start/cancel. These are not certified by the
+extension-focused automated checkpoint. M7 remains explicitly excluded by the
+user. Unrelated overlay/default-prompt/secrets migrations remain outside scope.
+Existing listing-module Clippy, settingsStore.test.ts ESLint and Cargo.toml
+ratchet failures remain; see the final continuity entry for exact checks/evidence.
+
+The inventory below is the original audit; completion and corrected decisions
+are recorded in the continuity log, including superseded earlier holds.
+
 ## Must stay (live tool-only path)
 
 - `extension-host.html`, `src/app/extension-host.ts`, `src/app/extension-runtime.ts`,
@@ -623,3 +640,49 @@ model decision remain as listed above. Do not revisit M7.
   limits, and install.rs's ZIP manifest reader. The current stage function already
   refuses all non-JSON artifacts; its existing 2 MiB package limit must survive
   removal of the legacy ZIP machinery/dependency (T14).
+
+**1 November 2026, session 4 completed: archive retirement and final checkpoint (T14).**
+
+- Deleted the unused 455-line ZIP extractor and its 11 archive-only tests,
+  ZIP manifest reader, PackShape/PackError/ExtractLimits plumbing and zip 8.6
+  dependency. Both lockfiles pruned zip, typed-path, zlib-rs and zopfli, with zero
+  added packages/version upgrades. Together with T9, the app lockfile drops 61
+  packages. No Handy-derived source was changed in this session.
+- The signed-store installer still refuses non-JSON before filesystem writes and
+  retains its 2 MiB package ceiling. Added a regression for ZIP/other shapes,
+  exact-limit acceptance and one-byte-over refusal. Approval digests come directly
+  from the already validated manifest: no second parse or best-effort digest
+  fallback. Current immutable publication and registry race behavior stay intact.
+- Final verification: locked workspace/app all-target checks pass; workspace
+  tests pass, with the added boundary test separately passing (core now 240 +
+  three benchmarks, SDK 44, checker/CLI 23 each, registry 98 + one credential test).
+  App 696 tests pass / 23 ignored. SDK/core strict Clippy passes; app Clippy exits
+  zero, unchanged 57 lib / 84 lib-test warnings. tsc, 101 Vitest tests, production
+  frontend build, 80 harness self-tests, parity/policy and scoped formatting pass.
+  Workspace strict Clippy still fails two pre-existing listing.rs diagnostics;
+  settingsStore.test.ts:2 raw-invoke ESLint and Cargo.toml ratchet growth persist.
+- Rebuilt the actual isolated acceptance host after all source changes. Final
+  evidence (ignored), all under `tests/agent-harness/.runs/retirement-final-20261101/`,
+  each with `evidence/report.md` and JSON:
+  - `run-ioe69W`: API admission 1/1 Pass (missing/empty/future profiles, working
+    owner preserved and actual greeting calls).
+  - `run-peRyW6`: registry refusal/preservation/save-failure 3/3 Pass.
+  - `run-ohFIbo`: native signed-store 3/3 Pass, including signed DESCRIPTION,
+    unlisted media refusal without network, updates/close/offline and real calls.
+  - `run-eQaOBG`: MCP store management/accounts/revocation 3/3 Pass, including
+    actual OAuth/vault ownership, destination changes, Developer Mode-independent
+    verified updates, explicit re-enable, cancellation and real tool calls.
+  - `run-fGusBB`: quarantine/recovery 1/1 Pass.
+  - `run-MoXv7u`: unsupported-api-as-current negative control failed at its
+    expected missing-rejection assertion.
+  - `run-bqrwNK`: lost-pointer negative control failed at its expected preserved
+    native-account pointer assertion.
+  All seven cleanup verdicts Pass, including scoped vaults; no harness process
+  remained. Evidence records precommit HEAD plus dirty inputs and exact build/
+  runner fingerprints; source is unchanged by the final documentation/commit.
+- In-scope implementation is complete. M7 remains excluded by the user's earlier
+  decision. Unrelated overlay/default-prompt/secrets migrations remain outside
+  this task. Manual ordinary dictation/microphone and the user's visual approval
+  are still pending; do not infer them from extension acceptance. Launch the real
+  app with `bun run tauri dev` from `C:\Projects\Grain\grain` and verify Application
+  settings have no embedding section and remaining groups render correctly.

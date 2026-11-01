@@ -26,8 +26,6 @@ pub mod settings;
 pub mod trust;
 // Bounded, atomic local storage of the signed store metadata; no service.
 pub mod store_cache;
-// [GRAIN] Phase 5A: pack format v2 detection + path-safe archive extraction.
-pub mod pack;
 // [GRAIN] Phase 5A: install/update/remove transaction + the trust invariant.
 pub mod install;
 // [GRAIN] The ASR-text substrate (normalise/tokens/same_word/fuzzy_keys) shared
