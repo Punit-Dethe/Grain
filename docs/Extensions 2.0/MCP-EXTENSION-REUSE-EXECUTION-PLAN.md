@@ -6,8 +6,11 @@ severity tiers and continuity log live in
 `cleanup/retire-legacy-extension-platform`. All in-scope retirement implementation
 is complete (M7 excluded by the user), including embedding and obsolete package
 paths. The user has accepted settings without embedding and microphone/dictation
-start/cancel. Use that continuity log for the final hosted production verification;
-earlier inventories below are historical.
+start/cancel. Production verification is complete: hosted run
+[41305891294](https://github.com/Punit-Dethe/Grain/actions/runs/41305891294)
+passes all four jobs, including the real Linux native backend (696 tests passed /
+23 existing ignored). Use that continuity log for final evidence and the separate
+public-release/operator scope; earlier inventories below are historical.
 
 ## Active forward work order — 15 October 2026
 

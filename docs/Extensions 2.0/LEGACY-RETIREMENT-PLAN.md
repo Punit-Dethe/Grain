@@ -28,13 +28,18 @@ by the user. Unrelated overlay/default-prompt/secrets migrations remain outside 
 Session 5 cleared workspace strict Clippy, frontend ESLint and the reviewed
 dependency ratchet. The maintained Windows Cargo runner now passes all 696
 backend tests and its four isolation/exit-code regressions. The repaired hosted
-workflow [41300313458](https://github.com/Punit-Dethe/Grain/actions/runs/41300313458)
-passed workspace, frontend and Windows-runner jobs. The real Linux backend
-compiled but found four Windows-path test failures (692 passed / 23 ignored).
-The bounded path-classifier/fixture correction is recorded below; fresh run
-[41305891294](https://github.com/Punit-Dethe/Grain/actions/runs/41305891294) at
-`57170be8` has passed the same three jobs and is running the real Linux backend.
-That is the remaining gate. This is not yet a complete hosted Pass.
+workflow [41305891294](https://github.com/Punit-Dethe/Grain/actions/runs/41305891294)
+at source commit `57170be8` passed all four jobs: frontend lint/tests/production
+build, Linux workspace strict Clippy/tests, Windows runner regressions and the
+real native Linux backend all-target check/library tests. Linux and Windows each
+pass 696 backend tests / 23 existing ignored cases; no test was disabled to clear
+CI. The four Linux path failures in the preceding run are corrected below.
+
+All in-scope implementation and production verification are complete. Remaining
+public-release key custody/recovery, production publishing/source protections,
+the next approved publication's deployment pause and separately deferred live
+provider checks belong to the stabilization/operator work order, not retirement.
+No merge, application release or publication was performed.
 
 The inventory below is the original audit; completion and corrected decisions
 are recorded in the continuity log, including superseded earlier holds.
@@ -799,3 +804,23 @@ passed frontend, Linux workspace and Windows runner jobs. The real Linux backend
 check/tests started at 12:19:53 UTC. Windows all-target checking also passes with
 the correction (C:/t/logs/p5-all-targets.txt). Source work is pushed; only the
 hosted native verdict remains before recording final production verification.
+
+**1 November 2026, session 5 complete: final production verification Pass (P6).**
+
+- Run [41305891294](https://github.com/Punit-Dethe/Grain/actions/runs/41305891294)
+  passed all four jobs at `57170be8`. The real Linux backend ran locked all-target
+  checking (8m06s), compiled the actual native test target (9m04s), and passed
+  696 tests / 23 existing ignored cases in 32.87s. All four previously failing
+  path tests and the strengthened catalogue assertions pass. Evidence:
+  C:/t/logs/p5-backend-linux-ci.txt. Later commits change documentation only.
+- Local Windows all-target checking and all 696 backend tests / 23 ignored pass.
+  Hosted frontend lint/101 unit tests/production build, workspace strict Clippy/
+  all-target tests and all four Windows runner regressions pass. Upstream policy,
+  divergence ratchet, scoped rustfmt and whitespace pass. No runner staging
+  directories remain and the CI watcher exited successfully.
+- User settings/dictation acceptance is already Pass; the stamped real-app
+  extension checkpoint remains 11/11 with both negative controls and cleanup
+  validated. Retirement has no remaining implementation or acceptance gate.
+  M7 remains excluded. Public-release/operator decisions and unrelated settings
+  migrations remain outside scope. Existing unrelated src/app/bindings.ts edits
+  are preserved and excluded from these commits; no claim is made about them.
